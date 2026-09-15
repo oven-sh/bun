@@ -1,64 +1,247 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { connect, type Socket } from "node:net";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
-// With install=auto and no node_modules in scope, resolving a bare npm
-// specifier blocks in `PackageManager::sleep_until` while the manifest
-// request is pending. That wait must not pump the JS event loop: user
-// `process.nextTick` / microtask / `setTimeout` callbacks must not fire
-// *inside* a synchronous `Bun.resolveSync` / `import.meta.resolve` /
-// `require.resolve` call.
-test("auto-install resolve wait does not run user JS inside the sync call", async () => {
-  // Registry that delays before 404 so the resolver's sleep_until actually
-  // parks (makes the setTimeout@0 observation deterministic).
-  await using server = Bun.serve({
+// Resolving a package that is not installed, with auto-install on, waits for
+// the registry inside a synchronous call. That wait must block the thread. It
+// used to run the JS event loop, so timers, immediates and other sockets'
+// callbacks ran inside `require()`, and a `Bun.serve` handler that made the
+// call read another request's url out of the shared receive buffer.
+//
+// The test is the registry and both HTTP clients. It holds the manifest
+// request until the second client's request has been written, so the second
+// request is readable for the whole time the first handler is inside the call.
+// No timing is involved: the manifest request itself proves the handler is
+// inside the call.
+
+type Gate = { requested: Promise<void>; arrived: () => void; release: () => void; released: Promise<void> };
+
+function makeRegistry() {
+  const gates = new Map<string, Gate>();
+  const server = Bun.serve({
     port: 0,
-    async fetch() {
-      await Bun.sleep(40);
-      return new Response("Not Found", { status: 404 });
+    hostname: "127.0.0.1",
+    async fetch(req) {
+      const gate = gates.get(decodeURIComponent(new URL(req.url).pathname.slice(1)));
+      if (gate) {
+        gate.arrived();
+        await gate.released;
+      }
+      return new Response("not found", { status: 404 });
     },
   });
+  return {
+    url: `http://127.0.0.1:${server.port}/`,
+    gateFor(packageName: string) {
+      const requested = Promise.withResolvers<void>();
+      const released = Promise.withResolvers<void>();
+      const gate: Gate = {
+        requested: requested.promise,
+        arrived: requested.resolve,
+        release: released.resolve,
+        released: released.promise,
+      };
+      gates.set(packageName, gate);
+      return gate;
+    },
+    stop: () => server.stop(true),
+  };
+}
 
-  // Run from an empty dir so the resolver falls through to auto-install
-  // instead of stopping at the repo's own node_modules.
-  using dir = tempDir("resolve-autoinstall-reentry", {});
-
-  const src = /* js */ `
-    const events = [];
-    async function probe(name, fn) {
-      const st = { p: "before" };
-      setTimeout(() => events.push(name + ":setTimeout@" + st.p), 0);
-      Promise.resolve().then(() => events.push(name + ":microtask@" + st.p));
-      process.nextTick(() => events.push(name + ":nextTick@" + st.p));
-      st.p = "INSIDE";
-      try { fn(); } catch {}
-      st.p = "after";
-      await Bun.sleep(20);
+async function* lines(stream: ReadableStream<Uint8Array>) {
+  const decoder = new TextDecoder();
+  let buffered = "";
+  for await (const chunk of stream) {
+    buffered += decoder.decode(chunk, { stream: true });
+    for (let end = buffered.indexOf("\n"); end >= 0; end = buffered.indexOf("\n")) {
+      yield buffered.slice(0, end);
+      buffered = buffered.slice(end + 1);
     }
-    const spec = "nope-pkg-" + process.pid;
-    const box = process.cwd();
-    await probe("resolveSync", () => Bun.resolveSync(spec, box));
-    await probe("importMeta",  () => import.meta.resolve(spec + "a", "file://" + box + "/x.ts"));
-    await probe("require",     () => require.resolve(spec + "b", { paths: [box] }));
-    console.log(JSON.stringify(events));
-  `;
+  }
+}
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "--install=auto", "-e", src],
-    cwd: String(dir),
-    env: {
-      ...bunEnv,
-      BUN_CONFIG_REGISTRY: `http://127.0.0.1:${server.port}`,
-    },
-    stdout: "pipe",
-    stderr: "pipe",
+async function connectTo(port: number) {
+  const socket = connect(port, "127.0.0.1");
+  await new Promise<void>((resolve, reject) => {
+    socket.once("connect", () => resolve());
+    socket.once("error", reject);
+  });
+  socket.on("error", () => {});
+  socket.on("data", () => {});
+  socket.setNoDelay(true);
+  return socket;
+}
+
+function write(socket: Socket, path: string, host: string) {
+  return new Promise<void>((resolve, reject) =>
+    socket.write(`GET ${path} HTTP/1.1\r\nHost: ${host}\r\n\r\n`, error => (error ? reject(error) : resolve())),
+  );
+}
+
+const doors = [
+  "require",
+  "require.resolve",
+  "Bun.resolveSync",
+  "import.meta.resolve",
+  "import.meta.resolveSync",
+  "import()",
+  "Bun.resolve",
+];
+
+describe.concurrent("auto-install does not run the event loop inside", () => {
+  test.each(doors)("%s", async door => {
+    const packageName = `not-installed-${doors.indexOf(door)}`;
+    const registry = makeRegistry();
+    const gate = registry.gateFor(packageName);
+    // An empty directory, so the resolver finds no node_modules above it.
+    using dir = tempDir("autoinstall-no-reentry", {});
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "--install=force",
+        join(import.meta.dir, "resolve-autoinstall-no-js-reentry-fixture.ts"),
+        door,
+        packageName,
+      ],
+      cwd: String(dir),
+      env: {
+        ...bunEnv,
+        BUN_CONFIG_REGISTRY: registry.url,
+        NPM_CONFIG_REGISTRY: registry.url,
+        BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache"),
+      },
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+
+    const output = lines(proc.stdout);
+    const { port } = JSON.parse((await output.next()).value!) as { port: number };
+
+    const first = await connectTo(port);
+    const second = await connectTo(port);
+    try {
+      await write(first, "/first", "first.example");
+      // The handler is inside the call now, waiting for the registry.
+      await gate.requested;
+      await write(second, "/second", "second.example");
+      gate.release();
+
+      expect(JSON.parse((await output.next()).value!)).toEqual({
+        url: "http://first.example/first",
+        ranInsideTheCall: [],
+      });
+    } finally {
+      first.destroy();
+      second.destroy();
+      registry.stop();
+    }
+  });
+});
+
+// `git` for a git dependency is a child process on the event loop of the
+// thread that installs, which is the JS loop here. A blocked thread cannot
+// reap it. Auto-install cannot load a git dependency in any case, so it
+// reports the package as not found and never starts git. Each repository
+// below does not exist: a git child would say so on stderr.
+describe.concurrent("auto-install does not start git", () => {
+  test("for a git dependency of the project", async () => {
+    using dir = tempDir("autoinstall-no-reentry-git", {
+      "index.js": `
+        let insideTheCall = true;
+        const ranInsideTheCall = [];
+        setTimeout(() => insideTheCall && ranInsideTheCall.push("timer"), 0);
+        setImmediate(() => insideTheCall && ranInsideTheCall.push("immediate"));
+        let code;
+        try {
+          require("git-dep");
+          code = "resolved";
+        } catch (error) {
+          code = error.code;
+        }
+        insideTheCall = false;
+        console.log(JSON.stringify({ code, ranInsideTheCall }));
+      `,
+    });
+    const root = String(dir);
+    await Bun.write(
+      join(root, "package.json"),
+      JSON.stringify({
+        name: "app",
+        dependencies: { "git-dep": `git+${pathToFileURL(join(root, "missing.git"))}#main` },
+      }),
+    );
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--install=force", "index.js"],
+      cwd: root,
+      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(root, ".bun-cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout: JSON.parse(stdout), stderr }).toEqual({
+      stdout: { code: "MODULE_NOT_FOUND", ranInsideTheCall: [] },
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  test("for a git dependency of an auto-installed package", async () => {
+    const tarball = await Bun.file(join(import.meta.dir, "../../../cli/install/baz-0.0.3.tgz")).bytes();
+    const integrity = "sha512-" + new Bun.CryptoHasher("sha512").update(tarball).digest("base64");
 
-  const events: string[] = JSON.parse(stdout.trim());
-  const inside = events.filter(e => e.includes("@INSIDE"));
-  expect({ inside, stderr }).toEqual({ inside: [], stderr: "" });
-  // All three callback kinds should have fired for each of the three probes.
-  expect(events.length).toBe(9);
-  expect(exitCode).toBe(0);
+    using dir = tempDir("autoinstall-no-reentry-git-transitive", {
+      "index.js": `
+        require("baz");
+        console.log("loaded");
+      `,
+    });
+    const root = String(dir);
+
+    await using registry = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req, server) {
+        const { pathname } = new URL(req.url);
+        if (pathname === "/baz") {
+          return Response.json({
+            name: "baz",
+            "dist-tags": { latest: "0.0.3" },
+            versions: {
+              "0.0.3": {
+                name: "baz",
+                version: "0.0.3",
+                dependencies: { "git-dep": `git+${pathToFileURL(join(root, "missing.git"))}` },
+                dist: { tarball: `http://127.0.0.1:${server.port}/baz/-/baz-0.0.3.tgz`, integrity },
+              },
+            },
+          });
+        }
+        if (pathname === "/baz/-/baz-0.0.3.tgz") return new Response(tarball);
+        return new Response("not found", { status: 404 });
+      },
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--install=force", "index.js"],
+      cwd: root,
+      env: {
+        ...bunEnv,
+        BUN_CONFIG_REGISTRY: `http://127.0.0.1:${registry.port}/`,
+        NPM_CONFIG_REGISTRY: `http://127.0.0.1:${registry.port}/`,
+        BUN_INSTALL_CACHE_DIR: join(root, ".bun-cache"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // `baz` prints "run baz" when it loads.
+    expect({ stdout, stderr }).toEqual({ stdout: "run baz\nloaded\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
 });

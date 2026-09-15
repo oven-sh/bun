@@ -375,8 +375,11 @@ pub struct PackageManager {
     /// TODO: Does this need to be atomic? It seems to be accessed only from the main thread.
     pub(crate) pending_pre_calc_hashes: AtomicU32,
     pub pending_tasks: AtomicU32,
-    /// Bumped by [`wake_raw`]; futex target for [`sleep_until`] on the Js arm.
-    pub wake_counter: AtomicU32,
+    /// Bumped by every `wake_raw`. `park_until` waits on it.
+    pub(crate) wake_count: AtomicU32,
+    /// Threads parked on `wake_count`. Lets `wake_raw` skip the futex syscall
+    /// when there is none, which is every `bun install` task.
+    pub(crate) wake_waiters: AtomicU32,
     pub total_tasks: u32,
     pub(crate) preallocated_network_tasks: PreallocatedNetworkTasks,
     pub(crate) preallocated_resolve_tasks: PreallocatedTaskStore,
@@ -946,11 +949,57 @@ impl PackageManager {
                 // type); cast back to `*mut c_void` here.
                 (on_wake.get_handler())(ctx.as_ptr(), this.cast::<c_void>());
             }
-            let wake_counter = &*core::ptr::addr_of!((*this).wake_counter);
-            wake_counter.fetch_add(1, Ordering::Release);
-            Futex::wake(wake_counter, u32::MAX);
             (*core::ptr::addr_of_mut!((*this).event_loop)).wakeup();
+
+            // SeqCst pairs with `park_until`: it registers as a waiter before it
+            // reads the count, this bumps the count before it reads the waiters,
+            // so one of the two sees the other and no wake is lost.
+            let wake_count = &*core::ptr::addr_of!((*this).wake_count);
+            wake_count.fetch_add(1, Ordering::SeqCst);
+            if (*core::ptr::addr_of!((*this).wake_waiters)).load(Ordering::SeqCst) > 0 {
+                Futex::wake(wake_count, u32::MAX);
+            }
         }
+    }
+
+    /// True for the resolver's auto-install manager (`init_with_runtime`). It
+    /// lives on a JS thread, and `sleep_until` parks that thread: nothing that
+    /// needs the thread's event loop to finish may be pending there.
+    pub(crate) fn waits_without_event_loop(&self) -> bool {
+        matches!(self.event_loop, AnyEventLoop::Js { .. })
+    }
+
+    /// `sleep_until` for the manager that lives on a JS thread. The caller is
+    /// inside `require()`, `import()` or a resolve call, so the wait must not
+    /// run the JS event loop: a timer, an immediate or another socket's
+    /// callback would run inside that call. It blocks the thread instead.
+    /// Every task this manager starts finishes on the HTTP thread or on the
+    /// thread pool and ends in `wake_raw`, which is all `is_done_fn` needs.
+    ///
+    /// # Safety
+    /// Same contract as `sleep_until`.
+    unsafe fn park_until<C>(
+        this: *mut PackageManager,
+        closure: &mut C,
+        is_done_fn: fn(&mut C) -> bool,
+    ) {
+        // Re-derived from `this` at every use: `is_done_fn` reborrows the whole
+        // `PackageManager`, so no reference may live across a call to it.
+        // SAFETY: `this` is valid per fn contract; both fields are atomics.
+        let wake_count = || unsafe { &*core::ptr::addr_of!((*this).wake_count) };
+        let wake_waiters = || unsafe { &*core::ptr::addr_of!((*this).wake_waiters) };
+
+        wake_waiters().fetch_add(1, Ordering::SeqCst);
+        loop {
+            // Read before `is_done_fn` drains the queues: a task that finishes
+            // after the drain bumps the count, and the wait below returns at once.
+            let seen = wake_count().load(Ordering::SeqCst);
+            if is_done_fn(closure) {
+                break;
+            }
+            Futex::wait_forever(wake_count(), seen);
+        }
+        wake_waiters().fetch_sub(1, Ordering::SeqCst);
     }
 
     /// Associated fn taking `*mut PackageManager` (NOT `&mut self`): every
@@ -970,35 +1019,11 @@ impl PackageManager {
     ) {
         Output::flush();
 
-        // Derive the event-loop pointer through `this`'s raw provenance (NOT
-        // via a `&mut self.event_loop` reborrow) so it shares `this`'s SRW tag
-        // and survives the callback's `&mut *this` retag.
-        // SAFETY: `this` is valid per fn contract; `&raw mut` does not create a
-        // reference, only a place projection.
-        let event_loop: *mut AnyEventLoop = unsafe { &raw mut (*this).event_loop };
-
-        // On the Js arm this wait is inside a synchronous module-resolution
-        // call; ticking the JS loop here would run user callbacks inside
-        // `Bun.resolveSync` / `require.resolve` / `import.meta.resolve`.
-        // `wake_raw` bumps `wake_counter` for every completion the HTTP thread
-        // or thread pool publishes, so futex-wait on that instead.
-        // SAFETY: `this`/`event_loop` valid per fn contract; only the
-        // discriminant is read here.
-        if matches!(unsafe { &*event_loop }, AnyEventLoop::Js { .. }) {
-            // SAFETY: `&raw const` through `this`'s provenance; each
-            // `&AtomicU32` is dropped before `is_done_fn` retags `*this`.
-            let wake_counter: *const AtomicU32 = unsafe { &raw const (*this).wake_counter };
-            loop {
-                // SAFETY: short-lived `&AtomicU32`; dropped before `is_done_fn`.
-                let before = unsafe { (*wake_counter).load(Ordering::Acquire) };
-                if is_done_fn(closure) {
-                    return;
-                }
-                // SAFETY: short-lived `&AtomicU32`; no borrow of `*this` is
-                // live across the futex wait. Bounded so a lost wake cannot
-                // hang.
-                let _ = Futex::wait(unsafe { &*wake_counter }, before, Some(1_000_000_000));
-            }
+        // SAFETY: `this` is valid per fn contract; the shared borrow ends
+        // before `is_done_fn` runs.
+        if unsafe { (*this).waits_without_event_loop() } {
+            // SAFETY: same contract as this fn.
+            return unsafe { Self::park_until(this, closure, is_done_fn) };
         }
 
         // `AnyEventLoop::tick_raw` takes the type-erased
@@ -1024,6 +1049,12 @@ impl PackageManager {
             ctx: std::ptr::from_mut::<C>(closure),
             is_done: is_done_fn,
         };
+        // Derive the event-loop pointer through `this`'s raw provenance (NOT
+        // via a `&mut self.event_loop` reborrow) so it shares `this`'s SRW tag
+        // and survives the callback's `&mut *this` retag.
+        // SAFETY: `this` is valid per fn contract; `&raw mut` does not create a
+        // reference, only a place projection.
+        let event_loop: *mut AnyEventLoop = unsafe { &raw mut (*this).event_loop };
         // SAFETY: `tick_raw` reborrows `*event_loop` only between `is_done`
         // calls (never across them), so the callback's `&mut PackageManager`
         // never overlaps a live `&mut AnyEventLoop`.
@@ -2147,7 +2178,8 @@ pub fn init(
         wr!(patch_task_queue, PatchTaskQueue::default());
         wr!(pending_pre_calc_hashes, AtomicU32::new(0));
         wr!(pending_tasks, AtomicU32::new(0));
-        wr!(wake_counter, AtomicU32::new(0));
+        wr!(wake_count, AtomicU32::new(0));
+        wr!(wake_waiters, AtomicU32::new(0));
         wr!(total_tasks, 0);
         wr!(pending_lifecycle_script_tasks, AtomicU32::new(0));
         wr!(finished_installing, AtomicBool::new(false));
@@ -2610,7 +2642,8 @@ fn init_with_runtime_once(
         wr!(patch_task_queue, PatchTaskQueue::default());
         wr!(pending_pre_calc_hashes, AtomicU32::new(0));
         wr!(pending_tasks, AtomicU32::new(0));
-        wr!(wake_counter, AtomicU32::new(0));
+        wr!(wake_count, AtomicU32::new(0));
+        wr!(wake_waiters, AtomicU32::new(0));
         wr!(total_tasks, 0);
         wr!(pending_lifecycle_script_tasks, AtomicU32::new(0));
         wr!(finished_installing, AtomicBool::new(false));

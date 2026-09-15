@@ -81,7 +81,7 @@ impl GPUComputePipeline {
         device: &DeviceRef,
         descriptor: JSValue,
     ) -> JsResult<(JSValue, Option<GpuError>)> {
-        let d = Dict::required(global, descriptor, "GPUComputePipelineDescriptor")?;
+        let d = Dict::new(global, descriptor, "GPUComputePipelineDescriptor")?;
         let label = d.label()?;
         let desc = pl::ComputePipelineDescriptor {
             label: super::wgpu_label(&label),
@@ -205,7 +205,7 @@ impl GPURenderPipeline {
         device: &DeviceRef,
         descriptor: JSValue,
     ) -> JsResult<(JSValue, Option<GpuError>)> {
-        let d = Dict::required(global, descriptor, "GPURenderPipelineDescriptor")?;
+        let d = Dict::new(global, descriptor, "GPURenderPipelineDescriptor")?;
         let label = d.label()?;
         let layout = parse_layout(&d)?;
 
@@ -216,10 +216,10 @@ impl GPURenderPipeline {
                 buffers.push(None);
                 return Ok(());
             }
-            let b = Dict::required(global, item, "GPUVertexBufferLayout")?;
+            let b = Dict::new(global, item, "GPUVertexBufferLayout")?;
             let mut attributes = Vec::new();
             b.require_each("attributes", |item| {
-                let a = Dict::required(global, item, "GPUVertexAttribute")?;
+                let a = Dict::new(global, item, "GPUVertexAttribute")?;
                 attributes.push(wgt::VertexAttribute {
                     format: a.require_enum(
                         "format",
@@ -277,7 +277,11 @@ impl GPURenderPipeline {
 
         let depth_stencil = match d.dict("depthStencil", "GPUDepthStencilState")? {
             None => None,
-            Some(ds) => Some(parse_depth_stencil(&ds)?),
+            Some(ds) => {
+                let state = parse_depth_stencil(&ds)?;
+                device.check_format(global, state.format, "createRenderPipeline: depthStencil")?;
+                Some(state)
+            }
         };
 
         let multisample = match d.dict("multisample", "GPUMultisampleState")? {
@@ -298,7 +302,7 @@ impl GPURenderPipeline {
                         targets.push(None);
                         return Ok(());
                     }
-                    let t = Dict::required(global, item, "GPUColorTargetState")?;
+                    let t = Dict::new(global, item, "GPUColorTargetState")?;
                     let blend = match t.dict("blend", "GPUBlendState")? {
                         None => None,
                         Some(b) => Some(wgt::BlendState {
@@ -310,12 +314,11 @@ impl GPURenderPipeline {
                             )?,
                         }),
                     };
+                    let format =
+                        t.require_enum("format", "GPUTextureFormat", names::parse_texture_format)?;
+                    device.check_format(global, format, "createRenderPipeline: targets")?;
                     targets.push(Some(wgt::ColorTargetState {
-                        format: t.require_enum(
-                            "format",
-                            "GPUTextureFormat",
-                            names::parse_texture_format,
-                        )?,
+                        format,
                         blend,
                         write_mask: wgt::ColorWrites::from_bits_truncate(
                             t.u32_or("writeMask", 0xF)?,

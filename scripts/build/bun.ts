@@ -90,24 +90,13 @@ function systemLibs(cfg: Config): string[] {
     // icucore: system ICU framework.
     // resolv: DNS resolution (getaddrinfo et al).
     libs.push("-licucore", "-lresolv");
-    // WebGPU (src/webgpu): wgpu's Metal backend. libbun_runtime.a is a
-    // staticlib, so the `#[link(kind = "framework")]` attributes of the objc2
-    // crates do not reach this link on their own. The list is what
-    // `cargo rustc -p bun_webgpu --crate-type staticlib -- --print native-static-libs`
-    // reports for the darwin targets.
-    libs.push(
-      "-framework",
-      "Metal",
-      "-framework",
-      "QuartzCore",
-      "-framework",
-      "CoreGraphics",
-      "-framework",
-      "Foundation",
-      "-framework",
-      "CoreFoundation",
-      "-lobjc",
-    );
+    // objc: WebGPU (src/webgpu). wgpu's Metal backend talks to the Objective-C
+    // runtime, which libSystem already loads into every process. The Metal,
+    // Foundation, CoreFoundation and CoreGraphics frameworks are NOT linked:
+    // src/webgpu/apple.rs dlopen()s them on first use of navigator.gpu, because
+    // CoreFoundation's initializer changes the environment of every process
+    // that loads it.
+    libs.push("-lobjc");
   }
 
   if (cfg.freebsd) {

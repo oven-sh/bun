@@ -30,6 +30,8 @@ pub(crate) struct LostSignal(Guarded<Option<String>>);
 
 pub(crate) struct DeviceState {
     pub raw: Arc<bun_webgpu::Device>,
+    /// The features the device was created with.
+    features: wgt::Features,
     scopes: JsCell<Vec<ErrorScope>>,
     /// The `GPUDeviceHandle` wrapper, weakly: it owns the error handler and the
     /// `lost` promise in GC-visited slots, so holding it strongly from here
@@ -51,6 +53,34 @@ impl DeviceState {
     #[inline]
     pub(crate) fn id(&self) -> bun_webgpu::wgc::id::DeviceId {
         self.raw.id()
+    }
+
+    /// WebGPU's "validate texture format required features": naming a format
+    /// whose feature the device did not enable is a TypeError at the call, not
+    /// a validation error later.
+    pub(crate) fn check_format(
+        &self,
+        global: &JSGlobalObject,
+        format: wgt::TextureFormat,
+        what: &str,
+    ) -> JsResult<()> {
+        let required = format.required_features();
+        if self.features.contains(required) {
+            return Ok(());
+        }
+        let format = bun_webgpu::names::texture_format_name(format);
+        let feature = bun_webgpu::names::FEATURES
+            .iter()
+            .find(|(_, flag)| *flag == required)
+            .map(|(name, _)| *name);
+        Err(match feature {
+            Some(feature) => global.throw_type_error(format_args!(
+                "{what}: format '{format}' requires the feature '{feature}', which this device was not created with"
+            )),
+            None => global.throw_type_error(format_args!(
+                "{what}: format '{format}' requires a feature this device does not have"
+            )),
+        })
     }
 
     /// Routes a wgpu-core error the way WebGPU's "dispatch error" does: into
@@ -194,8 +224,10 @@ impl GPUDeviceHandle {
                 }),
             );
         }
+        let features = instance().device_features(raw.id());
         let state = Rc::new(DeviceState {
             raw: Arc::new(raw),
+            features,
             scopes: JsCell::new(Vec::new()),
             handle: JsCell::new(bun_jsc::Weak::default()),
             lost_signal,
@@ -314,6 +346,10 @@ impl GPUDeviceHandle {
 
     fn pop_error_scope_impl(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         self.state.deliver_loss(global)?;
+        // A lost device answers `null` and leaves its stack alone, empty or not.
+        if self.state.lost.get() {
+            return Ok(JSPromise::resolved_promise_value(global, JSValue::NULL));
+        }
         let Some(scope) = self.state.scopes.with_mut(Vec::pop) else {
             use bun_jsc::EncodedSliceJsc as _;
             let err =

@@ -97,7 +97,7 @@ impl GPUShaderModule {
         device: &DeviceRef,
         descriptor: JSValue,
     ) -> JsResult<JSValue> {
-        let d = Dict::required(global, descriptor, "GPUShaderModuleDescriptor")?;
+        let d = Dict::new(global, descriptor, "GPUShaderModuleDescriptor")?;
         let label = d.label()?;
         let Some(code) = d.string("code")? else {
             return Err(global.throw_type_error(format_args!(

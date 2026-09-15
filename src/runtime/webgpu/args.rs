@@ -205,22 +205,6 @@ impl<'a> Dict<'a> {
         })
     }
 
-    /// A dictionary the caller must pass (it has required members).
-    pub(crate) fn required(
-        global: &'a JSGlobalObject,
-        v: JSValue,
-        name: &'static str,
-    ) -> JsResult<Self> {
-        if !v.is_object() {
-            return Err(global.throw_type_error(format_args!("{name}: expected an object")));
-        }
-        Ok(Self {
-            global,
-            obj: Some(v),
-            name,
-        })
-    }
-
     pub(crate) fn get(&self, key: &'static str) -> JsResult<Option<JSValue>> {
         match self.obj {
             Some(obj) => obj.get(self.global, key),
@@ -354,17 +338,18 @@ impl<'a> Dict<'a> {
         to_class(self.global, v, &self.what(key), class_name)
     }
 
-    /// A nested dictionary member. Missing reads as `None`.
+    /// A nested dictionary member. Missing reads as `None`; `null` is the
+    /// empty dictionary, as WebIDL converts it.
     pub(crate) fn dict(&self, key: &'static str, name: &'static str) -> JsResult<Option<Dict<'a>>> {
         match self.get(key)? {
-            Some(v) => Ok(Some(Dict::required(self.global, v, name)?)),
+            Some(v) => Ok(Some(Dict::new(self.global, v, name)?)),
             None => Ok(None),
         }
     }
 
     pub(crate) fn require_dict(&self, key: &'static str, name: &'static str) -> JsResult<Dict<'a>> {
         let v = self.require(key)?;
-        Dict::required(self.global, v, name)
+        Dict::new(self.global, v, name)
     }
 
     /// A `sequence<T>` member. Missing runs `f` zero times.
@@ -415,7 +400,7 @@ pub(crate) fn to_extent3d(
             depth_or_array_layers: parts[2],
         });
     }
-    let d = Dict::required(global, v, "GPUExtent3DDict")?;
+    let d = Dict::new(global, v, "GPUExtent3DDict")?;
     Ok(Extent3d {
         width: d.require_u32("width")?,
         height: d.u32_or("height", 1)?,
@@ -451,7 +436,7 @@ pub(crate) fn to_origin3d(
             z: parts[2],
         });
     }
-    let d = Dict::required(global, v, "GPUOrigin3DDict")?;
+    let d = Dict::new(global, v, "GPUOrigin3DDict")?;
     Ok(Origin3d {
         x: d.u32_or("x", 0)?,
         y: d.u32_or("y", 0)?,
@@ -486,7 +471,7 @@ pub(crate) fn to_color(
             a: parts[3],
         });
     }
-    let d = Dict::required(global, v, "GPUColorDict")?;
+    let d = Dict::new(global, v, "GPUColorDict")?;
     let channel = |key: &'static str| -> JsResult<f64> {
         let value = d.require(key)?;
         to_f64(global, value, what)

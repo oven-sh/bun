@@ -9,6 +9,8 @@ use std::time::Duration;
 pub use wgpu_core as wgc;
 pub use wgpu_types as wgt;
 
+#[cfg(target_vendor = "apple")]
+mod apple;
 pub mod names;
 
 use wgc::global::Global;
@@ -22,6 +24,11 @@ pub fn instance() -> &'static Global {
     INSTANCE.get_or_init(|| {
         let mut desc = wgt::InstanceDescriptor::new_without_display_handle();
         desc.backends = wgt::Backends::PRIMARY;
+        // Without its frameworks the Metal backend cannot run: no backend, no adapters.
+        #[cfg(target_vendor = "apple")]
+        if !apple::load() {
+            desc.backends = wgt::Backends::empty();
+        }
         // The GPU API's own debug layers (Vulkan validation layers, the D3D12
         // debug layer). wgpu-core's WebGPU validation does not depend on them.
         desc.flags = wgt::InstanceFlags::empty();

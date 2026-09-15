@@ -85,12 +85,19 @@ impl GPUAdapter {
                 let message = error_chain(&err);
                 // A feature or limit the adapter does not have is the caller's mistake and
                 // leaves the adapter usable; everything else (the driver refused) consumes it.
+                use wgc::instance::RequestDeviceError as E;
                 match err {
-                    wgc::instance::RequestDeviceError::UnsupportedFeature(_) => {
+                    E::UnsupportedFeature(_) => {
                         let err = global.create_type_error_instance(format_args!("{message}"));
                         Ok(JSPromise::rejected_promise(global, err).as_value(global))
                     }
-                    _ => Ok(reject_operation(&message)),
+                    E::LimitsExceeded(_) | E::ExperimentalFeaturesNotEnabled(_) => {
+                        Ok(reject_operation(&message))
+                    }
+                    _ => {
+                        self.consumed.set(true);
+                        Ok(reject_operation(&message))
+                    }
                 }
             }
         }

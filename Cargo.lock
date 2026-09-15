@@ -1753,6 +1753,8 @@ dependencies = [
 name = "bun_webgpu"
 version = "0.0.0"
 dependencies = [
+ "bun_core",
+ "bun_sys",
  "wgpu-core",
  "wgpu-types",
 ]

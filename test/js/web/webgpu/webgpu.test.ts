@@ -365,6 +365,19 @@ describe.skipIf(!hasAdapter)("with a device", () => {
     await expect(readback.mapAsync(GPUMapMode.WRITE)).rejects.toMatchObject({ name: "OperationError" });
     expect(await device.popErrorScope()).toBeInstanceOf(GPUValidationError);
 
+    // So is mapping a buffer that is mapped. The mapping it has stays usable.
+    await readback.mapAsync(GPUMapMode.READ);
+    const range = readback.getMappedRange();
+    device.pushErrorScope("validation");
+    await expect(readback.mapAsync(GPUMapMode.READ)).rejects.toMatchObject({ name: "OperationError" });
+    expect(await device.popErrorScope()).toBeInstanceOf(GPUValidationError);
+    expect(readback.mapState).toBe("mapped");
+    expect(Array.from(new Uint32Array(range))).toEqual([1, 2, 3, 4]);
+    readback.unmap();
+    expect(range.byteLength).toBe(0);
+    await readback.mapAsync(GPUMapMode.READ);
+    readback.unmap();
+
     device.destroy();
   });
 
@@ -763,7 +776,10 @@ describe.skipIf(!hasAdapter)("with a device", () => {
       expect(pass.label).toBe("pass");
       pass.setBindGroup(0, bindGroup, [256]);
       pass.setBindGroup(0, bindGroup, new Uint32Array([0, 512, 0]), 1, 1);
+      // With three arguments a Uint32Array is an ordinary sequence of offsets.
+      pass.setBindGroup(0, bindGroup, new Uint32Array([512]));
       expect(() => pass.setBindGroup(0, bindGroup, new Uint32Array([0]), 1, 1)).toThrow(RangeError);
+      expect(() => pass.setBindGroup(0, bindGroup, [0], 0, 1)).toThrow(TypeError);
       pass.end();
       encoder.finish();
 
@@ -799,11 +815,45 @@ describe.skipIf(!hasAdapter)("with a device", () => {
       RangeError,
     );
     expect(() => device.createTexture({ size: [4, 4], format: "rgba8", usage: 1 })).toThrow(TypeError);
+    // A format behind a feature the device was not created with is a TypeError too.
+    expect(() => device.createTexture({ size: [4, 4], format: "bc1-rgba-unorm", usage: 1 })).toThrow(
+      "texture-compression-bc",
+    );
+    expect(() => device.createTexture({ size: [4, 4], format: "r16unorm", usage: 1 })).toThrow(TypeError);
+    expect(() =>
+      device.createTexture({ size: [4, 4], format: "rgba8unorm", usage: 1, viewFormats: ["astc-4x4-unorm"] }),
+    ).toThrow(TypeError);
     expect(() => device.createTexture({ size: [], format: "rgba8unorm", usage: 1 })).toThrow(TypeError);
     expect(() => device.pushErrorScope("bogus")).toThrow(TypeError);
     expect(() => device.queue.submit([{}])).toThrow(TypeError);
     // A generic iterable is a sequence too.
     device.queue.submit(new Set());
+
+    // null is the empty dictionary, as an argument and as a member.
+    expect(device.createSampler(null)).toBeInstanceOf(GPUSampler);
+    expect(() => device.createBindGroupLayout(null)).toThrow(TypeError);
+    expect(() => device.createBindGroupLayout({ entries: [null] })).toThrow(TypeError);
+    expect(
+      await validationError(device, () => {
+        // `buffer: null` is a GPUBufferBindingLayout with every default: a uniform buffer.
+        const layout = device.createBindGroupLayout({
+          entries: [{ binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: null }],
+        });
+        const uniforms = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM });
+        device.createBindGroup({ layout, entries: [{ binding: 0, resource: { buffer: uniforms } }] });
+        const encoder = device.createCommandEncoder(null);
+        encoder.beginComputePass(null).end();
+        encoder.copyBufferToTexture(
+          { buffer: device.createBuffer({ size: 256, usage: GPUBufferUsage.COPY_SRC }), bytesPerRow: 256 },
+          {
+            texture: device.createTexture({ size: [4, 1], format: "rgba8unorm", usage: GPUTextureUsage.COPY_DST }),
+            origin: null,
+          },
+          [4, 1],
+        );
+        encoder.finish(null);
+      }),
+    ).toBeNull();
     device.destroy();
   });
 
@@ -824,6 +874,10 @@ describe.skipIf(!hasAdapter)("with a device", () => {
 
     // A lost device stays quiet: no exception and no error event.
     device.createBuffer({ size: 16, usage: 0x8000 });
+    // popErrorScope() on it resolves to null, with or without an open scope.
+    expect(await device.popErrorScope()).toBeNull();
+    device.pushErrorScope("validation");
+    expect(await device.popErrorScope()).toBeNull();
     device.destroy();
   });
 

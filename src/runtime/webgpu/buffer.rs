@@ -191,7 +191,7 @@ impl GPUBuffer {
         device: &DeviceRef,
         descriptor: JSValue,
     ) -> JsResult<JSValue> {
-        let d = Dict::required(global, descriptor, "GPUBufferDescriptor")?;
+        let d = Dict::new(global, descriptor, "GPUBufferDescriptor")?;
         let label = d.label()?;
         let size = d.require_u64("size")?;
         let usage = d.require_u32("usage")?;
@@ -329,8 +329,18 @@ impl GPUBuffer {
                     .as_value(global),
             )
         };
-        if matches!(self.map.get(), MapState::Pending) {
-            return reject(false, "mapAsync: a map is already pending on this buffer");
+        match self.map.get() {
+            MapState::Unmapped => {}
+            MapState::Pending => {
+                return reject(false, "mapAsync: a map is already pending on this buffer");
+            }
+            // Not an early reject in the spec, but a validation error: the mapping that
+            // exists stays as it is.
+            MapState::Mapped { .. } => {
+                let message = "mapAsync: the buffer is already mapped";
+                self.device.report(global, GpuError::validation(message))?;
+                return reject(false, message);
+            }
         }
         if mode != MAP_READ && mode != MAP_WRITE {
             let message = "mapAsync: mode has to be exactly GPUMapMode.READ or GPUMapMode.WRITE";

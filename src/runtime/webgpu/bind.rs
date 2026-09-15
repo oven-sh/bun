@@ -68,14 +68,14 @@ impl GPUBindGroupLayout {
         device: &DeviceRef,
         descriptor: JSValue,
     ) -> JsResult<JSValue> {
-        let d = Dict::required(global, descriptor, "GPUBindGroupLayoutDescriptor")?;
+        let d = Dict::new(global, descriptor, "GPUBindGroupLayoutDescriptor")?;
         let label = d.label()?;
         let mut entries = Vec::new();
         // A layout entry that names no binding type, or several, has no wgpu
         // spelling: it becomes a validation error and an invalid layout.
         let mut malformed: Option<u32> = None;
         d.require_each("entries", |item| {
-            let e = Dict::required(global, item, "GPUBindGroupLayoutEntry")?;
+            let e = Dict::new(global, item, "GPUBindGroupLayoutEntry")?;
             let binding = e.require_u32("binding")?;
             let visibility =
                 wgt::ShaderStages::from_bits_truncate(e.require_u32("visibility")? & 0x7);
@@ -130,11 +130,15 @@ impl GPUBindGroupLayout {
                         names::parse_storage_texture_access,
                         wgt::StorageTextureAccess::WriteOnly,
                     )?,
-                    format: t.require_enum(
-                        "format",
-                        "GPUTextureFormat",
-                        names::parse_texture_format,
-                    )?,
+                    format: {
+                        let format = t.require_enum(
+                            "format",
+                            "GPUTextureFormat",
+                            names::parse_texture_format,
+                        )?;
+                        device.check_format(global, format, "createBindGroupLayout")?;
+                        format
+                    },
                     view_dimension: t.enum_or(
                         "viewDimension",
                         "GPUTextureViewDimension",
@@ -212,7 +216,7 @@ impl GPUPipelineLayout {
         device: &DeviceRef,
         descriptor: JSValue,
     ) -> JsResult<JSValue> {
-        let d = Dict::required(global, descriptor, "GPUPipelineLayoutDescriptor")?;
+        let d = Dict::new(global, descriptor, "GPUPipelineLayoutDescriptor")?;
         let label = d.label()?;
         let mut layouts = Vec::new();
         d.require_each("bindGroupLayouts", |item| {
@@ -264,7 +268,7 @@ impl GPUBindGroup {
         device: &DeviceRef,
         descriptor: JSValue,
     ) -> JsResult<JSValue> {
-        let d = Dict::required(global, descriptor, "GPUBindGroupDescriptor")?;
+        let d = Dict::new(global, descriptor, "GPUBindGroupDescriptor")?;
         let label = d.label()?;
         let layout = d
             .require_class::<GPUBindGroupLayout>("layout", "GPUBindGroupLayout")?
@@ -274,7 +278,7 @@ impl GPUBindGroup {
         // what it needs of them; the ids can go once it exists.
         let mut implicit_views = Vec::new();
         d.require_each("entries", |item| {
-            let e = Dict::required(global, item, "GPUBindGroupEntry")?;
+            let e = Dict::new(global, item, "GPUBindGroupEntry")?;
             let binding = e.require_u32("binding")?;
             let resource = e.require("resource")?;
             let resource = if let Some(sampler) = resource.as_class_ref::<GPUSampler>() {
@@ -294,7 +298,7 @@ impl GPUBindGroup {
                     size: None,
                 })
             } else {
-                let b = Dict::required(global, resource, "GPUBufferBinding")?;
+                let b = Dict::new(global, resource, "GPUBufferBinding")?;
                 let buffer = b.require_class::<GPUBuffer>("buffer", "GPUBuffer")?;
                 bm::BindingResource::Buffer(bm::BufferBinding {
                     buffer: buffer.id(),
@@ -340,24 +344,42 @@ pub(crate) fn parse_set_bind_group(
     if offsets_arg.is_undefined() {
         return Ok((index, bind_group, offsets));
     }
-    if offsets_arg.js_type() == bun_jsc::JSType::Uint32Array {
-        let start = args::to_u64(
-            global,
-            callframe.argument(3),
-            "setBindGroup: dynamicOffsetsDataStart",
-        )?;
-        let length = args::to_u32(
-            global,
-            callframe.argument(4),
-            "setBindGroup: dynamicOffsetsDataLength",
-        )?;
+    // WebIDL picks the overload by argument count: with more than three
+    // arguments this is the (Uint32Array, start, length) form. With three, a
+    // Uint32Array is a plain `sequence<GPUBufferDynamicOffset>`: every element
+    // of it is an offset.
+    let is_uint32_array = offsets_arg.js_type() == bun_jsc::JSType::Uint32Array;
+    let windowed = callframe.arguments_count() > 3;
+    if windowed && !is_uint32_array {
+        return Err(global.throw_type_error(format_args!(
+            "setBindGroup: dynamicOffsetsData has to be a Uint32Array"
+        )));
+    }
+    if is_uint32_array {
+        let (start, length) = if windowed {
+            (
+                args::to_u64(
+                    global,
+                    callframe.argument(3),
+                    "setBindGroup: dynamicOffsetsDataStart",
+                )?,
+                Some(args::to_u32(
+                    global,
+                    callframe.argument(4),
+                    "setBindGroup: dynamicOffsetsDataLength",
+                )?),
+            )
+        } else {
+            (0, None)
+        };
         // Read the view last: the conversions above can run script that detaches it.
         let Some(view) = offsets_arg.as_array_buffer(global) else {
             return Ok((index, bind_group, offsets));
         };
         let bytes = view.byte_slice();
         let count = (bytes.len() / 4) as u64;
-        if start > count || u64::from(length) > count - start {
+        let length = length.map_or(count.saturating_sub(start), u64::from);
+        if start > count || length > count - start {
             return Err(global.throw_value(global.create_range_error_instance(format_args!(
                 "setBindGroup: dynamicOffsetsDataStart + dynamicOffsetsDataLength is past the end of dynamicOffsetsData"
             ))));

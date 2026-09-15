@@ -41,7 +41,7 @@ impl GPUTexture {
         device: &DeviceRef,
         descriptor: JSValue,
     ) -> JsResult<JSValue> {
-        let d = Dict::required(global, descriptor, "GPUTextureDescriptor")?;
+        let d = Dict::new(global, descriptor, "GPUTextureDescriptor")?;
         let label = d.label()?;
         let size = args::to_extent3d(global, d.require("size")?, "GPUTextureDescriptor.size")?;
         let mip_level_count = d.u32_or("mipLevelCount", 1)?;
@@ -65,6 +65,10 @@ impl GPUTexture {
             )?);
             Ok(())
         })?;
+        device.check_format(global, format, "createTexture")?;
+        for view_format in &view_formats {
+            device.check_format(global, *view_format, "createTexture: viewFormats")?;
+        }
 
         let desc = wgc::resource::TextureDescriptor {
             label: super::wgpu_label(&label),
@@ -113,9 +117,13 @@ impl GPUTexture {
         let d = Dict::new(global, callframe.argument(0), "GPUTextureViewDescriptor")?;
         let label = d.label()?;
         let usage = d.u32_or("usage", 0)?;
+        let format = d.enum_("format", "GPUTextureFormat", names::parse_texture_format)?;
+        if let Some(format) = format {
+            self.device.check_format(global, format, "createView")?;
+        }
         let desc = wgc::resource::TextureViewDescriptor {
             label: super::wgpu_label(&label),
-            format: d.enum_("format", "GPUTextureFormat", names::parse_texture_format)?,
+            format,
             dimension: d.enum_(
                 "dimension",
                 "GPUTextureViewDimension",
@@ -306,7 +314,7 @@ pub(crate) fn parse_texel_copy_texture_info(
     value: JSValue,
     what: &'static str,
 ) -> JsResult<wgt::TexelCopyTextureInfo<wgc::id::TextureId>> {
-    let d = Dict::required(global, value, "GPUTexelCopyTextureInfo")?;
+    let d = Dict::new(global, value, "GPUTexelCopyTextureInfo")?;
     let texture = d.require_class::<GPUTexture>("texture", "GPUTexture")?;
     Ok(wgt::TexelCopyTextureInfo {
         texture: texture.id(),
@@ -330,7 +338,7 @@ pub(crate) fn parse_texel_copy_buffer_layout(
     value: JSValue,
     name: &'static str,
 ) -> JsResult<wgt::TexelCopyBufferLayout> {
-    let d = Dict::required(global, value, name)?;
+    let d = Dict::new(global, value, name)?;
     Ok(wgt::TexelCopyBufferLayout {
         offset: d.u64_or("offset", 0)?,
         bytes_per_row: d.u32("bytesPerRow")?,
@@ -344,7 +352,7 @@ pub(crate) fn parse_texel_copy_buffer_info(
     value: JSValue,
 ) -> JsResult<wgt::TexelCopyBufferInfo<wgc::id::BufferId>> {
     let layout = parse_texel_copy_buffer_layout(global, value, "GPUTexelCopyBufferInfo")?;
-    let d = Dict::required(global, value, "GPUTexelCopyBufferInfo")?;
+    let d = Dict::new(global, value, "GPUTexelCopyBufferInfo")?;
     let buffer = d.require_class::<super::GPUBuffer>("buffer", "GPUBuffer")?;
     Ok(wgt::TexelCopyBufferInfo {
         buffer: buffer.id(),

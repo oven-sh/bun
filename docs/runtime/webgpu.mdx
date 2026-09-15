@@ -76,7 +76,7 @@ Bun uses [wgpu](https://wgpu.rs), the WebGPU implementation behind Firefox and D
 | Windows  | Direct3D 12 |
 | Linux    | Vulkan      |
 
-On Linux and Windows, Bun loads the Vulkan or Direct3D libraries the first time you call `navigator.gpu.requestAdapter()`.
+Bun loads the platform's GPU libraries the first time you call `navigator.gpu.requestAdapter()`. A program that does not use WebGPU does not load them.
 
 `requestAdapter()` resolves to `null` when the machine has no usable GPU API. On Linux that means there is no Vulkan driver installed. A software rasterizer counts as an adapter: Mesa's `lavapipe` on Linux and WARP on Windows both work, which is enough to run GPU code in CI. `adapter.info.isFallbackAdapter` is `true` for a software adapter.
 

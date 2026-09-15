@@ -31,7 +31,7 @@ impl GPUQuerySet {
         device: &DeviceRef,
         descriptor: JSValue,
     ) -> JsResult<JSValue> {
-        let d = Dict::required(global, descriptor, "GPUQuerySetDescriptor")?;
+        let d = Dict::new(global, descriptor, "GPUQuerySetDescriptor")?;
         let label = d.label()?;
         let kind = d.require_enum("type", "GPUQueryType", names::parse_query_type_name)?;
         let count = d.require_u32("count")?;

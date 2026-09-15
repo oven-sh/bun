@@ -20,6 +20,9 @@ wgpu-core = { version = "30.0.1", default-features = false, features = ["vulkan"
 
 [target.'cfg(target_vendor = "apple")'.dependencies]
 wgpu-core = { version = "30.0.1", default-features = false, features = ["metal"] }
+# apple.rs: dlopen and dlsym for the frameworks the Metal backend imports from.
+bun_core.workspace = true
+bun_sys.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 wgpu-core = { version = "30.0.1", default-features = false, features = ["dx12"] }

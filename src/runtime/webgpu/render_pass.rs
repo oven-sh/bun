@@ -38,6 +38,13 @@ fn optional_u64(global: &JSGlobalObject, v: JSValue, what: &str) -> JsResult<Opt
     Ok(Some(args::to_u64(global, v, what)?))
 }
 
+/// The `size` of `setVertexBuffer()` and `setIndexBuffer()`. wgpu-core takes
+/// `Option<NonZeroU64>` and reads `None` as "to the end of the buffer", so an
+/// explicit 0 binds the same range as an omitted size.
+fn binding_size(size: Option<u64>) -> Option<NonZeroU64> {
+    size.and_then(NonZeroU64::new)
+}
+
 fn u32_or(global: &JSGlobalObject, v: JSValue, what: &str, default: u32) -> JsResult<u32> {
     if v.is_undefined() {
         return Ok(default);
@@ -114,7 +121,7 @@ macro_rules! render_commands {
                     buffer.id(),
                     format,
                     offset,
-                    size.and_then(NonZeroU64::new),
+                    binding_size(size),
                 );
                 self.device.check_result(global, result)?;
                 Ok(JSValue::UNDEFINED)
@@ -142,7 +149,7 @@ macro_rules! render_commands {
                     slot,
                     buffer,
                     offset,
-                    size.and_then(NonZeroU64::new),
+                    binding_size(size),
                 );
                 self.device.check_result(global, result)?;
                 Ok(JSValue::UNDEFINED)
@@ -304,7 +311,7 @@ impl GPURenderPassEncoder {
         encoder: wgc::id::CommandEncoderId,
         descriptor: JSValue,
     ) -> JsResult<JSValue> {
-        let d = Dict::required(global, descriptor, "GPURenderPassDescriptor")?;
+        let d = Dict::new(global, descriptor, "GPURenderPassDescriptor")?;
         let label = d.label()?;
         let mut implicit_views = Vec::new();
 
@@ -314,7 +321,7 @@ impl GPURenderPassEncoder {
                 color_attachments.push(None);
                 return Ok(());
             }
-            let a = Dict::required(global, item, "GPURenderPassColorAttachment")?;
+            let a = Dict::new(global, item, "GPURenderPassColorAttachment")?;
             let view = attachment_view(
                 global,
                 device,
@@ -627,20 +634,22 @@ impl GPURenderBundleEncoder {
         device: &DeviceRef,
         descriptor: JSValue,
     ) -> JsResult<JSValue> {
-        let d = Dict::required(global, descriptor, "GPURenderBundleEncoderDescriptor")?;
+        let d = Dict::new(global, descriptor, "GPURenderBundleEncoderDescriptor")?;
         let label = d.label()?;
         let mut color_formats = Vec::new();
         d.require_each("colorFormats", |item| {
             if item.is_undefined_or_null() {
                 color_formats.push(None);
             } else {
-                color_formats.push(Some(args::to_enum(
+                let format = args::to_enum(
                     global,
                     item,
                     "GPURenderBundleEncoderDescriptor.colorFormats",
                     "GPUTextureFormat",
                     names::parse_texture_format,
-                )?));
+                )?;
+                device.check_format(global, format, "createRenderBundleEncoder: colorFormats")?;
+                color_formats.push(Some(format));
             }
             Ok(())
         })?;
@@ -649,11 +658,18 @@ impl GPURenderBundleEncoder {
             "GPUTextureFormat",
             names::parse_texture_format,
         )? {
-            Some(format) => Some(wgt::RenderBundleDepthStencil {
-                format,
-                depth_read_only: d.bool_or("depthReadOnly", false)?,
-                stencil_read_only: d.bool_or("stencilReadOnly", false)?,
-            }),
+            Some(format) => {
+                device.check_format(
+                    global,
+                    format,
+                    "createRenderBundleEncoder: depthStencilFormat",
+                )?;
+                Some(wgt::RenderBundleDepthStencil {
+                    format,
+                    depth_read_only: d.bool_or("depthReadOnly", false)?,
+                    stencil_read_only: d.bool_or("stencilReadOnly", false)?,
+                })
+            }
             None => None,
         };
         let desc = cmd::RenderBundleEncoderDescriptor {

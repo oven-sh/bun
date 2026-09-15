@@ -440,11 +440,23 @@ impl<'a> LoadResult<'a> {
 
     /// configVersion and boolean for if the configVersion previously existed/needs to be saved to lockfile
     pub(crate) fn choose_config_version(&self) -> (ConfigVersion, bool) {
+        let saved_config_version = match self {
+            LoadResult::Ok(ok) => ok.lockfile.saved_config_version,
+            LoadResult::NotFound | LoadResult::Err(_) => None,
+        };
+        self.choose_config_version_with_saved(saved_config_version)
+    }
+
+    /// `choose_config_version` for a caller that already borrows the lockfile mutably.
+    pub(crate) fn choose_config_version_with_saved(
+        &self,
+        saved_config_version: Option<ConfigVersion>,
+    ) -> (ConfigVersion, bool) {
         match self {
             LoadResult::NotFound | LoadResult::Err(_) => (ConfigVersion::CURRENT, true),
             LoadResult::Ok(ok) => match ok.migrated {
                 Migrated::None => {
-                    if let Some(config_version) = ok.lockfile.saved_config_version {
+                    if let Some(config_version) = saved_config_version {
                         return (config_version, false);
                     }
 
@@ -631,10 +643,15 @@ impl Lockfile {
                     lockfile_path: zstr!("bun.lockb"),
                     format: LockfileFormat::Binary,
                 });
+                // What `choose_config_version` picks for a bun lockfile: its own, else V0.
+                let config_version = ok
+                    .lockfile
+                    .saved_config_version
+                    .unwrap_or(ConfigVersion::V0);
                 if let Err(e) = TextLockfile::Stringifier::save_from_binary(
                     &mut *ok.lockfile,
                     &binary_origin,
-                    &manager.options,
+                    config_version,
                     &mut writer_buf,
                 ) {
                     Output::panic(format_args!(
@@ -1844,6 +1861,12 @@ impl Lockfile {
         options: &PackageManagerOptions,
     ) -> bool {
         let save_format = load_result.save_format(options);
+        // Only `bun install` sets `options.config_version`; `self` is `load_result`'s lockfile.
+        let config_version = options.config_version.unwrap_or_else(|| {
+            load_result
+                .choose_config_version_with_saved(self.saved_config_version)
+                .0
+        });
         if cfg!(debug_assertions) {
             if let Err(e) = self.verify_data() {
                 bun_core::pretty_errorln!(
@@ -1862,7 +1885,7 @@ impl Lockfile {
                 if let Err(_e) = TextLockfile::Stringifier::save_from_binary(
                     self,
                     load_result,
-                    options,
+                    config_version,
                     &mut writer_buf,
                 ) {
                     // The only write failure on an allocating writer is OOM.
@@ -1879,9 +1902,14 @@ impl Lockfile {
 
             let mut total_size: usize = 0;
             let mut end_pos: usize = 0;
-            if let Err(e) =
-                Serializer::save(self, options, &mut bytes, &mut total_size, &mut end_pos)
-            {
+            if let Err(e) = Serializer::save(
+                self,
+                options,
+                config_version,
+                &mut bytes,
+                &mut total_size,
+                &mut end_pos,
+            ) {
                 Output::err(e, "failed to serialize lockfile", format_args!(""));
                 Global::crash();
             }
@@ -3326,7 +3354,8 @@ impl Lockfile {
         ) else {
             return false;
         };
-        url == canonical_url.as_slice()
+        // Lockfiles migrated from yarn.lock by older versions keep yarn's `#<sha1>` on the URL.
+        crate::yarn::Entry::without_hash_fragment(url) == canonical_url.as_slice()
     }
 
     fn declared_by_root_or_workspace(&self, alias: &[u8], resolution: &Resolution) -> bool {

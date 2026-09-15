@@ -1764,6 +1764,94 @@ describe("package-lock.json migration fixes", () => {
     await frozen(dir);
   });
 
+  test.concurrent("bun pm migrate writes the same bun.lock as an install that migrates", async () => {
+    // `trustedDependencies`, `patchedDependencies` and `configVersion` do not come from
+    // package-lock.json. `bun install` takes the first two from package.json and picks
+    // configVersion 0 for an npm migration, so `bun pm migrate` must too. Otherwise the first
+    // `bun install` after "migrate and commit" rewrites the lockfile.
+    const dependencies = { x: "1.0.0", y: "1.0.0" };
+    using dir = synthetic("npm-migrate-root-settings", {
+      "package.json": JSON.stringify({
+        name: "root-settings",
+        dependencies,
+        trustedDependencies: ["x"],
+        patchedDependencies: { "y@1.0.0": "patches/y@1.0.0.patch" },
+      }),
+      "patches/y@1.0.0.patch": [
+        "diff --git a/index.js b/index.js",
+        "index 1111111..2222222 100644",
+        "--- a/index.js",
+        "+++ b/index.js",
+        "@@ -1,1 +1,2 @@",
+        "+// patched",
+        " module.exports = 1;",
+        "",
+      ].join("\n"),
+      "package-lock.json": npmLock("root-settings", {
+        "": { name: "root-settings", dependencies },
+        "node_modules/x": { version: "1.0.0" },
+        "node_modules/y": { version: "1.0.0" },
+      }),
+    });
+    const { text, lock } = await migrate(dir);
+    expect({
+      configVersion: lock.configVersion,
+      trustedDependencies: lock.trustedDependencies,
+      patchedDependencies: lock.patchedDependencies,
+    }).toEqual({
+      configVersion: 0,
+      trustedDependencies: ["x"],
+      patchedDependencies: { "y@1.0.0": "patches/y@1.0.0.patch" },
+    });
+    await frozen(dir);
+
+    fs.rmSync(join(String(dir), "bun.lock"));
+    const install = await run(dir, "install", "--lockfile-only");
+    expect(install.stderr).toContain("migrated lockfile from package-lock.json");
+    expect(install.exitCode).toBe(0);
+    expect((await readLock(dir)).text).toBe(text);
+  });
+
+  test.concurrent("bun pm migrate writes patchedDependencies to a binary lockfile", async () => {
+    // The migrated lockfile has no patch hashes yet; the binary writer must accept that like
+    // the text writer does. `bun install` computes them later.
+    const dependencies = { y: "1.0.0" };
+    using dir = synthetic("npm-migrate-patched-lockb", {
+      "package.json": JSON.stringify({
+        name: "patched-lockb",
+        dependencies,
+        patchedDependencies: { "y@1.0.0": "patches/y@1.0.0.patch" },
+      }),
+      "patches/y@1.0.0.patch": "diff --git a/index.js b/index.js\n",
+      "package-lock.json": npmLock("patched-lockb", {
+        "": { name: "patched-lockb", dependencies },
+        "node_modules/y": { version: "1.0.0" },
+      }),
+    });
+    fs.appendFileSync(join(String(dir), "bunfig.toml"), "saveTextLockfile = false\n");
+    const { stderr, exitCode } = await run(dir, "pm", "migrate");
+    expect(stderr).toContain("migrated lockfile from package-lock.json");
+    expect(exitCode).toBe(0);
+    expect(fs.existsSync(join(String(dir), "bun.lockb"))).toBe(true);
+    expect(await run(dir, "pm", "hash")).toMatchObject({ exitCode: 0 });
+  });
+
+  test.concurrent("bun pm migrate rejects a malformed trustedDependencies like bun install does", async () => {
+    const dependencies = { x: "1.0.0" };
+    using dir = synthetic("npm-migrate-bad-trusted", {
+      "package.json": JSON.stringify({ name: "bad-trusted", dependencies, trustedDependencies: "x" }),
+      "package-lock.json": npmLock("bad-trusted", {
+        "": { name: "bad-trusted", dependencies },
+        "node_modules/x": { version: "1.0.0" },
+      }),
+    });
+    const { stderr, exitCode } = await run(dir, "pm", "migrate");
+    expect(stderr).toContain("trustedDependencies expects an array of strings");
+    expect(stderr).toContain("error: failed to migrate lockfile: InvalidPackageJSON");
+    expect(fs.existsSync(join(String(dir), "bun.lock"))).toBe(false);
+    expect(exitCode).toBe(1);
+  });
+
   test.concurrent("an empty bin object migrates as no bin", async () => {
     const dependencies = { x: "1.0.0" };
     using dir = synthetic("npm-migrate-empty-bin", {

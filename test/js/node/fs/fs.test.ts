@@ -6429,6 +6429,140 @@ describe('kernel32 long path conversion does not mangle "../../path" into "path"
   }
 });
 
+// copyFile, existsSync and recursive mkdirSync hand kernel32 `\\?\`-prefixed
+// paths, which Windows does not normalize itself, so node:fs has to resolve
+// `.`, `..`, repeated and trailing separators first, the way node's
+// path.toNamespacedPath() does for every fs call.
+describe.if(isWindows)("kernel32 paths are normalized before the \\\\?\\ prefix is added", () => {
+  const copyFileApis: [string, (src: string, dest: string) => Promise<void>][] = [
+    ["copyFileSync", async (src, dest) => copyFileSync(src, dest)],
+    ["fs.copyFile", (src, dest) => promisify(fs.copyFile)(src, dest)],
+    ["fs.promises.copyFile", (src, dest) => promises.copyFile(src, dest)],
+  ];
+  // `\\localhost\X$\...` is the administrative-share spelling of `X:\...`, which
+  // the "windows path handling" suite above relies on as well.
+  const uncShare = (dir: string) => `\\\\localhost\\${dir[0]}$`;
+  // Ways of spelling `${dir}\${name}` (dir is `X:\...`) that only work once the
+  // path is normalized.
+  const spellings: [string, (dir: string, name: string) => string][] = [
+    ["trailing backslash", (dir, name) => `${dir}\\${name}\\`],
+    ["trailing slash", (dir, name) => `${dir}/${name}/`],
+    ["`..` component", (dir, name) => `${dir}\\missing\\..\\${name}`],
+    ["`..` above the drive root", (dir, name) => `${dir.slice(0, 2)}\\..\\..${dir.slice(2)}\\${name}`],
+    ["`.` component", (dir, name) => `${dir}\\.\\${name}`],
+    ["doubled separator", (dir, name) => `${dir}\\\\${name}`],
+    ["UNC path with a trailing backslash", (dir, name) => `${uncShare(dir)}${dir.slice(2)}\\${name}\\`],
+    ["UNC path with `..` above the share root", (dir, name) => `${uncShare(dir)}\\..\\..${dir.slice(2)}\\${name}`],
+  ];
+
+  describe.each(copyFileApis)("%s", (_, copyFile) => {
+    it.each(spellings)("creates a destination spelled with a %s", async (_, spell) => {
+      using dir = tempDir("fs-kernel32-normalize", { "src.txt": "payload" });
+      await copyFile(join(String(dir), "src.txt"), spell(String(dir), "dest.txt"));
+      expect(readFileSync(join(String(dir), "dest.txt"), "utf8")).toBe("payload");
+    });
+
+    it.each(spellings)("reads a source spelled with a %s", async (_, spell) => {
+      using dir = tempDir("fs-kernel32-normalize", { "src.txt": "payload" });
+      await copyFile(spell(String(dir), "src.txt"), join(String(dir), "dest.txt"));
+      expect(readFileSync(join(String(dir), "dest.txt"), "utf8")).toBe("payload");
+    });
+  });
+
+  it("copyFileSync onto a directory spelled with a trailing separator reports EPERM like node, not ENOENT", () => {
+    using dir = tempDir("fs-kernel32-normalize", { "src.txt": "payload", "sub/.keep": "" });
+    expect(() => copyFileSync(join(String(dir), "src.txt"), join(String(dir), "sub") + "\\")).toThrow(
+      expect.objectContaining({ code: "EPERM", syscall: "copyfile" }),
+    );
+  });
+
+  // Relative paths and rooted paths (`\dir\file`, no drive letter: resolved
+  // against the cwd's drive) depend on the cwd, so they run in a child started
+  // inside the temp dir, together with the existsSync/mkdirSync cases that use
+  // the same converter. Every result is collected into one object so a
+  // failure shows the whole matrix.
+  it("relative and rooted spellings", async () => {
+    using dir = tempDir("fs-kernel32-normalize", { "src.txt": "payload" });
+    const fixture = `
+      const fs = require("node:fs");
+      const { sep } = require("node:path");
+      const cwd = process.cwd();
+      const drive = cwd.slice(0, 2);
+      const rooted = cwd.slice(2);
+      const out = { cwd };
+      function attempt(key, fn) {
+        try {
+          out[key] = fn();
+        } catch (e) {
+          out[key] = e.code;
+        }
+      }
+      function copy(key, src, dest, created) {
+        attempt(key, () => {
+          fs.copyFileSync(src, dest);
+          return created ? fs.readFileSync(created, "utf8") : "copied";
+        });
+      }
+      copy("relativeDestTrailingSep", "src.txt", "a" + sep, "a");
+      copy("relativeSrcTrailingSep", "src.txt" + sep, "b", "b");
+      copy("rootedDestTrailingSep", "src.txt", rooted + sep + "c" + sep, "c");
+      copy("rootedSrcTrailingSep", rooted + sep + "src.txt" + sep, "d", "d");
+      copy("rootedSrcDotDotAboveRoot", sep + ".." + rooted + sep + "src.txt", "e", "e");
+      // Spellings of the current directory itself: copying onto a directory is
+      // EPERM (as it already was for "."), unlike the ENOENT of an empty path.
+      copy("destCwdSpelledDotSlash", "src.txt", "." + sep);
+      copy("destCwdSpelledDirDotDot", "src.txt", "missing" + sep + "..");
+      copy("destEmpty", "src.txt", "");
+      attempt("existsCwdSpelledDotSlash", () => fs.existsSync("." + sep));
+      attempt("existsCwdSpelledDirDotDot", () => fs.existsSync("missing/.."));
+      attempt("existsEmpty", () => fs.existsSync(""));
+      attempt("existsRootedFileTrailingSep", () => fs.existsSync(rooted + sep + "src.txt" + sep));
+      attempt("existsRootedFileDotDotAboveRoot", () => fs.existsSync(sep + ".." + rooted + sep + "src.txt"));
+      attempt("existsDriveFileTrailingSep", () => fs.existsSync(cwd + sep + "src.txt" + sep));
+      attempt("existsUncFileDotDotAboveShareRoot", () =>
+        fs.existsSync(sep + sep + "localhost" + sep + drive[0] + "$" + sep + ".." + sep + ".." + rooted + sep + "src.txt"),
+      );
+      attempt("mkdirRootedTrailingSep", () => fs.mkdirSync(rooted + sep + "made-rooted" + sep, { recursive: true }));
+      attempt("mkdirDriveTrailingSep", () => fs.mkdirSync(cwd + sep + "made-drive" + sep, { recursive: true }));
+      attempt("mkdirDriveDotDotAboveRoot", () =>
+        fs.mkdirSync(drive + sep + ".." + rooted + sep + "made-above", { recursive: true }),
+      );
+      process.stdout.write(JSON.stringify(out));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const { cwd, ...results } = JSON.parse(stdout);
+    expect(results).toEqual({
+      relativeDestTrailingSep: "payload",
+      relativeSrcTrailingSep: "payload",
+      rootedDestTrailingSep: "payload",
+      rootedSrcTrailingSep: "payload",
+      rootedSrcDotDotAboveRoot: "payload",
+      destCwdSpelledDotSlash: "EPERM",
+      destCwdSpelledDirDotDot: "EPERM",
+      destEmpty: "ENOENT",
+      existsCwdSpelledDotSlash: true,
+      existsCwdSpelledDirDotDot: true,
+      existsEmpty: false,
+      existsRootedFileTrailingSep: true,
+      existsRootedFileDotDotAboveRoot: true,
+      existsDriveFileTrailingSep: true,
+      existsUncFileDotDotAboveShareRoot: true,
+      mkdirRootedTrailingSep: `\\\\?\\${join(cwd, "made-rooted")}`,
+      mkdirDriveTrailingSep: `\\\\?\\${join(cwd, "made-drive")}`,
+      mkdirDriveDotDotAboveRoot: `\\\\?\\${join(cwd, "made-above")}`,
+    });
+    expect(exitCode).toBe(0);
+  });
+});
+
 it("overflowing mode doesn't crash", () => {
   // this is easiest to test on windows since mode_t is a u16 there
   expect(() => openSync("./a.txt", 65 * 1024)).toThrow(

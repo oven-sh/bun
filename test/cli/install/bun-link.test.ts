@@ -1,12 +1,13 @@
 import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
-import { access, mkdir, writeFile } from "fs/promises";
+import { access, exists, mkdir, writeFile } from "fs/promises";
 import {
   bunExe,
   bunEnv as env,
   isWindows,
   readdirSorted,
   runBunInstall,
+  tempDir,
   tmpdirSync,
   toBeValidBin,
   toHaveBins,
@@ -470,4 +471,49 @@ it("should link dependency without crashing", async () => {
 
   // This should fail with a non-zero exit code.
   expect(await exited4).toBe(1);
+});
+
+it("link and unlink --dry-run do not touch the global link directory", async () => {
+  using dir = tempDir("link-dry-run", {
+    "package.json": JSON.stringify({ name: "linkme-dry", version: "1.0.0" }),
+  });
+  const bunInstall = join(String(dir), "bun-install");
+  const globalLink = join(bunInstall, "install", "global", "node_modules", "linkme-dry");
+  const testEnv = { ...env, BUN_INSTALL: bunInstall };
+
+  const run = async (...cmd: string[]) => {
+    await using proc = spawn({
+      cmd: [bunExe(), ...cmd],
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: testEnv,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  };
+
+  let res = await run("link", "--dry-run");
+  expect(res.stderr).not.toContain("error");
+  expect(res.stdout).toContain(`dry run: would link "linkme-dry" at ${globalLink}`);
+  expect(res.stdout).not.toContain("Registered");
+  expect(res.exitCode).toBe(0);
+  expect(await exists(globalLink)).toBeFalse();
+
+  res = await run("link");
+  expect(res.stdout).toContain(`Success! Registered "linkme-dry"`);
+  expect(res.exitCode).toBe(0);
+  expect(await exists(globalLink)).toBeTrue();
+
+  res = await run("unlink", "--dry-run");
+  expect(res.stderr).not.toContain("error");
+  expect(res.stdout).toContain(`dry run: would unlink "linkme-dry"`);
+  expect(res.stdout).not.toContain("unlinked package");
+  expect(res.exitCode).toBe(0);
+  expect(await exists(globalLink)).toBeTrue();
+
+  res = await run("unlink");
+  expect(res.stdout).toContain(`success: unlinked package "linkme-dry"`);
+  expect(res.exitCode).toBe(0);
+  expect(await exists(globalLink)).toBeFalse();
 });

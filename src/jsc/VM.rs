@@ -29,7 +29,8 @@ unsafe extern "C" {
     safe fn JSC__VM__runGC(vm: &VM, sync: bool) -> usize;
     safe fn JSC__VM__heapSize(vm: &VM) -> usize;
     safe fn JSC__VM__collectAsync(vm: &VM, full: bool);
-    safe fn JSC__VM__collectAsyncIdle(vm: &VM);
+    safe fn JSC__VM__collectIdle(vm: &VM, sync: bool);
+    safe fn JSC__VM__shrinkFootprintNow(vm: &VM) -> bool;
     safe fn JSC__VM__setStartupJITDeferralScale(vm: &VM, scale: f64);
     safe fn JSC__VM__executionForbidden(vm: &VM) -> bool;
     safe fn JSC__VM__notifyNeedTermination(vm: &VM);
@@ -102,9 +103,17 @@ impl VM {
         JSC__VM__collectAsync(self, full)
     }
 
-    /// A full collection tagged as the embedder's idle collection, in which JSC may also let idle optimized code go.
-    pub(crate) fn collect_async_idle(&self) {
-        JSC__VM__collectAsyncIdle(self)
+    /// A full collection tagged as the embedder's idle collection, in which JSC may also let idle optimized code go:
+    /// requested, or with `sync` done before this returns.
+    pub(crate) fn collect_idle(&self, sync: bool) {
+        JSC__VM__collectIdle(self, sync)
+    }
+
+    /// Drop the code JSC can get back cheaply (unlinked code decodable from the executable's bytecode, parser caches) of
+    /// functions that a collection has found idle; the caller's next full collection frees it. `false`: nothing was
+    /// done, JS is on the stack.
+    pub(crate) fn shrink_footprint_now(&self) -> bool {
+        JSC__VM__shrinkFootprintNow(self)
     }
 
     /// Multiply JSC's LLInt->Baseline and Baseline->DFG tier-up thresholds by `scale` (1 = normal). Mutator thread only.

@@ -1,4 +1,4 @@
-//! Idle GC timer: JSC's own `GCActivityCallback` (via `WTFTimer`) paces eden/full against allocation rate; this adds a 1 s / 30 s idle `collect_async()` so a process that stops allocating still releases memory, and (main thread only) the idle ladder of `BUN_IDLE_GC_SECONDS` (default "30,90,480"; ""/0 = off): full collections, and in a standalone executable the page-out of the module graph, once the program has not been loud for that long (`idle_tick`). Knobs: `BUN_GC_TIMER_INTERVAL` (ms), `BUN_GC_TIMER_DISABLE`. One per JS thread, not thread-safe.
+//! Idle GC timer: JSC's own `GCActivityCallback` (via `WTFTimer`) paces eden/full against allocation rate; this adds a 1 s / 30 s idle `collect_async()` so a process that stops allocating still releases memory, and (main thread only) the idle ladder of `BUN_IDLE_GC_SECONDS` (default "30,90,480"; ""/0 = off): full collections and, in a standalone executable, page-outs once the program has not been loud for that long (`idle_tick`). Knobs: `BUN_GC_TIMER_INTERVAL` (ms), `BUN_GC_TIMER_DISABLE`. One per JS thread, not thread-safe.
 
 use core::cell::Cell;
 use core::ffi::c_int;
@@ -144,8 +144,12 @@ impl GarbageCollectionController {
 
     /// One tick on the idle ladder, at most one rung per tick. Returns whether a rung ran (it has then done this tick's
     /// collection: an idle full one, in which JSC drops code that has not run since the previous one) and the ms until
-    /// the next rung is due. In a standalone executable the second rung (or the only one) also pages out the embedded
-    /// module graph: after a pause of a few seconds the user is likely to come straight back.
+    /// the next rung is due. In a standalone executable the second rung also pages out the embedded module graph (after
+    /// a pause of a few seconds the user is likely to come straight back), and the last one evicts what a parked program
+    /// does not use: JSC drops the bytecode it can decode again from the executable (`shrink_footprint_now`; it declines
+    /// with JS on the stack, and the rung then waits for a tick that has none), the rung's collection frees it, and the
+    /// module graph and the executable's own code and constants are paged out. That collection is synchronous then: the
+    /// collector is the last thing that would read the executable back in.
     fn idle_tick(&self, vm: &VirtualMachine, now: &Timespec) -> (bool, Option<u64>) {
         if vm.is_inspector_enabled() {
             return (false, None);
@@ -160,19 +164,33 @@ impl GarbageCollectionController {
             return (false, Some(u64::from(at) - idle_ms));
         }
         let next = rungs.get(done + 1).copied().filter(|&at| at != 0);
+        let evict = next.is_none() && vm.standalone_module_graph.is_some();
+        if evict && !vm.jsc_vm().shrink_footprint_now() {
+            return (false, None);
+        }
         self.idle_rungs_done.set(done as u8 + 1);
-        vm.jsc_vm().collect_async_idle();
-        // Not while a Worker is alive: the page-out is for the whole process and the ladder only watches this thread.
-        #[cfg(target_os = "linux")]
-        if let Some(graph) = vm
-            .standalone_module_graph
-            .filter(|_| (done == 1 || (done == 0 && next.is_none())) && vm.child_workers.is_empty())
-        {
-            // VM-free: `graph` is the process-lifetime, immutable embedded module graph; the thread only madvise()s its
-            // pages and touches no VM or JS state.
+        // The page-outs are process-wide and the ladder only watches this thread: not while a Worker is alive.
+        let page_out = vm.standalone_module_graph.filter(|_| {
+            (evict || done == 1)
+                && cfg!(target_os = "linux")
+                && vm.child_workers.is_empty()
+                && !env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE::get()
+                    .unwrap_or(false)
+        });
+        vm.jsc_vm().collect_idle(evict && page_out.is_some());
+        if let Some(graph) = page_out {
+            // VM-free: the thread only madvise()s file-backed pages of the executable (`graph` is the process-lifetime,
+            // immutable embedded module graph) and touches no VM or JS state.
             let _ = std::thread::Builder::new()
                 .name("idle page-out".into())
-                .spawn(move || graph.page_out());
+                .stack_size(64 * 1024)
+                .spawn(move || {
+                    graph.page_out();
+                    #[cfg(target_os = "linux")]
+                    if evict {
+                        bun_sys::elf::page_out_program_image();
+                    }
+                });
         }
         (true, next.map(|at| u64::from(at).saturating_sub(idle_ms)))
     }

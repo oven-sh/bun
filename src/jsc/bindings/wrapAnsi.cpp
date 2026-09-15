@@ -1,12 +1,15 @@
 #include "root.h"
 #include "wrapAnsi.h"
 #include "ANSIHelpers.h"
+#include "ErrorCode.h"
+#include "helpers.h"
 
 #include <wtf/text/WTFString.h>
 #include <wtf/text/StringBuilder.h>
 #include <wtf/Vector.h>
 #include <wtf/MathExtras.h>
 #include <cmath>
+#include <optional>
 
 // Native exports (implemented in stringWidth.cpp) for visible width calculation
 extern "C" size_t Bun__visibleWidthExcludeANSI_utf16(const uint16_t* ptr, size_t len, bool ambiguous_as_wide);
@@ -633,24 +636,38 @@ static void processLine(const Char* lineStart, const Char* lineEnd, size_t colum
 // Main Implementation
 // ============================================================================
 
+// Rows re-emit the open hyperlink, so the output can pass MaxLength. nullopt: throw ERR_STRING_TOO_LONG.
+static std::optional<WTF::String> finishWrapAnsi(StringBuilder& result)
+{
+    if (result.hasOverflowed() || result.length() > Bun__stringSyntheticAllocationLimit) [[unlikely]]
+        return std::nullopt;
+    return result.toString();
+}
+
+// reserveCapacity() past MaxLength fails the builder before any append.
+static unsigned wrapAnsiCapacity(size_t estimate)
+{
+    return static_cast<unsigned>(std::min<size_t>(estimate, WTF::String::MaxLength));
+}
+
 template<typename Char>
-static WTF::String wrapAnsiImpl(std::span<const Char> input, size_t columns, const WrapAnsiOptions& options)
+static std::optional<WTF::String> wrapAnsiImpl(std::span<const Char> input, size_t columns, const WrapAnsiOptions& options)
 {
     if (columns == 0 || input.empty()) {
         // Return copy of input
-        StringBuilder result;
-        result.reserveCapacity(input.size());
+        StringBuilder result { OverflowPolicy::RecordOverflow };
+        result.reserveCapacity(wrapAnsiCapacity(input.size()));
         for (auto c : input)
             result.append(static_cast<UChar>(c));
-        return result.toString();
+        return finishWrapAnsi(result);
     }
 
     // Process each line separately. \n, a bare \r and a \r\n pair each
     // break a line and are emitted as one \n — callers (Claude Code's
     // wrap-text) map wrapped output back to the original text by relying on
     // every \r becoming a break.
-    StringBuilder result;
-    result.reserveCapacity(input.size() + input.size() / 10);
+    StringBuilder result { OverflowPolicy::RecordOverflow };
+    result.reserveCapacity(wrapAnsiCapacity(input.size() + input.size() / 10));
 
     const Char* lineStart = input.data();
     const Char* const dataEnd = input.data() + input.size();
@@ -687,7 +704,7 @@ static WTF::String wrapAnsiImpl(std::span<const Char> input, size_t columns, con
         lineStart = (*lineEnd == '\r' && lineEnd + 1 != dataEnd && *(lineEnd + 1) == '\n') ? lineEnd + 2 : lineEnd + 1;
     }
 
-    return result.toString();
+    return finishWrapAnsi(result);
 }
 
 // ============================================================================
@@ -751,14 +768,17 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionBunWrapAnsi, (JSC::JSGlobalObject * globalObj
     }
 
     // Process based on encoding
-    WTF::String result;
+    std::optional<WTF::String> result;
     if (view->is8Bit()) {
         result = wrapAnsiImpl<Latin1Character>(view->span8(), columns, options);
     } else {
         result = wrapAnsiImpl<UChar>(view->span16(), columns, options);
     }
 
-    return JSC::JSValue::encode(JSC::jsString(vm, result));
+    if (!result) [[unlikely]]
+        return Bun::ERR::STRING_TOO_LONG(scope, globalObject);
+
+    return JSC::JSValue::encode(JSC::jsString(vm, WTF::move(*result)));
 }
 
 } // namespace Bun

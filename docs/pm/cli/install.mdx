@@ -282,7 +282,12 @@ To protect against supply chain attacks where malicious packages are quickly pub
 ```bash terminal icon="terminal"
 # Only install package versions published at least 3 days ago
 bun add @types/bun --minimum-release-age 259200 # seconds
+
+# Exempt specific packages from the age gate (comma-separated, or repeat the flag)
+bun install --minimum-release-age 259200 --minimum-release-age-excludes @types/node,typescript
 ```
+
+`--minimum-release-age-excludes` takes exact package names. Wildcards such as `@scope/*` are not supported. When the flag is set, it replaces the `minimumReleaseAgeExcludes` list from `bunfig.toml`.
 
 You can also configure this in `bunfig.toml`:
 
@@ -357,7 +362,9 @@ linker = "hoisted"
 
 
 # minimum age config
+# equivalent to `--minimum-release-age` flag
 minimumReleaseAge = 259200 # seconds
+# equivalent to `--minimum-release-age-excludes` flag
 minimumReleaseAgeExcludes = ["@types/node", "typescript"]
 ```
 

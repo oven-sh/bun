@@ -942,12 +942,20 @@ impl WindowsNamedPipe {
     unsafe fn stop_for_vm_teardown(this: *mut core::ffi::c_void) {
         // SAFETY: recorded right after `pipe.init` by this live object; replaced by
         // the writer at adoption or dropped with the pipe (discard_unadopted_pipe).
-        let this = unsafe { &*this.cast::<Self>() };
-        if this.flags.get().contains(Flags::PIPE_ADOPTED) {
-            this.close();
-        } else {
-            this.discard_unadopted_pipe();
+        unsafe { &*this.cast::<Self>() }.close_or_cancel_connect();
+    }
+
+    /// `close`, for a pipe that may still be connecting. That one is not the writer's yet, so
+    /// `close` has nothing to end and the connection would open later all the same: discarding the
+    /// pipe cancels the connect (libuv completes it with `UV_ECANCELED`), and `on_connect` reports
+    /// the error and the close.
+    pub(crate) fn close_or_cancel_connect(&self) {
+        #[cfg(windows)]
+        if !self.flags.get().contains(Flags::PIPE_ADOPTED) {
+            self.discard_unadopted_pipe();
+            return;
         }
+        self.close();
     }
 
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__close")]

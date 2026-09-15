@@ -52,7 +52,7 @@ pub struct WindowsNamedPipeContext {
 bun_jsc::impl_abort_handle_owner!(WindowsNamedPipeContext, abort_handle, |this, _cause| {
     // SAFETY: trait contract — `this` is live; `close` re-enters `on_close`,
     // which may free `this`.
-    unsafe { (*ptr::addr_of_mut!((*this).named_pipe)).close() }
+    unsafe { (*ptr::addr_of_mut!((*this).named_pipe)).close_or_cancel_connect() }
 });
 
 /// Reached from `on_close` → `Self::deref` while `WindowsNamedPipe::on_close`

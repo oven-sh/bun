@@ -888,7 +888,7 @@ impl TimerObjectInternals {
         }
 
         // SAFETY: `vm` is the live per-thread VM.
-        if let Some(context) = unsafe { (*vm).graph_context(self.context) } {
+        if let Some(context) = unsafe { (*vm).timer_context(self.context) } {
             context.untrack_timer(core::ptr::from_mut(self).cast());
         }
 

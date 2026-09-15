@@ -225,8 +225,11 @@ function onNodeHTTPServerSocketTimeout() {
 }
 
 function emitListeningNextTick(self, hostname, port) {
-  // Nothing to announce if close() ran in the same tick as listen().
-  if (!self[serverSymbol]) return;
+  // Nothing to announce if close() ran in the same tick as listen(), or the listener is gone
+  // without it (the Bun.ModuleGraph that made the server was disposed in that tick: a TCP
+  // server without a listener has no address).
+  const server = self[serverSymbol];
+  if (!server || server.address === null) return;
   // Node passes no arguments. The extra ones are a Bun extension.
   self.emit("listening", null, hostname, port);
 }

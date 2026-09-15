@@ -745,6 +745,12 @@ RefPtr<DeferredPromise> getPromise(DeferredPromise* index, WeakPtr<SubtleCrypto>
     return promise;
 }
 
+void SubtleCrypto::removePendingPromise(DeferredPromise* index)
+{
+    m_pendingPromises.remove(index);
+    m_pendingPromiseGraphContexts.remove(index);
+}
+
 void SubtleCrypto::addPendingPromise(Ref<DeferredPromise>&& promise)
 {
     auto* index = promise.ptr();
@@ -1437,13 +1443,13 @@ void SubtleCrypto::wrapKey(JSC::JSGlobalObject& state, KeyFormat format, CryptoK
                     // FIXME: Converting to JS just to JSON-Stringify seems inefficient. We should find a way to go directly from the struct to JSON.
                     auto jwk = toJS<IDLDictionary<JsonWebKey>>(*(promise->globalObject()), *(promise->globalObject()), WTF::move(std::get<JsonWebKey>(key)));
                     if (scope.exception()) [[unlikely]] {
-                        weakThis->m_pendingPromises.remove(index);
+                        weakThis->removePendingPromise(index);
                         promise->reject(Exception { ExistingExceptionError });
                         return;
                     }
                     String jwkString = JSONStringify(promise->globalObject(), jwk, 0);
                     if (scope.exception()) [[unlikely]] {
-                        weakThis->m_pendingPromises.remove(index);
+                        weakThis->removePendingPromise(index);
                         promise->reject(Exception { ExistingExceptionError });
                         return;
                     }
@@ -1576,18 +1582,18 @@ void SubtleCrypto::unwrapKey(JSC::JSGlobalObject& state, KeyFormat format, Buffe
                     String jwkString(bytes.span());
                     auto jwkObject = JSONParse(&state, jwkString);
                     if (scope.exception()) [[unlikely]] {
-                        weakThis->m_pendingPromises.remove(index);
+                        weakThis->removePendingPromise(index);
                         promise->reject(Exception { ExistingExceptionError });
                         return;
                     }
                     if (!jwkObject) {
-                        weakThis->m_pendingPromises.remove(index);
+                        weakThis->removePendingPromise(index);
                         promise->reject(DataError, "WrappedKey cannot be converted to a JSON object"_s);
                         return;
                     }
                     auto jwk = convert<IDLDictionary<JsonWebKey>>(state, jwkObject);
                     if (scope.exception()) [[unlikely]] {
-                        weakThis->m_pendingPromises.remove(index);
+                        weakThis->removePendingPromise(index);
                         promise->reject(Exception { ExistingExceptionError });
                         return;
                     }

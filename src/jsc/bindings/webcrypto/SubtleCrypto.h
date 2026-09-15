@@ -108,6 +108,8 @@ private:
     // The ones script of a Bun.ModuleGraph asked for, by that graph's context.
     HashMap<DeferredPromise*, ScriptExecutionContextIdentifier> m_pendingPromiseGraphContexts;
     void addPendingPromise(Ref<DeferredPromise>&&);
+    // Settled without getPromise() (wrapKey / unwrapKey reject from their first step).
+    void removePendingPromise(DeferredPromise*);
 };
 
 }

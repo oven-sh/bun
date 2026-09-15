@@ -424,7 +424,7 @@ impl Timeout {
         // SAFETY: caller guarantees `this` came from `heap::alloc` in `init`.
         unsafe {
             Self::cancel(&mut *this, vm);
-            if let Some(context) = (*vm).graph_context((*this).context) {
+            if let Some(context) = (*vm).timer_context((*this).context) {
                 context.untrack_timer(this.cast());
             }
             drop(bun_core::heap::take(this));

@@ -84,6 +84,15 @@ const dir = String(
       export const observeHttp = () => new PerformanceObserver(() => {}).observe({ entryTypes: ["http"] });
       // Each promise's reaction holds a FormData: alive for as long as the promise is kept.
       export const opens = (path, count) => { for (let i = 0; i < count; i++) fs.promises.open(path, "r").then(handle => handle.close(), () => {}); };
+      // unwrapKey("jwk") of bytes that are not a JWK rejects from its first step.
+      export async function failingUnwraps(count) {
+        const key = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, ["encrypt", "unwrapKey"]);
+        const iv = new Uint8Array(12);
+        const notAJwk = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, new TextEncoder().encode("this is not json"));
+        let rejected = 0;
+        await Promise.all(Array.from({ length: count }, () => crypto.subtle.unwrapKey("jwk", notAJwk, key, { name: "AES-GCM", iv }, { name: "AES-GCM" }, true, ["encrypt"]).catch(() => rejected++)));
+        return rejected;
+      }
       export const digests = count => {
         const data = new Uint8Array(8 << 20);
         for (let i = 0; i < count; i++) { const held = new FormData(); crypto.subtle.digest("SHA-256", data).then(() => held); }
@@ -121,6 +130,16 @@ const dir = String(
       await new Promise(resolve => setImmediate(resolve));
       console.log(JSON.stringify({ leftOpen: descriptors() - before }));
     `,
+    "subtle-after-a-disposed-graph.mjs": `
+      const graph = new Bun.ModuleGraph({ isolateIO: true });
+      const app = await graph.import(import.meta.dir + "/left-behind-tenant.mjs");
+      const rejectedInTheGraph = await graph.run(() => app.failingUnwraps(200));
+      graph.dispose();
+      // The host's own operations afterwards: many more than the graph's, so their promises reuse those addresses.
+      const data = new Uint8Array(64);
+      const digests = await Promise.all(Array.from({ length: 2000 }, () => crypto.subtle.digest("SHA-256", data)));
+      console.log(JSON.stringify({ rejectedInTheGraph, settledInTheHost: digests.length }));
+    `,
     "subtle-of-a-disposed-graph.mjs": `
       import { heapStats } from "bun:jsc";
       const count = () => heapStats().objectTypeCounts.FormData;
@@ -139,6 +158,17 @@ const dir = String(
         kept = count() - baseline;
       }
       console.log(JSON.stringify({ started, kept }), keep.constructor.name);
+    `,
+    "disposes-while-opening.mjs": `
+      const [kind, state, args] = [process.argv[2], JSON.parse(process.argv[3]), JSON.parse(process.argv[4])];
+      // (What the opener had queued still runs, in a world that was closed under it: what that throws is the graph's.)
+      const graph = new Bun.ModuleGraph({ isolateIO: true, onError: error => console.error("the opener, after dispose():", error) });
+      const app = await graph.import(import.meta.dir + "/app.mjs");
+      // Not awaited: whatever the opener has under way (a connect, a handshake, a listen) is cut short.
+      graph.run(() => { Promise.resolve(app.open[kind](state, ...args)).catch(() => {}); });
+      graph.dispose();
+      console.log("disposed");
+      setTimeout(() => { console.log("and the process is still running"); process.exit(1); }, 3000).unref();
     `,
     "disposes-then-opens.mjs": `
       const [kind, state, args] = [process.argv[2], JSON.parse(process.argv[3]), JSON.parse(process.argv[4])];
@@ -632,6 +662,7 @@ const dir = String(
         "Bun.write(file, Blob)": () => Bun.write(dataFile + ".big", new Blob([Buffer.alloc(1 << 20, "x")])),
         "Bun.write(file, file)": () => Bun.write(dataFile + ".copy", Bun.file(dataFile)),
         "MessageChannel": () => new Promise(resolve => { const { port1, port2 } = new MessageChannel(); port1.onmessage = () => { port1.close(); resolve(); }; port2.postMessage(1); }),
+        "BroadcastChannel": () => new Promise(resolve => { const name = "race-" + Math.random().toString(36).slice(2); const receiver = new BroadcastChannel(name), sender = new BroadcastChannel(name); receiver.onmessage = () => { receiver.close(); sender.close(); resolve(); }; sender.postMessage(1); }),
         "Worker": () => new Promise(resolve => { const worker = new Worker("data:text/javascript,postMessage(1)"); worker.onmessage = () => resolve(); }),
         "child_process.exec": () => promisify(childProcess.exec)("echo hi"),
         "fs.promises.writeFile": () => fs.promises.writeFile(dataFile + ".written", "x"),
@@ -1945,6 +1976,32 @@ describe.concurrent("ModuleGraph isolation: what a disposed graph had open does 
   }
 });
 
+describe.concurrent(
+  "ModuleGraph isolation: what a graph was still opening when it was disposed does not keep the process running",
+  () => {
+    for (const kind of Object.keys(kinds)) {
+      test(kind, async () => {
+        const state = newState(kind + "-opening-exits");
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            join(dir, "disposes-while-opening.mjs"),
+            kind,
+            JSON.stringify(state),
+            JSON.stringify(kinds[kind].args?.(state) ?? []),
+          ],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "inherit",
+        });
+        const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+        expect(stdout).toBe("disposed\n");
+        expect(exitCode).toBe(0);
+      });
+    }
+  },
+);
+
 describe.concurrent("ModuleGraph isolation: what a disposed graph opens does not keep the process running", () => {
   for (const kind of Object.keys(kinds)) {
     test(kind, async () => {
@@ -2032,6 +2089,13 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
   // (Counts the process's descriptors through /proc/self/fd or /dev/fd.)
   test.skipIf(isWindows)("the files its fs.promises.open() calls in flight opened are closed", async () => {
     expect(await runs("files-of-a-disposed-graph.mjs")).toEqual({ stdout: `{"leftOpen":0}`, exitCode: 0 });
+  });
+  test("crypto.subtle operations it had rejected early do not stop the host's later ones from settling", async () => {
+    // (If they do, the host's await never finishes and the process exits with nothing printed.)
+    expect(await runs("subtle-after-a-disposed-graph.mjs")).toEqual({
+      stdout: `{"rejectedInTheGraph":200,"settledInTheHost":2000}`,
+      exitCode: 0,
+    });
   });
   test("the promises of its crypto.subtle operations in flight are released, not kept unsettled", async () => {
     expect(await runs("subtle-of-a-disposed-graph.mjs")).toEqual({
@@ -2399,20 +2463,6 @@ test("ModuleGraph isolation: a DNS query (c-ares) of a disposed graph is never a
 });
 
 test("ModuleGraph isolation: background work of a disposed graph does not settle into it", async () => {
-  // Completions that do not know which graph started them still resolve their promise, so the graph's
-  // continuation runs (in its stopped context: what it opens is closed at once). Which of these a
-  // platform's backend delivers this way varies; none other may.
-  const mayStillSettle = [
-    "Bun.file().stream()",
-    "fetch(data:)",
-    "fetch(blob:)",
-    "CompressionStream",
-    // Computed inside the call; the callback is a process.nextTick, and what a graph had queued still runs.
-    "crypto.randomInt",
-  ];
-  // The exit of a child the graph started is a close notification: its code hears of it.
-  const mustSettle = ["child_process.exec", "Bun.spawn().exited"];
-
   using made = await newGraph();
   const names = Object.keys(hostApp.background);
   const started: Record<string, Promise<unknown>> = {};
@@ -2429,6 +2479,20 @@ test("ModuleGraph isolation: background work of a disposed graph does not settle
   const settled = pending.filter(name => Bun.peek.status(started[name]) !== "pending");
   expect(settled.filter(name => !mayStillSettle.includes(name))).toEqual(mustSettle);
 });
+
+// Completions that do not know which graph started them still resolve their promise, so the graph's
+// continuation runs (in its stopped context: what it opens is closed at once). Which of these a
+// platform's backend delivers this way varies; none other may.
+const mayStillSettle = [
+  "Bun.file().stream()",
+  "fetch(data:)",
+  "fetch(blob:)",
+  "CompressionStream",
+  // Computed inside the call; the callback is a process.nextTick, and what a graph had queued still runs.
+  "crypto.randomInt",
+];
+// The exit of a child the graph started is a close notification: its code hears of it.
+const mustSettle = ["child_process.exec", "Bun.spawn().exited"];
 
 describe.concurrent(
   "ModuleGraph isolation: background work under way when its graph is disposed does not settle into it",
@@ -2447,9 +2511,12 @@ describe.concurrent(
         hostApp.race(name, 8, hostState, () => {});
         await until(() => hostState.ticks === 8);
         await hostTimerTurns();
-        // The exit of a child the graph started is a close notification: each is told once.
-        const toldOnce = ["child_process.exec", "Bun.spawn().exited"].includes(name);
-        expect({ settled: state.ticks }).toEqual({ settled: toldOnce ? 8 : state.settledAtDispose });
+        const expected = mustSettle.includes(name)
+          ? 8 // each is told once
+          : mayStillSettle.includes(name)
+            ? expect.any(Number)
+            : state.settledAtDispose;
+        expect({ settled: state.ticks }).toEqual({ settled: expected });
       });
     }
   },

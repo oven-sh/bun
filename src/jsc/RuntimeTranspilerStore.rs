@@ -93,7 +93,7 @@ fn dump_source_string_failiable(
 
     let mut holder = BUN_DEBUG_HOLDER.lock();
 
-    let mut path_buf = bun_paths::PathBuffer::default();
+    let mut path_buf = bun_paths::path_buffer_pool::get();
 
     if holder.is_none() {
         let base_name: &[u8] = if cfg!(windows) {
@@ -1034,7 +1034,7 @@ impl TranspilerJob {
             source_code_printer,
             BufferPrinter::init(BufferWriter::init()),
         );
-        printer.reset();
+        printer.ctx.reset();
 
         // Cap buffer size to prevent unbounded growth
         const MAX_BUFFER_CAP: usize = 512 * 1024;

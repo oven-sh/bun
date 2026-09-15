@@ -37,10 +37,6 @@ impl PluginRunner {
     pub fn extract_namespace(specifier: &[u8]) -> &[u8] {
         bun_bundler::transpiler::PluginRunner::extract_namespace(specifier)
     }
-    #[inline]
-    pub fn could_be_plugin(specifier: &[u8]) -> bool {
-        bun_bundler::transpiler::PluginRunner::could_be_plugin(specifier)
-    }
 }
 
 impl PluginResolver for PluginRunner {

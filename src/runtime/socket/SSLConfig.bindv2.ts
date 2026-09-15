@@ -1,4 +1,4 @@
-import * as b from "bindgenv2";
+import * as b from "../../codegen/bindgenv2/lib.ts";
 
 export const SSLConfigSingleFile = b.union("SSLConfigSingleFile", {
   string: b.String,

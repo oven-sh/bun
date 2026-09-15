@@ -1132,10 +1132,7 @@ impl<'a> SecurityScanSubprocess<'a> {
         let mut json_fds: [uv::uv_file; 2] = [0; 2];
         // SAFETY: FFI — `json_fds` is a 2-element out-array; flags are valid.
         let pipe_rc = unsafe { uv::uv_pipe(&mut json_fds, 0, uv::UV_NONBLOCK_PIPE as i32) };
-        // Use the translating overlay (`ReturnCodeExt::err_enum_e`) — the inherent
-        // `ReturnCode::err_enum()` returns the raw |uv_code| (e.g. 4071 for
-        // UV_EINVAL on Windows) without mapping to POSIX `bun.sys.E`.
-        if let Some(e) = pipe_rc.err_enum_e() {
+        if let Some(e) = pipe_rc.errno() {
             ipc_output_fds[0].close();
             ipc_output_fds[1].close();
             return Err(bun_errno::from_errno(e as i32).into());
@@ -1436,10 +1433,6 @@ impl<'a> SecurityScanSubprocess<'a> {
                                 spins = 0;
                             }
                             Err(e) => match e.get_errno() {
-                                // macOS `bun_sys::read` is single-shot
-                                // (`read$NOCANCEL`); WaiterThread
-                                // + PTY matrix arms can land signals mid-drain.
-                                bun_sys::E::EINTR => continue,
                                 bun_sys::E::EAGAIN => {
                                     // Bounded spin only — if we don't converge
                                     // to EOF here, fall through to the poll

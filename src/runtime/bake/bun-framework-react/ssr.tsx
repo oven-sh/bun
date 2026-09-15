@@ -69,12 +69,12 @@ export function renderToHtml(
         bootstrapModules,
         onError(error) {
           if (!signal.aborted) {
-            // Abort the rendering and close the stream
+            // Abort the rendering and fail the stream with the error (a thrown Response for redirect()/render()).
             signal.aborted = error;
             abort();
             if (signal.abort) signal.abort();
             if (stream) {
-              stream.controller.close();
+              stream.controller.close(error);
             }
           }
         },
@@ -163,9 +163,8 @@ class RscInjectionStream extends EventEmitter {
     });
     rscPayload.on("error", err => {
       this.rscHasEnded = true;
-      // Close the controller
-      controller.close();
-      // Reject the promise instead of resolving it
+      // Fail the stream with the error (a thrown Response for redirect()/render()) and reject pull().
+      controller.close(err);
       this.reject(err);
     });
   }

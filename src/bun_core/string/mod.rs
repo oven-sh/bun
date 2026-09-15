@@ -1,6 +1,6 @@
 //! `bun_core::string` — `String` and friends.
 //!
-//! `String` is the FFI-compatible 5-variant tagged union shared with C++
+//! `String` is the FFI-compatible 6-variant tagged union shared with C++
 //! (`BunString` in `src/jsc/bindings/BunString.cpp`). `EncodedSlice<'a>` is
 //! the pointer-tagged borrowed view; `Utf8Bytes<'a>` is the borrowed-or-owned
 //! UTF-8 byte slice.
@@ -44,11 +44,12 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 pub use wtf::{WTFStringImpl, WTFStringImplExt, WTFStringImplStruct};
 
 // ──────────────────────────────────────────────────────────────────────────
-// `String` — 5-variant tagged WTFString-or-EncodedSlice, 24 bytes on 64-bit.
+// `String` — 6-variant tagged WTFString-or-EncodedSlice, 24 bytes on 64-bit.
 //
 // - `String`: OWNS one ref when WTF-backed. Not `Copy`. `Drop` = `deref()`,
-//   `Clone` = `ref()`; for the `EncodedSlice`/`Static`/`Empty`/`Dead` tags both
-//   are a tag compare and nothing else. Every +1 producer returns this —
+//   `Clone` = `ref()`; for the `EncodedSlice`/`Static`/`Empty`/`Dead`/
+//   `OutOfMemory` tags both are a tag compare and nothing else. Every +1
+//   producer returns this —
 //   including `extern "C"` declarations: a by-value `String` in an FFI
 //   signature means ownership crosses (C++ `Bun::toStringRef` return, or a
 //   Rust return that C++ `transferToWTFString()`s), exactly like `Box<T>`.
@@ -61,11 +62,16 @@ pub use wtf::{WTFStringImpl, WTFStringImplExt, WTFStringImplStruct};
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Tag {
+    /// No string: moved out, never set, or refused by a constructor (over
+    /// [`String::max_length`], invalid input). Reaches JS as `ERR_STRING_TOO_LONG`.
     Dead = 0,
     WTFStringImpl = 1,
     EncodedSlice = 2,
     StaticEncodedSlice = 3,
     Empty = 4,
+    /// No string: a constructor could not allocate it. Reaches JS as
+    /// `ERR_MEMORY_ALLOCATION_FAILED`. [`String::is_dead`] covers this tag too.
+    OutOfMemory = 5,
 }
 
 /// C-layout untagged union over [`String`]'s payload representations.
@@ -74,7 +80,7 @@ pub enum Tag {
 union StringImpl {
     encoded: EncodedSlice<'static>,
     wtf_string_impl: WTFStringImpl,
-    // .StaticEncodedSlice aliases .encoded; .Dead/.Empty are zero-width.
+    // .StaticEncodedSlice aliases .encoded; .Dead/.Empty/.OutOfMemory are zero-width.
 }
 
 /// Known as `BunString` in C++. Not a Rust `enum`: C++ mutates `tag` and
@@ -148,6 +154,12 @@ impl String {
     };
     pub const DEAD: Self = Self {
         tag: Tag::Dead,
+        value: StringImpl {
+            encoded: EncodedSlice::EMPTY,
+        },
+    };
+    pub const OUT_OF_MEMORY: Self = Self {
+        tag: Tag::OutOfMemory,
         value: StringImpl {
             encoded: EncodedSlice::EMPTY,
         },
@@ -404,8 +416,9 @@ impl String {
         Self::clone_utf8(buf.as_bytes())
     }
     /// Returns `(String, ptr)` where `ptr` is `len` writable bytes — or
-    /// `(dead, null)` if WTF allocation failed (check `tag == .Dead` before
-    /// using the buffer).
+    /// `(DEAD, [])` when `len` is over the maximum string length and
+    /// `(OUT_OF_MEMORY, [])` when WTF could not allocate (check `is_dead()`
+    /// before using the buffer).
     pub fn create_uninitialized_latin1(len: usize) -> (Self, &'static mut [u8]) {
         let s = BunString__fromLatin1Unitialized(len);
         if s.tag != Tag::WTFStringImpl {
@@ -475,13 +488,33 @@ impl String {
 
     /// UTF-8 `bytes` → external WTF-backed string: adopts the allocation as
     /// Latin-1 when all-ASCII, otherwise adopts a UTF-16 transcode of it.
-    /// `DEAD` when longer than [`Self::max_length`].
-    pub fn from_owned_utf8(bytes: Vec<u8>) -> Result<Self, crate::AllocError> {
+    /// `DEAD` when longer than [`Self::max_length`], `OUT_OF_MEMORY` when the
+    /// transcode could not allocate.
+    pub fn from_owned_utf8(bytes: Vec<u8>) -> Self {
         match strings::to_utf16_alloc(&bytes, false, false) {
-            Ok(None) => Ok(Self::create_external_globally_allocated_latin1(bytes)),
-            Ok(Some(utf16)) => Ok(Self::create_external_globally_allocated_utf16(utf16)),
-            Err(_) => Err(crate::AllocError),
+            Ok(None) => Self::create_external_globally_allocated_latin1(bytes),
+            Ok(Some(utf16)) => Self::create_external_globally_allocated_utf16(utf16),
+            Err(_) => Self::utf16_transcode_failure(&bytes),
         }
+    }
+
+    /// A UTF-8 → UTF-16 transcode of `utf8` whose output could not be
+    /// allocated: `DEAD` when the result could not have fit in a string anyway,
+    /// `OUT_OF_MEMORY` otherwise.
+    pub fn utf16_transcode_failure(utf8: &[u8]) -> Self {
+        if Self::utf16_transcode_too_long(utf8) {
+            Self::DEAD
+        } else {
+            Self::OUT_OF_MEMORY
+        }
+    }
+
+    /// Whether the UTF-16 form of `utf8` would be longer than
+    /// [`Self::max_length`].
+    pub fn utf16_transcode_too_long(utf8: &[u8]) -> bool {
+        // UTF-16 never has more units than UTF-8 has bytes.
+        utf8.len() > Self::max_length()
+            && strings::element_length_utf8_into_utf16(utf8) > Self::max_length()
     }
 
     /// Clone an OS-native path slice into a WTF-backed string (UTF-8 on
@@ -584,7 +617,7 @@ impl String {
         match self.tag {
             Tag::WTFStringImpl => self.as_wtf().length() as usize,
             Tag::EncodedSlice | Tag::StaticEncodedSlice => self.encoded().len,
-            Tag::Dead | Tag::Empty => 0,
+            Tag::Dead | Tag::Empty | Tag::OutOfMemory => 0,
         }
     }
     #[inline]
@@ -808,9 +841,10 @@ impl String {
         self.to_encoded_slice().starts_with_ascii(ascii)
     }
 
+    /// True when `self` holds no string: [`Tag::Dead`] or [`Tag::OutOfMemory`].
     #[inline]
     pub fn is_dead(&self) -> bool {
-        self.tag == Tag::Dead
+        matches!(self.tag, Tag::Dead | Tag::OutOfMemory)
     }
 
     /// Borrow `value` without copying or refcounting; tags UTF-8 if `value`
@@ -846,7 +880,7 @@ impl String {
         match self.tag {
             Tag::WTFStringImpl => self.as_wtf().utf8_byte_length(),
             Tag::EncodedSlice | Tag::StaticEncodedSlice => self.encoded().utf8_byte_length(),
-            Tag::Dead | Tag::Empty => 0,
+            Tag::Dead | Tag::Empty | Tag::OutOfMemory => 0,
         }
     }
 
@@ -855,7 +889,7 @@ impl String {
         match self.tag {
             Tag::WTFStringImpl => self.as_wtf().utf16_byte_length(),
             Tag::EncodedSlice | Tag::StaticEncodedSlice => self.encoded().utf16_byte_length(),
-            Tag::Dead | Tag::Empty => 0,
+            Tag::Dead | Tag::Empty | Tag::OutOfMemory => 0,
         }
     }
 
@@ -973,7 +1007,7 @@ impl String {
     /// static/empty/dead.
     pub fn estimated_size(&self) -> usize {
         match self.tag {
-            Tag::Dead | Tag::Empty | Tag::StaticEncodedSlice => 0,
+            Tag::Dead | Tag::Empty | Tag::OutOfMemory | Tag::StaticEncodedSlice => 0,
             Tag::EncodedSlice => self.encoded().len,
             Tag::WTFStringImpl => self.as_wtf().byte_length(),
         }
@@ -1565,7 +1599,7 @@ impl Utf8WithString {
         match self.string.tag {
             Tag::WTFStringImpl => self.string.as_wtf().latin1_slice(),
             Tag::EncodedSlice | Tag::StaticEncodedSlice => self.string.encoded().slice(),
-            Tag::Dead | Tag::Empty => b"",
+            Tag::Dead | Tag::Empty | Tag::OutOfMemory => b"",
         }
     }
 

@@ -138,7 +138,7 @@ impl BlockList {
     ) -> JsResult<JSValue> {
         let [address_js, mut family_js] = frame.arguments_as_array::<2>();
         if family_js.is_undefined() {
-            family_js = BunString::static_("ipv4").to_js(global)?;
+            family_js = global.common_strings().ipv4_lower();
         }
         let address = if let Some(sa) = address_js.as_class_ref::<SocketAddress>() {
             sa._addr
@@ -165,7 +165,7 @@ impl BlockList {
     ) -> JsResult<JSValue> {
         let [start_js, end_js, mut family_js] = frame.arguments_as_array::<3>();
         if family_js.is_undefined() {
-            family_js = BunString::static_("ipv4").to_js(global)?;
+            family_js = global.common_strings().ipv4_lower();
         }
         let start = if let Some(sa) = start_js.as_class_ref::<SocketAddress>() {
             sa._addr
@@ -208,7 +208,7 @@ impl BlockList {
     ) -> JsResult<JSValue> {
         let [network_js, prefix_js, mut family_js] = frame.arguments_as_array::<3>();
         if family_js.is_undefined() {
-            family_js = BunString::static_("ipv4").to_js(global)?;
+            family_js = global.common_strings().ipv4_lower();
         }
         let network = if let Some(sa) = network_js.as_class_ref::<SocketAddress>() {
             sa._addr
@@ -256,7 +256,7 @@ impl BlockList {
     ) -> JsResult<JSValue> {
         let [address_js, mut family_js] = frame.arguments_as_array::<2>();
         if family_js.is_undefined() {
-            family_js = BunString::static_("ipv4").to_js(global)?;
+            family_js = global.common_strings().ipv4_lower();
         }
         let address_val;
         let address: &sockaddr = if let Some(sa) = address_js.as_class_ref::<SocketAddress>() {

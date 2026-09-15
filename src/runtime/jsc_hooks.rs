@@ -1315,6 +1315,16 @@ unsafe fn timer_remove(
     unsafe { &mut (*state).timer }.remove(t);
 }
 
+/// For `AbortSignal::Timeout`, which turns its delay into a deadline below this tier.
+fn timer_min_delay_ms() -> u32 {
+    let all = timer_all();
+    if all.is_null() {
+        return 0;
+    }
+    // SAFETY: `all` is the live per-thread `All`; leaf hook, field read only.
+    unsafe { (*all).fake_timers.min_delay_ms() }
+}
+
 /// `Node.fs.NodeFS{ .vm = … }` lazy creation.
 /// The low tier stores the result in `vm.node_fs: Option<*mut c_void>`.
 ///
@@ -1332,7 +1342,7 @@ unsafe fn create_node_fs(vm: *mut VirtualMachine) -> *mut c_void {
         None
     };
     bun_core::heap::into_raw(Box::new(NodeFS {
-        sync_error_buf: bun_paths::PathBuffer::uninit(),
+        sync_error_buf: bun_paths::path_buffer_pool::get(),
         vm: vm_field,
     }))
     .cast::<c_void>()
@@ -1516,6 +1526,7 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     print_exception,
     timer_insert,
     timer_remove,
+    timer_min_delay_ms,
     default_client_ssl_ctx,
     ssl_ctx_cache_get_or_create,
     create_node_fs,
@@ -2161,7 +2172,6 @@ fn to_jsc_fetch_error(err: &crate::Error) -> bun_jsc::CrateError {
         crate::Error::ModuleNotFound => bun_jsc::CrateError::ModuleNotFound,
         crate::Error::WriteFailed => bun_jsc::CrateError::WriteFailed,
         crate::Error::JSError | crate::Error::Js(_) => bun_jsc::CrateError::JSError,
-        crate::Error::JSErrorObject => bun_jsc::CrateError::JSErrorObject,
         _ => bun_jsc::CrateError::ParseError,
     }
 }
@@ -3091,7 +3101,7 @@ fn transpile_source_code_inner(
                 // from the raw pointer, which would invalidate any earlier
                 // Unique tag under Stacked Borrows. Rederive at each use-site
                 // instead (reset, mapper, print, get_written).
-                unsafe { (*(*extra).source_code_printer).reset() };
+                unsafe { (*(*extra).source_code_printer).ctx.reset() };
                 // Install the VM's sourcemap handler on the printer, then
                 // print the parse result (ESM, ASCII) with sourcemaps.
                 //
@@ -3464,7 +3474,7 @@ fn transpile_source_code_inner(
                 // Rewrite `specifier` against `vm.origin` so
                 // importing an asset via the file loader yields the public URL,
                 // not the absolute filesystem path.
-                let mut buf = std::string::String::new();
+                let mut public_path: Vec<u8> = Vec::new();
                 // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
                 // `URL<'static>` is a view struct; borrow it in place — no
                 // `&mut *jsc_vm` aliases through the call below, so there is no
@@ -3477,10 +3487,10 @@ fn transpile_source_code_inner(
                     top_level_dir,
                     origin,
                     b"",
-                    &mut buf,
+                    &mut public_path,
                     bun_paths::Platform::Loose,
                 );
-                bun_string_jsc::create_utf8_for_js(global_object, buf.as_bytes())
+                bun_string_jsc::create_utf8_for_js(global_object, &public_path)
                     .map_err(|_| crate::Error::JSError)?
             } else {
                 bun_string_jsc::create_utf8_for_js(global_object, path.text)
@@ -3648,12 +3658,8 @@ fn get_hardcoded_module(
         | HardcodedModule::NodeInternalReplHistory
         | HardcodedModule::NodeInternalUtilInspect => {
             // Gated behind `--expose-internals` (release) / always-on (debug).
-            if !bun_core::env::IS_DEBUG {
-                let allowed = bun_jsc::module_loader::IS_ALLOWED_TO_USE_INTERNAL_TESTING_APIS
-                    .load(core::sync::atomic::Ordering::Relaxed);
-                if !allowed {
-                    return None;
-                }
+            if !bun_jsc::module_loader::is_allowed_to_use_internal_testing_apis() {
+                return None;
             }
             let name: &'static str = hardcoded.into();
             Some(js_synthetic_module(name.as_bytes()))
@@ -3663,12 +3669,8 @@ fn get_hardcoded_module(
             // same as `bun:internal-for-testing`. The tag key uses the
             // generated `internal:`-prefixed canonical specifier (see
             // `generated_resolved_source_tag.rs`).
-            if !bun_core::env::IS_DEBUG {
-                let allowed = bun_jsc::module_loader::IS_ALLOWED_TO_USE_INTERNAL_TESTING_APIS
-                    .load(core::sync::atomic::Ordering::Relaxed);
-                if !allowed {
-                    return None;
-                }
+            if !bun_jsc::module_loader::is_allowed_to_use_internal_testing_apis() {
+                return None;
             }
             Some(js_synthetic_module(b"internal:test/binding"))
         }
@@ -3789,7 +3791,13 @@ export default db;
         return Some(ResolvedSource {
             source_code: file.to_wtf_string(),
             source_url: specifier.clone(),
-            bytecode_origin_path: bun_core::String::from_bytes(file.bytecode_origin_path),
+            // An embedded file is served through the builtin-module path but is a file: its origin is its own path
+            // (or, with --bytecode, the path the cache was generated under, which must match exactly).
+            origin_path: if file.bytecode_origin_path.is_empty() {
+                specifier.clone()
+            } else {
+                bun_core::String::from_bytes(file.bytecode_origin_path)
+            },
             bytecode_cache: Bytecode::persistent(bytecode),
             source_code_hash: file.source_hash,
             module_info: if !module_info.is_empty() {
@@ -3807,6 +3815,7 @@ export default db;
                 None
             },
             is_commonjs_module: file.module_format == ModuleFormat::Cjs,
+            is_prelinked_module: file.prelinked_index != u32::MAX,
             ..ResolvedSource::default()
         });
     }

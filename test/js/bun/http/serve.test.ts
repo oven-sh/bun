@@ -6,13 +6,16 @@ import {
   bunExe,
   dumpStats,
   emptyProcessMaxRSS,
+  isAndroid,
   isASAN,
   isBroken,
   isDebug,
   isIntelMacOS,
   isIPv4,
   isIPv6,
+  isLinux,
   isPosix,
+  libcPathForDlopen,
   runFixtureMaxRSS,
   tempDir,
   tls,
@@ -2530,7 +2533,8 @@ it("#5859 json", async () => {
     body: new Uint8Array([0xfd]),
   });
 
-  expect(await response.text()).toBe("Failed to parse JSON");
+  // The body decodes to U+FFFD, so req.json() rejects with the error of JSON.parse("\uFFFD").
+  expect(await response.text()).toBe("JSON Parse error: Unrecognized token '\uFFFD'");
   expect(response.ok).toBeFalse();
 });
 
@@ -4700,4 +4704,247 @@ it("serves a TLS connection whose handshake completes after a graceful stop()", 
     client?.destroy();
     raw.destroy();
   }
+});
+
+// Requests that arrive in one read are dispatched from one onData() call. The
+// socket is corked for the whole call, so their responses leave together.
+describe("requests pipelined in one read", () => {
+  const get = (path: string, extraHeaders = "") => `GET ${path} HTTP/1.1\r\nHost: x\r\n${extraHeaders}\r\n`;
+
+  // Writes `payload` in one write. Collects the reply until `complete(reply)` or the peer closes.
+  function exchange(
+    connect: (onConnect: () => void) => net.Socket,
+    payload: string,
+    complete: (reply: string) => boolean = () => false,
+  ) {
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    let reply = "";
+    const socket = connect(() => socket.write(payload));
+    socket.on("data", chunk => {
+      reply += chunk.toString("latin1");
+      if (complete(reply)) socket.destroy();
+    });
+    socket.on("error", reject);
+    socket.on("close", () => resolve(reply));
+    return promise;
+  }
+  const plain = (port: number) => (onConnect: () => void) => net.connect(port, "127.0.0.1", onConnect);
+
+  function parseResponses(reply: string) {
+    const responses: { status: string; body: string }[] = [];
+    while (reply.length) {
+      const headEnd = reply.indexOf("\r\n\r\n");
+      if (headEnd === -1) {
+        responses.push({ status: "incomplete head", body: reply });
+        break;
+      }
+      const head = reply.slice(0, headEnd);
+      const length = Number(/^content-length: (\d+)$/im.exec(head)?.[1] ?? 0);
+      responses.push({
+        status: head.slice(0, head.indexOf("\r\n")),
+        body: reply.slice(headEnd + 4, headEnd + 4 + length),
+      });
+      reply = reply.slice(headEnd + 4 + length);
+    }
+    return responses;
+  }
+
+  const echoPath = (req: Request) => new Response(new URL(req.url).pathname);
+
+  // Each send() is one TCP segment on loopback (TCP_NODELAY). The client counts
+  // the segments with TCP_INFO.
+  it.skipIf(!isLinux && !isAndroid)("are answered with one send()", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          import { dlopen, ptr } from "bun:ffi";
+          const libc = dlopen(${JSON.stringify(libcPathForDlopen())}, {
+            getsockopt: { args: ["int", "int", "int", "ptr", "ptr"], returns: "int" },
+          });
+          // struct tcp_info: tcpi_data_segs_in is a u32 at byte 152 (linux/tcp.h, since 4.6).
+          function dataSegmentsIn(fd) {
+            const info = new Uint8Array(280);
+            const len = new Uint32Array([info.length]);
+            if (libc.symbols.getsockopt(fd, 6 /* IPPROTO_TCP */, 11 /* TCP_INFO */, ptr(info), ptr(len)) !== 0) {
+              throw new Error("getsockopt(TCP_INFO) failed");
+            }
+            if (len[0] < 156) throw new Error("tcp_info has no tcpi_data_segs_in: " + len[0] + " bytes");
+            return new DataView(info.buffer).getUint32(152, true);
+          }
+          const depth = 8;
+          const request = "GET / HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n";
+          async function run(options) {
+            const server = Bun.serve({ port: 0, hostname: "127.0.0.1", ...options });
+            const done = Promise.withResolvers();
+            let reply = "";
+            const responses = () => reply.split("HTTP/1.1 200 OK").length - 1;
+            const socket = await Bun.connect({
+              hostname: "127.0.0.1",
+              port: server.port,
+              socket: {
+                open(socket) {
+                  socket.write(Buffer.alloc(request.length * depth, request));
+                },
+                data(socket, chunk) {
+                  reply += chunk.toString("latin1");
+                  if (responses() === depth && reply.endsWith("hello")) done.resolve();
+                },
+                error(socket, error) {
+                  done.reject(error);
+                },
+                close() {
+                  done.resolve();
+                },
+              },
+            });
+            await done.promise;
+            const result = { responses: responses(), segments: dataSegmentsIn(socket.fd) };
+            socket.end();
+            server.stop(true);
+            return result;
+          }
+          console.log(JSON.stringify({
+            fetch: await run({ fetch: () => new Response("hello", { headers: { "X-Custom": "1" } }) }),
+            route: await run({ routes: { "/": () => new Response("hello") } }),
+            static: await run({ routes: { "/": new Response("hello") } }),
+          }));
+        `,
+      ],
+      env: bunEnv,
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect({ result: stdout.trim() ? JSON.parse(stdout) : stdout, exitCode }).toEqual({
+      result: {
+        fetch: { responses: 8, segments: 1 },
+        route: { responses: 8, segments: 1 },
+        static: { responses: 8, segments: 1 },
+      },
+      exitCode: 0,
+    });
+  });
+
+  // The tests below pass without the batching too. They cover the paths that
+  // have to send the cork buffer before they close or hand over the socket.
+
+  it("keeps the order when a response is larger than the cork buffer", async () => {
+    // Twice the 16 KB cork buffer.
+    const big = Buffer.alloc(32 * 1024, "b").toString();
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch: req => (req.url.endsWith("/big") ? new Response(big) : echoPath(req)),
+    });
+    const reply = await exchange(
+      plain(server.port),
+      get("/a") + get("/b") + get("/big") + get("/c") + get("/d", "Connection: close\r\n"),
+    );
+    const ok = "HTTP/1.1 200 OK";
+    expect(parseResponses(reply)).toEqual([
+      { status: ok, body: "/a" },
+      { status: ok, body: "/b" },
+      { status: ok, body: big },
+      { status: ok, body: "/c" },
+      { status: ok, body: "/d" },
+    ]);
+  });
+
+  it("keeps the order over TLS", async () => {
+    using server = Bun.serve({ port: 0, hostname: "127.0.0.1", tls, fetch: echoPath });
+    const reply = await exchange(
+      onConnect => nodeTls.connect({ port: server.port, host: "127.0.0.1", rejectUnauthorized: false }, onConnect),
+      get("/a") + get("/b") + get("/c", "Connection: close\r\n"),
+    );
+    const ok = "HTTP/1.1 200 OK";
+    expect(parseResponses(reply)).toEqual([
+      { status: ok, body: "/a" },
+      { status: ok, body: "/b" },
+      { status: ok, body: "/c" },
+    ]);
+  });
+
+  it("sends the completed responses before the response to a malformed request", async () => {
+    using server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: echoPath });
+    // The third request has no Host header.
+    const reply = await exchange(plain(server.port), get("/a") + get("/b") + "GET /c HTTP/1.1\r\n\r\n");
+    expect(parseResponses(reply)).toEqual([
+      { status: "HTTP/1.1 200 OK", body: "/a" },
+      { status: "HTTP/1.1 200 OK", body: "/b" },
+      { status: "HTTP/1.1 400 Bad Request", body: "" },
+    ]);
+  });
+
+  it("sends the completed responses before it closes on a request behind a pending response", async () => {
+    const pending = Promise.withResolvers<Response>();
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch: req => (req.url.endsWith("/pending") ? pending.promise : echoPath(req)),
+    });
+    try {
+      const reply = await exchange(
+        plain(server.port),
+        get("/a") + get("/b") + get("/pending") + get("/c"),
+        reply => parseResponses(reply).length >= 2 && reply.endsWith("/b"),
+      );
+      expect(parseResponses(reply)).toEqual([
+        { status: "HTTP/1.1 200 OK", body: "/a" },
+        { status: "HTTP/1.1 200 OK", body: "/b" },
+      ]);
+    } finally {
+      pending.resolve(new Response("late"));
+    }
+  });
+
+  it("sends the completed responses before the 101 of a WebSocket upgrade", async () => {
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req, server) {
+        if (req.url.endsWith("/ws")) {
+          if (server.upgrade(req)) return;
+          return new Response("upgrade failed", { status: 500 });
+        }
+        return echoPath(req);
+      },
+      websocket: {
+        open(ws) {
+          ws.send("hello");
+        },
+        message() {},
+      },
+    });
+    const frame = "\x81\x05hello";
+    const reply = await exchange(
+      plain(server.port),
+      get("/a") +
+        get(
+          "/ws",
+          "Connection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n",
+        ),
+      reply => reply.endsWith(frame),
+    );
+    const [first, ...rest] = reply.split("HTTP/1.1 ");
+    expect(first).toBe("");
+    expect(rest.map(part => part.slice(0, part.indexOf("\r\n")))).toEqual(["200 OK", "101 Switching Protocols"]);
+    expect(rest[0]).toEndWith("\r\n\r\n/a");
+    expect(rest[1]).toEndWith("\r\n\r\n" + frame);
+  });
+
+  it("sends the completed response before a graceful stop() closes the idle connection", async () => {
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req, server) {
+        // The response completes before the body arrives. That rejects this
+        // read, and its handler runs before onData uncorks.
+        req.text().catch(() => server.stop());
+        return new Response("done");
+      },
+    });
+    const reply = await exchange(plain(server.port), "POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\n");
+    expect(parseResponses(reply)).toEqual([{ status: "HTTP/1.1 200 OK", body: "done" }]);
+  });
 });

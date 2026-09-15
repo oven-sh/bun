@@ -339,6 +339,30 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     it("allows creating a handle scope in the finalizer", async () => {
       await checkSameOutput("test_napi_handle_scope_finalizer", []);
     });
+    it("napi_delete_reference cancels the finalizer the GC already queued", async () => {
+      // Modules built against a released Node-API version get their finalizers
+      // run from the event loop, after the GC. An addon that deletes the
+      // reference in between has usually freed the native object too, so the
+      // finalizer must not run any more (Node dequeues it). Bun used to run it.
+      const output = await checkSameOutput("test_delete_ref_after_collect", []);
+      expect(output.split(/\r?\n/)).toEqual([
+        "napi_wrap: collected before delete: true, finalized after delete: 0",
+        "napi_add_finalizer: collected before delete: true, finalized after delete: 0",
+        "resolved to undefined",
+      ]);
+    });
+    it("a parent's queued finalizer can delete the references of children collected by the same GC", async () => {
+      // Whether the children's finalizers are queued before or after the
+      // parent's depends on the order the runtime finds the dead wrappers in,
+      // so the fixture tries both orders. In either, no child's finalizer may
+      // run after the parent deleted the child's reference.
+      const output = await checkSameOutput("test_delete_ref_after_collect_parent_and_children", []);
+      expect(output.split(/\r?\n/)).toEqual([
+        "parent created before children: parent collected: true, parent finalized: true, children finalized after delete: 0",
+        "parent created after children: parent collected: true, parent finalized: true, children finalized after delete: 0",
+        "resolved to undefined",
+      ]);
+    });
     it("prevents underflow when unref called on zero refcount", async () => {
       // This tests the fix for napi_reference_unref underflow protection
       await checkSameOutput("test_ref_unref_underflow", []);
@@ -701,6 +725,14 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       expect(result).toBe("success!");
     });
 
+    it("runs the finalizer before freeing the function, so the finalizer can still use the handle", async () => {
+      // napi_ok = 0, napi_invalid_arg = 1 (no thread reference is left to release).
+      const result = await checkSameOutput("test_threadsafe_function_finalizer_uses_handle", []);
+      expect(result).toContain(
+        "finalizer saw: context: status=0 matches=1, hint is context=1, data matches=1, unref status=0, release status=1",
+      );
+    });
+
     it.each([0, 3])(
       "runs the finalizer and exits when the last reference is released after abort (%d queued items)",
       async queued => {
@@ -712,6 +744,15 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     it("wakes blocked producers, runs the finalizer and exits when aborted with a bounded queue", async () => {
       const result = await checkSameOutput("test_threadsafe_function_abort_blocked_producers", []);
       expect(result).toContain("finalized: true");
+    });
+
+    // An abort finalizes from its own dispatch, like Node: it does not wait for
+    // the references other threads still hold (they are told to make no further
+    // calls, so they may never release). The late release of such a reference
+    // reports napi_ok (0) and frees the function.
+    it("runs the finalizer on abort while another thread still holds a reference", async () => {
+      const result = await checkSameOutput("test_threadsafe_function_abort_with_outstanding_ref", []);
+      expect(result).toContain("finalized: true\nreleased after finalize: true status: 0");
     });
 
     // A full bounded queue must not hide that the function is closing: the call
@@ -1614,7 +1655,7 @@ describe.skipIf(!canBuildNodeAddons())("napi_create_string_latin1", () => {
   it("does not leak the WTFStringImpl", async () => {
     const fixture = /* js */ `
       const nativeTests = require(${JSON.stringify(join(__dirname, "napi-app/build/Debug/napitests.node"))});
-      const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+      const rss = process.memoryUsage.rss;
       const size = 256 * 1024;
       for (let i = 0; i < 20; i++) {
         const s = nativeTests.create_latin1_string(size);
@@ -1799,6 +1840,68 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
       expect(stderr).toContain("fatal");
       expect(lines).toEqual(setupLines.toSorted());
       expect(exitCode).toBe(1);
+    });
+
+    // `bun test` ends the process when the last test settles. It does not wait
+    // for the event loop, so what the tests started can still be in flight: that
+    // is process.exit(), not a loop that ran dry. node-sqlite3's Statement
+    // finalizer emits an 'error' event for every call still queued behind a
+    // running one, nothing listens, and node-addon-api turns the throw into
+    // "NAPI FATAL ERROR: Error::ThrowAsJavaScriptException napi_throw" (#34663).
+    const testFile = (name: string) => `
+      ${setup}
+      test(${JSON.stringify(name)}, () => {});
+    `;
+
+    // stdout starts with the "bun test v1.x" banner; the rest is what the addons printed.
+    async function runBunTest(args: string[], files: Record<string, string>, env: Record<string, string>) {
+      using dir = tempDir("napi-bun-test-teardown", files);
+      await using proc = spawn({
+        cmd: [bunExe(), "test", ...args, ...Object.keys(files).map(file => `./${file}`)],
+        env: { ...bunEnv, ...env },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const lines = stdout
+        .split(/\r?\n/)
+        .filter(line => line && !line.startsWith("bun test "))
+        .sort();
+      return { lines, stdout, stderr, exitCode };
+    }
+
+    it("the end of a `bun test` run skips it", async () => {
+      const files = { "addon.test.js": testFile("loads the addons") };
+      const { lines, stderr, exitCode } = await runBunTest([], files, noDestruct);
+      expect(stderr).toContain("1 pass");
+      expect(lines).toEqual(setupLines.toSorted());
+      if (exitCode !== 0) expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    it("the end of a `bun test --parallel` worker skips it", async () => {
+      const files = { "a.test.js": testFile("loads the addons in a"), "b.test.js": testFile("loads the addons in b") };
+      const { stdout, stderr, exitCode } = await runBunTest(["--parallel=2"], files, noDestruct);
+      // The coordinator relays what a worker prints on its own stderr.
+      const output = stdout + stderr;
+      expect(output).toContain("2 pass");
+      expect(output).not.toContain("executed at position");
+      expect(output).not.toContain("finalize order");
+      if (exitCode !== 0) expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    it("a `bun test` run that drained the event loop first tears it down", async () => {
+      const files = { "addon.test.js": testFile("loads the addons") };
+      const { lines, stderr, exitCode } = await runBunTest([], files, {
+        ...noDestruct,
+        BUN_TEST_DRAIN_EVENT_LOOP: "1",
+      });
+      expect(stderr).toContain("1 pass");
+      expect(lines).toEqual(teardownLines.toSorted());
+      if (exitCode !== 0) expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
     });
 
     it("an event loop that runs dry tears it down", async () => {

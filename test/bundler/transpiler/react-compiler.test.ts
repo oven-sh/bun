@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { isASAN, isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
-import { itBundled } from "../expectBundled";
+import { itBundled, type BundlerTestInput } from "../expectBundled";
 
 // The React Compiler emits `import { c as _c } from "react/compiler-runtime"` and
 // rewrites component bodies to call `_c(n)` to allocate a memo cache of `n` slots.
@@ -86,6 +86,46 @@ describe("bundler", () => {
       expect(out).toContain("...rest");
       // Output must round-trip through Bun's own parser.
       new Bun.Transpiler({ loader: "js" }).transformSync(out);
+    },
+  });
+
+  // https://github.com/oven-sh/bun/issues/42224
+  itBundled("react-compiler/UnderscoreAndDollarComponentTags", {
+    files: {
+      "/entry.tsx": /* tsx */ `
+        import { _Imported } from "./components";
+        const Plain = () => <span>a</span>;
+        const _Underscore = () => <span>b</span>;
+        const $Dollar = () => <span>c</span>;
+
+        export const App = () => (
+          <p>
+            <Plain />
+            <_Underscore />
+            <$Dollar />
+            <_Imported />
+          </p>
+        );
+      `,
+      "/components.tsx": /* tsx */ `
+        export const _Imported = () => <span>d</span>;
+      `,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    external: ["react", "react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime"],
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain("react/compiler-runtime");
+      // Only a tag that starts with a lowercase letter is a host element. An
+      // identifier that starts with `_` or `$` is a component reference.
+      expect(out).toMatch(/jsx\w*\(Plain,/);
+      expect(out).toMatch(/jsx\w*\(_Underscore,/);
+      expect(out).toMatch(/jsx\w*\(\$Dollar,/);
+      expect(out).toMatch(/jsx\w*\(_Imported,/);
+      expect(out).not.toContain('"_Underscore"');
+      expect(out).not.toContain('"$Dollar"');
+      expect(out).not.toContain('"_Imported"');
     },
   });
 
@@ -211,6 +251,56 @@ describe("bundler", () => {
       // survive, but no call remains).
       expect(out).not.toContain("useState(");
     },
+  });
+
+  // With memoization off (ssr mode) the pipeline infers no reactive scopes for
+  // the compiled function itself, so an object literal and its method
+  // shorthands reach AlignObjectMethodScopes with no scope to align.
+  //
+  // The fake useState never returns its argument. The ssr pass inlines useState
+  // to its initial value, so a function prints that value only when the
+  // compiler compiled it and did not skip it.
+  itBundled("react-compiler/SsrObjectMethodShorthand", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { useState } from "react";
+
+        function InJsxAttribute() {
+          const [n] = useState(1);
+          return <div data-v={{ m() { return n; } }} />;
+        }
+        function InBody({ label }) {
+          const [n] = useState(2);
+          const v = {
+            m() { return label + n; },
+            async am() { return n; },
+            [label]() { return n; },
+            nested() { return { inner() { return n; } }; },
+          };
+          return <div data-v={v} />;
+        }
+        function useApi(value) {
+          const [n] = useState(3);
+          return { get() { return value + n; } };
+        }
+
+        const a = InJsxAttribute().props["data-v"];
+        const b = InBody({ label: "x" }).props["data-v"];
+        console.log(JSON.stringify({
+          InJsxAttribute: a.m(),
+          InBody: [b.m(), await b.am(), b.x(), b.nested().inner()],
+          useApi: useApi("v").get(),
+        }));
+      `,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+      "/node_modules/react/index.js": `exports.useState = () => ["not inlined", () => {}];`,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => ({ type, props });`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => ({ type, props });`,
+    },
+    reactCompiler: true,
+    target: "bun",
+    backend: "cli",
+    run: { stdout: '{"InJsxAttribute":1,"InBody":["x2",2,2,2],"useApi":"v3"}' },
   });
 
   // https://github.com/oven-sh/bun/pull/32504#discussion_r3447488111
@@ -948,6 +1038,52 @@ describe("bundler", () => {
     },
   });
 
+  // Regression: constant propagation marked the result temporary of a store
+  // (`x = 10`) or an update (`x++`) as constant. When a consumer folded that
+  // temporary away (`-(x = 10)` -> `-10`), the store lost its lvalue and codegen
+  // printed it as a statement ahead of an earlier store that was still inlined
+  // at its use (`x = 10; return [x = 5, -10, x++]`). See #42628.
+  itBundled("react-compiler/StoreOrderInSameExpression", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        const Stub = () => null;
+        function InCallback() {
+          const f = () => {
+            let x;
+            return [(x = 5), -(x = 10), x++];
+          };
+          return <Stub run={f} />;
+        }
+        function InBody() {
+          let x;
+          const v = [(x = 5), -(x = 10)];
+          return <Stub v={v} x={x++} />;
+        }
+        function UpdateInCallback({ cond }) {
+          const f = () => {
+            let x = 1;
+            const a = [(x = 5), -(x++)];
+            if (cond) x = 100;
+            return [a, x];
+          };
+          return <Stub run={f} />;
+        }
+        console.log(
+          JSON.stringify([
+            InCallback().p.run(),
+            InBody().p,
+            UpdateInCallback({ cond: false }).p.run(),
+          ]),
+        );
+      `,
+      ...stubReact,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "api",
+    run: { stdout: '[[5,-10,10],{"v":[5,-10],"x":10},[[5,-5],6]]' },
+  });
+
   itBundled("react-compiler/HoistsMemoCacheSentinel", {
     files: {
       "/entry.jsx": /* jsx */ `
@@ -1099,6 +1235,185 @@ describe("bundler", () => {
     },
   });
 
+  // The parser turns `<div children="x">y</div>` into
+  // `jsx("div", { children: "x", children: "y" })`: the JSX children are the
+  // last property, so they replace every earlier `children` key. It also
+  // inlines `{...{ k: v }}` into that object. The compiler reads the element
+  // back from the call, and has to keep each key in place and keep a getter a
+  // getter.
+  itBundled("react-compiler/ChildrenAttributeIsNotAJsxChild", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        function Attr(p) { return <div children="x">y</div>; }
+        function AttrExpr(p) { return <div children={p.a}>{p.b}</div>; }
+        function TwoAttrs(p) { return <div children="a" children="b" />; }
+        function InlineSpread(p) { return <div {...{ children: "sp" }}>real</div>; }
+        function AttrThenSpread(p) { return <div children="x" {...p} />; }
+        function AttrSpreadChildren(p) { return <div children="x" {...p}>{p.a}{p.b}</div>; }
+        function SpreadThenAttr(p) { return <div {...p} children="x" />; }
+        function Getter(p) { return <i {...{ get g() { return p.a; } }} />; }
+        console.log(JSON.stringify({
+          Attr: Attr({}).p.children,
+          AttrExpr: AttrExpr({ a: 1, b: "x" }).p.children,
+          TwoAttrs: TwoAttrs({}).p.children,
+          InlineSpread: InlineSpread({}).p.children,
+          AttrThenSpread: [AttrThenSpread({ children: "q" }).p.children, AttrThenSpread({}).p.children],
+          AttrSpreadChildren: AttrSpreadChildren({ a: 1, b: 2, children: "q" }).p.children,
+          SpreadThenAttr: SpreadThenAttr({ children: "q" }).p.children,
+          Getter: Getter({ a: 5 }).p.g,
+        }));
+      `,
+      ...stubReact,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "api",
+    run: {
+      stdout: JSON.stringify({
+        Attr: "y",
+        AttrExpr: "x",
+        TwoAttrs: "b",
+        InlineSpread: "real",
+        AttrThenSpread: ["q", "x"],
+        AttrSpreadChildren: [1, 2],
+        SpreadThenAttr: "x",
+        Getter: 5,
+      }),
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      const body = (name: string) => {
+        const start = out.indexOf(`function ${name}(`);
+        return out.slice(start, out.indexOf("\nfunction ", start + 1));
+      };
+      // A compiled component reads its memo cache. The getter has no JSX
+      // attribute form, so that one component is left as written.
+      const compiled = [
+        "Attr",
+        "AttrExpr",
+        "TwoAttrs",
+        "InlineSpread",
+        "AttrThenSpread",
+        "AttrSpreadChildren",
+        "SpreadThenAttr",
+        "Getter",
+      ].filter(name => /\$\[\d+\]/.test(body(name)));
+      expect(compiled).toEqual([
+        "Attr",
+        "AttrExpr",
+        "TwoAttrs",
+        "InlineSpread",
+        "AttrThenSpread",
+        "AttrSpreadChildren",
+        "SpreadThenAttr",
+      ]);
+      expect(body("Getter")).toContain("get g()");
+    },
+  });
+
+  // prune_non_escaping_scopes does not visit the test of a `?:`. A reactive
+  // scope that only the test reaches gets no node, but the local that scope
+  // reassigns still refers to it. Once that local has to be memoized, Babel
+  // raises `Invariant: Expected a node for all scopes` and skips that one
+  // function. The last two functions are the controls.
+  //
+  // A compiled function calls the fake `c` once per render, so the second
+  // number of each pair is 1 for a compiled function and 0 for a skipped one.
+  itBundled("react-compiler/AssignmentInConditionalTestSkipsOnlyThatFunction", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { calls } from "react/compiler-runtime";
+
+        function CallInTest(p) {
+          let m;
+          const r = (m = p.f()) ? 1 : 0;
+          return <div data-v={[m, r]} />;
+        }
+        function ArrayInTest(p) {
+          let m;
+          const r = (m = [p.a]) ? 1 : 0;
+          return <div data-v={[m]} data-r={r} />;
+        }
+        function ObjectInTest(p) {
+          let m = null;
+          const r = (m = { a: p.a }) ? p.b : p.c;
+          return <div data-v={{ m, r }} />;
+        }
+        function useInHook(p) {
+          "use memo";
+          let m;
+          const r = ((m = p.f()) ? 1 : 0) + 1;
+          return [m, r];
+        }
+        // https://github.com/facebook/react/issues/37228: the same invariant
+        // with no assignment, from a \`?:\` in a \`try\` in an inlined IIFE.
+        const check = v => v.ok;
+        function useValue() {
+          return { ok: true };
+        }
+        function ConditionalInTryInIife() {
+          const raw = useValue();
+          return (() => {
+            try {
+              return check(raw) ? raw : null;
+            } catch {
+              return null;
+            }
+          })();
+        }
+        function AssignedLocalNotMemoized(p) {
+          let m;
+          const r = (m = p.f()) ? 1 : 0;
+          return <div data-m={m} data-r={r} />;
+        }
+        function Plain({ name }) {
+          return <div>Hello {name}</div>;
+        }
+
+        function render(fn, props) {
+          const before = calls();
+          const result = fn(props);
+          return [result.props ?? result, calls() - before];
+        }
+        console.log(JSON.stringify({
+          CallInTest: render(CallInTest, { f: () => "x" }),
+          ArrayInTest: render(ArrayInTest, { a: 1 }),
+          ObjectInTest: render(ObjectInTest, { a: 1, b: 2, c: 3 }),
+          useInHook: render(useInHook, { f: () => "y" }),
+          ConditionalInTryInIife: render(ConditionalInTryInIife),
+          AssignedLocalNotMemoized: render(AssignedLocalNotMemoized, { f: () => "z" }),
+          Plain: render(Plain, { name: "bun" }),
+        }));
+      `,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+      "/node_modules/react/index.js": `exports.createElement = () => null;`,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => ({ type, props });`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => ({ type, props });`,
+      "/node_modules/react/compiler-runtime.js": `
+        let count = 0;
+        exports.c = size => {
+          count++;
+          return new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+        };
+        exports.calls = () => count;
+      `,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: {
+      stdout: JSON.stringify({
+        CallInTest: [{ "data-v": ["x", 1] }, 0],
+        ArrayInTest: [{ "data-v": [[1]], "data-r": 1 }, 0],
+        ObjectInTest: [{ "data-v": { m: { a: 1 }, r: 2 } }, 0],
+        useInHook: [["y", 2], 0],
+        ConditionalInTryInIife: [{ ok: true }, 0],
+        AssignedLocalNotMemoized: [{ "data-m": "z", "data-r": 1 }, 1],
+        Plain: [{ children: ["Hello ", "bun"] }, 1],
+      }),
+    },
+  });
+
   // A 0-arg call to an unknown import is non-reactive in InferReactivePlaces
   // (no operand is reactive, callee isn't a hook), so its scope's deps prune
   // to empty and it becomes a sentinel-only block. Babel does the same; this
@@ -1127,6 +1442,1295 @@ describe("bundler", () => {
       expect(out).toMatch(/__MEMO_CACHE_SENTINEL\)\s*\{[^}]*globalFn\(\)/);
     },
   });
+
+  // A closure reads a `let` that is declared below it (or by its own statement)
+  // and reassigned later. Babel declares such a local with `DeclareContext
+  // HoistedLet` in front of the closure, also when the local is already a
+  // context variable because it is captured and reassigned.
+  //
+  // The fake `c` records the size of every memo cache, so the second element of
+  // each pair is the `_c(n)` of that function. The sizes are the ones
+  // babel-plugin-react-compiler 1.0.0 emits. A function that the compiler
+  // skips has `[]` there.
+  itBundled("react-compiler/ClosureAboveReassignedLet", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { sizes } from "react/compiler-runtime";
+
+        const Row = "row";
+        const wrap = fn => fn;
+
+        function DeclarationReadsLetBelow(p) {
+          function label() {
+            return \`\${n} items\`;
+          }
+          let n = 0;
+          for (const it of p.items) {
+            n += it.qty;
+          }
+          return <b>{label()}</b>;
+        }
+        function ArrowReadsLetBelow(p) {
+          const renderRow = () => <Row items={items} />;
+          let items = p.items;
+          if (p.onlyActive) {
+            items = items.filter(i => i.active);
+          }
+          return <ul>{renderRow()}</ul>;
+        }
+        function ArrowReadsItself(p) {
+          let render = () => <Row again={render} x={p.x} />;
+          render = wrap(render);
+          return <div>{render()}</div>;
+        }
+        function TernaryOnLetBelow(p) {
+          const pick = () => (flag ? p.a : p.b);
+          let flag = p.flag;
+          flag = !flag;
+          return <i>{pick()}</i>;
+        }
+
+        function render(fn, props) {
+          const before = sizes().length;
+          const result = fn(props);
+          return [result.props.children, sizes().slice(before)];
+        }
+        console.log(JSON.stringify({
+          DeclarationReadsLetBelow: render(DeclarationReadsLetBelow, { items: [{ qty: 2 }, { qty: 3 }] }),
+          ArrowReadsLetBelow: render(ArrowReadsLetBelow, {
+            items: [{ id: 1, active: true }, { id: 2, active: false }],
+            onlyActive: true,
+          }),
+          ArrowReadsItself: render(ArrowReadsItself, { x: 7 }),
+          TernaryOnLetBelow: render(TernaryOnLetBelow, { flag: true, a: "a", b: "b" }),
+        }, (key, value) => (typeof value === "function" ? "function" : value)));
+      `,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+      "/node_modules/react/index.js": `exports.createElement = () => null;`,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => ({ type, props });`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => ({ type, props });`,
+      "/node_modules/react/compiler-runtime.js": `
+        const sizes = [];
+        exports.c = size => {
+          sizes.push(size);
+          return new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+        };
+        exports.sizes = () => sizes;
+      `,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: {
+      stdout: JSON.stringify({
+        DeclarationReadsLetBelow: ["5 items", [4]],
+        ArrowReadsLetBelow: [{ type: "row", props: { items: [{ id: 1, active: true }] } }, [3]],
+        ArrowReadsItself: [{ type: "row", props: { again: "function", x: 7 } }, [4]],
+        TernaryOnLetBelow: ["b", [6]],
+      }),
+    },
+  });
+
+  // A temporary that has to survive as a variable is "promoted": the compiler
+  // names it `#t<n>` (or `#T<n>` for a JSX tag, which has to be capitalised to
+  // read as a component) after its declaration id, and the printer drops the
+  // `#`. Several passes promote: the early return value of a reactive scope,
+  // the result of an inlined IIFE with more than one return, and every
+  // temporary read across scopes, all through `Environment::promote_temporary`
+  // (src/react_compiler/hir/environment.rs). The early return, the IIFE and
+  // the namespace-loaded tag below each take a different one of those paths.
+  itBundled("react-compiler/PromotedTemporariesAreNamedAfterTheirDeclaration", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import * as Lib from "ext";
+        import { makeArray } from "ext";
+
+        export function Component({ cond, a, num }) {
+          let x = [];
+          if (cond) {
+            x.push(a);
+            return x;
+          }
+          const arr = (() => {
+            if (num > 1) {
+              return [];
+            }
+            return makeArray(num);
+          })();
+          return <Lib.Stringify value={arr.push(num)} />;
+        }
+      `,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    external: ["react", "react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime", "ext"],
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toMatchSnapshot();
+      // The props object is the component's first temporary.
+      expect(out).toMatch(/function Component\(t0\)/);
+      // The early return of the first scope is stored in a promoted temporary
+      // and compared against the sentinel after the scope.
+      expect(out).toMatch(/\bt1 = __EARLY_RETURN_SENTINEL;\s*bb0: \{/);
+      expect(out).toMatch(/\bt1 = x;\s*break bb0;/);
+      expect(out).toMatch(/if \(t1 !== __EARLY_RETURN_SENTINEL\)\s*return t1;/);
+      // The IIFE is inlined into a labeled block. Its two returns assign the
+      // promoted temporary that then feeds the `arr` local.
+      expect(out).not.toContain("=> {");
+      expect(out).toMatch(
+        /\blet t3;\s*bb1: \{\s*if \(num > 1\) \{\s*t3 = \[\];\s*break bb1;\s*\}\s*t3 = makeArray\(num\);\s*\}\s*let arr = t3;/,
+      );
+      // The tag is loaded in one scope and used in another, so it is promoted
+      // with the JSX tag spelling.
+      expect(out).toMatch(/\blet T0, t2;/);
+      expect(out).toContain("T0 = Lib.Stringify;");
+      expect(out).toMatch(/\bjsx(?:DEV)?\(T0, \{/);
+      // Every promoted name that is read has a `let` (t0 is the parameter).
+      const declared = new Set([...out.matchAll(/\blet ([tT]\d+(?:, [tT]\d+)*);/g)].flatMap(m => m[1].split(", ")));
+      expect([...declared].sort()).toEqual(["T0", "t1", "t2", "t3"]);
+      const used = new Set([...out.matchAll(/\b([tT]\d+)\b/g)].map(m => m[1]));
+      expect([...used].sort()).toEqual(["T0", "t0", "t1", "t2", "t3"]);
+    },
+  });
+
+  // Dead code elimination keeps some stores to a local that nothing reads: the
+  // last instruction of a catch handler or of a `for..of` head, and a store
+  // whose own value is used (`f(v = 2)`). It pruned `let v` all the same. The
+  // first store left then became the declaration, in a scope that did not
+  // enclose the other stores: `ReferenceError: v is not defined`.
+  const stubReactWithEffect = { ...stubReact, "/node_modules/react/index.js": `exports.useEffect = () => {};` };
+  const deadStoreForms = {
+    "/entry.js": /* js */ `
+      import * as forms from "./forms";
+      const props = { bad: "{bad", items: [1, 2], call() {} };
+      const lines = [];
+      for (const [name, form] of Object.entries(forms)) {
+        try {
+          lines.push(name + "=" + JSON.stringify(form(props).p));
+        } catch (e) {
+          lines.push(name + " threw " + e);
+        }
+      }
+      console.log(lines.join("\\n"));
+    `,
+    "/forms.jsx": /* jsx */ `
+      import { useEffect } from "react";
+
+      export function NestedTry(p) {
+        useEffect(() => {});
+        let v;
+        try {
+          try {
+            JSON.parse(p.bad);
+          } catch {
+            v = 1;
+          }
+          JSON.parse(p.bad);
+        } catch {
+          v = 2;
+        }
+        return <div />;
+      }
+      export function SequentialTry(p) {
+        useEffect(() => {});
+        let v;
+        try {
+          JSON.parse(p.bad);
+        } catch {
+          v = 1;
+        }
+        try {
+          JSON.parse(p.bad);
+        } catch {
+          v = 2;
+        }
+        return <div />;
+      }
+      export function DestructureInHandler(p) {
+        useEffect(() => {});
+        let v;
+        try {
+          JSON.parse(p.bad);
+        } catch {
+          [v] = p.items;
+        }
+        try {
+          JSON.parse(p.bad);
+        } catch {
+          [v] = p.items;
+        }
+        return <div />;
+      }
+      export function HandlerThenArgument(p) {
+        useEffect(() => {});
+        let v;
+        try {
+          JSON.parse(p.bad);
+        } catch {
+          v = 1;
+        }
+        p.call((v = 2));
+        return <div />;
+      }
+      export function HandlerThenLogical(p) {
+        useEffect(() => {});
+        let v;
+        if (p.items) {
+          try {
+            JSON.parse(p.bad);
+          } catch {
+            v = 1;
+          }
+        }
+        p.items && (v = 2);
+        return <div />;
+      }
+      // The one read of \`v\` folds to "final".
+      export function EveryReadFolded(p) {
+        useEffect(() => {});
+        let v = "init";
+        try {
+          try {
+            JSON.parse(p.bad);
+          } catch {
+            v = "a";
+          }
+          JSON.parse(p.bad);
+        } catch {
+          v = "b";
+        }
+        v = "final";
+        return <div>{v}</div>;
+      }
+      // With \`let v\` kept, the compiler leaves these two alone: it does not
+      // take a \`for..of\` or \`for..in\` that assigns an outer local.
+      export function ForOfThenArgument(p) {
+        let v;
+        for (v of p.items) p.call();
+        p.call((v = 2));
+        return <div />;
+      }
+      export function ForInThenHandler(p) {
+        let v;
+        for (v in p.items) p.call();
+        try {
+          JSON.parse(p.bad);
+        } catch {
+          v = 2;
+        }
+        return <div />;
+      }
+    `,
+    ...stubReactWithEffect,
+  };
+  for (const target of ["browser", "bun"] as const) {
+    itBundled(`react-compiler/DeadStoreKeepsItsDeclaration-${target}`, {
+      files: deadStoreForms,
+      reactCompiler: true,
+      backend: "cli",
+      target,
+      run: {
+        stdout: `
+          DestructureInHandler={}
+          EveryReadFolded={"children":"final"}
+          ForInThenHandler={}
+          ForOfThenArgument={}
+          HandlerThenArgument={}
+          HandlerThenLogical={}
+          NestedTry={}
+          SequentialTry={}
+        `,
+      },
+      onAfterBundle(api) {
+        // Every form that calls useEffect compiled: the compiler outlines the
+        // empty effect callback (client) or drops the effect (ssr), so no
+        // call takes `() => {}` any more.
+        expect(api.readFile("/out.js")).not.toMatch(/\(\(\) => \{\s*\}\)/);
+      },
+    });
+  }
+
+  // Same cause. In client mode the store left in the `for` update was then a
+  // reassignment, inside a memo scope, of a local with no declaration:
+  // `panic: Expected identifier to be initialized`.
+  itBundled("react-compiler/DeadStoreInForUpdateKeepsItsDeclaration", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { useEffect } from "react";
+
+        function App(p) {
+          useEffect(() => {});
+          let v;
+          for (let i = 0; i < 2; v = i++) p.call(i);
+          for (let j = 0; j < 2; v = j++) p.call(j);
+          return <div />;
+        }
+        const calls = [];
+        App({ call: i => calls.push(i) });
+        console.log(calls.join());
+      `,
+      ...stubReactWithEffect,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    target: "browser",
+    run: { stdout: "0,1,0,1" },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).not.toMatch(/\(\(\) => \{\s*\}\)/);
+    },
+  });
+
+  // With `let x` kept, it can sit inside the memo block of another scope: here
+  // between `const r = {}` and the last mutation of `r`. Only a read of `x`
+  // from a later scope hoisted the `let` out of that block. A store alone left
+  // it inside, and the store then printed outside the block:
+  // `ReferenceError: x is not defined`.
+  //
+  // With a reactive value (`x = p.n`) the store is a dependency of the memo
+  // block that reads it, under a promoted name. Codegen inlined the store into
+  // that block all the same: `if ($[2] !== t0)` with no `t0` declared.
+  itBundled("react-compiler/DeadStoreAfterTheScopeOfItsDeclaration", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as forms from "./forms";
+        const calls = [];
+        const props = { bad: "{bad", n: 7, call: v => calls.push(v) };
+        const lines = [];
+        for (const [name, form] of Object.entries(forms)) {
+          try {
+            calls.length = 0;
+            const out = JSON.stringify(form(props).p);
+            lines.push(name + "=" + out + (calls.length ? " calls=" + JSON.stringify(calls) : ""));
+          } catch (e) {
+            lines.push(name + " threw " + e);
+          }
+        }
+        console.log(lines.join("\\n"));
+      `,
+      "/forms.jsx": /* jsx */ `
+        const Stub = () => null;
+
+        export function Prop(p) {
+          const r = {};
+          let x;
+          r.a = 1;
+          return <Stub r={r} v={(x = 5)} />;
+        }
+        // The one read of \`x\` folds to 5.
+        export function FoldedRead(p) {
+          const r = {};
+          let x = 0;
+          r.a = 1;
+          return <Stub r={r} v={[(x = 5), x]} />;
+        }
+        export function Argument(p) {
+          const r = {};
+          let x;
+          r.a = 1;
+          p.call((x = 5));
+          return <Stub r={r} />;
+        }
+        export function Handler(p) {
+          const r = {};
+          let x;
+          r.a = 1;
+          try {
+            JSON.parse(p.bad);
+          } catch {
+            x = 1;
+          }
+          return <Stub r={r} />;
+        }
+        // \`q\` holds \`r\`, so the declaration sits in two nested scopes.
+        export function Nested(p) {
+          const r = {};
+          const q = {};
+          let x;
+          q.b = r;
+          r.a = 1;
+          return <Stub r={r} q={q} v={(x = 5)} />;
+        }
+        export function PropFromProps(p) {
+          const r = {};
+          let x;
+          r.a = 1;
+          return <Stub r={r} v={(x = p.n)} />;
+        }
+        export function ArrayFromProps(p) {
+          const r = {};
+          let x;
+          r.a = 1;
+          return <Stub r={r} v={[(x = p.n)]} />;
+        }
+        export function NestedFromProps(p) {
+          const r = {};
+          const q = {};
+          let x;
+          q.b = r;
+          r.a = 1;
+          return <Stub r={r} q={q} v={(x = p.n)} />;
+        }
+        // The declaration is above the scope of \`r\`. Only the promoted store
+        // was wrong here.
+        export function DeclaredAbove(p) {
+          let x = 0;
+          const r = {};
+          r.a = 1;
+          return <Stub r={r} v={[(x = p.n), x++]} />;
+        }
+      `,
+      ...stubReact,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    target: "browser",
+    run: {
+      stdout: `
+        Argument={"r":{"a":1}} calls=[5]
+        ArrayFromProps={"r":{"a":1},"v":[7]}
+        DeclaredAbove={"r":{"a":1},"v":[7,7]}
+        FoldedRead={"r":{"a":1},"v":[5,5]}
+        Handler={"r":{"a":1}}
+        Nested={"r":{"a":1},"q":{"b":{"a":1}},"v":5}
+        NestedFromProps={"r":{"a":1},"q":{"b":{"a":1}},"v":7}
+        Prop={"r":{"a":1},"v":5}
+        PropFromProps={"r":{"a":1},"v":7}
+      `,
+    },
+    onAfterBundle(api) {
+      // Every form compiled. Each `let x` declared inside the scope of `r`
+      // sits before its memo block, and each promoted store is a statement.
+      const out = api.readFile("/out.js");
+      expect(out.match(/let (q, )?r, x;/g)).toHaveLength(8);
+      expect(out).not.toMatch(/let x;\s*r\.a = 1;/);
+      expect(out.match(/const t\d = x = p\.n;/g)).toHaveLength(4);
+    },
+  });
+
+  // Outside the compiler, the bundler binds a local that holds a `require()` /
+  // `import()` export to the export itself: `const { a } = require("./m")`
+  // declares nothing, and `ns.a` off `const ns = require("./m")` is an import
+  // that prints `ns.a` when it can't be bound. A compiled function gets new
+  // symbols for its locals, and the compiler drops a `const ns` it sees no
+  // read of. So in there the reads have to stay reads of the namespace object.
+  for (const target of ["bun", "browser"] as const) {
+    for (const minifyIdentifiers of [false, true]) {
+      itBundled(`react-compiler/RequireAndImportLocals-${target}-identifiers=${minifyIdentifiers}`, {
+        files: {
+          "/entry.ts": /* ts */ `
+            import { setFlag } from "./state";
+            import * as forms from "./forms";
+            setFlag(true);
+            const lines: string[] = [];
+            for (const [name, form] of Object.entries(forms)) {
+              try {
+                lines.push(name + "=" + (await form({})));
+              } catch (e) {
+                lines.push(name + " threw " + e);
+              }
+            }
+            console.log(lines.join("\\n"));
+          `,
+          "/forms.tsx": /* tsx */ `
+            import { useEffect, memo } from "react";
+            import { keep } from "./keep";
+
+            export function RequireDestructure() {
+              useEffect(() => {});
+              const { isFlag } = require("./state") as typeof import("./state");
+              return String(isFlag());
+            }
+            export function RequireDestructureRenamed() {
+              useEffect(() => {});
+              let { isFlag: read } = require("./state");
+              return String(read());
+            }
+            export function useRequireDestructure() {
+              useEffect(() => {});
+              const { isFlag } = require("./state");
+              return String(isFlag());
+            }
+            export const MemoRequireDestructure = memo(() => {
+              useEffect(() => {});
+              const { isFlag } = require("./state");
+              return String(isFlag());
+            });
+            export function AwaitDestructure() {
+              useEffect(() => {});
+              const load = async () => {
+                const { isFlag } = await import("./state");
+                return String(isFlag());
+              };
+              return load();
+            }
+            export function ThenDestructure() {
+              useEffect(() => {});
+              return import("./state").then(({ isFlag }) => String(isFlag()));
+            }
+            export function NamespaceDestructure() {
+              useEffect(() => {});
+              const ns = require("./state");
+              const { isFlag } = ns;
+              return String(isFlag());
+            }
+            export function NamespaceEscapes() {
+              useEffect(() => {});
+              const ns = require("./state");
+              keep(ns);
+              return String(ns.isFlag());
+            }
+            export function NamespaceOfLazyModule() {
+              useEffect(() => {});
+              const lazy = require("./lazy");
+              return lazy.doubled();
+            }
+            export function NamespaceOfCommonJS() {
+              useEffect(() => {});
+              const cjs = require("./cjs.cjs");
+              return cjs.hello() + cjs.suffix;
+            }
+            export function NamespaceOfBuiltin() {
+              useEffect(() => {});
+              const path = require("node:path");
+              return path.posix.join("a", "b");
+            }
+            export function AwaitNamespaceOfBuiltin() {
+              useEffect(() => {});
+              const load = async () => {
+                const path = await import("node:path");
+                return path.posix.join("a", "b");
+              };
+              return load();
+            }
+            export function ThenNamespaceOfCommonJS() {
+              useEffect(() => {});
+              return import("./cjs.cjs").then(cjs => cjs.hello());
+            }
+            export function ThenNamespaceTwice() {
+              useEffect(() => {});
+              return import("./cjs.cjs")
+                .then(cjs => import("./lazy").then(lazy => cjs.hello() + lazy.doubled()))
+                .then(text => import("./cjs.cjs").then(cjs => text + cjs.suffix));
+            }
+            export function plainFunction() {
+              const { onlyPlain } = require("./only-plain");
+              return onlyPlain();
+            }
+
+            // Declared outside the compiled function: the compiler keeps
+            // these symbols, so the reads stay bound to the exports.
+            const moduleNs = require("./module-ns");
+            const { isFlag: moduleIsFlag } = require("./state");
+            export function ModuleNamespace() {
+              useEffect(() => {});
+              return moduleNs.value();
+            }
+            export function ModuleDestructure() {
+              useEffect(() => {});
+              return String(moduleIsFlag());
+            }
+            export function NestedDeclaration() {
+              useEffect(() => {});
+              function inner() {
+                const { isFlag } = require("./state");
+                return isFlag();
+              }
+              return String(inner());
+            }
+            // A component name, but no hook call and no JSX: not compiled.
+            export function ComponentNameNotCompiled() {
+              const { isFlag } = require("./state");
+              return String(isFlag());
+            }
+            export function OptOut() {
+              "use no memo";
+              useEffect(keep);
+              const { onlyOptOut } = require("./only-opt-out");
+              return onlyOptOut();
+            }
+            export function optIn() {
+              "use memo";
+              const { isFlag } = require("./state");
+              return String(isFlag());
+            }
+          `,
+          "/state.ts": /* ts */ `
+            let flag = false;
+            export function setFlag(value: boolean) {
+              flag = value;
+            }
+            export function isFlag() {
+              return flag;
+            }
+          `,
+          "/lazy.ts": /* ts */ `
+            const table = [1, 2, 3].map(n => n * 2);
+            export function doubled() {
+              return table.join(",");
+            }
+          `,
+          "/only-plain.ts": /* ts */ `
+            export function onlyPlain() {
+              return "plain";
+            }
+            export const notRead = "PLAIN_NOT_READ_SENTINEL";
+          `,
+          "/only-opt-out.ts": /* ts */ `
+            export function onlyOptOut() {
+              return "opt-out";
+            }
+            export const notRead = "OPT_OUT_NOT_READ_SENTINEL";
+          `,
+          "/module-ns.ts": /* ts */ `
+            export function value() {
+              return "module-ns";
+            }
+            export const notRead = "MODULE_NS_NOT_READ_SENTINEL";
+          `,
+          "/cjs.cjs": /* js */ `
+            exports.hello = function () {
+              return "hello";
+            };
+            exports.suffix = "!";
+          `,
+          "/keep.ts": /* ts */ `
+            export function keep(value: unknown) {
+              (globalThis as any).kept = value;
+            }
+          `,
+          "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+          "/node_modules/react/index.js": /* js */ `
+            export function useEffect() {}
+            export function memo(component) {
+              return component;
+            }
+          `,
+          "/node_modules/react/compiler-runtime.js": /* js */ `
+            export function c(size) {
+              return new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+            }
+          `,
+        },
+        reactCompiler: true,
+        backend: "cli",
+        target,
+        minifyIdentifiers,
+        run: {
+          stdout: `
+            AwaitDestructure=true
+            AwaitNamespaceOfBuiltin=a/b
+            ComponentNameNotCompiled=true
+            MemoRequireDestructure=true
+            ModuleDestructure=true
+            ModuleNamespace=module-ns
+            NamespaceDestructure=true
+            NamespaceEscapes=true
+            NamespaceOfBuiltin=a/b
+            NamespaceOfCommonJS=hello!
+            NamespaceOfLazyModule=2,4,6
+            NestedDeclaration=true
+            OptOut=opt-out
+            RequireDestructure=true
+            RequireDestructureRenamed=true
+            ThenDestructure=true
+            ThenNamespaceOfCommonJS=hello
+            ThenNamespaceTwice=hello2,4,6!
+            optIn=true
+            plainFunction=plain
+            useRequireDestructure=true
+          `,
+        },
+        onAfterBundle(api) {
+          const out = api.readFile("/out.js");
+          // Every component and hook above compiled: the compiler outlines the
+          // empty effect callback (client) or drops the effect (ssr), so no
+          // call takes `() => {}` any more. The callee name can be minified.
+          expect(out).not.toMatch(/\(\(\) => \{\s*\}\)/);
+          // A function the compiler leaves alone still reads the export
+          // without a namespace object, so tree shaking drops the other one.
+          expect(out).not.toContain("PLAIN_NOT_READ_SENTINEL");
+          // So does one that opts out of the compiler.
+          expect(out).not.toContain("OPT_OUT_NOT_READ_SENTINEL");
+          // And a read, in a compiled function, of a local declared outside it.
+          expect(out).not.toContain("MODULE_NS_NOT_READ_SENTINEL");
+        },
+      });
+    }
+  }
+
+  // The bundler prints an import under the name of the export it links to:
+  // `defaultTheme` below prints as `theme`. A compiled function gets new
+  // symbols for its parameters, its locals and its temporaries (`t0`, `$`).
+  // The renamer has to number them like the symbols of any other function, or
+  // a local with the name of that export shadows it:
+  // `let theme = custom ?? theme`.
+  for (const target of ["bun", "browser"] as const) {
+    for (const minifyIdentifiers of [false, true]) {
+      itBundled(`react-compiler/LocalNamedLikeAnExportItReads-${target}-identifiers=${minifyIdentifiers}`, {
+        files: {
+          "/entry.ts": /* ts */ `
+            import * as forms from "./forms";
+            const lines: string[] = [];
+            const check = (flag?: boolean) => {
+              if (flag) throw "thrown";
+            };
+            for (const [name, form] of Object.entries(forms)) {
+              try {
+                lines.push(name + "=" + form({ custom: "mine", flag: true, list: [{ x: 1 }, { x: 2 }], check }));
+                lines.push(name + "=" + form({ list: [{ x: 3 }], check }));
+              } catch (e) {
+                lines.push(name + " threw " + e);
+              }
+            }
+            console.log(lines.join("\\n"));
+          `,
+          "/forms.tsx": /* tsx */ `
+            import { useEffect, useState, memo, forwardRef } from "react";
+            import * as values from "./values";
+            import {
+              Wrapped as BaseWrapped,
+              theme as defaultTheme,
+              custom as defaultCustom,
+              item as defaultItem,
+              s as format,
+              e as suffix,
+              t0 as first,
+              t1 as second,
+              $ as dollar,
+            } from "./values";
+
+            export function Local({ custom }) {
+              useEffect(() => {});
+              const theme = custom ?? defaultTheme;
+              return theme;
+            }
+            export function useLocal({ custom }) {
+              useEffect(() => {});
+              let theme = defaultTheme;
+              if (custom) theme = custom + "/" + defaultTheme;
+              return theme;
+            }
+            export const MemoLocal = memo(({ custom }) => {
+              useEffect(() => {});
+              const theme = custom ?? defaultTheme;
+              return theme;
+            });
+            export function Parameter({ custom }) {
+              useEffect(() => {});
+              return (custom ?? "none") + " " + defaultCustom;
+            }
+            export function NamespaceMember({ flag }) {
+              useEffect(() => {});
+              const theme = flag ? values.theme : "none";
+              return theme;
+            }
+            // The compiler hoists a callback that captures nothing to module
+            // level. Its parameter is a new symbol too.
+            export function OutlinedParameter({ list }) {
+              useEffect(() => {});
+              return list.map(item => item.x + defaultItem.y).join(",") + ";" + list.map(s => format(s.x)).join(",");
+            }
+            export function NestedParameter({ list, custom }) {
+              useEffect(() => {});
+              return list.map(item => item.x + defaultItem.y + (custom ?? "")).join(",");
+            }
+            export function CatchBinding({ flag, check }) {
+              useEffect(() => {});
+              try {
+                check(flag);
+              } catch (e) {
+                return e + suffix;
+              }
+              return "none" + suffix;
+            }
+            // The props object is \`t0\`, the memo cache is \`$\`, and the value
+            // of a memo block is \`t1\`.
+            export function Temporaries({ custom }) {
+              const [count] = useState(1);
+              const all = [String(custom), count, first, second, dollar];
+              return all.join(" ");
+            }
+            // A function expression declares its own name in its own scope.
+            // The compiled function keeps that name, so it is still numbered.
+            export const OwnNameForwardRef = forwardRef(function Wrapped({ custom }, ref) {
+              useEffect(() => {});
+              return "<" + BaseWrapped({ custom, by: "forwardRef" }) + ">";
+            });
+            export const OwnNameMemo = memo(function Wrapped({ custom }) {
+              useEffect(() => {});
+              return "<" + BaseWrapped({ custom, by: "memo" }) + ">";
+            });
+            export const OwnNamePlain = function Wrapped({ custom }) {
+              useEffect(() => {});
+              return "<" + BaseWrapped({ custom, by: "plain" }) + ">";
+            };
+          `,
+          "/values.ts": /* ts */ `
+            export const theme = "dark";
+            export const custom = "CUSTOM";
+            export const item = { y: 10 };
+            export function s(value: number) {
+              return "<" + value + ">";
+            }
+            export const e = "!";
+            export const t0 = "T0";
+            export const t1 = "T1";
+            export const $ = "DOLLAR";
+            export function Wrapped({ custom, by }: { custom?: string; by: string }) {
+              return by + ":" + custom;
+            }
+          `,
+          "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+          "/node_modules/react/index.js": /* js */ `
+            export function useEffect() {}
+            export function useState(value) {
+              return [value, () => {}];
+            }
+            export function memo(component) {
+              return component;
+            }
+            export function forwardRef(component) {
+              return component;
+            }
+          `,
+          "/node_modules/react/compiler-runtime.js": /* js */ `
+            export function c(size) {
+              return new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+            }
+          `,
+        },
+        reactCompiler: true,
+        backend: "cli",
+        target,
+        minifyIdentifiers,
+        run: {
+          stdout: `
+            CatchBinding=thrown!
+            CatchBinding=none!
+            Local=mine
+            Local=dark
+            MemoLocal=mine
+            MemoLocal=dark
+            NamespaceMember=dark
+            NamespaceMember=none
+            NestedParameter=11mine,12mine
+            NestedParameter=13
+            OutlinedParameter=11,12;<1>,<2>
+            OutlinedParameter=13;<3>
+            OwnNameForwardRef=<forwardRef:mine>
+            OwnNameForwardRef=<forwardRef:undefined>
+            OwnNameMemo=<memo:mine>
+            OwnNameMemo=<memo:undefined>
+            OwnNamePlain=<plain:mine>
+            OwnNamePlain=<plain:undefined>
+            Parameter=mine CUSTOM
+            Parameter=none CUSTOM
+            Temporaries=mine 1 T0 T1 DOLLAR
+            Temporaries=undefined 1 T0 T1 DOLLAR
+            useLocal=mine/dark
+            useLocal=dark
+          `,
+        },
+        onAfterBundle(api) {
+          if (minifyIdentifiers) return;
+          const out = api.readFile("/out.js");
+          // Every function above compiled: the compiler outlines the empty
+          // effect callback (client) or drops the effect (ssr).
+          expect(out).not.toMatch(/\(\(\) => \{\s*\}\)/);
+          // A local that shares its name with nothing the function reads
+          // keeps it.
+          expect(out).toMatch(/function Local\(t0\) \{\s*let \{ custom \} = t0;/);
+        },
+      });
+    }
+  }
+
+  // The compiler lowers the call the visit pass made of each JSX element into
+  // HIR and builds a new call from that. Both steps have to use the call shape
+  // of the file's JSX runtime. The classic runtime, and `key` after a spread in
+  // the automatic one, calls `factory(type, props, ...children)`: the third
+  // argument is a child and not a key, `key` stays in `props`, and no
+  // `jsx`/`jsxDEV` is imported.
+  const jsxCallShapeEntry = (prelude: string, jsx: string) => /* jsx */ `
+    ${prelude}
+    export function App({ a, k, rest }) {
+      const o = { a };
+      return (${jsx});
+    }
+    console.log(JSON.stringify(App({ a: "A", k: "K", rest: { id: "r" } })));
+  `;
+  const jsxCallShapeRuntime = {
+    "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    "/node_modules/react/index.js": /* js */ `
+      exports.Fragment = "React.Fragment";
+      exports.createElement = (type, props, ...children) => ({ createElement: type, props, children });
+    `,
+    "/node_modules/react/jsx-dev-runtime.js": /* js */ `
+      exports.Fragment = "Fragment";
+      exports.jsxDEV = (type, props, key) => ({ jsxDEV: type, props, key });
+    `,
+    "/node_modules/react/compiler-runtime.js": /* js */ `
+      exports.c = function useMemoCache(size) {
+        return new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+      };
+    `,
+  };
+  // `App` was compiled when its memo cache is in the bundle.
+  const expectCompiled = (api: { readFile(file: string): string }) =>
+    expect(api.readFile("/out.js")).toContain("useMemoCache");
+
+  const classicRuntimes: Record<string, { prelude: string; tsconfig?: string; jsx?: BundlerTestInput["jsx"] }> = {
+    Pragma: { prelude: `/** @jsxRuntime classic */ import React from "react";` },
+    Tsconfig: { prelude: `import React from "react";`, tsconfig: `{ "compilerOptions": { "jsx": "react" } }` },
+    Flags: {
+      prelude: `import { createElement as h, Fragment as Frag } from "react";`,
+      jsx: { runtime: "classic", factory: "h", fragment: "Frag" },
+    },
+  };
+  for (const [name, { prelude, tsconfig, jsx }] of Object.entries(classicRuntimes)) {
+    itBundled(`react-compiler/ClassicRuntime-${name}`, {
+      files: {
+        "/entry.jsx": jsxCallShapeEntry(
+          prelude,
+          /* jsx */ `
+            <>
+              <div title={o.a}>hi</div>
+              <p key={k} {...rest}>{a}<b>x</b></p>
+              <ul id="u"><li>1</li><li>2</li><li>3</li><li>4</li></ul>
+              <span />
+            </>
+          `,
+        ),
+        ...(tsconfig && { "/tsconfig.json": tsconfig }),
+        ...jsxCallShapeRuntime,
+      },
+      jsx,
+      reactCompiler: true,
+      target: "browser",
+      backend: "cli",
+      onAfterBundle: expectCompiled,
+      run: {
+        validate({ stdout }) {
+          expect(JSON.parse(stdout)).toEqual({
+            createElement: "React.Fragment",
+            props: null,
+            children: [
+              { createElement: "div", props: { title: "A" }, children: ["hi"] },
+              {
+                createElement: "p",
+                props: { key: "K", id: "r" },
+                children: ["A", { createElement: "b", props: null, children: ["x"] }],
+              },
+              {
+                createElement: "ul",
+                props: { id: "u" },
+                children: ["1", "2", "3", "4"].map(n => ({ createElement: "li", props: null, children: [n] })),
+              },
+              { createElement: "span", props: null, children: [] },
+            ],
+          });
+        },
+      },
+    });
+  }
+
+  itBundled("react-compiler/AutomaticRuntimeKeyAfterSpread", {
+    files: {
+      "/entry.jsx": jsxCallShapeEntry(
+        "",
+        /* jsx */ `
+          <div>
+            <p {...rest} key={k}>{a}</p>
+            <i key={k} {...rest}>{o.a}</i>
+          </div>
+        `,
+      ),
+      ...jsxCallShapeRuntime,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    bundleWarnings: {
+      "/entry.jsx": ['"key" prop after a {...spread} is deprecated in JSX. Falling back to classic runtime.'],
+    },
+    onAfterBundle: expectCompiled,
+    run: {
+      validate({ stdout }) {
+        expect(JSON.parse(stdout)).toEqual({
+          jsxDEV: "div",
+          props: {
+            children: [
+              { createElement: "p", props: { id: "r", key: "K" }, children: ["A"] },
+              { jsxDEV: "i", props: { id: "r", children: "A" }, key: "K" },
+            ],
+          },
+        });
+      },
+    },
+  });
+
+  // The classic factory is not an operand the compiler sees: it is resolved
+  // again when the call is rebuilt. A factory that is a local of the component
+  // would look unused and be dropped, so such a component stays uncompiled.
+  itBundled("react-compiler/ClassicRuntimeLocalFactoryIsNotCompiled", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        /** @jsxRuntime classic */
+        /** @jsx h */
+        export function App({ h, a }) {
+          return <div title={a}>hi</div>;
+        }
+        const createElement = (type, props, ...children) => ({ h: type, props, children });
+        console.log(JSON.stringify(App({ h: createElement, a: "A" })));
+      `,
+      ...jsxCallShapeRuntime,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).not.toContain("useMemoCache");
+    },
+    run: { stdout: '{"h":"div","props":{"title":"A"},"children":["hi"]}' },
+  });
+
+  // `a.b = a = c` and `a[i] = i++` read `a` and `i` for the member target
+  // before the right-hand side runs. The compiler removes assignments and
+  // propagates constants by the order of its own instructions, so it has to
+  // lower the target's object and key first too.
+  for (const target of ["bun", "browser"] as const) {
+    itBundled(`react-compiler/MemberAssignmentReadsTargetBeforeRightHandSide-${target}`, {
+      files: {
+        "/entry.ts": /* ts */ `
+          import * as forms from "./forms";
+          const props = { items: [1, 2, 3], key: "next", flag: true };
+          const lines: string[] = [];
+          for (const [name, Form] of Object.entries(forms)) {
+            try {
+              lines.push(name + "=" + Form(props).props.children);
+            } catch (e) {
+              lines.push(name + " threw " + e);
+            }
+          }
+          console.log(lines.join("\\n"));
+        `,
+        "/forms.jsx": /* jsx */ `
+          function values(head, next = "next") {
+            const out = [];
+            for (let node = head; node; node = node[next]) out.push(node.v);
+            return out.join();
+          }
+
+          export function AppendInLoop(p) {
+            const head = { v: 0, next: null };
+            let tail = head;
+            for (const x of p.items) {
+              tail.next = tail = { v: x, next: null };
+            }
+            return <div>{values(head)}</div>;
+          }
+          export function AppendTwice(p) {
+            const head = { v: 0, next: null };
+            let tail = head;
+            tail.next = tail = { v: p.items[0], next: null };
+            tail.next = tail = { v: p.items[1], next: null };
+            return <div>{values(head)}</div>;
+          }
+          export function AppendInCallback(p) {
+            const list = items => {
+              const head = { v: 0, next: null };
+              let tail = head;
+              for (const x of items) {
+                tail.next = tail = { v: x, next: null };
+              }
+              return values(head);
+            };
+            return <div>{list(p.items)}</div>;
+          }
+          export function AppendWithComputedKey(p) {
+            const head = { v: 0, next: null };
+            let tail = head;
+            for (const x of p.items) {
+              tail[p.key] = tail = { v: x, next: null };
+            }
+            return <div>{values(head)}</div>;
+          }
+          export function AppendWithNumericKey(p) {
+            const head = { v: 0, 0: null };
+            let tail = head;
+            for (const x of p.items) {
+              tail[0] = tail = { v: x, 0: null };
+            }
+            return <div>{values(head, 0)}</div>;
+          }
+          export function ConstantOnTheRight(p) {
+            let v = {};
+            const first = v;
+            if (p.flag) {
+              v.z = v = 80;
+            }
+            return <div>{JSON.stringify([first, v])}</div>;
+          }
+          export function KeyIsReassignedOnTheRight(p) {
+            let key = "a";
+            const o = {};
+            if (p.flag) {
+              o[key] = key = "b";
+            }
+            return <div>{JSON.stringify([o, key])}</div>;
+          }
+          export function KeyIsIncrementedOnTheRight() {
+            const arr = [];
+            let i = 0;
+            arr[i] = i++;
+            arr[i] = i++;
+            return <div>{JSON.stringify([arr, i])}</div>;
+          }
+          // The right-hand side is the member assignment here, so it already ran first.
+          export function MemberAssignmentOnTheRight(p) {
+            const head = { v: 0, next: null };
+            let tail = head;
+            for (const x of p.items) {
+              tail = tail.next = { v: x, next: null };
+            }
+            return <div>{values(head)}</div>;
+          }
+        `,
+        "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+        "/node_modules/react/index.js": ``,
+        "/node_modules/react/jsx-runtime.js": /* js */ `
+          export const jsx = (type, props) => ({ type, props });
+          export const jsxs = jsx;
+        `,
+        "/node_modules/react/jsx-dev-runtime.js": /* js */ `
+          export const jsxDEV = (type, props) => ({ type, props });
+        `,
+        "/node_modules/react/compiler-runtime.js": /* js */ `
+          export function c(size) {
+            return new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+          }
+        `,
+      },
+      reactCompiler: true,
+      backend: "cli",
+      target,
+      run: {
+        stdout: `
+          AppendInCallback=0,1,2,3
+          AppendInLoop=0,1,2,3
+          AppendTwice=0,1,2
+          AppendWithComputedKey=0,1,2,3
+          AppendWithNumericKey=0,1,2,3
+          ConstantOnTheRight=[{"z":80},80]
+          KeyIsIncrementedOnTheRight=[[0,1],2]
+          KeyIsReassignedOnTheRight=[{"a":"b"},"b"]
+          MemberAssignmentOnTheRight=0,1,2,3
+        `,
+      },
+    });
+  }
+});
+
+// Three passes kept one copy of their work per basic block or per nesting
+// level of a value, so memory grew with the square of the size of a component
+// that has no loop at all. The fixpoint in InferMutationAliasingEffects kept
+// the incoming state of every block. Codegen cloned the instructions of a
+// sequence expression at each level of a `||` chain. The post-dominator graph
+// rebuilt a hash index for each block it took out of a map. A chain of 400
+// terms took 979 MB, and an array pattern of 300 elements with defaults 1 GB.
+test("react-compiler memory does not grow with the square of the size of a component", async () => {
+  // A debug build is 20 times slower, and its larger frames overflow the stack
+  // on a longer chain.
+  const small = isDebug || isASAN;
+  const terms = small ? 100 : 400;
+  const elements = small ? 120 : 300;
+  using dir = tempDir("react-compiler-memory", {
+    "empty.jsx": `export default function App() { return null; }`,
+    "chain.jsx": `
+      import { useState } from "react";
+      export default function App(p) {
+        const [s] = useState(0);
+        const v = ${Array.from({ length: terms }, (_, i) => `(p.a === ${i})`).join(" || ")} || "f";
+        return <div>{v}{s}</div>;
+      }
+    `,
+    "pattern.jsx": `
+      import { useState } from "react";
+      export default function App(p) {
+        const [s] = useState(0);
+        const [${Array.from({ length: elements }, (_, i) => `e${i} = ${i}`).join(", ")}] = p.items;
+        return <div>{e0 + e${elements - 1}}{s}</div>;
+      }
+    `,
+  });
+
+  const peakMB = async (entry: string) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", entry],
+      env: {
+        ...bunEnv,
+        // ASAN's quarantine keeps freed blocks resident, which hides the difference.
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0", "thread_local_quarantine_size_kb=0"]
+          .filter(Boolean)
+          .join(":"),
+      },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    // The component compiled, or there is no component.
+    expect(stdout.includes("react/compiler-runtime")).toBe(entry !== "empty.jsx");
+    expect(exitCode).toBe(0);
+    return proc.resourceUsage()!.maxRSS / 1024 / 1024;
+  };
+
+  const [empty, chain, pattern] = await Promise.all([peakMB("empty.jsx"), peakMB("chain.jsx"), peakMB("pattern.jsx")]);
+  // Above the empty build, without the fixes: 110 MB and 125 MB for the small
+  // inputs, 940 MB and 1050 MB for the large ones.
+  const bound = small ? 70 : 300;
+  expect(chain - empty).toBeLessThan(bound);
+  expect(pattern - empty).toBeLessThan(bound);
+});
+
+// ValidateExhaustiveDependencies gives each phi the dependencies of its
+// operands. TS keeps them in a `Set`. The port appended clones to a `Vec`, so a
+// phi held one copy of a dependency for each path that reaches it. Each `if`
+// below merges `v` twice, which doubled the list: 20 of them took 300 MB, 22
+// took 1 GB and 24 took 4 GB.
+test("react-compiler keeps one copy of each dependency of a phi", async () => {
+  // A debug build takes 7 seconds for 20 and 25 seconds for 22.
+  const statements = isDebug || isASAN ? 20 : 22;
+  using dir = tempDir("react-compiler-phi-dependencies", {
+    "empty.jsx": `export default function App() { return null; }`,
+    "ladder.jsx": `
+      export default function App(p) {
+        let v = "init";
+        ${Array.from({ length: statements }, (_, i) => `if (p.a${i}) { log(${i}); } else if (p.b${i}) { v = "s${i}"; }`).join("\n")}
+        return <div>{v}</div>;
+      }
+    `,
+  });
+
+  const build = async (entry: string) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", entry],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return { memoized: /\b_c\(\d+\)/.test(stdout), peakMB: proc.resourceUsage()!.maxRSS / 1024 / 1024 };
+  };
+
+  const [empty, ladder] = await Promise.all([build("empty.jsx"), build("ladder.jsx")]);
+  expect(ladder.memoized).toBe(true);
+  // Above the empty build: 300 MB to 1 GB without the fix, under 20 MB with it.
+  expect(ladder.peakMB - empty.peakMB).toBeLessThan(100);
 });
 
 // validate_locals_not_reassigned_after_render (src/react_compiler/validation)
@@ -1225,4 +2829,39 @@ test.skipIf(!isDebug && !isASAN)("react-compiler reports which kind of function 
       Object.entries(localReassignmentCases).map(([name, { error }]) => [name, { error, memoized: error === null }]),
     ),
   );
+});
+
+// RenameVariables reaches a nested function expression through its
+// `visit_value` override. The shared walker for a function body recursed into
+// it a second time, so a function at depth d was walked 2^d times: depth 25
+// took 5 seconds and depth 30 did not finish.
+test("react-compiler compile time is not exponential in the function nesting depth", async () => {
+  const depth = 40;
+  const open = "(() => ";
+  const close = ")()";
+  using dir = tempDir("react-compiler-nesting", {
+    "entry.jsx": `
+      import { useState } from "react";
+      export default function App(p) {
+        const [s] = useState(0);
+        const v = ${Buffer.alloc(open.length * depth, open)}p.a + s${Buffer.alloc(close.length * depth, close)};
+        return <div>{v}</div>;
+      }
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", "entry.jsx"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  // The outermost call is inlined. The other arrows stay, in one memoized scope.
+  expect(stdout).toContain("p.a + s");
+  expect(stdout).toMatch(/\b_c\(\d+\)/);
+  expect(exitCode).toBe(0);
 });

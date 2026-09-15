@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, tempDir } from "harness";
 
 // Bun's GarbageCollectionController used to sample `blockBytesAllocated +
 // extraMemorySize` on every event-loop tick and arm a 16 ms one-shot whenever
@@ -150,3 +150,186 @@ describe.skipIf(isDebug)("GarbageCollectionController eden cadence", () => {
     expect(eden).toBeLessThan(5);
   });
 });
+
+// After BUN_IDLE_GC_SECONDS of timer ticks in which the JS heap did not grow,
+// the controller requests a full collection (so JSC can age out code that no
+// longer runs and return memory). An app parked at a prompt still fires the odd
+// timer and still counts as idle.
+describe("idle release", () => {
+  // Count FullCollection lines from BUN_JSC_logGC=1 while the script sits idle for a few seconds. Nothing allocates in
+  // that window, so a full collection there is the idle one.
+  const script = `
+    setTimeout(() => console.error("MARK"), 1200);
+    setTimeout(() => console.error("DONE"), 4200);
+  `;
+
+  async function run(seconds: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: {
+        ...bunEnv,
+        BUN_IDLE_GC_SECONDS: seconds,
+        BUN_JSC_logGC: "1",
+        BUN_GC_TIMER_DISABLE: undefined,
+        BUN_GC_TIMER_INTERVAL: undefined,
+      },
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    // Startup and (with BUN_DESTRUCT_VM_ON_EXIT) teardown do collections of their own; only count the idle window.
+    const fulls = (stderr.slice(stderr.indexOf("MARK"), stderr.indexOf("DONE")).match(/FullCollection/g) || []).length;
+    return { fulls, exitCode };
+  }
+
+  test.concurrent("requests a full collection once the heap has been quiet long enough", async () => {
+    const { fulls, exitCode } = await run("2");
+    expect(fulls).toBeGreaterThanOrEqual(1);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("BUN_IDLE_GC_SECONDS=0 disables it", async () => {
+    const { fulls, exitCode } = await run("0");
+    expect(fulls).toBe(0);
+    expect(exitCode).toBe(0);
+  });
+});
+
+// Those idle full collections are tagged (GCRequest::isIdle) so JSC may also let idle FTL code — which has no execution
+// counter of its own and pins every baseline CodeBlock it inlined — age out in them, and only in them: a program that
+// forces collections itself while running hot code must not lose that code. Eager JIT TTLs make it observable in seconds.
+describe("idle release lets FTL code age out", () => {
+  const script = /* js */ `
+    const { heapStats, noInline } = require("bun:jsc");
+    const fns = [];
+    for (let i = 0; i < 40; i++) {
+      const f = new Function("o", "h", "let s = 0; for (let k = 0; k < 40; k++) s += h(o, k) + " + i + "; return s;");
+      noInline(f);
+      fns.push(f);
+    }
+    const helper = (o, k) => o.a * k + o.b;
+    const o = { a: 1, b: 2 };
+    globalThis.keep = [helper, o, fns];
+    for (let r = 0; r < 100000; r++) for (let j = 0; j < fns.length; j++) fns[j](o, helper);
+    const count = () => heapStats().objectTypeCounts.FunctionCodeBlock ?? 0;
+    Bun.gc(true);
+    const before = count();
+    if (process.env.MODE === "forced") {
+      let n = 0;
+      const id = setInterval(() => {
+        Bun.gc(true);
+        if (++n >= 6) { clearInterval(id); console.log(JSON.stringify({ before, after: count() })); }
+      }, 700);
+    } else {
+      setTimeout(() => { Bun.gc(true); console.log(JSON.stringify({ before, after: count() })); }, 4500);
+    }
+  `;
+
+  async function run(env: Record<string, string>) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: {
+        ...bunEnv,
+        BUN_GC_TIMER_DISABLE: undefined,
+        BUN_GC_TIMER_INTERVAL: undefined,
+        BUN_JSC_useEagerCodeBlockJettisonTiming: "1",
+        BUN_JSC_optimizedCodeAgingQuietSeconds: "0.5",
+        ...env,
+      },
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const counts = (stdout.trim().startsWith("{") ? JSON.parse(stdout.trim()) : {}) as {
+      before?: number;
+      after?: number;
+    };
+    return { ...counts, stdout, exitCode };
+  }
+
+  test.concurrent("the idle collections drop the warmed-up code", async () => {
+    const { before, after, stdout, exitCode } = await run({ BUN_IDLE_GC_SECONDS: "1,1,1" });
+    expect(before, stdout).toBeGreaterThan(40);
+    expect(after, stdout).toBeLessThan(before! / 4);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("collections the program forces itself do not", async () => {
+    const { before, after, stdout, exitCode } = await run({ BUN_IDLE_GC_SECONDS: "0", MODE: "forced" });
+    expect(before, stdout).toBeGreaterThan(40);
+    expect(after, stdout).toBeGreaterThan(before! / 2);
+    expect(exitCode).toBe(0);
+  });
+});
+
+// A leak test reads the footprint right after Bun.gc(true). The allocator hands freed pages back after a purge delay, on
+// its own thread, so what the collection had just freed was still resident then: 250 MB of dead typed arrays left RSS
+// where it was. MADV_FREE (macOS) and ASAN's allocator do not show in RSS either way.
+test.skipIf(!isLinux || isASAN)("Bun.gc(true) returns what it freed to the OS before it returns", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const rss = () => process.memoryUsage.rss() / 1048576;
+        let arrays = [];
+        for (let i = 0; i < 2000; i++) arrays.push(new Uint8Array(128 * 1024).fill(1));
+        const held = rss();
+        arrays = null;
+        Bun.gc(true);
+        console.log(JSON.stringify({ released: held - rss() }));
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(JSON.parse(stdout).released).toBeGreaterThan(200);
+  expect(exitCode).toBe(0);
+});
+
+// One thread at a time hands the allocator's free ranges back, and its own purge thread is often the one: it starts on what
+// was freed once the purge delay has passed, and a few hundred MB keep it busy for tens of milliseconds. Bun.gc(true) in the
+// middle of that found the purge taken, skipped its own, and returned with all of it still resident.
+test.skipIf(!isLinux || isASAN)(
+  "Bun.gc(true) returns what is free to the OS while the purge thread is at work",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const rss = () => process.memoryUsage.rss() / 1048576;
+          // The allocator starts its purge thread the first time a thread blocks.
+          await Bun.sleep(1);
+          const rounds = [];
+          for (let round = 0; round < 3; round++) {
+            const arrays = [];
+            for (let i = 0; i < 48; i++) arrays.push(new Uint8Array(8 * 1024 * 1024).fill(1));
+            const held = rss();
+            // transfer(0) frees the 8 MB here and now, no collection involved. They stay resident until they are purged.
+            for (const array of arrays) array.buffer.transfer(0);
+            // Wait for the purge thread to start on them, which it does once the purge delay (100 ms) has passed. A round in
+            // which it was not seen at work says nothing about the two at once, so it does not count as passed.
+            const deadline = performance.now() + 1000;
+            let started = false;
+            while (!(started = rss() <= held - 32) && performance.now() < deadline);
+            Bun.gc(true);
+            rounds.push({ held, started, released: held - rss() });
+          }
+          console.log(JSON.stringify(rounds));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    for (const { started, released } of JSON.parse(stdout)) {
+      expect(started, stdout).toBe(true);
+      expect(released, stdout).toBeGreaterThan(300);
+    }
+    expect(exitCode).toBe(0);
+  },
+);

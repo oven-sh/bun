@@ -478,16 +478,19 @@ struct WKWebViewConfiguration : Ref {
     static Class cls;
     static Class cls_WKWebsiteDataStore;
     static Class cls_WKWebsiteDataStoreConfiguration; // _WKWebsiteDataStoreConfiguration (SPI)
+    static Class cls_WKProcessPool;
     static SEL s_nonPersistentDataStore;
     static SEL s_initWithDirectory; // macOS 15.2+ (SPI)
     static SEL s_initWithConfiguration; // _initWithConfiguration: (SPI)
     static SEL s_setWebsiteDataStore;
+    static SEL s_setProcessPool;
 
     // +1 retained.
     static WKWebViewConfiguration createEphemeral()
     {
         WKWebViewConfiguration cfg(msgCls<id>(cls, s_alloc));
         cfg.m_id = cfg.msg<id>(s_init);
+        cfg.msg<void>(s_setProcessPool, sharedProcessPool());
         id store = msgCls<id>(cls_WKWebsiteDataStore, s_nonPersistentDataStore);
         cfg.msg<void>(s_setWebsiteDataStore, store);
         cfg.disableProcessSuppression();
@@ -504,6 +507,7 @@ struct WKWebViewConfiguration : Ref {
     {
         WKWebViewConfiguration cfg(msgCls<id>(cls, s_alloc));
         cfg.m_id = cfg.msg<id>(s_init);
+        cfg.msg<void>(s_setProcessPool, sharedProcessPool());
         cfg.msg<void>(s_setWebsiteDataStore, persistentStoreForDirectory(directory));
         cfg.disableProcessSuppression();
         return cfg;
@@ -533,6 +537,7 @@ struct WKWebViewConfiguration : Ref {
 
 private:
     static id persistentStoreForDirectory(const WTF::String &directory);
+    static id sharedProcessPool();
 };
 
 struct WKUserScript : Ref {

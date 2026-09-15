@@ -275,15 +275,15 @@ exports[`yarn.lock migration basic migration with realistic complex yarn.lock: c
     "": {
       "name": "complex-app",
       "dependencies": {
+        "@babel/core": "^7.20.0",
         "react": "^18.2.0",
         "react-dom": "^18.2.0",
-        "@babel/core": "^7.20.0",
         "webpack": "^5.75.0",
       },
       "devDependencies": {
         "@types/react": "^18.0.0",
-        "typescript": "^4.9.0",
         "eslint": "^8.0.0",
+        "typescript": "^4.9.0",
       },
       "optionalDependencies": {
         "fsevents": "^2.3.2",
@@ -3186,8 +3186,8 @@ exports[`bun pm migrate for existing yarn.lock yarn.lock with packages that have
     "": {
       "name": "os-cpu-test",
       "dependencies": {
-        "fsevents": "^2.3.2",
         "esbuild": "^0.17.0",
+        "fsevents": "^2.3.2",
       },
     },
   },

@@ -6,7 +6,7 @@ use bun_alloc::ArenaVecExt as _;
 use bun_ast::LexerLog as _;
 use bun_ast::expr::Data as ExprData;
 use bun_ast::op::Level;
-use bun_ast::{ClauseItem, E, Expr, LocRef};
+use bun_ast::{ClauseItem, E, Expr, LocRef, Ref};
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     /// Note: The caller has already parsed the "import" keyword
@@ -92,6 +92,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         expr: value,
                         import_record_index,
                         options: import_options,
+                        namespace_ref: Ref::NONE,
                     },
                     loc,
                 ));
@@ -106,6 +107,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // .leading_interior_comments = comments,
                 import_record_index: u32::MAX,
                 options: import_options,
+                namespace_ref: Ref::NONE,
             },
             loc,
         ))

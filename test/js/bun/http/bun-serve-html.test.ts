@@ -1,6 +1,6 @@
 import type { Server, Subprocess } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isDebug, isLinux, tempDir, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 function replaceHash(html: string) {
@@ -1170,6 +1170,71 @@ test.concurrent("server.reload() that adds the first html route starts the dev s
       reloadedAgain: devServer,
       startedWithoutHmr: bundled,
       http2: { ...bundled, http2Status: 200 },
+    },
+    exitCode: 0,
+  });
+});
+
+// With no file descriptor left, the dev server cannot create its file watcher.
+// reload() throws what Bun.serve() throws for it, before it has replaced any
+// route.
+test.concurrent.skipIf(!isLinux)("server.reload() keeps the routes when the dev server cannot start", async () => {
+  using dir = tempDir("bun-serve-html-reload-dev-server-fails", {
+    "index.html": `<!DOCTYPE html><html><head><title>t</title></head><body><script type="module" src="./app.ts"></script></body></html>`,
+    "app.ts": `console.log("app");`,
+    "serve.ts": /*ts*/ `
+      import { closeSync, openSync } from "node:fs";
+      import html from "./index.html";
+
+      using server = Bun.serve({
+        port: 0,
+        development: true,
+        routes: { "/api": () => new Response("api") },
+        fetch: () => new Response("old fallback"),
+      });
+      const text = async path => await (await fetch(new URL(path, server.url))).text();
+      const options = { development: true, routes: { "/": html }, fetch: () => new Response("new fallback") };
+
+      const held = [];
+      for (;;) {
+        try {
+          held.push(openSync("/dev/null", "r"));
+        } catch {
+          break;
+        }
+      }
+      let threw = null;
+      try {
+        server.reload(options);
+      } catch (e) {
+        threw = e.message;
+      } finally {
+        held.forEach(closeSync);
+      }
+      const failed = { threw, api: await text("/api"), page: await text("/") };
+
+      server.reload(options);
+      const script = (await text("/")).match(/src="([^"]+\\.js)"/)?.[1] ?? "";
+      const reloaded = { api: await text("/api"), script: script.replace(/[0-9a-z]{8,}/, "HASH") };
+      console.log(JSON.stringify({ failed, reloaded }));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: ["/bin/sh", "-c", 'ulimit -n 256 && exec "$@"', "sh", bunExe(), "serve.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ result: stdout === "" ? null : JSON.parse(stdout), exitCode }, stderr).toEqual({
+    result: {
+      failed: {
+        threw: "EMFILE while initializing file watcher for development server",
+        api: "api",
+        page: "old fallback",
+      },
+      reloaded: { api: "new fallback", script: "/_bun/client/index-HASH.js" },
     },
     exitCode: 0,
   });

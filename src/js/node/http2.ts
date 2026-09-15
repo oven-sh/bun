@@ -1275,15 +1275,6 @@ function onServerStream(Http2ServerRequest, Http2ServerResponse, stream, headers
   server.emit("request", request, response);
 }
 
-// The h2 frame writer flushes through the native socket directly, bypassing the JS
-// Writable accounting net.Socket's bytesWritten getter is built on — the native
-// counter is the ground truth once frames hit the wire.
-function socketBytesWritten(socket) {
-  const native = socket._handle?.bytesWritten || 0;
-  const js = socket.bytesWritten || 0;
-  return native > js ? native : js;
-}
-
 const proxyCompatSocketHandler = {
   has(stream, prop) {
     const ref = stream.session !== undefined ? stream.session[bunHTTP2Socket] : stream;
@@ -1316,10 +1307,6 @@ const proxyCompatSocketHandler = {
       case "pause":
       case "resume":
         throw $ERR_HTTP2_NO_SOCKET_MANIPULATION();
-      case "bytesWritten": {
-        const ref = stream.session !== undefined ? stream.session[bunHTTP2Socket] : stream;
-        return socketBytesWritten(ref);
-      }
       default: {
         const ref = stream.session !== undefined ? stream.session[bunHTTP2Socket] : stream;
         const value = ref[prop];
@@ -1380,13 +1367,6 @@ const proxySocketHandler = {
       case "setKeepAlive":
       case "setNoDelay":
         throw $ERR_HTTP2_NO_SOCKET_MANIPULATION();
-      case "bytesWritten": {
-        const socket = session[bunHTTP2Socket];
-        if (!socket) {
-          throw $ERR_HTTP2_SOCKET_UNBOUND();
-        }
-        return socketBytesWritten(socket);
-      }
       default: {
         const socket = session[bunHTTP2Socket];
         if (!socket) {

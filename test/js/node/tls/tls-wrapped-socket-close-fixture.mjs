@@ -23,6 +23,10 @@ function observe(name, socket) {
   });
 }
 
+function ownerError() {
+  return Object.assign(new Error("destroyed by its owner"), { code: "OWNER_DESTROY" });
+}
+
 async function listen(server) {
   await once(server.listen(0, "127.0.0.1"), "listening");
   return server.address().port;
@@ -163,6 +167,24 @@ else if (cell === "reset-before-handshake") {
   await closed[0];
   await Promise.all(closed);
   server.close();
+}
+// The owner destroys the TLS socket. The wrapped socket closes after the 'error' of the TLS socket and before its 'close'.
+else if (cell === "destroy-before-handshake") {
+  await serverSideWrap(
+    port => net.connect(port, "127.0.0.1"),
+    // bun's wrap adopts the connection's handle on the tick after it is made.
+    tlsSocket => setImmediate(() => tlsSocket.destroy(ownerError())),
+  );
+} else if (cell === "destroy-after-handshake") {
+  await serverSideWrap(
+    port => tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false }).resume(),
+    tlsSocket => tlsSocket.on("secure", () => tlsSocket.destroy(ownerError())),
+  );
+} else if (cell === "client-destroy-after-handshake") {
+  await clientSideWrap(
+    tls.createServer({ key, cert }, peer => peer.on("error", () => {}).resume()),
+    tlsSocket => tlsSocket.on("secureConnect", () => tlsSocket.destroy(ownerError())),
+  );
 } else {
   throw new Error(`unknown cell ${cell}`);
 }

@@ -180,13 +180,13 @@ pub(crate) fn view(
         }
     };
 
-    // Now use the existing version resolution logic from outdated_command
     let mut manifest;
 
     let versions_len: usize;
 
     // Note: reshaped for borrowck.
     'brk: {
+        let mut not_found = bun_install::Error::NoMatchingVersion;
         'from_versions: {
             if let Some(versions_obj) = json.get_object(b"versions") {
                 // Find the version string from JSON that matches the resolved version
@@ -197,20 +197,16 @@ pub(crate) fn view(
                 let versions = versions_e_obj.properties.slice();
                 versions_len = versions.len();
 
-                let wanted_version: Semver::Version = 'brk2: {
-                    // First try dist-tag lookup (like "latest", "beta", etc.)
-                    if let Some(result) = parsed_manifest.find_by_dist_tag(version) {
-                        break 'brk2 result.version;
-                    } else {
-                        // Parse as semver query and find best version
-                        let sliced_literal = Semver::SlicedString::init(version, version);
-                        let query = Semver::query::parse(version, sliced_literal)?;
-                        if let Some(result) = parsed_manifest.find_best_version(&query, version) {
-                            break 'brk2 result.version;
-                        }
+                let wanted_version: Semver::Version = match parsed_manifest.find_by_spec(version) {
+                    Ok(result) => result.version,
+                    Err(
+                        err @ (bun_install::Error::DistTagNotFound
+                        | bun_install::Error::NoMatchingVersion),
+                    ) => {
+                        not_found = err;
+                        break 'from_versions;
                     }
-
-                    break 'from_versions;
+                    Err(err) => return Err(err.into()),
                 };
 
                 for prop in versions {
@@ -231,15 +227,45 @@ pub(crate) fn view(
             }
         }
 
+        let is_dist_tag = matches!(not_found, bun_install::Error::DistTagNotFound);
         if json_output {
             Output::print(format_args!(
-                "{{ \"error\": \"No matching version found\", \"version\": {} }}\n",
+                "{{ \"error\": \"{}\", \"version\": {} }}\n",
+                if is_dist_tag {
+                    "Dist-tag not found"
+                } else {
+                    "No matching version found"
+                },
                 bun_fmt::format_json_string_utf8(
                     spec_,
                     bun_fmt::JSONFormatterUTF8Options { quote: true }
                 ),
             ));
             Output::flush();
+        } else if is_dist_tag {
+            Output::err_generic(
+                "Package <b>{}<r> with tag <b>{}<r> not found, but package exists",
+                (bun_fmt::quote(name), bun_fmt::quote(version)),
+            );
+
+            let max_tags_to_display: usize = 10;
+            let tags_len = parsed_manifest.dist_tags().count();
+            if tags_len > 0 {
+                bun_core::pretty_errorln!("\nTags:<r>");
+                for (tag, v) in parsed_manifest.dist_tags().take(max_tags_to_display) {
+                    bun_core::pretty_errorln!(
+                        "<d>-<r> {}<d>:<r> {}",
+                        BStr::new(tag),
+                        v.fmt(&parsed_manifest.string_buf),
+                    );
+                }
+                if tags_len > max_tags_to_display {
+                    bun_core::pretty_errorln!(
+                        "  <d>... and {} more<r>",
+                        tags_len - max_tags_to_display
+                    );
+                }
+            }
         } else {
             Output::err_generic(
                 "No version of <b>{}<r> satisfying <b>{}<r> found",
@@ -248,13 +274,13 @@ pub(crate) fn view(
 
             let max_versions_to_display: usize = 5;
 
-            let start_index = parsed_manifest
-                .versions
-                .len()
-                .saturating_sub(max_versions_to_display);
-            let mut versions_to_display = &parsed_manifest.versions[start_index..];
-            versions_to_display =
-                &versions_to_display[..versions_to_display.len().min(max_versions_to_display)];
+            // Newest published versions; prereleases only when nothing else was ever published.
+            let mut all_versions = parsed_manifest.release_versions();
+            if all_versions.is_empty() {
+                all_versions = parsed_manifest.prerelease_versions();
+            }
+            let start_index = all_versions.len().saturating_sub(max_versions_to_display);
+            let versions_to_display = &all_versions[start_index..];
             if !versions_to_display.is_empty() {
                 bun_core::pretty_errorln!("\nRecent versions:<r>");
                 for v in versions_to_display {

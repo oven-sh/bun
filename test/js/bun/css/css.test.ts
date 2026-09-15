@@ -4995,6 +4995,66 @@ describe("css tests", () => {
     minify_test(".foo { font-family: 'revert', foo, sans-serif; }", '.foo{font-family:"revert",foo,sans-serif}');
     minify_test(".foo { font-family: ''; }", '.foo{font-family:""}');
 
+    // `font` resets sub-properties it cannot set (font-kerning, font-feature-settings,
+    // font-variant-*, ...). They have no typed Property, but must stay on the side
+    // of the shorthand they were written on.
+    minify_test(".foo { font: 12px serif; font-kerning: none; }", ".foo{font:12px serif;font-kerning:none}");
+    minify_test(".foo { font-kerning: none; font: 12px serif; }", ".foo{font-kerning:none;font:12px serif}");
+    minify_test(
+      ".foo { font-kerning: none; font: 12px serif; font-kerning: normal; }",
+      ".foo{font-kerning:none;font:12px serif;font-kerning:normal}",
+    );
+    minify_test(
+      `.foo { font: 12px serif; font-size-adjust: .5; font-optical-sizing: none; font-variation-settings: "wght" 700; font-feature-settings: "liga" 0; font-language-override: "TRK"; font-palette: --x; }`,
+      `.foo{font:12px serif;font-size-adjust:.5;font-optical-sizing:none;font-variation-settings:"wght" 700;font-feature-settings:"liga" 0;font-language-override:"TRK";font-palette:--x}`,
+    );
+    minify_test(
+      `.foo { font: 12px serif; font-variant-ligatures: none; font-variant-alternates: historical-forms; font-variant-numeric: tabular-nums; font-variant-east-asian: jis78; font-variant-position: sub; font-variant-emoji: text; font-variant: small-caps; }`,
+      `.foo{font:12px serif;font-variant-ligatures:none;font-variant-alternates:historical-forms;font-variant-numeric:tabular-nums;font-variant-east-asian:jis78;font-variant-position:sub;font-variant-emoji:text;font-variant:small-caps}`,
+    );
+    minify_test(".foo { FONT: 12px serif; Font-Kerning: none; }", ".foo{font:12px serif;Font-Kerning:none}");
+    minify_test(
+      ".foo { font: 12px serif; -webkit-font-feature-settings: 'liga' 0; -moz-font-feature-settings: 'liga' 0; }",
+      '.foo{font:12px serif;-webkit-font-feature-settings:"liga" 0;-moz-font-feature-settings:"liga" 0}',
+    );
+    // `font-variant` and `font-width` also override typed longhands written before them.
+    minify_test(
+      ".foo { font-variant-caps: small-caps; font-variant: normal; }",
+      ".foo{font-variant-caps:small-caps;font-variant:normal}",
+    );
+    minify_test(".foo { font-stretch: condensed; font-width: normal; }", ".foo{font-stretch:75%;font-width:normal}");
+    // A longhand the handler does absorb still folds into the shorthand across the unknown one.
+    minify_test(
+      ".foo { font: 12px serif; font-kerning: none; font-weight: bold; }",
+      ".foo{font:12px serif;font-kerning:none;font-weight:700}",
+    );
+    minify_test(
+      ".foo { font: 12px serif; font-weight: bold; font-kerning: none; }",
+      ".foo{font:700 12px serif;font-kerning:none}",
+    );
+    minify_test(
+      ".foo { font-family: serif; line-height: 1.5; font-feature-settings: 'liga' 0; font-size: 12px; }",
+      '.foo{font-family:serif;line-height:1.5;font-feature-settings:"liga" 0;font-size:12px}',
+    );
+    minify_test(
+      ".foo { font: 12px serif !important; font-kerning: none !important; }",
+      ".foo{font:12px serif!important;font-kerning:none!important}",
+    );
+    // Properties that `font` does not reset keep folding across them: custom
+    // properties, unrelated unknown names, `font-synthesis-*`, `-webkit-font-smoothing`.
+    minify_test(
+      ".foo { font-family: serif; --font-x: 1; fonts: 2; font-size: 12px; font-style: normal; font-weight: normal; font-stretch: normal; line-height: normal; font-variant-caps: normal; }",
+      ".foo{--font-x:1;fonts:2;font:12px serif}",
+    );
+    minify_test(
+      ".foo { font: 14px Arial; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; line-height: 1.4; }",
+      ".foo{-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;font:14px/1.4 Arial}",
+    );
+    minify_test(
+      ".foo { font: 12px serif; font-synthesis: none; font-synthesis-weight: none; font-weight: bold; }",
+      ".foo{font-synthesis:none;font-synthesis-weight:none;font:700 12px serif}",
+    );
+
     // fonTfamily in @font-face
     minify_test("@font-face { font-family: 'revert'; }", '@font-face{font-family:"revert"}');
     minify_test("@font-face { font-family: 'revert-layer'; }", '@font-face{font-family:"revert-layer"}');
@@ -6575,6 +6635,34 @@ describe("css tests", () => {
     minify_test(".foo { transition: width 2s ease 1s }", ".foo{transition:width 2s 1s}");
     minify_test(".foo { transition: ease-in 1s width 4s }", ".foo{transition:width 1s ease-in 4s}");
     minify_test(".foo { transition: opacity 0s .6s }", ".foo{transition:opacity 0s .6s}");
+    // `transition-behavior` has no typed Property but is reset by the shorthand,
+    // so it must stay on the side of the shorthand it was written on.
+    minify_test(
+      ".foo { transition: all 1s; transition-behavior: allow-discrete }",
+      ".foo{transition:all 1s;transition-behavior:allow-discrete}",
+    );
+    minify_test(
+      ".foo { transition-behavior: allow-discrete; transition: all 1s }",
+      ".foo{transition-behavior:allow-discrete;transition:all 1s}",
+    );
+    minify_test(
+      ".foo { transition-property: opacity; transition-behavior: allow-discrete; transition-duration: 1s }",
+      ".foo{transition-property:opacity;transition-behavior:allow-discrete;transition-duration:1s}",
+    );
+    minify_test(
+      ".foo { -webkit-transition: all 1s; transition: all 1s; transition-behavior: allow-discrete }",
+      ".foo{-webkit-transition:all 1s;transition:all 1s;transition-behavior:allow-discrete}",
+    );
+    minify_test(
+      ".foo { transition: all 1s !important; Transition-Behavior: allow-discrete !important }",
+      ".foo{transition:all 1s!important;Transition-Behavior:allow-discrete!important}",
+    );
+    // Unknown `-o-` prefixed longhands (Bootstrap 3) are not reset by `transition`
+    // and do not stop the typed longhands from folding.
+    minify_test(
+      ".foo { -webkit-transition-property: opacity; -o-transition-property: opacity; transition-property: opacity; -webkit-transition-duration: 1s; -o-transition-duration: 1s; transition-duration: 1s; -webkit-transition-timing-function: linear; -o-transition-timing-function: linear; transition-timing-function: linear; -webkit-transition-delay: 0s; -o-transition-delay: 0s; transition-delay: 0s; }",
+      ".foo{-o-transition-property:opacity;-o-transition-duration:1s;-o-transition-timing-function:linear;-o-transition-delay:0s;-webkit-transition:opacity 1s linear;transition:opacity 1s linear}",
+    );
     cssTest(
       `
       .foo {

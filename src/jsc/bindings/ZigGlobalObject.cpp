@@ -2436,9 +2436,6 @@ void GlobalObject::finishCreation(VM& vm)
         { OBJECT_OFFSETOF(GlobalObject, m_importMetaObjectStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
              init.set(Zig::ImportMetaObject::createStructure(init.vm, init.owner));
          } },
-        { OBJECT_OFFSETOF(GlobalObject, m_importMetaBakeObjectStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
-             init.set(Zig::ImportMetaObject::createStructure(init.vm, init.owner, true));
-         } },
         { OBJECT_OFFSETOF(GlobalObject, m_asyncBoundFunctionStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
              init.set(AsyncContextFrame::createStructure(init.vm, init.owner));
          } },
@@ -4206,6 +4203,15 @@ JSC::JSObject* GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObje
     JSModuleRecord* record,
     RefPtr<JSC::ScriptFetcher>)
 {
+    // A context-less vm.SourceTextModule links through this global; like Node, its import.meta starts empty.
+    if (record) {
+        if (auto* provider = record->sourceCode().provider()) {
+            auto* fetcher = provider->sourceOrigin().fetcher();
+            if (fetcher && fetcher->fetcherType() == JSC::ScriptFetcher::Type::NodeVM)
+                return JSC::constructEmptyObject(globalObject->vm(), globalObject->nullPrototypeObjectStructure());
+        }
+    }
+
     return Zig::ImportMetaObject::create(globalObject, key);
 }
 

@@ -12,8 +12,10 @@
 // An 8-bit ASCII string must stay borrowed: no API here needs a NUL terminator,
 // so a copy of it is waste. The conversion refuses every 8-bit string of 2**30
 // characters before it reads one, ASCII or not. So the last row binds an ASCII
-// string of that length: SQLite's own "too big" shows that SQLite got the
-// string's buffer, where a copy reports "Out of memory".
+// string of that length. SQLite takes it or reports that it is too big for
+// SQLite: the limit is 1e9 bytes in the bundled SQLite and 2 GiB in the system
+// SQLite that macOS loads. Each answer shows that SQLite got the string's buffer,
+// where a copy reports "Out of memory".
 import { decodeURIComponentSIMD } from "bun:internal-for-testing";
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
@@ -49,21 +51,25 @@ const fixture = `
     // The value of a cookie is converted only when the header has a "%" in it.
     "new Bun.CookieMap": text => new Bun.CookieMap("a=%41" + text),
   };
-  function report(label, name, text) {
+  let text = "\\u00e9".repeat(2 ** 30);
+  for (const [name, run] of Object.entries(cases)) {
     try {
-      const result = cases[name](text);
-      console.log(label + name + ": returned " + (Array.isArray(result) ? "an array" : result));
+      const result = run(text);
+      console.log(name + ": returned " + (Array.isArray(result) ? "an array" : result));
     } catch (e) {
-      console.log(label + name + ": " + e.name + ": " + e.message);
+      console.log(name + ": " + e.name + ": " + e.message);
     }
   }
 
-  let text = "\\u00e9".repeat(2 ** 30);
-  for (const name of Object.keys(cases)) report("", name, text);
-
   text = undefined;
   Bun.gc(true);
-  report("ASCII ", "Statement#get parameter", "q".repeat(2 ** 30));
+  try {
+    const { n } = cases["Statement#get parameter"]("q".repeat(2 ** 30));
+    console.log("ASCII parameter: " + (n === 2 ** 30 ? "SQLite got the string" : "length " + n));
+  } catch (e) {
+    const tooBigForSQLite = e.message === "string or blob too big";
+    console.log("ASCII parameter: " + (tooBigForSQLite ? "SQLite got the string" : e.name + ": " + e.message));
+  }
 `;
 
 // The length is what is under test, so the child holds a string of 1 GiB, and a
@@ -98,7 +104,7 @@ test.skipIf(totalmem() < 8 * 1024 ** 3)(
         "Statement#get parameter: RangeError: Out of memory",
         "decodeURIComponentSIMD: RangeError: Out of memory",
         "new Bun.CookieMap: RangeError: Out of memory",
-        "ASCII Statement#get parameter: Error: string or blob too big",
+        "ASCII parameter: SQLite got the string",
       ],
       stderr: "",
       exitCode: 0,

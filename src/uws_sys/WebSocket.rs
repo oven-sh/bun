@@ -523,6 +523,7 @@ pub mod c {
             pattern_len: usize,
             id: usize,
             behavior: *const WebSocketBehavior,
+            shared_context_key: *const c_void,
         );
         pub(crate) safe fn uws_ws_get_user_data(ssl: i32, ws: &mut RawWebSocket) -> *mut c_void;
         pub(crate) safe fn uws_ws_close(ssl: i32, ws: &mut RawWebSocket);

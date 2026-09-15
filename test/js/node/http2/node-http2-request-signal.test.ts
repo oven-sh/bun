@@ -181,6 +181,8 @@ describe("session.request(headers, { signal })", () => {
       const controller = new AbortController();
       const stream = session.request({ ":path": "/upload", ":method": "POST" }, { signal: controller.signal });
       const events = recordEvents(stream);
+      let rstCodeInAborted: number | undefined;
+      stream.on("aborted", () => (rstCodeInAborted = stream.rstCode));
       const backpressured = !stream.write(BLOCKED_BODY);
       const seen = produceOnDrain(stream);
       await windowExhausted;
@@ -193,12 +195,13 @@ describe("session.request(headers, { signal })", () => {
       const wire = await rstCode;
 
       assert.deepStrictEqual(
-        { backpressured, ...seen, events, rstCode: stream.rstCode, wire },
+        { backpressured, ...seen, events, rstCodeInAborted, rstCode: stream.rstCode, wire },
         {
           backpressured: true,
           drains: 0,
           accepted: 0,
           events: ["aborted", "error AbortError", "close"],
+          rstCodeInAborted: NGHTTP2_CANCEL,
           rstCode: NGHTTP2_CANCEL,
           wire: NGHTTP2_CANCEL,
         },
@@ -329,6 +332,18 @@ describe("a request queued behind SETTINGS_MAX_CONCURRENT_STREAMS is sent when t
       dc.unsubscribe("http2.client.stream.start", onStreamStart);
       close();
     }
+  });
+
+  // node v26.3.0 does not send the RST_STREAM in this case, so the queued request is never sent.
+  const nodeSkip = typeof Bun === "undefined" && "node does not reset the stream when an 'aborted' listener throws";
+  test("after the RST_STREAM, when an 'aborted' listener of the open request throws", { skip: nodeSkip }, async () => {
+    const wire = await cancelFirstOfTwo((first, controller) => {
+      first.on("aborted", () => {
+        throw new Error("listener failed");
+      });
+      controller.abort();
+    });
+    assert.deepStrictEqual(wire, ["HEADERS 1", "RST_STREAM 1", "HEADERS 3"]);
   });
 
   test("when the response ended, even if nothing reads its body", async () => {

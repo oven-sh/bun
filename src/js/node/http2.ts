@@ -2579,6 +2579,16 @@ class Http2Stream extends Duplex {
     // push(null)) and a throwing listener would otherwise skip the clear and
     // leave a retained stream pinning the store.
     this[bunHTTP2AsyncContextFrame] = undefined;
+    const session = this[bunHTTP2Session];
+    assertSession(session);
+    // Like node's closeStream(), the code is set and the RST_STREAM is queued before a listener runs.
+    const rstCode = (this.rstCode ||=
+      err == null ? NGHTTP2_NO_ERROR : err.code === "ABORT_ERR" ? NGHTTP2_CANCEL : NGHTTP2_INTERNAL_ERROR);
+    const nativeOpen = rstCode !== 0 || (this[bunHTTP2StreamStatus] & StreamState.NativeClosed) === 0;
+    if (typeof this.#id === "number" && !this[kNeverAnnounced] && nativeOpen) {
+      // Deferred with setImmediate so that it does not run on the native stack.
+      setImmediate(rstNextTick.bind(session, this.#id, rstCode));
+    }
     const { ending } = this._writableState;
     this.push(null);
     // A pushed stream's request was synthesized by the server, so its local (writable) half is
@@ -2597,23 +2607,6 @@ class Http2Stream extends Duplex {
       this._writableState.destroyed = true;
     }
 
-    const session = this[bunHTTP2Session];
-    assertSession(session);
-
-    let rstCode = this.rstCode;
-    if (!rstCode) {
-      if (err != null) {
-        if (err.code === "ABORT_ERR") {
-          // Enables using AbortController to cancel requests with RST code 8.
-          rstCode = NGHTTP2_CANCEL;
-        } else {
-          rstCode = NGHTTP2_INTERNAL_ERROR;
-        }
-      } else {
-        rstCode = this.rstCode = 0;
-      }
-    }
-    this.rstCode = rstCode;
     emitHttp2StreamPerf(this);
     // node closes the stream from inside _destroy, so the close-channel publish observes
     // closed === true and destroyed === true with the final rstCode. The non-error close path
@@ -2641,21 +2634,6 @@ class Http2Stream extends Duplex {
     }
 
     this[bunHTTP2Session] = null;
-    // This notifies the session that this stream has been destroyed and
-    // gives the session the opportunity to clean itself up. The session
-    // will destroy if it has been closed and there are no other open or
-    // pending streams. Delay with setImmediate so we don't do it on the
-    // nghttp2 stack.
-    if (
-      session &&
-      typeof this.#id === "number" &&
-      !this[kNeverAnnounced] &&
-      // A cleanly closed stream the native side already freed has nothing to send:
-      // the deferred rstStream would be a guaranteed no-op host call per request.
-      (rstCode !== 0 || (this[bunHTTP2StreamStatus] & StreamState.NativeClosed) === 0)
-    ) {
-      setImmediate(rstNextTick.bind(session, this.#id, rstCode));
-    }
 
     // Diagnostics channels: published after the stream is closed and destroyed, with the same error
     // instance the stream is destroyed with (node publishes from this same point in its _destroy).

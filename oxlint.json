@@ -105,6 +105,23 @@
         // cache the value in a local instead.
         "bun/no-duplicate-conditional-property-access": "error"
       }
+    },
+    {
+      // Browser polyfills that `bun build --target=browser` inlines into the
+      // user's bundle. They are plain JS, not JSC builtins: a `$intrinsic`,
+      // a node global such as `process` or `Buffer`, or any other undeclared
+      // name is a ReferenceError in the browser. Read `globalThis.process`.
+      "files": ["src/node-fallbacks/*.js"],
+      "env": { "browser": true, "es2024": true },
+      "rules": {
+        "no-undef": "error",
+        "no-unused-vars": "off",
+        "no-useless-rename": "off"
+      }
+    },
+    {
+      "files": ["src/node-fallbacks/stream.js"],
+      "env": { "commonjs": true }
     }
   ]
 }

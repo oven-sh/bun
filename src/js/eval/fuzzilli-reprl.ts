@@ -42,6 +42,11 @@ if (responseBytes !== 4) {
   throw new Error(`REPRL handshake failed: expected 4 bytes, got ${responseBytes}`);
 }
 
+// Likewise for exiting, and for signalling this process, the fuzzer, or sibling REPRL children.
+process.exit = process.reallyExit = () => {};
+process.kill = () => true;
+process._kill = () => 0;
+
 // Main REPRL loop
 while (true) {
   // Read command

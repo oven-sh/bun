@@ -204,17 +204,28 @@ const dir = String(
     "first-to-load-node-http-tenant.mjs": `
       import { createRequire } from "node:module";
       // Loaded when first used, inside the graph's context: the module's own top level runs there.
-      const http = () => createRequire(import.meta.url)("node:http");
-      export const get = port => new Promise(resolve => http().get({ host: "127.0.0.1", port, path: "/" }, response => response.resume().on("end", resolve)));
+      const load = name => createRequire(import.meta.url)("node:" + name);
+      export const get = (name, port) => new Promise(resolve => load(name).get({ host: "127.0.0.1", port, path: "/", rejectUnauthorized: false }, response => response.resume().on("end", resolve)));
+      // From a microtask, which still runs once the graph has been disposed. (Its require() throws by
+      // then; process.getBuiltinModule() is nobody's in particular.)
+      export const loaded = [];
+      export const loadLater = name => queueMicrotask(() => { process.getBuiltinModule("node:" + name); loaded.push(name); });
     `,
+    "tls-certificate.json": JSON.stringify(tlsCertificate),
     "first-to-load-node-http.mjs": `
-      using server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("ok") });
+      // node:http or node:https, first loaded by a graph that uses it, or by what a disposed graph
+      // had queued. Either way the module (its globalAgent) is the realm's: the host's request goes through.
+      const [name, how] = [process.argv[2], process.argv[3]];
+      const tls = name === "https" ? (await import(import.meta.dir + "/tls-certificate.json", { with: { type: "json" } })).default : undefined;
+      using server = Bun.serve({ port: 0, hostname: "127.0.0.1", tls, fetch: () => new Response("ok") });
       const graph = new Bun.ModuleGraph();
       const app = await graph.import(import.meta.dir + "/first-to-load-node-http-tenant.mjs");
-      await graph.run(() => app.get(server.port));
+      if (how === "used") await graph.run(() => app.get(name, server.port));
+      else graph.run(() => app.loadLater(name));
       graph.dispose();
-      const http = await import("node:http");
-      const status = await new Promise(resolve => http.get({ host: "127.0.0.1", port: server.port, path: "/" }, response => { response.resume(); resolve(response.statusCode); }));
+      while (how !== "used" && !app.loaded.includes(name)) await new Promise(resolve => setImmediate(resolve));
+      const http = await import("node:" + name);
+      const status = await new Promise(resolve => http.get({ host: "127.0.0.1", port: server.port, path: "/", rejectUnauthorized: false }, response => { response.resume(); resolve(response.statusCode); }));
       console.log(JSON.stringify({ status }));
       process.exit(0);
     `,
@@ -3217,9 +3228,14 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
       exitCode: 0,
     });
   });
-  test("the host's node:http requests work when a graph was the first to load node:http", async () => {
-    expect(await runsFixture("first-to-load-node-http.mjs")).toEqual({ stdout: `{"status":200}`, exitCode: 0 });
-  });
+  for (const name of ["http", "https"])
+    for (const how of ["used", "loaded by what it had queued"])
+      test(`the host's node:${name} requests work when a graph was the first to load node:${name} (${how})`, async () => {
+        expect(await runsFixture("first-to-load-node-http.mjs", name, how)).toEqual({
+          stdout: `{"status":200}`,
+          exitCode: 0,
+        });
+      });
   test("fetch() uploads it had streaming are released", async () => {
     expect(await runsFixture("uploads-of-a-disposed-graph.mjs")).toEqual({
       stdout: `{"streaming":true,"released":true}`,

@@ -557,16 +557,11 @@ function shouldUseEnvProxy() {
 
 export default {
   Agent,
-  // (Made in no graph's context, whichever script is first to load this module.)
-  globalAgent: AsyncContextFrame.run(
-    undefined,
-    () =>
-      new Agent({
-        keepAlive: true,
-        scheduling: "lifo",
-        timeout: 5000,
-        proxyEnv: shouldUseEnvProxy() ? process.env : undefined,
-      }),
-  ),
+  globalAgent: new Agent({
+    keepAlive: true,
+    scheduling: "lifo",
+    timeout: 5000,
+    proxyEnv: shouldUseEnvProxy() ? process.env : undefined,
+  }),
   shouldUseEnvProxy,
 };

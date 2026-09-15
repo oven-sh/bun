@@ -525,21 +525,15 @@ function createServer(options, requestListener) {
 
 var https = {
   Agent,
-  // (Made in no graph's context, whichever script is first to load this module.)
-  globalAgent: require("internal/async_context_frame").run(
-    undefined,
-    () =>
-      new Agent({
-        keepAlive: true,
-        scheduling: "lifo",
-        timeout: 5000,
-        proxyEnv: shouldUseEnvProxy() ? process.env : undefined,
-      }),
-  ),
+  globalAgent: new Agent({
+    keepAlive: true,
+    scheduling: "lifo",
+    timeout: 5000,
+    proxyEnv: shouldUseEnvProxy() ? process.env : undefined,
+  }),
   Server: http.Server,
   createServer,
   get,
   request,
 };
-
 export default https;

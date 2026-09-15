@@ -1286,7 +1286,6 @@ impl JSValkeyClient {
     }
 
     pub(crate) fn on_valkey_unsubscribe(&self) -> JsResult<()> {
-        debug_assert!(self.is_subscriber());
         debug_assert!(self.this_value.get().is_strong());
 
         self.client_mut().on_writable();

@@ -317,6 +317,39 @@ async function main() {
     }
   })();
 
+  // AppContainers run with strict handle checks: any call on a closed handle
+  // ends the process (exit 0xC0000008) instead of failing. A socket closed from
+  // inside its own data() handler is the case where usockets closes the libuv
+  // poll and the socket on the way out of the handler (eventing/libuv.c); the
+  // poll has to be closed while the socket is still open, or libuv's cancel of
+  // the in-flight poll request hits a closed handle. The client is closed the
+  // same way, by the dispatch of the reset it receives.
+  r.closeInHandler = await (async () => {
+    let server;
+    try {
+      server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data(socket) { socket.terminate(); } } });
+    } catch (e) {
+      return "listen:" + (e.code || e);
+    }
+    try {
+      const closed = new Promise(resolve => {
+        const timer = setTimeout(() => resolve("timeout waiting for the reset"), 15000);
+        Bun.connect({
+          hostname: "127.0.0.1",
+          port: server.port,
+          socket: {
+            open(socket) { socket.write("x"); },
+            data() {},
+            close() { clearTimeout(timer); resolve("OK"); },
+          },
+        }).catch(e => { clearTimeout(timer); resolve("connect:" + (e.code || e)); });
+      });
+      return await closed;
+    } finally {
+      server.stop(true);
+    }
+  })();
+
   fs.writeFileSync("results.json", JSON.stringify(r));
 }
 main().then(
@@ -350,6 +383,9 @@ main().then(
       // classified outcome; this guards only an unset key, an unclassified
       // crash, or a served wrong body. Pin the value once container CI reports it.
       expect(String(r.serveFetch)).toMatch(/^(OK$|listen:|fetch:)/);
+      // Same loopback caveat as serveFetch. The exit code above is the real
+      // check: a closed handle touched on the way out of data() ends the child.
+      expect(String(r.closeInHandler)).toMatch(/^(OK$|listen:|connect:)/);
     },
     90_000,
   );

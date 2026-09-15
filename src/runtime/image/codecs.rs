@@ -652,6 +652,23 @@ unsafe extern "C" {
         filter: i32,
         scratch: *mut u8,
     ) -> c_int;
+    fn bun_image_resize_scratch_size_rgba16(
+        src_w: i32,
+        src_h: i32,
+        dst_w: i32,
+        dst_h: i32,
+        filter: i32,
+    ) -> usize;
+    fn bun_image_resize_rgba16(
+        src: *const u16,
+        src_w: i32,
+        src_h: i32,
+        dst: *mut u16,
+        dst_w: i32,
+        dst_h: i32,
+        filter: i32,
+        scratch: *mut u8,
+    ) -> c_int;
     fn bun_image_rotate_rgba8(src: *const u8, w: i32, h: i32, dst: *mut u8, deg: i32);
     fn bun_image_flip_rgba8(src: *const u8, w: i32, h: i32, dst: *mut u8, horiz: i32);
     fn bun_image_modulate_rgba8(buf: *mut u8, len: usize, brightness: f32, saturation: f32);
@@ -729,6 +746,137 @@ pub(crate) fn resize(
     block.shrink_to_fit();
     // PERF: Vec::shrink_to_fit may not be in-place — profile if hot.
     Ok(block)
+}
+
+/// sRGB code → linear light, scaled to the full u16 range. 0 → 0 and
+/// 255 → 65535 exactly (both transfer-function branches are exact at the
+/// ends), so a pure black/white image converts losslessly.
+fn srgb_to_linear_lut() -> &'static [u16; 256] {
+    static LUT: std::sync::OnceLock<[u16; 256]> = std::sync::OnceLock::new();
+    LUT.get_or_init(|| {
+        let mut lut = [0u16; 256];
+        for (c, out) in lut.iter_mut().enumerate() {
+            let x = c as f64 / 255.0;
+            let lin = if x <= 0.04045 {
+                x / 12.92
+            } else {
+                ((x + 0.055) / 1.055).powf(2.4)
+            };
+            *out = (lin * 65535.0).round() as u16;
+        }
+        lut
+    })
+}
+
+/// Linear u16 → sRGB code. Inverse of `srgb_to_linear_lut` (round-trips all
+/// 256 codes; the flat-field kernel test pins that).
+fn linear_to_srgb_lut() -> &'static [u8; 65536] {
+    static LUT: std::sync::OnceLock<[u8; 65536]> = std::sync::OnceLock::new();
+    LUT.get_or_init(|| {
+        let mut lut = [0u8; 65536];
+        for (v, out) in lut.iter_mut().enumerate() {
+            let y = v as f64 / 65535.0;
+            let s = if y <= 0.003_130_8 {
+                12.92 * y
+            } else {
+                1.055 * y.powf(1.0 / 2.4) - 0.055
+            };
+            *out = (s * 255.0).round() as u8;
+        }
+        lut
+    })
+}
+
+/// Linear-light resize (`resize(w, h, { colorspace: "linear" })`): decode
+/// sRGB to linear in u16, run the RGBA16 kernel, re-encode. Averaging
+/// encoded sRGB codes (the default path, and what Sharp/CoreGraphics/WIC
+/// do) darkens downscaled detail because sRGB is an encoding of perceived
+/// brightness, not of light. Alpha is not gamma-encoded, so it is scaled
+/// linearly (×257 maps 255 → 65535 exactly).
+///
+/// Always runs the static kernel — vImage on the macOS system backend
+/// averages encoded values too, so routing through it would undo the
+/// point of the option. Output is therefore byte-identical across
+/// platforms and backends.
+pub(crate) fn resize_linear(
+    src: &[u8],
+    sw: u32,
+    sh: u32,
+    dw: u32,
+    dh: u32,
+    f: Filter,
+) -> Result<Vec<u8>, Error> {
+    // These buffers are user-sized (up to GiBs at the `maxPixels` cap, and
+    // 2× the u8 path's footprint), so allocate fallibly and surface
+    // `Error::OutOfMemory` instead of aborting.
+    fn alloc_zeroed<T: Copy + Default>(n: usize) -> Result<Vec<T>, Error> {
+        let mut v: Vec<T> = Vec::new();
+        v.try_reserve_exact(n).map_err(|_| Error::OutOfMemory)?;
+        v.resize(n, T::default());
+        Ok(v)
+    }
+    let fwd = srgb_to_linear_lut();
+    let rev = linear_to_srgb_lut();
+    let src_px: usize = (sw as usize) * (sh as usize) * 4;
+    let dst_px: usize = (dw as usize) * (dh as usize) * 4;
+    let mut lin: Vec<u16> = alloc_zeroed(src_px)?;
+    for (dst4, src4) in lin
+        .as_chunks_mut::<4>()
+        .0
+        .iter_mut()
+        .zip(src.as_chunks::<4>().0)
+    {
+        dst4[0] = fwd[src4[0] as usize];
+        dst4[1] = fwd[src4[1] as usize];
+        dst4[2] = fwd[src4[2] as usize];
+        dst4[3] = u16::from(src4[3]) * 257;
+    }
+    // SAFETY: pure FFI query; all args are by-value ints, no pointers.
+    let scratch_sz = unsafe {
+        bun_image_resize_scratch_size_rgba16(
+            i32::try_from(sw).expect("int cast"),
+            i32::try_from(sh).expect("int cast"),
+            i32::try_from(dw).expect("int cast"),
+            i32::try_from(dh).expect("int cast"),
+            f as i32,
+        )
+    };
+    let mut out16: Vec<u16> = alloc_zeroed(dst_px)?;
+    // u64-element scratch so the kernel's internal u16/Span/i16 partitions
+    // are all sufficiently aligned.
+    let mut scratch: Vec<u64> = alloc_zeroed(scratch_sz.div_ceil(8))?;
+    // SAFETY: lin has sw*sh*4 u16s, out16 has dw*dh*4 u16s, scratch covers
+    // the queried size; the kernel writes within those bounds.
+    let rc = unsafe {
+        bun_image_resize_rgba16(
+            lin.as_ptr(),
+            i32::try_from(sw).expect("int cast"),
+            i32::try_from(sh).expect("int cast"),
+            out16.as_mut_ptr(),
+            i32::try_from(dw).expect("int cast"),
+            i32::try_from(dh).expect("int cast"),
+            f as i32,
+            scratch.as_mut_ptr().cast::<u8>(),
+        )
+    };
+    if rc != 0 {
+        return Err(Error::OutOfMemory);
+    }
+    drop(lin);
+    drop(scratch);
+    let mut out: Vec<u8> = alloc_zeroed(dst_px)?;
+    for (dst4, src4) in out
+        .as_chunks_mut::<4>()
+        .0
+        .iter_mut()
+        .zip(out16.as_chunks::<4>().0)
+    {
+        dst4[0] = rev[src4[0] as usize];
+        dst4[1] = rev[src4[1] as usize];
+        dst4[2] = rev[src4[2] as usize];
+        dst4[3] = u8::try_from((u32::from(src4[3]) + 128) / 257).expect("int cast");
+    }
+    Ok(out)
 }
 
 pub(crate) fn rotate(src: &[u8], w: u32, h: u32, degrees: u32) -> Result<Decoded, Error> {

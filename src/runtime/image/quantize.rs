@@ -4,9 +4,11 @@
 //! compression", not perceptual perfection — Sharp uses libimagequant which
 //! is GPL, so we roll a small permissive one. Median-cut is the classic
 //! Heckbert '82 algorithm: treat the RGBA pixels as points in a 4-D box,
-//! repeatedly split the box with the largest channel range at that channel's
-//! median until you have N boxes, then each box's mean becomes a palette
-//! entry. Mapping is nearest-entry by squared RGBA distance, optionally with
+//! repeatedly split the box with the largest channel range along that channel
+//! until you have N boxes, then each box's mean becomes a palette entry. The
+//! cut goes between two distinct values, at the position that leaves the two
+//! halves the least squared error (see `cut_point`), not at the pixel-count
+//! median. Mapping is nearest-entry by squared RGBA distance, optionally with
 //! Floyd–Steinberg error diffusion (`dither: true`).
 
 use bun_alloc::AllocError;
@@ -104,14 +106,17 @@ pub(crate) fn quantize(
         }
 
         let ch = b.widest_channel();
-        // Partial sort by the chosen channel, then cut at the midpoint.
+        // Partial sort by the chosen channel, then cut between two of its values.
         let slice = &mut order[b.lo as usize..b.hi as usize];
         // u32 ×4 overflows past ~1.07B pixels (allowed when the user raises
         // `maxPixels`); the other order-index sites already widen first.
         slice.sort_unstable_by_key(|&p| rgba[p as usize * 4 + ch as usize]);
-        let mid = b.lo + (b.hi - b.lo) / 2;
-        boxes[pick] = shrink(rgba, &order, b.lo, mid);
-        boxes.push(shrink(rgba, &order, mid, b.hi));
+        let Some(cut) = cut_point(rgba, slice, ch) else {
+            break;
+        };
+        let cut = b.lo + u32::try_from(cut).expect("int cast");
+        boxes[pick] = shrink(rgba, &order, b.lo, cut);
+        boxes.push(shrink(rgba, &order, cut, b.hi));
     }
 
     let k: u16 = u16::try_from(boxes.len()).expect("int cast");
@@ -260,6 +265,46 @@ fn map_floyd_steinberg(
 #[inline]
 fn clamp255(v: i32) -> i32 {
     v.clamp(0, 255)
+}
+
+/// Where to split `sorted` (a box's pixel indices, sorted by channel `ch`).
+/// Only a boundary between two runs of different keys is a candidate, so one
+/// value never sits in both halves. Among those, pick the cut whose halves
+/// have the least total squared error about their means, the same error the
+/// palette entries minimise. Σv² is fixed for the box, so that is the cut
+/// with the largest Σ_c (L_c²/i + R_c²/(m-i)) for left/right channel sums
+/// L, R. `None` when every pixel has the same key.
+fn cut_point(rgba: &[u8], sorted: &[u32], ch: u8) -> Option<usize> {
+    let px = |p: u32| &rgba[p as usize * 4..][..4];
+    let m = sorted.len();
+    let mut total = [0u64; 4];
+    for &p in sorted {
+        for (t, &v) in total.iter_mut().zip(px(p)) {
+            *t += u64::from(v);
+        }
+    }
+    let mut left = [0u64; 4];
+    let mut best: Option<(u128, usize)> = None;
+    for i in 1..m {
+        let prev = px(sorted[i - 1]);
+        for (l, &v) in left.iter_mut().zip(prev) {
+            *l += u64::from(v);
+        }
+        if prev[ch as usize] == px(sorted[i])[ch as usize] {
+            continue;
+        }
+        let (li, ri) = (i as u128, (m - i) as u128);
+        let mut score: u128 = 0;
+        for c in 0..4 {
+            let l = u128::from(left[c]);
+            let r = u128::from(total[c] - left[c]);
+            score += l * l / li + r * r / ri;
+        }
+        if best.is_none_or(|(s, _)| score > s) {
+            best = Some((score, i));
+        }
+    }
+    best.map(|(_, i)| i)
 }
 
 /// Recompute a box's tight min/max over its pixel slice.

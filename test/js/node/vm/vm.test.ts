@@ -1068,6 +1068,21 @@ test("SourceTextModule.link gets each request's own import attributes", async ()
   ]);
 });
 
+test("SourceTextModule links and evaluates with two imports of one specifier", async () => {
+  const dep = new SourceTextModule(`export let x = 1;`, { identifier: "dep" });
+  const m = new SourceTextModule(
+    `import { x } from "dep"; import * as ns from "dep"; export { x as y } from "dep"; export const r = [x, ns.x].join();`,
+    { identifier: "importer" },
+  );
+  const seen: string[] = [];
+  await m.link((specifier: string) => {
+    seen.push(specifier);
+    return dep;
+  });
+  await m.evaluate();
+  expect({ seen, r: (m.namespace as any).r, y: (m.namespace as any).y }).toEqual({ seen: ["dep"], r: "1,1", y: 1 });
+});
+
 // JSC decodes a code block's function bodies one at a time, the first time each body runs,
 // reading the cachedData payload through the Decoder until then. The three entry points
 // lent JSC a span over a temporary WTF::Vector copy of the caller's buffer that died with

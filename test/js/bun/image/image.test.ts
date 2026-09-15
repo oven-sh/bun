@@ -381,6 +381,118 @@ describe("Bun.Image", () => {
     });
   });
 
+  describe("extract", () => {
+    // Pixel value encodes its source coordinate, so any offset/size mistake
+    // in the crop shows up as a wrong colour, not just wrong dims.
+    const coordPng = makePng(8, 8, (x, y) => [x * 16, y * 16, 0, 255]);
+
+    test("extracts the exact region, pixel for pixel", async () => {
+      const out = await new Bun.Image(coordPng).extract({ left: 2, top: 3, width: 4, height: 2 }).png().bytes();
+      const { w, h, data } = decodePngRaw(out);
+      expect(w).toBe(4);
+      expect(h).toBe(2);
+      for (let y = 0; y < 2; y++) {
+        for (let x = 0; x < 4; x++) {
+          expect(rgbaAt(data, 4, x, y)).toEqual([(x + 2) * 16, (y + 3) * 16, 0, 255]);
+        }
+      }
+    });
+
+    test("left/top default to 0", async () => {
+      const { w, h, data } = decodePngRaw(await new Bun.Image(coordPng).extract({ width: 2, height: 2 }).png().bytes());
+      expect({ w, h }).toEqual({ w: 2, h: 2 });
+      expect(rgbaAt(data, 2, 0, 0)).toEqual([0, 0, 0, 255]);
+      expect(rgbaAt(data, 2, 1, 1)).toEqual([16, 16, 0, 255]);
+    });
+
+    test("a region flush with the far edge is in bounds", async () => {
+      const { w, h, data } = decodePngRaw(
+        await new Bun.Image(coordPng).extract({ left: 6, top: 6, width: 2, height: 2 }).png().bytes(),
+      );
+      expect({ w, h }).toEqual({ w: 2, h: 2 });
+      expect(rgbaAt(data, 2, 1, 1)).toEqual([7 * 16, 7 * 16, 0, 255]);
+    });
+
+    test("resize() applies to the extracted region", async () => {
+      // Extract a flat red quadrant, then box-downscale — every output pixel
+      // must still be pure red, proving resize ran on the crop.
+      const quads = makePng(8, 8, (x, y) => (x < 4 && y < 4 ? [255, 0, 0, 255] : [0, 0, 255, 255]));
+      const out = await new Bun.Image(quads)
+        .extract({ width: 4, height: 4 })
+        .resize(2, 2, { filter: "box" })
+        .png()
+        .bytes();
+      const { w, h, data } = decodePngRaw(out);
+      expect({ w, h }).toEqual({ w: 2, h: 2 });
+      for (let y = 0; y < 2; y++) {
+        for (let x = 0; x < 2; x++) {
+          expect(rgbaAt(data, 2, x, y)).toEqual([255, 0, 0, 255]);
+        }
+      }
+    });
+
+    test("region addresses the rotated (upright) image", async () => {
+      // After rotate(90) on cornersPng, dst(0,0) is the source's blue corner.
+      const out = await new Bun.Image(cornersPng).rotate(90).extract({ width: 1, height: 1 }).png().bytes();
+      const { w, h, data } = decodePngRaw(out);
+      expect({ w, h }).toEqual({ w: 1, h: 1 });
+      expect(rgbaAt(data, 1, 0, 0)).toEqual([0, 0, 255, 255]);
+    });
+
+    test("extract from a JPEG source with a queued resize stays coordinate-exact", async () => {
+      // Half red / half blue split at x=8; a decode-time downscale hint that
+      // wrongly survived the extract would shift the boundary.
+      const split = makePng(16, 16, x => (x < 8 ? [255, 0, 0, 255] : [0, 0, 255, 255]));
+      const jpeg = await new Bun.Image(split).jpeg({ quality: 95 }).bytes();
+      const out = await new Bun.Image(jpeg)
+        .extract({ left: 8, width: 8, height: 16 })
+        .resize(4, 4, { filter: "box" })
+        .png()
+        .bytes();
+      const { w, h, data } = decodePngRaw(out);
+      expect({ w, h }).toEqual({ w: 4, h: 4 });
+      const [r, , b] = rgbaAt(data, 4, 1, 1);
+      expect(b).toBeGreaterThan(200);
+      expect(r).toBeLessThan(60);
+    });
+
+    test("out-of-bounds region rejects with ERR_IMAGE_BAD_EXTRACT_AREA", async () => {
+      for (const region of [
+        { left: 10, top: 0, width: 10, height: 4 }, // overhangs right edge
+        { left: 0, top: 15, width: 4, height: 4 }, // overhangs bottom edge
+        { width: 17, height: 1 }, // wider than the source
+      ]) {
+        const p = new Bun.Image(gradientPng).extract(region).png().bytes();
+        await expect(p).rejects.toThrow(/extract area/);
+        await expect(p).rejects.toMatchObject({ code: "ERR_IMAGE_BAD_EXTRACT_AREA" });
+      }
+    });
+
+    test("whole-image region is the identity", async () => {
+      const out = await new Bun.Image(coordPng).extract({ width: 8, height: 8 }).png().bytes();
+      const { w, h, data } = decodePngRaw(out);
+      expect({ w, h }).toEqual({ w: 8, h: 8 });
+      expect(rgbaAt(data, 8, 7, 7)).toEqual([7 * 16, 7 * 16, 0, 255]);
+    });
+
+    test("invalid arguments throw synchronously", () => {
+      const img = new Bun.Image(gradientPng);
+      // @ts-expect-error missing argument
+      expect(() => img.extract()).toThrow();
+      // @ts-expect-error width/height required
+      expect(() => img.extract({ left: 0, top: 0 })).toThrow(/width and height/);
+      expect(() => img.extract({ width: 0, height: 4 })).toThrow(/width must be an integer/);
+      expect(() => img.extract({ width: 4, height: NaN })).toThrow(/height must be an integer/);
+      expect(() => img.extract({ width: 1.5, height: 4 })).toThrow(/width must be an integer/);
+      // Fields are never coerced or clamped — a shifted origin is a
+      // different crop, so strings and negatives throw like Sharp.
+      // @ts-expect-error left must be a number
+      expect(() => img.extract({ left: "2", width: 4, height: 4 })).toThrow(/left must be an integer/);
+      expect(() => img.extract({ left: -1, width: 4, height: 4 })).toThrow(/left must be an integer/);
+      expect(() => img.extract({ top: 0.5, width: 4, height: 4 })).toThrow(/top must be an integer/);
+    });
+  });
+
   test("path string input reads from disk", async () => {
     using dir = tempDir("bun-image", { "in.png": Buffer.from(gradientPng) });
     const meta = await new Bun.Image(join(String(dir), "in.png")).metadata();

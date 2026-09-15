@@ -239,6 +239,9 @@ pub enum Error {
     /// BEFORE allocating the full RGBA buffer.
     #[error("TooManyPixels")]
     TooManyPixels,
+    /// `.extract()` region falls outside the (post-rotate) image bounds.
+    #[error("BadExtractArea")]
+    BadExtractArea,
     /// HEIC/AVIF on a platform with no system backend (Linux), or the system
     /// backend declined and there's no static codec to fall back to.
     #[error("UnsupportedOnPlatform")]
@@ -797,5 +800,31 @@ pub(crate) fn flip(src: &[u8], w: u32, h: u32, horizontal: bool) -> Result<Vec<u
     };
     // SAFETY: the flip kernel is a permutation that stores every one of the w*h dst pixels.
     unsafe { bun_core::vec::commit_spare(&mut out, out_len) };
+    Ok(out)
+}
+
+pub(crate) fn crop(
+    src: &[u8],
+    sw: u32,
+    sh: u32,
+    x: u32,
+    y: u32,
+    cw: u32,
+    ch: u32,
+) -> Result<Vec<u8>, Error> {
+    // Widen before adding — x/y and cw/ch are user-controlled u32s whose sum
+    // can wrap. Error, don't clamp: a silently-shrunk crop is a different
+    // image than the one the caller asked for.
+    if (x as u64) + (cw as u64) > (sw as u64) || (y as u64) + (ch as u64) > (sh as u64) {
+        return Err(Error::BadExtractArea);
+    }
+    let src_stride: usize = (sw as usize) * 4;
+    let row_bytes: usize = (cw as usize) * 4;
+    let x_bytes: usize = (x as usize) * 4;
+    let mut out: Vec<u8> = Vec::with_capacity(row_bytes * (ch as usize));
+    for row in 0..(ch as usize) {
+        let s_off = ((y as usize) + row) * src_stride + x_bytes;
+        out.extend_from_slice(&src[s_off..s_off + row_bytes]);
+    }
     Ok(out)
 }

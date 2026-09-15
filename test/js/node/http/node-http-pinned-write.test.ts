@@ -6,10 +6,11 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 import net from "node:net";
 
-// Large enough to overflow both the 16KB cork buffer and the kernel send
-// buffer on every platform (Windows loopback auto-tuning can absorb several
-// MB), so the native write reports backpressure and the tail is held.
-const CHUNK_SIZE = 64 * 1024 * 1024;
+// Large enough to overflow the 16KB cork buffer plus the Linux/macOS loopback
+// kernel send buffer, so the native write reports backpressure and the tail is
+// held. Windows loopback auto-tuning can absorb the whole payload, so the pin
+// assertions are skipped there; the other tests check byte-delivery only.
+const CHUNK_SIZE = 8 * 1024 * 1024;
 
 const PATTERN_256 = Buffer.from(Array.from({ length: 256 }, (_, i) => i));
 const PATTERN_64_HIGH = Buffer.from(Array.from({ length: 64 }, (_, i) => 0xc0 + i));
@@ -28,7 +29,7 @@ function sha1(buf: Uint8Array): string {
   return createHash("sha1").update(buf).digest("hex");
 }
 
-describe("node:http large Buffer writes are sent zero-copy", () => {
+describe.concurrent("node:http large Buffer writes are sent zero-copy", () => {
   // Winsock auto-tunes its send buffer on loopback and will absorb the whole
   // payload in one nonblocking send(), so the pinned-tail state is never
   // reached on Windows (the bytes go straight to the kernel instead). The
@@ -301,9 +302,7 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
     });
   });
 
-  // 8 MB overflows the Linux/macOS loopback send+recv buffers with a paused
-  // client while keeping the spill + drain under the default test timeout.
-  const RESIZABLE_CHUNK_SIZE = 8 * 1024 * 1024;
+  const RESIZABLE_CHUNK_SIZE = CHUNK_SIZE;
   const resizableChild = (afterWrite: string) => `
     const http = require("node:http");
     const net = require("node:net");

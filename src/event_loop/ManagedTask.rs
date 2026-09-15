@@ -16,7 +16,7 @@ pub struct ManagedTask {
 impl ManagedTask {
     pub(crate) fn task(this: *mut ManagedTask) -> Task {
         // Per §Dispatch (tag+ptr), name the tag explicitly.
-        Task::new(crate::task_tag::ManagedTask, this.cast())
+        Task::init(this)
     }
 
     /// # Safety

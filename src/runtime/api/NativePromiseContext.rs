@@ -283,10 +283,7 @@ impl DeferredDerefTask {
 
         // `Task` is a plain `{ tag, ptr }` pair (no bitfield packing), so
         // build it directly — dispatch unpacks via `task.ptr as usize`.
-        let task = Task::new(
-            <DeferredDerefTask as Taskable>::TAG,
-            (addr | (tag as usize)) as *mut (),
-        );
+        let task = Task::init((addr | (tag as usize)) as *mut DeferredDerefTask);
         // SAFETY: event_loop() returns the VM's owned EventLoop; we are the
         // sole mutator on the JS thread here.
         vm.event_loop_ref().enqueue_task(task);

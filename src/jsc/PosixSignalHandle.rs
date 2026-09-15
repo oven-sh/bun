@@ -36,10 +36,7 @@ impl PosixSignalHandle {
         while let Some(signal) = self.ring.dequeue() {
             // `Task` is a plain `{ tag, ptr }` pair (no bitfield packing), so build it
             // directly — `bun_runtime::dispatch::run_task` unpacks `task.ptr as usize as u8`.
-            let task = Task::new(
-                <PosixSignalTask as Taskable>::TAG,
-                signal as usize as *mut (),
-            );
+            let task = Task::init(signal as usize as *mut PosixSignalTask);
             event_loop.enqueue_task(task);
         }
     }

@@ -322,7 +322,7 @@ impl<C: JobContext> bun_event_loop::Taskable for Job<C> {
         // SAFETY: fn contract; JS thread with the heap alive.
         drop(unsafe { Self::take(this, VirtualMachine::get()) })
     }
-    /// Reached through the header ([`context_erased`]): the tag is shared.
+    /// The context whose script scheduled the job.
     unsafe fn context(this: *const Self) -> bun_event_loop::TaskContext {
         // SAFETY: fn contract.
         bun_event_loop::TaskContext::Of(unsafe { (*this).header.context })
@@ -469,16 +469,6 @@ pub unsafe fn complete_erased(ptr: *mut (), global: &JSGlobalObject) -> JsResult
     let context = global.bun_vm().context_of(unsafe { (*header).context });
     // SAFETY: as above.
     unsafe { ((*header).complete)(header, &global.js_thread(context)) }
-}
-
-/// [`Taskable::context`](bun_event_loop::Taskable::context) for the erased tag: the context
-/// whose script scheduled the job.
-///
-/// # Safety
-/// As [`complete_erased`].
-pub unsafe fn context_erased(ptr: *mut ()) -> bun_event_loop::TaskContext {
-    // SAFETY: `ptr` is a live posted `Job<C>`, header first (fn contract).
-    bun_event_loop::TaskContext::Of(unsafe { (*ptr.cast::<JobHeader>()).context })
 }
 
 /// Teardown's release for a queued, never-dispatched `Job<C>` completion

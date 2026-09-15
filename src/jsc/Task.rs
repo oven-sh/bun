@@ -10,7 +10,7 @@
 //! 1. Add a tag constant to `bun_event_loop::task_tag` (the canonical list).
 //! 2. `impl bun_jsc::Taskable for YourType` in the crate that owns `YourType`: its tag, how it is
 //!    released unrun, and whose script it continues (`context`).
-//! 3. Add a match arm in `bun_runtime::dispatch::run_task` (and `__bun_release_task_unrun`, `task_context`).
+//! 3. Add a match arm in `bun_runtime::dispatch::run_task` (and `__bun_release_task_unrun`).
 
 use crate::event_loop::Stopped;
 use crate::{JSGlobalObject, JsError};

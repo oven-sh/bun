@@ -167,13 +167,13 @@ const dir = String(
           channel.onmessage = () => state.ticks++;
           state.close = () => channel.close();
         },
-        unixListen(state) {
-          const server = Bun.listen({ unix: import.meta.dir + "/" + state.tag + ".sock", socket: { open(socket) { socket.write(state.tag); }, data() {} } });
+        unixListen(state, path) {
+          const server = Bun.listen({ unix: path, socket: { open(socket) { socket.write(state.tag); }, data() {} } });
           state.close = () => server.stop(true);
         },
-        netUnixServer(state) {
+        netUnixServer(state, path) {
           const server = net.createServer(socket => { socket.on("error", () => {}); socket.write(state.tag); });
-          return new Promise(resolve => server.listen(import.meta.dir + "/" + state.tag + ".sock", () => {
+          return new Promise(resolve => server.listen(path, () => {
             state.close = () => server.close();
             resolve();
           }));
@@ -599,7 +599,10 @@ async function greetsThrough(options: object, tag: string): Promise<boolean> {
   }
   return promise;
 }
-const unixPath = (state: State) => join(dir, state.tag + ".sock");
+/** Where a Unix domain socket named `name` lives; on Windows, the named pipe that stands in for it. */
+const localSocketPath = (name: string) =>
+  isWindows ? `\\\\.\\pipe\\module-graph-isolation-${process.pid}-${name}` : join(dir, name + ".sock");
+const unixPath = (state: State) => localSocketPath(state.tag);
 /** Whether the HTTP/2 (cleartext) server on the state's port answers with its tag. */
 function servesTagOverHttp2(state: State): Promise<boolean> {
   const { promise, resolve } = Promise.withResolvers<boolean>();
@@ -682,11 +685,11 @@ function mysqlGreeting(): Buffer {
   header.writeUIntLE(payload.length, 0, 3);
   return Buffer.concat([header, payload]);
 }
-const hostUnixPath = join(dir, "host.sock");
+const hostUnixPath = localSocketPath("host");
 let hostTcp: Bun.TCPSocketListener<{ tag?: string }>;
 let hostTls: Bun.TCPSocketListener<{ tag?: string }>;
 let hostMysql: Bun.TCPSocketListener<{ tag?: string }>;
-let hostUnix: Bun.UnixSocketListener<{ tag?: string }> | undefined;
+let hostUnix: Bun.UnixSocketListener<{ tag?: string }>;
 let hostHttp2: http2.Http2Server;
 let hostHttp: Bun.Server;
 beforeAll(async () => {
@@ -697,7 +700,7 @@ beforeAll(async () => {
     tls: tlsCertificate,
     socket: tracksTags("tls:"),
   });
-  if (!isWindows) hostUnix = Bun.listen<{ tag?: string }>({ unix: hostUnixPath, socket: tracksTags("unix:") });
+  hostUnix = Bun.listen<{ tag?: string }>({ unix: hostUnixPath, socket: tracksTags("unix:") });
   const mysqlClients = tracksTags("mysql:");
   hostMysql = Bun.listen<{ tag?: string }>({
     hostname: "127.0.0.1",
@@ -756,14 +759,14 @@ afterAll(() => {
   hostTcp.stop(true);
   hostTls.stop(true);
   hostMysql.stop(true);
-  hostUnix?.stop(true);
+  hostUnix.stop(true);
   hostHttp2.close();
   hostHttp.stop(true);
 });
 
 type Kind = {
   /** Extra arguments of the opener, after the state. */
-  args?: () => unknown[];
+  args?: (state: State) => unknown[];
   /** Whether what the opener opened is open / running right now. */
   alive: (state: State) => Promise<boolean>;
 };
@@ -821,15 +824,14 @@ const kinds: Record<string, Kind> = {
       }
     },
   },
-  // (On Windows these are named pipes, which Bun.listen and node:net name differently.)
-  ...(isWindows
-    ? {}
-    : {
-        unixListen: { alive: state => greetsThrough({ unix: unixPath(state) }, state.tag) },
-        netUnixServer: { alive: state => greetsThrough({ unix: unixPath(state) }, state.tag) },
-        unixConnect: { args: () => [hostUnixPath], alive: async state => connected.has("unix:" + state.tag) },
-        netUnixConnect: { args: () => [hostUnixPath], alive: async state => connected.has("unix:" + state.tag) },
-      }),
+  // (Named pipes on Windows.)
+  unixListen: { args: state => [unixPath(state)], alive: state => greetsThrough({ unix: unixPath(state) }, state.tag) },
+  netUnixServer: {
+    args: state => [unixPath(state)],
+    alive: state => greetsThrough({ unix: unixPath(state) }, state.tag),
+  },
+  unixConnect: { args: () => [hostUnixPath], alive: async state => connected.has("unix:" + state.tag) },
+  netUnixConnect: { args: () => [hostUnixPath], alive: async state => connected.has("unix:" + state.tag) },
   tlsConnect: { args: () => [hostTls.port], alive: async state => connected.has("tls:" + state.tag) },
   nodeTlsConnect: { args: () => [hostTls.port], alive: async state => connected.has("tls:" + state.tag) },
   tlsServer: {
@@ -882,7 +884,7 @@ async function newGraph(options: ConstructorParameters<typeof ModuleGraph>[0] = 
 }
 /** Opens `kind` for `state` and waits until it is up. */
 async function openIn(run: (fn: () => unknown) => unknown, app: any, kind: string, state: State) {
-  await run(() => app.open[kind](state, ...(kinds[kind].args?.() ?? [])));
+  await run(() => app.open[kind](state, ...(kinds[kind].args?.(state) ?? [])));
   await until(() => kinds[kind].alive(state));
 }
 const runInHost = (fn: () => unknown) => fn();
@@ -915,6 +917,35 @@ describe.concurrent("ModuleGraph isolation: disposing a graph closes what it ope
         for (const state of Object.values(states)) state.close?.();
       }
       await dead(states.host);
+    });
+  }
+});
+
+describe.concurrent("ModuleGraph isolation: what a disposed graph opens is closed at once", () => {
+  for (const kind of Object.keys(kinds)) {
+    test(kind, async () => {
+      using made = await newGraph();
+      const state = newState(kind + "-late");
+      let opening = false;
+      try {
+        // Queued inside the graph's context, so it runs there, and after the dispose() below:
+        // what a graph had queued as a microtask still runs.
+        made.graph.run(() =>
+          made.app.call(() =>
+            queueMicrotask(() => {
+              opening = true;
+              // (In a stopped context the opener may never learn that it is done.)
+              Promise.resolve(made.app.open[kind](state, ...(kinds[kind].args?.(state) ?? []))).catch(() => {});
+            }),
+          ),
+        );
+        made.graph.dispose();
+        await until(() => opening);
+        await hostTimerTurns();
+        await until(async () => !(await kinds[kind].alive(state)));
+      } finally {
+        state.close?.();
+      }
     });
   }
 });
@@ -1664,7 +1695,7 @@ test("ModuleGraph isolation: every node: builtin module is classified", () => {
     http,
     https: owned("httpsServer"),
     http2: owned("http2Server", "http2Session"),
-    net: owned("netServer", "netConnect", ...(isWindows ? [] : ["netUnixServer", "netUnixConnect"])),
+    net: owned("netServer", "netConnect", "netUnixServer", "netUnixConnect"),
     tls,
     _tls_common: tls,
     _tls_wrap: tls,

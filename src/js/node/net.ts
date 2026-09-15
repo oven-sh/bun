@@ -1775,6 +1775,7 @@ function Socket(options?): void {
   this._parentWrap = null;
   this[kupgraded] = null;
   this[kOnUpgradedClose] = undefined;
+  this[kOwesRawClose] = false;
 
   this[kSetNoDelay] = Boolean(noDelay);
   this[kSetKeepAlive] = Boolean(keepAlive);

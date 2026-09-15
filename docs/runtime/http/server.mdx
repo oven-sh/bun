@@ -386,7 +386,7 @@ Use this for development and hot reloading. You can update only `fetch`, `error`
 
 ### `server.timeout(Request, seconds)`
 
-Override the idle timeout for an individual request. Pass `0` to disable the timeout entirely for that request.
+Override the idle timeout for an individual request. Pass `0` to disable the timeout entirely for that request. `seconds` must be an integer from `0` to `255`, the same range as `idleTimeout`. Other values throw.
 
 ```ts
 const server = Bun.serve({

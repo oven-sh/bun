@@ -1139,6 +1139,9 @@ declare module "bun" {
     /**
      * Reset the idle timeout of the given Request to the given number of seconds. `0` means no timeout.
      *
+     * `seconds` must be an integer from `0` to `255`, the same range as the `idleTimeout` option.
+     * Other values throw.
+     *
      * @example
      * ```js
      * export default {

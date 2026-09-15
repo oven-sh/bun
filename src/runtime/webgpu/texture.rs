@@ -11,7 +11,7 @@ use super::args::{self, Dict};
 use super::device::DeviceRef;
 
 /// Every `GPUTextureUsage` bit the spec defines.
-const ALL_USAGES: u32 = 0x1F;
+const ALL_USAGES: u32 = 0x3F;
 
 #[bun_jsc::JsClass]
 pub struct GPUTexture {

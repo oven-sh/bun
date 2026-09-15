@@ -159,6 +159,7 @@ describe("surface", () => {
       TEXTURE_BINDING: 0x04,
       STORAGE_BINDING: 0x08,
       RENDER_ATTACHMENT: 0x10,
+      TRANSIENT_ATTACHMENT: 0x20,
     });
     expect(GPUShaderStage).toEqual({ VERTEX: 1, FRAGMENT: 2, COMPUTE: 4 });
     expect(GPUColorWrite).toEqual({ RED: 1, GREEN: 2, BLUE: 4, ALPHA: 8, ALL: 15 });
@@ -793,6 +794,18 @@ describe.skipIf(!hasAdapter)("with a device", () => {
       querySet.destroy();
     });
     expect(error).toBeNull();
+
+    // TRANSIENT_ATTACHMENT goes with RENDER_ATTACHMENT and with nothing else.
+    const transient = (extra: number) =>
+      validationError(device, () => {
+        device.createTexture({
+          size: [4, 4],
+          format: "rgba8unorm",
+          usage: GPUTextureUsage.TRANSIENT_ATTACHMENT | extra,
+        });
+      });
+    expect(await transient(GPUTextureUsage.RENDER_ATTACHMENT)).toBeNull();
+    expect(await transient(GPUTextureUsage.COPY_SRC)).toBeInstanceOf(GPUValidationError);
 
     // A view usage with bits that are not a GPUTextureUsage is a validation error.
     expect(

@@ -323,7 +323,7 @@ const exports = {
     return _writeFile(fileHandleOrFdOrPath, ...args);
   },
   readlink: asyncWrap(fs.readlink, "readlink"),
-  realpath: asyncWrap(fs.realpath, "realpath"),
+  realpath: asyncWrap(fs.realpathNative, "realpath"),
   rename: asyncWrap(fs.rename, "rename"),
   stat: asyncWrap(fs.stat, "stat"),
   symlink: asyncWrap(fs.symlink, "symlink"),

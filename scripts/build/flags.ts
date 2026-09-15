@@ -1012,7 +1012,6 @@ export const linkerFlags: Flag[] = [
       "/delayload:dxgi.dll",
       "/delayload:SETUPAPI.dll",
       "/delayload:combase.dll",
-      "/delayload:api-ms-win-core-winrt-error-l1-1-0.dll",
     ],
     when: c => c.windows && c.release,
     desc: "Release link opts + delay-load non-critical DLLs (faster startup)",

@@ -2456,8 +2456,9 @@ describe("proxy resolution", () => {
       [{ ALL_PROXY: P, HTTP_PROXY: Q }, "http://example.test/", Q],
       [{ ALL_PROXY: P, HTTP_PROXY: Q }, "https://example.test/", P],
       [{ ALL_PROXY: P, HTTP_PROXY: "" }, "http://example.test/", P],
-      // a bare host:port in ALL_PROXY is as likely a SOCKS port
-      [{ ALL_PROXY: "proxy.test:3128" }, "http://example.test/", null],
+      // a value with no scheme is an HTTP proxy, for ALL_PROXY as for HTTP_PROXY
+      [{ ALL_PROXY: "proxy.test:3128" }, "http://example.test/", "proxy.test:3128"],
+      [{ ALL_PROXY: "proxy.test:3128" }, "https://example.test/", "proxy.test:3128"],
       [{ HTTP_PROXY: "proxy.test:3128" }, "http://example.test/", "proxy.test:3128"],
       // ...unless it names a proxy the client cannot speak to
       [{ ALL_PROXY: "socks5://proxy.test:1080" }, "http://example.test/", null],

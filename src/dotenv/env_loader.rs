@@ -363,15 +363,17 @@ impl Loader {
         specific.filter(|p| !Self::is_emptyish(p))
     }
 
-    /// `ALL_PROXY` commonly names a SOCKS proxy, which the HTTP client cannot
-    /// speak, and a bare `host:1080` there is usually one too: only a value
-    /// that says `http:` or `https:` is used.
+    /// The proxy for every target scheme. It commonly names a SOCKS proxy,
+    /// which the HTTP client cannot speak, so a value with some other scheme
+    /// than `http:` / `https:` is left alone. A value with no scheme is an
+    /// HTTP proxy, as for curl and for `HTTP_PROXY`: going direct instead would
+    /// silently bypass the proxy, where a wrong guess fails loudly.
     fn all_proxy(&self) -> Option<&[u8]> {
         let value = self
             .get_lower_then_upper(b"all_proxy", b"ALL_PROXY")
             .filter(|p| !Self::is_emptyish(p))?;
         let url = URL::parse(value);
-        url.has_http_like_protocol().then_some(value)
+        (url.protocol.is_empty() || url.has_http_like_protocol()).then_some(value)
     }
 
     /// `no_proxy`, else `NO_PROXY`: one list, the lowercase name first, as curl,

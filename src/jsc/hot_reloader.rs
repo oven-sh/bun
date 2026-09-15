@@ -392,6 +392,11 @@ pub struct MainFile {
     /// and skip the reload. Then when the parent directory gets NOTE_WRITE,
     /// we check if the file exists and trigger the reload.
     pub(crate) is_waiting_for_dir_change: bool,
+
+    /// `file` was a regular file when the reloader started. False for `[eval]`,
+    /// `[stdin]` and a directory: those never exist on disk, so a `--watch`
+    /// restart must not wait for them.
+    pub(crate) is_real_file: bool,
 }
 
 impl Default for MainFile {
@@ -402,6 +407,7 @@ impl Default for MainFile {
             file: b"",
             hash: 0,
             is_waiting_for_dir_change: false,
+            is_real_file: false,
         }
     }
 }
@@ -416,6 +422,7 @@ impl MainFile {
                 0
             },
             is_waiting_for_dir_change: false,
+            is_real_file: is_regular_file(file),
             ..Default::default()
         };
 
@@ -428,6 +435,23 @@ impl MainFile {
 
         main
     }
+}
+
+fn is_regular_file(path: &[u8]) -> bool {
+    if path.is_empty() {
+        return false;
+    }
+    let mut buf = bun_paths::path_buffer_pool::get();
+    if path.len() >= buf.len() {
+        return false;
+    }
+    buf[..path.len()].copy_from_slice(path);
+    buf[path.len()] = 0;
+    let path = ZStr::from_buf(&buf[..], path.len());
+    matches!(
+        bun_sys::exists_at_type(Fd::cwd(), path),
+        Ok(bun_sys::ExistsAtType::File)
+    )
 }
 
 pub struct Task<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool> {
@@ -562,6 +586,15 @@ where
             return;
         }
 
+        if RELOAD_IMMEDIATELY && self.hold_restart_for_missing_main_file() {
+            self.count = 0;
+            return;
+        }
+
+        self.enqueue_now();
+    }
+
+    fn enqueue_now(&mut self) {
         // With --watch-kill-signal listeners registered, reload via the event
         // loop so the JS thread emits them before execve (node runs the child's
         // handlers on kill); otherwise execve immediately (node's default kill).
@@ -618,6 +651,81 @@ where
         }
     }
 }
+
+impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool>
+    Task<Ctx, EventLoopType, RELOAD_IMMEDIATELY>
+where
+    Ctx: HotReloaderCtx<EventLoop = EventLoopType>,
+{
+    /// A `--watch` restart resolves the entry point again in a new process. If
+    /// the file is missing at that moment, the new process exits before it
+    /// starts a watcher, and the watch session ends. An editor save that renames
+    /// the file away, `rm` and `git checkout` all remove the file for a while.
+    /// So a helper thread holds the restart until the file exists again.
+    ///
+    /// The hold has a limit, because the new process can resolve to another
+    /// file: `index.js` renamed to `index.ts`, a changed package.json `main`.
+    /// Returns true when the helper thread now owns the restart.
+    fn hold_restart_for_missing_main_file(&self) -> bool {
+        // SAFETY: BACKREF, see `pending_count`. These three fields are written
+        // once at init, and no `&MainFile` is formed.
+        let (file, hash, is_real_file) = unsafe {
+            let main = core::ptr::addr_of!((*self.reloader).main);
+            ((*main).file, (*main).hash, (*main).is_real_file)
+        };
+        if !is_real_file || is_regular_file(file) {
+            return false;
+        }
+        if WATCH_RELOAD_HELD.swap(true, Ordering::Relaxed) {
+            return true;
+        }
+        // `bun test` has no main file, so the helper thread never flushes the
+        // changed-path set, which only the watcher thread may touch.
+        debug_assert!(WATCH_CHANGED_PATHS.get().is_none());
+
+        // The poll runs on its own thread. This thread holds the watcher mutex
+        // while it dispatches events, and the JS thread takes that mutex for
+        // every new import.
+        let reloader = self.reloader as usize;
+        let spawned = std::thread::Builder::new()
+            .name("WatchReloadHold".into())
+            .spawn(move || {
+                Output::Source::configure_thread_no_js();
+                // An editor save brings the file back within milliseconds, so
+                // poll fast and stay quiet at first.
+                const QUIET_MS: u64 = 500;
+                const LIMIT_MS: u64 = 10_000;
+                let mut waited = 0u64;
+                while waited < LIMIT_MS && !is_regular_file(file) {
+                    if waited == QUIET_MS {
+                        bun_core::pretty_errorln!(
+                            "<r><d>Waiting for \"<b>{}<r><d>\" to exist before restarting...<r>",
+                            bstr::BStr::new(bun_paths::resolve_path::relative(
+                                FileSystem::get().top_level_dir,
+                                file
+                            )),
+                        );
+                        Output::flush();
+                    }
+                    let step = if waited < QUIET_MS { 10 } else { 100 };
+                    std::thread::sleep(std::time::Duration::from_millis(step));
+                    waited += step;
+                }
+                WATCH_RELOAD_HELD.store(false, Ordering::Relaxed);
+                let mut task = Self::init_empty(reloader as *mut NewHotReloader<_, _, _>);
+                task.append(hash);
+                task.enqueue_now();
+            })
+            .is_ok();
+        if !spawned {
+            WATCH_RELOAD_HELD.store(false, Ordering::Relaxed);
+        }
+        spawned
+    }
+}
+
+static WATCH_RELOAD_HELD: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
 
 static WATCH_RELOAD_GRACE_ARMED: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);

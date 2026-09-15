@@ -2,13 +2,17 @@ import type { Subprocess } from "bun";
 import { spawn } from "bun";
 import { afterEach, expect, it } from "bun:test";
 import { bunEnv, bunExe, isBroken, isLinux, isWindows, tempDir, tmpdirSync } from "harness";
-import { readdirSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { readdirSync, rmSync, writeFileSync } from "node:fs";
+import { basename, join } from "node:path";
 
 let watchee: Subprocess;
 
 function stdoutWaiter(proc: Subprocess<"ignore", "pipe", any>) {
-  const reader = proc.stdout.getReader();
+  return streamWaiter(proc.stdout);
+}
+
+function streamWaiter(stream: ReadableStream<Uint8Array>) {
+  const reader = stream.getReader();
   const decoder = new TextDecoder();
   let output = "";
   return {
@@ -465,3 +469,167 @@ it.skipIf(isWindows)(
   },
   30000,
 );
+
+// A --watch restart resolves the entry point again in a new process (execve, or
+// a child respawn on Windows). When the entry file is missing at that moment,
+// the new process exits 1 before it starts a file watcher, and that ended the
+// watch session. The restart now waits until the file exists again.
+for (const { label, arg, file, files } of [
+  { label: "explicit path", arg: () => "entry.ts", file: "entry.ts" },
+  { label: "extensionless path", arg: () => "./entry", file: "entry.ts" },
+  { label: ".js path that resolves to a .ts file", arg: () => "./entry.js", file: "entry.ts" },
+  { label: "parent-relative path", arg: (cwd: string) => `../${basename(cwd)}/entry.ts`, file: "entry.ts" },
+  { label: "directory path", arg: () => ".", file: "index.ts" },
+  {
+    label: "directory path with package.json main",
+    arg: () => ".",
+    file: "src/app.ts",
+    files: { "package.json": JSON.stringify({ name: "watch-entry-deleted", main: "src/app.ts" }) },
+  },
+]) {
+  it.concurrent(`--watch keeps watching when the entry point is deleted and recreated (${label})`, async () => {
+    using dir = tempDir("watch-entry-deleted", {
+      ...files,
+      [file]: `console.log("BOOT 1"); setInterval(() => {}, 1000);`,
+    });
+    const cwd = String(dir);
+    const entry = join(cwd, file);
+
+    await using proc = spawn({
+      cmd: [bunExe(), "--no-clear-screen", "--watch", arg(cwd)],
+      cwd,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const stdout = streamWaiter(proc.stdout);
+    const stderr = streamWaiter(proc.stderr);
+
+    await stdout.waitFor("BOOT 1");
+
+    // Without the fix the process restarts here, prints "Module not found" and
+    // exits, so stderr closes before the note appears.
+    rmSync(entry);
+    await stderr.waitFor("to exist before restarting");
+    expect(stderr.output()).toContain(`Waiting for "${join(...file.split("/"))}"`);
+
+    writeFileSync(entry, `console.log("BOOT 2"); setInterval(() => {}, 1000);`);
+    await stdout.waitFor("BOOT 2");
+
+    proc.kill("SIGKILL");
+    await proc.exited;
+  });
+}
+
+// The held restart still runs the --watch-kill-signal listeners before it
+// replaces the process.
+it.concurrent("--watch runs kill-signal listeners after it waited for the entry point", async () => {
+  const source = (boot: number) =>
+    `process.on("SIGTERM", () => console.log("LISTENER ${boot}")); console.log("BOOT ${boot}"); setInterval(() => {}, 1000);`;
+  using dir = tempDir("watch-entry-deleted-kill-signal", { "entry.ts": source(1) });
+  const entry = join(String(dir), "entry.ts");
+
+  await using proc = spawn({
+    cmd: [bunExe(), "--no-clear-screen", "--watch", "entry.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  const stdout = streamWaiter(proc.stdout);
+  const stderr = streamWaiter(proc.stderr);
+
+  await stdout.waitFor("BOOT 1");
+  rmSync(entry);
+  await stderr.waitFor("to exist before restarting");
+  writeFileSync(entry, source(2));
+  await stdout.waitFor("BOOT 2");
+  // The listener has a bounded time to run before the restart is forced, so
+  // its line can be absent on a loaded machine. It must never run twice.
+  expect(stdout.output().replace("LISTENER 1\n", "")).toBe("BOOT 1\nBOOT 2\n");
+
+  proc.kill("SIGKILL");
+  await proc.exited;
+});
+
+// The wait has a limit: the new process can resolve to another file (index.js
+// renamed to index.ts), so the restart must happen at some point. Here nothing
+// takes the place of the entry point, so the restarted process fails as before.
+it.concurrent(
+  "--watch restarts after a limit when the entry point stays missing",
+  async () => {
+    using dir = tempDir("watch-entry-stays-missing", {
+      "entry.ts": `console.log("BOOT 1"); setInterval(() => {}, 1000);`,
+    });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "--no-clear-screen", "--watch", "entry.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const stdout = streamWaiter(proc.stdout);
+
+    await stdout.waitFor("BOOT 1");
+    rmSync(join(String(dir), "entry.ts"));
+
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain(`Waiting for "entry.ts" to exist before restarting`);
+    expect(stderr).toContain(`Module not found "entry.ts"`);
+    expect(exitCode).toBe(1);
+  },
+  30_000,
+);
+
+// [eval] never exists on disk, so a restart must not wait for it.
+it.concurrent("--watch -e restarts when a dependency changes", async () => {
+  using dir = tempDir("watch-eval-entry", { "dep.ts": `export const v = 1;` });
+
+  await using proc = spawn({
+    cmd: [
+      bunExe(),
+      "--no-clear-screen",
+      "--watch",
+      "-e",
+      `import { v } from "./dep.ts"; console.log("EVAL " + v); setInterval(() => {}, 1000);`,
+    ],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+  });
+  const stdout = streamWaiter(proc.stdout);
+
+  await stdout.waitFor("EVAL 1");
+  writeFileSync(join(String(dir), "dep.ts"), `export const v = 2;`);
+  await stdout.waitFor("EVAL 2");
+
+  proc.kill("SIGKILL");
+  await proc.exited;
+});
+
+// Only a restart waits. A first run on a path that does not exist still fails
+// at once.
+it.concurrent("--watch exits when the entry point does not exist at startup", async () => {
+  using dir = tempDir("watch-entry-missing", {});
+
+  await using proc = spawn({
+    cmd: [bunExe(), "--no-clear-screen", "--watch", "entry.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain(`Module not found "entry.ts"`);
+  expect(stderr).not.toContain("Waiting for");
+  expect(stdout).toBe("");
+  expect(exitCode).toBe(1);
+});

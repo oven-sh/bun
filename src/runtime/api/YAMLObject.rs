@@ -54,6 +54,8 @@ struct Stringifier {
     stack_check: StackCheck,
     builder: wtf::StringBuilder,
     indent: usize,
+    /// Columns added by the `- ` prefixes of the enclosing sequence items.
+    item_offset: usize,
 
     known_collections: HashMap<JSValue, AnchorAlias>,
     array_item_counter: usize,
@@ -194,6 +196,7 @@ impl Stringifier {
             stack_check: StackCheck::init(),
             builder: wtf::StringBuilder::init(),
             indent: 0,
+            item_offset: 0,
             known_collections: HashMap::default(),
             array_item_counter: 0,
             prop_names,
@@ -492,9 +495,9 @@ impl Stringifier {
 
                         // don't need to print a newline here for any value
 
-                        self.indent += 1;
+                        self.item_offset += b"- ".len();
                         self.stringify(global, item)?;
-                        self.indent -= 1;
+                        self.item_offset -= b"- ".len();
                     }
                     if first {
                         if after_key {
@@ -591,7 +594,7 @@ impl Stringifier {
                 let space_num = *space_num as usize;
                 self.builder.append_lchar(b'\n');
                 self.builder
-                    .ensure_unused_capacity(indent_count * space_num);
+                    .ensure_unused_capacity(indent_count * space_num + self.item_offset);
                 for _ in 0..indent_count * space_num {
                     self.builder.append_lchar(b' ');
                 }
@@ -602,10 +605,16 @@ impl Stringifier {
                 let clamped = space_str.trunc(10);
 
                 self.builder
-                    .ensure_unused_capacity(indent_count * clamped.length());
+                    .ensure_unused_capacity(indent_count * clamped.length() + self.item_offset);
                 for _ in 0..indent_count {
                     self.builder.append_string(&clamped);
                 }
+            }
+        }
+
+        if !matches!(self.space, Space::Minified) {
+            for _ in 0..self.item_offset {
+                self.builder.append_lchar(b' ');
             }
         }
     }
@@ -772,7 +781,9 @@ fn string_needs_quotes(str: &BunString) -> bool {
         | 0x20 /* ' ' */
         | 0x09 /* '\t' */
         | 0x0a /* '\n' */
-        | 0x0d /* '\r' */ => return true,
+        | 0x0d /* '\r' */
+        // the parser drops a leading byte order mark
+        | 0xfeff => return true,
 
         _ => {}
     }

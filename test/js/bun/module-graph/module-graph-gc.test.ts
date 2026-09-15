@@ -1,5 +1,5 @@
 // Bun.ModuleGraph and the garbage collector: what keeps a graph (its loader, module
-// records, CommonJS modules and, with `isolateIO`, its context) alive, and that nothing else does.
+// records, CommonJS modules and its context) alive, and that nothing else does.
 import { heapStats } from "bun:jsc";
 import { afterAll, describe, expect, test } from "bun:test";
 import { rmSync } from "fs";
@@ -312,10 +312,9 @@ async function accepts(port: number): Promise<boolean> {
 describe("ModuleGraph GC: an unreferenced graph is collected", () => {
   class Subclass extends ModuleGraph {}
   const kinds: [string, () => Graph][] = [
-    ["plain", () => new ModuleGraph()],
+    ["without options", () => new ModuleGraph()],
     ["with globals and onError", () => new ModuleGraph({ globals: { TAG: "g" }, onError() {} })],
-    ["isolateIO", () => new ModuleGraph({ isolateIO: true })],
-    ["subclass", () => new Subclass({ isolateIO: true })],
+    ["subclass", () => new Subclass()],
   ];
   for (const [kind, make] of kinds) {
     test(kind, async () => {
@@ -520,17 +519,14 @@ describe("ModuleGraph GC: cells a graph made go with it", () => {
   });
 });
 
-describe("ModuleGraph GC: isolateIO", () => {
+describe("ModuleGraph GC: what the graph's context owns", () => {
   const control = () => ({ stop: false, ticks: 0, httpPort: 0, tcpPort: 0, heard: [] as string[] });
 
   test("a listening server keeps its graph alive and serving after the host dropped the graph; stopping it lets the graph go", async () => {
     const lifetimes = new Lifetimes();
     const state = control();
     await (async () => {
-      const graph = lifetimes.track(
-        "graph",
-        new ModuleGraph({ isolateIO: true, globals: { TAG: "served", control: state } }),
-      );
+      const graph = lifetimes.track("graph", new ModuleGraph({ globals: { TAG: "served", control: state } }));
       const io = await graph.import(file("io.mjs"));
       graph.run(() => io.serve());
     })();
@@ -545,7 +541,7 @@ describe("ModuleGraph GC: isolateIO", () => {
     const lifetimes = new Lifetimes();
     const state = control();
     await (async () => {
-      const graph = lifetimes.track("graph", new ModuleGraph({ isolateIO: true, globals: { control: state } }));
+      const graph = lifetimes.track("graph", new ModuleGraph({ globals: { control: state } }));
       const io = await graph.import(file("io.mjs"));
       graph.run(() => io.tick());
     })();
@@ -561,11 +557,11 @@ describe("ModuleGraph GC: isolateIO", () => {
     let timer: Timer | undefined;
     let snapshot: (<R>(fn: () => R) => R) | undefined;
     await (async () => {
-      const timed = lifetimes.track("with a pending timer", new ModuleGraph({ isolateIO: true }));
+      const timed = lifetimes.track("with a pending timer", new ModuleGraph());
       timer = timed.run(() => setTimeout(() => {}, 1_000_000));
-      const snapshotted = lifetimes.track("with a captured async context", new ModuleGraph({ isolateIO: true }));
+      const snapshotted = lifetimes.track("with a captured async context", new ModuleGraph());
       snapshot = snapshotted.run(() => AsyncLocalStorage.snapshot());
-      lifetimes.track("ran and returned", new ModuleGraph({ isolateIO: true })).run(() => 1);
+      lifetimes.track("ran and returned", new ModuleGraph()).run(() => 1);
     })();
     expect(await lifetimes.stillAlive("ran and returned")).toEqual([]);
     expect(await lifetimes.survives("with a pending timer")).toBe(true);
@@ -580,7 +576,7 @@ describe("ModuleGraph GC: isolateIO", () => {
     const lifetimes = new Lifetimes();
     const state = control();
     await (async () => {
-      const graph = lifetimes.track("graph", new ModuleGraph({ isolateIO: true, globals: { control: state } }));
+      const graph = lifetimes.track("graph", new ModuleGraph({ globals: { control: state } }));
       const io = await graph.import(file("io.mjs"));
       await graph.run(() => io.connectToOwnServer());
       await graph.run(() => io.worker());
@@ -598,10 +594,7 @@ describe("ModuleGraph GC: isolateIO", () => {
     const states = Array.from({ length: 10 }, control);
     await (async () => {
       for (const [i, state] of states.entries()) {
-        const graph = lifetimes.track(
-          "graph " + i,
-          new ModuleGraph({ isolateIO: true, globals: { TAG: "n" + i, control: state } }),
-        );
+        const graph = lifetimes.track("graph " + i, new ModuleGraph({ globals: { TAG: "n" + i, control: state } }));
         const io = await graph.import(file("io.mjs"));
         graph.run(() => (io.serve(), io.tick()));
       }
@@ -617,7 +610,7 @@ describe("ModuleGraph GC: isolateIO", () => {
     const round = async (graphs: number) => {
       const states = Array.from({ length: graphs }, control);
       for (const [i, state] of states.entries()) {
-        const graph = new ModuleGraph({ isolateIO: true, globals: { TAG: "c" + i, control: state } });
+        const graph = new ModuleGraph({ globals: { TAG: "c" + i, control: state } });
         const io = await graph.import(file("io.mjs"));
         graph.run(() => (io.serve(), io.tick()));
         await graph.run(() => io.connectToOwnServer());
@@ -639,9 +632,9 @@ describe("ModuleGraph GC: isolateIO", () => {
 
 // node:fs remembers every open FileHandle for the life of the realm, to close the ones nobody
 // did: what it remembers of one must not hold the graph whose module holds the handle.
-describe.concurrent("ModuleGraph GC: a dropped graph whose module keeps a FileHandle open is collected", () => {
-  for (const isolateIO of [false, true]) {
-    test(isolateIO ? "isolateIO" : "plain", async () => {
+describe.concurrent("ModuleGraph GC: node:fs's record of open FileHandles", () => {
+  {
+    test("a dropped graph whose module keeps a FileHandle open is collected", async () => {
       await using proc = Bun.spawn({
         cmd: [
           bunExe(),
@@ -652,7 +645,7 @@ describe.concurrent("ModuleGraph GC: a dropped graph whose module keeps a FileHa
           let collected = false;
           const registry = new FinalizationRegistry(() => { collected = true; });
           await (async () => {
-            const graph = new Bun.ModuleGraph({ isolateIO: ${isolateIO}, onError() {} });
+            const graph = new Bun.ModuleGraph({ onError() {} });
             registry.register(graph, "graph");
             await graph.import(${JSON.stringify(join(dir, "keeps-a-file-handle.mjs"))});
           })();
@@ -682,7 +675,7 @@ test("ModuleGraph GC: survives collecting continuously", async () => {
       const dir = ${JSON.stringify(dir)};
       for (let i = 0; i < 3; i++) {
         const control = { stop: false, ticks: 0, httpPort: 0, tcpPort: 0, heard: [] };
-        const graph = new Bun.ModuleGraph({ isolateIO: i % 2 === 0, globals: { TAG: "cc" + i, control } });
+        const graph = new Bun.ModuleGraph({ globals: { TAG: "cc" + i, control } });
         const cjs = (await graph.import(join(dir, "uses-cjs.mjs"))).default;
         cjs.inc(); cjs.cache();
         const esm = await graph.import(join(dir, "esm.mjs"));

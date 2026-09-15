@@ -308,7 +308,6 @@ public:
     // Bun.ModuleGraph (ModuleGraph.cpp)
     // Made with the first Bun.ModuleGraph (ModuleGraph.cpp).
     bool hasModuleGraphs() const { return !!m_moduleGraphs; }
-    JSC::Structure* JSIsolatedModuleGraphStructure() const { return m_JSIsolatedModuleGraphStructure.getInitializedOnMainThread(this); }
     // The shape of an async-context frame that names a Bun.ModuleGraph (ModuleGraph.cpp).
     JSC::Structure* moduleGraphFrameStructure() const { return m_moduleGraphFrameStructure.getInitializedOnMainThread(this); }
 
@@ -540,7 +539,6 @@ public:
     /* node:worker_threads worker: { stdin?, stdout, stderr } MessagePorts from the parent Worker; */        \
     /* process.stdin/stdout/stderr are built over these lazily (BunProcess.cpp constructStd*). */            \
     V(private, WriteBarrier<JSObject>, m_nodeWorkerStdioPorts)                                               \
-    V(private, LazyPropertyOfGlobalObject<Structure>, m_JSIsolatedModuleGraphStructure)                      \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_moduleGraphFrameStructure)                           \
                                                                                                              \
     /* The original, unmodified Error.prepareStackTrace. */                                                  \

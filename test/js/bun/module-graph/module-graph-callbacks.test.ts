@@ -1,4 +1,4 @@
-// Bun.ModuleGraph({ isolateIO: true }): every way the runtime calls back into a graph's script
+// Bun.ModuleGraph: every way the runtime calls back into a graph's script
 // finds that graph's context current — also while other graphs and the host are doing the same
 // things at the same time. One entry per kind of callback; add one when adding an API that calls back.
 import { afterAll, beforeAll, expect, test } from "bun:test";
@@ -307,7 +307,7 @@ test("every callback of several graphs and the host, all running at once, finds 
   const runners: Runner[] = [{ tag: "host", graph: undefined, app: hostApp }];
   using stack = new DisposableStack();
   for (const tag of ["a", "b", "c"]) {
-    const graph = stack.adopt(new ModuleGraph({ isolateIO: true }), graph => graph.dispose());
+    const graph = stack.adopt(new ModuleGraph(), graph => graph.dispose());
     runners.push({ tag, graph, app: await graph.import(join(dir, "callbacks.mjs")) });
   }
 

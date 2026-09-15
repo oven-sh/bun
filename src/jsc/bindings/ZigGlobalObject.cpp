@@ -1146,8 +1146,8 @@ WebCore::ScriptExecutionContext* GlobalObject::scriptExecutionContext() const
 
 WebCore::ScriptExecutionContext* GlobalObject::currentScriptExecutionContext()
 {
-    if (m_moduleGraphs && m_moduleGraphs->hasIsolatedGraphs) [[unlikely]] {
-        if (auto* graph = Bun::currentIsolatedModuleGraph(this))
+    if (m_moduleGraphs) [[unlikely]] {
+        if (auto* graph = Bun::currentModuleGraph(this))
             return &graph->context();
     }
     return m_scriptExecutionContext;
@@ -2719,11 +2719,6 @@ void GlobalObject::finishCreation(VM& vm)
     m_moduleGraphFrameStructure.initLater(
         [](const Initializer<Structure>& init) {
             init.set(Bun::createModuleGraphFrameStructure(init.vm, init.owner));
-        });
-    m_JSIsolatedModuleGraphStructure.initLater(
-        [](const Initializer<Structure>& init) {
-            auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(init.owner);
-            init.set(Bun::JSIsolatedModuleGraph::createStructure(init.vm, globalObject, globalObject->JSModuleGraphStructure()->storedPrototype()));
         });
 
     this->initGeneratedLazyClasses();

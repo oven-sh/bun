@@ -711,6 +711,7 @@ describe("ModuleGraph matrix: lifecycle and error timing", () => {
         b = graph("b", log);
       const bMod = b.import(join(dir, "slow.mjs"));
       let aOutcome: unknown;
+      let parked: Promise<unknown> | undefined;
       if (when === "beforeImportSettles") {
         const p = a.import(join(dir, "slow.mjs"));
         a.dispose();
@@ -719,8 +720,8 @@ describe("ModuleGraph matrix: lifecycle and error timing", () => {
         const p = a.import(join(dir, "slow.mjs"));
         while (!log.includes("slow-start@a")) await new Promise<void>(r => setImmediate(r)); // a is now parked in its TLA
         a.dispose();
-        // Parked in a top-level await on a timer that still fires (no isolateIO): left to finish.
-        aOutcome = await p.then(() => "resolved", errorName);
+        // Parked in a top-level await on a timer that went with the graph: nothing is left to settle it.
+        parked = p;
       } else if (when === "afterImport") {
         const m = await a.import(join(dir, "slow.mjs"));
         a.dispose();
@@ -736,6 +737,7 @@ describe("ModuleGraph matrix: lifecycle and error timing", () => {
       const cResult = await c
         .import(join(dir, "slow.mjs"))
         .then(async (m: any) => ({ who: m.who, late: await m.later() }), errorName);
+      if (parked) aOutcome = Bun.peek.status(parked);
       expect({
         aOutcome,
         bResult,
@@ -743,7 +745,7 @@ describe("ModuleGraph matrix: lifecycle and error timing", () => {
         bLog: log.filter(l => l.endsWith("@b")),
         cLog: log.filter(l => l.endsWith("@c")),
       }).toEqual({
-        aOutcome: when === "duringDependencyTla" ? "resolved" : "Error",
+        aOutcome: when === "duringDependencyTla" ? "pending" : "Error",
         bResult: { who: "b", late: "b" },
         cResult: { who: "c", late: "c" },
         bLog: ["slow-start@b", "slow-end@b", "late@b"],

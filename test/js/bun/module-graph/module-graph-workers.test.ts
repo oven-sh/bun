@@ -116,7 +116,7 @@ const dir = String(
             worker.on("exit", onClose);
           }
         } else if (kind === "nested") {
-          const inner = (held.inner = new Bun.ModuleGraph({ isolateIO: true, globals: { control } }));
+          const inner = (held.inner = new Bun.ModuleGraph({ globals: { control } }));
           const app = await inner.import(import.meta.path);
           for (const [innerKind, innerArg] of arg) await inner.run(() => app.begin(innerKind, innerArg));
         } else if (kind === "peer") {
@@ -207,12 +207,11 @@ const dir = String(
         };
 
         // A second graph of this thread's, which none of the cell's events are for.
-        const sibling = new Bun.ModuleGraph({ isolateIO: true, globals: { control: { tick: () => void Atomics.add(i32, base + S.SIBLING_TICKS, 1) } } });
+        const sibling = new Bun.ModuleGraph({ globals: { control: { tick: () => void Atomics.add(i32, base + S.SIBLING_TICKS, 1) } } });
         await sibling.import(import.meta.dir + "/sibling.mjs");
         out.disposeSibling = () => sibling.dispose();
 
         graph = new Bun.ModuleGraph({
-          isolateIO: cell.graph !== "plain",
           globals: { control },
           onError: cell.onError && ((error, kind) => { out.onError = kind + ": " + error.message; if (cell.onError !== "record") step(cell.onError); }),
         });
@@ -411,10 +410,9 @@ const dir = String(
       if (kinds.includes("child")) result.childGone = await main.pidGone(true);
       if (kinds.some(kind => ["fetch", "socket", "dialing"].includes(kind))) result.peerClosed = await main.peerClosed(kinds.includes("dialing"));
       await main.quiet();
-      // (A graph without isolateIO owns nothing: what its code opened is the host's, and goes on.)
-      result.afterDispose = cell.graph === "plain" ? "not isolated" : main.afterDispose();
+      result.afterDispose = main.afterDispose();
       // (Named, when there is something to name.)
-      if (cell.graph !== "plain" && subject.heard.length > subject.heardAtDispose) result.heardAfterDispose = subject.heard.slice(subject.heardAtDispose);
+      if (subject.heard.length > subject.heardAtDispose) result.heardAfterDispose = subject.heard.slice(subject.heardAtDispose);
       result.fdsAboveBaseline = await main.fdsAbove(baseline);
 
       bystander.control.held.worker.postMessage("ping");
@@ -508,8 +506,6 @@ const dir = String(
         // (Named, when there is something to name.)
         if (late.length) result.heardAfterDispose = late;
         Object.assign(result, { heard: main.disposed() ? null : main.names(heard), onError, leafTerminateResolved: cell.terminate === "either" ? "either" : terminateResolved });
-        // (A graph without isolateIO owns nothing: the graph its code made goes on when it is disposed.)
-        if (cell.innerSurvives) result.innerSurvives = (await until(() => main.afterDispose().ticks > 5), true);
         await subject.worker.terminate();
       } else {
         await until(() => subject.seen.exit !== undefined);
@@ -527,7 +523,7 @@ const dir = String(
       if (kinds.includes('"child"')) { result.childGone = !main.disposed() || (await main.pidGone(cell.worker === "alive")); main.killChild(0); }
       if (/"(fetch|socket|connecting)"/.test(kinds)) result.peerClosed = await main.peerClosed(cell.racy);
       await main.quiet();
-      result.afterDispose = cell.innerSurvives ? { ...main.afterDispose(), ticks: 0 } : main.afterDispose();
+      result.afterDispose = main.afterDispose();
       result.fdsAboveBaseline = await main.fdsAbove(baseline);
       result.bystander = await bystander.answers();
       result.hostServer = await fetch("http://127.0.0.1:" + main.hostServer.port + "/").then(response => response.text());
@@ -661,7 +657,7 @@ function a(name: string, api: Api, mode: LeafState, cell: OwnerCell) {
           leafStopped: true,
           graphStopped: true,
           ...peers(JSON.stringify(work), cell.graphState),
-          afterDispose: cell.graph === "plain" ? "not isolated" : silent,
+          afterDispose: silent,
           fdsAboveBaseline: 0,
           bystander: "answers",
           hostServer: "host",
@@ -735,13 +731,6 @@ for (const api of apis) {
     onError: "record",
     hostPlan: ["leaf-message:throw", "errored"],
   });
-  // A graph without isolateIO owns nothing: the worker is the host's, and answers after dispose().
-  a(
-    `${api} Worker idle, graph without isolateIO: dispose() leaves the worker running; terminate() ends it`,
-    api,
-    "idle",
-    { graph: "plain", hostPlan: ["dispose", "leaf-answers", "terminate-leaf", "settled"] },
-  );
   // An error thrown by the graph's code, and what its onError does about it.
   for (const onError of ["record", "terminate-leaf", "dispose"])
     for (const then of [[], ["dispose"]])
@@ -800,7 +789,6 @@ type HostedCell = {
   onError?: string;
   racy?: boolean;
   channel?: string;
-  innerSurvives?: boolean;
 };
 type Ends = "alive" | "terminated" | "exited" | "threw" | "main exits";
 function b(topology: string, name: string, hostApi: Api, cell: HostedCell, ends: Ends) {
@@ -847,7 +835,6 @@ function b(topology: string, name: string, hostApi: Api, cell: HostedCell, ends:
             graphStopped: true,
             peerStopped: true,
             ...peers(kinds, cell.graphState, cell.racy),
-            ...(cell.innerSurvives && { innerSurvives: true }),
             afterDispose: silent,
             fdsAboveBaseline: 0,
             bystander: "answers",
@@ -1086,13 +1073,6 @@ Object.entries(innerWork).forEach(([what, inner], i) => {
     "alive",
   );
 });
-b(
-  D,
-  "the outer graph is without isolateIO, the inner one has an interval, in a web Worker: the worker disposes the outer graph and the inner one goes on",
-  "web",
-  { graph: "plain", work: [["nested", [["timer"]]]], hostPlan: ["dispose"], mainPlan: ["done"], innerSurvives: true },
-  "alive",
-);
 
 // The events land on one; the other goes on sending to it.
 const E = "E: two workers, a graph in each, talking to each other";

@@ -1518,7 +1518,8 @@ describe("Bun.ModuleGraph — error attribution matrix", () => {
 describe("Bun.ModuleGraph — errors with none of the graph's code on the stack", () => {
   // Module code is strict, so `() => JSON.parse(text)` calls JSON.parse as a tail call: by the time it
   // throws, the graph's frame is gone. And when the runtime rejects a promise itself there was never
-  // one. A graph with a context of its own (isolateIO) still gets these: they are its context's.
+  // one. The graph still gets these when they happen in its context (its code was entered with
+  // run(), or is its own module code); called by the host directly, the code runs in the host's.
   const dir = fixture({
     "tenant.mjs": `
       import { EventEmitter } from "node:events";
@@ -1537,14 +1538,14 @@ describe("Bun.ModuleGraph — errors with none of the graph's code on the stack"
       process.on("unhandledRejection", error => told.push("host"));
       const until = async condition => { while (!condition()) await new Promise(resolve => setImmediate(resolve)); };
       const out = {};
-      for (const isolateIO of [true, false]) {
-        const graph = new Bun.ModuleGraph({ isolateIO, onError: () => told.push("graph") });
+      for (const entered of [true, false]) {
+        const graph = new Bun.ModuleGraph({ onError: () => told.push("graph") });
         const { cases } = await graph.import(import.meta.dir + "/tenant.mjs");
         for (const name of Object.keys(cases)) {
           told.length = 0;
-          graph.run ? graph.run(() => cases[name]()) : cases[name]();
+          entered ? graph.run(() => cases[name]()) : cases[name]();
           await until(() => told.length > 0);
-          out[(isolateIO ? "isolateIO: " : "plain: ") + name] = told.join();
+          out[(entered ? "inside run(): " : "called by the host: ") + name] = told.join();
         }
       }
       // While one graph's onError runs, another graph's error is still that graph's.
@@ -1560,19 +1561,19 @@ describe("Bun.ModuleGraph — errors with none of the graph's code on the stack"
       process.exit(0);
     `,
   });
-  test("go to the graph whose context is current; without one there is nothing to go on", async () => {
+  test("go to the graph whose context is current; in the host's there is nothing to go on", async () => {
     const { stdout, exitCode } = await runBun(["main.mjs"], { cwd: dir });
     expect(JSON.parse(stdout)).toEqual({
-      "isolateIO: a native function throws, called as a tail call": "graph",
-      "isolateIO: JSON.parse throws, called as a tail call": "graph",
-      "isolateIO: EventEmitter 'error' with no listener, emitted as a tail call": "graph",
-      "isolateIO: the runtime rejects a promise nobody handles": "graph",
-      "isolateIO: the graph's own throw (control)": "graph",
-      "plain: a native function throws, called as a tail call": "host",
-      "plain: JSON.parse throws, called as a tail call": "host",
-      "plain: EventEmitter 'error' with no listener, emitted as a tail call": "host",
-      "plain: the runtime rejects a promise nobody handles": "host",
-      "plain: the graph's own throw (control)": "graph",
+      "inside run(): a native function throws, called as a tail call": "graph",
+      "inside run(): JSON.parse throws, called as a tail call": "graph",
+      "inside run(): EventEmitter 'error' with no listener, emitted as a tail call": "graph",
+      "inside run(): the runtime rejects a promise nobody handles": "graph",
+      "inside run(): the graph's own throw (control)": "graph",
+      "called by the host: a native function throws, called as a tail call": "host",
+      "called by the host: JSON.parse throws, called as a tail call": "host",
+      "called by the host: EventEmitter 'error' with no listener, emitted as a tail call": "host",
+      "called by the host: the runtime rejects a promise nobody handles": "host",
+      "called by the host: the graph's own throw (control)": "graph",
       "another graph's rejection while an onError runs": "first,second",
     });
     expect(exitCode).toBe(0);

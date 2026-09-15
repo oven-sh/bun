@@ -1,4 +1,4 @@
-// Bun.ModuleGraph({ isolateIO: true }): graphs are isolated from each other and from the
+// Bun.ModuleGraph: graphs are isolated from each other and from the
 // host. What one opens is its own: disposing it closes that and nothing else, whoever's code
 // happened to be running when it was opened.
 import { afterAll, beforeAll, describe, expect, setSystemTime, test } from "bun:test";
@@ -46,7 +46,7 @@ const dir = String(
     "retries-then-is-disposed.mjs": `
       import { writeSync } from "node:fs";
       const [name, ports] = [process.argv[2], JSON.parse(process.argv[3])];
-      const graph = new Bun.ModuleGraph({ isolateIO: true });
+      const graph = new Bun.ModuleGraph();
       const app = await graph.import(import.meta.dir + "/app.mjs");
       const state = { ticks: 0 };
       let hostTurns = 0;
@@ -69,7 +69,7 @@ const dir = String(
     `,
     "opens-then-disposes.mjs": `
       const [kind, state, args] = [process.argv[2], JSON.parse(process.argv[3]), JSON.parse(process.argv[4])];
-      const graph = new Bun.ModuleGraph({ isolateIO: true });
+      const graph = new Bun.ModuleGraph();
       const app = await graph.import(import.meta.dir + "/app.mjs");
       await graph.run(() => app.open[kind](state, ...args));
       graph.dispose();
@@ -133,7 +133,7 @@ const dir = String(
         const data = Buffer.alloc(4 << 20, "T");
         for (const handle of await opensForWriting(dir, count)) handle.write(data, 0, data.length, 0).catch(() => {});
       };
-      // A module loaded through a graph of its own making that has no context of its own.
+      // A module loaded through a graph of its own making.
       export const loadsThroughAPlainGraph = specifier => new Bun.ModuleGraph().import(specifier);
       export const makesAGraph = options => new Bun.ModuleGraph(options);
       // FileHandles nobody closes and nobody keeps.
@@ -161,7 +161,7 @@ const dir = String(
       const server = http.createServer((request, response) => response.end("ok"));
       await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
       const get = () => new Promise(resolve => http.get({ port: server.address().port, host: "127.0.0.1", agent: false }, response => { response.resume(); response.on("end", resolve); }));
-      const graph = new Bun.ModuleGraph({ isolateIO: true });
+      const graph = new Bun.ModuleGraph();
       const app = await graph.import(import.meta.dir + "/left-behind-tenant.mjs");
       // ("control": the same requests with no observer anywhere.)
       if (process.argv[2] === "observe") graph.run(() => app.observeHttp());
@@ -177,7 +177,7 @@ const dir = String(
     "files-of-a-disposed-graph.mjs": `
       import fs from "node:fs";
       const descriptors = () => fs.readdirSync(process.platform === "linux" ? "/proc/self/fd" : "/dev/fd").length;
-      const graph = new Bun.ModuleGraph({ isolateIO: true });
+      const graph = new Bun.ModuleGraph();
       const app = await graph.import(import.meta.dir + "/left-behind-tenant.mjs");
       const before = descriptors();
       graph.run(() => app.opens(import.meta.path, 64));
@@ -190,7 +190,7 @@ const dir = String(
     "pipes-of-a-disposed-graph.mjs": `
       import fs from "node:fs";
       const descriptors = () => fs.readdirSync(process.platform === "linux" ? "/proc/self/fd" : "/dev/fd").length;
-      const graph = new Bun.ModuleGraph({ isolateIO: true });
+      const graph = new Bun.ModuleGraph();
       const app = await graph.import(import.meta.dir + "/left-behind-tenant.mjs");
       const before = descriptors();
       graph.run(() => app.quietChildren(process.execPath, 8));
@@ -209,7 +209,7 @@ const dir = String(
     `,
     "first-to-load-node-http.mjs": `
       using server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("ok") });
-      const graph = new Bun.ModuleGraph({ isolateIO: true });
+      const graph = new Bun.ModuleGraph();
       const app = await graph.import(import.meta.dir + "/first-to-load-node-http-tenant.mjs");
       await graph.run(() => app.get(server.port));
       graph.dispose();
@@ -225,7 +225,7 @@ const dir = String(
       // (A write the upload is waiting on is a protected promise.)
       const protectedPromises = () => { Bun.gc(true); return heapStats().protectedObjectTypeCounts.Promise ?? 0; };
       const before = protectedPromises();
-      const graph = new Bun.ModuleGraph({ isolateIO: true });
+      const graph = new Bun.ModuleGraph();
       const app = await graph.import(import.meta.dir + "/left-behind-tenant.mjs");
       graph.run(() => app.uploads(server.port, 16));
       while (arrived < 16) await new Promise(resolve => setImmediate(resolve));
@@ -238,7 +238,7 @@ const dir = String(
     "rewrite-given-up-at-exit.mjs": `
       import { writeSync } from "node:fs";
       const said = [];
-      const graph = new Bun.ModuleGraph({ isolateIO: true });
+      const graph = new Bun.ModuleGraph();
       const app = await graph.import(import.meta.dir + "/left-behind-tenant.mjs");
       graph.run(() => app.rewrites(what => said.push(what)));
       await new Promise(resolve => setTimeout(resolve, 1));
@@ -249,7 +249,7 @@ const dir = String(
     "queued-writes-of-a-disposed-graph.mjs": `
       import fs from "node:fs";
       const dir = fs.mkdtempSync(import.meta.dir + "/queued-writes-");
-      const graph = new Bun.ModuleGraph({ isolateIO: true });
+      const graph = new Bun.ModuleGraph();
       const app = await graph.import(import.meta.dir + "/left-behind-tenant.mjs");
       if (process.argv[2] === "host") {
         // The host writes through handles the graph opened: the descriptors are still the graph's.
@@ -277,7 +277,7 @@ const dir = String(
     `,
     "host-import-parked-at-dispose.mjs": `
       const parked = Promise.withResolvers();
-      const graph = new Bun.ModuleGraph({ isolateIO: true, globals: { gate: new Promise(() => {}), parked: parked.resolve } });
+      const graph = new Bun.ModuleGraph({ globals: { gate: new Promise(() => {}), parked: parked.resolve } });
       let settled = "pending";
       graph.import(import.meta.dir + "/parks-in-tla.mjs").then(() => (settled = "fulfilled"), error => (settled = "rejected: " + error.code));
       await parked.promise;
@@ -292,7 +292,7 @@ const dir = String(
       const listener = new BroadcastChannel("of-a-disposed-graph");
       const marker = Promise.withResolvers();
       listener.onmessage = event => (event.data === "the host's own" ? marker.resolve() : heardByTheHost.push(event.data));
-      const graph = new Bun.ModuleGraph({ isolateIO: true });
+      const graph = new Bun.ModuleGraph();
       const inGraph = graph.run(() => AsyncLocalStorage.snapshot());
       const outcomes = [];
       const posts = when => {
@@ -317,7 +317,7 @@ const dir = String(
     `,
     "plain-graph-made-by-a-graph.mjs": `
       globalThis.ticks = 0;
-      const tenant = new Bun.ModuleGraph({ isolateIO: true });
+      const tenant = new Bun.ModuleGraph();
       const app = await tenant.import(import.meta.dir + "/left-behind-tenant.mjs");
       await tenant.run(() => app.loadsThroughAPlainGraph(import.meta.dir + "/ticks-from-its-top-level.mjs"));
       while (globalThis.ticks < 3) await new Promise(resolve => setImmediate(resolve));
@@ -330,7 +330,7 @@ const dir = String(
     `,
     "plain-graph-handed-to-the-host.mjs": `
       const parked = Promise.withResolvers();
-      const tenant = new Bun.ModuleGraph({ isolateIO: true });
+      const tenant = new Bun.ModuleGraph();
       const app = await tenant.import(import.meta.dir + "/left-behind-tenant.mjs");
       const inner = tenant.run(() => app.makesAGraph({ globals: { gate: new Promise(() => {}), parked: parked.resolve } }));
       let inFlight = "pending";
@@ -356,7 +356,7 @@ const dir = String(
       let calls = 0, inner;
       // The tenant's onError causes a rejection in the code of a graph the tenant made without an
       // onError: given back to the same onError it would go round for ever.
-      const tenant = new Bun.ModuleGraph({ isolateIO: true, onError: () => { if (++calls <= 50) inner.rejects(); } });
+      const tenant = new Bun.ModuleGraph({ onError: () => { if (++calls <= 50) inner.rejects(); } });
       const app = await tenant.import(import.meta.dir + "/left-behind-tenant.mjs");
       inner = await tenant.run(() => app.makesAGraph().import(import.meta.dir + "/rejects-when-called.mjs"));
       tenant.run(() => inner.startsIt());
@@ -369,10 +369,10 @@ const dir = String(
       const hostSaw = [], tenantSaw = [];
       process.on("uncaughtException", error => hostSaw.push(error.message));
       process.on("unhandledRejection", error => hostSaw.push(error.message));
-      const tenant = new Bun.ModuleGraph({ isolateIO: true, onError: error => tenantSaw.push(error.message) });
+      const tenant = new Bun.ModuleGraph({ onError: error => tenantSaw.push(error.message) });
       const app = await tenant.import(import.meta.dir + "/left-behind-tenant.mjs");
       // A graph of the tenant's making that was given no onError of its own.
-      const inner = tenant.run(() => app.makesAGraph({ isolateIO: process.argv[2] === "isolateIO" }));
+      const inner = tenant.run(() => app.makesAGraph());
       await inner.import(import.meta.dir + "/throws-later.mjs");
       while (hostSaw.length + tenantSaw.length < 2) await new Promise(resolve => setImmediate(resolve));
       console.log(JSON.stringify({ hostSaw, tenantSaw: tenantSaw.sort() }));
@@ -382,7 +382,7 @@ const dir = String(
       import fs from "node:fs";
       const descriptors = () => (process.platform === "win32" ? 0 : fs.readdirSync(process.platform === "linux" ? "/proc/self/fd" : "/dev/fd").length);
       const dir = fs.mkdtempSync(import.meta.dir + "/open-files-");
-      const graph = new Bun.ModuleGraph({ isolateIO: true });
+      const graph = new Bun.ModuleGraph();
       const app = await graph.import(import.meta.dir + "/left-behind-tenant.mjs");
       const before = descriptors();
       // Kept by the host, so no collection lets go of them.
@@ -410,7 +410,7 @@ const dir = String(
     "streams-of-a-disposed-graph.mjs": `
       import fs from "node:fs";
       const descriptors = () => fs.readdirSync(process.platform === "linux" ? "/proc/self/fd" : "/dev/fd").length;
-      const graph = new Bun.ModuleGraph({ isolateIO: true });
+      const graph = new Bun.ModuleGraph();
       const app = await graph.import(import.meta.dir + "/left-behind-tenant.mjs");
       const before = descriptors();
       await graph.run(() => app.streams(import.meta.path, 16));
@@ -425,7 +425,7 @@ const dir = String(
       const descriptors = () => fs.readdirSync(process.platform === "linux" ? "/proc/self/fd" : "/dev/fd").length;
       const heard = { host: [], graph: [] };
       process.on("uncaughtException", error => heard.host.push(error.code));
-      const graph = new Bun.ModuleGraph({ isolateIO: true, onError: error => heard.graph.push(error.code) });
+      const graph = new Bun.ModuleGraph({ onError: error => heard.graph.push(error.code) });
       const app = await graph.import(import.meta.dir + "/left-behind-tenant.mjs");
       const before = descriptors();
       await graph.run(() => app.forgetsFileHandles(import.meta.path, 8));
@@ -444,7 +444,7 @@ const dir = String(
     `,
     "file-handle-the-host-holds.mjs": `
       import fs from "node:fs";
-      const graph = new Bun.ModuleGraph({ isolateIO: true });
+      const graph = new Bun.ModuleGraph();
       const app = await graph.import(import.meta.dir + "/left-behind-tenant.mjs");
       const { handle, stream } = await graph.run(() => app.fileHandleAndStream(import.meta.path));
       graph.dispose();
@@ -462,7 +462,7 @@ const dir = String(
       console.log(JSON.stringify({ fd: handle.fd, read, streamed, stillMine }));
     `,
     "subtle-after-a-disposed-graph.mjs": `
-      const graph = new Bun.ModuleGraph({ isolateIO: true });
+      const graph = new Bun.ModuleGraph();
       const app = await graph.import(import.meta.dir + "/left-behind-tenant.mjs");
       const rejectedInTheGraph = await graph.run(() => app.failingUnwraps(200));
       graph.dispose();
@@ -475,7 +475,7 @@ const dir = String(
       import { heapStats } from "bun:jsc";
       const count = () => heapStats().objectTypeCounts.FormData;
       const keep = new FormData(), baseline = count();
-      const graph = new Bun.ModuleGraph({ isolateIO: true });
+      const graph = new Bun.ModuleGraph();
       const app = await graph.import(import.meta.dir + "/left-behind-tenant.mjs");
       graph.run(() => app.digests(20));
       const started = count() - baseline;
@@ -494,7 +494,7 @@ const dir = String(
     "disposes-while-opening.mjs": `
       const [kind, state, args] = [process.argv[2], JSON.parse(process.argv[3]), JSON.parse(process.argv[4])];
       // (What the opener had queued still runs, in a world that was closed under it: what that throws is the graph's.)
-      const graph = new Bun.ModuleGraph({ isolateIO: true, onError: error => console.error("the opener, after dispose():", error) });
+      const graph = new Bun.ModuleGraph({ onError: error => console.error("the opener, after dispose():", error) });
       const app = await graph.import(import.meta.dir + "/app.mjs");
       // Not awaited: whatever the opener has under way (a connect, a handshake, a listen) is cut short.
       graph.run(() => { Promise.resolve(app.open[kind](state, ...args)).catch(() => {}); });
@@ -504,7 +504,7 @@ const dir = String(
     `,
     "disposes-then-opens.mjs": `
       const [kind, state, args] = [process.argv[2], JSON.parse(process.argv[3]), JSON.parse(process.argv[4])];
-      const graph = new Bun.ModuleGraph({ isolateIO: true });
+      const graph = new Bun.ModuleGraph();
       const app = await graph.import(import.meta.dir + "/app.mjs");
       // Queued inside the graph's context, so it runs there, and after the dispose() below.
       graph.run(() => app.call(() => queueMicrotask(() => { Promise.resolve(app.open[kind](state, ...args)).catch(() => {}); })));
@@ -646,7 +646,7 @@ const dir = String(
         },
         nestedGraph(state) {
           // A graph this graph's code makes, with a context of its own.
-          const inner = new Bun.ModuleGraph({ isolateIO: true, globals: { state } });
+          const inner = new Bun.ModuleGraph({ globals: { state } });
           state.close = () => inner.dispose();
           return inner.import(import.meta.dir + "/ticker.mjs");
         },
@@ -1578,7 +1578,7 @@ const kinds: Record<string, Kind> = {
 const hostApp = await import(appPath);
 /** A graph with the app loaded; `using` disposes it however the test ends. */
 async function newGraph(options: ConstructorParameters<typeof ModuleGraph>[0] = {}) {
-  const graph = new ModuleGraph({ isolateIO: true, ...options });
+  const graph = new ModuleGraph({ ...options });
   return { graph, app: await graph.import(appPath), [Symbol.dispose]: () => graph.dispose() };
 }
 /** Opens `kind` for `state` and waits until it is up. */
@@ -1708,11 +1708,11 @@ test("ModuleGraph isolation: a graph made by a graph's code is disposed with it,
   await Bun.write(dep, "export default 1;");
   await made.graph.run(() =>
     made.app.call(async () => {
-      state.inner = new ModuleGraph({ isolateIO: true });
+      state.inner = new ModuleGraph();
       await state.inner.import(dep);
       // What the disposed graph's leftover code does: a new graph, and a load into it.
       state.later = () =>
-        void new ModuleGraph({ isolateIO: true }).import(dep + "?later").then(
+        void new ModuleGraph().import(dep + "?later").then(
           () => state.heard.push("fulfilled"),
           () => state.heard.push("rejected"),
         );
@@ -2749,27 +2749,24 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
       exitCode: 0,
     });
   });
-  test("what a module opens at its top level is the graph's when the graph loaded it through a plain graph of its own making", async () => {
+  test("what a module opens at its top level is the graph's when the graph loaded it through a graph of its own making", async () => {
     expect(await runs("plain-graph-made-by-a-graph.mjs")).toEqual({
       stdout: `{"evaluatedIn":"a graph's context","ticksAfterDispose":0}`,
       exitCode: 0,
     });
   });
-  test("a plain graph it made is disposed with it: the host's import() through one it was handed rejects from then on", async () => {
+  test("a graph it made is disposed with it: the host's import() through one it was handed rejects from then on", async () => {
     expect(await runs("plain-graph-handed-to-the-host.mjs")).toEqual({
       stdout: `{"inFlight":"pending","afterwards":"rejected: ERR_INVALID_STATE"}`,
       exitCode: 0,
     });
   });
-  test.each(["plain", "isolateIO"])(
-    "errors of a %s graph its script made without an onError go to its own onError, not to the host",
-    async kind => {
-      expect(await runs("errors-of-a-graph-made-by-a-graph.mjs", kind)).toEqual({
-        stdout: `{"hostSaw":[],"tenantSaw":["rejected and unhandled","thrown from a timer"]}`,
-        exitCode: 0,
-      });
-    },
-  );
+  test("errors of a graph its script made without an onError go to its own onError, not to the host", async () => {
+    expect(await runs("errors-of-a-graph-made-by-a-graph.mjs")).toEqual({
+      stdout: `{"hostSaw":[],"tenantSaw":["rejected and unhandled","thrown from a timer"]}`,
+      exitCode: 0,
+    });
+  });
   test("a rejection its onError causes in the code of a graph it made goes to the host, not back to that onError", async () => {
     expect(await runs("on-error-that-causes-an-inner-rejection.mjs")).toEqual({
       stdout: `{"callsOfTheTenantsOnError":1,"hostSaw":["rejected by the inner graph's code"]}`,

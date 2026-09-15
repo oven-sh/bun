@@ -5418,26 +5418,6 @@ declare module "bun" {
      * errors to that graph's `onError`.
      */
     onError?: ((error: unknown, kind: "uncaughtException" | "unhandledRejection") => void) | undefined;
-    /**
-     * Give the graph a context of its own for timers and I/O. Everything
-     * its code opens — timers, `Bun.serve` / `Bun.listen` servers, sockets,
-     * `fetch()` requests, watchers, child processes — belongs to the graph,
-     * and {@link ModuleGraph.dispose} closes all of it.
-     *
-     * The context follows the graph's code through `await`, timers, socket
-     * handlers and the listeners of what it made, the way
-     * `AsyncLocalStorage` stores do (creating the first such graph turns
-     * that tracking on for the process). Code of the graph that the host
-     * calls directly runs in the host's context; use
-     * {@link ModuleGraph.run} to call it in the graph's.
-     *
-     * Disposing the graph cancels everything it has in flight: promises
-     * waiting on its timers (`Bun.sleep`) or on its background work (a file
-     * read under way) never settle.
-     *
-     * @default false
-     */
-    isolateIO?: boolean | undefined;
   }
 
   /**
@@ -5456,6 +5436,16 @@ declare module "bun" {
    * addons, the event loop — is the global object's, shared: this runs
    * cooperating instances of a program side by side, it is not a sandbox.
    *
+   * A graph has a context of its own for timers and I/O. Everything its
+   * code opens — timers, `Bun.serve` / `Bun.listen` servers, sockets,
+   * `fetch()` requests, watchers, child processes — belongs to the graph,
+   * and {@link ModuleGraph.dispose} closes all of it. The context follows
+   * the graph's code through `await`, timers, socket handlers and the
+   * listeners of what it made, the way `AsyncLocalStorage` stores do
+   * (creating the first graph turns that tracking on for the process). Code
+   * of the graph that the host calls directly runs in the host's context;
+   * use {@link ModuleGraph.run} to call it in the graph's.
+   *
    * @experimental
    * @example
    * ```ts
@@ -5471,7 +5461,7 @@ declare module "bun" {
   class ModuleGraph {
     constructor(options?: ModuleGraphOptions);
     /**
-     * The `isolateIO` graph whose context the calling code is running in
+     * The graph whose context the calling code is running in
      * (what it opens now would belong to that graph), or `undefined` in the
      * host's context. For host functions shared by several graphs, and for
      * asserting that a call went through {@link ModuleGraph.run}.
@@ -5493,8 +5483,7 @@ declare module "bun" {
      */
     readonly mainModule: string | undefined;
     /**
-     * Call `fn` inside the graph's context (see
-     * {@link ModuleGraphOptions.isolateIO}): what `fn` and everything it
+     * Call `fn` inside the graph's context: what `fn` and everything it
      * starts open belongs to the graph.
      *
      * Throws `ERR_INVALID_STATE` once the graph is disposed.
@@ -5505,13 +5494,13 @@ declare module "bun" {
     /**
      * Drops the graph's module registry and require cache: later
      * `graph.import()`s reject, as does one that is still waiting for a file;
-     * one whose module is suspended in a top-level `await` is left alone and
-     * finishes if what the module awaits does.
+     * one whose module is suspended in a top-level `await` is left alone, and
+     * never settles if what the module awaits was the graph's.
      * `import()` from the graph's own code rejects
      * and its `require()` of anything throws, and modules of the graph that
      * had not run yet never will. Code from the
      * graph that is still referenced keeps working, and its errors still go
-     * to `onError`. With `isolateIO`, everything the graph's code opened
+     * to `onError`. Everything the graph's code opened
      * is closed, along with any graph its code made, and the graph hears
      * nothing of it, like a worker that was terminated: no `close` handler,
      * `onExit` or `'error'` event is called, and its pending promises (a

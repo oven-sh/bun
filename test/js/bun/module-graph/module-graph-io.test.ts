@@ -1,4 +1,4 @@
-// Bun.ModuleGraph({ isolateIO: true }) — the graph gets a context of its own
+// Bun.ModuleGraph — a graph has a context of its own
 // for timers and I/O: what its code opens belongs to it, and dispose() closes all of it.
 import { afterAll, describe, expect, test } from "bun:test";
 import fs, { rmSync, writeFileSync } from "fs";
@@ -65,10 +65,9 @@ function isRunning(pid: number): boolean {
   }
 }
 
-describe.concurrent("ModuleGraph isolateIO", () => {
-  test("option is validated; run() exists and validates", () => {
-    expect(() => new Bun.ModuleGraph({ isolateIO: 1 as any })).toThrow(/isolateIO/);
-    using graph = new Bun.ModuleGraph({ isolateIO: true });
+describe.concurrent("ModuleGraph: what a graph opens is the graph's", () => {
+  test("run() calls fn in the graph's context and validates it; a subclass is a ModuleGraph", () => {
+    using graph = new Bun.ModuleGraph();
     expect(graph.run((a, b) => a + b, 1, 2)).toBe(3);
     expect(() =>
       graph.run(() => {
@@ -76,19 +75,14 @@ describe.concurrent("ModuleGraph isolateIO", () => {
       }),
     ).toThrow(RangeError);
     expect(() => graph.run(1 as any)).toThrow(/fn/);
-    // Without a context of its own run() is just a call.
-    using plain = new Bun.ModuleGraph();
-    expect(plain.run(x => x * 2, 21)).toBe(42);
-    // Either kind is a ModuleGraph, to `instanceof` and to a subclass.
     class Tenant extends Bun.ModuleGraph {
       tenant = "t1";
     }
-    using tenant = new Tenant({ isolateIO: true });
-    const prototypes = [Bun.ModuleGraph.prototype, Bun.ModuleGraph.prototype, Tenant.prototype];
+    using tenant = new Tenant();
+    const prototypes = [Bun.ModuleGraph.prototype, Tenant.prototype];
     expect(
-      [graph, plain, tenant].map((g, i) => [g instanceof Bun.ModuleGraph, Object.getPrototypeOf(g) === prototypes[i]]),
+      [graph, tenant].map((g, i) => [g instanceof Bun.ModuleGraph, Object.getPrototypeOf(g) === prototypes[i]]),
     ).toEqual([
-      [true, true],
       [true, true],
       [true, true],
     ]);
@@ -110,7 +104,7 @@ describe.concurrent("ModuleGraph isolateIO", () => {
         export const counts = () => ({ ticks, late, immediates });
       `,
     });
-    const graph = new Bun.ModuleGraph({ isolateIO: true });
+    const graph = new Bun.ModuleGraph();
     const app = await graph.import(join(dir, "timers.mjs"));
     await graph.run(() => app.armLater());
     await until(() => app.counts().ticks > 0 && app.counts().late > 0 && app.counts().immediates > 0);
@@ -119,25 +113,6 @@ describe.concurrent("ModuleGraph isolateIO", () => {
     const stopped = app.counts();
     await hostTimerTurns();
     expect(app.counts()).toEqual(stopped);
-  });
-
-  test("without isolateIO the graph's timers are the host's and outlive dispose()", async () => {
-    const dir = fixture({
-      "timers.mjs": `
-        export let ticks = 0;
-        export const interval = setInterval(() => { ticks++; }, 1);
-        export const tick = () => ticks;
-      `,
-    });
-    const graph = new Bun.ModuleGraph();
-    const app = await graph.import(join(dir, "timers.mjs"));
-    graph.dispose();
-    try {
-      const before = app.tick();
-      await until(() => app.tick() > before + 2);
-    } finally {
-      clearInterval(app.interval);
-    }
   });
 
   test("dispose() closes Bun.serve, Bun.listen and UDP sockets the graph opened", async () => {
@@ -149,7 +124,7 @@ describe.concurrent("ModuleGraph isolateIO", () => {
         export const ports = { http: server.port, tcp: listener.port, udp: udp.port };
       `,
     });
-    using graph = new Bun.ModuleGraph({ isolateIO: true });
+    using graph = new Bun.ModuleGraph();
     const { ports } = await graph.import(join(dir, "servers.mjs"));
     expect(await fetch(`http://127.0.0.1:${ports.http}/`).then(r => r.text())).toBe("graph");
     expect(await accepts(ports.tcp)).toBe(true);
@@ -204,7 +179,7 @@ describe.concurrent("ModuleGraph isolateIO", () => {
       websocket: { message() {}, close: () => wsClosed.resolve() },
     });
 
-    const graph = new Bun.ModuleGraph({ isolateIO: true });
+    const graph = new Bun.ModuleGraph();
     const app = await graph.import(join(dir, "clients.mjs"));
     await graph.run(() => app.connect(listener.port, server.port));
     await requestSeen.promise;
@@ -244,7 +219,7 @@ describe.concurrent("ModuleGraph isolateIO", () => {
       `,
     });
     using listener = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
-    const graph = new Bun.ModuleGraph({ isolateIO: true });
+    const graph = new Bun.ModuleGraph();
     const app = await graph.import(join(dir, "stubborn.mjs"));
     // The child ignores the SIGTERM dispose() sends and keeps talking (on Windows it is terminated).
     const child = await graph.run(() => app.start(listener.port, join(dir, "child.mjs")));
@@ -267,7 +242,7 @@ describe.concurrent("ModuleGraph isolateIO", () => {
         export const child = Bun.spawn({ cmd: [process.execPath, "-e", "setInterval(() => {}, 1000)"], stdout: "ignore", stderr: "ignore" });
       `,
     });
-    const graph = new Bun.ModuleGraph({ isolateIO: true });
+    const graph = new Bun.ModuleGraph();
     const { child } = await graph.import(join(dir, "spawn.mjs"));
     try {
       expect(isRunning(child.pid)).toBe(true);
@@ -294,7 +269,7 @@ describe.concurrent("ModuleGraph isolateIO", () => {
         postMessage(server.port);
       `,
     });
-    using graph = new Bun.ModuleGraph({ isolateIO: true });
+    using graph = new Bun.ModuleGraph();
     const app = await graph.import(join(dir, "spawner.mjs"));
     const channel = new BroadcastChannel("module-graph-io");
     try {
@@ -326,7 +301,7 @@ describe.concurrent("ModuleGraph isolateIO", () => {
         export const counts = () => ({ events, aborted });
       `,
     });
-    using graph = new Bun.ModuleGraph({ isolateIO: true });
+    using graph = new Bun.ModuleGraph();
     const app = await graph.import(join(dir, "watchers.mjs"));
     let writes = 0;
     await until(() => {
@@ -367,7 +342,7 @@ describe.concurrent("ModuleGraph isolateIO", () => {
       fetch: (req, server) => (server.upgrade(req) ? undefined : new Response("no", { status: 400 })),
       websocket: { open: ws => void ws.send("hello"), message() {} },
     });
-    using graph = new Bun.ModuleGraph({ isolateIO: true });
+    using graph = new Bun.ModuleGraph();
     const app = await graph.import(join(dir, "listeners.mjs"));
     await graph.run(() => app.connect(server.port));
     await until(() => app.tick() > 0);
@@ -394,7 +369,7 @@ describe.concurrent("ModuleGraph isolateIO", () => {
     });
     // Once `keepAlive` is emptied nothing of the graph is referenced but the socket its code made.
     const connect = async (keepAlive: object[]): Promise<WebSocket> => {
-      const graph = new Bun.ModuleGraph({ isolateIO: true });
+      const graph = new Bun.ModuleGraph();
       keepAlive.push(graph);
       const app = await graph.import(join(dir, "ws.mjs"));
       return graph.run(() => app.connect(server.port));
@@ -447,7 +422,7 @@ describe.concurrent("ModuleGraph isolateIO", () => {
     // The same work outside a graph, started afterwards: it has finished once this has.
     const hostWork = () =>
       Promise.all([fs.promises.readFile(join(dir, "data.txt"), "utf8"), promisify(zlib.gzip)("hello"), Bun.sleep(1)]);
-    const graph = new Bun.ModuleGraph({ isolateIO: true });
+    const graph = new Bun.ModuleGraph();
     const app = await graph.import(join(dir, "jobs.mjs"));
     const work = graph.run(() => app.work());
     graph.dispose();
@@ -488,7 +463,7 @@ describe.concurrent("ModuleGraph isolateIO", () => {
         serverSide.resolve(socket);
       });
       await new Promise<void>((resolve, reject) => server.once("error", reject).listen(0, "127.0.0.1", resolve));
-      const graph = new Bun.ModuleGraph({ isolateIO: true });
+      const graph = new Bun.ModuleGraph();
       try {
         const app = await graph.import(join(dir, "sockets.mjs"));
         const raw = await graph.run(() => app.connect((server.address() as net.AddressInfo).port));
@@ -508,7 +483,7 @@ describe.concurrent("ModuleGraph isolateIO", () => {
 
     // A socket the graph's server accepted, upgraded (as the TLS server) from the host's context.
     {
-      const graph = new Bun.ModuleGraph({ isolateIO: true });
+      const graph = new Bun.ModuleGraph();
       try {
         const app = await graph.import(join(dir, "sockets.mjs"));
         const { port, accepted } = await graph.run(() => app.accept());
@@ -559,7 +534,7 @@ describe.concurrent("ModuleGraph isolateIO", () => {
         },
       },
     });
-    using graph = new Bun.ModuleGraph({ isolateIO: true });
+    using graph = new Bun.ModuleGraph();
     const app = await graph.import(join(dir, "sql.mjs"));
     graph.run(() => app.query(server.port));
     await redialed.promise;
@@ -579,7 +554,6 @@ describe.concurrent("ModuleGraph isolateIO", () => {
       setImmediate(() => setTimeout(() => log.push(entry + " finished"), 1));
     };
     const graph = new Bun.ModuleGraph({
-      isolateIO: true,
       globals: { viaSnapshot: (entry: string) => asHost(() => work(entry)), direct: work },
     });
     const app = await graph.import(join(dir, "calls.mjs"));
@@ -614,7 +588,7 @@ describe.concurrent("ModuleGraph isolateIO", () => {
       socket: { data() {}, open: () => void lateClients++ },
     });
     (globalThis as any).__moduleGraphIoLatePort = listener.port;
-    const graph = new Bun.ModuleGraph({ isolateIO: true });
+    const graph = new Bun.ModuleGraph();
     const app = await graph.import(join(dir, "late.mjs"));
     // run() throws once the graph is disposed; its code is still entered by what it left behind.
     const inGraph = graph.run(() => AsyncLocalStorage.snapshot());
@@ -640,7 +614,7 @@ describe.concurrent("ModuleGraph isolateIO", () => {
         export const tick = () => ticks;
       `,
     });
-    const graph = new Bun.ModuleGraph({ isolateIO: true });
+    const graph = new Bun.ModuleGraph();
     const app = await graph.import(join(dir, "fn.mjs"));
     const hostOwned = app.start();
     try {
@@ -669,8 +643,8 @@ describe.concurrent("ModuleGraph isolateIO", () => {
       `,
     });
     const outer = new AsyncLocalStorage<string>();
-    const a = new Bun.ModuleGraph({ isolateIO: true });
-    const b = new Bun.ModuleGraph({ isolateIO: true });
+    const a = new Bun.ModuleGraph();
+    const b = new Bun.ModuleGraph();
     const appA = await a.import(join(dir, "als.mjs"));
     const appB = await b.import(join(dir, "als.mjs"));
     // b's code entered from inside a's context: what it opens is b's.
@@ -708,7 +682,7 @@ describe.concurrent("ModuleGraph isolateIO", () => {
         exports.ticks = () => ticks;
       `,
     });
-    using graph = new Bun.ModuleGraph({ isolateIO: true, globals: { WHO: "graph" } });
+    using graph = new Bun.ModuleGraph({ globals: { WHO: "graph" } });
     const app = (await graph.import(join(dir, "entry.cjs"))).default;
     expect(app.who).toBe("graph");
     await until(() => app.counts().every((n: number) => n > 0));
@@ -735,7 +709,7 @@ describe.concurrent("ModuleGraph isolateIO", () => {
         globalThis.__moduleGraphIoDep = setInterval(() => { globalThis.__moduleGraphIoDepTicks = (globalThis.__moduleGraphIoDepTicks ?? 0) + 1; }, 1);
       `,
     });
-    const graph = new Bun.ModuleGraph({ isolateIO: true });
+    const graph = new Bun.ModuleGraph();
     const app = await graph.import(join(dir, "tla.mjs"));
     try {
       await until(() => app.counts().after > 0 && (globalThis as any).__moduleGraphIoDepTicks > 0);
@@ -759,9 +733,9 @@ describe.concurrent("ModuleGraph isolateIO", () => {
         pending.catch(() => {});
       `,
       "worker.mjs": `
-        const kept = new Bun.ModuleGraph({ isolateIO: true });
+        const kept = new Bun.ModuleGraph();
         await kept.import(import.meta.dir + "/app.mjs");
-        const disposed = new Bun.ModuleGraph({ isolateIO: true });
+        const disposed = new Bun.ModuleGraph();
         await disposed.import(import.meta.dir + "/app.mjs");
         disposed.dispose();
         postMessage("ready");
@@ -770,7 +744,7 @@ describe.concurrent("ModuleGraph isolateIO", () => {
         const worker = new Worker(import.meta.dir + "/worker.mjs");
         await new Promise(resolve => (worker.onmessage = resolve));
         await worker.terminate();
-        const graph = new Bun.ModuleGraph({ isolateIO: true });
+        const graph = new Bun.ModuleGraph();
         await graph.import(import.meta.dir + "/app.mjs");
         console.log("done");
         process.exit(0);

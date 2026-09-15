@@ -1005,7 +1005,7 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
         };
         const graphs = {};
         for (const name of ["disposed", "live"]) {
-          const graph = new Bun.ModuleGraph({ isolateIO: true, globals: { addonPath } });
+          const graph = new Bun.ModuleGraph({ globals: { addonPath } });
           graphs[name] = { graph, app: await graph.import(import.meta.dir + "/tenant.mjs") };
         }
         const hostRan = [];

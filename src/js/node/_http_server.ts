@@ -1831,6 +1831,7 @@ function getNodeHTTPServerSocket() {
     }
 
     ref() {
+      this[kHandle]?.response?.ref();
       return this;
     }
 
@@ -1916,6 +1917,7 @@ function getNodeHTTPServerSocket() {
     }
 
     unref() {
+      this[kHandle]?.response?.unref();
       return this;
     }
 

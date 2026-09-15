@@ -1183,6 +1183,7 @@ export const linkerFlags: Flag[] = [
     flag: [
       "exp",
       "exp2",
+      "exp2f",
       "expf",
       "fcntl64",
       "getrandom",

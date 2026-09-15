@@ -277,7 +277,7 @@ class GPUPipelineError extends DOMException {
 class GPUUncapturedErrorEvent extends Event {
   #error: GPUError;
 
-  constructor(type: string, init: EventInit & { error: GPUError }) {
+  constructor(type: string, init: { bubbles?: boolean; cancelable?: boolean; composed?: boolean; error: GPUError }) {
     if (init === undefined || init === null || !(init.error instanceof GPUError)) {
       throw new TypeError("GPUUncapturedErrorEvent: init.error has to be a GPUError");
     }

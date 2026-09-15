@@ -837,6 +837,36 @@ describe.skipIf(!hasAdapter)("with a device", () => {
     device.destroy();
   });
 
+  test("works in a Worker, and a Worker can be terminated with GPU work pending", async () => {
+    const source = `
+      const adapter = await navigator.gpu.requestAdapter();
+      const device = await adapter.requestDevice();
+      const buffer = device.createBuffer({ size: 16, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+      device.queue.writeBuffer(buffer, 0, new Uint32Array([5, 6, 7, 8]));
+      await buffer.mapAsync(GPUMapMode.READ);
+      postMessage(Array.from(new Uint32Array(buffer.getMappedRange())));
+      buffer.unmap();
+      // Leave a map pending for terminate() to interrupt.
+      device.queue.writeBuffer(buffer, 0, new Uint32Array([1, 1, 1, 1]));
+      buffer.mapAsync(GPUMapMode.READ);
+      postMessage("pending");
+    `;
+    const worker = new Worker(`data:text/javascript,${encodeURIComponent(source)}`);
+    const messages: unknown[] = [];
+    const { promise: pending, resolve, reject } = Promise.withResolvers<void>();
+    worker.onerror = event => reject(event.error ?? new Error(event.message));
+    worker.onmessage = event => {
+      messages.push(event.data);
+      if (event.data === "pending") resolve();
+    };
+    await pending;
+    expect(messages).toEqual([[5, 6, 7, 8], "pending"]);
+    const { promise: closed, resolve: onClose } = Promise.withResolvers<void>();
+    worker.addEventListener("close", () => onClose());
+    await worker.terminate();
+    await closed;
+  });
+
   test("a pending mapAsync keeps the process alive", async () => {
     await using proc = Bun.spawn({
       cmd: [

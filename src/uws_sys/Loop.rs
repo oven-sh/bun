@@ -69,13 +69,28 @@ pub struct RecvBufferBorrowGuard<'a>(&'a RecvBufferBorrow);
 
 impl Drop for RecvBufferBorrowGuard<'_> {
     fn drop(&mut self) {
-        // Registration is stack-ordered: a borrow covers the rest of the
-        // callback frame that made it, and those frames nest.
-        debug_assert!(core::ptr::eq(
-            RECV_BUFFER_BORROWS.get(),
-            core::ptr::from_ref(self.0)
-        ));
-        RECV_BUFFER_BORROWS.set(self.0.next.get());
+        let this = core::ptr::from_ref(self.0);
+        // A borrow covers the rest of the callback frame that made it, and
+        // those frames nest, so `this` is the head. Unlink it by a walk
+        // anyway: a guard that drops out of order would otherwise leave the
+        // list holding a node whose stack slot is gone.
+        if core::ptr::eq(RECV_BUFFER_BORROWS.get(), this) {
+            RECV_BUFFER_BORROWS.set(self.0.next.get());
+            return;
+        }
+
+        debug_assert!(false, "RecvBufferBorrowGuard dropped out of order");
+        let mut node = RECV_BUFFER_BORROWS.get();
+        while !node.is_null() {
+            // SAFETY: every node on the list is a registered borrow, which
+            // its own guard keeps alive until it unlinks it here.
+            let previous = unsafe { &*node };
+            node = previous.next.get();
+            if core::ptr::eq(node, this) {
+                previous.next.set(self.0.next.get());
+                return;
+            }
+        }
     }
 }
 

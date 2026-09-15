@@ -722,6 +722,12 @@ impl JSGlobalObject {
         Ok(Some(result))
     }
 
+    /// Whether a runtime plugin registered an `onLoad` callback in `namespace_`.
+    pub(crate) fn has_on_load_namespace(&self, namespace_: &BunString) -> bool {
+        crate::mark_binding();
+        Bun__onLoadPluginsHasNamespace(self, namespace_)
+    }
+
     pub(crate) fn run_on_resolve_plugins(
         &self,
         namespace_: &BunString,
@@ -1500,6 +1506,8 @@ unsafe extern "C" {
         path: &BunString,
         target: BunPluginTarget,
     ) -> JSValue;
+    safe fn Bun__onLoadPluginsHasNamespace(global: &JSGlobalObject, namespace_: &BunString)
+    -> bool;
     safe fn Bun__runOnResolvePlugins(
         global: &JSGlobalObject,
         namespace_: Option<&BunString>,

@@ -774,20 +774,10 @@ impl Request {
         if let Some(req) = self.request_context.get_request() {
             // S008: `uws::Request` is an `opaque_ffi!` ZST handle — safe deref.
             let req = bun_opaque::opaque_deref(req);
-            let req_url = Self::request_target_path(req.url());
-            if !req_url.is_empty() && req_url[0] == b'/' {
-                if let Some(host) = req
-                    .header(b"host")
-                    .filter(|host| Self::is_valid_host_header(host))
-                {
-                    // With `port: None`, HostFormatter always emits exactly `host`, so the
-                    // formatted byte-count is just `host.len()`. Avoid the `core::fmt::write`
-                    // vtable dispatch that `bun_fmt::count(format_args!(...))` incurs — this
-                    // runs once per request via JSC extra-memory accounting.
-                    return self.get_protocol().len() + host.len() + req_url.len();
-                }
-            }
-            return req_url.len();
+            let (host, path) = Self::url_parts(req.header(b"host"), req.url());
+            // Canonicalizing can change the length slightly; this is an estimate for
+            // JSC's extra-memory accounting, so the joined length is close enough.
+            return host.map_or(0, |host| self.get_protocol().len() + host.len()) + path.len();
         }
 
         0
@@ -828,9 +818,11 @@ impl Request {
     }
 
     /// RFC 3986 3.2.2 `uri-host [ ":" port ]` byte set. A Host value outside it, or an empty
-    /// one, cannot form a URL authority, so `request.url` synthesis falls back to the
-    /// configured host instead of pasting the client bytes into the URL.
-    pub(crate) fn is_valid_host_header(host: &[u8]) -> bool {
+    /// one, cannot form a URL authority, so `request.url` synthesis falls back to the bare
+    /// request-target instead of pasting the client bytes into the URL. A value inside the
+    /// set can still be rejected by the URL parser (`host:abc`, bad percent-encoding); the
+    /// callers apply the same fallback in that case.
+    fn is_valid_host_header(host: &[u8]) -> bool {
         !host.is_empty()
             && host.iter().all(|&c| {
                 c.is_ascii_alphanumeric()
@@ -858,6 +850,64 @@ impl Request {
             })
     }
 
+    /// The one decision behind `request.url` on every transport: the path the request
+    /// asked for, plus the client's Host / `:authority` if it can be a URL authority.
+    /// A host is dropped when it is missing, when the path is not origin-form, or when it
+    /// contains a byte that cannot appear in an authority (`/`, `?`, `#`, `@`, `\`, ...),
+    /// so client bytes never end up in the URL anywhere but the host position.
+    fn url_parts<'a>(
+        host: Option<&'a [u8]>,
+        target: &'a [u8],
+    ) -> (Option<&'a [u8]>, Cow<'a, [u8]>) {
+        let path = Self::request_target_path(target);
+        let host = host
+            .filter(|host| Self::is_valid_host_header(host))
+            .filter(|_| path.first() == Some(&b'/'));
+        (host, path)
+    }
+
+    /// `{protocol}{host}{path}` as the URL parser canonicalizes it, or the bare path when
+    /// there is no usable host or the parser still rejects it (`host:abc`, `exa%zzmple`).
+    fn synthesize_url(protocol: &'static [u8], host: Option<&[u8]>, target: &[u8]) -> BunString {
+        let (host, path) = Self::url_parts(host, target);
+        let Some(host) = host else {
+            return BunString::clone_utf8(&path);
+        };
+
+        // Join straight into a WTF string: parsing one is a refcount bump and an
+        // already-canonical URL comes back as the same string, so this is one allocation
+        // per request regardless of target length. The host is ASCII by construction, so
+        // only the path decides the encoding.
+        let joined = if strings::is_all_ascii(&path) {
+            let (joined, bytes) =
+                BunString::create_uninitialized_latin1(protocol.len() + host.len() + path.len());
+            let (a, rest) = bytes.split_at_mut(protocol.len());
+            let (b, c) = rest.split_at_mut(host.len());
+            a.copy_from_slice(protocol);
+            b.copy_from_slice(host);
+            c.copy_from_slice(&path);
+            joined
+        } else {
+            let mut bytes = Vec::with_capacity(protocol.len() + host.len() + path.len());
+            bytes.extend_from_slice(protocol);
+            bytes.extend_from_slice(host);
+            bytes.extend_from_slice(&path);
+            BunString::clone_utf8(&bytes)
+        };
+        let href = bun_url::href_from_string(&joined);
+        if href.is_empty() {
+            return BunString::clone_utf8(&path);
+        }
+        href
+    }
+
+    /// For transports whose request goes away before JS can read `request.url` lazily
+    /// (HTTP/3), so it is populated up front from the same policy `ensure_url` uses.
+    pub(crate) fn set_synthesized_url(&self, host: Option<&[u8]>, target: &[u8]) {
+        self.url
+            .set(Self::synthesize_url(self.get_protocol(), host, target));
+    }
+
     pub(crate) fn ensure_url(&self) -> Result<(), AllocError> {
         if !self.url.get().is_empty() {
             return Ok(());
@@ -866,83 +916,11 @@ impl Request {
         if let Some(req) = self.request_context.get_request() {
             // S008: `uws::Request` is an `opaque_ffi!` ZST handle — safe deref.
             let req = bun_opaque::opaque_deref(req);
-            let req_url = Self::request_target_path(req.url());
-            if !req_url.is_empty() && req_url[0] == b'/' {
-                if let Some(host) = req
-                    .header(b"host")
-                    .filter(|host| Self::is_valid_host_header(host))
-                {
-                    // With `port: None`, HostFormatter always emits exactly `host`. Compute the
-                    // length and assemble the URL with straight slice copies instead of going
-                    // through `core::fmt::write` (which is not monomorphized and shows up in
-                    // per-request profiles).
-                    let protocol = self.get_protocol();
-                    let url_bytelength = protocol.len() + host.len() + req_url.len();
-
-                    debug_assert!(self.size_of_url() == url_bytelength);
-
-                    if url_bytelength < 128 {
-                        let mut buffer = [0u8; 128];
-                        let url = {
-                            let mut at = 0;
-                            buffer[at..at + protocol.len()].copy_from_slice(protocol);
-                            at += protocol.len();
-                            buffer[at..at + host.len()].copy_from_slice(host);
-                            at += host.len();
-                            buffer[at..at + req_url.len()].copy_from_slice(&req_url);
-                            at += req_url.len();
-                            &buffer[..at]
-                        };
-
-                        debug_assert!(self.size_of_url() == url.len());
-
-                        let href = bun_url::href_from_string(&BunString::from_bytes(url));
-                        if !href.is_empty() {
-                            if core::ptr::eq(href.byte_slice().as_ptr(), url.as_ptr()) {
-                                self.url.set(BunString::clone_latin1(&url[..href.length()]));
-                            } else {
-                                self.url.set(href);
-                            }
-                        } else {
-                            // TODO: what is the right thing to do for invalid URLS?
-                            self.url.set(BunString::clone_utf8(url));
-                        }
-
-                        return Ok(());
-                    }
-
-                    if strings::is_all_ascii(host) && strings::is_all_ascii(&req_url) {
-                        let (new_url, bytes) =
-                            BunString::create_uninitialized_latin1(url_bytelength);
-                        self.url.set(new_url);
-                        // exact space was counted above
-                        let (a, rest) = bytes.split_at_mut(protocol.len());
-                        let (b, c) = rest.split_at_mut(host.len());
-                        a.copy_from_slice(protocol);
-                        b.copy_from_slice(host);
-                        c.copy_from_slice(&req_url);
-                    } else {
-                        // slow path
-                        let mut temp_url: Vec<u8> = Vec::with_capacity(url_bytelength);
-                        temp_url.extend_from_slice(protocol);
-                        temp_url.extend_from_slice(host);
-                        temp_url.extend_from_slice(&req_url);
-                        // `defer bun.default_allocator.free(temp_url)` → Vec drops at scope end
-                        self.url.set(BunString::clone_utf8(&temp_url));
-                    }
-
-                    let href = bun_url::href_from_string(self.url.get());
-                    // TODO: what is the right thing to do for invalid URLS?
-                    if !href.is_empty() {
-                        self.url.set(href);
-                    }
-
-                    return Ok(());
-                }
-            }
-
-            debug_assert!(self.size_of_url() == req_url.len());
-            self.url.set(BunString::clone_utf8(&req_url));
+            self.url.set(Self::synthesize_url(
+                self.get_protocol(),
+                req.header(b"host"),
+                req.url(),
+            ));
         }
         Ok(())
     }

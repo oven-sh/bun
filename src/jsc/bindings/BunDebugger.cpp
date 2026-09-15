@@ -1,4 +1,5 @@
 #include "root.h"
+#include "ZeroCollectorStack.h"
 
 #include "BunDebugger.h"
 #include "ZigGlobalObject.h"
@@ -755,8 +756,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionReportNodeInspectorServerStarted, (JSGlobalOb
     // sweep here before waking the main thread (which may immediately
     // process.exit()). close() is synchronous and rare enough that a full
     // collection is acceptable.
-    if (url.isEmpty() && error.isEmpty())
+    if (url.isEmpty() && error.isEmpty()) {
         vm.heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
+        Bun::zeroCollectorStack();
+    }
 
     auto& state = nodeInspectorState();
     {

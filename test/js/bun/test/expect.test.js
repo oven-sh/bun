@@ -880,6 +880,113 @@ describe("expect()", () => {
       expect({ a: 123n }).toEqual({ a: expect.any(BigInt) });
       expect({ a: 123n }).not.toEqual({ a: expect.any(g) });
     });
+
+    // https://github.com/oven-sh/bun/issues/42529
+    describe("a matcher at a key or index the other side lacks", () => {
+      expect.extend({
+        optionalFn(received) {
+          return { pass: received === undefined || typeof received === "function", message: () => "" };
+        },
+      });
+      const optionalFn = () => ANY(expect).optionalFn();
+
+      it("receives undefined when an object lacks the key", () => {
+        expect({ a: 1 }).toEqual({ a: 1, cb: optionalFn() });
+        expect({ a: 1, cb: () => {} }).toEqual({ a: 1, cb: optionalFn() });
+        expect({ a: 1, cb: 2 }).not.toEqual({ a: 1, cb: optionalFn() });
+        expect({ a: 1 }).not.toEqual({ a: 1, cb: expect.any(Function) });
+        expect({ a: 1 }).not.toEqual({ a: 1, cb: expect.anything() });
+      });
+
+      it("receives undefined when the matcher is on the received side", () => {
+        expect({ a: 1, cb: optionalFn() }).toEqual({ a: 1 });
+        expect({ a: 1, cb: expect.any(Function) }).not.toEqual({ a: 1 });
+      });
+
+      it("receives undefined past the end of a shorter array", () => {
+        expect([1]).toEqual([1, optionalFn()]);
+        expect([1, optionalFn()]).toEqual([1]);
+        expect([1]).not.toEqual([1, expect.any(Function)]);
+        expect([1, expect.any(Function)]).not.toEqual([1]);
+        expect([optionalFn(), optionalFn()]).toEqual([]);
+      });
+
+      it("receives undefined at a hole", () => {
+        expect([, 1]).toEqual([optionalFn(), 1]);
+        expect([optionalFn(), 1]).toEqual([, 1]);
+        expect([, 1]).not.toEqual([expect.any(Function), 1]);
+        expect({ x: [, 1] }).not.toEqual({ x: [expect.any(Date), 1] });
+        expect(Array(2)).not.toEqual([expect.any(Date), expect.any(Number)]);
+        expect(Array(2)).toEqual([optionalFn(), optionalFn()]);
+      });
+
+      it("does not crash when the side with the matcher is longer", () => {
+        expect([expect.any(Number)]).not.toEqual([]);
+        expect([]).not.toBeOneOf([[expect.any(Number)]]);
+        expect([[expect.any(Number)]]).not.toContainEqual([]);
+        expect(new Map([[expect.any(Number), 2]])).not.toContainEqual([]);
+        const withAccessor = [0];
+        Object.defineProperty(withAccessor, 0, { get: () => "s", enumerable: true });
+        expect(withAccessor).not.toEqual([expect.any(Number)]);
+      });
+
+      it("applies to the enumerable properties of an Error", () => {
+        const received = Object.assign(new Error("boom"), { code: "E1" });
+        expect(received).toEqual(Object.assign(new Error("boom"), { code: "E1", cb: optionalFn() }));
+        expect(Object.assign(new Error("boom"), { code: "E1", cb: optionalFn() })).toEqual(received);
+        expect(received).not.toEqual(Object.assign(new Error("boom"), { code: "E1", cb: expect.any(Function) }));
+      });
+
+      it("uses the verdict of a built-in matcher on undefined", () => {
+        expect({}).toEqual({ a: expect.not.stringContaining("x") });
+        expect({}).toEqual({ a: expect.not.stringMatching(/x/) });
+        expect({}).toEqual({ a: expect.not.arrayContaining([1]) });
+        expect({}).not.toEqual({ a: expect.stringContaining("x") });
+        expect({}).not.toEqual({ a: expect.any(String) });
+      });
+
+      it("reads an inherited value for the missing key", () => {
+        class P {
+          get name() {
+            return "abc";
+          }
+        }
+        expect(new P()).toEqual({ name: expect.any(String) });
+        expect(new P()).not.toEqual({ name: expect.any(Number) });
+        expect({ name: expect.any(String) }).toEqual(new P());
+      });
+
+      it("reads an inherited value when the object has a getter of its own", () => {
+        // an own accessor keeps the object off the structure fast path
+        const received = {
+          get a() {
+            return 1;
+          },
+        };
+        expect(received).toEqual({ a: 1, cb: optionalFn() });
+        expect({ a: 1, cb: optionalFn() }).toEqual(received);
+        expect(received).not.toEqual({ a: 1, cb: expect.any(Function) });
+        expect(Object.create(received)).toEqual({ a: expect.any(Number), cb: optionalFn() });
+      });
+
+      it("applies inside nested comparisons", () => {
+        expect([{ a: 1 }]).toContainEqual({ a: 1, cb: optionalFn() });
+        expect(new Set([{ a: 1 }])).toEqual(new Set([{ a: 1, cb: optionalFn() }]));
+        expect(new Map([["k", { a: 1 }]])).toEqual(new Map([["k", { a: 1, cb: optionalFn() }]]));
+        expect({ list: [{ a: 1 }] }).toEqual({ list: expect.arrayContaining([{ a: 1, cb: optionalFn() }]) });
+        expect({ list: [{ a: 1 }] }).not.toEqual({
+          list: expect.arrayContaining([{ a: 1, cb: expect.any(Function) }]),
+        });
+      });
+
+      it("stays a mismatch for toStrictEqual", () => {
+        expect({ a: 1 }).not.toStrictEqual({ a: 1, cb: optionalFn() });
+        expect({ a: 1, cb: optionalFn() }).not.toStrictEqual({ a: 1 });
+        expect([1]).not.toStrictEqual([1, optionalFn()]);
+        expect([1, optionalFn()]).not.toStrictEqual([1]);
+        expect([, 1]).not.toStrictEqual([optionalFn(), 1]);
+      });
+    });
   });
 
   test("toThrow asymmetric matchers", () => {

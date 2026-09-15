@@ -626,6 +626,24 @@ AsymmetricMatcherResult matchAsymmetricMatcher(JSGlobalObject* globalObject, JSV
     return result;
 }
 
+// The values matchAsymmetricMatcherAndGetFlags handles. Runs no user code.
+static bool isAsymmetricMatcher(JSValue value)
+{
+    if (value.isEmpty() || !value.isCell())
+        return false;
+    JSCell* cell = value.asCell();
+    if (cell->type() != JSC::JSType(JSDOMWrapperType))
+        return false;
+    return cell->inherits<JSExpectAnything>()
+        || cell->inherits<JSExpectAny>()
+        || cell->inherits<JSExpectStringContaining>()
+        || cell->inherits<JSExpectStringMatching>()
+        || cell->inherits<JSExpectArrayContaining>()
+        || cell->inherits<JSExpectObjectContaining>()
+        || cell->inherits<JSExpectCloseTo>()
+        || cell->inherits<JSExpectCustomAsymmetricMatcher>();
+}
+
 template<typename PromiseType, bool isInternal>
 static void handlePromise(PromiseType* promise, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue ctx, Zig::FFIFunction resolverFunction, Zig::FFIFunction rejecterFunction)
 {
@@ -1001,7 +1019,12 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             }
 
             if constexpr (!isStrict) {
-                if (((left.isEmpty() || right.isEmpty()) && (left.isUndefined() || right.isUndefined()))) {
+                // a hole or an index past the end reads as undefined
+                if (left.isEmpty())
+                    left = jsUndefined();
+                if (right.isEmpty())
+                    right = jsUndefined();
+                if (left.isUndefined() && right.isUndefined()) {
                     continue;
                 }
             }
@@ -1017,6 +1040,15 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
 
             if (((right.isEmpty() || right.isUndefined()))) {
                 continue;
+            }
+
+            if constexpr (!isStrict && enableAsymmetricMatchers) {
+                if (isAsymmetricMatcher(right)) {
+                    auto eql = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, jsUndefined(), right, gcBuffer, stack, scope, true);
+                    RETURN_IF_EXCEPTION(scope, false);
+                    if (!eql) return false;
+                    continue;
+                }
             }
 
             return false;
@@ -1061,6 +1093,11 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 if (prop1.isUndefined() && prop2.isEmpty()) {
                     continue;
                 }
+                if constexpr (enableAsymmetricMatchers) {
+                    if (prop2.isEmpty() && isAsymmetricMatcher(prop1)) {
+                        prop2 = jsUndefined();
+                    }
+                }
             }
 
             if (!prop2) {
@@ -1094,6 +1131,8 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             bool sameStructure = o2Structure->id() == o1Structure->id();
             // Comparing values runs user getters that can rehash this PropertyTable mid-walk (use-after-free), so collect the pairs first and compare after.
             MarkedArgumentBuffer pairs;
+            // matcher on one side, no own property on the other: read with get() after the walks
+            Vector<Identifier, 4> matcherOnlyKeys;
             if (sameStructure) {
                 o1Structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
                     if (entry.attributes() & PropertyAttribute::DontEnum || PropertyName(entry.key()).isPrivateName()) {
@@ -1146,6 +1185,12 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                         if (left.isUndefined() && right.isEmpty()) {
                             return true;
                         }
+                        if constexpr (enableAsymmetricMatchers) {
+                            if (right.isEmpty() && isAsymmetricMatcher(left)) {
+                                matcherOnlyKeys.append(Identifier::fromUid(vm, entry.key()));
+                                return true;
+                            }
+                        }
                     }
 
                     if (!right) {
@@ -1173,6 +1218,12 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
 
                         // Membership check only; every left property is in `pairs` and compared below.
                         if (o1->getDirectOffset(vm, JSC::PropertyName(entry.key())) == invalidOffset) {
+                            if constexpr (!isStrict && enableAsymmetricMatchers) {
+                                if (isAsymmetricMatcher(o2->getDirect(entry.offset()))) {
+                                    matcherOnlyKeys.append(Identifier::fromUid(vm, entry.key()));
+                                    return true;
+                                }
+                            }
                             result = false;
                             return false;
                         }
@@ -1201,6 +1252,18 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 RETURN_IF_EXCEPTION(scope, false);
                 if (same) continue;
 
+                auto eql = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, left, right, gcBuffer, stack, scope, true);
+                RETURN_IF_EXCEPTION(scope, false);
+                if (!eql) {
+                    return false;
+                }
+            }
+
+            for (const Identifier& key : matcherOnlyKeys) {
+                JSValue left = o1->get(globalObject, key);
+                RETURN_IF_EXCEPTION(scope, false);
+                JSValue right = o2->get(globalObject, key);
+                RETURN_IF_EXCEPTION(scope, false);
                 auto eql = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, left, right, gcBuffer, stack, scope, true);
                 RETURN_IF_EXCEPTION(scope, false);
                 if (!eql) {
@@ -1270,6 +1333,11 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             if (prop1.isUndefined() && prop2.isEmpty()) {
                 continue;
             }
+            if constexpr (enableAsymmetricMatchers) {
+                if (prop2.isEmpty() && isAsymmetricMatcher(prop1)) {
+                    prop2 = jsUndefined();
+                }
+            }
         }
 
         if (!prop2) {
@@ -1282,6 +1350,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     }
 
     // for the remaining properties in the other object, make sure they are undefined
+    // or an asymmetric matcher that accepts what the first object reads at that key
     for (; i < propertyArrayLength2; i++) {
         Identifier i2 = a2[i];
         PropertyName propertyName2 = PropertyName(i2);
@@ -1289,9 +1358,22 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         JSValue prop2 = o2->getIfPropertyExists(globalObject, propertyName2);
         RETURN_IF_EXCEPTION(scope, false);
 
-        if (!prop2.isUndefined()) {
-            return false;
+        if (prop2.isUndefined()) {
+            continue;
         }
+
+        if constexpr (!isStrict && enableAsymmetricMatchers) {
+            if (isAsymmetricMatcher(prop2)) {
+                JSValue prop1 = o1->get(globalObject, propertyName2);
+                RETURN_IF_EXCEPTION(scope, false);
+                auto eql = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, prop1, prop2, gcBuffer, stack, scope, true);
+                RETURN_IF_EXCEPTION(scope, false);
+                if (!eql) return false;
+                continue;
+            }
+        }
+
+        return false;
     }
 
     return true;
@@ -1613,6 +1695,9 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
                     if (prop1.isUndefined() && prop2.isEmpty()) {
                         continue;
                     }
+                    if (mode.enableAsymmetricMatchers && prop2.isEmpty() && isAsymmetricMatcher(prop1)) {
+                        prop2 = jsUndefined();
+                    }
                 }
 
                 if (!prop2) {
@@ -1627,6 +1712,7 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
             }
 
             // for the remaining properties in the other object, make sure they are undefined
+            // or an asymmetric matcher that accepts what the first object reads at that key
             for (; i < propertyArrayLength2; i++) {
                 Identifier i2 = a2[i];
                 if (i2 == vm.propertyNames->stack) continue;
@@ -1635,9 +1721,22 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
                 JSValue prop2 = right->getIfPropertyExists(globalObject, propertyName2);
                 RETURN_IF_EXCEPTION(scope, {});
 
-                if (!prop2.isUndefined()) {
-                    return false;
+                if (prop2.isUndefined()) {
+                    continue;
                 }
+
+                if (!mode.isStrict && mode.enableAsymmetricMatchers && isAsymmetricMatcher(prop2)) {
+                    JSValue prop1 = left->get(globalObject, propertyName2);
+                    RETURN_IF_EXCEPTION(scope, {});
+                    bool propertiesEqual = mode.deepEquals(globalObject, prop1, prop2, gcBuffer, stack, scope, true);
+                    RETURN_IF_EXCEPTION(scope, {});
+                    if (!propertiesEqual) {
+                        return false;
+                    }
+                    continue;
+                }
+
+                return false;
             }
 
             return true;

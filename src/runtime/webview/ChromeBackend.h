@@ -351,6 +351,7 @@ struct Pending {
     Method method;
     PendingSlot slot;
     uint32_t viewId;
+    uint32_t navGen = 0; // JSWebView::m_navGeneration when sent; 0 for slots other than Navigate
 };
 
 // Transport mode. Pipe = we spawned Chrome with --remote-debugging-pipe,

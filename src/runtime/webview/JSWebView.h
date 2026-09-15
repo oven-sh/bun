@@ -20,6 +20,12 @@ enum class WebViewBackend : uint8_t {
     Chrome, // Chrome DevTools Protocol via --remote-debugging-pipe
 };
 
+// The `waitUntil` option of navigate()/reload()/goBack()/goForward(). WebKit has no DCL hook and treats both as Load.
+enum class NavWaitUntil : uint8_t {
+    Load = 0,
+    DOMContentLoaded = 1,
+};
+
 enum class ScreenshotFormat : uint8_t {
     Png, // lossless, default.
     Jpeg, // lossy, quality 0-100.
@@ -98,6 +104,10 @@ public:
     WTF::String m_sessionId;
     WTF::String m_targetId;
     WTF::String m_pendingChromeNavigateUrl;
+    // Main frame id and the current navigation's loaderId from Page.frameNavigated; Page.lifecycleEvent must match both.
+    WTF::String m_frameId;
+    WTF::String m_loaderId; // empty between a navigation's start and its commit
+    bool m_navTitleChained = false; // the document.title fetch that settles this navigation was sent
     // clickSelector stash — the actionability eval chains into a
     // dispatchMouseEvent that needs these. WebViewHost has the same fields
     // on its side (m_selButton etc.) for the same chain.
@@ -114,6 +124,9 @@ public:
     // encoding → how the bytes are wrapped (Blob/Buffer/base64/shmem).
     ScreenshotFormat m_screenshotFormat = ScreenshotFormat::Png;
     ScreenshotEncoding m_screenshotEncoding = ScreenshotEncoding::Blob;
+    NavWaitUntil m_navWaitUntil = NavWaitUntil::Load;
+    // Bumped when a navigation starts and when the Navigate slot settles. The timeout timer and Navigate-slot CDP replies carry the value they were created under and no-op on mismatch.
+    uint32_t m_navGeneration = 0;
 
     JSC::WriteBarrier<JSC::JSObject> m_onNavigated;
     JSC::WriteBarrier<JSC::JSObject> m_onNavigationFailed;
@@ -157,7 +170,7 @@ public:
     // before reaching here) and m_closed is false. WebKit paths are
     // Darwin-only; calling one on the WebKit backend off-Darwin is a bug
     // (constructor already threw).
-    JSC::JSPromise* navigate(JSC::JSGlobalObject*, const WTF::String& url);
+    JSC::JSPromise* navigate(JSC::JSGlobalObject*, const WTF::String& url, NavWaitUntil, uint32_t timeoutMs);
     JSC::JSPromise* evaluate(JSC::JSGlobalObject*, const WTF::String& script);
     JSC::JSPromise* screenshot(JSC::JSGlobalObject*, ScreenshotFormat, uint8_t quality);
     // Chrome-only. Raw CDP escape hatch — method is "Domain.method",
@@ -171,10 +184,13 @@ public:
     JSC::JSPromise* scroll(JSC::JSGlobalObject*, double dx, double dy);
     JSC::JSPromise* scrollTo(JSC::JSGlobalObject*, const WTF::String& selector, uint32_t timeout, uint8_t block);
     JSC::JSPromise* resize(JSC::JSGlobalObject*, uint32_t width, uint32_t height);
-    JSC::JSPromise* goBack(JSC::JSGlobalObject*);
-    JSC::JSPromise* goForward(JSC::JSGlobalObject*);
-    JSC::JSPromise* reload(JSC::JSGlobalObject*);
+    JSC::JSPromise* goBack(JSC::JSGlobalObject*, NavWaitUntil, uint32_t timeoutMs);
+    JSC::JSPromise* goForward(JSC::JSGlobalObject*, NavWaitUntil, uint32_t timeoutMs);
+    JSC::JSPromise* reload(JSC::JSGlobalObject*, NavWaitUntil, uint32_t timeoutMs);
     void doClose();
+
+    // Rejects m_pendingNavigate after timeoutMs (0 = never). Call after the backend op stored the promise.
+    void armNavTimeout(JSC::JSGlobalObject*, uint32_t timeoutMs);
 
 #if OS(DARWIN)
     // WebKit constructor: spawn host if needed, allocate viewId, register

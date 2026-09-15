@@ -42,7 +42,7 @@ it("importing empty js like file returns empty module", async () => {
     delete require.cache[require.resolve(`./empty-file`)];
 
     const empty_file_js = await import("./empty-file", { with: { type } });
-    expect(empty_file_js).toEqual({}); // Expect an empty module object
+    expect({ ...empty_file_js }).toEqual({}); // Expect an empty module object
     expect(empty_file_js.default).toBeUndefined(); // Expect no default export
   }
 });

@@ -894,13 +894,12 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     ASSERT(c1);
     ASSERT(c2);
 
-    // node's objectComparisonStart (lib/internal/util/comparisons.js): the constructor /
-    // [[Prototype]] rule in strict mode, then equal Object.prototype.toString tags in every mode.
-    if constexpr (checkPrototypes) {
+    // jest's equals() and node's objectComparisonStart: equal Object.prototype.toString tags first.
+    {
         JSObject* protoCheck1 = v1.getObject();
         JSObject* protoCheck2 = v2.getObject();
         if (protoCheck1 && protoCheck2) {
-            if constexpr (!skipPrototypeIdentity) {
+            if constexpr (checkPrototypes && !skipPrototypeIdentity) {
                 const auto& constructorName = vm.propertyNames->constructor;
                 PropertySlot slot1(protoCheck1, PropertySlot::InternalMethodType::Get);
                 bool hasConstructor1 = protoCheck1->getPropertySlot(globalObject, constructorName, slot1);

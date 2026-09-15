@@ -10,6 +10,8 @@
 
 use core::cell::Cell;
 use core::mem;
+use core::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, Weak};
 
 use crate::generated_classes::PropertyName;
 use crate::webcore::Blob;
@@ -27,6 +29,7 @@ use bun_jsc::{
     JsCell, JsClass as _, JsRef, JsResult, StringJsc as _, Strong, SysErrorJsc as _,
 };
 use bun_sys as sys;
+use bun_threading::Guarded;
 
 use super::codecs;
 use super::exif;
@@ -78,6 +81,8 @@ pub struct Image {
     /// collect the wrapper without polling `hasPendingActivity` every cycle.
     this_ref: JsCell<JsRef>,
     pending_tasks: Cell<u32>,
+    /// Shared with every clone of this image.
+    shared: Arc<SharedDecode>,
 }
 
 impl Default for Image {
@@ -91,6 +96,38 @@ impl Default for Image {
             last_height: Cell::new(-1),
             this_ref: JsCell::new(JsRef::empty()),
             pending_tasks: Cell::new(0),
+            shared: Arc::new(SharedDecode::default()),
+        }
+    }
+}
+
+impl Drop for Image {
+    fn drop(&mut self) {
+        self.shared.images.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
+/// Per clone family: lets concurrent full-resolution pipelines decode the
+/// input once. See `decode_oriented`.
+struct SharedDecode {
+    /// Live images in the family; sharing engages only when > 1.
+    images: AtomicU32,
+    /// `Weak` so an idle family pins no pixels; `key` covers everything that
+    /// shapes the decode so a mutated buffer or backend flip misses.
+    cache: Guarded<DecodeCacheSlot>,
+}
+
+#[derive(Default)]
+struct DecodeCacheSlot {
+    key: u64,
+    decoded: Weak<codecs::Decoded>,
+}
+
+impl Default for SharedDecode {
+    fn default() -> Self {
+        Self {
+            images: AtomicU32::new(1),
+            cache: Guarded::init(DecodeCacheSlot::default()),
         }
     }
 }
@@ -108,8 +145,8 @@ pub enum Source {
     ///    more than the dupe it replaces.
     JsBuffer,
     /// Owned — Blob inputs (the Blob's store may be sliced/freed independently)
-    /// and decoded data: URLs.
-    Owned(Vec<u8>),
+    /// and decoded data: URLs. `Arc` so clones share rather than copy.
+    Owned(Arc<Vec<u8>>),
     /// Owned, NUL-terminated. Read on the worker thread.
     Path(ZBox),
     /// `Bun.file()`, `Bun.s3()`, an fd-backed Blob — anything whose bytes
@@ -314,7 +351,8 @@ impl Image {
         mem::size_of::<Image>()
             + match self.source.get() {
                 Source::JsBuffer | Source::Blob(_) => 0,
-                Source::Owned(b) => b.len(),
+                // Split across the clones sharing it.
+                Source::Owned(b) => b.len() / Arc::strong_count(b),
                 Source::Path(p) => p.len(),
             }
     }
@@ -383,7 +421,7 @@ fn source_from_js(
                 )));
             }
             out.truncate(r.written);
-            return Ok(Source::Owned(out));
+            return Ok(Source::Owned(Arc::new(out)));
         }
         return Ok(Source::Path(ZBox::from_bytes(s)));
     }
@@ -410,7 +448,7 @@ fn source_from_js(
         // independently).
         let view = blob.shared_view();
         if !view.is_empty() {
-            return Ok(Source::Owned(view.to_vec()));
+            return Ok(Source::Owned(Arc::new(view.to_vec())));
         }
         // Anything with a backing store but no in-memory view yet
         // (`Bun.file()`, `Bun.s3()`, fd, …) — keep the JS object and read it
@@ -621,6 +659,42 @@ impl Image {
     #[bun_jsc::host_fn(method)]
     pub(crate) fn do_format_avif(&self, g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
         self.set_format(g, cf, codecs::Format::Avif)
+    }
+
+    /// Sharp's `clone()`: a new `Image` sharing this input with a copy of the
+    /// recorded ops.
+    #[bun_jsc::host_fn(method)]
+    pub(crate) fn do_clone(
+        &self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let source = match self.source.get() {
+            // The clone's `sourceJS` slot is pointed at the same buffer below.
+            Source::JsBuffer => Source::JsBuffer,
+            Source::Owned(b) => Source::Owned(Arc::clone(b)),
+            Source::Path(p) => Source::Path(ZBox::from_bytes(p.as_bytes())),
+            Source::Blob(strong) => Source::Blob(Strong::create(strong.get(), global)),
+        };
+        self.shared.images.fetch_add(1, Ordering::Relaxed);
+        let img = Box::new(Image {
+            source: JsCell::new(source),
+            pipeline: Cell::new(self.pipeline.get()),
+            max_pixels: self.max_pixels,
+            auto_orient: self.auto_orient,
+            last_width: Cell::new(-1),
+            last_height: Cell::new(-1),
+            this_ref: JsCell::new(JsRef::empty()),
+            pending_tasks: Cell::new(0),
+            shared: Arc::clone(&self.shared),
+        });
+        let cloned = img.to_js(global);
+        if matches!(self.source.get(), Source::JsBuffer) {
+            if let Some(src) = js::source_js_get_cached(callframe.this()) {
+                js::source_js_set_cached(cloned, global, src);
+            }
+        }
+        Ok(cloned)
     }
 }
 
@@ -864,10 +938,8 @@ impl Image {
                 // BackendUnavailable (and any other backend error) ⇔ no image present.
                 Err(_) => return Ok(JSValue::NULL),
             };
-            let img = Box::new(Image {
-                source: JsCell::new(Source::Owned(bytes)),
-                ..Default::default()
-            });
+            let img = Box::<Image>::default();
+            img.source.set(Source::Owned(Arc::new(bytes)));
             return Ok(img.to_js(global));
         }
         #[cfg(not(any(target_os = "macos", windows)))]
@@ -1050,6 +1122,13 @@ impl Image {
         self.schedule(global, cf.this(), Kind::Placeholder, Deliver::DataUrl)
     }
 
+    /// Sharp-shaped `stats()` of the source image; recorded ops are ignored,
+    /// like `.placeholder()`.
+    #[bun_jsc::host_fn(method)]
+    pub(crate) fn do_stats(&self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
+        self.schedule(global, cf.this(), Kind::Stats, Deliver::Uint8Array)
+    }
+
     /// Terminal: encode and write to `path` on the work pool (no round-trip of
     /// then `Bun.write(dest, encoded)` — same path as `await Bun.write(...)`, so
     /// `dest` may be a path string, `Bun.file()`, `Bun.s3()`, or an fd. Resolves
@@ -1131,6 +1210,8 @@ impl Image {
             kind,
             max_pixels: self.max_pixels,
             auto_orient: self.auto_orient,
+            shared: (self.shared.images.load(Ordering::Relaxed) > 1)
+                .then(|| Arc::clone(&self.shared)),
             result: TaskResult::Err(codecs::Error::DecodeFailed),
         };
         let cx = global.js_thread();
@@ -1206,6 +1287,8 @@ impl Image {
             kind: Kind::Encode(self.pipeline.get().output),
             max_pixels: self.max_pixels,
             auto_orient: self.auto_orient,
+            // Must not block on a worker's in-flight decode.
+            shared: None,
             result: TaskResult::Err(codecs::Error::DecodeFailed),
         };
         task.run();
@@ -1225,7 +1308,7 @@ impl Image {
             ))),
             // Preserve errno/path/syscall instead of flattening to DecodeFailed.
             TaskResult::IoErr(e) => Err(global.throw_value(e.to_js(global))),
-            TaskResult::Meta { .. } => unreachable!(),
+            TaskResult::Meta { .. } | TaskResult::Stats(..) => unreachable!(),
         }
     }
 }
@@ -1328,7 +1411,7 @@ impl<'a> BlobReadChain<'a> {
                 // — drop the redundant read instead and re-enter `schedule()`
                 // on the already-swapped source.
                 if matches!(image.source.get(), Source::Blob(_)) {
-                    image.source.set(Source::Owned(bytes));
+                    image.source.set(Source::Owned(Arc::new(bytes)));
                 } else {
                     drop(bytes);
                 }
@@ -1372,6 +1455,8 @@ pub struct PipelineTask {
     kind: Kind,
     max_pixels: u64,
     auto_orient: bool,
+    /// `Some` when the family had clones at schedule time; see `decode_oriented`.
+    shared: Option<Arc<SharedDecode>>,
     result: TaskResult,
 }
 // SAFETY: `input` borrows bytes that are pinned (`Pin`) or owned by the Image
@@ -1507,6 +1592,8 @@ pub enum Kind {
     /// hash itself never crosses the JS boundary unless we add an
     /// `as: "hash"` option later.
     Placeholder,
+    /// `.stats()` — of the source, like `Placeholder`.
+    Stats,
 }
 
 pub enum TaskResult {
@@ -1521,11 +1608,106 @@ pub enum TaskResult {
         h: u32,
         format: codecs::Format,
     },
+    Stats(Box<ImageStats>),
     Err(codecs::Error),
     IoErr(sys::Error),
 }
 
+enum TaskPixels {
+    Owned(codecs::Decoded),
+    Shared(Arc<codecs::Decoded>),
+}
+
+impl core::ops::Deref for TaskPixels {
+    type Target = codecs::Decoded;
+    fn deref(&self) -> &codecs::Decoded {
+        match self {
+            TaskPixels::Owned(d) => d,
+            TaskPixels::Shared(a) => a,
+        }
+    }
+}
+
+impl TaskPixels {
+    /// Exclusive pixels for the mutating encode path. The returned `Arc` keeps
+    /// the family's cache entry alive until the task finishes.
+    fn into_parts(self) -> (codecs::Decoded, Option<Arc<codecs::Decoded>>) {
+        match self {
+            TaskPixels::Owned(d) => (d, None),
+            TaskPixels::Shared(a) => (
+                codecs::Decoded {
+                    rgba: a.rgba.clone(),
+                    width: a.width,
+                    height: a.height,
+                    icc_profile: a.icc_profile.clone(),
+                },
+                Some(a),
+            ),
+        }
+    }
+}
+
 impl PipelineTask {
+    /// Decode + EXIF auto-orient, through the family cache when that does
+    /// not change the decode.
+    fn decode_oriented(
+        &self,
+        input: &[u8],
+        src_format: codecs::Format,
+        hint: codecs::DecodeHint,
+    ) -> Result<TaskPixels, codecs::Error> {
+        // A hinted JPEG decode (IDCT downscale) stays unshared: resizing
+        // from one shared full-resolution frame benchmarks slower than the
+        // decode it saves. Only JPEG honours the hint.
+        let share = self.shared.as_ref().filter(|_| {
+            src_format != codecs::Format::Jpeg || (hint.target_w == 0 && hint.target_h == 0)
+        });
+        if let Some(shared) = share {
+            // `backend` can change between tasks via `Bun.Image.backend`.
+            let seed = self
+                .max_pixels
+                .wrapping_mul(31)
+                .wrapping_add(u64::from(codecs::BACKEND.load(Ordering::Relaxed)) << 1)
+                .wrapping_add(u64::from(self.auto_orient));
+            let key = bun_wyhash::hash_with_seed(seed, input);
+            // Held across the decode: a sibling that waits does less work
+            // than one that decodes the same bytes again.
+            let mut slot = shared.cache.lock();
+            if slot.key == key {
+                if let Some(arc) = slot.decoded.upgrade() {
+                    return Ok(TaskPixels::Shared(arc));
+                }
+            }
+            let mut d = codecs::decode(input, self.max_pixels, codecs::DecodeHint::default())?;
+            self.orient(&mut d, input, src_format)?;
+            let arc = Arc::new(d);
+            slot.key = key;
+            slot.decoded = Arc::downgrade(&arc);
+            Ok(TaskPixels::Shared(arc))
+        } else {
+            let mut d = codecs::decode(input, self.max_pixels, hint)?;
+            self.orient(&mut d, input, src_format)?;
+            Ok(TaskPixels::Owned(d))
+        }
+    }
+
+    /// EXIF auto-orient: applied BEFORE any user op so resize targets and
+    /// metadata report the visually-upright dimensions, the way Sharp does.
+    fn orient(
+        &self,
+        d: &mut codecs::Decoded,
+        input: &[u8],
+        src_format: codecs::Format,
+    ) -> Result<(), codecs::Error> {
+        if self.auto_orient && src_format == codecs::Format::Jpeg {
+            let orient = exif::read_jpeg(input);
+            if orient != exif::Orientation::Normal {
+                apply_orientation(d, orient)?;
+            }
+        }
+        Ok(())
+    }
+
     /// Runs on a `WorkPool` thread. No JSC access.
     pub(crate) fn run(&mut self) {
         // `self.input` was prepared on the JS thread by `pin_for_task`: either a
@@ -1632,7 +1814,14 @@ impl PipelineTask {
         // can be over-shrunk and then upscaled, throwing away detail.
         // (flip/flop are pure mirrors that never change w/h, so the hint
         //  stays valid through them.)
-        let hint: codecs::DecodeHint = if let Some(r) = self.pipeline.resize {
+        //
+        // Only encode kinds apply the recorded resize; stats/placeholder are
+        // of the source and must decode at full resolution.
+        let resize_hint = match self.kind {
+            Kind::Encode(_) => self.pipeline.resize,
+            Kind::Metadata | Kind::Placeholder | Kind::Stats => None,
+        };
+        let hint: codecs::DecodeHint = if let Some(r) = resize_hint {
             let mut tw = r.w;
             // r.h==0 means "preserve aspect" — constrain on width only.
             let mut th = if r.h != 0 { r.h } else { r.w };
@@ -1652,46 +1841,43 @@ impl PipelineTask {
             codecs::DecodeHint::default()
         };
 
-        let mut decoded = match codecs::decode(input, self.max_pixels, hint) {
-            Ok(d) => d,
+        let src_format = codecs::Format::sniff(input).unwrap_or(codecs::Format::Png);
+
+        let pixels = match self.decode_oriented(input, src_format, hint) {
+            Ok(p) => p,
             Err(e) => {
                 self.result = TaskResult::Err(e);
                 return;
             }
         };
-        // `defer decoded.deinit()` — `codecs::Decoded` Drop frees rgba/icc.
-
-        let src_format = codecs::Format::sniff(input).unwrap_or(codecs::Format::Png);
-
-        // EXIF auto-orient: applied BEFORE any user op so resize targets and
-        // metadata report the visually-upright dimensions, the way Sharp does.
-        if self.auto_orient && src_format == codecs::Format::Jpeg {
-            let orient = exif::read_jpeg(input);
-            if orient != exif::Orientation::Normal {
-                if let Err(e) = apply_orientation(&mut decoded, orient) {
-                    self.result = TaskResult::Err(e);
-                    return;
-                }
-            }
-        }
 
         if matches!(self.kind, Kind::Metadata) {
             // Reached only for HEIC/AVIF (probe fell through).
             self.result = TaskResult::Meta {
-                w: decoded.width,
-                h: decoded.height,
+                w: pixels.width,
+                h: pixels.height,
                 format: src_format,
             };
             return;
         }
 
         if matches!(self.kind, Kind::Placeholder) {
-            self.result = match make_placeholder(&decoded.rgba, decoded.width, decoded.height) {
+            self.result = match make_placeholder(&pixels.rgba, pixels.width, pixels.height) {
                 Ok(r) => r,
                 Err(e) => TaskResult::Err(e),
             };
             return;
         }
+
+        if matches!(self.kind, Kind::Stats) {
+            self.result = match compute_stats(&pixels) {
+                Ok(st) => TaskResult::Stats(st),
+                Err(e) => TaskResult::Err(e),
+            };
+            return;
+        }
+
+        let (mut decoded, _family_keepalive) = pixels.into_parts();
 
         if let Err(e) = self.apply_pipeline(&mut decoded) {
             self.result = TaskResult::Err(e);
@@ -1754,6 +1940,12 @@ impl PipelineTask {
             TaskResult::Encoded { w, h, .. } | TaskResult::Meta { w, h, .. } => {
                 image.last_width.set(i32::try_from(*w).expect("int cast"));
                 image.last_height.set(i32::try_from(*h).expect("int cast"));
+            }
+            TaskResult::Stats(st) => {
+                image.last_width.set(i32::try_from(st.w).expect("int cast"));
+                image
+                    .last_height
+                    .set(i32::try_from(st.h).expect("int cast"));
             }
             _ => {}
         }
@@ -1917,6 +2109,38 @@ impl PipelineTask {
                 obj.put(global, b"format", fmt_js);
                 promise.resolve(global, obj)?;
             }
+            TaskResult::Stats(st) => {
+                let obj = JSValue::create_empty_object(global, 5);
+                let channels = JSValue::create_empty_array(global, st.channels.len())?;
+                for (i, ch) in st.channels.iter().enumerate() {
+                    let c = JSValue::create_empty_object(global, 10);
+                    c.put(global, b"min", JSValue::js_number(f64::from(ch.min)));
+                    c.put(global, b"max", JSValue::js_number(f64::from(ch.max)));
+                    c.put(global, b"sum", JSValue::js_number(ch.sum as f64));
+                    c.put(
+                        global,
+                        b"squaresSum",
+                        JSValue::js_number(ch.squares_sum as f64),
+                    );
+                    c.put(global, b"mean", JSValue::js_number(ch.mean));
+                    c.put(global, b"stdev", JSValue::js_number(ch.stdev));
+                    c.put(global, b"minX", JSValue::js_number(f64::from(ch.min_x)));
+                    c.put(global, b"minY", JSValue::js_number(f64::from(ch.min_y)));
+                    c.put(global, b"maxX", JSValue::js_number(f64::from(ch.max_x)));
+                    c.put(global, b"maxY", JSValue::js_number(f64::from(ch.max_y)));
+                    channels.put_index(global, i as u32, c)?;
+                }
+                obj.put(global, b"channels", channels);
+                obj.put(global, b"isOpaque", JSValue::from(st.is_opaque));
+                obj.put(global, b"entropy", JSValue::js_number(st.entropy));
+                obj.put(global, b"sharpness", JSValue::js_number(st.sharpness));
+                let dom = JSValue::create_empty_object(global, 3);
+                dom.put(global, b"r", JSValue::js_number(f64::from(st.dominant[0])));
+                dom.put(global, b"g", JSValue::js_number(f64::from(st.dominant[1])));
+                dom.put(global, b"b", JSValue::js_number(f64::from(st.dominant[2])));
+                obj.put(global, b"dominant", dom);
+                promise.resolve(global, obj)?;
+            }
             TaskResult::Err(e) => promise.reject(global, Ok(reject_error(global, e)))?,
             TaskResult::IoErr(e) => promise.reject(global, Ok(e.to_js(global)))?,
         }
@@ -2013,6 +2237,187 @@ fn make_placeholder(rgba: &[u8], sw: u32, sh: u32) -> Result<TaskResult, codecs:
         w: rendered.w,
         h: rendered.h,
     })
+}
+
+/// Sharp-shaped `stats()`: sample stdev (n−1), first-occurrence min/max
+/// positions, `dominant` is the fullest 16×16×16 RGB bin's centre.
+pub struct ImageStats {
+    w: u32,
+    h: u32,
+    channels: [ChannelStats; 4],
+    is_opaque: bool,
+    entropy: f64,
+    sharpness: f64,
+    dominant: [u8; 3],
+}
+
+#[derive(Clone, Copy, Default)]
+struct ChannelStats {
+    min: u8,
+    max: u8,
+    sum: u64,
+    squares_sum: u64,
+    mean: f64,
+    stdev: f64,
+    min_x: u32,
+    min_y: u32,
+    max_x: u32,
+    max_y: u32,
+}
+
+fn compute_stats(d: &codecs::Decoded) -> Result<Box<ImageStats>, codecs::Error> {
+    let (w, h) = (d.width, d.height);
+    let n = u64::from(w) * u64::from(h);
+    let mut stats = Box::new(ImageStats {
+        w,
+        h,
+        channels: [ChannelStats::default(); 4],
+        is_opaque: true,
+        entropy: 0.0,
+        sharpness: 0.0,
+        dominant: [8, 8, 8],
+    });
+    if n == 0 {
+        return Ok(stats);
+    }
+
+    #[derive(Clone, Copy)]
+    struct Acc {
+        min: u8,
+        max: u8,
+        min_i: u64,
+        max_i: u64,
+        sum: u64,
+        sq: u64,
+    }
+    let mut acc = [Acc {
+        min: 255,
+        max: 0,
+        min_i: 0,
+        max_i: 0,
+        sum: 0,
+        sq: 0,
+    }; 4];
+    // 16x16x16 RGB bins for `dominant`; 256 integer BT.601 luma bins for
+    // `entropy` (vips goes through LAB, so Sharp's numbers differ slightly).
+    let mut hist3d = vec![0u64; 4096];
+    let mut luma_hist = [0u64; 256];
+
+    for (i, px) in d.rgba.as_chunks::<4>().0.iter().enumerate() {
+        for (&v, a) in px.iter().zip(acc.iter_mut()) {
+            if v < a.min {
+                a.min = v;
+                a.min_i = i as u64;
+            }
+            if v > a.max {
+                a.max = v;
+                a.max_i = i as u64;
+            }
+            a.sum += u64::from(v);
+            a.sq += u64::from(v) * u64::from(v);
+        }
+        let (r, g, b) = (u32::from(px[0]), u32::from(px[1]), u32::from(px[2]));
+        hist3d[(((r >> 4) << 8) | ((g >> 4) << 4) | (b >> 4)) as usize] += 1;
+        let y = ((r * 77 + g * 150 + b * 29 + 128) >> 8) as u8;
+        luma_hist[usize::from(y)] += 1;
+        if px[3] != 255 {
+            stats.is_opaque = false;
+        }
+    }
+
+    let nf = n as f64;
+    for (out, a) in stats.channels.iter_mut().zip(acc.iter()) {
+        // `.max(0.0)`: rounding can push a constant channel's radicand below 0.
+        let stdev = if n > 1 {
+            ((a.sq as f64 - (a.sum as f64) * (a.sum as f64) / nf) / (nf - 1.0))
+                .max(0.0)
+                .sqrt()
+        } else {
+            0.0
+        };
+        *out = ChannelStats {
+            min: a.min,
+            max: a.max,
+            sum: a.sum,
+            squares_sum: a.sq,
+            mean: a.sum as f64 / nf,
+            stdev,
+            min_x: (a.min_i % u64::from(w)) as u32,
+            min_y: (a.min_i / u64::from(w)) as u32,
+            max_x: (a.max_i % u64::from(w)) as u32,
+            max_y: (a.max_i / u64::from(w)) as u32,
+        };
+    }
+
+    for &count in &luma_hist {
+        if count > 0 {
+            let p = count as f64 / nf;
+            stats.entropy -= p * p.log2();
+        }
+    }
+
+    let mut best = 0usize;
+    for (i, &count) in hist3d.iter().enumerate().skip(1) {
+        if count > hist3d[best] {
+            best = i;
+        }
+    }
+    stats.dominant = [
+        ((best >> 8) as u8) * 16 + 8,
+        (((best >> 4) & 0xF) as u8) * 16 + 8,
+        ((best & 0xF) as u8) * 16 + 8,
+    ];
+
+    // `sharpness`: stdev of a 3x3 laplacian over luma, interior pixels only
+    // (vips extends the border). A 3-row window keeps this O(width) memory.
+    if w >= 3 && h >= 3 {
+        let stride = w as usize;
+        let mut rows: [Vec<u8>; 3] = [const { Vec::new() }; 3];
+        for row in &mut rows {
+            if row.try_reserve_exact(stride).is_err() {
+                return Err(codecs::Error::OutOfMemory);
+            }
+            row.resize(stride, 0);
+        }
+        let luma_row = |y: usize, out: &mut [u8]| {
+            let base = y * stride * 4;
+            for (px, out_y) in d.rgba[base..base + stride * 4]
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .zip(out.iter_mut())
+            {
+                let (r, g, b) = (u32::from(px[0]), u32::from(px[1]), u32::from(px[2]));
+                *out_y = ((r * 77 + g * 150 + b * 29 + 128) >> 8) as u8;
+            }
+        };
+        luma_row(0, &mut rows[0]);
+        luma_row(1, &mut rows[1]);
+        let (mut sum, mut sq) = (0.0f64, 0.0f64);
+        for y in 1..(h as usize - 1) {
+            luma_row(y + 1, &mut rows[(y + 1) % 3]);
+            let prev = &rows[(y - 1) % 3];
+            let cur = &rows[y % 3];
+            let next = &rows[(y + 1) % 3];
+            for x in 1..(stride - 1) {
+                let lap = f64::from(
+                    i32::from(prev[x])
+                        + i32::from(cur[x - 1])
+                        + i32::from(cur[x + 1])
+                        + i32::from(next[x])
+                        - 4 * i32::from(cur[x]),
+                ) / 9.0;
+                sum += lap;
+                sq += lap * lap;
+            }
+        }
+        let cnt = f64::from(w - 2) * f64::from(h - 2);
+        if cnt > 1.0 {
+            stats.sharpness = ((sq - sum * sum / cnt) / (cnt - 1.0)).max(0.0).sqrt();
+        }
+    }
+
+    Ok(stats)
 }
 
 /// Map a resize spec to concrete output dims given the current dims.

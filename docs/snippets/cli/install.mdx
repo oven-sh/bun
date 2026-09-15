@@ -54,6 +54,11 @@ bun install <name>@<version>
   Add the exact version instead of the ^ range
 </ParamField>
 
+<ParamField path="--catalog" type="string">
+  Add the resolved version to the root <code>package.json</code> catalog and depend on it as <code>catalog:</code>;{" "}
+  <code>--catalog=NAME</code> targets <code>catalogs.NAME</code>
+</ParamField>
+
 ### Lockfile Control
 
 <ParamField path="--yarn" type="boolean">
@@ -105,12 +110,28 @@ bun install <name>@<version>
   Platform-specific optimizations: "clonefile", "hardlink", "symlink", "copyfile"
 </ParamField>
 
+<ParamField path="--linker" type="string">
+  Linker strategy (one of <code>isolated</code> or <code>hoisted</code>)
+</ParamField>
+
 <ParamField path="--filter" type="string">
   Install packages for the matching workspaces
 </ParamField>
 
 <ParamField path="--analyze" type="boolean">
   Recursively analyze & install all dependencies of files passed as arguments
+</ParamField>
+
+### Platform Targeting
+
+<ParamField path="--cpu" type="string">
+  Override CPU architecture for optional dependencies (e.g., <code>x64</code>, <code>arm64</code>, <code>*</code> for
+  all)
+</ParamField>
+
+<ParamField path="--os" type="string">
+  Override operating system for optional dependencies (e.g., <code>linux</code>, <code>darwin</code>, <code>*</code> for
+  all)
 </ParamField>
 
 ### Caching Options
@@ -149,6 +170,10 @@ bun install <name>@<version>
 
 <ParamField path="--trust" type="boolean">
   Add to trustedDependencies in the project's package.json and install the package(s)
+</ParamField>
+
+<ParamField path="--minimum-release-age" type="number">
+  Only install package versions published at least this many seconds ago
 </ParamField>
 
 ### Concurrency & Performance

@@ -27,6 +27,8 @@ struct WorkerOptions {
     // true, then we need to make sure that `process.argv` contains "[worker eval]" instead of the
     // Blob URL.
     bool evalMode { false };
+    // node:worker_threads `trackUnmanagedFds`; default matches Node.js.
+    bool trackUnmanagedFds { true };
     Kind kind { Kind::Web };
     // Serialized array containing [workerData, environmentData]
     // (environmentData is always a Map)

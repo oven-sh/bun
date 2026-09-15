@@ -41,7 +41,8 @@ pub struct PackageInstall<'a> {
     pub(crate) patch: Option<Patch>,
 
     pub(crate) node_modules: &'a NodeModulesFolder,
-    pub lockfile: &'a Lockfile,
+    /// Needed by `verify()` and by Folder installs; thread-pool workers do neither and pass `None`.
+    pub lockfile: Option<&'a Lockfile>,
 }
 
 #[derive(Clone, Copy)]
@@ -743,6 +744,11 @@ impl UninstallTask {
 // ───────────────────────────── impl PackageInstall ─────────────────────────────
 
 impl<'a> PackageInstall<'a> {
+    fn lockfile(&self) -> &'a Lockfile {
+        self.lockfile
+            .expect("only verify() and Folder installs read the lockfile; workers pass neither")
+    }
+
     ///
     fn verify_patch_hash(&mut self, patch: Patch, root_node_modules_dir: &Dir) -> bool {
         // hash from the .patch file, to be checked against bun tag
@@ -804,7 +810,7 @@ impl<'a> PackageInstall<'a> {
             return false;
         };
         strings::eql_long(
-            repo.resolved.slice(&self.lockfile.buffers.string_bytes),
+            repo.resolved.slice(&self.lockfile().buffers.string_bytes),
             &bun_tag_file.bytes,
             true,
         )
@@ -821,7 +827,7 @@ impl<'a> PackageInstall<'a> {
             resolution::Tag::Root => self.verify_transitive_symlinked_folder(root_node_modules_dir),
             resolution::Tag::Folder => {
                 if self
-                    .lockfile
+                    .lockfile()
                     .is_workspace_tree_id(self.node_modules.tree_id)
                 {
                     self.verify_package_json_name_and_version(root_node_modules_dir, resolution.tag)
@@ -1001,7 +1007,9 @@ impl<'a> PackageInstall<'a> {
 
         // lastly, check the name.
         package_json_checker.found_name()
-            == self.package_name.slice(&self.lockfile.buffers.string_bytes)
+            == self
+                .package_name
+                .slice(&self.lockfile().buffers.string_bytes)
     }
 
     // ───────────────────────────── install backends ─────────────────────────────
@@ -2315,7 +2323,7 @@ impl<'a> PackageInstall<'a> {
 
         if resolution_tag == resolution::Tag::Folder
             && !self
-                .lockfile
+                .lockfile()
                 .is_workspace_tree_id(self.node_modules.tree_id)
         {
             supported_method_to_use = Method::Symlink;

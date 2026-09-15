@@ -38,7 +38,8 @@ export const symbols = [
   "uv_cond_wait",
   "uv_cpu_info",
   "uv_cpumask_size",
-  "uv_cwd",
+  // Defined in uv-posix-polyfills.c
+  // "uv_cwd",
   "uv_default_loop",
   "uv_disable_stdio_inheritance",
   "uv_dlclose",

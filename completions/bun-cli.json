@@ -1396,6 +1396,14 @@
           "multiple": false
         },
         {
+          "name": "minimum-release-age-excludes",
+          "description": "Package names exempt from --minimum-release-age (comma-separated or repeated; replaces the bunfig.toml list)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
           "name": "cpu",
           "description": "Override CPU architecture for optional dependencies (e.g., x64, arm64, * for all)",
           "hasValue": true,
@@ -1808,6 +1816,14 @@
         {
           "name": "minimum-release-age",
           "description": "Only install packages published at least N seconds ago (security feature)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "minimum-release-age-excludes",
+          "description": "Package names exempt from --minimum-release-age (comma-separated or repeated; replaces the bunfig.toml list)",
           "hasValue": true,
           "valueType": "val",
           "required": false,

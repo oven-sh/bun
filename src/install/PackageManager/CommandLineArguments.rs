@@ -126,6 +126,9 @@ const SHARED_TAIL_PARAMS: &[ParamType] = &[
         "--minimum-release-age <NUM>           Only install packages published at least N seconds ago (security feature)"
     ),
     clap::param!(
+        "--minimum-release-age-excludes <STR>...  Package names exempt from --minimum-release-age (comma-separated or repeated; replaces the bunfig.toml list)"
+    ),
+    clap::param!(
         "--cpu <STR>...                        Override CPU architecture for optional dependencies (e.g., x64, arm64, * for all)"
     ),
     clap::param!(
@@ -568,6 +571,7 @@ pub struct CommandLineArguments {
     pub(crate) node_linker: Option<Options::NodeLinker>,
 
     pub(crate) minimum_release_age_ms: Option<f64>,
+    pub(crate) minimum_release_age_excludes: &'static [&'static [u8]],
 
     // `bun pm version` options
     pub(crate) git_tag_version: bool,
@@ -672,6 +676,7 @@ impl Default for CommandLineArguments {
             node_linker: None,
 
             minimum_release_age_ms: None,
+            minimum_release_age_excludes: &[],
 
             git_tag_version: true,
             allow_same_version: false,
@@ -1377,6 +1382,16 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             }
             const MS_PER_S: f64 = bun_core::time::MS_PER_S as f64;
             cli.minimum_release_age_ms = Some(secs * MS_PER_S);
+        }
+
+        let exclude_values = args.options(b"--minimum-release-age-excludes");
+        if !exclude_values.is_empty() {
+            let excludes: Vec<&'static [u8]> = exclude_values
+                .iter()
+                .flat_map(|value| strings::split(*value, b","))
+                .filter(|name| !name.is_empty())
+                .collect();
+            cli.minimum_release_age_excludes = bun_core::heap::release(excludes.into_boxed_slice());
         }
 
         let omit_values = args.options(b"--omit");

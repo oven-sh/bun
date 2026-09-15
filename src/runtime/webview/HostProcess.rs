@@ -149,11 +149,6 @@ bun_spawn::link_impl_ProcessExit! {
 
 #[cfg(target_os = "macos")]
 fn spawn(vm: *mut VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) -> Result<Fd, Error> {
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = (vm, stdout_inherit, stderr_inherit);
-        return Err(crate::Error::Unsupported);
-    }
     #[cfg(target_os = "macos")]
     {
         // Both ends nonblocking — parent uses usockets; child sets O_NONBLOCK

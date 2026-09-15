@@ -917,13 +917,6 @@ impl Drop for MarkedArrayBuffer {
 }
 
 impl MarkedArrayBuffer {
-    pub fn from_typed_array(ctx: &JSGlobalObject, value: JSValue) -> MarkedArrayBuffer {
-        MarkedArrayBuffer {
-            owns_buffer: false,
-            buffer: ArrayBuffer::from_typed_array(ctx, value),
-        }
-    }
-
     pub fn from_array_buffer(ctx: &JSGlobalObject, value: JSValue) -> MarkedArrayBuffer {
         MarkedArrayBuffer {
             owns_buffer: false,
@@ -941,14 +934,6 @@ impl MarkedArrayBuffer {
         // SAFETY: ptr/len from heap::alloc; backed by the global allocator.
         let bytes = unsafe { bun_core::ffi::slice_mut(ptr, len) };
         Ok(MarkedArrayBuffer::from_bytes(bytes, JSType::Uint8Array))
-    }
-
-    pub fn from_js(global: &JSGlobalObject, value: JSValue) -> Option<MarkedArrayBuffer> {
-        let array_buffer = value.as_array_buffer(global)?;
-        Some(MarkedArrayBuffer {
-            buffer: array_buffer,
-            owns_buffer: false,
-        })
     }
 
     pub fn from_bytes(bytes: &mut [u8], typed_array_type: JSType) -> MarkedArrayBuffer {

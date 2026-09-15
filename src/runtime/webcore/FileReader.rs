@@ -525,11 +525,18 @@ impl FileReader {
         }
     }
 
+    /// Drop the native sink and end the stream locked to it: errored with the reader's `err`, else closed.
+    fn detach_sink(&self, err: Option<&streams::StreamError>) {
+        self.sink_paused.set(false);
+        if self.sink.replace(SinkHandle::None).is_some() {
+            self.parent_const().end_locked_stream(err);
+        }
+    }
+
     /// Detach the native sink without running the cancel path. Called by the
     /// sink's `SourceHandle::close` when the sink closes first.
     pub(crate) fn unpipe_without_deref(&self) {
-        self.sink.set(SinkHandle::None);
-        self.sink_paused.set(false);
+        self.detach_sink(None);
     }
 
     /// Sink's drain ack: unpause, push any buffered bytes, then resume reading.
@@ -556,12 +563,12 @@ impl FileReader {
                     return;
                 }
                 streams::Writable::Err(e) => {
-                    self.sink.set(SinkHandle::None);
+                    self.detach_sink(None);
                     sink.end(Some(streams::StreamError::Error(e)));
                     return;
                 }
                 streams::Writable::Done => {
-                    self.sink.set(SinkHandle::None);
+                    self.detach_sink(None);
                     sink.end(None);
                     return;
                 }
@@ -569,13 +576,13 @@ impl FileReader {
             }
         }
         if reader_done || self.done.get() {
-            self.sink.set(SinkHandle::None);
             // A read error from before the sink was attached ends it here.
-            sink.end(
-                self.read_error
-                    .replace(None)
-                    .map(streams::StreamError::Error),
-            );
+            let err = self
+                .read_error
+                .replace(None)
+                .map(streams::StreamError::Error);
+            self.detach_sink(err.as_ref());
+            sink.end(err);
             return;
         }
         if !self.reader().has_pending_read() {
@@ -655,8 +662,7 @@ impl FileReader {
             // No JS read is waiting; stop at the highwater mark and let onPull restart. `started` gates it: a non-lazy `Bun.spawn` pipe is already reading before any consumer attaches, and throttling then deadlocks a child alternating stdout/stderr writes.
             let keep_going = !self.started.get()
                 || (self.flowing.get() && self.buffered.get().len() < self.highwater_mark);
-            // A completion-driven reader keeps issuing reads unless stopped; `on_pull` restarts it.
-            #[cfg(windows)]
+            // `false` only ends this read loop; `pause()` stops the reader and releases its hold on the event loop until `on_pull`.
             if !keep_going {
                 self.reader().pause();
             }
@@ -680,12 +686,12 @@ impl FileReader {
                     return false;
                 }
                 streams::Writable::Err(e) => {
-                    self.sink.set(SinkHandle::None);
+                    self.detach_sink(None);
                     sink.end(Some(streams::StreamError::Error(e)));
                     return false;
                 }
                 streams::Writable::Done => {
-                    self.sink.set(SinkHandle::None);
+                    self.detach_sink(None);
                     sink.end(None);
                     return false;
                 }
@@ -693,7 +699,7 @@ impl FileReader {
             }
         }
         if !has_more && self.sink.get().is_some() {
-            self.sink.set(SinkHandle::None);
+            self.detach_sink(None);
             sink.end(None);
         }
         has_more
@@ -809,6 +815,8 @@ impl FileReader {
         }
 
         if !self.reader().has_pending_read() && self.flowing.get() {
+            // A consumer is pulling again: undo the highwater pause from `on_read_chunk`.
+            self.reader().unpause();
             // SAFETY: the reader cell is live for `self`'s lifetime; `read_into` is the raw re-entrancy-safe entry (EOF/error dispatch runs user JS).
             let (amount_read, state) = unsafe { IOReader::read_into(self.reader.get(), buffer) };
             bun_core::scoped_log!(FileReader, "onPull({}) = {}", buffer.len(), amount_read);
@@ -890,7 +898,7 @@ impl FileReader {
         if sink.is_some() {
             self.consume_reader_buffer();
             if !self.sink_paused.get() {
-                self.sink.set(SinkHandle::None);
+                self.detach_sink(None);
                 let buffered = self.buffered.replace(Vec::new());
                 if !buffered.is_empty() {
                     let _ = sink.write(&streams::Result::OwnedAndDone(buffered));
@@ -942,9 +950,9 @@ impl FileReader {
 
         let sink = *self.sink.get();
         if sink.is_some() {
-            self.sink.set(SinkHandle::None);
-            self.sink_paused.set(false);
-            sink.end(Some(streams::StreamError::Error(err)));
+            let err = streams::StreamError::Error(err);
+            self.detach_sink(Some(&err));
+            sink.end(Some(err));
         } else if self.pending.get().state == streams::PendingState::Pending {
             self.pending.with_mut(|p| {
                 p.result = streams::Result::Err(streams::StreamError::Error(err));

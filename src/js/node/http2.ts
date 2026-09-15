@@ -4944,6 +4944,7 @@ class ClientHttp2Session extends Http2Session {
   #closeCalled: boolean = false;
   /// connected indicates that the connection/socket is connected
   #connected: boolean = false;
+  // Open streams that user code holds. Counted in request() and streamPush, never from a parser callback.
   #connections: number = 0;
 
   #socket_proxy: Proxy<TLSSocket | Socket>;
@@ -4976,16 +4977,6 @@ class ClientHttp2Session extends Http2Session {
 
   static #Handlers = {
     binaryType: "buffer",
-    streamStart(self: ClientHttp2Session, stream_id: number) {
-      if (!self) return;
-      self.#connections++;
-      if (stream_id % 2 === 0) {
-        // A pushed (even-id) stream announced by the server: its context object must be a stream,
-        // not a session. Returned to the native caller, which stores it as the stream context.
-        const stream = new ClientHttp2Stream(stream_id, self, null);
-        return stream;
-      }
-    },
     streamPush(
       self: ClientHttp2Session,
       pushId: number,
@@ -5901,8 +5892,7 @@ class ClientHttp2Session extends Http2Session {
   }
 
   request(headers: any, options?: any) {
-    // Set once a stream id was allocated (streamStart incremented #connections); validation
-    // throws before that point must not decrement.
+    // Set once the stream is counted in #connections: a throw before that must not decrement.
     let connectionsCounted = false;
     try {
       // node validates arguments synchronously and only defers session-state failures
@@ -6236,13 +6226,14 @@ class ClientHttp2Session extends Http2Session {
         return req;
       }
 
-      connectionsCounted = true;
       let stream_id: number = this.#parser.getNextStream();
       if (stream_id < 0) {
         const req = new ClientHttp2Stream(undefined, this, headers);
         process.nextTick(emitOutofStreamErrorNT, req);
         return req;
       }
+      this.#connections++;
+      connectionsCounted = true;
       const req = new ClientHttp2Stream(stream_id, this, headers);
       req.authority = authority;
       req[kHeadRequest] = method === HTTP2_METHOD_HEAD;
@@ -6315,6 +6306,7 @@ class ClientHttp2Session extends Http2Session {
         process.nextTick(emitOutofStreamErrorNT, req);
         continue;
       }
+      this.#connections++;
       req[kSetStreamId](stream_id);
       try {
         if (typeof options === "undefined") {

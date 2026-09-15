@@ -16,7 +16,7 @@ use bun_install::package_manager_real::{
 };
 use bun_install::{
     self as install, DEFAULT_TRUSTED_DEPENDENCIES_LIST, DependencyID, LifecycleScriptSubprocess,
-    PackageID, PackageManager, Resolution,
+    PackageManager, Resolution,
 };
 use bun_paths::AutoAbsPath;
 
@@ -181,6 +181,7 @@ impl UntrustedCommand {
             let resolution = &lockfile.packages.items_resolution()[package_id as usize];
 
             scripts_list.print_scripts(resolution, buf, PrintFormat::Untrusted);
+            print_trusted_name_if_aliased(lockfile, dep_id);
             bun_core::pretty!("\n");
         }
 
@@ -205,11 +206,26 @@ impl UntrustedCommand {
     }
 }
 
+/// Follows `print_scripts`, which names the package by its folder.
+fn print_trusted_name_if_aliased(lockfile: &Lockfile, dep_id: DependencyID) {
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    let alias = lockfile.buffers.dependencies.as_slice()[dep_id as usize]
+        .name
+        .slice(buf);
+    let package_id = lockfile.buffers.resolutions.as_slice()[dep_id as usize] as usize;
+    let packages = lockfile.packages.slice();
+    let trusted_name = packages.items_resolution()[package_id]
+        .trusted_name(alias, packages.items_name()[package_id].slice(buf));
+    if trusted_name != alias {
+        bun_core::pretty!(" <d>alias of<r> {}\n", bun_core::fmt::quote(trusted_name));
+    }
+}
+
 pub(crate) struct TrustCommand;
 
 /// Value type stored in `scripts_at_depth`.
 struct ScriptInfo {
-    package_id: PackageID,
+    dep_id: DependencyID,
     scripts_list: ScriptsList,
     skip: bool,
 }
@@ -235,6 +251,22 @@ impl TrustCommand {
             for arg in packages_to_trust {
                 bun_core::pretty_error!(" <d>-<r> {}\n", bstr::BStr::new(arg));
             }
+        }
+    }
+
+    fn print_aliased_args(aliased_args: &StringArrayHashMap<Box<[u8]>>) {
+        if aliased_args.count() == 0 {
+            return;
+        }
+        // the listing above went to stdout; keep the notes after it on a terminal
+        Output::flush();
+        for (alias, trusted_name) in aliased_args.keys().iter().zip(aliased_args.values()) {
+            bun_core::note!(
+                "{} is an alias of {}, run 'bun pm trust {}' to trust it",
+                bun_core::fmt::quote(alias),
+                bun_core::fmt::quote(trusted_name),
+                bun_core::fmt::quote(trusted_name),
+            );
         }
     }
 
@@ -337,6 +369,8 @@ impl TrustCommand {
         let mut node_modules_path = AutoAbsPath::init_top_level_dir();
 
         let mut package_names_to_add: StringArrayHashMap<()> = StringArrayHashMap::new();
+        // alias given on the command line -> the name its package is trusted under
+        let mut aliased_args: StringArrayHashMap<Box<[u8]>> = StringArrayHashMap::new();
         let mut scripts_at_depth: ArrayHashMap<usize, Vec<ScriptInfo>> = ArrayHashMap::new();
 
         let mut scripts_count: usize = 0;
@@ -392,25 +426,18 @@ impl TrustCommand {
                 };
 
                 if let Some(scripts_list) = maybe_scripts_list {
-                    let skip = 'brk: {
-                        if trust_all {
-                            break 'brk false;
-                        }
+                    let trusted_name = resolution
+                        .trusted_name(alias, packages.items_name()[package_id as usize].slice(buf));
 
-                        for package_name_from_cli in &packages_to_trust {
-                            if strings::eql_long(package_name_from_cli, alias, true)
-                                && !lockfile.has_trusted_dependency(
-                                    alias,
-                                    packages.items_name()[package_id as usize].slice(buf),
-                                    resolution,
-                                )
-                            {
-                                break 'brk false;
-                            }
-                        }
-
-                        true
+                    let named = |name: &[u8]| {
+                        packages_to_trust.iter().any(|package_name_from_cli| {
+                            strings::eql_long(package_name_from_cli, name, true)
+                        })
                     };
+                    let skip = !trust_all && !named(trusted_name);
+                    if skip && trusted_name != alias && named(alias) {
+                        aliased_args.put(alias, Box::<[u8]>::from(trusted_name))?;
+                    }
 
                     let total = scripts_list.total as usize;
                     // even if it is skipped we still add to scripts_at_depth for logging later
@@ -419,13 +446,13 @@ impl TrustCommand {
                         *entry.value_ptr = Vec::new();
                     }
                     entry.value_ptr.push(ScriptInfo {
-                        package_id,
+                        dep_id,
                         scripts_list,
                         skip,
                     });
 
                     if !skip {
-                        package_names_to_add.put(alias, ())?;
+                        package_names_to_add.put(trusted_name, ())?;
                         scripts_count += total;
                     }
                 }
@@ -436,6 +463,7 @@ impl TrustCommand {
 
         if scripts_at_depth.count() == 0 || package_names_to_add.count() == 0 {
             Self::print_error_zero_untrusted_dependencies_found(trust_all, &packages_to_trust);
+            Self::print_aliased_args(&aliased_args);
             Global::crash();
         }
 
@@ -595,7 +623,8 @@ impl TrustCommand {
         let buf = lockfile.buffers.string_bytes.as_slice();
         for entry in scripts_at_depth.values().iter().rev() {
             for info in entry.iter() {
-                let resolution = &lockfile.packages.items_resolution()[info.package_id as usize];
+                let package_id = lockfile.buffers.resolutions.as_slice()[info.dep_id as usize];
+                let resolution = &lockfile.packages.items_resolution()[package_id as usize];
                 if info.skip {
                     info.scripts_list
                         .print_scripts(resolution, buf, PrintFormat::Untrusted);
@@ -606,6 +635,7 @@ impl TrustCommand {
                     info.scripts_list
                         .print_scripts(resolution, buf, PrintFormat::Completed);
                 }
+                print_trusted_name_if_aliased(lockfile, info.dep_id);
                 Output::print(format_args!("\n"));
             }
         }
@@ -700,6 +730,7 @@ impl TrustCommand {
                 if total_skipped_packages > 1 { "s" } else { "" },
             );
         }
+        Self::print_aliased_args(&aliased_args);
 
         Ok(())
     }

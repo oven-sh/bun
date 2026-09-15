@@ -3276,11 +3276,7 @@ impl Lockfile {
         resolution: &Resolution,
     ) -> bool {
         if let Some(trusted_dependencies) = &self.trusted_dependencies {
-            let trusted_name = if resolution.tag == ResolutionTag::Npm {
-                pkg_name
-            } else {
-                alias
-            };
+            let trusted_name = resolution.trusted_name(alias, pkg_name);
             let hash = SemverStringBuilder::string_hash(trusted_name) as u32;
             let name_is_trusted = match trusted_dependencies.get(&hash) {
                 Some(name) => !name.is_empty() && **name == *trusted_name,

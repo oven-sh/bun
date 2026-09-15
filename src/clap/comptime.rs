@@ -483,6 +483,9 @@ pub struct ComptimeClap<Id> {
     pub(crate) flags: Box<[bool]>,
     pub(crate) pos: Box<[&'static [u8]]>,
     pub(crate) passthrough_positionals: Box<[&'static [u8]]>,
+    /// True when a `--` token directly followed the last positional. That
+    /// token is not part of `passthrough_positionals`.
+    pub(crate) passthrough_follows_separator: bool,
 
     // The converted params are
     // carried as a `&'static` table — either rodata (`comptime_table!`) or
@@ -532,6 +535,7 @@ impl<Id> ComptimeClap<Id> {
 
         let mut pos: Vec<&'static [u8]> = Vec::new();
         let mut passthrough_positionals: Vec<&'static [u8]> = Vec::new();
+        let mut passthrough_follows_separator = false;
 
         let mut single_options: Box<[Option<&'static [u8]>]> =
             vec![None; table.n_single].into_boxed_slice();
@@ -559,6 +563,7 @@ impl<Id> ComptimeClap<Id> {
                     };
                     if !first.is_empty() && first == b"--" {
                         remaining_ = &remaining_[1..];
+                        passthrough_follows_separator = true;
                     }
 
                     passthrough_positionals.reserve_exact(remaining_.len());
@@ -591,6 +596,7 @@ impl<Id> ComptimeClap<Id> {
             flags,
             pos: pos.into_boxed_slice(),
             passthrough_positionals: passthrough_positionals.into_boxed_slice(),
+            passthrough_follows_separator,
             table,
             _id: PhantomData,
         })
@@ -647,5 +653,9 @@ impl<Id> ComptimeClap<Id> {
 
     pub(crate) fn remaining(&self) -> &[&'static [u8]] {
         &self.passthrough_positionals
+    }
+
+    pub(crate) fn remaining_follows_separator(&self) -> bool {
+        self.passthrough_follows_separator
     }
 }

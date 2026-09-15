@@ -46,8 +46,6 @@ pub enum Error {
     UnexpectedPendingResolution,
     #[error("WorkerTerminated")]
     WorkerTerminated,
-    #[error("JSErrorObject")]
-    JSErrorObject,
     #[error("ThreadSpawnFailed")]
     ThreadSpawnFailed,
     #[error("MissingDebugInfo")]
@@ -115,7 +113,6 @@ impl Error {
             Self::ServerEntryPointGenerate => "ServerEntryPointGenerate",
             Self::UnexpectedPendingResolution => "UnexpectedPendingResolution",
             Self::WorkerTerminated => "WorkerTerminated",
-            Self::JSErrorObject => "JSErrorObject",
             Self::ThreadSpawnFailed => "ThreadSpawnFailed",
             Self::MissingDebugInfo => "MissingDebugInfo",
             Self::EndOfFile => "EndOfFile",

@@ -24,7 +24,7 @@ test("PerformanceObserver without disconnect() does not leak Performance when Wo
       // Intentionally never call observer.disconnect().
     `,
     "main.js": `
-      const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+      const rss = process.memoryUsage.rss;
       const workerPath = new URL("./worker.js", import.meta.url).href;
 
       async function runOne() {

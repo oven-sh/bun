@@ -728,12 +728,6 @@ pub mod fs {
             // singleton deref + `'static` widening) instead of open-coding it.
             FilenameStore::append(self, s)
         }
-        fn append_lower_case(
-            &mut self,
-            s: &[u8],
-        ) -> core::result::Result<&[u8], bun_alloc::AllocError> {
-            FilenameStore::append_lower_case(self, s)
-        }
     }
 
     // Port of `threadlocal var temp_entries_option: EntriesOption = undefined` —
@@ -1069,7 +1063,7 @@ pub mod fs {
         /// record the resulting fd budget so `need_to_close_files` can decide
         /// whether to cache directory fds.
         pub(crate) fn init(cwd: &'static [u8]) -> RealFS {
-            let file_limit = Self::adjust_ulimit().expect("unreachable");
+            let file_limit = Self::adjust_ulimit();
             #[cfg(windows)]
             let _ = file_limit;
             RealFS {
@@ -1082,16 +1076,22 @@ pub mod fs {
         }
 
         /// Port of `RealFS.adjustUlimit` — always try to max out how many
-        /// files we can keep open.
-        pub(crate) fn adjust_ulimit() -> crate::CrateResult<usize> {
+        /// files we can keep open. Returns 0 when the limit cannot be read:
+        /// `need_to_close_files` is then always true and no fd stays cached.
+        /// `--watch`/`--hot` register an imported module through its cached
+        /// fd, so they then only see the entry point.
+        pub(crate) fn adjust_ulimit() -> usize {
             #[cfg(not(unix))]
             {
-                Ok(usize::MAX)
+                usize::MAX
             }
             #[cfg(unix)]
             {
                 let resource = bun_sys::posix::RlimitResource::NOFILE;
-                let mut lim = bun_sys::posix::getrlimit(resource)?;
+                // Node ignores a failed getrlimit(RLIMIT_NOFILE) too (`PlatformInit`).
+                let Ok(mut lim) = bun_sys::posix::getrlimit(resource) else {
+                    return 0;
+                };
 
                 // Cap at 1<<20 to match Node.js. On macOS the hard limit defaults to
                 // RLIM_INFINITY; raising soft anywhere near INT_MAX breaks child processes
@@ -1114,7 +1114,7 @@ pub mod fs {
                         lim.cur = raised.cur;
                     }
                 }
-                Ok(usize::try_from(lim.cur).expect("int cast"))
+                usize::try_from(lim.cur).expect("int cast")
             }
         }
 

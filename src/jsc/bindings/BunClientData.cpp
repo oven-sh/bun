@@ -14,6 +14,7 @@
 #include <JavaScriptCore/SubspaceInlines.h>
 #include <JavaScriptCore/VM.h>
 #include <JavaScriptCore/CachedTypes.h>
+#include <JavaScriptCore/PrelinkedModuleGraph.h>
 #include <wtf/MainThread.h>
 
 #include "JSDOMConstructorBase.h"
@@ -277,7 +278,33 @@ DOMClientIsoSubspaces::~DOMClientIsoSubspaces()
 
 void JSVMClientData::setDecoderStringTable(std::span<const uint8_t> bytes)
 {
+    if (m_decoderStringTable)
+        return; // slots may already hold cells this VM visits; never replace
     m_decoderStringTable = makeUnique<JSC::DecoderStringTable>(bytes);
+}
+
+extern "C" bool Bun__standalonePrelinkedModuleGraph(const uint8_t** blob, size_t* blobLength, const uint8_t** slotTable, size_t* slotTableLength);
+
+JSC::PrelinkedModuleGraph* JSVMClientData::prelinkedModuleGraph(JSC::VM& vm)
+{
+    if (!m_prelinkedModuleGraphChecked) [[unlikely]] {
+        if (!m_decoderStringTable)
+            return nullptr; // not installed (yet): a later call may still build the graph
+        m_prelinkedModuleGraphChecked = true;
+        const uint8_t* blob = nullptr;
+        size_t blobLength = 0;
+        const uint8_t* slotTable = nullptr;
+        size_t slotTableLength = 0;
+        if (Bun__standalonePrelinkedModuleGraph(&blob, &blobLength, &slotTable, &slotTableLength) && slotTableLength >= sizeof(uint32_t)) {
+            // ModuleInfoSlotTable: u32 count, then `count` u32 slots (4-byte aligned in the mapped section).
+            ASSERT(!(reinterpret_cast<uintptr_t>(slotTable) % alignof(uint32_t)));
+            uint32_t count = 0;
+            memcpy(&count, slotTable, sizeof(count));
+            if (count <= (slotTableLength - sizeof(uint32_t)) / sizeof(uint32_t))
+                m_prelinkedModuleGraph = JSC::PrelinkedModuleGraph::tryCreate(vm, *m_decoderStringTable, { blob, blobLength }, { reinterpret_cast<const uint32_t*>(slotTable + sizeof(uint32_t)), count });
+        }
+    }
+    return m_prelinkedModuleGraph.get();
 }
 
 } // namespace WebCore

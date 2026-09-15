@@ -305,19 +305,23 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
 
   test("concurrent requests multiplex on one h2 session", async () => {
     let sessions = 0;
-    let maxOpen = 0;
-    let open = 0;
+    const held: [http2.ServerHttp2Stream, string][] = [];
     const server = makeH2Server();
     server.on("session", () => sessions++);
     server.on("stream", (stream, headers) => {
-      open++;
-      maxOpen = Math.max(maxOpen, open);
-      stream.on("close", () => open--);
-      // Hold each stream briefly so all 8 are open at once.
-      setTimeout(() => {
+      const path = String(headers[":path"]);
+      if (path === "/warmup") {
         stream.respond({ ":status": 200 });
-        stream.end(String(headers[":path"]));
-      }, 100);
+        stream.end(path);
+        return;
+      }
+      // Answer only once all 8 streams are open at once.
+      held.push([stream, path]);
+      if (held.length < 8) return;
+      for (const [heldStream, heldPath] of held) {
+        heldStream.respond({ ":status": 200 });
+        heldStream.end(heldPath);
+      }
     });
     server.listen(0);
     await once(server, "listening");
@@ -338,7 +342,6 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
       expect(stdout.trim()).toBe("/0,/1,/2,/3,/4,/5,/6,/7");
       expect(exitCode).toBe(0);
       expect(sessions).toBe(1);
-      expect(maxOpen).toBe(8);
     } finally {
       server.close();
     }
@@ -2264,3 +2267,183 @@ test("h2: per-request `timeout` extends the session idle deadline, and {timeout:
     server.close();
   }
 }, 60_000);
+
+// The HTTP client caches 60 custom TLS contexts. A request whose context was
+// evicted holds the last ref to it, so the context dies with that request. The
+// request ends inside a callback of a socket that the context owns (for h2,
+// the session's socket). Reads of the freed context only show under ASAN.
+// Serial: each test fills the context cache, which would evict the context a
+// concurrent test depends on.
+describe.skipIf(!isASAN)("request whose custom TLS context was evicted from the cache", () => {
+  type Held = { socket: nodetls.TLSSocket; stream?: http2.ServerHttp2Stream };
+
+  async function run(protocol: "http2" | "http1.1", terminateInChild: string, afterEvicted?: (held: Held) => void) {
+    let heldStream: http2.ServerHttp2Stream | undefined;
+    let server: http2.Http2SecureServer | https.Server;
+    if (protocol === "http2") {
+      server = makeH2Server();
+      server.on("sessionError", () => {});
+      server.on("stream", (stream, headers) => {
+        stream.on("error", () => {});
+        stream.respond({ ":status": 200 });
+        if (headers[":path"] === "/hold") {
+          stream.write("chunk");
+          heldStream = stream;
+          return;
+        }
+        stream.end("ok");
+      });
+    } else {
+      server = https.createServer(tls, (req, res) => {
+        res.writeHead(200);
+        if (req.url === "/hold") res.write("chunk");
+        else res.end("ok");
+      });
+      server.on("clientError", (_err, socket) => socket.destroy());
+    }
+    // The child awaits the held response first, so its connection is sockets[0].
+    const sockets: nodetls.TLSSocket[] = [];
+    server.on("secureConnection", socket => {
+      socket.on("error", () => {});
+      sockets.push(socket);
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const { port } = server.address() as import("node:net").AddressInfo;
+    try {
+      await using proc = await spawnFetch(`
+        const url = "https://localhost:${port}";
+        const ac = new AbortController();
+        // serverName gives this request its own TLS context.
+        const held = await fetch(url + "/hold", {
+          protocol: "${protocol}",
+          signal: ac.signal,
+          tls: { serverName: "localhost", rejectUnauthorized: false },
+        });
+        const reader = held.body.getReader();
+        await reader.read();
+        // 61 more configs overflow the 60-entry cache.
+        for (let i = 0; i < 61; i += 8) {
+          const batch = [];
+          for (let j = i; j < Math.min(i + 8, 61); j++) {
+            batch.push(
+              fetch(url, { tls: { serverName: "evict-" + j + ".test", rejectUnauthorized: false } })
+                .then(r => r.arrayBuffer())
+                .catch(() => {}),
+            );
+          }
+          await Promise.all(batch);
+        }
+        process.stderr.write("evicted\\n");
+        ${terminateInChild}
+        await reader.read().catch(() => {});
+        // The HTTP thread still serves requests.
+        const after = await fetch(url, { tls: { rejectUnauthorized: false } });
+        await after.arrayBuffer();
+        console.log("ok");
+        process.exit(0);
+      `);
+      // One reader for all of stderr, so that a crash report written after
+      // "evicted" lands in the assertion below.
+      const errReader = proc.stderr.getReader();
+      const decoder = new TextDecoder();
+      let stderr = "";
+      async function readStderr(until?: string) {
+        while (until === undefined || !stderr.includes(until)) {
+          const { value, done } = await errReader.read();
+          if (value) stderr += decoder.decode(value, { stream: true });
+          if (done) break;
+        }
+      }
+      await readStderr("evicted");
+      afterEvicted?.({ socket: sockets[0], stream: heldStream });
+      await readStderr();
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr: stderr.trim(), exitCode }).toEqual({
+        stdout: "ok",
+        stderr: "evicted",
+        exitCode: 0,
+      });
+    } finally {
+      heldStream?.destroy();
+      server.close();
+    }
+  }
+
+  // 30 s: each child makes 62 TLS handshakes under ASAN, and a regression
+  // needs time to print its report.
+  test("an abort does not use the freed session", async () => {
+    await run("http2", "ac.abort();");
+  }, 30_000);
+
+  test("a server RST_STREAM does not free the stream the deliver loop holds", async () => {
+    await run("http2", "", held => held.stream!.close(http2.constants.NGHTTP2_CANCEL));
+  }, 30_000);
+
+  // uSockets reads the socket's group, which the context embeds, right after
+  // the close callback returns.
+  test.each(["http2", "http1.1"] as const)(
+    "a connection that the server closes does not free the context inside the close callback (%s)",
+    async protocol => {
+      await run(protocol, "", held => held.socket.destroy());
+    },
+    30_000,
+  );
+});
+
+// The HTTP thread frees a context with no ref left between two loop ticks, not
+// inside the socket callback that gave up the last ref. This checks that the
+// free still happens: a freed context closes the idle socket in its keep-alive
+// pool.
+test("an evicted custom TLS context is freed when its last request ends", async () => {
+  const sockets: nodetls.TLSSocket[] = [];
+  let busySocket: nodetls.TLSSocket | undefined;
+  const server = nodetls.createServer({ ...tls, ALPNProtocols: ["http/1.1"] }, socket => {
+    sockets.push(socket);
+    socket.on("error", () => {});
+    let request = "";
+    socket.on("data", chunk => {
+      request += chunk;
+      if (!request.endsWith("\r\n\r\n")) return;
+      if (request.startsWith("GET /hold ")) {
+        busySocket = socket;
+        socket.write("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nchunk\r\n");
+      } else {
+        socket.write("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
+      }
+      request = "";
+    });
+  });
+  server.listen(0);
+  await once(server, "listening");
+  const { port } = server.address() as import("node:net").AddressInfo;
+  const url = `https://localhost:${port}`;
+  // serverName gives these two requests their own TLS context.
+  const own = { serverName: "localhost", rejectUnauthorized: false };
+  try {
+    // The first connection stays busy, so the second request opens another
+    // one, which then sits idle in the context's keep-alive pool.
+    const busy = await fetch(url + "/hold", { tls: own });
+    const reader = busy.body!.getReader();
+    await reader.read();
+    expect(await (await fetch(url, { tls: own })).text()).toBe("ok");
+    expect(sockets.length).toBe(2);
+    const idle = sockets[1];
+    // Not once(): the pool closes with a reset, and once() rejects on "error".
+    const idleClosed = new Promise(resolve => idle.once("close", resolve));
+    // 61 more configs overflow the 60-entry cache.
+    const evicting = Array.from({ length: 61 }, (_, i) =>
+      fetch(url, { tls: { serverName: `evict-${i}.test`, rejectUnauthorized: false } }).then(res => res.text()),
+    );
+    expect(await Promise.all(evicting)).toEqual(evicting.map(() => "ok"));
+    // The busy request keeps the evicted context alive, and its pool with it.
+    expect(idle.destroyed).toBe(false);
+    busySocket!.write("0\r\n\r\n");
+    while (!(await reader.read()).done);
+    await idleClosed;
+  } finally {
+    for (const socket of sockets) socket.destroy();
+    server.close();
+  }
+  // 30 s: both ends of 63 TLS handshakes run in this process.
+}, 30_000);

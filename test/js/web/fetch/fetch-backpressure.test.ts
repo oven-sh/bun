@@ -19,6 +19,8 @@ const CHUNK = 64 * 1024;
 const COUNT = 256; // 16 MiB
 const TOTAL = CHUNK * COUNT;
 const PAYLOAD = Buffer.alloc(CHUNK, 65);
+// BODY_HIGH_WATER_MARK (src/http/Signals.rs): what a client stages of a body nothing reads.
+const MARK = 256 * 1024;
 
 function md5(data: Uint8Array | string): string {
   return Bun.CryptoHasher.hash("md5", data, "hex");
@@ -76,10 +78,11 @@ function progress(wire: number) {
       for (let i = waiters.length; i--; ) if (sent >= waiters[i][0]) waiters.splice(i, 1)[0][1]();
       if (sent >= wire) finished.resolve();
     },
-    // A write that did not go through once the socket has taken more than 8 chunks: the kernel is
-    // full, not merely slow to take the first packets.
+    // A write that did not go through once the server is past MARK. A client holds MARK before it
+    // pauses, so every server gets this far. Past it is kernel buffering; on a host without it the
+    // server waits for 'drain' while the paused client waits for settled().
     block() {
-      if (sent > 8 * CHUNK) blocked.resolve();
+      if (sent > MARK) blocked.resolve();
     },
     close: () => closed.resolve(),
     api: {
@@ -600,7 +603,7 @@ describe.concurrent("fetch() receive backpressure — streaming consumer shapes"
         while (sent < declared) {
           const n = s.write(PAYLOAD);
           sent += Math.max(n, 0);
-          if (n < PAYLOAD.length) return void (sent > 4 * CHUNK && blocked.resolve(s));
+          if (n < PAYLOAD.length) return void (sent > MARK && blocked.resolve(s));
         }
       };
       using listener = Bun.listen({

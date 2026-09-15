@@ -228,4 +228,19 @@ describe.each([
       ]);
     },
   );
+
+  test.concurrent.skipIf(!exe).each([
+    ["new TLSSocket(socket, { isServer }), before the handshake completes", "destroy-before-handshake"],
+    ["new TLSSocket(socket, { isServer }), after the handshake", "destroy-after-handshake"],
+    ["tls.connect({ socket }), after the handshake", "client-destroy-after-handshake"],
+  ])(
+    "destroy(err) closes the wrapped socket after the TLS socket's 'error', before its 'close': %s",
+    async (_, cell) => {
+      expect(await run(cell)).toEqual([
+        "tls error OWNER_DESTROY",
+        "raw close hadError=false",
+        "tls close hadError=true",
+      ]);
+    },
+  );
 });

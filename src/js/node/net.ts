@@ -287,11 +287,12 @@ function closeWithTLSSocket(self, raw) {
   if (!tlsSocket || tlsSocket[kupgraded] !== self) return false;
   if (self.destroyed) return true;
   // Its 'end' closes the wrapped socket. Its _destroy does when it is destroyed before that.
-  if (tlsSocket.destroyed) tlsSocket[kCloseRawConnection]();
-  else tlsSocket[kOwesRawClose] = true;
+  tlsSocket[kOwesRawClose] = true;
+  // A _destroy that deferred the close of its handle has returned by now. Its 'error' is already queued.
+  if (tlsSocket.destroyed) process.nextTick(closeOwedRaw, tlsSocket, self);
   return true;
 }
-// Between the TLS socket's 'error' and its 'close'.
+// Runs after the TLS socket queued its 'error' and before its 'close', so the wrapped socket's 'close' lands between them.
 function closeOwedRaw(self, upgraded) {
   if (!self[kOwesRawClose]) return;
   self[kOwesRawClose] = false;

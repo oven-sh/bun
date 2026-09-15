@@ -137,8 +137,13 @@ static ExceptionOr<URLPatternInit> processInit(URLPatternInit&& init, BaseURLStr
         }
     }
 
+    // https://urlpattern.spec.whatwg.org/#process-protocol-for-init
     if (!init.protocol.isNull()) {
-        auto protocolResult = canonicalizeProtocol(init.protocol, type);
+        StringView strippedValue { init.protocol };
+        if (strippedValue.endsWith(':'))
+            strippedValue = strippedValue.left(strippedValue.length() - 1);
+
+        auto protocolResult = canonicalizeProtocol(strippedValue, type);
 
         if (protocolResult.hasException())
             return protocolResult.releaseException();
@@ -188,8 +193,13 @@ static ExceptionOr<URLPatternInit> processInit(URLPatternInit&& init, BaseURLStr
         result.pathname = pathResult.releaseReturnValue();
     }
 
+    // https://urlpattern.spec.whatwg.org/#process-search-for-init
     if (!init.search.isNull()) {
-        auto queryResult = canonicalizeSearch(init.search, type);
+        StringView strippedValue { init.search };
+        if (strippedValue.startsWith('?'))
+            strippedValue = strippedValue.substring(1);
+
+        auto queryResult = canonicalizeSearch(strippedValue, type);
 
         if (queryResult.hasException())
             return queryResult.releaseException();
@@ -197,8 +207,13 @@ static ExceptionOr<URLPatternInit> processInit(URLPatternInit&& init, BaseURLStr
         result.search = queryResult.releaseReturnValue();
     }
 
+    // https://urlpattern.spec.whatwg.org/#process-hash-for-init
     if (!init.hash.isNull()) {
-        auto fragmentResult = canonicalizeHash(init.hash, type);
+        StringView strippedValue { init.hash };
+        if (strippedValue.startsWith('#'))
+            strippedValue = strippedValue.substring(1);
+
+        auto fragmentResult = canonicalizeHash(strippedValue, type);
 
         if (fragmentResult.hasException())
             return fragmentResult.releaseException();

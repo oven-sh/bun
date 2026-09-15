@@ -90,7 +90,6 @@ private:
     {
         Base::finishCreation(vm);
         Bun::reifyStaticPropertyTable(vm, JSDirentPrototype::info(), JSDirentPrototypeTableValues, *this);
-        Bun::putToStringTagWithoutTransition(vm, this, info());
     }
 };
 

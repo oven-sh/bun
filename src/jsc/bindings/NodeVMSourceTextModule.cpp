@@ -141,53 +141,6 @@ void NodeVMSourceTextModule::destroy(JSCell* cell)
     static_cast<NodeVMSourceTextModule*>(cell)->NodeVMSourceTextModule::~NodeVMSourceTextModule();
 }
 
-// Mirrors `tryCreateAttributes` in JSC's NodesAnalyzeModule.cpp: no `type` key means JavaScript.
-static ScriptFetchParameters::Type importAttributesType(VM& vm, ImportAttributesListNode* attributesList)
-{
-    if (!attributesList)
-        return ScriptFetchParameters::Type::JavaScript;
-    for (auto [key, value] : attributesList->attributes()) {
-        if (*key == vm.propertyNames->type)
-            return ScriptFetchParameters::parseType(value->impl()).value_or(ScriptFetchParameters::Type::JavaScript);
-    }
-    return ScriptFetchParameters::Type::JavaScript;
-}
-
-// The AST node keeps its phase private; the record stores it per imported binding. A bare `import 'm'` is never deferred.
-static AbstractModuleRecord::ModulePhase importPhase(JSModuleRecord& moduleRecord, ImportDeclarationNode& importDeclaration)
-{
-    const auto& specifiers = importDeclaration.specifierList()->specifiers();
-    if (specifiers.isEmpty())
-        return AbstractModuleRecord::ModulePhase::Evaluation;
-    auto entry = moduleRecord.importEntries().find(specifiers[0]->localName().impl());
-    if (entry == moduleRecord.importEntries().end())
-        return AbstractModuleRecord::ModulePhase::Evaluation;
-    return entry->value.phase;
-}
-
-// `requestedModules()` is deduplicated by (specifier, type, phase), first wins. Null for `export ... from`.
-static ImportAttributesListNode* findImportAttributesList(VM& vm, JSModuleRecord& moduleRecord, ModuleProgramNode& node, const AbstractModuleRecord::ModuleRequest& request)
-{
-    ScriptFetchParameters::Type requestType = request.m_attributes ? request.m_attributes->type() : ScriptFetchParameters::Type::JavaScript;
-    for (StatementNode* statement = node.statements()->firstStatement(); statement; statement = statement->next()) {
-        if (!statement->isModuleDeclarationNode())
-            continue;
-        auto* moduleDeclaration = static_cast<ModuleDeclarationNode*>(statement);
-        if (!moduleDeclaration->isImportDeclarationNode())
-            continue;
-        auto* importDeclaration = static_cast<ImportDeclarationNode*>(moduleDeclaration);
-        if (importDeclaration->moduleName()->moduleName().string() != request.m_specifier.string())
-            continue;
-        ImportAttributesListNode* attributesList = importDeclaration->attributesList();
-        if (importAttributesType(vm, attributesList) != requestType)
-            continue;
-        if (importPhase(moduleRecord, *importDeclaration) != request.m_phase)
-            continue;
-        return attributesList;
-    }
-    return nullptr;
-}
-
 JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
 {
     if (m_moduleRequestsArray) {
@@ -234,6 +187,7 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
     m_moduleRequests.clear();
 
     const auto& requests = moduleRecord->requestedModules();
+    const auto& attributesLists = analyzer.requestedModuleAttributesLists();
 
     if (requests.isEmpty()) {
         RELEASE_AND_RETURN(scope, constructEmptyArray(globalObject, nullptr, 0));
@@ -255,54 +209,21 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
         JSObject* requestObject = constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
         requestObject->putDirect(vm, specifierIdentifier, specifierValue);
 
-        WTF::String attributesTypeString = "unknown"_str;
-
         WTF::HashMap<WTF::String, WTF::String> attributeMap;
         JSObject* attributesObject = constructEmptyObject(globalObject);
 
-        if (request.m_attributes) {
-            JSValue attributesType {};
-            switch (request.m_attributes->type()) {
-                using AttributeType = decltype(request.m_attributes->type());
-                using enum AttributeType;
-            case None:
-                attributesTypeString = "none"_str;
-                attributesType = JSC::jsString(vm, attributesTypeString);
-                break;
-            case JavaScript:
-                attributesTypeString = "javascript"_str;
-                attributesType = JSC::jsString(vm, attributesTypeString);
-                break;
-            case WebAssembly:
-                attributesTypeString = "webassembly"_str;
-                attributesType = JSC::jsString(vm, attributesTypeString);
-                break;
-            case JSON:
-                attributesTypeString = "json"_str;
-                attributesType = JSC::jsString(vm, attributesTypeString);
-                break;
-            case HostDefined:
-                attributesTypeString = request.m_attributes->hostDefinedImportType();
-                attributesType = JSC::jsString(vm, attributesTypeString);
-                break;
-            default:
-                attributesType = JSC::jsNumber(static_cast<uint8_t>(request.m_attributes->type()));
-                break;
-            }
-
-            attributeMap.set("type"_s, WTF::move(attributesTypeString));
-            attributesObject->putDirect(vm, JSC::Identifier::fromString(vm, "type"_s), attributesType);
-
-            if (const String& hostDefinedImportType = request.m_attributes->hostDefinedImportType(); !hostDefinedImportType.isEmpty()) {
-                attributesObject->putDirect(vm, hostDefinedImportTypeIdentifier, JSC::jsString(vm, hostDefinedImportType));
-                attributeMap.set("hostDefinedImportType"_s, hostDefinedImportType);
+        if (ImportAttributesListNode* attributesList = attributesLists[i]) {
+            for (auto [key, value] : attributesList->attributes()) {
+                attributeMap.set(key->string(), value->string());
+                attributesObject->putDirectMayBeIndex(globalObject, *key, JSC::jsString(vm, value->string()));
+                RETURN_IF_EXCEPTION(scope, {});
             }
         }
 
-        if (ImportAttributesListNode* attributesNode = findImportAttributesList(vm, *moduleRecord, *node, request)) {
-            for (auto [key, value] : attributesNode->attributes()) {
-                attributeMap.set(key->string(), value->string());
-                attributesObject->putDirect(vm, *key, JSC::jsString(vm, value->string()));
+        if (request.m_attributes) {
+            if (const String& hostDefinedImportType = request.m_attributes->hostDefinedImportType(); !hostDefinedImportType.isEmpty()) {
+                attributesObject->putDirect(vm, hostDefinedImportTypeIdentifier, JSC::jsString(vm, hostDefinedImportType));
+                attributeMap.set("hostDefinedImportType"_s, hostDefinedImportType);
             }
         }
 

@@ -1038,8 +1038,7 @@ test("SourceTextModule accepts the cachedData it produced", () => {
   );
 });
 
-// JSC deduplicates requested modules by (specifier, type, phase). A repeated specifier shifts
-// every later request when the import statements are index-aligned with that list.
+// JSC keeps one request per (specifier, type, phase): the first declaration's.
 test("SourceTextModule.link gets each request's own import attributes", async () => {
   const dep = new SyntheticModule(["default", "a"], function (this: any) {
     this.setExport("default", 1);
@@ -1050,7 +1049,10 @@ test("SourceTextModule.link gets each request's own import attributes", async ()
     `import 'a'; import 'a'; import j from 'j' with { type: 'json' }; import c from 'c' with { type: 'css' };
      import { a } from 'x'; import 'x';
      export * from 'e' with { type: 'css' };
-     import defer * as d from 'm' with { type: 'json', x: '1' }; import b from 'm' with { type: 'json', y: '2' };`,
+     import defer * as d from 'm' with { type: 'json', x: '1' }; import b from 'm' with { type: 'json', y: '2' };
+     export * from 'f'; import f from 'f' with { later: '1' };
+     export { a as n } from 'n' with { type: 'json', k: 'v' };
+     import 'i' with { "0": 'zero' };`,
     { identifier: "root" },
   );
   await m.link((specifier: string, _referrer: any, extra: any) => {
@@ -1065,6 +1067,9 @@ test("SourceTextModule.link gets each request's own import attributes", async ()
     ["e", { type: "css", hostDefinedImportType: "css" }],
     ["m", { type: "json", x: "1" }],
     ["m", { type: "json", y: "2" }],
+    ["f", {}],
+    ["n", { type: "json", k: "v" }],
+    ["i", { "0": "zero" }],
   ]);
 });
 

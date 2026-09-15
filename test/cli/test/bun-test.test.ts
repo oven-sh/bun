@@ -641,6 +641,48 @@ describe("bun test", () => {
         /^::error file=.*,line=\d+,col=\d+,title=error: before 😋 after::second 😋 line%0A {6}at /,
       );
     });
+    test.each([
+      {
+        label: "three lines",
+        message: 'request failed\n  status=500\n  body={"err":1}',
+        expected: 'request failed::  status=500%0A  body={"err":1}',
+      },
+      {
+        label: "a blank line between the title and the body",
+        message: "header\n\nbody one\nbody two",
+        expected: "header::body one%0Abody two",
+      },
+      {
+        label: "CRLF line endings",
+        message: "header\r\nbody one\r\nbody two",
+        expected: "header::body one%0Abody two",
+      },
+      {
+        label: "CRLF line endings and a blank line between the title and the body",
+        message: "header\r\n\r\nbody one\r\nbody two",
+        expected: "header::body one%0Abody two",
+      },
+    ])(
+      "should put every line after the first of a message with $label in the annotation body",
+      ({ message, expected }) => {
+        const stderr = runTest({
+          input: `
+            import { test } from "bun:test";
+            test("fail", () => {
+              throw new Error(${JSON.stringify(message)});
+            });
+          `,
+          env: {
+            GITHUB_ACTIONS: "true",
+          },
+        });
+        const annotation = stderr.split("\n").find(l => l.startsWith("::error"));
+        expect(annotation).toMatch(/^::error file=.*,line=\d+,col=\d+,title=error: /);
+        expect(annotation!.slice(annotation!.indexOf("title=error: ") + "title=error: ".length)).toStartWith(
+          `${expected}%0A      at `,
+        );
+      },
+    );
     test("should percent-encode metacharacters in the annotation file property", () => {
       const stderr = runTest({
         input: [

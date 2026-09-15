@@ -2894,8 +2894,10 @@ JSC__JSObject__create(JSC::JSGlobalObject* globalObject, size_t initialCapacity,
 bool JSC__JSValue__hasOwnPropertyValue(JSC::EncodedJSValue value, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue ownKey)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    auto* object = uncheckedDowncast<JSC::JSObject>(JSC::JSValue::decode(value));
     auto propertyKey = JSC::JSValue::decode(ownKey).toPropertyKey(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    // Object.prototype.hasOwnProperty.call(value, ownKey): ToObject boxes a primitive and throws for undefined and null.
+    auto* object = JSC::JSValue::decode(value).toObject(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
     const bool result = JSC::objectPrototypeHasOwnProperty(globalObject, object, propertyKey);

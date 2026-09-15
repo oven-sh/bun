@@ -62,7 +62,7 @@ pub struct ClientSession {
     /// checked by the coalescing path so a caller only multiplexes onto a
     /// session verified the way it would verify a fresh one.
     pub(crate) verification: PeerVerification,
-    /// The fetch context whose requests may multiplex onto this session.
+    /// The fetch session whose requests may multiplex onto this connection.
     pub(crate) pool: crate::PoolOptions,
 
     /// Queued bytes for the socket; whole frames are written here and

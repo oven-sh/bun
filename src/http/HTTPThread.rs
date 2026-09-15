@@ -932,7 +932,7 @@ impl HttpThread {
         self.wakeup();
     }
 
-    /// Close the idle keep-alive connections of fetch context `pool_id`.
+    /// Close the idle keep-alive connections of fetch session `pool_id`.
     pub fn schedule_pool_close(&mut self, pool_id: u64) {
         {
             let _guard = self.queued_pool_closes_lock.lock_guard();

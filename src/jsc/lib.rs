@@ -944,7 +944,6 @@ pub enum BuiltinName {
 #[derive(Clone, Copy)]
 pub enum FetchOptionName {
     Compress,
-    Context,
     Decompress,
     Keepalive,
     MaxRedirects,
@@ -952,6 +951,7 @@ pub enum FetchOptionName {
     Protocol,
     Proxy,
     S3,
+    Session,
     Timeout,
     Tls,
     Unix,
@@ -965,7 +965,6 @@ impl FetchOptionName {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Compress => "compress",
-            Self::Context => "context",
             Self::Decompress => "decompress",
             Self::Keepalive => "keepalive",
             Self::MaxRedirects => "maxRedirects",
@@ -973,6 +972,7 @@ impl FetchOptionName {
             Self::Protocol => "protocol",
             Self::Proxy => "proxy",
             Self::S3 => "s3",
+            Self::Session => "session",
             Self::Timeout => "timeout",
             Self::Tls => "tls",
             Self::Unix => "unix",

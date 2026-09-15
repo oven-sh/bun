@@ -62,47 +62,47 @@ async function closeObservingServer() {
   };
 }
 
-describe("Bun.FetchContext", () => {
+describe("Bun.FetchSession", () => {
   test("owns its connection pool", async () => {
     const counting = connectionCountingServer();
     const port = await counting.listen();
-    using a = new Bun.FetchContext({ tls: { ca: tlsCert.cert } });
-    using b = new Bun.FetchContext({ tls: { ca: tlsCert.cert } });
+    using a = new Bun.FetchSession({ tls: { ca: tlsCert.cert } });
+    using b = new Bun.FetchSession({ tls: { ca: tlsCert.cert } });
     try {
       const url = `https://localhost:${port}/`;
       const get = async (init: BunFetchRequestInit) => (await fetch(url, init)).text();
-      expect(await get({ context: a })).toBe("ok");
-      expect(await get({ context: a })).toBe("ok");
+      expect(await get({ session: a })).toBe("ok");
+      expect(await get({ session: a })).toBe("ok");
       expect(counting.connections).toBe(1);
       // Same origin, same TLS options: still not a's socket.
-      expect(await get({ context: b })).toBe("ok");
+      expect(await get({ session: b })).toBe("ok");
       expect(counting.connections).toBe(2);
       // Nor does plain fetch() take either.
       expect(await get({ tls: { ca: tlsCert.cert } })).toBe("ok");
       expect(counting.connections).toBe(3);
-      expect(await get({ context: b })).toBe("ok");
-      expect(await get({ context: a })).toBe("ok");
+      expect(await get({ session: b })).toBe("ok");
+      expect(await get({ session: a })).toBe("ok");
       expect(counting.connections).toBe(3);
     } finally {
       counting.close();
     }
   });
 
-  test("close() closes the idle connections and the context stays usable", async () => {
+  test("close() closes the idle connections and the session stays usable", async () => {
     const counting = connectionCountingServer();
     const port = await counting.listen();
-    const context = new Bun.FetchContext({ tls: { ca: tlsCert.cert } });
+    const session = new Bun.FetchSession({ tls: { ca: tlsCert.cert } });
     try {
       const url = `https://localhost:${port}/`;
       const closed = Promise.withResolvers<void>();
       counting.server.once("secureConnection", socket => socket.once("close", () => closed.resolve()));
-      expect(await (await fetch(url, { context })).text()).toBe("ok");
-      context.close();
+      expect(await (await fetch(url, { session })).text()).toBe("ok");
+      session.close();
       await closed.promise;
-      expect(await (await fetch(url, { context })).text()).toBe("ok");
+      expect(await (await fetch(url, { session })).text()).toBe("ok");
       expect(counting.connections).toBe(2);
     } finally {
-      context.close();
+      session.close();
       counting.close();
     }
   });
@@ -110,47 +110,47 @@ describe("Bun.FetchContext", () => {
   test("keepAlive: false closes each connection", async () => {
     const counting = connectionCountingServer();
     const port = await counting.listen();
-    using context = new Bun.FetchContext({ tls: { ca: tlsCert.cert }, keepAlive: false });
+    using session = new Bun.FetchSession({ tls: { ca: tlsCert.cert }, keepAlive: false });
     try {
       const url = `https://localhost:${port}/`;
-      expect(await (await fetch(url, { context })).text()).toBe("ok");
-      expect(await (await fetch(url, { context })).text()).toBe("ok");
+      expect(await (await fetch(url, { session })).text()).toBe("ok");
+      expect(await (await fetch(url, { session })).text()).toBe("ok");
       expect(counting.connections).toBe(2);
     } finally {
       counting.close();
     }
   });
 
-  test("a request's keepalive: true wins over the context's keepAlive: false", async () => {
+  test("a request's keepalive: true wins over the session's keepAlive: false", async () => {
     const counting = connectionCountingServer();
     const port = await counting.listen();
-    using context = new Bun.FetchContext({ tls: { ca: tlsCert.cert }, keepAlive: false });
+    using session = new Bun.FetchSession({ tls: { ca: tlsCert.cert }, keepAlive: false });
     try {
       const url = `https://localhost:${port}/`;
-      expect(await (await fetch(url, { context, keepalive: true })).text()).toBe("ok");
-      expect(await (await fetch(url, { context, keepalive: true })).text()).toBe("ok");
+      expect(await (await fetch(url, { session, keepalive: true })).text()).toBe("ok");
+      expect(await (await fetch(url, { session, keepalive: true })).text()).toBe("ok");
       expect(counting.connections).toBe(1);
     } finally {
       counting.close();
     }
   });
 
-  test("keepAlive.maxIdleSockets caps the idle connections of the context", async () => {
+  test("keepAlive.maxIdleSockets caps the idle connections of the session", async () => {
     const counting = connectionCountingServer();
     const port = await counting.listen();
-    using context = new Bun.FetchContext({ tls: { ca: tlsCert.cert }, keepAlive: { maxIdleSockets: 1 } });
+    using session = new Bun.FetchSession({ tls: { ca: tlsCert.cert }, keepAlive: { maxIdleSockets: 1 } });
     try {
       const url = `https://localhost:${port}/`;
       // Two at once need two connections; only one may stay pooled afterwards.
       const closed = Promise.withResolvers<void>();
       counting.server.on("secureConnection", socket => socket.once("close", () => closed.resolve()));
       const bodies = await Promise.all(
-        [fetch(url, { context }), fetch(url, { context })].map(p => p.then(r => r.text())),
+        [fetch(url, { session }), fetch(url, { session })].map(p => p.then(r => r.text())),
       );
       expect(bodies).toEqual(["ok", "ok"]);
       expect(counting.connections).toBe(2);
       await closed.promise;
-      expect(await (await fetch(url, { context })).text()).toBe("ok");
+      expect(await (await fetch(url, { session })).text()).toBe("ok");
       expect(counting.connections).toBe(2);
     } finally {
       counting.close();
@@ -163,19 +163,19 @@ describe("Bun.FetchContext", () => {
     "keepAlive.idleTimeout closes a connection that sat idle for that long",
     async () => {
       using server = await closeObservingServer();
-      using context = new Bun.FetchContext({ keepAlive: { idleTimeout: 1 } });
-      expect(await (await fetch(server.url, { context })).text()).toBe("ok");
+      using session = new Bun.FetchSession({ keepAlive: { idleTimeout: 1 } });
+      expect(await (await fetch(server.url, { session })).text()).toBe("ok");
       // The client closes it; nothing else in this test would.
       await server.closed;
     },
     20_000,
   );
 
-  test.concurrent("collecting a context closes its idle connections", async () => {
+  test.concurrent("collecting a session closes its idle connections", async () => {
     using server = await closeObservingServer();
     await (async () => {
-      const context = new Bun.FetchContext();
-      expect(await (await fetch(server.url, { context })).text()).toBe("ok");
+      const session = new Bun.FetchSession();
+      expect(await (await fetch(server.url, { session })).text()).toBe("ok");
     })();
     let done = false;
     server.closed.then(() => (done = true));
@@ -186,26 +186,26 @@ describe("Bun.FetchContext", () => {
     await server.closed;
   });
 
-  test.concurrent("concurrent requests of a context share its pool afterwards", async () => {
+  test.concurrent("concurrent requests of a session share its pool afterwards", async () => {
     const counting = connectionCountingServer();
     const port = await counting.listen();
-    using context = new Bun.FetchContext({ tls: { ca: tlsCert.cert } });
+    using session = new Bun.FetchSession({ tls: { ca: tlsCert.cert } });
     try {
       const url = `https://localhost:${port}/`;
-      const burst = () => Promise.all(Array.from({ length: 8 }, () => fetch(url, { context }).then(r => r.text())));
+      const burst = () => Promise.all(Array.from({ length: 8 }, () => fetch(url, { session }).then(r => r.text())));
       expect(await burst()).toEqual(Array(8).fill("ok"));
       const opened = counting.connections;
       expect(opened).toBeGreaterThanOrEqual(1);
       expect(opened).toBeLessThanOrEqual(8);
       // They are parked now; the next requests need no new connection.
-      for (let i = 0; i < 3; i++) expect(await (await fetch(url, { context })).text()).toBe("ok");
+      for (let i = 0; i < 3; i++) expect(await (await fetch(url, { session })).text()).toBe("ok");
       expect(counting.connections).toBe(opened);
     } finally {
       counting.close();
     }
   });
 
-  test.concurrent("a redirect stays in the context's pool", async () => {
+  test.concurrent("a redirect stays in the session's pool", async () => {
     const ports: number[] = [];
     using server = Bun.serve({
       port: 0,
@@ -215,18 +215,18 @@ describe("Bun.FetchContext", () => {
         return new URL(req.url).pathname === "/a" ? Response.redirect("/b", 302) : new Response("b");
       },
     });
-    using context = new Bun.FetchContext();
-    expect(await (await fetch(`${server.url}a`, { context })).text()).toBe("b");
-    expect(await (await fetch(`${server.url}b`, { context })).text()).toBe("b");
+    using session = new Bun.FetchSession();
+    expect(await (await fetch(`${server.url}a`, { session })).text()).toBe("b");
+    expect(await (await fetch(`${server.url}b`, { session })).text()).toBe("b");
     // One client port: /a, the /b it redirected to, and the second /b shared a connection.
     expect(new Set(ports).size).toBe(1);
     expect(ports.length).toBe(3);
   });
 
-  test("tls options come from the context, and a request's tls replaces them as a whole", async () => {
+  test("tls options come from the session, and a request's tls replaces them as a whole", async () => {
     using server = Bun.serve({ port: 0, tls: tlsCert, fetch: () => new Response("secure") });
-    using trusting = new Bun.FetchContext({ tls: { ca: tlsCert.cert } });
-    using lax = new Bun.FetchContext({ tls: { rejectUnauthorized: false } });
+    using trusting = new Bun.FetchSession({ tls: { ca: tlsCert.cert } });
+    using lax = new Bun.FetchSession({ tls: { rejectUnauthorized: false } });
     const url = `https://localhost:${server.port}/`;
     const outcome = (init: BunFetchRequestInit) =>
       fetch(url, { keepalive: false, ...init }).then(
@@ -234,48 +234,48 @@ describe("Bun.FetchContext", () => {
         e => e.code,
       );
     expect(await outcome({})).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
-    expect(await outcome({ context: trusting })).toBe("secure");
-    expect(await outcome({ context: lax })).toBe("secure");
-    expect(await outcome({ context: lax, tls: { rejectUnauthorized: true } })).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
-    expect(await outcome({ context: trusting, tls: { serverName: "wrong.example", ca: tlsCert.cert } })).toBe(
+    expect(await outcome({ session: trusting })).toBe("secure");
+    expect(await outcome({ session: lax })).toBe("secure");
+    expect(await outcome({ session: lax, tls: { rejectUnauthorized: true } })).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
+    expect(await outcome({ session: trusting, tls: { serverName: "wrong.example", ca: tlsCert.cert } })).toBe(
       "ERR_TLS_CERT_ALTNAME_INVALID",
     );
-    // The context's `ca` is not merged into a request's own `tls`.
-    expect(await outcome({ context: trusting, tls: {} })).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
-    expect(await outcome({ context: trusting, tls: { serverName: "localhost" } })).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
+    // The session's `ca` is not merged into a request's own `tls`.
+    expect(await outcome({ session: trusting, tls: {} })).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
+    expect(await outcome({ session: trusting, tls: { serverName: "localhost" } })).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
   });
 
-  test.skipIf(isWindows)("unix comes from the context", async () => {
-    using dir = tempDir("fetch-context-unix", {});
-    const path = join(String(dir), "context.sock");
+  test.skipIf(isWindows)("unix comes from the session", async () => {
+    using dir = tempDir("fetch-session-unix", {});
+    const path = join(String(dir), "session.sock");
     using server = Bun.serve({ unix: path, fetch: req => new Response(new URL(req.url).pathname) });
-    using context = new Bun.FetchContext({ unix: path });
-    expect(await (await fetch("http://anything.invalid/over-unix", { context })).text()).toBe("/over-unix");
+    using session = new Bun.FetchSession({ unix: path });
+    expect(await (await fetch("http://anything.invalid/over-unix", { session })).text()).toBe("/over-unix");
   });
 
-  test.skipIf(isWindows)("a request's unix or proxy replaces the other one named by the context", async () => {
-    using dir = tempDir("fetch-context-unix-proxy", {});
-    const path = join(String(dir), "context.sock");
+  test.skipIf(isWindows)("a request's unix or proxy replaces the other one named by the session", async () => {
+    using dir = tempDir("fetch-session-unix-proxy", {});
+    const path = join(String(dir), "session.sock");
     using overUnix = Bun.serve({ unix: path, fetch: req => new Response("unix " + req.url) });
     using proxy = Bun.serve({ port: 0, fetch: req => new Response("proxy " + req.url) });
-    using proxied = new Bun.FetchContext({ proxy: `http://127.0.0.1:${proxy.port}` });
-    using socketed = new Bun.FetchContext({ unix: path });
+    using proxied = new Bun.FetchSession({ proxy: `http://127.0.0.1:${proxy.port}` });
+    using socketed = new Bun.FetchSession({ unix: path });
     const text = (init: BunFetchRequestInit) => fetch("http://origin.invalid/x", init).then(r => r.text());
-    expect(await text({ context: proxied })).toBe("proxy http://origin.invalid/x");
-    expect(await text({ context: proxied, unix: path })).toBe("unix http://origin.invalid/x");
-    expect(await text({ context: socketed })).toBe("unix http://origin.invalid/x");
-    expect(await text({ context: socketed, proxy: `http://127.0.0.1:${proxy.port}` })).toBe(
+    expect(await text({ session: proxied })).toBe("proxy http://origin.invalid/x");
+    expect(await text({ session: proxied, unix: path })).toBe("unix http://origin.invalid/x");
+    expect(await text({ session: socketed })).toBe("unix http://origin.invalid/x");
+    expect(await text({ session: socketed, proxy: `http://127.0.0.1:${proxy.port}` })).toBe(
       "proxy http://origin.invalid/x",
     );
   });
 
   test("rejects invalid options", () => {
-    const construct = (options: any) => () => new Bun.FetchContext(options);
-    expect(construct(1)).toThrow("FetchContext: options must be an object");
-    expect(construct({ tls: 1 })).toThrow("FetchContext: 'tls' must be an object");
-    expect(construct({ keepAlive: 1 })).toThrow("FetchContext: 'keepAlive' must be a boolean or an object");
+    const construct = (options: any) => () => new Bun.FetchSession(options);
+    expect(construct(1)).toThrow("FetchSession: options must be an object");
+    expect(construct({ tls: 1 })).toThrow("FetchSession: 'tls' must be an object");
+    expect(construct({ keepAlive: 1 })).toThrow("FetchSession: 'keepAlive' must be a boolean or an object");
     expect(construct({ keepAlive: { idleTimeout: 0 } })).toThrow(
-      "FetchContext: 'keepAlive.idleTimeout' must be a positive number",
+      "FetchSession: 'keepAlive.idleTimeout' must be a positive number",
     );
     expect(construct({ keepAlive: { maxIdleSockets: 1.5 } })).toThrow(
       'The "keepAlive.maxIdleSockets" property must be of type integer',
@@ -289,29 +289,29 @@ describe("Bun.FetchContext", () => {
       'The "respectNoProxy" property must be of type boolean',
     );
     expect(construct({ unix: "/tmp/x.sock", proxy: "http://p" })).toThrow(
-      "FetchContext: cannot use a proxy with a unix socket",
+      "FetchSession: cannot use a proxy with a unix socket",
     );
-    expect(construct({ unix: 1 })).toThrow("FetchContext: 'unix' must be a non-empty string");
+    expect(construct({ unix: 1 })).toThrow("FetchSession: 'unix' must be a non-empty string");
   });
 
   test("null means absent for every option", async () => {
     using server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("plain") });
-    using context = new Bun.FetchContext({
+    using session = new Bun.FetchSession({
       tls: null,
       proxy: null,
       keepAlive: null,
       unix: null,
       onStats: null,
     } as any);
-    expect(await (await fetch(server.url, { context })).text()).toBe("plain");
-    expect(await (await fetch(server.url, { context: null, onStats: null } as any)).text()).toBe("plain");
-    using empty = new Bun.FetchContext(null as any);
-    expect(await (await fetch(server.url, { context: empty })).text()).toBe("plain");
+    expect(await (await fetch(server.url, { session })).text()).toBe("plain");
+    expect(await (await fetch(server.url, { session: null, onStats: null } as any)).text()).toBe("plain");
+    using empty = new Bun.FetchSession(null as any);
+    expect(await (await fetch(server.url, { session: empty })).text()).toBe("plain");
   });
 
-  test("fetch rejects a context that is not a FetchContext", async () => {
-    expect(await fetch("http://localhost:1/", { context: {} as any }).catch(e => e.message)).toBe(
-      "fetch: 'context' must be a Bun.FetchContext",
+  test("fetch rejects a session that is not a FetchSession", async () => {
+    expect(await fetch("http://localhost:1/", { session: {} as any }).catch(e => e.message)).toBe(
+      "fetch: 'session' must be a Bun.FetchSession",
     );
   });
 });
@@ -343,17 +343,17 @@ describe("proxy policy", () => {
     };
   }
 
-  test.concurrent("proxy: false opts out of the environment proxy, per request and per context", async () => {
+  test.concurrent("proxy: false opts out of the environment proxy, per request and per session", async () => {
     using s = servers();
     const result = await run(
       `
       const url = "http://127.0.0.1:${s.origin.port}/";
       const text = init => fetch(url, { keepalive: false, ...init }).then(r => r.text());
-      using direct = new Bun.FetchContext({ proxy: false });
+      using direct = new Bun.FetchSession({ proxy: false });
       console.log(JSON.stringify({
         env: await text({}),
         requestFalse: await text({ proxy: false }),
-        contextFalse: await text({ context: direct }),
+        sessionFalse: await text({ session: direct }),
         // undefined, null and "" keep meaning "inherit"
         undefinedInherits: await text({ proxy: undefined }),
         nullInherits: await text({ proxy: null }),
@@ -366,7 +366,7 @@ describe("proxy policy", () => {
     expect(JSON.parse(result.stdout)).toEqual({
       env: "proxy",
       requestFalse: "origin",
-      contextFalse: "origin",
+      sessionFalse: "origin",
       undefinedInherits: "proxy",
       nullInherits: "proxy",
       emptyInherits: "proxy",
@@ -408,14 +408,14 @@ describe("proxy policy", () => {
       `
       const url = "http://127.0.0.1:${s.origin.port}/";
       const text = init => fetch(url, { keepalive: false, ...init }).then(r => r.text());
-      using insisting = new Bun.FetchContext({ proxy: { url: "${proxyUrl}", respectNoProxy: false } });
+      using insisting = new Bun.FetchSession({ proxy: { url: "${proxyUrl}", respectNoProxy: false } });
       console.log(JSON.stringify({
         string: await text({ proxy: "${proxyUrl}" }),
         object: await text({ proxy: { url: "${proxyUrl}" } }),
         respected: await text({ proxy: { url: "${proxyUrl}", respectNoProxy: true } }),
         insisted: await text({ proxy: { url: "${proxyUrl}", respectNoProxy: false } }),
-        context: await text({ context: insisting }),
-        requestOverContext: await text({ context: insisting, proxy: false }),
+        session: await text({ session: insisting }),
+        requestOverSession: await text({ session: insisting, proxy: false }),
       }));
       `,
       { NO_PROXY: "*" },
@@ -426,8 +426,8 @@ describe("proxy policy", () => {
       object: "origin",
       respected: "origin",
       insisted: "proxy",
-      context: "proxy",
-      requestOverContext: "origin",
+      session: "proxy",
+      requestOverSession: "origin",
     });
     expect(result.exitCode).toBe(0);
   });
@@ -514,10 +514,10 @@ describe("pinning a request to an address", () => {
     const server = connectionCountingServer();
     const port = await server.listen();
     try {
-      using context = new Bun.FetchContext({ proxy: false });
+      using session = new Bun.FetchSession({ proxy: false });
       const get = (host: string, serverName?: string) =>
         fetch(`https://127.0.0.1:${port}/`, {
-          context,
+          session,
           headers: { Host: host },
           tls: { ca: tlsCert.cert, serverName },
         }).then(r => r.text());
@@ -542,11 +542,11 @@ describe("onStats", () => {
         return new Response(String((await req.arrayBuffer()).byteLength));
       },
     });
-    using context = new Bun.FetchContext({});
+    using session = new Bun.FetchSession({});
     const body = Buffer.alloc(100_000, "b");
     const collected: Bun.FetchConnectionStats[] = [];
     for (let i = 0; i < 2; i++) {
-      const response = await fetch(server.url, { method: "POST", body, context, onStats: s => collected.push(s) });
+      const response = await fetch(server.url, { method: "POST", body, session, onStats: s => collected.push(s) });
       expect(await response.text()).toBe("100000");
     }
     expect(collected.length).toBe(2);
@@ -731,12 +731,12 @@ describe("onStats", () => {
     expect(await response.text()).toBe("first second");
   });
 
-  test("comes from the context, and a throwing callback does not break the request", async () => {
+  test("comes from the session, and a throwing callback does not break the request", async () => {
     using server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("fine") });
-    let fromContext = 0;
-    using context = new Bun.FetchContext({ onStats: () => void fromContext++ });
-    expect(await (await fetch(server.url, { context })).text()).toBe("fine");
-    expect(fromContext).toBe(1);
+    let fromSession = 0;
+    using session = new Bun.FetchSession({ onStats: () => void fromSession++ });
+    expect(await (await fetch(server.url, { session })).text()).toBe("fine");
+    expect(fromSession).toBe(1);
 
     await using proc = Bun.spawn({
       cmd: [

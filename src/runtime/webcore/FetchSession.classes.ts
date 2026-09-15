@@ -2,7 +2,7 @@ import { define } from "../../codegen/class-definitions.ts";
 
 export default [
   define({
-    name: "FetchContext",
+    name: "FetchSession",
     construct: true,
     constructNeedsThis: true,
     finalize: true,

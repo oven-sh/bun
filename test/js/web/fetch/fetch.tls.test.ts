@@ -939,12 +939,12 @@ describe.concurrent("fetch-tls", () => {
   });
 
   // https://github.com/oven-sh/bun/issues/40308: like Node's https.Agent, a
-  // context's callback runs when a connection is established, and the
-  // context's later requests reuse the approved connection.
-  it("reuses the keep-alive connection across the requests of a context that supplies checkServerIdentity", async () => {
+  // session's callback runs when a connection is established, and the
+  // session's later requests reuse the approved connection.
+  it("reuses the keep-alive connection across the requests of a session that supplies checkServerIdentity", async () => {
     using server = await countingKeepAliveServer();
     const seen: { hostname: string; fingerprint: string }[] = [];
-    using context = new Bun.FetchContext({
+    using session = new Bun.FetchSession({
       tls: {
         ca: validTls.cert,
         checkServerIdentity(hostname: string, cert: tls.PeerCertificate) {
@@ -954,7 +954,7 @@ describe.concurrent("fetch-tls", () => {
       },
     });
     for (let i = 0; i < 4; i++) {
-      const res = await fetch(server.url, { context });
+      const res = await fetch(server.url, { session });
       expect(await res.text()).toBe("ok");
     }
     expect(seen).toEqual([{ hostname: "127.0.0.1", fingerprint: expect.any(String) }]);

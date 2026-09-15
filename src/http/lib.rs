@@ -483,9 +483,9 @@ pub struct HTTPClientResult<'a> {
     pub stats: ConnectionStats,
 }
 
-/// Keep-alive pool partition of the fetch context a request belongs to.
+/// Keep-alive pool partition of the fetch session a request belongs to.
 /// Sockets are only shared between requests with the same `id`; 0 is the
-/// default context. Zero limits mean "use the default".
+/// default session. Zero limits mean "use the default".
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub struct PoolOptions {
     pub id: u64,

@@ -216,7 +216,7 @@ impl ClientContext {
         false
     }
 
-    /// Close the connections of fetch context `pool_id` that carry no request.
+    /// Close the connections of fetch session `pool_id` that carry no request.
     pub(crate) fn close_idle_sessions(pool_id: u64) {
         let Some(this) = Self::get() else {
             return;

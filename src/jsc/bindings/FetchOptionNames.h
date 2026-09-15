@@ -8,7 +8,6 @@
 // clang-format off
 #define BUN_FETCH_OPTION_NAMES(macro) \
     macro(Compress, "compress") \
-    macro(Context, "context") \
     macro(Decompress, "decompress") \
     macro(Keepalive, "keepalive") \
     macro(MaxRedirects, "maxRedirects") \
@@ -16,6 +15,7 @@
     macro(Protocol, "protocol") \
     macro(Proxy, "proxy") \
     macro(S3, "s3") \
+    macro(Session, "session") \
     macro(Timeout, "timeout") \
     macro(Tls, "tls") \
     macro(Unix, "unix") \

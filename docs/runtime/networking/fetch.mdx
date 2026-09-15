@@ -269,7 +269,7 @@ await fetch("https://example.com", {
 
 This option is similar to the one in Node's `tls` module. Bun calls it after the certificate chain verifies. With `rejectUnauthorized: false` Bun still calls it and ignores what it returns.
 
-A request that passes its own `checkServerIdentity` opens a connection of its own and closes it afterwards, so that another request's function never vouches for it. To verify once per connection and reuse the connection, put the function on a [`Bun.FetchContext`](#fetch-contexts).
+A request that passes its own `checkServerIdentity` opens a connection of its own and closes it afterwards, so that another request's function never vouches for it. To verify once per connection and reuse the connection, put the function on a [`Bun.FetchSession`](#fetch-sessions).
 
 #### Disable TLS validation
 
@@ -469,19 +469,19 @@ bun --fetch-preconnect https://bun.com ./my-script.ts
 
 Bun automatically reuses connections to the same host. This is called **connection pooling**, and it can significantly reduce the time spent establishing connections.
 
-#### Fetch contexts
+#### Fetch sessions
 
-A `Bun.FetchContext` holds connection settings and owns a keep-alive pool. Pass it as `context` to each request that should use it. Bun never shares a connection between two contexts, or between a context and plain `fetch`.
+A `Bun.FetchSession` holds connection settings and owns a keep-alive pool. Pass it as `session` to each request that should use it. Bun never shares a connection between two sessions, or between a session and plain `fetch`.
 
 ```ts
-const context = new Bun.FetchContext({
+const session = new Bun.FetchSession({
   tls: { ca: await Bun.file("corp-ca.pem").text() },
   proxy: { url: "http://proxy.internal:8080", respectNoProxy: false },
   keepAlive: { idleTimeout: 30, maxIdleSockets: 8 },
 });
 
-const response = await fetch("https://example.com", { context });
-context.close(); // closes the idle connections
+const response = await fetch("https://example.com", { session });
+session.close(); // closes the idle connections
 ```
 
 | Option      | Description                                                                                                                                                                                                               |
@@ -492,7 +492,7 @@ context.close(); // closes the idle connections
 | `unix`      | A Unix socket path.                                                                                                                                                                                                       |
 | `onStats`   | See [Connection stats](#connection-stats).                                                                                                                                                                                |
 
-An option given on the request takes precedence over the context's. A request's `tls` replaces the context's `tls` as a whole.
+An option given on the request takes precedence over the session's, `proxy: false` included. A request's `tls` replaces the session's `tls` as a whole.
 
 #### Connecting to a specific address
 

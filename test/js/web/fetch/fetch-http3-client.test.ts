@@ -337,13 +337,13 @@ describe("fetch protocol: http3", () => {
   });
 
   test("onStats reports an h3 request, its peer, and reuse of the connection", async () => {
-    using context = new Bun.FetchContext();
+    using session = new Bun.FetchSession();
     const collected: Bun.FetchConnectionStats[] = [];
     const body = Buffer.alloc(5000, "x");
     for (let i = 0; i < 2; i++) {
       const res = await fetch(`${base}/echo`, {
         ...h3,
-        context,
+        session,
         method: "POST",
         body,
         onStats: s => collected.push(s),
@@ -366,10 +366,10 @@ describe("fetch protocol: http3", () => {
     expect(collected[0].bytesWritten).toBeGreaterThan(5000);
   });
 
-  test("a FetchContext has its own connection, and close() closes it once idle", async () => {
-    using one = new Bun.FetchContext();
-    using other = new Bun.FetchContext();
-    const text = (context: Bun.FetchContext) => fetch(`${base}/hello`, { ...h3, context }).then(r => r.text());
+  test("a FetchSession has its own connection, and close() closes it once idle", async () => {
+    using one = new Bun.FetchSession();
+    using other = new Bun.FetchSession();
+    const text = (session: Bun.FetchSession) => fetch(`${base}/hello`, { ...h3, session }).then(r => r.text());
     const before = liveCounts().sessions;
     expect(await text(one)).toBe("hello over h3");
     expect(await text(one)).toBe("hello over h3");

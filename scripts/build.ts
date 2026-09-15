@@ -24,6 +24,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { constants as osConstants } from "node:os";
 import { join } from "node:path";
+import { processAlive, processCommandLine } from "./build/proc.ts";
 import {
   canTraceOrderFile,
   downloadArtifacts,
@@ -140,42 +141,54 @@ async function main(): Promise<void> {
   };
   // One build at a time per build directory (cargo used to serialize the Rust half through its target-dir lock;
   // two ninjas in one directory also race on .ninja_log/.ninja_deps). A second `bun bd` waits for the first.
+  // The lock is a pid file (there is no portable advisory file lock in node): a holder that is not a live
+  // build.ts process is stale, a stale lock is removed only if it still names the pid that was checked, and a
+  // fresh holder re-reads the file after a moment to make sure a racing stale-breaker did not replace it.
   let buildDirLocked = false;
   const lockBuildDir = (cfg: { buildDir: string }): void => {
     if (buildDirLocked) return;
     const lock = join(cfg.buildDir, "build.lock");
+    const sleep = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+    const holderOf = (): number => {
+      try {
+        return Number(readFileSync(lock, "utf8")) || 0;
+      } catch {
+        return 0;
+      }
+    };
     let announced = false;
+    let knownHolder = 0; // a holder already identified as a live build, so its command line is read once
     for (;;) {
       try {
         writeFileSync(lock, String(process.pid), { flag: "wx" });
-        break;
+        sleep(50);
+        if (holderOf() === process.pid) break;
+        continue; // a concurrent stale-breaker replaced it; contend again
       } catch (e) {
         if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
       }
-      let holder = 0;
-      try {
-        holder = Number(readFileSync(lock, "utf8"));
-      } catch {}
-      let alive = holder > 0 && holder !== process.pid;
-      if (alive) {
-        try {
-          process.kill(holder, 0);
-        } catch (e) {
-          alive = (e as NodeJS.ErrnoException).code === "EPERM";
-        }
-      }
-      if (!alive) {
-        rmSync(lock, { force: true }); // left by a build that was killed
+      const holder = holderOf();
+      const isBuild =
+        holder === process.pid
+          ? false
+          : holder === knownHolder
+            ? processAlive(holder)
+            : processAlive(holder) && /scripts[\\/]build\.ts/.test(processCommandLine(holder));
+      if (!isBuild) {
+        if (holderOf() === holder) rmSync(lock, { force: true }); // left by a build that was killed
         continue;
       }
+      knownHolder = holder;
       if (!announced) {
         process.stderr.write(`waiting for another build in ${cfg.buildDir} to finish (pid ${holder})…\n`);
         announced = true;
       }
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);
+      sleep(500);
     }
     buildDirLocked = true;
-    process.on("exit", () => rmSync(lock, { force: true }));
+    process.on("exit", () => {
+      if (holderOf() === process.pid) rmSync(lock, { force: true });
+    });
   };
   const ninjaEnv = async (
     cfg: { windows: boolean; buildDir: string; bun: string; host: { os: string } },

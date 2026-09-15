@@ -45,6 +45,7 @@ import { availableParallelism, constants as osConstants } from "node:os";
 import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import { writeIfChanged } from "../fs.ts";
 import { acquireJobserverToken, jobserverAvailable } from "../jobserver.ts";
+import { processAlive, processCommandLine } from "../proc.ts";
 import { type BuildScriptOutput, type RustcUnitManifest, type UnitManifest, envify } from "./units.ts";
 
 const [mode, manifestPath] = process.argv.slice(2);
@@ -279,15 +280,6 @@ function recordedExit(state: PipelineState): number | undefined {
   return existsSync(state.exit) ? Number(readFileSync(state.exit, "utf8")) : undefined;
 }
 
-function processAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 /**
  * Does `pid` name a live process working on *this* unit (its command line carries the unit's `-C metadata` hash /
  * manifest path)? A recorded pid with no recorded exit may have been recycled since (monitor killed outright,
@@ -295,25 +287,24 @@ function processAlive(pid: number): boolean {
  */
 function isUnitProcess(unit: RustcUnitManifest, pid: number): boolean {
   if (!processAlive(pid)) return false;
-  const needles = [unit.args.find(a => a.startsWith("metadata=")) ?? unit.output, manifestPath!];
-  let cmdline = "";
-  try {
-    if (process.platform === "linux") cmdline = readFileSync(`/proc/${pid}/cmdline`, "utf8").replace(/\0/g, " ");
-    else if (process.platform === "win32") {
-      cmdline =
-        spawnSync(
-          "powershell",
-          ["-NoProfile", "-Command", `(Get-CimInstance Win32_Process -Filter "ProcessId=${pid}").CommandLine`],
-          {
-            encoding: "utf8",
-            windowsHide: true,
-          },
-        ).stdout ?? "";
-    } else cmdline = spawnSync("ps", ["-o", "args=", "-p", String(pid)], { encoding: "utf8" }).stdout ?? "";
-  } catch {
-    return false;
-  }
-  return needles.some(n => cmdline.includes(n));
+  const cmdline = processCommandLine(pid);
+  return [unit.args.find(a => a.startsWith("metadata=")) ?? unit.output, manifestPath!].some(n => cmdline.includes(n));
+}
+
+/**
+ * A liveness watch on a process once identified as this unit's: `processAlive` per poll (cheap everywhere), the
+ * command-line identity re-established every few seconds (it costs a subprocess on macOS/Windows) to catch a pid
+ * reused after the process died.
+ */
+function unitProcessWatch(unit: RustcUnitManifest, pid: number): () => boolean {
+  let verifiedAt = -Infinity;
+  return () => {
+    if (!processAlive(pid)) return false;
+    if (Date.now() - verifiedAt < 5000) return true;
+    if (!isUnitProcess(unit, pid)) return false;
+    verifiedAt = Date.now();
+    return true;
+  };
 }
 
 function sleepSync(ms: number): void {
@@ -560,13 +551,14 @@ function runCodegen(unit: RustcUnitManifest): void {
     compileHere("no code generation in progress");
   const log = new LogFollower(state.log, existsSync(state.handoff) ? Number(readFileSync(state.handoff, "utf8")) : 0);
   const pids = recordedPids(state);
+  const monitorAlive = pids === undefined ? () => false : unitProcessWatch(unit, pids.monitor);
   const tick = () => {
     log.pump();
     const code = recordedExit(state);
     if (code !== undefined) finish(code, log);
     // No status yet: the monitor must still be at work on this unit. If it is gone (and stays silent for a moment —
     // it publishes right after rustc's streams close), nobody will ever report.
-    if (pids === undefined || !isUnitProcess(unit, pids.monitor)) {
+    if (!monitorAlive()) {
       if (waitFor(() => recordedExit(state) !== undefined, 1000)) return tick();
       compileHere("the rustc process disappeared without an exit status");
     }

@@ -200,6 +200,7 @@ Split CI modes: `rust-only` (path deps+codegen+rustc units → libbun_runtime.a)
 | `rust/toml.ts`                 | TOML reader for the `[lints]` tables cargo's JSON doesn't export                                                                                                        |
 | `rust/cargo-env.ts`            | cargo conventions shared by configure and the build-time driver: build-script `output.json` shape, `envify`, dylib path variable                                        |
 | `jobserver.ts`                 | The token pool rustc's worker threads share (`CARGO_MAKEFLAGS`), formerly cargo's                                                                                       |
+| `proc.ts`                      | `processAlive()`/`processCommandLine()` — identity checks behind the pid files (build-dir lock, pipelined rustc state)                                                  |
 | `cargo-config.ts`              | Generates the git-ignored `.cargo/config.toml` (per-target `linker` from `cfg.hostCxx`)                                                                                 |
 | `bun.ts`                       | `emitBun()` — assembles deps+codegen+rust+compile+link                                                                                                                  |
 | `shims.ts`                     | Platform/toolchain workaround dylibs, `emitShims()`                                                                                                                     |

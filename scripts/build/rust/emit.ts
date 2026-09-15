@@ -41,6 +41,7 @@ const runScriptDeps = [
   resolve(here, "cargo-env.ts"),
   resolve(here, "..", "jobserver.ts"),
   resolve(here, "..", "fs.ts"),
+  resolve(here, "..", "proc.ts"),
 ];
 const planScriptDeps = [planScript, resolve(here, "toml.ts"), resolve(here, "..", "fs.ts")];
 

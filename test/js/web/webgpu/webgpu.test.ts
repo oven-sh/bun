@@ -340,8 +340,14 @@ describe.skipIf(!hasAdapter)("with a device", () => {
 
     const aborted = readback.mapAsync(GPUMapMode.READ);
     readback.unmap();
-    await expect(aborted).rejects.toMatchObject({ name: "AbortError" });
     expect(readback.mapState).toBe("unmapped");
+    // A new map right behind the aborted one is its own request.
+    const again = readback.mapAsync(GPUMapMode.READ);
+    await expect(aborted).rejects.toMatchObject({ name: "AbortError" });
+    await again;
+    expect(readback.mapState).toBe("mapped");
+    expect(Array.from(new Uint32Array(readback.getMappedRange()))).toEqual([1, 2, 3, 4]);
+    readback.unmap();
 
     // The wrong mode is a validation error on the device and a rejected promise.
     device.pushErrorScope("validation");
@@ -500,6 +506,207 @@ describe.skipIf(!hasAdapter)("with a device", () => {
     readback.unmap();
 
     target.destroy();
+    device.destroy();
+  });
+
+  test("render: sampled texture, depth test, indexed draw in a bundle, occlusion query", async () => {
+    const device = await requestDevice();
+    const size = 16;
+
+    // A 2x2 texture: green on the left, white on the right.
+    const source = device.createTexture({
+      size: [2, 2],
+      format: "rgba8unorm",
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+    });
+    // prettier-ignore
+    const texels = new Uint8Array([
+      0, 255, 0, 255,   255, 255, 255, 255,
+      0, 255, 0, 255,   255, 255, 255, 255,
+    ]);
+    device.queue.writeTexture(
+      { texture: source },
+      texels,
+      { bytesPerRow: 8, rowsPerImage: 2 },
+      { width: 2, height: 2 },
+    );
+
+    const module = device.createShaderModule({
+      code: /* wgsl */ `
+        struct Params { depth: f32 };
+        @group(0) @binding(0) var tex: texture_2d<f32>;
+        @group(0) @binding(1) var samp: sampler;
+        @group(0) @binding(2) var<uniform> params: Params;
+
+        struct VOut { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32> };
+
+        @vertex
+        fn vs(@location(0) position: vec2<f32>) -> VOut {
+          var out: VOut;
+          out.position = vec4<f32>(position, params.depth, 1.0);
+          out.uv = position * 0.5 + vec2<f32>(0.5);
+          return out;
+        }
+
+        @fragment
+        fn fs(in: VOut) -> @location(0) vec4<f32> {
+          return textureSample(tex, samp, in.uv);
+        }
+      `,
+    });
+
+    const bindGroupLayout = device.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: {} },
+        { binding: 1, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
+        { binding: 2, visibility: GPUShaderStage.VERTEX, buffer: { hasDynamicOffset: true, minBindingSize: 4 } },
+      ],
+    });
+    const pipeline = device.createRenderPipeline({
+      layout: device.createPipelineLayout({ bindGroupLayouts: [bindGroupLayout] }),
+      vertex: {
+        module,
+        buffers: [{ arrayStride: 8, attributes: [{ format: "float32x2", offset: 0, shaderLocation: 0 }] }],
+      },
+      fragment: { module, targets: [{ format: "rgba8unorm", writeMask: GPUColorWrite.ALL }] },
+      primitive: { topology: "triangle-list", cullMode: "none", frontFace: "ccw" },
+      depthStencil: { format: "depth24plus", depthWriteEnabled: true, depthCompare: "less" },
+    });
+
+    // A full-target quad as two indexed triangles.
+    const vertices = device.createBuffer({ size: 32, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
+    device.queue.writeBuffer(vertices, 0, new Float32Array([-1, -1, 1, -1, 1, 1, -1, 1]));
+    const indices = device.createBuffer({ size: 12, usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST });
+    device.queue.writeBuffer(indices, 0, new Uint16Array([0, 1, 2, 0, 2, 3]));
+
+    // Two depth values 256 bytes apart, picked with a dynamic offset.
+    const params = device.createBuffer({ size: 512, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    device.queue.writeBuffer(params, 0, new Float32Array([0.25]));
+    device.queue.writeBuffer(params, 256, new Float32Array([0.75]));
+
+    const bindGroup = device.createBindGroup({
+      layout: bindGroupLayout,
+      entries: [
+        { binding: 0, resource: source.createView() },
+        { binding: 1, resource: device.createSampler({ magFilter: "nearest", minFilter: "nearest" }) },
+        { binding: 2, resource: { buffer: params, size: 4 } },
+      ],
+    });
+
+    const bundleEncoder = device.createRenderBundleEncoder({
+      colorFormats: ["rgba8unorm"],
+      depthStencilFormat: "depth24plus",
+    });
+    bundleEncoder.setPipeline(pipeline);
+    bundleEncoder.setVertexBuffer(0, vertices);
+    bundleEncoder.setIndexBuffer(indices, "uint16");
+    bundleEncoder.setBindGroup(0, bindGroup, [0]);
+    bundleEncoder.drawIndexed(6);
+    const bundle = bundleEncoder.finish();
+
+    const target = device.createTexture({
+      size: [size, size],
+      format: "rgba8unorm",
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
+    });
+    const depth = device.createTexture({
+      size: [size, size],
+      format: "depth24plus",
+      usage: GPUTextureUsage.RENDER_ATTACHMENT,
+    });
+    const querySet = device.createQuerySet({ type: "occlusion", count: 2 });
+    const queryResults = device.createBuffer({
+      size: 16,
+      usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC,
+    });
+    const readback = device.createBuffer({
+      size: size * 256 + 256,
+      usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+    });
+
+    const error = await validationError(device, () => {
+      const encoder = device.createCommandEncoder();
+      encoder.pushDebugGroup("frame");
+      encoder.clearBuffer(readback);
+      const pass = encoder.beginRenderPass({
+        // A GPUTexture stands for its default view.
+        colorAttachments: [{ view: target, loadOp: "clear", storeOp: "store", clearValue: { r: 0, g: 0, b: 0, a: 1 } }],
+        depthStencilAttachment: {
+          view: depth.createView(),
+          depthClearValue: 1,
+          depthLoadOp: "clear",
+          depthStoreOp: "discard",
+        },
+        occlusionQuerySet: querySet,
+      });
+      // The bundle draws the quad at depth 0.25.
+      pass.executeBundles([bundle]);
+      // Behind it, at depth 0.75: every fragment fails the depth test.
+      pass.setPipeline(pipeline);
+      pass.setVertexBuffer(0, vertices);
+      pass.setIndexBuffer(indices, "uint16", 0, 12);
+      pass.setBindGroup(0, bindGroup, new Uint32Array([256]), 0, 1);
+      pass.beginOcclusionQuery(0);
+      pass.drawIndexed(6, 1, 0, 0, 0);
+      pass.endOcclusionQuery();
+      pass.end();
+      encoder.resolveQuerySet(querySet, 0, 1, queryResults, 0);
+      encoder.copyTextureToBuffer({ texture: target }, { buffer: readback, bytesPerRow: 256 }, [size, size]);
+      encoder.copyBufferToBuffer(queryResults, 0, readback, size * 256, 8);
+      encoder.popDebugGroup();
+      device.queue.submit([encoder.finish()]);
+    });
+    expect(error).toBeNull();
+
+    await readback.mapAsync(GPUMapMode.READ);
+    const bytes = new Uint8Array(readback.getMappedRange());
+    const pixel = (x: number, y: number) => Array.from(bytes.subarray(y * 256 + x * 4, y * 256 + x * 4 + 4));
+    expect(pixel(2, 8)).toEqual([0, 255, 0, 255]);
+    expect(pixel(size - 3, 8)).toEqual([255, 255, 255, 255]);
+    // No sample of the second quad passed the depth test.
+    expect(new BigUint64Array(bytes.buffer, size * 256, 1)[0]).toBe(0n);
+    readback.unmap();
+    device.destroy();
+  });
+
+  test("compute: indirect dispatch with pipeline constants", async () => {
+    const device = await requestDevice();
+    const module = device.createShaderModule({
+      code: /* wgsl */ `
+        override scale: u32 = 1u;
+        @group(0) @binding(0) var<storage, read_write> data: array<u32>;
+
+        @compute @workgroup_size(1)
+        fn main(@builtin(workgroup_id) id: vec3<u32>) {
+          data[id.x] = (id.x + 1u) * scale;
+        }
+      `,
+    });
+    const pipeline = device.createComputePipeline({
+      layout: "auto",
+      compute: { module, entryPoint: "main", constants: { scale: 10 } },
+    });
+    const data = device.createBuffer({ size: 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
+    const indirect = device.createBuffer({ size: 12, usage: GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST });
+    device.queue.writeBuffer(indirect, 0, new Uint32Array([3, 1, 1]));
+    const readback = device.createBuffer({ size: 16, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+
+    const encoder = device.createCommandEncoder();
+    const pass = encoder.beginComputePass();
+    pass.setPipeline(pipeline);
+    // A GPUBuffer stands for a binding of the whole buffer.
+    pass.setBindGroup(
+      0,
+      device.createBindGroup({ layout: pipeline.getBindGroupLayout(0), entries: [{ binding: 0, resource: data }] }),
+    );
+    pass.dispatchWorkgroupsIndirect(indirect, 0);
+    pass.end();
+    encoder.copyBufferToBuffer(data, readback);
+    device.queue.submit([encoder.finish()]);
+
+    await readback.mapAsync(GPUMapMode.READ);
+    expect(Array.from(new Uint32Array(readback.getMappedRange()))).toEqual([10, 20, 30, 0]);
+    readback.unmap();
     device.destroy();
   });
 

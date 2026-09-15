@@ -38,6 +38,8 @@ pub(crate) struct DeviceState {
     lost_signal: Arc<LostSignal>,
     /// `destroy()` ran, or the loss was already delivered to `lost`.
     lost: Cell<bool>,
+    /// `(reason, message)` of the loss, for a `lost` promise that is first read after it.
+    lost_info: JsCell<Option<(&'static str, String)>>,
     /// Every buffer of this device that is mapped or has a pending map, so
     /// `destroy()` can unmap them as the spec requires.
     mapped_buffers: JsCell<Vec<bun_jsc::Weak<()>>>,
@@ -122,22 +124,15 @@ impl DeviceState {
         message: &str,
     ) -> JsResult<()> {
         self.lost.set(true);
+        self.lost_info.set(Some((reason, message.to_owned())));
         let Some(handle) = self.handle.get().get() else {
             return Ok(());
         };
+        // Nothing read `lost` yet: the getter resolves it from `lost_info` when something does.
         let Some(promise) = js::lost_get_cached(handle).and_then(JSValue::as_promise) else {
             return Ok(());
         };
-        let reason = bun_core::String::static_(reason);
-        use bun_jsc::StringJsc as _;
-        let info = js_module(
-            global,
-            "createDeviceLostInfo",
-            &[
-                reason.to_js(global)?,
-                bun_jsc::bun_string_jsc::create_utf8_for_js(global, message.as_bytes())?,
-            ],
-        )?;
+        let info = lost_info_to_js(global, reason, message)?;
         // SAFETY: `as_promise` returned a live JSPromise cell; it stays alive through `handle`.
         unsafe { &mut *promise }.resolve(global, info)
     }
@@ -153,6 +148,23 @@ impl DeviceState {
         self.mapped_buffers
             .with_mut(|list| list.retain(|w| w.get().is_some_and(|v| v != buffer)));
     }
+}
+
+/// A `GPUDeviceLostInfo`.
+fn lost_info_to_js(
+    global: &JSGlobalObject,
+    reason: &'static str,
+    message: &str,
+) -> JsResult<JSValue> {
+    use bun_jsc::StringJsc as _;
+    js_module(
+        global,
+        "createDeviceLostInfo",
+        &[
+            bun_core::String::static_(reason).to_js(global)?,
+            bun_jsc::bun_string_jsc::create_utf8_for_js(global, message.as_bytes())?,
+        ],
+    )
 }
 
 #[bun_jsc::JsClass]
@@ -188,6 +200,7 @@ impl GPUDeviceHandle {
             handle: JsCell::new(bun_jsc::Weak::default()),
             lost_signal,
             lost: Cell::new(false),
+            lost_info: JsCell::new(None),
             mapped_buffers: JsCell::new(Vec::new()),
         });
         let handle = bun_jsc::JsClass::to_js(
@@ -200,7 +213,6 @@ impl GPUDeviceHandle {
         state
             .handle
             .set(bun_jsc::Weak::create_passive(handle, global));
-        js::lost_set_cached(handle, global, JSPromise::create(global).as_value(global));
         js_module(global, "createDevice", &[handle])
     }
 
@@ -236,10 +248,16 @@ impl GPUDeviceHandle {
         Ok(GPUQueue::create(global, &self.state))
     }
 
-    /// Only reached if the slot `create` filled was somehow cleared: the cached
-    /// value is what JS normally reads.
+    /// Runs once: the generated getter keeps the promise in the `lost` slot,
+    /// where `resolve_lost` finds it.
     pub(crate) fn get_lost(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(JSPromise::create(global).as_value(global))
+        match self.state.lost_info.get() {
+            Some((reason, message)) => {
+                let info = lost_info_to_js(global, reason, message)?;
+                Ok(JSPromise::resolved_promise_value(global, info))
+            }
+            None => Ok(JSPromise::create(global).as_value(global)),
+        }
     }
 
     pub(crate) fn destroy(

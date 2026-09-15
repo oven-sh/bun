@@ -116,7 +116,7 @@ export default [
     },
     // The GPU allocation is invisible to the collector; report it so wrappers that were
     // dropped without destroy() do not pile up.
-    { values: ["mappedRanges"], estimatedSize: true },
+    { values: ["mappedRanges", "pendingMap"], estimatedSize: true },
   ),
 
   gpu(

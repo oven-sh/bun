@@ -147,12 +147,14 @@ impl Drop for Device {
     }
 }
 
-/// The three `GPUError` subclasses.
+/// The three `GPUError` subclasses. The discriminant is what crosses to
+/// `src/js/internal/webgpu.ts`, which indexes its class table with it.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[repr(u8)]
 pub enum ErrorKind {
-    Validation,
-    OutOfMemory,
-    Internal,
+    Validation = 0,
+    OutOfMemory = 1,
+    Internal = 2,
 }
 
 /// `GPUErrorFilter`.

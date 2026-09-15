@@ -41,7 +41,7 @@ impl GPU {
             compatible_surface: None,
             apply_limit_buckets: false,
         };
-        let adapter = match instance().request_adapter(&desc, wgt::Backends::all(), None) {
+        let adapter = match instance().request_adapter(&desc, wgt::Backends::PRIMARY, None) {
             Ok(id) => GPUAdapter::create(global, bun_webgpu::Adapter::new(id)),
             // No GPU API on this machine, or no adapter that fits: WebGPU's answer is `null`.
             Err(_) => JSValue::NULL,

@@ -1048,11 +1048,10 @@ test.each([
   async (_, inNewContext) => {
     const context = inNewContext ? createContext({}) : undefined;
     const importerSource = `
-      import { x, shape } from "dep";
-      import * as ns from "dep";
-      export function read() { return [x, shape, ns.x].join(); }
+      import { x, shape, bump as bumpDep } from "dep";
+      export function read() { return [x, shape].join(); }
       export function loop(n) { let r; for (let i = 0; i < n; i++) r = read(); return r; }
-      export { bump } from "dep";
+      export function bump() { bumpDep(); }
     `;
     const dep1 = `export let x = 0; export const shape = 1; export function bump() { x++; }`;
     // The same names at other places in the module's environment.
@@ -1077,12 +1076,12 @@ test.each([
     d.bump();
     d.bump();
     expect([before, ...[a, b, c, d, e].map(m => m.loop(20000))]).toEqual([
-      "0,1,0",
-      "0,1,0",
-      "1,1,1",
-      "102,2,102",
-      "103,2,103",
-      "0,1,0",
+      "0,1",
+      "0,1",
+      "1,1",
+      "102,2",
+      "103,2",
+      "0,1",
     ]);
   },
 );

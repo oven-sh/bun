@@ -57,6 +57,25 @@ test("TypeScript Worker from a Blob", async () => {
   expect(result).toBe("i support typescript");
 });
 
+test("Worker from a Blob URL with a fragment", async () => {
+  const url = URL.createObjectURL(
+    new Blob([`self.onmessage = e => self.postMessage(e.data);`], { type: "application/javascript" }),
+  );
+  let worker: Worker | undefined;
+  try {
+    worker = new Worker(url + "#frag");
+    const result = await new Promise((resolve, reject) => {
+      worker!.onmessage = e => resolve(e.data);
+      worker!.onerror = e => reject(e.message);
+      worker!.postMessage("hello");
+    });
+    expect(result).toBe("hello");
+  } finally {
+    worker?.terminate();
+    URL.revokeObjectURL(url);
+  }
+});
+
 test("Worker from a blob errors on invalid blob", async () => {
   const { promise, reject } = Promise.withResolvers();
   const worker = new Worker("blob:i dont exist!");

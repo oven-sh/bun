@@ -1304,7 +1304,7 @@ describe("Bun.sliceAnsi", () => {
       expect(Bun.sliceAnsi(red + "ab漢\x1b[0m", 0, 3, { ellipsis: E })).toBe(red + "ab" + E + reset);
       // A close that lands BEFORE the cut cluster is passed through in
       // order and the ellipsis follows it (matches the known-cutEnd path).
-      expect(Bun.sliceAnsi(red + "ab漢" + reset + "xy", 0, 4, { ellipsis: E })).toBe(red + "ab漢" + reset + E);
+      expect(Bun.sliceAnsi(red + "ab漢" + reset + "xy", 0, 5, { ellipsis: E })).toBe(red + "ab漢" + reset + E);
       // start > 0: start ellipsis budgeted first, same EOF overflow detection.
       expect(Bun.sliceAnsi("xyab漢", 2, 5, { ellipsis: E })).toBe(E + "b" + E);
       expect(Bun.sliceAnsi("xyab漢", 2, 6, { ellipsis: E })).toBe(E + "b漢");
@@ -1327,6 +1327,110 @@ describe("Bun.sliceAnsi", () => {
         Bun.sliceAnsi(red + "ab漢" + reset + "x", 0, -2, { ellipsis: E }),
       );
       expect(Bun.stringWidth(Bun.sliceAnsi("ab漢", 0, 3, { ellipsis: E }))).toBe(3);
+    });
+
+    test("a cluster that does not fit beside the ellipsis goes with the cut", () => {
+      // The ellipsis is counted against the range, so the content has to end
+      // by `end - width(ellipsis)`. A wide cluster that starts before that
+      // column and extends past it is dropped, as cli-truncate does, and the
+      // result is never wider than the range.
+      expect(Bun.sliceAnsi("安宁哈", 0, 4, { ellipsis: E })).toBe("安" + E);
+      expect(Bun.sliceAnsi("安宁哈", 0, 2, { ellipsis: E })).toBe(E);
+      expect(Bun.sliceAnsi("a安宁哈", 0, 3, { ellipsis: E })).toBe("a" + E);
+      expect(Bun.sliceAnsi("🙂🙂🙂", 0, 4, { ellipsis: E })).toBe("🙂" + E);
+      expect(Bun.sliceAnsi("ab漢xy", 0, 4, { ellipsis: E })).toBe("ab" + E);
+      expect(Bun.sliceAnsi("abc漢xy", 0, 6, { ellipsis: ">>" })).toBe("abc>>");
+      // The dropped cluster is kept when nothing is cut.
+      expect(Bun.sliceAnsi("安宁", 0, 4, { ellipsis: E })).toBe("安宁");
+      expect(Bun.sliceAnsi("a安宁", 0, 5, { ellipsis: E })).toBe("a安宁");
+      expect(Bun.sliceAnsi("a安\n", 0, 3, { ellipsis: E })).toBe("a安");
+      // Negative end (the cut is known up front) agrees.
+      expect(Bun.sliceAnsi("安宁哈", 0, -2, { ellipsis: E })).toBe("安" + E);
+      expect(Bun.sliceAnsi("a漢b", 0, -1, { ellipsis: E })).toBe("a" + E);
+      expect(Bun.sliceAnsi("漢x", 0, -1, { ellipsis: E })).toBe(E);
+      // A conjunct is one cluster that is wider than 2 columns.
+      const conjunct = "\u0915\u094D\u0937\u094D\u092E\u094D\u092F"; // क्ष्म्य, width 4
+      expect(Bun.stringWidth(conjunct)).toBe(4);
+      expect(Bun.sliceAnsi(conjunct + "xyz", 0, 3, { ellipsis: E })).toBe(E);
+      expect(Bun.sliceAnsi(conjunct + "xyz", 0, 5, { ellipsis: E })).toBe(conjunct + E);
+      expect(Bun.sliceAnsi("a" + conjunct, 0, -1, { ellipsis: E })).toBe("a" + E);
+      // Both edges cut.
+      expect(Bun.sliceAnsi("xy安宁", 1, 5, { ellipsis: E })).toBe(E + "安" + E);
+      expect(Bun.sliceAnsi("xy安宁", 1, 6, { ellipsis: E })).toBe(E + "安宁");
+      expect(Bun.sliceAnsi("xy安宁哈", 1, 4, { ellipsis: E })).toBe(E + E);
+      expect(Bun.sliceAnsi("xy安宁哈", 1, -4, { ellipsis: E })).toBe(E + E);
+      // Start ellipsis only (no room for an end ellipsis): same rule at `end`.
+      expect(Bun.sliceAnsi("xy安宁哈", 1, 3, { ellipsis: E })).toBe(E);
+      // A wide cluster dropped at `start` leaves a column the content may use.
+      expect(Bun.sliceAnsi("abc🙂漢,🙂", 1, 9, { ellipsis: "..." })).toBe("...漢...");
+      expect(Bun.sliceAnsi("abc🙂漢,🙂", 1, -1, { ellipsis: "..." })).toBe("...漢...");
+      // Only a cluster that was kept can be dropped. This one starts before
+      // `start`, is not kept, and is wide enough to end past the content end.
+      const wide7 = ["\u0915", "\u0937", "\u092E", "\u092F", "\u0930", "\u0932", "\u0935"].join("\u094D");
+      expect(Bun.stringWidth(wide7)).toBe(7);
+      expect(Bun.sliceAnsi(wide7 + "abcdefgh", 1, 9, { ellipsis: "..." })).toBe("......");
+      // Only a cluster that starts before the content end counts. One that
+      // starts AT that column with a zero-width Prepend (U+0600) and turns
+      // wide when 漢 joins it is a plain cut, as before.
+      expect(Bun.sliceAnsi("ЖЗИ\u0600漢К", 0, -2, { ellipsis: E })).toBe("ЖЗИ" + E);
+      // 8-bit input: U+00A7 is 2 columns under ambiguousIsNarrow: false.
+      expect(Bun.sliceAnsi("a\u00A7\u00A7\u00A7", 0, 3, { ellipsis: ".", ambiguousIsNarrow: false })).toBe("a.");
+      // A run of ASCII after the dropped cluster (bulk path).
+      expect(Bun.sliceAnsi("\x1b[0ma漢bcdefgh", 0, 3, { ellipsis: E })).toBe("a" + E);
+      expect(Bun.sliceAnsi("\x1b[0ma漢bcdefgh", 0, -7, { ellipsis: E })).toBe("a" + E);
+
+      // The ellipsis takes the style that was active where the dropped
+      // cluster started, and ANSI inside or after that cluster goes with it.
+      const red = "\x1b[31m",
+        reset = "\x1b[39m";
+      const coder = "\u{1F469}\u200D\u{1F4BB}"; // 👩‍💻, one cluster, width 2
+      expect(Bun.sliceAnsi(red + "ab漢" + reset + "xy", 0, 4, { ellipsis: E })).toBe(red + "ab" + E + reset);
+      expect(Bun.sliceAnsi("ab" + red + "漢xy" + reset, 0, 4, { ellipsis: E })).toBe("ab" + red + E + reset);
+      expect(Bun.sliceAnsi("ab\u{1F469}" + red + "\u200D\u{1F4BB}xyz", 0, 4, { ellipsis: E })).toBe("ab" + E);
+      expect(Bun.sliceAnsi(red + "ab\u{1F469}" + reset + "\u200D\u{1F4BB}xyz", 0, 4, { ellipsis: E })).toBe(
+        red + "ab" + E + reset,
+      );
+      expect(Bun.sliceAnsi(red + "ab\u{1F469}" + reset + "\u200D\u{1F4BB}xyz", 0, -3, { ellipsis: E })).toBe(
+        red + "ab" + E + reset,
+      );
+      expect(Bun.sliceAnsi("ab\u{1F469}" + red + "\u200D\u{1F4BB}", 0, 4, { ellipsis: E })).toBe(
+        "ab\u{1F469}" + red + "\u200D\u{1F4BB}" + reset,
+      );
+      // Same for an OSC 8 hyperlink that opens or closes inside that cluster.
+      const linkOpen = "\x1b]8;;http://x\x07",
+        linkClose = "\x1b]8;;\x07";
+      expect(Bun.sliceAnsi(linkOpen + "ab" + coder + "xyz" + linkClose, 0, 4, { ellipsis: E })).toBe(
+        linkOpen + "ab" + linkClose + E,
+      );
+      expect(Bun.sliceAnsi("ab\u{1F469}" + linkOpen + "\u200D\u{1F4BB}xyz" + linkClose, 0, 4, { ellipsis: E })).toBe(
+        "ab" + E,
+      );
+      expect(Bun.sliceAnsi(linkOpen + "ab\u{1F469}" + linkClose + "\u200D\u{1F4BB}xyz", 0, 4, { ellipsis: E })).toBe(
+        linkOpen + "ab" + linkClose + E,
+      );
+
+      // The law: when the ellipsis fits the range, the result fits the range.
+      const samples = [
+        "安宁哈世界",
+        "a安宁哈世界",
+        "🙂🙂🙂🙂",
+        "ab" + coder + "漢c" + conjunct + "d",
+        red + "a安b宁c哈" + reset,
+      ];
+      for (const s of samples) {
+        const total = Bun.stringWidth(s);
+        for (const e of [E, "..", "漢"]) {
+          const ew = Bun.stringWidth(e);
+          for (let start = 0; start < total; start++) {
+            for (let end = start + ew + 1; end <= total; end++) {
+              const budget = end - start;
+              expect(Bun.stringWidth(Bun.sliceAnsi(s, start, end, e))).toBeLessThanOrEqual(budget);
+              if (end < total)
+                expect(Bun.stringWidth(Bun.sliceAnsi(s, start, end - total, e))).toBeLessThanOrEqual(budget);
+            }
+          }
+        }
+      }
     });
 
     test("degenerate ranges return the bare ellipsis (matches ASCII fast path)", () => {

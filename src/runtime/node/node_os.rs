@@ -454,13 +454,10 @@ mod _impl {
         bun_sys::posix::sysctl_read_slice(c"kern.cp_times", &mut times_buf[..])
             .map_err(|_| OsError::Any)?;
 
+        // Get the multiplier; this is the number of ms/tick
         // SAFETY: pure FFI getter
         let ticks: i64 = bun_sysconf__SC_CLK_TCK() as i64;
-        let mult: u64 = if ticks > 0 {
-            1000 / u64::try_from(ticks).expect("int cast")
-        } else {
-            1
-        };
+        let mult: u64 = 1000 / u64::try_from(ticks).expect("int cast");
 
         let values = JSValue::create_empty_array(global_this, ncpu as usize)?;
         let mut i: u32 = 0;

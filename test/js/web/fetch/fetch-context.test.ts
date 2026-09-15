@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { once } from "events";
 import { bunEnv, bunExe, isIPv6, isWindows, tempDir, tls as tlsCert } from "harness";
-import { lookup as dnsLookup } from "node:dns/promises";
 import net from "node:net";
 import { join } from "node:path";
 import tls from "node:tls";
@@ -284,7 +283,6 @@ describe("Bun.FetchContext", () => {
     expect(construct({ keepAlive: { maxIdleSockets: 0 } })).toThrow(
       'The value of "keepAlive.maxIdleSockets" is out of range. It must be >= 1 and <= 65535. Received 0',
     );
-    expect(construct({ lookup: "127.0.0.1" })).toThrow("lookup must be a function");
     expect(construct({ onStats: 1 })).toThrow("onStats must be a function");
     expect(construct({ proxy: "not a url" })).toThrow("fetch() proxy URL is invalid");
     expect(construct({ proxy: { url: "http://p", respectNoProxy: 1 } })).toThrow(
@@ -301,13 +299,12 @@ describe("Bun.FetchContext", () => {
     using context = new Bun.FetchContext({
       tls: null,
       proxy: null,
-      lookup: null,
       keepAlive: null,
       unix: null,
       onStats: null,
     } as any);
     expect(await (await fetch(server.url, { context })).text()).toBe("plain");
-    expect(await (await fetch(server.url, { context: null, lookup: null, onStats: null } as any)).text()).toBe("plain");
+    expect(await (await fetch(server.url, { context: null, onStats: null } as any)).text()).toBe("plain");
     using empty = new Bun.FetchContext(null as any);
     expect(await (await fetch(server.url, { context: empty })).text()).toBe("plain");
   });
@@ -377,6 +374,33 @@ describe("proxy policy", () => {
     expect(result.exitCode).toBe(0);
   });
 
+  test.concurrent("proxy: false is part of what a connection is shared by, and covers HTTPS_PROXY too", async () => {
+    using s = servers();
+    using secure = Bun.serve({ port: 0, tls: tlsCert, fetch: () => new Response("secure origin") });
+    using dead = await deadPort();
+    const result = await run(
+      `
+      const text = (url, init) => fetch(url, init).then(r => r.text(), e => e.code);
+      const plain = "http://127.0.0.1:${s.origin.port}/";
+      const secure = "https://127.0.0.1:${secure.port}/";
+      const tls = { ca: ${JSON.stringify(tlsCert.cert)} };
+      console.log(JSON.stringify([
+        // Keep-alive is on: the direct connection must not serve the proxied request, nor the other way around.
+        await text(plain, { proxy: false }),
+        await text(plain, {}),
+        await text(plain, { proxy: false }),
+        await text(plain, {}),
+        await text(secure, { tls }),
+        await text(secure, { tls, proxy: false }),
+      ]));
+      `,
+      { HTTP_PROXY: `http://127.0.0.1:${s.proxy.port}`, HTTPS_PROXY: `http://127.0.0.1:${dead.port}` },
+    );
+    expect(result.stderr).toBe("");
+    expect(JSON.parse(result.stdout)).toEqual(["origin", "proxy", "origin", "proxy", "ECONNREFUSED", "secure origin"]);
+    expect(result.exitCode).toBe(0);
+  });
+
   test.concurrent("respectNoProxy: false insists on the proxy over NO_PROXY", async () => {
     using s = servers();
     const proxyUrl = `http://127.0.0.1:${s.proxy.port}`;
@@ -409,237 +433,103 @@ describe("proxy policy", () => {
   });
 });
 
-describe("lookup", () => {
-  test("dials the returned address and keeps the URL's host for Host, SNI and the certificate", async () => {
-    let servername: string | false | undefined;
-    const hosts: (string | undefined)[] = [];
-    const server = tls.createServer({ key: tlsCert.key, cert: tlsCert.cert }, socket => {
-      servername = (socket as tls.TLSSocket & { servername?: string | false }).servername;
+// Resolve and vet a name yourself, then: the address in the URL, the name in
+// `Host` and `tls.serverName`, and `proxy: false` so that the environment proxy
+// is not judged against the address.
+describe("pinning a request to an address", () => {
+  /** Answers every request with what it saw. `sni` is `false` when the client sent none. */
+  async function observingServer(hostname: string, secure: boolean) {
+    const respond = (socket: net.Socket, sni: string | false | null) => {
       socket.on("error", () => {});
-      socket.once("data", chunk => {
-        hosts.push(/^host: (.*)$/im.exec(chunk.toString())?.[1]);
-        socket.end("HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\npinned");
+      socket.on("data", chunk => {
+        const host = /^host: (.*)$/im.exec(chunk.toString())?.[1];
+        const body = JSON.stringify({ sni, host });
+        socket.write(`HTTP/1.1 200 OK\r\nContent-Length: ${body.length}\r\n\r\n${body}`);
+      });
+    };
+    const server = secure
+      ? tls.createServer({ key: tlsCert.key, cert: tlsCert.cert }, socket =>
+          respond(socket, socket.servername ?? false),
+        )
+      : net.createServer(socket => respond(socket, null));
+    server.listen(0, hostname);
+    await once(server, "listening");
+    return {
+      port: (server.address() as net.AddressInfo).port,
+      [Symbol.dispose]: () => void server.close(),
+    };
+  }
+
+  for (const [family, address] of [
+    ["IPv4", "127.0.0.1"],
+    ["IPv6", "[::1]"],
+  ] as const) {
+    describe.skipIf(family === "IPv6" && !isIPv6())(family, () => {
+      const listenOn = address.replace(/[[\]]/g, "");
+
+      test("https: Host and tls.serverName name the origin; the certificate is verified against serverName", async () => {
+        using server = await observingServer(listenOn, true);
+        const url = `https://${address}:${server.port}/`;
+        const pinned = (serverName: string) =>
+          fetch(url, {
+            headers: { Host: "localhost" },
+            tls: { ca: tlsCert.cert, serverName },
+            proxy: false,
+            keepalive: false,
+          }).then(
+            r => r.json(),
+            e => e.code,
+          );
+        expect(await pinned("localhost")).toEqual({ sni: "localhost", host: "localhost" });
+        // The harness certificate lists the loopback addresses as well, so
+        // only a name it does not list shows what is being verified.
+        expect(await pinned("pinned.invalid")).toBe("ERR_TLS_CERT_ALTNAME_INVALID");
+      });
+
+      // An address as serverName: no SNI, and the certificate's IP entries are what is verified.
+      test("https: tls.serverName can be an address", async () => {
+        using server = await observingServer(listenOn, true);
+        const response = await fetch(`https://${address}:${server.port}/`, {
+          headers: { Host: "localhost" },
+          tls: { ca: tlsCert.cert, serverName: "::1" },
+          proxy: false,
+          keepalive: false,
+        });
+        expect(await response.json()).toEqual({ sni: false, host: "localhost" });
+      });
+
+      test("http: Host names the origin", async () => {
+        using server = await observingServer(listenOn, false);
+        const response = await fetch(`http://${address}:${server.port}/`, {
+          headers: { Host: "pinned.example" },
+          proxy: false,
+          keepalive: false,
+        });
+        expect(await response.json()).toEqual({ sni: null, host: "pinned.example" });
       });
     });
-    server.listen(0, "127.0.0.1");
-    await once(server, "listening");
-    const port = (server.address() as net.AddressInfo).port;
-    try {
-      const seen: unknown[] = [];
-      // `localhost` is in the certificate; the name below does not resolve at all.
-      const response = await fetch(`https://localhost:${port}/`, {
-        keepalive: false,
-        tls: { ca: tlsCert.cert },
-        lookup(hostname, options) {
-          seen.push([hostname, options]);
-          return "127.0.0.1";
-        },
-      });
-      expect(await response.text()).toBe("pinned");
-      expect(response.url).toBe(`https://localhost:${port}/`);
-      expect(seen).toEqual([["localhost", { port }]]);
-      expect({ servername, hosts }).toEqual({ servername: "localhost", hosts: [`localhost:${port}`] });
+  }
 
-      // A name only `lookup` can resolve, verified against a certificate that does not list it.
-      const mismatch = await fetch(`https://pinned.invalid:${port}/`, {
-        keepalive: false,
-        tls: { ca: tlsCert.cert },
-        lookup: () => ({ address: "127.0.0.1", family: 4 }),
-      }).then(
-        r => r.status,
-        e => e.code,
-      );
-      expect(mismatch).toBe("ERR_TLS_CERT_ALTNAME_INVALID");
+  test("connections are shared by address and serverName, not by Host", async () => {
+    const server = connectionCountingServer();
+    const port = await server.listen();
+    try {
+      using context = new Bun.FetchContext({ proxy: false });
+      const get = (host: string, serverName?: string) =>
+        fetch(`https://127.0.0.1:${port}/`, {
+          context,
+          headers: { Host: host },
+          tls: { ca: tlsCert.cert, serverName },
+        }).then(r => r.text());
+      expect(await get("a.example", "localhost")).toBe("ok");
+      expect(await get("b.example", "localhost")).toBe("ok");
+      expect(server.connections).toBe(1);
+      // Verified against the address instead of the name: another connection.
+      expect(await get("a.example")).toBe("ok");
+      expect(server.connections).toBe(2);
     } finally {
       server.close();
     }
-  });
-
-  test("accepts what dns.promises.lookup resolves to, including { all: true }", async () => {
-    using server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: req => new Response(req.headers.get("host")) });
-    const url = `http://name.invalid:${server.port}/`;
-    for (const lookup of [
-      async () => ({ address: "127.0.0.1", family: 4 }),
-      async () => [
-        { address: "127.0.0.1", family: 4 },
-        { address: "10.255.255.1", family: 4 },
-      ],
-      () => ["127.0.0.1"],
-      // A thenable that is not a native promise.
-      () => ({ then: (resolve: (address: string) => void) => resolve("127.0.0.1") }),
-      (hostname: string) => (hostname === "name.invalid" ? dnsLookup("localhost", { family: 4 }) : "0.0.0.0"),
-    ]) {
-      const response = await fetch(url, { keepalive: false, lookup });
-      expect(await response.text()).toBe(`name.invalid:${server.port}`);
-    }
-  });
-
-  test("runs again for the host a redirect leads to", async () => {
-    using target = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("target") });
-    using origin = Bun.serve({
-      port: 0,
-      hostname: "127.0.0.1",
-      fetch: () => Response.redirect(`http://second.invalid:${target.port}/`, 302),
-    });
-    const seen: string[] = [];
-    const lookup = (hostname: string, { port }: { port: number }) => {
-      seen.push(`${hostname}:${port}`);
-      return "127.0.0.1";
-    };
-    const response = await fetch(`http://first.invalid:${origin.port}/`, { lookup });
-    expect(await response.text()).toBe("target");
-    expect(seen).toEqual([`first.invalid:${origin.port}`, `second.invalid:${target.port}`]);
-
-    // A lookup that refuses the second host stops the chain before anything is dialed.
-    let reachedTarget = false;
-    using guarded = Bun.serve({
-      port: 0,
-      hostname: "127.0.0.1",
-      fetch() {
-        reachedTarget = true;
-        return new Response("should not be reached");
-      },
-    });
-    using redirector = Bun.serve({
-      port: 0,
-      hostname: "127.0.0.1",
-      fetch: () => Response.redirect(`http://internal.invalid:${guarded.port}/`, 302),
-    });
-    const refused = await fetch(`http://first.invalid:${redirector.port}/`, {
-      lookup(hostname) {
-        if (hostname === "internal.invalid") throw new Error("refusing to connect to internal.invalid");
-        return "127.0.0.1";
-      },
-    }).then(
-      r => r.status,
-      e => e.message,
-    );
-    expect({ refused, reachedTarget }).toEqual({
-      refused: "refusing to connect to internal.invalid",
-      reachedTarget: false,
-    });
-  });
-
-  test("a rejection, a throw or a non-address fails the request with that error", async () => {
-    using server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("unreachable") });
-    const url = `http://name.invalid:${server.port}/`;
-    const outcome = (lookup: any) =>
-      fetch(url, { lookup }).then(
-        r => r.status,
-        e => `${e.code ?? e.name}: ${e.message}`,
-      );
-    expect(await outcome(() => Promise.reject(new RangeError("no such host")))).toBe("RangeError: no such host");
-    expect(await outcome(() => "not-an-address")).toBe("ERR_INVALID_IP_ADDRESS: Invalid IP address: not-an-address");
-    expect(await outcome(() => undefined)).toBe("ERR_INVALID_IP_ADDRESS: fetch: 'lookup' must return an IP address");
-    expect(await outcome(() => ({ address: 5 }))).toBe(
-      "ERR_INVALID_IP_ADDRESS: fetch: 'lookup' must return an IP address",
-    );
-  });
-
-  test("an abort while lookup is pending rejects the request and ignores the late answer", async () => {
-    const paths: string[] = [];
-    using server = Bun.serve({
-      port: 0,
-      hostname: "127.0.0.1",
-      fetch(req) {
-        paths.push(new URL(req.url).pathname);
-        return new Response("served");
-      },
-    });
-    const controller = new AbortController();
-    const answer = Promise.withResolvers<string>();
-    const asked = Promise.withResolvers<void>();
-    const request = fetch(`http://name.invalid:${server.port}/aborted`, {
-      signal: controller.signal,
-      lookup() {
-        asked.resolve();
-        return answer.promise;
-      },
-    });
-    await asked.promise;
-    controller.abort();
-    expect(await request.catch(e => e.name)).toBe("AbortError");
-    answer.resolve("127.0.0.1");
-    await answer.promise;
-    // The HTTP thread handles the late answer before this later request, so
-    // had it still dialed, /aborted would be in the list.
-    expect(await (await fetch(`http://127.0.0.1:${server.port}/after`, { keepalive: false })).text()).toBe("served");
-    expect(paths).toEqual(["/after"]);
-  });
-
-  test("the address lookup returned is part of the pool key", async () => {
-    const counting = connectionCountingServer();
-    const port = await counting.listen();
-    using context = new Bun.FetchContext({ tls: { ca: tlsCert.cert } });
-    const lookup = () => "127.0.0.1";
-    try {
-      const url = `https://localhost:${port}/`;
-      expect(await (await fetch(url, { context })).text()).toBe("ok");
-      expect(counting.connections).toBe(1);
-      // A pinned request does not take the connection an unpinned one left.
-      expect(await (await fetch(url, { context, lookup })).text()).toBe("ok");
-      expect(counting.connections).toBe(2);
-      // Each kind reuses its own.
-      expect(await (await fetch(url, { context, lookup })).text()).toBe("ok");
-      expect(await (await fetch(url, { context })).text()).toBe("ok");
-      expect(counting.connections).toBe(2);
-    } finally {
-      counting.close();
-    }
-  });
-
-  test("is called for a host that is already an IP address, and not for a unix socket", async () => {
-    using server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("tcp") });
-    const seen: string[] = [];
-    const lookup = (hostname: string) => {
-      seen.push(hostname);
-      return "127.0.0.1";
-    };
-    // 127.0.0.9 is never dialed: the answer is.
-    expect(await (await fetch(`http://127.0.0.9:${server.port}/`, { lookup, keepalive: false })).text()).toBe("tcp");
-    expect(seen).toEqual(["127.0.0.9"]);
-    if (!isWindows) {
-      using dir = tempDir("fetch-lookup-unix", {});
-      const path = join(String(dir), "lookup.sock");
-      using overUnix = Bun.serve({ unix: path, fetch: () => new Response("unix") });
-      expect(await (await fetch("http://name.invalid/", { unix: path, lookup })).text()).toBe("unix");
-      expect(seen).toEqual(["127.0.0.9"]);
-    }
-  });
-
-  test.skipIf(!isIPv6())("dials an IPv6 answer", async () => {
-    using server = Bun.serve({ port: 0, hostname: "::1", fetch: req => new Response(req.headers.get("host")) });
-    let stats: Bun.FetchConnectionStats | undefined;
-    const response = await fetch(`http://six.invalid:${server.port}/`, {
-      lookup: () => ({ address: "::1", family: 6 }),
-      onStats: s => (stats = s),
-      keepalive: false,
-    });
-    expect(await response.text()).toBe(`six.invalid:${server.port}`);
-    expect(stats).toMatchObject({ remoteAddress: "::1", remotePort: server.port, remoteFamily: "IPv6" });
-  });
-
-  test("many requests can wait on their lookups at once", async () => {
-    using server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: req => new Response(new URL(req.url).pathname) });
-    const release = Promise.withResolvers<string>();
-    let waiting = 0;
-    const all = Promise.all(
-      Array.from({ length: 32 }, (_, i) =>
-        fetch(`http://many.invalid:${server.port}/${i}`, {
-          lookup() {
-            if (++waiting === 32) release.resolve("127.0.0.1");
-            return release.promise;
-          },
-        }).then(r => r.text()),
-      ),
-    );
-    expect(await all).toEqual(Array.from({ length: 32 }, (_, i) => `/${i}`));
-  });
-
-  test("is refused together with protocol http2", async () => {
-    expect(
-      await fetch("https://localhost:1/", { protocol: "http2", lookup: () => "127.0.0.1" }).catch(e => e.message),
-    ).toBe(`fetch: 'lookup' is only supported with protocol "http1.1"`);
   });
 });
 

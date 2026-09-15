@@ -488,30 +488,36 @@ context.close(); // closes the idle connections
 | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `tls`       | The same options as `fetch`'s `tls`. `checkServerIdentity` runs once per connection.                                                                                                                                      |
 | `proxy`     | The same values as `fetch`'s `proxy`, including `false`.                                                                                                                                                                  |
-| `lookup`    | Resolves the host of each connection. See [Choosing the address to connect to](#choosing-the-address-to-connect-to).                                                                                                      |
 | `keepAlive` | `false` closes each connection after its response. `idleTimeout` is in seconds (default 300). `maxIdleSockets` caps the idle connections per kind (plain, TLS, Unix socket). Neither limit applies to HTTP/3 connections. |
 | `unix`      | A Unix socket path.                                                                                                                                                                                                       |
 | `onStats`   | See [Connection stats](#connection-stats).                                                                                                                                                                                |
 
 An option given on the request takes precedence over the context's. A request's `tls` replaces the context's `tls` as a whole.
 
-#### Choosing the address to connect to
+#### Connecting to a specific address
 
-`lookup` receives the hostname and port Bun is about to dial and returns the IP address to use. Bun keeps the URL as it is: the `Host` header, the TLS server name, certificate verification and `NO_PROXY` matching use the original hostname.
+To send a request for a hostname to an address you resolved and checked yourself, put the address in the URL and name the origin in the `Host` header and in `tls.serverName`. Bun dials the address, sends `Host` (as `:authority` over HTTP/2), uses `serverName` for SNI, and verifies the certificate against `serverName`.
 
 ```ts
 import { lookup } from "node:dns/promises";
 
-const response = await fetch("https://example.com/webhook", {
-  async lookup(hostname) {
-    const { address } = await lookup(hostname);
-    if (isPrivateAddress(address)) throw new Error(`refusing to connect to ${address}`);
-    return address;
-  },
+const { address, family } = await lookup("example.com");
+if (isPrivateAddress(address)) throw new Error(`refusing to connect to ${address}`);
+
+const response = await fetch(`https://${family === 6 ? `[${address}]` : address}/webhook`, {
+  headers: { Host: "example.com" },
+  tls: { serverName: "example.com" },
+  proxy: false,
+  redirect: "manual",
 });
 ```
 
-Bun calls `lookup` for every connection the request needs, including the connections of redirects, and before it considers a pooled connection. A request only reuses a connection to the address its own `lookup` returned. When `lookup` throws or rejects, `fetch` rejects with that error. Through a proxy, `lookup` receives the proxy's hostname. Bun also passes a hostname that is already an IP address to `lookup`. While `lookup` is pending the request has no connection and no timeout runs, so pass a `signal` if `lookup` might not settle. `lookup` works with HTTP/1.1 only.
+- Pass `proxy: false`. Otherwise Bun judges the environment's proxy and `NO_PROXY` against the address in the URL, not against the hostname. Decide whether the hostname needs a proxy before you resolve it.
+- Follow redirects yourself (`redirect: "manual"`): `Host` and `serverName` describe this origin only, and a relative `Location` resolves against the address.
+- A name with several addresses has no fallback here. Try each address yourself.
+- Bun sends `Host` as given. Include the port when it is not the scheme's default. A plain `http://` URL needs only `Host`.
+- `tls.serverName` works with HTTP/1.1 and HTTP/2. `protocol: "http3"` rejects it.
+- Each distinct `serverName` has its own TLS context and keep-alive pool. Bun caches up to 60 of them.
 
 #### Connection stats
 

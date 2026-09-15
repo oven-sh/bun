@@ -1768,6 +1768,44 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
     );
   });
 
+  test("an address in the URL with Host and tls.serverName: :authority, SNI and verification follow the name", async () => {
+    const server = makeH2Server({}, (req, res) => {
+      res.end(JSON.stringify({ authority: req.authority, sni: (req.socket as nodetls.TLSSocket).servername }));
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as import("node:net").AddressInfo;
+    try {
+      await using proc = await spawnCapped({
+        cmd: [
+          bunExe(),
+          "--no-warnings",
+          "-e",
+          `const pinned = serverName =>
+             fetch("https://127.0.0.1:${port}/", {
+               protocol: "http2",
+               headers: { Host: "localhost" },
+               tls: { ca: ${JSON.stringify(tls.cert)}, serverName },
+               proxy: false,
+             }).then(r => r.json(), e => e.code);
+           console.log(JSON.stringify([await pinned("localhost"), await pinned("pinned.invalid")]));`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual([
+        { authority: "localhost", sni: "localhost" },
+        "ERR_TLS_CERT_ALTNAME_INVALID",
+      ]);
+      expect(exitCode).toBe(0);
+    } finally {
+      server.close();
+    }
+  });
+
   test("each FetchContext has its own h2 session, and onStats counts the stream's bytes", async () => {
     let sessions = 0;
     const server = makeH2Server({}, (req, res) => {

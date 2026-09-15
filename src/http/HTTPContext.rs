@@ -240,18 +240,10 @@ pub struct PooledSocket<const SSL: bool> {
     /// HTTP/2 connection state (HPACK tables, server SETTINGS) when
     /// this socket negotiated "h2". Owned by the pool while parked.
     pub(crate) h2_session: Option<RefPtr<h2::ClientSession>>,
-    pub(crate) partition: PoolPartition,
+    /// `PoolOptions::id` of the fetch context that opened it.
+    pub(crate) pool_id: u64,
     /// `PoolOptions::idle_timeout_seconds` of the context that parked it.
     pub(crate) idle_timeout_seconds: u32,
-}
-
-/// Which requests may share a connection beyond what the origin, TLS and
-/// proxy fields of the pool key say: the fetch context that opened it, and
-/// the address a `lookup` callback pinned it to.
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
-pub struct PoolPartition {
-    pub(crate) pool_id: u64,
-    pub(crate) dial_address: Option<core::net::IpAddr>,
 }
 
 /// `&mut` access to a pooled / found-slot HTTP/2 session, for the field
@@ -313,7 +305,7 @@ struct PoolKey<'a> {
     proxy_auth_hash: u64,
     want_h2: AlpnOffer,
     transport: Transport,
-    partition: PoolPartition,
+    pool_id: u64,
 }
 
 fn ssl_config_hash(cfg: Option<&SSLConfig>) -> u64 {
@@ -647,7 +639,6 @@ impl<const SSL: bool> HTTPContext<SSL> {
         h2_session: Option<RefPtr<h2::ClientSession>>,
         unix_path: &[u8],
         pool: crate::PoolOptions,
-        dial_address: Option<core::net::IpAddr>,
     ) {
         // log("releaseSocket(0x{f})", .{bun.fmt.hexIntUpper(@intFromPtr(socket.socket))});
 
@@ -694,10 +685,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 target_port,
                 proxy_auth_hash,
                 h2_session,
-                partition: PoolPartition {
-                    pool_id: pool.id,
-                    dial_address,
-                },
+                pool_id: pool.id,
                 idle_timeout_seconds: pool.idle_timeout_seconds,
             };
             let parked = match transport {
@@ -743,7 +731,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
             let mut iter = pool.used.iterator::<true, true>();
             while let Some(idx) = iter.next() {
                 let ptr = pool.at(u16::try_from(idx).expect("int cast"));
-                if same_context && pooled_socket_mut(ptr).partition.pool_id != options.id {
+                if same_context && pooled_socket_mut(ptr).pool_id != options.id {
                     continue;
                 }
                 count += 1;
@@ -808,7 +796,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
         proxy_auth_hash: u64,
         want_h2: AlpnOffer,
         transport: Transport,
-        partition: PoolPartition,
+        pool_id: u64,
     ) -> Option<ExistingSocket<SSL>> {
         if hostname.len() > MAX_KEEPALIVE_HOSTNAME {
             return None;
@@ -825,7 +813,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
             proxy_auth_hash,
             want_h2,
             transport,
-            partition,
+            pool_id,
         };
         match transport {
             Transport::Tcp => Self::find_in(self.pending_sockets.get()?, &key),
@@ -849,7 +837,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
             proxy_auth_hash,
             want_h2,
             transport,
-            partition,
+            pool_id,
         } = *key;
         let mut iter = pool.used.iterator::<true, true>();
 
@@ -861,7 +849,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 continue;
             }
 
-            if socket.partition != partition {
+            if socket.pool_id != pool_id {
                 continue;
             }
 
@@ -1011,7 +999,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 0,
                 AlpnOffer::H1,
                 Transport::Unix,
-                client.pool_partition(),
+                client.pool.id,
             ) {
                 let sock = found.socket;
                 debug_assert!(found.tunnel.is_none());
@@ -1150,7 +1138,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     AlpnOffer::H1
                 },
                 Transport::Tcp,
-                client.pool_partition(),
+                client.pool.id,
             ) {
                 let sock = found.socket;
                 client.flags.reused_socket_verification = found.verification;
@@ -1199,15 +1187,6 @@ impl<const SSL: bool> HTTPContext<SSL> {
             }
         }
 
-        // A `lookup` callback chose the address; `hostname` still names the
-        // pool entry, the TLS peer and the Host header.
-        let mut dial_buf = [0u8; 64];
-        let dial_host: &[u8] = match client.dial_address() {
-            Some(address) => {
-                bun_core::fmt::buf_print_infallible(&mut dial_buf, format_args!("{address}"))
-            }
-            None => hostname,
-        };
         let socket = HTTPSocket::<SSL>::connect_group(
             &mut self.group,
             Self::KIND,
@@ -1216,7 +1195,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
             } else {
                 None
             },
-            dial_host,
+            hostname,
             port as c_int,
             ActiveSocket::<SSL>::init(
                 client
@@ -1264,7 +1243,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
             let mut iter = pool.used.iterator::<true, true>();
             while let Some(idx) = iter.next() {
                 let pooled = pooled_socket_mut(pool.at(u16::try_from(idx).expect("int cast")));
-                if pooled.partition.pool_id == pool_id {
+                if pooled.pool_id == pool_id {
                     // The close callback finds the slot through the socket's
                     // ext and returns it to the pool.
                     HTTPContext::<SSL>::close_socket(pooled.http_socket);

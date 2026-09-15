@@ -943,39 +943,17 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         }
     }
 
-    // lookup / onStats: function | undefined
-    let mut lookup: Option<JSValue> = None;
+    // onStats: function | undefined
     let mut on_stats: Option<JSValue> = None;
-    {
-        let objects_to_try = [
-            options_object.unwrap_or_default(),
-            request_init_object.unwrap_or_default(),
-        ];
-        for obj in objects_to_try {
-            if !obj.is_empty() {
-                if lookup.is_none() {
-                    lookup =
-                        obj.get_fetch_option_function(global_this, jsc::FetchOptionName::Lookup)?;
-                }
-                if on_stats.is_none() {
-                    on_stats =
-                        obj.get_fetch_option_function(global_this, jsc::FetchOptionName::OnStats)?;
-                }
-            }
+    for obj in [
+        options_object.unwrap_or_default(),
+        request_init_object.unwrap_or_default(),
+    ] {
+        if on_stats.is_none() && !obj.is_empty() {
+            on_stats = obj.get_fetch_option_function(global_this, jsc::FetchOptionName::OnStats)?;
         }
-        lookup = lookup.or_else(|| context.and_then(|c| c.lookup()));
-        on_stats = on_stats.or_else(|| context.and_then(|c| c.on_stats()));
     }
-    if lookup.is_some()
-        && matches!(
-            forced_protocol,
-            Some(http::Protocol::Http2 | http::Protocol::Http3)
-        )
-    {
-        return Err(global_this.throw_invalid_arguments(format_args!(
-            "fetch: 'lookup' is only supported with protocol \"http1.1\""
-        )));
-    }
+    let on_stats = on_stats.or_else(|| context.and_then(|c| c.on_stats()));
     let pool = context.map(|c| c.pool()).unwrap_or_default();
 
     // signal: AbortSignal | null | undefined;
@@ -1911,10 +1889,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         // closes them when it is collected, so it has to outlive the request too.
         fetch_context: match context {
             Some(context) => jsc::strong::Optional::create(context.wrapper(), global_this),
-            None => jsc::strong::Optional::empty(),
-        },
-        lookup: match lookup {
-            Some(callback) => jsc::strong::Optional::create(callback, global_this),
             None => jsc::strong::Optional::empty(),
         },
         on_stats: match on_stats {

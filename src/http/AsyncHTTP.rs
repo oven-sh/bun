@@ -195,7 +195,6 @@ fn make_client<'a>(
         compressed_request_body: Vec::new(),
         compressed_body_len: 0,
         pool: crate::PoolOptions::default(),
-        lookup: crate::LookupState::Off,
         stats: crate::ConnectionStats::default(),
     }
 }
@@ -259,8 +258,6 @@ pub struct Options<'a> {
     pub tls_props: Option<SSLConfigSharedPtr>,
     pub compress: Option<crate::compress_body::CompressOption>,
     pub pool: crate::PoolOptions,
-    /// The owner resolves the host of every connection this request opens.
-    pub lookup: bool,
     pub bypass_pool: bool,
     pub collect_stats: bool,
 }
@@ -497,9 +494,6 @@ impl<'a> AsyncHTTP<'a> {
         this.client.pool = options.pool;
         this.client.flags.bypass_pool = options.bypass_pool;
         this.client.flags.collect_stats = options.collect_stats;
-        if options.lookup {
-            this.client.lookup = crate::LookupState::Needed;
-        }
 
         // `client.proxy_authorization` stays `None` on the JS-thread original;
         // `on_start` derives it on the HTTP-thread clone so redirects can

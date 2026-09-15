@@ -121,6 +121,8 @@ pub(crate) struct BodyAbortListener {
     /// `Response` owns `Box<Self>`, so a ref-counted pointer here would cycle.
     response: bun_ptr::ParentRef<Response, bun_ptr::Mut>,
     global: GlobalRef,
+    /// The context of the script that fetched: the body's error is reported to it.
+    context: bun_jsc::ContextId,
 }
 
 impl BodyAbortListener {
@@ -131,8 +133,11 @@ impl BodyAbortListener {
         // box is dropped, so it is live here. Copy out up front: erroring a
         // still-streaming body can re-enter `Response::unref` via
         // `FetchTasklet::abandon_response_body` and destroy this box.
-        let (response, global) =
-            unsafe { ((*ctx.cast::<Self>()).response, (*ctx.cast::<Self>()).global) };
+        let (response, global, context) = unsafe {
+            let this = &*ctx.cast::<Self>();
+            (this.response, this.global, this.context)
+        };
+        let _context = global.bun_vm().enter_context(context);
         // SAFETY: `response` is live (see above).
         let _keepalive = unsafe { RefPtr::init_ref(response.as_mut_ptr()) };
         if !matches!(
@@ -497,6 +502,7 @@ impl Response {
         this: *mut Response,
         global: &JSGlobalObject,
         signal: &AbortSignal,
+        context: bun_jsc::ContextId,
     ) {
         let signal_ref = signal.ref_();
         signal.pending_activity_ref();
@@ -505,6 +511,7 @@ impl Response {
             // SAFETY: caller contract; `this` is live and owns the box.
             response: unsafe { bun_ptr::ParentRef::from_raw_mut(this) },
             global: GlobalRef::new(global),
+            context,
         });
         signal.add_listener(
             core::ptr::from_mut(&mut *listener).cast::<c_void>(),

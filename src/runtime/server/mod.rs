@@ -1138,6 +1138,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // SAFETY: `this` is the live server backref for this request.
         let server = unsafe { &*this };
         let _entered = server.vm().enter_event_loop_scope_without_checkpoint();
+        // The handler and the render of what it returns continue the script that made the server.
+        let _context = server.vm().enter_context(server.context.get());
         let on_request = server.config.on_request;
         debug_assert!(!on_request.is_empty());
 
@@ -1190,6 +1192,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // SAFETY: `server` is the live backref stored in `user_route`.
         let server_ref = unsafe { &*server };
         let _entered = server_ref.vm().enter_event_loop_scope_without_checkpoint();
+        // As in `on_request`.
+        let _context = server_ref.vm().enter_context(server_ref.context.get());
         let global = server_ref.global_this();
         let server_request_list =
             Self::js_route_list_get_cached(server_js).expect("routeList cached value missing");
@@ -1669,7 +1673,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     pub(crate) fn stop_listening(&mut self, abrupt: bool) {
         // httplog!("stopListening", .{});
 
-        self.abort_handle.leave();
+        // A graceful stop leaves connections open, and this handle is how their context's stop
+        // reaches them: it stays until they are gone (`deinit_if_we_can`).
+        if abrupt {
+            self.abort_handle.leave();
+        }
 
         if Self::HAS_H3 {
             if let Some(h3l) = self.h3_listener.take() {
@@ -1897,6 +1905,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             self.unref();
         }
         if self.is_drained() {
+            self.abort_handle.leave();
             // No handler is dispatched from here on (`js_value_for_dispatch`), so the wrapper —
             // the handlers' only GC root — may become collectible.
             self.js_value.downgrade();

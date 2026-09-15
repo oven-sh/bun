@@ -853,11 +853,20 @@ impl Listener {
     }
 
     fn do_stop(this: &Self, force_close: bool) {
+        let connections = this.handlers.active_connections.get();
+        // Accepted sockets have no handle of their own: this one is how their context's stop
+        // reaches them, so it stays until they are gone (`Handlers::mark_inactive`).
+        if force_close || connections == 0 {
+            this.abort_handle.leave();
+        }
         if matches!(this.listener.get(), ListenerType::None) {
+            // Stopped gracefully earlier; what is still connected goes now.
+            if force_close && connections != 0 {
+                this.group.with_mut(|g| g.close_all());
+            }
             return;
         }
         let listener = this.listener.replace(ListenerType::None);
-        this.abort_handle.leave();
 
         if matches!(listener, ListenerType::Uws(_)) {
             Self::unlink_unix_socket_path(this);
@@ -868,7 +877,7 @@ impl Listener {
         // closed server whose connections the caller unref'd lets the process
         // exit like Node does.
         this.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
-        if this.handlers.active_connections.get() == 0 {
+        if connections == 0 {
             this.this_value.with_mut(|r| r.downgrade());
             this.strong_data
                 .with_mut(|s| s.clear_without_deallocation());

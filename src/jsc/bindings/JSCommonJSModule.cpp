@@ -134,7 +134,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsModuleGraphRequireMainGetter, (JSC::JSGlobalObject * 
 static void putModuleGraphRequireMain(VM& vm, JSFunction* requireFunction, JSCommonJSModule* requirer)
 {
     if (requirer->moduleGraph())
-        requireFunction->putDirectCustomAccessor(vm, Identifier::fromString(vm, "main"_s), JSC::CustomGetterSetter::create(vm, jsModuleGraphRequireMainGetter, nullptr), JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly | 0);
+        requireFunction->putDirectCustomAccessor(vm, WebCore::builtinNames(vm).mainPublicName(), JSC::CustomGetterSetter::create(vm, jsModuleGraphRequireMainGetter, nullptr), JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly);
 }
 
 // The source a graph's module is compiled from: the same text, under a cache identity of its own.
@@ -263,8 +263,11 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     ASSERT(fnValue);
 
     // A graph's module: the wrapper closes over the graph's overlay instead of the global scope.
+    // Only a wrapper that closed over the global scope and has not been linked yet can be moved:
+    // one a custom `Module.wrapper` made inside another function reads that function's variables by
+    // their offsets in its scope, and one that already ran was compiled for the chain it ran in.
     JSModuleGraph* graph = moduleObject->moduleGraph();
-    if (auto* wrapper = graph ? dynamicDowncast<JSFunction>(fnValue) : nullptr; wrapper && !wrapper->isHostFunction())
+    if (auto* wrapper = graph ? dynamicDowncast<JSFunction>(fnValue) : nullptr; wrapper && !wrapper->isHostFunction() && wrapper->scope() == globalObject->globalScope() && !wrapper->jsExecutable()->eitherCodeBlock())
         fnValue = JSFunction::create(vm, globalObject, wrapper->jsExecutable(), graph->overlay());
 
     JSObject* fn = fnValue.getObject();
@@ -1685,6 +1688,11 @@ static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sou
                 JSValue keyValue = identifierToJSValue(vm, moduleKey);
                 // The graph's loader, which is evaluating this, keeps the graph alive.
                 RELEASE_ASSERT(!ofGraph || graph.get());
+                // Nothing evaluates in a disposed Bun.ModuleGraph: a module that had not run yet never does.
+                if (ofGraph && graph->disposed()) [[unlikely]] {
+                    throwException(globalObject, scope, Bun::createModuleGraphDisposedError(globalObject));
+                    return;
+                }
                 // The loader reaches this from its pipeline, which carries no async context:
                 // the module's code runs in its graph's (what it opens is the graph's).
                 ModuleGraphContextScope graphContext(globalObject, graph.get());

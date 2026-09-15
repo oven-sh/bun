@@ -670,8 +670,9 @@ impl ValkeyClient {
         self.read_buffer.clear_and_free();
         self.reply_scanner.reset();
 
-        // A manual close or a failure the client detected itself: no retry.
-        if self.flags.is_manually_closed || self.flags.failed {
+        // A manual close, a failure the client detected itself, or the script that made the client
+        // is gone (a disposed `Bun.ModuleGraph`'s): no retry, and what was queued is released.
+        if self.flags.is_manually_closed || self.flags.failed || self.parent().context_stopped() {
             debug!("skip reconnecting since the connection is manually closed or failed");
             self.fail(b"Connection closed", RedisError::ConnectionClosed)?;
             self.on_valkey_close()?;

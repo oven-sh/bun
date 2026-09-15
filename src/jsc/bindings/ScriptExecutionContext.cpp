@@ -248,6 +248,11 @@ void ScriptExecutionContext::stopActiveDOMObjects()
         activeDOMObject.stop();
         return ShouldContinue::Yes;
     });
+
+    if (isForModuleGraph()) {
+        if (auto* performance = uncheckedDowncast<Zig::GlobalObject>(jsGlobalObject())->existingPerformance())
+            performance->disconnectObserversOf(*this);
+    }
 }
 
 void ScriptExecutionContext::suspendActiveDOMObjectIfNeeded(ActiveDOMObject& activeDOMObject)

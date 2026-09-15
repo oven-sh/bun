@@ -100,10 +100,15 @@ impl ScriptExecutionContext {
         *self.id.get()
     }
 
+    pub(crate) fn root(id: ContextId) -> Self {
+        let context = Self::default();
+        context.id.set(id);
+        context
+    }
+
     /// The root context starts over under a new identity (`bun test --isolate`:
-    /// the next file). What the previous identity owned was stopped first.
+    /// the next file), once what the previous identity owned has been stopped.
     pub(crate) fn renew(&self, id: ContextId) {
-        debug_assert!(self.tail.get().is_null());
         self.id.set(id);
     }
 
@@ -325,6 +330,8 @@ pub struct AbortHandle {
     signal: JsCell<Option<AbortSignalRef>>,
     /// Its context stopped it, or had already stopped when it was armed.
     context_stopped: core::cell::Cell<bool>,
+    /// The context it was last armed in: kept after it leaves, for the owner's late completions.
+    armed_in: core::cell::Cell<Option<ContextId>>,
 }
 
 impl AbortHandle {
@@ -337,7 +344,14 @@ impl AbortHandle {
             on_abort: Self::owner_aborted::<O>,
             signal: JsCell::new(None),
             context_stopped: core::cell::Cell::new(false),
+            armed_in: core::cell::Cell::new(None),
         }
+    }
+
+    /// The context the owner was armed in, if it ever was: whose script its completions continue.
+    #[inline]
+    pub fn armed_in(&self) -> Option<ContextId> {
+        self.armed_in.get()
     }
 
     #[inline]
@@ -375,6 +389,7 @@ impl AbortHandle {
                 return;
             }
             context.push(this);
+            (*this).armed_in.set(Some(context.id()));
             if context.is_stopped() {
                 (*this).context_stopped.set(true);
                 // Script of a disposed graph is still opening things: they go on
@@ -391,7 +406,7 @@ impl AbortHandle {
     unsafe fn follow(this: *mut Self, signal: AbortSignalRef) {
         // SAFETY: fn contract.
         let handle = unsafe { &*this };
-        debug_assert!(handle.signal.get().is_none());
+        handle.unfollow();
         let raw = signal.get();
         handle.signal.set(Some(signal));
         // `AbortSignal` is an `opaque_ffi!` handle; the ref just stored keeps it live.

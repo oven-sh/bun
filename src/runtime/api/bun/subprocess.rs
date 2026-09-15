@@ -310,18 +310,28 @@ pub(crate) use assert_stdio_result;
 bun_jsc::impl_abort_handle_owner!(Subprocess<'static>, abort_handle, |this, cause| {
     // SAFETY: trait contract — `this` is live.
     let this = unsafe { &*this };
-    this.clear_abort_signal();
-    // A child outlives the VM that spawned it, as one the host spawned does.
-    if matches!(
-        cause,
-        bun_jsc::AbortCause::ContextStopped(bun_jsc::StopReason::VmTeardown)
-    ) {
-        return;
-    }
+    let signal = match cause {
+        // Its own signal: the child is asked the way its script chose. It stays in its
+        // context, which may still stop before the child is gone.
+        bun_jsc::AbortCause::Signal(_) => {
+            this.abort_handle.unfollow();
+            this.kill_signal
+        }
+        // A child outlives the VM that spawned it, as one the host spawned does.
+        bun_jsc::AbortCause::ContextStopped(bun_jsc::StopReason::VmTeardown) => {
+            this.clear_abort_signal();
+            return;
+        }
+        // Nobody is left to wait for a child that ignores being asked.
+        bun_jsc::AbortCause::ContextStopped(_) => {
+            this.clear_abort_signal();
+            SignalCode::SIGKILL
+        }
+    };
     if !this.has_exited() {
         this.update_flags(|f| f.insert(Flags::ABORT_SIGNAL_KILLED));
     }
-    let _ = this.try_kill(this.kill_signal);
+    let _ = this.try_kill(signal);
 });
 
 bun_spawn::link_impl_ProcessExit! {
@@ -1106,8 +1116,12 @@ impl Subprocess<'_> {
         // `&mut`-taking methods without tripping borrowck.
         let event_loop = (*jsc_vm).event_loop();
 
-        // The exit of a child whose `Bun.ModuleGraph` was disposed (it was killed then) is not reported.
-        if !is_sync && !self.abort_handle.context_stopped() {
+        // The exit is reported to the script that spawned the child.
+        let _context = self
+            .abort_handle
+            .armed_in()
+            .map(|context| (*jsc_vm).enter_context(context));
+        if !is_sync {
             if !this_jsvalue.is_empty() {
                 if let Some(promise) = js::exited_promise_take_cached(this_jsvalue, global_this) {
                     // SAFETY: event_loop points into the live VM and outlives this scope.

@@ -53,8 +53,8 @@ public:
     // given no onError go to its maker's.
     JSModuleGraph* maker() const { return m_maker.get(); }
     void setMaker(JSC::VM& vm, JSModuleGraph* maker) { m_maker.setMayBeNull(vm, this, maker); }
-    // Key of the first module import()ed: import.meta.main / require.main. Undefined before.
-    // The first module import()ed, unless that import failed.
+    // Key of the first module import()ed, unless that import failed: import.meta.main /
+    // require.main. Undefined before.
     JSC::JSValue mainPath() const
     {
         if (!m_mainPath || (m_mainImport && m_mainImport->status() == JSC::JSPromise::Status::Rejected))
@@ -127,7 +127,7 @@ JSModuleGraph* moduleGraphOfLoader(JSC::JSGlobalObject*, JSC::JSModuleLoader*);
 JSModuleGraph* moduleGraphOfRunningCode(JSC::JSGlobalObject*);
 // promiseRejectionTracker: the graph whose code is rejecting `promise` right now, or null.
 JSModuleGraph* moduleGraphRejecting(Zig::GlobalObject*, JSC::JSPromise*);
-// The innermost graph with a context of its own that the current async context is inside of.
+// The innermost graph that the current async context is inside of.
 JSModuleGraph* currentModuleGraph(Zig::GlobalObject*);
 
 // ── What a graph's require() and import() use ────────────────────────────────────────

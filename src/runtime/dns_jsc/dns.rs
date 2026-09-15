@@ -3720,6 +3720,8 @@ type PollsMap = ArrayHashMap<c_ares::ares_socket_t, *mut PollType>;
 pub struct Resolver {
     pub(crate) ref_count: bun_ptr::RefCount<Resolver>,
     pub(crate) channel: Cell<Option<*mut c_ares::Channel>>, // FFI
+    /// The context whose script made the resolver: its channel is that context's, whoever is first to query.
+    made_in: bun_jsc::ContextId,
     pub(crate) vm: bun_ptr::BackRef<VirtualMachine>, // JSC_BORROW (BACKREF — VirtualMachine outlives the resolver; read-only after init)
     pub(crate) polls: JsCell<PollsMap>,
     pub(crate) options: Cell<c_ares::ChannelOptions>,
@@ -4042,6 +4044,7 @@ impl Resolver {
         Self {
             ref_count: bun_ptr::RefCount::init(),
             channel: Cell::new(None),
+            made_in: vm.current_context_or_root().id(),
             vm: bun_ptr::BackRef::new(vm),
             polls: JsCell::new(PollsMap::new()),
             options: Cell::new(c_ares::ChannelOptions::default()),
@@ -5361,7 +5364,7 @@ impl c_ares::ChannelContainer for Resolver {
         let context = if is_global {
             self.vm.root_context()
         } else {
-            self.vm.current_context()
+            self.vm.context_of(self.made_in)
         };
         // SAFETY: a resolver with a channel is at its final address (the
         // channel holds it); it leaves its context in `destroy_channel`.

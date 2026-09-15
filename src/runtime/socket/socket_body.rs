@@ -4222,9 +4222,11 @@ impl bun_event_loop::Taskable for DuplexUpgradeContext {
         // SAFETY: fn contract; nothing else frees the context and no borrow of it is live.
         unsafe { Self::deinit(this) };
     }
-    /// A socket's own upgrade hop; its handlers carry their context.
-    unsafe fn context(_: *const Self) -> bun_event_loop::TaskContext {
-        bun_event_loop::TaskContext::Always
+    /// The hop continues the script that upgraded the duplex: once that context has stopped, a
+    /// `StartTLS` that has not run yet must not start (`release_unrun` closes what there is).
+    unsafe fn context(this: *const Self) -> bun_event_loop::TaskContext {
+        // SAFETY: fn contract — the queued context.
+        bun_event_loop::TaskContext::Of(unsafe { (*this).context })
     }
 }
 
@@ -4258,6 +4260,8 @@ pub(crate) struct DuplexUpgradeContext {
     /// A TLS socket over a JS duplex is in no uSockets group, so the context
     /// that upgraded it closes it through this owner when it stops.
     abort_handle: bun_jsc::AbortHandle,
+    /// That context.
+    context: bun_jsc::ContextId,
 }
 
 // `close` may re-enter (`on_close`) and schedule the free of `this`.
@@ -4748,6 +4752,7 @@ pub fn js_upgrade_duplex_to_tls(
         ptr::addr_of_mut!((*duplex_context).server_verify).write(server_verify);
         ptr::addr_of_mut!((*duplex_context).abort_handle)
             .write(bun_jsc::AbortHandle::for_owner::<DuplexUpgradeContext>());
+        ptr::addr_of_mut!((*duplex_context).context).write(global.bun_vm().current_context().id());
         ptr::addr_of_mut!((*duplex_context).mode).write(if is_server {
             SocketMode::DuplexServer
         } else {

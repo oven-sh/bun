@@ -262,12 +262,6 @@ static JSModuleGraph* moduleGraphOfCurrentContext(Zig::GlobalObject* globalObjec
     return context->isForModuleGraph() ? dynamicDowncast<JSModuleGraph>(context->moduleGraph()) : nullptr;
 }
 
-// The code rejecting `promise` is on the stack now — or nothing is (the runtime rejects an async
-// function's promise right after unwinding, and forwards a rejection to the promises derived
-// from it from bare jobs), and the exception the VM last saw thrown, if it is this rejection's
-// reason, carries the throw site: an error belongs to the graph whose code threw it, however
-// far the promises carried it before someone left it unhandled. That exception is good for the
-// turn it was thrown in (GlobalObject::drainMicrotasks clears it).
 // The graph whose onError is given the errors of `graph`'s code: a graph that was given no onError
 // is part of the program of the graph whose code made it. Null: the host's handlers.
 static JSModuleGraph* graphGivenErrorsOf(JSModuleGraph* graph)
@@ -277,6 +271,12 @@ static JSModuleGraph* graphGivenErrorsOf(JSModuleGraph* graph)
     return graph;
 }
 
+// The code rejecting `promise` is on the stack now — or nothing is (the runtime rejects an async
+// function's promise right after unwinding, and forwards a rejection to the promises derived
+// from it from bare jobs), and the exception the VM last saw thrown, if it is this rejection's
+// reason, carries the throw site: an error belongs to the graph whose code threw it, however
+// far the promises carried it before someone left it unhandled. That exception is good for the
+// turn it was thrown in (GlobalObject::drainMicrotasks clears it).
 JSModuleGraph* moduleGraphRejecting(Zig::GlobalObject* globalObject, JSPromise* promise)
 {
     if (!globalObject->hasModuleGraphs())
@@ -297,7 +297,7 @@ JSModuleGraph* moduleGraphRejecting(Zig::GlobalObject* globalObject, JSPromise* 
 static bool deliverToOnError(Zig::GlobalObject* globalObject, JSModuleGraph* graph, JSValue error, ASCIILiteral kind)
 {
     graph = graphGivenErrorsOf(graph);
-    if (!graph || !graph->onError() || graph->inOnError())
+    if (!graph || graph->inOnError())
         return false;
     VM& vm = globalObject->vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -378,7 +378,7 @@ JSModuleGraph* currentModuleGraph(Zig::GlobalObject* globalObject)
     return moduleGraphOfFrame(globalObject->vm(), globalObject->m_asyncContextData.get()->getInternalField(0));
 }
 
-// VirtualMachine::current_graph_context (only asked while some graph has a context).
+// VirtualMachine::current_graph_context (only asked once a graph has been made).
 extern "C" void* Bun__currentGraphContext(JSGlobalObject* globalObject)
 {
     return defaultGlobalObject(globalObject)->currentScriptExecutionContext()->bunContext();
@@ -508,13 +508,16 @@ ModuleGraphContextScope::~ModuleGraphContextScope()
 // VirtualMachine::enter_context: native code about to run a completion of something a graph's script
 // started. Returns the async context to restore.
 // `gone`: the graph was collected (its context is about to stop). Empty: nothing to do.
-extern "C" EncodedJSValue Bun__ModuleGraph__enterContext(WebCore::ScriptExecutionContext* context, bool* gone)
+// `entered` is the realm whose async context was changed, which is where it is restored: a graph
+// outlives the realm `bun test --isolate` retired, and the VM's global is the next file's by then.
+extern "C" EncodedJSValue Bun__ModuleGraph__enterContext(WebCore::ScriptExecutionContext* context, bool* gone, JSGlobalObject** entered)
 {
     JSObject* graph = context->moduleGraph();
     *gone = !graph;
     if (!graph)
         return JSValue::encode(JSValue());
-    return JSValue::encode(enterModuleGraphContext(uncheckedDowncast<Zig::GlobalObject>(context->jsGlobalObject()), graph));
+    *entered = context->jsGlobalObject();
+    return JSValue::encode(enterModuleGraphContext(uncheckedDowncast<Zig::GlobalObject>(*entered), graph));
 }
 
 extern "C" EncodedJSValue Bun__ModuleGraph__enterRootContext(JSGlobalObject* lexicalGlobalObject)

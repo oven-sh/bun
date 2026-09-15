@@ -41,6 +41,11 @@ PerformanceObserver::PerformanceObserver(ScriptExecutionContext& scriptExecution
     m_performance = uncheckedDowncast<Zig::GlobalObject>(scriptExecutionContext.globalObject())->performance();
 }
 
+ScriptExecutionContext* PerformanceObserver::scriptExecutionContext() const
+{
+    return m_callback->scriptExecutionContext();
+}
+
 void PerformanceObserver::disassociate()
 {
     m_performance = nullptr;
@@ -124,12 +129,9 @@ void PerformanceObserver::deliver()
     if (m_entriesToDeliver.isEmpty())
         return;
 
-    // Its maker's context is gone or stopped (a Bun.ModuleGraph's): it observes nothing more.
     auto* context = m_callback->scriptExecutionContext();
-    if (!context || context->isStopped()) {
-        disconnect();
+    if (!context)
         return;
-    }
 
     Vector<RefPtr<PerformanceEntry>> entries = std::exchange(m_entriesToDeliver, {});
     auto list = PerformanceObserverEntryList::create(WTF::move(entries));

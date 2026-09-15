@@ -459,7 +459,11 @@ unsafe extern "C" {
     /// ModuleGraph.cpp: make the graph of this `WebCore::ScriptExecutionContext` current;
     /// returns the async context to restore.
     /// (Empty: there was nothing to do.)
-    fn Bun__ModuleGraph__enterContext(dom_context: *mut c_void, gone: &mut bool) -> JSValue;
+    fn Bun__ModuleGraph__enterContext(
+        dom_context: *mut c_void,
+        gone: &mut bool,
+        entered: &mut *const JSGlobalObject,
+    ) -> JSValue;
     safe fn Bun__ModuleGraph__enterRootContext(global: &JSGlobalObject) -> JSValue;
     safe fn Bun__ModuleGraph__leaveContext(global: &JSGlobalObject, previous: JSValue);
     /// ModuleGraph.cpp: deliver an uncaught exception thrown by a `Bun.ModuleGraph`'s
@@ -1212,6 +1216,14 @@ impl VirtualMachine {
         }
     }
 
+    /// No graph context closes `fd` when it stops: its script closes the number itself.
+    pub fn disown_fd(&self, fd: bun_sys::Fd) {
+        for context in self.graph_contexts.values() {
+            // SAFETY: registered ⇒ not freed.
+            unsafe { context.as_ref() }.disown_fd(fd);
+        }
+    }
+
     /// An off-thread job is about to use `fd`. If a graph context other than the running script's
     /// owns it (the host writing through a `FileHandle` a graph made), the job counts for the
     /// owner until the guard is dropped, on this thread: the owner's `dispose()` must not close
@@ -1259,6 +1271,14 @@ impl VirtualMachine {
         self.graph_context(id)
     }
 
+    /// The context `id` names: the realm's, a `Bun.ModuleGraph`'s, or the dead one once that graph's is freed.
+    pub fn context_of(&self, id: crate::ContextId) -> &crate::ScriptExecutionContext {
+        if id == self.root_context.id() || id == self.vm_context.id() {
+            return &self.root_context;
+        }
+        self.graph_context(id).unwrap_or(&self.dead_context)
+    }
+
     /// The `Bun.ModuleGraph` context `id` names, until it is freed.
     pub fn graph_context(&self, id: crate::ContextId) -> Option<&crate::ScriptExecutionContext> {
         if self.graph_contexts.count() == 0
@@ -1298,6 +1318,7 @@ impl VirtualMachine {
         let mut scope = ContextScope {
             vm: self,
             previous: JSValue::ZERO,
+            entered: self.global.cast_const(),
             previous_scope: self.innermost_scope.replace(Some(context)),
             previous_scope_gone: self.innermost_scope_gone.replace(false),
             gone: false,
@@ -1316,12 +1337,17 @@ impl VirtualMachine {
                 return None;
             }
             let mut gone = false;
+            let mut realm = self.global.cast_const();
             // SAFETY: non-null ⇒ the `WebCore::ScriptExecutionContext` is alive.
-            let previous = unsafe { Bun__ModuleGraph__enterContext(dom_context, &mut gone) };
-            (!gone).then_some(previous)
+            let previous =
+                unsafe { Bun__ModuleGraph__enterContext(dom_context, &mut gone, &mut realm) };
+            (!gone).then_some((previous, realm))
         });
         match entered {
-            Some(previous) => scope.previous = previous,
+            Some((previous, realm)) => {
+                scope.previous = previous;
+                scope.entered = realm;
+            }
             None => {
                 scope.gone = true;
                 self.innermost_scope_gone.set(true);
@@ -1353,9 +1379,27 @@ impl VirtualMachine {
 
     /// The groups a client socket the running script opens joins.
     pub fn client_socket_groups(&mut self) -> &mut crate::rare_data::SocketGroups {
-        let id = self.current_context().id();
-        self.client_socket_groups_of(id)
-            .expect("the current context is registered")
+        let context = core::ptr::from_ref(self.current_context());
+        // SAFETY: the realm's, the dead one or a registered graph's: none is freed under a call
+        // made from its own script (JS thread).
+        self.socket_groups_of(unsafe { &*context })
+    }
+
+    fn socket_groups_of(
+        &mut self,
+        context: &crate::ScriptExecutionContext,
+    ) -> &mut crate::rare_data::SocketGroups {
+        let id = context.id();
+        if id == self.root_context.id() || id == self.vm_context.id() {
+            return &mut self.rare_data().socket_groups;
+        }
+        // Script of a stopped context (the dead one is stopped from the start) is still opening
+        // things: what joins is closed on the next turn of the loop.
+        if context.is_stopped() {
+            self.stop_graph_context_again(id);
+        }
+        // SAFETY: the context boxes its groups and outlives this call; JS thread.
+        unsafe { &mut *context.socket_groups() }
     }
 
     /// The groups a client socket of context `id` joins (a client that redials
@@ -1365,23 +1409,15 @@ impl VirtualMachine {
         &mut self,
         id: crate::ContextId,
     ) -> Option<&mut crate::rare_data::SocketGroups> {
-        if id == self.root_context.id() || id == self.vm_context.id() {
-            return Some(&mut self.rare_data().socket_groups);
-        }
-        if id == self.dead_context.id() {
-            // Stopped from the start: what joins is closed on the next turn of the loop.
-            self.stop_graph_context_again(id);
-            // SAFETY: the context boxes its groups; it lives as long as the VM; JS thread.
-            return Some(unsafe { &mut *self.dead_context.socket_groups() });
-        }
-        let context = core::ptr::from_ref(self.graph_context(id)?);
-        // SAFETY: registered ⇒ not freed; the context boxes its groups; JS thread.
-        let context = unsafe { &*context };
-        if context.is_stopped() {
-            self.stop_graph_context_again(id);
-        }
-        // SAFETY: as above.
-        Some(unsafe { &mut *context.socket_groups() })
+        let context = if id == self.root_context.id() || id == self.vm_context.id() {
+            core::ptr::from_ref(&self.root_context)
+        } else if id == self.dead_context.id() {
+            core::ptr::from_ref(&self.dead_context)
+        } else {
+            core::ptr::from_ref(self.graph_context(id)?)
+        };
+        // SAFETY: the VM's own, or registered ⇒ not freed; JS thread.
+        Some(self.socket_groups_of(unsafe { &*context }))
     }
 
     /// Script of a disposed graph is still opening things in the graph's
@@ -2673,12 +2709,6 @@ impl VirtualMachine {
         }
 
         // ---- E. free owners --------------------------------------------------
-        debug_assert!(
-            // SAFETY: fn contract (statement-scoped exclusive access).
-            unsafe { (*this).stop_context_handles(crate::StopReason::VmTeardown) }
-                == SweepResult::Idle,
-            "a handle was armed after the last stop-phase sweep"
-        );
         // SAFETY: fn contract; last use of `this`.
         unsafe { (*this).destroy() };
     }
@@ -3293,16 +3323,17 @@ impl VirtualMachine {
             addr_of_mut!((*vm).macros).write(Default::default());
             addr_of_mut!((*vm).macro_entry_points).write(Default::default());
             addr_of_mut!((*vm).auto_killer).write(Default::default());
-            addr_of_mut!((*vm).root_context).write(Default::default());
+            addr_of_mut!((*vm).context_ids).write(Default::default());
+            addr_of_mut!((*vm).root_context).write(crate::ScriptExecutionContext::root(
+                (*vm).context_ids.next(),
+            ));
             addr_of_mut!((*vm).vm_context).write(Default::default());
             #[cfg(debug_assertions)]
             addr_of_mut!((*vm).context_scopes).write(Cell::new(0));
-            addr_of_mut!((*vm).context_ids).write(Default::default());
             addr_of_mut!((*vm).graph_contexts).write(Default::default());
             addr_of_mut!((*vm).innermost_scope).write(Cell::new(None));
             addr_of_mut!((*vm).innermost_scope_gone).write(Cell::new(false));
             addr_of_mut!((*vm).graph_jobs).write(crate::JsCell::new(Default::default()));
-            (*vm).root_context.renew((*vm).context_ids.next());
             addr_of_mut!((*vm).dead_context).write(crate::ScriptExecutionContext::dead(
                 (*vm).context_ids.next(),
             ));
@@ -7736,6 +7767,8 @@ pub struct ContextScope<'a> {
     /// The async context to restore; empty when entering changed nothing. (On the stack: kept
     /// alive by the conservative scan.)
     previous: JSValue,
+    /// The realm `previous` is restored in: the one that was entered. (On the stack, as `previous`.)
+    entered: *const JSGlobalObject,
     previous_scope: Option<crate::ContextId>,
     previous_scope_gone: bool,
     gone: bool,
@@ -7751,7 +7784,8 @@ impl Drop for ContextScope<'_> {
             self.vm.gone_scopes.set(self.vm.gone_scopes.get() - 1);
         }
         if !self.previous.is_empty() {
-            Bun__ModuleGraph__leaveContext(self.vm.global(), self.previous);
+            // SAFETY: the realm entered above; it is reachable from this frame until here.
+            Bun__ModuleGraph__leaveContext(unsafe { &*self.entered }, self.previous);
         }
     }
 }

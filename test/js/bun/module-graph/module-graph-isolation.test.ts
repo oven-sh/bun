@@ -134,7 +134,7 @@ const dir = String(
         for (const handle of await opensForWriting(dir, count)) handle.write(data, 0, data.length, 0).catch(() => {});
       };
       // A module loaded through a graph of its own making.
-      export const loadsThroughAPlainGraph = specifier => new Bun.ModuleGraph().import(specifier);
+      export const loadsThroughAGraphOfItsOwn = specifier => new Bun.ModuleGraph().import(specifier);
       export const makesAGraph = options => new Bun.ModuleGraph(options);
       // (hostMakesAGraph: a function of the host's, passed in globals.)
       export const hasTheHostMakeAGraph = () => hostMakesAGraph();
@@ -317,11 +317,11 @@ const dir = String(
       globalThis.evaluatedIn = Bun.ModuleGraph.current === undefined ? "the host's context" : "a graph's context";
       setInterval(() => globalThis.ticks++, 1);
     `,
-    "plain-graph-made-by-a-graph.mjs": `
+    "graph-made-by-a-graph.mjs": `
       globalThis.ticks = 0;
       const tenant = new Bun.ModuleGraph();
       const app = await tenant.import(import.meta.dir + "/left-behind-tenant.mjs");
-      await tenant.run(() => app.loadsThroughAPlainGraph(import.meta.dir + "/ticks-from-its-top-level.mjs"));
+      await tenant.run(() => app.loadsThroughAGraphOfItsOwn(import.meta.dir + "/ticks-from-its-top-level.mjs"));
       while (globalThis.ticks < 3) await new Promise(resolve => setImmediate(resolve));
       tenant.dispose();
       const ticks = globalThis.ticks;
@@ -330,7 +330,7 @@ const dir = String(
       console.log(JSON.stringify({ evaluatedIn: globalThis.evaluatedIn, ticksAfterDispose: globalThis.ticks - ticks }));
       // (Exits by itself: the interval does not keep the process running either.)
     `,
-    "plain-graph-handed-to-the-host.mjs": `
+    "graph-handed-to-the-host.mjs": `
       const parked = Promise.withResolvers();
       const tenant = new Bun.ModuleGraph();
       const app = await tenant.import(import.meta.dir + "/left-behind-tenant.mjs");
@@ -365,6 +365,225 @@ const dir = String(
       while (hostSaw.length === 0 && calls <= 50) await new Promise(resolve => setImmediate(resolve));
       for (let i = 0; i < 8; i++) await new Promise(resolve => setImmediate(resolve));
       console.log(JSON.stringify({ callsOfTheTenantsOnError: calls, hostSaw }));
+      process.exit(0);
+    `,
+    "imports-a-commonjs-module.mjs": `import ran from "./commonjs-that-tells.cjs"; export default ran;`,
+    "commonjs-that-tells.cjs": `tell("the CommonJS body ran"); module.exports = true;`,
+    "disposed-before-its-commonjs-ran.mjs": `
+      // With a plugin registered the transpiler answers in the same turn, so the import is past
+      // loading (and waiting to evaluate) when dispose() is called right after it.
+      Bun.plugin({ name: "matches-nothing", setup(build) { build.onLoad({ filter: /\\.never$/ }, () => ({ contents: "", loader: "js" })); } });
+      const told = [];
+      const graph = new Bun.ModuleGraph({ globals: { tell: what => told.push(what) } });
+      const imported = graph.import(import.meta.dir + "/imports-a-commonjs-module.mjs").then(() => "fulfilled", error => error.code);
+      graph.dispose();
+      console.log(JSON.stringify({ imported: await imported, told }));
+    `,
+    "stops-gracefully.mjs": `
+      import fs from "node:fs";
+      export const counts = { requests: 0, accepted: 0 };
+      // Neither ever answers or closes on its own.
+      export const serve = () => Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => (counts.requests++, new Promise(() => {})) });
+      export const listen = () => Bun.listen({ port: 0, hostname: "127.0.0.1", socket: { open() { counts.accepted++; }, data() {} } });
+      // The documented use of autoClose: false: the script closes the descriptor by number.
+      export const readThenCloseByNumber = path => new Promise(resolve => {
+        const stream = fs.createReadStream(path, { autoClose: false });
+        stream.on("data", () => {}).on("end", () => { const fd = stream.fd; fs.closeSync(fd); resolve(fd); });
+      });
+    `,
+    "isolated/first.test.js": `
+      import { test } from "bun:test";
+      test("a graph whose fetch is still receiving when this file ends", async () => {
+        const graph = new Bun.ModuleGraph();
+        const app = await graph.import(import.meta.dir + "/../fetches-bodies.mjs");
+        await graph.run(() => app.fetchHeaders(process.env.NEVER_ENDING_URL));
+      });
+    `,
+    "isolated/second.test.js": `
+      import { test } from "bun:test";
+      import { heapStats } from "bun:jsc";
+      test("the realm of the file before is collected", async () => {
+        let realms;
+        for (let i = 0; i < 100 && realms !== 1; i++) {
+          Bun.gc(true);
+          await new Promise(resolve => setImmediate(resolve));
+          realms = heapStats().objectTypeCounts.GlobalObject;
+        }
+        console.log("realms: " + realms);
+      });
+    `,
+    "observes-and-connects.mjs": `
+      import http2 from "node:http2";
+      export const observe = () => new PerformanceObserver(() => {}).observe({ entryTypes: ["mark"] });
+      export const connect = port => new Promise(resolve => {
+        const session = http2.connect("http://127.0.0.1:" + port);
+        session.on("error", () => {});
+        session.request({ ":path": "/" }).on("response", resolve).on("error", () => {}).end();
+      });
+    `,
+    "dropped-after-observing-and-connecting.mjs": `
+      import http2 from "node:http2";
+      import { heapStats } from "bun:jsc";
+      const until = async condition => { while (!condition()) await new Promise(resolve => setImmediate(resolve)); };
+      const count = name => (Bun.gc(true), heapStats().objectTypeCounts[name] ?? 0);
+      // Answers the headers and leaves every stream open.
+      const server = http2.createServer().on("stream", stream => stream.respond({ ":status": 200 }));
+      await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+      const use = async () => {
+        const graph = new Bun.ModuleGraph();
+        const app = await graph.import(import.meta.dir + "/observes-and-connects.mjs");
+        graph.run(() => app.observe());
+        await graph.run(() => app.connect(server.address().port));
+        graph.dispose();
+      };
+      // (One first, so the classes' own cells are there before counting.)
+      await use();
+      let none;
+      await until(() => { const before = none; return (none = count("ModuleGraph") + count("H2FrameParser")) === before; });
+      for (let i = 0; i < 10; i++) await use();
+      // Nothing of the host's queues a performance entry, and nothing closes the sessions.
+      await until(() => count("ModuleGraph") + count("H2FrameParser") === none);
+      console.log("collected");
+      process.exit(0);
+    `,
+    "leaves-things-half-done.mjs": `
+      import { Duplex } from "node:stream";
+      import tls from "node:tls";
+      export const heard = [];
+      // A write that can never drain: nobody reads the other end.
+      export const writeAndEnd = (path, data) => { const writer = Bun.file(path).writer(); writer.write(data); writer.end(); };
+      // A child that ignores being asked to stop.
+      export const spawnStubborn = signal => {
+        const child = Bun.spawn({ cmd: ["sh", "-c", "trap '' TERM; sleep 30 & wait"], signal, stdio: ["ignore", "ignore", "ignore"] });
+        child.exited.then(() => heard.push("exited"), () => heard.push("exited"));
+        return child.pid;
+      };
+      // TLS over a stream of the script's own: every byte TLS wants sent is a call to write().
+      export const writes = [];
+      export const tlsOverDuplex = () => {
+        const socket = new Duplex({ read() {}, write(chunk, encoding, callback) { writes.push(chunk.length); callback(); } });
+        tls.connect({ socket, rejectUnauthorized: false }).on("error", () => heard.push("error"));
+      };
+    `,
+    "disposed-with-things-half-done.mjs": `
+      import fs from "node:fs";
+      import { heapStats } from "bun:jsc";
+      const until = async condition => { while (!condition()) await new Promise(resolve => setImmediate(resolve)); };
+      const alive = pid => { try { process.kill(pid, 0); return true; } catch { return false; } };
+      const out = {};
+      // File sinks with a write parked on a pipe nobody reads.
+      const fifo = import.meta.dir + "/fifo-" + process.pid;
+      Bun.spawnSync({ cmd: ["mkfifo", fifo] });
+      const readEnd = fs.openSync(fifo, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+      // (The class's own cells count as file sinks too: what is there once one of the host's has come and gone.)
+      const fileSinks = () => (Bun.gc(true), heapStats().objectTypeCounts.FileSink ?? 0);
+      await Bun.file(import.meta.dir + "/scratch-" + process.pid).writer().end();
+      let none = fileSinks();
+      await until(() => { const before = none; return (none = fileSinks()) === before; });
+      for (let i = 0; i < 10; i++) {
+        const graph = new Bun.ModuleGraph();
+        const app = await graph.import(import.meta.dir + "/leaves-things-half-done.mjs");
+        graph.run(() => app.writeAndEnd(fifo, Buffer.alloc(1 << 20, "x")));
+        graph.dispose();
+      }
+      await until(() => fileSinks() === none);
+      out.fileSinks = fileSinks() - none;
+      fs.closeSync(readEnd);
+      fs.rmSync(fifo);
+      fs.rmSync(import.meta.dir + "/scratch-" + process.pid);
+      // A child that ignores SIGTERM, whose own AbortSignal fired before the graph went.
+      {
+        const graph = new Bun.ModuleGraph();
+        const app = await graph.import(import.meta.dir + "/leaves-things-half-done.mjs");
+        const controller = new AbortController();
+        const pid = graph.run(() => app.spawnStubborn(controller.signal));
+        controller.abort();
+        graph.dispose();
+        await until(() => !alive(pid));
+        out.childHeard = app.heard;
+      }
+      // TLS over the script's own stream, disposed before the handshake was started.
+      {
+        const graph = new Bun.ModuleGraph();
+        const app = await graph.import(import.meta.dir + "/leaves-things-half-done.mjs");
+        graph.run(() => app.tlsOverDuplex());
+        graph.dispose();
+        for (let turn = 0; turn < 10; turn++) await new Promise(resolve => setImmediate(resolve));
+        out.tls = { writes: app.writes, heard: app.heard };
+      }
+      console.log(JSON.stringify(out));
+      process.exit(0);
+    `,
+    "wraps-commonjs-its-own-way.cjs": `
+      const Module = require("node:module");
+      // A wrapper that is not at the top level: the module function closes over another function's variable.
+      Module.wrapper = ["(function () { var outer = 'of the wrapper'; return function (exports, require, module, __filename, __dirname) {", "\\n}; })()"];
+      require.extensions[".wrapped"] = (module, filename) => module._compile("module.exports = () => [outer, typeof tag];", filename);
+      module.exports = require("./payload.wrapped");
+    `,
+    "payload.wrapped": "",
+    "custom-commonjs-wrapper.mjs": `
+      const graph = new Bun.ModuleGraph({ globals: { tag: "of the graph" } });
+      const read = (await graph.import(import.meta.dir + "/wraps-commonjs-its-own-way.cjs")).default;
+      console.log(JSON.stringify(read()));
+      process.exit(0);
+    `,
+    "streams-over-file-handles.mjs": `
+      import fs from "node:fs";
+      export const open = async (readFrom, writeTo) => {
+        const [reading, writing] = [await fs.promises.open(readFrom, "r"), await fs.promises.open(writeTo, "w")];
+        return { reader: reading.createReadStream(), writer: writing.createWriteStream() };
+      };
+    `,
+    "host-holds-streams-over-file-handles.mjs": `
+      import fs from "node:fs";
+      const [data, scratch, hosts] = ["/data.txt", "/scratch-" + process.pid, "/hosts-" + process.pid].map(name => import.meta.dir + name);
+      fs.writeFileSync(hosts, "the host\x27s");
+      const graph = new Bun.ModuleGraph();
+      const app = await graph.import(import.meta.dir + "/streams-over-file-handles.mjs");
+      const { reader, writer } = await graph.run(() => app.open(data, scratch));
+      const theirs = [reader.fd, writer.fd];
+      graph.dispose();
+      await new Promise(resolve => setImmediate(resolve));
+      // The host opens its own file until it has been handed both numbers.
+      const mine = [];
+      for (let i = 0; i < 64 && !theirs.every(fd => mine.includes(fd)); i++) mine.push(fs.openSync(hosts, "r+"));
+      const read = new Promise(resolve => reader.on("data", chunk => resolve("read " + chunk)).on("error", error => resolve(error.code)));
+      const wrote = new Promise(resolve => writer.on("error", error => resolve(error.code)).write("the graph\x27s", error => resolve(error ? error.code : "wrote")));
+      console.log(JSON.stringify({ sameNumbers: theirs.every(fd => mine.includes(fd)), read: await read, wrote: await wrote, hosts: fs.readFileSync(hosts, "utf8") }));
+      fs.rmSync(hosts); fs.rmSync(scratch);
+      process.exit(0);
+    `,
+    "disposed-after-a-graceful-stop.mjs": `
+      const until = async condition => { while (!condition()) await new Promise(resolve => setImmediate(resolve)); };
+      const graph = new Bun.ModuleGraph();
+      const app = await graph.import(import.meta.dir + "/stops-gracefully.mjs");
+      const server = graph.run(() => app.serve());
+      const request = fetch(server.url).then(() => "answered", error => error.code);
+      const listener = graph.run(() => app.listen());
+      const closed = Promise.withResolvers();
+      await Bun.connect({ hostname: "127.0.0.1", port: listener.port, socket: { open() {}, data() {}, close() { closed.resolve("closed"); } } });
+      await until(() => app.counts.requests === 1 && app.counts.accepted === 1);
+      // Graceful: both stop listening and leave what is connected alone.
+      graph.run(() => (server.stop(), listener.stop()));
+      graph.dispose();
+      console.log(JSON.stringify({ request: await request, client: await closed.promise }));
+      process.exit(0);
+    `,
+    "closes-a-descriptor-by-number.mjs": `
+      import fs from "node:fs";
+      const data = import.meta.dir + "/data.txt";
+      const graph = new Bun.ModuleGraph();
+      const app = await graph.import(import.meta.dir + "/stops-gracefully.mjs");
+      const theirs = await graph.run(() => app.readThenCloseByNumber(data));
+      // The host opens files until it is handed the number the graph's script closed.
+      let mine;
+      for (let i = 0; i < 64 && mine !== theirs; i++) mine = fs.openSync(data, "r");
+      graph.dispose();
+      await new Promise(resolve => setImmediate(resolve));
+      let read;
+      try { read = fs.readSync(mine, Buffer.alloc(4), 0, 4, 0); } catch (error) { read = error.code; }
+      console.log(JSON.stringify({ sameNumber: mine === theirs, read }));
       process.exit(0);
     `,
     "fetches-bodies.mjs": `
@@ -2787,14 +3006,74 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
     });
   });
   test("what a module opens at its top level is the graph's when the graph loaded it through a graph of its own making", async () => {
-    expect(await runs("plain-graph-made-by-a-graph.mjs")).toEqual({
+    expect(await runs("graph-made-by-a-graph.mjs")).toEqual({
       stdout: `{"evaluatedIn":"a graph's context","ticksAfterDispose":0}`,
       exitCode: 0,
     });
   });
   test("a graph it made is disposed with it: the host's import() through one it was handed rejects from then on", async () => {
-    expect(await runs("plain-graph-handed-to-the-host.mjs")).toEqual({
+    expect(await runs("graph-handed-to-the-host.mjs")).toEqual({
       stdout: `{"inFlight":"pending","afterwards":"rejected: ERR_INVALID_STATE"}`,
+      exitCode: 0,
+    });
+  });
+  test("a server and a listener its script had stopped gracefully: what they left connected is closed", async () => {
+    expect(await runs("disposed-after-a-graceful-stop.mjs")).toEqual({
+      stdout: `{"request":"ECONNRESET","client":"closed"}`,
+      exitCode: 0,
+    });
+  });
+  test("a performance observer and an HTTP/2 session it left behind do not keep it", async () => {
+    expect(await runs("dropped-after-observing-and-connecting.mjs")).toEqual({ stdout: "collected", exitCode: 0 });
+  });
+  test.skipIf(isWindows)("file sinks, a child and a TLS handshake it left half done are dropped with it", async () => {
+    expect(await runs("disposed-with-things-half-done.mjs")).toEqual({
+      stdout: `{"fileSinks":0,"childHeard":[],"tls":{"writes":[],"heard":[]}}`,
+      exitCode: 0,
+    });
+  });
+  test("bun test --isolate: a graph's fetch that completes after its file was retired does not keep that file's realm", async () => {
+    using neverEnding = Bun.serve({
+      port: 0,
+      fetch: () =>
+        new Response(
+          new ReadableStream({ pull: controller => (controller.enqueue(new Uint8Array(1024)), new Promise(() => {})) }),
+        ),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--isolate", "first.test.js", "second.test.js"],
+      cwd: join(dir, "isolated"),
+      env: { ...bunEnv, NEVER_ENDING_URL: neverEnding.url.href },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ realms: (stdout + stderr).match(/realms: \d+/)?.[0], exitCode }).toEqual({
+      realms: "realms: 1",
+      exitCode: 0,
+    });
+  });
+  test("a CommonJS wrapper made inside another function keeps that function's scope", async () => {
+    expect(await runs("custom-commonjs-wrapper.mjs")).toEqual({
+      stdout: `["of the wrapper","undefined"]`,
+      exitCode: 0,
+    });
+  });
+  test("streams over its FileHandles that the host still holds do not touch whoever has the numbers now", async () => {
+    expect(await runs("host-holds-streams-over-file-handles.mjs")).toEqual({
+      stdout: `{"sameNumbers":true,"read":"EBADF","wrote":"EBADF","hosts":"the host's"}`,
+      exitCode: 0,
+    });
+  });
+  test("a descriptor its script closed by number is not closed again under whoever has the number now", async () => {
+    expect(await runs("closes-a-descriptor-by-number.mjs")).toEqual({
+      stdout: `{"sameNumber":true,"read":4}`,
+      exitCode: 0,
+    });
+  });
+  test("a CommonJS module that had not run yet when dispose() was called never does", async () => {
+    expect(await runs("disposed-before-its-commonjs-ran.mjs")).toEqual({
+      stdout: `{"imported":"ERR_INVALID_STATE","told":[]}`,
       exitCode: 0,
     });
   });

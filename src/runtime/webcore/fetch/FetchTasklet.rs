@@ -1839,7 +1839,7 @@ impl FetchTasklet {
         // Response-owned listener so abort still errors the body after this tasklet detaches its own.
         if let Some(signal) = self.abort_signal() {
             // SAFETY: `response` is the live heap allocation owned by JSC.
-            unsafe { Response::attach_abort_signal(response, &global_this, signal) };
+            unsafe { Response::attach_abort_signal(response, &global_this, signal, self.context) };
         }
         response_js
     }

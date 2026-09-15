@@ -70,7 +70,6 @@ struct node_module;
 #include <js_native_api.h>
 #include <node_api.h>
 #include "BakeAdditionsToGlobalObject.h"
-#include "WriteBarrierList.h"
 #include "NativeModuleList.h"
 #include "streams/JSStreamsRuntime.h"
 
@@ -305,7 +304,6 @@ public:
 
     JSWeakMap* vmModuleContextMap() const { return m_vmModuleContextMap.getInitializedOnMainThread(this); }
 
-    // Bun.ModuleGraph (ModuleGraph.cpp)
     // Made with the first Bun.ModuleGraph (ModuleGraph.cpp).
     bool hasModuleGraphs() const { return !!m_moduleGraphs; }
     // The shape of an async-context frame that names a Bun.ModuleGraph (ModuleGraph.cpp).
@@ -835,7 +833,7 @@ public:
     // Promises rejected while they had no handler, awaiting handleRejectedPromises()
     // after the microtask drain, each with whose rejection it is as decided when it
     // happened: a Bun.ModuleGraph, or null for the global object's own code.
-    // Guarded by cellLock() like WriteBarrierList (visited on the GC thread).
+    // Guarded by cellLock() (visited on the GC thread).
     class RejectedPromiseQueue {
     public:
         void append(JSC::VM&, JSC::JSCell* owner, JSC::JSPromise*, JSC::JSObject* rejectionOwner);

@@ -675,6 +675,7 @@ mod _async_tasks {
             vm: &mut VirtualMachine,
         ) -> JSValue {
             let fd_job = vm.owned_fd_job(task_args.target_fd());
+            disown_fd_being_closed(vm, &*task_args);
             let task = Box::new(Self {
                 promise: JSPromiseStrong::init(global_object),
                 args: task_args,
@@ -1030,6 +1031,21 @@ mod _async_tasks {
         fn target_fd(&self) -> Option<FD> {
             None
         }
+        /// The operation closes [`target_fd`](Self::target_fd).
+        fn closes_target_fd(&self) -> bool {
+            false
+        }
+    }
+
+    /// Script is closing a descriptor by number (`fs.close(fd)`): if a graph context owns it (a
+    /// stream it opened with `autoClose: false`), it stops owning it, since the number is another
+    /// file's as soon as it is closed. After [`VirtualMachine::owned_fd_job`], which looks the owner up.
+    pub(crate) fn disown_fd_being_closed<A: FsArgument>(vm: &VirtualMachine, args: &A) {
+        if args.closes_target_fd()
+            && let Some(fd) = args.target_fd()
+        {
+            vm.disown_fd(fd);
+        }
     }
 
     /// Forward [`FsArgument`] to the inherent `from_js` each `args::*` struct
@@ -1086,11 +1102,26 @@ mod _async_tasks {
         args::Fchown,
         args::FChmod,
         args::Fstat,
-        args::Close,
         args::Futimes,
         args::FdataSync,
         args::Fsync,
     );
+    // SAFETY: plain data.
+    unsafe impl ThreadIsolatedArg for args::Close {}
+    impl FsArgument for args::Close {
+        #[inline]
+        fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
+            args::Close::from_js(ctx, arguments)
+        }
+        #[inline]
+        fn target_fd(&self) -> Option<FD> {
+            Some(self.fd)
+        }
+        #[inline]
+        fn closes_target_fd(&self) -> bool {
+            true
+        }
+    }
     // `ReadFile`/`WriteFile` carry an `AbortSignal` field — opt them in so the
     // `const _ = assert!(…::HAVE_ABORT_SIGNAL)` invariants in `async_` hold and
     // `signal()` exposes it to `AsyncFSTask::run_from_js_thread`.
@@ -1385,6 +1416,7 @@ mod _async_tasks {
             let promise = JSPromiseStrong::init(global_object);
             let value = promise.value();
             let fd_job = vm.owned_fd_job(args.target_fd());
+            disown_fd_being_closed(vm, &*args);
             bun_jsc::Job::<Self>::schedule(
                 &global_object.js_thread(),
                 Self {
@@ -2685,6 +2717,7 @@ mod _async_tasks {
         }
     }
 } // mod _async_tasks
+pub(crate) use _async_tasks::disown_fd_being_closed;
 pub use _async_tasks::{
     AsyncCpTask, AsyncFSTask, AsyncReaddirRecursiveTask, CpSingleTask, FsArgument, FsReturn,
     IntoResultListEntry, NewAsyncCpTask, ResultListEntry, ResultListEntryValue, ShellAsyncCpTask,

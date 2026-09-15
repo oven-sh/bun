@@ -1,6 +1,6 @@
 // Bun.ModuleGraph and the garbage collector: what keeps a graph (its loader, module
 // records, CommonJS modules and its context) alive, and that nothing else does.
-import { heapStats } from "bun:jsc";
+import { generateHeapSnapshotForDebugging, heapStats } from "bun:jsc";
 import { afterAll, describe, expect, test } from "bun:test";
 import { rmSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
@@ -76,7 +76,7 @@ function collect(): Promise<void> {
 /** For a failure message: from the debugging heap snapshot, what keeps each live `ModuleGraph` cell
  *  (shortest path from a root), or that nothing in the heap does. */
 function whatRetainsGraphs(): string[] {
-  const snapshot = require("bun:jsc").generateHeapSnapshotForDebugging() as any;
+  const snapshot = generateHeapSnapshotForDebugging() as any;
   const { nodes, edges, roots, nodeClassNames, edgeTypes, edgeNames, labels } = snapshot;
   const className = new Map<number, string>();
   for (let i = 0; i < nodes.length; i += 7)
@@ -166,106 +166,8 @@ class Lifetimes {
       await collect();
     }
     if (!remaining().length) return [];
-    const survivors = remaining();
-    // Before anything else runs (the snapshot below is a lot of other code): the same collection
-    // from a timer callback, after that callback recursed and returned, which writes over the
-    // stack its collection is about to run on. If that alone gets the survivor, it was held from
-    // there. For the failure message only: the result is a failure whatever this finds.
-    for (let i = 0; i < 3 && remaining().length; i++) {
-      await new Promise<void>(resolve =>
-        setTimeout(() => {
-          const recurse = (depth: number): number => (depth ? recurse(depth - 1) + 1 : 0);
-          recurse(256);
-          Bun.gc(true);
-          setTimeout(resolve, 0);
-        }, 0),
-      );
-    }
-    const afterRecursing = `after 100 collections from timer callbacks, 3 more from a timer callback that first recursed 256 frames and returned: ${survivors.length - remaining().length} of ${survivors.length} collected`;
-    // The same recursion, but from this function's continuation (a microtask run after a timer
-    // callback returned, not inside one), and no collection there: then collections from timer
-    // callbacks as before. It writes over the depths the timer dispatch's own native frames use.
-    const beforeContinuation = remaining().length;
-    await new Promise<void>(resolve => setTimeout(resolve, 0));
-    {
-      const recurse = (depth: number): number => (depth ? recurse(depth - 1) + 1 : 0);
-      recurse(256);
-    }
-    for (let i = 0; i < 3 && remaining().length; i++) await collect();
-    const afterContinuation = `then 3 more from timer callbacks after a continuation (not a timer callback) recursed 256 frames: ${beforeContinuation - remaining().length} of ${beforeContinuation} collected`;
-    // The snapshot collects with JavaScriptCore's own full collection, not Bun.gc(true) (which first drops
-    // cached code): that alone, from timer callbacks.
-    const beforeFullGC = remaining().length;
-    for (let i = 0; i < 3 && remaining().length; i++) {
-      await new Promise<void>(resolve => setTimeout(() => (require("bun:jsc").fullGC(), setTimeout(resolve, 0)), 0));
-    }
-    const afterFullGC = `then 3 of bun:jsc's fullGC() from timer callbacks: ${beforeFullGC - remaining().length} of ${beforeFullGC} collected`;
-    // It also parses a large JSON text and drops it: that much allocation, then the same collections.
-    const beforeChurn = remaining().length;
-    if (beforeChurn)
-      void JSON.parse(
-        JSON.stringify(Array.from({ length: 200_000 }, (_, i) => ({ id: i, edges: [i, i + 1], name: "cell" + i }))),
-      );
-    for (let i = 0; i < 3 && remaining().length; i++) await collect();
-    const afterChurn = `then 3 more from timer callbacks after parsing and dropping a large JSON text: ${beforeChurn - remaining().length} of ${beforeChurn} collected`;
-    // A heap snapshot that is thrown away (it collects by itself), then the same collections:
-    // separates what taking the snapshot does from what analysing it (a lot of script) does.
-    const beforeSnapshot = remaining().length;
-    if (beforeSnapshot) void require("bun:jsc").generateHeapSnapshotForDebugging();
-    for (let i = 0; i < 3 && remaining().length; i++) await collect();
-    const afterSnapshot = `then 3 more from timer callbacks after a heap snapshot that was thrown away: ${beforeSnapshot - remaining().length} of ${beforeSnapshot} collected`;
-    // Say what keeps them, not just that something does.
-    const report = [
-      ...survivors,
-      afterRecursing,
-      afterContinuation,
-      afterFullGC,
-      afterChurn,
-      afterSnapshot,
-      ...(remaining().length ? whatRetainsGraphs() : []),
-    ];
-    // When no root reaches a survivor, say from where a collection does get it: only for the
-    // failure message (the result is a failure whatever these find).
-    const turn = () => new Promise<void>(resolve => setTimeout(resolve, 0));
-    const probes: [string, () => Promise<void>][] = [
-      // (First, so that what the heap snapshot above changed is not credited to a later probe.)
-      ["timer callbacks again", collect],
-      // If what holds it is something the timer path writes only for a repeating timer, the next
-      // repeating timer to fire replaces it.
-      [
-        "timer callbacks, after an unrelated interval fired once and cleared itself",
-        async () => {
-          await new Promise<void>(resolve => {
-            const interval = setInterval(() => (clearInterval(interval), resolve()), 1);
-          });
-          await collect();
-        },
-      ],
-      ["a setImmediate callback", () => new Promise<void>(resolve => setImmediate(() => (Bun.gc(true), resolve())))],
-      ["a microtask", async () => (await Promise.resolve(), void Bun.gc(true))],
-      [
-        "a timer callback, 64 JS frames deeper",
-        () =>
-          new Promise<void>(resolve =>
-            setTimeout(() => {
-              const deeper = (depth: number): void => (depth ? deeper(depth - 1) : void Bun.gc(true));
-              deeper(64);
-              resolve();
-            }, 0),
-          ),
-      ],
-    ];
-    for (const [where, probe] of probes) {
-      const before = remaining().length;
-      for (let i = 0; i < 3 && remaining().length; i++) {
-        await probe();
-        await turn();
-      }
-      report.push(
-        `after 100 collections from timer callbacks, 3 more from ${where}: ${before - remaining().length} of ${before} collected`,
-      );
-    }
-    return report;
+    // Say what keeps them, not just that something does: a heap snapshot taken while they are retained.
+    return [...remaining(), ...whatRetainsGraphs()];
   }
   /** Collects a few times; whether `name` survived all of them. */
   async survives(name: string): Promise<boolean> {

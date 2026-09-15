@@ -1138,6 +1138,11 @@ impl JSValkeyClient {
         self.reconnect()
     }
 
+    /// The script that created the client is gone (its `Bun.ModuleGraph` was disposed).
+    pub(crate) fn context_stopped(&self) -> bool {
+        !self.vm().is_context_live(self.context)
+    }
+
     pub(crate) fn reconnect(&self) -> JsResult<()> {
         // Whether the retry timer fired or connect() got here first, this is
         // the one dial: a retry still armed would open a second socket.
@@ -1155,7 +1160,7 @@ impl JSValkeyClient {
 
         // No reconnecting on a VM that is exiting: its stop phase would only
         // have to close the new socket again.
-        if self.vm().is_shutting_down() || !self.vm().is_context_live(self.context) {
+        if self.vm().is_shutting_down() {
             bun_core::hint::cold();
             return Ok(());
         }
@@ -1601,16 +1606,12 @@ impl JSValkeyClient {
         // This is a mess beyond belief and it is incredibly fragile.
         let has_pending_commands = self.client.get().has_any_pending_commands();
 
-        // Nothing of a client whose Bun.ModuleGraph was disposed will happen any more (it does not
-        // reconnect, so what it had queued stays queued): it is not a reason to keep running.
-        let has_activity = self.vm().is_context_live(self.context)
-            && (has_pending_commands
-                || self.has_subscriptions()
-                || self.client.get().flags.is_reconnecting
-                || self.client.get().status == valkey::Status::Connecting);
+        let has_activity = has_pending_commands
+            || self.has_subscriptions()
+            || self.client.get().flags.is_reconnecting;
 
         // There's a couple cases to handle here:
-        if has_activity {
+        if has_activity || self.client.get().status == valkey::Status::Connecting {
             // If we currently have pending activity or we are connecting, we need to keep the
             // event loop alive.
             self.poll_ref.with_mut(|r| r.ref_(vm_event_loop_ctx()));

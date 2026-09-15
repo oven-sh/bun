@@ -362,13 +362,22 @@ const kNeedDrain = Symbol("kNeedDrain");
 const kProxyConfig = Symbol("kProxyConfig");
 const kWaitForProxyTunnel = Symbol("kWaitForProxyTunnel");
 
-// Cached HTTP Date header value, refreshed once a second like Node.js does.
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http.js
-// The `date` header, formatted once per second. Keyed by the second rather than reset by a timer:
+// The `date` header, formatted once per second like Node.js does
+// (https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http.js). Keyed by the second rather than reset by a timer:
 // a timer belongs to whoever happened to be running when it was set, and if that was a
 // Bun.ModuleGraph disposed within the second, nothing would ever clear the cache again.
 let utcCache;
 let utcCacheSecond = -1;
+function utcDate() {
+  const now = Date.now();
+  const second = Math.floor(now / 1000);
+  if (second !== utcCacheSecond) {
+    utcCacheSecond = second;
+    utcCache = new Date(now).toUTCString();
+  }
+  return utcCache;
+}
+
 // The agent a request with no `agent` uses. For the script of a Bun.ModuleGraph that is the
 // graph's own copy of the realm's default agent, made on first use in the graph's context: the
 // sockets it keeps alive are then the graph's, and close with it.
@@ -381,16 +390,6 @@ function defaultAgentOfRunningScript(realmAgent) {
   let agent = agents.get(realmAgent);
   if (agent === undefined) agents.set(realmAgent, (agent = new realmAgent.constructor(realmAgent.options)));
   return agent;
-}
-
-function utcDate() {
-  const now = Date.now();
-  const second = Math.floor(now / 1000);
-  if (second !== utcCacheSecond) {
-    utcCacheSecond = second;
-    utcCache = new Date(now).toUTCString();
-  }
-  return utcCache;
 }
 
 function ipToInt(ip) {

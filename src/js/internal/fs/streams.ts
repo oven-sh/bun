@@ -49,11 +49,20 @@ const ownFd = $newRustFunction("node_fs_binding.rs", "ownFd", 1);
 const isOwnedFdOpen = $newRustFunction("node_fs_binding.rs", "isOwnedFdOpen", 1);
 const releaseOwnedFd = $newRustFunction("node_fs_binding.rs", "releaseOwnedFd", 2);
 
+// A stream over a FileHandle copies the handle's descriptor number; the handle knows whether the
+// number is still its own.
+const kFileHandle = Symbol("kFileHandle");
+
 /** The graph that opened this stream's descriptor was disposed (the host still holds the stream):
  *  the descriptor is closed, and its number may be another file's. */
 function ownerClosedFd(stream) {
-  const owner = stream[kFdOwner];
-  if (!owner || isOwnedFdOpen(owner)) return false;
+  const handle = stream[kFileHandle];
+  if (handle !== undefined) {
+    if (handle[kFd] !== -1) return false;
+  } else {
+    const owner = stream[kFdOwner];
+    if (!owner || isOwnedFdOpen(owner)) return false;
+  }
   stream.fd = null;
   return true;
 }
@@ -195,6 +204,7 @@ function ReadStream(this: FSStream, path, options): void {
       throw $ERR_METHOD_NOT_IMPLEMENTED("fs.FileHandle with custom fs operations");
     }
     this[kFs] = fileHandleStreamFs(fd);
+    this[kFileHandle] = fd;
     this.fd = fd[kFd];
     fd[kRef]();
     fd.on("close", this.close.bind(this));
@@ -448,6 +458,7 @@ function WriteStream(this: FSStream, path: string | null, options?: any): void {
       throw $ERR_METHOD_NOT_IMPLEMENTED("fs.FileHandle with custom fs operations");
     }
     this[kFs] = customFs = fileHandleStreamFs(fd);
+    this[kFileHandle] = fd;
     fd[kRef]();
     fd.on("close", this.close.bind(this));
     this.fd = fd = fd[kFd];

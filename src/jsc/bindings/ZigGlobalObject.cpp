@@ -4302,8 +4302,7 @@ JSC::JSObject* GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObje
     RefPtr<JSC::ScriptFetcher>)
 {
     auto* importMeta = Zig::ImportMetaObject::create(globalObject, key);
-    if (importMeta)
-        importMeta->setModuleGraph(globalObject->vm(), Bun::moduleGraphOfLoader(globalObject, loader));
+    importMeta->setModuleGraph(globalObject->vm(), Bun::moduleGraphOfLoader(globalObject, loader));
     return importMeta;
 }
 
@@ -4338,14 +4337,11 @@ JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGlobalObj
 {
     // Nothing evaluates in a disposed Bun.ModuleGraph (a late top-level-await
     // completion, a deferred namespace touched later): its modules throw instead.
-    if (auto* graph = Bun::moduleGraphOfLoader(lexicalGlobalObject, moduleLoader); graph && graph->disposed()) [[unlikely]] {
-        auto scope = DECLARE_THROW_SCOPE(JSC::getVM(lexicalGlobalObject));
-        throwException(lexicalGlobalObject, scope, Bun::createModuleGraphDisposedError(lexicalGlobalObject));
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(lexicalGlobalObject));
+    if (Bun::throwIfModuleGraphDisposed(lexicalGlobalObject, scope, moduleLoader)) [[unlikely]]
         return {};
-    }
     noteModuleEvaluation(defaultGlobalObject(lexicalGlobalObject), moduleLoader);
-    return moduleLoader->evaluateNonVirtual(lexicalGlobalObject, key, moduleRecordValue,
-        WTF::move(scriptFetcher), sentValue, resumeMode);
+    RELEASE_AND_RETURN(scope, moduleLoader->evaluateNonVirtual(lexicalGlobalObject, key, moduleRecordValue, WTF::move(scriptFetcher), sentValue, resumeMode));
 }
 
 extern "C" bool Bun__VM__specifierIsEvalEntryPoint(void*, EncodedJSValue);

@@ -3038,8 +3038,6 @@ JSValue createJSSQLStatementConstructor(Zig::GlobalObject* globalObject)
 
 } // namespace WebCore
 
-// Drained = every bun-tracked statement finalized. Statements sqlite3 still
-// holds (vtab modules' cached ones) don't count; close_v2 finalizes those.
 int VersionSqlite3::closeWithStatements()
 {
     for (auto* statement : statements) {
@@ -3063,6 +3061,8 @@ int VersionSqlite3::closeWithStatements()
     return statusCode;
 }
 
+// Drained = every bun-tracked statement finalized. Statements sqlite3 still
+// holds (vtab modules' cached ones) don't count; close_v2 finalizes those.
 void VersionSqlite3::closeIfDrained()
 {
     if (!closed || !db)

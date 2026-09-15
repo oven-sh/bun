@@ -759,4 +759,31 @@ describe.concurrent("ModuleGraph: what a graph opens is the graph's", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "done\n", stderr: "", exitCode: 0 });
   });
+
+  test("a server of the host's that answers with a Response whose body is still arriving, while a graph exists", async () => {
+    // The server renders what its handler returned after the handler is off the stack: that
+    // continues the script that made the server, whichever graphs exist.
+    // A chunk per pull; the next one when released.
+    let chunks = 0;
+    let release = () => {};
+    using upstream = Bun.serve({
+      port: 0,
+      fetch: () =>
+        new Response(
+          new ReadableStream({
+            async pull(controller) {
+              controller.enqueue(new TextEncoder().encode("chunk"));
+              if (++chunks === 3) controller.close();
+              else await new Promise<void>(resolve => (release = resolve));
+            },
+          }),
+        ),
+    });
+    using graph = new Bun.ModuleGraph();
+    const arriving = await fetch(upstream.url);
+    using front = Bun.serve({ port: 0, fetch: () => arriving });
+    const served = fetch(front.url).then(response => response.text());
+    await until(() => (release(), chunks === 3));
+    expect(await served).toBe("chunkchunkchunk");
+  });
 });

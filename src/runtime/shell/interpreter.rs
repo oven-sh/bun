@@ -941,6 +941,16 @@ impl Interpreter {
             || self.node(id).base().is_some_and(|b| b.interrupted)
     }
 
+    /// Enters the context of the script that started this (a `Bun.ModuleGraph`'s), if it has one.
+    fn enter_context<'a>(
+        &self,
+        global_this: &'a crate::jsc::JSGlobalObject,
+    ) -> Option<bun_jsc::virtual_machine::ContextScope<'a>> {
+        self.context
+            .get()
+            .map(|id| global_this.bun_vm().enter_context(id))
+    }
+
     /// The `Bun.ModuleGraph` whose script started this was disposed (or its realm is going).
     pub(crate) fn context_stopped(&self) -> bool {
         self.context
@@ -1306,9 +1316,9 @@ impl Interpreter {
                     // (allocation failure), the promise is rejected with that
                     // instead; a terminating VM settles nothing.
                     let event_loop = global_this.bun_vm().event_loop_mut();
+                    // Settled for the script that started the shell.
+                    let _context = self.enter_context(global_this);
                     match buffers {
-                        // The promise of a disposed graph's script never settles.
-                        _ if self.context_stopped() => {}
                         Ok((buffered_stdout, buffered_stderr)) => event_loop.run_callback(
                             resolve,
                             global_this,
@@ -1377,12 +1387,13 @@ impl Interpreter {
             .base()
             .map_or(NodeId::INTERPRETER, |b| b.parent);
         let y = self.child_done(parent, id, 1);
-        // The promise of a disposed graph's script never settles.
-        if let Some((reject, error)) = rejection.filter(|_| !self.context_stopped()) {
+        if let Some((reject, error)) = rejection {
             let global_this = self
                 .global_this_ref()
                 .expect("take_failure returned a rejection on the Js path");
             let _entered = self.event_loop.entered();
+            // Settled for the script that started the shell.
+            let _context = self.enter_context(global_this);
             global_this.bun_vm().event_loop_mut().run_callback(
                 reject,
                 global_this,

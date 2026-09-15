@@ -5,9 +5,12 @@ description: Run many instances of one app in a single process with Bun.ModuleGr
 
 <Warning>`Bun.ModuleGraph` is experimental.</Warning>
 
-A `Bun.ModuleGraph` loads modules into the current global a second (third, …) time. Each graph has its own module instances, its own `require.cache`, and its own values for the names you pass as `globals`. Parsed code and bytecode are shared between graphs; ES modules share JIT-compiled code too.
+A `Bun.ModuleGraph` loads modules into the current global another time. Each graph has its own module instances, its own `require.cache`, and its own values for the names you pass as `globals`. Parsed code and bytecode are shared between graphs; ES modules share JIT-compiled code too.
 
 ```ts host.ts icon="/icons/typescript.svg"
+// A `process` of the tenant's own: its module code sees this one.
+const tenantProcess = Object.create(process, { env: { value: { TENANT: "a" }, enumerable: true } });
+
 const graph = new Bun.ModuleGraph({
   globals: { process: tenantProcess }, // free identifiers in the graph's modules
   onError(error, kind) {
@@ -16,28 +19,61 @@ const graph = new Bun.ModuleGraph({
 });
 
 const app = await graph.import("./app.ts");
-await graph.run(() => app.handle(request));
+await graph.run(() => app.handle(new Request("http://localhost/")));
 
 graph.dispose();
 ```
 
 ## What a graph opens is the graph's
 
-A graph has a context of its own for timers and I/O. Everything its code opens belongs to the graph: timers, `Bun.serve` / `Bun.listen` servers, sockets, `fetch()` requests, WebSockets, watchers, child processes (including `Bun.$`), workers, database connections. A graph that the graph's code makes is one more thing it opened: it is disposed with its maker.
+A graph has a context of its own for timers and I/O. Everything its code opens belongs to the graph:
 
-`graph.dispose()` closes all of it, and from then on the graph hears nothing, like a worker that was terminated: no `close` handler, `onExit` or `'error'` event is called, a `fetch()` or a connection that was in flight does not reject, and a promise waiting on anything (a request, a child's exit, a file read, compression, `crypto.subtle`, a DNS lookup, `Bun.build`, a stream) never settles. That includes what the host still holds of the graph's: do not use a graph's objects (a socket, a worker, a child process, a stream, a `Response`) after `dispose()`. They no longer work, and an operation on one may fail or may never complete: `await worker.terminate()`, `server.close(callback)` or waiting for a child's `'exit'` can wait for ever. `FinalizationRegistry` cleanup callbacks are still called. What the graph had already queued as microtasks or `process.nextTick` callbacks still runs, once; whatever that code starts does not start (a connection is not dialed, a UDP socket is not bound, a server does not announce `'listening'`, `child_process.spawn()` spawns nothing) and its promise stays pending rather than rejecting, so code that retries on failure stops there. Closing is not preventing: a process `Bun.spawn` starts is started and then killed, so a very short command can finish first, and synchronous calls (`Bun.spawnSync`, `fs.writeFileSync`) run to completion. `dispose()` releases what a graph holds; it is not a sandbox. Files its objects had open are closed too: `node:fs` streams, `FileHandle`s, a `Bun.file().writer()`, `bun:sqlite` and `node:sqlite` databases (what is buffered and not yet written is dropped; the host gets `EBADF` or "Database has closed" from one it still holds). A raw descriptor from `fs.openSync()` is only a number and stays open, as it does when a worker is terminated.
+- timers
+- `Bun.serve` and `Bun.listen` servers, sockets, `fetch()` requests, WebSockets
+- watchers
+- child processes, including `Bun.$`
+- workers
+- database connections
+- files opened through `node:fs` streams, `FileHandle`s, `Bun.file().writer()`, `bun:sqlite` and `node:sqlite`
+- graphs its code makes
 
 The context follows the code asynchronously, like `AsyncLocalStorage`: through `await`, timers, socket handlers and event listeners.
 
-Native addons are shared, but their asynchronous work is the graph's too: a Node-API async work item or thread-safe function completes in the context of the graph whose code created it. After `dispose()` the addon's completion callback still runs, so it can free what it allocated, but it cannot call into JavaScript (`napi_call_function` and the like return `napi_cannot_run_js`, as they do in a worker that is terminating), and a promise it settles for the disposed graph stays pending.
+`graph.dispose()` closes all of it. From then on the graph hears nothing, like a worker that was terminated:
+
+- No `close` handler, `onExit` or `'error'` event is called.
+- A `fetch()` or a connection that was in flight does not reject.
+- A promise waiting on a request, a child's exit, a file read, compression, `crypto.subtle`, a DNS lookup, `Bun.build` or a stream never settles.
+- `FinalizationRegistry` cleanup callbacks are still called.
+
+Microtasks and `process.nextTick` callbacks the graph had already queued still run, once. Whatever that code starts does not start: a connection is not dialed, a UDP socket is not bound, a server does not announce `'listening'`, `child_process.spawn()` spawns nothing. Its promise stays pending rather than rejecting, so code that retries on failure stops there.
+
+The host's references to the graph's objects are dead too. Do not use a graph's socket, worker, child process, stream or `Response` after `dispose()`. An operation on one may fail or may never complete: `await worker.terminate()`, `server.close(callback)` or waiting for a child's `'exit'` can wait for ever. From a file the graph had open, the host gets `EBADF` or "Database has closed". What was buffered and not yet written is dropped.
+
+`dispose()` releases what a graph holds. It is not a sandbox:
+
+- A process `Bun.spawn` starts is started and then killed, so a very short command can finish first.
+- Synchronous calls such as `Bun.spawnSync` and `fs.writeFileSync` run to completion.
+- A raw descriptor from `fs.openSync()` is only a number and stays open, as it does when a worker is terminated.
+
+Native addons are shared, but their asynchronous work is the graph's too. A Node-API async work item or thread-safe function completes in the context of the graph whose code created it. After `dispose()` the addon's completion callback still runs, so it can free what it allocated. It cannot call into JavaScript: `napi_call_function` and the like return `napi_cannot_run_js`, as they do in a worker that is terminating. A promise it settles for the disposed graph stays pending.
 
 ## Disposing
 
-`graph.dispose()` drops the graph's module registry and `require.cache`. Code of the graph that is still referenced keeps working, and its errors still go to `onError`. From then on `graph.import()`, `graph.run()` and the graph's `require()` fail with `ERR_INVALID_STATE`, as does `import()` from a function of the graph that the host calls; `import()` by the disposed graph's own leftover code stays pending. Modules of the graph that had not run yet never will. An import that was still waiting for a file rejects. One whose module is suspended in a top-level `await` is left alone: if what the module awaits was the graph's (a timer, a request), it went with the graph and the import never settles, so a host that may dispose a graph while importing into it should race the import the same way as a call (below).
+`graph.dispose()` also drops the graph's module registry and `require.cache`. Code of the graph that is still referenced keeps working, and its errors still go to `onError`. From then on:
+
+- `graph.import()`, `graph.run()` and the graph's `require()` fail with `ERR_INVALID_STATE`.
+- `import()` from a function of the graph that the host calls fails the same way.
+- `import()` by the disposed graph's own leftover code stays pending.
+- Modules of the graph that had not run yet never will.
+- An import that was still waiting for a file rejects.
+- An import whose module is suspended in a top-level `await` is left alone. If what the module awaits was the graph's, such as a timer or a request, it went with the graph and the import never settles.
+
+A host that may dispose a graph while importing into it should race the import the same way as a call, as shown below.
 
 ## Calling into a graph
 
-Code the host calls directly runs in the host's context, even when the function was defined by a graph. Use `run()` to enter the graph's:
+A function runs in its caller's context, whichever graph defined it. Code the host calls directly runs in the host's context, and a function of one graph that another graph's code calls runs in that other graph's. Use `run()` to enter the graph's own:
 
 ```ts
 app.start(); // what this opens is the host's
@@ -52,9 +88,9 @@ const response = await Promise.race([graph.run(() => app.handle(request)), dispo
 // elsewhere: graph.dispose(); disposed.reject(new Error("tenant was disposed"));
 ```
 
-`Bun.ModuleGraph.current` is the graph whose context the calling code is running in, or `undefined` in the host's. Host functions shared by several graphs (passed in `globals`) can use it to tell their callers apart.
+`Bun.ModuleGraph.current` is the graph whose context the calling code is running in, or `undefined` in the host's. Host functions that several graphs share through `globals` can use it to tell their callers apart.
 
-The context follows the caller. A host function a graph calls (one passed in `globals`, say) runs in that graph's context, so the asynchronous work it starts is the graph's and is dropped with it at `dispose()`. For work that must finish whatever happens to the caller (an audit log, billing), leave the graph's context with a snapshot taken in the host:
+The context follows the caller. A host function a graph calls, such as one passed in `globals`, runs in that graph's context. The asynchronous work it starts is the graph's and is dropped with it at `dispose()`. For work that must finish whatever happens to the caller, such as an audit log or billing, leave the graph's context with a snapshot taken in the host:
 
 ```ts
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -67,14 +103,30 @@ const graph = new Bun.ModuleGraph({
 
 ## Errors
 
-Uncaught exceptions and unhandled rejections raised by a graph's module code go to that graph's `onError` instead of the process-wide handlers. A graph that was given no `onError` and was made in another graph's context (by that graph's code, or by a host function it called) hands them to that graph's `onError`, and so on up to the host. That follows the code that threw; an error that is reported with none of the graph's code on the stack (an `EventEmitter` `'error'` nobody listens for, a promise the runtime rejected) goes to the graph whose context it happened in, which for such a module can be a different graph.
+Uncaught exceptions and unhandled rejections raised by a graph's module code go to that graph's `onError` instead of the process-wide handlers.
 
-An error belongs to the graph whose code threw it, and stays that graph's through the promises that carry it on. If nobody handles the promise `graph.import()` returned and a module of the graph threw while it was being evaluated (at its top level, after an `await`, or in a dependency), that goes to `onError` too. When none of the graph's code is on the stack (the runtime rejected a promise itself, or the graph's function called what threw as a tail call, as in `() => JSON.parse(text)`), the error goes to the graph whose context is current (in the host's context, reached by calling the graph's function directly rather than through `run()`, there is none to go by). A rejection that reaches an unhandled promise through a `.then()` with no rejection handler, or through an `async` function that returned the promise, currently arrives without a context as well and takes the process-wide path; `await` it, or add a handler, inside the graph.
+An error belongs to the graph whose code threw it, and stays that graph's through the promises that carry it on. If nobody handles the promise `graph.import()` returned and a module of the graph threw while it was being evaluated, that goes to `onError` too. That covers a throw at the module's top level, after an `await`, or in a dependency.
 
-What the host caused takes the normal process-wide path: a specifier that does not resolve, an `import()` into a disposed graph, and anything `onError` itself throws or rejects while it runs.
+Some errors are reported with none of the graph's code on the stack:
+
+- an `EventEmitter` `'error'` nobody listens for
+- a promise the runtime rejected itself
+- a throw from something the graph's function called as a tail call, as in `() => JSON.parse(text)`
+
+Those go to the graph whose context is current. In the host's context there is none to go by. Code is in the host's context when the host called the graph's function directly rather than through `run()`.
+
+A graph that was given no `onError` hands its errors to the `onError` of the graph in whose context it was made, and so on up to the host. It was made in a graph's context if that graph's code made it, or a host function that graph's code called did.
+
+A rejection can also reach an unhandled promise through a `.then()` with no rejection handler, or through an `async` function that returned the promise. It currently arrives without a context and takes the process-wide path. `await` it, or add a handler, inside the graph.
+
+What the host caused takes the normal process-wide path:
+
+- a specifier that does not resolve
+- an `import()` into a disposed graph
+- anything `onError` itself throws or rejects while it runs
 
 ## What is shared
 
-The global object, `globalThis` properties, `process` (unless you replace it through `globals`), plugins and native addons are shared by every graph and the host. A graph's listeners on something the host owns (the shared `process`: signals, `process.stdin`, `'exit'`; an emitter the host passed in) are that object's, so they outlive `dispose()`. `ModuleGraph` separates instances of an app you trust from each other; it is not a security sandbox.
+The global object, `globalThis` properties, plugins and native addons are shared by every graph and the host. So is `process`, unless you replace it through `globals`. A graph's listeners on something the host owns are that object's, so they outlive `dispose()`. That includes signal, `process.stdin` and `'exit'` listeners on the shared `process`, and listeners on an emitter the host passed in. `ModuleGraph` separates instances of an app you trust from each other. It is not a security sandbox.
 
 `mock.module()` in `bun test` is one of the shared things: it applies to what a graph loads afterwards. A graph that already loaded the module keeps the instance it has.

@@ -197,7 +197,7 @@ pub trait Taskable {
     /// Whose script the task continues. Required, so that no type can be queued without having
     /// decided it: the event loop enters a [`TaskContext::Of`] context around the task, and
     /// [releases it unrun](Self::release_unrun) if that context (a `Bun.ModuleGraph`'s) has
-    /// stopped. Only asked while some graph has a context.
+    /// stopped.
     ///
     /// # Safety
     /// `this` is the queued [`Task::ptr`], live (not yet run or released).

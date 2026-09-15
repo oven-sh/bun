@@ -190,8 +190,9 @@ impl JSBundleCompletionTask {
         // reads this VM's env loader and the plugin cell, so the VM cancels it at
         // teardown and waits for it (`bundle_ticket`). The VM's, not the calling
         // realm's: a live VM cannot cancel a build (hop tasks it already queued
-        // here would still be dispatched against the finished pass), so one that
-        // outlives its `bun test --isolate` file completes on the next file's global.
+        // here would still be dispatched against the finished pass). One that
+        // outlives its `bun test --isolate` file runs to the end and its completion
+        // is released unrun (`Taskable::context`), as cancelled.
         // SAFETY: `completion` is the live heap allocation; it leaves its
         // context in `on_complete_anytask`.
         unsafe {

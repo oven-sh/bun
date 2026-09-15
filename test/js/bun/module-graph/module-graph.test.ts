@@ -2063,10 +2063,10 @@ describe("Bun.ModuleGraph — constructor / method contract", () => {
     for (const g of [
       new (ModuleGraphClass as any)(),
       ModuleGraph({}),
-      ModuleGraph({ env: undefined, cwd: undefined, globals: undefined, onExit: undefined, onError: undefined } as any),
+      new (ModuleGraphClass as any)({ globals: undefined, onError: undefined }),
     ]) {
       const m = await g.import(join(dir, "ok.mjs"));
-      expect([m.env, typeof m.cwd]).toEqual([process.env.K ?? null, "string"]); // env defaults to a COPY of the host env
+      expect(typeof m.cwd).toBe("string");
     }
   });
   test("globals: own enumerable props are injected; prototype props and non-enumerables are not", async () => {

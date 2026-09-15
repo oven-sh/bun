@@ -1356,7 +1356,8 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
 
 /// Whose script a queued task continues, through its type's
 /// [`Taskable::context`](bun_event_loop::Taskable). One arm per tag, as
-/// [`__bun_release_task_unrun`]: a tag cannot exist without its type having decided it.
+/// [`__bun_release_task_unrun`]: a tag cannot exist without its type having decided it. A tag
+/// of the other platform is `Always`: nothing of this one queues it.
 fn task_context(task: bun_event_loop::Task) -> bun_event_loop::TaskContext {
     use bun_event_loop::{Taskable, task_tag};
     /// `<T as Taskable>::context(task.ptr as *const T)`, SAFETY spelled once.
@@ -1415,7 +1416,7 @@ fn task_context(task: bun_event_loop::Task) -> bun_event_loop::TaskContext {
             }
             #[cfg(windows)]
             {
-                unreachable!("posix-only tag")
+                bun_event_loop::TaskContext::Always
             }
         }
         task_tag::FlushPendingFileSinkTask => context!(FlushPendingFileSinkTask),
@@ -1454,7 +1455,7 @@ fn task_context(task: bun_event_loop::Task) -> bun_event_loop::TaskContext {
             }
             #[cfg(not(windows))]
             {
-                unreachable!("windows-only tag")
+                bun_event_loop::TaskContext::Always
             }
         }
         task_tag::WindowsNamedPipeContext => {
@@ -1464,7 +1465,7 @@ fn task_context(task: bun_event_loop::Task) -> bun_event_loop::TaskContext {
             }
             #[cfg(not(windows))]
             {
-                unreachable!("windows-only tag")
+                bun_event_loop::TaskContext::Always
             }
         }
         task_tag::Open
@@ -1487,11 +1488,11 @@ fn task_context(task: bun_event_loop::Task) -> bun_event_loop::TaskContext {
             }
             #[cfg(not(windows))]
             {
-                unreachable!("windows-only tag (libuv fs request)")
+                bun_event_loop::TaskContext::Always
             }
         }
-        // Every tag has an arm above (`task_tag::COUNT` is asserted); a value
-        // outside the range is a producer bug.
-        _ => unreachable!("task tag out of range: {}", task.tag.0),
+        // A tag this platform never queues, or one out of range, continues nobody's script in
+        // particular: `run_task` decides what becomes of it.
+        _ => bun_event_loop::TaskContext::Always,
     }
 }

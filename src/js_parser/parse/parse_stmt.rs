@@ -496,19 +496,30 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             // "for await (let x of y) {}"
             let mut is_for_await = p.lexer.is_contextual_keyword(b"await");
+            let mut for_await_range = bun_ast::Range::NONE;
             if is_for_await {
                 let await_range = p.lexer.range();
-                if p.fn_or_arrow_data_parse.allow_await != AwaitOrYield::AllowExpr {
+                for_await_range = await_range;
+                // Module-scope `for await` in a non-ESM target is accepted
+                // here; the visit pass errors if it survives DCE.
+                let at_module_scope = p.is_at_module_scope();
+                let tolerate_top_level = p.fn_or_arrow_data_parse.allow_await
+                    == AwaitOrYield::AllowIdent
+                    && at_module_scope;
+                if p.fn_or_arrow_data_parse.allow_await != AwaitOrYield::AllowExpr
+                    && !tolerate_top_level
+                {
                     p.log().add_range_error(
                         Some(p.source),
                         await_range,
                         b"Cannot use \"await\" outside an async function",
                     );
                     is_for_await = false;
+                    for_await_range = bun_ast::Range::NONE;
                 } else {
                     // TODO: improve error handling here
                     //                 didGenerateError := p.markSyntaxFeature(compat.ForAwait, awaitRange)
-                    if p.fn_or_arrow_data_parse.is_top_level {
+                    if p.fn_or_arrow_data_parse.is_top_level || at_module_scope {
                         p.top_level_await_keyword = await_range;
                         // p.markSyntaxFeature(compat.TopLevelAwait, awaitRange)
                     }
@@ -664,6 +675,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         init: init_.unwrap(),
                         value,
                         body,
+                        await_range: for_await_range,
                     },
                     loc,
                 ));

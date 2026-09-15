@@ -23,7 +23,6 @@ use crate::LinkerContext;
 use crate::linker_context::generate_compile_result_for_css_chunk::generate_compile_result_for_css_chunk;
 use crate::linker_context::generate_compile_result_for_html_chunk::generate_compile_result_for_html_chunk;
 use crate::linker_context::generate_compile_result_for_js_chunk::generate_compile_result_for_js_chunk;
-use crate::linker_context::metafile_builder;
 use crate::linker_context::output_file_list_builder::OutputFileList as OutputFileListBuilder;
 use crate::linker_context::prepare_css_asts_for_chunk::{
     PrepareCssAstTask, prepare_css_asts_for_chunk,
@@ -35,8 +34,7 @@ use crate::linker_context_mod::{GenerateChunkCtx, PendingPartRange};
 /// Bytecode output file extension (also defined in `writeOutputFilesToDisk.rs`).
 const BYTECODE_EXTENSION: &str = ".jsc";
 
-// `Chunk.final_rel_path` / `metafile_chunk_json` are owned
-// `Box<[u8]>`; assignments
+// `Chunk.final_rel_path` is an owned `Box<[u8]>`; assignments
 // below move the boxed buffer directly — no lifetime promotion needed.
 use crate::linker_context_mod::debug;
 
@@ -60,6 +58,12 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         debug!(" START {} renamers", chunks.len());
         if c.graph.code_splitting && !c.options.minify_identifiers {
             crate::linker_context::cross_chunk_names::assign_unminified(c, chunks)?;
+        }
+        if !c.options.minify_identifiers {
+            c.renamer_rows = crate::linker_context::rename_symbols_in_chunk::renamer_rows(
+                c.graph.symbols.symbols_for_source.len(),
+                chunks,
+            );
         }
         let ctx = GenerateChunkCtx {
             chunk: bun_ptr::BackRef::new_mut(&mut chunks[0]),
@@ -92,6 +96,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             for chunk in chunks.iter_mut() {
                 chunk.nested_scopes_to_rename = Vec::new();
             }
+            crate::linker_context::rename_symbols_in_chunk::log_renamer_tables(chunks);
         }
         if c.graph.code_splitting {
             if c.options.minify_identifiers {
@@ -653,17 +658,6 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         }
     }
 
-    // Generate metafile JSON fragments for each chunk (after paths are resolved)
-    if c.options.metafile {
-        // Reshaped for borrowck — `generate_chunk_json` reads all chunks
-        // immutably while we write one chunk's `metafile_chunk_json`; index split.
-        for i in 0..chunks.len() {
-            let json =
-                metafile_builder::generate_chunk_json(c, &chunks[i], chunks).unwrap_or_default();
-            chunks[i].metafile_chunk_json = json;
-        }
-    }
-
     let mut output_files =
         OutputFileListBuilder::init(c, chunks, c.parse_graph().additional_output_files.len())?;
 
@@ -843,6 +837,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 SourceMapOption::None => {}
             }
 
+            chunks[ci].final_output_size = buffer.len();
             scc[ci] = Some(buffer);
         }
 
@@ -1260,6 +1255,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
             let output_kind = c.chunk_output_kind(chunk);
 
+            chunk.final_output_size = code_result.buffer.len();
             let chunk_index =
                 output_files.insert_for_chunk(options::OutputFile::init(options::OutputFileInit {
                     data: options::OutputFileData::Buffer {

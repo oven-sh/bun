@@ -551,15 +551,10 @@ impl JSMySQLConnection {
     bun_jsc::cached_prop_hostfns! {
         crate::jsc::codegen::js_mysql_connection;
         lazy_array(get_queries => queries_get_cached, queries_set_cached),
-        (get_on_connect, set_on_connect => onconnect_get_cached, onconnect_set_cached),
         (get_on_close,   set_on_close   => onclose_get_cached, onclose_set_cached),
     }
 
     bun_jsc::poll_ref_hostfns!(field = poll_ref, ctx = vm_ctx);
-
-    pub fn get_connected(this: &Self, _: &JSGlobalObject) -> JSValue {
-        JSValue::from(this.connection.get().status == my_sql_connection::Status::Connected)
-    }
 
     pub fn do_flush(this: &Self, _: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         this.register_auto_flusher();

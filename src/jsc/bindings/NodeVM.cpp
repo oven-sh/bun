@@ -127,6 +127,15 @@ bool extractCachedData(JSValue cachedDataValue, WTF::Vector<uint8_t>& outCachedD
     return false;
 }
 
+Ref<JSC::CachedBytecode> createOwnedCachedBytecode(std::span<const uint8_t> bytes)
+{
+    // UnlinkedFunctionExecutable's Decoder constructor (CachedTypes.cpp) keeps the Decoder and a
+    // payload offset, and decodes the body on the function's first call, borrowed payload or not.
+    auto payload = WTF::MallocSpan<uint8_t, JSC::VMMalloc>::malloc(bytes.size());
+    WTF::memcpySpan(payload.mutableSpan(), bytes);
+    return JSC::CachedBytecode::create(WTF::move(payload), {});
+}
+
 JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, const ArgList& args, const SourceOrigin& sourceOrigin, CompileFunctionOptions&& options, JSC::SourceTaintedOrigin sourceTaintOrigin, JSC::JSScope* scope)
 {
     ASSERT(scope);
@@ -219,7 +228,7 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
     TriState bytecodeAccepted = TriState::Indeterminate;
 
     if (!options.cachedData.isEmpty()) {
-        cachedBytecode = CachedBytecode::create(std::span(options.cachedData), nullptr, {});
+        cachedBytecode = createOwnedCachedBytecode(options.cachedData.span());
         SourceCodeKey key(sourceCode, {}, JSC::SourceCodeType::ProgramType, lexicallyScopedFeatures, JSC::JSParserScriptMode::Classic, JSC::DerivedContextType::None, JSC::EvalContextType::None, false, {}, std::nullopt);
         unlinkedProgramCodeBlock = JSC::decodeCodeBlock<UnlinkedProgramCodeBlock>(vm, key, *cachedBytecode);
         if (unlinkedProgramCodeBlock == nullptr) {
@@ -1722,29 +1731,14 @@ JSC::JSValue createNodeVMBinding(Zig::GlobalObject* globalObject)
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "isModuleNamespaceObject"_s)),
         JSC::JSFunction::create(vm, globalObject, 0, "isModuleNamespaceObject"_s, vmIsModuleNamespaceObject, ImplementationVisibility::Public), 1);
     obj->putDirect(
-        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "kUnlinked"_s)),
-        JSC::jsNumber(static_cast<unsigned>(NodeVMSourceTextModule::Status::Unlinked)), 0);
-    obj->putDirect(
-        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "kLinking"_s)),
-        JSC::jsNumber(static_cast<unsigned>(NodeVMSourceTextModule::Status::Linking)), 0);
-    obj->putDirect(
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "kLinked"_s)),
         JSC::jsNumber(static_cast<unsigned>(NodeVMSourceTextModule::Status::Linked)), 0);
-    obj->putDirect(
-        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "kEvaluating"_s)),
-        JSC::jsNumber(static_cast<unsigned>(NodeVMSourceTextModule::Status::Evaluating)), 0);
     obj->putDirect(
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "kEvaluated"_s)),
         JSC::jsNumber(static_cast<unsigned>(NodeVMSourceTextModule::Status::Evaluated)), 0);
     obj->putDirect(
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "kErrored"_s)),
         JSC::jsNumber(static_cast<unsigned>(NodeVMSourceTextModule::Status::Errored)), 0);
-    obj->putDirect(
-        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "kSourceText"_s)),
-        JSC::jsNumber(static_cast<unsigned>(NodeVMModule::Type::SourceText)), 0);
-    obj->putDirect(
-        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "kSynthetic"_s)),
-        JSC::jsNumber(static_cast<unsigned>(NodeVMModule::Type::Synthetic)), 0);
     obj->putDirect(
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "DONT_CONTEXTIFY"_s)),
         globalObject->m_nodeVMDontContextify.get(globalObject), 0);

@@ -2350,7 +2350,7 @@ where
 
         // For HTTP/3, prepareJsRequestContextFor() already eagerly
         // populated url+headers (the lazy getRequest() path is H1-only),
-        // so the guards below short-circuit and `req` is never read.
+        // so the copy below short-circuits and `req` is never read.
         if !MUX {
             // `Req<SSL,H3>` is erased to `c_void`; for !MUX the concrete
             // type is `uws::Request`, so the cast is nominal.
@@ -2359,21 +2359,10 @@ where
                 .set_request(req.cast::<uws::Request>());
         }
 
-        if request_object.ensure_url().is_err() {
-            request_object.url.set(BunString::EMPTY);
-        }
-
-        // we have to clone the request headers here since they will soon belong to a different request
-        if !request_object.has_fetch_headers() {
-            if !MUX {
-                // `HeadersRef::create_from_uws` adopts the freshly-allocated +1 ref.
-                request_object.set_fetch_headers(Some(response::HeadersRef::create_from_uws(req)));
-            }
-        }
-
-        // This object dies after the stack frame is popped
-        // so we have to clear it in here too
-        request_object.request_context.detach_request();
+        // `req` dies when this stack frame is popped, and the head bytes it
+        // views belong to the next request after that, so the lazily-read url
+        // and headers are copied out here.
+        request_object.detach_uws_request_head();
     }
 
     pub(crate) fn to_async(&self, req: *mut Req<SSL_ENABLED, MUX>, request_object: &mut Request) {

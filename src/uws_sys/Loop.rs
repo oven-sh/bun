@@ -1,3 +1,4 @@
+use core::cell::Cell;
 use core::ffi::{c_int, c_uint, c_void};
 use core::ptr::NonNull;
 
@@ -12,6 +13,96 @@ bun_core::declare_scope!(Loop, visible);
 /// A `now_ns` the caller has no reading to share for. The JS park hook takes its own only if
 /// it reaches the idle sweep, so passing this costs nothing on the paths that never park.
 pub const NOW_NS_UNKNOWN: u64 = 0;
+
+// ─────────────────── borrows of the receive buffer ───────────────────
+
+/// A read of the loop's receive buffer that outlives the callback it started
+/// in.
+///
+/// Every socket read on a loop writes into one buffer: `loop->data.recv_buf`,
+/// or `ssl_read_output` for the decrypted bytes of a TLS socket. The next read
+/// overwrites those bytes in place. A `uWS::HttpRequest` is only
+/// `std::string_view`s into them, and `Bun.serve` reads `req.url` and
+/// `req.headers` from it lazily, after the dispatch callback has already
+/// called into JS. That is safe while the loop is not running, because nothing
+/// else can read a socket. A handler that runs the loop inside itself breaks
+/// it, and the borrower then reads another request's bytes.
+///
+/// A frame that holds such a borrow registers it here. Every entry point that
+/// runs this thread's loop calls `release_recv_buffer_borrows` first, which
+/// asks each borrower to copy out what it still reads.
+pub struct RecvBufferBorrow {
+    next: Cell<*const RecvBufferBorrow>,
+    release: unsafe fn(*mut c_void),
+    owner: *mut c_void,
+}
+
+thread_local! {
+    /// The borrows registered on this thread, innermost first.
+    static RECV_BUFFER_BORROWS: Cell<*const RecvBufferBorrow> =
+        const { Cell::new(core::ptr::null()) };
+}
+
+impl RecvBufferBorrow {
+    /// `release` is called with `owner` before this thread's loop runs again.
+    /// It must be idempotent: one nested run releases the borrow, and the
+    /// frame that owns it can still reach its own release path afterwards.
+    pub const fn new(release: unsafe fn(*mut c_void), owner: *mut c_void) -> Self {
+        Self {
+            next: Cell::new(core::ptr::null()),
+            release,
+            owner,
+        }
+    }
+
+    /// Registers `self` until the returned guard drops. The guard borrows
+    /// `self`, so the value cannot move while it is registered.
+    pub fn register(&self) -> RecvBufferBorrowGuard<'_> {
+        self.next.set(RECV_BUFFER_BORROWS.get());
+        RECV_BUFFER_BORROWS.set(core::ptr::from_ref(self));
+        RecvBufferBorrowGuard(self)
+    }
+}
+
+/// Unregisters its `RecvBufferBorrow` on drop.
+pub struct RecvBufferBorrowGuard<'a>(&'a RecvBufferBorrow);
+
+impl Drop for RecvBufferBorrowGuard<'_> {
+    fn drop(&mut self) {
+        // Registration is stack-ordered: a borrow covers the rest of the
+        // callback frame that made it, and those frames nest.
+        debug_assert!(core::ptr::eq(
+            RECV_BUFFER_BORROWS.get(),
+            core::ptr::from_ref(self.0)
+        ));
+        RECV_BUFFER_BORROWS.set(self.0.next.get());
+    }
+}
+
+/// Asks every borrower on this thread to copy out the receive-buffer bytes it
+/// still reads. Call it before running this thread's loop.
+#[inline]
+fn release_recv_buffer_borrows() {
+    if RECV_BUFFER_BORROWS.get().is_null() {
+        return;
+    }
+    release_registered_borrows();
+}
+
+#[cold]
+fn release_registered_borrows() {
+    let mut node = RECV_BUFFER_BORROWS.get();
+    while !node.is_null() {
+        // SAFETY: a registered borrow stays on the list only while
+        // `register`'s guard holds it, so the node is live. `new` pairs
+        // `release` with the `owner` it takes.
+        unsafe {
+            let borrow = &*node;
+            node = borrow.next.get();
+            (borrow.release)(borrow.owner);
+        }
+    }
+}
 
 // ───────────────────────────── PosixLoop ─────────────────────────────
 
@@ -245,11 +336,13 @@ impl PosixLoop {
     }
 
     pub fn tick(&mut self) {
+        release_recv_buffer_borrows();
         // SAFETY: self is a valid loop pointer
         unsafe { c::us_loop_run_bun_tick(self, core::ptr::null(), NOW_NS_UNKNOWN) };
     }
 
     pub fn tick_without_idle(&mut self) {
+        release_recv_buffer_borrows();
         let timespec = Timespec { sec: 0, nsec: 0 };
         // SAFETY: self is a valid loop pointer; &timespec lives for the call
         unsafe { c::us_loop_run_bun_tick(self, &raw const timespec, NOW_NS_UNKNOWN) };
@@ -259,6 +352,7 @@ impl PosixLoop {
     /// `timer::All::get_timeout`), reused by the JS park hook's idle-sweep rate limit rather
     /// than read again. `NOW_NS_UNKNOWN` if the caller has none to share.
     pub fn tick_with_timeout(&mut self, timespec: Option<&Timespec>, now_ns: u64) {
+        release_recv_buffer_borrows();
         // SAFETY: self is a valid loop pointer
         unsafe {
             c::us_loop_run_bun_tick(
@@ -386,11 +480,13 @@ impl WindowsLoop {
     /// Windows the park hook is driven from `us_loop_run` (libuv.c), which reads libuv's
     /// already-refreshed clock via `uv_now` rather than taking one of its own.
     pub fn tick_with_timeout(&mut self, _: Option<&Timespec>, _now_ns: u64) {
+        release_recv_buffer_borrows();
         // SAFETY: self is a valid loop pointer
         unsafe { c::us_loop_run(self) };
     }
 
     pub fn tick_without_idle(&mut self) {
+        release_recv_buffer_borrows();
         // SAFETY: self is a valid loop pointer
         unsafe { c::us_loop_pump(self) };
     }
@@ -418,6 +514,7 @@ impl WindowsLoop {
     }
 
     pub fn run(&mut self) {
+        release_recv_buffer_borrows();
         // SAFETY: self is a valid loop pointer
         unsafe { c::us_loop_run(self) };
     }

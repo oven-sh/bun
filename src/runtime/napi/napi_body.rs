@@ -93,8 +93,7 @@ unsafe extern "C" {
     fn NapiEnv__globalObject(env: *mut NapiEnv) -> *mut JSGlobalObject;
     fn NapiEnv__getAndClearPendingException(env: *mut NapiEnv, out: *mut JSValue) -> bool;
     fn NapiEnv__hasPendingException(env: *mut NapiEnv) -> bool;
-    /// `NapiStatus::ok` while JS may run, otherwise the status Node's `NAPI_PREAMBLE` returns
-    /// when `can_call_into_js()` is false.
+    /// `NapiStatus::ok`, or the status Node's `NAPI_PREAMBLE` returns when `can_call_into_js()` is false.
     fn NapiEnv__checkCanCallIntoJS(env: *mut NapiEnv) -> NapiStatus;
     fn NapiEnv__deref(env: *mut NapiEnv);
     fn NapiEnv__ref(env: *mut NapiEnv);
@@ -155,10 +154,7 @@ impl NapiEnv {
         unsafe { NapiEnv__hasPendingException(self.as_mut_ptr()) }
     }
 
-    /// The other gate of Node's `NAPI_PREAMBLE`: `can_call_into_js()` is false once the VM is
-    /// stopping or stopped (a Worker's `terminate()`, or the exit sequence past the 'exit'
-    /// handlers, where the addon envs are torn down). `Err` is the status Node returns then,
-    /// set as the last error.
+    /// Node's `can_call_into_js()` gate. `Err` is the status Node returns, set as the last error.
     pub(crate) fn check_can_call_into_js(&self) -> Result<(), napi_status> {
         // SAFETY: env is non-null; C++ side is read-only here.
         match unsafe { NapiEnv__checkCanCallIntoJS(self.as_mut_ptr()) } {
@@ -487,10 +483,8 @@ macro_rules! get_env {
     };
 }
 
-/// Like `get_env!` but also returns `napi_pending_exception` if a JS exception
-/// is pending on the env, and refuses the call while the VM is stopping or
-/// stopped (mirrors Node's `NAPI_PREAMBLE`). Use this for napi entry points
-/// that can execute JS or have observable side effects.
+/// Node's `NAPI_PREAMBLE`: `get_env!`, then `napi_pending_exception` if a JS
+/// exception is pending, then the `can_call_into_js()` gate.
 macro_rules! preamble {
     ($env:expr) => {{
         let env = get_env!($env);

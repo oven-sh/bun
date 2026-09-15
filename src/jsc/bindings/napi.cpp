@@ -85,10 +85,7 @@
 using namespace JSC;
 using namespace Zig;
 
-// Node: RETURN_STATUS_IF_FALSE(env, env->can_call_into_js(), ...). The VM is stopping or stopped:
-// a Worker's terminate(), or this thread's exit sequence past the 'exit' handlers, where the addon
-// envs are torn down (cleanup hooks, the finalizers of live wraps and references, the instance
-// data finalizer). Every function Node opens with NAPI_PREAMBLE refuses here and runs no JS.
+// Node: RETURN_STATUS_IF_FALSE(env, env->can_call_into_js(), ...)
 #define NAPI_RETURN_IF_CANNOT_CALL_INTO_JS(_env)                                \
     do {                                                                        \
         if (!(_env)->canCallIntoJS()) [[unlikely]]                              \
@@ -99,8 +96,7 @@ using namespace Zig;
 // - if NAPI_VERBOSE is 1, log that the function was called
 // - if env is nullptr, return napi_invalid_arg
 // - if there is a pending exception, return napi_pending_exception
-// - if the VM is stopping or stopped, return napi_cannot_run_js (module version 10 or later)
-//   or napi_pending_exception (older)
+// - if the VM is stopping or stopped (env->canCallIntoJS()), return env->cannotCallIntoJSStatus()
 // No do..while is used as this declares a variable that other macros need to use
 #define NAPI_PREAMBLE(_env)                                                     \
     NAPI_LOG_CURRENT_FUNCTION;                                                  \
@@ -122,8 +118,7 @@ using namespace Zig;
         NAPI_CHECK_ARG(_env, _env);        \
     } while (0)
 
-// NAPI_PREAMBLE_NO_THROW_SCOPE for a function Node opens with NAPI_PREAMBLE: the same refusal
-// while the VM is stopping or stopped, before the function declares its own scope.
+// NAPI_PREAMBLE_NO_THROW_SCOPE plus the can_call_into_js gate, for a function Node opens with NAPI_PREAMBLE.
 #define NAPI_PREAMBLE_NO_THROW_SCOPE_GATED(_env)  \
     do {                                          \
         NAPI_PREAMBLE_NO_THROW_SCOPE(_env);       \
@@ -3436,8 +3431,7 @@ extern "C" uint32_t Bun__napi_get_version(napi_env env)
     return env->napiModule().nm_version;
 }
 
-// napi_ok while JS may run, otherwise the status NAPI_RETURN_IF_CANNOT_CALL_INTO_JS returns (not
-// yet set as the last error).
+// napi_ok, or the status NAPI_RETURN_IF_CANNOT_CALL_INTO_JS returns (not yet set as the last error).
 extern "C" napi_status NapiEnv__checkCanCallIntoJS(napi_env env)
 {
     return env->canCallIntoJS() ? napi_ok : env->cannotCallIntoJSStatus();

@@ -99,6 +99,22 @@ impl<T: HeapNode, Context: HeapContext<T>> Intrusive<T, Context> {
         result
     }
 
+    /// Visit every element (unordered, O(N)). `f` must not insert or remove.
+    pub unsafe fn for_each(&self, mut f: impl FnMut(*mut T)) {
+        // SAFETY: all reachable nodes from `self.root` are valid for the heap's lifetime.
+        Self::for_each_internal(self.root, &mut f);
+    }
+
+    unsafe fn for_each_internal(node: *mut T, f: &mut impl FnMut(*mut T)) {
+        if node.is_null() {
+            return;
+        }
+        f(node);
+        // SAFETY: `node` is non-null and valid (checked above / invariant).
+        Self::for_each_internal((*node).heap().child, f);
+        Self::for_each_internal((*node).heap().next, f);
+    }
+
     /// Look at the next maximum value but do not remove it. This is an O(N) operation.
     pub unsafe fn find_max(&self) -> *mut T {
         if self.root.is_null() {

@@ -357,6 +357,23 @@ impl MiniEventLoop {
         unsafe { (*self.loop_ptr()).wakeup() };
     }
 
+    /// [`enqueue_task_concurrent`](Self::enqueue_task_concurrent) for a
+    /// signal handler, which may have interrupted `tick` and so must not form
+    /// `&mut Self`. Async-signal-safe (lock-free push + `us_wakeup_loop`).
+    ///
+    /// # Safety
+    /// `this` is live; `task` outlives the queued item and is not queued yet.
+    pub unsafe fn enqueue_task_concurrent_raw(
+        this: *const Self,
+        task: NonNull<AnyTaskWithExtraContext>,
+    ) {
+        // SAFETY: per fn contract; field projection only, no `&Self`.
+        unsafe {
+            (*core::ptr::addr_of!((*this).concurrent_tasks)).push(task);
+            bun_uws::us_wakeup_loop((*this).loop_);
+        }
+    }
+
     /// The caller supplies `field_offset = core::mem::offset_of!(C, <field>)` of the
     /// embedded `AnyTaskWithExtraContext`.
     ///

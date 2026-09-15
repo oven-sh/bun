@@ -20,6 +20,17 @@ function extractHash(html: string, file_kind: "css" | "js") {
   return html.match(re)?.[1];
 }
 
+/**
+ * What an HTML route whose bundle could not be built answers with: the first
+ * request (which waited for the build) and every request after it.
+ */
+const buildFailedResponses = ["GET", "GET", "HEAD"].map(method => ({
+  method,
+  status: 500,
+  contentLength: "0",
+  body: "",
+}));
+
 test("serve html", async () => {
   await using dir = tempDir("html-css-js", {
     "dashboard.html": /*html*/ `
@@ -416,6 +427,67 @@ export default p;
     // try again
     const response2 = await fetch(`http://${hostname}:${port}/`);
     expect(response2.status).toBe(500);
+  });
+
+  // A failed plugin load is remembered for the lifetime of the server. The first
+  // request is answered when the load rejects; later requests hit the remembered
+  // failure right away, both in production (the route stays failed) and in
+  // development without HMR (the route is retried per request and fails again).
+  test("requests after a failed plugin load keep getting 500", async () => {
+    await using dir = tempDir("html-failed-plugin-load", {
+      "bunfig.toml": /* toml */ `
+[serve.static]
+plugins = ["./plugin.ts"]
+`,
+      "index.html": /*html*/ `<!DOCTYPE html><html><head><title>Plugin load failure</title></head><body></body></html>`,
+      "plugin.ts": /*ts*/ `
+export default {
+  name: "throws-in-setup",
+  setup() {
+    throw new Error("setup failed on purpose");
+  },
+};
+`,
+      "serve-fixture.ts": /*ts*/ `
+import html from "./index.html";
+
+const server = Bun.serve({
+  port: 0,
+  development: process.argv[2] === "development" ? { hmr: false } : false,
+  routes: { "/": html },
+  fetch: () => new Response("fallback", { status: 404 }),
+});
+const results = [];
+for (const method of ["GET", "GET", "HEAD"]) {
+  const response = await fetch(server.url, { method });
+  results.push({
+    method,
+    status: response.status,
+    contentLength: response.headers.get("content-length"),
+    body: await response.text(),
+  });
+}
+server.stop(true);
+console.log(JSON.stringify(results));
+`,
+    });
+
+    await Promise.all(
+      ["production", "development"].map(async mode => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "serve-fixture.ts", mode],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toContain("Failed to load plugins for Bun.serve");
+        expect(stderr).toContain("setup failed on purpose");
+        expect(JSON.parse(stdout)).toEqual(buildFailedResponses);
+        expect(exitCode).toBe(0);
+      }),
+    );
   });
 
   test("empty plugin array", async () => {
@@ -1160,6 +1232,46 @@ test("wildcard static routes", async () => {
       expect(text).toContain("<title>Error Page</title>");
     }
   }
+});
+
+// In production the route is built once; when that build fails the route stays
+// failed, so the requests served from the failed state must report it the same
+// way as the request that waited for the build.
+test("production html route whose build failed keeps answering 500", async () => {
+  await using dir = tempDir("bun-serve-html-build-failed", {
+    "index.html": /*html*/ `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Build failure</title>
+          <script type="module" src="./does-not-exist.js"></script>
+        </head>
+        <body></body>
+      </html>
+    `,
+  });
+  const { default: html } = await import(join(String(dir), "index.html"));
+
+  using server = Bun.serve({
+    port: 0,
+    development: false,
+    routes: { "/": html },
+    fetch() {
+      return new Response("fallback", { status: 404 });
+    },
+  });
+
+  const results = [];
+  for (const method of ["GET", "GET", "HEAD"]) {
+    const response = await fetch(server.url, { method });
+    results.push({
+      method,
+      status: response.status,
+      contentLength: response.headers.get("content-length"),
+      body: await response.text(),
+    });
+  }
+  expect(results).toEqual(buildFailedResponses);
 });
 
 test("serve html with JSX runtime in development mode", async () => {

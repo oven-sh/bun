@@ -296,8 +296,7 @@ impl Route {
                             bstr::BStr::new(req.url())
                         );
                     }
-                    // TODO: use the code from DevServer.rs to render the error
-                    resp.end_without_body(true);
+                    Self::end_build_failed(resp);
                 }
                 State::Html(html) => {
                     if bun_core::Environment::ENABLE_LOGS {
@@ -674,32 +673,28 @@ impl Route {
                         StaticRoute::on(html.this_ptr(), resp);
                     }
                 }
-                State::Err(_log) => {
-                    if self
-                        .server
-                        .get()
-                        .expect("server set")
-                        .config()
-                        .is_development()
-                    {
-                        // TODO: use the code from DevServer.rs to render the error
-                    } else {
-                        // To protect privacy, do not show errors to end users in production.
-                        // TODO: Show a generic error page.
-                    }
-                    // This runs from a JS event-loop task, not a uWS handler,
-                    // so `end_without_body(true)` alone cannot close the
-                    // socket; write Content-Length so the client has framing.
-                    resp.write_status(b"500 Build Failed");
-                    resp.write_header_int(b"Content-Length", 0);
-                    resp.end_without_body(true);
-                }
+                State::Err(_log) => Self::end_build_failed(resp),
                 _ => {
                     resp.write_header_int(b"Content-Length", 0);
                     resp.end_without_body(true);
                 }
             }
         }
+    }
+
+    /// The response for a route in `State::Err`, both for the requests that were
+    /// waiting on the build that failed and for every request arriving while
+    /// the route stays in that state (outside of development: until the server
+    /// is restarted). The build log is never rendered into the response so
+    /// error details do not reach end users.
+    ///
+    /// `resume_pending_responses` runs from a JS event-loop task, not a uWS
+    /// handler, so `end_without_body(true)` alone cannot close the socket
+    /// there; the Content-Length gives the client framing either way.
+    fn end_build_failed(resp: AnyResponse) {
+        resp.write_status(b"500 Build Failed");
+        resp.write_header_int(b"Content-Length", 0);
+        resp.end_without_body(true);
     }
 }
 

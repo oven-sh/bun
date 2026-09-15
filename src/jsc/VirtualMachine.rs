@@ -405,6 +405,9 @@ pub struct VirtualMachine {
     /// The context the innermost live [`ContextScope`] entered: whose script the native code that
     /// is running continues.
     pub(crate) innermost_scope: Cell<Option<crate::ContextId>>,
+    /// That scope was entered as gone: its graph has been collected (its context may not have
+    /// been stopped yet: that is queued from the finalizer).
+    pub(crate) innermost_scope_gone: Cell<bool>,
     pub(crate) graph_jobs:
         crate::JsCell<bun_collections::ArrayHashMap<crate::ContextId, GraphJobs>>,
     pub test_isolation_enabled: bool,
@@ -1172,9 +1175,11 @@ impl VirtualMachine {
     /// what a disposed graph's leftover script calls synchronously (a comparator, a handler of a
     /// synchronous transform): that is still its script running, which no scope entered.
     pub fn calls_nobody(&self) -> bool {
-        self.innermost_scope
-            .get()
-            .is_some_and(|context| !self.is_context_live(context))
+        self.innermost_scope_gone.get()
+            || self
+                .innermost_scope
+                .get()
+                .is_some_and(|context| !self.is_context_live(context))
     }
 
     /// An off-thread job (a pool job, a libuv fs request) was handed off for `context`'s script.
@@ -1291,6 +1296,7 @@ impl VirtualMachine {
             vm: self,
             previous: JSValue::ZERO,
             previous_scope: self.innermost_scope.replace(Some(context)),
+            previous_scope_gone: self.innermost_scope_gone.replace(false),
             gone: false,
         };
         if context == self.root_context.id() || context == self.vm_context.id() {
@@ -1315,6 +1321,7 @@ impl VirtualMachine {
             Some(previous) => scope.previous = previous,
             None => {
                 scope.gone = true;
+                self.innermost_scope_gone.set(true);
                 self.gone_scopes.set(self.gone_scopes.get() + 1);
                 if self.graph_contexts.count() != 0 && self.script_allowed() {
                     scope.previous = Bun__ModuleGraph__enterRootContext(self.global());
@@ -3283,6 +3290,7 @@ impl VirtualMachine {
             addr_of_mut!((*vm).context_ids).write(Default::default());
             addr_of_mut!((*vm).graph_contexts).write(Default::default());
             addr_of_mut!((*vm).innermost_scope).write(Cell::new(None));
+            addr_of_mut!((*vm).innermost_scope_gone).write(Cell::new(false));
             addr_of_mut!((*vm).graph_jobs).write(crate::JsCell::new(Default::default()));
             (*vm).root_context.renew((*vm).context_ids.next());
             addr_of_mut!((*vm).dead_context).write(crate::ScriptExecutionContext::dead(
@@ -7719,12 +7727,14 @@ pub struct ContextScope<'a> {
     /// alive by the conservative scan.)
     previous: JSValue,
     previous_scope: Option<crate::ContextId>,
+    previous_scope_gone: bool,
     gone: bool,
 }
 
 impl Drop for ContextScope<'_> {
     fn drop(&mut self) {
         self.vm.innermost_scope.set(self.previous_scope);
+        self.vm.innermost_scope_gone.set(self.previous_scope_gone);
         #[cfg(debug_assertions)]
         self.vm.context_scopes.set(self.vm.context_scopes.get() - 1);
         if self.gone {

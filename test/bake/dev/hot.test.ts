@@ -1,6 +1,6 @@
 // Hot tests ensure that the `import.meta.hot` interface is functional
 import { expect } from "bun:test";
-import { renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { devTest, emptyHtmlFile } from "../bake-harness";
 
 devTest("import.meta.hot.accept basic", {
@@ -640,5 +640,80 @@ devTest("dev.write resolves only after the new module body has run", {
     // dev.write resolves on bun:afterUpdate, i.e. after replaceModules has
     // awaited the 500ms TLA. Acking on WS receipt would see "initial" here.
     expect(await c.js`globalThis.marker`).toBe("updated");
+  },
+});
+
+devTest("every save that arrives while a bundle runs reaches the next bundle", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./hold-plugin.ts"]
+    `,
+    // Keeps a bundle that loads held.ts open for as long as hold/on exists.
+    "hold-plugin.ts": `
+      import { existsSync, readFileSync, writeFileSync } from "node:fs";
+      import { join } from "node:path";
+
+      const on = join(import.meta.dir, "hold", "on");
+      export default {
+        name: "hold",
+        setup(build) {
+          build.onLoad({ filter: /held\\.ts$/ }, async args => {
+            if (existsSync(on)) {
+              writeFileSync(join(import.meta.dir, "hold", "entered"), "");
+              while (existsSync(on)) await Bun.sleep(5);
+            }
+            return { contents: readFileSync(args.path, "utf8"), loader: "ts" };
+          });
+        },
+      };
+    `,
+    "hold/.keep": "",
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import { held } from "./held";
+      import { a } from "./a";
+      import { b } from "./b";
+      import { c } from "./c";
+      console.log(held, a, b, c);
+    `,
+    "held.ts": `export const held = "held-0";`,
+    "a.ts": `export const a = "a-0";`,
+    "b.ts": `export const b = "b-0";`,
+    "c.ts": `export const c = "c-0";`,
+  },
+  async test(dev) {
+    const served = async () => {
+      const html = await (await dev.fetch("/")).text();
+      const src = html.match(/<script[^>]+src="([^"]+)"[^>]*data-bun-dev-server-script/)![1];
+      return await (await dev.fetch(src)).text();
+    };
+    const until = async (what: string, done: () => boolean | Promise<boolean>) => {
+      const deadline = Date.now() + 30_000;
+      while (!(await done())) {
+        if (Date.now() > deadline) throw new Error("Timed out waiting for " + what);
+        await Bun.sleep(10);
+      }
+    };
+    expect(await served()).toContain('"held-0"');
+
+    writeFileSync(dev.join("hold/on"), "");
+    writeFileSync(dev.join("held.ts"), `export const held = "held-1";`);
+    await until("the bundle of held.ts to start", () => existsSync(dev.join("hold/entered")));
+
+    // Each save has to reach the dev server as a watcher batch of its own. The
+    // watcher gives no signal, so space them by far more than the window in
+    // which it merges events.
+    const saved = ["a", "b", "c"];
+    for (const name of saved) {
+      writeFileSync(dev.join(name + ".ts"), `export const ${name} = "${name}-1";`);
+      await Bun.sleep(100);
+    }
+    unlinkSync(dev.join("hold/on"));
+
+    // One bundle follows the held one. The last save is in it.
+    let text = "";
+    await until("the bundle after the held one", async () => (text = await served()).includes('"c-1"'));
+    expect(saved.filter(name => !text.includes(`"${name}-1"`))).toEqual([]);
   },
 });

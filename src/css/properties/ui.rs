@@ -115,9 +115,9 @@ impl ColorSchemeHandler {
         match property {
             Property::ColorScheme(color_scheme_) => {
                 let color_scheme: ColorScheme = *color_scheme_;
-                if !context
+                if context
                     .targets
-                    .is_compatible(css::compat::Feature::LightDark)
+                    .should_compile_same(css::compat::Feature::LightDark)
                 {
                     if color_scheme.contains(ColorScheme::LIGHT) {
                         dest.push(define_var(b"--buncss-light", css::Token::Ident(b"initial")));

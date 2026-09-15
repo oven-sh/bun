@@ -384,6 +384,47 @@ describe("web worker", () => {
     });
   });
 
+  // WebIDL: WorkerOptions.type is a WorkerType and .credentials a RequestCredentials enumeration, so
+  // any other value is a TypeError at construction. Valid values have no further effect in Bun.
+  describe("type and credentials options", () => {
+    test.each([
+      [{ type: "zzz" }, "options.type"],
+      [{ type: null }, "options.type"],
+      [{ type: 1 }, "options.type"],
+      [{ credentials: "zzz" }, "options.credentials"],
+    ])("new Worker(url, %j) throws a TypeError", (options, name) => {
+      let error: any;
+      try {
+        new Worker("data:text/javascript,", options as any);
+      } catch (e) {
+        error = e;
+      }
+      expect(error).toBeInstanceOf(TypeError);
+      expect(error.message).toStartWith(`The property '${name}' must be one of:`);
+    });
+
+    test("valid or undefined values are accepted", async () => {
+      for (const options of [
+        { type: "module" },
+        { type: "classic" },
+        { type: undefined },
+        { credentials: "omit" },
+        { credentials: "same-origin" },
+        { credentials: "include" },
+      ] satisfies WorkerOptions[]) {
+        const worker = new Worker("data:text/javascript,", options);
+        await once(worker, "close");
+      }
+    });
+
+    // node:worker_threads has neither option. Unknown keys are ignored there, as in Node.
+    test("worker_threads.Worker does not validate them", async () => {
+      const worker = new wt.Worker(new URL("data:text/javascript,"), { type: "zzz", credentials: "zzz" } as any);
+      const [code] = await once(worker, "exit");
+      expect(code).toBe(0);
+    });
+  });
+
   describe("error event", () => {
     test("is fired with a string of the error", async () => {
       const worker = new Worker("data:text/javascript,throw 5");
@@ -679,6 +720,8 @@ describe("web worker", () => {
     // after the request must release, not build script values under it.
     test("terminate() while fs.readFile completions keep arriving", async () => {
       using dir = tempDir("worker-readfile-churn", { "f.bin": Buffer.alloc(65536, 7) });
+      // Each round boots 4 workers; a debug build spends ~0.5s per round, so it runs fewer.
+      const rounds = isDebug ? 4 : 12;
       await using proc = Bun.spawn({
         cmd: [
           bunExe(),
@@ -687,7 +730,7 @@ describe("web worker", () => {
              let n = 0; (function pump(){ while (n < 16) { n++; readFile(\${JSON.stringify(process.argv[1])}, () => { n--; setImmediate(pump) }) } })();
              postMessage("busy")\`;
            const url = URL.createObjectURL(new Blob([src]));
-           for (let r = 0; r < 12; r++) await Promise.all(Array.from({ length: 4 }, (_, i) => new Promise(res => {
+           for (let r = 0; r < ${rounds}; r++) await Promise.all(Array.from({ length: 4 }, (_, i) => new Promise(res => {
              const w = new Worker(url); w.addEventListener("close", res); w.onmessage = () => setTimeout(() => w.terminate(), (r + i) % 10) })));
            console.log("PASS");`,
           path.join(String(dir), "f.bin"),

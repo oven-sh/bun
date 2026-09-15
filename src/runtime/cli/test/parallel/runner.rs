@@ -377,7 +377,7 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn
     if ctx.args.allow_addons == Some(false) {
         argv.push(lit(b"--no-addons\0"));
     }
-    if ctx.args.allow_ffi_cc == Some(false) {
+    if ctx.args.allow_ffi == Some(false) {
         argv.push(lit(b"--no-ffi-cc\0"));
     }
     if matches!(ctx.debug.macros, MacroOptions::Disable) {

@@ -1516,7 +1516,8 @@ describe("Socket fd adoption", () => {
   // kernel buffer then makes write(2) fail with EAGAIN. Node's pipe handle
   // polls and writes the rest, so EAGAIN is never an error and no byte is lost.
   it.skipIf(isWindows)("queues the rest of a write when a non-blocking fd reports EAGAIN", async () => {
-    const fifo = join(tmpdirSync(), "adopted.fifo");
+    using dir = tempDir("net-fd-eagain", {});
+    const fifo = join(String(dir), "adopted.fifo");
     execFileSync("mkfifo", [fifo]);
     const { O_RDONLY, O_WRONLY, O_NONBLOCK } = fs.constants;
     const rfd = fs.openSync(fifo, O_RDONLY | O_NONBLOCK);

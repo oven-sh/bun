@@ -438,11 +438,20 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
     pub(crate) late_bound_optional_peer: bool,
     pub(crate) manager: Option<&'a PackageManager>,
     pub(crate) sort_buf: Vec<DependencyID>,
+    /// Peers of the package currently being hoisted; see `Builder::begin_peer_probes`.
+    pub(crate) peer_probes: Vec<PeerProbe>,
     pub(crate) workspace_filters: &'a [WorkspaceFilter],
     pub(crate) install_root_dependencies: bool,
     pub(crate) packages_to_install: Option<&'a [PackageID]>,
     /// Workspace package ids that are hoisting barriers (self-contained node_modules).
     pub(crate) self_contained: Vec<PackageID>,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct PeerProbe {
+    dep_id: DependencyID,
+    /// A tree the package would still see if it stayed put holds an in-range version.
+    provided: bool,
 }
 
 pub struct BuilderEntry {
@@ -485,6 +494,115 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
 
     fn buf(&self) -> &[u8] {
         self.lockfile().buffers.string_bytes.as_slice()
+    }
+
+    /// Collects the required peers of `package_id`, about to be hoisted out of the package with `owner_deps`.
+    fn begin_peer_probes(&mut self, owner_deps: DependencyIDSlice, package_id: PackageID) {
+        self.peer_probes.clear();
+        if package_id == invalid_package_id {
+            return;
+        }
+
+        let lockfile_ref = self.lockfile;
+        let pkg_resolutions = lockfile_ref.get().packages.items_resolution();
+        match pkg_resolutions[package_id as usize].tag {
+            // Installed as a symlink, so a nested copy would resolve the same peers as the root copy.
+            crate::resolution::Tag::Workspace | crate::resolution::Tag::Symlink => return,
+            _ => {}
+        }
+
+        let buf = lockfile_ref.get().buffers.string_bytes.as_slice();
+        let deps = self.dependencies;
+        let pkg_deps = self.resolution_lists[package_id as usize];
+
+        'peers: for peer_dep_id in pkg_deps.begin()..pkg_deps.end() {
+            let peer = &deps[peer_dep_id as usize];
+            if !peer.behavior.is_peer()
+                || peer.behavior.is_optional_peer()
+                || peer.version.tag != crate::dependency::VersionTag::Npm
+            {
+                continue;
+            }
+
+            // A regular dependency on the same name is what gets installed next to the package.
+            for dep_id in pkg_deps.begin()..pkg_deps.end() {
+                let dep = &deps[dep_id as usize];
+                if dep.name_hash == peer.name_hash && !dep.behavior.is_peer() {
+                    continue 'peers;
+                }
+            }
+
+            // The owner's own copy of the peer, if it has one, is the one the package finds from here.
+            let owner_copy = (owner_deps.begin()..owner_deps.end())
+                .map(|dep_id| (&deps[dep_id as usize], self.resolutions[dep_id as usize]))
+                .find(|(dep, res_id)| {
+                    dep.name_hash == peer.name_hash
+                        && !dep.behavior.is_peer()
+                        && *res_id != invalid_package_id
+                })
+                .map(|(_, res_id)| {
+                    pkg_resolutions[res_id as usize].satisfies_dependency_version(
+                        &peer.version,
+                        buf,
+                        buf,
+                    )
+                });
+            let provided = match owner_copy {
+                Some(true) => true,
+                Some(false) => continue 'peers,
+                None => false,
+            };
+
+            self.peer_probes.push(PeerProbe {
+                dep_id: peer_dep_id,
+                provided,
+            });
+        }
+    }
+
+    /// True if `tree_id` holds an out-of-range version of a peer that staying put would resolve in range.
+    fn probe_peers(&mut self, tree_id: Id) -> bool {
+        let lockfile_ref = self.lockfile;
+        let lockfile = lockfile_ref.get();
+        let pkg_resolutions = lockfile.packages.items_resolution();
+        let buf = lockfile.buffers.string_bytes.as_slice();
+        let deps = self.dependencies;
+        let tree_deps = self.list.items_tree()[tree_id as usize]
+            .dependencies
+            .get(self.list.items_dependencies()[tree_id as usize].as_slice());
+
+        let mut i = 0;
+        while i < self.peer_probes.len() {
+            let probe = self.peer_probes[i];
+            let peer = &deps[probe.dep_id as usize];
+
+            let held = tree_deps
+                .iter()
+                .find(|&&dep_id| deps[dep_id as usize].name_hash == peer.name_hash)
+                .map(|&dep_id| self.resolutions[dep_id as usize])
+                .filter(|&res_id| res_id != invalid_package_id)
+                .map(|res_id| {
+                    pkg_resolutions[res_id as usize].satisfies_dependency_version(
+                        &peer.version,
+                        buf,
+                        buf,
+                    )
+                });
+
+            match held {
+                None => i += 1,
+                Some(true) => {
+                    self.peer_probes[i].provided = true;
+                    i += 1;
+                }
+                Some(false) if probe.provided => return true,
+                Some(false) => {
+                    self.peer_probes.swap_remove(i);
+                }
+            }
+        }
+
+        false
     }
 
     /// Flatten the multi-dimensional ArrayList of package IDs into a single easily serializable array
@@ -981,6 +1099,10 @@ impl Tree {
 
         // Tree is Copy — snapshot the fields we need so we don't hold a borrow of builder.list.
         let this: Tree = builder.list.items_tree()[self_id as usize];
+        if !AS_DEFINED && !builder.peer_probes.is_empty() && builder.probe_peers(self_id) {
+            return HoistDependencyResult::DependencyLoop; // 3
+        }
+
         // The loop body only reads through `builder`; the recursive call comes after the loop.
         let this_deps: &[DependencyID] = this
             .dependencies
@@ -1072,6 +1194,9 @@ impl Tree {
 
         // this dependency was not found in this tree, try hoisting or placing in the next parent
         if this.parent != INVALID_ID && this.id != hoist_root_id {
+            if AS_DEFINED {
+                builder.begin_peer_probes(input_dep_range, package_id);
+            }
             let id = Tree::hoist_dependency::<false, METHOD>(
                 this.parent,
                 hoist_root_id,

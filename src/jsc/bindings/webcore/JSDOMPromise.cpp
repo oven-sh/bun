@@ -50,6 +50,14 @@ auto DOMPromise::whenPromiseIsSettled(JSDOMGlobalObject* globalObject, JSC::JSOb
         return JSC::JSValue::encode(JSC::jsUndefined());
     });
 
+    // A native promise takes the reaction directly. `then` looks up the species
+    // through the promise's `constructor`, which a script can define, so
+    // calling it could run user code and throw here.
+    if (auto* nativePromise = dynamicDowncast<JSC::JSPromise>(promise)) {
+        nativePromise->performPromiseThen(vm, globalObject, handler, handler, JSC::jsUndefined());
+        return IsCallbackRegistered::Yes;
+    }
+
     auto scope = DECLARE_THROW_SCOPE(vm);
     const JSC::Identifier& privateName = vm.propertyNames->builtinNames().thenPrivateName();
     auto thenFunction = promise->get(&lexicalGlobalObject, privateName);

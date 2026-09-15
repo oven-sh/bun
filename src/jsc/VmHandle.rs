@@ -121,8 +121,11 @@ pub struct Shared {
 struct DebugState {
     js_thread: std::thread::ThreadId,
     live: Guarded<LiveTickets>,
-    /// Test suite only — see [`test_gate`].
-    gate: core::sync::atomic::AtomicBool,
+    /// Test suite only (see [`test_gate`]): the [`TestGate`] mode armed, and
+    /// the posts the gate is holding for `Draining`, which the wait does not
+    /// close past.
+    gate: AtomicU8,
+    parked: AtomicU32,
 }
 
 #[cfg(debug_assertions)]
@@ -317,7 +320,8 @@ impl VmHandle {
             debug: DebugState {
                 js_thread: std::thread::current().id(),
                 live: Default::default(),
-                gate: core::sync::atomic::AtomicBool::new(false),
+                gate: AtomicU8::new(TestGate::Off as u8),
+                parked: AtomicU32::new(0),
             },
         }))
     }
@@ -441,7 +445,7 @@ impl VmHandle {
         self.assert_js_thread();
         let s = &*self.0;
         s.hot.state.store(State::Draining as u8, Ordering::SeqCst);
-        test_gate::draining(self);
+        test_gate::state_published(self);
         #[cfg(debug_assertions)]
         let started = std::time::Instant::now();
         #[cfg(debug_assertions)]
@@ -454,7 +458,7 @@ impl VmHandle {
             {
                 continue;
             }
-            if s.tickets.load(Ordering::SeqCst) == 0 {
+            if s.tickets.load(Ordering::SeqCst) == 0 && test_gate::nothing_parked(s) {
                 s.hot.state.store(State::Closed as u8, Ordering::SeqCst);
                 break;
             }
@@ -469,6 +473,7 @@ impl VmHandle {
                 }
             }
         }
+        test_gate::state_published(self);
         if s.active.load(Ordering::SeqCst) != 0 {
             let mut g = s.drained.0.lock();
             while s.active.load(Ordering::SeqCst) != 0 {
@@ -533,33 +538,68 @@ pub extern "C" fn Bun__VM__currentLoopKind(vm: &VirtualMachine) -> LoopKind {
 //
 // `BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE` (first-level worker VMs; builds with
 // debug assertions): a post from another thread is held until the worker's
-// teardown has begun waiting, so it always arrives *during* the wait — the
-// ticketed path (queued, released on the JS thread, then the wait ends) and
-// the weak path (queued-and-released while draining, or refused once closed)
-// run with their real preconditions every time instead of only when they lose
-// the race. Each is named on stderr. The parked thread keeps whatever locks it
-// holds (the fetch tasklet's mutex, a streaming body's buffer lock), so a row
-// whose worker then blocks on that same lock never reaches teardown: a hang
-// under the gate, not in production.
+// teardown has reached the state the mode names, so the path under test runs
+// with its real preconditions every time instead of only when the post loses
+// the race with teardown. `draining` holds every post until the wait has
+// begun, and the wait does not close until a post it let through has been
+// made: a ticket's completion and a weak post alike are queued and released
+// by the wait. `closed` holds a weak post until the wait has ended, and the
+// teardown does not go on until that post has been made: it is refused and
+// the poster frees its own payload. A ticket's completion cannot be held past
+// the wait (the wait is for it), and neither can a weak post made while a
+// ticket is outstanding, which may be what that ticket's holder does before
+// handing the ticket back (WebCrypto posts its result from the pool task that
+// carries the ticket); both park only until `Draining` in either mode. Each
+// post is named on stderr with its outcome. The parked thread keeps whatever
+// locks it holds (the fetch tasklet's mutex, a streaming body's buffer lock),
+// so a row whose worker then blocks on that same lock never reaches teardown:
+// a hang under the gate, not in production.
+
+/// The mode a worker VM arms (see above); `Off` everywhere else.
+#[repr(u8)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum TestGate {
+    Off = 0,
+    Draining = 1,
+    Closed = 2,
+}
+
 #[cfg(debug_assertions)]
 mod test_gate {
-    use super::{Ordering, Posted, Shared, State, Ticket, VmHandle};
+    use super::{Access, Ordering, Posted, Shared, State, TestGate, Ticket, VmHandle};
     type Task = core::ptr::NonNull<super::ConcurrentTaskItem>;
 
+    impl TestGate {
+        /// `BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE=draining|closed`.
+        pub fn from_env() -> TestGate {
+            match bun_core::env_var::BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE::get() {
+                Some(b"draining") => TestGate::Draining,
+                Some(b"closed") => TestGate::Closed,
+                _ => TestGate::Off,
+            }
+        }
+    }
     impl VmHandle {
-        pub(crate) fn arm_test_gate(&self) {
-            self.0.debug.gate.store(true, Ordering::Relaxed);
+        pub(crate) fn arm_test_gate(&self, mode: TestGate) {
+            self.0.debug.gate.store(mode as u8, Ordering::Relaxed);
+        }
+    }
+    fn mode(s: &Shared) -> TestGate {
+        match s.debug.gate.load(Ordering::Relaxed) {
+            1 => TestGate::Draining,
+            2 => TestGate::Closed,
+            _ => TestGate::Off,
         }
     }
     fn on(s: &Shared) -> bool {
-        s.debug.gate.load(Ordering::Relaxed)
+        mode(s) != TestGate::Off
     }
     fn armed(s: &Shared) -> bool {
         on(s) && std::thread::current().id() != s.debug.js_thread
     }
-    fn park_until_draining(s: &Shared) {
+    fn park_until(s: &Shared, state: State) {
         let mut g = s.drained.0.lock();
-        while s.state() < State::Draining {
+        while s.state() < state {
             s.drained.1.wait_guarded(&mut g);
         }
     }
@@ -576,7 +616,7 @@ mod test_gate {
 
     pub(super) fn before_ticket_post(t: &Ticket) {
         if armed(&t.shared) {
-            park_until_draining(&t.shared);
+            park_until(&t.shared, State::Draining);
             let l = *t
                 .shared
                 .debug
@@ -596,19 +636,40 @@ mod test_gate {
         if !armed(s) {
             return post(task);
         }
-        park_until_draining(s);
         // SAFETY: handed over by the caller and not yet queued anywhere.
         let tag = unsafe { task.as_ref() }.task.tag;
-        let r = post(task);
-        let outcome = match r {
-            Posted::Queued => "released by the wait",
-            Posted::Refused(_) => "refused",
+        let report = |r: &Posted| {
+            let outcome = match r {
+                Posted::Queued => "released by the wait",
+                Posted::Refused(_) => "refused",
+            };
+            say(format_args!("late post: {} ({outcome})", tag.name()));
         };
-        say(format_args!("late post: {} ({outcome})", tag.name()));
+        if mode(s) == TestGate::Closed && s.tickets.load(Ordering::SeqCst) == 0 {
+            // Counted as a weak access in progress: `close_and_wait` returns
+            // only once this thread has posted and reported.
+            s.active.fetch_add(1, Ordering::SeqCst);
+            let _in_progress = Access(s);
+            park_until(s, State::Closed);
+            let r = post(task);
+            report(&r);
+            return r;
+        }
+        s.debug.parked.fetch_add(1, Ordering::SeqCst);
+        park_until(s, State::Draining);
+        let r = post(task);
+        report(&r);
+        s.debug.parked.fetch_sub(1, Ordering::SeqCst);
+        s.notify();
         r
     }
-    /// The wait began: parked posts go now.
-    pub(super) fn draining(h: &VmHandle) {
+    /// `close_and_wait`: may `Draining` become `Closed`? Not while a post the
+    /// gate is holding for `Draining` has yet to be made.
+    pub(super) fn nothing_parked(s: &Shared) -> bool {
+        s.debug.parked.load(Ordering::SeqCst) == 0
+    }
+    /// `Draining` / `Closed` was just published: posts parked for it go now.
+    pub(super) fn state_published(h: &VmHandle) {
         if on(&h.0) {
             h.0.notify();
         }
@@ -621,11 +682,17 @@ mod test_gate {
 }
 #[cfg(not(debug_assertions))]
 mod test_gate {
-    use super::{Posted, Shared, Ticket, VmHandle};
+    use super::{Posted, Shared, TestGate, Ticket, VmHandle};
     type Task = core::ptr::NonNull<super::ConcurrentTaskItem>;
+    impl TestGate {
+        #[inline(always)]
+        pub fn from_env() -> TestGate {
+            TestGate::Off
+        }
+    }
     impl VmHandle {
         #[inline(always)]
-        pub(crate) fn arm_test_gate(&self) {}
+        pub(crate) fn arm_test_gate(&self, _: TestGate) {}
     }
     #[inline(always)]
     pub(super) fn before_ticket_post(_: &Ticket) {}
@@ -634,7 +701,11 @@ mod test_gate {
         post(task)
     }
     #[inline(always)]
-    pub(super) fn draining(_: &VmHandle) {}
+    pub(super) fn nothing_parked(_: &Shared) -> bool {
+        true
+    }
+    #[inline(always)]
+    pub(super) fn state_published(_: &VmHandle) {}
 }
 
 // ── C++ holds references ──────────────────────────────────────────────────

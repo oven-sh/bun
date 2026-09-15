@@ -8804,12 +8804,23 @@ declare module "bun" {
     socketReused: boolean;
     /**
      * IP address of the peer the socket connected to (the proxy's, when there is
-     * one). `null` for a Unix socket, or when no connection was established.
+     * one).
+     *
+     * `null` when there is no peer address to report: the request went over a
+     * Unix socket, or it failed before a connection was established (the name
+     * did not resolve, the connect was refused, `lookup` rejected, the request
+     * was aborted first).
      */
     remoteAddress: string | null;
-    /** Port of the peer the socket connected to, or `null`. */
+    /**
+     * Port of the peer the socket connected to. `null` exactly when
+     * {@link remoteAddress} is.
+     */
     remotePort: number | null;
-    /** Address family of {@link remoteAddress}, or `null`. */
+    /**
+     * Address family of {@link remoteAddress}. `null` exactly when
+     * {@link remoteAddress} is.
+     */
     remoteFamily: "IPv4" | "IPv6" | null;
   }
 
@@ -8824,7 +8835,7 @@ declare module "bun" {
    * the request goes through a proxy, the host being dialed is the proxy's.
    *
    * @param hostname The host about to be dialed, which can be an IP literal (an IPv6 one without its brackets)
-   * @param options The port about to be dialed
+   * @param options An object with the `port` about to be dialed
    */
   type FetchLookupFunction = (
     hostname: string,

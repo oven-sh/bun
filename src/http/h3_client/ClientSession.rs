@@ -95,6 +95,10 @@ impl ClientSession {
         self.qsocket.map(|qs| quic_socket_mut(qs.as_ptr()))
     }
 
+    pub(crate) fn remote_address(&self) -> Option<core::net::SocketAddr> {
+        self.qsocket_mut()?.remote_address()
+    }
+
     /// `on_conn_close` runs from a later engine tick, so the registry is not
     /// touched from here.
     pub(crate) fn close_if_idle(&mut self, pool_id: u64) {
@@ -284,6 +288,8 @@ impl ClientSession {
         // Formed only after detach() so its Unique tag is not invalidated by
         // detach()'s aliasing write to `client.h3`.
         let client = client_mut(client_ptr);
+        // The stats describe one connection attempt; this is a new one.
+        client.stats = Default::default();
         if !ClientContext::as_mut(ctx).connect(client, &host, port) {
             client.fail_from_h2(err);
         }

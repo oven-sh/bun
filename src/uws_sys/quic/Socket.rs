@@ -20,6 +20,13 @@ unsafe extern "C" {
     fn us_quic_socket_status(s: *mut Socket, buf: *mut u8, len: c_uint) -> c_int;
     safe fn us_quic_socket_ext(s: &mut Socket) -> *mut c_void;
     safe fn us_quic_socket_close(s: &mut Socket);
+    fn us_quic_socket_remote_address(
+        s: *mut Socket,
+        buf: *mut u8,
+        len: *mut c_int,
+        port: *mut c_int,
+        is_ipv6: *mut c_int,
+    );
 }
 
 impl Socket {
@@ -32,6 +39,29 @@ impl Socket {
     #[inline]
     pub fn close(&mut self) {
         us_quic_socket_close(self)
+    }
+
+    /// The peer's address (an IPv4-mapped one as IPv4); `None` once the connection is gone.
+    pub fn remote_address(&mut self) -> Option<core::net::SocketAddr> {
+        let mut buf = [0u8; 16];
+        let (mut len, mut port, mut is_ipv6): (c_int, c_int, c_int) = (0, 0, 0);
+        // SAFETY: self is a live us_quic_socket_t; `buf` holds the 16 bytes the
+        // callee writes at most, and the out-params are valid for writes.
+        unsafe {
+            us_quic_socket_remote_address(
+                self,
+                buf.as_mut_ptr(),
+                &raw mut len,
+                &raw mut port,
+                &raw mut is_ipv6,
+            )
+        };
+        let ip: core::net::IpAddr = match len {
+            4 => core::net::Ipv4Addr::new(buf[0], buf[1], buf[2], buf[3]).into(),
+            16 => core::net::Ipv6Addr::from(buf).into(),
+            _ => return None,
+        };
+        Some(core::net::SocketAddr::new(ip, u16::try_from(port).ok()?))
     }
 
     #[inline]

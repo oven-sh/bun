@@ -448,14 +448,13 @@ describe.concurrent("bun-install", () => {
     });
   });
 
-  it.each([
+  describe.each([
     // The proxy would refuse the retry too.
     { status: "407 Proxy Authentication Required", code: 407, connects: 1 },
     // Its upstream may be back by the retry: 1 attempt + 5 retries.
     { status: "502 Bad Gateway", code: 502, connects: 6 },
-  ])(
-    "reports a proxy that answers CONNECT with $code after $connects attempt(s)",
-    async ({ status, code, connects }) => {
+  ])("a proxy that answers CONNECT with $code", ({ status, code, connects }) => {
+    it(`is reported with its status after ${connects} attempt(s)`, async () => {
       await withContext(defaultOpts, async ctx => {
         const seen: string[] = [];
         const proxy = listen<{ head: string }>({
@@ -504,8 +503,8 @@ describe.concurrent("bun-install", () => {
           proxy.stop(true);
         }
       });
-    },
-  );
+    });
+  });
 
   it("should support --registry CLI flag", async () => {
     await withContext(defaultOpts, async ctx => {

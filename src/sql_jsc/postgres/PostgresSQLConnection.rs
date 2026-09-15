@@ -30,7 +30,7 @@ use crate::postgres::postgres_request as PostgresRequest;
 use crate::postgres::postgres_request::MessageType;
 use crate::postgres::postgres_sql_query::{self, RequestCounter, Status as QueryStatus};
 use crate::postgres::postgres_sql_statement::{Error as StatementError, Status as StatementStatus};
-use crate::postgres::sasl::SASLStatus;
+use crate::postgres::sasl::{SASL, SASLStatus};
 use crate::shared::CachedStructure as PostgresCachedStructure;
 use crate::shared::connection_ctor_args::ConnectionCtorArgs;
 use bun_sql::postgres::AnyPostgresError;
@@ -291,7 +291,7 @@ impl PostgresSQLConnection {
     /// (`self.writer()` / `self.flush_data()` / `self.fail()` do not).
     #[inline]
     #[allow(clippy::mut_from_ref)] // body projects through `JsCell` (UnsafeCell-backed); see SAFETY note
-    fn sasl_state_mut(&self) -> Option<&mut crate::postgres::sasl::SASL> {
+    fn sasl_state_mut(&self) -> Option<&mut SASL> {
         // SAFETY: see doc comment — single-JS-thread, no re-entrant access to
         // `authentication_state` for the borrow's lifetime.
         match unsafe { self.authentication_state.get_mut() } {
@@ -2640,15 +2640,24 @@ impl PostgresSQLConnection {
                         }
 
                         let iteration_count = cont.iteration_count()?;
-                        // RFC 7677 §4: SCRAM-SHA-256 requires a minimum of 4096
-                        // iterations. Cap the upper bound to avoid a CPU-burn DoS
-                        // from a malicious/MITM'd server sending i ≈ u32::MAX.
-                        if !(4096..=10_000_000).contains(&iteration_count) {
-                            debug!(
-                                "SASLContinue iteration count out of range: {}",
-                                iteration_count
-                            );
+                        // PostgreSQL 16+ scram_iterations may be as low as 1; only 0 is malformed.
+                        if iteration_count == 0 {
+                            debug!("SASLContinue iteration count is zero");
                             return Err(AnyPostgresError::InvalidMessage);
+                        }
+                        if iteration_count > SASL::MAX_ITERATION_COUNT {
+                            let mut message: Vec<u8> = Vec::new();
+                            {
+                                use std::io::Write as _;
+                                let _ = write!(
+                                    &mut message,
+                                    "SCRAM-SHA-256 iteration count {} exceeds the supported maximum of {}",
+                                    iteration_count,
+                                    SASL::MAX_ITERATION_COUNT
+                                );
+                            }
+                            self.fail(&message, AnyPostgresError::SASL_ITERATION_COUNT_TOO_HIGH);
+                            return Ok(());
                         }
 
                         // Bound the *encoded* length before allocating: a

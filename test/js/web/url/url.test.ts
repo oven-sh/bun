@@ -250,6 +250,40 @@ describe("url", () => {
     expect(v.href).toBe("http://example.com/");
   });
 
+  it("blob: origin is null when the inner URL has an invalid punycode label (like Node)", () => {
+    // The origin of a blob: URL is the origin of its re-parsed path, so an
+    // inner URL the constructor rejects must not produce a tuple origin.
+    for (const inner of [
+      "http://xn--a.com/",
+      "https://XN--A.com/x",
+      "http://xn--a/",
+      "http://x%6E--a.com/",
+      "http://xn--nxasmq6b.xn--a.com/",
+      "ws://xn--a-.com/",
+      "wss://xn---.com/",
+      "ftp://xn--a.com/",
+      "file://xn--a/x",
+    ]) {
+      expect(() => new URL(inner)).toThrow(TypeError);
+      expect(new URL("blob:" + inner).origin).toBe("null");
+    }
+    expect(
+      [
+        "http://xn--ls8h.la/",
+        "https://xn--ls8h.la:8443/x",
+        "http://m\u00FCnchen.de/x",
+        "http://xn--ls8h.la/xn--a",
+        "http://ok.example/?xn--a",
+      ].map(inner => new URL("blob:" + inner).origin),
+    ).toEqual([
+      "http://xn--ls8h.la",
+      "https://xn--ls8h.la:8443",
+      "http://xn--mnchen-3ya.de",
+      "http://xn--ls8h.la",
+      "http://ok.example",
+    ]);
+  });
+
   it("prints", () => {
     // URL.prototype carries [Symbol.for("nodejs.util.inspect.custom")], so
     // Bun.inspect matches node's util.inspect output.

@@ -494,9 +494,35 @@ declare module "bun" {
      * Sets the number of seconds to wait before timing out a connection
      * due to no messages or pings.
      *
+     * The timer restarts whenever the client sends anything (a message, a
+     * ping, or a pong) and, unless {@link resetIdleTimeoutOnSend} is `false`,
+     * whenever the server sends something to the client. With
+     * {@link sendPings} enabled, Bun pings the client before the deadline and
+     * closes the connection (close code `1006`) only if nothing has come back
+     * from the client by the deadline.
+     *
      * @default 120
      */
     idleTimeout?: number;
+
+    /**
+     * Whether messages sent by the server (`ws.send()`, `ws.publish()`,
+     * `server.publish()`, ...) restart the {@link idleTimeout} timer.
+     *
+     * With the default of `true`, a connection the server keeps pushing to
+     * never counts as idle, so a client that stopped reading or answering is
+     * only noticed once the server itself goes quiet for `idleTimeout`
+     * seconds. Set this to `false` to count only traffic received from the
+     * client: a client that has not sent anything for `idleTimeout` seconds
+     * is closed (after being pinged, if {@link sendPings} is enabled), no
+     * matter how much the server sent to it in the meantime.
+     *
+     * Either way, once Bun has pinged a client, only traffic from that client
+     * cancels the pending close.
+     *
+     * @default true
+     */
+    resetIdleTimeoutOnSend?: boolean;
 
     /**
      * Whether `ws.publish()` also sends the message to `ws` (itself), if it is subscribed.

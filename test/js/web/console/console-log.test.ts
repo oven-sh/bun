@@ -143,6 +143,42 @@ NamedError: console.error a named error
 `);
 });
 
+// https://github.com/oven-sh/bun/issues/7125
+it("console.error keeps red across inspected values", async () => {
+  await using proc = spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `console.error("This is an error message", { a: 1, b: 2 });
+       console.error("errors:", [1]);
+       console.error("nested", { outer: { inner: [1, "two", null] } });
+       console.log("not an error", { a: 1 });`,
+    ],
+    env: { ...bunEnv, FORCE_COLOR: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const err = stderr.replaceAll("\r\n", "\n");
+  // Three console.error calls, each bracketed by <r><red> ... <r>\n.
+  expect(err.match(/^\x1b\[0m\x1b\[31m/gm)?.length).toBe(3);
+  expect(err.match(/\x1b\[0m\n/g)?.length).toBe(3);
+
+  // Every SGR reset inside the body must be immediately followed by the red
+  // escape so structural punctuation (braces, brackets, keys, commas) stays
+  // red. After pairing them off, the only remaining resets are the three
+  // trailing ones directly before each newline.
+  const leftover = err.replaceAll("\x1b[0m\x1b[31m", "").match(/\x1b\[0m(?!\n)/g) ?? [];
+  expect(leftover).toEqual([]);
+
+  // console.log must be untouched: no red, and no extra trailing reset.
+  const out = stdout.replaceAll("\r\n", "\n");
+  expect(out).not.toContain("\x1b[31m");
+  expect(out.endsWith("\x1b[0m\n")).toBe(false);
+  expect(exitCode).toBe(0);
+});
+
 it("console.log with SharedArrayBuffer", () => {
   // console.log(x) === Bun.inspect(x) + "\n" written to stdout.
   expect(Bun.inspect(new ArrayBuffer(0))).toBe("ArrayBuffer(0) []");

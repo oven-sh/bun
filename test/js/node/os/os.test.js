@@ -62,6 +62,28 @@ it("homedir", () => {
   expect(os.homedir() !== "unknown").toBe(true);
 });
 
+it.skipIf(isWindows)("homedir reflects HOME changes", () => {
+  const originalHome = process.env.HOME;
+  const userHome = os.userInfo().homedir;
+  try {
+    process.env.HOME = "/tmp/bun-runtime-home";
+    expect(os.homedir()).toBe("/tmp/bun-runtime-home");
+    expect(os.userInfo().homedir).toBe(userHome);
+
+    process.env.HOME = "";
+    expect(os.homedir()).toBe("");
+
+    delete process.env.HOME;
+    expect(os.homedir()).toBe(userHome);
+  } finally {
+    if (originalHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = originalHome;
+    }
+  }
+});
+
 it("tmpdir", () => {
   if (isWindows) {
     expect(

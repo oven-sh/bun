@@ -670,14 +670,6 @@ mod _impl {
         }
         #[cfg(not(windows))]
         {
-            // The posix implementation of uv_os_homedir first checks the HOME
-            // environment variable, then falls back to reading the passwd entry.
-            if let Some(home) = env_var::HOME.get() {
-                if !home.is_empty() {
-                    return Ok(BunString::from_bytes(home));
-                }
-            }
-
             // From libuv:
             // > Calling sysconf(_SC_GETPW_R_SIZE_MAX) would get the suggested size, but it
             // > is frequently 1024 or 4096, so we can just use that directly. The pwent

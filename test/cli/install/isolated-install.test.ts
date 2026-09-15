@@ -3103,9 +3103,10 @@ describe("global virtual store", () => {
     await runBunInstall(env, a.packageDir);
     await runBunInstall(env, b.packageDir);
 
-    const targetA = entryStoreName(readlinkSync(join(a.packageDir, "node_modules", ".bun", "two-range-deps@1.0.0")));
-    const targetB = entryStoreName(readlinkSync(join(b.packageDir, "node_modules", ".bun", "two-range-deps@1.0.0")));
-    expect(targetA).not.toBe(targetB);
+    const targetA = readlinkSync(join(a.packageDir, "node_modules", ".bun", "two-range-deps@1.0.0"));
+    const targetB = readlinkSync(join(b.packageDir, "node_modules", ".bun", "two-range-deps@1.0.0"));
+    expect(dirname(targetB)).toBe(dirname(targetA));
+    expect(entryStoreName(targetA)).not.toBe(entryStoreName(targetB));
 
     // Each entry's dep symlink resolves to the version that *its* project
     // overrode — proving the entries really are independent on disk.
@@ -3187,10 +3188,10 @@ describe("global virtual store", () => {
     await runBunInstall(env, a.packageDir);
     await runBunInstall(env, b.packageDir);
 
-    const targetA = entryStoreName(readlinkSync(join(a.packageDir, "node_modules", ".bun", "two-range-deps@1.0.0")));
-    const targetB = entryStoreName(readlinkSync(join(b.packageDir, "node_modules", ".bun", "two-range-deps@1.0.0")));
-    expect(targetA).toMatch(/^two-range-deps@1\.0\.0-[0-9a-f]{16}$/);
-    expect(targetA).toBe(targetB);
+    const targetA = readlinkSync(join(a.packageDir, "node_modules", ".bun", "two-range-deps@1.0.0"));
+    const targetB = readlinkSync(join(b.packageDir, "node_modules", ".bun", "two-range-deps@1.0.0"));
+    expect(entryStoreName(targetA)).toMatch(/^two-range-deps@1\.0\.0-[0-9a-f]{16}$/);
+    expect(targetB).toBe(targetA);
   });
 
   test("workspace dependency makes the parent entry project-local", async () => {

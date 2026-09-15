@@ -747,6 +747,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         // Earlier responses of this read leave before JavaScript runs (the 413 above runs none).
         resp_ref.send_corked();
+        resp_ref.send_when_complete();
 
         server.on_pending_request();
 

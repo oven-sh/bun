@@ -150,6 +150,11 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
          * shutdown sweep; the shouldCloseConnection() gates act on it once the
          * in-flight work completes. */
         HTTP_CLOSE_WHEN_IDLE = 1 << 17,
+        /* Bun.serve handed this request to user JavaScript. The response is sent
+         * when it completes, also on the socket onData is parsing: JavaScript
+         * that runs after it (microtasks, the request body callback) can block,
+         * reset the connection or end the process. */
+        HTTP_SEND_WHEN_COMPLETE = 1 << 18,
 
         /* Bits that describe the connection rather than the response in flight.
          * There is one HttpResponseData per socket, reused by every request on a

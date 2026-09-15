@@ -2833,7 +2833,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionToClass, (JSC::JSGlobalObject * globalObject,
     JSObject* prototype = prototypeBase ? JSC::constructEmptyObject(globalObject, prototypeBase) : JSC::constructEmptyObject(globalObject);
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
-    prototype->structure()->setMayBePrototype(true);
+    // Not structure()->setMayBePrototype(): that structure is the shared cached one for every `{}`.
+    prototype->didBecomePrototype(vm);
     prototype->putDirect(vm, vm.propertyNames->constructor, target, PropertyAttribute::DontEnum | 0);
 
     target->setPrototypeDirect(vm, base);

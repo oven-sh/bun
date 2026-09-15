@@ -251,6 +251,8 @@ impl Task {
     /// The type→tag table is the [`Taskable`] trait; the per-type impl
     /// supplies `T::TAG`, and says whose script the task continues.
     // Takes `*mut T` directly; `&mut T` coerces at call sites.
+    // The precondition is the queue's own: the event loop dereferences `ptr` when it runs the task.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     #[inline]
     pub fn init<T: Taskable>(ptr: *mut T) -> Task {
         // SAFETY: `ptr` is what is about to be queued, which is all `Taskable::context` asks for

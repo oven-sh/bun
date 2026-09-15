@@ -1590,15 +1590,14 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     }
 
     /// What the `stop()` promise (node:http: the `'close'` event) and the
-    /// loop unref wait for. Bun.serve waits for open HTTP connections too;
-    /// node:http's `server.close()` reports closed without them (Node's own
-    /// `net.Server` waits for every connection — pre-existing divergence),
-    /// so there they only pin the wrapper via [`Self::is_drained`].
+    /// loop unref wait for. Accepted connections count before a TLS handshake
+    /// completes, so a stopped listener cannot report closed while one can
+    /// still dispatch.
     pub(crate) fn is_closed(&self) -> bool {
         self.pending_requests.get() == 0
             && !self.has_listener()
             && !self.has_active_web_sockets()
-            && (self.config.is_node_http_server || !self.has_active_connections())
+            && !self.has_active_connections()
     }
 
     /// Nothing is left that can dispatch a handler: [`Self::is_closed`] and

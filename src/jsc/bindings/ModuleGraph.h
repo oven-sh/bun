@@ -57,6 +57,10 @@ public:
         return m_mainPath.get();
     }
     bool disposed() const { return m_disposed; }
+    // Its onError is running. What that throws or rejects, and an error of this graph's code that it
+    // causes, is the host's: given to the graph, it would come straight back to the same onError.
+    bool inOnError() const { return m_inOnError; }
+    void setInOnError(bool inOnError) { m_inOnError = inOnError; }
     // The context that owns what the graph's script opens: a JSIsolatedModuleGraph's, else null.
     inline WebCore::ScriptExecutionContext* context() const;
 
@@ -80,6 +84,7 @@ private:
     // The loader's promise for the import that made m_mainPath main.
     JSC::WriteBarrier<JSC::JSPromise> m_mainImport;
     bool m_disposed { false };
+    bool m_inOnError { false };
     unsigned m_overlayShape { 0 };
 };
 
@@ -128,8 +133,6 @@ public:
     WTF::HashMap<WTF::String, unsigned> overlayShapes;
     // Some graph of the global has (had) a context of its own.
     bool hasIsolatedGraphs { false };
-    // A graph's onError is running: what it throws synchronously is the host's.
-    bool inOnError { false };
     // Native code is telling a graph that something of its own closed.
     unsigned teardownNotificationDepth { 0 };
     // The async context native code entered from the top of the event loop

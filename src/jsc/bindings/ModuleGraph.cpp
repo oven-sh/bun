@@ -25,6 +25,7 @@
 #include <JavaScriptCore/StackFrame.h>
 #include <JavaScriptCore/StackVisitor.h>
 #include <JavaScriptCore/SymbolTable.h>
+#include <wtf/Scope.h>
 #include <JavaScriptCore/WeakGCMapInlines.h>
 #include <wtf/SetForScope.h>
 #include <wtf/text/StringBuilder.h>
@@ -251,6 +252,16 @@ JSModuleGraph* moduleGraphOfRunningCode(JSGlobalObject* globalObject)
     return moduleGraphOwningCurrentStack(zigGlobal).value_or(nullptr);
 }
 
+// No frame says whose an error is when the runtime rejects a promise itself (a file that does not
+// exist, a connection refused), and when the graph's function that called what threw did so as
+// a tail call (`() => JSON.parse(text)`: module code is strict, so its frame is gone by then).
+// The error is then the current context's: the graph's, if it has one of its own.
+static JSModuleGraph* moduleGraphOfCurrentContext(Zig::GlobalObject* globalObject)
+{
+    auto* context = globalObject->currentScriptExecutionContext();
+    return context->isForModuleGraph() ? dynamicDowncast<JSModuleGraph>(context->moduleGraph()) : nullptr;
+}
+
 // The code rejecting `promise` is on the stack now — or nothing is (the runtime rejects an async
 // function's promise right after unwinding, and forwards a rejection to the promises derived
 // from it from bare jobs), and the exception the VM last saw thrown, if it is this rejection's
@@ -261,10 +272,6 @@ JSModuleGraph* moduleGraphRejecting(Zig::GlobalObject* globalObject, JSPromise* 
 {
     if (!globalObject->hasModuleGraphs())
         return nullptr;
-    // What a graph's code rejects while it runs as an onError is the host's, like what onError
-    // throws: given to the graph, it would come straight back to the same onError.
-    if (moduleGraphState(globalObject).inOnError)
-        return nullptr;
     VM& vm = globalObject->vm();
     std::optional<JSModuleGraph*> owner = moduleGraphOwningCurrentStack(globalObject);
     if (!owner) {
@@ -272,15 +279,15 @@ JSModuleGraph* moduleGraphRejecting(Zig::GlobalObject* globalObject, JSPromise* 
         if (last && last->value() == promise->result())
             owner = moduleGraphOwningFrames(globalObject, last->stack());
     }
-    return owner.value_or(nullptr);
+    JSModuleGraph* graph = owner ? *owner : moduleGraphOfCurrentContext(globalObject);
+    return graph && !graph->inOnError() ? graph : nullptr;
 }
 
 // ─── onError ─────────────────────────────────────────────────────────────────────────
 
 static bool deliverToOnError(Zig::GlobalObject* globalObject, JSModuleGraph* graph, JSValue error, ASCIILiteral kind)
 {
-    auto& flags = moduleGraphState(globalObject);
-    if (!graph || !graph->onError() || flags.inOnError)
+    if (!graph || !graph->onError() || graph->inOnError())
         return false;
     VM& vm = globalObject->vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -288,7 +295,9 @@ static bool deliverToOnError(Zig::GlobalObject* globalObject, JSModuleGraph* gra
     MarkedArgumentBuffer args;
     args.append(error);
     args.append(jsString(vm, String(kind)));
-    SetForScope inOnError(flags.inOnError, true);
+    // Until what onError itself threw has been reported, too.
+    graph->setInOnError(true);
+    auto leaveOnError = makeScopeExit([&] { graph->setInOnError(false); });
     JSC::call(globalObject, onError, getCallData(onError), jsUndefined(), args);
     if (scope.exception()) [[unlikely]] {
         if (vm.hasPendingTerminationException())
@@ -325,7 +334,8 @@ extern "C" bool Bun__ModuleGraph__handleUncaughtException(JSGlobalObject* lexica
     vm.clearLastException();
     if (!exception)
         return false;
-    JSModuleGraph* graph = moduleGraphOwningFrames(globalObject, exception->stack()).value_or(nullptr);
+    auto owner = moduleGraphOwningFrames(globalObject, exception->stack());
+    JSModuleGraph* graph = owner ? *owner : moduleGraphOfCurrentContext(globalObject);
     return deliverToOnError(globalObject, graph, exception->value(), "uncaughtException"_s);
 }
 

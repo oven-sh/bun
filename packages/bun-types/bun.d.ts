@@ -5507,9 +5507,12 @@ declare module "bun" {
      * had not run yet never will. Code from the
      * graph that is still referenced keeps working, and its errors still go
      * to `onError`. With `isolateIO`, everything the graph's code opened
-     * is closed, and whatever it opens afterwards is closed at once. The
-     * graph's `close` handlers (sockets, `WebSocket`, `net.Socket`, a child
-     * process's `onExit`) are still called; its other callbacks are not.
+     * is closed, along with any graph its code made. What was open is told
+     * once that it closed: `close` handlers (sockets, `WebSocket`,
+     * `net.Socket`, a child process's `onExit`) are still called, and an
+     * operation in flight (a `fetch()`, a connecting socket) rejects or emits
+     * `'error'`; its other callbacks are not called. Whatever it opens
+     * afterwards is closed at once and reports nothing.
      * Idempotent.
      */
     dispose(): void;

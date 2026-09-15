@@ -1515,6 +1515,70 @@ describe("Bun.ModuleGraph — error attribution matrix", () => {
   });
 });
 
+describe("Bun.ModuleGraph — errors with none of the graph's code on the stack", () => {
+  // Module code is strict, so `() => JSON.parse(text)` calls JSON.parse as a tail call: by the time it
+  // throws, the graph's frame is gone. And when the runtime rejects a promise itself there was never
+  // one. A graph with a context of its own (isolateIO) still gets these: they are its context's.
+  const dir = fixture({
+    "tenant.mjs": `
+      import { EventEmitter } from "node:events";
+      export const cases = {
+        "a native function throws, called as a tail call": () => setTimeout(() => structuredClone(() => {}), 0),
+        "JSON.parse throws, called as a tail call": () => setTimeout(() => JSON.parse("{"), 0),
+        "EventEmitter 'error' with no listener, emitted as a tail call": () => setTimeout(() => new EventEmitter().emit("error", new Error("emitted")), 0),
+        "the runtime rejects a promise nobody handles": () => { Bun.file("/nonexistent/module-graph-test").text(); },
+        "the graph's own throw (control)": () => setTimeout(() => { throw new Error("thrown"); }, 0),
+      };
+      export const rejectLater = message => { Promise.reject(new Error(message)); };
+    `,
+    "main.mjs": `
+      const told = [];
+      process.on("uncaughtException", error => told.push("host"));
+      process.on("unhandledRejection", error => told.push("host"));
+      const until = async condition => { while (!condition()) await new Promise(resolve => setImmediate(resolve)); };
+      const out = {};
+      for (const isolateIO of [true, false]) {
+        const graph = new Bun.ModuleGraph({ isolateIO, onError: () => told.push("graph") });
+        const { cases } = await graph.import(import.meta.dir + "/tenant.mjs");
+        for (const name of Object.keys(cases)) {
+          told.length = 0;
+          graph.run ? graph.run(() => cases[name]()) : cases[name]();
+          await until(() => told.length > 0);
+          out[(isolateIO ? "isolateIO: " : "plain: ") + name] = told.join();
+        }
+      }
+      // While one graph's onError runs, another graph's error is still that graph's.
+      told.length = 0;
+      let other;
+      const first = new Bun.ModuleGraph({ onError: () => { told.push("first"); other.rejectLater("from the other graph"); } });
+      const second = new Bun.ModuleGraph({ onError: () => told.push("second") });
+      other = await second.import(import.meta.dir + "/tenant.mjs");
+      (await first.import(import.meta.dir + "/tenant.mjs?first")).rejectLater("from the first graph");
+      await until(() => told.length >= 2);
+      out["another graph's rejection while an onError runs"] = told.join();
+      console.log(JSON.stringify(out, null, 1));
+      process.exit(0);
+    `,
+  });
+  test("go to the graph whose context is current; without one there is nothing to go on", async () => {
+    const { stdout, exitCode } = await runBun(["main.mjs"], { cwd: dir });
+    expect(JSON.parse(stdout)).toEqual({
+      "isolateIO: a native function throws, called as a tail call": "graph",
+      "isolateIO: JSON.parse throws, called as a tail call": "graph",
+      "isolateIO: EventEmitter 'error' with no listener, emitted as a tail call": "graph",
+      "isolateIO: the runtime rejects a promise nobody handles": "graph",
+      "isolateIO: the graph's own throw (control)": "graph",
+      "plain: a native function throws, called as a tail call": "host",
+      "plain: JSON.parse throws, called as a tail call": "host",
+      "plain: EventEmitter 'error' with no listener, emitted as a tail call": "host",
+      "plain: the runtime rejects a promise nobody handles": "host",
+      "plain: the graph's own throw (control)": "graph",
+      "another graph's rejection while an onError runs": "first,second",
+    });
+    expect(exitCode).toBe(0);
+  });
+});
+
 describe("Bun.ModuleGraph — CommonJS surface per graph", () => {
   const dir = fixture({
     "state.cjs": `let n = 0; module.exports = { inc: () => ++n, env: () => process.env.T, file: __filename, dir: __dirname, mod: module };`,

@@ -4178,6 +4178,49 @@ void JSC__JSValue__putNonEnumerable(JSC::EncodedJSValue JSValue0, JSC::JSGlobalO
     object->putDirect(arg1->vm(), Zig::toIdentifier(*arg2, arg1), JSC::JSValue::decode(JSValue3), JSC::PropertyAttribute::DontEnum | 0);
 }
 
+// Encoding-aware own-property read: the key's EncodedSlice bits decide
+// Latin-1 vs UTF-8 vs UTF-16, integer-index names ("0") are safe, and the
+// prototype chain is not consulted. Returns deleted if the own property
+// does not exist.
+extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue JSC__JSValue__getOwnEncoded(JSC::EncodedJSValue target, JSC::JSGlobalObject* globalObject, const EncodedSlice* key)
+{
+    ASSERT_NO_PENDING_EXCEPTION(globalObject);
+    JSValue value = JSC::JSValue::decode(target);
+    ASSERT_WITH_MESSAGE(!value.isEmpty(), "getOwn() must not be called on empty value");
+
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    const auto identifier = Zig::toIdentifier(*key, globalObject);
+    const auto property = JSC::PropertyName(identifier);
+
+    PropertySlot slot(value, PropertySlot::InternalMethodType::GetOwnProperty);
+    bool hasSlot = value.getOwnPropertySlot(globalObject, property, slot);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!hasSlot)
+        return JSValue::encode(JSValue::decode(JSC::JSValue::ValueDeleted));
+
+    JSValue result = slot.getValue(globalObject, property);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    return JSValue::encode(result);
+}
+
+// Generic (method-table) put: runs custom `put` overrides such as
+// JSEnvironmentVariableMap's, which JSC__JSValue__put (a putDirect) bypasses.
+extern "C" [[ZIG_EXPORT(check_slow)]] void JSC__JSValue__putGeneric(JSC::EncodedJSValue target, JSC::JSGlobalObject* globalObject, const EncodedSlice* key, JSC::EncodedJSValue value)
+{
+    auto& vm = JSC::getVM(globalObject);
+    ThrowScope scope = DECLARE_THROW_SCOPE(vm);
+    JSC::JSObject* object = JSC::JSValue::decode(target).getObject();
+    if (!object)
+        return;
+    JSC::Identifier identifier = Zig::toIdentifier(*key, globalObject);
+    JSC::PutPropertySlot slot(object, false);
+    object->methodTable()->put(object, globalObject, identifier, JSC::JSValue::decode(value), slot);
+    RETURN_IF_EXCEPTION(scope, );
+}
+
 void JSC__JSValue__putToPropertyKey(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue arg2, JSC::EncodedJSValue arg3)
 {
     auto& vm = JSC::getVM(arg1);

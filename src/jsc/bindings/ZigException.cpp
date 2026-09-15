@@ -292,11 +292,15 @@ public:
         // the proper singular spelling is parenthesis
         auto openingParentheses = line.reverseFind('(');
         auto closingParentheses = line.reverseFind(')');
+        bool hasParens = openingParentheses != WTF::notFound && closingParentheses != WTF::notFound;
 
-        if (openingParentheses > closingParentheses)
-            openingParentheses = WTF::notFound;
+        // One unmatched parenthesis, or `)` before `(`: stop parsing as before.
+        if (hasParens ? openingParentheses > closingParentheses : openingParentheses != closingParentheses) {
+            offset = stack.length();
+            return false;
+        }
 
-        if (openingParentheses == WTF::notFound || closingParentheses == WTF::notFound) {
+        if (!hasParens) {
             // Special case: "unknown" frames don't have parentheses but are valid
             // These appear in stack traces from certain error paths
             if (line == "unknown"_s) {
@@ -305,12 +309,18 @@ public:
                 return true;
             }
 
-            // For any other frame without parentheses, terminate parsing as before
-            offset = stack.length();
-            return false;
+            // `at /path/file.js:1:2` or `at async /path/file.js:1:2`
+            if (line.startsWith("async "_s)) {
+                frame.isAsync = true;
+                line = line.substring(6);
+                if (line.isEmpty()) {
+                    offset = stack.length();
+                    return false;
+                }
+            }
         }
 
-        auto lineInner = StringView_slice(line, openingParentheses + 1, closingParentheses);
+        auto lineInner = hasParens ? StringView_slice(line, openingParentheses + 1, closingParentheses) : line;
 
         {
             auto marker1 = 0;
@@ -382,6 +392,11 @@ public:
             }
         }
     done_block:
+
+        if (!hasParens) {
+            frame.functionName = StringView();
+            return true;
+        }
 
         StringView functionName = line.substring(0, openingParentheses - 1);
 

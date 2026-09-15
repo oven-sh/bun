@@ -102,8 +102,8 @@ import { expectType } from "./utilities";
     expectType(event.data).is<string>();
   };
 
-  ws.onerror = (event: Event) => {
-    expectType(event).is<Event>();
+  ws.onerror = (event: ErrorEvent) => {
+    expectType(event).is<ErrorEvent>();
   };
 
   ws.onclose = (event: CloseEvent) => {
@@ -129,7 +129,7 @@ import { expectType } from "./utilities";
   };
 
   ws.onerror = event => {
-    expectType(event).is<Event>();
+    expectType(event).is<ErrorEvent>();
   };
 
   ws.onclose = event => {
@@ -153,8 +153,8 @@ import { expectType } from "./utilities";
     expectType(event.data).is<string>();
   };
 
-  const handleError = (event: Event) => {
-    expectType(event).is<Event>();
+  const handleError = (event: ErrorEvent) => {
+    expectType(event).is<ErrorEvent>();
   };
 
   const handleClose = (event: CloseEvent) => {
@@ -268,4 +268,24 @@ import { expectType } from "./utilities";
 
   // Terminate the connection immediately
   ws.terminate();
+}
+
+// #36329 - error event delivers ErrorEvent
+{
+  const ws = new WebSocket("wss://dev.local");
+
+  ws.addEventListener("error", event => {
+    expectType(event).is<ErrorEvent>();
+    expectType(event.message).is<string>();
+    expectType(event.error).is<any>();
+  });
+
+  ws.addEventListener("error", (event: ErrorEvent) => {
+    expectType(event.message).is<string>();
+  });
+
+  ws.onerror = event => {
+    expectType(event).is<ErrorEvent>();
+    expectType(event.message).is<string>();
+  };
 }

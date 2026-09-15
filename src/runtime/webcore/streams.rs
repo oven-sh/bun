@@ -390,6 +390,8 @@ pub enum WritableFuture {
         strong: JSPromiseStrong,
         // JSC_BORROW: process-lifetime VM global; safe `Deref` via `BackRef`.
         global: BackRef<JSGlobalObject>,
+        /// The context whose script is writing (as `PendingFuture::Promise`).
+        context: bun_jsc::ContextId,
     },
 }
 
@@ -403,6 +405,7 @@ impl WritablePending {
                 self.future = WritableFuture::Promise {
                     strong: JSPromiseStrong::init(global_this),
                     global: BackRef::new(global_this),
+                    context: global_this.bun_vm().current_context().id(),
                 };
                 match &self.future {
                     WritableFuture::Promise { strong, .. } => {
@@ -428,11 +431,20 @@ impl WritablePending {
         self.consumed = 0;
 
         match core::mem::replace(&mut self.future, WritableFuture::None) {
-            WritableFuture::Promise { mut strong, global } => Writable::fulfill_promise(
-                core::mem::replace(&mut self.result, Writable::Done),
-                strong.swap(),
-                &global,
-            ),
+            WritableFuture::Promise {
+                mut strong,
+                global,
+                context,
+            } => {
+                // A sink settles a write from its own completion (a libuv write callback on
+                // Windows), not from a queued task: for the script that is writing.
+                let _context = global.bun_vm().enter_context(context);
+                Writable::fulfill_promise(
+                    core::mem::replace(&mut self.result, Writable::Done),
+                    strong.swap(),
+                    &global,
+                )
+            }
             WritableFuture::None => {}
         }
     }

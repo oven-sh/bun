@@ -1199,6 +1199,14 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                                         && Npm::PackageManifest::is_package_version_too_recent(
                                                             find_result.package, min_age_ms,
                                                         )
+                                                        // minimum-release-age gates new
+                                                        // resolution only: a version the
+                                                        // loaded lockfile already pins
+                                                        // stays installable.
+                                                        && locked_version_in_lockfile(
+                                                            this, name_hash, &version,
+                                                        )
+                                                        .is_none()
                                                     {
                                                         let package_name = this.lockfile.str(&name);
                                                         let min_age_seconds = min_age_ms / MS_PER_S;
@@ -2784,7 +2792,17 @@ fn get_or_put_resolved_package(
                 Npm::FindVersionResult::Err(err_type) => match err_type {
                     Npm::FindVersionError::TooRecent
                     | Npm::FindVersionError::AllVersionsTooRecent => {
-                        return Err(crate::Error::TooRecentVersion);
+                        // minimum-release-age gates new resolution only. A
+                        // version the loaded lockfile already pins for this
+                        // range stays installable (ranges get this through
+                        // `get_package_id`'s satisfies-dedupe, which this
+                        // error path would otherwise never reach).
+                        match locked_version_in_lockfile(this, name_hash, version)
+                            .and_then(|(locked, _)| manifest.find_by_version(locked))
+                        {
+                            Some(locked_result) => Some(locked_result),
+                            None => return Err(crate::Error::TooRecentVersion),
+                        }
                     }
                     Npm::FindVersionError::NotFound => None, // Handle below with existing logic
                 },

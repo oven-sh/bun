@@ -6,21 +6,77 @@
 # 4. I don't know how to write fish completions well
 # Contributions very welcome!!
 
+function __fish__bun_extract_cwd
+    set -l tokens (commandline -cop)
+    set -l result "."
+    for i in (seq 1 (count $tokens))
+        set -l val ""
+        if test "$tokens[$i]" = "--cwd"
+            set -l next_idx (math $i + 1)
+            if test $next_idx -le (count $tokens)
+                set val "$tokens[$next_idx]"
+            end
+        else if string match -q -- "--cwd=*" "$tokens[$i]"
+            set val (string replace -- "--cwd=" "" "$tokens[$i]")
+        end
+
+        if test -n "$val"
+            set val (string trim -c '"' -- "$val")
+            set val (string trim -c "'" -- "$val")
+            set val (string replace -r '^~' "$HOME" -- "$val")
+            set result "$val"
+        end
+    end
+    echo "$result"
+end
+        else if string match -q -- "--cwd=*" "$tokens[$i]"
+            set val (string replace -- "--cwd=" "" "$tokens[$i]")
+        end
+
+        if test -n "$val"
+            set val (string trim -c '"' -- "$val")
+            set val (string trim -c "'" -- "$val")
+            set val (string replace -r '^~' "$HOME" -- "$val")
+            echo "$val"
+            return
+        end
+    end
+    echo "."
+end
+
 function __fish__get_bun_bins
-	string split ' ' (bun getcompletes b)
+    set -l target_cwd (__fish__bun_extract_cwd)
+    if test -d "$target_cwd"
+        builtin cd "$target_cwd"
+        string split ' ' (bun getcompletes b 2>/dev/null)
+    end
 end
 
 function __fish__get_bun_scripts
-	set -lx SHELL bash
-	set -lx MAX_DESCRIPTION_LEN 40
-	string trim (string split '\n' (string split '\t' (bun getcompletes z)))
+    set -l target_cwd (__fish__bun_extract_cwd)
+    if test -d "$target_cwd"
+        builtin cd "$target_cwd"
+        set -lx SHELL bash
+        set -lx MAX_DESCRIPTION_LEN 40
+        string trim (string split '
+' (string split '	' (bun getcompletes z 2>/dev/null)))
+    end
 end
 
 function __fish__get_bun_packages
-	if test (commandline -ct) != ""
-		set -lx SHELL fish
-		string split ' ' (bun getcompletes a (commandline -ct))
-	end
+    set -l target_cwd (__fish__bun_extract_cwd)
+    set -l pkg_file "$target_cwd/package.json"
+    if not test -f "$pkg_file"
+        return
+    end
+
+    if not command -qs jq
+        return
+    end
+
+    set -l dependencies (jq -r '.dependencies | keys[]' "$pkg_file" 2>/dev/null)
+    set -l dev_dependencies (jq -r '.devDependencies | keys[]' "$pkg_file" 2>/dev/null)
+    string split " " "$dependencies $dev_dependencies"
 end
 
 function __history_completions

@@ -470,6 +470,8 @@ bun pm cache rm
 rm -rf ~/.bun/install/cache
 ```
 
+To delete only the packages downloaded more than 30 days ago, see [`bun pm cache prune`](/pm/cli/pm#cache).
+
 ## Platform-specific backends
 
 For performance, `bun install` uses different system calls to install dependencies depending on the platform. You can force a specific backend with the `--backend` flag.

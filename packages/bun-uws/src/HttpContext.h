@@ -323,52 +323,64 @@ private:
             return s;
         }
 
-        us_socket_t *returned = parseData<IsNodeHttp>(s, data, length);
+        s = parseData<IsNodeHttp>(s, data, length);
 
-        /* Feed back what the parse parked. A socket that closed, or that
-         * another kind adopted (a WebSocket upgrade, an HTTP/2 handover), no
-         * longer has the ext those bytes live in. */
-        if (returned && !us_socket_is_closed(returned) && us_socket_kind(returned) == socketKind()) {
-            HttpResponseData<SSL> *httpResponseData = (HttpResponseData<SSL> *) us_socket_ext(returned);
-            if (httpResponseData->hasParkedReads()) [[unlikely]] {
-                return drainParkedReads<IsNodeHttp>(returned);
-            }
+        if (socketHasParkedReads(s)) [[unlikely]] {
+            s = replayParkedReads<IsNodeHttp>(s);
         }
-        return returned;
+        return s;
+    }
+
+    /* Whether onData parked reads for this connection. A socket that closed,
+     * or that another kind adopted (a WebSocket upgrade, an HTTP/2 handover),
+     * no longer has the ext those reads live in. */
+    static bool socketHasParkedReads(us_socket_t *s) {
+        return s && !us_socket_is_closed(s) && us_socket_kind(s) == socketKind()
+            && ((HttpResponseData<SSL> *) us_socket_ext(s))->hasParkedReads();
     }
 
     /* Hand the reads parked by onData back to the parser, now that the parse
-     * that parked them has finished with the connection's parse state. */
+     * that parked them has finished with the connection's parse state. The
+     * handler of a replayed request can run the event loop too and park the
+     * next read, so this is a loop: a peer that keeps that going adds rounds,
+     * not stack frames. */
     template <bool IsNodeHttp>
-    static us_socket_t *drainParkedReads(us_socket_t *s) {
-        HttpResponseData<SSL> *httpResponseData = (HttpResponseData<SSL> *) us_socket_ext(s);
+    static us_socket_t *replayParkedReads(us_socket_t *s) {
+        do {
+            HttpResponseData<SSL> *httpResponseData = (HttpResponseData<SSL> *) us_socket_ext(s);
 
-        if constexpr (IsNodeHttp) {
-            /* node:http flood prevention holds this connection: queue the
-             * parked bytes behind the requests the parser itself parked and
-             * let its resume path replay both, in order. */
-            if (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED) {
-                httpResponseData->nodeHttpPausedSpill.appendVector(httpResponseData->parkedReads);
-                httpResponseData->parkedReads.clear();
-                httpResponseData->parkedReadsPausedSocket = false;
+            if constexpr (IsNodeHttp) {
+                /* node:http flood prevention holds this connection: queue the
+                 * parked bytes behind the requests the parser itself parked and
+                 * let its resume path replay both, in order. */
+                if (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED) {
+                    httpResponseData->nodeHttpPausedSpill.appendVector(httpResponseData->parkedReads);
+                    httpResponseData->parkedReads.clear();
+                    httpResponseData->parkedReadsPausedSocket = false;
+                    return s;
+                }
+            }
+
+            WTF::Vector<char> parked = std::exchange(httpResponseData->parkedReads, {});
+            if (std::exchange(httpResponseData->parkedReadsPausedSocket, false)) {
+                /* Reads belong to the connection again: a handler called below
+                 * can pause it for its own reasons. A resume that cannot re-arm
+                 * the poll closes the socket, and onClose destructs the ext. */
+                us_socket_resume(s);
+                if (us_socket_is_closed(s)) {
+                    return s;
+                }
+            }
+            /* A connection in shutdown takes no more requests (see parseData). */
+            if (parked.isEmpty() || us_socket_is_shut_down(s)) {
                 return s;
             }
-        }
-
-        WTF::Vector<char> parked = std::exchange(httpResponseData->parkedReads, {});
-        if (std::exchange(httpResponseData->parkedReadsPausedSocket, false)) {
-            /* Reads belong to the connection again: a handler called below can
-             * pause it for its own reasons. */
-            us_socket_resume(s);
-        }
-        /* A connection in shutdown takes no more requests (see parseData). */
-        if (parked.isEmpty() || us_socket_is_shut_down(s)) {
-            return s;
-        }
-        size_t length = parked.size();
-        /* The parser's post-padded fence writes two bytes past the logical end. */
-        parked.grow(length + LIBUS_RECV_BUFFER_PADDING);
-        return onData<IsNodeHttp>(s, parked.mutableSpan().data(), (int) length);
+            size_t length = parked.size();
+            /* The parser's post-padded fence writes two bytes past the logical end. */
+            parked.grow(length + LIBUS_RECV_BUFFER_PADDING);
+            s = parseData<IsNodeHttp>(s, parked.mutableSpan().data(), (int) length);
+        } while (socketHasParkedReads(s));
+        return s;
     }
 
     template <bool IsNodeHttp>

@@ -409,6 +409,13 @@ public:
             }
         }
 
+        /* Reads HttpContext::onData parked for this connection (the handler ran
+         * the event loop before it upgraded) end with the HTTP parser, like
+         * bytes that follow the upgrade request in its own read. The pause the
+         * park took must end too, and the WebSocket does not know about it: it
+         * is lifted below, once the WebSocket can take a close. */
+        const bool resumeParkedPause = responseData->parkedReadsPausedSocket;
+
         /* Destroy HttpResponseData (the IsNodeHttp=true type on node:http
          * compat contexts; upgrade() is not on a templated handler path, so it
          * selects at runtime like socketExtSize()). */
@@ -468,6 +475,13 @@ public:
         /* Emit open event and start the timeout */
         if (webSocketContextData->openHandler) {
             webSocketContextData->openHandler(webSocket);
+        }
+
+        /* A resume that cannot re-arm the poll closes the socket, so it waits
+         * for a WebSocket that is open and can report that close. A socket the
+         * open handler closed stays allocated until the tick ends. */
+        if (resumeParkedPause) {
+            us_socket_resume(usSocket);
         }
 
         return usSocket;

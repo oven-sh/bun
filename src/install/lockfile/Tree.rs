@@ -641,6 +641,24 @@ impl Tree {
             return Ok(());
         }
 
+        // Below another copy of itself, a package's dependencies are already placed; laying
+        // them out again only re-nests what the levels in between shadow, which for a cycle
+        // through two versions (a@1 -> b@1 -> a@2 -> b@2 -> a@1 ...) never ends. npm stops
+        // here as well (linking to the copy above); bun.lock.rs skips these copies to match.
+        {
+            let trees = builder.list.items_tree();
+            let mut ancestor_id = self.id;
+            while ancestor_id != INVALID_ID {
+                let ancestor = &trees[ancestor_id as usize];
+                if (ancestor.dependency_id as usize) < builder.resolutions.len()
+                    && builder.resolutions[ancestor.dependency_id as usize] == parent_pkg_id
+                {
+                    return Ok(());
+                }
+                ancestor_id = ancestor.parent;
+            }
+        }
+
         builder.list.append(BuilderEntry {
             tree: Tree {
                 parent: self.id,
@@ -1083,6 +1101,16 @@ impl Tree {
             if !AS_DEFINED || !matches!(id, HoistDependencyResult::DependencyLoop) {
                 return id; // 1 or 2
             }
+        }
+
+        // A bundled root's walk ends below the folder holding the bundling package, which is
+        // resolvable from inside it; a bundled dependency depending back on it would otherwise
+        // copy it into itself, and the copy's bundled dependencies bring it back, forever.
+        if (this.dependency_id as usize) < deps.len()
+            && builder.resolutions[this.dependency_id as usize] == package_id
+            && deps[this.dependency_id as usize].name_hash == target_name_hash
+        {
+            return Ok(HoistDependencyResult::Hoisted); // 1
         }
 
         // place the dependency in the current tree

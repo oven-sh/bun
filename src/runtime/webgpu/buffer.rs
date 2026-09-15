@@ -13,9 +13,9 @@ use bun_webgpu::wgc::resource::{BufferAccessError, BufferMapOperation};
 use bun_webgpu::{GpuError, error_chain, instance, wgc, wgt};
 
 use super::args::{self, Dict};
-use super::detach_array_buffer;
 use super::device::DeviceRef;
 use super::wait::{Slot, Wait, Waiter};
+use super::{detach_array_buffer, pin_array_buffer};
 use crate::generated_classes::js_GPUBuffer as js;
 
 /// `GPUMapMode`.
@@ -507,6 +507,7 @@ impl GPUBuffer {
             }
         };
         list.push(global, array_buffer)?;
+        pin_array_buffer(array_buffer);
         self.map.with_mut(|state| {
             if let MapState::Mapped { ranges, .. } = state {
                 ranges.push((offset, size));

@@ -64,13 +64,21 @@ extern "C" JSC::EncodedJSValue Bun__WebGPU__internalModule(Zig::GlobalObject* gl
     return JSC::JSValue::encode(module);
 }
 
-// GPUBuffer.unmap() and destroy() detach every ArrayBuffer getMappedRange() returned.
+// getMappedRange(): a pinned ArrayBuffer cannot be transferred, so only unmap() and destroy() detach it.
+extern "C" void Bun__WebGPU__pinArrayBuffer(JSC::EncodedJSValue encodedValue)
+{
+    if (auto* arrayBuffer = dynamicDowncast<JSC::JSArrayBuffer>(JSC::JSValue::decode(encodedValue)))
+        arrayBuffer->impl()->pin();
+}
+
+// GPUBuffer.unmap() and destroy() unpin and detach every ArrayBuffer getMappedRange() returned.
 extern "C" void Bun__WebGPU__detachArrayBuffer(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue)
 {
     auto* arrayBuffer = dynamicDowncast<JSC::JSArrayBuffer>(JSC::JSValue::decode(encodedValue));
-    if (!arrayBuffer || arrayBuffer->isShared())
+    if (!arrayBuffer)
         return;
     auto* impl = arrayBuffer->impl();
-    if (impl && !impl->isDetached() && impl->isDetachable())
+    impl->unpin();
+    if (!impl->isDetached() && impl->isDetachable())
         impl->detach(JSC::getVM(globalObject));
 }

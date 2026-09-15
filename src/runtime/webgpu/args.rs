@@ -37,9 +37,13 @@ pub(crate) fn to_u32(global: &JSGlobalObject, v: JSValue, what: &str) -> JsResul
     Ok(enforce_range(global, v, what, 0.0, f64::from(u32::MAX))? as u32)
 }
 
-/// `[EnforceRange] unsigned short`.
-pub(crate) fn to_u16(global: &JSGlobalObject, v: JSValue, what: &str) -> JsResult<u16> {
-    Ok(enforce_range(global, v, what, 0.0, f64::from(u16::MAX))? as u16)
+/// `[Clamp] unsigned short`: NaN is 0, everything else rounds to the nearest value in range.
+pub(crate) fn to_u16_clamped(global: &JSGlobalObject, v: JSValue) -> JsResult<u16> {
+    let n = v.to_number(global)?;
+    if n.is_nan() {
+        return Ok(0);
+    }
+    Ok(n.clamp(0.0, f64::from(u16::MAX)).round_ties_even() as u16)
 }
 
 /// `[EnforceRange] long`.

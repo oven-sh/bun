@@ -361,6 +361,19 @@ describe.skipIf(!hasAdapter)("with a device", () => {
     expect(Array.from(new Uint32Array(readback.getMappedRange()))).toEqual([1, 2, 3, 4]);
     readback.unmap();
 
+    // Only unmap() detaches a mapped range. A transfer copies it, so the writes are not lost.
+    await upload.mapAsync(GPUMapMode.WRITE);
+    const written = upload.getMappedRange();
+    new Uint32Array(written).set([5, 6, 7, 8]);
+    expect(written.transfer().byteLength).toBe(16);
+    expect(structuredClone(written, { transfer: [written] }).byteLength).toBe(16);
+    expect(written.byteLength).toBe(16);
+    upload.unmap();
+    expect(written.byteLength).toBe(0);
+    await upload.mapAsync(GPUMapMode.WRITE);
+    expect(Array.from(new Uint32Array(upload.getMappedRange()))).toEqual([5, 6, 7, 8]);
+    upload.unmap();
+
     // The wrong mode is a validation error on the device and a rejected promise.
     device.pushErrorScope("validation");
     await expect(readback.mapAsync(GPUMapMode.WRITE)).rejects.toMatchObject({ name: "OperationError" });
@@ -806,6 +819,9 @@ describe.skipIf(!hasAdapter)("with a device", () => {
       });
     expect(await transient(GPUTextureUsage.RENDER_ATTACHMENT)).toBeNull();
     expect(await transient(GPUTextureUsage.COPY_SRC)).toBeInstanceOf(GPUValidationError);
+    expect(await transient(GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC)).toBeInstanceOf(
+      GPUValidationError,
+    );
 
     // A view usage with bits that are not a GPUTextureUsage is a validation error.
     expect(
@@ -862,6 +878,15 @@ describe.skipIf(!hasAdapter)("with a device", () => {
       TypeError,
     );
     expect({ pulled, closed }).toEqual({ pulled: 1, closed: true });
+
+    // maxAnisotropy is the one [Clamp] integer: out of range values clamp, they do not throw.
+    const linear = { magFilter: "linear", minFilter: "linear", mipmapFilter: "linear" };
+    expect(
+      await validationError(device, () => device.createSampler({ ...linear, maxAnisotropy: Infinity })),
+    ).toBeNull();
+    expect(await validationError(device, () => device.createSampler({ ...linear, maxAnisotropy: NaN }))).toBeInstanceOf(
+      GPUValidationError,
+    );
 
     // null is the empty dictionary, as an argument and as a member.
     expect(device.createSampler(null)).toBeInstanceOf(GPUSampler);

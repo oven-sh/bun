@@ -303,7 +303,7 @@ impl GPUSampler {
                 names::parse_compare_function,
             )?,
             anisotropy_clamp: match d.get("maxAnisotropy")? {
-                Some(v) => args::to_u16(global, v, "GPUSamplerDescriptor.maxAnisotropy")?,
+                Some(v) => args::to_u16_clamped(global, v)?,
                 None => 1,
             },
             border_color: None,

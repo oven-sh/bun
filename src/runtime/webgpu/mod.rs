@@ -77,6 +77,7 @@ pub(crate) fn wgpu_label(label: &bun_core::String) -> Option<std::borrow::Cow<'s
 
 unsafe extern "C" {
     safe fn Bun__WebGPU__internalModule(global: &JSGlobalObject) -> JSValue;
+    safe fn Bun__WebGPU__pinArrayBuffer(value: JSValue);
     safe fn Bun__WebGPU__detachArrayBuffer(global: &JSGlobalObject, value: JSValue);
 }
 
@@ -96,7 +97,12 @@ pub(crate) fn js_module(
     function.call(global, JSValue::UNDEFINED, args)
 }
 
-/// Detaches `value` if it is an ArrayBuffer that is still attached.
+/// Makes the ArrayBuffer `value` non-transferable until [`detach_array_buffer`].
+pub(crate) fn pin_array_buffer(value: JSValue) {
+    Bun__WebGPU__pinArrayBuffer(value)
+}
+
+/// Unpins and detaches an ArrayBuffer that [`pin_array_buffer`] pinned.
 pub(crate) fn detach_array_buffer(global: &JSGlobalObject, value: JSValue) {
     Bun__WebGPU__detachArrayBuffer(global, value)
 }

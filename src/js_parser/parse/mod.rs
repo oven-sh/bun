@@ -1324,7 +1324,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(G::DeclList::from_arena_slice(&decls))
     }
 
-    pub(crate) fn parse_path(&mut self) -> Result<ParsedPath<'a>, Error> {
+    /// For erased TypeScript constructs (`import type`, `declare module` bodies):
+    /// allows unsupported attribute keys such as TS 5.3's `resolution-mode`.
+    pub(crate) fn parse_type_only_path(&mut self) -> Result<ParsedPath<'a>, Error> {
+        self.parse_path_inner(true)
+    }
+
+    pub(crate) fn parse_path_inner(&mut self, is_type_only: bool) -> Result<ParsedPath<'a>, Error> {
         let p = self;
         let path_text = p.lexer.to_utf8_e_string()?;
         let mut path = ParsedPath {
@@ -1365,6 +1371,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let mut has_seen_embed_true = false;
 
             while p.lexer.token != T::TCloseBrace {
+                // The key text is re-read from `p.source` via `key_range` later;
+                // lexer slices don't survive `p.lexer.next()`.
+                let key_range = p.lexer.range();
+                let mut has_unsupported_key = false;
                 let supported_attribute: Option<SupportedAttribute> = 'brk: {
                     // Parse the key
                     if p.lexer.is_identifier_or_keyword() {
@@ -1377,6 +1387,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if p.lexer.identifier == b"bunBakeGraph" {
                             break 'brk Some(SupportedAttribute::BunBakeGraph);
                         }
+                        has_unsupported_key = true;
                     } else if p.lexer.token == T::TStringLiteral {
                         let estr = p.lexer.to_utf8_e_string()?;
                         let string_literal_text = estr.slice8();
@@ -1389,6 +1400,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if string_literal_text == b"bunBakeGraph" {
                             break 'brk Some(SupportedAttribute::BunBakeGraph);
                         }
+                        has_unsupported_key = true;
                     } else {
                         p.lexer.expect(T::TIdentifier)?;
                     }
@@ -1402,6 +1414,29 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.lexer.expect(T::TStringLiteral)?;
                 let estr = p.lexer.to_utf8_e_string()?;
                 let string_literal_text = estr.slice8();
+
+                if has_unsupported_key && !is_type_only {
+                    // Strip quotes from string-literal keys to match Node's message.
+                    let key_bytes: &[u8] = p.source.text_for_range(key_range);
+                    let key_stripped: &[u8] = if key_bytes.len() >= 2
+                        && (key_bytes[0] == b'"' || key_bytes[0] == b'\'')
+                        && key_bytes[0] == key_bytes[key_bytes.len() - 1]
+                    {
+                        &key_bytes[1..key_bytes.len() - 1]
+                    } else {
+                        key_bytes
+                    };
+                    p.log().add_range_error_fmt(
+                        Some(p.source),
+                        key_range,
+                        format_args!(
+                            "Import attribute \"{}\" with value \"{}\" is not supported",
+                            bstr::BStr::new(key_stripped),
+                            bstr::BStr::new(string_literal_text),
+                        ),
+                    );
+                }
+
                 if let Some(attr) = supported_attribute {
                     match attr {
                         SupportedAttribute::Type => {

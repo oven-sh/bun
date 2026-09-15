@@ -363,6 +363,7 @@ impl<C: JobContext> Job<C> {
             if C::CANCELLABLE {
                 cx.vm().jobs.with_mut(|j| j.push(&raw mut (*job).header));
             }
+            cx.vm().graph_job_started((*job).header.context);
             WorkPool::schedule(&raw mut (*job).task);
         }
     }
@@ -399,11 +400,13 @@ impl<C: JobContext> Job<C> {
         }
         // SAFETY: fn contract.
         let Job {
+            header,
             mut keep_alive,
             off,
             js,
             ..
         } = unsafe { *Box::from_raw(this) };
+        vm.graph_job_finished(header.context);
         keep_alive.unref(bun_io::js_vm_ctx());
         (off, js)
     }

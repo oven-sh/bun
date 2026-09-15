@@ -686,6 +686,7 @@ mod _async_tasks {
                 tracker: AsyncTaskTracker::init(vm),
                 context: vm.current_context().id(),
             });
+            vm.graph_job_started(task.context);
             // Transfer ownership to libuv: the box outlives the async request and is
             // reclaimed in `destroy()` (run_from_js_thread → scopeguard). `heap::release`
             // names that hand-off — it is `Box::leak` under the hood; the reclaim
@@ -985,6 +986,7 @@ mod _async_tasks {
             // SAFETY: caller guarantees `this` is the live Box-leaked allocation;
             // reclaim ownership (paired with the Box::leak in create()).
             let mut task = unsafe { bun_core::heap::take(this) };
+            task.global_object.bun_vm().graph_job_finished(task.context);
             // A result nobody took (the request's context stopped: released unrun).
             if let Ok(result) = core::mem::replace(&mut task.result, Err(sys::Error::default())) {
                 result.discard();

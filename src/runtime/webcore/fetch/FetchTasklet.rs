@@ -905,6 +905,12 @@ impl FetchTasklet {
             }
             self.mutex.unlock();
             if is_done {
+                // An upload still streaming for a disposed graph: nothing will drain it, and its
+                // parked write promise is protected. (At teardown script is forbidden, and the
+                // heap goes with the VM.)
+                if vm.script_allowed() {
+                    self.cancel_request_body_sink(JSValue::UNDEFINED);
+                }
                 self.poll_ref
                     .with_mut(|poll_ref| poll_ref.unref(bun_io::js_vm_ctx()));
                 // SAFETY: `self` is the live heap tasklet; we hold a ref.

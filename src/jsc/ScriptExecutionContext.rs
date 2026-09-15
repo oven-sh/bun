@@ -162,9 +162,8 @@ impl ScriptExecutionContext {
         self.stop_again_queued.set(false);
         let result = self.stop_handles(reason);
         self.close_sockets();
-        for fd in self.owned_fds.replace(Vec::new()) {
-            fd.close();
-        }
+        crate::VirtualMachineRef::get()
+            .close_fds_after_jobs(self.id(), self.owned_fds.replace(Vec::new()));
         result
     }
 

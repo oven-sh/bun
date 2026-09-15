@@ -133,6 +133,14 @@ impl Default for InitOptions {
     }
 }
 
+/// See [`VirtualMachine::graph_jobs`].
+#[derive(Default)]
+pub struct GraphJobs {
+    outstanding: u32,
+    /// Descriptors the context owned when it stopped.
+    fds: Vec<bun_sys::Fd>,
+}
+
 pub struct VirtualMachine {
     pub global: *mut JSGlobalObject,
     // allocator dropped per §Allocators (global mimalloc)
@@ -381,6 +389,10 @@ pub struct VirtualMachine {
     /// every context question has the root context for an answer.
     pub(crate) graph_contexts:
         bun_collections::ArrayHashMap<crate::ContextId, NonNull<crate::ScriptExecutionContext>>,
+    /// The off-thread jobs of graph contexts that have not come back, by context (JS thread).
+    /// A job may be inside a syscall on a descriptor its context owns.
+    pub(crate) graph_jobs:
+        crate::JsCell<bun_collections::ArrayHashMap<crate::ContextId, GraphJobs>>,
     pub test_isolation_enabled: bool,
     pub test_isolation_state: TestIsolationState,
 }
@@ -1112,6 +1124,50 @@ impl VirtualMachine {
         );
         // SAFETY: a graph's context outlives every async context frame that names it.
         unsafe { Bun__currentGraphContext(self.global()).as_ref() }
+    }
+
+    /// An off-thread job (a pool job, a libuv fs request) was handed off for `context`'s script.
+    pub fn graph_job_started(&self, context: crate::ContextId) {
+        if self.graph_context(context).is_some() {
+            self.graph_jobs.with_mut(|jobs| {
+                bun_core::handle_oom(jobs.get_or_put(context))
+                    .value_ptr
+                    .outstanding += 1;
+            });
+        }
+    }
+
+    /// It is back on the JS thread (completed or released). The last one of a context that
+    /// stopped closes the descriptors that were waiting for it.
+    pub fn graph_job_finished(&self, context: crate::ContextId) {
+        let fds = self.graph_jobs.with_mut(|jobs| {
+            let entry = jobs.get_mut(&context)?;
+            entry.outstanding -= 1;
+            if entry.outstanding != 0 {
+                return None;
+            }
+            jobs.fetch_swap_remove(&context).map(|(_, entry)| entry.fds)
+        });
+        for fd in fds.into_iter().flatten() {
+            bun_sys::FdExt::close(fd);
+        }
+    }
+
+    /// `context` stopped owning `fds`. Closed now, unless a job of its is still out: a write on
+    /// the pool would land in whichever file is given the number next.
+    pub(crate) fn close_fds_after_jobs(&self, context: crate::ContextId, fds: Vec<bun_sys::Fd>) {
+        let fds = self
+            .graph_jobs
+            .with_mut(|jobs| match jobs.get_mut(&context) {
+                Some(entry) => {
+                    entry.fds.extend(fds);
+                    Vec::new()
+                }
+                None => fds,
+            });
+        for fd in fds {
+            bun_sys::FdExt::close(fd);
+        }
     }
 
     /// The context that tracks the timers set under `id`: a graph's, or the one standing in for
@@ -3147,6 +3203,7 @@ impl VirtualMachine {
             addr_of_mut!((*vm).context_scopes).write(Cell::new(0));
             addr_of_mut!((*vm).context_ids).write(Default::default());
             addr_of_mut!((*vm).graph_contexts).write(Default::default());
+            addr_of_mut!((*vm).graph_jobs).write(crate::JsCell::new(Default::default()));
             (*vm).root_context.renew((*vm).context_ids.next());
             addr_of_mut!((*vm).dead_context).write(crate::ScriptExecutionContext::dead(
                 (*vm).context_ids.next(),

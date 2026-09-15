@@ -114,6 +114,19 @@ const dir = String(
       };
       // Children with piped stdio that say nothing: nobody is reading the pipes to their end.
       export const quietChildren = (bun, count) => { for (let i = 0; i < count; i++) childProcess.spawn(bun, ["-e", "setInterval(() => {}, 1000)"]); };
+      // Request bodies that never finish: each upload is streaming for as long as its fetch lives.
+      export const uploads = (port, count) => {
+        for (let i = 0; i < count; i++) {
+          const body = new ReadableStream({ pull(controller) { controller.enqueue(new Uint8Array(1024)); return new Promise(resolve => setTimeout(resolve, 1)); } });
+          fetch("http://127.0.0.1:" + port + "/", { method: "POST", body, duplex: "half" }).catch(() => {});
+        }
+      };
+      // More writes than the pool has threads, so most are still queued when this returns.
+      export const queuesWrites = async (dir, count) => {
+        const handles = await Promise.all(Array.from({ length: count }, (_, i) => fs.promises.open(dir + "/tenant-" + i, "w")));
+        const data = Buffer.alloc(4 << 20, "T");
+        for (const handle of handles) handle.write(data, 0, data.length, 0).catch(() => {});
+      };
       // FileHandles nobody closes and nobody keeps.
       export const forgetsFileHandles = async (path, count) => { for (let i = 0; i < count; i++) await fs.promises.open(path, "r"); };
       // One the host is handed, with a stream over another.
@@ -178,6 +191,57 @@ const dir = String(
       while (descriptors() > before) await new Promise(resolve => setImmediate(resolve));
       console.log(JSON.stringify({ opened: open >= 16, leftOpen: descriptors() - before }));
     `,
+    // (The host must not have loaded node:http before the graph does.)
+    "first-to-load-node-http-tenant.mjs": `
+      import { createRequire } from "node:module";
+      // Loaded when first used, inside the graph's context: the module's own top level runs there.
+      const http = () => createRequire(import.meta.url)("node:http");
+      export const get = port => new Promise(resolve => http().get({ host: "127.0.0.1", port, path: "/" }, response => response.resume().on("end", resolve)));
+    `,
+    "first-to-load-node-http.mjs": `
+      using server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("ok") });
+      const graph = new Bun.ModuleGraph({ isolateIO: true });
+      const app = await graph.import(import.meta.dir + "/first-to-load-node-http-tenant.mjs");
+      await graph.run(() => app.get(server.port));
+      graph.dispose();
+      const http = await import("node:http");
+      const status = await new Promise(resolve => http.get({ host: "127.0.0.1", port: server.port, path: "/" }, response => { response.resume(); resolve(response.statusCode); }));
+      console.log(JSON.stringify({ status }));
+      process.exit(0);
+    `,
+    "uploads-of-a-disposed-graph.mjs": `
+      import { heapStats } from "bun:jsc";
+      let arrived = 0;
+      using server = Bun.serve({ port: 0, hostname: "127.0.0.1", async fetch(request) { arrived++; for await (const chunk of request.body) {} return new Response("done"); } });
+      // (A write the upload is waiting on is a protected promise.)
+      const protectedPromises = () => { Bun.gc(true); return heapStats().protectedObjectTypeCounts.Promise ?? 0; };
+      const before = protectedPromises();
+      const graph = new Bun.ModuleGraph({ isolateIO: true });
+      const app = await graph.import(import.meta.dir + "/left-behind-tenant.mjs");
+      graph.run(() => app.uploads(server.port, 16));
+      while (arrived < 16) await new Promise(resolve => setImmediate(resolve));
+      const streaming = protectedPromises() - before >= 16;
+      graph.dispose();
+      while (protectedPromises() > before) await new Promise(resolve => setImmediate(resolve));
+      console.log(JSON.stringify({ streaming, released: true }));
+      process.exit(0);
+    `,
+    "queued-writes-of-a-disposed-graph.mjs": `
+      import fs from "node:fs";
+      const dir = fs.mkdtempSync(import.meta.dir + "/queued-writes-");
+      const graph = new Bun.ModuleGraph({ isolateIO: true });
+      const app = await graph.import(import.meta.dir + "/left-behind-tenant.mjs");
+      await graph.run(() => app.queuesWrites(dir, 64));
+      graph.dispose();
+      // The host's files are given the descriptor numbers the graph's had.
+      const mine = Array.from({ length: 64 }, (_, i) => fs.openSync(dir + "/host-" + i, "w"));
+      // The graph's writes are done (or dropped) once the pool has come round to a job queued behind them.
+      await fs.promises.readFile(import.meta.path);
+      for (let i = 0; i < 8; i++) await new Promise(resolve => setImmediate(resolve));
+      const written = mine.filter(fd => fs.fstatSync(fd).size > 0).length;
+      console.log(JSON.stringify({ hostFilesWrittenTo: written }));
+      process.exit(0);
+    `,
     "open-files-of-a-disposed-graph.mjs": `
       import fs from "node:fs";
       const descriptors = () => (process.platform === "win32" ? 0 : fs.readdirSync(process.platform === "linux" ? "/proc/self/fd" : "/dev/fd").length);
@@ -216,6 +280,8 @@ const dir = String(
       await graph.run(() => app.streams(import.meta.path, 16));
       const open = descriptors() - before;
       graph.dispose();
+      // (One with a read or write on the thread pool is closed when that comes back.)
+      while (descriptors() > before) await new Promise(resolve => setImmediate(resolve));
       console.log(JSON.stringify({ open, leftOpen: descriptors() - before }));
     `,
     "forgotten-file-handles.mjs": `
@@ -2423,6 +2489,21 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
   test.skipIf(isWindows)("the stdio pipes of the children node:child_process spawned for it are closed", async () => {
     expect(await runs("pipes-of-a-disposed-graph.mjs")).toEqual({
       stdout: `{"opened":true,"leftOpen":0}`,
+      exitCode: 0,
+    });
+  });
+  test("the host's node:http requests work when a graph was the first to load node:http", async () => {
+    expect(await runs("first-to-load-node-http.mjs")).toEqual({ stdout: `{"status":200}`, exitCode: 0 });
+  });
+  test("fetch() uploads it had streaming are released", async () => {
+    expect(await runs("uploads-of-a-disposed-graph.mjs")).toEqual({
+      stdout: `{"streaming":true,"released":true}`,
+      exitCode: 0,
+    });
+  });
+  test("writes it had queued on the thread pool never reach the files that are given its descriptors next", async () => {
+    expect(await runs("queued-writes-of-a-disposed-graph.mjs")).toEqual({
+      stdout: `{"hostFilesWrittenTo":0}`,
       exitCode: 0,
     });
   });

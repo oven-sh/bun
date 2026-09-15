@@ -564,7 +564,8 @@ function globalAgentAccessors(AgentClass) {
       timeout: 5000,
       proxyEnv: shouldUseEnvProxy() ? process.env : undefined,
     });
-  let ofRealm = make();
+  // (In no graph's context, whichever script is first to load this module.)
+  let ofRealm = AsyncContextFrame.run(undefined, make);
   const ofGraphs = new WeakMap();
   return {
     get() {

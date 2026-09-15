@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import path, { dirname, join, resolve } from "node:path";
 import { itBundled } from "./expectBundled";
@@ -1893,4 +1893,356 @@ describe("bundler", () => {
       }).toEqual({ success: true, logs: [], outputs: ["second-name.js"] });
     });
   }
+
+  describe.concurrent("plugin/setup() or onStart() promise that is still pending", () => {
+    const entry = `export const hello = "world";\n`;
+    const nextTurn = () => new Promise<void>(resolve => setImmediate(resolve));
+
+    // The fixtures run in a subprocess: a Bun.build() call that blocks would hang the test process.
+    // A test that times out leaves its fixture running, so the fixtures that are left are killed at the end.
+    const fixtures = new Set<Bun.Subprocess>();
+    afterAll(() => {
+      for (const fixture of fixtures) fixture.kill("SIGKILL");
+    });
+    async function runFixture(dir: string, ...args: string[]) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...args],
+        env: bunEnv,
+        cwd: dir,
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 20_000,
+        killSignal: "SIGKILL",
+      });
+      fixtures.add(proc);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      fixtures.delete(proc);
+      return exitCode === 0 ? JSON.parse(stdout) : { exitCode, signalCode: proc.signalCode, stdout, stderr };
+    }
+
+    test.each(["setup", "onStart"])("Bun.build() returns a promise when %s() never settles", async hook => {
+      using dir = tempDir("bun-build-setup-never-settles", {
+        "entry.js": entry,
+        "never-settles-fixture.ts": /* ts */ `
+          const never = new Promise(() => {});
+          const built = Bun.build({
+            entrypoints: ["./entry.js"],
+            plugins: [
+              {
+                name: "never-settles",
+                setup(build) {
+                  if (process.argv[2] === "setup") return never;
+                  build.onStart(() => never);
+                },
+              },
+            ],
+          });
+          const winner = await Promise.race([
+            built.then(() => "build"),
+            new Promise(resolve => setImmediate(() => resolve("timeout"))),
+          ]);
+          console.log(JSON.stringify({ returnedPromise: built instanceof Promise, winner }));
+        `,
+      });
+      // The fixture does not call process.exit(): the pending build must not keep the process alive.
+      expect(await runFixture(String(dir), "never-settles-fixture.ts", hook)).toEqual({
+        returnedPromise: true,
+        winner: "timeout",
+      });
+    });
+
+    test("Bun.build() returns before setup() settles, then continues from where setup() resumes", async () => {
+      using dir = tempDir("bun-build-setup-gated", {
+        "entry.js": entry,
+        "gated-setup-fixture.ts": /* ts */ `
+          const { promise: gate, resolve: release } = Promise.withResolvers<void>();
+          const order: string[] = [];
+          const built = Bun.build({
+            entrypoints: ["./entry.js"],
+            plugins: [
+              {
+                name: "gated",
+                async setup(build) {
+                  order.push("setup:start");
+                  await gate;
+                  order.push("setup:resume");
+                  build.onLoad({ filter: /entry\\.js$/ }, () => ({
+                    contents: "export const hello = 'patched';",
+                    loader: "js",
+                  }));
+                },
+              },
+            ],
+          });
+          // Only this line can settle the promise that setup() waits for.
+          order.push("returned");
+          release();
+          const result = await built;
+          order.push("built");
+          console.log(JSON.stringify({ order, patched: (await result.outputs[0].text()).includes("patched") }));
+        `,
+      });
+      expect(await runFixture(String(dir), "gated-setup-fixture.ts")).toEqual({
+        order: ["setup:start", "returned", "setup:resume", "built"],
+        patched: true,
+      });
+    });
+
+    test("each setup() runs after the one before it settles, and onStart() settles before the first onLoad()", async () => {
+      using dir = tempDir("bun-build-setup-chain", { "entry.js": entry });
+      const order: string[] = [];
+      const result = await Bun.build({
+        entrypoints: [`${dir}/entry.js`],
+        plugins: [
+          {
+            name: "first",
+            async setup(build) {
+              order.push("first:start");
+              await nextTurn();
+              build.onStart(async () => {
+                await nextTurn();
+                order.push("first:onStart");
+              });
+              order.push("first:done");
+            },
+          },
+          {
+            name: "second",
+            setup(build) {
+              order.push("second");
+              build.onLoad({ filter: /entry\.js$/ }, () => {
+                order.push("onLoad");
+                return { contents: entry, loader: "js" };
+              });
+            },
+          },
+          {
+            name: "third",
+            async setup(build) {
+              await nextTurn();
+              build.onStart(async () => {
+                await nextTurn();
+                order.push("third:onStart");
+              });
+              order.push("third");
+            },
+          },
+        ],
+      });
+      expect(result.success).toBe(true);
+      // An onStart() callback runs next to the later setup() calls, so only its place before onLoad() is fixed.
+      expect({
+        setups: order.filter(step => !step.endsWith(":onStart")),
+        onStarts: order.filter(step => step.endsWith(":onStart")).sort(),
+        last: order.at(-1),
+      }).toEqual({
+        setups: ["first:start", "first:done", "second", "third", "onLoad"],
+        onStarts: ["first:onStart", "third:onStart"],
+        last: "onLoad",
+      });
+    });
+
+    test("a config change that setup() makes after an await is used", async () => {
+      using dir = tempDir("bun-build-setup-mutates-config", {
+        "entry.js": `export const flag = BUILD_FLAG;\n`,
+      });
+      const result = await Bun.build({
+        entrypoints: [`${dir}/entry.js`],
+        plugins: [
+          {
+            name: "definer",
+            async setup(build) {
+              await nextTurn();
+              build.config.define = { BUILD_FLAG: JSON.stringify("after-await") };
+            },
+          },
+        ],
+      });
+      expect(result.success).toBe(true);
+      expect(await result.outputs[0].text()).toContain("after-await");
+    });
+
+    test("an error in or after a setup() that returns a promise rejects the promise that Bun.build() returned", async () => {
+      using dir = tempDir("bun-build-setup-rejects", { "entry.js": entry });
+      const slow = { name: "slow", setup: () => nextTurn() };
+      const build = (config: object) => Bun.build({ entrypoints: [`${dir}/entry.js`], ...config });
+
+      const rejectingSetup = build({
+        plugins: [
+          {
+            name: "rejects",
+            async setup() {
+              await nextTurn();
+              throw new Error("setup rejected");
+            },
+          },
+        ],
+      });
+      const rejectingOnStart = build({
+        plugins: [
+          {
+            name: "rejects",
+            setup(build: Bun.PluginBuilder) {
+              build.onStart(async () => {
+                await nextTurn();
+                throw new Error("onStart rejected");
+              });
+            },
+          },
+        ],
+      });
+      const throwingSetup = build({
+        plugins: [
+          slow,
+          {
+            name: "throws",
+            setup() {
+              throw new Error("second setup threw");
+            },
+          },
+        ],
+      });
+      const invalidPlugin = build({ plugins: [slow, { setup() {} }] });
+      const invalidConfig = build({ plugins: [slow], format: "not-a-format" });
+      // A promise that is already rejected when setup() returns rejects too: it is never thrown by the call.
+      const alreadyRejected = build({
+        plugins: [{ name: "rejected", setup: () => Promise.reject(new Error("already rejected")) }],
+      });
+      const asyncThrow = build({
+        plugins: [
+          {
+            name: "throws",
+            async setup() {
+              throw new Error("async setup threw");
+            },
+          },
+        ],
+      });
+
+      expect(
+        (
+          await Promise.allSettled([
+            rejectingSetup,
+            rejectingOnStart,
+            throwingSetup,
+            invalidPlugin,
+            invalidConfig,
+            alreadyRejected,
+            asyncThrow,
+          ])
+        ).map(result => (result.status === "rejected" ? result.reason.message : result)),
+      ).toEqual([
+        "setup rejected",
+        "onStart rejected",
+        "second setup threw",
+        "Expected plugin to have a name",
+        expect.stringContaining("format"),
+        "already rejected",
+        "async setup threw",
+      ]);
+    });
+
+    test("an error before any setup() returns a promise is still thrown by the Bun.build() call", () => {
+      const throws = {
+        name: "throws",
+        setup() {
+          throw new Error("setup threw");
+        },
+      };
+      expect(() => Bun.build({ entrypoints: ["./entry.js"], plugins: [throws] })).toThrow("setup threw");
+      expect(() => Bun.build({ entrypoints: ["./entry.js"], plugins: [{ setup() {} } as any] })).toThrow(
+        "Expected plugin to have a name",
+      );
+    });
+
+    test("a GC while the plugins are validated and the options are parsed does not collect what the build needs", async () => {
+      using dir = tempDir("bun-build-setup-gc", {
+        "entry.js": entry,
+        "gc-in-getters-fixture.ts": /* ts */ `
+          const gc = () => {
+            for (let i = 0; i < 500; i++) ({ i, list: [i, i, i], text: "x" + i });
+            Bun.gc(true);
+          };
+          const results = [];
+          for (const asyncSetup of [false, true]) {
+            const result = await Bun.build({
+              entrypoints: ["./entry.js"],
+              // Read after the last setup(), when only the native stack or the reaction holds the plugin object of the bundler.
+              get minify() {
+                gc();
+                return false;
+              },
+              plugins: [
+                {
+                  // Read before the first setup(), when only the native stack holds it.
+                  get name() {
+                    gc();
+                    return "first";
+                  },
+                  setup(build) {
+                    build.onLoad({ filter: /entry\\.js$/ }, () => ({
+                      contents: "export const hello = 'patched';",
+                      loader: "js",
+                    }));
+                  },
+                },
+                {
+                  get name() {
+                    gc();
+                    return "second";
+                  },
+                  setup: asyncSetup
+                    ? async () => {
+                        await new Promise(resolve => setImmediate(resolve));
+                        gc();
+                      }
+                    : () => gc(),
+                },
+              ],
+            });
+            results.push({ asyncSetup, patched: (await result.outputs[0].text()).includes("patched") });
+          }
+          console.log(JSON.stringify(results));
+        `,
+      });
+      expect(await runFixture(String(dir), "gc-in-getters-fixture.ts")).toEqual([
+        { asyncSetup: false, patched: true },
+        { asyncSetup: true, patched: true },
+      ]);
+    });
+
+    test("a build that waits for a promise that is collected without settling is collected with it", async () => {
+      using dir = tempDir("bun-build-setup-collected", {
+        "entry.js": entry,
+        "collected-setup-fixture.ts": /* ts */ `
+          let collected = 0;
+          const registry = new FinalizationRegistry(() => collected++);
+          function abandonBuild(makeSetup) {
+            const config = { entrypoints: ["./entry.js"], plugins: [{ name: "never-settles", setup: makeSetup() }] };
+            registry.register(config, undefined);
+            Bun.build(config);
+          }
+          // Nothing holds the promise.
+          abandonBuild(() => () => new Promise(() => {}));
+          // The config object holds the promise, through the closure of setup().
+          abandonBuild(() => {
+            const gate = new Promise(() => {});
+            return async () => {
+              await gate;
+            };
+          });
+          // The plugin object of the bundler holds the promise.
+          abandonBuild(() => build => {
+            build.onStart(() => new Promise(() => {}));
+          });
+          for (let i = 0; i < 200 && collected < 3; i++) {
+            Bun.gc(true);
+            await new Promise(resolve => setImmediate(resolve));
+          }
+          console.log(JSON.stringify({ collected }));
+        `,
+      });
+      expect(await runFixture(String(dir), "collected-setup-fixture.ts")).toEqual({ collected: 3 });
+    });
+  });
 });

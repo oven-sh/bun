@@ -486,8 +486,7 @@ pub mod api {
                 }
             }
 
-            /// The name to send as SNI: `server_name`, unless it is unset or an
-            /// IP literal (RFC 6066 section 3 permits only DNS host names).
+            /// `server_name` as SNI. `None` when unset or an IP literal (RFC 6066 section 3).
             pub(crate) fn sni(&self) -> Option<&core::ffi::CStr> {
                 let server_name = self.server_name();
                 if server_name.is_null() {

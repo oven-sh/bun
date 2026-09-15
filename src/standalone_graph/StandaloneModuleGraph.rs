@@ -644,6 +644,56 @@ mod elf {
             hi - lo
         );
     }
+
+    /// Whether every mapping covering `[lo, hi)` in `/proc/self/maps` has a
+    /// backing file. A packer such as UPX unpacks the payload into anonymous
+    /// memory, where `MADV_DONTNEED` zero-fills the pages (#42509).
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub(super) fn is_file_backed(lo: usize, hi: usize) -> bool {
+        let Ok(file) = bun_sys::File::open(
+            bun_core::zstr!("/proc/self/maps"),
+            bun_sys::O::RDONLY | bun_sys::O::CLOEXEC,
+            0,
+        ) else {
+            return false;
+        };
+        // procfs reports size 0 to `fstat`, so presize instead.
+        let mut maps = Vec::new();
+        if maps.try_reserve(16 * 1024).is_err() || file.read_to_end_into(&mut maps).is_err() {
+            return false;
+        }
+        // `start-end perms offset dev inode [path]`, sorted by address; inode 0 is anonymous.
+        let mut next = lo;
+        for line in bun_core::strings::split(&maps, b"\n") {
+            let mut fields = bun_core::strings::tokenize(line, b" ");
+            let Some((start, end)) = fields
+                .next()
+                .and_then(|range| bun_core::strings::split_once_char(range, b'-'))
+            else {
+                continue;
+            };
+            let (Ok(start), Ok(end)) = (
+                bun_core::fmt::parse_int::<usize>(start, 16),
+                bun_core::fmt::parse_int::<usize>(end, 16),
+            ) else {
+                continue;
+            };
+            if end <= next {
+                continue;
+            }
+            if start > next {
+                return false;
+            }
+            if fields.nth(3).is_none_or(|inode| inode == b"0") {
+                return false;
+            }
+            next = end;
+            if next >= hi {
+                return true;
+            }
+        }
+        false
+    }
 }
 
 pub struct File {
@@ -2971,7 +3021,8 @@ impl StandaloneModuleGraph {
     /// bytecode regions for the life of the process, and dropping those turns
     /// every first call into a page fault. Only applies when running as a
     /// compiled standalone binary; `BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE=1`
-    /// skips the hint.
+    /// skips the hint, and so does a Linux payload that is not file-backed
+    /// (`elf::is_file_backed`).
     #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
     pub fn hint_source_pages_dont_need() {
         let Some(graph) = Self::get_ref() else {
@@ -2989,6 +3040,15 @@ impl StandaloneModuleGraph {
             );
             return;
         };
+
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        if !elf::is_file_backed(start, end) {
+            bun_core::scoped_log!(
+                StandaloneModuleGraph,
+                "hintSourcePagesDontNeed: source text is not file-backed, keeping it"
+            );
+            return;
+        }
 
         // This is a best-effort hint, so call libc madvise directly and
         // just log on failure rather than treating errors as fatal.

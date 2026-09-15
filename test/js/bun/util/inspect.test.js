@@ -503,6 +503,121 @@ it("Bun.inspect.custom exists", () => {
   expect(Bun.inspect.custom).toBe(util.inspect.custom);
 });
 
+// The native formatter loads the inspect function of internal/util/inspect (and, with colors, its
+// stylize helper) the first time a custom inspect function runs. When that load throws (a global
+// that the module reads while it loads has been replaced, the stack is nearly exhausted, the export
+// is not callable), the error has to reach the caller and the next call has to load again. It used
+// to abort the process. Each case runs in a fresh child, so it controls what the formatter has
+// loaded before the failing call.
+describe.concurrent("Bun.inspect when loading util.inspect for a custom inspect function throws", () => {
+  async function inspectInChild(code) {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const obj = { [Bun.inspect.custom]() { return "custom"; } };
+          const styled = { [Bun.inspect.custom](depth, options) { return options.stylize("x", "number"); } };
+          ${code}
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  it("throws while a global that the module reads is replaced, and works once it is restored", async () => {
+    const result = await inspectInChild(`
+      const RealSymbol = Symbol;
+      globalThis.Symbol = 0;
+      try {
+        console.log(Bun.inspect(styled, { colors: true }));
+      } catch {
+        console.log("threw");
+      }
+      globalThis.Symbol = RealSymbol;
+      console.log(Bun.inspect(obj));
+      console.log(Bun.inspect(styled, { colors: true }) === "\\u001b[33mx\\u001b[39m");
+      // Both functions are cached on the global object now; they have to survive a full GC.
+      Bun.gc(true);
+      console.log(Bun.inspect(styled, { colors: true }) === "\\u001b[33mx\\u001b[39m");
+    `);
+    expect(result).toEqual({ stdout: "threw\ncustom\ntrue\ntrue\n", stderr: "", exitCode: 0 });
+  });
+
+  // The first row fails while loading the inspect function. The second row loads it up front, so
+  // the failure happens one step later, while the stylize helper is built from it.
+  it.each([
+    ["without colors", "", "Bun.inspect(obj)", '"custom"'],
+    [
+      "with colors and the inspect function already loaded",
+      "Bun.inspect(obj);",
+      "Bun.inspect(styled, { colors: true })",
+      '"\\u001b[33mx\\u001b[39m"',
+    ],
+  ])("throws the RangeError at the stack limit, and works afterwards, %s", async (_, setup, call, expected) => {
+    const result = await inspectInChild(`
+      ${setup}
+      let deep;
+      function recurse() {
+        try {
+          recurse();
+        } catch {
+          // Only the frame whose call overflowed gets here.
+          try {
+            deep = ${call};
+          } catch (e) {
+            deep = e;
+          }
+        }
+      }
+      recurse();
+      console.log(String(deep));
+      console.log(JSON.stringify(${call}));
+    `);
+    expect(result).toEqual({
+      stdout: `RangeError: Maximum call stack size exceeded.\n${expected}\n`,
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // Only code with access to the internal modules (bunEnv gives the child that access) can replace
+  // the export the formatter reads. The formatter accepts any callable there, not only a function.
+  it("throws a TypeError while the export is not callable, and passes the export once it is", async () => {
+    const result = await inspectInChild(`
+      const exports = require("internal/util/inspect");
+      const realInspect = exports.inspect;
+      const receives = { [Bun.inspect.custom](depth, options, inspect) { return String(inspect === exports.inspect); } };
+      exports.inspect = 42;
+      try {
+        console.log(Bun.inspect(receives));
+      } catch (e) {
+        console.log(String(e));
+      }
+      exports.inspect = new Proxy(realInspect, {});
+      console.log(Bun.inspect(receives));
+    `);
+    expect(result).toEqual({ stdout: "TypeError: util.inspect is not a function\ntrue\n", stderr: "", exitCode: 0 });
+  });
+
+  // Like node, the formatter passes the inspect function of the internal module to custom inspect
+  // functions. Replacing util.inspect does not change it.
+  it("passes the real inspect function while util.inspect is replaced", async () => {
+    const result = await inspectInChild(`
+      const util = require("node:util");
+      const realInspect = util.inspect;
+      util.inspect = 42;
+      const receives = { [Bun.inspect.custom](depth, options, inspect) { return String(inspect === realInspect); } };
+      console.log(Bun.inspect(receives));
+    `);
+    expect(result).toEqual({ stdout: "true\n", stderr: "", exitCode: 0 });
+  });
+});
+
 describe("Functions with names", () => {
   const closures = [
     () => function f() {},
@@ -672,7 +787,7 @@ describe.concurrent("Bun.inspect when a property lookup throws", () => {
     // Bun.$ is the first property of the Bun object and is built by a builtin that calls
     // Symbol(), as are Bun.sql and Bun.SQL further down, so breaking Symbol makes those
     // initializers throw while Bun is formatted. Custom inspect functions (Bun.env has one on
-    // Windows) load node:util the first time one runs, which also needs Symbol, so load it first.
+    // Windows) load util.inspect the first time one runs, which also needs Symbol, so load it first.
     const result = await inspectInChild(`
       Bun.inspect({ [Bun.inspect.custom]() { return ""; } });
       globalThis.Symbol = 0;

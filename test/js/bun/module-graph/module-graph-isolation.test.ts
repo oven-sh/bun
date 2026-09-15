@@ -490,6 +490,33 @@ const dir = String(
       console.log(JSON.stringify({ stoppedShort: atDispose < 200, calledAfterDispose: app.loads.length - atDispose }));
       process.exit(0);
     `,
+    "waits-in-a-plugin.mjs": `
+      export const waiting = [];
+      // The plugin answers after a timer of its own, which goes with its graph.
+      export const build = entry => void Bun.build({
+        entrypoints: [entry],
+        plugins: [{
+          name: "slow",
+          setup(build) {
+            build.onResolve({ filter: /^chain:/ }, args => ({ path: args.path.slice(6), namespace: "chain" }));
+            build.onLoad({ filter: /.*/, namespace: "chain" }, async args => {
+              waiting.push(args.path);
+              await new Promise(resolve => setTimeout(resolve, 60_000));
+              return { loader: "js", contents: "" };
+            });
+          },
+        }],
+      }).catch(() => {});
+    `,
+    "disposed-while-a-plugin-waits.mjs": `
+      const graph = new Bun.ModuleGraph();
+      const app = await graph.import(import.meta.dir + "/waits-in-a-plugin.mjs");
+      graph.run(() => app.build(import.meta.dir + "/chain-entry.js"));
+      while (app.waiting.length === 0) await new Promise(resolve => setImmediate(resolve));
+      graph.dispose();
+      // Not process.exit(): a build still waiting for the plugin's answer would keep this process here.
+      console.log("idle");
+    `,
     "uploads-to-s3.mjs": `
       const client = endpoint => new Bun.S3Client({ accessKeyId: "a", secretAccessKey: "b", bucket: "bucket", endpoint });
       export const chunks = { pulled: 0 };
@@ -3181,6 +3208,9 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
       stdout: `{"stoppedShort":true,"calledAfterDispose":0}`,
       exitCode: 0,
     });
+  });
+  test("a Bun.build waiting for an answer its plugin will never give does not keep the process running", async () => {
+    expect(await runs("disposed-while-a-plugin-waits.mjs")).toEqual({ stdout: "idle", exitCode: 0 });
   });
   test("an S3 upload waiting for its script to write more does not keep the process running", async () => {
     expect(await runs("disposed-while-uploading.mjs")).toEqual({ stdout: "idle", exitCode: 0 });

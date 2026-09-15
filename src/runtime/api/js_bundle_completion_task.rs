@@ -96,7 +96,28 @@ pub struct JSBundleCompletionTask {
     /// Armed while the build is out on the bundle thread: the context that
     /// called `Bun.build` gives up on the result when it stops.
     pub(crate) abort_handle: jsc::AbortHandle,
+    /// Armed in the context that called `Bun.build`, when that is a `Bun.ModuleGraph`'s.
+    pub(crate) caller: CallerOfTheBuild,
 }
+
+/// The build's tie to the script that called `Bun.build`. When that script's context stops (its
+/// `Bun.ModuleGraph` is disposed) the build itself goes on — a live VM cannot cancel one — but
+/// what its plugins were asked and have not answered is answered now, as cancelled: their
+/// callbacks ran in that context, so whatever they were waiting for went with it.
+pub(crate) struct CallerOfTheBuild {
+    handle: jsc::AbortHandle,
+}
+
+jsc::impl_abort_handle_owner!(CallerOfTheBuild, handle, |this, _cause| {
+    // SAFETY: trait contract — `this` is the `caller` field of a live task (armed ⇒ its
+    // completion has not run); the plugin cell is protected by the task.
+    unsafe {
+        let task = bun_core::from_field_ptr!(JSBundleCompletionTask, caller, this);
+        if let Some(plugins) = (*task).plugins {
+            crate::api::JSBundler::PluginJscExt::tombstone(plugins.as_ref());
+        }
+    }
+});
 
 jsc::impl_abort_handle_owner!(JSBundleCompletionTask, abort_handle, |this, _cause| {
     // SAFETY: trait contract — `this` is live (armed ⇒ its completion has not run).
@@ -163,6 +184,9 @@ impl JSBundleCompletionTask {
             bundle_loop: core::sync::atomic::AtomicPtr::new(ptr::null_mut()),
             stage: core::sync::atomic::AtomicU8::new(Stage::Queued as u8),
             abort_handle: jsc::AbortHandle::for_owner::<Self>(),
+            caller: CallerOfTheBuild {
+                handle: jsc::AbortHandle::for_owner::<CallerOfTheBuild>(),
+            },
             html_build_task: None,
             result: BundleV2Result::Pending,
             next: bun_threading::Link::new(),
@@ -197,7 +221,11 @@ impl JSBundleCompletionTask {
         // SAFETY: `completion` is the live heap allocation; it leaves its
         // context in `on_complete_anytask`.
         unsafe {
-            jsc::AbortHandle::arm_owner(completion, &(*completion).global_this.bun_vm().vm_context)
+            let vm = (*completion).global_this.bun_vm();
+            jsc::AbortHandle::arm_owner(completion, &vm.vm_context);
+            if let Some(caller) = vm.as_graph_context(vm.context_of((*completion).context)) {
+                jsc::AbortHandle::arm_owner(&raw mut (*completion).caller, caller);
+            }
         };
         bun_bundler::bundle_v2::singleton::enqueue::<JSBundleCompletionTask>(completion);
     }
@@ -566,7 +594,10 @@ impl JSBundleCompletionTask {
 
     pub(crate) fn on_complete_anytask(ctx: *mut Self) -> bun_event_loop::JsResult<()> {
         // SAFETY: `ctx` is the live heap allocation (fn contract).
-        unsafe { (*ctx).abort_handle.leave() };
+        unsafe {
+            (*ctx).abort_handle.leave();
+            (*ctx).caller.handle.leave();
+        }
         // SAFETY: `ctx` is the live heap allocation; takes over the +1 taken by
         // the `complete_on_bundle_thread` enqueue.
         let _guard = unsafe { RefPtr::from_raw(ctx) };
@@ -608,6 +639,7 @@ impl JSBundleCompletionTask {
                 .is_ok()
             {
                 (*this).poll_ref.disable();
+                (*this).caller.handle.leave();
                 if let Some(plugin) = (*this).plugins.take() {
                     Plugin::destroy(plugin.as_ptr());
                 }

@@ -16,7 +16,7 @@ const {
 } = require("node:_http_common");
 const { kUniqueHeaders, parseUniqueHeadersOption, OutgoingMessage } = require("node:_http_outgoing");
 const Agent = require("node:_http_agent");
-const { urlToHttpOptions } = require("internal/url");
+const { isURL, urlToHttpOptions } = require("internal/url");
 const { kOutHeaders, kNeedDrain, kProxyConfig, checkShouldUseProxy } = require("internal/http");
 const { validateInteger, validateBoolean, validateString, validateOneOf } = require("internal/validators");
 const { getTimerDuration } = require("internal/timers");
@@ -95,10 +95,6 @@ function closeRequest(req) {
   req.emit("close");
 }
 
-function isURLInstance(input) {
-  return input != null && typeof input === "object" && input instanceof URL;
-}
-
 // When proxying a HTTP request, the following needs to be done:
 // https://datatracker.ietf.org/doc/html/rfc7230#section-5.3.2
 // 1. Rewrite the request path to absolute-form.
@@ -169,7 +165,7 @@ function ClientRequest(input, options, cb) {
   if (typeof input === "string") {
     const urlStr = input;
     input = urlToHttpOptions(new URL(urlStr));
-  } else if (isURLInstance(input)) {
+  } else if (isURL(input)) {
     // url.URL instance
     input = urlToHttpOptions(input);
   } else {

@@ -4,6 +4,7 @@ import { once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { Readable } from "node:stream";
+import { pathToFileURL } from "node:url";
 import wt, {
   BroadcastChannel,
   getEnvironmentData,
@@ -313,6 +314,39 @@ test("support worker eval that throws", async () => {
   expect(result.toString()).toInclude("Unexpected throw");
   expect(result.name).toBe("SyntaxError");
   await worker.terminate();
+});
+
+test("filename accepts a URL-like object that is not a URL instance", async () => {
+  using dir = tempDir("worker-url-like", {
+    "worker.js": `require("node:worker_threads").parentPort.postMessage("from url-like");`,
+  });
+  const url = pathToFileURL(join(String(dir), "worker.js"));
+  // node decides "is this a URL?" structurally (lib/internal/url.js isURL), so
+  // a WHATWG URL from another implementation (jsdom, whatwg-url) counts. A
+  // plain object with a URL's fields stands in for one here.
+  const urlLike = { href: url.href, protocol: url.protocol, hostname: url.hostname, pathname: url.pathname };
+  const worker = new Worker(urlLike as any);
+  const [message] = await once(worker, "message");
+  expect(message).toBe("from url-like");
+  await worker.terminate();
+
+  // A data: URL-like object runs its href, not its string form.
+  const dataHref = `data:text/javascript,postMessage("from data url")`;
+  const dataWorker = new Worker({ href: dataHref, protocol: "data:", pathname: dataHref.slice(5) } as any);
+  const [dataMessage] = await once(dataWorker, "message");
+  expect(dataMessage).toBe("from data url");
+  await dataWorker.terminate();
+
+  // Like node, a URL-like object goes through fileURLToPath, so a non-file
+  // scheme fails on the scheme and not on the argument type.
+  expect(() => new Worker({ ...urlLike, href: "http://example.com/worker.js", protocol: "http:" } as any)).toThrow(
+    expect.objectContaining({ code: "ERR_INVALID_URL_SCHEME" }),
+  );
+  // A legacy url.parse() object has `auth` and `path` (null, not undefined),
+  // so it is not a URL.
+  expect(() => new Worker({ ...urlLike, auth: null, path: url.pathname } as any)).toThrow(
+    expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+  );
 });
 
 describe("execArgv option", async () => {

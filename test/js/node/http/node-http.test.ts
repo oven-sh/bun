@@ -29,6 +29,7 @@ import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { Duplex, duplexPair, PassThrough, Writable } from "node:stream";
 import { connect as tlsConnect } from "node:tls";
+import vm from "node:vm";
 import tunnel from "tunnel";
 import { run as runHTTPProxyTest } from "./node-http-proxy.js";
 const { describe, expect, it, beforeAll, afterAll, createDoneDotAll, mock, test } = createTest(import.meta.path);
@@ -1078,6 +1079,153 @@ describe("node:http", () => {
         });
         req.end();
       });
+    });
+
+    // node decides "is this a URL?" structurally (lib/internal/url.js isURL:
+    // truthy href and protocol, no legacy url.parse() `auth`/`path`), so a
+    // WHATWG URL from another implementation (jsdom, whatwg-url) counts. A
+    // plain object holding a URL's fields stands in for one here.
+    function urlLikeOf(href: string) {
+      const url = new URL(href);
+      const urlLike = Object.create({
+        toString() {
+          return this.href;
+        },
+      });
+      for (const key of [
+        "href",
+        "origin",
+        "protocol",
+        "username",
+        "password",
+        "host",
+        "hostname",
+        "port",
+        "pathname",
+        "search",
+        "hash",
+      ]) {
+        urlLike[key] = url[key];
+      }
+      return urlLike;
+    }
+
+    function requestJSON(...args: any[]) {
+      return new Promise<any>((resolve, reject) => {
+        const req = request(...(args as [any]), (res: IncomingMessage) => {
+          let body = "";
+          res.setEncoding("utf8");
+          res.on("data", chunk => (body += chunk));
+          res.on("end", () => resolve(JSON.parse(body)));
+        });
+        req.on("error", reject);
+        req.end();
+      });
+    }
+
+    it("request() and get() read a URL-like object that is not a URL instance as a URL", async () => {
+      const server = createServer((req, res) => {
+        res.end(JSON.stringify({ method: req.method, url: req.url, host: req.headers.host }));
+      });
+      server.listen(0);
+      await once(server, "listening");
+      try {
+        const { port } = server.address() as AddressInfo;
+        const urlLike = urlLikeOf(`http://localhost:${port}/some/path?q=1#frag`);
+        expect(urlLike instanceof URL).toBe(false);
+        const expected = { method: "GET", url: "/some/path?q=1", host: `localhost:${port}` };
+
+        // An `instanceof URL` check took this object for an options bag. It has
+        // no `path` key, so the request silently went to "/".
+        expect(await requestJSON(urlLike)).toEqual(expected);
+        expect(await requestJSON(urlLike, { method: "POST" })).toEqual({ ...expected, method: "POST" });
+        expect(await requestJSON(urlLike, { headers: { "x-extra": "1" } })).toEqual(expected);
+
+        const viaGet = await new Promise<any>((resolve, reject) => {
+          get(urlLike, res => {
+            let body = "";
+            res.setEncoding("utf8");
+            res.on("data", chunk => (body += chunk));
+            res.on("end", () => resolve(JSON.parse(body)));
+          }).on("error", reject);
+        });
+        expect(viaGet).toEqual(expected);
+      } finally {
+        server.close();
+      }
+    });
+
+    it("request() accepts a URL instance after globalThis.URL was replaced", async () => {
+      // @happy-dom/global-registrator installs its own URL class on globalThis.
+      // A URL made before that, or by node:url, is then not `instanceof URL`.
+      // Before the fix it was taken for an options bag, and a URL instance has
+      // no own properties to copy, so the request went to localhost:80.
+      const NativeURL = URL;
+      const server = createServer((req, res) => {
+        res.end(JSON.stringify({ method: req.method, url: req.url, host: req.headers.host }));
+      });
+      server.listen(0);
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+      const url = new NativeURL(`http://localhost:${port}/some/path?q=1`);
+      globalThis.URL = class URL extends NativeURL {};
+      try {
+        expect(url instanceof URL).toBe(false);
+        expect(await requestJSON(url)).toEqual({ method: "GET", url: "/some/path?q=1", host: `localhost:${port}` });
+      } finally {
+        globalThis.URL = NativeURL;
+        server.close();
+      }
+    });
+
+    it("https.request() reads a URL-like object that is not a URL instance as a URL", () => {
+      const urlLike = urlLikeOf("https://localhost:1/some/path?q=1");
+      const req = https.request(urlLike);
+      // Nothing listens on port 1; the connect error is expected and ignored.
+      req.on("error", () => {});
+      try {
+        expect({ protocol: req.protocol, host: req.host, path: req.path }).toEqual({
+          protocol: "https:",
+          host: "localhost",
+          path: "/some/path?q=1",
+        });
+      } finally {
+        req.destroy();
+      }
+    });
+
+    it("req.write() and req.end() accept a Uint8Array from another realm", async () => {
+      // A typed array created in a node:vm context has that realm's
+      // Uint8Array.prototype, so `instanceof Uint8Array` is false for it. The
+      // chunk check has to look at the cell type, like util.types.isUint8Array.
+      const chunk = vm.runInNewContext("new Uint8Array([104, 105])");
+      expect(chunk instanceof Uint8Array).toBe(false);
+
+      const server = createServer((req, res) => {
+        let body = "";
+        req.setEncoding("utf8");
+        req.on("data", part => (body += part));
+        req.on("end", () => res.end(body));
+      });
+      server.listen(0);
+      await once(server, "listening");
+      try {
+        const { port } = server.address() as AddressInfo;
+        const echoed = await new Promise<string>((resolve, reject) => {
+          const req = request({ port, method: "POST" }, res => {
+            let body = "";
+            res.setEncoding("utf8");
+            res.on("data", part => (body += part));
+            res.on("end", () => resolve(body));
+          });
+          req.on("error", reject);
+          req.write(chunk);
+          req.end(chunk);
+        });
+        expect(echoed).toBe("hihi");
+      } finally {
+        server.close();
+      }
     });
   });
 

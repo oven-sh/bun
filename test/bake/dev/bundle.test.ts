@@ -1,6 +1,6 @@
 // Bundle tests are tests concerning bundling bugs that only occur in DevServer.
 import { expect } from "bun:test";
-import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
+import { Dev, devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
 devTest("import identifier doesnt get renamed", {
   framework: minimalFramework,
@@ -410,6 +410,114 @@ devTest("removing 'use client' from a component with a pending resolution failur
     // The server must still be alive and responding.
     const res = await dev.fetch("/");
     expect(res).toBeInstanceOf(Response);
+  },
+});
+// No route imports the client entry point of the framework. The script of
+// every route of the router type starts at it.
+const clientEntryPointApp = {
+  framework: {
+    ...minimalFramework,
+    fileSystemRouterTypes: [
+      {
+        ...minimalFramework.fileSystemRouterTypes![0],
+        clientEntryPoint: "./client.ts",
+      },
+    ],
+  },
+  files: {
+    "client.ts": `
+      import { dep } from "./client-dep";
+      console.log("client v1, " + dep);
+    `,
+    "client-dep.ts": `
+      export const dep = "dep v1";
+    `,
+    "client.css": `
+      body {
+        color: red;
+      }
+    `,
+    "routes/index.ts": `
+      export default function (req, meta) {
+        const styles = meta.styles.map(href => '<link rel="stylesheet" href="' + href + '">').join("");
+        const scripts = meta.modules.map(src => '<script type="module" src="' + src + '"></script>').join("");
+        return new Response("<!DOCTYPE html><html><head>" + styles + "</head><body>" + scripts + "</body></html>", {
+          headers: { "content-type": "text/html" },
+        });
+      }
+    `,
+  },
+};
+async function loadClientEntryPointPage(dev: Dev) {
+  const html = await dev.fetch("/").text();
+  const script = html.match(/<script type="module" src="([^"]+)">/)![1];
+  const code = await dev.fetch(script).text();
+  return {
+    script,
+    styles: html.match(/<link rel="stylesheet"/g)?.length ?? 0,
+    versions: [...new Set(code.match(/\b(client|dep) v\d+/g))].sort(),
+  };
+}
+devTest("saving a file under the framework client entry point updates the next page load", {
+  ...clientEntryPointApp,
+  async test(dev) {
+    const first = await loadClientEntryPointPage(dev);
+    expect(first).toEqual({ script: expect.any(String), styles: 0, versions: ["client v1", "dep v1"] });
+
+    await dev.write(
+      "client-dep.ts",
+      `
+        export const dep = "dep v2";
+      `,
+    );
+    const second = await loadClientEntryPointPage(dev);
+    expect(second).toEqual({ script: expect.any(String), styles: 0, versions: ["client v1", "dep v2"] });
+    expect(second.script).not.toBe(first.script);
+
+    // Nothing accepts the update, so a connected page reloads.
+    {
+      await using c = await dev.client("/");
+      await c.expectMessage("client v1, dep v2");
+      await c.expectReload(async () => {
+        await dev.write(
+          "client.ts",
+          `
+            import { dep } from "./client-dep";
+            console.log("client v2, " + dep);
+          `,
+        );
+      });
+      await c.expectMessage("client v2, dep v2");
+    }
+
+    await dev.write(
+      "client.ts",
+      `
+        import { dep } from "./client-dep";
+        import "./client.css";
+        console.log("client v3, " + dep);
+      `,
+    );
+    const third = await loadClientEntryPointPage(dev);
+    expect(third).toEqual({ script: expect.any(String), styles: 1, versions: ["client v3", "dep v2"] });
+  },
+});
+devTest("a build error under the framework client entry point shows on the next page load", {
+  ...clientEntryPointApp,
+  async test(dev) {
+    expect((await dev.fetch("/")).status).toBe(200);
+
+    await dev.write("client-dep.ts", `export const dep = ;`, { errors: null });
+    expect((await dev.fetch("/")).status).toBe(500);
+
+    await dev.write(
+      "client-dep.ts",
+      `
+        export const dep = "dep v2";
+      `,
+    );
+    const recovered = await loadClientEntryPointPage(dev);
+    expect(recovered).toEqual({ script: expect.any(String), styles: 0, versions: ["client v1", "dep v2"] });
   },
 });
 devTest("deinit with a free-list slot in DirectoryWatchStore.dependencies", {

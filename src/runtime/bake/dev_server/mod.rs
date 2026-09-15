@@ -196,6 +196,8 @@ pub struct IncrementalResult {
     pub(crate) client_components_removed: Vec<incremental_graph::ServerFileIndex>,
     pub(crate) failures_removed: Vec<SerializedFailure>,
     pub(crate) client_components_affected: Vec<incremental_graph::ServerFileIndex>,
+    /// Client entry points of router types. They affect every route of the type.
+    pub(crate) framework_client_entries_affected: Vec<incremental_graph::ClientFileIndex>,
     pub(crate) failures_added: Vec<SerializedFailure>,
 }
 impl IncrementalResult {
@@ -209,6 +211,7 @@ impl IncrementalResult {
         client_components_added: Vec::new(),
         client_components_removed: Vec::new(),
         client_components_affected: Vec::new(),
+        framework_client_entries_affected: Vec::new(),
     };
 
     /// Clears each list retaining capacity, asserts `failures_removed` was
@@ -223,6 +226,7 @@ impl IncrementalResult {
         debug_assert!(self.failures_removed.is_empty());
         self.failures_removed.clear();
         self.client_components_affected.clear();
+        self.framework_client_entries_affected.clear();
         self.failures_added.clear();
         // NOTE: `had_adjusted_edges` is NOT reset here (matches spec).
     }

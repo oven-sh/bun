@@ -124,6 +124,7 @@ pub struct File {
     pub(crate) is_route: bool,
     // ── client-side ────────────────────────────────────────────────────
     pub(crate) is_hmr_root: bool,
+    /// The client entry point of a router type (`framework_router::Type::client_file`).
     pub(crate) is_special_framework_file: bool,
     pub(crate) html_route_bundle_index: Option<route_bundle::Index>,
     pub(crate) source_map: packed_map::Shared,
@@ -1121,10 +1122,19 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 }
             }
             Side::Client => {
-                let (is_hmr_root, html_rbi) = {
+                let (is_hmr_root, html_rbi, is_framework_client_entry) = {
                     let file = &self.bundled_files.values()[file_index.get() as usize];
-                    (file.is_hmr_root, file.html_route_bundle_index)
+                    (
+                        file.is_hmr_root,
+                        file.html_route_bundle_index,
+                        file.is_special_framework_file,
+                    )
                 };
+                if is_framework_client_entry {
+                    self.dev_incremental_result()
+                        .framework_client_entries_affected
+                        .push(ClientFileIndex::init(file_index.get()));
+                }
                 if is_hmr_root {
                     let key = bun_ptr::RawSlice::new(
                         &*self.bundled_files.keys()[file_index.get() as usize],

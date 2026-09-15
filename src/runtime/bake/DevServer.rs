@@ -953,11 +953,12 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
                 allow_layouts: fsr.allow_layouts,
                 server_file: to_opaque_file_id::<{ bake::Side::Server }>(server_file),
                 client_file: if let Some(client) = &fsr.entry_client {
-                    Some(to_opaque_file_id::<{ bake::Side::Client }>(
-                        // SAFETY: `client_graph` is disjoint from `framework`.
-                        unsafe { &mut (*dev_ptr).client_graph }
-                            .insert_stale(client, bake::Graph::Client)?,
-                    ))
+                    // SAFETY: `client_graph` is disjoint from `framework`.
+                    let client_graph = unsafe { &mut (*dev_ptr).client_graph };
+                    let index = client_graph.insert_stale(client, bake::Graph::Client)?;
+                    client_graph.bundled_files.values_mut()[index.get() as usize]
+                        .is_special_framework_file = true;
+                    Some(to_opaque_file_id::<{ bake::Side::Client }>(index))
                 } else {
                     None
                 },
@@ -3421,6 +3422,19 @@ impl DevServer {
                     route_bundle::State::PossibleBundlingFailures;
             }
 
+            if !self
+                .incremental_result
+                .framework_client_entries_affected
+                .is_empty()
+            {
+                for i in 0..self.route_bundles.len() {
+                    if self.loads_affected_framework_client_entry(&self.route_bundles[i]) {
+                        self.route_bundles[i].server_state =
+                            route_bundle::State::PossibleBundlingFailures;
+                    }
+                }
+            }
+
             self.publish(HmrTopic::Errors, &payload, Opcode::BINARY);
         } else if !self.incremental_result.failures_removed.is_empty() {
             let mut payload: Vec<u8> = Vec::with_capacity(
@@ -4447,6 +4461,22 @@ pub(super) fn finalize_bundle(
         for index in &dev.incremental_result.html_routes_soft_affected {
             dev.route_bundles[index.get() as usize].invalidate_client_bundle(&mut dev.source_maps);
             route_bits.set(index.get() as usize);
+        }
+        has_route_bits_set = true;
+    }
+
+    // No route imports a framework client entry point. The client bundle of
+    // every route of its router type starts at it.
+    if !dev
+        .incremental_result
+        .framework_client_entries_affected
+        .is_empty()
+    {
+        for i in 0..dev.route_bundles.len() {
+            if dev.loads_affected_framework_client_entry(&dev.route_bundles[i]) {
+                dev.route_bundles[i].invalidate_client_bundle(&mut dev.source_maps);
+                route_bits.set(i);
+            }
         }
         has_route_bits_set = true;
     }
@@ -5689,6 +5719,22 @@ fn mark_all_route_children(
 }
 
 impl DevServer {
+    /// Whether `incremental_result.framework_client_entries_affected` has the
+    /// client entry point of the router type of `route_bundle`.
+    fn loads_affected_framework_client_entry(&self, route_bundle: &RouteBundle) -> bool {
+        let route_bundle::Data::Framework(fw) = &route_bundle.data else {
+            return false;
+        };
+        let router_type = self
+            .router
+            .type_ptr_const(self.router.route_ptr(fw.route_index).r#type);
+        router_type.client_file.is_some_and(|id| {
+            self.incremental_result
+                .framework_client_entries_affected
+                .contains(&from_opaque_file_id::<{ bake::Side::Client }>(id))
+        })
+    }
+
     fn mark_all_route_children_failed(&mut self, route_index: framework_router::RouteIndex) {
         let mut next = self.router.route_ptr(route_index).first_child;
         while let Some(child_index) = next {

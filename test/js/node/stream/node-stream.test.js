@@ -3,7 +3,7 @@ import { describe, expect, it, jest } from "bun:test";
 import { bunEnv, bunExe, bunRun, isGlibcVersionAtLeast, isMacOS, tempDir, tmpdirSync } from "harness";
 import { createReadStream, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { Duplex, duplexPair, finished, PassThrough, Readable, Stream, Transform, Writable } from "node:stream";
+import { compose, Duplex, duplexPair, finished, PassThrough, Readable, Stream, Transform, Writable } from "node:stream";
 import { finished as finishedP } from "node:stream/promises";
 import { join } from "path";
 
@@ -1614,6 +1614,90 @@ describe("node v26 stream semantics", () => {
     const err = await promise;
     expect(err.name).toBe("AbortError");
     expect(err.code).toBe("ABORT_ERR");
+  });
+
+  // Upstream: nodejs/node#63593. compose consumes the tail in flowing mode, so
+  // the composed stream emits a chunk inside the tail's push() call.
+  it("compose emits tail output synchronously with its production", async () => {
+    const log = [];
+    const tail = new Transform({
+      transform(chunk, encoding, callback) {
+        log.push("transform:" + chunk);
+        this.push(chunk);
+        log.push("pushed:" + chunk);
+        callback();
+      },
+    });
+    const composed = compose(new PassThrough(), tail);
+    composed.on("data", chunk => log.push("data:" + chunk));
+    const ended = new Promise(resolve => composed.on("end", resolve));
+    // Let the composed stream and the tail start flowing before the first write.
+    await new Promise(resolve => setImmediate(resolve));
+    await new Promise(resolve => setImmediate(resolve));
+    composed.write("x");
+    composed.end("y");
+    await ended;
+    expect(log).toEqual(["transform:x", "data:x", "pushed:x", "transform:y", "data:y", "pushed:y"]);
+  });
+
+  it("compose delivers the chunks the tail pushed before it errored", async () => {
+    const log = [];
+    const tail = new Transform({
+      transform(chunk, encoding, callback) {
+        this.push(chunk);
+        callback(chunk.toString() === "boom" ? new Error("tail-boom") : null);
+      },
+    });
+    const composed = compose(new PassThrough(), tail);
+    composed.on("data", chunk => log.push("data:" + chunk));
+    composed.on("error", err => log.push("error:" + err.message));
+    const closed = new Promise(resolve => composed.on("close", resolve));
+    await new Promise(resolve => setImmediate(resolve));
+    await new Promise(resolve => setImmediate(resolve));
+    composed.write("ok");
+    composed.write("boom");
+    await closed;
+    expect(log).toEqual(["data:ok", "data:boom", "error:tail-boom"]);
+  });
+
+  // Upstream: nodejs/node#63699. With a web stream tail, compose runs one
+  // reader loop per _read() call. When the loop that sees done runs while the
+  // composed buffer is over the high water mark, push(value) reports
+  // backpressure. The done check has to come first or push(null) never runs.
+  it("compose with a web stream tail ends when done arrives under backpressure", async () => {
+    const waitFor = async condition => {
+      for (let i = 0; i < 200 && !condition(); i++) {
+        await new Promise(resolve => setImmediate(resolve));
+      }
+      return condition();
+    };
+    const src = new Readable({ read() {} });
+    const composed = compose(src, new TransformStream());
+    let ended = false;
+    composed.on("end", () => (ended = true));
+    // One chunk fits under the high water mark, two do not. The default high
+    // water mark is 16 KiB on Windows and 64 KiB elsewhere.
+    const big = Buffer.alloc(Math.floor(composed.readableHighWaterMark * 0.75), "a");
+
+    // The first reader loop starts.
+    composed.read(0);
+    src.push(big);
+    expect(await waitFor(() => composed.readableLength === big.length)).toBe(true);
+    // readableLength - 1 is below the high water mark, so a second loop starts.
+    composed.read(1);
+    // The first loop receives this chunk. push() returns false: over the high water mark.
+    src.push(big);
+    expect(await waitFor(() => composed.readableLength === big.length * 2 - 1)).toBe(true);
+    // The second loop receives done while the buffer is still full. The fix
+    // pushes null here, before anything drains the buffer.
+    src.push(null);
+    expect(await waitFor(() => composed._readableState.ended)).toBe(true);
+
+    let total = 1;
+    let chunk;
+    while ((chunk = composed.read()) !== null) total += chunk.length;
+    expect(total).toBe(big.length * 2);
+    expect(await waitFor(() => ended)).toBe(true);
   });
 
   // Upstream: v26 test-stream-writable-decoded-encoding.js.

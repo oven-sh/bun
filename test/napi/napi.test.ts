@@ -1566,68 +1566,54 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     expect(exitCode).toBe(0);
   });
 
-  it("napi_create_error succeeds during env cleanup when a prior finalizer leaked a VM exception (#30286)", async () => {
-    // Reproduces the gitnexus + tree-sitter crash: one finalizer left a
-    // pending JSC exception on the VM, the next finalizer called
-    // napi_create_error, and Bun returned napi_pending_exception. Under
-    // node-addon-api's Error::New that turns into
-    //   NAPI FATAL ERROR: Error::New napi_create_error
-    // during web_worker.exitAndDeinit. After the fix napi_create_error
-    // ignores pre-existing VM exceptions (matching Node.js) so the
-    // finalizer completes cleanly and the process exits 0.
+  // #30286, the tree-sitter shape: node-addon-api's Error::New calls
+  // napi_create_error while the JS exception the addon is about to report is
+  // still pending on the VM, and escalates any failure to napi_fatal_error
+  // ("NAPI FATAL ERROR: Error::New napi_create_error"). Node makes
+  // napi_create_error a pure value-producing call, so it returns napi_ok there.
+  it("napi_create_error succeeds while a JS exception is pending on the VM (#30286)", async () => {
     const code = `
       const addon = require(${JSON.stringify(join(__dirname, "napi-app/build/Debug/test_finalizer_create_error.node"))});
-      // A function that throws -- called from the first-to-run finalizer
-      // so the throw leaves a JSC VM exception pending for the next
-      // finalizer (the one that calls napi_create_error).
-      globalThis.keep = addon.setup(() => { throw new Error("from js"); });
+      addon.createErrorWithPendingException(() => { throw new Error("from js"); });
+      console.log("done");
     `;
-    await using proc = spawn({
-      cmd: [bunExe(), "-e", code],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // napi_ok == 0 -- before the fix this was 10 (napi_pending_exception) in
-    // release builds, or an ASAN abort in debug builds. A panic would leave
-    // stdout empty, so the positive assertion covers both crash modes without
-    // relying on stderr-contains-"panic" (which is unreliable per CLAUDE.md).
-    expect(stdout.trim()).toBe("create_error_status=0");
-    expect(exitCode).toBe(0);
-    expect(stderr).toBe("");
+    const run = async (exe: string) => {
+      await using proc = spawn({ cmd: [exe, "-e", code], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stdout.trim().split(/\r?\n/), stderr, exitCode };
+    };
+    const [bun, node] = await Promise.all([run(bunExe()), run(await nodeExeMatchingAbi())]);
+    expect(bun).toEqual(node);
+    expect(bun).toEqual({ stdout: ["create_error_status=0", "done"], stderr: "", exitCode: 0 });
   });
 
-  it("the first napi finalizer starts clean when a cleanup hook leaked a VM exception (#30286)", async () => {
-    // The node-canvas shape of #30286 (terminated Workers): a native
-    // teardown callback fails internally, its scheduled exception gets
-    // promoted onto the JSC VM (napi_call_function's prologue does this
-    // before validating arguments), and the exception is still pending
-    // when NapiEnv::cleanup() reaches the FIRST wrap finalizer. That
-    // finalizer's first napi call (napi_create_string_utf8 in
-    // node-addon-api's ObjectWrap teardown) then fails with
-    // napi_pending_exception and the addon escalates to napi_fatal_error
-    // ("Error::Error napi_create_object"). Cleanup hooks run before wrap
-    // finalizers, so the addon's leaking hook reproduces the state
-    // deterministically; the fix clears pending exceptions before the
-    // finalizer phase starts.
-    const code = `
+  // #30286, the node-canvas shape: a Worker is terminate()d, so JSC's
+  // TerminationException is pending on the VM when NapiEnv::cleanup() reaches
+  // the first wrap finalizer. That finalizer's first napi calls
+  // (napi_create_string_utf8, then napi_create_error, as in node-addon-api's
+  // ObjectWrap teardown) must succeed anyway, as they do in node.
+  it("the first napi finalizer of a terminated worker starts clean (#30286)", async () => {
+    const worker = `
+      const { parentPort } = require("worker_threads");
       const addon = require(${JSON.stringify(join(__dirname, "napi-app/build/Debug/test_finalizer_create_error.node"))});
       globalThis.keep = addon.setupSingle();
+      parentPort.postMessage("ready");
+      setInterval(() => {}, 1000);
     `;
-    await using proc = spawn({
-      cmd: [bunExe(), "-e", code],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // The wrap finalizer prints the napi_create_error status; 0 == napi_ok.
-    // Before the fix the finalizer's napi_create_string_utf8 failed on the
-    // hook's leaked exception (status -110 on the string step).
-    expect(stdout.trim()).toBe("create_error_status=0");
-    expect(exitCode).toBe(0);
-    expect(stderr).toBe("");
+    const code = `
+      const { Worker } = require("worker_threads");
+      const worker = new Worker(${JSON.stringify(worker)}, { eval: true });
+      worker.on("message", () => worker.terminate());
+      worker.on("exit", code => console.log("worker exited with", code));
+    `;
+    const run = async (exe: string) => {
+      await using proc = spawn({ cmd: [exe, "-e", code], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stdout.trim().split(/\r?\n/), stderr, exitCode };
+    };
+    const [bun, node] = await Promise.all([run(bunExe()), run(await nodeExeMatchingAbi())]);
+    expect(bun).toEqual(node);
+    expect(bun).toEqual({ stdout: ["create_error_status=0", "worker exited with 1"], stderr: "", exitCode: 0 });
   });
 
   it("napi_reference_unref can be called from finalizers in regular modules", async () => {

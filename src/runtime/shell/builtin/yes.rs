@@ -23,8 +23,8 @@ pub struct Yes {
     /// out to ~BUFSIZ.
     pub(crate) buffer: Vec<u8>,
     pub(crate) buffer_used: usize,
-    /// Chunks in a row that the `IOWriter` wrote inside `enqueue` (a regular
-    /// file, `/dev/null`), so the event loop has not run since the first one.
+    /// Chunks in a row that `enqueue` wrote itself (`Yield::OnIoWriterChunk`:
+    /// the fd is not pollable), so the event loop has not run in between.
     sync_chunks: usize,
     /// Populated in `start()`.
     pub task: Option<YesTask>,
@@ -91,7 +91,6 @@ impl Yes {
         Self::write_no_io_loop(interp, cmd)
     }
 
-    /// Where `YesTask` picks up after the event loop has had its turn.
     fn resume(interp: &Interpreter, cmd: NodeId) -> Yield {
         match Builtin::of(interp, cmd).stdout.needs_io() {
             Some(safeguard) => Self::enqueue_chunk(interp, cmd, safeguard),
@@ -136,8 +135,7 @@ impl Yes {
         Self::bounce(interp, cmd)
     }
 
-    /// Continue (`resume`) from the next event loop iteration so the endless
-    /// output does not block the main thread.
+    /// Bounce back via the event loop so we don't block the main thread.
     fn bounce(interp: &Interpreter, cmd: NodeId) -> Yield {
         let task: *mut YesTask = Self::state_mut(interp, cmd)
             .task
@@ -158,15 +156,10 @@ impl Yes {
         safeguard: OutputNeedsIOSafeGuard,
     ) -> Yield {
         let child = ChildPtr::new(cmd, WriterTag::Builtin);
-        let y = {
-            // `stdout` and `impl_` are disjoint fields of `Builtin` — split-borrow
-            // so the tiled buffer is enqueued zero-copy.
-            let (stdout, yes) = Self::split_stdout_state(Builtin::of_mut(interp, cmd));
-            stdout.enqueue(child, &yes.buffer[..yes.buffer_used], safeguard)
-        };
-        // A pollable fd suspends here and completes from the event loop. Any
-        // other fd was written inside `enqueue`, and the trampoline delivers
-        // this completion to `on_io_writer_chunk` without leaving the thread.
+        // `stdout` and `impl_` are disjoint fields of `Builtin` — split-borrow
+        // so the tiled buffer is enqueued zero-copy.
+        let (stdout, yes) = Self::split_stdout_state(Builtin::of_mut(interp, cmd));
+        let y = stdout.enqueue(child, &yes.buffer[..yes.buffer_used], safeguard);
         let me = Self::state_mut(interp, cmd);
         me.sync_chunks = if matches!(y, Yield::OnIoWriterChunk { .. }) {
             me.sync_chunks + 1
@@ -222,8 +215,8 @@ impl Yes {
 // `buffer: Vec<u8>` drops with the owning `Box<Yes>`; no explicit `Drop` impl
 // needed (PORTING.md §Allocators).
 
-/// Re-queues `yes` onto the event loop after a burst of writes that completed
-/// on the spot so we don't block the main thread forever.
+/// Re-queues `yes` onto the event loop after a burst of synchronous writes so
+/// we don't block the main thread forever.
 #[repr(C)]
 pub struct YesTask {
     /// Back-ref to the owning [`Interpreter`].

@@ -2713,6 +2713,146 @@ config:
           },
         });
       });
+
+      // yaml.org/type/merge.html: only a plain `<<` resolves to !!merge. Once
+      // quoted or tagged it is the two-character string key that
+      // YAML.stringify emits for a "<<" property.
+      describe.each(['"<<"', "'<<'", "!!str <<", "! <<"])("%s is an ordinary string key", key => {
+        test("as the first key of a block mapping", () => {
+          expect(YAML.parse(`${key}: {a: 1}\nb: 2`)).toEqual({ "<<": { a: 1 }, b: 2 });
+        });
+
+        test("as a later key of a block mapping", () => {
+          expect(YAML.parse(`b: 2\n${key}: {a: 1}`)).toEqual({ b: 2, "<<": { a: 1 } });
+        });
+
+        test("in a flow mapping", () => {
+          expect(YAML.parse(`{${key}: {a: 1}, b: 2}`)).toEqual({ "<<": { a: 1 }, b: 2 });
+        });
+
+        test("as an explicit key", () => {
+          expect(YAML.parse(`? ${key}\n: {a: 1}\nb: 2`)).toEqual({ "<<": { a: 1 }, b: 2 });
+        });
+
+        test("as a flow sequence pair", () => {
+          expect(YAML.parse(`[${key}: {a: 1}]`)).toEqual([{ "<<": { a: 1 } }]);
+          expect(YAML.parse(`[? ${key} : {a: 1}]`)).toEqual([{ "<<": { a: 1 } }]);
+        });
+
+        test("with a sequence value", () => {
+          expect(YAML.parse(`${key}: [{a: 1}, {c: 3}]\nb: 2`)).toEqual({ "<<": [{ a: 1 }, { c: 3 }], b: 2 });
+          expect(YAML.parse(`${key}: [1, 2]`)).toEqual({ "<<": [1, 2] });
+        });
+      });
+
+      test("a quoted key is not affected by merge keys inside its value, and vice versa", () => {
+        expect(YAML.parse('x:\n  "<<":\n    <<: {a: 1}\n    b: 2\n  c: 3')).toEqual({
+          x: { "<<": { a: 1, b: 2 }, c: 3 },
+        });
+        expect(YAML.parse('x:\n  <<:\n    "<<": {a: 1}\n    b: 2\n  c: 3')).toEqual({
+          x: { "<<": { a: 1 }, b: 2, c: 3 },
+        });
+        expect(YAML.parse('<<: {a: 1}\n"<<": {b: 2}')).toEqual({ a: 1, "<<": { b: 2 } });
+      });
+
+      test("a quoted key may hold an alias to the mapping being defined", () => {
+        const doc = YAML.parse('&a\nx: 1\n"<<": *a');
+        expect(doc["<<"]).toBe(doc);
+        expect(() => YAML.parse("&a\nx: 1\n<<: *a")).toThrow("Merge key cannot reference an enclosing node");
+      });
+
+      test("an alias to a `<<` scalar is an ordinary key", () => {
+        expect(YAML.parse("- &m <<\n- *m : {a: 1}")).toEqual(["<<", { "<<": { a: 1 } }]);
+      });
+
+      test("a plain `<<` merges in every key position", () => {
+        const merged = { base: { a: 1 }, d: { a: 1, c: 3 } };
+        expect(YAML.parse("base: &b {a: 1}\nd:\n  <<: *b\n  c: 3")).toEqual(merged);
+        expect(YAML.parse("base: &b {a: 1}\nd:\n  c: 3\n  <<: *b")).toEqual(merged);
+        expect(YAML.parse("base: &b {a: 1}\nd: {<<: *b, c: 3}")).toEqual(merged);
+        expect(YAML.parse("base: &b {a: 1}\nd:\n  ? <<\n  : *b\n  c: 3")).toEqual(merged);
+        expect(YAML.parse("base: &b {a: 1}\nd:\n  &k <<: *b\n  c: 3")).toEqual(merged);
+        expect(YAML.parse("base: &b {a: 1}\nd: [<<: *b, ? << : *b]")).toEqual({
+          base: { a: 1 },
+          d: [{ a: 1 }, { a: 1 }],
+        });
+        // A tag on the value's own line belongs to the mapping, not to its
+        // first key.
+        expect(YAML.parse("base: &b {a: 1}\nd: !custom\n  <<: *b\n  c: 3")).toEqual(merged);
+        expect(YAML.parse("base: &b {a: 1}\nd: !!map\n  <<: *b\n  c: 3")).toEqual(merged);
+        expect(YAML.parse("base: &b {a: 1}\nd:\n  - !custom\n    <<: *b\n    c: 3")).toEqual({
+          base: { a: 1 },
+          d: [{ a: 1, c: 3 }],
+        });
+        expect(YAML.parse("!!map\n<<: {a: 1}\nb: 2")).toEqual({ a: 1, b: 2 });
+        expect(YAML.parse("--- !custom\n<<: {a: 1}\nb: 2")).toEqual({ a: 1, b: 2 });
+        // A tag on the previous entry's value does not reach the next key.
+        expect(YAML.parse("base: &b {a: 1}\nd:\n  c: !!str 3\n  <<: *b")).toEqual({
+          base: { a: 1 },
+          d: { a: 1, c: "3" },
+        });
+      });
+
+      test("an explicit !!merge tag merges regardless of style", () => {
+        expect(YAML.parse("base: &b {a: 1}\n!!merge <<: *b\nc: 3")).toEqual({ base: { a: 1 }, a: 1, c: 3 });
+        expect(YAML.parse('base: &b {a: 1}\n!!merge "<<": *b\nc: 3')).toEqual({ base: { a: 1 }, a: 1, c: 3 });
+        // flow mapping
+        expect(YAML.parse('base: &b {a: 1}\nd: {!!merge "<<": *b, c: 3}')).toEqual({
+          base: { a: 1 },
+          d: { a: 1, c: 3 },
+        });
+        // block explicit key
+        expect(YAML.parse('base: &b {a: 1}\nd:\n  ? !!merge "<<"\n  : *b\n  c: 3')).toEqual({
+          base: { a: 1 },
+          d: { a: 1, c: 3 },
+        });
+        // flow sequence pairs
+        expect(YAML.parse('base: &b {a: 1}\nd: [!!merge "<<": *b, ? !!merge "<<" : *b]')).toEqual({
+          base: { a: 1 },
+          d: [{ a: 1 }, { a: 1 }],
+        });
+      });
+
+      test("a tag on its own line in a flow sequence pair stays on the key", () => {
+        expect(YAML.parse("[!!str\n<<: {a: 1}]")).toEqual([{ "<<": { a: 1 } }]);
+        expect(YAML.parse('base: &b {a: 1}\nd: [!!merge\n  "<<": *b]')).toEqual({ base: { a: 1 }, d: [{ a: 1 }] });
+      });
+
+      test('a "<<" property round-trips through stringify', () => {
+        for (const value of [
+          { "<<": { admin: true }, user: "x" },
+          { "<<": [1, 2] },
+          { "<<": [{ a: 1 }] },
+          { nested: { "<<": { a: 1 } }, "<<": "s" },
+        ]) {
+          expect(YAML.parse(YAML.stringify(value))).toEqual(value);
+        }
+      });
+
+      test('the .yaml loader keeps a quoted "<<" key too', async () => {
+        using dir = tempDir("yaml-quoted-merge-key", {
+          "config.yaml": 'base: &base {a: 1}\nquoted:\n  "<<": *base\n  b: 2\nmerged:\n  <<: *base\n  b: 2\n',
+          "index.ts": `
+            import config from "./config.yaml";
+            console.log(JSON.stringify(config));
+          `,
+        });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "index.ts"],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(JSON.parse(stdout)).toEqual({
+          base: { a: 1 },
+          quoted: { "<<": { a: 1 }, b: 2 },
+          merged: { a: 1, b: 2 },
+        });
+        expect(exitCode).toBe(0);
+      });
     });
   });
 

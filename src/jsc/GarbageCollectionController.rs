@@ -1,4 +1,4 @@
-//! Idle GC timer: JSC's own `GCActivityCallback` (via `WTFTimer`) paces eden/full against allocation rate; this adds a 1 s / 30 s idle `collect_async()` so a process that stops allocating still releases memory, and once the heap has been quiet for `BUN_IDLE_GC_SECONDS` (default "10,65,65": first after 10 s of quiet, then one per CodeBlock-aging lease; 0 = off; main thread only) full collections so JSC can age out code that no longer runs, plus a page-out of a standalone executable's embedded module graph. Knobs: `BUN_GC_TIMER_INTERVAL` (ms), `BUN_GC_TIMER_DISABLE`. One per JS thread, not thread-safe.
+//! Idle GC timer: JSC's own `GCActivityCallback` (via `WTFTimer`) paces eden/full against allocation rate; this adds a 1 s / 30 s idle `collect_async()` so a process that stops allocating still releases memory, and (main thread only) the idle ladder of `BUN_IDLE_GC_SECONDS` (default "30,90,480"; ""/0 = off): full collections and, in a standalone executable, page-outs once the program has not been loud for that long (`idle_tick`). Knobs: `BUN_GC_TIMER_INTERVAL` (ms), `BUN_GC_TIMER_DISABLE`. One per JS thread, not thread-safe.
 
 use core::cell::Cell;
 use core::ffi::c_int;
@@ -14,16 +14,18 @@ const SLOW_REPEAT_INTERVAL_MS: i32 = 30_000;
 
 pub struct GarbageCollectionController {
     pub gc_repeating_timer: JsCell<EventLoopTimer>,
-    /// Written by every `perform_gc` caller, so the fast/slow comparison sees the last such call, not strictly the last fire; external callers are one-shot so worst case is one extra 30 s slow interval.
-    pub(crate) gc_last_heap_size: Cell<usize>,
-    pub(crate) heap_size_didnt_change_for_repeating_timer_ticks_count: Cell<u8>,
-    pub(crate) gc_timer_interval: Cell<i32>,
-    pub(crate) gc_repeating_timer_fast: Cell<bool>,
-    pub(crate) disabled: Cell<bool>,
-    /// Idle full collections: cumulative quiet thresholds (ms; empty = off) parsed from `BUN_IDLE_GC_SECONDS`, and the
-    /// nominal time (from tick intervals) since the JS heap last grew.
-    idle_gc_at_ms: Cell<[u32; 3]>,
-    idle_quiet_ms: Cell<u32>,
+    /// When the timer last fired and what the program had allocated by then.
+    last_tick_at: Cell<Timespec>,
+    bytes_allocated_at_last_tick: Cell<u64>,
+    /// Ticks in a row that were not loud; from `SILENT_TICKS_BEFORE_SLOW` on the timer is on its 30 s tick.
+    silent_ticks: Cell<u8>,
+    gc_timer_interval: Cell<i32>,
+    disabled: Cell<bool>,
+    /// The idle ladder: how long (ms, cumulative; 0 = unused) after the program was last loud each rung runs, from
+    /// `BUN_IDLE_GC_SECONDS`; when it last was; how many rungs have run since.
+    idle_rungs_ms: Cell<[u32; 3]>,
+    last_loud_at: Cell<Timespec>,
+    idle_rungs_done: Cell<u8>,
 }
 
 bun_event_loop::impl_timer_owner!(
@@ -35,36 +37,48 @@ impl Default for GarbageCollectionController {
     fn default() -> Self {
         Self {
             gc_repeating_timer: JsCell::new(EventLoopTimer::init_paused(TimerTag::GcRepeating)),
-            gc_last_heap_size: Cell::new(0),
-            heap_size_didnt_change_for_repeating_timer_ticks_count: Cell::new(0),
+            last_tick_at: Cell::new(Timespec::EPOCH),
+            bytes_allocated_at_last_tick: Cell::new(0),
+            silent_ticks: Cell::new(0),
             gc_timer_interval: Cell::new(0),
-            gc_repeating_timer_fast: Cell::new(true),
             disabled: Cell::new(false),
-            idle_gc_at_ms: Cell::new([0; 3]),
-            idle_quiet_ms: Cell::new(0),
+            idle_rungs_ms: Cell::new([0; 3]),
+            last_loud_at: Cell::new(Timespec::EPOCH),
+            idle_rungs_done: Cell::new(0),
         }
     }
 }
 
 impl GarbageCollectionController {
-    /// Remove `t` from the heap if linked, set its deadline to `now + ms`, and
-    /// insert. JS-thread only. Real time, not the mocked clock: GC pacing is
-    /// Bun's, not the test's.
-    fn arm(vm: *mut VirtualMachine, t: *mut EventLoopTimer, ms: i32) {
+    // A tick is loud when the program allocated faster than this share, per second, of what the collector lets it
+    // allocate before it collects by itself (its budget for the cycle, which follows the size of the heap: 128 KB a
+    // second with the 8 MB of a new heap).
+    const LOUD_SHARE_OF_BUDGET_PER_SECOND: u64 = 64;
+    // On the 30 s tick, what the program must have allocated at least for the timer to go back on the fast one before the
+    // tick comes.
+    const WAKE_BYTES: u64 = 8 * 1024 * 1024;
+    const SILENT_TICKS_BEFORE_SLOW: u8 = 30;
+    /// Remove the timer from the heap if linked, set its deadline to `now + ms`, and insert. JS-thread only. `now` is
+    /// real time, not the mocked clock: GC pacing is Bun's, not the test's.
+    fn arm(&self, vm: *mut VirtualMachine, now: &Timespec, ms: i32) {
+        // whole-struct provenance: from_field_ptr recovers the container on fire
+        let t = core::ptr::addr_of!(self.gc_repeating_timer)
+            .cast::<EventLoopTimer>()
+            .cast_mut();
         // SAFETY: `t` is the embedded node of the per-VM controller,
         // address-stable for the VM lifetime; JS-thread only.
         unsafe {
             if (*t).state == TimerState::ACTIVE {
                 VirtualMachine::timer_remove(vm, t);
             }
-            (*t).next = Timespec::now(TimespecMockMode::ForceRealTime).add_ms(i64::from(ms));
+            (*t).next = now.add_ms(i64::from(ms));
             VirtualMachine::timer_insert(vm, t);
         }
     }
 
     #[inline]
     fn repeat_interval(&self) -> i32 {
-        if self.gc_repeating_timer_fast.get() {
+        if self.silent_ticks.get() < Self::SILENT_TICKS_BEFORE_SLOW {
             self.gc_timer_interval.get()
         } else {
             SLOW_REPEAT_INTERVAL_MS
@@ -93,66 +107,92 @@ impl GarbageCollectionController {
         self.disabled
             .set(env_var::BUN_GC_TIMER_DISABLE::get().unwrap_or(false));
 
-        if vm.is_main_thread() {
-            // "a,b,c,...": seconds of quiet before the first idle full collection, then between consecutive ones (spaced a
-            // CodeBlock-aging lease apart so each can expire what has not run since the previous); "0"/"" = off.
-            let spec = env_var::BUN_IDLE_GC_SECONDS::get().unwrap_or(b"10,65,65");
+        // The field, not `is_main_thread()`: a Worker's VM is initialised before it is given its `worker`.
+        if vm.is_main_thread {
+            // "a,b,c": seconds without a loud tick before the first rung, then between consecutive ones (at least a
+            // CodeBlock-aging lease, so that each collection can expire what has not run since the previous one), an hour
+            // each at most. An entry that is not a positive decimal number ("", "0", "1.5", "1,,1") turns the ladder off.
+            let spec = env_var::BUN_IDLE_GC_SECONDS::get().unwrap_or(b"30,90,480");
             let mut at = [0u32; 3];
             let mut sum = 0u32;
             for (slot, part) in at.iter_mut().zip(bun_core::strings::split(spec, b",")) {
-                let secs = bun_core::fmt::parse_int::<u32>(bun_core::strings::trim(part, b" "), 10)
-                    .unwrap_or(0);
+                let part = bun_core::strings::trim(part, b" ");
+                let secs = if !part.is_empty() && part.iter().all(u8::is_ascii_digit) {
+                    bun_core::fmt::parse_int::<u32>(part, 10)
+                        .unwrap_or(3600)
+                        .min(3600)
+                } else {
+                    0
+                };
                 if secs == 0 {
+                    at = [0; 3];
                     break;
                 }
-                sum = sum.saturating_add(secs.min(3600) * 1000);
+                sum += secs * 1000;
                 *slot = sum;
             }
-            self.idle_gc_at_ms.set(at);
+            self.idle_rungs_ms.set(at);
         }
     }
 
-    /// Decides whether this tick's collection should be a full one. After the first `BUN_IDLE_GC_SECONDS` entry (main
-    /// thread only) of ticks in which the heap did not grow, the tick's collection is made Full (it collects what the
-    /// last burst left and lets JSC snapshot which code is still running), and again after each further entry of quiet
-    /// (the second also pages out a standalone executable's embedded module graph): JSC drops code that has not run since the
-    /// previous one, and each round makes a little more releasable (code whose last owner died in that collection,
-    /// pages it emptied). Returns (full, ms until the next such tick is due).
-    fn idle_tick(&self, vm: &VirtualMachine, grew: bool, interval_ms: i32) -> (bool, Option<u32>) {
-        let dues = self.idle_gc_at_ms.get();
-        if dues[0] == 0 || vm.is_inspector_enabled() {
+    /// The program is at work: the ladder starts over and the timer is on its fast tick.
+    fn loud_at(&self, now: &Timespec) {
+        self.last_loud_at.set(*now);
+        self.idle_rungs_done.set(0);
+        self.silent_ticks.set(0);
+    }
+
+    /// One tick on the idle ladder, at most one rung per tick. Returns whether a rung ran (it has then done this tick's
+    /// collection: an idle full one, in which JSC drops code that has not run since the previous one) and the ms until
+    /// the next rung is due. In a standalone executable the second rung also pages out the embedded module graph (after
+    /// a pause of a few seconds the user is likely to come straight back), and the last one evicts what a parked program
+    /// does not use: JSC drops the bytecode it can decode again from the executable (`shrink_footprint_now`; it declines
+    /// with JS on the stack, and the rung then waits for a tick that has none), the rung's collection frees it, and the
+    /// module graph and the executable's own code and constants are paged out. That collection is synchronous then: the
+    /// collector is the last thing that would read the executable back in.
+    fn idle_tick(&self, vm: &VirtualMachine, now: &Timespec) -> (bool, Option<u64>) {
+        if vm.is_inspector_enabled() {
             return (false, None);
         }
-        if grew {
-            self.idle_quiet_ms.set(0);
+        let rungs = self.idle_rungs_ms.get();
+        let done = usize::from(self.idle_rungs_done.get());
+        let Some(&at) = rungs.get(done).filter(|&&at| at != 0) else {
+            return (false, None);
+        };
+        let idle_ms = now.duration(&self.last_loud_at.get()).ms_unsigned();
+        if idle_ms < u64::from(at) {
+            return (false, Some(u64::from(at) - idle_ms));
+        }
+        let next = rungs.get(done + 1).copied().filter(|&at| at != 0);
+        let evict = next.is_none() && vm.standalone_module_graph.is_some();
+        if evict && !vm.jsc_vm().shrink_footprint_now() {
             return (false, None);
         }
-        let before = self.idle_quiet_ms.get();
-        let quiet = before.saturating_add(interval_ms.max(0) as u32);
-        self.idle_quiet_ms.set(quiet);
-        let dues = dues.into_iter().filter(|&due| due != 0);
-        let crossed = |due: u32| before < due && quiet >= due;
-        // The module-graph page-out goes with the second collection (or the only one): after a pause of a few seconds
-        // the user is likely to come straight back, and those file-backed pages would just fault in again.
-        #[cfg(target_os = "linux")]
-        {
-            let at = self.idle_gc_at_ms.get();
-            if let Some(graph) = vm
-                .standalone_module_graph
-                .filter(|_| crossed(if at[1] != 0 { at[1] } else { at[0] }))
-            {
-                // SAFETY: VM-free — `graph` is the process-lifetime, immutable embedded module graph; the thread only
-                // madvise()s its pages and touches no VM or JS state.
-                let _ = std::thread::Builder::new()
-                    .name("idle page-out".into())
-                    .spawn(move || graph.page_out());
-            }
+        self.idle_rungs_done.set(done as u8 + 1);
+        // The page-outs are process-wide and the ladder only watches this thread: not while a Worker is alive.
+        let page_out = vm.standalone_module_graph.filter(|_| {
+            (evict || done == 1)
+                && cfg!(target_os = "linux")
+                && vm.child_workers.is_empty()
+                && !env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE::get()
+                    .unwrap_or(false)
+        });
+        vm.jsc_vm().collect_idle(evict && page_out.is_some());
+        if let Some(graph) = page_out {
+            // VM-free: the thread only madvise()s file-backed pages of the executable (`graph` is the process-lifetime,
+            // immutable embedded module graph) and touches no VM or JS state.
+            let _ = std::thread::Builder::new()
+                .name("idle page-out".into())
+                .stack_size(64 * 1024)
+                .spawn(move || {
+                    graph.page_out();
+                    #[cfg(target_os = "linux")]
+                    if evict {
+                        bun_sys::elf::page_out_program_image();
+                    }
+                });
         }
-        let full = dues.clone().any(crossed);
-        (
-            full,
-            dues.clone().find(|&due| quiet < due).map(|due| due - quiet),
-        )
+        (true, next.map(|at| u64::from(at).saturating_sub(idle_ms)))
     }
 
     /// Idempotent. Must run before JSC teardown: `~RunLoop::Timer` frees the
@@ -172,41 +212,61 @@ impl GarbageCollectionController {
         }
     }
 
-    /// Arms the idle timer on first call; kept at the event-loop call sites so the first deadline is in the poll that follows.
-    #[inline]
-    pub(crate) fn process_gc_timer(&self) {
-        if self.disabled.get() || self.gc_repeating_timer.get().state != TimerState::PENDING {
-            return;
-        }
-        let interval = self.repeat_interval();
-        Self::arm(
-            VirtualMachine::get_mut_ptr(),
-            // whole-struct provenance: from_field_ptr recovers the container on fire
-            core::ptr::addr_of!(self.gc_repeating_timer)
-                .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
-                .cast_mut(),
-            interval,
-        );
+    /// `allocated` bytes in `elapsed_ms` are more than a loud program's share of the collector's budget.
+    fn is_loud(jsc: &crate::VM, allocated: u64, elapsed_ms: u64) -> bool {
+        allocated.saturating_mul(1000)
+            > jsc.allocation_budget_this_cycle() as u64 / Self::LOUD_SHARE_OF_BUDGET_PER_SECOND
+                * elapsed_ms.max(1)
     }
 
-    pub(crate) fn perform_gc(&self, idle_full: bool) {
+    /// Arms the idle timer on first call; kept at the event-loop call sites so the first deadline is in the poll that follows.
+    /// On the 30 s tick it also puts the timer back on the fast one as soon as the program has allocated `WAKE_BYTES` and
+    /// the tick so far would be a loud one, which makes it one: work that starts then would otherwise run for up to half a minute without the
+    /// collections requested every second.
+    #[inline]
+    pub(crate) fn process_gc_timer(&self) {
         if self.disabled.get() {
             return;
         }
-        let vm = VirtualMachine::get().jsc_vm();
-        if idle_full {
-            vm.collect_async_idle();
-        } else {
-            vm.collect_async(false);
-        }
-        self.gc_last_heap_size.set(vm.block_bytes_allocated());
+        let now = match self.gc_repeating_timer.get().state {
+            TimerState::PENDING => Timespec::now(TimespecMockMode::ForceRealTime),
+            TimerState::ACTIVE if self.silent_ticks.get() >= Self::SILENT_TICKS_BEFORE_SLOW => {
+                let jsc = VirtualMachine::get().jsc_vm();
+                let total = jsc.total_bytes_allocated();
+                let allocated = total.saturating_sub(self.bytes_allocated_at_last_tick.get());
+                if allocated <= Self::WAKE_BYTES {
+                    return;
+                }
+                let now = Timespec::now(TimespecMockMode::ForceRealTime);
+                if !Self::is_loud(
+                    jsc,
+                    allocated,
+                    now.duration(&self.last_tick_at.get()).ms_unsigned(),
+                ) {
+                    return;
+                }
+                self.bytes_allocated_at_last_tick.set(total);
+                now
+            }
+            _ => return,
+        };
+        self.last_tick_at.set(now);
+        self.loud_at(&now);
+        self.arm(VirtualMachine::get_mut_ptr(), &now, self.repeat_interval());
     }
 
-    /// `Tag::GcRepeating` fire body: `BUN_GC_TIMER_INTERVAL` (default 1 s) in fast mode, 30 s in slow mode; drops to slow after 30 fires with no heap growth, back to fast when it grows.
+    pub(crate) fn perform_gc(&self) {
+        if self.disabled.get() {
+            return;
+        }
+        VirtualMachine::get().jsc_vm().collect_async(false);
+    }
+
+    /// `Tag::GcRepeating` fire body: `BUN_GC_TIMER_INTERVAL` (default 1 s) in fast mode, 30 s in slow mode: slow from the 30th fire in a row that was not loud until the next loud one (a loud fire or the wake in `process_gc_timer`).
     ///
     /// # Safety
-    /// `this` is the live per-VM controller; `vm` is the per-thread VM.
-    pub unsafe fn on_gc_repeating_timer(this: *mut Self, vm: *mut VirtualMachine) {
+    /// `this` is the live per-VM controller; `vm` is the per-thread VM; `now` is the dispatcher's real-time reading.
+    pub unsafe fn on_gc_repeating_timer(this: *mut Self, now: &Timespec, vm: *mut VirtualMachine) {
         // SAFETY: per fn contract.
         let this = unsafe { &*this };
         this.gc_repeating_timer
@@ -214,42 +274,39 @@ impl GarbageCollectionController {
         if this.disabled.get() {
             return;
         }
-        // Timer chatter in a parked app churns a few blocks per tick; real work grows the heap by far more.
-        const IDLE_GROWTH_SLACK: usize = 2 * 1024 * 1024;
-        let prev_heap_size = this.gc_last_heap_size.get();
         // SAFETY: per fn contract.
         let vm_ref = unsafe { &*vm };
-        let grew = vm_ref.jsc_vm().block_bytes_allocated() > prev_heap_size + IDLE_GROWTH_SLACK;
-        let (full, idle_gc_due_in) = this.idle_tick(vm_ref, grew, this.repeat_interval());
-        this.perform_gc(full);
-        // Only growth is activity; a shrinking heap is a collection (possibly the one requested above) doing its job.
-        if this.gc_last_heap_size.get() <= prev_heap_size {
-            let ticks = this
-                .heap_size_didnt_change_for_repeating_timer_ticks_count
-                .get()
-                .saturating_add(1);
-            this.heap_size_didnt_change_for_repeating_timer_ticks_count
-                .set(ticks);
-            if ticks >= 30 {
-                this.gc_repeating_timer_fast.set(false);
-            }
+        let jsc = vm_ref.jsc_vm();
+        // A tick that comes this long after it was due found the thread in a synchronous call, or the process stopped
+        // or asleep: that time was not spent idle.
+        const LATE_TICK_MS: u64 = 2000;
+        let late = now
+            .duration(&this.gc_repeating_timer.get().next)
+            .ms_unsigned()
+            > LATE_TICK_MS;
+        // Whether the program is at work: what it allocated since the last tick (the first one has everything since it
+        // started, so a program's first second is loud) against its share of the collector's budget for that time.
+        let elapsed_ms = now.duration(&this.last_tick_at.replace(*now)).ms_unsigned();
+        let total = jsc.total_bytes_allocated();
+        let allocated = total.saturating_sub(this.bytes_allocated_at_last_tick.replace(total));
+        let loud = late || Self::is_loud(jsc, allocated, elapsed_ms);
+        if loud {
+            this.loud_at(now);
         } else {
-            this.heap_size_didnt_change_for_repeating_timer_ticks_count
-                .set(0);
-            this.gc_repeating_timer_fast.set(true);
+            this.silent_ticks
+                .set(this.silent_ticks.get().saturating_add(1));
         }
-        let interval = match idle_gc_due_in {
-            Some(ms) => this.repeat_interval().min(ms.max(1000) as i32),
-            None => this.repeat_interval(),
-        };
-        Self::arm(
-            vm,
-            // whole-struct provenance: from_field_ptr recovers the container on fire
-            core::ptr::addr_of!(this.gc_repeating_timer)
-                .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
-                .cast_mut(),
-            interval,
-        );
+        let (ran_rung, next_rung_in_ms) = this.idle_tick(vm_ref, now);
+        if !ran_rung {
+            this.perform_gc();
+        }
+        let interval = this.repeat_interval();
+        // Sooner for a rung that is due before the next tick, but not within a second: never more than `interval`, so
+        // it fits.
+        let interval = next_rung_in_ms.map_or(interval, |ms| {
+            ms.max(1000).min(interval.max(0) as u64) as i32
+        });
+        this.arm(vm, now, interval);
     }
 }
 

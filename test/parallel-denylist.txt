@@ -50,6 +50,7 @@ internal/macos-cross-config.test.ts
 js/bun/bun-object/deep-match.spec.ts
 js/bun/console/console-iterator.test.ts
 js/bun/cron/cron.test.ts
+js/bun/gc/gc-controller-cadence.test.ts
 js/bun/globals.test.js
 js/bun/http/bun-serve-date.test.ts
 js/bun/http/bun-serve-html-405.test.ts

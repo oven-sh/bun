@@ -1948,7 +1948,7 @@ describe.concurrent("dot specifiers resolve to the directory index, not a siblin
 // dependencies live next to the real directory (isolated install layout), so
 // resolving to the link path makes them unreachable.
 // https://github.com/oven-sh/bun/issues/42776
-describe("#42776 - symlink created after node_modules was cached", () => {
+describe.concurrent("#42776 - symlink created after node_modules was cached", () => {
   const storeFixture = {
     "store/pkg-a@1.0.0/node_modules/pkg-a/package.json": JSON.stringify({
       name: "pkg-a",

@@ -108,14 +108,7 @@ static bool isProxyEnvVarName(VM& vm, const StringImpl* name)
         return false;
     auto& strings = Bun::commonStrings(vm);
     auto is = [name](JSC::JSString* candidate) { return candidate->tryGetValueImpl() == name; };
-    return is(strings.envALL_PROXYString()) ||
-        is(strings.envAllProxyString()) ||
-        is(strings.envHTTPS_PROXYString()) ||
-        is(strings.envHttpsProxyString()) ||
-        is(strings.envHTTP_PROXYString()) ||
-        is(strings.envHttpProxyString()) ||
-        is(strings.envNO_PROXYString()) ||
-        is(strings.envNoProxyString());
+    return is(strings.envALL_PROXYString()) || is(strings.envAllProxyString()) || is(strings.envHTTPS_PROXYString()) || is(strings.envHttpsProxyString()) || is(strings.envHTTP_PROXYString()) || is(strings.envHttpProxyString()) || is(strings.envNO_PROXYString()) || is(strings.envNoProxyString());
 }
 
 // For a name that is not a property key in hand: Windows upper-cases the key on the way here.

@@ -1909,6 +1909,23 @@ export function textLockfile(version: number, pkgs: any): string {
   });
 }
 
+// The install cache `VerdaccioRegistry.writeBunfig` gives a project of its own.
+function installCacheDir(dir: string): string {
+  return join(dir, ".bun-cache");
+}
+
+/**
+ * The env to spawn `bun install` with for a project under `dir` that must not
+ * share its install cache (and with it the global store, `<cache>/links`) with
+ * any other project. The `install.cache` in the project's bunfig loses to the
+ * BUN_INSTALL_CACHE_DIR the CI runner exports per test file, so projects
+ * spawned with plain `bunEnv` share one cache. Concurrent installs that share
+ * one fail on Windows (#28062).
+ */
+export function installEnv(dir: string, env: NodeJS.Dict<string> = bunEnv): NodeJS.Dict<string> {
+  return { ...env, BUN_INSTALL_CACHE_DIR: installCacheDir(dir) };
+}
+
 export class VerdaccioRegistry {
   port: number;
   process: ChildProcess | undefined;
@@ -2028,7 +2045,9 @@ export class VerdaccioRegistry {
     const packageJson = join(packageDir, "package.json");
     await this.writeBunfig(packageDir, opts.bunfigOpts);
     this.users = {};
-    return { packageDir: String(packageDir), packageJson };
+    const dir = String(packageDir);
+    // `env` pins the cache `writeBunfig` gave the project (see `installEnv`).
+    return { packageDir: dir, packageJson, env: installEnv(dir) };
   }
 
   async writeBunfig(dir: string, opts: BunfigOpts = {}) {
@@ -2036,7 +2055,7 @@ export class VerdaccioRegistry {
       join(dir, "bunfig.toml"),
       Bun.TOML.stringify({
         install: {
-          cache: join(dir, ".bun-cache"),
+          cache: installCacheDir(dir),
           saveTextLockfile: opts.saveTextLockfile,
           registry: opts.npm ? undefined : this.registryUrl(),
           linker: opts.linker,

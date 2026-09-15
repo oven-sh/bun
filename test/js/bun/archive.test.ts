@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { existsSync, readdirSync, rmSync } from "node:fs";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
+import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, rmSync, symlinkSync } from "node:fs";
 import { join } from "path";
 
 // Minimal ustar tarball builder (pathnames must be <100 bytes). `name` accepts
 // a Buffer so tests can put raw, non-UTF-8 byte sequences into the name field.
-function ustarHeader(name: string | Buffer, size: number, typeflag: string = "0"): Buffer {
+function ustarHeader(name: string | Buffer, size: number, typeflag: string = "0", linkname: string = ""): Buffer {
   const nameBytes = typeof name === "string" ? Buffer.from(name) : name;
   if (nameBytes.length > 99) throw new Error("ustar name too long: " + name);
   const h = Buffer.alloc(512);
@@ -17,12 +17,18 @@ function ustarHeader(name: string | Buffer, size: number, typeflag: string = "0"
   h.write("00000000000\0", 136);
   h.write("        ", 148);
   h.write(typeflag, 156);
+  if (linkname) h.write(linkname, 157, 100);
   h.write("ustar\0", 257);
   h.write("00", 263);
   let sum = 0;
   for (let i = 0; i < 512; i++) sum += h[i];
   h.write(sum.toString(8).padStart(6, "0") + "\0 ", 148);
   return h;
+}
+
+// A one-member tarball that holds a single symlink entry (typeflag '2').
+function symlinkTarball(name: string, target: string): Uint8Array {
+  return new Uint8Array(Buffer.concat([ustarHeader(name, 0, "2", target), Buffer.alloc(1024)]));
 }
 
 function ustarEntry(name: string | Buffer, data: Buffer): Buffer {
@@ -723,6 +729,130 @@ describe("Bun.Archive", () => {
   });
 
   describe("path safety", () => {
+    // Symlinks need a privilege Windows does not give the test process, and the
+    // extractor only creates symlink entries on POSIX.
+    describe.skipIf(isWindows)("symlinks already in the destination", () => {
+      // `extract()` has two implementations: the default one, and the one the
+      // `glob` option selects. Both must contain their writes.
+      describe.each([
+        ["default", (archive: Bun.Archive, path: string) => archive.extract(path)],
+        ["glob", (archive: Bun.Archive, path: string) => archive.extract(path, { glob: "**" })],
+      ] as const)("%s extraction", (_mode, extract) => {
+        test("replaces a symlink under an entry's own name", async () => {
+          using dir = tempDir("archive-symlink-leaf", { "victim/f.txt": "ORIGINAL" });
+          const root = String(dir);
+          const out = join(root, "out");
+          mkdirSync(out);
+          symlinkSync("../victim/f.txt", join(out, "cfg"));
+
+          const count = await extract(new Bun.Archive({ cfg: "OVERWRITTEN" }), out);
+
+          expect(await Bun.file(join(root, "victim", "f.txt")).text()).toBe("ORIGINAL");
+          expect(await Bun.file(join(out, "cfg")).text()).toBe("OVERWRITTEN");
+          expect(lstatSync(join(out, "cfg")).isSymbolicLink()).toBe(false);
+          expect(count).toBe(1);
+        });
+
+        test("skips an entry whose parent is a symlink", async () => {
+          using dir = tempDir("archive-symlink-parent", { "victim/keep.txt": "ORIGINAL" });
+          const root = String(dir);
+          const out = join(root, "out");
+          mkdirSync(out);
+          symlinkSync("../victim", join(out, "shared"));
+
+          await extract(new Bun.Archive({ "shared/f.txt": "OUTSIDE", "inside.txt": "INSIDE" }), out);
+
+          expect(readdirSync(join(root, "victim")).sort()).toEqual(["keep.txt"]);
+          // The entries that do resolve inside the destination still extract.
+          expect(await Bun.file(join(out, "inside.txt")).text()).toBe("INSIDE");
+          expect(lstatSync(join(out, "shared")).isSymbolicLink()).toBe(true);
+        });
+      });
+
+      test("skips an entry that a symlink from an earlier archive redirects", async () => {
+        using dir = tempDir("archive-symlink-chain", { "victim/file.txt": "ORIGINAL" });
+        const root = String(dir);
+        const out = join(root, "out");
+
+        // `d1 -> .` points at the extraction root, which is inside it.
+        expect(await new Bun.Archive(symlinkTarball("d1", ".")).extract(out)).toBe(1);
+
+        // `d1/d2/up -> ../..` is the extraction root when the name is read
+        // lexically. It is not: `d1` is a symlink to the root, so the link
+        // would land in `out/d2` and point at the parent of the root.
+        expect(await new Bun.Archive(symlinkTarball("d1/d2/up", "../..")).extract(out)).toBe(0);
+
+        // A plain file member through that link.
+        expect(
+          await new Bun.Archive(buildTarball([{ name: "d1/d2/up/victim/file.txt", data: "OVERWRITTEN" }])).extract(out),
+        ).toBe(0);
+
+        expect(await Bun.file(join(root, "victim", "file.txt")).text()).toBe("ORIGINAL");
+        expect(existsSync(join(out, "d2"))).toBe(false);
+      });
+
+      test("creates a symlink whose target stays inside, then skips a write under it", async () => {
+        using dir = tempDir("archive-symlink-inside", {});
+        const out = join(String(dir), "out");
+
+        expect(await new Bun.Archive({ "real/keep.txt": "KEEP" }).extract(out)).toBeGreaterThan(0);
+        expect(await new Bun.Archive(symlinkTarball("link", "real")).extract(out)).toBe(1);
+
+        expect(lstatSync(join(out, "link")).isSymbolicLink()).toBe(true);
+        expect(await Bun.file(join(out, "link", "keep.txt")).text()).toBe("KEEP");
+
+        // A member under the link is skipped, and the rest of the archive still
+        // extracts. The link itself stays.
+        expect(await new Bun.Archive({ "link/new.txt": "NEW", "also.txt": "ALSO" }).extract(out)).toBe(1);
+        expect(existsSync(join(out, "real", "new.txt"))).toBe(false);
+        expect(await Bun.file(join(out, "also.txt")).text()).toBe("ALSO");
+        expect(lstatSync(join(out, "link")).isSymbolicLink()).toBe(true);
+      });
+    });
+
+    test("extracts entries nested deeper than the extractor keeps directories open", async () => {
+      // The POSIX extractor keeps one fd open per directory level, up to a
+      // fixed depth, and reopens the levels below that for each entry.
+      const deep = Buffer.alloc(150 * 2, "d/").toString();
+      const archive = new Bun.Archive({
+        [deep + "one.txt"]: "ONE",
+        [deep + "two.txt"]: "TWO",
+        [deep + "e/three.txt"]: "THREE",
+        "top.txt": "TOP",
+      });
+
+      using dir = tempDir("archive-deep-nesting", {});
+      const plain = join(String(dir), "plain");
+      const globbed = join(String(dir), "globbed");
+      await archive.extract(plain);
+      await archive.extract(globbed, { glob: "**" });
+
+      for (const out of [plain, globbed]) {
+        expect(await Bun.file(join(out, deep, "one.txt")).text()).toBe("ONE");
+        expect(await Bun.file(join(out, deep, "two.txt")).text()).toBe("TWO");
+        expect(await Bun.file(join(out, deep, "e", "three.txt")).text()).toBe("THREE");
+        expect(await Bun.file(join(out, "top.txt")).text()).toBe("TOP");
+      }
+    });
+
+    // Linux resolves parent directories with O_PATH, which asks for no
+    // permission on the directory itself. Elsewhere they are opened for reading.
+    test.skipIf(!isLinux)("extracts under a directory the process can search but not read", async () => {
+      using dir = tempDir("archive-search-only", {});
+      const out = join(String(dir), "out");
+      const wx = join(out, "wx");
+      mkdirSync(wx, { recursive: true });
+      chmodSync(wx, 0o311);
+      try {
+        await new Bun.Archive({ "wx/f.txt": "F", "wx/sub/g.txt": "G" }).extract(out);
+        expect(await Bun.file(join(wx, "f.txt")).text()).toBe("F");
+        expect(await Bun.file(join(wx, "sub", "g.txt")).text()).toBe("G");
+      } finally {
+        // Let the temp dir cleanup list it.
+        chmodSync(wx, 0o755);
+      }
+    });
+
     test("skips tar entries whose pathname exceeds the platform path limit", async () => {
       // GNU `@LongLink` ('L') records let a tar entry carry a pathname of
       // arbitrary length, far beyond what fits in the extractor's fixed-size

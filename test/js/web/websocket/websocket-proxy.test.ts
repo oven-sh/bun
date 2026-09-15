@@ -25,7 +25,7 @@ const { HttpsProxyAgent } = require("https-proxy-agent") as {
 const gc = harness.gc;
 const bunExe = harness.bunExe;
 const bunEnv = harness.bunEnv;
-const isDockerEnabled = harness.isDockerEnabled;
+const isDockerServiceEnabled = harness.isDockerServiceEnabled;
 
 // The in-process WebSocket tests below pass an explicit `proxy:` option targeting
 // 127.0.0.1 and expect the proxy to be hit. NO_PROXY applies to explicit proxies
@@ -603,12 +603,13 @@ describe("WebSocket through HTTPS proxy (TLS proxy)", () => {
   });
 });
 
-// Squid proxy tests - run when Docker is enabled
-// Uses docker-compose infrastructure to run squid proxy
+// Squid proxy tests - run when the docker-compose squid service is available.
+// The compose service maps host.docker.internal to the host, which is how the
+// container reaches the echo servers this file starts in beforeAll.
 // Import docker-compose dynamically to avoid issues when not using docker
 const dockerCompose = require("../../../docker/index.ts");
 
-describe.skipIf(!isDockerEnabled())("WebSocket through Squid proxy (Docker)", () => {
+describe.skipIf(!isDockerServiceEnabled("squid"))("WebSocket through Squid proxy (Docker)", () => {
   let squidInfo: { host: string; ports: Record<number, number>; proxyUrl?: string };
 
   beforeAll(async () => {

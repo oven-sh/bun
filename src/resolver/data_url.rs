@@ -129,6 +129,195 @@ impl PercentEncoding {
     }
 }
 
+/// TAB, LF, FF, CR, SPACE (https://infra.spec.whatwg.org/#ascii-whitespace)
+const ASCII_WHITESPACE: &[u8] = b"\t\n\x0C\r ";
+
+/// Data: URL processor step 11: `;`, optional spaces, case-insensitive `base64`.
+fn strip_base64_marker(mime_type: &[u8]) -> Option<&[u8]> {
+    const MARKER: &[u8] = b"base64";
+    let (rest, marker) = mime_type.split_at(mime_type.len().checked_sub(MARKER.len())?);
+    if !strings::eql_case_insensitive_ascii_check_length(marker, MARKER) {
+        return None;
+    }
+    strings::trim_right(rest, b" ").strip_suffix(b";")
+}
+
+/// The `Content-Type` to expose and the decoded body, from [`DataURL::process_for_fetch`].
+pub struct FetchDataURL {
+    pub mime_type: Vec<u8>,
+    pub body: Vec<u8>,
+}
+
+/// https://fetch.spec.whatwg.org/#http-whitespace
+fn is_http_whitespace(c: u8) -> bool {
+    matches!(c, b'\t' | b'\n' | b'\r' | b' ')
+}
+
+fn trim_trailing_http_whitespace(mut s: &[u8]) -> &[u8] {
+    while let Some(&c) = s.last() {
+        if !is_http_whitespace(c) {
+            break;
+        }
+        s = &s[..s.len() - 1];
+    }
+    s
+}
+
+fn trim_http_whitespace(mut s: &[u8]) -> &[u8] {
+    while let Some(&c) = s.first() {
+        if !is_http_whitespace(c) {
+            break;
+        }
+        s = &s[1..];
+    }
+    trim_trailing_http_whitespace(s)
+}
+
+/// https://mimesniff.spec.whatwg.org/#http-token-code-point
+fn is_http_token(c: u8) -> bool {
+    c.is_ascii_alphanumeric()
+        || matches!(
+            c,
+            b'!' | b'#'
+                | b'$'
+                | b'%'
+                | b'&'
+                | b'\''
+                | b'*'
+                | b'+'
+                | b'-'
+                | b'.'
+                | b'^'
+                | b'_'
+                | b'`'
+                | b'|'
+                | b'~'
+        )
+}
+
+/// https://mimesniff.spec.whatwg.org/#http-quoted-string-token-code-point
+fn is_http_quoted_string_token(c: u8) -> bool {
+    c == b'\t' || (0x20..=0x7E).contains(&c) || c >= 0x80
+}
+
+fn solely_http_tokens(s: &[u8]) -> bool {
+    !s.is_empty() && s.iter().all(|&c| is_http_token(c))
+}
+
+/// https://fetch.spec.whatwg.org/#collect-an-http-quoted-string with extract-value, after the opening `"`.
+fn collect_quoted_string_value(input: &[u8], pos: &mut usize) -> Vec<u8> {
+    let mut value = Vec::new();
+    while *pos < input.len() {
+        let c = input[*pos];
+        *pos += 1;
+        match c {
+            b'"' => return value,
+            b'\\' => {
+                if *pos < input.len() {
+                    value.push(input[*pos]);
+                    *pos += 1;
+                } else {
+                    value.push(b'\\');
+                }
+            }
+            _ => value.push(c),
+        }
+    }
+    value
+}
+
+/// https://mimesniff.spec.whatwg.org/#parse-a-mime-type then serialize; `None` for an invalid `type/subtype`.
+fn serialize_mime_type(input: &[u8]) -> Option<Vec<u8>> {
+    let input = trim_http_whitespace(input);
+    let slash = strings::index_of_char_usize(input, b'/')?;
+    let type_ = &input[..slash];
+    if !solely_http_tokens(type_) {
+        return None;
+    }
+
+    let mut pos = slash + 1;
+    let subtype_start = pos;
+    while pos < input.len() && input[pos] != b';' {
+        pos += 1;
+    }
+    let subtype = trim_trailing_http_whitespace(&input[subtype_start..pos]);
+    if !solely_http_tokens(subtype) {
+        return None;
+    }
+
+    let mut out = Vec::with_capacity(input.len());
+    out.extend(type_.iter().map(u8::to_ascii_lowercase));
+    out.push(b'/');
+    out.extend(subtype.iter().map(u8::to_ascii_lowercase));
+
+    let mut seen: Vec<Vec<u8>> = Vec::new();
+    while pos < input.len() {
+        pos += 1; // consume ';'
+        while pos < input.len() && is_http_whitespace(input[pos]) {
+            pos += 1;
+        }
+        let name_start = pos;
+        while pos < input.len() && input[pos] != b';' && input[pos] != b'=' {
+            pos += 1;
+        }
+        let name: Vec<u8> = input[name_start..pos]
+            .iter()
+            .map(u8::to_ascii_lowercase)
+            .collect();
+
+        if pos >= input.len() || input[pos] == b';' {
+            continue;
+        }
+        pos += 1; // consume '='
+
+        let value: Vec<u8> = if pos < input.len() && input[pos] == b'"' {
+            pos += 1;
+            let v = collect_quoted_string_value(input, &mut pos);
+            while pos < input.len() && input[pos] != b';' {
+                pos += 1;
+            }
+            v
+        } else {
+            let value_start = pos;
+            while pos < input.len() && input[pos] != b';' {
+                pos += 1;
+            }
+            let v = trim_trailing_http_whitespace(&input[value_start..pos]);
+            if v.is_empty() {
+                continue;
+            }
+            v.to_vec()
+        };
+
+        if name.is_empty()
+            || !name.iter().all(|&c| is_http_token(c))
+            || !value.iter().all(|&c| is_http_quoted_string_token(c))
+            || seen.iter().any(|n| n == &name)
+        {
+            continue;
+        }
+
+        out.push(b';');
+        out.extend_from_slice(&name);
+        out.push(b'=');
+        if value.is_empty() || !value.iter().all(|&c| is_http_token(c)) {
+            out.push(b'"');
+            for &c in &value {
+                if c == b'"' || c == b'\\' {
+                    out.push(b'\\');
+                }
+                out.push(c);
+            }
+            out.push(b'"');
+        } else {
+            out.extend_from_slice(&value);
+        }
+        seen.push(name);
+    }
+
+    Some(out)
+}
+
 // `mime_type`/`data` are slices into the caller-provided `url` string.
 // Classified as BORROW_PARAM — struct gets a lifetime parameter.
 pub struct DataURL<'a> {
@@ -147,19 +336,20 @@ impl<'a> DataURL<'a> {
         Ok(Some(Self::parse_without_check(url)?))
     }
 
+    /// https://fetch.spec.whatwg.org/#data-url-processor
     pub fn parse_without_check(url: &'a [u8]) -> Result<DataURL<'a>, ParseDataURLError> {
         let comma =
             strings::index_of_char(url, b',').ok_or(ParseDataURLError::InvalidDataURL)? as usize;
 
         let mut parsed = DataURL {
             url: bun_core::String::EMPTY,
-            mime_type: &url[b"data:".len()..comma],
+            mime_type: strings::trim(&url[b"data:".len()..comma], ASCII_WHITESPACE),
             data: &url[comma + 1..url.len()],
             is_base64: false,
         };
 
-        if parsed.mime_type.ends_with(b";base64") {
-            parsed.mime_type = &parsed.mime_type[0..(parsed.mime_type.len() - b";base64".len())];
+        if let Some(mime_type) = strip_base64_marker(parsed.mime_type) {
+            parsed.mime_type = mime_type;
             parsed.is_base64 = true;
         }
 
@@ -170,21 +360,40 @@ impl<'a> DataURL<'a> {
         bun_http_types::MimeType::MimeType::init(self.mime_type, false, None)
     }
 
+    pub fn is_base64(&self) -> bool {
+        self.is_base64
+    }
+
     /// Decodes the data from the data URL. Always returns an owned slice.
     pub fn decode_data(&self) -> Result<Vec<u8>, DecodeDataError> {
         let percent_decoded_owned: Option<Vec<u8>> = PercentEncoding::decode_unstrict(self.data)?;
         let percent_decoded: &[u8] = percent_decoded_owned.as_deref().unwrap_or(self.data);
 
         if self.is_base64 {
-            let decoded = bun_base64::decode_alloc(percent_decoded)
-                .map_err(|_| DecodeDataError::Base64DecodeError)?;
-            if decoded.len() != bun_base64::decode_len(percent_decoded) {
-                return Err(DecodeDataError::Base64DecodeError);
-            }
-            return Ok(decoded);
+            return bun_base64::decode_forgiving_alloc(percent_decoded)
+                .map_err(|_| DecodeDataError::Base64DecodeError);
         }
 
         Ok(percent_decoded.to_vec())
+    }
+
+    /// https://fetch.spec.whatwg.org/#data-url-processor; `input` is the serialized URL without its fragment.
+    pub fn process_for_fetch(input: &[u8]) -> Option<FetchDataURL> {
+        let parsed = DataURL::parse(input).ok()??;
+        let body = parsed.decode_data().ok()?;
+
+        let mut mime_type = parsed.mime_type;
+        let mime_type_buf;
+        if mime_type.first() == Some(&b';') {
+            mime_type_buf = [b"text/plain".as_slice(), mime_type].concat();
+            mime_type = &mime_type_buf;
+        }
+
+        Some(FetchDataURL {
+            mime_type: serialize_mime_type(mime_type)
+                .unwrap_or_else(|| b"text/plain;charset=US-ASCII".to_vec()),
+            body,
+        })
     }
 
     /// Returns the shorter of either a base64-encoded or percent-escaped data URL
@@ -358,6 +567,39 @@ mod tests {
         assert!(url.starts_with(b"data:application/octet-stream;base64,"));
         let parsed = round_trip(b"application/octet-stream", text);
         assert!(parsed.is_base64);
+    }
+
+    #[test]
+    fn base64_marker_is_case_insensitive_and_space_tolerant() {
+        for url in [
+            &b"data:text/plain;base64,aGk="[..],
+            b"data:text/plain;BASE64,aGk=",
+            b"data:text/plain;Base64,aGk=",
+            b"data:text/plain; base64,aGk=",
+            b"data:text/plain;base64 ,aGk=",
+            b"data: text/plain;  bAsE64  ,aGk=",
+        ] {
+            let parsed = DataURL::parse(url).unwrap().unwrap();
+            assert!(parsed.is_base64, "{}", String::from_utf8_lossy(url));
+            assert_eq!(parsed.mime_type, b"text/plain");
+            assert_eq!(parsed.decode_data().unwrap(), b"hi");
+        }
+
+        let parsed = DataURL::parse(b"data:;base64,aGk=").unwrap().unwrap();
+        assert!(parsed.is_base64);
+        assert_eq!(parsed.mime_type, b"");
+
+        for url in [
+            &b"data:text/plain;base64x,aGk="[..],
+            b"data:text/plain;charset=base64,aGk=",
+            b"data:text/plain base64,aGk=",
+            b"data:base64,aGk=",
+            b"data:text/plain;base 64,aGk=",
+        ] {
+            let parsed = DataURL::parse(url).unwrap().unwrap();
+            assert!(!parsed.is_base64, "{}", String::from_utf8_lossy(url));
+            assert_eq!(parsed.decode_data().unwrap(), b"aGk=");
+        }
     }
 
     #[test]

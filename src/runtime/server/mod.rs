@@ -709,6 +709,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // S008: `Response<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
         let resp_ref = bun_opaque::opaque_deref_mut(resp);
 
+        // Requests pipelined in one read are dispatched corked, and their
+        // completed responses collect in the cork buffer. Those leave before
+        // user JavaScript runs again: it can block for long, reset the
+        // connection or end the process.
+        resp_ref.send_corked();
+
         // We need to register the handler immediately since uSockets will not buffer.
         //
         // We first validate the self-reported request body length so that

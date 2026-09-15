@@ -4372,6 +4372,65 @@ refs:
         expect(() => YAML.stringify(throwingProxy)).toThrow("Proxy get trap error");
       });
 
+      // Array.isArray and JSON.stringify look through a Proxy (ECMA-262 IsArray).
+      describe("a Proxy of an array", () => {
+        test("is a sequence, not a mapping with index keys", () => {
+          const array = [1, "two", [3], { four: 4 }];
+          const proxy = new Proxy(array, {});
+          expect(Array.isArray(proxy)).toBe(true);
+
+          expect(YAML.stringify(proxy)).toBe("[1,two,[3],{four: 4}]");
+          expect(YAML.stringify(proxy, null, 2)).toBe("- 1\n- two\n- - 3\n- four: 4");
+          expect(YAML.stringify(new Proxy([], {}))).toBe("[]");
+          expect(YAML.stringify({ a: new Proxy([], {}) }, null, 2)).toBe("a: \n  []");
+          // An array drops undefined and function items. A mapping would keep the "2" key.
+          expect(YAML.stringify(new Proxy([undefined, () => {}, 1], {}))).toBe("[1]");
+
+          // Nested in an object and in an array, and a Proxy of a Proxy.
+          const nested = { list: new Proxy(array, {}), deep: [new Proxy(new Proxy([1, 2], {}), {})] };
+          expect(YAML.stringify(nested)).toBe("{list: [1,two,[3],{four: 4}],deep: [[1,2]]}");
+          expect(YAML.stringify(nested, null, 2)).toBe(
+            "list: \n  - 1\n  - two\n  - - 3\n  - four: 4\ndeep: \n  - - 1\n    - 2",
+          );
+          expect(YAML.parse(YAML.stringify(nested, null, 2))).toEqual({ list: array, deep: [[1, 2]] });
+        });
+
+        test("gets an anchor and an alias when it appears twice", () => {
+          const shared = new Proxy([1], {});
+          expect(YAML.stringify({ a: shared, b: shared })).toBe("{a: &a [1],b: *a}");
+          expect(YAML.stringify({ a: shared, b: shared }, null, 2)).toBe("a: \n  &a\n  - 1\nb: \n  *a");
+          expect(YAML.stringify([shared, shared])).toBe("[&item0 [1],*item0]");
+
+          const target: unknown[] = [];
+          const cycle = new Proxy(target, {});
+          target.push(cycle);
+          expect(YAML.stringify(cycle)).toBe("&root [*root]");
+        });
+
+        test("reads its length and its items through the get trap, like JSON.stringify", () => {
+          // "length" and every item exist only in the get trap.
+          const virtual = new Proxy([] as string[], {
+            get(target, key, receiver) {
+              if (key === "length") return 2;
+              if (key === "0") return "first";
+              if (key === "1") return "second";
+              return Reflect.get(target, key, receiver);
+            },
+          });
+          expect(JSON.stringify(virtual)).toBe('["first","second"]');
+          expect(YAML.stringify(virtual)).toBe("[first,second]");
+          expect(YAML.stringify(virtual, null, 2)).toBe("- first\n- second");
+        });
+
+        test("throws a TypeError when it is revoked", () => {
+          const { proxy, revoke } = Proxy.revocable([1], {});
+          revoke();
+          expect(() => JSON.stringify(proxy)).toThrow(TypeError);
+          expect(() => YAML.stringify(proxy)).toThrow(TypeError);
+          expect(() => YAML.stringify({ a: [proxy] }, null, 2)).toThrow(TypeError);
+        });
+      });
+
       test("handles getters that throw", () => {
         const obj = {
           normal: "value",

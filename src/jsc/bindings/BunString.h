@@ -2,41 +2,38 @@
 
 #include "root.h"
 
+#include <optional>
 #include <wtf/text/WTFString.h>
 #include <wtf/text/CString.h>
 
+namespace JSC {
+class JSGlobalObject;
+class ThrowScope;
+}
+
 namespace Bun {
+// The UTF-8 bytes of a string. An 8-bit all-ASCII string is borrowed, so it must outlive the view. Any other string is converted.
 class UTF8View {
 public:
-    UTF8View()
+    // std::nullopt when the conversion fails, where `utf8()` asserts: a Latin-1 string of 2^30 characters
+    // or more, or a 16-bit string whose UTF-8 form is 2^31 bytes or more.
+    static std::optional<UTF8View> tryCreate(WTF::StringView view)
     {
-        m_isCString = false;
-        m_underlying = {};
-        m_view = {};
-    }
-
-    UTF8View(WTF::StringView view)
-    {
+        UTF8View result;
         if (view.is8Bit() && view.containsOnlyASCII()) {
-            m_view = view;
-        } else {
-            m_underlying = view.utf8();
-            m_isCString = true;
+            result.m_view = view;
+            return result;
         }
-    }
-    UTF8View(const WTF::String& str)
-    {
-        if (str.is8Bit() && str.containsOnlyASCII()) {
-            m_view = str;
-        } else {
-            m_underlying = str.utf8();
-            m_isCString = true;
-        }
+        auto utf8 = view.tryGetUTF8();
+        if (!utf8) [[unlikely]]
+            return std::nullopt;
+        result.m_underlying = WTF::move(utf8.value());
+        result.m_isCString = true;
+        return result;
     }
 
-    WTF::CString m_underlying {};
-    WTF::StringView m_view {};
-    bool m_isCString { false };
+    // The same, and throws `RangeError: Out of memory` when the conversion fails.
+    static std::optional<UTF8View> tryCreate(JSC::JSGlobalObject*, JSC::ThrowScope&, WTF::StringView);
 
     std::span<const uint8_t> bytes() const
     {
@@ -54,6 +51,13 @@ public:
 
         return std::span(reinterpret_cast<const char*>(m_view.span8().data()), m_view.length());
     }
+
+private:
+    UTF8View() = default;
+
+    WTF::CString m_underlying {};
+    WTF::StringView m_view {};
+    bool m_isCString { false };
 };
 
 // Pre-hashed and never atomized in place, so any number of threads may hold

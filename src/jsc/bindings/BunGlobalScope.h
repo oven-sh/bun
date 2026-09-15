@@ -28,6 +28,7 @@ public:
     DECLARE_VISIT_CHILDREN;
 
     JSC::Structure* encodeIntoObjectStructure() const { return m_encodeIntoObjectStructure.getInitializedOnMainThread(this); }
+    JSC::Structure* callSiteStructure() const { return m_callSiteStructure.getInitializedOnMainThread(this); }
 
     /**
      * WARNING: You must update visitChildrenImpl() if you add a new field.
@@ -40,6 +41,7 @@ public:
      * those callbacks will eventually never be called anymore. But it'll work the first time!
      */
     LazyProperty<JSGlobalObject, Structure> m_encodeIntoObjectStructure;
+    LazyProperty<JSGlobalObject, Structure> m_callSiteStructure;
 };
 
 } // namespace Bun

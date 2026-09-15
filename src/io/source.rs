@@ -365,8 +365,12 @@ impl Source {
         }
     }
 
-    pub(crate) fn open_pipe(loop_: *mut uv::Loop, fd: Fd) -> bun_sys::Result<Box<Pipe>> {
-        bun_core::scoped_log!(PipeSource, "openPipe (fd = {})", fd);
+    pub(crate) fn open_pipe(
+        loop_: *mut uv::Loop,
+        fd: Fd,
+        reads: bool,
+    ) -> bun_sys::Result<Box<Pipe>> {
+        bun_core::scoped_log!(PipeSource, "openPipe (fd = {}, reads = {})", fd, reads);
         let mut pipe: Box<Pipe> = Box::new(bun_core::ffi::zeroed::<Pipe>());
         // we should never init using IPC here
         if let Some(err) = pipe.init(loop_, false).to_error(bun_sys::Tag::pipe) {
@@ -374,7 +378,12 @@ impl Source {
             return bun_sys::Result::Err(err);
         }
 
-        if let Some(err) = pipe.open(fd.uv()).to_error(bun_sys::Tag::open) {
+        let opened = if reads {
+            pipe.open_for_reading(fd.uv())
+        } else {
+            pipe.open(fd.uv())
+        };
+        if let Some(err) = opened.to_error(bun_sys::Tag::open) {
             // close_and_destroy() schedules a libuv close whose callback frees
             // the allocation. Hand the Box to libuv via into_raw so Drop does not double-free.
             let raw = bun_core::heap::into_raw(pipe);
@@ -426,7 +435,18 @@ impl Source {
         file
     }
 
+    /// Open `fd` for a writer.
     pub(crate) fn open(loop_: *mut uv::Loop, fd: Fd) -> bun_sys::Result<Source> {
+        Self::open_with(loop_, fd, false)
+    }
+
+    /// Open `fd` for a reader: `EBUSY` while another reader's pipe is open
+    /// over the same stdio fd (`uv::Pipe::open_for_reading`).
+    pub(crate) fn open_for_reading(loop_: *mut uv::Loop, fd: Fd) -> bun_sys::Result<Source> {
+        Self::open_with(loop_, fd, true)
+    }
+
+    fn open_with(loop_: *mut uv::Loop, fd: Fd, reads: bool) -> bun_sys::Result<Source> {
         let rc = uv::uv_guess_handle(fd.uv());
         bun_core::scoped_log!(
             PipeSource,
@@ -436,7 +456,7 @@ impl Source {
         );
 
         match rc {
-            uv::HandleType::NamedPipe => match Self::open_pipe(loop_, fd) {
+            uv::HandleType::NamedPipe => match Self::open_pipe(loop_, fd, reads) {
                 bun_sys::Result::Ok(pipe) => bun_sys::Result::Ok(Source::Pipe(pipe)),
                 bun_sys::Result::Err(err) => bun_sys::Result::Err(err),
             },

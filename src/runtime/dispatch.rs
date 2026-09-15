@@ -619,17 +619,16 @@ pub(crate) fn tick_queue_with_count(
         let _context = match task_context(task) {
             bun_event_loop::TaskContext::Always => None,
             bun_event_loop::TaskContext::Of(context) => {
-                match global.bun_vm().enter_context_if_live(context) {
-                    Some(entered) => Some(entered),
-                    None => {
-                        let _context = global.bun_vm().enter_context(context);
-                        __bun_release_task_unrun(task);
-                        if global.has_exception() {
-                            report_error_or_terminate(global, bun_jsc::JsError::Thrown)?;
-                        }
-                        continue;
+                let vm = global.bun_vm();
+                let entered = vm.enter_context(context);
+                if !(vm.script_allowed() && vm.is_context_live(context)) {
+                    __bun_release_task_unrun(task);
+                    if global.has_exception() {
+                        report_error_or_terminate(global, bun_jsc::JsError::Thrown)?;
                     }
+                    continue;
                 }
+                Some(entered)
             }
         };
         match run_task(task, el, vm, global) {

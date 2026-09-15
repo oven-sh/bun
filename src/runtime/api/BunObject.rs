@@ -1795,10 +1795,9 @@ fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSVa
     // `Bun.redis` is the realm's: not owned (and closed at dispose()) by whichever
     // Bun.ModuleGraph reads the property first.
     let vm = global_this.bun_vm();
-    let realm = vm.enter_context(vm.root_context().id());
     let valkey = match JSValkeyClient::create_no_js_no_pubsub(
         global_this,
-        realm.context(),
+        vm.root_context(),
         &[JSValue::UNDEFINED],
     ) {
         Ok(p) => p,

@@ -167,7 +167,8 @@ mod lib_c {
         let promise_value = unsafe { (*request).head.promise.value() };
 
         bun_jsc::Job::<get_addr_info_request::LibcLookup>::schedule(
-            &global_this.js_thread(this.vm().context_of(context)),
+            // The realm's: lookups of the same name from any context wait on the one in flight.
+            &global_this.js_thread(this.vm().root_context()),
             get_addr_info_request::LibcLookup {
                 backend: get_addr_info_request::LibcBackend::Query(query),
             },
@@ -989,8 +990,6 @@ pub mod get_addr_info_request {
     impl bun_jsc::JobContext for LibcLookup {
         type OffThread = Self;
         type Js = LibcRequest;
-        /// Lookups of the same name from any context wait on the one in flight.
-        const SHARED_BY_REALM: bool = true;
         fn run(
             this: &mut Self,
             done: bun_jsc::Completion<Self>,

@@ -195,11 +195,6 @@ pub trait JobContext: Sized + 'static {
     /// can wait on something external. Only such jobs are tracked by the VM.
     const CANCELLABLE: bool = false;
 
-    /// Whether the job serves the whole realm rather than the context that
-    /// happened to schedule it (work other contexts' requests join): it is
-    /// dropped only with the realm, not with a `Bun.ModuleGraph`.
-    const SHARED_BY_REALM: bool = false;
-
     /// Pool thread, VM not yet in its final wait when the pool reached the job
     /// (a job reached later is handed back unrun, as Node's environment
     /// cleanup `uv_cancel`s queued work). Return `done` to complete now; keep
@@ -353,11 +348,7 @@ impl<C: JobContext> Job<C> {
                 cancel: |p| unsafe { C::cancel(&raw mut (*p.cast::<Self>()).off) },
                 prev: core::ptr::null_mut(),
                 next: core::ptr::null_mut(),
-                context: if C::SHARED_BY_REALM {
-                    cx.vm().root_context().id()
-                } else {
-                    cx.context().id()
-                },
+                context: cx.context().id(),
             },
             ticket: Some(cx.vm().ticket()),
             task: WorkPoolTask {

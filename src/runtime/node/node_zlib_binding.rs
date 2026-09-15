@@ -240,7 +240,6 @@ pub(crate) trait CompressionStreamImpl:
     fn write_in_progress(&self) -> &Cell<bool>;
     fn pinned_buffers(&self) -> &Cell<u8>;
     fn pending_close(&self) -> &Cell<bool>;
-    fn write_context(&self) -> &Cell<bun_jsc::ContextId>;
     fn closed(&self) -> &Cell<bool>;
 
     /// Recover `*mut Self` from the embedded `WorkPoolTask`.
@@ -433,8 +432,6 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
             &mut out_buf.byte_slice_mut()[out_off as usize..out_off as usize + out_len as usize],
         );
 
-        this.write_context()
-            .set(global_this.bun_vm().context_of_caller(callframe).id());
         this.write_in_progress().set(true);
         this.ref_();
 
@@ -571,8 +568,6 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         T::pending_input_set_cached(this_value, global, JSValue::ZERO);
         T::pending_output_set_cached(this_value, global, JSValue::ZERO);
 
-        // The result and the error are reported to the script that wrote.
-        let _context = vm.enter_context(this.write_context().get());
         if !Self::check_error(&this, global, this_value) {
             this.poll_ref().with_mut(|p| p.unref(vm));
             // SAFETY: see above.
@@ -990,8 +985,8 @@ macro_rules! __impl_compression_stream {
                 // SAFETY: fn contract — the stream the pool posted (write's ref held).
                 unsafe { $crate::node::node_zlib_binding::CompressionStream::<$native>::release_unrun(this) }
             }
-            /// The stream may be the host's while the write is a graph's: the write always completes (its
-            /// buffers are unpinned), and `run_from_js_thread` reports it only to a live write context.
+            /// The write always completes (its buffers are unpinned); the callbacks it reports to carry
+            /// the async context of the script that set them.
             unsafe fn context(_: *const Self) -> bun_event_loop::TaskContext {
                 bun_event_loop::TaskContext::Always
             }
@@ -1027,7 +1022,6 @@ macro_rules! __impl_compression_stream {
             #[inline] fn write_in_progress(&self) -> &::core::cell::Cell<bool> { &self.write_in_progress }
             #[inline] fn pinned_buffers(&self) -> &::core::cell::Cell<u8> { &self.pinned_buffers }
             #[inline] fn pending_close(&self) -> &::core::cell::Cell<bool> { &self.pending_close }
-            #[inline] fn write_context(&self) -> &::core::cell::Cell<::bun_jsc::ContextId> { &self.write_context }
             #[inline] fn closed(&self) -> &::core::cell::Cell<bool> { &self.closed }
 
             #[inline]

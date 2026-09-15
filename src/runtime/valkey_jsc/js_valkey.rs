@@ -1456,16 +1456,11 @@ impl JSValkeyClient {
         let is_tls = self.client.get().tls != valkey::TLS::None;
         let vm = self.client.get().vm.as_mut();
         let loop_ = vm.uws_loop();
-        let Some(groups) = vm.client_socket_groups_of(self.context) else {
-            // The context that created the client is gone.
-            self.client_mut().flags.enable_auto_reconnect = false;
-            self.client_fail(
-                b"The ModuleGraph that created this client was disposed",
-                protocol::RedisError::ConnectionClosed,
-            )?;
-            self.close_without_socket_next_tick();
-            return Ok(());
-        };
+        // (A client that redials on its own stays with the context that created it; what joins a
+        // context that is gone is closed on the next turn of the loop.)
+        let context = core::ptr::from_ref(vm.context_of(self.context));
+        // SAFETY: the VM's own, or registered ⇒ not freed under this call; JS thread.
+        let groups = vm.client_socket_groups_in(unsafe { &*context });
         let group: *mut uws::SocketGroup = if is_tls {
             groups.valkey_group::<true>(loop_)
         } else {

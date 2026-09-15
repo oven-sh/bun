@@ -336,8 +336,10 @@ impl DeferredDerefTask {
                     );
                 }
                 Tag::S3UploadStream => {
+                    // The pump's promise was collected unsettled (the script running it is gone):
+                    // as a rejection with no reason.
                     (*ctx.cast::<crate::webcore::s3::client::S3UploadStreamWrapper>())
-                        .pump_abandoned();
+                        .handle_reject_stream(JSValue::ZERO);
                 }
             }
         }

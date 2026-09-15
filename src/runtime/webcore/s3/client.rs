@@ -644,14 +644,6 @@ impl S3UploadStreamWrapper {
         drop(unsafe { RefPtr::from_raw(std::ptr::from_mut::<Self>(self)) });
     }
 
-    /// The pump's promise was collected without settling (the script running it is gone: a
-    /// disposed `Bun.ModuleGraph`'s): nothing more is written. Balances the +1 ref taken for the
-    /// pump promise in `upload_stream`.
-    pub(crate) fn pump_abandoned(&mut self) {
-        bun_output::scoped_log!(S3UploadStream, "pumpAbandoned");
-        self.handle_reject_stream(JSValue::ZERO);
-    }
-
     /// Stream pump rejected. Rejects the caller's end_promise, fails the upload,
     /// and balances the +1 ref taken for the pump promise in `upload_stream`.
     pub(crate) fn handle_reject_stream(&mut self, err: JSValue) {

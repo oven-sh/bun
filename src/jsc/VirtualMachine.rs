@@ -1354,13 +1354,6 @@ impl VirtualMachine {
         scope
     }
 
-    /// For a completion the event loop delivers: `None` when it is not to be reported (its
-    /// context has stopped or is gone, or script may no longer run), else the context, entered.
-    pub fn enter_context_if_live(&self, context: crate::ContextId) -> Option<ContextScope<'_>> {
-        (self.script_allowed() && self.is_context_live(context))
-            .then(|| self.enter_context(context))
-    }
-
     /// Whether the running script may name by number (a timer id) something `owner`'s script
     /// made: the host may name anything; a graph's script its own and the host's (whose
     /// `globalThis` it shares anyway), never another graph's.
@@ -1391,24 +1384,6 @@ impl VirtualMachine {
         }
         // SAFETY: the context boxes its groups and outlives this call; JS thread.
         unsafe { &mut *context.socket_groups() }
-    }
-
-    /// The groups a client socket of context `id` joins (a client that redials
-    /// on its own stays with the context that created it), or `None` once that
-    /// context is gone.
-    pub fn client_socket_groups_of(
-        &mut self,
-        id: crate::ContextId,
-    ) -> Option<&mut crate::rare_data::SocketGroups> {
-        let context = if id == self.root_context.id() || id == self.vm_context.id() {
-            core::ptr::from_ref(&self.root_context)
-        } else if id == self.dead_context.id() {
-            core::ptr::from_ref(&self.dead_context)
-        } else {
-            core::ptr::from_ref(self.graph_context(id)?)
-        };
-        // SAFETY: the VM's own, or registered ⇒ not freed; JS thread.
-        Some(self.client_socket_groups_in(unsafe { &*context }))
     }
 
     /// Script of a disposed graph is still opening things in the graph's

@@ -101,10 +101,10 @@ const mockCDP = /* js */ `
 
 // Runs a scenario after the mock definitions in a fresh bun process and
 // returns the JSON it printed.
-async function runScenario(body: string): Promise<unknown> {
+async function runScenario(body: string, env: Record<string, string | undefined> = {}): Promise<unknown> {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", mockCDP + body],
-    env: bunEnv,
+    env: { ...bunEnv, ...env },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -115,6 +115,38 @@ async function runScenario(body: string): Promise<unknown> {
 }
 
 const wsClosed = expect.stringMatching(/^rejected: Chrome WebSocket closed \(code \d+\)$/);
+
+// The DevTools socket is Bun's own connection, not the app's traffic: it must
+// not follow http_proxy like `new WebSocket()` does. The proxy here refuses
+// every connection, so a navigate() that completes proves the dial was direct.
+test.concurrent("the DevTools WebSocket ignores HTTP_PROXY", async () => {
+  using deadProxy = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: {
+      open(socket) {
+        socket.end();
+      },
+      data() {},
+    },
+  });
+  const result = await runScenario(
+    `
+    const mock = startMockCDP();
+    const view = mock.newView();
+    const navigate = await view.navigate("http://mock/1").then(() => "resolved", e => "rejected: " + e.message);
+    console.log(JSON.stringify({ navigate, url: view.url }));
+    mock.stop();
+  `,
+    {
+      HTTP_PROXY: `http://127.0.0.1:${deadProxy.port}`,
+      http_proxy: undefined,
+      NO_PROXY: undefined,
+      no_proxy: undefined,
+    },
+  );
+  expect(result).toEqual({ navigate: "resolved", url: "http://mock/1" });
+});
 
 test.concurrent.each([
   ["navigate", `view.navigate("http://mock/2")`],

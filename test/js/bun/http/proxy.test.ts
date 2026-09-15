@@ -1,7 +1,7 @@
 import axios from "axios";
 import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, tls as tlsCert } from "harness";
+import { bunEnv, bunExe, isASAN, tempDir, tls as tlsCert } from "harness";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import { once } from "node:events";
 import http from "node:http";
@@ -2005,6 +2005,58 @@ describe.concurrent("NO_PROXY with explicit proxy option", () => {
     if (exitCode !== 0) console.error("stderr:", stderr);
     expect(stdout.trim()).toBe("200");
     expect(exitCode).toBe(0);
+  });
+
+  // HTTP_PROXY points at the dead proxy, so a fetch that consults the env
+  // fails. `null` and "" opt out of the env; `undefined` is the same as absent.
+  test.each([
+    ["proxy: null ignores HTTP_PROXY", "null", "200"],
+    ['proxy: "" ignores HTTP_PROXY', '""', "200"],
+    ["proxy: undefined uses HTTP_PROXY", "undefined", "error: ECONNRESET"],
+  ])("%s", async (_, proxy, expected) => {
+    const noProxyEnv = { ...bunEnv };
+    for (const k of PROXY_ENV_KEYS) delete noProxyEnv[k];
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `try {
+          const resp = await fetch("http://127.0.0.1:${httpServer.port}", { proxy: ${proxy} });
+          console.log(resp.status);
+        } catch (error) {
+          console.log("error:", error.code);
+        }`,
+      ],
+      env: { ...noProxyEnv, HTTP_PROXY: `http://127.0.0.1:${deadProxyPort}` },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: `${expected}\n`, stderr: "", exitCode: 0 });
+  });
+
+  // A Bun.file() body of this size goes out with sendfile over plain http,
+  // a path that only runs without a proxy.
+  test("proxy: null sends a Bun.file body directly", async () => {
+    const noProxyEnv = { ...bunEnv };
+    for (const k of PROXY_ENV_KEYS) delete noProxyEnv[k];
+    using dir = tempDir("fetch-proxy-null-sendfile", { "body.txt": Buffer.alloc(64 * 1024, "a").toString() });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const resp = await fetch("http://127.0.0.1:${httpServer.port}", { method: "POST", body: Bun.file("body.txt"), proxy: null });
+        console.log(resp.status, (await resp.text()).length);`,
+      ],
+      env: { ...noProxyEnv, HTTP_PROXY: `http://127.0.0.1:${deadProxyPort}` },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "200 65536\n", stderr: "", exitCode: 0 });
   });
 
   test("S3 ops use runtime process.env.HTTP_PROXY and survive overwrite while in flight", async () => {

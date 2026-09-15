@@ -475,7 +475,7 @@ bool Transport::ensureConnected(Zig::GlobalObject* zig, const WTF::String& wsUrl
     }
 
     auto* ctx = zig->scriptExecutionContext();
-    auto result = WebCore::WebSocket::create(*ctx, wsUrl);
+    auto result = WebCore::WebSocket::createDirect(*ctx, wsUrl);
     if (result.hasException()) {
         m_dead = true;
         m_mode = TransportMode::None;

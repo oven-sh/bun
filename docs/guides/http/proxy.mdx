@@ -48,3 +48,12 @@ To use the same proxy for all requests, set the `$HTTP_PROXY` and `$HTTPS_PROXY`
 ```sh terminal icon="terminal"
 HTTP_PROXY=https://username:password@proxy.example.com:8080 HTTPS_PROXY=https://username:password@proxy.example.com:8080 bun run index.ts
 ```
+
+`new WebSocket()` reads the same variables: `$HTTP_PROXY` for `ws://` URLs and `$HTTPS_PROXY` for `wss://` URLs. Set `$NO_PROXY` to a comma-separated list of hosts that must not go through the proxy.
+
+To ignore the environment variables for one request or connection, pass `proxy: null`.
+
+```ts direct.ts icon="/icons/typescript.svg"
+await fetch("http://localhost:3000", { proxy: null });
+const ws = new WebSocket("ws://localhost:3000", { proxy: null });
+```

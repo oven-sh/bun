@@ -63,6 +63,7 @@ namespace WebCore {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(WebSocket);
 extern "C" int Bun__getTLSRejectUnauthorizedValue();
 extern "C" bool Bun__isNoProxy(const char* hostname, size_t hostname_len, const char* host, size_t host_len);
+extern "C" BunString Bun__getEnvHttpProxy(bool is_http, const char* hostname, size_t hostname_len, const char* host, size_t host_len);
 
 static ErrorEvent::Init createErrorEventInit(WebSocket& webSocket, const String& reason, JSC::JSGlobalObject* globalObject)
 {
@@ -286,6 +287,16 @@ ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, c
 
 ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headers)
 {
+    return create(context, url, protocols, WTF::move(headers), true);
+}
+
+ExceptionOr<Ref<WebSocket>> WebSocket::createDirect(ScriptExecutionContext& context, const String& url)
+{
+    return create(context, url, Vector<String> {}, std::nullopt, false);
+}
+
+ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headers, bool useEnvProxy)
+{
     if (url.isNull())
         return Exception { SyntaxError };
 
@@ -295,8 +306,7 @@ ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, c
     if (socket->m_state == CLOSED)
         return socket;
 
-    auto result = socket->connect(url, protocols, WTF::move(headers));
-    // auto result = socket->connect(url, protocols);
+    auto result = socket->connect(url, protocols, WTF::move(headers), std::nullopt, useEnvProxy);
 
     if (result.hasException())
         return result.releaseException();
@@ -304,7 +314,7 @@ ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, c
     return socket;
 }
 
-ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headers, const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders, WebSocketSSLConfigPtr&& sslConfig, bool offerPerMessageDeflate)
+ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headers, const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders, WebSocketSSLConfigPtr&& sslConfig, bool offerPerMessageDeflate, bool useEnvProxy)
 {
     if (url.isNull())
         return Exception { SyntaxError };
@@ -321,14 +331,14 @@ ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, c
     socket->m_sslConfig = WTF::move(sslConfig); // Set BEFORE connect() so it's available during connection
     socket->setOfferPerMessageDeflate(offerPerMessageDeflate);
 
-    auto result = socket->connect(url, protocols, WTF::move(headers), proxyConfigResult.releaseReturnValue());
+    auto result = socket->connect(url, protocols, WTF::move(headers), proxyConfigResult.releaseReturnValue(), useEnvProxy);
     if (result.hasException())
         return result.releaseException();
 
     return socket;
 }
 
-ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headers, bool rejectUnauthorized, const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders, WebSocketSSLConfigPtr&& sslConfig, bool offerPerMessageDeflate)
+ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headers, bool rejectUnauthorized, const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders, WebSocketSSLConfigPtr&& sslConfig, bool offerPerMessageDeflate, bool useEnvProxy)
 {
     if (url.isNull())
         return Exception { SyntaxError };
@@ -346,7 +356,7 @@ ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, c
     socket->m_sslConfig = WTF::move(sslConfig); // Set BEFORE connect() so it's available during connection
     socket->setOfferPerMessageDeflate(offerPerMessageDeflate);
 
-    auto result = socket->connect(url, protocols, WTF::move(headers), proxyConfigResult.releaseReturnValue());
+    auto result = socket->connect(url, protocols, WTF::move(headers), proxyConfigResult.releaseReturnValue(), useEnvProxy);
     if (result.hasException())
         return result.releaseException();
 
@@ -378,11 +388,6 @@ static String hostName(const URL& url, bool secure)
     return url.host().convertToASCIILowercase();
 }
 
-ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headersInit)
-{
-    return connect(url, protocols, WTF::move(headersInit), std::nullopt);
-}
-
 size_t WebSocket::memoryCost() const
 
 {
@@ -410,7 +415,7 @@ size_t WebSocket::memoryCost() const
     return cost;
 }
 
-__attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headersInit, std::optional<ProxyConfig>&& proxyConfig)
+__attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headersInit, std::optional<ProxyConfig>&& proxyConfig, bool useEnvProxy)
 {
     // LOG(Network, "WebSocket %p connect() url='%s'", this, url.utf8().data());
     m_url = URL { url };
@@ -553,15 +558,30 @@ __attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url,
         hasProxy = false;
     }
 
-    // Check NO_PROXY even for explicitly-provided proxies
-    if (hasProxy) {
+    if (!is_unix && (hasProxy || useEnvProxy)) {
         auto hostStr = m_url.host().toString();
         auto hostWithPort = hostName(m_url, is_secure);
         auto hostUtf8 = hostStr.utf8();
         auto hostWithPortUtf8 = hostWithPort.utf8();
-        if (Bun__isNoProxy(hostUtf8.data(), hostUtf8.length(), hostWithPortUtf8.data(), hostWithPortUtf8.length())) {
-            proxyConfig = std::nullopt;
-            hasProxy = false;
+        if (hasProxy) {
+            // Check NO_PROXY even for explicitly-provided proxies
+            if (Bun__isNoProxy(hostUtf8.data(), hostUtf8.length(), hostWithPortUtf8.data(), hostWithPortUtf8.length())) {
+                proxyConfig = std::nullopt;
+                hasProxy = false;
+            }
+        } else if (useEnvProxy) {
+            // NO_PROXY is already applied to the result.
+            String envProxyUrl = Bun__getEnvHttpProxy(!is_secure, hostUtf8.data(), hostUtf8.length(), hostWithPortUtf8.data(), hostWithPortUtf8.length()).transferToWTFString();
+            if (!envProxyUrl.isEmpty()) {
+                auto envProxyConfig = setupProxy(envProxyUrl, std::nullopt);
+                if (envProxyConfig.hasException()) {
+                    // A bad env value is not the caller's bug, so it does not throw.
+                    dispatchConnectFailure(envProxyConfig.releaseException().releaseMessage());
+                    return {};
+                }
+                proxyConfig = envProxyConfig.releaseReturnValue();
+                hasProxy = proxyConfig.has_value();
+            }
         }
     }
 
@@ -647,15 +667,7 @@ __attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url,
     headerNames.clear();
 
     if (this->m_upgradeClient == nullptr) {
-        m_state = CLOSED;
-        if (scriptExecutionContext()) {
-            queueTaskKeepingObjectAlive(*this, TaskSource::WebSocket, [](WebSocket& ws) {
-                auto eventInit = createErrorEventInit(ws, "Failed to connect"_s, ws.scriptExecutionContext()->jsGlobalObject());
-                auto message = eventInit.message;
-                ws.dispatchEvent(ErrorEvent::create(eventNames().errorEvent, WTF::move(eventInit), EventIsTrusted::Yes));
-                ws.dispatchEvent(CloseEvent::create(false, 1006, WTF::move(message)));
-            });
-        }
+        dispatchConnectFailure("Failed to connect"_s);
         // create() still holds a Ref, so releasing connect()'s claim here cannot destroy `this`.
         m_pendingActivity = nullptr;
         return {};
@@ -663,6 +675,19 @@ __attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url,
 
     m_state = CONNECTING;
     return {};
+}
+
+void WebSocket::dispatchConnectFailure(String&& reason)
+{
+    m_state = CLOSED;
+    if (!scriptExecutionContext())
+        return;
+    queueTaskKeepingObjectAlive(*this, TaskSource::WebSocket, [reason = WTF::move(reason)](WebSocket& ws) {
+        auto eventInit = createErrorEventInit(ws, reason, ws.scriptExecutionContext()->jsGlobalObject());
+        auto message = eventInit.message;
+        ws.dispatchEvent(ErrorEvent::create(eventNames().errorEvent, WTF::move(eventInit), EventIsTrusted::Yes));
+        ws.dispatchEvent(CloseEvent::create(false, 1006, WTF::move(message)));
+    });
 }
 
 ExceptionOr<void> WebSocket::send(const String& message)

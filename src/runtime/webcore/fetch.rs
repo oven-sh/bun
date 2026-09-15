@@ -404,6 +404,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     }
 
     let mut proxy: Option<ZigURL> = None;
+    // false for `proxy: null` / `proxy: ""`: connect directly, ignore http_proxy / https_proxy.
+    let mut use_env_proxy = true;
     let mut redirect_type: FetchRedirect = FetchRedirect::Follow;
     let signal: Option<AbortSignalRef>;
     let mut range: Option<bun_core::ZBox> = None;
@@ -846,9 +848,14 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     // branch below would silently ignore it. Treat it as its href here.
                     let is_url_instance =
                         bun_jsc::DOMURL::cast_(proxy_arg, global_this.vm()).is_some();
-                    // Handle string format: proxy: "http://proxy.example.com:8080"
-                    if is_url_instance || (proxy_arg.is_string() && proxy_arg.get_length(ctx)? > 0)
+                    if proxy_arg.is_null()
+                        || (proxy_arg.is_string() && proxy_arg.get_length(ctx)? == 0)
                     {
+                        use_env_proxy = false;
+                        break 'extract_proxy url_proxy_buffer;
+                    }
+                    // Handle string format: proxy: "http://proxy.example.com:8080"
+                    if is_url_instance || proxy_arg.is_string() {
                         let href = jsc::URL::href_from_js(proxy_arg, global_this)?;
                         if href.tag() == BunStringTag::Dead {
                             let err = ctx.to_type_error(
@@ -1800,6 +1807,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         redirect_type,
         verbose,
         proxy: proxy_static,
+        use_env_proxy,
         proxy_headers: proxy_headers.take(),
         url_proxy_buffer: url_proxy_boxed,
         signal,

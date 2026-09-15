@@ -776,3 +776,169 @@ describe.concurrent("WebSocket NO_PROXY bypass", () => {
     );
   });
 });
+
+describe.concurrent("WebSocket proxy from the environment", () => {
+  // Each child connects to an echo server with no `proxy` option. The env
+  // decides whether the connection tunnels through the recording proxy
+  // (which forwards CONNECT to the echo server) or dials the server directly.
+  const noProxyEnv = {
+    HTTP_PROXY: undefined,
+    http_proxy: undefined,
+    HTTPS_PROXY: undefined,
+    https_proxy: undefined,
+    NO_PROXY: undefined,
+    no_proxy: undefined,
+  };
+  const childScript = (url: string, options: string) => `
+    let ws;
+    try {
+      ws = new WebSocket(${JSON.stringify(url)}, ${options});
+    } catch (error) {
+      console.log("throw:", error.message);
+      process.exit(0);
+    }
+    ws.onmessage = event => { console.log("message:", event.data); ws.close(1000); };
+    ws.onerror = event => console.log("error:", event.message);
+    ws.onclose = event => console.log("close:", event.code, JSON.stringify(event.reason));
+  `;
+  const connected = `message: connected\nclose: 1000 ""\n`;
+
+  async function run(url: string, options: string, env: Record<string, string | undefined>) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", childScript(url, options)],
+      env: { ...bunEnv, ...noProxyEnv, ...env },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test.each([
+    ["HTTP_PROXY proxies ws://", () => `ws://127.0.0.1:${wsPort}`, "HTTP_PROXY", "proxied"],
+    ["http_proxy proxies ws://", () => `ws://127.0.0.1:${wsPort}`, "http_proxy", "proxied"],
+    ["HTTPS_PROXY proxies wss://", () => `wss://127.0.0.1:${wssPort}`, "HTTPS_PROXY", "proxied"],
+    ["https_proxy proxies wss://", () => `wss://127.0.0.1:${wssPort}`, "https_proxy", "proxied"],
+    ["HTTPS_PROXY does not apply to ws://", () => `ws://127.0.0.1:${wsPort}`, "HTTPS_PROXY", "direct"],
+    ["HTTP_PROXY does not apply to wss://", () => `wss://127.0.0.1:${wssPort}`, "HTTP_PROXY", "direct"],
+    // fetch() dials a schemeless value as an http:// proxy, so WebSocket does too.
+    ["HTTP_PROXY without a scheme proxies ws://", () => `ws://127.0.0.1:${wsPort}`, "HTTP_PROXY", "proxied", ""],
+  ] as const)("%s", async (_, url, variable, outcome, scheme = "http://") => {
+    using recorded = await startRecordingProxy();
+    const target = url();
+    const targetPort = Number(new URL(target).port);
+    const result = await run(target, `{ tls: { rejectUnauthorized: false } }`, {
+      [variable]: `${scheme}127.0.0.1:${recorded.port}`,
+    });
+    expect({ ...result, requests: recorded.requests }).toEqual({
+      stdout: connected,
+      stderr: "",
+      exitCode: 0,
+      requests: outcome === "proxied" ? [connectRequest(targetPort)] : [],
+    });
+  });
+
+  test("NO_PROXY bypasses the env proxy", async () => {
+    using recorded = await startRecordingProxy();
+    const result = await run(`ws://127.0.0.1:${wsPort}`, "{}", {
+      HTTP_PROXY: `http://127.0.0.1:${recorded.port}`,
+      NO_PROXY: "127.0.0.1",
+    });
+    expect({ ...result, connections: recorded.connections }).toEqual({
+      stdout: connected,
+      stderr: "",
+      exitCode: 0,
+      connections: 0,
+    });
+  });
+
+  test("credentials in the env proxy URL become Proxy-Authorization on the CONNECT", async () => {
+    using recorded = await startRecordingProxy({ requireAuth: true });
+    const result = await run(`ws://127.0.0.1:${wsPort}`, "{}", {
+      HTTP_PROXY: `http://proxy_user:proxy_pass@127.0.0.1:${recorded.port}`,
+    });
+    expect({ ...result, requests: recorded.requests }).toEqual({
+      stdout: connected,
+      stderr: "",
+      exitCode: 0,
+      requests: [connectRequest(wsPort, { "proxy-authorization": `Basic ${btoa("proxy_user:proxy_pass")}` })],
+    });
+  });
+
+  test("an explicit proxy option wins over the env", async () => {
+    using envProxy = await startRecordingProxy();
+    using optionProxy = await startRecordingProxy();
+    const result = await run(`ws://127.0.0.1:${wsPort}`, `{ proxy: "http://127.0.0.1:${optionProxy.port}" }`, {
+      HTTP_PROXY: `http://127.0.0.1:${envProxy.port}`,
+    });
+    expect({ ...result, env: envProxy.connections, option: optionProxy.requests }).toEqual({
+      stdout: connected,
+      stderr: "",
+      exitCode: 0,
+      env: 0,
+      option: [connectRequest(wsPort)],
+    });
+  });
+
+  test("an unsupported env proxy scheme fails the connection with an error event", async () => {
+    const result = await run(`ws://127.0.0.1:${wsPort}`, "{}", { HTTP_PROXY: "socks5://127.0.0.1:1" });
+    const message = `WebSocket connection to 'ws://127.0.0.1:${wsPort}/' failed: Unsupported proxy protocol "socks5" (expected "http" or "https")`;
+    expect(result).toEqual({
+      stdout: `error: ${message}\nclose: 1006 ${JSON.stringify(message)}\n`,
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The proxy answers every CONNECT with 407, so a connection that reaches it
+  // fails. `undefined` is the same as an absent key: the env proxy applies.
+  test.each([
+    ["proxy: null connects directly", "{ proxy: null }", "direct"],
+    ['proxy: "" connects directly', '{ proxy: "" }', "direct"],
+    ["proxy: undefined uses the env proxy", "{ proxy: undefined }", "proxied"],
+  ])("%s", async (_, options, outcome) => {
+    using recorded = await startRecordingProxy({ requireAuth: true });
+    const result = await run(`ws://127.0.0.1:${wsPort}`, options, {
+      HTTP_PROXY: `http://127.0.0.1:${recorded.port}`,
+    });
+    expect({ ...result, connections: recorded.connections }).toEqual(
+      outcome === "direct"
+        ? { stdout: connected, stderr: "", exitCode: 0, connections: 0 }
+        : {
+            stdout:
+              `error: WebSocket connection to 'ws://127.0.0.1:${wsPort}/' failed: Proxy connection failed\n` +
+              `close: 1006 "Proxy connection failed"\n`,
+            stderr: "",
+            exitCode: 0,
+            connections: 1,
+          },
+    );
+  });
+
+  test("require('ws') connects directly unless it is given a proxy agent", async () => {
+    using recorded = await startRecordingProxy();
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const WebSocket = require("ws");
+        const ws = new WebSocket("ws://127.0.0.1:${wsPort}");
+        ws.on("message", data => { console.log("message:", String(data)); ws.close(1000); });
+        ws.on("error", error => console.log("error:", error.message));
+        ws.on("close", code => console.log("close:", code));
+        `,
+      ],
+      env: { ...bunEnv, ...noProxyEnv, HTTP_PROXY: `http://127.0.0.1:${recorded.port}` },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode, connections: recorded.connections }).toEqual({
+      stdout: "message: connected\nclose: 1000\n",
+      stderr: "",
+      exitCode: 0,
+      connections: 0,
+    });
+  });
+});

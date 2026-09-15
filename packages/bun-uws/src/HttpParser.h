@@ -1384,7 +1384,9 @@ struct HttpResponseData;
                     consumedTotal += consumed;
                 }
             } else if (contentLengthStringLen) {
-                if constexpr (!ConsumeMinimally) {
+                /* ConsumeMinimally leaves the body to consumePostPadded, which streams
+                 * only while bytes remain: Content-Length: 0 gets its fin here. */
+                if (!ConsumeMinimally || remainingStreamingBytes == 0) {
                     unsigned int emittable = (unsigned int) std::min<uint64_t>(remainingStreamingBytes, length);
                     void *returnedUser = dataHandler(user, std::string_view(data, emittable), emittable == remainingStreamingBytes);
                     remainingStreamingBytes -= emittable;

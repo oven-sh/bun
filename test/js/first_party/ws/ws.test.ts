@@ -934,6 +934,7 @@ it("Server should be able to send empty pings", async () => {
       return await promise;
     } finally {
       httpServer.closeAllConnections();
+      httpServer.close();
     }
   }
   {

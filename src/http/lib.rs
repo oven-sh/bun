@@ -986,19 +986,8 @@ const CHUNKED_ENCODED_HEADER: picohttp::Header =
 const CONNECTION_HEADER: picohttp::Header = picohttp::Header::new(b"Connection", b"keep-alive");
 const ACCEPT_HEADER: picohttp::Header = picohttp::Header::new(b"Accept", b"*/*");
 
-const ACCEPT_ENCODING_NO_COMPRESSION: &[u8] = b"identity";
-const ACCEPT_ENCODING_COMPRESSION: &[u8] = b"gzip, deflate, br, zstd";
-const ACCEPT_ENCODING_HEADER_COMPRESSION: picohttp::Header =
-    picohttp::Header::new(b"Accept-Encoding", ACCEPT_ENCODING_COMPRESSION);
-const ACCEPT_ENCODING_HEADER_NO_COMPRESSION: picohttp::Header =
-    picohttp::Header::new(b"Accept-Encoding", ACCEPT_ENCODING_NO_COMPRESSION);
-
-const ACCEPT_ENCODING_HEADER: picohttp::Header = if FeatureFlags::DISABLE_COMPRESSION_IN_HTTP_CLIENT
-{
-    ACCEPT_ENCODING_HEADER_NO_COMPRESSION
-} else {
-    ACCEPT_ENCODING_HEADER_COMPRESSION
-};
+const ACCEPT_ENCODING_HEADER: picohttp::Header =
+    picohttp::Header::new(b"Accept-Encoding", b"gzip, deflate, br, zstd");
 
 fn get_user_agent_header() -> picohttp::Header {
     let ua = OVERRIDDEN_DEFAULT_USER_AGENT.get().copied().unwrap_or(b"");

@@ -26,10 +26,6 @@
 #include <sys/types.h>
 #include <zlib.h>
 
-#ifndef OPENSSL_NO_ENGINE
-#include <openssl/engine.h>
-#endif
-
 #if !defined(_MSC_VER)
 #include <unistd.h>
 #endif

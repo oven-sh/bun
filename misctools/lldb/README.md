@@ -4,7 +4,7 @@ This directory contains LLDB pretty printers for various Bun data structures to 
 
 ## Files
 
-- `bun_pretty_printer.py` - Pretty printers for Bun-specific types (bun.String, WTFStringImpl, ZigString, BabyList, etc.)
+- `bun_pretty_printer.py` - Pretty printers for Bun-specific types (bun.String, WTFStringImpl, ZigString, etc.)
 - `lldb_webkit.py` - Pretty printers for WebKit/JavaScriptCore types
 - `init.lldb` - LLDB initialization commands
 

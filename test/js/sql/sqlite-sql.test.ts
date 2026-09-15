@@ -1,6 +1,6 @@
 import { randomUUIDv7, SQL } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
-import { isDebug, tempDir } from "harness";
+import { isDebug, isWindows, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import { rm, stat } from "node:fs/promises";
 import { join } from "node:path";
@@ -489,6 +489,40 @@ describe("Connection & Initialization", () => {
       await sql.close();
       await rm(dir, { recursive: true });
     });
+
+    // A plain path is not a URL, so a "?" in it belongs to the filename, the same as in bun:sqlite.
+    // Only sqlite:, file: and URL inputs carry a ?mode= query string.
+    test("should keep ? in a plain filename", async () => {
+      using dir = tempDir("question-mark-filename", {});
+      const dbPath = path.join(dir, "what?.db");
+
+      await using fromOptions = new SQL({ adapter: "sqlite", filename: dbPath });
+      await using fromArgument = new SQL(dbPath, { adapter: "sqlite" });
+
+      expect(fromOptions.options.filename).toBe(dbPath);
+      expect(fromArgument.options.filename).toBe(dbPath);
+    });
+
+    test.skipIf(isWindows)("should open the file named by a plain filename containing ?", async () => {
+      using dir = tempDir("question-mark-open", {});
+      const dbPath = path.join(dir, "what?.db");
+
+      {
+        await using sql = new SQL({ adapter: "sqlite", filename: dbPath });
+        await sql`CREATE TABLE test (id INTEGER)`;
+        await sql`INSERT INTO test VALUES (1)`;
+      }
+
+      expect(existsSync(dbPath)).toBe(true);
+      expect(existsSync(path.join(dir, "what"))).toBe(false);
+
+      // In URL form the "?" has to be percent-encoded, and the query string is still honored.
+      await using sql = new SQL({ adapter: "sqlite", filename: `${Bun.pathToFileURL(dbPath).href}?mode=ro` });
+      expect(sql.options.filename).toBe(dbPath);
+      expect(sql.options.readonly).toBe(true);
+      const rows = await sql`SELECT id FROM test`;
+      expect(rows).toEqual([{ id: 1 }]);
+    });
   });
 
   describe("Path Handling", () => {
@@ -681,6 +715,58 @@ describe("Connection & Initialization", () => {
 
       await sql.close();
       await rm(dir, { recursive: true });
+    });
+
+    test("should open options.url when adapter is sqlite", async () => {
+      using dir = tempDir("url-with-adapter", {});
+      const dbPath = path.join(dir, "url.db");
+      const options = { adapter: "sqlite" as const, url: `sqlite://${dbPath}` };
+
+      {
+        await using sql = new SQL(options);
+        expect(sql.options.filename).toBe(dbPath);
+        await sql`CREATE TABLE test (id INTEGER)`;
+        await sql`INSERT INTO test VALUES (1)`;
+      }
+
+      expect(existsSync(dbPath)).toBe(true);
+
+      await using sql = new SQL(options);
+      const rows = await sql`SELECT id FROM test`;
+      expect(rows).toEqual([{ id: 1 }]);
+    });
+
+    test("should accept the same url shapes with adapter: sqlite as without it", async () => {
+      using dir = tempDir("url-shapes-with-adapter", {});
+      const dbPath = path.join(dir, "shapes.db");
+
+      const urls = [`sqlite://${dbPath}`, Bun.pathToFileURL(dbPath), dbPath];
+      const filenames: unknown[] = [];
+      for (const url of urls) {
+        const options = { adapter: "sqlite" as const, url };
+        await using sql = new SQL(options);
+        filenames.push(sql.options.filename);
+      }
+      expect(filenames).toEqual([dbPath, dbPath, dbPath]);
+
+      const readonlyOptions = { adapter: "sqlite" as const, url: `sqlite://${dbPath}?mode=ro` };
+      await using readonly = new SQL(readonlyOptions);
+      expect(readonly.options.filename).toBe(dbPath);
+      expect(readonly.options.readonly).toBe(true);
+    });
+
+    test("should prefer options.filename over options.url", async () => {
+      using dir = tempDir("filename-over-url", {});
+      const filenamePath = path.join(dir, "filename.db");
+      const urlPath = path.join(dir, "url.db");
+
+      const options = { adapter: "sqlite" as const, filename: filenamePath, url: `sqlite://${urlPath}` };
+      await using sql = new SQL(options);
+      expect(sql.options.filename).toBe(filenamePath);
+
+      await sql`CREATE TABLE test (id INTEGER)`;
+      expect(existsSync(filenamePath)).toBe(true);
+      expect(existsSync(urlPath)).toBe(false);
     });
   });
 

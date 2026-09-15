@@ -1510,6 +1510,13 @@ function parseDefinitelySqliteUrl(value: string | URL | null): string | null {
   return null;
 }
 
+function hasSqliteProtocol(str: string): boolean {
+  for (const { prefix } of sqliteProtocols) {
+    if (str.startsWith(prefix)) return true;
+  }
+  return false;
+}
+
 function parseSQLiteOptions(
   filenameOrUrl: string | URL | null | undefined,
   options: Bun.SQL.__internal.OptionsWithDefinedAdapter,
@@ -1521,24 +1528,16 @@ function parseSQLiteOptions(
     filename: ":memory:",
   };
 
-  let filename = filenameOrUrl || ":memory:";
-  let originalUrl = filename; // Keep the original URL for query parsing
-
-  if (filename instanceof URL) {
-    originalUrl = filename.toString();
-    filename = filename.toString();
-  }
+  let filename = filenameOrUrl instanceof URL ? filenameOrUrl.toString() : filenameOrUrl || ":memory:";
 
   let queryString: string | null = null;
-  // Parse query string from the original URL before processing
-  if (typeof originalUrl === "string") {
-    const queryIndex = originalUrl.indexOf("?");
+  // Only a URL carries a query string. A plain path is passed to SQLite as-is,
+  // so "what?.db" opens the file named "what?.db" just like bun:sqlite does.
+  if (filenameOrUrl instanceof URL || hasSqliteProtocol(filename)) {
+    const queryIndex = filename.indexOf("?");
     if (queryIndex !== -1) {
-      queryString = originalUrl.slice(queryIndex + 1);
-      // Strip query from filename for processing
-      if (typeof filename === "string") {
-        filename = filename.slice(0, queryIndex);
-      }
+      queryString = filename.slice(queryIndex + 1);
+      filename = filename.slice(0, queryIndex);
     }
   }
 
@@ -1691,21 +1690,17 @@ function parseConnectionDetailsFromOptionsOrEnvironment(
 
   let optionsFilename;
   let optionsUrl;
-  if (options.adapter === "sqlite") {
-    // SQLite adapter - only check filename (not url)
-    if ("filename" in options && (optionsFilename = options.filename)) {
-      resolvedUrl = optionsFilename;
-    }
-  } else if (!options.adapter) {
-    // Unknown adapter - check both, filename first (more specific)
-    if ("filename" in options && (optionsFilename = options.filename)) {
-      resolvedUrl = optionsFilename;
-    } else if ("url" in options && (optionsUrl = options.url)) {
+  if (options.adapter && options.adapter !== "sqlite") {
+    // Known non-SQLite adapter - only check url (not filename)
+    if ("url" in options && (optionsUrl = options.url)) {
       resolvedUrl = optionsUrl;
     }
   } else {
-    // Known non-SQLite adapter - only check url (not filename)
-    if ("url" in options && (optionsUrl = options.url)) {
+    // SQLite or unknown adapter - check both, filename first (more specific).
+    // { adapter: "sqlite", url } must open the same database that { url } alone does.
+    if ("filename" in options && (optionsFilename = options.filename)) {
+      resolvedUrl = optionsFilename;
+    } else if ("url" in options && (optionsUrl = options.url)) {
       resolvedUrl = optionsUrl;
     }
   }

@@ -245,20 +245,6 @@ pub(super) fn lower_jsx_call(
             callee == Some(JsxImportKind::Jsxs)
         };
 
-        // `key` was hoisted out of the props object into args[2] by the visit
-        // pass. Lower it BEFORE children so instruction order matches JSX
-        // source order (attributes precede children) — upstream build_hir.rs
-        // lowers opening_element.attributes before children.
-        if let Some(key_arg) = args.get(2) {
-            if !matches!(key_arg.data, ExprData::EUndefined(_)) {
-                let place = lower_expression_to_temporary(builder, key_arg)?;
-                props.push(JsxAttribute::Attribute {
-                    name: StoreStr::new(b"key"),
-                    place,
-                });
-            }
-        }
-
         let last_index = obj.properties.len().saturating_sub(1);
         for (index, prop) in obj.properties.iter().enumerate() {
             if matches!(prop.kind, G::PropertyKind::Spread) {
@@ -302,6 +288,19 @@ pub(super) fn lower_jsx_call(
 
             let place = lower_expression_to_temporary(builder, value_expr)?;
             props.push(JsxAttribute::Attribute { name, place });
+        }
+        // `key` is args[2]: it runs after the props and children. It stays ahead of any spread.
+        if let Some(key_arg) = args.get(2) {
+            if !matches!(key_arg.data, ExprData::EUndefined(_)) {
+                let place = lower_expression_to_temporary(builder, key_arg)?;
+                props.insert(
+                    0,
+                    JsxAttribute::Attribute {
+                        name: StoreStr::new(b"key"),
+                        place,
+                    },
+                );
+            }
         }
         // args[3..6] (isStatic, source, self) are dev-only metadata; ignore.
     } else {

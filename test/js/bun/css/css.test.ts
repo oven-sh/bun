@@ -2,6 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
+import { cssInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "path";
@@ -5919,6 +5920,98 @@ describe("css tests", () => {
         Token::SquareBracketBlock,
       ))`,
     );
+  });
+
+  describe("nesting: where a `&` lands in the lowered selector", () => {
+    // Chrome 95 has no CSS nesting, so the printer replaces every `&` with the parent selector.
+    const targets = { chrome: 95 << 16 };
+    function lowered_nesting_test(source: string, expected: string) {
+      test(source, () => {
+        const output = cssInternals.minifyTest(source, "", targets);
+        expect(output).toBe(expected);
+        // The output has no `&` left. It must parse again.
+        cssInternals.minifyTest(output, "", targets);
+      });
+    }
+
+    describe("simple selectors come before the `&`", () => {
+      // The parent selector leads with a `&` that stands for a type selector.
+      lowered_nesting_test("div { &:hover { .x& { color: red } } }", ".x:is(div):hover{color:red}");
+      lowered_nesting_test("div { &.m { .x& { color: red } } }", ".x:is(div).m{color:red}");
+      lowered_nesting_test("div { &.a { &.b { .x& { color: red } } } }", ".x:is(div).a.b{color:red}");
+      lowered_nesting_test("div { &:hover { &* { color: red } } }", "*:is(div):hover{color:red}");
+      lowered_nesting_test("div { &:hover { &a { color: red } } }", "a:is(div):hover{color:red}");
+
+      // The parent selector leads with a `&` that stands for a selector with a combinator.
+      lowered_nesting_test(".a .b { &:hover { .x& { color: red } } }", ".x:is(.a .b):hover{color:red}");
+
+      // `&div` prints as `div&`, so the parent selector starts with a type selector.
+      lowered_nesting_test(".a { &div { .x& { color: red } } }", ".x:is(div.a){color:red}");
+
+      // An unwrapped `:is()` puts its argument after `.x`.
+      lowered_nesting_test("div { .x:is(&) { color: red } }", ".x:is(div){color:red}");
+      lowered_nesting_test(".a .b { .x:is(&) { color: red } }", ".x:is(.a .b){color:red}");
+
+      // One compound selector with no type selector needs no `:is()`.
+      lowered_nesting_test(".a { &.b { .x& { color: red } } }", ".x.a.b{color:red}");
+      lowered_nesting_test(".a { .x:is(&) { color: red } }", ".x.a{color:red}");
+    });
+
+    describe("a combinator comes before the `&`", () => {
+      // A selector with a combinator needs `:is()`.
+      lowered_nesting_test(".a .b { .dark & { color: red } }", ".dark :is(.a .b){color:red}");
+      lowered_nesting_test(".a .b { &:hover { .dark & { color: red } } }", ".dark :is(.a .b):hover{color:red}");
+      lowered_nesting_test("ul { li { &:hover { .dark & { color: red } } } }", ".dark :is(ul li):hover{color:red}");
+      lowered_nesting_test(".a .b { &:hover { & + & { color: red } } }", ".a .b:hover+:is(.a .b):hover{color:red}");
+
+      // One compound selector needs no `:is()`, with or without a type selector.
+      lowered_nesting_test(".a { &:hover { .dark & { color: red } } }", ".dark .a:hover{color:red}");
+      lowered_nesting_test("a { &:hover { .dark & { color: red } } }", ".dark a:hover{color:red}");
+      lowered_nesting_test("a { .dark & { color: red } }", ".dark a{color:red}");
+      lowered_nesting_test("div { & + & { color: red } }", "div+div{color:red}");
+
+      // `&div` prints as `div&` in every compound selector.
+      lowered_nesting_test("span { .dark &div { color: red } }", ".dark div:is(span){color:red}");
+      lowered_nesting_test(".a { .dark &div { color: red } }", ".dark div.a{color:red}");
+      lowered_nesting_test(
+        "@namespace svg url(http://www.w3.org/2000/svg); .a { &svg|b { color: red } }",
+        '@namespace svg "http://www.w3.org/2000/svg";svg|b.a{color:red}',
+      );
+
+      // A relative selector follows an implicit `:scope` and a combinator.
+      // https://github.com/parcel-bundler/lightningcss/issues/1073
+      lowered_nesting_test(
+        ".container .style-previous { :has(+ &) { color: red } }",
+        ":has(+:is(.container .style-previous)){color:red}",
+      );
+      lowered_nesting_test(".a .b { :has(~ &) { color: red } }", ":has(~:is(.a .b)){color:red}");
+      lowered_nesting_test(".a .b { :has(&.x) { color: red } }", ":has(:is(.a .b).x){color:red}");
+      lowered_nesting_test(".a { :has(> &.x) { color: red } }", ":has(>.a.x){color:red}");
+    });
+
+    describe("nothing comes before the `&`", () => {
+      lowered_nesting_test("div { &:hover { &.y { color: red } } }", "div:hover.y{color:red}");
+      lowered_nesting_test(".a .b { &:hover { & .c { color: red } } }", ".a .b:hover .c{color:red}");
+      lowered_nesting_test("div { :is(&):hover { color: red } }", "div:hover{color:red}");
+      lowered_nesting_test(".a .b { *& { color: red } }", ".a .b{color:red}");
+    });
+
+    // `:is()` cannot hold a pseudo-element, so these parent selectors print as written.
+    describe("the parent selector has a pseudo-element", () => {
+      lowered_nesting_test(".a::before { &:hover { .dark & { color: red } } }", ".dark .a:before:hover{color:red}");
+      lowered_nesting_test(
+        ".scroll::-webkit-scrollbar-thumb { &:hover { .dark & { color: red } } }",
+        ".dark .scroll::-webkit-scrollbar-thumb:hover{color:red}",
+      );
+      lowered_nesting_test(
+        ".host::part(thumb) { &:hover { .dark & { color: red } } }",
+        ".dark .host::part(thumb):hover{color:red}",
+      );
+      lowered_nesting_test(
+        "input::file-selector-button { &:hover { .dark & { color: red } } }",
+        ".dark input::file-selector-button:hover{color:red}",
+      );
+    });
   });
 
   describe("media", () => {

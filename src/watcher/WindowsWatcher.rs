@@ -22,6 +22,9 @@ pub struct WindowsWatcher {
     pub(crate) watcher: DirWatcher,
     pub(crate) buf: PathBuffer,
     pub(crate) base_idx: usize,
+    /// Set by a zero byte completion. Cleared once no read completes within
+    /// `Timeout::Quiet` and the resync is dispatched.
+    pub(crate) pending_resync: bool,
 }
 
 impl Default for WindowsWatcher {
@@ -35,6 +38,7 @@ impl Default for WindowsWatcher {
             },
             buf: PathBuffer::ZEROED,
             base_idx: 0,
+            pending_resync: false,
         }
     }
 }
@@ -293,7 +297,7 @@ impl WindowsWatcher {
     }
 
     /// wait until new events are available
-    fn next(&mut self, timeout: Timeout) -> bun_sys::Result<Option<EventIterator>> {
+    fn next(&mut self, timeout: Timeout) -> bun_sys::Result<Next> {
         if let Err(err) = self.watcher.prepare() {
             bun_core::scoped_log!(watcher, "prepare() returned error");
             return Err(err);
@@ -317,7 +321,7 @@ impl WindowsWatcher {
                 let err = w::Win32Error::get();
                 // `WAIT_TIMEOUT` (258) — not yet a named const on `bun_sys::windows::Win32Error`.
                 if err == w::Win32Error::TIMEOUT || err == w::Win32Error(258) {
-                    return Ok(None);
+                    return Ok(Next::Timeout);
                 } else {
                     bun_core::scoped_log!(watcher, "GetQueuedCompletionStatus failed: {}", err.0);
                     return Err(bun_sys::Error::from_win32(err, bun_sys::Tag::watch));
@@ -335,20 +339,18 @@ impl WindowsWatcher {
                     // signal: stop() closes the dir handle, which surfaces as rc==0 /
                     // ERROR_OPERATION_ABORTED above, never as rc!=0 && nbytes==0. Per
                     // MSDN, the function returns zero bytes when its internal buffer
-                    // overflows. Drop the lost events, re-arm, and keep watching so
-                    // --hot picks up the next change. Returning ESHUTDOWN here kills
-                    // the watcher thread and the --hot child silently exits
-                    // (hot.test.ts "should work with sourcemap generation" flake).
+                    // overflows. The lost records are unrecoverable, so the caller
+                    // treats every watched path as changed. The next `next()` call
+                    // re-arms the read. Returning ESHUTDOWN here kills the watcher
+                    // thread and the --hot child silently exits (hot.test.ts "should
+                    // work with sourcemap generation" flake).
                     bun_core::scoped_log!(
                         watcher,
-                        "ReadDirectoryChangesW buffer overflow (nbytes==0); re-arming"
+                        "ReadDirectoryChangesW buffer overflow (nbytes==0); resyncing"
                     );
-                    if let Err(err) = self.watcher.prepare() {
-                        return Err(err);
-                    }
-                    continue;
+                    return Ok(Next::Overflow);
                 }
-                return Ok(Some(EventIterator {
+                return Ok(Next::Events(EventIterator {
                     watcher: BackRef::new(&self.watcher),
                     offset: 0,
                     has_next: true,
@@ -381,6 +383,20 @@ impl WindowsWatcher {
 pub(crate) enum Timeout {
     Infinite = w::INFINITE,
     None = 0,
+    /// After an overflow: long enough that a burst which still overflows the
+    /// kernel buffer always completes a read within it, so the resync waits
+    /// for the burst to end instead of reloading into it. The longest gap
+    /// between two completions seen inside such a burst was 123 ms.
+    Quiet = 250,
+}
+
+/// Outcome of one `WindowsWatcher::next` wait.
+enum Next {
+    Events(EventIterator),
+    Timeout,
+    /// The kernel discarded its change buffer (`ReadDirectoryChangesW`
+    /// completed with zero bytes). Which paths changed is unknown.
+    Overflow,
 }
 
 pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
@@ -389,18 +405,35 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
     let base_idx = this.platform.base_idx;
 
     let mut event_id: usize = 0;
+    let mut quiet = false;
 
     // first wait has infinite timeout - we're waiting for the next event and don't want to spin
-    let mut timeout = Timeout::Infinite;
+    // After an overflow every wait is a short one instead: the resync below must not wait for
+    // the next change, and it must not run while records still arrive faster than this thread
+    // drains them. A reload that starts inside such a burst lands in the next overflow.
+    let mut timeout = if this.platform.pending_resync {
+        Timeout::Quiet
+    } else {
+        Timeout::Infinite
+    };
     loop {
         let mut iter = match this.platform.next(timeout)? {
-            Some(it) => it,
-            None => break,
+            Next::Events(it) => it,
+            Next::Timeout => {
+                quiet = true;
+                break;
+            }
+            Next::Overflow => {
+                this.platform.pending_resync = true;
+                break;
+            }
         };
         // after the first wait, we want to coalesce further events but don't want to wait for them
         // NOTE: using a 1ms timeout would be ideal, but that actually makes the thread wait for at least 10ms more than it should
         // Instead we use a 0ms timeout, which may not do as much coalescing but is more responsive.
-        timeout = Timeout::None;
+        if !this.platform.pending_resync {
+            timeout = Timeout::None;
+        }
         bun_core::scoped_log!(
             watcher,
             "number of watched items: {}",
@@ -484,6 +517,11 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
     // Process any remaining events in the final batch
     if event_id > 0 {
         process_watch_event_batch(this, event_id)?;
+    }
+
+    if quiet && this.platform.pending_resync {
+        this.platform.pending_resync = false;
+        this.resync_after_overflow();
     }
 
     Ok(())

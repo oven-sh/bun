@@ -143,6 +143,9 @@ static String icuParsedHostToUnicode(const String& host)
         result.append('.');
         labelStart = labelEnd + 1;
     }
+    // The decoded labels can add up to more than String::MaxLength.
+    if (result.hasOverflowed()) [[unlikely]]
+        return {};
     return result.toString();
 }
 

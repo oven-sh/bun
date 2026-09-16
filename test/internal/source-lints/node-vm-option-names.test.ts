@@ -8,20 +8,19 @@ import path from "node:path";
 // from NodeVMOptionNames (src/jsc/bindings/NodeVMOptionNames.h), which atomizes it once per VM, or from
 // vm.propertyNames or builtinNames(vm).
 const optionParsers = ["src/jsc/bindings/NodeVM.cpp", "src/jsc/bindings/NodeVMScript.cpp"];
-const atomizesOnEveryLookup = /getIfPropertyExists\s*\([^;]*Identifier::fromString\s*\(/;
+const atomizesOnEveryLookup = /getIfPropertyExists\s*\([^;{}]*?Identifier::fromString\s*\(/g;
 
 test("node:vm option parsers do not atomize an option name on every lookup", () => {
   const repoRoot = path.resolve(import.meta.dir, "..", "..", "..");
   const violations: string[] = [];
   let lookups = 0;
   for (const file of optionParsers) {
-    const lines = readFileSync(path.join(repoRoot, file), "utf8").split("\n");
-    lines.forEach((line, index) => {
-      const commentStart = line.indexOf("//");
-      const code = commentStart === -1 ? line : line.slice(0, commentStart);
-      if (code.includes("getIfPropertyExists(")) lookups++;
-      if (atomizesOnEveryLookup.test(code)) violations.push(`${file}:${index + 1}`);
-    });
+    // The whole file, so that a call broken over several lines is seen. Line comments go, newlines stay.
+    const code = readFileSync(path.join(repoRoot, file), "utf8").replace(/\/\/.*$/gm, "");
+    lookups += code.match(/getIfPropertyExists\s*\(/g)?.length ?? 0;
+    for (const match of code.matchAll(atomizesOnEveryLookup)) {
+      violations.push(`${file}:${code.slice(0, match.index).split("\n").length}`);
+    }
   }
   // The parsers have about thirty lookups. None at all means they moved and this lint checks nothing.
   expect(lookups).toBeGreaterThan(10);

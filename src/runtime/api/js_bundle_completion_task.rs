@@ -212,17 +212,14 @@ impl JSBundleCompletionTask {
         let _ = WorkPool::get();
 
         // Out on the bundle thread from here until it posts the completion: it
-        // reads this VM's env loader and the plugin cell, so the VM cancels it at
-        // teardown and waits for it (`bundle_ticket`). The VM's, not the calling
-        // realm's: a live VM cannot cancel a build (hop tasks it already queued
-        // here would still be dispatched against the finished pass). One that
-        // outlives its `bun test --isolate` file runs to the end and its completion
-        // is released unrun (`Taskable::context`), as cancelled.
+        // reads this VM's env loader and the plugin cell, so it is cancelled and
+        // waited for (`bundle_ticket`) when the realm's context stops: at teardown,
+        // and at a `bun test --isolate` file swap.
         // SAFETY: `completion` is the live heap allocation; it leaves its
         // context in `on_complete_anytask`.
         unsafe {
             let vm = (*completion).global_this.bun_vm();
-            jsc::AbortHandle::arm_owner(completion, &vm.vm_context);
+            jsc::AbortHandle::arm_owner(completion, vm.root_context());
             if let Some(caller) = vm.as_graph_context(vm.context_of((*completion).context)) {
                 jsc::AbortHandle::arm_owner(&raw mut (*completion).caller, caller);
             }

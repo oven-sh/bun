@@ -143,7 +143,7 @@ const _: () = assert!(core::mem::size_of::<Task>() == 2 * core::mem::size_of::<u
 pub struct ContextId(u32);
 
 impl ContextId {
-    /// No script's context. Never handed out to one: the VM's own context has it.
+    /// No script's context. Never handed out to one.
     pub const NONE: ContextId = ContextId(0);
 
     #[inline]

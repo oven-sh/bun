@@ -360,9 +360,6 @@ pub struct VirtualMachine {
     /// Owns what script running in this VM's global opens. `bun test --isolate`
     /// stops it and renews its identity at every file swap.
     pub(crate) root_context: crate::ScriptExecutionContext,
-    /// Owns what belongs to the VM rather than to the realm script runs in:
-    /// stopped only by teardown.
-    pub vm_context: crate::ScriptExecutionContext,
     /// What native code continues on behalf of a context that is gone runs in: always stopped,
     /// so what it arms is closed at once.
     pub(crate) dead_context: crate::ScriptExecutionContext,
@@ -1095,8 +1092,7 @@ impl VirtualMachine {
         &self,
         context: &'a crate::ScriptExecutionContext,
     ) -> Option<&'a crate::ScriptExecutionContext> {
-        (context.id() != self.root_context.id() && context.id() != self.vm_context.id())
-            .then_some(context)
+        (context.id() != self.root_context.id()).then_some(context)
     }
 
     /// The context of the realm's own script: what belongs to the realm rather
@@ -1155,7 +1151,7 @@ impl VirtualMachine {
 
     /// The context `id` names: the realm's, a `Bun.ModuleGraph`'s, or the dead one once that graph's is freed.
     pub fn context_of(&self, id: crate::ContextId) -> &crate::ScriptExecutionContext {
-        if id == self.root_context.id() || id == self.vm_context.id() {
+        if id == self.root_context.id() {
             return &self.root_context;
         }
         self.graph_context(id).unwrap_or(&self.dead_context)
@@ -1163,10 +1159,7 @@ impl VirtualMachine {
 
     /// The `Bun.ModuleGraph` context `id` names, until it is freed.
     pub fn graph_context(&self, id: crate::ContextId) -> Option<&crate::ScriptExecutionContext> {
-        if self.graph_contexts.count() == 0
-            || id == self.root_context.id()
-            || id == self.vm_context.id()
-        {
+        if self.graph_contexts.count() == 0 || id == self.root_context.id() {
             return None;
         }
         // SAFETY: registered ⇒ not freed.
@@ -1179,7 +1172,6 @@ impl VirtualMachine {
     #[inline]
     pub fn is_context_live(&self, id: crate::ContextId) -> bool {
         id == self.root_context.id()
-            || id == self.vm_context.id()
             || self
                 .graph_context(id)
                 .is_some_and(|context| !context.is_stopped())
@@ -1201,7 +1193,7 @@ impl VirtualMachine {
             entered: self.global.cast_const(),
             previous_scope: self.innermost_scope.replace(Some(context)),
         };
-        if context == self.root_context.id() || context == self.vm_context.id() {
+        if context == self.root_context.id() {
             if self.graph_contexts.count() != 0 && self.script_allowed() {
                 scope.previous = Bun__ModuleGraph__enterRootContext(self.global());
             }
@@ -1257,7 +1249,7 @@ impl VirtualMachine {
         context: &crate::ScriptExecutionContext,
     ) -> &mut crate::rare_data::SocketGroups {
         let id = context.id();
-        if id == self.root_context.id() || id == self.vm_context.id() {
+        if id == self.root_context.id() {
             return &mut self.rare_data().socket_groups;
         }
         // Script of a stopped context (the dead one is stopped from the start) is still opening
@@ -1316,9 +1308,6 @@ impl VirtualMachine {
     /// Every `Bun.ModuleGraph` context of the realm goes with it.
     pub fn stop_context_handles(&mut self, reason: crate::StopReason) -> SweepResult {
         let mut result = self.root_context.stop_handles(reason);
-        if reason == crate::StopReason::VmTeardown {
-            result = result.and(self.vm_context.stop_handles(reason));
-        }
         result = result.and(self.dead_context.stop_handles(reason));
         // By index: an owner's callback may create or free a context.
         let mut i = 0;
@@ -1341,7 +1330,6 @@ impl VirtualMachine {
         let id = loop {
             let id = self.context_ids.next();
             if id != self.root_context.id()
-                && id != self.vm_context.id()
                 && id != self.dead_context.id()
                 && !self.graph_contexts.contains(&id)
             {
@@ -3166,7 +3154,6 @@ impl VirtualMachine {
             addr_of_mut!((*vm).root_context).write(crate::ScriptExecutionContext::root(
                 (*vm).context_ids.next(),
             ));
-            addr_of_mut!((*vm).vm_context).write(Default::default());
             addr_of_mut!((*vm).graph_contexts).write(Default::default());
             addr_of_mut!((*vm).innermost_scope).write(Cell::new(None));
             addr_of_mut!((*vm).dead_context).write(crate::ScriptExecutionContext::dead(

@@ -70,6 +70,16 @@ pub(crate) fn run_as_coordinator(
     // env map once per worker after .put() — appending after the fact would
     // create duplicate entries when the parent already has the variable set,
     // and POSIX getenv() returns the first match.
+    //
+    // A worker gets `--watch` through BUN_OPTIONS when this process does. Mark
+    // it as a watcher child, as `Bun.spawn` does for a child with fd 3 and up:
+    // a watcher manager does not forward the worker's channel (#42925).
+    #[cfg(windows)]
+    let mark_workers = bun_sys::windows::is_watcher_child();
+    #[cfg(windows)]
+    if mark_workers {
+        let _ = env.map.put(b"_BUN_WATCHER_CHILD", b"1");
+    }
     let mut envps: Vec<bun_dotenv::NullDelimitedEnvMap> = Vec::with_capacity(k as usize);
     for i in 0..k {
         let mut id = Vec::new();
@@ -77,6 +87,10 @@ pub(crate) fn run_as_coordinator(
         let _ = env.map.put(b"JEST_WORKER_ID", &id);
         let _ = env.map.put(b"BUN_TEST_WORKER_ID", &id);
         envps.push(env.map.create_null_delimited_env_map()?);
+    }
+    #[cfg(windows)]
+    if mark_workers {
+        env.map.remove(b"_BUN_WATCHER_CHILD");
     }
     let argv = build_worker_argv(ctx)?;
 

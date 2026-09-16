@@ -953,7 +953,7 @@ fn spawn_maybe_sync(
             // And then one fd is assigned specifically and only for IPC. If the user dont specify it, we add one (default: 3).
             //
             // When Bun.spawn() is given an `.ipc` callback, it enables IPC as follows:
-            if let Err(_err) = env_array.try_reserve(4) {
+            if let Err(_err) = env_array.try_reserve(3) {
                 return Err(global_this.throw_out_of_memory());
             }
             let ipc_fd: i32 = 'brk: {
@@ -993,17 +993,20 @@ fn spawn_maybe_sync(
                 IPC::Mode::Json => c"NODE_CHANNEL_SERIALIZATION_MODE=json".as_ptr(),
                 IPC::Mode::Advanced => c"NODE_CHANNEL_SERIALIZATION_MODE=advanced".as_ptr(),
             });
-
-            // `fork()` passes `process.execArgv`, so this child runs with `--watch`
-            // when this process does. Mark it as a watcher child. It must not
-            // become a watcher manager: the manager does not forward the IPC pipe
-            // (#42925), and a socket sent over IPC is duplicated for the pid of
-            // the direct child.
-            #[cfg(windows)]
-            if bun_sys::windows::is_watcher_child() {
-                env_array.push(c"_BUN_WATCHER_CHILD=1".as_ptr());
-            }
         }
+    }
+
+    // A watcher manager gives the process it spawns stdin, stdout and stderr
+    // only (#42925). A child that gets another handle, such as the IPC channel
+    // of `fork()`, must not become one when it runs with `--watch` (`fork()`
+    // passes `process.execArgv`), so mark it as a watcher child.
+    #[cfg(windows)]
+    if bun_sys::windows::is_watcher_child()
+        && extra_fds
+            .iter()
+            .any(|fd| !matches!(fd, SpawnOptionsStdio::Ignore))
+    {
+        env_array.push(c"_BUN_WATCHER_CHILD=1".as_ptr());
     }
 
     env_array.push(core::ptr::null());

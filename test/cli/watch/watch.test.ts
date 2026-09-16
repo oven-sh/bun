@@ -537,17 +537,17 @@ it("a bun --watch that a script under bun --watch spawns restarts on a file chan
   } finally {
     await killWatcheeTree(waiter, /inner pid (\d+)/);
   }
-}, 30000);
+});
 
 // fork() passes process.execArgv, so the child of a script under `bun --watch`
 // runs with --watch too. On Windows it must not become a watcher manager: the
 // manager does not forward the IPC channel to the process it spawns.
 it("a fork()ed child of a script under bun --watch keeps its IPC channel", async () => {
   using dir = tempDir("watch-fork-ipc", {
-    "parent.cjs": `
-      const { fork } = require("node:child_process");
-      const { join } = require("node:path");
-      const child = fork(join(__dirname, "child.cjs"));
+    "parent.mjs": `
+      import { fork } from "node:child_process";
+      import { join } from "node:path";
+      const child = fork(join(import.meta.dir, "child.mjs"));
       console.log("child pid " + child.pid);
       child.on("message", message => console.log("parent got " + message));
       // Ends the parent too, so the test sees a closed stdout instead of
@@ -557,11 +557,11 @@ it("a fork()ed child of a script under bun --watch keeps its IPC channel", async
         process.exit(1);
       });
     `,
-    "child.cjs": `process.send("hello from child");`,
+    "child.mjs": `process.send("hello from child");`,
   });
 
   watchee = spawn({
-    cmd: [bunExe(), "--watch", "parent.cjs"],
+    cmd: [bunExe(), "--watch", "parent.mjs"],
     cwd: String(dir),
     env: bunEnv,
     stdout: "pipe",
@@ -575,18 +575,36 @@ it("a fork()ed child of a script under bun --watch keeps its IPC channel", async
   } finally {
     await killWatcheeTree(waiter, /child pid (\d+)/);
   }
-}, 30000);
+});
 
-// A `bun test --parallel` worker gets --watch through BUN_OPTIONS. On Windows it
-// must not become a watcher manager: the manager does not forward fd 3, the
-// worker's channel to the coordinator.
-it("bun test --parallel workers run under BUN_OPTIONS=--watch", async () => {
+// Every process under BUN_OPTIONS=--watch runs with --watch. On Windows neither
+// a `bun test --parallel` worker nor a child that a test fork()s may become a
+// watcher manager: the manager forwards neither the worker's channel to the
+// coordinator nor the IPC channel, both fd 3.
+it("bun test --parallel workers and the children they fork() run under BUN_OPTIONS=--watch", async () => {
   const fixture = (name: string) =>
     `import { test, expect } from "bun:test"; test("${name}", () => expect(1).toBe(1));`;
   using dir = tempDir("watch-test-parallel", {
     "a.test.js": fixture("a"),
     "b.test.js": fixture("b"),
-    "c.test.js": fixture("c"),
+    "fork.test.js": `
+      import { test, expect } from "bun:test";
+      import { fork } from "node:child_process";
+      import { join } from "node:path";
+      test("fork", async () => {
+        const child = fork(join(import.meta.dir, "child.mjs"));
+        try {
+          const { promise, resolve, reject } = Promise.withResolvers();
+          child.on("message", resolve);
+          child.on("error", reject);
+          child.on("exit", code => reject(new Error("child exited with code " + code)));
+          expect(await promise).toBe("hello from child");
+        } finally {
+          child.kill("SIGKILL");
+        }
+      });
+    `,
+    "child.mjs": `process.send("hello from child");`,
   });
 
   const proc = spawn({
@@ -608,7 +626,7 @@ it("bun test --parallel workers run under BUN_OPTIONS=--watch", async () => {
   } finally {
     await killWatcheeTree(waiter);
   }
-}, 30000);
+});
 
 // Paths of the files and directories a process holds open. Linux reads
 // /proc, macOS asks lsof (the kernel has no per-process fd listing there).

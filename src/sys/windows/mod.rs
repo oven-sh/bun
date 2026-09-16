@@ -1519,9 +1519,10 @@ static IS_WATCHER_CHILD: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
 /// Records whether `_BUN_WATCHER_CHILD` marks this process, then removes it
-/// from the environment. `spawn_watcher_child` sets it, and so does `Bun.spawn`
-/// in a watcher child for a child with an IPC channel. The variable marks this
-/// process only: a `bun --watch` that inherits it never becomes a watcher
+/// from the environment. `spawn_watcher_child` sets it. A watcher child also
+/// sets it for a child that gets a handle beyond stdin, stdout and stderr
+/// (`Bun.spawn`, the `bun test --parallel` coordinator). The variable marks
+/// this process only: a `bun --watch` that inherits it never becomes a watcher
 /// manager, so its first reload exits with `WATCHER_RELOAD_EXIT` and nothing
 /// respawns it.
 ///

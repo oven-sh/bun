@@ -1501,7 +1501,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             optional_chain = None;
 
             // Each of these tokens are split into a function to conserve
-            // stack space.
+            // stack space. A new arm also belongs in `continues_expression_after_line_break`.
             let continuation = match p.lexer.token {
                 T::TAmpersand => Self::sfx_t_ampersand(p, level, left),
                 T::TAmpersandAmpersandEquals => {
@@ -1608,4 +1608,45 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         Ok(())
     }
+}
+
+/// The arms of the match in `parse_suffix`, minus `++`, `--` and TypeScript `!`, which stop there.
+pub(crate) fn continues_expression_after_line_break(token: T) -> bool {
+    token.is_assign()
+        || matches!(
+            token,
+            T::TDot
+                | T::TQuestionDot
+                | T::TOpenParen
+                | T::TOpenBracket
+                | T::TNoSubstitutionTemplateLiteral
+                | T::TTemplateHead
+                | T::TComma
+                | T::TQuestion
+                | T::TQuestionQuestion
+                | T::TBarBar
+                | T::TAmpersandAmpersand
+                | T::TBar
+                | T::TCaret
+                | T::TAmpersand
+                | T::TEqualsEquals
+                | T::TExclamationEquals
+                | T::TEqualsEqualsEquals
+                | T::TExclamationEqualsEquals
+                | T::TLessThan
+                | T::TGreaterThan
+                | T::TLessThanEquals
+                | T::TGreaterThanEquals
+                | T::TIn
+                | T::TInstanceof
+                | T::TLessThanLessThan
+                | T::TGreaterThanGreaterThan
+                | T::TGreaterThanGreaterThanGreaterThan
+                | T::TPlus
+                | T::TMinus
+                | T::TAsterisk
+                | T::TSlash
+                | T::TPercent
+                | T::TAsteriskAsterisk
+        )
 }

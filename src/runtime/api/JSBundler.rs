@@ -2004,6 +2004,41 @@ pub(crate) fn js_worker_live_count(
     ))
 }
 
+/// `bun:internal-for-testing`: the use directive the bundler finds in a source, or null.
+#[bun_jsc::host_fn]
+pub(crate) fn js_scan_use_directive(
+    global: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    use bun_ast::UseDirective;
+    use bun_js_parser::scan::scan_use_directive::scan_use_directive;
+
+    let source = callframe.argument(0);
+    let arena = bun_alloc::Arena::new();
+    let found = match source.as_array_buffer(global) {
+        Some(bytes) => scan_use_directive(bytes.byte_slice(), &arena),
+        None => scan_use_directive(&source.to_utf8(global)?, &arena),
+    };
+    let (directive, range) = match found {
+        Some((UseDirective::Client, range)) => ("client", range),
+        Some((UseDirective::Server, range)) => ("server", range),
+        Some((UseDirective::None, _)) | None => return Ok(JSValue::NULL),
+    };
+    let found = JSValue::create_empty_object(global, 3);
+    found.put(
+        global,
+        b"directive",
+        BunString::static_(directive).to_js(global)?,
+    );
+    found.put(
+        global,
+        b"start",
+        JSValue::js_number_from_int32(range.loc.start),
+    );
+    found.put(global, b"length", JSValue::js_number_from_int32(range.len));
+    Ok(found)
+}
+
 /// `jsc.API.JSBundler.Plugin` — re-exported for `crate::bake` (`SplitBundlerOptions.plugin`).
 pub(crate) use js_bundler::Plugin;
 pub(crate) use js_bundler::PluginJscExt;

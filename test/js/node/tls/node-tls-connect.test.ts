@@ -1993,3 +1993,249 @@ describe.each([
     });
   });
 });
+
+// node re-emits the wrapped socket's 'connect' on the TLSSocket, and whatever a
+// connecting socket defers (a parked write, end()) resumes from that event:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L964-L973
+// The sequences asserted below are the ones node v26.3.0 produces.
+describe("tls.connect({ socket }) over a net.Socket that is still connecting", () => {
+  // A TLS server that reports everything the client sent once the client ends.
+  async function tlsSink() {
+    const received = Promise.withResolvers<string>();
+    const server = tls.createServer(COMMON_CERT_, socket => {
+      let data = "";
+      socket.on("error", received.reject);
+      socket.on("data", chunk => (data += chunk));
+      socket.on("end", () => {
+        received.resolve(data);
+        socket.end();
+      });
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    return {
+      port: (server.address() as AddressInfo).port,
+      received: received.promise,
+      [Symbol.asyncDispose]: () => server[Symbol.asyncDispose](),
+    };
+  }
+
+  it("emits 'connect' when the wrapped socket connects, and a write from that listener is delivered", async () => {
+    await using sink = await tlsSink();
+    const raw = net.connect(sink.port, "127.0.0.1");
+    const client = tls.connect({ socket: raw, rejectUnauthorized: false });
+    const log = [`wrapped connecting=${client.connecting}`];
+    // Added after the wrap, so it runs after the TLSSocket's 'connect': the
+    // event is re-emitted inside the wrapped socket's own emit, not later.
+    raw.on("connect", () => log.push("wrapped socket's later 'connect' listener"));
+    client.on("connect", () => {
+      log.push(
+        `connect connecting=${client.connecting} pending=${client.pending} secureConnecting=${client.secureConnecting}`,
+      );
+      client.write("from connect;");
+    });
+    // Only 'connect' is re-emitted: node has no 'ready' on this socket.
+    client.on("ready", () => log.push("ready"));
+    client.on("secureConnect", () => {
+      log.push("secureConnect");
+      client.end("from secureConnect;");
+    });
+
+    const [received] = await Promise.all([sink.received, once(client, "close")]);
+
+    expect({ log, received }).toEqual({
+      log: [
+        "wrapped connecting=true",
+        "connect connecting=false pending=false secureConnecting=true",
+        "wrapped socket's later 'connect' listener",
+        "secureConnect",
+      ],
+      received: "from connect;from secureConnect;",
+    });
+  });
+
+  it("sends a write issued before the wrapped socket connects once, ahead of a write from 'connect'", async () => {
+    await using sink = await tlsSink();
+    const raw = net.connect(sink.port, "127.0.0.1");
+    const client = tls.connect({ socket: raw, rejectUnauthorized: false });
+    const callbacks: string[] = [];
+    client.write("before connect;", () => callbacks.push("before connect"));
+    client.on("connect", () => client.write("from connect;", () => callbacks.push("from connect")));
+    client.on("secureConnect", () => client.end());
+
+    const [received] = await Promise.all([sink.received, once(client, "close")]);
+
+    expect({ received, callbacks }).toEqual({
+      received: "before connect;from connect;",
+      callbacks: ["before connect", "from connect"],
+    });
+  });
+
+  // The wrapped socket sends a plaintext preamble first (a PROXY protocol
+  // header, say). That parked write makes the TLS engine run over the stream
+  // instead of taking over the fd, from either of two places.
+  it.each([
+    [
+      "a preamble written before the wrap",
+      (port: number) => {
+        const raw = net.connect(port, "127.0.0.1");
+        raw.write("preamble;");
+        return { raw, client: tls.connect({ socket: raw, rejectUnauthorized: false }) };
+      },
+    ],
+    [
+      "a socket wrapped before it dials",
+      (port: number) => {
+        const raw = new net.Socket();
+        const client = tls.connect({ socket: raw, rejectUnauthorized: false });
+        raw.connect(port, "127.0.0.1");
+        raw.write("preamble;");
+        return { raw, client };
+      },
+    ],
+  ])("also when the TLS engine runs over the stream: %s", async (_shape, dial) => {
+    // Reads the preamble, then speaks TLS on the same connection.
+    const received = Promise.withResolvers<{ preamble: string; data: string }>();
+    await using server = net.createServer(socket => {
+      socket.once("readable", () => {
+        const preamble = String(socket.read(9));
+        const secure = new tls.TLSSocket(socket, { isServer: true, ...COMMON_CERT_ });
+        let data = "";
+        secure.on("error", received.reject);
+        secure.on("data", chunk => (data += chunk));
+        secure.on("end", () => {
+          received.resolve({ preamble, data });
+          secure.end();
+        });
+      });
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { client } = dial((server.address() as AddressInfo).port);
+    const log = [`wrapped connecting=${client.connecting}`];
+    client.write("before connect;");
+    client.on("connect", () => {
+      log.push(`connect connecting=${client.connecting} pending=${client.pending}`);
+      client.write("from connect;");
+    });
+    client.on("secureConnect", () => {
+      log.push("secureConnect");
+      client.end();
+    });
+
+    const [fromClient] = await Promise.all([received.promise, once(client, "close")]);
+
+    expect({ log, fromClient }).toEqual({
+      log: ["wrapped connecting=true", "connect connecting=false pending=false", "secureConnect"],
+      fromClient: { preamble: "preamble;", data: "before connect;from connect;" },
+    });
+  });
+
+  it("end() issued before the wrapped socket connects waits for 'connect', then sends the FIN", async () => {
+    // The peer never answers the ClientHello, so the handshake cannot settle
+    // first, and allowHalfOpen keeps it from closing when the FIN arrives.
+    const sawFin = Promise.withResolvers<void>();
+    const accepted: net.Socket[] = [];
+    await using peer = net.createServer({ allowHalfOpen: true }, socket => {
+      accepted.push(socket);
+      socket.on("error", () => {});
+      socket.on("data", () => {});
+      socket.on("end", () => sawFin.resolve());
+    });
+    await once(peer.listen(0, "127.0.0.1"), "listening");
+    const raw = net.connect((peer.address() as AddressInfo).port, "127.0.0.1");
+    const client = tls.connect({ socket: raw, rejectUnauthorized: false });
+    try {
+      const log: string[] = [];
+      client.on("connect", () => log.push("connect"));
+      client.on("finish", () => log.push("finish"));
+      client.end();
+
+      await once(client, "finish");
+      expect(log).toEqual(["connect", "finish"]);
+      await sawFin.promise;
+    } finally {
+      client.destroy();
+      raw.destroy();
+      for (const socket of accepted) socket.destroy();
+    }
+  });
+
+  describe("does not emit 'connect'", () => {
+    it("when the wrapped socket had already connected", async () => {
+      await using sink = await tlsSink();
+      const raw = net.connect(sink.port, "127.0.0.1");
+      await once(raw, "connect");
+      const client = tls.connect({ socket: raw, rejectUnauthorized: false });
+      const log = [`wrapped connecting=${client.connecting}`];
+      client.on("connect", () => log.push("connect"));
+      client.on("secureConnect", () => {
+        log.push("secureConnect");
+        client.end();
+      });
+
+      await Promise.all([sink.received, once(client, "close")]);
+
+      expect(log).toEqual(["wrapped connecting=false", "secureConnect"]);
+    });
+
+    it("when the TLSSocket was destroyed before the wrapped socket connects", async () => {
+      await using peer = net.createServer(socket => {
+        socket.on("error", () => {});
+        socket.resume();
+      });
+      await once(peer.listen(0, "127.0.0.1"), "listening");
+      const raw = net.connect((peer.address() as AddressInfo).port, "127.0.0.1");
+      // A parked write: the engine runs over the stream, and that branch does
+      // not tear the wrapped socket down, so the socket still connects.
+      raw.write("preamble;");
+      const client = tls.connect({ socket: raw, rejectUnauthorized: false });
+      try {
+        const connects: string[] = [];
+        client.on("connect", () => connects.push(`connect destroyed=${client.destroyed}`));
+        client.destroy();
+
+        // node destroys the wrapped socket with the TLSSocket.
+        if (!raw.destroyed) await once(raw, "connect");
+
+        expect(connects).toEqual([]);
+      } finally {
+        raw.destroy();
+      }
+    });
+
+    it("for a Duplex that reports connecting and emits its own 'connect'", async () => {
+      // node only follows a net.Socket: a Duplex transport counts as connected.
+      await using sink = await tlsSink();
+      const raw = net.connect(sink.port, "127.0.0.1");
+      const duplex = Object.assign(
+        new Duplex({
+          read() {},
+          write(chunk, encoding, callback) {
+            raw.write(chunk, encoding, callback);
+          },
+          final(callback) {
+            raw.end();
+            callback();
+          },
+        }),
+        { connecting: true },
+      );
+      raw.on("data", chunk => duplex.push(chunk));
+      raw.on("end", () => duplex.push(null));
+      raw.on("connect", () => {
+        duplex.connecting = false;
+        duplex.emit("connect");
+      });
+      const client = tls.connect({ socket: duplex, rejectUnauthorized: false });
+      const log = [`wrapped connecting=${client.connecting}`];
+      client.on("connect", () => log.push("connect"));
+      client.on("secureConnect", () => {
+        log.push("secureConnect");
+        client.end();
+      });
+
+      await Promise.all([sink.received, once(client, "close")]);
+
+      expect(log).toEqual(["wrapped connecting=false", "secureConnect"]);
+    });
+  });
+});

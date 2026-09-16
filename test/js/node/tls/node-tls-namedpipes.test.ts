@@ -176,3 +176,49 @@ it.if(isWindows)("should be able to upgrade a named pipe connection to TLS", asy
   await test(`\\\\.\\pipe\\test\\${randomUUID()}`);
   await expectMaxObjectTypeCount(expect, "TLSSocket", 3);
 });
+
+// A named pipe runs the TLS engine over the stream as soon as it is wrapped,
+// so this is not the wait-for-'connect' branch that the TCP tests in
+// node-tls-connect.test.ts cover. node re-emits the pipe's 'connect':
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L964-L973
+it.if(isWindows)("a TLSSocket over a named pipe that is still connecting emits 'connect'", async () => {
+  const received = Promise.withResolvers<string>();
+  let client: ReturnType<typeof connect> | null = null;
+  const server = createServer(tls, socket => {
+    let data = "";
+    socket.on("error", received.reject);
+    socket.on("data", chunk => (data += chunk));
+    socket.on("end", () => {
+      received.resolve(data);
+      socket.end();
+    });
+  });
+  try {
+    const pipeName = `\\\\.\\pipe\\test\\${randomUUID()}`;
+    server.listen(pipeName);
+    await once(server, "listening");
+
+    const socket = connect({ socket: net.connect(pipeName), ca: tls.cert });
+    client = socket;
+    const log = [`wrapped connecting=${socket.connecting}`];
+    socket.write("before connect;");
+    socket.on("connect", () => {
+      log.push(`connect connecting=${socket.connecting} pending=${socket.pending}`);
+      socket.write("from connect;");
+    });
+    socket.on("secureConnect", () => {
+      log.push("secureConnect");
+      socket.end();
+    });
+
+    const [fromClient] = await Promise.all([received.promise, once(socket, "close")]);
+
+    expect({ log, fromClient }).toEqual({
+      log: ["wrapped connecting=true", "connect connecting=false pending=false", "secureConnect"],
+      fromClient: "before connect;from connect;",
+    });
+  } finally {
+    client?.destroy();
+    server.close();
+  }
+});

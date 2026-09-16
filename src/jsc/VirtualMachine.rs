@@ -4779,6 +4779,19 @@ impl VirtualMachine {
                     source,
                     crate::BunPluginTarget::Bun,
                 )? {
+                    if let Ok(path) = &resolved_path {
+                        let filesystem_path = if path.starts_with_ascii(b"file://") {
+                            bun_url::path_from_file_url(path)
+                        } else {
+                            path.clone()
+                        };
+                        let path = filesystem_path.to_utf8();
+                        if bun_paths::is_absolute(path.slice()) {
+                            let directory = bun_resolver::fs::PathName::init(path.slice())
+                                .dir_with_trailing_slash();
+                            jsc_vm.transpiler.resolver.bust_dir_cache(directory);
+                        }
+                    }
                     return Ok(resolved_path);
                 }
             }

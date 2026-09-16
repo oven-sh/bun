@@ -180,6 +180,110 @@ describe("HTTP/3 header encoding", () => {
   });
 });
 
+// lsquic decodes a header block that follows another one while the stream is
+// read, not when its bytes arrive. The peer in these tests writes its header
+// blocks in one call, so they share one STREAM frame and that is where the
+// later blocks are decoded.
+describe("HTTP/3 header blocks that follow another header block", () => {
+  const encoder = new TextEncoder();
+  const request = (path: string) => ({
+    ":method": "POST",
+    ":path": path,
+    ":scheme": "https",
+    ":authority": "localhost",
+  });
+  const connectTo = async (server: { address: unknown }) => {
+    const client = await connect(server.address, {
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 1 },
+    });
+    await client.opened;
+    return client;
+  };
+
+  // Everything the client sees on one stream, in order.
+  async function responseEvents(client: any, path: string, trailers?: Record<string, string>) {
+    const events: string[] = [];
+    const stream = await client.createBidirectionalStream({
+      oninfo: (headers: Record<string, string>) => events.push("info " + headers[":status"]),
+      onheaders: (headers: Record<string, string>) => events.push("headers " + headers[":status"]),
+    });
+    stream.closed.catch(() => {});
+    stream.sendHeaders(request(path), { terminal: trailers === undefined });
+    if (trailers) stream.sendTrailers(trailers);
+    for await (const batch of stream) {
+      for (const chunk of batch) events.push("data " + Buffer.from(chunk).toString("latin1"));
+    }
+    events.push("end");
+    return events;
+  }
+
+  test("a client gets two interim responses and the final response in order", async () => {
+    await using server = await listen(
+      async serverSession => {
+        serverSession.onstream = (stream: any) => {
+          stream.closed.catch(() => {});
+        };
+        await serverSession.closed.catch(() => {});
+      },
+      {
+        sni: { "*": { keys: [key], certs: [cert] } },
+        transportParams: { maxIdleTimeout: 1 },
+        onheaders(this: any, headers: Record<string, string>) {
+          this.sendInformationalHeaders({ ":status": "100" });
+          this.sendInformationalHeaders({ ":status": "103", link: "</style.css>; rel=preload" });
+          if (headers[":path"] === "/no-body") {
+            this.sendHeaders({ ":status": "204" }, { terminal: true });
+            return;
+          }
+          this.sendHeaders({ ":status": "200" });
+          this.writer.writeSync(encoder.encode("hello"));
+          this.writer.endSync();
+        },
+      },
+    );
+    const client = await connectTo(server);
+    const events = { noBody: await responseEvents(client, "/no-body"), body: await responseEvents(client, "/body") };
+    client.close();
+    expect(events).toEqual({
+      noBody: ["info 100", "info 103", "headers 204", "end"],
+      body: ["info 100", "info 103", "headers 200", "data hello", "end"],
+    });
+  });
+
+  test("a server gets the trailers that follow the request headers", async () => {
+    let requestTrailers: Record<string, string> | undefined;
+    await using server = await listen(
+      async serverSession => {
+        serverSession.onstream = (stream: any) => {
+          stream.closed.catch(() => {});
+        };
+        await serverSession.closed.catch(() => {});
+      },
+      {
+        sni: { "*": { keys: [key], certs: [cert] } },
+        transportParams: { maxIdleTimeout: 1 },
+        onheaders(this: any) {
+          this.sendHeaders({ ":status": "200" }, { terminal: true });
+        },
+        ontrailers(this: any, trailers: Record<string, string>) {
+          requestTrailers = trailers;
+        },
+      },
+    );
+    const client = await connectTo(server);
+    // The server queues the trailers event in the lsquic callback that reads
+    // the request, ahead of the packet that carries its response.
+    const response = await responseEvents(client, "/trailers", { "x-checksum": "abc123" });
+    client.close();
+    expect({ response, requestTrailers: { ...requestTrailers } }).toEqual({
+      response: ["headers 200", "end"],
+      requestTrailers: { "x-checksum": "abc123" },
+    });
+  });
+});
+
 describe("verifyClient", () => {
   test("a server requiring a client certificate never surfaces streams from a client that presented none", async () => {
     let announcedStreams = 0;

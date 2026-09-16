@@ -1,7 +1,9 @@
-// Migrates a package-lock.json spanning every resolution shape the npm migrator handles in one
-// workspace: workspace packages, a `file:` folder and `file:` tarball, a remote tarball URL, `npm:`
-// aliases (including a self-named alias inside a linked folder), a scoped transitive, and per-
-// workspace version conflicts that force nested installs. Every tarball is served locally.
+// Migrates one package-lock.json that combines many of the shapes the npm migrator handles, then installs
+// it: workspace packages (one linked under two names, with a dependency nested in it), a `file:` folder and
+// a `file:` tarball, a remote tarball URL, `npm:` aliases (including a self-named alias inside a linked
+// folder), a scoped transitive, version conflicts that force nested installs, optional dependencies with
+// `os`/`cpu`, a `bin`, and install scripts of a workspace and of a default-trusted registry package.
+// Every tarball is served locally. Git resolutions are not here: migrate.test.ts covers them.
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import fs from "fs";
 import { VerdaccioRegistry, bunEnv, bunExe, isWindows, pack, tmpdirSync } from "harness";
@@ -97,7 +99,12 @@ beforeAll(async () => {
   );
   write("bun-types/isfake.txt", "");
 
-  write("packages/body-parser/package.json", JSON.stringify({ name: "body-parser", version: "200.0.0" }));
+  // body-parser is linked into node_modules under two names (`body-parser` and `not-body-parser`), and its
+  // a-dep conflicts with the hoisted one, so the linker meets the nested package once per name.
+  write(
+    "packages/body-parser/package.json",
+    JSON.stringify({ name: "body-parser", version: "200.0.0", dependencies: { "a-dep": "1.0.3" } }),
+  );
   // `lol` depended on esbuild in the original fixture. optional-native and what-bin keep what esbuild
   // brought into the lockfile: optional platform packages with `os`/`cpu`, and a `bin`.
   const lolDependencies = { "no-deps": "^2.0.0", "optional-native": "1.0.0", "what-bin": "1.0.0" };
@@ -121,7 +128,7 @@ beforeAll(async () => {
     JSON.stringify({
       name: "with-postinstall",
       version: "1.0.0",
-      dependencies: { "a-dep": "1.0.2" },
+      dependencies: { "a-dep": "1.0.2", "electron": "1.0.0", "lifecycle-postinstall": "1.0.0" },
       scripts: { postinstall: `${JSON.stringify(bunExe())} postinstall.js` },
     }),
   );
@@ -187,6 +194,12 @@ beforeAll(async () => {
           },
           "node_modules/body-parser": { resolved: "packages/body-parser", link: true },
           "node_modules/bun-types": { resolved: "bun-types", link: true },
+          // with-postinstall depended on sharp in the original fixture. The registry's electron is also on the
+          // default trusted list, and its preinstall script writes preinstall.txt.
+          "node_modules/electron": {
+            ...registryEntry("electron", "1.0.0"),
+            hasInstallScript: true,
+          },
           "node_modules/express": {
             name: "a-dep",
             ...registryEntry("a-dep", "1.0.10"),
@@ -199,6 +212,12 @@ beforeAll(async () => {
           },
           "node_modules/is-number": {
             ...registryEntry("is-number", "1.0.0"),
+          },
+          // Not trusted, so its postinstall script is blocked. The install counts it as blocked only because
+          // the migrated entry says it has an install script.
+          "node_modules/lifecycle-postinstall": {
+            ...registryEntry("lifecycle-postinstall", "1.0.0"),
+            hasInstallScript: true,
           },
           "node_modules/lol": { resolved: "packages/lol-package", link: true },
           // No platform is named "foo" or "bar", so none of these three may be installed.
@@ -231,7 +250,10 @@ beforeAll(async () => {
             bin: { "what-bin": "what-bin.js" },
           },
           "node_modules/with-postinstall": { resolved: "packages/with-postinstall", link: true },
-          "packages/body-parser": { version: "200.0.0" },
+          "packages/body-parser": { version: "200.0.0", dependencies: { "a-dep": "1.0.3" } },
+          "packages/body-parser/node_modules/a-dep": {
+            ...registryEntry("a-dep", "1.0.3"),
+          },
           "packages/lol-package": { name: "lol", dependencies: lolDependencies },
           "packages/lol-package/node_modules/no-deps": {
             ...registryEntry("no-deps", "2.0.0"),
@@ -264,7 +286,7 @@ beforeAll(async () => {
           "packages/with-postinstall": {
             version: "1.0.0",
             hasInstallScript: true,
-            dependencies: { "a-dep": "1.0.2" },
+            dependencies: { "a-dep": "1.0.2", "electron": "1.0.0", "lifecycle-postinstall": "1.0.0" },
           },
           "packages/with-postinstall/node_modules/a-dep": {
             ...registryEntry("a-dep", "1.0.2"),
@@ -300,6 +322,7 @@ test("the install succeeds", async () => {
   }
   expect(stderr).toContain("migrated lockfile from package-lock.json");
   expect(stdout).toContain("packages installed");
+  expect(stdout).toContain("Blocked 1 postinstall. Run `bun pm untrusted` for details.");
 });
 
 // bun-types: `file:` folder with a self-named `npm:` alias
@@ -324,6 +347,8 @@ validate("node_modules/bar", "0.0.2");
 // body-parser workspace and its aliases
 validate("node_modules/body-parser", "200.0.0");
 validate("node_modules/not-body-parser", "200.0.0", "body-parser");
+validate("packages/body-parser/node_modules/a-dep", "1.0.3");
+validate("node_modules/not-body-parser/node_modules/a-dep", "1.0.3");
 validate("packages/second/node_modules/body-parser", "1.0.0", "two-range-deps");
 
 // @types/is-number: scoped transitive of two-range-deps, hoisted
@@ -355,6 +380,14 @@ mustExist(`node_modules/.bin/what-bin${isWindows ? ".exe" : ""}`);
 
 // with-postinstall: lifecycle script ran
 mustExist("packages/with-postinstall/postinstall.txt");
+
+// electron: the install script of a default-trusted registry package ran
+validate("node_modules/electron", "1.0.0");
+mustExist("node_modules/electron/preinstall.txt");
+
+// lifecycle-postinstall: the install script of a package that is not trusted did not run
+validate("node_modules/lifecycle-postinstall", "1.0.0");
+mustNotExist("node_modules/lifecycle-postinstall/postinstall.txt");
 
 // left-pad appears in two-range-deps' lockfile `dependencies` with no matching `packages` entry,
 // so the migrator must not install it anywhere.

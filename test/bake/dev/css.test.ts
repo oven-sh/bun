@@ -830,3 +830,34 @@ devTest("framework route whose stylesheet fails to build at the first request", 
     await dev.fetch(styles[0]).expect.toContain("#00f");
   },
 });
+
+devTest("framework route with a stylesheet whose import does not resolve", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": `
+      import "../one.css";
+      export default (req, meta) => Response.json(meta.styles);
+    `,
+    "one.css": `.one { color: red; }`,
+  },
+  async test(dev) {
+    const before: string[] = await dev.fetch("/").json();
+    expect(before).toHaveLength(1);
+
+    // A resolution failure of the stylesheet is reported like a syntax error: once, and it clears.
+    const error = 'one.css:1:1: error: Could not resolve: "./missing.css"';
+    await dev.write("one.css", `@import "./missing.css";\n.one { color: red; }`, { errors: null });
+    {
+      await using c = await dev.client("/", { errors: [error] });
+    }
+
+    await dev.write("one.css", `.one { color: #00f; }`);
+    expect(await dev.fetch("/").json()).toEqual(before);
+    await dev.fetch(before[0]).expect.toContain("#00f");
+
+    await dev.write("one.css", `@import "./missing.css";\n.one { color: red; }`, { errors: null });
+    {
+      await using c = await dev.client("/", { errors: [error] });
+    }
+  },
+});

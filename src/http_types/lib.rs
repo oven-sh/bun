@@ -26,8 +26,7 @@ pub fn parse_content_length(value: &[u8]) -> usize {
     bun_core::parse_int::<usize>(value, 10).unwrap_or(0)
 }
 
-/// RFC 9110 §8.6: `content-length` is 1*DIGIT. Anything else, or a value that does not fit
-/// in a u64, is rejected.
+/// RFC 9110 §8.6 `1*DIGIT`, strictly: `None` for anything else, or a value that overflows `u64`.
 pub fn parse_content_length_strict(value: &[u8]) -> Option<u64> {
     if value.is_empty() {
         return None;

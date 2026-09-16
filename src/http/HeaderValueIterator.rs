@@ -43,8 +43,7 @@ pub fn upgrade_header_is_not_h2(value: &[u8]) -> bool {
         .any(|token| !strings::eql_any_case_insensitive_ascii(token, &[b"h2", b"h2c"]))
 }
 
-/// Folds one `Transfer-Encoding` field line into `coding`; `Err` for a coding `Encoding` lacks.
-/// RFC 9112 §6.1: `chunked`, if present, must be the final coding.
+/// RFC 9112 §6.1: `chunked`, if present, must be the final coding. Called once per field line.
 pub fn fold_transfer_encoding(value: &[u8], coding: &mut Encoding) -> crate::Result<()> {
     for token in HeaderValueIterator::init(value) {
         if *coding == Encoding::Chunked {

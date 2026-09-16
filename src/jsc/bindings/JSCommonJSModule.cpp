@@ -137,17 +137,15 @@ static void putModuleGraphRequireMain(VM& vm, JSFunction* requireFunction, JSCom
         requireFunction->putDirectCustomAccessor(vm, WebCore::builtinNames(vm).mainPublicName(), JSC::CustomGetterSetter::create(vm, jsModuleGraphRequireMainGetter, nullptr), JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly);
 }
 
-// The source a graph's module is compiled from: the same text, under a cache identity of its own.
+// The source a graph's module is compiled from: the same text, in a code-cache entry of its
+// overlay shape's own. A graph's wrapper runs under the graph's overlay (below), and JSC's code
+// cache shares compiled code, baseline JIT code included, between everything with the same key;
+// that JIT code is only right under the scope chain it was first linked for. The cache key is the
+// source's hash, so the shape goes into it: distinct shapes, distinct keys. Graphs of one shape
+// share code; nothing shares with the host or with another shape.
 //
-// JSC shares unlinked code, and the baseline JIT code cached on it, between everything compiled
-// from the same source, and that JIT code assumes each free identifier resolves the same way in
-// every instance (JIT::emit_op_resolve_scope: a closure variable gets an unguarded scope walk).
-// A graph's wrapper closes over the graph's overlay, so a name in the overlay (one of `globals`,
-// or @moduleLoader, which import() resolves) is a closure variable there and a global in the
-// host's instance of the same file. Sharing between the two runs one's JIT code against the
-// other's scope chain. The identity therefore includes the overlay's shape: graphs whose
-// `globals` have the same names share code, and never with the host or another shape. ES
-// modules get this from JSC (CodeCache::getUnlinkedGlobalCodeBlock, privateToExecutable).
+// A stand-in: ES modules of a graph need none of this because JSC compiles them knowing their
+// module scope (ModuleProgramExecutable). CommonJS wrappers should be compiled the same way.
 class GraphCommonJSSourceProvider final : public JSC::SourceProvider {
 public:
     static Ref<GraphCommonJSSourceProvider> create(Ref<JSC::SourceProvider>&& source, unsigned overlayShape)
@@ -162,8 +160,7 @@ private:
     GraphCommonJSSourceProvider(Ref<JSC::SourceProvider>&& source, unsigned overlayShape)
         : JSC::SourceProvider(source->sourceOrigin(), String(source->sourceURL()), String(source->preRedirectURL()), source->sourceTaintedOrigin(), source->startPosition(), source->sourceType())
         , m_source(WTF::move(source))
-        // Multiplied by an odd number: distinct shapes stay distinct, spread over the hash's bits.
-        , m_overlayShape(overlayShape * 0x9E3779B1u)
+        , m_overlayShape(overlayShape)
     {
     }
 
@@ -698,9 +695,8 @@ JSC_DEFINE_CUSTOM_GETTER(getterChildren, (JSC::JSGlobalObject * globalObject, JS
             children.append(child);
             last = child;
             n += 1;
-        next:
-            {
-            }
+        next: {
+        }
         }
 
         // Construct the array

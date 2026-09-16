@@ -290,7 +290,8 @@ Agent.prototype.addRequest = function addRequest(req, options, port /* legacy */
 
 // Node leaves the entry that addRequest() made when no socket ever joins it.
 function dropEmptySocketsEntry(agent, name) {
-  if (agent.sockets[name]?.length === 0) delete agent.sockets[name];
+  const { sockets } = agent;
+  if (sockets[name]?.length === 0) delete sockets[name];
 }
 
 function destroyOneFreeSocket(agent) {

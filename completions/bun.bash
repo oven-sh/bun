@@ -103,6 +103,30 @@ _read_scripts_in_package_json() {
     fi
 }
 
+_extract_cwd() {
+    local line
+    working_dir="${PWD}"
+    for (( line=0; line < COMP_CWORD; line++ )); do
+        if [[ "${COMP_WORDS[line]}" == "--cwd" ]]; then
+            if (( line + 2 < COMP_CWORD )) &&
+                [[ "${COMP_WORDS[line+1]}" == "=" && -n "${COMP_WORDS[line+2]}" ]]; then
+                working_dir="${COMP_WORDS[line+2]}"
+            elif (( line + 1 < COMP_CWORD )) &&
+                [[ -n "${COMP_WORDS[line+1]}" ]]; then
+                working_dir="${COMP_WORDS[line+1]}"
+            fi
+        elif [[ "${COMP_WORDS[line]}" == --cwd=* ]]; then
+            working_dir="${COMP_WORDS[line]#--cwd=}"
+        fi
+    done
+
+    working_dir="${working_dir%\"}"
+    working_dir="${working_dir#\"}"
+    working_dir="${working_dir%\'}"
+    working_dir="${working_dir#\'}"
+    working_dir="${working_dir/#\~/$HOME}"
+}
+
 _bun_completions_inner() {
     local SUBCOMMANDS="dev bun create run install add remove upgrade completions discord help init pm x test repl update audit dedupe prune outdated link unlink build"
 
@@ -141,9 +165,9 @@ _bun_completions_inner() {
 
     case "${prev}" in
         help|--help|-h|-v|--version) return ;;
-        -c|--config)      _file_arguments "!*.toml" && return ;;
-        --bunfile)        _file_arguments "!*.bun" && return ;;
-        --server-bunfile) _file_arguments "!*.server.bun" && return ;;
+        -c|--config)      _file_arguments "!*.toml"; return ;;
+        --bunfile)        _file_arguments "!*.bun"; return ;;
+        --server-bunfile) _file_arguments "!*.server.bun"; return ;;
         --backend)
             _compgen_reply -W "clonefile copyfile hardlink clonefile_each_dir symlink" -- "${cur_word}"
             return ;;
@@ -290,24 +314,8 @@ _bun_completions_inner() {
 }
 
 _bun_completions() {
-    local working_dir="${PWD}" line
-    for (( line=0; line < ${#COMP_WORDS[@]}; line++ )); do
-        if [[ "${COMP_WORDS[line]}" == "--cwd" ]]; then
-            if [[ "${COMP_WORDS[line+1]}" == "=" && -n "${COMP_WORDS[line+2]}" ]]; then
-                working_dir="${COMP_WORDS[line+2]}"
-            elif [[ -n "${COMP_WORDS[line+1]}" ]]; then
-                working_dir="${COMP_WORDS[line+1]}"
-            fi
-        elif [[ "${COMP_WORDS[line]}" == --cwd=* ]]; then
-            working_dir="${COMP_WORDS[line]#--cwd=}"
-        fi
-    done
-
-    working_dir="${working_dir%\"}"
-    working_dir="${working_dir#\"}"
-    working_dir="${working_dir%\'}"
-    working_dir="${working_dir#\'}"
-    working_dir="${working_dir/#\~/$HOME}"
+    local working_dir
+    _extract_cwd
 
     local orig_pwd="${PWD}"
     local switched=0
@@ -329,24 +337,8 @@ _bun_completions() {
 }
 
 _bunx_completions() {
-    local working_dir="${PWD}" line
-    for (( line=0; line < ${#COMP_WORDS[@]}; line++ )); do
-        if [[ "${COMP_WORDS[line]}" == "--cwd" ]]; then
-            if [[ "${COMP_WORDS[line+1]}" == "=" && -n "${COMP_WORDS[line+2]}" ]]; then
-                working_dir="${COMP_WORDS[line+2]}"
-            elif [[ -n "${COMP_WORDS[line+1]}" ]]; then
-                working_dir="${COMP_WORDS[line+1]}"
-            fi
-        elif [[ "${COMP_WORDS[line]}" == --cwd=* ]]; then
-            working_dir="${COMP_WORDS[line]#--cwd=}"
-        fi
-    done
-
-    working_dir="${working_dir%\"}"
-    working_dir="${working_dir#\"}"
-    working_dir="${working_dir%\'}"
-    working_dir="${working_dir#\'}"
-    working_dir="${working_dir/#\~/$HOME}"
+    local working_dir
+    _extract_cwd
 
     local orig_pwd="${PWD}"
     local switched=0

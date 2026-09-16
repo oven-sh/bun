@@ -1,8 +1,9 @@
-# This is terribly complicated
-# It's because:
-# 1. bun run has to have dynamic completions
-# 2. there are global options
-# 3. bun {install add remove} gets special options
+# Bun completions for fish shell
+#
+# Known limitations:
+# 1. No flag completions for custom scripts
+# 2. Doesn't read bunfig.toml
+# 3. Bun install filter completions don't work yet
 # 4. I don't know how to write fish completions well
 # Contributions very welcome!!
 
@@ -33,48 +34,70 @@ end
 function __fish__get_bun_bins
     set -l target_cwd (__fish__bun_extract_cwd)
     if test -d "$target_cwd"
+        set -l orig_pwd "$PWD"
         builtin cd "$target_cwd"
-        string split ' ' (bun getcompletes b 2>/dev/null)
+        set -l result (bun getcompletes b 2>/dev/null)
+        builtin cd "$orig_pwd"
+        string split ' ' $result
     end
 end
 
 function __fish__get_bun_scripts
     set -l target_cwd (__fish__bun_extract_cwd)
     if test -d "$target_cwd"
+        set -l orig_pwd "$PWD"
         builtin cd "$target_cwd"
         set -lx SHELL bash
         set -lx MAX_DESCRIPTION_LEN 40
-        string trim (string split '
-' (string split '	' (bun getcompletes z 2>/dev/null)))
+        set -l result (bun getcompletes z 2>/dev/null)
+        builtin cd "$orig_pwd"
+        string trim (string split '\n' (string split '\t' $result))
     end
 end
 
 function __fish__get_bun_packages
     set -l target_cwd (__fish__bun_extract_cwd)
     set -l pkg_file "$target_cwd/package.json"
-    if not test -f "$pkg_file"
+    if not test -f "$pkg_file"; or not test -r "$pkg_file"
         return
     end
 
-    if not command -qs jq
-        return
+    if command -qs jq
+        set -l deps (jq -r '(.dependencies // {}), (.devDependencies // {}), (.peerDependencies // {}), (.optionalDependencies // {}) | keys[]' "$pkg_file" 2>/dev/null)
+        if test (count $deps) -gt 0
+            string split " " (string join " " $deps)
+            return
+        end
     end
 
-    set -l dependencies (jq -r '.dependencies | keys[]' "$pkg_file" 2>/dev/null)
-    set -l dev_dependencies (jq -r '.devDependencies | keys[]' "$pkg_file" 2>/dev/null)
-    string split " " "$dependencies $dev_dependencies"
-end
-
-function __history_completions
-	set -l tokens (commandline --current-process --tokenize)
-	history --prefix (commandline) | string replace -r \^$tokens[1]\\s\* "" | string replace -r \^$tokens[2]\\s\* "" | string split ' '
+    awk '
+        /"(dependencies|devDependencies|peerDependencies|optionalDependencies)"[[:space:]]*:[[:space:]]*\{/ {
+            in_deps = 1
+            sub(/^[^{]*\{/, "")
+        }
+        in_deps {
+            while (in_deps && match($0, /"([^"\\]+)"[[:space:]]*:[[:space:]]*"[^"]*"/)) {
+                key = substr($0, RSTART, RLENGTH)
+                sub(/^[[:space:]]*"/, "", key)
+                sub(/"[[:space:]]*:.*$/, "", key)
+                print key
+                $0 = substr($0, RSTART + RLENGTH)
+            }
+            if ($0 ~ /^[[:space:]]*\}/) {
+                in_deps = 0
+            }
+        }
+    ' "$pkg_file" 2>/dev/null
 end
 
 function __fish__get_bun_bun_js_files
     set -l target_cwd (__fish__bun_extract_cwd)
     if test -d "$target_cwd"
+        set -l orig_pwd "$PWD"
         builtin cd "$target_cwd"
-        string split ' ' (bun getcompletes j 2>/dev/null)
+        set -l result (bun getcompletes j 2>/dev/null)
+        builtin cd "$orig_pwd"
+        string split ' ' $result
     end
 end
 
@@ -85,28 +108,21 @@ set -l bun_builtin_cmds_without_run dev create help bun upgrade discord install 
 set -l bun_builtin_cmds_accepting_flags create help bun upgrade discord run init link unlink pm x update
 
 function __bun_complete_bins_scripts --inherit-variable bun_builtin_cmds_without_run -d "Emit bun completions for bins and scripts"
-    # Do nothing if we already have a builtin subcommand,
-    # or any subcommand other than "run".
     if __fish_seen_subcommand_from $bun_builtin_cmds_without_run
     or not __fish_use_subcommand && not __fish_seen_subcommand_from run
         return
     end
-    # Do we already have a bin or script subcommand?
     set -l bins (__fish__get_bun_bins)
     if __fish_seen_subcommand_from $bins
         return
     end
-    # Scripts have descriptions appended with a tab separator.
-    # Strip off descriptions for the purposes of subcommand testing.
     set -l scripts (__fish__get_bun_scripts)
     if __fish_seen_subcommand_from (string split \t -f 1 -- $scripts)
         return
     end
-    # Emit scripts.
     for script in $scripts
         echo $script
     end
-    # Emit binaries and JS files (but only if we're doing `bun run`).
     if __fish_seen_subcommand_from run
         for bin in $bins
             echo "$bin"\t"package bin"
@@ -117,132 +133,88 @@ function __bun_complete_bins_scripts --inherit-variable bun_builtin_cmds_without
     end
 end
 
-
-# Clear existing completions
 complete -e -c bun
-
-# Dynamically emit scripts and binaries
 complete -c bun -f -a "(__bun_complete_bins_scripts)"
 
-# Complete flags if we have no subcommand or a flag-friendly one.
 set -l flag_applies "__fish_use_subcommand; or __fish_seen_subcommand_from $bun_builtin_cmds_accepting_flags"
 complete -c bun \
-	-n $flag_applies --no-files -s 'u' -l 'origin' -r -d 'Server URL. Rewrites import paths'
+       -n $flag_applies --no-files -s 'u' -l 'origin' -r -d 'Server URL. Rewrites import paths'
 complete -c bun \
-	-n $flag_applies --no-files  -s 'p' -l 'port' -r -d 'Port number to start server from'
+       -n $flag_applies --no-files  -s 'p' -l 'port' -r -d 'Port number to start server from'
 complete -c bun \
-	-n $flag_applies --no-files  -s 'd' -l 'define' -r -d 'Substitute K:V while parsing, e.g. --define process.env.NODE_ENV:\"development\"'
+       -n $flag_applies --no-files  -s 'd' -l 'define' -r -d 'Substitute K:V while parsing, e.g. --define process.env.NODE_ENV:\"development\"'
 complete -c bun \
-	-n $flag_applies --no-files  -s 'e' -l 'external' -r -d 'Exclude module from transpilation (can use * wildcards). ex: -e react'
+       -n $flag_applies --no-files  -s 'e' -l 'external' -r -d 'Exclude module from transpilation (can use * wildcards). ex: -e react'
 complete -c bun \
-	-n $flag_applies --no-files -l 'use' -r -d 'Use a framework (ex: next)'
+       -n $flag_applies --no-files -l 'use' -r -d 'Use a framework (ex: next)'
 complete -c bun \
-	-n $flag_applies --no-files -l 'hot' -r -d 'Enable hot reloading in Bun\'s JavaScript runtime'
-
-# Complete dev and create as first subcommand.
-complete -c bun \
-	-n "__fish_use_subcommand" -a 'dev' -d 'Start dev server'
-complete -c bun \
-	-n "__fish_use_subcommand" -a 'create' -f -d 'Create a new project from a template'
-
-# Complete "next" and "react" if we've seen "create".
-complete -c bun \
-	-n "__fish_seen_subcommand_from create" -a 'next' -d 'new Next.js project'
+       -n $flag_applies --no-files -l 'hot' -r -d 'Enable hot reloading in Bun\'s JavaScript runtime'
 
 complete -c bun \
-	-n "__fish_seen_subcommand_from create" -a 'react' -d 'new React project'
-
-# Complete "upgrade" as first subcommand.
+       -n "__fish_use_subcommand" -a 'dev' -d 'Start dev server'
 complete -c bun \
-	-n "__fish_use_subcommand" -a 'upgrade' -d 'Upgrade bun to the latest version' -x
-# Complete "-h/--help" unconditionally.
+       -n "__fish_use_subcommand" -a 'create' -f -d 'Create a new project from a template'
 complete -c bun \
-	-s "h" -l "help" -d 'See all commands and flags' -x
-
-# Complete "-v/--version" if we have no subcommand.
+       -n "__fish_seen_subcommand_from create" -a 'next' -d 'new Next.js project'
 complete -c bun \
-	-n "not __fish_use_subcommand" -l "version" -s "v" -d 'Bun\'s version' -x
-
-# Complete additional subcommands.
+       -n "__fish_seen_subcommand_from create" -a 'react' -d 'new React project'
 complete -c bun \
-	-n "__fish_use_subcommand" -a 'discord' -d 'Open bun\'s Discord server' -x
-
-
+       -n "__fish_use_subcommand" -a 'upgrade' -d 'Upgrade bun to the latest version' -x
 complete -c bun \
-	-n "__fish_use_subcommand" -a 'bun' -d 'Generate a new bundle'
-
-
+       -s "h" -l "help" -d 'See all commands and flags' -x
 complete -c bun \
-	-n "__fish_seen_subcommand_from bun" -F -d 'Bundle this'
-
+       -n "not __fish_use_subcommand" -l "version" -s "v" -d 'Bun\'s version' -x
 complete -c bun \
-	-n "__fish_seen_subcommand_from create; and __fish_seen_subcommand_from react next" -F -d "Create in directory"
-
-
+       -n "__fish_use_subcommand" -a 'discord' -d 'Open bun\'s Discord server' -x
 complete -c bun \
-	-n "__fish_use_subcommand" -a 'init' -F -d 'Start an empty Bun project'
-
+       -n "__fish_use_subcommand" -a 'bun' -d 'Generate a new bundle'
 complete -c bun \
-	-n "__fish_use_subcommand" -a 'install' -f -d 'Install packages from package.json'
-
+       -n "__fish_seen_subcommand_from bun" -F -d 'Bundle this'
 complete -c bun \
-	-n "__fish_use_subcommand" -a 'add' -F -d 'Add a package to package.json'
-
+       -n "__fish_seen_subcommand_from create; and __fish_seen_subcommand_from react next" -F -d "Create in directory"
 complete -c bun \
-	-n "__fish_use_subcommand" -a 'remove' -F -d 'Remove a package from package.json'
-
+       -n "__fish_use_subcommand" -a 'init' -F -d 'Start an empty Bun project'
+complete -c bun \
+       -n "__fish_use_subcommand" -a 'install' -f -d 'Install packages from package.json'
+complete -c bun \
+       -n "__fish_use_subcommand" -a 'add' -F -d 'Add a package to package.json'
+complete -c bun \
+       -n "__fish_use_subcommand" -a 'remove' -F -d 'Remove a package from package.json'
 
 for i in (seq (count $bun_install_boolean_flags))
-	complete -c bun \
-		-n "__fish_seen_subcommand_from install add remove dedupe" -l "$bun_install_boolean_flags[$i]" -d "$bun_install_boolean_flags_descriptions[$i]"
+       complete -c bun \
+               -n "__fish_seen_subcommand_from install add remove dedupe" -l "$bun_install_boolean_flags[$i]" -d "$bun_install_boolean_flags_descriptions[$i]"
 end
 
 complete -c bun \
-	-n "__fish_seen_subcommand_from install add remove update dedupe" -l 'cwd' -d 'Change working directory'
-
+       -n "__fish_seen_subcommand_from install add remove update dedupe" -l 'cwd' -d 'Change working directory'
 complete -c bun \
-	-n "__fish_seen_subcommand_from install add remove update dedupe" -l 'cache-dir' -d 'Choose a cache directory (default: $HOME/.bun/install/cache)'
-
+       -n "__fish_seen_subcommand_from install add remove update dedupe" -l 'cache-dir' -d 'Choose a cache directory (default: $HOME/.bun/install/cache)'
 complete -c bun \
-	-n "__fish_seen_subcommand_from install add remove" -s 'F' -l 'filter' -r -d 'Apply to the matching workspaces instead of the current package'
-
+       -n "__fish_seen_subcommand_from install add remove" -s 'F' -l 'filter' -r -d 'Apply to the matching workspaces instead of the current package'
 complete -c bun \
-	-n "__fish_seen_subcommand_from install add" -l 'catalog' -d 'Add the resolved version to the root package.json catalog and depend on it as "catalog:" (--catalog=NAME for a named catalog)'
-
+       -n "__fish_seen_subcommand_from install add" -l 'catalog' -d 'Add the resolved version to the root package.json catalog and depend on it as "catalog:" (--catalog=NAME for a named catalog)'
 complete -c bun \
-	-n "__fish_seen_subcommand_from dedupe" -l 'check' -d 'Exit with code 1 if the lockfile has duplicate versions that can be removed, without changing anything'
-
+       -n "__fish_seen_subcommand_from dedupe" -l 'check' -d 'Exit with code 1 if the lockfile has duplicate versions that can be removed, without changing anything'
 complete -c bun \
-	-n "__fish_seen_subcommand_from add" -d 'Popular' -a '(__fish__get_bun_packages)'
-
+       -n "__fish_seen_subcommand_from add" -d 'Popular' -a '(__fish__get_bun_packages)'
 complete -c bun \
-	-n "__fish_seen_subcommand_from add" -d 'History' -a '(__history_completions)'
-
+       -n "__fish_seen_subcommand_from pm; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) cache;" -a 'bin ls licenses cache hash hash-print hash-string' -f
 complete -c bun \
-	-n "__fish_seen_subcommand_from pm; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) cache;" -a 'bin ls licenses cache hash hash-print hash-string' -f
-
+       -n "__fish_seen_subcommand_from pm; and __fish_seen_subcommand_from cache; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts);" -a 'rm' -f
 complete -c bun \
-	-n "__fish_seen_subcommand_from pm; and __fish_seen_subcommand_from cache; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts);" -a 'rm' -f
-
+       -n "__fish_seen_subcommand_from pm; and __fish_seen_subcommand_from licenses" -l 'json' -d 'Output as JSON' -f
 complete -c bun \
-	-n "__fish_seen_subcommand_from pm; and __fish_seen_subcommand_from licenses" -l 'json' -d 'Output as JSON' -f
-
+       -n "__fish_seen_subcommand_from pm; and __fish_seen_subcommand_from licenses" -l 'prod' -d 'Omit devDependencies' -f
 complete -c bun \
-	-n "__fish_seen_subcommand_from pm; and __fish_seen_subcommand_from licenses" -l 'prod' -d 'Omit devDependencies' -f
-
+       -n "__fish_seen_subcommand_from pm; and __fish_seen_subcommand_from licenses" -l 'production' -d 'Omit devDependencies' -f
 complete -c bun \
-	-n "__fish_seen_subcommand_from pm; and __fish_seen_subcommand_from licenses" -l 'production' -d 'Omit devDependencies' -f
-
+       -n "__fish_seen_subcommand_from pm; and __fish_seen_subcommand_from licenses" -l 'dev' -s 'D' -d 'List only what devDependencies pull in' -f
 complete -c bun \
-	-n "__fish_seen_subcommand_from pm; and __fish_seen_subcommand_from licenses" -l 'dev' -s 'D' -d 'List only what devDependencies pull in' -f
-
+       -n "__fish_seen_subcommand_from pm; and __fish_seen_subcommand_from licenses" -l 'long' -d 'Also print author, description and homepage' -f
 complete -c bun \
-	-n "__fish_seen_subcommand_from pm; and __fish_seen_subcommand_from licenses" -l 'long' -d 'Also print author, description and homepage' -f
+       -n "__fish_seen_subcommand_from pm; and __fish_seen_subcommand_from licenses" -l 'filter' -s 'F' -d 'List only the matching workspaces' -r
 
-complete -c bun \
-	-n "__fish_seen_subcommand_from pm; and __fish_seen_subcommand_from licenses" -l 'filter' -s 'F' -d 'List only the matching workspaces' -r
-
-# Add built-in subcommands with descriptions.
 complete -c bun -n "__fish_use_subcommand" -a "create" -f -d "Create a new project from a template"
 complete -c bun -n "__fish_use_subcommand" -a "build bun" --require-parameter -F -d "Transpile and bundle one or more files"
 complete -c bun -n "__fish_use_subcommand" -a "upgrade" -d "Upgrade Bun"

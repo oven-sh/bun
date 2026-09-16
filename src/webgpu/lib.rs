@@ -3,6 +3,7 @@
 // The proof that `wgpu_core::global::Global` is `Sync` is deeper than the default of 128.
 #![recursion_limit = "256"]
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Once, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -32,6 +33,27 @@ pub fn instance() -> &'static Global {
         // The GPU API's own debug layers; wgpu-core's WebGPU validation does not need them.
         desc.flags = wgt::InstanceFlags::empty();
         Global::new("bun", desc, None)
+    })
+}
+
+/// Runs a shader or pipeline compile on a thread with a stack sized for `source_len`. `None` if the thread could not be created. naga's WGSL lowering, its validator and its SPIR-V writer recurse once per nesting level of the shader, with no depth limit, and its parser does not, so its own recursion limits never fire: a chain of unary operators costs about 0.6 KB of stack per byte of source in a release build, and about 9 KB in a debug build, which overflows the JS thread's stack for an ordinary generated shader.
+pub fn compile<R: Send>(source_len: usize, f: impl FnOnce() -> R + Send) -> Option<R> {
+    // The worst construct measured with naga 30.0.1 is `!!!!...` (one byte of source per level), with margin.
+    const PER_SOURCE_BYTE: usize = if cfg!(debug_assertions) {
+        32 * 1024
+    } else {
+        6 * 1024
+    };
+    const BASE: usize = 8 * 1024 * 1024;
+    let stack = BASE.saturating_add(source_len.saturating_mul(PER_SOURCE_BYTE));
+    std::thread::scope(|scope| {
+        std::thread::Builder::new()
+            .name(String::from("bun-webgpu-compile"))
+            .stack_size(stack)
+            .spawn_scoped(scope, f)
+            .ok()?
+            .join()
+            .ok()
     })
 }
 
@@ -111,29 +133,68 @@ owned_id!(
 /// A device that exists, for [`wait_for_idle_at_exit`].
 struct LiveDevice {
     id: id::DeviceId,
-    /// [`release_device`] is waiting for its queue on the helper thread.
+    queue: id::QueueId,
+    /// [`release_device`] is waiting for its queue on its own thread.
     releasing: bool,
 }
 
 static DEVICES: Guarded<Vec<LiveDevice>> = Guarded::new(Vec::new());
+static IDLE_AT_EXIT: AtomicBool = AtomicBool::new(false);
+static EXITING: AtomicBool = AtomicBool::new(false);
 
-/// How long an exit waits for the GPU. A shader that does not end has to lose.
+/// How long an exit waits for the GPU to go idle. A shader that does not end has to lose.
 const EXIT_WAIT: Duration = Duration::from_secs(10);
 
-/// An ASAN build leaves through libc's `exit()`, which unloads the Vulkan driver under its own threads if they still run a submission.
-extern "C" fn wait_for_idle_at_exit() {
+/// How long an exit waits for a release that is already in progress. That release has its own wait, which cannot be cut short.
+const RELEASE_WAIT: Duration = Duration::from_secs(1);
+
+/// Waits for the GPU to go idle, then releases every device. Runs on its own thread: wgpu-core's locks read thread-local data, which the exiting thread no longer has.
+fn drain_devices() {
+    let release_deadline = Instant::now() + RELEASE_WAIT;
+    while DEVICES.lock().iter().any(|device| device.releasing) {
+        if Instant::now() >= release_deadline {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
     let deadline = Instant::now() + EXIT_WAIT;
     loop {
         let busy = DEVICES.lock().iter().any(|device| {
-            device.releasing
-                || matches!(
+            !device.releasing
+                && matches!(
                     instance().device_poll(device.id, wgt::PollType::Poll),
                     Ok(status) if !status.is_queue_empty()
                 )
         });
         if !busy || Instant::now() >= deadline {
-            return;
+            break;
         }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    // Every poller is a no-op from here, so nothing else reaches the ids below.
+    EXITING.store(true, Ordering::Release);
+    for device in core::mem::take(&mut *DEVICES.lock()) {
+        if !device.releasing {
+            instance().queue_drop(device.queue);
+            instance().device_drop(device.id);
+        }
+    }
+    IDLE_AT_EXIT.store(true, Ordering::Release);
+}
+
+/// `exit()` unloads the GPU driver while its own threads still run or compile a submission, which crashes inside the driver.
+extern "C" fn wait_for_idle_at_exit() {
+    if DEVICES.lock().is_empty() {
+        return;
+    }
+    let spawned = std::thread::Builder::new()
+        .name(String::from("bun-webgpu-exit"))
+        .spawn(drain_devices);
+    if spawned.is_err() {
+        return;
+    }
+    let deadline = Instant::now() + RELEASE_WAIT + EXIT_WAIT + Duration::from_secs(1);
+    while !IDLE_AT_EXIT.load(Ordering::Acquire) && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(1));
     }
 }
@@ -144,6 +205,7 @@ fn release_device(device: id::DeviceId, queue: id::QueueId) {
     global.queue_drop(queue);
     let mut devices = DEVICES.lock();
     devices.retain(|live| live.id != device);
+    drop(devices);
     global.device_drop(device);
 }
 
@@ -158,11 +220,10 @@ pub struct Device {
 impl Device {
     pub fn new(device: id::DeviceId, queue: id::QueueId) -> Self {
         static AT_EXIT: Once = Once::new();
-        if bun_core::env::ENABLE_ASAN {
-            AT_EXIT.call_once(|| bun_core::add_exit_callback(wait_for_idle_at_exit));
-        }
+        AT_EXIT.call_once(|| bun_core::add_exit_callback(wait_for_idle_at_exit));
         DEVICES.lock().push(LiveDevice {
             id: device,
+            queue,
             releasing: false,
         });
         Self {
@@ -182,6 +243,9 @@ impl Device {
 
     /// Fires the ready callbacks; `false` if the device is lost. Never a timed `Wait`: gfx-rs/wgpu#9958 aborts on it.
     pub fn poll(&self) -> bool {
+        if EXITING.load(Ordering::Acquire) {
+            return false;
+        }
         let _exclusive = self.poll_lock.lock();
         instance()
             .device_poll(self.device, wgt::PollType::Poll)
@@ -198,6 +262,9 @@ impl Device {
 impl Drop for Device {
     fn drop(&mut self) {
         let (device, queue) = (self.device, self.queue);
+        if EXITING.load(Ordering::Acquire) {
+            return;
+        }
         if let Some(live) = DEVICES.lock().iter_mut().find(|live| live.id == device) {
             live.releasing = true;
         }

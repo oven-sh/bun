@@ -64,7 +64,8 @@ impl GPUCommandEncoder {
             callframe.argument(0),
         )?;
         if let Some(message) = invalid {
-            self.invalid.with_mut(|first| first.get_or_insert(message).len());
+            self.invalid
+                .with_mut(|first| first.get_or_insert(message).len());
         }
         Ok(pass)
     }

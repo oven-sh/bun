@@ -14,6 +14,10 @@ use super::args::Dict;
 use super::device::DeviceRef;
 use super::js_module;
 
+/// Stands in for a source too large to compile: invalid WGSL, so the module is invalid and carries this as its error.
+const TOO_LARGE: &str =
+    "// the shader source is too large to compile\nthe shader source is too large to compile";
+
 /// One `GPUCompilationMessage`. naga reports UTF-8 byte offsets; the spec wants UTF-16 units.
 struct Message {
     text: String,
@@ -28,6 +32,8 @@ pub struct GPUShaderModule {
     raw: Rc<bun_webgpu::ShaderModule>,
     label: JsCell<bun_core::String>,
     messages: Vec<Message>,
+    /// What the pipeline calls that use this module have to size their stack for.
+    source_len: usize,
 }
 
 super::gpu_object!(GPUShaderModule, label);
@@ -88,6 +94,10 @@ fn compilation_messages(err: &CreateShaderModuleError, source: &str) -> Vec<Mess
 }
 
 impl GPUShaderModule {
+    pub(crate) fn source_len(&self) -> usize {
+        self.source_len
+    }
+
     pub(crate) fn create(
         global: &JSGlobalObject,
         device: &DeviceRef,
@@ -104,12 +114,25 @@ impl GPUShaderModule {
             label: super::wgpu_label(&label),
             runtime_checks: wgt::ShaderRuntimeChecks::checked(),
         };
-        let (id, err) = instance().device_create_shader_module(
-            device.id(),
-            &desc,
-            ShaderModuleSource::Wgsl(Cow::Borrowed(&code)),
-            None,
-        );
+        let device_id = device.id();
+        let compiled = bun_webgpu::compile(code.len(), || {
+            instance().device_create_shader_module(
+                device_id,
+                &desc,
+                ShaderModuleSource::Wgsl(Cow::Borrowed(&code)),
+                None,
+            )
+        });
+        let (id, err) = match compiled {
+            Some(compiled) => compiled,
+            // The compile thread needs a stack proportional to the source: nothing compiles this one.
+            None => instance().device_create_shader_module(
+                device_id,
+                &desc,
+                ShaderModuleSource::Wgsl(Cow::Borrowed(TOO_LARGE)),
+                None,
+            ),
+        };
         let raw = Rc::new(bun_webgpu::ShaderModule::new(id));
         let messages = err
             .as_ref()
@@ -119,6 +142,7 @@ impl GPUShaderModule {
             raw,
             label: JsCell::new(label),
             messages,
+            source_len: code.len(),
         }
         .to_js(global))
     }

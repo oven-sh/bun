@@ -144,7 +144,8 @@ impl Waiter for MapWait {
 
         // `unmap()` or `destroy()` gave up on this request: if it mapped anyway, unmap it now.
         if result.is_ok() && !buffer.destroyed.get() {
-            let _ = instance().buffer_unmap(buffer.raw.id());
+            let device = &buffer.device.raw;
+            let _ = device.exclusive(|| instance().buffer_unmap(buffer.raw.id()));
         }
         if let Some(queued) = buffer.queued.take() {
             if buffer.is_current(&queued) {
@@ -467,20 +468,22 @@ impl GPUBuffer {
             zeroes.resize(size as usize, 0u8);
             ArrayBuffer::create::<{ JSType::ArrayBuffer }>(global, &zeroes)?
         } else {
-            let (ptr, mapped_len) =
-                match instance().buffer_get_mapped_range(self.raw.id(), offset, Some(size)) {
-                    Ok(range) => range,
-                    Err(err) => return Err(operation_error(&error_chain(&err))),
+            self.device.raw.exclusive(|| {
+                let (ptr, mapped_len) =
+                    match instance().buffer_get_mapped_range(self.raw.id(), offset, Some(size)) {
+                        Ok(range) => range,
+                        Err(err) => return Err(operation_error(&error_chain(&err))),
+                    };
+                debug_assert_eq!(mapped_len, size);
+                let bytes: &[u8] = if size == 0 {
+                    &[]
+                } else {
+                    // SAFETY: wgpu-core mapped `size` readable bytes at `ptr`. They stay mapped until
+                    // `buffer_unmap` or a poll that finds the device lost, and `exclusive` holds both off.
+                    unsafe { core::slice::from_raw_parts(ptr.as_ptr(), size as usize) }
                 };
-            debug_assert_eq!(mapped_len, size);
-            let bytes: &[u8] = if size == 0 {
-                &[]
-            } else {
-                // SAFETY: wgpu-core mapped `size` readable bytes at `ptr` and keeps them mapped
-                // until `buffer_unmap`, which cannot run before this function returns.
-                unsafe { core::slice::from_raw_parts(ptr.as_ptr(), size as usize) }
-            };
-            ArrayBuffer::create::<{ JSType::ArrayBuffer }>(global, bytes)?
+                ArrayBuffer::create::<{ JSType::ArrayBuffer }>(global, bytes)
+            })?
         };
 
         let list = match mapped_ranges(this_value) {
@@ -539,19 +542,21 @@ impl GPUBuffer {
             }
             if write && write_back {
                 if let Some(view) = array_buffer.as_array_buffer(global) {
-                    if let Ok((ptr, _)) =
-                        instance().buffer_get_mapped_range(self.raw.id(), offset, Some(size))
-                    {
+                    self.device.raw.exclusive(|| {
+                        let Ok((ptr, _)) =
+                            instance().buffer_get_mapped_range(self.raw.id(), offset, Some(size))
+                        else {
+                            return;
+                        };
                         let src = view.byte_slice();
                         let n = src.len().min(size as usize);
                         if n != 0 {
-                            // SAFETY: wgpu-core keeps `size` writable bytes mapped at `ptr` until
-                            // `buffer_unmap`, which the caller runs after this returns; `n <= size`.
+                            // SAFETY: as in `get_mapped_range`, and `n <= size`.
                             unsafe {
                                 core::ptr::copy_nonoverlapping(src.as_ptr(), ptr.as_ptr(), n)
                             };
                         }
-                    }
+                    });
                 }
             }
             detach_array_buffer(global, array_buffer);
@@ -567,7 +572,8 @@ impl GPUBuffer {
     ) -> JsResult<JSValue> {
         let was_mapped = self.release_mapping(global, this_value, !self.invalid)?;
         if was_mapped && !self.destroyed.get() && !self.invalid {
-            let result = instance().buffer_unmap(self.raw.id());
+            let device = &self.device.raw;
+            let result = device.exclusive(|| instance().buffer_unmap(self.raw.id()));
             self.device.check_result(global, result)?;
         }
         Ok(JSValue::UNDEFINED)
@@ -581,8 +587,9 @@ impl GPUBuffer {
     ) -> JsResult<JSValue> {
         self.release_mapping(global, this_value, false)?;
         if !self.destroyed.replace(true) {
-            // Takes wgpu-core's device-wide write lock, so it cannot overlap a poll that completes a map.
-            instance().buffer_destroy(self.raw.id());
+            // wgpu-core unmaps first: not while a poll on the pool thread completes a map of this buffer.
+            let device = &self.device.raw;
+            device.exclusive(|| instance().buffer_destroy(self.raw.id()));
         }
         Ok(JSValue::UNDEFINED)
     }

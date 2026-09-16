@@ -725,6 +725,8 @@ pub fn exit(code: u32) -> ! {
 
     #[cfg(target_os = "macos")]
     {
+        // Before libc, which runs the exit handlers of every loaded library: a callback here may need one (the GPU driver's threads have to stop before its library unloads).
+        Bun__onExit();
         libc_exit(code as i32)
     }
     #[cfg(windows)]
@@ -742,6 +744,8 @@ pub fn exit(code: u32) -> ! {
     #[cfg(not(any(target_os = "macos", windows)))]
     {
         if env::ENABLE_ASAN {
+            // See the macOS branch above.
+            Bun__onExit();
             libc_exit(code as i32);
         }
         quick_exit(code as c_int);

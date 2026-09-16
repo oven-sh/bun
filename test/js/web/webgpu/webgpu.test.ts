@@ -227,6 +227,10 @@ describe.skipIf(!hasAdapter)("with a device", () => {
     await expect(
       adapter.requestDevice({ requiredLimits: { minUniformBufferOffsetAlignment: 300 } }),
     ).rejects.toMatchObject({ name: "OperationError" });
+    // A key that reads as an array index is a limit name like any other.
+    await expect(adapter.requestDevice({ requiredLimits: { 0: 1 } })).rejects.toMatchObject({
+      name: "OperationError",
+    });
 
     // A value that is worse than the default leaves the default in place.
     const device = await adapter.requestDevice({
@@ -1119,6 +1123,203 @@ describe.skipIf(!hasAdapter)("with a device", () => {
     expect(stderr).toBe("");
     expect(stdout).toBe("ok\n");
     expect(exitCode).toBe(0);
+  });
+
+  test("a shader override can be addressed by its numeric id", async () => {
+    const device = await requestDevice();
+    const module = device.createShaderModule({
+      code: /* wgsl */ `
+        @id(0) override size: u32 = 1;
+        @group(0) @binding(0) var<storage, read_write> out: array<u32>;
+        @compute @workgroup_size(1) fn main() { out[0] = size; }`,
+    });
+    const out = device.createBuffer({ size: 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
+    const readback = device.createBuffer({ size: 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+    // The numeric id is the only way to address an override that has one, and JSC keeps such a
+    // key as an array index, where a lookup by name does not find it.
+    const pipeline = device.createComputePipeline({
+      layout: "auto",
+      compute: { module, constants: { 0: 7 } },
+    });
+    const bindGroup = device.createBindGroup({
+      layout: pipeline.getBindGroupLayout(0),
+      entries: [{ binding: 0, resource: { buffer: out } }],
+    });
+    const encoder = device.createCommandEncoder();
+    const pass = encoder.beginComputePass();
+    pass.setPipeline(pipeline);
+    pass.setBindGroup(0, bindGroup);
+    pass.dispatchWorkgroups(1);
+    pass.end();
+    encoder.copyBufferToBuffer(out, 0, readback, 0, 4);
+    device.queue.submit([encoder.finish()]);
+    await readback.mapAsync(GPUMapMode.READ);
+    expect(new Uint32Array(readback.getMappedRange())[0]).toBe(7);
+    readback.unmap();
+    device.destroy();
+  });
+
+  test("a shader that nests deeper than the stack of the calling thread", async () => {
+    const device = await requestDevice();
+    // naga recurses once per level of the shader, and its parser does not, so its own recursion
+    // limits never fire: these compile on a thread with a stack sized for the source.
+    for (const body of [
+      `let x = ${"!".repeat(4000)}true;`,
+      `var a = 1; let x = ${"*&".repeat(2000)}a;`,
+      `var a = 1; if (a == 0) {} ${"else if (a == 1) {} ".repeat(600)}`,
+    ]) {
+      device.pushErrorScope("validation");
+      const module = device.createShaderModule({ code: `@compute @workgroup_size(1) fn main() { ${body} }` });
+      device.createComputePipeline({ layout: "auto", compute: { module } });
+      expect(await device.popErrorScope()).toBeNull();
+    }
+    device.destroy();
+  });
+
+  test("a resolve target of the wrong dimension is a validation error", async () => {
+    const device = await requestDevice();
+    for (const size of [[4, 4, 4], [4]]) {
+      const color = device.createTexture({
+        size: [4, 4],
+        format: "rgba8unorm",
+        sampleCount: 4,
+        usage: GPUTextureUsage.RENDER_ATTACHMENT,
+      });
+      const wrong = device.createTexture({
+        size,
+        dimension: size.length === 1 ? "1d" : "3d",
+        format: "rgba8unorm",
+        usage: GPUTextureUsage.RENDER_ATTACHMENT,
+      });
+      device.pushErrorScope("validation");
+      const encoder = device.createCommandEncoder();
+      encoder
+        .beginRenderPass({
+          colorAttachments: [
+            { view: color.createView(), resolveTarget: wrong.createView(), loadOp: "clear", storeOp: "store" },
+          ],
+        })
+        .end();
+      encoder.finish();
+      expect(await device.popErrorScope()).toBeInstanceOf(GPUValidationError);
+    }
+    device.destroy();
+  });
+
+  test("a resource whose creation failed reports no size to the garbage collector", async () => {
+    const device = await requestDevice();
+    device.addEventListener("uncapturederror", (event: any) => event.preventDefault());
+    // Nothing was allocated for these, so their estimated size is the wrapper alone. Counting the
+    // requested size instead overflows the collector's accounting of memory it does not own.
+    const texture = device.createTexture({
+      size: [0xffffffff, 0xffffffff, 0xffffffff],
+      format: "rgba8unorm",
+      usage: GPUTextureUsage.COPY_DST,
+    });
+    const buffers = [];
+    for (let i = 0; i < 2000; i++) {
+      buffers.push(device.createBuffer({ size: Number.MAX_SAFE_INTEGER, usage: GPUBufferUsage.COPY_DST }));
+    }
+    Bun.gc(true);
+    const junk = [];
+    for (let i = 0; i < 200_000; i++) junk.push({ i });
+    Bun.gc(true);
+    expect(texture.width).toBe(0xffffffff);
+    expect(buffers[0].size).toBe(Number.MAX_SAFE_INTEGER);
+    device.destroy();
+  });
+
+  test("process.exit() with GPU work in flight stops the driver first", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const adapter = await navigator.gpu.requestAdapter();
+          const device = await adapter.requestDevice();
+          // A shader the driver has never seen: it is still compiling it when this process exits.
+          const salt = (Date.now() ^ (performance.now() * 1e6)) >>> 0;
+          const module = device.createShaderModule({
+            code: \`@group(0) @binding(0) var<storage, read_write> data: array<u32>;
+              @compute @workgroup_size(64) fn main(@builtin(global_invocation_id) id: vec3<u32>) {
+                var x = data[id.x] + \${salt}u;
+                for (var i = 0u; i < 100000u; i = i + 1u) { x = x * 1664525u + 1013904223u; }
+                data[id.x] = x;
+              }\`,
+          });
+          const pipeline = device.createComputePipeline({ layout: "auto", compute: { module } });
+          const data = device.createBuffer({ size: 65536 * 4, usage: GPUBufferUsage.STORAGE });
+          const bindGroup = device.createBindGroup({
+            layout: pipeline.getBindGroupLayout(0),
+            entries: [{ binding: 0, resource: { buffer: data } }],
+          });
+          const encoder = device.createCommandEncoder();
+          const pass = encoder.beginComputePass();
+          pass.setPipeline(pipeline);
+          pass.setBindGroup(0, bindGroup);
+          pass.dispatchWorkgroups(1024);
+          pass.end();
+          device.queue.submit([encoder.finish()]);
+          console.log("submitted");
+          process.exit(0);
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("submitted\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("a device that becomes garbage while its work runs does not block the collector", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          // This shader never ends. The device is garbage as soon as this function returns, and
+          // releasing it waits for the GPU, so that wait must not happen on this thread.
+          async function fireAndForget() {
+            const adapter = await navigator.gpu.requestAdapter();
+            const device = await adapter.requestDevice();
+            const module = device.createShaderModule({
+              code: \`@group(0) @binding(0) var<storage, read_write> data: array<u32>;
+                @compute @workgroup_size(1) fn main() {
+                  var x = data[0];
+                  loop { x = x * 1664525u + 1013904223u; if (data[1] == 1u) { break; } }
+                  data[0] = x;
+                }\`,
+            });
+            const pipeline = device.createComputePipeline({ layout: "auto", compute: { module } });
+            const data = device.createBuffer({ size: 64, usage: GPUBufferUsage.STORAGE });
+            const bindGroup = device.createBindGroup({
+              layout: pipeline.getBindGroupLayout(0),
+              entries: [{ binding: 0, resource: { buffer: data } }],
+            });
+            const encoder = device.createCommandEncoder();
+            const pass = encoder.beginComputePass();
+            pass.setPipeline(pipeline);
+            pass.setBindGroup(0, bindGroup);
+            pass.dispatchWorkgroups(1);
+            pass.end();
+            device.queue.submit([encoder.finish()]);
+          }
+          await fireAndForget();
+          Bun.gc(true);
+          console.log("collected");
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    // The line arrives as soon as the collector is done with the device. Before the fix the child
+    // hung inside Bun.gc() for as long as the shader ran, which is for ever here.
+    const reader = proc.stdout.getReader();
+    const { value } = await reader.read();
+    expect(new TextDecoder().decode(value)).toBe("collected\n");
+    proc.kill();
   });
 
   test("works in a Worker, and a Worker can be terminated with GPU work pending", async () => {

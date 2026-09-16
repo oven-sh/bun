@@ -12,6 +12,13 @@ use super::args::{self, Dict, Held};
 use super::device::DeviceRef;
 use super::{GPUBindGroupLayout, GPUPipelineLayout, GPUShaderModule};
 
+/// A pipeline whose shader needs more stack than a thread can have.
+fn too_large() -> GpuError {
+    GpuError::validation(String::from(
+        "the shader source is too large to compile: naga needs a stack proportional to it",
+    ))
+}
+
 /// `layout: GPUPipelineLayout | "auto"`.
 fn parse_layout(d: &Dict<'_>, held: &mut Held) -> JsResult<Option<wgc::id::PipelineLayoutId>> {
     let value = d.require("layout")?;
@@ -31,8 +38,17 @@ fn parse_layout(d: &Dict<'_>, held: &mut Held) -> JsResult<Option<wgc::id::Pipel
 fn parse_stage(
     d: &Dict<'_>,
     held: &mut Held,
+    source_len: &mut usize,
 ) -> JsResult<pl::ProgrammableStageDescriptor<'static>> {
-    let module = d.require_id::<GPUShaderModule>(held, "module", "GPUShaderModule")?;
+    let (module, len) = held
+        .try_read::<GPUShaderModule, _>(d.require("module")?, GPUShaderModule::source_len)
+        .ok_or_else(|| {
+            d.global.throw_type_error(format_args!(
+                "{}.module: expected a GPUShaderModule",
+                d.name
+            ))
+        })?;
+    *source_len = (*source_len).max(len);
     let entry_point = d.string("entryPoint")?.map(Cow::Owned);
     let mut constants = wgc::naga::back::PipelineConstants::default();
     if let Some(record) = d.get("constants")? {
@@ -70,17 +86,25 @@ impl GPUComputePipeline {
         let d = Dict::new(global, descriptor, "GPUComputePipelineDescriptor")?;
         let label = d.label()?;
         let mut held = Held::default();
+        let mut source_len = 0;
         let desc = pl::ComputePipelineDescriptor {
             label: super::wgpu_label(&label),
             layout: parse_layout(&d, &mut held)?,
             stage: parse_stage(
                 &d.require_dict("compute", "GPUProgrammableStage")?,
                 &mut held,
+                &mut source_len,
             )?,
             cache: None,
         };
-        let (id, err) = instance().device_create_compute_pipeline(device.id(), &desc, None);
+        let device_id = device.id();
+        let compiled = bun_webgpu::compile(source_len, || {
+            instance().device_create_compute_pipeline(device_id, &desc, None)
+        });
         drop(held);
+        let Some((id, err)) = compiled else {
+            return Ok((JSValue::UNDEFINED, Some(too_large())));
+        };
         let value = GPUComputePipeline {
             device: Rc::clone(device),
             raw: Rc::new(bun_webgpu::ComputePipeline::new(id)),
@@ -195,6 +219,7 @@ impl GPURenderPipeline {
         let d = Dict::new(global, descriptor, "GPURenderPipelineDescriptor")?;
         let label = d.label()?;
         let mut held = Held::default();
+        let mut source_len = 0;
         let layout = parse_layout(&d, &mut held)?;
 
         let vertex = d.require_dict("vertex", "GPUVertexState")?;
@@ -232,7 +257,7 @@ impl GPURenderPipeline {
             Ok(())
         })?;
         let vertex = pl::VertexState {
-            stage: parse_stage(&vertex, &mut held)?,
+            stage: parse_stage(&vertex, &mut held, &mut source_len)?,
             buffers: Cow::Owned(buffers),
         };
 
@@ -318,7 +343,7 @@ impl GPURenderPipeline {
                     Ok(())
                 })?;
                 Some(pl::FragmentState {
-                    stage: parse_stage(&f, &mut held)?,
+                    stage: parse_stage(&f, &mut held, &mut source_len)?,
                     targets: Cow::Owned(targets),
                 })
             }
@@ -339,8 +364,14 @@ impl GPURenderPipeline {
             // wgpu-core hands out an invalid pipeline only from a failed creation: ask for no samples at all.
             desc.multisample.count = 0;
         }
-        let (id, err) = instance().device_create_render_pipeline(device.id(), &desc, None);
+        let device_id = device.id();
+        let compiled = bun_webgpu::compile(source_len, || {
+            instance().device_create_render_pipeline(device_id, &desc, None)
+        });
         drop(held);
+        let Some((id, err)) = compiled else {
+            return Ok((JSValue::UNDEFINED, Some(too_large())));
+        };
         let value = GPURenderPipeline {
             device: Rc::clone(device),
             raw: Rc::new(bun_webgpu::RenderPipeline::new(id)),

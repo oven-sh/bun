@@ -24,7 +24,7 @@ const cases = [
 ] as const;
 
 // The smallest leak to catch is one 50,000-byte input or output for each call.
-// The bound is a fifth of that. A run with no leak measures 2,400 at most.
+// The bound is a fifth of that. A run with no leak measures 3,100 at most.
 const maxBytesPerCall = 10_000;
 // ASAN builds are slower, so they make fewer calls. They can: mimalloc needs
 // about 400 zstd calls to settle, and an ASAN build does not use mimalloc.
@@ -70,10 +70,10 @@ describe("zlib compression does not leak memory", () => {
         openHandles: 3,
       });
       // A leak is one native handle for each call, so one for each hundred
-      // calls is not a leak. The count is not always 0: on Windows, about 1 run
-      // in 15 of `gzip` or `deflate` still counts the handle of its last call.
-      // One function scope points at it, nothing in a heap snapshot points at
-      // that scope, and one event loop turn later both are gone.
+      // calls is not a leak. The count is not always 0: about 1 run in 15 of an
+      // async method still counts the handle of its last call, and never more.
+      // In a heap snapshot nothing that a root reaches points at it, and one
+      // event loop turn later it is gone.
       expect(leakedHandles).toBeLessThan((rounds * callsPerRound) / 100);
       expect(samples).toHaveLength(rounds);
 

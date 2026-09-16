@@ -334,9 +334,9 @@ impl<C: JobContext> bun_event_loop::Taskable for Job<C> {
         drop(unsafe { Self::take(this, VirtualMachine::get()) })
     }
     /// The context whose script scheduled the job.
-    unsafe fn context(this: *const Self) -> bun_event_loop::TaskContext {
+    unsafe fn context(this: *const Self) -> bun_event_loop::ContextId {
         // SAFETY: fn contract.
-        bun_event_loop::TaskContext::Of(unsafe { (*this).header.context })
+        unsafe { (*this).header.context }
     }
 }
 

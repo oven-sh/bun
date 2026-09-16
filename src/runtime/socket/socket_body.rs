@@ -4224,9 +4224,9 @@ impl bun_event_loop::Taskable for DuplexUpgradeContext {
     }
     /// The hop continues the script that upgraded the duplex: once that context has stopped, a
     /// `StartTLS` that has not run yet must not start (`release_unrun` closes what there is).
-    unsafe fn context(this: *const Self) -> bun_event_loop::TaskContext {
+    unsafe fn context(this: *const Self) -> bun_event_loop::ContextId {
         // SAFETY: fn contract — the queued context.
-        bun_event_loop::TaskContext::Of(unsafe { (*this).context })
+        unsafe { (*this).context }
     }
 }
 

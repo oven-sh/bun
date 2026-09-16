@@ -97,7 +97,7 @@ pub struct BundleV2<'a> {
     pub js_poster: Option<bun_event_loop::JsPoster>,
     /// Whose script the plugins' `onResolve` / `onLoad` callbacks continue: the context that called
     /// `Bun.build`. Once it has stopped a request is answered as cancelled instead of reaching them.
-    pub plugin_context: bun_event_loop::TaskContext,
+    pub plugin_context: bun_event_loop::ContextId,
     /// CYCLEBREAK GENUINE: erased `bake::DevServer` (see `dispatch::DevServerHandle`).
     /// Populated from `transpiler.options.dev_server` + the runtime-registered vtable at
     /// construction. All ~15 DevServer call sites go through this.
@@ -1137,7 +1137,7 @@ pub mod bv2_impl {
                     unsafe { (*this).answer_cancelled() };
                 }
                 /// The plugins' callbacks continue the script that started the build.
-                unsafe fn context(this: *const Self) -> bun_event_loop::TaskContext {
+                unsafe fn context(this: *const Self) -> bun_event_loop::ContextId {
                     // SAFETY: fn contract; `bv2` is the live bundle waiting for this request, and the
                     // field is set before any request is dispatched.
                     unsafe { (*(*this).bv2).plugin_context }
@@ -1347,7 +1347,7 @@ pub mod bv2_impl {
                     unsafe { (*this).answer_cancelled() };
                 }
                 /// As `Resolve::context`.
-                unsafe fn context(this: *const Self) -> bun_event_loop::TaskContext {
+                unsafe fn context(this: *const Self) -> bun_event_loop::ContextId {
                     // SAFETY: as `Resolve::context`.
                     unsafe { (*(*this).bv2).plugin_context }
                 }
@@ -2964,7 +2964,7 @@ pub mod bv2_impl {
                 // SAFETY: `event_loop`, when set, points at the caller's live loop
                 // (owning thread == this thread).
                 js_poster: event_loop.and_then(|l| unsafe { l.as_ref() }.js_poster()),
-                plugin_context: bun_event_loop::TaskContext::Always,
+                plugin_context: bun_event_loop::ContextId::NONE,
                 dev_server: None,
                 file_map: None,
                 source_code_length: 0,

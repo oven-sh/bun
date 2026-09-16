@@ -589,8 +589,8 @@ impl bun_event_loop::Taskable for Pending {
     }
     /// `Pending::run` checks the context whose script is reading: most sources call it from their
     /// own completion, not through this task.
-    unsafe fn context(_: *const Self) -> bun_event_loop::TaskContext {
-        bun_event_loop::TaskContext::Always
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
     }
 }
 

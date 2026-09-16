@@ -26,8 +26,8 @@ impl bun_event_loop::Taskable for DeferredBatchTask {
     }
     /// A step of the bundle, which is waiting for it to come back: what the build reports is its
     /// completion's to decide.
-    unsafe fn context(_: *const Self) -> bun_event_loop::TaskContext {
-        bun_event_loop::TaskContext::Always
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
     }
 }
 

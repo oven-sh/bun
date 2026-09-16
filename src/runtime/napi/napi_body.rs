@@ -55,8 +55,8 @@ impl Taskable for napi_async_work {
     }
     /// An addon's completion always runs (it frees the work there): `NapiEnv::complete_in_context`
     /// enters the context that queued it, and refuses calls into script if that context has stopped.
-    unsafe fn context(_: *const Self) -> bun_event_loop::TaskContext {
-        bun_event_loop::TaskContext::Always
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
     }
 }
 impl Taskable for ThreadSafeFunction {
@@ -66,8 +66,8 @@ impl Taskable for ThreadSafeFunction {
     /// neutralised or freed. Nothing to do, and `this` must not be dereferenced.
     unsafe fn release_unrun(_: *mut Self) {}
     /// As `napi_async_work`.
-    unsafe fn context(_: *const Self) -> bun_event_loop::TaskContext {
-        bun_event_loop::TaskContext::Always
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
     }
 }
 impl Taskable for NapiFinalizerTask {
@@ -80,8 +80,8 @@ impl Taskable for NapiFinalizerTask {
         let _ = NapiFinalizerTask::run_on_js_thread(this);
     }
     /// An addon counts on its finalizers running.
-    unsafe fn context(_: *const Self) -> bun_event_loop::TaskContext {
-        bun_event_loop::TaskContext::Always
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
     }
 }
 

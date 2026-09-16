@@ -208,8 +208,8 @@ pub(crate) mod lib_uv_backend {
             unsafe { bun_core::heap::take(this) }.run();
         }
         /// A lookup is shared by the realm; each promise waiting on it is settled for its own context.
-        unsafe fn context(_: *const Self) -> bun_event_loop::TaskContext {
-            bun_event_loop::TaskContext::Always
+        unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+            bun_event_loop::ContextId::NONE
         }
     }
 

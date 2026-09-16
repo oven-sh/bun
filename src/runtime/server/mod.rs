@@ -4289,9 +4289,9 @@ impl bun_event_loop::Taskable for ServerAllConnectionsClosedTask {
         // SAFETY: fn contract — the box `schedule` queued.
         drop(unsafe { bun_core::heap::take(this) });
     }
-    unsafe fn context(this: *const Self) -> bun_event_loop::TaskContext {
+    unsafe fn context(this: *const Self) -> bun_event_loop::ContextId {
         // SAFETY: fn contract.
-        bun_event_loop::TaskContext::Of(unsafe { (*this).context })
+        unsafe { (*this).context }
     }
 }
 

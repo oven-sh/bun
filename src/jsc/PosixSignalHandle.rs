@@ -91,8 +91,8 @@ impl Taskable for PosixSignalTask {
     /// `this` packs the signal number; nothing is owned.
     unsafe fn release_unrun(_: *mut Self) {}
     /// A signal is the process's: `process.on(<signal>)` listeners of the realm.
-    unsafe fn context(_: *const Self) -> bun_event_loop::TaskContext {
-        bun_event_loop::TaskContext::Always
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
     }
 }
 

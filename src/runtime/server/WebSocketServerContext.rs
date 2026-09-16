@@ -95,7 +95,7 @@ impl Handler {
         if !on_error.is_empty_or_undefined_or_null() {
             // A top-level call of its own: what `error` throws is reported here.
             global_object.bun_vm().event_loop_mut().run_callback(
-                bun_event_loop::TaskContext::Always,
+                bun_event_loop::ContextId::NONE,
                 on_error,
                 global_object,
                 JSValue::UNDEFINED,

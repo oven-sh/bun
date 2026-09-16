@@ -150,7 +150,7 @@ macro_rules! extern_crypto_job {
                     drop(this);
                     produced?;
                     global.bun_vm().event_loop_mut().run_callback(
-                        bun_event_loop::TaskContext::Always,
+                        bun_event_loop::ContextId::NONE,
                         callback.get(),
                         global,
                         JSValue::UNDEFINED,
@@ -287,7 +287,7 @@ pub mod random {
                 }
             }
             global.bun_vm().event_loop_mut().run_callback(
-                bun_event_loop::TaskContext::Always,
+                bun_event_loop::ContextId::NONE,
                 js.callback.get(),
                 global,
                 JSValue::UNDEFINED,
@@ -1135,7 +1135,7 @@ mod _impl {
                         .to_js()
                 };
                 event_loop.run_callback(
-                    bun_event_loop::TaskContext::Always,
+                    bun_event_loop::ContextId::NONE,
                     callback,
                     global,
                     JSValue::UNDEFINED,
@@ -1145,7 +1145,7 @@ mod _impl {
             }
 
             event_loop.run_callback(
-                bun_event_loop::TaskContext::Always,
+                bun_event_loop::ContextId::NONE,
                 callback,
                 global,
                 JSValue::UNDEFINED,
@@ -1494,7 +1494,7 @@ mod _impl {
                 let exception =
                     global.create_error_instance(format_args!("Argon2 derivation failed"));
                 event_loop.run_callback(
-                    bun_event_loop::TaskContext::Always,
+                    bun_event_loop::ContextId::NONE,
                     callback,
                     global,
                     JSValue::UNDEFINED,
@@ -1506,7 +1506,7 @@ mod _impl {
             // Ownership transfers to JSC (freed via MarkedArrayBuffer_deallocator).
             match JSValue::create_buffer(global, output.leak()) {
                 Ok(buf) => event_loop.run_callback(
-                    bun_event_loop::TaskContext::Always,
+                    bun_event_loop::ContextId::NONE,
                     callback,
                     global,
                     JSValue::UNDEFINED,
@@ -1515,7 +1515,7 @@ mod _impl {
                 // The result could not be built (allocation failure): that is
                 // this derivation's error.
                 Err(err) => event_loop.run_callback(
-                    bun_event_loop::TaskContext::Always,
+                    bun_event_loop::ContextId::NONE,
                     callback,
                     global,
                     JSValue::UNDEFINED,

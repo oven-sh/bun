@@ -203,7 +203,7 @@ impl PostgresSQLQuery {
         let event_loop = vm.event_loop_mut();
         let js_err = postgres_error_to_js(global_object, None, err);
         event_loop.run_callback(
-            bun_event_loop::TaskContext::Always,
+            bun_event_loop::ContextId::NONE,
             function,
             global_object,
             this_value,
@@ -237,7 +237,7 @@ impl PostgresSQLQuery {
             .unwrap();
         let event_loop = vm.event_loop_mut();
         event_loop.run_callback(
-            bun_event_loop::TaskContext::Always,
+            bun_event_loop::ContextId::NONE,
             function,
             global_object,
             this_value,
@@ -312,7 +312,7 @@ impl PostgresSQLQuery {
         let event_loop = vm.event_loop_mut();
 
         event_loop.run_callback(
-            bun_event_loop::TaskContext::Always,
+            bun_event_loop::ContextId::NONE,
             function,
             global_object,
             this_value,

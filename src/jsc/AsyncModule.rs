@@ -115,8 +115,8 @@ impl bun_event_loop::Taskable for Queue {
     /// the VM's own queue; nothing is owned.
     unsafe fn release_unrun(_: *mut Self) {}
     /// A ping to the VM's own module queue.
-    unsafe fn context(_: *const Self) -> bun_event_loop::TaskContext {
-        bun_event_loop::TaskContext::Always
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
     }
 }
 
@@ -133,8 +133,8 @@ impl bun_event_loop::Taskable for AsyncModule {
         vm.modules.scheduled -= 1;
     }
     /// Fulfils a module fetch of a loader; calls no script of its own.
-    unsafe fn context(_: *const Self) -> bun_event_loop::TaskContext {
-        bun_event_loop::TaskContext::Always
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
     }
 }
 

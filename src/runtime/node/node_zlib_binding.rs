@@ -582,7 +582,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         // never called has none, so there is nothing to notify.
         if let Some(write_callback) = T::write_callback_get_cached(this_value) {
             vm.event_loop_ref().run_callback(
-                bun_event_loop::TaskContext::Always,
+                bun_event_loop::ContextId::NONE,
                 write_callback,
                 global,
                 this_value,
@@ -863,7 +863,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
             // SAFETY: `bun_vm()` and `event_loop()` are non-null for a Bun-owned global.
             let vm = global_this.bun_vm();
             vm.event_loop_ref().run_callback(
-                bun_event_loop::TaskContext::Always,
+                bun_event_loop::ContextId::NONE,
                 callback,
                 global_this,
                 this_value,
@@ -993,8 +993,8 @@ macro_rules! __impl_compression_stream {
             }
             /// The write always completes (its buffers are unpinned); the callbacks it reports to carry
             /// the async context of the script that set them.
-            unsafe fn context(_: *const Self) -> bun_event_loop::TaskContext {
-                bun_event_loop::TaskContext::Always
+            unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+                bun_event_loop::ContextId::NONE
             }
         }
 

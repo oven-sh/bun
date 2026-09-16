@@ -617,8 +617,8 @@ pub(crate) fn tick_queue_with_count(
         // `bun test --isolate` has since retired (the swap was that file's exit), and any context
         // once the VM was asked to stop (a parent's terminate() while the worker still ticks).
         let _context = match task.context() {
-            bun_event_loop::TaskContext::Always => None,
-            bun_event_loop::TaskContext::Of(context) => {
+            bun_event_loop::ContextId::NONE => None,
+            context => {
                 let vm = global.bun_vm();
                 let entered = vm.enter_context(context);
                 if !(vm.script_allowed() && vm.is_context_live(context)) {

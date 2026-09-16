@@ -17,8 +17,8 @@ impl Taskable for JSCDeferredWorkTask {
         unsafe { Bun__deleteDeferredWorkTask(this) }
     }
     /// `JSCTaskScheduler::runPendingWork` checks the graph that scheduled the work.
-    unsafe fn context(_: *const Self) -> bun_event_loop::TaskContext {
-        bun_event_loop::TaskContext::Always
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
     }
 }
 

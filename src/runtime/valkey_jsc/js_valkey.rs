@@ -273,7 +273,7 @@ impl JSValkeyClient {
             // `event_loop_mut()` is the safe accessor for the VM-owned
             // event-loop self-pointer (see `VirtualMachine::event_loop_mut`).
             vm.event_loop_mut().run_callback(
-                bun_event_loop::TaskContext::Of(self.context),
+                self.context,
                 callback,
                 global_object,
                 JSValue::UNDEFINED,
@@ -2040,7 +2040,7 @@ impl bun_event_loop::Taskable for ValkeyDeferredClose {
         }
     }
     /// The client's own close: `on_close` checks the client's context before it calls script.
-    unsafe fn context(_: *const Self) -> bun_event_loop::TaskContext {
-        bun_event_loop::TaskContext::Always
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
     }
 }

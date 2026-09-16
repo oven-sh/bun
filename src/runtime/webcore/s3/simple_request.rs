@@ -160,8 +160,8 @@ impl Taskable for S3HttpSimpleTask {
     }
     /// `on_response` enters the request's context itself, stopped or not: a multipart upload still
     /// sends its rollback for a graph that was disposed.
-    unsafe fn context(_: *const Self) -> bun_event_loop::TaskContext {
-        bun_event_loop::TaskContext::Always
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
     }
 }
 

@@ -697,7 +697,7 @@ impl Handlers {
             return false;
         }
         self.vm.event_loop_ref().run_callback(
-            bun_event_loop::TaskContext::Always,
+            bun_event_loop::ContextId::NONE,
             callback,
             &self.global(),
             context,
@@ -714,7 +714,7 @@ impl Handlers {
             return false;
         }
         self.vm.event_loop_ref().run_callback(
-            bun_event_loop::TaskContext::Always,
+            bun_event_loop::ContextId::NONE,
             callback,
             &self.global(),
             JSValue::UNDEFINED,
@@ -736,7 +736,7 @@ impl Handlers {
             return JSValue::ZERO;
         }
         self.vm.event_loop_ref().run_callback_with_result(
-            bun_event_loop::TaskContext::Always,
+            bun_event_loop::ContextId::NONE,
             callback,
             &self.global(),
             this_value,
@@ -6354,7 +6354,7 @@ impl H2FrameParser {
                 continue;
             };
             this.handlers.get().vm.event_loop_mut().run_callback(
-                bun_event_loop::TaskContext::Always,
+                bun_event_loop::ContextId::NONE,
                 callback,
                 global_object,
                 this_value,

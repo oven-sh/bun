@@ -1228,9 +1228,9 @@ mod _async_tasks {
             unsafe { Self::destroy(this) }
         }
         /// The context whose script asked.
-        unsafe fn context(this: *const Self) -> bun_event_loop::TaskContext {
+        unsafe fn context(this: *const Self) -> bun_event_loop::ContextId {
             // SAFETY: fn contract.
-            bun_event_loop::TaskContext::Of(unsafe { (*this).context })
+            unsafe { (*this).context }
         }
     }
 
@@ -1398,7 +1398,7 @@ mod _async_tasks {
         pub(crate) r#ref: KeepAlive,
         pub(crate) tracker: AsyncTaskTracker,
         /// `fs.cp`: the context whose script asked. The shell's `cp`: a step of its script.
-        pub(crate) context: bun_event_loop::TaskContext,
+        pub(crate) context: bun_event_loop::ContextId,
         pub(crate) has_result: AtomicBool,
         /// Number of in-flight references to `this`. Starts at 1 for the main
         /// directory-scan task; incremented for each `SingleTask` spawned. Every
@@ -1532,7 +1532,7 @@ mod _async_tasks {
             // SAFETY: fn contract — posted by `on_subtask_done` with the count at zero.
             unsafe { Self::destroy(this) }
         }
-        unsafe fn context(this: *const Self) -> bun_event_loop::TaskContext {
+        unsafe fn context(this: *const Self) -> bun_event_loop::ContextId {
             // SAFETY: fn contract.
             unsafe { (*this).context }
         }
@@ -1571,7 +1571,7 @@ mod _async_tasks {
                 EventLoopHandle::init(vm.event_loop.cast()),
                 bun_jsc::ConcurrentPoster::Js(vm.ticket()),
                 tracker,
-                bun_event_loop::TaskContext::Of(cx.context().id()),
+                cx.context().id(),
                 core::ptr::null_mut(),
             );
             // SAFETY: `schedule_new` returns a Box::leak'd pointer; valid until destroy()
@@ -1594,7 +1594,7 @@ mod _async_tasks {
                 poster,
                 AsyncTaskTracker { id: 0 },
                 // As `ShellCpTask`, which is waiting for this.
-                bun_event_loop::TaskContext::Always,
+                bun_event_loop::ContextId::NONE,
                 shelltask,
             )
         }
@@ -1605,7 +1605,7 @@ mod _async_tasks {
             evtloop: EventLoopHandle,
             poster: bun_jsc::ConcurrentPoster,
             tracker: AsyncTaskTracker,
-            context: bun_event_loop::TaskContext,
+            context: bun_event_loop::ContextId,
             shelltask: *mut ShellCpTask,
         ) -> *mut Self {
             let mut task = Box::new(Self {

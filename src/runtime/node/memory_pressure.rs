@@ -66,8 +66,8 @@ impl bun_event_loop::Taskable for MemoryPressureTask {
     /// Nothing is owned (`this` is the packed level).
     unsafe fn release_unrun(_: *mut Self) {}
     /// The process's memory pressure: listeners of the realm.
-    unsafe fn context(_: *const Self) -> bun_event_loop::TaskContext {
-        bun_event_loop::TaskContext::Always
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
     }
 }
 

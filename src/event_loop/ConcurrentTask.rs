@@ -130,7 +130,7 @@ pub mod task_tag {
 pub struct Task {
     pub tag: TaskTag,
     pub ptr: *mut (),
-    // [`Task::context`], in the padding `tag` leaves: [`ContextId::NONE`] for [`TaskContext::Always`].
+    // [`Task::context`], in the padding `tag` leaves.
     context: ContextId,
 }
 const _: () = assert!(core::mem::size_of::<Task>() == 2 * core::mem::size_of::<usize>());
@@ -155,18 +155,6 @@ impl ContextId {
     pub const fn raw(self) -> u32 {
         self.0
     }
-}
-
-/// Whose script a queued task continues: what the event loop checks before it runs one.
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub enum TaskContext {
-    /// Runs whenever the VM runs script: work that serves the whole realm, and a step of a
-    /// larger operation that checks its own context before it reaches script (the impl says
-    /// which, and where).
-    Always,
-    /// Continues the script of this context (the one that was current when the work was
-    /// started): run inside it, and released unrun once it has stopped.
-    Of(ContextId),
 }
 
 /// What it takes to be queued as a [`Task`]: a tag, and how the task is
@@ -200,15 +188,18 @@ pub trait Taskable {
     /// `this` came off the queue under `Self::TAG` and is not used afterwards.
     unsafe fn release_unrun(this: *mut Self);
 
-    /// Whose script the task continues. Required, so that no type can be queued without having
-    /// decided it: [`Task::init`] asks when the task is made and the task carries the answer.
-    /// The event loop enters a [`TaskContext::Of`] context around the task, and
-    /// [releases it unrun](Self::release_unrun) if that context (a `Bun.ModuleGraph`'s) has
-    /// stopped.
+    /// Whose script the task continues: the context that was current when the work was started.
+    /// Required, so that no type can be queued without having decided it: [`Task::init`] asks
+    /// when the task is made and the task carries the answer. The event loop runs the task inside
+    /// that context, and [releases it unrun](Self::release_unrun) if the context (a
+    /// `Bun.ModuleGraph`'s) has stopped. [`ContextId::NONE`]: no script's. The task runs whenever
+    /// the VM runs script, inside nothing: work that serves the whole realm, and a step of a
+    /// larger operation that enters its own context before it reaches script (the impl says
+    /// which, and where).
     ///
     /// # Safety
     /// `this` is the [`Task::ptr`] about to be queued, live.
-    unsafe fn context(this: *const Self) -> TaskContext;
+    unsafe fn context(this: *const Self) -> ContextId;
 }
 
 impl TaskTag {
@@ -222,23 +213,15 @@ impl Task {
     /// For a tag whose `ptr` is not a `*mut T` (it packs an integer, or the payload is erased);
     /// everything else goes through [`init`](Self::init).
     #[inline]
-    pub const fn new(tag: TaskTag, ptr: *mut (), context: TaskContext) -> Task {
-        let context = match context {
-            TaskContext::Always => ContextId::NONE,
-            TaskContext::Of(context) => context,
-        };
+    pub const fn new(tag: TaskTag, ptr: *mut (), context: ContextId) -> Task {
         Task { tag, ptr, context }
     }
 
     /// Whose script the task continues: what its type's [`Taskable::context`] said when the task
     /// was made. The event loop checks it before it runs the task.
     #[inline]
-    pub const fn context(&self) -> TaskContext {
-        if self.context.0 == ContextId::NONE.0 {
-            TaskContext::Always
-        } else {
-            TaskContext::Of(self.context)
-        }
+    pub const fn context(&self) -> ContextId {
+        self.context
     }
 
     /// The type→tag table is the [`Taskable`] trait; the per-type impl
@@ -272,8 +255,8 @@ impl Taskable for crate::ManagedTask::ManagedTask {
     }
     /// A callback task always runs: a callback that continues some script enters that script's
     /// context itself, so what it reports goes to nobody once the context has stopped.
-    unsafe fn context(_this: *const Self) -> TaskContext {
-        TaskContext::Always
+    unsafe fn context(_this: *const Self) -> ContextId {
+        ContextId::NONE
     }
 }
 // ────────────────────────────────────────────────────────────────────────────

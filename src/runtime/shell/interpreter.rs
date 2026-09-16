@@ -943,10 +943,10 @@ impl Interpreter {
 
     /// Whose script the shell's completion continues: the one that started it (a `Bun.ModuleGraph`'s),
     /// if it has one.
-    fn task_context(&self) -> bun_event_loop::TaskContext {
+    fn task_context(&self) -> bun_jsc::ContextId {
         match self.context.get() {
-            Some(context) => bun_event_loop::TaskContext::Of(context),
-            None => bun_event_loop::TaskContext::Always,
+            Some(context) => context,
+            None => bun_jsc::ContextId::NONE,
         }
     }
 
@@ -2745,7 +2745,7 @@ impl<P: OutputTaskVTable> OutputTask<P> {
 ///
 /// `Taskable` is a supertrait so [`ShellTask::on_finish`] can build the
 /// JS-side `ConcurrentTask`.
-/// Its `Taskable::context` is `Always`: a step is what its interpreter is waiting for, and the
+/// Its `Taskable::context` is `ContextId::NONE`: a step is what its interpreter is waiting for, and the
 /// interpreter checks its own context before anything reaches script (`Interpreter::interrupted`,
 /// `finish`, `fail`).
 pub trait ShellTaskCtx: Sized + bun_event_loop::Taskable {

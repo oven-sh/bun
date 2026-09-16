@@ -866,7 +866,7 @@ impl QuicSession {
             if let Some(cb) = callbacks::get(global, "onSessionTicket") {
                 let vm = global.bun_vm().as_mut();
                 vm.event_loop_ref().run_callback(
-                    bun_event_loop::TaskContext::Always,
+                    bun_event_loop::ContextId::NONE,
                     cb,
                     global,
                     self.handle(),
@@ -1033,7 +1033,7 @@ impl QuicSession {
                     if let Some(cb) = callbacks::get(global, "onStreamCreated") {
                         let vm = global.bun_vm().as_mut();
                         vm.event_loop_ref().run_callback(
-                            bun_event_loop::TaskContext::Always,
+                            bun_event_loop::ContextId::NONE,
                             cb,
                             global,
                             self.handle(),
@@ -1054,7 +1054,7 @@ impl QuicSession {
                 if let Some(cb) = callbacks::get(global, "onSessionNewToken") {
                     let vm = global.bun_vm().as_mut();
                     vm.event_loop_ref().run_callback(
-                        bun_event_loop::TaskContext::Always,
+                        bun_event_loop::ContextId::NONE,
                         cb,
                         global,
                         self.handle(),
@@ -1067,7 +1067,7 @@ impl QuicSession {
                 if let Some(cb) = callbacks::get(global, "onSessionKeyLog") {
                     let vm = global.bun_vm().as_mut();
                     vm.event_loop_ref().run_callback(
-                        bun_event_loop::TaskContext::Always,
+                        bun_event_loop::ContextId::NONE,
                         cb,
                         global,
                         self.handle(),
@@ -1089,7 +1089,7 @@ impl QuicSession {
                 if let Some(cb) = callbacks::get(global, "onSessionTicket") {
                     let vm = global.bun_vm().as_mut();
                     vm.event_loop_ref().run_callback(
-                        bun_event_loop::TaskContext::Always,
+                        bun_event_loop::ContextId::NONE,
                         cb,
                         global,
                         self.handle(),
@@ -1110,7 +1110,7 @@ impl QuicSession {
                     if let Some(cb) = callbacks::get(global, "onStreamReset") {
                         let vm = global.bun_vm().as_mut();
                         vm.event_loop_ref().run_callback(
-                            bun_event_loop::TaskContext::Always,
+                            bun_event_loop::ContextId::NONE,
                             cb,
                             global,
                             handle,
@@ -1126,7 +1126,7 @@ impl QuicSession {
                 if let Some(cb) = callbacks::get(global, "onSessionGoaway") {
                     let vm = global.bun_vm().as_mut();
                     vm.event_loop_ref().run_callback(
-                        bun_event_loop::TaskContext::Always,
+                        bun_event_loop::ContextId::NONE,
                         cb,
                         global,
                         self.handle(),
@@ -1142,7 +1142,7 @@ impl QuicSession {
                 if let Some(cb) = callbacks::get(global, "onStreamTrailers") {
                     let vm = global.bun_vm().as_mut();
                     vm.event_loop_ref().run_callback(
-                        bun_event_loop::TaskContext::Always,
+                        bun_event_loop::ContextId::NONE,
                         cb,
                         global,
                         handle,
@@ -1170,7 +1170,7 @@ impl QuicSession {
                     if let Some(cb) = callbacks::get(global, "onStreamHeaders") {
                         let vm = global.bun_vm().as_mut();
                         vm.event_loop_ref().run_callback(
-                            bun_event_loop::TaskContext::Always,
+                            bun_event_loop::ContextId::NONE,
                             cb,
                             global,
                             handle,
@@ -1187,7 +1187,7 @@ impl QuicSession {
                 if let Some(cb) = callbacks::get(global, "onStreamDrain") {
                     let vm = global.bun_vm().as_mut();
                     vm.event_loop_ref().run_callback(
-                        bun_event_loop::TaskContext::Always,
+                        bun_event_loop::ContextId::NONE,
                         cb,
                         global,
                         handle,
@@ -1203,7 +1203,7 @@ impl QuicSession {
                 if let Some(cb) = callbacks::get(global, "onStreamBlocked") {
                     let vm = global.bun_vm().as_mut();
                     vm.event_loop_ref().run_callback(
-                        bun_event_loop::TaskContext::Always,
+                        bun_event_loop::ContextId::NONE,
                         cb,
                         global,
                         handle,
@@ -1221,7 +1221,7 @@ impl QuicSession {
                 if let Some(wakeup) = stream.take_wakeup() {
                     let vm = global.bun_vm().as_mut();
                     vm.event_loop_ref().run_callback(
-                        bun_event_loop::TaskContext::Always,
+                        bun_event_loop::ContextId::NONE,
                         wakeup.get(),
                         global,
                         JSValue::UNDEFINED,
@@ -1238,7 +1238,7 @@ impl QuicSession {
                 if let Some(cb) = callbacks::get(global, "onSessionDatagram") {
                     let vm = global.bun_vm().as_mut();
                     vm.event_loop_ref().run_callback(
-                        bun_event_loop::TaskContext::Always,
+                        bun_event_loop::ContextId::NONE,
                         cb,
                         global,
                         self.handle(),
@@ -1260,7 +1260,7 @@ impl QuicSession {
                 if let Some(cb) = callbacks::get(global, "onSessionDatagramStatus") {
                     let vm = global.bun_vm().as_mut();
                     vm.event_loop_ref().run_callback(
-                        bun_event_loop::TaskContext::Always,
+                        bun_event_loop::ContextId::NONE,
                         cb,
                         global,
                         self.handle(),
@@ -1316,7 +1316,7 @@ impl QuicSession {
                     if let Some(cb) = callbacks::get(global, "onSessionDatagramStatus") {
                         let vm = global.bun_vm().as_mut();
                         vm.event_loop_ref().run_callback(
-                            bun_event_loop::TaskContext::Always,
+                            bun_event_loop::ContextId::NONE,
                             cb,
                             global,
                             self.handle(),
@@ -1344,7 +1344,7 @@ impl QuicSession {
                 if let Some(cb) = callbacks::get(global, "onSessionVersionNegotiation") {
                     let vm = global.bun_vm().as_mut();
                     vm.event_loop_ref().run_callback(
-                        bun_event_loop::TaskContext::Always,
+                        bun_event_loop::ContextId::NONE,
                         cb,
                         global,
                         self.handle(),
@@ -1381,7 +1381,7 @@ impl QuicSession {
                 if let Some(cb) = callbacks::get(global, "onSessionOrigin") {
                     let vm = global.bun_vm().as_mut();
                     vm.event_loop_ref().run_callback(
-                        bun_event_loop::TaskContext::Always,
+                        bun_event_loop::ContextId::NONE,
                         cb,
                         global,
                         self.handle(),
@@ -1428,7 +1428,7 @@ impl QuicSession {
                 if let Some(cb) = callbacks::get(global, "onSessionPathValidation") {
                     let vm = global.bun_vm().as_mut();
                     vm.event_loop_ref().run_callback(
-                        bun_event_loop::TaskContext::Always,
+                        bun_event_loop::ContextId::NONE,
                         cb,
                         global,
                         self.handle(),
@@ -1475,7 +1475,7 @@ impl QuicSession {
                 if let Some(cb) = callbacks::get(global, "onStreamClose") {
                     let vm = global.bun_vm().as_mut();
                     vm.event_loop_ref().run_callback(
-                        bun_event_loop::TaskContext::Always,
+                        bun_event_loop::ContextId::NONE,
                         cb,
                         global,
                         handle,
@@ -1614,7 +1614,7 @@ impl QuicSession {
         if let Some(callback) = callbacks::get(global, "onSessionHandshake") {
             let vm = global.bun_vm().as_mut();
             vm.event_loop_ref().run_callback(
-                bun_event_loop::TaskContext::Always,
+                bun_event_loop::ContextId::NONE,
                 callback,
                 global,
                 self.handle(),
@@ -1645,7 +1645,7 @@ impl QuicSession {
             if let Some(callback) = callbacks::get(global, "onSessionEarlyDataRejected") {
                 let vm = global.bun_vm().as_mut();
                 vm.event_loop_ref().run_callback(
-                    bun_event_loop::TaskContext::Always,
+                    bun_event_loop::ContextId::NONE,
                     callback,
                     global,
                     self.handle(),
@@ -1734,7 +1734,7 @@ impl QuicSession {
         if let Some(cb) = callbacks::get(global, "onSessionQlog") {
             let vm = global.bun_vm().as_mut();
             vm.event_loop_ref().run_callback(
-                bun_event_loop::TaskContext::Always,
+                bun_event_loop::ContextId::NONE,
                 cb,
                 global,
                 self.handle(),
@@ -1804,7 +1804,7 @@ impl QuicSession {
         if let Some(callback) = callbacks::get(global, "onSessionClose") {
             let vm = global.bun_vm().as_mut();
             vm.event_loop_ref().run_callback(
-                bun_event_loop::TaskContext::Always,
+                bun_event_loop::ContextId::NONE,
                 callback,
                 global,
                 self.handle(),
@@ -2180,7 +2180,7 @@ impl QuicSession {
         if let Some(cb) = callbacks::get(global, "onSessionDatagramStatus") {
             let vm = global.bun_vm().as_mut();
             vm.event_loop_ref().run_callback(
-                bun_event_loop::TaskContext::Always,
+                bun_event_loop::ContextId::NONE,
                 cb,
                 global,
                 self.handle(),

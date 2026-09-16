@@ -1017,8 +1017,8 @@ impl bun_event_loop::Taskable for StatWatcher {
     }
     /// The watcher closes with the context that started it (`abort_handle`); a hop that arrives
     /// afterwards finds it closed.
-    unsafe fn context(_: *const Self) -> bun_event_loop::TaskContext {
-        bun_event_loop::TaskContext::Always
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
     }
 }
 
@@ -1120,7 +1120,7 @@ impl bun_event_loop::Taskable for StatWatcherTimerUpdate {
         drop(unsafe { bun_core::heap::take(this) });
     }
     /// The scheduler's own timer; calls no script.
-    unsafe fn context(_: *const Self) -> bun_event_loop::TaskContext {
-        bun_event_loop::TaskContext::Always
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
     }
 }

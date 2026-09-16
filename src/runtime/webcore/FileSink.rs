@@ -1623,8 +1623,8 @@ impl bun_event_loop::Taskable for FlushPendingTask {
         }
     }
     /// Flushes what the sink has buffered.
-    unsafe fn context(_: *const Self) -> bun_event_loop::TaskContext {
-        bun_event_loop::TaskContext::Always
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
     }
 }
 

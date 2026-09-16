@@ -1602,7 +1602,7 @@ impl CronJob {
         // observed by `schedule_next`), and does not stop the job — as with a
         // rejected tick.
         let result = vm.event_loop_mut().run_callback_with_result(
-            bun_event_loop::TaskContext::Of(this.context),
+            this.context,
             cb,
             &this.global,
             js_this,

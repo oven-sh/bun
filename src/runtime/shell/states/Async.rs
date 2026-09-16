@@ -209,8 +209,8 @@ impl bun_event_loop::Taskable for crate::shell::dispatch_tasks::ShellAsyncTask {
         drop(unsafe { bun_core::heap::take(this) });
     }
     /// See [`ShellTaskCtx`](crate::shell::interpreter::ShellTaskCtx): a step of a shell script always runs.
-    unsafe fn context(_: *const Self) -> bun_event_loop::TaskContext {
-        bun_event_loop::TaskContext::Always
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
     }
 }
 

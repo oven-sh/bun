@@ -1316,7 +1316,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         let mut bv2 = BundleV2::init(transpiler, None, bump, event_loop, false, worker_pool, bump)?;
 
         bv2.plugins = self.plugins();
-        bv2.plugin_context = bun_event_loop::TaskContext::Of(self.context);
+        bv2.plugin_context = self.context;
         bv2.completion = Some(self.as_js_bundle_completion_task());
         // SAFETY: `file_map` returns a `NonNull` into `self.config.files`,
         // which outlives `bv2` (both live until `generate_in_new_thread`
@@ -1369,8 +1369,8 @@ impl bun_event_loop::Taskable for JSBundleCompletionTask {
         let _ = JSBundleCompletionTask::on_complete_anytask(this);
     }
     /// The context whose script called `Bun.build`.
-    unsafe fn context(this: *const Self) -> bun_event_loop::TaskContext {
+    unsafe fn context(this: *const Self) -> bun_event_loop::ContextId {
         // SAFETY: fn contract.
-        bun_event_loop::TaskContext::Of(unsafe { (*this).context })
+        unsafe { (*this).context }
     }
 }

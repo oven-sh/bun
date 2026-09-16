@@ -275,7 +275,7 @@ impl JSMySQLQuery {
         let event_loop = self.event_loop();
 
         event_loop.run_callback(
-            bun_event_loop::TaskContext::Always,
+            bun_event_loop::ContextId::NONE,
             function,
             self.global_object(),
             this_value,
@@ -367,7 +367,7 @@ impl JSMySQLQuery {
             return;
         };
         event_loop.run_callback(
-            bun_event_loop::TaskContext::Always,
+            bun_event_loop::ContextId::NONE,
             function,
             self.global_object(),
             this_value,

@@ -732,7 +732,7 @@ impl PostgresSQLConnection {
             // Reported here rather than returned: the pending queries are still
             // rejected and the socket closed below whatever `onclose` did.
             self.event_loop().run_callback(
-                bun_event_loop::TaskContext::Always,
+                bun_event_loop::ContextId::NONE,
                 on_close,
                 self.global(),
                 JSValue::UNDEFINED,
@@ -3082,7 +3082,7 @@ impl PostgresSQLConnection {
         let payload_js = bun_string_jsc::create_utf8_for_js(global, payload)
             .map_err(crate::jsc::js_error_to_postgres)?;
         self.event_loop().run_callback(
-            bun_event_loop::TaskContext::Always,
+            bun_event_loop::ContextId::NONE,
             callback,
             global,
             JSValue::UNDEFINED,

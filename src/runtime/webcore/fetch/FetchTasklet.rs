@@ -58,8 +58,8 @@ impl Taskable for FetchTaskletDeinitHop {
         unsafe { Self::run(this) }
     }
     /// Frees a tasklet; calls no script.
-    unsafe fn context(_: *const Self) -> bun_event_loop::TaskContext {
-        bun_event_loop::TaskContext::Always
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
     }
 }
 impl FetchTaskletDeinitHop {
@@ -82,8 +82,8 @@ impl Taskable for FetchTasklet {
     }
     /// `on_progress_update` decides: a fetch whose context stopped reports nothing, and what is left
     /// of it is released there.
-    unsafe fn context(_: *const Self) -> bun_event_loop::TaskContext {
-        bun_event_loop::TaskContext::Always
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
     }
 }
 
@@ -2760,8 +2760,8 @@ impl bun_event_loop::Taskable for FetchTaskletPromiseSettle {
         drop(unsafe { bun_core::heap::take(this) });
     }
     /// The fetch() promise is settled for the script that fetched.
-    unsafe fn context(this: *const Self) -> bun_event_loop::TaskContext {
+    unsafe fn context(this: *const Self) -> bun_event_loop::ContextId {
         // SAFETY: fn contract — the box the completion queued.
-        bun_event_loop::TaskContext::Of(unsafe { (*this).context })
+        unsafe { (*this).context }
     }
 }

@@ -696,7 +696,7 @@ impl JSMySQLConnection {
         queries_array.ensure_still_alive();
         // self.global_object.queue_microtask(on_close, &[js_error, queries_array]);
         loop_.run_callback(
-            bun_event_loop::TaskContext::Always,
+            bun_event_loop::ContextId::NONE,
             on_close,
             &self.global_object,
             JSValue::UNDEFINED,

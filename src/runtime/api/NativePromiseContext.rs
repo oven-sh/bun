@@ -242,8 +242,8 @@ impl Taskable for DeferredDerefTask {
         Self::run_from_js_thread(this as usize);
     }
     /// A deferred deref; calls no script.
-    unsafe fn context(_: *const Self) -> bun_event_loop::TaskContext {
-        bun_event_loop::TaskContext::Always
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
     }
 }
 

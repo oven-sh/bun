@@ -528,7 +528,11 @@ pub struct SocketGroups {
 }
 
 impl SocketGroups {
-    fn each(&mut self) -> [&mut SocketGroup; 12] {
+    /// How many groups a set has: the length of [`each`](Self::each)'s array, which does not
+    /// compile with any other.
+    const COUNT: usize = 12;
+
+    fn each(&mut self) -> [&mut SocketGroup; Self::COUNT] {
         [
             &mut self.bun_connect_group_tcp,
             &mut self.bun_connect_group_tls,
@@ -638,7 +642,7 @@ impl SocketGroups {
     pub(crate) unsafe fn close_all(this: *mut Self) {
         for _ in 0..8 {
             let mut closed_any = false;
-            for i in 0..12 {
+            for i in 0..Self::COUNT {
                 // SAFETY: fn contract; the borrow ends before `close_all` dispatches.
                 let group: *mut SocketGroup = unsafe { &mut *this }.each()[i];
                 // SAFETY: `group` is embedded in the live set.

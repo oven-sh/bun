@@ -1380,6 +1380,156 @@ test.concurrent("dev server started after process.chdir() reports bundle failure
   expect(exitCode).toBe(0);
 });
 
+// The dev server builds its router list from the `{ dir, style }` routes it
+// started with and never changes it. reload() used to accept another list and
+// ignore it, so the new route never answered and a removed one kept answering.
+describe("server.reload() and the framework router routes", () => {
+  const files = {
+    "index.html": `<!DOCTYPE html><html><head><title>t</title></head><body></body></html>`,
+    "pages/index.tsx": `export default function Page() { return <h1>page</h1>; }`,
+    "other/index.tsx": `export default function Page() { return <h1>other</h1>; }`,
+    // What the built-in React framework resolves when a dev server with a router starts. No page is bundled here.
+    "node_modules/react-refresh/package.json": `{ "name": "react-refresh", "version": "0.0.0" }`,
+    "node_modules/react-refresh/runtime.js": `export {};`,
+    "node_modules/react-server-dom-bun/package.json": `{ "name": "react-server-dom-bun", "version": "0.0.0" }`,
+    "node_modules/react-server-dom-bun/server.js": `export {};`,
+  };
+
+  // `body` runs with `html`, `router`, `reload(server, routes)` and
+  // `get(server, path)` in scope and prints its result as JSON.
+  async function run(body: string) {
+    using dir = tempDir("bun-serve-reload-framework-router", {
+      ...files,
+      "serve.ts": /*ts*/ `
+        import html from "./index.html";
+
+        const router = { dir: "./pages", style: "nextjs-pages" };
+
+        // "ok", or the first sentence of the error message.
+        function reload(server, config) {
+          try {
+            server.reload({ development: true, fetch: () => new Response("fallback"), ...config });
+            return "ok";
+          } catch (e) {
+            return e.message.split(". ")[0];
+          }
+        }
+
+        async function get(server, path) {
+          const res = await fetch(new URL(path, server.url));
+          return { status: res.status, body: (await res.text()).slice(0, 9) };
+        }
+
+        ${body}
+      `,
+    });
+    const { stdout, stderr, exitCode } = await runServeFixture(dir);
+    return { result: stdout === "" ? null : JSON.parse(stdout), exitCode, stderr };
+  }
+
+  const rejected = "server.reload() cannot add, remove, or change a framework router route ({ dir, style })";
+  const page = { status: 200, body: "<!DOCTYPE" };
+
+  test.concurrent("throws when the routes name other framework routers than the dev server serves", async () => {
+    const { stderr, ...rest } = await run(`
+      const server = Bun.serve({ port: 0, development: true, routes: { "/": html, "/*": router }, fetch: () => new Response("fallback") });
+      const result = {
+        removed: reload(server, { routes: { "/": html } }),
+        otherStyle: reload(server, { routes: { "/": html, "/*": { dir: "./pages", style: "nextjs-app-ui" } } }),
+        otherDir: reload(server, { routes: { "/": html, "/*": { dir: "./other", style: "nextjs-pages" } } }),
+        otherPrefix: reload(server, { routes: { "/": html, "/docs/*": router } }),
+        added: reload(server, { routes: { "/": html, "/*": router, "/docs/*": { dir: "./other", style: "nextjs-pages" } } }),
+        // The server kept its routes.
+        page: await get(server, "/"),
+      };
+      console.log(JSON.stringify(result));
+      server.stop(true);
+    `);
+    expect(rest, stderr).toEqual({
+      result: {
+        removed: rejected,
+        otherStyle: rejected,
+        otherDir: rejected,
+        otherPrefix: rejected,
+        added: rejected,
+        page,
+      },
+      exitCode: 0,
+    });
+  });
+
+  // `dir` resolves against the root the dev server started with, so the same
+  // routes object passes after a `process.chdir()`.
+  test.concurrent("accepts the same framework routers in every spelling", async () => {
+    const { stderr, ...rest } = await run(`
+      const routes = { "/": html, "/*": router };
+      const server = Bun.serve({ port: 0, development: true, routes, fetch: () => new Response("fallback") });
+      const result = {
+        same: reload(server, { routes }),
+        trailingSlash: reload(server, { routes: { "/": html, "/*": { dir: "./pages/", style: "nextjs-pages" } } }),
+        plainName: reload(server, { routes: { "/": html, "/*": { dir: "pages", style: "nextjs-pages" } } }),
+        absolute: reload(server, { routes: { "/": html, "/*": { dir: import.meta.dir + "/pages", style: "nextjs-pages" } } }),
+        noRoutes: reload(server, {}),
+      };
+      process.chdir("pages");
+      result.sameAfterChdir = reload(server, { routes });
+      result.otherDirAfterChdir = reload(server, { routes: { "/": html, "/*": { dir: "./other", style: "nextjs-pages" } } });
+      server.stop(true);
+      result.sameAfterStop = reload(server, { routes });
+      console.log(JSON.stringify(result));
+    `);
+    expect(rest, stderr).toEqual({
+      result: {
+        same: "ok",
+        trailingSlash: "ok",
+        plainName: "ok",
+        absolute: "ok",
+        noRoutes: "ok",
+        sameAfterChdir: "ok",
+        otherDirAfterChdir: rejected,
+        sameAfterStop: "ok",
+      },
+      exitCode: 0,
+    });
+  });
+
+  // The dev server that this reload starts serves the routers of this reload.
+  test.concurrent("accepts the first framework router of a server that has no dev server", async () => {
+    const { stderr, ...rest } = await run(`
+      const server = Bun.serve({ port: 0, development: true, routes: {}, fetch: () => new Response("fallback") });
+      const result = {
+        added: reload(server, { routes: { "/*": router } }),
+        unmatched: await get(server, "/unmatched"),
+        same: reload(server, { routes: { "/*": router } }),
+        otherStyle: reload(server, { routes: { "/*": { dir: "./pages", style: "nextjs-app-ui" } } }),
+      };
+      console.log(JSON.stringify(result));
+      server.stop(true);
+    `);
+    expect(rest, stderr).toEqual({
+      result: { added: "ok", unmatched: { status: 200, body: "fallback" }, same: "ok", otherStyle: rejected },
+      exitCode: 0,
+    });
+  });
+
+  // A server with no dev server and none to come (its mode is not development).
+  test.concurrent("throws for a server that was started without development mode", async () => {
+    const { stderr, ...rest } = await run(`
+      const server = Bun.serve({ port: 0, development: false, routes: {}, fetch: () => new Response("fallback") });
+      const result = {
+        added: reload(server, { routes: { "/*": router } }),
+        unmatched: await get(server, "/unmatched"),
+      };
+      console.log(JSON.stringify(result));
+      server.stop(true);
+    `);
+    expect(rest, stderr).toEqual({
+      result: { added: rejected, unmatched: { status: 200, body: "fallback" } },
+      exitCode: 0,
+    });
+  });
+});
+
 test("wildcard static routes", async () => {
   await using dir = tempDir("bun-serve-html-error-handling", {
     "index.html": /*html*/ `

@@ -637,6 +637,18 @@ impl Clone for Style {
     }
 }
 
+impl PartialEq for Style {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Style::NextjsPages, Style::NextjsPages)
+            | (Style::NextjsAppUi, Style::NextjsAppUi)
+            | (Style::NextjsAppRoutes, Style::NextjsAppRoutes) => true,
+            (Style::JavascriptDefined(a), Style::JavascriptDefined(b)) => a.get() == b.get(),
+            _ => false,
+        }
+    }
+}
+
 bun_core::comptime_string_map! {
     pub(crate) static STYLE_MAP: fn() -> Style = {
         b"nextjs-pages" => || Style::NextjsPages,

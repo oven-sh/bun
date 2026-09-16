@@ -25,9 +25,7 @@ namespace Bun {
     macro(wasm)
 // clang-format on
 
-// The names of the options node:vm reads, one set per VM (JSVMClientData). A name is atomized on its first use
-// and kept, so that a lookup does not add the name to the atom table and take it out again. A VM that never
-// reads an option creates none of them.
+// node:vm option names, atomized on first use and kept per VM, so a lookup does not add and remove an atom.
 class NodeVMOptionNames {
 public:
 #define BUN_NODE_VM_OPTION_NAME_ACCESSOR(name)                      \

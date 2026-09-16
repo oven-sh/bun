@@ -5,9 +5,7 @@
 
 namespace Bun {
 
-// node:vm gives every Script and compiled function a file: URL origin made from its filename. A program that
-// compiles many of them usually gives them all one filename, or none, which is one default name. The last filename
-// made into a URL is kept here, one per VM (JSVMClientData); see NodeVM::sourceOriginURL().
+// The last filename node:vm made into a file: URL origin, and that URL, per VM; see NodeVM::sourceOriginURL().
 struct NodeVMSourceOriginCache {
     WTF::String filename;
     WTF::URL url;

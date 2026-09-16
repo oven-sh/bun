@@ -1283,27 +1283,19 @@ where
         }
     }
 
-    /// HTTP/1 only: `end_stream()` for a response the JS sink already fully
-    /// ended (`HTTPServerWritable::ended_response`). HTTP/1's uWS `markDone()`
-    /// drops its `onAborted` on end, so nothing nulls `self.resp` if the peer
-    /// closes afterwards: by the time the parked stream-resolution microtask
-    /// runs, uSockets may already have freed the socket
-    /// (`us_internal_free_closed_sockets`) or recycled it onto the next
-    /// keep-alive request. Release the handle without dereferencing it. The
-    /// `clear_on_data()`/`clear_aborted()`/`clear_timeout()` calls
-    /// `detach_response()` would make are already covered by `markDone()`,
-    /// which is also why a later `server.stop(true)` cannot reach `on_abort`:
-    /// callers come here even once the server is terminated.
+    /// `end_stream()` for a response the sink already ended
+    /// (`HTTPServerWritable::ended_response`), where `resp` must no longer be
+    /// dereferenced. `markDone()` already did what `detach_response()` would.
     ///
-    /// HTTP/2 and HTTP/3 must never reach this. `Http{2,3}Response::markDone()`
-    /// deliberately leave `onAborted` armed so the stream teardown can notify
-    /// the holder, which also proves `resp` is still alive here (`on_abort`
-    /// nulls it first). They therefore need `end_stream()`'s
-    /// `detach_response()` to disarm that callback before the context is
-    /// released, or the later stream teardown invokes it on a freed pool slot.
+    /// HTTP/1 arrives from the stream's resolve/reject reaction, by then
+    /// uSockets may have freed or recycled the socket. HTTP/2 and HTTP/3
+    /// arrive from `on_abort`, which is the last call on a freed stream.
+    ///
+    /// An H2/H3 reaction must use `end_stream()` instead: its `resp` is still
+    /// alive, and `detach_response()` has to disarm the still-armed
+    /// `onAborted` before the context goes, or it fires on a freed pool slot.
     pub(crate) fn end_already_responded_stream(&self) {
         ctx_log!("endAlreadyRespondedStream");
-        debug_assert!(!MUX);
         // `resp` may be freed (see above); the sink resumed it at `ended_response = true`.
         self.flags.set_request_body_paused(false);
         if self.resp.take().is_some() {
@@ -1461,20 +1453,29 @@ where
         let pinned = RequestContextRef::pin(this);
         let this = pinned.ctx();
         debug_assert!(this.resp.get().is_some());
-        // An HTTP/2 or HTTP/3 stream is destroyed once both sides finish,
-        // so this also fires after a successful end(). HTTP/1 sockets persist
-        // for keep-alive, so the equivalent never happens there. Drop the
-        // pointer; everything else cleans up via the resolve/reject path.
+        debug_assert!(this.server.get().is_some());
+        let server = this.server();
+        let vm = server.vm();
+        // Both arms below can reject a parked request-body read and drain.
+        // The held count keeps that drain from checkpointing mid-frame.
+        let _entered = vm.enter_event_loop_scope_without_checkpoint();
+        // An H2/H3 stream is destroyed once both sides finish, so this also
+        // fires after a successful end(); HTTP/1 keep-alive sockets never do.
+        // Only the sink ends a response without `detach_response()`, and its
+        // reaction does nothing once `resp` is gone, so end the request here.
         if MUX {
             // SAFETY: FFI handle
             if resp.has_responded() {
-                this.resp.set(None);
-                this.flags.set_has_abort_handler(false);
+                // The sink can outlive this call; `resp` dies with the stream.
+                if let Some(wrapper) = this.sink_mut() {
+                    wrapper.sink.res = None;
+                }
+                // Releases the base ref itself, so no `_ref` adoption here.
+                this.end_already_responded_stream();
                 return;
             }
         }
         debug_assert!(!this.flags.aborted());
-        debug_assert!(this.server.get().is_some());
         // mark request as aborted
         this.flags.set_aborted(true);
         let abort = this.additional_on_abort.replace(None);
@@ -1485,12 +1486,7 @@ where
 
         this.detach_response();
         let any_js_calls = core::cell::Cell::new(false);
-        let server = this.server();
-        let vm = server.vm();
         let global_this = server.global_this();
-        // Entered for the abort listeners below, and (dropped last) for the
-        // drains below and in the release of `_ref`.
-        let _entered = vm.enter_event_loop_scope_without_checkpoint();
         let _ref = RequestContextRef::adopt(this.as_ctx_ptr());
         // This is a task in the event loop.
         // If we called into JavaScript, we must drain the microtask queue.

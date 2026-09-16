@@ -175,6 +175,8 @@ test.skipIf(!isWindows)("Bun.secrets.set() persist option selects the Credential
       { options: {}, value: "default", Persist: CRED_PERSIST_ENTERPRISE },
       { options: { persist: "local" }, value: "local-machine", Persist: CRED_PERSIST_LOCAL_MACHINE },
       { options: { persist: "enterprise" }, value: "enterprise-again", Persist: CRED_PERSIST_ENTERPRISE },
+      { options: { persist: "local" }, value: "local-machine-again", Persist: CRED_PERSIST_LOCAL_MACHINE },
+      { options: {}, value: "default-after-local", Persist: CRED_PERSIST_ENTERPRISE },
     ] as const;
 
     for (const { options, value, Persist } of cases) {
@@ -187,6 +189,10 @@ test.skipIf(!isWindows)("Bun.secrets.set() persist option selects the Credential
       });
       expect(await Bun.secrets.get({ service, name })).toBe(value);
     }
+
+    // The conversions leave one entry, not one per Persist value: one delete() removes it.
+    expect(await Bun.secrets.delete({ service, name })).toBe(true);
+    expect(await Bun.secrets.get({ service, name })).toBeNull();
   } finally {
     advapi32.close();
     await Bun.secrets.delete({ service, name });

@@ -440,9 +440,7 @@ impl Default for Framework {
     }
 }
 
-/// Resolves a directory option against the working directory: absolute,
-/// normalized, no trailing separator. `None` once the result is
-/// `MAX_PATH_BYTES` long, the length `Resolver::read_dir_info` rejects too.
+/// `None` from `MAX_PATH_BYTES` bytes up, the length `Resolver::read_dir_info` rejects too.
 pub(crate) fn resolve_dir_option(dir: &[u8]) -> Option<Box<[u8]>> {
     let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
     let mut buf = paths::path_buffer_pool::get();
@@ -456,8 +454,7 @@ pub(crate) fn resolve_dir_option(dir: &[u8]) -> Option<Box<[u8]>> {
     ))
 }
 
-/// `resolve_dir_option` for `fileSystemRouterTypes[index].root`. Reports a
-/// root that is too long the way `resolve_helper` reports an entry point.
+/// Reports a root that is too long the way `resolve_helper` reports an entry point.
 pub(crate) fn resolve_router_root(index: usize, root: &[u8]) -> Option<Box<[u8]>> {
     let resolved = resolve_dir_option(root);
     if resolved.is_none() {

@@ -4787,7 +4787,7 @@ impl VirtualMachine {
         #[cfg(not(windows))]
         {
             let path = specifier_utf8.slice();
-            if path.contains(&b'\\') && bun_paths::is_absolute(path) {
+            if bun_core::strings::contains_char(path, b'\\') && bun_paths::is_absolute(path) {
                 let path_z = bun_core::ZBox::from_bytes(path);
                 if matches!(
                     bun_sys::exists_at_type(bun_sys::Fd::cwd(), &path_z),

@@ -7403,7 +7403,9 @@ impl NodeFS {
             );
 
             let path_slice = args.path.slice();
-            let path = if bun_paths::is_absolute(path_slice) && path_slice.contains(&b'\\') {
+            let path = if bun_paths::is_absolute(path_slice)
+                && bun_core::strings::contains_char(path_slice, b'\\')
+            {
                 args.path.slice_z(inbuf)
             } else {
                 // SAFETY: instance() returns the leaked singleton; INSTANCE_LOADED checked above.

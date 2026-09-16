@@ -805,6 +805,28 @@ const dir = String(
       console.log(JSON.stringify({ status }));
       process.exit(0);
     `,
+    "spawns-and-feeds-a-child.mjs": `
+      import childProcess from "node:child_process";
+      // What a logger that pipes to a child does; from a microtask, which still runs once the graph has been disposed.
+      export const later = () => queueMicrotask(() => {
+        const child = childProcess.spawn("cat");
+        child.on("error", () => {});
+        child.stdin.write("x");
+        child.stdin.end();
+        child.kill();
+        child.unref();
+        childProcess.spawn("/does/not/exist/" + import.meta.file);
+      });
+    `,
+    "spawns-after-it-was-disposed.mjs": `
+      // No onError, and no handler of the host's: an error in the graph's leftover code would end this process.
+      const graph = new Bun.ModuleGraph();
+      const app = await graph.import(import.meta.dir + "/spawns-and-feeds-a-child.mjs");
+      graph.run(() => app.later());
+      graph.dispose();
+      for (let i = 0; i < 20; i++) await new Promise(resolve => setImmediate(resolve));
+      console.log(JSON.stringify({ hostStillRuns: true }));
+    `,
     "listens-and-reads-its-address.mjs": `
       import http from "node:http";
       import net from "node:net";
@@ -2391,13 +2413,17 @@ test("ModuleGraph isolation: a query the host makes on a disposed graph's Bun.SQ
 
 // As Bun.spawn(): the child is started and then killed. 'spawn' is node:child_process's own
 // announcement, made from a process.nextTick(); what the event loop would report is not.
-test("ModuleGraph isolation: child_process.spawn() by a disposed graph starts a child that is killed at once, and hears of nothing else", async () => {
+test("ModuleGraph isolation: child_process.spawn() by a disposed graph starts nothing and announces nothing", async () => {
   using made = await newGraph();
   const state = newState("late-spawn");
+  const marker = join(dir, "late-spawn-ran.txt");
   made.graph.run(() =>
     made.app.call(() =>
       queueMicrotask(() => {
-        const child = require("node:child_process").spawn(bunExe(), ["-e", "setInterval(() => {}, 1000)"]);
+        const child = require("node:child_process").spawn(bunExe(), [
+          "-e",
+          `require("fs").writeFileSync(${JSON.stringify(marker)}, "ran")`,
+        ]);
         for (const event of ["spawn", "exit", "close", "error"]) child.on(event, () => state.heard.push(event));
         state.pid = child.pid;
       }),
@@ -2411,19 +2437,11 @@ test("ModuleGraph isolation: child_process.spawn() by a disposed graph starts a 
     env: bunEnv,
   }).exited;
   await hostTimerTurns();
-  const gone = (pid: number) => {
-    try {
-      process.kill(pid, 0);
-      return false;
-    } catch {
-      return true;
-    }
-  };
-  await until(() => gone(state.pid));
-  expect({ host: existsSync(hostMarker), pid: typeof state.pid, heard: state.heard }).toEqual({
+  expect({ host: existsSync(hostMarker), graph: existsSync(marker), pid: state.pid, heard: state.heard }).toEqual({
     host: true,
-    pid: "number",
-    heard: ["spawn"],
+    graph: false,
+    pid: undefined,
+    heard: [],
   });
 });
 
@@ -3380,6 +3398,15 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
   test("a global agent the host put in place of node's is what a graph's requests without an agent go through", async () => {
     expect(await runsFixture("host-replaced-the-global-agent.mjs")).toEqual({ stdout: `{"status":200}`, exitCode: 0 });
   });
+  test.skipIf(isWindows)(
+    "a child its leftover script spawns and writes to is not started: nothing fails, in it or in the host",
+    async () => {
+      expect(await runsFixture("spawns-after-it-was-disposed.mjs")).toEqual({
+        stdout: `{"hostStillRuns":true}`,
+        exitCode: 0,
+      });
+    },
+  );
   test("a server it was disposed in the turn it listened is not announced to it: its listen callback cannot fail the host", async () => {
     expect(await runsFixture("disposed-in-the-turn-it-listens.mjs")).toEqual({ stdout: `{"heard":[]}`, exitCode: 0 });
   });

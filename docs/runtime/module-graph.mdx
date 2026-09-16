@@ -46,7 +46,7 @@ The context follows the code asynchronously, like `AsyncLocalStorage`: through `
 - A promise waiting on a request, a child's exit, a file read, compression, `crypto.subtle`, a DNS lookup, `Bun.build` or a stream never settles.
 - `FinalizationRegistry` cleanup callbacks are still called.
 
-Microtasks and `process.nextTick` callbacks the graph had already queued still run, once. Whatever that code starts does not start: a connection is not dialed, a UDP socket is not bound, nobody can connect to a server it listens with. Its promise stays pending rather than rejecting, so code that retries on failure stops there. The one thing such code can still hear is what Node's own JavaScript announces from `process.nextTick()` about something that did happen, such as a child's `'spawn'`.
+Microtasks and `process.nextTick` callbacks the graph had already queued still run, once. Whatever that code starts does not start: a connection is not dialed, a UDP socket is not bound, nobody can connect to a server it listens with. Its promise stays pending rather than rejecting, so code that retries on failure stops there.
 
 The host's references to the graph's objects are dead too. Do not use a graph's socket, worker, child process, stream or `Response` after `dispose()`. An operation on one may fail or may never complete: `await worker.terminate()`, `server.close(callback)` or waiting for a child's `'exit'` can wait for ever. From a file the graph had open, the host gets `EBADF` or "Database has closed". What was buffered and not yet written is dropped.
 

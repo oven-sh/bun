@@ -421,6 +421,26 @@ pub(crate) fn release_owned_fd(global: &JSGlobalObject, frame: &CallFrame) -> Js
     Ok(JSValue::from(context.is_some()))
 }
 
+/// `(syscall)` → the error `read`, `write` or `writev` fails with on a descriptor that is not open:
+/// what a node:fs stream reports when [`is_owned_fd_open`] says its descriptor went with its owner,
+/// without handing the number (another file's by now) to the system to be told so. Made the way
+/// every failed fs call's error is.
+#[bun_jsc::host_fn]
+pub(crate) fn closed_fd_error(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let syscall = frame.argument(0).to_utf8(global)?;
+    let tag = match syscall.slice() {
+        b"read" => bun_sys::Tag::read,
+        b"write" => bun_sys::Tag::write,
+        b"writev" => bun_sys::Tag::writev,
+        _ => {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "closedFdError: not a syscall a stream makes"
+            )));
+        }
+    };
+    Ok(bun_sys::Error::from_code(bun_sys::E::EBADF, tag).to_js(global))
+}
+
 /// `(owner, callback)`: `callback()` in the context [`own_fd`] named, so what it queues or throws
 /// is that context's script's. (By id: holding the context's async frame from a registry that
 /// lives as long as the realm would keep its graph from ever being collected.)

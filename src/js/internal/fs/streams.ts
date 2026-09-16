@@ -48,6 +48,8 @@ const kFdOwner = Symbol("kFdOwner");
 const ownFd = $newRustFunction("node_fs_binding.rs", "ownFd", 1);
 const isOwnedFdOpen = $newRustFunction("node_fs_binding.rs", "isOwnedFdOpen", 1);
 const releaseOwnedFd = $newRustFunction("node_fs_binding.rs", "releaseOwnedFd", 2);
+// (syscall) → the EBADF that syscall fails with, as node:fs makes it for a call that did fail.
+const closedFdError = $newRustFunction("node_fs_binding.rs", "closedFdError", 1);
 
 // A stream over a FileHandle copies the handle's descriptor number; the handle knows whether the
 // number is still its own.
@@ -71,7 +73,7 @@ function ownerClosedFd(stream) {
  *  nothing: a stream that was reading or writing at dispose() finds this out from its own queued continuation,
  *  and an 'error' nobody listens for there would be an uncaught exception of the host's. */
 function reportClosedByOwner(syscall: string, report: (er: Error) => void) {
-  if (!require("internal/shared").isStoppedModuleGraphRunning()) report(badFileDescriptor(syscall));
+  if (!require("internal/shared").isStoppedModuleGraphRunning()) report(closedFdError(syscall));
 }
 
 /** A write that finds the descriptor gone: nothing is in flight, whoever is or is not told, so a later destroy() must
@@ -80,14 +82,6 @@ function writeFoundFdClosed(stream, syscall: string, cb: (er?: Error) => void) {
   stream[kIsPerformingIO] = false;
   reportClosedByOwner(syscall, cb);
   if (stream.destroyed) stream.emit(kIoDone);
-}
-
-function badFileDescriptor(syscall: string) {
-  const err: any = new Error("EBADF: bad file descriptor, " + syscall);
-  err.code = "EBADF";
-  err.errno = process.platform === "win32" ? -4083 : -9;
-  err.syscall = syscall;
-  return err;
 }
 
 const {

@@ -1,5 +1,5 @@
 // Bundle tests are tests concerning bundling bugs that only occur in DevServer.
-import { expect } from "bun:test";
+import { describe, expect } from "bun:test";
 import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
 devTest("import identifier doesnt get renamed", {
@@ -438,8 +438,8 @@ const buildErrorSources = {
 type BuildErrorSource = keyof typeof buildErrorSources;
 // "0" is the default of a release build and of this harness: a route with a build error is bundled
 // again on each request. "1" is the default of a debug build: the dev server trusts its module graph.
-for (const perfectIncremental of ["0", "1"]) {
-  devTest(`a build error stays on its routes until a save fixes it (perfect incremental: ${perfectIncremental})`, {
+describe.each(["0", "1"])("perfect incremental: %s", perfectIncremental => {
+  devTest("a build error stays on its routes until a save fixes it", {
     framework: { ...minimalFramework, fileSystemRouterTypes: [{ ...localServerEntryRouterType, layouts: true }] },
     env: { BUN_ASSUME_PERFECT_INCREMENTAL: perfectIncremental },
     files: Object.fromEntries(
@@ -502,7 +502,7 @@ for (const perfectIncremental of ["0", "1"]) {
       }
     },
   });
-}
+});
 // Two "use client" files at most: a third one in a bundle trips the use-after-free that #39488 fixes.
 devTest("a client component that the server entry point imports is in the client bundle of a route", {
   framework: {

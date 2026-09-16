@@ -80,7 +80,11 @@ struct Http3Response {
             return false;
         }
         int w = us_quic_stream_write((us_quic_stream_t *) this, data.data(), (unsigned) data.length());
-        if (w < 0) w = 0;
+        if (w < 0) {
+            failStream();
+            if (writtenPtr) *writtenPtr = 0;
+            return false;
+        }
         d->offset += (uint64_t) w;
         if (writtenPtr) *writtenPtr = (size_t) w;
         if ((size_t) w < data.length()) {
@@ -209,10 +213,20 @@ private:
             h.name = base + (uintptr_t) h.name;
             h.value = base + (uintptr_t) h.value;
         }
-        us_quic_stream_send_headers((us_quic_stream_t *) this,
+        int r = us_quic_stream_send_headers((us_quic_stream_t *) this,
             d->hdrs.mutableSpan().data(), (unsigned) d->hdrs.size(), endStream);
         d->hdrBuf.shrink(0);
         d->hdrs.shrink(0);
+        if (r < 0) failStream();
+    }
+
+    /* lsquic refused the header block, or the send half takes no more
+     * writes. That is not backpressure: no on_stream_writable clears it, so
+     * want_write would spin the event loop. RESET_STREAM(H3_INTERNAL_ERROR)
+     * tells the peer that the message is incomplete. on_stream_close then
+     * reports the abort to the holder through onAborted. */
+    void failStream() {
+        us_quic_stream_reset_internal_error((us_quic_stream_t *) this);
     }
 
     bool internalEnd(std::string_view data, uint64_t totalSize, bool optional,
@@ -245,7 +259,12 @@ private:
 
         int w = data.empty() ? 0
             : us_quic_stream_write((us_quic_stream_t *) this, data.data(), (unsigned) data.length());
-        if (w < 0) w = 0;
+        if (w < 0) {
+            failStream();
+            if (optional) return false;
+            markDone(d);
+            return true;
+        }
         d->offset += (uint64_t) w;
         if ((size_t) w < data.length()) {
             if (optional) {

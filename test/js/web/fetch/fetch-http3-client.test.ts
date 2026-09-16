@@ -1074,3 +1074,39 @@ test("custom TLS trust options are rejected on protocol: http3 and excluded from
   expect(stdout).toMatch(/second status=200 sessions=0\n$/);
   expect(exitCode).toBe(0);
 });
+
+// lsxpack_header, the struct lsquic takes for one field, keeps the length of a
+// value in 16 bits: 70000 bytes would reach the server as 70000 % 65536 = 4464.
+// Subprocess, because a debug build asserts on that length inside the client.
+test("a request header value over 65535 bytes rejects and is not sent truncated", async () => {
+  const fixture = `
+    const server = Bun.serve({
+      port: 0,
+      tls: ${JSON.stringify(tls)},
+      http3: true,
+      http1: false,
+      fetch: req => new Response(String(req.headers.get("x-long")?.length)),
+    });
+    const send = value =>
+      fetch("https://127.0.0.1:" + server.port + "/", {
+        protocol: "http3",
+        tls: { rejectUnauthorized: false },
+        headers: { "x-long": value },
+      }).then(
+        async res => "the server saw " + (await res.text()) + " bytes",
+        err => "rejected with " + err.code,
+      );
+    console.log("too long:", await send(Buffer.alloc(70000, "~").toString()));
+    console.log("afterwards:", await send("short"));
+    // The pooled HTTP/3 session would keep the process alive until it idles out.
+    process.exit(0);
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("too long: rejected with HTTP3HeaderEncodingError\nafterwards: the server saw 5 bytes\n");
+  expect(exitCode).toBe(0);
+});

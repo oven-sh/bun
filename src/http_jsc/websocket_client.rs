@@ -1105,9 +1105,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             // backpressure); don't enqueue a second close frame on top of it.
             return;
         }
-        // The socket closes only once a read sees the peer's FIN, and JS can
-        // no longer reach `resume()` after the close is dispatched: a socket
-        // left paused here keeps its fd for the life of the process.
+        // Only a read closes this socket, and JS cannot `resume()` it after the close.
         self.resume();
         if !self.has_tcp() {
             self.dispatch_abrupt_close(ErrorCode::Ended);
@@ -1246,8 +1244,7 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     pub(crate) fn pause(&self) -> bool {
-        // C++ still reaches us while a close frame is mid-flush; the socket
-        // must stay resumed from `send_close_with_body` on.
+        // A close is mid-flush: keep the reads that `send_close_with_body` resumed.
         if self.has_pending_close_dispatch() {
             return false;
         }

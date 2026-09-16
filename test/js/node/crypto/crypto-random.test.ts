@@ -280,16 +280,12 @@ describe.concurrent.skipIf(!isLinux || isMusl || !cc)(
     // threads, etc.; the regression produced >= N calls.
     const MAX_GETRANDOM_CALLS = 200;
     // On Linux release builds Bun terminates via quick_exit(3), which skips
-    // __attribute__((destructor)) and atexit handlers, so every getrandom call
-    // is recorded in a file rather than reported from a destructor. A call
-    // appends one byte, so the size of the file is the count. An append is
-    // atomic, so concurrent calls need no lock, and write(2) is safe where the
-    // wrappers can run (signal handlers included). The constructor creates
-    // the file, so it exists even when no getrandom calls occur.
+    // __attribute__((destructor)) and atexit handlers, so every call is
+    // recorded in a file as it happens: one appended byte per call, so the
+    // file size is the count. An append is atomic and async-signal-safe.
     //
-    // BoringSSL does not use the libc wrapper: it seeds its DRBG with
-    // syscall(SYS_getrandom, ...). Those calls are counted separately, into
-    // GETRANDOM_SYSCALL_COUNT_FILE.
+    // BoringSSL seeds its DRBG with syscall(SYS_getrandom, ...), not the libc
+    // wrapper. Those calls go to GETRANDOM_SYSCALL_COUNT_FILE.
     const interposerSrc = `
       #define _GNU_SOURCE
       #include <stdarg.h>
@@ -385,11 +381,10 @@ describe.concurrent.skipIf(!isLinux || isMusl || !cc)(
       expect(calls).toBeLessThan(MAX_GETRANDOM_CALLS);
     });
 
-    // One RAND_bytes call costs about 0.5 µs however few bytes it returns, so
-    // randomInt() takes the 8 bytes of a sample from the VM's entropy cache,
-    // which one RAND_bytes call refills 2 KB at a time. BoringSSL reseeds its
-    // DRBG with syscall(SYS_getrandom) every 4096 RAND_bytes calls
-    // (kReseedInterval), so the reseeds during a loop count those calls.
+    // randomInt() must take its samples from the VM's entropy cache, not make a
+    // RAND_bytes call (about 0.5 µs) per sample. BoringSSL reseeds its DRBG with
+    // syscall(SYS_getrandom) every 4096 RAND_bytes calls (kReseedInterval), so
+    // the reseeds during a loop count those calls.
     it("randomInt does not call RAND_bytes per iteration", async () => {
       const RESEED_INTERVAL = 4096;
       const script = `

@@ -403,11 +403,8 @@ pub mod random {
             }
 
             // Uniform random in [min, max) via Lemire's nearly-divisionless
-            // rejection sampling. A sample is 8 bytes of the VM's entropy cache, not
-            // its own `RAND_bytes` call: one call costs about 0.5 µs however few
-            // bytes it returns, and the cache refills with one call per 2 KB. Node
-            // reads from a cache too:
-            // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/crypto/random.js#L202-L205
+            // rejection sampling. Samples come from the VM's entropy cache: a
+            // `RAND_bytes` call per sample costs about 0.5 µs.
             let res: i64 = {
                 let range = (max - min) as u64;
                 debug_assert!(range > 0);

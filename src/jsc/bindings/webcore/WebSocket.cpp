@@ -1251,8 +1251,9 @@ void WebSocket::didReceiveMessage(String&& message)
     // a CString. The callback reads the span, we drop it — no
     // MessageEvent, no dispatchEvent, no postTask.
     if (m_native.onMessage) {
-        Bun::UTF8View view(message);
-        m_native.onMessage(m_native.ctx, view.span());
+        // The client fails a message longer than MAX_RECEIVE_MESSAGE_LENGTH (128 MiB), so the conversion cannot fail.
+        if (auto view = Bun::UTF8View::tryCreate(message))
+            m_native.onMessage(m_native.ctx, view->span());
         return;
     }
 

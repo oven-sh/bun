@@ -184,7 +184,12 @@ function getPrivilegedCommand() {
     return priviledgedCommand;
   }
 
-  if (isWindows) {
+  // Already root (the image bake step runs bootstrap and `agent.mjs install`
+  // as root on a fresh machine): no wrapper. In particular not
+  // `su -s sh root -c`, which takes ONE command string — prefixing it to an
+  // argv drops every argument after the first (`rc-update add …` became a
+  // bare `rc-update`).
+  if (isWindows || process.getuid?.() === 0) {
     return (priviledgedCommand = []);
   }
 
@@ -192,12 +197,6 @@ function getPrivilegedCommand() {
   const { error: sudoError } = spawnSync([...sudo, "true"]);
   if (!sudoError) {
     return (priviledgedCommand = sudo);
-  }
-
-  const su = ["su", "-s", "sh", "root", "-c"];
-  const { error: suError } = spawnSync([...su, "true"]);
-  if (!suError) {
-    return (priviledgedCommand = su);
   }
 
   const doas = ["doas", "-u", "root"];

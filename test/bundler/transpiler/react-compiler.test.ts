@@ -1038,6 +1038,52 @@ describe("bundler", () => {
     },
   });
 
+  // Regression: constant propagation marked the result temporary of a store
+  // (`x = 10`) or an update (`x++`) as constant. When a consumer folded that
+  // temporary away (`-(x = 10)` -> `-10`), the store lost its lvalue and codegen
+  // printed it as a statement ahead of an earlier store that was still inlined
+  // at its use (`x = 10; return [x = 5, -10, x++]`). See #42628.
+  itBundled("react-compiler/StoreOrderInSameExpression", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        const Stub = () => null;
+        function InCallback() {
+          const f = () => {
+            let x;
+            return [(x = 5), -(x = 10), x++];
+          };
+          return <Stub run={f} />;
+        }
+        function InBody() {
+          let x;
+          const v = [(x = 5), -(x = 10)];
+          return <Stub v={v} x={x++} />;
+        }
+        function UpdateInCallback({ cond }) {
+          const f = () => {
+            let x = 1;
+            const a = [(x = 5), -(x++)];
+            if (cond) x = 100;
+            return [a, x];
+          };
+          return <Stub run={f} />;
+        }
+        console.log(
+          JSON.stringify([
+            InCallback().p.run(),
+            InBody().p,
+            UpdateInCallback({ cond: false }).p.run(),
+          ]),
+        );
+      `,
+      ...stubReact,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "api",
+    run: { stdout: '[[5,-10,10],{"v":[5,-10],"x":10},[[5,-5],6]]' },
+  });
+
   itBundled("react-compiler/HoistsMemoCacheSentinel", {
     files: {
       "/entry.jsx": /* jsx */ `
@@ -1262,6 +1308,109 @@ describe("bundler", () => {
         "SpreadThenAttr",
       ]);
       expect(body("Getter")).toContain("get g()");
+    },
+  });
+
+  // prune_non_escaping_scopes does not visit the test of a `?:`. A reactive
+  // scope that only the test reaches gets no node, but the local that scope
+  // reassigns still refers to it. Once that local has to be memoized, Babel
+  // raises `Invariant: Expected a node for all scopes` and skips that one
+  // function. The last two functions are the controls.
+  //
+  // A compiled function calls the fake `c` once per render, so the second
+  // number of each pair is 1 for a compiled function and 0 for a skipped one.
+  itBundled("react-compiler/AssignmentInConditionalTestSkipsOnlyThatFunction", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { calls } from "react/compiler-runtime";
+
+        function CallInTest(p) {
+          let m;
+          const r = (m = p.f()) ? 1 : 0;
+          return <div data-v={[m, r]} />;
+        }
+        function ArrayInTest(p) {
+          let m;
+          const r = (m = [p.a]) ? 1 : 0;
+          return <div data-v={[m]} data-r={r} />;
+        }
+        function ObjectInTest(p) {
+          let m = null;
+          const r = (m = { a: p.a }) ? p.b : p.c;
+          return <div data-v={{ m, r }} />;
+        }
+        function useInHook(p) {
+          "use memo";
+          let m;
+          const r = ((m = p.f()) ? 1 : 0) + 1;
+          return [m, r];
+        }
+        // https://github.com/facebook/react/issues/37228: the same invariant
+        // with no assignment, from a \`?:\` in a \`try\` in an inlined IIFE.
+        const check = v => v.ok;
+        function useValue() {
+          return { ok: true };
+        }
+        function ConditionalInTryInIife() {
+          const raw = useValue();
+          return (() => {
+            try {
+              return check(raw) ? raw : null;
+            } catch {
+              return null;
+            }
+          })();
+        }
+        function AssignedLocalNotMemoized(p) {
+          let m;
+          const r = (m = p.f()) ? 1 : 0;
+          return <div data-m={m} data-r={r} />;
+        }
+        function Plain({ name }) {
+          return <div>Hello {name}</div>;
+        }
+
+        function render(fn, props) {
+          const before = calls();
+          const result = fn(props);
+          return [result.props ?? result, calls() - before];
+        }
+        console.log(JSON.stringify({
+          CallInTest: render(CallInTest, { f: () => "x" }),
+          ArrayInTest: render(ArrayInTest, { a: 1 }),
+          ObjectInTest: render(ObjectInTest, { a: 1, b: 2, c: 3 }),
+          useInHook: render(useInHook, { f: () => "y" }),
+          ConditionalInTryInIife: render(ConditionalInTryInIife),
+          AssignedLocalNotMemoized: render(AssignedLocalNotMemoized, { f: () => "z" }),
+          Plain: render(Plain, { name: "bun" }),
+        }));
+      `,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+      "/node_modules/react/index.js": `exports.createElement = () => null;`,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => ({ type, props });`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => ({ type, props });`,
+      "/node_modules/react/compiler-runtime.js": `
+        let count = 0;
+        exports.c = size => {
+          count++;
+          return new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+        };
+        exports.calls = () => count;
+      `,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: {
+      stdout: JSON.stringify({
+        CallInTest: [{ "data-v": ["x", 1] }, 0],
+        ArrayInTest: [{ "data-v": [[1]], "data-r": 1 }, 0],
+        ObjectInTest: [{ "data-v": { m: { a: 1 }, r: 2 } }, 0],
+        useInHook: [["y", 2], 0],
+        ConditionalInTryInIife: [{ ok: true }, 0],
+        AssignedLocalNotMemoized: [{ "data-m": "z", "data-r": 1 }, 1],
+        Plain: [{ children: ["Hello ", "bun"] }, 1],
+      }),
     },
   });
 
@@ -2009,6 +2158,193 @@ describe("bundler", () => {
     }
   }
 
+  // The bundler prints an import under the name of the export it links to:
+  // `defaultTheme` below prints as `theme`. A compiled function gets new
+  // symbols for its parameters, its locals and its temporaries (`t0`, `$`).
+  // The renamer has to number them like the symbols of any other function, or
+  // a local with the name of that export shadows it:
+  // `let theme = custom ?? theme`.
+  for (const target of ["bun", "browser"] as const) {
+    for (const minifyIdentifiers of [false, true]) {
+      itBundled(`react-compiler/LocalNamedLikeAnExportItReads-${target}-identifiers=${minifyIdentifiers}`, {
+        files: {
+          "/entry.ts": /* ts */ `
+            import * as forms from "./forms";
+            const lines: string[] = [];
+            const check = (flag?: boolean) => {
+              if (flag) throw "thrown";
+            };
+            for (const [name, form] of Object.entries(forms)) {
+              try {
+                lines.push(name + "=" + form({ custom: "mine", flag: true, list: [{ x: 1 }, { x: 2 }], check }));
+                lines.push(name + "=" + form({ list: [{ x: 3 }], check }));
+              } catch (e) {
+                lines.push(name + " threw " + e);
+              }
+            }
+            console.log(lines.join("\\n"));
+          `,
+          "/forms.tsx": /* tsx */ `
+            import { useEffect, useState, memo, forwardRef } from "react";
+            import * as values from "./values";
+            import {
+              Wrapped as BaseWrapped,
+              theme as defaultTheme,
+              custom as defaultCustom,
+              item as defaultItem,
+              s as format,
+              e as suffix,
+              t0 as first,
+              t1 as second,
+              $ as dollar,
+            } from "./values";
+
+            export function Local({ custom }) {
+              useEffect(() => {});
+              const theme = custom ?? defaultTheme;
+              return theme;
+            }
+            export function useLocal({ custom }) {
+              useEffect(() => {});
+              let theme = defaultTheme;
+              if (custom) theme = custom + "/" + defaultTheme;
+              return theme;
+            }
+            export const MemoLocal = memo(({ custom }) => {
+              useEffect(() => {});
+              const theme = custom ?? defaultTheme;
+              return theme;
+            });
+            export function Parameter({ custom }) {
+              useEffect(() => {});
+              return (custom ?? "none") + " " + defaultCustom;
+            }
+            export function NamespaceMember({ flag }) {
+              useEffect(() => {});
+              const theme = flag ? values.theme : "none";
+              return theme;
+            }
+            // The compiler hoists a callback that captures nothing to module
+            // level. Its parameter is a new symbol too.
+            export function OutlinedParameter({ list }) {
+              useEffect(() => {});
+              return list.map(item => item.x + defaultItem.y).join(",") + ";" + list.map(s => format(s.x)).join(",");
+            }
+            export function NestedParameter({ list, custom }) {
+              useEffect(() => {});
+              return list.map(item => item.x + defaultItem.y + (custom ?? "")).join(",");
+            }
+            export function CatchBinding({ flag, check }) {
+              useEffect(() => {});
+              try {
+                check(flag);
+              } catch (e) {
+                return e + suffix;
+              }
+              return "none" + suffix;
+            }
+            // The props object is \`t0\`, the memo cache is \`$\`, and the value
+            // of a memo block is \`t1\`.
+            export function Temporaries({ custom }) {
+              const [count] = useState(1);
+              const all = [String(custom), count, first, second, dollar];
+              return all.join(" ");
+            }
+            // A function expression declares its own name in its own scope.
+            // The compiled function keeps that name, so it is still numbered.
+            export const OwnNameForwardRef = forwardRef(function Wrapped({ custom }, ref) {
+              useEffect(() => {});
+              return "<" + BaseWrapped({ custom, by: "forwardRef" }) + ">";
+            });
+            export const OwnNameMemo = memo(function Wrapped({ custom }) {
+              useEffect(() => {});
+              return "<" + BaseWrapped({ custom, by: "memo" }) + ">";
+            });
+            export const OwnNamePlain = function Wrapped({ custom }) {
+              useEffect(() => {});
+              return "<" + BaseWrapped({ custom, by: "plain" }) + ">";
+            };
+          `,
+          "/values.ts": /* ts */ `
+            export const theme = "dark";
+            export const custom = "CUSTOM";
+            export const item = { y: 10 };
+            export function s(value: number) {
+              return "<" + value + ">";
+            }
+            export const e = "!";
+            export const t0 = "T0";
+            export const t1 = "T1";
+            export const $ = "DOLLAR";
+            export function Wrapped({ custom, by }: { custom?: string; by: string }) {
+              return by + ":" + custom;
+            }
+          `,
+          "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+          "/node_modules/react/index.js": /* js */ `
+            export function useEffect() {}
+            export function useState(value) {
+              return [value, () => {}];
+            }
+            export function memo(component) {
+              return component;
+            }
+            export function forwardRef(component) {
+              return component;
+            }
+          `,
+          "/node_modules/react/compiler-runtime.js": /* js */ `
+            export function c(size) {
+              return new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+            }
+          `,
+        },
+        reactCompiler: true,
+        backend: "cli",
+        target,
+        minifyIdentifiers,
+        run: {
+          stdout: `
+            CatchBinding=thrown!
+            CatchBinding=none!
+            Local=mine
+            Local=dark
+            MemoLocal=mine
+            MemoLocal=dark
+            NamespaceMember=dark
+            NamespaceMember=none
+            NestedParameter=11mine,12mine
+            NestedParameter=13
+            OutlinedParameter=11,12;<1>,<2>
+            OutlinedParameter=13;<3>
+            OwnNameForwardRef=<forwardRef:mine>
+            OwnNameForwardRef=<forwardRef:undefined>
+            OwnNameMemo=<memo:mine>
+            OwnNameMemo=<memo:undefined>
+            OwnNamePlain=<plain:mine>
+            OwnNamePlain=<plain:undefined>
+            Parameter=mine CUSTOM
+            Parameter=none CUSTOM
+            Temporaries=mine 1 T0 T1 DOLLAR
+            Temporaries=undefined 1 T0 T1 DOLLAR
+            useLocal=mine/dark
+            useLocal=dark
+          `,
+        },
+        onAfterBundle(api) {
+          if (minifyIdentifiers) return;
+          const out = api.readFile("/out.js");
+          // Every function above compiled: the compiler outlines the empty
+          // effect callback (client) or drops the effect (ssr).
+          expect(out).not.toMatch(/\(\(\) => \{\s*\}\)/);
+          // A local that shares its name with nothing the function reads
+          // keeps it.
+          expect(out).toMatch(/function Local\(t0\) \{\s*let \{ custom \} = t0;/);
+        },
+      });
+    }
+  }
+
   // The compiler lowers the call the visit pass made of each JSX element into
   // HIR and builds a new call from that. Both steps have to use the call shape
   // of the file's JSX runtime. The classic runtime, and `key` after a spread in
@@ -2157,6 +2493,303 @@ describe("bundler", () => {
     },
     run: { stdout: '{"h":"div","props":{"title":"A"},"children":["hi"]}' },
   });
+
+  // `a.b = a = c` and `a[i] = i++` read `a` and `i` for the member target
+  // before the right-hand side runs. The compiler removes assignments and
+  // propagates constants by the order of its own instructions, so it has to
+  // lower the target's object and key first too.
+  for (const target of ["bun", "browser"] as const) {
+    itBundled(`react-compiler/MemberAssignmentReadsTargetBeforeRightHandSide-${target}`, {
+      files: {
+        "/entry.ts": /* ts */ `
+          import * as forms from "./forms";
+          const props = { items: [1, 2, 3], key: "next", flag: true };
+          const lines: string[] = [];
+          for (const [name, Form] of Object.entries(forms)) {
+            try {
+              lines.push(name + "=" + Form(props).props.children);
+            } catch (e) {
+              lines.push(name + " threw " + e);
+            }
+          }
+          console.log(lines.join("\\n"));
+        `,
+        "/forms.jsx": /* jsx */ `
+          function values(head, next = "next") {
+            const out = [];
+            for (let node = head; node; node = node[next]) out.push(node.v);
+            return out.join();
+          }
+
+          export function AppendInLoop(p) {
+            const head = { v: 0, next: null };
+            let tail = head;
+            for (const x of p.items) {
+              tail.next = tail = { v: x, next: null };
+            }
+            return <div>{values(head)}</div>;
+          }
+          export function AppendTwice(p) {
+            const head = { v: 0, next: null };
+            let tail = head;
+            tail.next = tail = { v: p.items[0], next: null };
+            tail.next = tail = { v: p.items[1], next: null };
+            return <div>{values(head)}</div>;
+          }
+          export function AppendInCallback(p) {
+            const list = items => {
+              const head = { v: 0, next: null };
+              let tail = head;
+              for (const x of items) {
+                tail.next = tail = { v: x, next: null };
+              }
+              return values(head);
+            };
+            return <div>{list(p.items)}</div>;
+          }
+          export function AppendWithComputedKey(p) {
+            const head = { v: 0, next: null };
+            let tail = head;
+            for (const x of p.items) {
+              tail[p.key] = tail = { v: x, next: null };
+            }
+            return <div>{values(head)}</div>;
+          }
+          export function AppendWithNumericKey(p) {
+            const head = { v: 0, 0: null };
+            let tail = head;
+            for (const x of p.items) {
+              tail[0] = tail = { v: x, 0: null };
+            }
+            return <div>{values(head, 0)}</div>;
+          }
+          export function ConstantOnTheRight(p) {
+            let v = {};
+            const first = v;
+            if (p.flag) {
+              v.z = v = 80;
+            }
+            return <div>{JSON.stringify([first, v])}</div>;
+          }
+          export function KeyIsReassignedOnTheRight(p) {
+            let key = "a";
+            const o = {};
+            if (p.flag) {
+              o[key] = key = "b";
+            }
+            return <div>{JSON.stringify([o, key])}</div>;
+          }
+          export function KeyIsIncrementedOnTheRight() {
+            const arr = [];
+            let i = 0;
+            arr[i] = i++;
+            arr[i] = i++;
+            return <div>{JSON.stringify([arr, i])}</div>;
+          }
+          // The right-hand side is the member assignment here, so it already ran first.
+          export function MemberAssignmentOnTheRight(p) {
+            const head = { v: 0, next: null };
+            let tail = head;
+            for (const x of p.items) {
+              tail = tail.next = { v: x, next: null };
+            }
+            return <div>{values(head)}</div>;
+          }
+        `,
+        "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+        "/node_modules/react/index.js": ``,
+        "/node_modules/react/jsx-runtime.js": /* js */ `
+          export const jsx = (type, props) => ({ type, props });
+          export const jsxs = jsx;
+        `,
+        "/node_modules/react/jsx-dev-runtime.js": /* js */ `
+          export const jsxDEV = (type, props) => ({ type, props });
+        `,
+        "/node_modules/react/compiler-runtime.js": /* js */ `
+          export function c(size) {
+            return new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+          }
+        `,
+      },
+      reactCompiler: true,
+      backend: "cli",
+      target,
+      run: {
+        stdout: `
+          AppendInCallback=0,1,2,3
+          AppendInLoop=0,1,2,3
+          AppendTwice=0,1,2
+          AppendWithComputedKey=0,1,2,3
+          AppendWithNumericKey=0,1,2,3
+          ConstantOnTheRight=[{"z":80},80]
+          KeyIsIncrementedOnTheRight=[[0,1],2]
+          KeyIsReassignedOnTheRight=[{"a":"b"},"b"]
+          MemberAssignmentOnTheRight=0,1,2,3
+        `,
+      },
+    });
+  }
+
+  // The value of `i += 2` is the value it stores. When it is lowered to a
+  // store and then a new read of `i`, the store prints as a statement ahead of
+  // the expression it is part of, and an earlier operand of that expression
+  // that reads `i` prints after it. As a statement, `i += 2` leaves that read
+  // behind as a stray `i;`, which can land after the memo block that declares
+  // `i`: "ReferenceError: i is not defined".
+  for (const target of ["bun", "browser"] as const) {
+    itBundled(`react-compiler/CompoundAssignmentToALocalStaysInPlace-${target}`, {
+      files: {
+        "/entry.ts": /* ts */ `
+          import * as forms from "./forms";
+          const lines: string[] = [];
+          for (const [name, Form] of Object.entries(forms)) {
+            try {
+              const children = Form({ n: 1, flag: true, items: [5, 6, 7, 8] }).props.children;
+              lines.push(name + "=" + (typeof children === "function" ? children() : children));
+            } catch (e) {
+              lines.push(name + " threw " + e);
+            }
+          }
+          console.log(lines.join("\\n"));
+        `,
+        "/forms.jsx": /* jsx */ `
+          const list = (...values) => values;
+
+          export function ComputedKey(p) {
+            const o = {};
+            let i = p.n;
+            o["k" + i] = i += 2;
+            return <div>{JSON.stringify(o)}</div>;
+          }
+          export function TemplateKey(p) {
+            const o = {};
+            let i = p.n;
+            o[\`k\${i}\`] = i += 2;
+            return <div>{JSON.stringify(o)}</div>;
+          }
+          export function Arguments(p) {
+            let i = p.n;
+            const r = list(\`k\${i}\`, i++, "k" + i + "z", (i += 2), typeof i + i);
+            return <div>{JSON.stringify(r)}</div>;
+          }
+          export function ArrayAndObjectLiterals(p) {
+            let i = p.n;
+            const r = [[i, -i], { a: "k" + i }, (i += 2)];
+            return <div>{JSON.stringify(r)}</div>;
+          }
+          export function JsxAttribute(p) {
+            let i = p.n;
+            const el = <a title={"k" + i} id={(i += 2)} />;
+            return <div>{JSON.stringify(el.props)}</div>;
+          }
+          export function InLoop(p) {
+            let i = p.n;
+            const out = [];
+            for (const x of [1, 2]) {
+              out.push(list("k" + i, (i += x)));
+            }
+            return <div>{JSON.stringify(out)}</div>;
+          }
+          export function InTernaryBranch(p) {
+            let i = p.n;
+            const r = p.flag ? list("k" + i, (i += 2)) : null;
+            return <div>{JSON.stringify(r)}</div>;
+          }
+          export function InCallback(p) {
+            const run = n => {
+              const o = {};
+              let i = n;
+              o["k" + i] = i += 2;
+              return list(o, "k" + i, (i *= 2));
+            };
+            return <div>{JSON.stringify(run(p.n))}</div>;
+          }
+          export function CapturedLocal(p) {
+            let i = p.n;
+            const read = () => i;
+            const r = list("k" + i, (i += 2), read());
+            return <div>{JSON.stringify(r)}</div>;
+          }
+          export function CapturedBeforeItsDeclaration(p) {
+            const read = () => i;
+            let i = p.n;
+            i *= 3;
+            return <div>{read}</div>;
+          }
+          export function OperandIsATernary(p) {
+            let i = p.n;
+            const r = list(p.flag ? i : 0, (i += 2));
+            return <div>{JSON.stringify(r)}</div>;
+          }
+          export function OperandIsALogical(p) {
+            let i = p.n;
+            const r = list(p.flag && i, (i += 2));
+            return <div>{JSON.stringify(r)}</div>;
+          }
+          export function OperandIsAnOptionalChain(p) {
+            let i = p.n;
+            const r = list(p.items?.[i], (i += 2));
+            return <div>{JSON.stringify(r)}</div>;
+          }
+          export function OperandIsAComma(p) {
+            let i = p.n;
+            const r = list((0, "k" + i), (i += 2));
+            return <div>{JSON.stringify(r)}</div>;
+          }
+          // An operand that updates \`i\` stays ahead of the operand that reads it.
+          export function UpdateInAnEarlierTernary(p) {
+            let i = p.n;
+            let j = p.n;
+            const r = list(p.flag ? i++ : 0, "k" + i, i, (j += 2));
+            return <div>{JSON.stringify(r)}</div>;
+          }
+          export function Statements(p) {
+            let i = p.n;
+            i += 2;
+            for (let j = 0; j < 2; j += 1) i *= 2;
+            return <div>{i}</div>;
+          }
+        `,
+        "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+        "/node_modules/react/index.js": ``,
+        "/node_modules/react/jsx-runtime.js": /* js */ `
+          export const jsx = (type, props) => ({ type, props });
+          export const jsxs = jsx;
+        `,
+        "/node_modules/react/jsx-dev-runtime.js": /* js */ `
+          export const jsxDEV = (type, props) => ({ type, props });
+        `,
+        "/node_modules/react/compiler-runtime.js": /* js */ `
+          export function c(size) {
+            return new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+          }
+        `,
+      },
+      reactCompiler: true,
+      backend: "cli",
+      target,
+      run: {
+        stdout: `
+          Arguments=["k1",1,"k2z",4,"number4"]
+          ArrayAndObjectLiterals=[[1,-1],{"a":"k1"},3]
+          CapturedBeforeItsDeclaration=3
+          CapturedLocal=["k1",3,3]
+          ComputedKey={"k1":3}
+          InCallback=[{"k1":3},"k3",6]
+          InLoop=[["k1",2],["k2",4]]
+          InTernaryBranch=["k1",3]
+          JsxAttribute={"title":"k1","id":3}
+          OperandIsAComma=["k1",3]
+          OperandIsALogical=[1,3]
+          OperandIsATernary=[1,3]
+          OperandIsAnOptionalChain=[6,3]
+          Statements=12
+          TemplateKey={"k1":3}
+          UpdateInAnEarlierTernary=[1,"k2",2,3]
+        `,
+      },
+    });
+  }
 });
 
 // Three passes kept one copy of their work per basic block or per nesting

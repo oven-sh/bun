@@ -7,6 +7,7 @@ const WebHeaders: typeof globalThis.Headers = bindings[3];
 const FormData: typeof globalThis.FormData = bindings[4];
 const File: typeof globalThis.File = bindings[5];
 const nativeFetch = Bun.fetch;
+const JSONParse = JSON.parse;
 
 // node-fetch extends from URLSearchParams in their implementation...
 // https://github.com/node-fetch/node-fetch/blob/8b3320d2a7c07bce4afc6b2bf6c3bbddda85b01f/src/headers.js#L44
@@ -80,6 +81,13 @@ class Response extends WebResponse {
     this[kBody] = undefined;
     if (this[kFetched]) cloned[kFetched] = true;
     return cloned;
+  }
+
+  // node-fetch parses the text, so an empty body rejects:
+  // https://github.com/node-fetch/node-fetch/blob/8b3320d2a7c07bce4afc6b2bf6c3bbddda85b01f/src/body.js#L147-L150
+  // The inherited json() resolves null for an empty fetched body (#24955).
+  async json() {
+    return JSONParse(await super.text());
   }
 
   // This is a deprecated function in node-fetch

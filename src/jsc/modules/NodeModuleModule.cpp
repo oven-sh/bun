@@ -21,6 +21,7 @@
 #include "headers.h"
 #include "ErrorCode.h"
 #include "VectorSizeLimit.h"
+#include "BunString.h"
 
 #include "GeneratedNodeModuleModule.h"
 #include "ZigGeneratedClasses.h"
@@ -491,9 +492,12 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveLookupPaths,
     String request = callFrame->argument(0).toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    auto utf8 = request.utf8();
-    if (ModuleLoader__isBuiltin(utf8.data(), utf8.length())) {
-        return JSC::JSValue::encode(JSC::jsNull());
+    // A builtin name is short, so a request whose UTF-8 form does not fit in a buffer is not one.
+    if (auto utf8 = UTF8View::tryCreate(request)) {
+        auto span = utf8->span();
+        if (ModuleLoader__isBuiltin(span.data(), span.size())) {
+            return JSC::JSValue::encode(JSC::jsNull());
+        }
     }
 
     PathResolveModule parent = getParent(vm, globalObject, callFrame->argument(1));

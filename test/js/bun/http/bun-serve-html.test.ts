@@ -1020,29 +1020,59 @@ describe("html route whose file a plugin resolves to a different file", () => {
   });
 });
 
+// A page whose first bundle stays open until serve.ts resolves
+// globalThis.releaseBundle, so serve.ts can reload the server meanwhile.
+const heldBundleFixture = {
+  "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
+  "index.html": `<!DOCTYPE html><html><head><title>t</title></head><body><script type="module" src="./app.ts"></script></body></html>`,
+  "app.ts": `console.log("app");`,
+  "plugin.ts": /*ts*/ `
+    export default {
+      name: "hold-bundle",
+      setup(build) {
+        build.onLoad({ filter: /app\\.ts$/ }, async () => {
+          globalThis.bundleStarted.resolve();
+          await globalThis.releaseBundle.promise;
+          return { loader: "ts", contents: "console.log('app');" };
+        });
+      },
+    };
+  `,
+};
+
+// For serve.ts. Asks the dev server over its HMR socket which route bundle
+// currently backs `path`: the client's "set url" message ('n' + route pattern)
+// is answered with 'n' + the route bundle index as a u32.
+const routeBundleIndexSource = /*ts*/ `
+  async function routeBundleIndex(server, path) {
+    const url = new URL("/_bun/hmr", server.url);
+    url.protocol = "ws:";
+    const ws = new WebSocket(url);
+    ws.binaryType = "arraybuffer";
+    const { promise, resolve, reject } = Promise.withResolvers();
+    ws.onerror = reject;
+    ws.onclose = () => reject(new Error("hmr socket closed before answering"));
+    ws.onmessage = ({ data }) => {
+      const view = new DataView(data);
+      if (view.getUint8(0) === "n".charCodeAt(0)) resolve(view.getUint32(1, true));
+    };
+    ws.onopen = () => ws.send(new TextEncoder().encode("n" + path));
+    try {
+      return await promise;
+    } finally {
+      ws.onclose = null;
+      ws.close();
+    }
+  }
+`;
+
 // server.reload() hands the dev server a new route object for the same html
 // file. The dev server used to give it a second route bundle and deliver the
 // bundled html there, so a request that was deferred on the original bundle
 // while it was still building crashed the process once the bundle finished.
 test.concurrent("server.reload() while an html route's first bundle is still in flight", async () => {
   using dir = tempDir("bun-serve-html-reload-during-bundle", {
-    "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
-    "index.html": `<!DOCTYPE html><html><head><title>t</title></head><body><script type="module" src="./app.ts"></script></body></html>`,
-    "app.ts": `console.log("app");`,
-    // Holds the first bundle open until serve.ts has reloaded the server, so
-    // the request that started the bundle stays deferred on it meanwhile.
-    "plugin.ts": /*ts*/ `
-      export default {
-        name: "hold-bundle",
-        setup(build) {
-          build.onLoad({ filter: /app\\.ts$/ }, async () => {
-            globalThis.bundleStarted.resolve();
-            await globalThis.releaseBundle.promise;
-            return { loader: "ts", contents: "console.log('app');" };
-          });
-        },
-      };
-    `,
+    ...heldBundleFixture,
     "serve.ts": /*ts*/ `
       import html from "./index.html";
 
@@ -1052,36 +1082,14 @@ test.concurrent("server.reload() while an html route's first bundle is still in 
       const options = { port: 0, development: true, routes: { "/": html } };
       const server = Bun.serve(options);
 
-      // Asks the dev server over its HMR socket which route bundle currently
-      // backs "/": the client's "set url" message ('n' + route pattern) is
-      // answered with 'n' + the route bundle index as a u32.
-      async function routeBundleIndex() {
-        const url = new URL("/_bun/hmr", server.url);
-        url.protocol = "ws:";
-        const ws = new WebSocket(url);
-        ws.binaryType = "arraybuffer";
-        const { promise, resolve, reject } = Promise.withResolvers();
-        ws.onerror = reject;
-        ws.onclose = () => reject(new Error("hmr socket closed before answering"));
-        ws.onmessage = ({ data }) => {
-          const view = new DataView(data);
-          if (view.getUint8(0) === "n".charCodeAt(0)) resolve(view.getUint32(1, true));
-        };
-        ws.onopen = () => ws.send(new TextEncoder().encode("n/"));
-        try {
-          return await promise;
-        } finally {
-          ws.onclose = null;
-          ws.close();
-        }
-      }
+      ${routeBundleIndexSource}
 
       const first = fetch(server.url).then(res => res.status);
       await globalThis.bundleStarted.promise;
-      const before = await routeBundleIndex();
+      const before = await routeBundleIndex(server, "/");
 
       server.reload(options);
-      const after = await routeBundleIndex();
+      const after = await routeBundleIndex(server, "/");
 
       globalThis.releaseBundle.resolve();
       const second = fetch(server.url).then(res => res.status);
@@ -1101,77 +1109,77 @@ test.concurrent("server.reload() while an html route's first bundle is still in 
 // held an html route. A server that got its first html route from
 // server.reload() served it through the bundler path instead: no HMR runtime,
 // no /_bun/hmr socket, no error overlay.
-test.concurrent("server.reload() that adds the first html route starts the dev server", async () => {
-  using dir = tempDir("bun-serve-html-reload-first-html-route", {
-    "index.html": `<!DOCTYPE html><html><head><title>t</title></head><body><script type="module" src="./app.ts"></script></body></html>`,
-    "app.ts": `console.log("app");`,
-    "serve.ts": /*ts*/ `
-      import { once } from "node:events";
-      import http2 from "node:http2";
-      import html from "./index.html";
+describe("server.reload() that adds the first html route", () => {
+  // `body` runs with `html`, the `api` routes and `probe(server)` in scope, and
+  // prints its result as JSON.
+  async function run(body: string) {
+    using dir = tempDir("bun-serve-html-reload-first-html-route", {
+      "index.html": `<!DOCTYPE html><html><head><title>t</title></head><body><script type="module" src="./app.ts"></script></body></html>`,
+      "app.ts": `console.log("app");`,
+      "serve.ts": /*ts*/ `
+        import html from "./index.html";
 
-      const api = { "/api": () => new Response("api") };
+        const api = { "/api": () => new Response("api") };
 
-      async function probe(server) {
-        const page = await (await fetch(server.url)).text();
-        const script = page.match(/src="([^"]+\\.js)"/)?.[1] ?? "";
-        const url = new URL("/_bun/hmr", server.url);
-        url.protocol = "ws:";
-        const ws = new WebSocket(url);
-        const { promise: hmrSocket, resolve } = Promise.withResolvers();
-        ws.onopen = () => resolve(true);
-        ws.onerror = ws.onclose = () => resolve(false);
-        const result = {
-          script: script.replace(/[0-9a-z]{8,}/, "HASH"),
-          hmrSocket: await hmrSocket,
-          api: await (await fetch(new URL("/api", server.url))).text(),
-        };
-        ws.onclose = null;
-        ws.close();
-        return result;
-      }
+        async function probe(server) {
+          const page = await (await fetch(server.url)).text();
+          const script = page.match(/src="([^"]+\\.js)"/)?.[1] ?? "";
+          const url = new URL("/_bun/hmr", server.url);
+          url.protocol = "ws:";
+          const ws = new WebSocket(url);
+          const { promise: hmrSocket, resolve } = Promise.withResolvers();
+          ws.onopen = () => resolve(true);
+          ws.onerror = ws.onclose = () => resolve(false);
+          const result = {
+            script: script.replace(/[0-9a-z]{8,}/, "HASH"),
+            hmrSocket: await hmrSocket,
+            api: await (await fetch(new URL("/api", server.url))).text(),
+          };
+          ws.onclose = null;
+          ws.close();
+          return result;
+        }
 
-      const result = {};
-      {
-        using server = Bun.serve({ port: 0, development: true, routes: api });
-        server.reload({ development: true, routes: { ...api, "/": html } });
-        result.reloaded = await probe(server);
-        server.reload({ development: true, routes: { ...api, "/": html } });
-        result.reloadedAgain = await probe(server);
-      }
-      {
-        // reload() does not change the mode the server was started in.
-        using server = Bun.serve({ port: 0, development: { hmr: false }, routes: api });
-        server.reload({ development: true, routes: { ...api, "/": html } });
-        result.startedWithoutHmr = await probe(server);
-      }
-      {
-        // The dev server is HTTP/1.1 only: with it, an html route answers
-        // HTTP/2 with a 503. A server that speaks HTTP/2 keeps the page.
-        using server = Bun.serve({ port: 0, development: true, http2: true, routes: api });
-        server.reload({ development: true, routes: { ...api, "/": html } });
-        const session = http2.connect(server.url.href);
-        const stream = session.request({ ":path": "/" }).end();
-        const [headers] = await once(stream, "response");
-        stream.resume();
-        await once(stream, "end");
-        session.close();
-        result.http2 = { ...(await probe(server)), http2Status: headers[":status"] };
-      }
-      console.log(JSON.stringify(result));
-    `,
-  });
-  const { stdout, stderr, exitCode } = await runServeFixture(dir);
+        ${body}
+      `,
+    });
+    const { stdout, stderr, exitCode } = await runServeFixture(dir);
+    return { result: stdout === "" ? null : JSON.parse(stdout), exitCode, stderr };
+  }
   const devServer = { script: "/_bun/client/index-HASH.js", hmrSocket: true, api: "api" };
   const bundled = { script: "/chunk-HASH.js", hmrSocket: false, api: "api" };
-  expect({ result: stdout === "" ? null : JSON.parse(stdout), exitCode }, stderr).toEqual({
-    result: {
-      reloaded: devServer,
-      reloadedAgain: devServer,
-      startedWithoutHmr: bundled,
-      http2: { ...bundled, http2Status: 200 },
-    },
-    exitCode: 0,
+
+  test.concurrent("starts the dev server", async () => {
+    const { stderr, ...rest } = await run(`
+      using server = Bun.serve({ port: 0, development: true, routes: api });
+      server.reload({ development: true, routes: { ...api, "/": html } });
+      const reloaded = await probe(server);
+      server.reload({ development: true, routes: { ...api, "/": html } });
+      console.log(JSON.stringify({ reloaded, reloadedAgain: await probe(server) }));
+    `);
+    expect(rest, stderr).toEqual({ result: { reloaded: devServer, reloadedAgain: devServer }, exitCode: 0 });
+  });
+
+  // reload() does not change the mode the server was started in.
+  test.concurrent("does not start it for a server that was started with hmr: false", async () => {
+    const { stderr, ...rest } = await run(`
+      using server = Bun.serve({ port: 0, development: { hmr: false }, routes: api });
+      server.reload({ development: true, routes: { ...api, "/": html } });
+      console.log(JSON.stringify(await probe(server)));
+    `);
+    expect(rest, stderr).toEqual({ result: bundled, exitCode: 0 });
+  });
+
+  // The dev server is HTTP/1.1 only: with it, an html route answers HTTP/2 with
+  // a 503. Bun.serve() drops http2 for the dev server, but reload() comes after
+  // the HTTP/2 app exists, so the page stays on the bundler path.
+  test.concurrent("does not start it for a server that speaks HTTP/2", async () => {
+    const { stderr, ...rest } = await run(`
+      using server = Bun.serve({ port: 0, development: true, http2: true, routes: api });
+      server.reload({ development: true, routes: { ...api, "/": html } });
+      console.log(JSON.stringify(await probe(server)));
+    `);
+    expect(rest, stderr).toEqual({ result: bundled, exitCode: 0 });
   });
 });
 
@@ -1236,6 +1244,52 @@ test.concurrent.skipIf(!isLinux)("server.reload() keeps the routes when the dev 
       },
       reloaded: { api: "new fallback", script: "/_bun/client/index-HASH.js" },
     },
+    exitCode: 0,
+  });
+});
+
+// reload() cannot change `development`, so the mode the server was started in
+// decides whether an html route gets the dev server. If the reload's own
+// `development` could veto it, the bundler would build the page and register a
+// copy of it at "/index.html" when the build finishes. Finishing after a later
+// reload had started the dev server, that copy replaced the html route mounted
+// there, and the dev server read the freed route.
+test.concurrent("server.reload() with another `development` than the server was started with", async () => {
+  using dir = tempDir("bun-serve-html-reload-other-development", {
+    ...heldBundleFixture,
+    "serve.ts": /*ts*/ `
+      import html from "./index.html";
+
+      globalThis.bundleStarted = Promise.withResolvers();
+      globalThis.releaseBundle = Promise.withResolvers();
+
+      ${routeBundleIndexSource}
+
+      using server = Bun.serve({ port: 0, development: true, routes: {}, fetch: () => new Response("fallback") });
+      const script = async response =>
+        (await response.text()).match(/src="([^"]+\\.js)"/)?.[1].replace(/[0-9a-z]{8,}/, "HASH") ?? null;
+
+      server.reload({ development: false, routes: { "/index.html": html } });
+      const first = fetch(new URL("/index.html", server.url)).then(script);
+      await globalThis.bundleStarted.promise;
+
+      server.reload({ development: true, routes: { "/index.html": html } });
+      globalThis.releaseBundle.resolve();
+
+      console.log(JSON.stringify({
+        first: await first,
+        second: await fetch(new URL("/index.html", server.url)).then(script),
+        routeBundle: await routeBundleIndex(server, "/index.html"),
+      }));
+    `,
+  });
+  const { stdout, stderr, exitCode } = await runServeFixture(dir);
+  expect({ stdout, exitCode }, stderr).toEqual({
+    stdout: JSON.stringify({
+      first: "/_bun/client/index-HASH.js",
+      second: "/_bun/client/index-HASH.js",
+      routeBundle: 0,
+    }),
     exitCode: 0,
   });
 });

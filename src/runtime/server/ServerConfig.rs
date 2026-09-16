@@ -606,6 +606,80 @@ fn convert_file_system_router_type(
 }
 
 impl ServerConfig {
+    /// The DevServer options for routes that hold an html import or a
+    /// framework router.
+    pub(crate) fn dev_server_options(
+        global: &JSGlobalObject,
+        framework_router_list: Vec<crate::bake::FileSystemRouterType>,
+        allocations: crate::bake::StringRefList,
+    ) -> JsResult<crate::bake::UserOptions> {
+        use crate::bake::bake_body as bb;
+        use bun_options_types::schema::api::DotEnvBehavior;
+
+        // NOTE: the arena is created here and moved into
+        // `UserOptions` (lives until the options are dropped).
+        let arena = bun_alloc::Arena::new();
+
+        let root = bb::arena_dupe_z(
+            &arena,
+            bun_paths::fs::FileSystem::instance().top_level_dir(),
+        );
+
+        // Convert `crate::bake::FileSystemRouterType` (Cow-backed)
+        // into `bake_body::FileSystemRouterType` (`&'static` slices)
+        // by duping every string into the arena. Type
+        // duplication; remove once the two structs unify.
+        let router_types: Vec<bb::FileSystemRouterType> = framework_router_list
+            .into_iter()
+            .map(|t| convert_file_system_router_type(&arena, t))
+            .collect();
+
+        // SAFETY: `bun_vm()` returns the live VM for this global;
+        // we need `&mut Resolver` for `Framework::auto`.
+        let resolver = &mut global.bun_vm().as_mut().transpiler.resolver;
+        let framework = bb::Framework::auto(&arena, resolver, router_types)
+            .map_err(|e| global.throw_error(e, "Framework::auto"))?;
+
+        let mut user_options = crate::bake::UserOptions {
+            arena,
+            allocations,
+            root,
+            framework,
+            bundler_options: bb::SplitBundlerOptions::default(),
+        };
+
+        let o = &global.bun_vm().transpiler.options.transform_options;
+
+        match o.serve_env_behavior {
+            DotEnvBehavior::prefix => {
+                // NOTE: `serve_env_prefix` is `Option<Box<[u8]>>`
+                // owned by the long-lived `transform_options`; dupe
+                // into the arena so the `&'static [u8]` field is
+                // backed by `UserOptions.arena`.
+                user_options.bundler_options.client.env_prefix = o
+                    .serve_env_prefix
+                    .as_deref()
+                    .map(|p| bb::arena_dupe_z(&user_options.arena, p).as_bytes());
+                user_options.bundler_options.client.env = DotEnvBehavior::prefix;
+            }
+            DotEnvBehavior::load_all => {
+                user_options.bundler_options.client.env = DotEnvBehavior::load_all;
+            }
+            DotEnvBehavior::disable => {
+                user_options.bundler_options.client.env = DotEnvBehavior::disable;
+            }
+            _ => {}
+        }
+
+        if let Some(define) = &o.serve_define {
+            user_options.bundler_options.client.define = define.clone();
+            user_options.bundler_options.server.define = define.clone();
+            user_options.bundler_options.ssr.define = define.clone();
+        }
+
+        Ok(user_options)
+    }
+
     pub fn from_js(
         global: &JSGlobalObject,
         arguments: &mut bun_jsc::call_frame::ArgumentsSlice,
@@ -937,75 +1011,14 @@ impl ServerConfig {
                 || !init_ctx.framework_router_list.is_empty()
             {
                 if args.development.is_hmr_enabled() {
-                    use crate::bake::bake_body as bb;
-                    use bun_options_types::schema::api::DotEnvBehavior;
-
-                    // NOTE: the arena is created here and moved into
-                    // `UserOptions` (lives until `args.bake` is dropped).
-                    let arena = bun_alloc::Arena::new();
-
-                    let root = bb::arena_dupe_z(
-                        &arena,
-                        bun_paths::fs::FileSystem::instance().top_level_dir(),
-                    );
-
-                    // Convert `crate::bake::FileSystemRouterType` (Cow-backed)
-                    // into `bake_body::FileSystemRouterType` (`&'static` slices)
-                    // by duping every string into the arena. Type
-                    // duplication; remove once the two structs unify.
-                    let router_types: Vec<bb::FileSystemRouterType> =
-                        core::mem::take(&mut init_ctx.framework_router_list)
-                            .into_iter()
-                            .map(|t| convert_file_system_router_type(&arena, t))
-                            .collect();
-
-                    // SAFETY: `bun_vm()` returns the live VM for this global;
-                    // we need `&mut Resolver` for `Framework::auto`.
-                    let resolver = &mut global.bun_vm().as_mut().transpiler.resolver;
-                    let framework = bb::Framework::auto(&arena, resolver, router_types)
-                        .map_err(|e| global.throw_error(e, "Framework::auto"))?;
-
-                    let mut user_options = crate::bake::UserOptions {
-                        arena,
-                        allocations: core::mem::replace(
+                    args.bake = Some(Self::dev_server_options(
+                        global,
+                        core::mem::take(&mut init_ctx.framework_router_list),
+                        core::mem::replace(
                             &mut init_ctx.js_string_allocations,
                             crate::bake::StringRefList::EMPTY,
                         ),
-                        root,
-                        framework,
-                        bundler_options: bb::SplitBundlerOptions::default(),
-                    };
-
-                    let o = &vm.transpiler.options.transform_options;
-
-                    match o.serve_env_behavior {
-                        DotEnvBehavior::prefix => {
-                            // NOTE: `serve_env_prefix` is `Option<Box<[u8]>>`
-                            // owned by the long-lived `transform_options`; dupe
-                            // into the arena so the `&'static [u8]` field is
-                            // backed by `UserOptions.arena`.
-                            user_options.bundler_options.client.env_prefix = o
-                                .serve_env_prefix
-                                .as_deref()
-                                .map(|p| bb::arena_dupe_z(&user_options.arena, p).as_bytes());
-                            user_options.bundler_options.client.env = DotEnvBehavior::prefix;
-                        }
-                        DotEnvBehavior::load_all => {
-                            user_options.bundler_options.client.env = DotEnvBehavior::load_all;
-                        }
-                        DotEnvBehavior::disable => {
-                            user_options.bundler_options.client.env = DotEnvBehavior::disable;
-                        }
-                        _ => {}
-                    }
-
-                    if let Some(define) = &o.serve_define {
-                        user_options.bundler_options.client.define = define.clone();
-                        user_options.bundler_options.server.define = define.clone();
-                        user_options.bundler_options.ssr.define = define.clone();
-                    }
-
-                    args.bake = Some(user_options);
+                    )?);
                 } else {
                     if !init_ctx.framework_router_list.is_empty() {
                         return Err(global.throw_invalid_arguments(format_args!(

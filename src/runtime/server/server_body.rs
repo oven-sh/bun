@@ -2061,6 +2061,54 @@ where
         Ok(JSValue::TRUE)
     }
 
+    /// `init()` only creates the DevServer when the first config holds an html
+    /// route. A server that gets its first one from a reload creates it here.
+    ///
+    /// A reload cannot change `development`, so the server's mode decides and
+    /// not the new config's. Were the new config able to veto the DevServer,
+    /// its html route would take the bundler path, and that route's build
+    /// could finish after a later reload did create the DevServer:
+    /// `html_bundle::Route::on_complete` rewrites the static routes, which
+    /// `DevServer::html_router` points into.
+    fn init_dev_server_for_reload(
+        &mut self,
+        new_config: &mut ServerConfig,
+        global: &JSGlobalObject,
+    ) -> JsResult<()> {
+        // The DevServer is HTTP/1-only: once it exists an html route answers
+        // HTTP/2 and HTTP/3 with a 503, so a server with those apps keeps the
+        // bundler path.
+        if self.dev_server.is_some()
+            || !self.config.development.is_hmr_enabled()
+            || self.h2_app.is_some()
+            || self.h3_app.is_some()
+            || !self.has_listener()
+        {
+            return Ok(());
+        }
+        if new_config.bake.is_none() {
+            let has_html_route = new_config
+                .static_routes
+                .iter()
+                .any(|entry| matches!(entry.route, AnyRoute::Html(_)));
+            if !has_html_route {
+                return Ok(());
+            }
+            // `from_js` left the options out: the new config's `development` is not HMR.
+            new_config.bake = Some(ServerConfig::dev_server_options(
+                global,
+                Vec::new(),
+                bake::StringRefList::EMPTY,
+            )?);
+        }
+        self.config.bake = new_config.bake.take();
+        if let Err(err) = self.init_dev_server() {
+            self.config.bake = None;
+            return Err(err);
+        }
+        Ok(())
+    }
+
     /// Swaps the live server's mutable
     /// configuration (handlers, websocket, routes) with `new_config` and
     /// re-registers routes on the uws app(s). Ownership of moved-in fields
@@ -2075,25 +2123,8 @@ where
     ) -> JsResult<()> {
         httplog!("onReload");
 
-        // `init()` only creates the DevServer when the first config holds an
-        // html route. Create it here for a server that gets its first one from
-        // a reload, before anything is swapped so that a failure leaves the
-        // server as it was. `development` is fixed at start. The DevServer is
-        // HTTP/1-only: once it exists an html route answers HTTP/2 and HTTP/3
-        // with a 503, so a server with those apps keeps the bundler path.
-        if self.dev_server.is_none()
-            && new_config.bake.is_some()
-            && self.config.development.is_hmr_enabled()
-            && self.h2_app.is_none()
-            && self.h3_app.is_none()
-            && self.has_listener()
-        {
-            self.config.bake = new_config.bake.take();
-            if let Err(err) = self.init_dev_server() {
-                self.config.bake = None;
-                return Err(err);
-            }
-        }
+        // Before anything is swapped, so that a failure leaves the server as it was.
+        self.init_dev_server_for_reload(new_config, global)?;
 
         // SAFETY: `on_reload` is only reachable while the server is running
         // (`self.app` set in `listen()`).

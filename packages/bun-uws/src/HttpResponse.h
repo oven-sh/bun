@@ -115,10 +115,11 @@ public:
      *
      * The socket onData is parsing gets onData's uncork and close gate once the
      * read is consumed: false. A Bun.serve response leaves the cork to onData,
-     * so the responses to requests pipelined in one read share one send(). A
-     * node:http response is still sent now: its 'finish' event and end()
-     * callback run before onData gets control back and expect the bytes to be
-     * out.
+     * so the responses to requests pipelined in one read share one send(). Bun
+     * sends them earlier, with sendCorked(), when the handler of a later
+     * request is about to run JavaScript. A node:http response is still sent
+     * now: its 'finish' event and end() callback run before onData gets control
+     * back and expect the bytes to be out.
      *
      * Any other socket (an async handler completing, possibly inside another
      * socket's parse window via a drained microtask) is uncorked here and gets

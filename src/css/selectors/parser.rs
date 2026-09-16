@@ -3113,8 +3113,6 @@ impl PseudoElement {
         matches!(self, PseudoElement::WebkitScrollbar(_))
     }
 
-    /// `::search-text:current` is the active find-in-page match.
-    /// https://drafts.csswg.org/css-pseudo-4/#selectordef-search-text
     pub(crate) fn is_search_text(&self) -> bool {
         matches!(self, PseudoElement::SearchText)
     }
@@ -3711,8 +3709,7 @@ pub(crate) fn parse_functional_pseudo_class<Impl: BunSelectorImpl>(
         });
     }
 
-    // `:state()` is a state pseudo-class, so `::part(x):state(y)` is valid.
-    // https://drafts.csswg.org/css-shadow-parts/#part
+    // `::part(x):state(y)` is valid: `:state()` is a state pseudo-class.
     let is_state_after_part = strings::eql_case_insensitive_ascii_check_length(name, b"state")
         && !state.intersects(
             SelectorParsingState::AFTER_SLOTTED | SelectorParsingState::AFTER_PSEUDO_ELEMENT,

@@ -1,6 +1,6 @@
 // Bundle tests are tests concerning bundling bugs that only occur in DevServer.
 import { expect } from "bun:test";
-import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
+import { Dev, devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
 devTest("import identifier doesnt get renamed", {
   framework: minimalFramework,
@@ -939,6 +939,7 @@ const symlinkedRoutesFiles = {
     // The router scans once, when the server starts. Make the links before that,
     // in directories that the resolver did not list yet.
     symlinkSync("one.ts", join(root, "routes/alias.ts"));
+    symlinkSync("one.ts", join(root, "routes/[id].ts"));
     symlinkSync(join(root, "routes/real"), join(root, "routes/linked"), "junction");
     mkdirSync(join(root, "app"));
     symlinkSync(join(root, "src/pages"), join(root, "app/pages"), "junction");
@@ -946,6 +947,7 @@ const symlinkedRoutesFiles = {
   `,
   "routes/one.ts": `export default () => new Response("one v1");`,
   "routes/real/a.ts": `export default () => new Response("a v1");`,
+  "routes/real/[slug].ts": `export default (req, meta) => new Response("slug " + meta.params.slug + " v1");`,
   "src/pages/about.ts": `export default () => new Response("about v1");`,
 };
 devTest("route files reached through a file, directory, or router root symlink", {
@@ -953,7 +955,7 @@ devTest("route files reached through a file, directory, or router root symlink",
   async test(dev) {
     async function pages() {
       const result: Record<string, string | number> = {};
-      for (const url of ["/one", "/alias", "/real/a", "/linked/a", "/about"]) {
+      for (const url of ["/one", "/alias", "/any-id", "/real/a", "/linked/a", "/real/x", "/linked/x", "/about"]) {
         const res = await dev.fetch(url);
         result[url] = res.ok ? await res.text() : res.status;
       }
@@ -962,81 +964,154 @@ devTest("route files reached through a file, directory, or router root symlink",
     expect(await pages()).toEqual({
       "/one": "one v1",
       "/alias": "one v1",
+      "/any-id": "one v1",
       "/real/a": "a v1",
       "/linked/a": "a v1",
+      "/real/x": "slug x v1",
+      "/linked/x": "slug x v1",
       "/about": "about v1",
     });
 
     // A save of the real file reaches every route that uses it.
     await dev.write("routes/one.ts", `export default () => new Response("one v2");`);
     await dev.write("routes/real/a.ts", `export default () => new Response("a v2");`);
+    await dev.write(
+      "routes/real/[slug].ts",
+      `export default (req, meta) => new Response("slug " + meta.params.slug + " v2");`,
+    );
     await dev.write("src/pages/about.ts", `export default () => new Response("about v2");`);
     expect(await pages()).toEqual({
       "/one": "one v2",
       "/alias": "one v2",
+      "/any-id": "one v2",
       "/real/a": "a v2",
       "/linked/a": "a v2",
+      "/real/x": "slug x v2",
+      "/linked/x": "slug x v2",
       "/about": "about v2",
     });
   },
 });
+devTest("a built-in module whose path goes through a symlink as the server entry point", {
+  files: {
+    "bun.app.ts": `
+      import { mkdirSync, symlinkSync } from "node:fs";
+      import { join } from "node:path";
+      const root = import.meta.dir;
+      mkdirSync(join(root, "links"));
+      symlinkSync(join(root, "fw"), join(root, "links/fw"), "junction");
+      export default {
+        app: {
+          framework: {
+            fileSystemRouterTypes: [{ root: "routes", style: "nextjs-pages", serverEntryPoint: "my-framework/server" }],
+            builtInModules: [{ import: "my-framework/server", path: join(root, "links/fw/server.ts") }],
+          },
+        },
+      };
+    `,
+    "fw/server.ts": `
+      export function render(req, meta) {
+        return meta.pageModule.default(req, meta);
+      }
+    `,
+    "routes/index.ts": `export default () => new Response("index");`,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("index");
+  },
+});
+// Does what the HMR client of a browser tab on `pathname` does: subscribe to
+// hot updates and tell the server which route the tab shows.
+async function openTab(dev: Dev, pathname: string) {
+  const ws = new WebSocket(dev.baseUrl + "/_bun/hmr");
+  ws.binaryType = "arraybuffer";
+  const routeBundle = Promise.withResolvers<number>();
+  const reloaded = Promise.withResolvers<number[]>();
+  // Nothing awaits `reloaded` when an earlier assertion fails.
+  reloaded.promise.catch(() => {});
+  const fail = (event: Event) => {
+    const error = new Error(`The HMR socket of ${pathname} got "${event.type}" before the expected message`);
+    routeBundle.reject(error);
+    reloaded.reject(error);
+  };
+  ws.onerror = fail;
+  ws.onclose = fail;
+  ws.onmessage = event => {
+    const view = new DataView(event.data);
+    switch (String.fromCharCode(view.getUint8(0))) {
+      case "V": // The server sends its version first.
+        ws.send("sh");
+        ws.send("n" + pathname);
+        break;
+      case "n": // The answer to "n": the route bundle of this tab.
+        routeBundle.resolve(view.getUint32(1, true));
+        break;
+      case "u": {
+        // A hot update starts with the route bundles that have to reload. -1 ends the list.
+        const routeBundles: number[] = [];
+        for (let i = 1; i + 4 <= view.byteLength && view.getInt32(i, true) !== -1; i += 4) {
+          routeBundles.push(view.getInt32(i, true));
+        }
+        reloaded.resolve(routeBundles);
+        break;
+      }
+    }
+  };
+  return { ws, routeBundle: await routeBundle.promise, reloaded: reloaded.promise };
+}
+// Saves `file` while a tab is open on each route. The hot update has to tell both tabs to reload.
+async function expectSaveReloadsBothTabs(dev: Dev, routes: [string, string], file: string, contents: string) {
+  const tabs = [await openTab(dev, routes[0]), await openTab(dev, routes[1])];
+  try {
+    expect(tabs[0].routeBundle).not.toBe(tabs[1].routeBundle);
+    await dev.write(file, contents);
+    const expected = tabs.map(tab => tab.routeBundle).sort((a, b) => a - b);
+    for (const tab of tabs) {
+      expect((await tab.reloaded).sort((a, b) => a - b)).toEqual(expected);
+    }
+  } finally {
+    for (const tab of tabs) tab.ws.close();
+  }
+}
 devTest("a save reloads the viewers of every route that shares a symlinked file", {
   files: symlinkedRoutesFiles,
   async test(dev) {
     await dev.fetch("/one").equals("one v1");
     await dev.fetch("/alias").equals("one v1");
-
-    // Does what the HMR client of a browser tab on `pathname` does: subscribe
-    // to hot updates and tell the server which route the tab shows.
-    async function openTab(pathname: string) {
-      const ws = new WebSocket(dev.baseUrl + "/_bun/hmr");
-      ws.binaryType = "arraybuffer";
-      const routeBundle = Promise.withResolvers<number>();
-      const reloaded = Promise.withResolvers<number[]>();
-      // Nothing awaits `reloaded` when an earlier assertion fails.
-      reloaded.promise.catch(() => {});
-      const fail = (event: Event) => {
-        const error = new Error(`The HMR socket of ${pathname} got "${event.type}" before the expected message`);
-        routeBundle.reject(error);
-        reloaded.reject(error);
-      };
-      ws.onerror = fail;
-      ws.onclose = fail;
-      ws.onmessage = event => {
-        const view = new DataView(event.data);
-        switch (String.fromCharCode(view.getUint8(0))) {
-          case "V": // The server sends its version first.
-            ws.send("sh");
-            ws.send("n" + pathname);
-            break;
-          case "n": // The answer to "n": the route bundle of this tab.
-            routeBundle.resolve(view.getUint32(1, true));
-            break;
-          case "u": {
-            // A hot update starts with the route bundles that have to reload. -1 ends the list.
-            const routeBundles: number[] = [];
-            for (let i = 1; i + 4 <= view.byteLength && view.getInt32(i, true) !== -1; i += 4) {
-              routeBundles.push(view.getInt32(i, true));
-            }
-            reloaded.resolve(routeBundles);
-            break;
-          }
-        }
-      };
-      return { ws, routeBundle: await routeBundle.promise, reloaded: reloaded.promise };
-    }
-
-    const one = await openTab("/one");
-    const alias = await openTab("/alias");
-    try {
-      expect(one.routeBundle).not.toBe(alias.routeBundle);
-      await dev.write("routes/one.ts", `export default () => new Response("one v2");`);
-      const expected = [one.routeBundle, alias.routeBundle].sort((a, b) => a - b);
-      expect((await one.reloaded).sort((a, b) => a - b)).toEqual(expected);
-      expect((await alias.reloaded).sort((a, b) => a - b)).toEqual(expected);
-    } finally {
-      one.ws.close();
-      alias.ws.close();
-    }
+    await expectSaveReloadsBothTabs(
+      dev,
+      ["/one", "/alias"],
+      "routes/one.ts",
+      `export default () => new Response("one v2");`,
+    );
+  },
+});
+devTest("a save below a server entry point reloads the viewers of every router type that shares it", {
+  framework: {
+    fileSystemRouterTypes: [
+      { root: "routes", style: "nextjs-pages", serverEntryPoint: "./fw/server.ts" },
+      { root: "more-routes", style: "nextjs-pages", serverEntryPoint: "./fw/server.ts" },
+    ],
+  },
+  files: {
+    "fw/server.ts": `
+      import { tag } from "./tag.ts";
+      export async function render(req, meta) {
+        return new Response((await meta.pageModule.default(req, meta).text()) + " " + tag);
+      }
+      export function registerClientReference(value, file, uid) {
+        return { value, file, uid };
+      }
+    `,
+    "fw/tag.ts": `export const tag = "v1";`,
+    "routes/a.ts": `export default () => new Response("a");`,
+    "more-routes/b.ts": `export default () => new Response("b");`,
+  },
+  async test(dev) {
+    await dev.fetch("/a").equals("a v1");
+    await dev.fetch("/b").equals("b v1");
+    await expectSaveReloadsBothTabs(dev, ["/a", "/b"], "fw/tag.ts", `export const tag = "v2";`);
+    await dev.fetch("/a").equals("a v2");
+    await dev.fetch("/b").equals("b v2");
   },
 });

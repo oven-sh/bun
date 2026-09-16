@@ -139,8 +139,10 @@ test("a route reached through a symlink has the real path of its file", () => {
   using dir = tempDir("fsr-symlink", {
     "pages/one.tsx": "1",
     "pages/real/a.tsx": "1",
+    "pages/real/[id].tsx": "1",
   });
   symlinkSync("one.tsx", path.join(dir, "pages/alias.tsx"));
+  symlinkSync("one.tsx", path.join(dir, "pages/[slug].tsx"));
   symlinkSync(path.join(dir, "pages/real"), path.join(dir, "pages/linked"), "junction");
   symlinkSync(path.join(dir, "pages"), path.join(dir, "root-link"), "junction");
 
@@ -149,8 +151,11 @@ test("a route reached through a symlink has the real path of its file", () => {
   const pages = {
     "/one": path.join(dir, "pages/one.tsx"),
     "/alias": path.join(dir, "pages/one.tsx"),
+    "/any-slug": path.join(dir, "pages/one.tsx"),
     "/real/a": path.join(dir, "pages/real/a.tsx"),
     "/linked/a": path.join(dir, "pages/real/a.tsx"),
+    "/real/any-id": path.join(dir, "pages/real/[id].tsx"),
+    "/linked/any-id": path.join(dir, "pages/real/[id].tsx"),
   };
   for (const root of ["pages", "root-link"]) {
     const router = new FrameworkRouter({ root: path.join(dir, root), style: "nextjs-pages" });

@@ -655,16 +655,14 @@ impl Framework {
         had_errors: &mut bool,
         desc: &[u8],
     ) {
-        if let Some(module) = self.built_in_modules.get(path) {
-            match module {
-                BuiltInModule::Import(p) => *path = p,
-                BuiltInModule::Code(_) => {}
-            }
-            return;
-        }
+        let specifier: &'static [u8] = match self.built_in_modules.get(path) {
+            Some(BuiltInModule::Code(_)) => return,
+            Some(BuiltInModule::Import(p)) => p,
+            None => *path,
+        };
 
         let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
-        let mut result = match r.resolve(top_level_dir, *path, bun_ast::ImportKind::Stmt) {
+        let mut result = match r.resolve(top_level_dir, specifier, bun_ast::ImportKind::Stmt) {
             Ok(res) => res,
             Err(err) => {
                 Output::err(

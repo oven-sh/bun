@@ -16,7 +16,7 @@ use bun_jsc::{
     CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc, Strong, StrongOptional,
 };
 use bun_paths::{self as paths, MAX_PATH_BYTES};
-use bun_resolver::{DirInfo, Resolver};
+use bun_resolver::{DirInfo, RealPath, Resolver};
 
 use bun_wyhash;
 
@@ -1669,14 +1669,10 @@ impl FrameworkRouter {
                         };
 
                         // Same key as the bundler: the resolver's path, with symlinks resolved.
-                        // SAFETY: as for the `kind` call above, which did the stat.
-                        let symlink = unsafe { (*file_ptr).symlink(&raw mut *fs_impl, false) };
-                        let abs_path: &[u8] = if !symlink.is_empty() {
-                            symlink
-                        } else if !dir_info.abs_real_path.is_empty() {
-                            fs_ref.abs(&[dir_info.abs_real_path, base])
-                        } else {
-                            fs_ref.abs(&[file.dir, base])
+                        let abs_path: &[u8] = match r.real_path_of(dir_info, file) {
+                            RealPath::Whole(real_path) => real_path,
+                            RealPath::Dir(real_dir) => fs_ref.abs(&[real_dir, base]),
+                            RealPath::Same => fs_ref.abs(&[file.dir, base]),
                         };
 
                         let result = if param_count > 0 {

@@ -263,6 +263,7 @@ use crate::tsconfig_json::TSConfigJSON;
 pub use crate::data_url::DataURL;
 pub use crate::dir_info as DirInfo;
 pub use crate::dir_info::DirInfoRef;
+use crate::dir_info::RealPath;
 pub use ::bun_options_types::global_cache::GlobalCache;
 
 // Sibling resolver modules. They retain the same item names so cross-references
@@ -1508,6 +1509,19 @@ impl<'a> Resolver<'a> {
         self.resolve(source_dir, import_path, kind)
     }
 
+    /// The real path of `entry`, which `dir` lists. The one rule, also for bake's route scan.
+    pub fn real_path_of(&self, dir: &DirInfo::DirInfo, entry: &Fs::file_system::Entry) -> RealPath {
+        // SAFETY: `rfs_ptr` is the process-global RealFS. `symlink` locks the entry to stat it.
+        let symlink = unsafe { entry.symlink(self.rfs_ptr(), self.store_fd) };
+        if !symlink.is_empty() {
+            RealPath::Whole(symlink)
+        } else if !dir.abs_real_path.is_empty() {
+            RealPath::Dir(dir.abs_real_path)
+        } else {
+            RealPath::Same
+        }
+    }
+
     pub(crate) fn finalize_result(
         &mut self,
         result: &mut Result,
@@ -1582,10 +1596,8 @@ impl<'a> Resolver<'a> {
             // map in place under that lock. The entry pointer stays valid after
             // unlock (EntryStore-owned).
             if let Some(query) = dir.get_entry(self.generation, name.filename) {
-                // SAFETY: rfs points at the process-global RealFS; the lazy-stat
-                // rewrite inside `symlink()` is serialized on the per-entry mutex.
-                let symlink_path = unsafe { query.entry().symlink(self.rfs_ptr(), self.store_fd) };
-                if !symlink_path.is_empty() {
+                let real_path = self.real_path_of(&dir, query.entry());
+                if let RealPath::Whole(symlink_path) = real_path {
                     path.set_realpath(symlink_path);
                     if !result.file_fd.is_valid() {
                         result.file_fd = query.entry().cache().fd;
@@ -1598,9 +1610,9 @@ impl<'a> Resolver<'a> {
                             bstr::BStr::new(symlink_path)
                         ));
                     }
-                } else if !dir.abs_real_path.is_empty() {
+                } else if let RealPath::Dir(abs_real_path) = real_path {
                     // When the directory is a symlink, we don't need to call getFdPath.
-                    let parts = [dir.abs_real_path, query.entry().base()];
+                    let parts = [abs_real_path, query.entry().base()];
                     let mut buf = bun_paths::path_buffer_pool::get();
 
                     // NOTE: `abs_buf` returns a borrow of `buf`; capture only the
@@ -6255,10 +6267,8 @@ impl<'a> Resolver<'a> {
                         // dies (NLL) before any later `&mut` to this slot.
                         let entry = lookup.entry();
 
-                        // SAFETY: `rfs_ptr` points at the process-global RealFS; the lazy-stat
-                        // rewrite inside `symlink()` is serialized on `Entry.mutex`.
-                        let mut symlink = unsafe { entry.symlink(rfs_ptr, self.store_fd) };
-                        if !symlink.is_empty() {
+                        let real_path = self.real_path_of(&parent_, entry);
+                        if let RealPath::Whole(symlink) = real_path {
                             if let Some(logs) = self.debug_logs.as_mut() {
                                 let mut buf = Vec::new();
                                 let _ = write!(
@@ -6270,15 +6280,15 @@ impl<'a> Resolver<'a> {
                                 logs.add_note(buf);
                             }
                             info.abs_real_path = symlink;
-                        } else if !parent_.abs_real_path.is_empty() {
+                        } else if let RealPath::Dir(parent_real_path) = real_path {
                             // this might leak a little i'm not sure
-                            let parts = [parent_.abs_real_path, base];
+                            let parts = [parent_real_path, base];
                             // NOTE: split into two statements so the two `&mut FileSystem`
                             // borrows from `unsafe { &mut *self.fs() }` don't overlap (Stacked Borrows).
                             let joined = self
                                 .fs_ref()
                                 .abs_buf(&parts, bufs!(dir_info_uncached_filename));
-                            symlink = self
+                            let symlink = self
                                 .fs_ref()
                                 .dirname_store
                                 .append_slice(joined)

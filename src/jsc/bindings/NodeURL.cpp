@@ -37,18 +37,15 @@ enum class IDNAMode : uint8_t {
     Lenient,
 };
 
-// ICU takes UTF-16. This is the fallible form of `String::convertTo16Bit`, which calls `CRASH()` when the
-// copy cannot exist: past 2^31 - 13 code units, or out of memory. A null result means that.
-static String tryConvertTo16Bit(const String& string)
+// ICU takes UTF-16. A Latin-1 string past 2^31 - 13 characters has no 16-bit form, and `String::convertTo16Bit`
+// calls `CRASH()` for it. False means only that: a failed allocation keeps its out-of-memory crash, because one
+// caller has no way to report it and must not take it for a verdict.
+static bool tryConvertTo16Bit(String& string)
 {
-    if (!string.is8Bit())
-        return string;
-    std::span<char16_t> characters;
-    auto impl = StringImpl::tryCreateUninitialized(string.length(), characters);
-    if (!impl) [[unlikely]]
-        return {};
-    StringImpl::copyCharacters(characters, string.span8());
-    return impl.releaseNonNull();
+    if (string.is8Bit() && !StringImpl::isValidLength<char16_t>(string.length())) [[unlikely]]
+        return false;
+    string.convertTo16Bit();
+    return true;
 }
 
 // Runs a uidna_nameTo* conversion with the U_BUFFER_OVERFLOW_ERROR retry
@@ -58,8 +55,8 @@ using UIDNAFunction = int32_t (*)(const UIDNA*, const char16_t*, int32_t, char16
 
 static String runUIDNA(UIDNAFunction convert, const UIDNA* idna, const String& input, UErrorCode& status, UIDNAInfo& info)
 {
-    String domain = tryConvertTo16Bit(input);
-    if (domain.isNull()) [[unlikely]] {
+    String domain = input;
+    if (!tryConvertTo16Bit(domain)) [[unlikely]] {
         status = U_MEMORY_ALLOCATION_ERROR;
         return {};
     }
@@ -113,8 +110,9 @@ static String icuToASCII(const String& input, IDNAMode mode)
 // any length.
 static bool icuAcceptsHost(const String& host)
 {
-    String domain = tryConvertTo16Bit(host);
-    if (domain.isNull()) [[unlikely]]
+    // ICU cannot check a host that has no 16-bit form, so it is refused.
+    String domain = host;
+    if (!tryConvertTo16Bit(domain)) [[unlikely]]
         return false;
     const auto span = domain.span16();
 

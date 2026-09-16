@@ -1748,21 +1748,10 @@ pub(crate) fn spawn_watcher_child(
     Ok(())
 }
 
-/// The CRT fd table our own parent passed us through `STARTUPINFO.lpReserved2`,
-/// ready to hand to the watcher child as-is.
-///
-/// A process cannot exec on Windows, so the watcher manager re-spawns the real
-/// process. Everything the parent gave the manager beyond stdin/stdout/stderr
-/// (the `NODE_CHANNEL_FD` IPC pipe, extra `stdio` pipes) lives only in this
-/// block. The block's layout is the one the CRT and libuv share:
-/// `u32 count`, `u8 crt_flags[count]`, then `HANDLE os_handle[count]`
-/// (unaligned). The handles are this process's own, so forwarding the block
-/// gives the child the same fd numbers on the same handles. Each handle gets
-/// `HANDLE_FLAG_INHERIT` back: `uv_disable_stdio_inheritance` cleared it at
-/// startup, and `CreateProcessW` skips a handle without it.
-///
-/// Returns `(0, null)` when there is no block or it fails the same checks
-/// libuv's `uv__stdio_verify` applies.
+/// Our own `STARTUPINFO.lpReserved2` block (the CRT fd table the parent gave
+/// us: `u32 count`, `u8 crt_flags[count]`, unaligned `HANDLE os_handle[count]`),
+/// re-marked inheritable so the watcher child gets the same fds, fd 3 (IPC)
+/// included. `(0, null)` when absent or malformed (libuv's `uv__stdio_verify`).
 fn inherited_crt_fd_block() -> (WORD, *mut u8) {
     const HANDLE_FLAG_INHERIT: DWORD = 0x1;
     const MAX_CRT_FDS: usize = 256;
@@ -2019,11 +2008,9 @@ mod kernel32_2 {
         // `STATUS_INVALID_HANDLE`, never UB (mirrors POSIX `close(fd)` →
         // `EBADF`, which is `safe fn` in `safe_libc`).
         pub(super) safe fn NtClose(Handle: HANDLE) -> NTSTATUS;
-        // safe: out-param is `&mut MaybeUninit<STARTUPINFOW>` (non-null, valid
-        // for write); the call writes every field and cannot fail.
+        // safe: writes every field of the out-param; cannot fail.
         pub(super) safe fn GetStartupInfoW(lpStartupInfo: &mut MaybeUninit<STARTUPINFOW>);
-        // safe: by-value `HANDLE` + two `DWORD`s; bad handle → BOOL 0 +
-        // GetLastError, never UB.
+        // safe: by-value args; bad handle → BOOL 0, never UB.
         pub(super) safe fn SetHandleInformation(
             hObject: HANDLE,
             dwMask: DWORD,

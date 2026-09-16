@@ -37,8 +37,9 @@ pub(crate) struct TlsOption {
     pub(crate) ssl_config: Option<http::ssl_config::SharedPtr>,
     pub(crate) reject_unauthorized: Option<bool>,
     pub(crate) check_server_identity: Option<JSValue>,
-    /// A `checkServerIdentity` that is not a function, which a request ignores.
-    pub(crate) ignored_check_server_identity: Option<JSValue>,
+    /// A `checkServerIdentity` that is not a function. A request ignores it,
+    /// a session throws.
+    pub(crate) unusable_check_server_identity: Option<JSValue>,
 }
 
 pub(crate) fn parse_tls(
@@ -50,7 +51,7 @@ pub(crate) fn parse_tls(
         ssl_config: None,
         reject_unauthorized: None,
         check_server_identity: None,
-        ignored_check_server_identity: None,
+        unusable_check_server_identity: None,
     };
     if let Some(reject) = tls.get(global, "rejectUnauthorized")? {
         if reject.is_boolean() {
@@ -63,7 +64,7 @@ pub(crate) fn parse_tls(
         if callback.is_cell() && callback.is_callable() {
             parsed.check_server_identity = Some(callback);
         } else if !callback.is_null() {
-            parsed.ignored_check_server_identity = Some(callback);
+            parsed.unusable_check_server_identity = Some(callback);
         }
     }
     if let Some(config) = SSLConfig::from_js(vm, global, tls)? {
@@ -93,37 +94,45 @@ fn invalid_proxy(global: &JSGlobalObject, proxy_arg: JSValue) -> JsError {
     )
 }
 
-/// `None`: the value does not select a proxy policy (`undefined`, `null`,
-/// `""`, an object without `url`), so the caller's default applies.
-pub(crate) fn parse_proxy(
-    global: &JSGlobalObject,
-    proxy_arg: JSValue,
-) -> JsResult<Option<ProxyOption>> {
+/// What a `proxy` value says.
+pub(crate) enum ProxyArg {
+    /// `undefined`, `null` or `""`: the caller's default applies.
+    Absent,
+    /// Names no proxy, such as a number or an object without `url`. A request
+    /// ignores it (#25414), a session throws.
+    Unusable,
+    Policy(ProxyOption),
+}
+
+pub(crate) fn parse_proxy(global: &JSGlobalObject, proxy_arg: JSValue) -> JsResult<ProxyArg> {
     if proxy_arg.is_boolean() {
         // `true` names no proxy; treating it as "inherit" would go direct
         // wherever the environment has none.
         if proxy_arg.as_boolean() {
             return Err(invalid_proxy(global, proxy_arg));
         }
-        return Ok(Some(ProxyOption::Direct));
+        return Ok(ProxyArg::Policy(ProxyOption::Direct));
     }
     // A URL instance has no `.url` own property; treat it as its href.
     let is_url_instance = bun_jsc::DOMURL::cast_(proxy_arg, global.vm()).is_some();
     if is_url_instance || (proxy_arg.is_string() && proxy_arg.get_length(global)? > 0) {
-        return Ok(Some(ProxyOption::Explicit {
+        return Ok(ProxyArg::Policy(ProxyOption::Explicit {
             href: proxy_href(global, proxy_arg)?,
             headers: None,
             respect_no_proxy: true,
         }));
     }
+    if proxy_arg.is_undefined_or_null() || proxy_arg.is_string() {
+        return Ok(ProxyArg::Absent);
+    }
     if !proxy_arg.is_object() {
-        return Ok(None);
+        return Ok(ProxyArg::Unusable);
     }
     let Some(url_arg) = proxy_arg.get(global, "url")? else {
-        return Ok(None);
+        return Ok(ProxyArg::Unusable);
     };
     if url_arg.is_undefined_or_null() {
-        return Ok(None);
+        return Ok(ProxyArg::Unusable);
     }
     // `href_from_js` accepts a string or a `URL` and is the sole validator.
     let href = proxy_href(global, url_arg)?;
@@ -141,7 +150,7 @@ pub(crate) fn parse_proxy(
     let respect_no_proxy = proxy_arg
         .get_boolean_strict(global, "respectNoProxy")?
         .unwrap_or(true);
-    Ok(Some(ProxyOption::Explicit {
+    Ok(ProxyArg::Policy(ProxyOption::Explicit {
         href,
         headers,
         respect_no_proxy,
@@ -273,7 +282,7 @@ impl FetchSession {
         if let Some(tls) = options.get(global, "tls")? {
             if tls.is_object() {
                 let parsed = parse_tls(vm, global, tls)?;
-                if let Some(value) = parsed.ignored_check_server_identity {
+                if let Some(value) = parsed.unusable_check_server_identity {
                     return Err(global.throw_invalid_property_type_value(
                         b"tls.checkServerIdentity",
                         b"function",
@@ -293,12 +302,10 @@ impl FetchSession {
         }
 
         if let Some(proxy) = options.get(global, "proxy")? {
-            this.proxy = parse_proxy(global, proxy)?;
-            // `fetch()` ignores a `proxy` that selects no policy (#25414). A
-            // session exists to pin the route, so only `null` and `""` are
-            // absent here.
-            if this.proxy.is_none() && !proxy.is_null() && !proxy.is_string() {
-                return Err(invalid_proxy(global, proxy));
+            match parse_proxy(global, proxy)? {
+                ProxyArg::Policy(policy) => this.proxy = Some(policy),
+                ProxyArg::Absent => {}
+                ProxyArg::Unusable => return Err(invalid_proxy(global, proxy)),
             }
         }
 

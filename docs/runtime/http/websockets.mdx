@@ -356,7 +356,7 @@ socket.addEventListener("message", event => {
 
 `pause()` and `resume()` return `true` when they took effect (or will, once a connecting socket opens) and `false` when there is no socket to act on; `socket.isPaused` reports the current state. Messages already decoded when `pause()` is called may still be delivered. The `ws` package's `pause()`, `resume()`, and `isPaused` map to the same methods.
 
-A paused connection reads no frames at all. It does not answer a ping. It does not see a close from the peer, so `readyState` stays `OPEN` until `resume()`. `close()` and `terminate()` work while paused.
+A paused connection reads no frames at all. It does not answer a ping. It does not see a close from the peer, so `readyState` stays `OPEN` until `resume()`. `close()` works while paused.
 
 ---
 

@@ -5136,7 +5136,7 @@ declare module "bun" {
      *
      * A paused connection reads no frames at all. It does not answer a ping.
      * It does not see a close from the peer, so `readyState` stays `OPEN`
-     * until `resume()`. `close()` and `terminate()` work while paused.
+     * until `resume()`. `close()` works while paused.
      * @returns `true` if the socket was paused (or will be on open), `false` if there is no socket to pause
      */
     pause(): boolean;

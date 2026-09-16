@@ -434,9 +434,31 @@ fn match_dns_name(pattern: &[u8], hostname: &[u8]) -> bool {
     match_hostname(pattern, hostname, MatchOpts::TLS_CHECK)
 }
 
+unsafe extern "C" {
+    /// `url.domainToASCII` (NodeURL.cpp). `Tag::Dead` when `domain` does not
+    /// parse as a host.
+    safe fn Bun__domainToASCII(domain: &bun_core::String) -> bun_core::String;
+}
+
 pub fn check_x509_server_identity(x509: &mut boring::X509, hostname: &[u8]) -> bool {
+    // Node.js `checkServerIdentity` (CVE-2026-48618): a host is an IP address
+    // only as typed, and DNS names are matched on `domainToASCII(host)`. UTS #46
+    // maps U+3002, U+FF0E and U+FF61 to ".", so the bytes of such a host do not
+    // split into the labels that get resolved. An ASCII host has no such
+    // mapping and is matched as typed.
+    let host_is_ip = bun_core::ip_address::is_ip_address(unfqdn(hostname));
+    let ascii_hostname;
+    let hostname = if strings::first_non_ascii(hostname).is_some() {
+        let ascii = Bun__domainToASCII(&bun_core::String::borrow_utf8(hostname));
+        if ascii.is_dead() {
+            return false;
+        }
+        ascii_hostname = ascii.to_owned_slice();
+        &ascii_hostname[..]
+    } else {
+        hostname
+    };
     let hostname = unfqdn(hostname);
-    let host_is_ip = bun_core::ip_address::is_ip_address(hostname);
     let mut has_dns_san = false;
 
     match x509.subject_alt_names() {

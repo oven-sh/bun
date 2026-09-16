@@ -130,8 +130,7 @@ pub mod task_tag {
 pub struct Task {
     pub tag: TaskTag,
     pub ptr: *mut (),
-    // [`Task::context`], in the padding `tag` leaves.
-    in_context: bool,
+    // [`Task::context`], in the padding `tag` leaves: [`ContextId::NONE`] for [`TaskContext::Always`].
     context: ContextId,
 }
 const _: () = assert!(core::mem::size_of::<Task>() == 2 * core::mem::size_of::<usize>());
@@ -144,6 +143,9 @@ const _: () = assert!(core::mem::size_of::<Task>() == 2 * core::mem::size_of::<u
 pub struct ContextId(u32);
 
 impl ContextId {
+    /// No script's context. Never handed out to one: the VM's own context has it.
+    pub const NONE: ContextId = ContextId(0);
+
     #[inline]
     pub const fn from_raw(raw: u32) -> ContextId {
         ContextId(raw)
@@ -221,30 +223,21 @@ impl Task {
     /// everything else goes through [`init`](Self::init).
     #[inline]
     pub const fn new(tag: TaskTag, ptr: *mut (), context: TaskContext) -> Task {
-        match context {
-            TaskContext::Always => Task {
-                tag,
-                ptr,
-                in_context: false,
-                context: ContextId(0),
-            },
-            TaskContext::Of(context) => Task {
-                tag,
-                ptr,
-                in_context: true,
-                context,
-            },
-        }
+        let context = match context {
+            TaskContext::Always => ContextId::NONE,
+            TaskContext::Of(context) => context,
+        };
+        Task { tag, ptr, context }
     }
 
     /// Whose script the task continues: what its type's [`Taskable::context`] said when the task
     /// was made. The event loop checks it before it runs the task.
     #[inline]
     pub const fn context(&self) -> TaskContext {
-        if self.in_context {
-            TaskContext::Of(self.context)
-        } else {
+        if self.context.0 == ContextId::NONE.0 {
             TaskContext::Always
+        } else {
+            TaskContext::Of(self.context)
         }
     }
 

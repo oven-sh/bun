@@ -177,17 +177,22 @@ async function tryNativeFastPath(src, dest, opts) {
     // round trips per entry, one entry at a time. Only take the native path
     // when the result is indistinguishable from node's walker: dest must be
     // missing or empty (no merge semantics) and the scan must find nothing
-    // the native copy treats differently.
+    // the native copy treats differently. node rejects an existing dest
+    // directory, empty or not, when `errorOnExist` is set without `force`.
     return {
-      ok: nativeCopiesTrees && (!destStat || (await isEmptyDir(dest))) && (await nativeCanCopyTree(src)),
+      ok:
+        nativeCopiesTrees &&
+        (!destStat || (!(opts.errorOnExist && !opts.force) && (await isEmptyDir(dest)))) &&
+        (await nativeCanCopyTree(src)),
       checked,
     };
   }
   // The single-file native copy is only node-equivalent for regular-file ->
   // regular-file (or missing dest). Symlinks (node resolves relative link
   // targets) and special files (node-specific error codes) must go through
-  // the ported implementation.
-  return { ok: srcStat.isFile() && (!destStat || destStat.isFile()), checked };
+  // the ported implementation. So must an existing dest without `force`:
+  // node skips it or raises ERR_FS_CP_EEXIST.
+  return { ok: srcStat.isFile() && (!destStat || (opts.force && destStat.isFile())), checked };
 }
 
 async function cpFn(src, dest, opts, checked?) {

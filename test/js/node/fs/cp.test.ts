@@ -756,21 +756,61 @@ test.skipIf(!isPosix)(
   },
 );
 
+test("fs.promises.cp with errorOnExist and without force rejects an existing empty destination", async () => {
+  // Verified against node v26.3.0. Nothing has to be merged, but node checks
+  // the destination directory itself.
+  using dir = tempDir("cp-error-on-exist", {
+    "from/d/f.txt": "x",
+  });
+  fs.mkdirSync(join(String(dir), "result"));
+
+  await expect(
+    fs.promises.cp(join(String(dir), "from"), join(String(dir), "result"), {
+      recursive: true,
+      errorOnExist: true,
+      force: false,
+    }),
+  ).rejects.toMatchObject({ code: "ERR_FS_CP_EEXIST" });
+});
+
 // The node-ported walker copies one entry at a time and awaits several thread
 // pool round trips for each. The native copy runs the file copies on the thread
-// pool in parallel, so a tree it copies exactly like node must not go through
-// the walker. The walker binds copyFile/copyFileSync when it first loads, so a
+// pool in parallel, so a copy it does exactly like node must not go through the
+// walker. The walker binds copyFile/copyFileSync when it first loads, so a
 // fresh process can count how many files it copied.
-describe.concurrent("recursive cp with nothing to merge does not take the JS walker", () => {
-  const cases = [
+describe.concurrent("recursive cp takes the JS walker only when the native copy can differ from node", () => {
+  // `options` is source text for the child process.
+  type Case = {
+    label: string;
+    options?: string;
+    withSymlink?: boolean;
+    destExists?: boolean;
+    walker?: boolean;
+    skip: boolean;
+  };
+  const cases: Case[] = [
     // Windows keeps the walker: the native copy there stops at MAX_PATH.
-    { label: "regular files and directories", skip: isWindows },
+    { label: "default options", skip: isWindows },
     { label: "destination is an empty directory", destExists: true, skip: isWindows },
+    // `force` and `errorOnExist` only matter for an entry that exists at the
+    // destination, and the native copy ignores `mode` like a plain copy does.
+    { label: "force: false", options: "{ force: false }", skip: isWindows },
+    { label: "errorOnExist without force", options: "{ errorOnExist: true, force: false }", skip: isWindows },
+    { label: "mode: COPYFILE_FICLONE", options: "{ mode: fs.constants.COPYFILE_FICLONE }", skip: isWindows },
     // macOS keeps the walker: clonefile() copies a relative link target as
     // written, and node rewrites it against the source tree.
     { label: "tree contains a relative symlink", withSymlink: true, skip: !isLinux },
+    // The copy has to fail where a clone is not possible. Only copyFile does that.
+    {
+      label: "mode: COPYFILE_FICLONE_FORCE",
+      options: "{ mode: fs.constants.COPYFILE_FICLONE_FORCE }",
+      walker: true,
+      skip: false,
+    },
+    { label: "filter", options: "{ filter: () => true }", walker: true, skip: false },
   ];
-  for (const { label, withSymlink = false, destExists = false, skip } of cases) {
+  const forms = ["cpSync", "cp", "promises.cp"];
+  for (const { label, options = "{}", withSymlink = false, destExists = false, walker = false, skip } of cases) {
     test.skipIf(skip)(label, async () => {
       const files: Record<string, string> = {};
       for (let d = 0; d < 4; d++) {
@@ -779,21 +819,33 @@ describe.concurrent("recursive cp with nothing to merge does not take the JS wal
       using dir = tempDir("cp-native-path", files);
       if (withSymlink) fs.symlinkSync(join("dir-0", "file-0.txt"), join(String(dir), "from", "link"));
       if (destExists) {
-        fs.mkdirSync(join(String(dir), "to-sync"));
-        fs.mkdirSync(join(String(dir), "to-async"));
+        for (const form of forms) fs.mkdirSync(join(String(dir), "to-" + form));
       }
 
       const script = `
         import fs from "node:fs";
-        const walkerCopies = { cpSync: 0, cp: 0 };
+        let walkerCopies = 0;
         const { copyFileSync } = fs;
         const { copyFile } = fs.promises;
-        fs.copyFileSync = function () { walkerCopies.cpSync++; return copyFileSync.apply(this, arguments); };
-        fs.promises.copyFile = function () { walkerCopies.cp++; return copyFile.apply(this, arguments); };
-        fs.cpSync("from", "to-sync", { recursive: true });
-        await fs.promises.cp("from", "to-async", { recursive: true });
-        const read = root => fs.readdirSync(root, { recursive: true }).filter(name => name.endsWith(".txt")).length;
-        console.log(JSON.stringify({ walkerCopies, copied: { cpSync: read("to-sync"), cp: read("to-async") } }));
+        fs.copyFileSync = function () { walkerCopies++; return copyFileSync.apply(this, arguments); };
+        fs.promises.copyFile = function () { walkerCopies++; return copyFile.apply(this, arguments); };
+        const options = { recursive: true, ...${options} };
+        const copies = {
+          "cpSync": dest => fs.cpSync("from", dest, options),
+          "cp": dest => new Promise((resolve, reject) => fs.cp("from", dest, options, err => (err ? reject(err) : resolve()))),
+          "promises.cp": dest => fs.promises.cp("from", dest, options),
+        };
+        const result = {};
+        for (const form in copies) {
+          walkerCopies = 0;
+          let error = null;
+          try { await copies[form]("to-" + form); } catch (e) { error = e.code; }
+          const copied = fs.existsSync("to-" + form)
+            ? fs.readdirSync("to-" + form, { recursive: true }).filter(name => name.endsWith(".txt")).length
+            : 0;
+          result[form] = { tookWalker: walkerCopies > 0, copied, error };
+        }
+        console.log(JSON.stringify(result));
       `;
       await using proc = Bun.spawn({
         cmd: [bunExe(), "-e", script],
@@ -804,16 +856,22 @@ describe.concurrent("recursive cp with nothing to merge does not take the JS wal
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toBe("");
-      expect(JSON.parse(stdout)).toEqual({
-        walkerCopies: { cpSync: 0, cp: 0 },
-        copied: { cpSync: 16, cp: 16 },
-      });
+      const result = JSON.parse(stdout);
+      if (walker) {
+        // COPYFILE_FICLONE_FORCE fails on a filesystem that cannot clone, so
+        // only the route is checked.
+        expect(forms.map(form => [form, result[form].tookWalker])).toEqual(forms.map(form => [form, true]));
+      } else {
+        expect(result).toEqual(
+          Object.fromEntries(forms.map(form => [form, { tookWalker: false, copied: 16, error: null }])),
+        );
+      }
       expect(exitCode).toBe(0);
       if (withSymlink) {
         // The child resolves the link against its working directory.
         const cwd = fs.realpathSync(String(dir));
-        for (const dest of ["to-sync", "to-async"]) {
-          expect(fs.readlinkSync(join(cwd, dest, "link"))).toBe(join(cwd, "from", "dir-0", "file-0.txt"));
+        for (const form of forms) {
+          expect(fs.readlinkSync(join(cwd, "to-" + form, "link"))).toBe(join(cwd, "from", "dir-0", "file-0.txt"));
         }
       }
     });

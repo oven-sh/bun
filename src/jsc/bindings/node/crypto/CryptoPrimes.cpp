@@ -265,6 +265,33 @@ JSValue GeneratePrimeJob::result(JSGlobalObject* globalObject, JSC::ThrowScope& 
     return JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(), WTF::move(buf));
 }
 
+// options.add / options.rem: a bigint, an ArrayBuffer or SharedArrayBuffer, or any ArrayBufferView
+// (node: isAnyArrayBuffer(x) || isArrayBufferView(x)), read as a big-endian unsigned integer.
+static ncrypto::BignumPointer primeOptionToBignum(JSGlobalObject* globalObject, ThrowScope& scope, JSValue value, ASCIILiteral name)
+{
+    if (value.isBigInt()) {
+        value = unsignedBigIntToBuffer(globalObject, scope, value, name);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
+    std::span<const uint8_t> bytes;
+    if (auto* view = dynamicDowncast<JSArrayBufferView>(value)) {
+        bytes = view->span();
+    } else if (auto* arrayBuffer = dynamicDowncast<JSArrayBuffer>(value)) {
+        bytes = arrayBuffer->impl()->span();
+    } else {
+        ERR::INVALID_ARG_TYPE(scope, globalObject, name, "ArrayBuffer, Buffer, TypedArray, DataView, or bigint"_s, value);
+        return {};
+    }
+
+    ncrypto::BignumPointer result(bytes.data(), bytes.size());
+    if (!result) {
+        ERR::CRYPTO_OPERATION_FAILED(scope, globalObject, "could not generate prime"_s);
+        return {};
+    }
+    return result;
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsGeneratePrime, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = lexicalGlobalObject->vm();
@@ -322,34 +349,14 @@ JSC_DEFINE_HOST_FUNCTION(jsGeneratePrime, (JSC::JSGlobalObject * lexicalGlobalOb
 
     ncrypto::BignumPointer add;
     if (!addValue.isUndefined()) {
-        if (addValue.isBigInt()) {
-            addValue = unsignedBigIntToBuffer(lexicalGlobalObject, scope, addValue, "options.add"_s);
-            RETURN_IF_EXCEPTION(scope, {});
-        }
-        auto* addView = dynamicDowncast<JSC::JSArrayBufferView>(addValue);
-        if (!addView) {
-            return ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "options.add"_s, "ArrayBuffer, Buffer, TypedArray, DataView, or bigint"_s, addValue);
-        }
-        add.reset(reinterpret_cast<const uint8_t*>(addView->vector()), addView->byteLength());
-        if (!add) {
-            return ERR::CRYPTO_OPERATION_FAILED(scope, lexicalGlobalObject, "could not generate prime"_s);
-        }
+        add = primeOptionToBignum(lexicalGlobalObject, scope, addValue, "options.add"_s);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     ncrypto::BignumPointer rem;
     if (!remValue.isUndefined()) {
-        if (remValue.isBigInt()) {
-            remValue = unsignedBigIntToBuffer(lexicalGlobalObject, scope, remValue, "options.rem"_s);
-            RETURN_IF_EXCEPTION(scope, {});
-        }
-        auto* remView = dynamicDowncast<JSC::JSArrayBufferView>(remValue);
-        if (!remView) {
-            return ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "options.rem"_s, "ArrayBuffer, Buffer, TypedArray, DataView, or bigint"_s, remValue);
-        }
-        rem.reset(reinterpret_cast<const uint8_t*>(remView->vector()), remView->byteLength());
-        if (!rem) {
-            return ERR::CRYPTO_OPERATION_FAILED(scope, lexicalGlobalObject, "could not generate prime"_s);
-        }
+        rem = primeOptionToBignum(lexicalGlobalObject, scope, remValue, "options.rem"_s);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     if (add) {
@@ -423,34 +430,14 @@ JSC_DEFINE_HOST_FUNCTION(jsGeneratePrimeSync, (JSC::JSGlobalObject * lexicalGlob
 
     ncrypto::BignumPointer add;
     if (!addValue.isUndefined()) {
-        if (addValue.isBigInt()) {
-            addValue = unsignedBigIntToBuffer(lexicalGlobalObject, scope, addValue, "options.add"_s);
-            RETURN_IF_EXCEPTION(scope, {});
-        }
-        auto* addView = dynamicDowncast<JSC::JSArrayBufferView>(addValue);
-        if (!addView) {
-            return ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "options.add"_s, "ArrayBuffer, Buffer, TypedArray, DataView, or bigint"_s, addValue);
-        }
-        add.reset(reinterpret_cast<const uint8_t*>(addView->vector()), addView->byteLength());
-        if (!add) {
-            return ERR::CRYPTO_OPERATION_FAILED(scope, lexicalGlobalObject, "could not generate prime"_s);
-        }
+        add = primeOptionToBignum(lexicalGlobalObject, scope, addValue, "options.add"_s);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     ncrypto::BignumPointer rem;
     if (!remValue.isUndefined()) {
-        if (remValue.isBigInt()) {
-            remValue = unsignedBigIntToBuffer(lexicalGlobalObject, scope, remValue, "options.rem"_s);
-            RETURN_IF_EXCEPTION(scope, {});
-        }
-        auto* remView = dynamicDowncast<JSC::JSArrayBufferView>(remValue);
-        if (!remView) {
-            return ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "options.rem"_s, "ArrayBuffer, Buffer, TypedArray, DataView, or bigint"_s, remValue);
-        }
-        rem.reset(reinterpret_cast<const uint8_t*>(remView->vector()), remView->byteLength());
-        if (!rem) {
-            return ERR::CRYPTO_OPERATION_FAILED(scope, lexicalGlobalObject, "could not generate prime"_s);
-        }
+        rem = primeOptionToBignum(lexicalGlobalObject, scope, remValue, "options.rem"_s);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     if (add) {

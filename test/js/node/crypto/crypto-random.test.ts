@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { checkPrime, checkPrimeSync, randomBytes, randomFill, randomFillSync, randomInt } from "crypto";
+import { statSync } from "fs";
 import { bunEnv, bunExe, isLinux, isMacOS, isMusl, tempDir } from "harness";
 import { join } from "path";
 
@@ -279,10 +280,12 @@ describe.concurrent.skipIf(!isLinux || isMusl || !cc)(
     // threads, etc.; the regression produced >= N calls.
     const MAX_GETRANDOM_CALLS = 200;
     // On Linux release builds Bun terminates via quick_exit(3), which skips
-    // __attribute__((destructor)) and atexit handlers, so the count is
-    // persisted to a file on every getrandom call rather than reported from a
-    // destructor. The constructor writes "0" so the file exists even when no
-    // getrandom calls occur.
+    // __attribute__((destructor)) and atexit handlers, so every getrandom call
+    // is recorded in a file rather than reported from a destructor. A call
+    // appends one byte, so the size of the file is the count. An append is
+    // atomic, so concurrent calls need no lock, and write(2) is safe where the
+    // wrappers can run (signal handlers included). The constructor creates
+    // the file, so it exists even when no getrandom calls occur.
     //
     // BoringSSL does not use the libc wrapper: it seeds its DRBG with
     // syscall(SYS_getrandom, ...). Those calls are counted separately, into
@@ -290,31 +293,22 @@ describe.concurrent.skipIf(!isLinux || isMusl || !cc)(
     const interposerSrc = `
       #define _GNU_SOURCE
       #include <stdarg.h>
-      #include <stdio.h>
       #include <stdlib.h>
       #include <dlfcn.h>
       #include <fcntl.h>
       #include <unistd.h>
       #include <sys/syscall.h>
       #include <sys/types.h>
-      static long count = 0;
-      static long syscall_count = 0;
       static int out_fd = -1;
       static int syscall_out_fd = -1;
       static ssize_t (*real_getrandom)(void *, size_t, unsigned int) = 0;
       static long (*real_syscall)(long, ...) = 0;
-      static void persist(int fd, long n) {
-        if (fd < 0) return;
-        char buf[32];
-        int len = snprintf(buf, sizeof(buf), "%ld\\n", n);
-        pwrite(fd, buf, len, 0);
-      }
       static int open_count_file(const char *env_name) {
         const char *path = getenv(env_name);
-        if (!path) return -1;
-        int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-        persist(fd, 0);
-        return fd;
+        return path ? open(path, O_WRONLY | O_CREAT | O_TRUNC | O_APPEND, 0644) : -1;
+      }
+      static void count_call(int fd) {
+        if (fd >= 0 && write(fd, "x", 1) != 1) abort();
       }
       __attribute__((constructor)) static void init(void) {
         out_fd = open_count_file("GETRANDOM_COUNT_FILE");
@@ -323,8 +317,7 @@ describe.concurrent.skipIf(!isLinux || isMusl || !cc)(
       ssize_t getrandom(void *buf, size_t buflen, unsigned int flags) {
         if (!real_getrandom)
           real_getrandom = (ssize_t (*)(void *, size_t, unsigned int))dlsym(RTLD_NEXT, "getrandom");
-        long n = __atomic_add_fetch(&count, 1, __ATOMIC_RELAXED);
-        persist(out_fd, n);
+        count_call(out_fd);
         return real_getrandom(buf, buflen, flags);
       }
       long syscall(long number, ...) {
@@ -335,8 +328,7 @@ describe.concurrent.skipIf(!isLinux || isMusl || !cc)(
         va_end(ap);
         if (!real_syscall)
           real_syscall = (long (*)(long, ...))dlsym(RTLD_NEXT, "syscall");
-        if (number == SYS_getrandom)
-          persist(syscall_out_fd, __atomic_add_fetch(&syscall_count, 1, __ATOMIC_RELAXED));
+        if (number == SYS_getrandom) count_call(syscall_out_fd);
         return real_syscall(number, a[0], a[1], a[2], a[3], a[4], a[5]);
       }
     `;
@@ -370,10 +362,7 @@ describe.concurrent.skipIf(!isLinux || isMusl || !cc)(
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect({ stdout: stdout.trim(), exitCode, stderr }).toMatchObject({ stdout: "ok", exitCode: 0 });
-      const text = await Bun.file(countFile).text();
-      const m = text.match(/^(\d+)/);
-      if (!m) throw new Error("interposer did not write a count; file=" + JSON.stringify(text));
-      return Number(m[1]);
+      return statSync(countFile).size;
     }
 
     it.each([
@@ -404,13 +393,18 @@ describe.concurrent.skipIf(!isLinux || isMusl || !cc)(
     it("randomInt does not call RAND_bytes per iteration", async () => {
       const RESEED_INTERVAL = 4096;
       const script = `
-        const { readFileSync } = require("fs");
+        const { statSync } = require("fs");
         const c = require("crypto");
-        const reseeds = () => Number(readFileSync(process.env.GETRANDOM_SYSCALL_COUNT_FILE, "utf8"));
-        c.randomInt(1000);
-        const before = reseeds();
-        for (let i = 0; i < ${32 * RESEED_INTERVAL}; i++) c.randomInt(1000);
-        console.log(reseeds() - before);
+        const reseeds = () => statSync(process.env.GETRANDOM_SYSCALL_COUNT_FILE).size;
+        const reseedsDuring = (n, fn) => {
+          const before = reseeds();
+          for (let i = 0; i < n; i++) fn();
+          return reseeds() - before;
+        };
+        console.log(
+          reseedsDuring(${4 * RESEED_INTERVAL}, () => c.randomUUID({ disableEntropyCache: true })),
+          reseedsDuring(${32 * RESEED_INTERVAL}, () => c.randomInt(1000)),
+        );
       `;
       await using proc = Bun.spawn({
         cmd: [bunExe(), "-e", script],
@@ -424,12 +418,17 @@ describe.concurrent.skipIf(!isLinux || isMusl || !cc)(
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect({ stdout: stdout.trim(), exitCode, stderr }).toMatchObject({
-        stdout: expect.stringMatching(/^\d+$/),
+        stdout: expect.stringMatching(/^\d+ \d+$/),
         exitCode: 0,
       });
+      const [control, reseeds] = stdout.trim().split(" ").map(Number);
+      // randomUUID({ disableEntropyCache: true }) makes one RAND_bytes call
+      // per iteration, so it must reseed 4 times. Fewer means the interposer
+      // does not see the reseeds, and the check below proves nothing.
+      expect(control).toBeGreaterThanOrEqual(4);
       // One RAND_bytes call per iteration reseeds 32 times. A thread that
       // starts during the loop seeds its own DRBG, so allow a few.
-      expect(Number(stdout)).toBeLessThan(8);
+      expect(reseeds).toBeLessThan(8);
     });
   },
 );

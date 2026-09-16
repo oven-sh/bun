@@ -25,11 +25,11 @@ Userspace builds still run it.
 -    ZSTD_cpuid_t cpuid = ZSTD_cpuid();
 -    return ZSTD_cpuid_bmi1(cpuid) && ZSTD_cpuid_bmi2(cpuid);
 +    static int cached = 0;
-+    int state = __atomic_load_n(&cached, __ATOMIC_RELAXED);
++    int state = __atomic_load_n(&cached, __ATOMIC_SEQ_CST);
 +    if (state == 0) {
 +        ZSTD_cpuid_t const cpuid = ZSTD_cpuid();
 +        state = 1 + (ZSTD_cpuid_bmi1(cpuid) && ZSTD_cpuid_bmi2(cpuid));
-+        __atomic_store_n(&cached, state, __ATOMIC_RELAXED);
++        __atomic_store_n(&cached, state, __ATOMIC_SEQ_CST);
 +    }
 +    return state - 1;
  }

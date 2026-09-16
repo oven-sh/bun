@@ -262,10 +262,18 @@ impl PendingPluginSetup {
         self.promise.get()
     }
 
-    /// Call this after `promise()` fulfilled. It calls each `setup()` that is left. On `false`,
-    /// `promise()` is the next promise to wait for. On `true`, every `setup()` has settled.
-    pub(crate) fn advance(&mut self, global: &JSGlobalObject) -> JsResult<bool> {
-        while let Some(setup) = self.queue.pop_front() {
+    /// Call this after `promise()` fulfilled. It calls each `setup()` that is left, while
+    /// `owner_is_alive()` holds: a `setup()` can stop the server that these plugins are for.
+    /// On `false`, `promise()` is the next promise to wait for. On `true`, no call is left.
+    pub(crate) fn advance(
+        &mut self,
+        global: &JSGlobalObject,
+        owner_is_alive: impl Fn() -> bool,
+    ) -> JsResult<bool> {
+        while owner_is_alive() {
+            let Some(setup) = self.queue.pop_front() else {
+                break;
+            };
             if let Some(promise) = run_plugin_setup(self.plugin, setup.get(), global)? {
                 self.promise.set(global, promise);
                 return Ok(false);
@@ -327,7 +335,7 @@ impl SplitBundlerOptions {
                 bun_jsc::PromiseResult::Fulfilled(_) => {}
                 bun_jsc::PromiseResult::Rejected(err) => return Err(global.throw_value(err)),
             }
-            if !pending.advance(global)? {
+            if !pending.advance(global, || true)? {
                 self.pending_plugin_setup = Some(pending);
             }
         }

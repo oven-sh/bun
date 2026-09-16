@@ -215,32 +215,43 @@ impl PluginSetupWaiter {
     fn on_settled(context: JSValue, global: &JSGlobalObject, rejection: Option<JSValue>) {
         // SAFETY: `wait_for` took this ref for the reaction that runs now.
         let waiter = unsafe { bun_ptr::RefPtr::from_raw(context.as_promise_ptr::<Self>()) };
-        let Some(mut pending) = waiter.pending.take() else {
-            return;
-        };
+        let mut pending = waiter.pending.take();
 
-        let result = match rejection {
-            Some(reason) => Err(reason),
+        let result = match (rejection, &mut pending) {
+            (Some(reason), _) => Err(reason),
             // `setup()` is user code. It can stop the server, which drops the DevServer.
-            None => pending
-                .advance(global)
+            (None, Some(pending)) => pending
+                .advance(global, || waiter.dev.get().is_some())
                 .map_err(|err| global.take_exception(err)),
+            // The DevServer dropped, and took the `setup()` calls that were left.
+            (None, None) => return,
         };
 
-        let Some(dev) = waiter.dev.get() else { return };
-        // SAFETY: `DevServer::drop` clears `dev`, so the DevServer is alive. This
-        // runs on the JS thread, from a promise job, so no other reference to it is live.
-        let dev = unsafe { &mut *dev.as_ptr() };
+        // SAFETY: `DevServer::drop` clears `dev`, so a DevServer that is still set is alive.
+        // This runs on the JS thread, from a promise job, so no other reference to it is live.
+        let dev = waiter.dev.get().map(|dev| unsafe { &mut *dev.as_ptr() });
         match result {
             Ok(false) => {
-                let promise = pending.promise();
-                waiter.pending.set(Some(pending));
-                Self::wait_for(&waiter, global, promise);
+                if dev.is_some()
+                    && let Some(pending) = pending
+                {
+                    let promise = pending.promise();
+                    waiter.pending.set(Some(pending));
+                    Self::wait_for(&waiter, global, promise);
+                }
             }
-            Ok(true) => dev.on_plugins_loaded(),
+            Ok(true) => {
+                if let Some(dev) = dev {
+                    dev.on_plugins_loaded();
+                }
+            }
+            // The promise is marked as handled, so the error is reported here, also when the
+            // server is gone.
             Err(err) => {
-                // This can drop the DevServer, when the server was stopped before.
-                bun_core::handle_oom(dev.on_plugins_rejected());
+                if let Some(dev) = dev {
+                    // This can drop the DevServer, when the server was stopped before.
+                    bun_core::handle_oom(dev.on_plugins_rejected());
+                }
                 Output::err_generic("Failed to load plugins for Bun.serve:", ());
                 global.bun_vm().as_mut().run_error_handler(err, None);
             }

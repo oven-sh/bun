@@ -228,98 +228,14 @@ describe.concurrent("Bun.serve({ app }) with a plugin setup() that returns a pen
       "rejects-fixture.ts": `
         import { getDevServerDeinitCount } from "bun:internal-for-testing";
         import { devServerIsGone, framework, requestIsWaiting, serve } from "./app.ts";
-        const { promise: gate, reject: closeGate } = Promise.withResolvers<void>();
-        let secondSetupRan = false;
-        const deinitsBefore = getDevServerDeinitCount();
-        const server = serve({
-          port: 0,
-          development: true,
-          app: {
-            framework,
-            plugins: [
-              { name: "first", setup: () => gate },
-              {
-                name: "second",
-                setup() {
-                  secondSetupRan = true;
-                },
-              },
-            ],
-          },
-          fetch: () => new Response("fallback"),
-        });
-        const waiting = fetch(server.url);
-        await requestIsWaiting(server);
-        // The call above did not throw. The rejection arrives now.
-        closeGate(new Error("plugin setup failed on purpose"));
-        const whileWaiting = (await waiting).status;
-        const afterwards = await (await fetch(server.url)).text();
-        const pendingRequests = server.pendingRequests;
-        await server.stop(true);
-        // A request context that is not released keeps the dev server alive.
-        await devServerIsGone(deinitsBefore);
-        console.log(JSON.stringify({ secondSetupRan, whileWaiting, afterwards, pendingRequests }));
-      `,
-    });
-    const { stdout, stderr, exitCode } = await runFixture(String(dir), "rejects-fixture.ts");
-    expect(JSON.parse(stdout)).toEqual({
-      secondSetupRan: false,
-      whileWaiting: 500,
-      afterwards: "Plugin Error",
-      pendingRequests: 0,
-    });
-    expect(stderr).toContain("Failed to load plugins for Bun.serve");
-    expect(stderr).toContain("plugin setup failed on purpose");
-    expect(exitCode).toBe(0);
-  });
 
-  test("a rejection after server.stop() answers the request that waits", async () => {
-    using dir = tempDir("bake-app-plugin-setup-rejects-stopped", {
-      ...appFiles,
-      "rejects-stopped-fixture.ts": `
-        import { getDevServerDeinitCount } from "bun:internal-for-testing";
-        import { devServerIsGone, framework, requestIsWaiting, serve } from "./app.ts";
-        const { promise: gate, reject: closeGate } = Promise.withResolvers<void>();
-        const deinitsBefore = getDevServerDeinitCount();
-        const server = serve({
-          port: 0,
-          development: true,
-          app: { framework, plugins: [{ name: "first", setup: () => gate }] },
-          fetch: () => new Response("fallback"),
-        });
-        const waiting = fetch(server.url);
-        await requestIsWaiting(server);
-        // The listener closes now. Only the request that waits keeps the server alive,
-        // so its answer is what lets the dev server go.
-        const stopped = server.stop();
-        closeGate(new Error("plugin setup failed on purpose"));
-        const whileWaiting = (await waiting).status;
-        await stopped;
-        await devServerIsGone(deinitsBefore);
-        console.log(JSON.stringify({ whileWaiting }));
-      `,
-    });
-    const { stdout, stderr, exitCode } = await runFixture(String(dir), "rejects-stopped-fixture.ts");
-    expect(JSON.parse(stdout)).toEqual({ whileWaiting: 500 });
-    expect(stderr).toContain("plugin setup failed on purpose");
-    expect(exitCode).toBe(0);
-  });
-
-  test("a dev server that is gone when setup() settles is left alone", async () => {
-    using dir = tempDir("bake-app-plugin-setup-dropped", {
-      ...appFiles,
-      "dropped-fixture.ts": `
-        import { getDevServerDeinitCount } from "bun:internal-for-testing";
-        import { framework, nextTurn, serve } from "./app.ts";
-        const { promise: gate, resolve: openGate } = Promise.withResolvers<void>();
-        let secondSetupRan = false;
-        const taken = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("taken") });
-        const deinitsBefore = getDevServerDeinitCount();
-        let code = "listen succeeded";
-        try {
-          serve({
-            hostname: "127.0.0.1",
-            port: taken.port,
+        // A request waits for the plugins when the rejection arrives. The server stops after that.
+        async function rejectThenStop() {
+          const { promise: gate, reject: closeGate } = Promise.withResolvers<void>();
+          let secondSetupRan = false;
+          const deinitsBefore = getDevServerDeinitCount();
+          const server = serve({
+            port: 0,
             development: true,
             app: {
               framework,
@@ -334,20 +250,162 @@ describe.concurrent("Bun.serve({ app }) with a plugin setup() that returns a pen
               ],
             },
             fetch: () => new Response("fallback"),
-          }).stop(true);
-        } catch (e) {
-          code = e.code;
+          });
+          const waiting = fetch(server.url);
+          await requestIsWaiting(server);
+          // The call above did not throw. The rejection arrives now.
+          closeGate(new Error("rejected before the server stopped"));
+          const whileWaiting = (await waiting).status;
+          const afterwards = await (await fetch(server.url)).text();
+          const pendingRequests = server.pendingRequests;
+          await server.stop(true);
+          // A request context that is not released keeps the dev server alive.
+          await devServerIsGone(deinitsBefore);
+          return { secondSetupRan, whileWaiting, afterwards, pendingRequests };
         }
-        const deinits = getDevServerDeinitCount() - deinitsBefore;
-        openGate();
-        await nextTurn();
-        await taken.stop(true);
-        console.log(JSON.stringify({ code, deinits, secondSetupRan }));
+
+        // The listener closes first. Only the request that waits keeps the server alive, so
+        // the answer to it is what lets the dev server go.
+        async function stopThenReject() {
+          const { promise: gate, reject: closeGate } = Promise.withResolvers<void>();
+          const deinitsBefore = getDevServerDeinitCount();
+          const server = serve({
+            port: 0,
+            development: true,
+            app: { framework, plugins: [{ name: "first", setup: () => gate }] },
+            fetch: () => new Response("fallback"),
+          });
+          const waiting = fetch(server.url);
+          await requestIsWaiting(server);
+          const stopped = server.stop();
+          closeGate(new Error("rejected after server.stop()"));
+          const whileWaiting = (await waiting).status;
+          await stopped;
+          await devServerIsGone(deinitsBefore);
+          return { whileWaiting };
+        }
+
+        console.log(JSON.stringify({ rejectThenStop: await rejectThenStop(), stopThenReject: await stopThenReject() }));
       `,
     });
-    const { stdout, stderr, exitCode } = await runFixture(String(dir), "dropped-fixture.ts");
-    expect(JSON.parse(stdout)).toEqual({ code: "EADDRINUSE", deinits: 1, secondSetupRan: false });
-    expect(stderr).toBe("");
+    const { stdout, stderr, exitCode } = await runFixture(String(dir), "rejects-fixture.ts");
+    expect(JSON.parse(stdout)).toEqual({
+      rejectThenStop: { secondSetupRan: false, whileWaiting: 500, afterwards: "Plugin Error", pendingRequests: 0 },
+      stopThenReject: { whileWaiting: 500 },
+    });
+    expect(stderr).toContain("Failed to load plugins for Bun.serve");
+    expect(stderr).toContain("rejected before the server stopped");
+    expect(stderr).toContain("rejected after server.stop()");
+    expect(exitCode).toBe(0);
+  });
+
+  test("a dev server that is gone when setup() settles is left alone", async () => {
+    using dir = tempDir("bake-app-plugin-setup-gone", {
+      ...appFiles,
+      "gone-fixture.ts": `
+        import { getDevServerDeinitCount } from "bun:internal-for-testing";
+        import { framework, nextTurn, serve } from "./app.ts";
+
+        // Bun.serve() throws after the dev server exists, so the dev server is freed in the call.
+        async function listenFails() {
+          const { promise: gate, resolve: openGate } = Promise.withResolvers<void>();
+          let secondSetupRan = false;
+          const taken = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("taken") });
+          const deinitsBefore = getDevServerDeinitCount();
+          let code = "listen succeeded";
+          try {
+            serve({
+              hostname: "127.0.0.1",
+              port: taken.port,
+              development: true,
+              app: {
+                framework,
+                plugins: [
+                  { name: "first", setup: () => gate },
+                  {
+                    name: "second",
+                    setup() {
+                      secondSetupRan = true;
+                    },
+                  },
+                ],
+              },
+              fetch: () => new Response("fallback"),
+            }).stop(true);
+          } catch (e) {
+            code = e.code;
+          }
+          const deinits = getDevServerDeinitCount() - deinitsBefore;
+          openGate();
+          await nextTurn();
+          await taken.stop(true);
+          return { code, deinits, secondSetupRan };
+        }
+
+        // A setup() that stops the server ends the setup() calls.
+        async function setupStopsServer() {
+          const { promise: gate, resolve: openGate } = Promise.withResolvers<void>();
+          let thirdSetupRan = false;
+          const server = serve({
+            port: 0,
+            development: true,
+            app: {
+              framework,
+              plugins: [
+                { name: "first", setup: () => gate },
+                {
+                  name: "second",
+                  setup() {
+                    server.stop(true);
+                  },
+                },
+                {
+                  name: "third",
+                  setup() {
+                    thirdSetupRan = true;
+                  },
+                },
+              ],
+            },
+            fetch: () => new Response("fallback"),
+          });
+          openGate();
+          await nextTurn();
+          return { thirdSetupRan };
+        }
+
+        // Nothing is left to tell, but the error is still reported.
+        async function rejectAfterStop() {
+          const { promise: gate, reject: closeGate } = Promise.withResolvers<void>();
+          const server = serve({
+            port: 0,
+            development: true,
+            app: { framework, plugins: [{ name: "first", setup: () => gate }] },
+            fetch: () => new Response("fallback"),
+          });
+          await server.stop(true);
+          closeGate(new Error("rejected after the server was gone"));
+          await nextTurn();
+          return { stopped: true };
+        }
+
+        console.log(
+          JSON.stringify({
+            listenFails: await listenFails(),
+            setupStopsServer: await setupStopsServer(),
+            rejectAfterStop: await rejectAfterStop(),
+          }),
+        );
+      `,
+    });
+    const { stdout, stderr, exitCode } = await runFixture(String(dir), "gone-fixture.ts");
+    expect(JSON.parse(stdout)).toEqual({
+      listenFails: { code: "EADDRINUSE", deinits: 1, secondSetupRan: false },
+      setupStopsServer: { thirdSetupRan: false },
+      rejectAfterStop: { stopped: true },
+    });
+    expect(stderr).toContain("Failed to load plugins for Bun.serve");
+    expect(stderr).toContain("rejected after the server was gone");
     expect(exitCode).toBe(0);
   });
 });

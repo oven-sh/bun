@@ -7,7 +7,7 @@
 #include "BunClientData.h"
 #include "ZigGlobalObject.h"
 #include "ScriptExecutionContext.h"
-#include <JavaScriptCore/MutatorState.h>
+#include <JavaScriptCore/JSFinalizationRegistry.h>
 
 using Ticket = JSC::DeferredWorkTimer::Ticket;
 using Task = JSC::DeferredWorkTimer::Task;
@@ -56,9 +56,10 @@ void JSCTaskScheduler::onAddPendingWork(WebCore::JSVMClientData* clientData, Ref
 {
     auto& scheduler = clientData->deferredWorkTimer;
     JSCTaskScheduler::PendingWork pending { Bun__VM__currentLoopKind(clientData->bunVM), 0 };
-    // Script is asking (WebAssembly.compile, Atomics.waitAsync) unless the collector is: a
-    // FinalizationRegistry's work is registered from a collection, whatever context that ran in.
-    if (ticket->scriptExecutionOwner()->vm().heap.mutatorState() == JSC::MutatorState::Running) {
+    // Script asked for this work (WebAssembly.compile, Atomics.waitAsync): it is the asking
+    // graph's, and is dropped with it. A FinalizationRegistry's cleanup is the collector's doing,
+    // for a registry that may be anybody's: it always runs.
+    if (!ticket->target()->inherits<JSC::JSFinalizationRegistry>()) {
         auto* context = defaultGlobalObject(ticket->target()->globalObject())->currentScriptExecutionContext();
         if (context->isForModuleGraph())
             pending.graphContext = context->identifier();

@@ -420,6 +420,7 @@ const clientEntryPointFramework: Bake.Framework = {
     {
       root: "routes",
       style: "nextjs-pages",
+      layouts: true,
       serverEntryPoint: "./server.ts",
       clientEntryPoint: "./client.ts",
     },
@@ -468,8 +469,15 @@ const clientEntryPointFiles = {
   "other-client.ts": `
     console.log("other v1");
   `,
+  "nav.ts": `
+    export const nav = "nav v1";
+  `,
+  "routes/_layout.ts": `
+    export { nav as default } from "../nav";
+  `,
   "routes/index.ts": `export default "index";`,
   "routes/second.ts": `export default "second";`,
+  "routes/third.ts": `export default "third";`,
   "other-routes/other.ts": `export default "other";`,
 };
 async function loadClientEntryPointPages(dev: Dev) {
@@ -566,28 +574,35 @@ devTest("a build error under the framework client entry point shows on the next 
 });
 // A page tells the dev server the route that `history.pushState` took it to.
 // That gives the route a bundle entry before anything requests the route.
-for (const [entryPoint, file, broken] of [
-  ["client", "client-dep.ts", `console.log("dep v2" +);`],
-  ["server", "server.ts", clientEntryPointFiles["server.ts"] + "export const broken = ;"],
+async function navigateWithPushState(dev: Dev, pathname: string) {
+  const { promise, resolve } = Promise.withResolvers<void>();
+  dev.on("hmr", function onMessage(data: Uint8Array) {
+    if (data[0] !== "n".charCodeAt(0)) return;
+    dev.off("hmr", onMessage);
+    resolve();
+  });
+  dev.socket!.send("n" + pathname);
+  await promise;
+}
+for (const [name, file, broken] of [
+  ["a module under the client entry point", "client-dep.ts", `console.log("dep v2" +);`],
+  ["the server entry point", "server.ts", clientEntryPointFiles["server.ts"] + "export const broken = ;"],
+  ["a module that a layout imports", "nav.ts", `export const nav = ;`],
 ] as const) {
-  devTest(`a route loads when its first request follows a fixed build error under the ${entryPoint} entry point`, {
+  devTest(`first request of a route that a page navigated to, with a build error in ${name}`, {
     framework: clientEntryPointFramework,
     files: clientEntryPointFiles,
     async test(dev) {
       expect((await dev.fetch("/")).status).toBe(200);
-
-      const { promise: routeIsKnown, resolve } = Promise.withResolvers<void>();
-      dev.on("hmr", function onMessage(data: Uint8Array) {
-        if (data[0] !== "n".charCodeAt(0)) return;
-        dev.off("hmr", onMessage);
-        resolve();
-      });
-      dev.socket!.send("n/second");
-      await routeIsKnown;
+      await navigateWithPushState(dev, "/second");
+      await navigateWithPushState(dev, "/third");
 
       await dev.write(file, broken, { errors: null });
+      expect((await dev.fetch("/third")).status).toBe(500);
+
       await dev.write(file, clientEntryPointFiles[file]);
       expect((await dev.fetch("/second")).status).toBe(200);
+      expect((await dev.fetch("/third")).status).toBe(200);
     },
   });
 }

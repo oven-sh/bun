@@ -2063,6 +2063,13 @@ fn ensure_route_is_bundled<Ctx: EnsureRouteCtx>(
                     }
                 }
 
+                // `index_failures` also marks a route that a page navigated to
+                // with `history.pushState`. Nothing has bundled that route yet.
+                if dev.route_page_is_stale(route_bundle_index) {
+                    state = route_bundle::State::Unqueued;
+                    continue 'sw;
+                }
+
                 dev.route_bundle_ptr(route_bundle_index).server_state = route_bundle::State::Loaded;
                 state = route_bundle::State::Loaded;
                 continue 'sw;
@@ -3402,8 +3409,8 @@ impl DevServer {
             for i in 0..self.incremental_result.framework_routes_affected.len() {
                 let entry = self.incremental_result.framework_routes_affected[i];
                 if let Some(index) = self.router.route_ptr(entry.route_index()).bundle {
-                    self.route_bundle_ptr(index)
-                        .mark_possible_bundling_failures();
+                    self.route_bundle_ptr(index).server_state =
+                        route_bundle::State::PossibleBundlingFailures;
                 }
                 if entry.should_recurse_when_visiting() {
                     self.mark_all_route_children_failed(entry.route_index());
@@ -3412,14 +3419,14 @@ impl DevServer {
 
             for i in 0..self.incremental_result.html_routes_soft_affected.len() {
                 let index = self.incremental_result.html_routes_soft_affected[i];
-                self.route_bundle_ptr(index)
-                    .mark_possible_bundling_failures();
+                self.route_bundle_ptr(index).server_state =
+                    route_bundle::State::PossibleBundlingFailures;
             }
 
             for i in 0..self.incremental_result.html_routes_hard_affected.len() {
                 let index = self.incremental_result.html_routes_hard_affected[i];
-                self.route_bundle_ptr(index)
-                    .mark_possible_bundling_failures();
+                self.route_bundle_ptr(index).server_state =
+                    route_bundle::State::PossibleBundlingFailures;
             }
 
             if !self
@@ -3429,7 +3436,8 @@ impl DevServer {
             {
                 for i in 0..self.route_bundles.len() {
                     if self.loads_affected_framework_client_entry(&self.route_bundles[i]) {
-                        self.route_bundles[i].mark_possible_bundling_failures();
+                        self.route_bundles[i].server_state =
+                            route_bundle::State::PossibleBundlingFailures;
                     }
                 }
             }
@@ -5718,6 +5726,23 @@ fn mark_all_route_children(
 }
 
 impl DevServer {
+    /// Whether the page file of a framework route was never bundled, or has to
+    /// be bundled again.
+    fn route_page_is_stale(&self, index: route_bundle::Index) -> bool {
+        let route_bundle::Data::Framework(fw) = &self.route_bundles[index.get() as usize].data
+        else {
+            return false;
+        };
+        self.router
+            .route_ptr(fw.route_index)
+            .file_page
+            .is_some_and(|id| {
+                self.server_graph
+                    .stale_files
+                    .is_set(from_opaque_file_id::<{ bake::Side::Server }>(id).get() as usize)
+            })
+    }
+
     /// Whether `incremental_result.framework_client_entries_affected` has the
     /// client entry point of the router type of `route_bundle`.
     fn loads_affected_framework_client_entry(&self, route_bundle: &RouteBundle) -> bool {
@@ -5741,8 +5766,8 @@ impl DevServer {
             let bundle = route.bundle;
             let next_sibling = route.next_sibling;
             if let Some(index) = bundle {
-                self.route_bundle_ptr(index)
-                    .mark_possible_bundling_failures();
+                self.route_bundle_ptr(index).server_state =
+                    route_bundle::State::PossibleBundlingFailures;
             }
             self.mark_all_route_children_failed(child_index);
             next = next_sibling;

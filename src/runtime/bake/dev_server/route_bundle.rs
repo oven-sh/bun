@@ -114,16 +114,6 @@ pub struct RouteBundle {
 }
 
 impl RouteBundle {
-    /// Makes the next request check whether a build failure is reachable from
-    /// this route. An `Unqueued` route was never bundled, and its first request
-    /// bundles it. From `PossibleBundlingFailures` it would go to `Loaded`
-    /// without a bundle once the failures are gone.
-    pub(crate) fn mark_possible_bundling_failures(&mut self) {
-        if self.server_state != State::Unqueued {
-            self.server_state = State::PossibleBundlingFailures;
-        }
-    }
-
     #[inline]
     pub(crate) fn source_map_id(&self) -> source_map_store::Key {
         source_map_store::Key(u64::from(self.client_script_generation) << 32)

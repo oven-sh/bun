@@ -1113,10 +1113,10 @@ _bun_run_param_script_completion() {
             cwd_specified=1
         fi
         if [[ -n "${val}" ]]; then
-            val="${val%"}"
-            val="${val#"}"
-            val="${val%'}"
-            val="${val#'}"
+            val="${val%\"}"
+            val="${val#\"}"
+            val="${val%\'}"
+            val="${val#\'}"
             val="${val/#\~/$HOME}"
             target_cwd="${val}"
         fi
@@ -1168,10 +1168,10 @@ _bun_remove_param_package_completion() {
             cwd_specified=1
         fi
         if [[ -n "${val}" ]]; then
-            val="${val%"}"
-            val="${val#"}"
-            val="${val%'}"
-            val="${val#'}"
+            val="${val%\"}"
+            val="${val#\"}"
+            val="${val%\'}"
+            val="${val#\'}"
             val="${val/#\~/$HOME}"
             pkg_dir="${val}"
         fi
@@ -1185,8 +1185,8 @@ _bun_remove_param_package_completion() {
     if [[ -f "${pkg_file}" && -r "${pkg_file}" ]]; then
         local -a deps
         local in_dep_block=0 line_content rest
-        local dep_header_re='"'(dependencies|devDependencies|peerDependencies|optionalDependencies)'"[[:space:]]*:[[:space:]]*\{(.*)'
-        local dep_entry_re='[[:space:]]*"([^"\\]+)"[[:space:]]*:[[:space:]]*"([^"]*)"(.*)'
+        local dep_header_re='"(dependencies|devDependencies|peerDependencies|optionalDependencies)"[[:space:]]*:[[:space:]]*\{(.*)'
+        local dep_entry_re='[[:space:]]*"([^"\\\\]+)"[[:space:]]*:[[:space:]]*"([^"]*)"(.*)'
         local dep_close_re='^[[:space:]]*\}[[:space:]]*,?'
 
         while IFS= read -r line_content || [[ -n "${line_content}" ]]; do

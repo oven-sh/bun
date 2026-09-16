@@ -707,9 +707,7 @@ impl ServerConfig {
         self.framework_routers.clear();
     }
 
-    /// Whether the `{ dir, style }` routes of `new_config` are other framework routers than the
-    /// DevServer serves. Both lists resolve `dir` against the root the DevServer started with, so
-    /// the same `routes` object matches after a `process.chdir()`.
+    /// `dir` resolves against the root the DevServer started with, not the current directory.
     pub(crate) fn framework_routers_differ(&self, new_config: &ServerConfig) -> bool {
         let served = &self.framework_routers;
         let requested = &new_config.framework_routers;

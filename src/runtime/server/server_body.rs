@@ -2107,8 +2107,7 @@ where
         // Before anything is swapped, so that a failure leaves the server as it was.
         let dev_server_created = self.init_dev_server_for_reload(new_config, global)?;
 
-        // A DevServer builds its router list once, at start. One created just now serves the list of this reload.
-        // A reload with no `routes` declares no change of the list.
+        // A DevServer builds its router list once, at start.
         if !dev_server_created
             && new_config.had_routes_object
             && self.config.framework_routers_differ(new_config)

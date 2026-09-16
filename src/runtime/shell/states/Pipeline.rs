@@ -196,19 +196,7 @@ impl Pipeline {
                 let stdout = if cmd_idx == cmd_count - 1 {
                     me.io.stdout.clone()
                 } else {
-                    // `is_socket` is set on POSIX — the POSIX
-                    // pipe is actually a socketpair end (see above).
-                    let w = IOWriter::init(
-                        pipes[cmd_idx][1],
-                        io_writer::Flags {
-                            #[cfg(not(windows))]
-                            pollable: true,
-                            #[cfg(not(windows))]
-                            is_socket: true,
-                            ..Default::default()
-                        },
-                        interp,
-                    );
+                    let w = IOWriter::init(pipes[cmd_idx][1], io_writer::Flags::pipe(), interp);
                     OutKind::Fd(crate::shell::io::OutFd {
                         writer: w,
                         captured: None,

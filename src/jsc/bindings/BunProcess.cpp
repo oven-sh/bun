@@ -1042,7 +1042,7 @@ static HashMap<int, String>* signalNumberToNameMap = nullptr;
 static HashMap<String, int>* signalNameToNumberMap = nullptr;
 
 // The signals that have a process.on() listener and an installed handler.
-static HashSet<int>* signalToContextIdsMap = nullptr;
+static HashSet<int>* signalsWithListeners = nullptr;
 
 static const NeverDestroyed<String>* getSignalNames()
 {
@@ -1597,8 +1597,8 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
         loadSignalNumberMap();
         loadSignalNumberToNameMap();
 
-        if (!signalToContextIdsMap) {
-            signalToContextIdsMap = new HashSet<int>();
+        if (!signalsWithListeners) {
+            signalsWithListeners = new HashSet<int>();
         }
 
         if (auto signalNumber = signalNameToNumberMap->get(eventName.string())) {
@@ -1620,19 +1620,19 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
 #endif
 
                 if (isAdded) {
-                    if (!signalToContextIdsMap->contains(signalNumber)) {
+                    if (!signalsWithListeners->contains(signalNumber)) {
                         Bun__ensureSignalHandler();
 #if !OS(WINDOWS)
                         installForwardSignalHandler(signalNumber);
 #else
                         Bun__watchWindowsSignal(signalNumber);
 #endif
-                        signalToContextIdsMap->add(signalNumber);
+                        signalsWithListeners->add(signalNumber);
                     }
                 } else {
-                    if (signalToContextIdsMap->contains(signalNumber) && listenerCount == 0) {
+                    if (signalsWithListeners->contains(signalNumber) && listenerCount == 0) {
                         // The watch-mode sticky signal keeps its OS handler installed; only the
-                        // handler teardown is skipped. The map entry is still removed — it is the
+                        // handler teardown is skipped. The set entry is still removed — it is the
                         // "has JS listeners" source of truth that e.g. self-kill flush consults.
                         if (signalNumber != watchModeStickySignal) {
 #if !OS(WINDOWS)
@@ -1644,7 +1644,7 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
                             Bun__unwatchWindowsSignal(signalNumber);
 #endif
                         }
-                        signalToContextIdsMap->remove(signalNumber);
+                        signalsWithListeners->remove(signalNumber);
                     }
                 }
             }
@@ -3882,31 +3882,28 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionCpuUsage, (JSC::JSGlobalObject * global
 {
     auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
+    double user, system;
 #if !OS(WINDOWS)
     struct rusage rusage;
     if (getrusage(RUSAGE_SELF, &rusage) != 0) {
         throwSystemError(throwScope, globalObject, "Failed to get CPU usage"_s, "getrusage"_s, errno);
         return {};
     }
+    user = std::chrono::microseconds::period::den * rusage.ru_utime.tv_sec + rusage.ru_utime.tv_usec;
+    system = std::chrono::microseconds::period::den * rusage.ru_stime.tv_sec + rusage.ru_stime.tv_usec;
 #else
     Bun::CpuTimes cpuTimes;
     if (int err = Bun::getProcessCpuTimes(cpuTimes)) {
         throwSystemError(throwScope, globalObject, "Failed to get CPU usage"_s, "uv_getrusage"_s, err);
         return {};
     }
+    user = cpuTimes.user;
+    system = cpuTimes.system;
 #endif
 
     auto* process = getProcessObject(globalObject, callFrame->thisValue());
 
     Structure* cpuUsageStructure = process->cpuUsageStructure();
-
-#if !OS(WINDOWS)
-    double user = std::chrono::microseconds::period::den * rusage.ru_utime.tv_sec + rusage.ru_utime.tv_usec;
-    double system = std::chrono::microseconds::period::den * rusage.ru_stime.tv_sec + rusage.ru_stime.tv_usec;
-#else
-    double user = cpuTimes.user;
-    double system = cpuTimes.system;
-#endif
 
     if (callFrame->argumentCount() > 0) {
         JSValue comparatorValue = callFrame->argument(0);
@@ -4768,10 +4765,10 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyKill, (JSC::JSGlobalObject * glob
     int ownPid = static_cast<int>(GetCurrentProcessId());
 #endif
     // Node's Kill binding runs RunAtExit for a self-directed unhandled signal, so flush profiles
-    // first. `signalToContextIdsMap` is mutated only on the main thread; workers never set
+    // first. `signalsWithListeners` is mutated only on the main thread; workers never set
     // profiler configs, so skipping the flush there avoids a rehash race.
     if (signal > 0 && (pid == 0 || pid == -1 || pid == ownPid || pid == -ownPid)
-        && !(Bun__isMainThreadVM() && signalToContextIdsMap && signalToContextIdsMap->contains(signal))) {
+        && !(Bun__isMainThreadVM() && signalsWithListeners && signalsWithListeners->contains(signal))) {
         Bun__writeProfilesBeforeSelfKill();
     }
 

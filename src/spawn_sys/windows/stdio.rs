@@ -140,10 +140,12 @@ pub struct ChildPipe {
     pub overlapped: bool,
 }
 
+/// Neither end is inheritable: a child inherits every inheritable handle of
+/// this process, so an end is made inheritable only by the spawn it is for,
+/// while that holds the spawn lock.
 pub struct PipePair {
-    /// Overlapped, not inheritable, not associated with a completion port.
+    /// Overlapped, not associated with a completion port.
     pub parent: HANDLE,
-    /// Inheritable.
     pub child: HANDLE,
 }
 
@@ -221,14 +223,13 @@ pub fn create_pipe_pair(child: ChildPipe) -> Result<PipePair, DWORD> {
         }
     };
 
-    let mut sa = inheritable();
-    // SAFETY: `name_w` is NUL-terminated; `sa` outlives the call.
+    // SAFETY: `name_w` is NUL-terminated.
     let client = unsafe {
         win32::CreateFileW(
             name_w.as_ptr(),
             client_access,
             0,
-            &mut sa,
+            ptr::null_mut(),
             win32::OPEN_EXISTING,
             win32::SECURITY_SQOS_PRESENT
                 | win32::SECURITY_ANONYMOUS

@@ -38,7 +38,6 @@ pub struct WindowsNamedPipeContext {
 
     vm: &'static VirtualMachine,
     global_this: GlobalRef,
-    task_event: EventState,
     is_open: bool,
 }
 
@@ -47,21 +46,12 @@ pub struct WindowsNamedPipeContext {
 /// handlers below do.
 fn schedule_deinit(this: *mut WindowsNamedPipeContext) {
     // SAFETY: called from `deref()` at count zero; `this` is live until the task fires.
-    // `task_event`/`vm` are disjoint from the caller's `&named_pipe`, and
-    // `vm` is `&'static` (JSC_BORROW) so `enqueue_task`'s `&mut` goes through a raw cast.
+    // `vm` is disjoint from the caller's `&named_pipe`, and is `&'static`
+    // (JSC_BORROW) so `enqueue_task`'s `&mut` goes through a raw cast.
     unsafe {
-        debug_assert!((*this).task_event != EventState::Deinit);
-        (*this).task_event = EventState::Deinit;
         let vm = ptr::from_ref::<VirtualMachine>((*this).vm).cast_mut();
         (*vm).enqueue_task(Task::init(this));
     }
-}
-
-#[repr(u8)]
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub enum EventState {
-    Deinit,
-    None,
 }
 
 /// Intrusive-refcounted self-pointers into the wrapped JS socket (a *different*
@@ -278,24 +268,19 @@ impl WindowsNamedPipeContext {
         unsafe { Self::deref(this) };
     }
 
+    /// The task `schedule_deinit` queued: frees the context.
+    ///
     /// # Safety
-    /// `this` is the live queued pointer; the call may free it.
+    /// `this` is the live queued pointer; the call frees it.
     pub(crate) unsafe fn run_event(this: *mut Self) {
-        // SAFETY: called from the `task_tag::WindowsNamedPipeContext` dispatch
-        // arm; `this` is the live ctx pointer registered in create()
-        match unsafe { (*this).task_event } {
-            EventState::Deinit => {
-                // SAFETY: `this` is the live allocation registered in create().
-                crate::jsc_hooks::ActiveHandle::WindowsNamedPipe(unsafe {
-                    core::ptr::NonNull::new_unchecked(this)
-                })
-                .unregister();
-                // SAFETY: `this` was allocated via heap::alloc in create(); refcount hit zero
-                // and this deferred task is the sole remaining owner. Drop runs field destructors.
-                drop(unsafe { bun_core::heap::take(this) });
-            }
-            EventState::None => panic!("Invalid event state"),
-        }
+        // SAFETY: `this` is the live allocation registered in create().
+        crate::jsc_hooks::ActiveHandle::WindowsNamedPipe(unsafe {
+            core::ptr::NonNull::new_unchecked(this)
+        })
+        .unregister();
+        // SAFETY: `this` was allocated via heap::alloc in create(); refcount hit zero
+        // and this deferred task is the sole remaining owner. Drop runs field destructors.
+        drop(unsafe { bun_core::heap::take(this) });
     }
 
     /// Owns the freshly-`create()`d context until `disarm()`: on any early
@@ -358,7 +343,6 @@ impl WindowsNamedPipeContext {
                     named_pipe,
                     vm,
                     global_this,
-                    task_event: EventState::None,
                     is_open: false,
                 },
             );
@@ -461,7 +445,7 @@ impl Drop for WindowsNamedPipeContext {
 
 impl bun_event_loop::Taskable for WindowsNamedPipeContext {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::WindowsNamedPipeContext;
-    /// A `Deinit` hop (refcount already zero) that will not run: `this` is the
+    /// A `schedule_deinit` hop (refcount already zero) that will not run: `this` is the
     /// heap context, freed by nobody else — do what the hop does, script-free.
     unsafe fn release_unrun(this: *mut Self) {
         // SAFETY: fn contract.

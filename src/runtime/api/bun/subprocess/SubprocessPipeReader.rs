@@ -6,14 +6,14 @@ use bun_io::BufferedReader;
 use bun_io::FilePollFlag;
 use bun_io::Loop as AsyncLoop;
 use bun_io::max_buf::MaxBuf;
-use bun_io::pipe_reader::PosixFlags;
+use bun_io::pipe_reader::ReaderFlags;
 use bun_jsc::event_loop::EventLoop;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 use bun_ptr::{ParentRef, RefCount, RefPtr};
-use bun_sys::{self, FdExt as _};
+use bun_sys::{self, Fd, FdExt as _};
 
 use super::readable::Readable;
-use super::{StdioKind, StdioResult, Subprocess};
+use super::{StdioKind, Subprocess};
 
 pub type IOReader = BufferedReader;
 
@@ -46,7 +46,7 @@ pub struct PipeReader {
     pub(crate) event_loop_handle: bun_jsc::EventLoopHandle,
     pub(crate) ref_count: RefCount<PipeReader>,
     pub(crate) state: State,
-    pub(crate) stdio_result: StdioResult,
+    pub(crate) stdio_result: Option<Fd>,
 }
 
 // `pub const ref/deref = RefCount.ref/deref` — thin forwarders so existing call
@@ -103,7 +103,7 @@ impl PipeReader {
     pub(crate) fn create(
         event_loop: NonNull<EventLoop>,
         process: NonNull<Subprocess<'static>>,
-        result: StdioResult,
+        result: Option<Fd>,
         limit: Option<NonNull<MaxBuf>>,
     ) -> RefPtr<PipeReader> {
         let mut this = Box::new(PipeReader {
@@ -145,7 +145,7 @@ impl PipeReader {
         if lazy {
             // Defer reading until JS first pulls so the kernel pipe buffer
             // provides backpressure and the child blocks.
-            self.reader.flags.insert(PosixFlags::IS_PAUSED);
+            self.reader.flags.insert(ReaderFlags::IS_PAUSED);
         }
         // On POSIX `start()` always returns Ok(()); if poll registration fails
         // it synchronously invokes onReaderError() first, which drops both the
@@ -181,7 +181,7 @@ impl PipeReader {
             }
             self.reader
                 .flags
-                .insert(PosixFlags::SOCKET | PosixFlags::NONBLOCKING | PosixFlags::POLLABLE);
+                .insert(ReaderFlags::SOCKET | ReaderFlags::NONBLOCKING | ReaderFlags::POLLABLE);
         }
     }
 

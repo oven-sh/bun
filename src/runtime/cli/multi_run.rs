@@ -12,6 +12,7 @@ use bun_event_loop::MiniEventLoop::MiniEventLoop;
 use bun_install::package_manager::workspace_selection;
 use bun_io::BufferedReader;
 use bun_paths as path;
+use bun_sys::FdExt as _;
 
 use crate::Command;
 use crate::filter_arg as FilterArg;
@@ -20,9 +21,7 @@ use crate::run_command::{ConfigureEnvOptions, RunCommand};
 // `bun.spawn` (Process/Status/SpawnOptions/Rusage/spawnProcess) —
 // lives under crate::api::bun::process.
 use crate::api::bun::process::SpawnResultExt as _;
-use crate::api::bun::process::{
-    self as spawn, Rusage, SpawnOptions, SpawnResult, Status, event_loop_handle_to_ctx,
-};
+use crate::api::bun::process::{self as spawn, Rusage, SpawnOptions, SpawnResult, Status};
 use bun_collections::index_sort;
 use bun_dotenv::Loader as DotEnvLoader;
 type OutputWriter = bun_core::io::Writer;
@@ -196,11 +195,9 @@ impl<'a> ProcessHandle<'a> {
             (stderr_fd, &mut self.stderr_reader.reader),
         ] {
             let Some(fd) = fd else { continue };
-            #[cfg(unix)]
             let _ = bun_sys::set_nonblocking(fd);
             if let Err(err) = reader.start(fd, true) {
                 // A reader that fails to start (Windows only) has not taken the fd.
-                use bun_sys::FdExt as _;
                 fd.close();
                 return Err(Error::from(err));
             }
@@ -858,9 +855,9 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
     // --no-orphans: register the macOS kqueue parent watch on this MiniEventLoop
     // (the VirtualMachine.init path is never reached for --parallel). Linux is
     // already covered by prctl in enable() + linux_pdeathsig on each spawn.
-    bun_io::ParentDeathWatchdog::install_on_event_loop(event_loop_handle_to_ctx(
-        EventLoopHandle::init_mini(event_loop),
-    ));
+    bun_io::ParentDeathWatchdog::install_on_event_loop(
+        EventLoopHandle::init_mini(event_loop).as_event_loop_ctx(),
+    );
     // shell_bin is NUL-terminated ([:0]const u8) for argv use.
     let shell_bin: Box<[u8]> = if cfg!(unix) {
         // SAFETY: env_ptr is the process-lifetime DotEnv loader; the &mut borrow passed to

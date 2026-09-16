@@ -1012,12 +1012,12 @@ impl BlobExt for Blob {
                         PathOrFileDescriptor::Fd(fd) => {
                             #[cfg(windows)]
                             match fd.decode_windows() {
-                                bun_sys::fd::DecodeWindows::Crt(uv_file) => {
+                                bun_sys::fd::DecodeWindows::Crt(crt_fd) => {
                                     bun_core::write_pretty!(
                                         writer,
                                         ENABLE_ANSI_COLORS,
                                         " (<r>fd<d>:<r> <yellow>{d}<r>)<r>",
-                                        uv_file,
+                                        crt_fd,
                                     )?;
                                 }
                                 bun_sys::fd::DecodeWindows::Windows(handle) => {
@@ -1834,33 +1834,17 @@ impl BlobExt for Blob {
                     .as_file();
                 match &file.pathlike {
                     PathOrFileDescriptor::Path(path_like) => {
-                        // SAFETY: bun_vm() returns the live VM for this global.
-                        let vm = global_this.bun_vm().as_mut();
-                        // SAFETY: lazily-initialised per-VM NodeFS binding; never null after init.
-                        let binding = unsafe {
-                            &*vm.node_fs().cast::<crate::node::node_fs_binding::Binding>()
-                        };
                         Ok(crate::node::fs::async_::Stat::create(
                             global_this,
-                            binding,
-                            crate::node::fs::args::Stat::owned(path_like.slice().to_vec()),
-                            vm,
+                            crate::node::fs::args::Stat::of_bun_file(path_like.slice().to_vec()),
+                            global_this.bun_vm().as_mut(),
                         ))
                     }
-                    PathOrFileDescriptor::Fd(fd) => {
-                        // SAFETY: bun_vm() returns the live VM for this global.
-                        let vm = global_this.bun_vm().as_mut();
-                        // SAFETY: lazily-initialised per-VM NodeFS binding; never null after init.
-                        let binding = unsafe {
-                            &*vm.node_fs().cast::<crate::node::node_fs_binding::Binding>()
-                        };
-                        Ok(crate::node::fs::async_::Fstat::create(
-                            global_this,
-                            binding,
-                            crate::node::fs::args::Fstat::for_fd(*fd),
-                            vm,
-                        ))
-                    }
+                    PathOrFileDescriptor::Fd(fd) => Ok(crate::node::fs::async_::Fstat::create(
+                        global_this,
+                        crate::node::fs::args::Fstat::for_fd(*fd),
+                        global_this.bun_vm().as_mut(),
+                    )),
                 }
             }
             store::DataTag::S3 => crate::webcore::s3_file::get_stat(self, global_this, callback),
@@ -4971,7 +4955,7 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
     global_this: &JSGlobalObject,
     pathlike: &PathOrFileDescriptor,
     bytes: &[u8],
-    _needs_async: &mut bool,
+    needs_async: &mut bool,
 ) -> JSValue {
     let fd: Fd = if !NEEDS_OPEN {
         pathlike.fd()
@@ -4986,7 +4970,7 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
             bun_sys::Result::Ok(result) => result,
             bun_sys::Result::Err(err) => {
                 if err.get_errno() == bun_sys::E::ENOENT {
-                    *_needs_async = true;
+                    *needs_async = true;
                     return JSValue::ZERO;
                 }
                 return JSPromise::rejected_promise(
@@ -5014,7 +4998,7 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
             }
             bun_sys::Result::Err(err) => {
                 if err.get_errno() == bun_sys::E::EAGAIN {
-                    *_needs_async = true;
+                    *needs_async = true;
                     return JSValue::ZERO;
                 }
                 let err_js = if !NEEDS_OPEN {
@@ -5496,19 +5480,11 @@ pub(crate) unsafe extern "C" fn Blob__fromMmapWithType(
     }
 }
 
-/// `stat.{st_mtime, st_mtime_nsec}` → JS epoch ms. `bun_sys::Stat` is
-/// `libc::stat` on POSIX (fields) and has an `mtim` timespec on Windows;
-/// cfg-split here so the call sites stay shared.
+/// The modification time of `stat` in JS epoch ms.
 #[inline]
 fn stat_to_js_mtime(stat: &bun_sys::Stat) -> jsc::JSTimeType {
-    #[cfg(not(windows))]
-    {
-        jsc::to_js_time(stat.st_mtime as isize, stat.st_mtime_nsec as isize)
-    }
-    #[cfg(windows)]
-    {
-        jsc::to_js_time(stat.mtim.sec as isize, stat.mtim.nsec as isize)
-    }
+    let mtime = bun_sys::stat_mtime(stat);
+    jsc::to_js_time(mtime.sec as isize, mtime.nsec as isize)
 }
 
 /// Window clamp shared by the `resolve_size`/`resolved_size` arms: only an

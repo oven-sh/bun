@@ -10,7 +10,7 @@ use crate::webcore::file_sink::{self, FileSink};
 use crate::webcore::sink;
 use crate::webcore::streams::SourceHandle;
 
-use super::{Flags, StaticPipeWriter, StdioResult, Subprocess, js};
+use super::{Flags, StaticPipeWriter, Subprocess, js};
 
 pub enum Writable<'a> {
     Pipe(RefPtr<FileSink>),
@@ -119,7 +119,7 @@ impl<'a> Writable<'a> {
         stdio: &mut Stdio,
         event_loop: &EventLoop,
         subprocess: &mut Subprocess<'a>,
-        result: StdioResult,
+        result: Option<Fd>,
         promise_for_stream: &mut JSValue,
     ) -> crate::Result<Writable<'a>> {
         super::assert_stdio_result(result);

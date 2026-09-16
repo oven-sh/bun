@@ -12,8 +12,8 @@ use bun_io::max_buf::MaxBuf;
 use bun_ptr::RefPtr;
 use bun_ptr::cow_slice::CowSlice;
 
+use super::Subprocess;
 use super::subprocess_pipe_reader::PipeReader;
-use super::{StdioResult, Subprocess};
 
 // `bun.ptr.CowString` — owned/borrowed byte slice (has
 // `init_owned` / `length` / `take_slice`).
@@ -88,7 +88,7 @@ impl Readable {
         stdio: Stdio,
         event_loop: NonNull<EventLoop>,
         process: NonNull<Subprocess<'static>>,
-        result: StdioResult,
+        result: Option<Fd>,
         max_size: Option<NonNull<MaxBuf>>,
         _is_sync: bool,
     ) -> Readable {

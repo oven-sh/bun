@@ -302,14 +302,6 @@ fn blank_cells(
     }
 }
 
-fn is_high_surrogate(unit: u16) -> bool {
-    (0xD800..0xDC00).contains(&unit)
-}
-
-fn is_low_surrogate(unit: u16) -> bool {
-    (0xDC00..0xE000).contains(&unit)
-}
-
 fn ansi_color(attributes: WORD, red: WORD, green: WORD, blue: WORD) -> u8 {
     u8::from(attributes & red != 0)
         | u8::from(attributes & green != 0) << 1
@@ -563,10 +555,9 @@ impl Writer<'_> {
         if !self.passthrough {
             let mut units = data.iter().copied().peekable();
             while let Some(unit) = units.next() {
-                let low = units
-                    .peek()
-                    .copied()
-                    .filter(|low| is_high_surrogate(unit) && is_low_surrogate(*low));
+                let low = units.peek().copied().filter(|low| {
+                    bun_core::strings::u16_is_lead(unit) && bun_core::strings::u16_is_trail(*low)
+                });
                 let Some(low) = low else {
                     self.put_codepoint(u32::from(unit));
                     continue;
@@ -608,8 +599,8 @@ impl Writer<'_> {
             let mut take = run.len().min(MAX_CONSOLE_CHARS - self.used);
             if take > 0
                 && take < run.len()
-                && is_high_surrogate(run[take - 1])
-                && is_low_surrogate(run[take])
+                && bun_core::strings::u16_is_lead(run[take - 1])
+                && bun_core::strings::u16_is_trail(run[take])
             {
                 take -= 1;
             }

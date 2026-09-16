@@ -29,7 +29,7 @@ use std::io::Write as _;
 use bun_core::ZStr;
 use bun_core::{self, ZBox, env_var, getenv_z, strings, zstr};
 #[cfg(windows)]
-use bun_io::windows::{Pipe, ReadEvent};
+use bun_io::windows::{Pipe, PipeOrigin, ReadEvent};
 use bun_jsc::JSGlobalObject;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_output::{declare_scope, scoped_log};
@@ -757,7 +757,7 @@ impl Endpoints {
             .map_err(|code| win32::sys_error(code, bun_sys::Tag::pipe))?;
         let child = Fd::from_system(pair.child);
         let ours = Fd::from_system(pair.parent);
-        match Pipe::open_owned(event_loop.r#loop(), ours, true) {
+        match Pipe::open(event_loop.r#loop(), ours, PipeOrigin::Created, true) {
             Ok(pipe) => {
                 // Pending commands keep the loop alive (Transport::updateKeepAlive),
                 // not the pipes.

@@ -3,7 +3,7 @@ use core::ffi::c_int;
 use bun_sys::Fd;
 use bun_uws_sys::Loop;
 
-use crate::windows::{self, File, Pipe, Tty};
+use crate::windows::{self, File, Pipe, PipeOrigin, Tty};
 
 bun_core::declare_scope!(PipeSource, hidden);
 
@@ -15,18 +15,27 @@ pub enum Source {
 }
 
 impl Source {
-    /// Classify `fd` and take it over. A pipe opened this way is treated as
-    /// somebody else's (inherited stdio, an fd that came from JS): see
-    /// [`Pipe::open_foreign`]. `fd` is closed with the source when `close_fd`
-    /// is set, except a standard handle, which is never closed. On `Err` the
-    /// caller still owns `fd`.
-    pub fn open(loop_: *mut Loop, fd: Fd, close_fd: bool) -> bun_sys::Result<Source> {
+    /// Take `fd` over. [`PipeOrigin::Created`] says it is a pipe; with any
+    /// other `origin` it is classified first, and `origin` says whose it is if
+    /// it turns out to be a pipe. `fd` is closed with the source when
+    /// `close_fd` is set, except a standard handle, which is never closed. On
+    /// `Err` the caller still owns `fd`.
+    pub fn open(
+        loop_: *mut Loop,
+        fd: Fd,
+        origin: PipeOrigin,
+        close_fd: bool,
+    ) -> bun_sys::Result<Source> {
+        if origin == PipeOrigin::Created {
+            bun_core::scoped_log!(PipeSource, "open(fd: {}, created)", fd);
+            return Pipe::open(loop_, fd, origin, close_fd).map(Source::Pipe);
+        }
         let handle = fd.native();
         let file_type = bun_sys::windows::GetFileType(handle);
         bun_core::scoped_log!(PipeSource, "open(fd: {}, type: {})", fd, file_type);
         match file_type {
             bun_sys::windows::FILE_TYPE_PIPE => {
-                Pipe::open_foreign(loop_, fd, close_fd).map(Source::Pipe)
+                Pipe::open(loop_, fd, origin, close_fd).map(Source::Pipe)
             }
             // `NUL` and serial ports are character devices too.
             bun_sys::windows::FILE_TYPE_CHAR if windows::tty::is_console(handle) => {
@@ -41,13 +50,6 @@ impl Source {
             }
             _ => File::open(loop_, fd, close_fd).map(Source::File),
         }
-    }
-
-    /// Take over an overlapped pipe end that Bun created itself (a spawned
-    /// child's stdio, a pseudoconsole pipe): see [`Pipe::open_owned`].
-    pub fn open_owned_pipe(loop_: *mut Loop, fd: Fd, close_fd: bool) -> bun_sys::Result<Source> {
-        bun_core::scoped_log!(PipeSource, "open_owned_pipe(fd: {})", fd);
-        Pipe::open_owned(loop_, fd, close_fd).map(Source::Pipe)
     }
 
     /// Closed from under its owner by a loop teardown.

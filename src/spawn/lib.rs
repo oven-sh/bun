@@ -56,8 +56,8 @@ pub use bun_spawn_sys::{Argv, CStrPtr, Envp, ffi};
 pub use bun_spawn_sys::RusageFields;
 pub use process::{
     Dup2, Exited, ExtraPipe, PidT, Poller, Process, ProcessHandle, Rusage, SignalCodeExt, SpawnEnv,
-    SpawnOptions, SpawnResult, SpawnResultExt, Status, Stdio, StdioKind, WaiterThread,
-    spawn_process, spawn_process_cstr,
+    SpawnOptions, SpawnResult, SpawnResultExt, Status, Stdio, StdioKind, spawn_process,
+    spawn_process_cstr,
 };
 
 // Variant types live in `bun_runtime`/`bun_install`; each provides its body
@@ -85,21 +85,20 @@ bun_dispatch::link_interface! {
 /// `None` = no handler set (the default for `Process::exit_handler`).
 pub type ProcessExitHandler = Option<ProcessExit>;
 
-#[cfg(unix)]
-pub use process::WaitPidResult;
+/// The force-waiter-thread flag; only Linux honours it.
+pub use bun_spawn_sys::waiter_thread_flag;
 #[cfg(windows)]
 pub use process::WindowsOptions;
+#[cfg(unix)]
+pub use process::{WaitPidResult, WaiterThread};
 
 /// Blocking (synchronous) spawn helpers.
 pub mod sync {
-    #[cfg(windows)]
-    pub use crate::process::WindowsOptions;
     pub use crate::process::sync::{Options, Result, SyncStdio as Stdio, spawn, spawn_with_argv};
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// `bun.jsc.Subprocess` cross-tier shapes — `Source`, `StdioResult`,
-// `StaticPipeWriter<P>`.
+// `bun.jsc.Subprocess` cross-tier shapes — `Source`, `StaticPipeWriter<P>`.
 //
 // They live below `bun_runtime::api::bun::subprocess` because `bun_install::
 // security_scanner` constructs a `StaticPipeWriter<SecurityScanSubprocess>` to
@@ -109,13 +108,8 @@ pub mod sync {
 // crate naming `bun_jsc`/`bun_runtime`.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod subprocess {
-    use bun_sys::Fd;
-
     pub use crate::process::StdioKind;
     pub use crate::static_pipe_writer::{StaticPipeWriter, StaticPipeWriterProcess};
-
-    /// The parent's end of a child's stdio slot, when spawn made a pipe for it.
-    pub type StdioResult = Option<Fd>;
 
     /// The in-memory payload that a
     /// `StaticPipeWriter` drains into the child's stdin/extra-fd.

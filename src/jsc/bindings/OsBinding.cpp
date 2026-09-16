@@ -110,9 +110,6 @@ extern "C" uint64_t Bun__Os__getFreeMemory(void)
 #include "BunWinternl.h"
 #include <wtf/FastMalloc.h>
 
-#pragma comment(lib, "iphlpapi.lib")
-#pragma comment(lib, "advapi32.lib")
-
 extern "C" uint64_t Bun__Os__getFreeMemory(void)
 {
     MEMORYSTATUSEX status;
@@ -141,17 +138,6 @@ static size_t writeUTF8(const WCHAR* string, int length, char* out, size_t capac
     return static_cast<size_t>(written) + 1;
 }
 
-// What NtQuerySystemInformation(SystemProcessorPerformanceInformation) fills in.
-// winternl.h declares the same struct with DpcTime and InterruptTime as "Reserved1".
-struct ProcessorPerformanceInformation {
-    LARGE_INTEGER IdleTime;
-    LARGE_INTEGER KernelTime;
-    LARGE_INTEGER UserTime;
-    LARGE_INTEGER DpcTime;
-    LARGE_INTEGER InterruptTime;
-    ULONG InterruptCount;
-};
-
 // Port of libuv's uv_cpu_info() (src/win/util.c), MIT.
 extern "C" int Bun__Os__cpuInfo(BunCpuInfo** cpuInfos, int* count)
 {
@@ -168,16 +154,16 @@ extern "C" int Bun__Os__cpuInfo(BunCpuInfo** cpuInfos, int* count)
     static constexpr size_t modelCapacity = maxBrand * 3 + 1;
 
     void* allocation = nullptr;
-    size_t performanceSize = cpuCount * sizeof(ProcessorPerformanceInformation);
+    size_t performanceSize = cpuCount * sizeof(SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION);
     if (!WTF::tryFastMalloc(cpuCount * (sizeof(BunCpuInfo) + modelCapacity) + performanceSize).getValue(allocation))
         return UV__ENOMEM;
 
     // The model strings go last: their size is odd, and NtQuerySystemInformation
     // fails with STATUS_DATATYPE_MISALIGNMENT for a buffer that is not aligned.
     auto* infos = static_cast<BunCpuInfo*>(allocation);
-    auto* performance = reinterpret_cast<ProcessorPerformanceInformation*>(infos + cpuCount);
+    auto* performance = reinterpret_cast<SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION*>(infos + cpuCount);
     char* models = reinterpret_cast<char*>(performance + cpuCount);
-    static_assert(alignof(BunCpuInfo) >= alignof(ProcessorPerformanceInformation));
+    static_assert(alignof(BunCpuInfo) >= alignof(SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION));
 
     DWORD error;
     ULONG resultSize;
@@ -226,7 +212,8 @@ extern "C" int Bun__Os__cpuInfo(BunCpuInfo** cpuInfos, int* count)
         info.cpu_times.nice = 0;
         info.cpu_times.sys = (performance[i].KernelTime.QuadPart - performance[i].IdleTime.QuadPart) / 10000;
         info.cpu_times.idle = performance[i].IdleTime.QuadPart / 10000;
-        info.cpu_times.irq = performance[i].InterruptTime.QuadPart / 10000;
+        // winternl.h names DpcTime and InterruptTime "Reserved1".
+        info.cpu_times.irq = performance[i].Reserved1[1].QuadPart / 10000;
     }
 
     *cpuInfos = infos;

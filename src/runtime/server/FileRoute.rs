@@ -66,7 +66,6 @@ enum Serve {
     /// Hand the fd to a `FileResponseStream`.
     Stream {
         file_type: FileType,
-        pollable: bool,
         offset: u64,
         length: Option<u64>,
     },
@@ -290,7 +289,6 @@ impl FileRoute {
             }
             Serve::Stream {
                 file_type,
-                pollable,
                 offset,
                 length,
             } => {
@@ -301,7 +299,6 @@ impl FileRoute {
                     resp,
                     vm: bun_ptr::BackRef::new(server.vm()),
                     file_type,
-                    pollable,
                     offset,
                     length,
                     idle_timeout: server.config().idle_timeout,
@@ -319,11 +316,11 @@ impl FileRoute {
         resp: AnyResponse,
         method: Method,
     ) -> Serve {
-        let (can_serve_file, offset, size, file_type, pollable) = 'brk: {
+        let (can_serve_file, offset, size, file_type) = 'brk: {
             let stat = match bun_sys::fstat(fd) {
                 Ok(s) => s,
                 // file_type is never read because can_serve_file == false
-                Err(_) => break 'brk (false, 0, 0, FileType::File, false),
+                Err(_) => break 'brk (false, 0, 0, FileType::File),
             };
 
             let stat_size: u64 = u64::try_from(stat.st_size.max(0)).expect("int cast");
@@ -332,7 +329,7 @@ impl FileRoute {
 
             let mode = stat.st_mode as bun_sys::Mode;
             if bun_sys::S::ISDIR(mode) {
-                break 'brk (false, 0, 0, FileType::File, false);
+                break 'brk (false, 0, 0, FileType::File);
             }
 
             // `Cell::take` → mutate → `set`: single-threaded event loop, no
@@ -342,14 +339,14 @@ impl FileRoute {
             self.stat_hash.set(sh);
 
             if bun_sys::S::ISFIFO(mode) || bun_sys::S::ISCHR(mode) {
-                break 'brk (true, offset, size, FileType::Pipe, true);
+                break 'brk (true, offset, size, FileType::Pipe);
             }
 
             if bun_sys::S::ISSOCK(mode) {
-                break 'brk (true, offset, size, FileType::Socket, true);
+                break 'brk (true, offset, size, FileType::Socket);
             }
 
-            break 'brk (true, offset, size, FileType::File, false);
+            break 'brk (true, offset, size, FileType::File);
         };
 
         if !can_serve_file {
@@ -446,7 +443,6 @@ impl FileRoute {
 
         Serve::Stream {
             file_type,
-            pollable,
             offset: body_offset,
             length: body_len,
         }

@@ -6,9 +6,7 @@ use core::ptr;
 
 use bun_sys::syslog;
 use bun_sys::{self as sys, Fd};
-use bun_uws_sys::Loop as UwsLoop;
-
-pub type Loop = UwsLoop;
+use bun_uws_sys::Loop;
 
 /// Local `errno_sys` helper. `bun_sys`
 /// does not yet expose this helper on `Result<T>`; once it does, drop this and
@@ -423,6 +421,7 @@ impl FilePoll {
         unsafe { __bun_run_file_poll(self, size_or_offset) };
     }
 
+    #[cfg(unix)]
     #[inline]
     pub(crate) fn is_active(&self) -> bool {
         self.flags.contains(Flags::HasIncrementedPollCount)

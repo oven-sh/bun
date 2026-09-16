@@ -12,7 +12,7 @@ use bun_core::{String as BunString, strings};
 use bun_io::KeepAlive;
 use bun_io::StreamBuffer;
 #[cfg(windows)]
-use bun_io::windows::{Pipe, ReadEvent, ipc_frame};
+use bun_io::windows::{Pipe, PipeOrigin, ReadEvent, ipc_frame};
 use bun_jsc as jsc;
 use bun_jsc::js_value::Protected;
 use bun_jsc::{JSGlobalObject, JSValue, JsError, JsResult, SerializedFlags, StringJsc as _, Task};
@@ -1063,6 +1063,7 @@ impl SendQueue {
     /// Whether more is read from the peer. What one read already brought in
     /// is delivered to its end, as Node does: `disconnect()` from a message
     /// handler stops the reads that follow, not the messages in hand.
+    #[cfg(not(windows))]
     #[inline]
     fn accepts_input(&self) -> bool {
         self.socket_is_open() && !self.input_stopped.get()
@@ -1114,6 +1115,7 @@ impl SendQueue {
         self.socket_closed_notify(from != CloseFrom::Deinit);
     }
 
+    #[cfg(not(windows))]
     fn socket_closed(&self) {
         self.socket_closed_notify(true);
     }
@@ -1719,11 +1721,11 @@ impl SendQueue {
         bun_jsc::GlobalRef::from(JSGlobalObject::opaque_ref(owner.global_this()))
     }
 
-    /// Make `fd` this queue's channel and start reading from it. `created_here`
-    /// says whose pipe end it is: the overlapped end spawn made for a child, or
-    /// the end this process inherited as `NODE_CHANNEL_FD`, which whoever
-    /// spawned it opened as it saw fit and handed to this process alone. The
-    /// channel closes `fd` either way. On `Err` the caller still owns `fd`.
+    /// Make `fd` this queue's channel and start reading from it. `origin` is
+    /// `Created` for the overlapped end spawn made for a child and
+    /// `InheritedUnshared` for the end this process inherited as
+    /// `NODE_CHANNEL_FD`. The channel closes `fd` either way. On `Err` the
+    /// caller still owns `fd`.
     ///
     /// # Safety
     /// `this` must be the root pointer of a live `SendQueue`
@@ -1733,14 +1735,10 @@ impl SendQueue {
         this: *mut Self,
         loop_: *mut bun_io::Loop,
         fd: Fd,
-        created_here: bool,
+        origin: PipeOrigin,
     ) -> bun_sys::Result<()> {
         log!("SendQueue#openPipe");
-        let mut pipe = if created_here {
-            Pipe::open_owned(loop_, fd, true)?
-        } else {
-            Pipe::open_inherited_unshared(loop_, fd, true)?
-        };
+        let mut pipe = Pipe::open(loop_, fd, origin, true)?;
         // The loop is kept alive by `keep_alive`, not by the pending read.
         pipe.unref();
         if let Err(err) = pipe.read_start(this, Self::on_pipe_read) {
@@ -2332,72 +2330,59 @@ fn on_data2(send_queue: &SendQueue, all_data: &[u8]) {
     }
 }
 
-/// Used on POSIX
-#[allow(non_snake_case)]
-pub mod IPCHandlers {
+/// The uSockets callbacks of a POSIX IPC socket.
+#[cfg(not(windows))]
+pub mod posix_socket {
     use super::*;
 
-    pub mod PosixSocket {
-        use super::*;
+    pub fn on_close(send_queue: &SendQueue, _: Socket, _: c_int, _: Option<*mut c_void>) {
+        // uSockets has already freed the underlying socket
+        log!("NewSocketIPCHandler#onClose\n");
+        send_queue.socket_closed();
+    }
 
-        pub fn on_close(send_queue: &SendQueue, _: Socket, _: c_int, _: Option<*mut c_void>) {
-            // uSockets has already freed the underlying socket
-            log!("NewSocketIPCHandler#onClose\n");
-            send_queue.socket_closed();
-        }
-
-        pub fn on_data(send_queue: &SendQueue, _: Socket, all_data: &[u8]) {
-            if !send_queue.accepts_input() {
-                // A descriptor that came with the bytes has nobody to take it.
-                if let Some(fd) = send_queue.incoming_fd.take() {
-                    let _ = fd.close_allowing_standard_io(None);
-                }
-                return;
+    pub fn on_data(send_queue: &SendQueue, _: Socket, all_data: &[u8]) {
+        if !send_queue.accepts_input() {
+            // A descriptor that came with the bytes has nobody to take it.
+            if let Some(fd) = send_queue.incoming_fd.take() {
+                let _ = fd.close_allowing_standard_io(None);
             }
-            let global_this = send_queue.get_global_this();
-            // RAII: `enter()` now, `exit()` on drop. The guard holds the raw
-            // `*mut EventLoop` so `&mut EventLoop` isn't held across `on_data2`.
-            let _scope = global_this.bun_vm().enter_event_loop_scope();
-            on_data2(send_queue, all_data);
+            return;
         }
+        let global_this = send_queue.get_global_this();
+        // RAII: `enter()` now, `exit()` on drop. The guard holds the raw
+        // `*mut EventLoop` so `&mut EventLoop` isn't held across `on_data2`.
+        let _scope = global_this.bun_vm().enter_event_loop_scope();
+        on_data2(send_queue, all_data);
+    }
 
-        pub fn on_fd(send_queue: &SendQueue, _: Socket, fd: c_int) {
-            // SCM_RIGHTS is POSIX-only.
-            #[cfg(windows)]
-            {
-                let _ = (send_queue, fd);
-                return;
-            }
-            #[cfg(not(windows))]
-            {
-                log!("onFd: {}", fd);
-                if let Some(existing_fd) = send_queue.incoming_fd.take() {
-                    log!("onFd: incoming_fd already set; overwriting");
-                    let _ = existing_fd.close_allowing_standard_io(None);
-                }
-                send_queue.incoming_fd.set(Some(Fd::from_native(fd)));
-            }
+    pub fn on_fd(send_queue: &SendQueue, _: Socket, fd: c_int) {
+        log!("onFd: {}", fd);
+        if let Some(existing_fd) = send_queue.incoming_fd.take() {
+            log!("onFd: incoming_fd already set; overwriting");
+            let _ = existing_fd.close_allowing_standard_io(None);
         }
+        send_queue.incoming_fd.set(Some(Fd::from_native(fd)));
+    }
 
-        pub fn on_writable(send_queue: &SendQueue, _: Socket) {
-            log!("onWritable");
+    pub fn on_writable(send_queue: &SendQueue, _: Socket) {
+        log!("onWritable");
 
-            let global_this = send_queue.get_global_this();
-            // RAII: see `on_data`.
-            let _scope = global_this.bun_vm().enter_event_loop_scope();
-            log!("IPC call continueSend() from onWritable");
-            send_queue.continue_send(&global_this, ContinueSendReason::OnWritable);
-        }
+        let global_this = send_queue.get_global_this();
+        // RAII: see `on_data`.
+        let _scope = global_this.bun_vm().enter_event_loop_scope();
+        log!("IPC call continueSend() from onWritable");
+        send_queue.continue_send(&global_this, ContinueSendReason::OnWritable);
+    }
 
-        pub fn on_timeout(_: &SendQueue, _: Socket) {
-            log!("onTimeout");
-            // unref if needed
-        }
+    pub fn on_timeout(_: &SendQueue, _: Socket) {
+        log!("onTimeout");
+        // unref if needed
+    }
 
-        pub fn on_end(send_queue: &SendQueue, _: Socket) {
-            log!("onEnd");
-            send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
-        }
+    pub fn on_end(send_queue: &SendQueue, _: Socket) {
+        log!("onEnd");
+        send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
     }
 }
 

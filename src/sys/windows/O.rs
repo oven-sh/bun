@@ -6,44 +6,21 @@ pub const APPEND: i32 = 0x0008;
 pub const CREAT: i32 = 0x0100;
 pub const EXCL: i32 = 0x0400;
 pub const FILEMAP: i32 = 0x2000_0000;
-pub const RANDOM: i32 = 0x0010;
 pub const RDONLY: i32 = 0x0000;
 pub const RDWR: i32 = 0x0002;
-pub const SEQUENTIAL: i32 = 0x0020;
-pub const SHORT_LIVED: i32 = 0x1000;
-pub const TEMPORARY: i32 = 0x0040;
 pub const TRUNC: i32 = 0x0200;
 pub const WRONLY: i32 = 0x0001;
 pub const DIRECT: i32 = 0x0200_0000;
 pub const DSYNC: i32 = 0x0400_0000;
 pub const SYNC: i32 = 0x0800_0000;
-/// Opens with a share mode of 0.
-pub const EXLOCK: i32 = 0x1000_0000;
-// No-ops on Windows.
-pub const DIRECTORY: i32 = 0;
-pub const NOATIME: i32 = 0;
-pub const NOCTTY: i32 = 0;
-pub const NOFOLLOW: i32 = 0;
-pub const NONBLOCK: i32 = 0;
-pub const SYMLINK: i32 = 0;
 
-// POSIX-shaped flag values Bun normalises to internally.
-//
-// Linux-style octal constants, not MSVC `libc::O_*` (CREAT=0x100, EXCL=0x400,
-// APPEND=0x8). `crate::O` on Windows uses the same values for the flags it
-// defines as non-zero; SYNC/DSYNC/DIRECT are zero there but are still
-// recognised here when a caller passes the Linux value.
+// The POSIX-shaped flag values Bun normalises to internally: `crate::O`, plus
+// the Linux values of SYNC/DSYNC/DIRECT, which are zero in `crate::O` on
+// Windows but are still recognised here when a caller passes them.
 mod bun_o {
-    pub(super) const WRONLY: i32 = 0o1;
-    pub(super) const RDWR: i32 = 0o2;
-    pub(super) const CREAT: i32 = 0o100;
-    pub(super) const EXCL: i32 = 0o200;
-    pub(super) const TRUNC: i32 = 0o1000;
-    pub(super) const APPEND: i32 = 0o2000;
-    pub(super) const NONBLOCK: i32 = 0o4000;
+    pub(super) use crate::O::{APPEND, CREAT, EXCL, RDWR, TRUNC, WRONLY};
     pub(super) const DSYNC: i32 = 0o10000;
     pub(super) const DIRECT: i32 = 0o40000;
-    pub(super) const NOFOLLOW: i32 = 0o400000;
     pub(super) const SYNC: i32 = 0o4010000;
 }
 
@@ -68,9 +45,6 @@ pub fn from_bun_o(c_flags: i32) -> i32 {
     if c_flags & bun_o::APPEND != 0 {
         flags |= APPEND;
     }
-    if c_flags & bun_o::NONBLOCK != 0 {
-        flags |= NONBLOCK;
-    }
     // `open` rejects SYNC and DSYNC together (EINVAL).
     // `SYNC` (0o4010000) is a superset of `DSYNC` (0o10000), so check
     // SYNC first to emit only `SYNC` when both bits are present.
@@ -80,9 +54,6 @@ pub fn from_bun_o(c_flags: i32) -> i32 {
         flags |= SYNC;
     } else if c_flags & bun_o::DSYNC != 0 {
         flags |= DSYNC;
-    }
-    if c_flags & bun_o::NOFOLLOW != 0 {
-        flags |= NOFOLLOW;
     }
     if c_flags & bun_o::DIRECT != 0 {
         flags |= DIRECT;

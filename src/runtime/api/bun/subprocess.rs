@@ -65,11 +65,6 @@ pub mod js {
     );
 }
 
-/// The parent's end of a stdio pipe.
-pub use bun_spawn::subprocess::StdioResult;
-
-type StdioPipeItem = ExtraPipe;
-
 pub type StaticPipeWriter<'a> = NewStaticPipeWriter<Subprocess<'a>>;
 
 impl<'a> static_pipe_writer::StaticPipeWriterProcess for Subprocess<'a> {
@@ -110,7 +105,7 @@ pub struct Subprocess<'a> {
     pub(crate) stdin: JsCell<Writable<'a>>,
     pub(crate) stdout: JsCell<Readable>,
     pub(crate) stderr: JsCell<Readable>,
-    pub(crate) stdio_pipes: JsCell<Vec<StdioPipeItem>>,
+    pub(crate) stdio_pipes: JsCell<Vec<ExtraPipe>>,
     pub(crate) pid_rusage: Cell<Option<Rusage>>,
 
     /// Terminal attached to this subprocess (if spawned with terminal option)
@@ -281,7 +276,7 @@ bitflags::bitflags! {
 }
 
 #[inline]
-pub(crate) fn assert_stdio_result(result: StdioResult) {
+pub(crate) fn assert_stdio_result(result: Option<bun_sys::Fd>) {
     if let Some(fd) = result {
         debug_assert!(fd.is_valid());
     }

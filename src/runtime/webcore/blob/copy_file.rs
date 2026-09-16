@@ -937,7 +937,7 @@ fn copyable_path<'a>(
     buf: &'a mut bun_paths::PathBuffer,
 ) -> bun_sys::Result<Option<&'a bun_core::ZStr>> {
     match pathlike {
-        PathOrFileDescriptor::Path(path) => Ok(Some(path.slice_z(buf))),
+        PathOrFileDescriptor::Path(path) => Ok(Some(path.slice_z_as_written(buf))),
         PathOrFileDescriptor::Fd(fd) => match bun_sys::File::borrow(fd).kind()? {
             bun_sys::FileKind::Directory => Err(bun_sys::Error::from_code(
                 bun_sys::E::EISDIR,
@@ -992,17 +992,21 @@ fn copy_by_path(
         Ok(None) => return CopyByPath::Unavailable,
         Err(err) => return CopyByPath::Failed(err.to_system_error()),
     };
-    let mut dest_wbuf = bun_paths::w_path_buffer_pool::get();
-    let mut source_wbuf = bun_paths::w_path_buffer_pool::get();
-    if let Err(err) = w::fs::kernel32_path(&mut dest_wbuf[..], dest_path.as_bytes()) {
-        let err = bun_sys::Error::from_win32(err, bun_sys::Tag::copyfile);
-        return CopyByPath::Failed(error_with_pathlike(err, &destination.pathlike));
-    }
-    if let Err(err) = w::fs::kernel32_path(&mut source_wbuf[..], source_path.as_bytes()) {
-        let err = bun_sys::Error::from_win32(err, bun_sys::Tag::copyfile);
-        return CopyByPath::Failed(error_with_pathlike(err, &source.pathlike));
-    }
-    let (dest_w, source_w) = (&dest_wbuf[..], &source_wbuf[..]);
+    // Named as every other `Bun.file` call names them.
+    let dest_w = match w::fs::WPath::new(dest_path.as_bytes()) {
+        Ok(path) => path,
+        Err(err) => {
+            let err = bun_sys::Error::from_win32(err, bun_sys::Tag::copyfile);
+            return CopyByPath::Failed(error_with_pathlike(err, &destination.pathlike));
+        }
+    };
+    let source_w = match w::fs::WPath::new(source_path.as_bytes()) {
+        Ok(path) => path,
+        Err(err) => {
+            let err = bun_sys::Error::from_win32(err, bun_sys::Tag::copyfile);
+            return CopyByPath::Failed(error_with_pathlike(err, &source.pathlike));
+        }
+    };
 
     loop {
         // SAFETY: both paths are NUL-terminated.

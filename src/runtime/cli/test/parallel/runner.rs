@@ -514,7 +514,7 @@ impl<'a> WorkerLoop<'a> {
     fn begin(&mut self) {
         // SAFETY: vm pointer is valid for the worker's lifetime.
         let vm = unsafe { &mut *self.vm };
-        if !Channel::adopt(&raw mut self.cmds.channel, vm, Fd::from_crt(3), true) {
+        if !Channel::adopt(&raw mut self.cmds.channel, Fd::from_crt(3), true) {
             bun_core::pretty_errorln!("<red>error<r>: test worker failed to adopt IPC fd");
             Global::exit(1);
         }

@@ -476,8 +476,11 @@ it.skipIf(!isWindows)(
         import path from "node:path";
 
         const root = process.cwd();
+        const source = path.join(root, "source.txt");
+        fs.writeFileSync(source, "x");
         const apis = {
           write: name => Bun.write(Bun.file(name), "x"),
+          copy: name => Bun.write(Bun.file(name), Bun.file(source)),
           writePath: name => Bun.write(name, "x"),
           writeStream: name => Bun.write(name, new Response(new Blob(["x"]).stream())),
           writer: async name => {
@@ -505,8 +508,18 @@ it.skipIf(!isWindows)(
                 ok = false;
               }
               const created = fs.readdirSync(cwd, { recursive: true }).filter(entry => entry !== "sub");
-              // What a file was written under is what it is read under. A device has nothing to read.
-              const readBack = created.length ? await Bun.file(target).text().catch(error => error.code) : null;
+              // What a file was written under is what it is read, measured and deleted under. A device
+              // has nothing to read.
+              let readBack = null;
+              if (created.length) {
+                const file = Bun.file(target);
+                readBack = {
+                  text: await file.text().catch(error => error.code),
+                  exists: await file.exists(),
+                  size: await file.stat().then(stat => stat.size, error => error.code),
+                  deleted: await file.delete().then(() => fs.readdirSync(cwd, { recursive: true }).filter(entry => entry !== "sub"), error => error.code),
+                };
+              }
               process.chdir(root);
               results[key][api] = { ok, created: created.sort(), readBack };
             }
@@ -527,13 +540,14 @@ it.skipIf(!isWindows)(
       stderr: "inherit",
     });
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    type Result = { ok: boolean; created: string[]; readBack: string | null };
+    type ReadBack = { text: string; exists: boolean; size: number | string; deleted: string[] | string };
+    type Result = { ok: boolean; created: string[]; readBack: ReadBack | null };
     const results = JSON.parse(stdout) as Record<
       string,
-      Record<"write" | "writePath" | "writeStream" | "writer", Result>
+      Record<"write" | "copy" | "writePath" | "writeStream" | "writer", Result>
     >;
     const keys = names.flatMap(name => [name, "absolute " + name]);
-    for (const api of ["writePath", "writeStream", "writer"] as const) {
+    for (const api of ["copy", "writePath", "writeStream", "writer"] as const) {
       expect(Object.fromEntries(keys.map(key => [key, { api, ...results[key][api] }]))).toEqual(
         Object.fromEntries(keys.map(key => [key, { api, ...results[key].write }])),
       );
@@ -541,8 +555,12 @@ it.skipIf(!isWindows)(
     // A bare `NUL` is the null device on every Windows version, under any directory.
     expect(results.NUL.write).toEqual({ ok: true, created: [], readBack: null });
     expect(results["absolute NUL"].write).toEqual({ ok: true, created: [], readBack: null });
-    // What was written under a name can be read under that name.
-    expect(results["absolute trail."].write).toEqual({ ok: true, created: ["trail"], readBack: "x" });
+    // What was written under a name is read, measured and deleted under that name.
+    expect(results["absolute trail."].write).toEqual({
+      ok: true,
+      created: ["trail"],
+      readBack: { text: "x", exists: true, size: 1, deleted: [] },
+    });
     expect(exitCode).toBe(0);
   },
 );

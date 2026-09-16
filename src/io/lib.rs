@@ -5,9 +5,10 @@
 
 // ════════════════════════════════════════════════════════════════════════════
 // Loop / Poll / Waker / Closer / FilePoll-vtable / heap / pipes / MaxBuf /
-// openForWriting / PipeReader / PipeWriter are shared. `windows`, `source` and
-// the Windows*Reader/Writer impls are `#[cfg(windows)]`-gated: pipes, consoles
-// and files there complete through the loop's port instead of being polled.
+// openForWriting / PipeReader / PipeWriter are shared. `windows`, `source`, the
+// Windows half of `BufferedReader` and the `Windows*Writer`s are
+// `#[cfg(windows)]`-gated: pipes, consoles and files there complete through the
+// loop's port instead of being polled.
 // ════════════════════════════════════════════════════════════════════════════
 
 #![allow(unsafe_op_in_unsafe_fn)]
@@ -263,7 +264,8 @@ pub use parent_death_watchdog as ParentDeathWatchdog;
 
 // ─── public surface (was bun_io's crate root) ──────────────────────────────
 
-pub use posix_event_loop::{FilePoll, Loop, Store};
+pub use bun_uws_sys::Loop;
+pub use posix_event_loop::{FilePoll, Store};
 
 pub use posix_event_loop::{AllocatorType, Owner, PollTag, get_vm_ctx, js_vm_ctx};
 
@@ -343,6 +345,7 @@ impl EventLoopCtx {
         unsafe { &mut *self.file_polls_ptr() }
     }
     /// Claims the per-loop pipe-read scratch; `None` while a read further up the stack holds it.
+    #[cfg(unix)]
     #[inline]
     fn claim_pipe_read_scratch(&self) -> Option<PipeReadScratchGuard<'static>> {
         // SAFETY: per-thread scratch owned by the VM/Mini loop, which outlives every read.
@@ -545,7 +548,7 @@ macro_rules! __impl_buffered_reader_parent_body {
                 unsafe { $re }
             }
             #[allow(unused_unsafe, clippy::macro_metavars_in_unsafe)]
-            unsafe fn loop_($l_this: *mut Self) -> *mut $crate::pipe_reader::Loop {
+            unsafe fn loop_($l_this: *mut Self) -> *mut $crate::Loop {
                 unsafe { $lp }
             }
             #[allow(unused_unsafe, clippy::macro_metavars_in_unsafe)]
@@ -603,7 +606,7 @@ pub use pipe_writer::{BufferedWriter, StreamBuffer, StreamingWriter, WriteResult
 #[cfg(windows)]
 pub use source::Source;
 
-pub use pipe_reader::{BufferedReader, BufferedReaderParent, PosixFlags};
+pub use pipe_reader::{BufferedReader, BufferedReaderParent, ReaderFlags};
 
 pub use open_for_writing_mod::{open_for_writing, open_for_writing_impl};
 
@@ -707,7 +710,7 @@ type EventType = KEvent;
 // The bare-kqueue/epoll request loop that backs
 // `Bun.file(path).text()` / `Bun.write()` & friends (and nothing else; see the
 // crate doc above). NOT the main event loop. Renamed from `Loop` so this
-// crate's `Loop` (= `posix_event_loop::Loop` = the uws `us_loop_t` everyone
+// crate's `Loop` (= `bun_uws_sys::Loop`, the uws `us_loop_t` everyone
 // actually means by "the loop") keeps its short name. Only one external caller
 // (`bun_runtime::webcore::Blob`).
 
@@ -1747,6 +1750,7 @@ impl FilePollRef {
         // SAFETY: type invariant — see doc comment above.
         unsafe { &mut *loop_ }
     }
+    #[cfg(unix)]
     #[inline]
     pub(crate) fn unregister(self, loop_: *mut bun_uws_sys::Loop, force: bool) -> sys::Result<()> {
         self.inner().unregister(Self::uws_loop_mut(loop_), force)
@@ -1785,6 +1789,7 @@ impl FilePollRef {
     pub fn is_watching(self) -> bool {
         self.inner().is_watching()
     }
+    #[cfg(unix)]
     #[inline]
     pub(crate) fn is_active(self) -> bool {
         self.inner().is_active()

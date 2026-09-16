@@ -1,7 +1,6 @@
 //! The Windows loop's completion port, for I/O that Bun owns (pipes, the
 //! console, process exit). Mirrors `packages/bun-usockets/src/internal/
 //! eventing/iocp.h`.
-#![cfg(windows)]
 
 use core::ffi::{c_int, c_void};
 
@@ -44,7 +43,7 @@ pub type CompleteFn = unsafe extern "C" fn(*mut Loop, *mut Op, *mut OverlappedEn
 #[repr(C)]
 pub struct Op {
     pub overlapped: Overlapped,
-    pub complete: Option<CompleteFn>,
+    pub complete: CompleteFn,
     /// The loop's, while the op is on its way through `us_iocp_op_ready`.
     next_ready: *mut Op,
 }
@@ -59,7 +58,7 @@ impl Op {
                 offset_high: 0,
                 event: core::ptr::null_mut(),
             },
-            complete: Some(complete),
+            complete,
             next_ready: core::ptr::null_mut(),
         }
     }

@@ -221,18 +221,11 @@ impl StoreExt for Store {
 impl FileExt for File {
     fn unlink(&self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         match &self.pathlike {
-            PathOrFileDescriptor::Path(path_like) => {
-                // The `*Binding` arg is unused in `AsyncFSTask::create`.
-                let binding = node_fs::Binding::default();
-                // SAFETY: `bun_vm()` returns the live per-global VM pointer; the
-                // task is created on the JS thread that owns it.
-                Ok(node_fs::async_::Unlink::create(
-                    global_this,
-                    &binding,
-                    node_fs::args::Unlink::owned(path_like.slice().to_vec()),
-                    global_this.bun_vm().as_mut(),
-                ))
-            }
+            PathOrFileDescriptor::Path(path_like) => Ok(node_fs::async_::Unlink::create(
+                global_this,
+                node_fs::args::Unlink::of_bun_file(path_like.slice().to_vec()),
+                global_this.bun_vm().as_mut(),
+            )),
             PathOrFileDescriptor::Fd(_) => Ok(JSPromise::resolved_promise_value(
                 global_this,
                 // `JSGlobalObject::create_invalid_args` lives in the still-gated

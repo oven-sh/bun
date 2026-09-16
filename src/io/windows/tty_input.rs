@@ -175,25 +175,9 @@ const ESC: u8 = 0x1B;
 
 /// Generalized UTF-8: a surrogate code point is encoded as its own three-byte sequence.
 fn push_wtf8(out: &mut Vec<u8>, code_point: u32) {
-    let continuation = |shift: u32| 0x80 | ((code_point >> shift) & 0x3F) as u8;
-    if code_point < 0x80 {
-        out.push(code_point as u8);
-    } else if code_point < 0x800 {
-        out.extend_from_slice(&[0xC0 | (code_point >> 6) as u8, continuation(0)]);
-    } else if code_point < 0x10000 {
-        out.extend_from_slice(&[
-            0xE0 | (code_point >> 12) as u8,
-            continuation(6),
-            continuation(0),
-        ]);
-    } else {
-        out.extend_from_slice(&[
-            0xF0 | (code_point >> 18) as u8,
-            continuation(12),
-            continuation(6),
-            continuation(0),
-        ]);
-    }
+    let mut bytes = [0u8; 4];
+    let len = bun_core::strings::encode_wtf8_rune(&mut bytes, code_point);
+    out.extend_from_slice(&bytes[..len]);
 }
 
 /// The same mappings as Cygwin: unmodified keypad keys follow the Linux console, modifiers

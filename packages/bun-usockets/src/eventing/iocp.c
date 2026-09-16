@@ -35,14 +35,7 @@
  * each completion. This is the mechanism behind wepoll, mio, c-ares and
  * libuv's uv_poll_t. */
 
-void Bun__internal_dispatch_ready_poll(void *loop, void *poll);
 extern void Bun__JSC_onBeforeWait(void *_Nonnull jsc_vm);
-
-void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec *timeout, uint64_t now_ns);
-
-/* Pointer tags are used to indicate a Bun pointer versus a uSockets pointer */
-#define UNSET_BITS_49_UNTIL_64 0x0000FFFFFFFFFFFF
-#define CLEAR_POINTER_TAG(p) ((void *) ((uintptr_t) (p) & UNSET_BITS_49_UNTIL_64))
 
 #ifndef STATUS_SUCCESS
 #define STATUS_SUCCESS ((NTSTATUS) 0x00000000L)
@@ -799,8 +792,7 @@ void us_iocp_wait_free(struct us_iocp_wait *wait) {
 
 /* Loop */
 
-struct us_loop_t *us_create_loop(void *hint, void (*wakeup_cb)(struct us_loop_t *loop), void (*pre_cb)(struct us_loop_t *loop), void (*post_cb)(struct us_loop_t *loop), unsigned int ext_size) {
-    (void) hint;
+struct us_loop_t *us_create_loop(void (*wakeup_cb)(struct us_loop_t *loop), void (*pre_cb)(struct us_loop_t *loop), void (*post_cb)(struct us_loop_t *loop), unsigned int ext_size) {
     if (!nt_ensure()) {
         return NULL;
     }
@@ -1043,13 +1035,6 @@ static long long us_internal_timespec_ns(const struct timespec *timeout) {
     return ns < 0 ? 0 : ns;
 }
 
-/* If the batch was full, more packets are likely queued already: take them
- * before running pre/post again. Capped like the epoll/kqueue backend.
- *
- * Likewise after a poll cancelled to widen its mask came back: the flush
- * submits the wider one, and what it was widened for (a resumed socket's
- * queued data) completes it at once. Taking that now reports it in the same
- * iteration an epoll_ctl would have. */
 /* A tick dispatches one batch of packets: what runs between ticks (timers, the
  * loop's post handlers) waits for no more than that. A poll that was cancelled
  * to widen its mask is the exception: it goes back to the kernel and the port
@@ -1074,28 +1059,6 @@ static long long us_internal_clamp_to_sweep(struct us_loop_t *loop, long long ti
         return timeout_ns;
     }
     return sweep_ns;
-}
-
-void us_loop_run(struct us_loop_t *loop) {
-    /* While we have non-fallthrough polls we shouldn't fall through */
-    while (loop->num_polls) {
-        loop->data.tick_depth++;
-        us_internal_loop_pre(loop);
-        acceptors_retry_starved(loop);
-
-        us_internal_dispatch_ready_polls(loop);
-        us_internal_complete_ready_ops(loop);
-        long long timeout_ns = loop->ready_ops_head ? 0 : us_internal_clamp_to_sweep(loop, -1);
-        us_internal_before_wait(loop, timeout_ns);
-        us_internal_iocp_wait(loop, timeout_ns, 0);
-
-        us_internal_dispatch_ready_polls(loop);
-        us_internal_resubmit_cancelled_polls(loop);
-        us_internal_sweep_if_due(loop);
-
-        us_internal_loop_post(loop);
-        loop->data.tick_depth--;
-    }
 }
 
 void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec *timeout, uint64_t now_ns) {
@@ -1158,16 +1121,8 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec *timeout
      * syscall), and a tick that does not block takes the heaps back before it could sweep.
      * With no scavenger to hand off to, fall back to sweeping inline, rate-limited. */
     const int handed_off = will_idle_inside_event_loop && mi_on_thread_idle_start();
-    if (!handed_off && will_idle_inside_event_loop) {
-        /* `now_ns` is the reading the JS side took to pick `timeout`; 0 if it had none to share. */
-        static const uint64_t idle_sweep_interval_ns = 100 * 1000000ULL;
-        static _Thread_local uint64_t last_idle_sweep_ns = 0;
-        const uint64_t sweep_now_ns = now_ns ? now_ns : us_internal_monotonic_ns();
-        if (sweep_now_ns >= last_idle_sweep_ns + idle_sweep_interval_ns) {
-            last_idle_sweep_ns = sweep_now_ns;
-            mi_on_thread_idle();
-        }
-    }
+    if (!handed_off && will_idle_inside_event_loop)
+        us_internal_idle_sweep(now_ns);
 
     if (!found_packets)
         us_internal_iocp_wait(loop, timeout_ns, now_ns);
@@ -1240,25 +1195,13 @@ void us_loop_free(struct us_loop_t *loop) {
  * thread blocked in that wait. An overlapped AcceptEx is handed a connection by
  * the kernel or stays pending, however many acceptors there are. */
 
-#define US_ACCEPTS_PER_LISTENER 1
 #define US_ACCEPT_ADDRESS_LENGTH ((DWORD) (sizeof(struct sockaddr_storage) + 16))
 
-struct us_internal_accept_slot {
-    struct us_iocp_op op;
-    struct us_internal_acceptor *acceptor;
-    /* Handed to the outstanding AcceptEx, or accepted and not taken yet. */
-    SOCKET socket;
-    /* Completion by event, see us_internal_acceptor::by_event. */
-    HANDLE event;
-    struct us_iocp_wait *wait;
-    unsigned char in_flight;
-    unsigned char accepted;
-    char addresses[2 * US_ACCEPT_ADDRESS_LENGTH];
-};
-
-/* The kernel owns a slot's OVERLAPPED and buffer until its packet is dequeued,
- * so this is freed only once the listener stopped and no slot is in flight. */
+/* One AcceptEx is outstanding per listener. The kernel owns its OVERLAPPED and
+ * buffer until its packet is dequeued, so this is freed only once the listener
+ * stopped and none is in flight. */
 struct us_internal_acceptor {
+    struct us_iocp_op op;
     struct us_poll_t *owner;
     struct us_loop_t *loop;
     SOCKET listener;
@@ -1272,16 +1215,21 @@ struct us_internal_acceptor {
      * one. Each AcceptEx then carries an event with its low bit set, which
      * queues nothing to that port, and a wait on the event delivers it here. */
     unsigned char by_event;
+    HANDLE event;
+    struct us_iocp_wait *wait;
+    /* Handed to the outstanding AcceptEx, or accepted and not taken yet. */
+    SOCKET socket;
+    unsigned char in_flight;
+    unsigned char accepted;
     /* Neither AcceptEx nor a poll could be started. Every tick tries again,
      * and the sweep timer it holds keeps ticks coming. */
     unsigned char starved;
-    /* Depth of accept_slot_complete frames dispatching to the owner: a
+    /* Depth of acceptor_complete frames dispatching to the owner: a
      * callback can run the loop again, and close the listener from there. */
     unsigned int dispatching;
-    unsigned int in_flight;
     struct us_internal_acceptor *next;
     struct us_internal_acceptor *prev;
-    struct us_internal_accept_slot slots[US_ACCEPTS_PER_LISTENER];
+    char addresses[2 * US_ACCEPT_ADDRESS_LENGTH];
 };
 
 static void acceptor_set_starved(struct us_internal_acceptor *a, int starved) {
@@ -1301,17 +1249,14 @@ static void acceptor_maybe_free(struct us_internal_acceptor *a) {
         return;
     }
     acceptor_set_starved(a, 0);
-    for (int i = 0; i < US_ACCEPTS_PER_LISTENER; i++) {
-        struct us_internal_accept_slot *slot = &a->slots[i];
-        if (slot->socket != INVALID_SOCKET) {
-            closesocket(slot->socket);
-        }
-        if (slot->wait) {
-            us_iocp_wait_free(slot->wait);
-        }
-        if (slot->event) {
-            CloseHandle(slot->event);
-        }
+    if (a->socket != INVALID_SOCKET) {
+        closesocket(a->socket);
+    }
+    if (a->wait) {
+        us_iocp_wait_free(a->wait);
+    }
+    if (a->event) {
+        CloseHandle(a->event);
     }
     if (a->prev) {
         a->prev->next = a->next;
@@ -1324,9 +1269,8 @@ static void acceptor_maybe_free(struct us_internal_acceptor *a) {
     us_free(a);
 }
 
-/* Returns 0 once a packet for the slot is on its way. */
-static int accept_slot_start(struct us_internal_accept_slot *slot) {
-    struct us_internal_acceptor *a = slot->acceptor;
+/* Returns 0 once a packet for the AcceptEx is on its way. */
+static int acceptor_start(struct us_internal_acceptor *a) {
 #if defined(LIBUS_SOCKET_FAULT_INJECTION) && LIBUS_SOCKET_FAULT_INJECTION
     ssize_t injected = 0;
     int unused = 0;
@@ -1334,49 +1278,47 @@ static int accept_slot_start(struct us_internal_accept_slot *slot) {
         return -1;
     }
 #endif
-    slot->socket = WSASocketW(a->family, a->type, a->protocol, NULL, 0, WSA_FLAG_OVERLAPPED | WSA_FLAG_NO_HANDLE_INHERIT);
-    if (slot->socket == INVALID_SOCKET) {
+    a->socket = WSASocketW(a->family, a->type, a->protocol, NULL, 0, WSA_FLAG_OVERLAPPED | WSA_FLAG_NO_HANDLE_INHERIT);
+    if (a->socket == INVALID_SOCKET) {
         return -1;
     }
-    memset(&slot->op.overlapped, 0, sizeof(slot->op.overlapped));
+    memset(&a->op.overlapped, 0, sizeof(a->op.overlapped));
     if (a->by_event) {
-        ResetEvent(slot->event);
-        slot->op.overlapped.hEvent = (HANDLE) ((ULONG_PTR) slot->event | 1);
+        ResetEvent(a->event);
+        a->op.overlapped.hEvent = (HANDLE) ((ULONG_PTR) a->event | 1);
     }
     DWORD bytes;
-    if (!a->accept_ex(a->listener, slot->socket, slot->addresses, 0, US_ACCEPT_ADDRESS_LENGTH, US_ACCEPT_ADDRESS_LENGTH, &bytes, &slot->op.overlapped) &&
+    if (!a->accept_ex(a->listener, a->socket, a->addresses, 0, US_ACCEPT_ADDRESS_LENGTH, US_ACCEPT_ADDRESS_LENGTH, &bytes, &a->op.overlapped) &&
         WSAGetLastError() != ERROR_IO_PENDING) {
         int err = WSAGetLastError();
-        closesocket(slot->socket);
-        slot->socket = INVALID_SOCKET;
+        closesocket(a->socket);
+        a->socket = INVALID_SOCKET;
         WSASetLastError(err);
         return -1;
     }
     if (!a->by_event) {
         /* Also when it succeeded at once: the packet is queued all the same. */
         us_iocp_op_submitted(a->loop);
-    } else if (us_iocp_wait_start(slot->wait, slot->event, &slot->op) != 0) {
+    } else if (us_iocp_wait_start(a->wait, a->event, &a->op) != 0) {
         /* Nothing will announce the completion, so collect it here. */
-        CancelIoEx((HANDLE) a->listener, &slot->op.overlapped);
-        WaitForSingleObject(slot->event, INFINITE);
-        closesocket(slot->socket);
-        slot->socket = INVALID_SOCKET;
+        CancelIoEx((HANDLE) a->listener, &a->op.overlapped);
+        WaitForSingleObject(a->event, INFINITE);
+        closesocket(a->socket);
+        a->socket = INVALID_SOCKET;
         WSASetLastError(WSAENOBUFS);
         return -1;
     }
-    slot->in_flight = 1;
-    a->in_flight++;
+    a->in_flight = 1;
     return 0;
 }
 
 /* Keep the listener accepting. If AcceptEx cannot be started (out of sockets or
  * memory), the listener is polled for a waiting connection instead, and
  * us_internal_accept tries again when there is one. */
-static void accept_slot_arm(struct us_internal_accept_slot *slot) {
-    struct us_internal_acceptor *a = slot->acceptor;
+static void acceptor_arm(struct us_internal_acceptor *a) {
     /* A connection that was reset while it waited fails the call that would have taken it. */
     for (int attempt = 0; attempt < 8; attempt++) {
-        if (accept_slot_start(slot) == 0) {
+        if (acceptor_start(a) == 0) {
             if (a->owner->afd) {
                 afd_poll_stop(a->owner->afd);
                 a->owner->afd = NULL;
@@ -1405,22 +1347,17 @@ static void acceptors_retry_starved(struct us_loop_t *loop) {
         if (!a->starved || !a->owner) {
             continue;
         }
-        for (int i = 0; i < US_ACCEPTS_PER_LISTENER; i++) {
-            struct us_internal_accept_slot *slot = &a->slots[i];
-            if (!slot->in_flight && !slot->accepted) {
-                accept_slot_arm(slot);
-            }
+        if (!a->in_flight && !a->accepted) {
+            acceptor_arm(a);
         }
     }
 }
 
-static void accept_slot_complete(struct us_loop_t *loop, struct us_iocp_op *op, OVERLAPPED_ENTRY *entry) {
+static void acceptor_complete(struct us_loop_t *loop, struct us_iocp_op *op, OVERLAPPED_ENTRY *entry) {
     (void) loop;
     (void) entry;
-    struct us_internal_accept_slot *slot = (struct us_internal_accept_slot *) op;
-    struct us_internal_acceptor *a = slot->acceptor;
-    slot->in_flight = 0;
-    a->in_flight--;
+    struct us_internal_acceptor *a = (struct us_internal_acceptor *) op;
+    a->in_flight = 0;
 
     if (!a->owner || a->loop->closing) {
         acceptor_maybe_free(a);
@@ -1429,45 +1366,42 @@ static void accept_slot_complete(struct us_loop_t *loop, struct us_iocp_op *op, 
 
     /* The status AcceptEx left in the OVERLAPPED; an error is the connection's
      * (it was reset before it could be accepted), not the listener's. */
-    int ok = NT_SUCCESS((NTSTATUS) slot->op.overlapped.Internal);
+    int ok = NT_SUCCESS((NTSTATUS) a->op.overlapped.Internal);
     if (ok) {
         SOCKET listener = a->listener;
-        ok = setsockopt(slot->socket, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT, (const char *) &listener, sizeof(listener)) == 0;
+        ok = setsockopt(a->socket, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT, (const char *) &listener, sizeof(listener)) == 0;
     }
     if (!ok) {
-        closesocket(slot->socket);
-        slot->socket = INVALID_SOCKET;
-        accept_slot_arm(slot);
+        closesocket(a->socket);
+        a->socket = INVALID_SOCKET;
+        acceptor_arm(a);
         return;
     }
 
-    slot->accepted = 1;
+    a->accepted = 1;
     a->dispatching++;
     us_internal_dispatch_ready_poll(a->owner, 0, 0, LIBUS_SOCKET_READABLE);
     a->dispatching--;
-    if (slot->accepted) {
+    if (a->accepted) {
         /* Not taken: the listener was closed first, or us_internal_accept was made
          * to fail. Reset, as the connections still in the backlog are. */
-        slot->accepted = 0;
+        a->accepted = 0;
         struct linger reset = {.l_onoff = 1, .l_linger = 0};
-        setsockopt(slot->socket, SOL_SOCKET, SO_LINGER, (const char *) &reset, sizeof(reset));
-        closesocket(slot->socket);
-        slot->socket = INVALID_SOCKET;
+        setsockopt(a->socket, SOL_SOCKET, SO_LINGER, (const char *) &reset, sizeof(reset));
+        closesocket(a->socket);
+        a->socket = INVALID_SOCKET;
     }
     /* The owner accepts until nothing is left, which starts AcceptEx again.
      * When it stopped before that, this does. */
-    if (a->owner && !slot->in_flight) {
-        accept_slot_arm(slot);
+    if (a->owner && !a->in_flight) {
+        acceptor_arm(a);
     }
     acceptor_maybe_free(a);
 }
 
 static void acceptor_cancel(struct us_internal_acceptor *a) {
-    for (int i = 0; i < US_ACCEPTS_PER_LISTENER; i++) {
-        struct us_internal_accept_slot *slot = &a->slots[i];
-        if (slot->in_flight) {
-            CancelIoEx((HANDLE) a->listener, &slot->op.overlapped);
-        }
+    if (a->in_flight) {
+        CancelIoEx((HANDLE) a->listener, &a->op.overlapped);
     }
 }
 
@@ -1530,26 +1464,16 @@ static struct us_internal_acceptor *acceptor_create(struct us_loop_t *loop, stru
     }
     loop->acceptors = a;
 
-    for (int i = 0; i < US_ACCEPTS_PER_LISTENER; i++) {
-        a->slots[i].op.complete = accept_slot_complete;
-        a->slots[i].acceptor = a;
-        a->slots[i].socket = INVALID_SOCKET;
-    }
+    a->op.complete = acceptor_complete;
+    a->socket = INVALID_SOCKET;
     int started = 1;
-    for (int i = 0; i < US_ACCEPTS_PER_LISTENER; i++) {
-        struct us_internal_accept_slot *slot = &a->slots[i];
-        if (a->by_event) {
-            slot->event = CreateEventW(NULL, TRUE, FALSE, NULL);
-            slot->wait = slot->event ? us_iocp_wait_create(loop) : NULL;
-            if (!slot->wait) {
-                started = 0;
-                break;
-            }
-        }
-        if (accept_slot_start(slot) != 0) {
-            started = 0;
-            break;
-        }
+    if (a->by_event) {
+        a->event = CreateEventW(NULL, TRUE, FALSE, NULL);
+        a->wait = a->event ? us_iocp_wait_create(loop) : NULL;
+        started = a->wait != NULL;
+    }
+    if (started && acceptor_start(a) != 0) {
+        started = 0;
     }
     if (!started) {
         acceptor_stop(a);
@@ -1583,11 +1507,7 @@ LIBUS_SOCKET_DESCRIPTOR us_internal_accept(struct us_poll_t *p, struct bsd_addr_
     if (!a) {
         return bsd_accept_socket(p->fd, addr);
     }
-    for (int i = 0; i < US_ACCEPTS_PER_LISTENER; i++) {
-        struct us_internal_accept_slot *slot = &a->slots[i];
-        if (!slot->accepted) {
-            continue;
-        }
+    if (a->accepted) {
         ssize_t injected = 0;
         int unused = 0;
         if (US_FAULT_CHECK(US_FAULT_ACCEPT, p->fd, injected, unused)) {
@@ -1595,15 +1515,15 @@ LIBUS_SOCKET_DESCRIPTOR us_internal_accept(struct us_poll_t *p, struct bsd_addr_
         }
         (void) injected;
         (void) unused;
-        SOCKET accepted = slot->socket;
-        slot->accepted = 0;
-        slot->socket = INVALID_SOCKET;
+        SOCKET accepted = a->socket;
+        a->accepted = 0;
+        a->socket = INVALID_SOCKET;
 
         struct sockaddr *local = NULL;
         struct sockaddr *remote = NULL;
         int local_length = 0;
         int remote_length = 0;
-        a->get_addresses(slot->addresses, 0, US_ACCEPT_ADDRESS_LENGTH, US_ACCEPT_ADDRESS_LENGTH, &local, &local_length, &remote, &remote_length);
+        a->get_addresses(a->addresses, 0, US_ACCEPT_ADDRESS_LENGTH, US_ACCEPT_ADDRESS_LENGTH, &local, &local_length, &remote, &remote_length);
         if (remote_length < 0 || (size_t) remote_length > sizeof(addr->mem)) {
             remote_length = 0;
         }
@@ -1627,9 +1547,7 @@ LIBUS_SOCKET_DESCRIPTOR us_internal_accept(struct us_poll_t *p, struct bsd_addr_
     if (next != LIBUS_SOCKET_ERROR) {
         return next;
     }
-    for (int i = 0; i < US_ACCEPTS_PER_LISTENER; i++) {
-        accept_slot_arm(&a->slots[i]);
-    }
+    acceptor_arm(a);
     return LIBUS_SOCKET_ERROR;
 }
 
@@ -1757,8 +1675,6 @@ size_t us_internal_accept_poll_event(struct us_poll_t *p) {
 struct us_internal_async *us_internal_create_async(struct us_loop_t *loop, int fallthrough, unsigned int ext_size) {
     struct us_internal_callback_t *cb = us_calloc(1, sizeof(struct us_internal_callback_t) + ext_size);
     cb->loop = loop;
-    cb->cb_expects_the_loop = 1;
-    cb->leave_poll_ready = 1;
     cb->fallthrough = fallthrough;
     us_poll_init(&cb->p, INVALID_SOCKET, POLL_TYPE_CALLBACK);
 
@@ -1778,7 +1694,7 @@ static void us_internal_async_complete(struct us_loop_t *loop, struct us_iocp_op
         us_free(cb);
         return;
     }
-    cb->cb(cb->cb_expects_the_loop ? (struct us_internal_callback_t *) cb->loop : cb);
+    cb->cb((struct us_internal_callback_t *) cb->loop);
 }
 
 void us_internal_async_close(struct us_internal_async *a) {
@@ -1809,15 +1725,6 @@ void us_internal_async_wakeup(struct us_internal_async *a) {
             InterlockedExchange(&cb->posted, 0);
         }
     }
-}
-
-int us_socket_get_error(struct us_socket_t *s) {
-    int error = 0;
-    int len = sizeof(error);
-    if (getsockopt(us_poll_fd((struct us_poll_t *) s), SOL_SOCKET, SO_ERROR, (char *) &error, &len) == SOCKET_ERROR) {
-        return LIBUS_ERR;
-    }
-    return error;
 }
 
 #endif

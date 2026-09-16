@@ -8,7 +8,7 @@ use core::ffi::c_void;
 use crate::api::bun::process::SpawnResultExt as _;
 use crate::api::bun::process::{self as spawn, Process, Rusage, SpawnOptions, Status, Stdio};
 use bun_core::{self, Output};
-use bun_sys;
+use bun_sys::{self, FdExt as _};
 
 use super::channel::{Channel, ChannelOwner};
 use super::coordinator::Coordinator;
@@ -152,7 +152,6 @@ impl Worker {
         let mut unadopted = scopeguard::guard(
             [stdout, stderr, extra_pipes.first().map(|pipe| pipe.fd())],
             |fds| {
-                use bun_sys::FdExt as _;
                 for fd in fds.into_iter().flatten() {
                     fd.close();
                 }
@@ -171,7 +170,7 @@ impl Worker {
         }
         // `adopt` closes the fd when it fails.
         if let Some(ipc_fd) = unadopted[2].take() {
-            if !Channel::adopt(&raw mut this.ipc, coord.vm, ipc_fd, false) {
+            if !Channel::adopt(&raw mut this.ipc, ipc_fd, false) {
                 return Err(crate::Error::ChannelAdoptFailed);
             }
         } else {

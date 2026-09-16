@@ -9,7 +9,6 @@
 //! it the same way when it no longer wants the result, so exactly one side
 //! finds out that the other got there first.
 
-use core::ffi::c_void;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
@@ -21,7 +20,7 @@ use bun_uws_sys::Loop;
 use bun_uws_sys::iocp::{self, Op, OverlappedEntry};
 
 use super::pipe::ReadEvent;
-use super::{Callback, Link, Port};
+use super::{Callback, Link, Port, ReadCallback};
 
 /// The owner's handle to a file. Dropping it lets an operation that is already
 /// running finish unobserved, then closes the fd if it is owned.
@@ -40,17 +39,6 @@ const POSTED: u32 = 4;
 /// The loop is gone and nobody will dequeue a result: the pool thread lets go
 /// of the request instead of posting it.
 const ORPHANED: u32 = 5;
-
-type ReadCallback = unsafe fn(*const (), *mut c_void, ReadEvent<'_>);
-
-/// Who hears about reads. Kept apart from the request so it can change while
-/// the work pool holds the request.
-#[derive(Clone, Copy)]
-struct Reader {
-    ctx: *mut c_void,
-    f: *const (),
-    call: ReadCallback,
-}
 
 enum Request {
     None,
@@ -81,7 +69,6 @@ struct Inner {
     task: Task,
     fd: Fd,
     close_fd: bool,
-    loop_: *mut Loop,
     port: Arc<Port>,
     state: AtomicU32,
     /// The loop thread sleeps on `state` ([`Inner::shut`]).
@@ -90,15 +77,15 @@ struct Inner {
     /// go once; the second one frees.
     released: AtomicBool,
     request: Request,
-    reader: Option<Reader>,
+    /// Who hears about reads. Kept apart from the request so it can change
+    /// while the work pool holds the request.
+    reader: Option<ReadCallback>,
     buf: Vec<u8>,
     result: sys::Result<usize>,
     owner_gone: bool,
     /// The loop was torn down ([`Link::shut`]): an operation still out
     /// finishes unobserved, since its callback would run in a dead VM.
     detached: bool,
-    /// `shut` found a request out and orphaned it.
-    orphaned: bool,
     /// Inside the owner's callback: the allocation and `buf` are in use by
     /// `complete`'s frame, so a request made now is scheduled when it returns.
     completing: bool,
@@ -123,7 +110,6 @@ impl File {
             },
             fd,
             close_fd,
-            loop_,
             port,
             state: AtomicU32::new(IDLE),
             shut_waiting: AtomicBool::new(false),
@@ -134,7 +120,6 @@ impl File {
             result: Ok(0),
             owner_gone: false,
             detached: false,
-            orphaned: false,
             completing: false,
             deferred: false,
         }));
@@ -184,22 +169,9 @@ impl File {
 
     /// Who the read that is out (if any) reports to: for an owner that moved.
     pub fn set_reader<T>(&mut self, ctx: *mut T, on_read: unsafe fn(*mut T, ReadEvent<'_>)) {
-        unsafe fn call<T>(f: *const (), ctx: *mut c_void, event: ReadEvent<'_>) {
-            // SAFETY: `f` was erased from exactly this type below.
-            let f =
-                unsafe { core::mem::transmute::<*const (), unsafe fn(*mut T, ReadEvent<'_>)>(f) };
-            // SAFETY: the owner keeps `ctx` valid while the read is out.
-            unsafe { f(ctx.cast::<T>(), event) }
-        }
         // SAFETY: `inner` is live while the owner's `File` is; the work pool
         // never looks at `reader`.
-        unsafe {
-            (*self.inner.as_ptr()).reader = Some(Reader {
-                ctx: ctx.cast(),
-                f: on_read as *const (),
-                call: call::<T>,
-            });
-        }
+        unsafe { (*self.inner.as_ptr()).reader = Some(ReadCallback::new(ctx, on_read)) };
     }
 
     /// Write all of `data` at the file position, then call `on_write(ctx, ..)`
@@ -265,7 +237,7 @@ impl Drop for File {
         // out, whoever finishes it is the only one to touch it again.
         unsafe {
             (*this).owner_gone = true;
-            if (*this).orphaned {
+            if (*this).state.load(Ordering::Acquire) == ORPHANED {
                 Inner::release(this);
                 return;
             }
@@ -350,8 +322,7 @@ impl Inner {
                     }
                 }
             }
-            (*this).orphaned = true;
-            Settle::post((*this).loop_);
+            Settle::post((*this).link.loop_);
             if (*this).owner_gone {
                 Self::release(this);
             }
@@ -391,8 +362,8 @@ impl Inner {
     unsafe fn schedule(this: *mut Inner) {
         // SAFETY: caller contract.
         unsafe {
-            super::op_submitted((*this).loop_);
-            (*(*this).loop_).add_active(1);
+            super::op_submitted((*this).link.loop_);
+            (*(*this).link.loop_).add_active(1);
             WorkPool::schedule(&raw mut (*this).task);
         }
     }
@@ -514,7 +485,7 @@ impl Inner {
                             Ok(_) => ReadEvent::Data(&mut (*this).buf),
                             Err(err) => ReadEvent::Err(err),
                         };
-                        (reader.call)(reader.f, reader.ctx, event);
+                        reader.invoke(event);
                     }
                 }
                 Request::Write { callback, .. } => callback.invoke(result),

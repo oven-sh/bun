@@ -1,4 +1,4 @@
-use core::ffi::{c_int, c_uint, c_void};
+use core::ffi::{c_int, c_uint};
 use core::ptr::NonNull;
 
 use crate::InternalLoopData;
@@ -42,7 +42,7 @@ pub struct Loop {
 
     /// The loop's I/O completion port
     #[cfg(windows)]
-    pub iocp: *mut c_void,
+    pub iocp: *mut core::ffi::c_void,
 
     /// Number of polls owned by Bun
     pub active: u32,
@@ -269,10 +269,8 @@ impl Loop {
 
     /// `None` if the loop's kernel objects cannot be created (e.g. EMFILE).
     pub fn create<H: LoopHandler>() -> Option<NonNull<Loop>> {
-        // SAFETY: us_create_loop allocates and returns a new loop; null hint is valid
-        let p = unsafe {
-            c::us_create_loop(core::ptr::null_mut(), Some(H::WAKEUP), H::PRE, H::POST, 0)
-        };
+        // SAFETY: us_create_loop allocates and returns a new loop
+        let p = unsafe { c::us_create_loop(Some(H::WAKEUP), H::PRE, H::POST, 0) };
         NonNull::new(p)
     }
 
@@ -358,7 +356,6 @@ mod c {
     // loop via `Loop::get()`. Keep all loop-taking decls as raw `*mut Loop`.
     unsafe extern "C" {
         pub(super) fn us_create_loop(
-            hint: *mut c_void,
             wakeup_cb: Option<LoopCb>,
             pre_cb: Option<LoopCb>,
             post_cb: Option<LoopCb>,
@@ -367,24 +364,19 @@ mod c {
         pub(super) fn us_loop_free(loop_: *mut Loop);
         pub(super) fn us_quic_loop_flush_if_pending(loop_: *mut Loop);
         pub(super) fn us_nq_loop_drain(loop_: *mut Loop);
-        pub fn us_loop_run(loop_: *mut Loop);
         pub fn us_wakeup_loop(loop_: *mut Loop);
-        pub(super) fn us_loop_run_bun_tick(
-            loop_: *mut Loop,
-            timeout_ms: *const Timespec,
-            now_ns: u64,
-        );
+        pub(super) fn us_loop_run_bun_tick(loop_: *mut Loop, timeout: *const Timespec, now_ns: u64);
         pub(super) fn us_internal_free_closed_sockets(loop_: *mut Loop);
         pub(super) fn us_loop_close_all_groups(loop_: *mut Loop) -> c_int;
         pub(super) safe fn uws_get_loop() -> *mut Loop;
         pub(super) fn uws_loop_date_header_timer_update(loop_: *mut Loop);
     }
 }
-// Raw externs for cross-thread callers (e.g. bun_http's `HTTPThread::wakeup`)
+// Raw extern for cross-thread callers (e.g. bun_http's `HTTPThread::wakeup`)
 // that hold only a `*mut Loop` and must not form a `&mut Loop` via
 // `Loop::wakeup` while the loop's own thread holds one: see the noalias note
 // on `mod c`.
-pub use c::{us_loop_run, us_wakeup_loop};
+pub use c::us_wakeup_loop;
 
 unsafe extern "C" {
     // safe: no args; frees this thread's lazily-created uws loop if it exists.

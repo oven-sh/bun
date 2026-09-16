@@ -90,7 +90,7 @@ unsafe impl<T> Send for SendPtr<T> {}
 /// loop, so the global `Js` ctx is the correct erasure here.
 #[inline]
 fn js_event_loop_ctx() -> Async::EventLoopCtx {
-    Async::posix_event_loop::get_vm_ctx(Async::AllocatorType::Js)
+    Async::get_vm_ctx(Async::AllocatorType::Js)
 }
 
 bun_output::declare_scope!(ResolveInfoRequest, hidden);
@@ -905,40 +905,41 @@ pub mod get_addr_info_request {
             // SAFETY: NUL written at port_buf[port_len]
             let port_z = ZStr::from_buf(&port_buf[..], port_len);
 
-            let mut hostname = bun_paths::path_buffer_pool::get();
-            // Reserve the last byte for the NUL terminator so the index below
-            // can never exceed the buffer even if the upstream length guard in
-            // `doLookup` is bypassed.
-            let cap = hostname.len() - 1;
-            let copied_len = strings::copy(&mut hostname[..cap], &query_name).len();
-            hostname[copied_len] = 0;
             let mut addrinfo: *mut AddrInfo = ptr::null_mut();
-            // SAFETY: hostname[copied_len] == 0
-            let host = ZStr::from_buf(&hostname[..], copied_len);
             let debug_timer = Output::DebugTimer::start();
             #[cfg(windows)]
             let err = windows_get_addr_info(
-                host.as_bytes(),
+                &query_name,
                 port_z.as_bytes(),
                 hints.as_ref(),
                 &raw mut addrinfo,
             );
             #[cfg(not(windows))]
-            // SAFETY: FFI; all pointers valid for the call duration
-            let err = unsafe {
-                libc::getaddrinfo(
-                    host.as_ptr().cast::<c_char>(),
-                    if port_len > 0 {
-                        port_z.as_ptr().cast::<c_char>()
-                    } else {
-                        ptr::null()
-                    },
-                    hints
-                        .as_ref()
-                        .map(std::ptr::from_ref)
-                        .unwrap_or(ptr::null()),
-                    &raw mut addrinfo,
-                )
+            let err = {
+                let mut hostname = bun_paths::path_buffer_pool::get();
+                // Reserve the last byte for the NUL terminator so the index below
+                // can never exceed the buffer even if the upstream length guard in
+                // `doLookup` is bypassed.
+                let cap = hostname.len() - 1;
+                let copied_len = strings::copy(&mut hostname[..cap], &query_name).len();
+                hostname[copied_len] = 0;
+                let host = ZStr::from_buf(&hostname[..], copied_len);
+                // SAFETY: FFI; all pointers valid for the call duration
+                unsafe {
+                    libc::getaddrinfo(
+                        host.as_ptr().cast::<c_char>(),
+                        if port_len > 0 {
+                            port_z.as_ptr().cast::<c_char>()
+                        } else {
+                            ptr::null()
+                        },
+                        hints
+                            .as_ref()
+                            .map(std::ptr::from_ref)
+                            .unwrap_or(ptr::null()),
+                        &raw mut addrinfo,
+                    )
+                }
             };
             sys::syslog!(
                 "getaddrinfo({}, {}) = {} ({})",
@@ -1810,9 +1811,8 @@ impl Drop for DNSLookup {
         let _ = self.global_this();
         // DNSLookup is always created on the JS event loop (it holds a JSGlobalObject),
         // so the Js-arm vtable is the correct EventLoopCtx for KeepAlive::unref.
-        self.poll_ref.unref(Async::posix_event_loop::get_vm_ctx(
-            Async::AllocatorType::Js,
-        ));
+        self.poll_ref
+            .unref(Async::get_vm_ctx(Async::AllocatorType::Js));
     }
 }
 
@@ -2495,7 +2495,7 @@ pub mod internal {
         let results: Option<Box<[ResultEntry]>> = if !info.is_null() {
             let res = process_results(info);
             // SAFETY: `info` is non-null (checked above) and owned by getaddrinfo.
-            unsafe { bun_dns::freeaddrinfo(info.cast()) };
+            unsafe { bun_dns::freeaddrinfo(info) };
             Some(res)
         } else {
             None
@@ -2562,7 +2562,7 @@ pub mod internal {
                 &wsa_hints,
                 &mut addrinfo,
             );
-            after_result(req, addrinfo.cast(), err);
+            after_result(req, addrinfo, err);
         }
         #[cfg(not(windows))]
         // SAFETY: FFI getaddrinfo; `req.key.host` is the owned NUL-terminated host
@@ -4634,10 +4634,7 @@ impl Resolver {
             return;
         }
 
-        let owner = Async::Owner::new(
-            Async::posix_event_loop::poll_tag::DNS_RESOLVER,
-            self.as_ctx_ptr().cast::<()>(),
-        );
+        let owner = Async::Owner::new(Async::PollTag::DnsResolver, self.as_ctx_ptr().cast::<()>());
         // SAFETY: `event_loop_handle` is set once VM is initialized; live for VM lifetime.
         let loop_ = unsafe { &mut *self.vm().event_loop_handle.unwrap() };
         // SAFETY: single-JS-thread; the `&mut PollsMap` borrow does not span

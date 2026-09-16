@@ -29,7 +29,7 @@ use core::marker::PhantomData;
 
 use bun_collections::VecExt;
 #[cfg(windows)]
-use bun_io::windows::{Pipe, ReadEvent};
+use bun_io::windows::{Pipe, PipeOrigin, ReadEvent};
 use bun_jsc::JsCell;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_sys::Fd;
@@ -167,33 +167,23 @@ impl<Owner: ChannelOwner> Channel<Owner> {
     /// `inherited` says it is the worker's (this process did not create it),
     /// which decides how a pipe may be driven there. Takes `fd` either way.
     /// `this` is the channel's address derived from the owner's `&mut`.
-    pub(crate) fn adopt(
-        this: *mut Self,
-        vm: *const VirtualMachine,
-        fd: Fd,
-        inherited: bool,
-    ) -> bool {
+    pub(crate) fn adopt(this: *mut Self, fd: Fd, inherited: bool) -> bool {
         // SAFETY: caller passes `&raw mut owner.channel` (live for the call).
         let self_ = unsafe { &*this };
         self_.root.set(this);
-        Self::adopt_impl(self_, this, vm, fd, inherited)
+        Self::adopt_impl(self_, this, fd, inherited)
     }
 
-    fn adopt_impl(
-        &self,
-        this: *mut Self,
-        _vm: *const VirtualMachine,
-        fd: Fd,
-        inherited: bool,
-    ) -> bool {
+    fn adopt_impl(&self, this: *mut Self, fd: Fd, inherited: bool) -> bool {
         #[cfg(windows)]
         {
             let loop_ = VirtualMachine::get().as_mut().uws_loop();
-            let opened = if inherited {
-                Pipe::open_foreign(loop_, fd, true)
+            let origin = if inherited {
+                PipeOrigin::Foreign
             } else {
-                Pipe::open_owned(loop_, fd, true)
+                PipeOrigin::Created
             };
+            let opened = Pipe::open(loop_, fd, origin, true);
             // The pipe stays ref'd so the loop blocks for the peer's first frame.
             let started =
                 opened.and_then(|mut pipe| match pipe.read_start(this, Self::on_pipe_read) {
@@ -362,43 +352,37 @@ impl<Owner: ChannelOwner> Channel<Owner> {
     }
 
     /// Best-effort drain of any buffered writes.
+    #[cfg(not(windows))]
     pub fn flush(&self) {
-        #[cfg(windows)]
-        {
-            return self.submit_windows_write();
-        }
-        #[cfg(not(windows))]
-        {
-            while !self.done.get() {
-                let mut pending = self.out.replace(Vec::new());
-                let mut head = self.backend.out_head.get();
-                debug_assert!(head <= pending.len());
-                if pending.len() <= head {
-                    self.backend.out_head.set(0);
-                    self.out.set(pending);
-                    return;
-                }
-                let wrote = self.backend.socket.get().write(&pending[head..]);
-                let w = usize::try_from(wrote)
-                    .unwrap_or(0)
-                    .min(pending.len() - head);
-                head += w;
-                if head == pending.len() {
-                    pending.clear();
-                    head = 0;
-                } else if head >= pending.len() - head {
-                    // Sent prefix caught up to the tail: compact (amortized linear).
-                    pending.drain_front(head);
-                    head = 0;
-                }
-                self.backend.out_head.set(head);
-                self.out.with_mut(|cur| {
-                    pending.extend_from_slice(cur);
-                    *cur = pending;
-                });
-                if wrote <= 0 {
-                    return;
-                }
+        while !self.done.get() {
+            let mut pending = self.out.replace(Vec::new());
+            let mut head = self.backend.out_head.get();
+            debug_assert!(head <= pending.len());
+            if pending.len() <= head {
+                self.backend.out_head.set(0);
+                self.out.set(pending);
+                return;
+            }
+            let wrote = self.backend.socket.get().write(&pending[head..]);
+            let w = usize::try_from(wrote)
+                .unwrap_or(0)
+                .min(pending.len() - head);
+            head += w;
+            if head == pending.len() {
+                pending.clear();
+                head = 0;
+            } else if head >= pending.len() - head {
+                // Sent prefix caught up to the tail: compact (amortized linear).
+                pending.drain_front(head);
+                head = 0;
+            }
+            self.backend.out_head.set(head);
+            self.out.with_mut(|cur| {
+                pending.extend_from_slice(cur);
+                *cur = pending;
+            });
+            if wrote <= 0 {
+                return;
             }
         }
     }

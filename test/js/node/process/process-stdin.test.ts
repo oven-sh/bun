@@ -3,6 +3,21 @@ import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { exec } from "node:child_process";
 import { join } from "node:path";
 
+// `until(marker)` reads `stream` until the text read so far contains `marker`; `output()` is that text.
+function readUntil(stream: ReadableStream<Uint8Array>) {
+  let output = "";
+  const decoder = new TextDecoder();
+  const reader = stream.getReader();
+  async function until(marker: string) {
+    while (!output.includes(marker)) {
+      const { value, done } = await reader.read();
+      if (done) throw new Error("stdout ended before " + marker + ": " + JSON.stringify(output));
+      output += decoder.decode(value, { stream: true });
+    }
+  }
+  return { until, output: () => output };
+}
+
 test.concurrent("pipe does the right thing", async () => {
   // Note: Bun.spawnSync uses memfd_create on Linux for pipe, which means we see
   // it as a file instead of a tty
@@ -511,16 +526,7 @@ describe("pause() with a read pending, then a child inherits stdin", () => {
       stdout: "pipe",
       stderr: "inherit",
     });
-    let output = "";
-    const decoder = new TextDecoder();
-    const reader = proc.stdout.getReader();
-    async function until(marker: string) {
-      while (!output.includes(marker)) {
-        const { value, done } = await reader.read();
-        if (done) throw new Error("stdout ended before " + marker + ": " + JSON.stringify(output));
-        output += decoder.decode(value, { stream: true });
-      }
-    }
+    const { until, output } = readUntil(proc.stdout);
     await until("PARENT-READY");
     proc.stdin.write("first\n");
     proc.stdin.flush();
@@ -529,7 +535,7 @@ describe("pause() with a read pending, then a child inherits stdin", () => {
     proc.stdin.flush();
     await until('-GOT:"second');
     await proc.stdin.end();
-    expect(output.trim().split("\n")).toEqual([
+    expect(output().trim().split("\n")).toEqual([
       "PARENT-READY",
       'PARENT-GOT:"first\\n"',
       "CHILD-READY",
@@ -769,16 +775,7 @@ describe("pause() inside a 'data' handler, then a child inherits stdin", () => {
       stdout: "pipe",
       stderr: "inherit",
     });
-    let output = "";
-    const decoder = new TextDecoder();
-    const reader = proc.stdout.getReader();
-    async function until(marker: string) {
-      while (!output.includes(marker)) {
-        const { value, done } = await reader.read();
-        if (done) throw new Error("stdout ended before " + marker + ": " + JSON.stringify(output));
-        output += decoder.decode(value, { stream: true });
-      }
-    }
+    const { until, output } = readUntil(proc.stdout);
     await until("PARENT-READY");
     proc.stdin.write("first\n");
     await proc.stdin.flush();
@@ -788,7 +785,7 @@ describe("pause() inside a 'data' handler, then a child inherits stdin", () => {
     await Bun.write(join(String(dir), "second-written"), "");
     await until("CHILD-GOT");
     await proc.stdin.end();
-    expect(output.trim().split("\n")).toEqual(["PARENT-READY", 'PARENT-GOT:"first\\n"', 'CHILD-GOT:"second\\n"']);
+    expect(output().trim().split("\n")).toEqual(["PARENT-READY", 'PARENT-GOT:"first\\n"', 'CHILD-GOT:"second\\n"']);
     expect(await proc.exited).toBe(0);
   }
 
@@ -828,16 +825,7 @@ describe("a synchronous spawn that inherits a flowing stdin gets the input that 
       stdout: "pipe",
       stderr: "inherit",
     });
-    let output = "";
-    const decoder = new TextDecoder();
-    const reader = proc.stdout.getReader();
-    async function until(marker: string) {
-      while (!output.includes(marker)) {
-        const { value, done } = await reader.read();
-        if (done) throw new Error("stdout ended before " + marker + ": " + JSON.stringify(output));
-        output += decoder.decode(value, { stream: true });
-      }
-    }
+    const { until, output } = readUntil(proc.stdout);
     await until("PARENT-READY");
     proc.stdin.write("first\n");
     await proc.stdin.flush();
@@ -849,7 +837,7 @@ describe("a synchronous spawn that inherits a flowing stdin gets the input that 
     await proc.stdin.flush();
     await until('PARENT-GOT:"third');
     await proc.stdin.end();
-    expect(output.trim().split("\n")).toEqual([
+    expect(output().trim().split("\n")).toEqual([
       "PARENT-READY",
       'PARENT-GOT:"first\\n"',
       "CHILD-READY",

@@ -112,8 +112,6 @@ pub use JscSubprocess::StdioKind;
 
 use crate::shell::ShellErr;
 
-pub type StdioResult = Option<Fd>;
-
 bun_output::define_scoped_log!(log, SHELL_SUBPROC, visible);
 
 /// Used for captured writer
@@ -843,8 +841,7 @@ impl ShellSubprocess {
             && bun_spawn::ctrl_c::child_died_of_it(status);
         let exit_code: Option<u8> = 'brk: {
             if let Status::Exited(exited) = &status {
-                #[cfg(windows)]
-                if exited.raw == bun_sys::windows::STATUS_CONTROL_C_EXIT {
+                if exited.is_ctrl_c_exit() {
                     break 'brk SignalCode::SIGINT.to_exit_code();
                 }
                 break 'brk Some(exited.code);
@@ -914,7 +911,7 @@ impl Writable {
         stdio: Stdio,
         event_loop: EventLoopHandle,
         subprocess: *mut Subprocess,
-        result: StdioResult,
+        result: Option<Fd>,
     ) -> Result<Writable, WritableInitError> {
         assert_stdio_result(result);
 
@@ -1083,7 +1080,7 @@ impl Readable {
         shellio: Option<Arc<IOWriter>>,
         event_loop: EventLoopHandle,
         process: *mut ShellSubprocess,
-        result: StdioResult,
+        result: Option<Fd>,
         interp: *mut crate::shell::interpreter::Interpreter,
         _max_size: u32,
         _is_sync: bool,
@@ -1298,7 +1295,7 @@ pub struct PipeReader {
     pub(crate) process: Option<*mut ShellSubprocess>,
     pub(crate) event_loop: EventLoopHandle,
     pub(crate) state: PipeReaderState,
-    pub(crate) stdio_result: StdioResult,
+    pub(crate) stdio_result: Option<Fd>,
     pub(crate) out_type: OutKind,
     pub(crate) captured_writer: CapturedWriter,
     pub(crate) buffered_output: BufferedOutput,
@@ -1529,7 +1526,7 @@ impl PipeReader {
     pub(crate) fn create(
         event_loop: EventLoopHandle,
         process: *mut ShellSubprocess,
-        result: StdioResult,
+        result: Option<Fd>,
         capture: Option<Arc<IOWriter>>,
         buffered_output: BufferedOutput,
         out_type: OutKind,
@@ -1619,7 +1616,7 @@ impl PipeReader {
                     }
                     self.reader
                         .flags
-                        .insert(bun_io::pipe_reader::PosixFlags::SOCKET);
+                        .insert(bun_io::pipe_reader::ReaderFlags::SOCKET);
                 }
 
                 Ok(())

@@ -254,17 +254,13 @@ export interface DirectBuild {
   codegen?: DirectCodegen;
   /**
    * Fail the build if any object of this dep still has an undefined
-   * reference to one of `symbols` (llvm-nm over the objects, once they
+   * reference to one of these symbols (llvm-nm over the objects, once they
    * exist). Names are matched with and without the Mach-O leading
    * underscore. The use so far: deps whose allocations bun routes to
    * mimalloc must not reach the C library's allocator behind its back, see
    * LIBC_ALLOCATION_SYMBOLS. Skipped when llvm-nm was not found (cfg.nm).
    */
-  forbidUndefined?: ForbidUndefined;
-}
-
-export interface ForbidUndefined {
-  symbols: readonly string[];
+  forbidUndefined?: readonly string[];
 }
 
 /**
@@ -1743,8 +1739,8 @@ function emitForbidUndefined(
   objects: string[],
   buildDir: string,
 ): string[] {
-  const { symbols } = spec.forbidUndefined!;
-  assert(symbols.length > 0, `${name}: forbidUndefined.symbols is empty`);
+  const symbols = spec.forbidUndefined!;
+  assert(symbols.length > 0, `${name}: forbidUndefined is empty`);
   if (cfg.nm === undefined) return [];
 
   mkdirSync(buildDir, { recursive: true });

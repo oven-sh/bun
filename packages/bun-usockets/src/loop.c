@@ -22,6 +22,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
+#include <mimalloc.h>
 #ifndef WIN32
 #include <fcntl.h>
 #include <sys/ioctl.h>
@@ -96,6 +97,15 @@ void us_internal_sweep_if_due(struct us_loop_t *loop) {
     us_internal_timer_sweep(loop);
 }
 
+void us_internal_idle_sweep(uint64_t now_ns) {
+    static const uint64_t idle_sweep_interval_ns = 100 * 1000000ULL;
+    static _Thread_local uint64_t last_idle_sweep_ns = 0;
+    const uint64_t sweep_now_ns = now_ns ? now_ns : us_internal_monotonic_ns();
+    if (sweep_now_ns >= last_idle_sweep_ns + idle_sweep_interval_ns) {
+        last_idle_sweep_ns = sweep_now_ns;
+        mi_on_thread_idle();
+    }
+}
 
 /* -1 if the wakeup async cannot be created; nothing is left allocated in loop->data. */
 int us_internal_loop_data_init(struct us_loop_t *loop, void (*wakeup_cb)(struct us_loop_t *loop),
@@ -403,7 +413,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
             if (!cb->leave_poll_ready) {
                 us_internal_accept_poll_event(p);
             }
-            cb->cb(cb->cb_expects_the_loop ? (struct us_internal_callback_t *) cb->loop : (struct us_internal_callback_t *) &cb->p);
+            cb->cb((struct us_internal_callback_t *) cb->loop);
             break;
         }
     case POLL_TYPE_SEMI_SOCKET: {

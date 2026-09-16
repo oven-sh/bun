@@ -912,10 +912,9 @@ impl Fd {
     }
     /// C runtime file number. On POSIX this equals `native()`. On Windows,
     /// when kind=crt this extracts the stored CRT fd; when kind=system this
-    /// maps stdio handles to 0/1/2 (checking both the cached statics and the
-    /// live `GetStdHandle` result) and **panics** otherwise — converting an
-    /// arbitrary HANDLE to a CRT fd makes closing impossible. The supplier
-    /// should call `make_crt_owned_for_syscall()` near where `open()` was called.
+    /// **panics** — converting a HANDLE to a CRT fd makes closing impossible.
+    /// The supplier should call `make_crt_owned_for_syscall()` near where
+    /// `open()` was called.
     #[cfg(not(windows))]
     #[inline]
     pub const fn crt(self) -> i32 {
@@ -925,38 +924,12 @@ impl Fd {
     pub fn crt(self) -> i32 {
         match self.decode_windows() {
             DecodeWindows::Crt(v) => v,
-            DecodeWindows::Windows(handle) => {
-                // `.stdin()`/`.stdout()`/`.stderr()` hand out the cached
-                // `WINDOWS_CACHED_STD{IN,OUT,ERR}` (snapshotted at startup),
-                // so round-trip against those first. Comparing only against
-                // the live `GetStdHandle` result panics if the process std
-                // handle was swapped after startup via `SetStdHandle`,
-                // `AllocConsole`, `AttachConsole`, etc.
-                if Some(self) == fd::WINDOWS_CACHED_STDIN.get().copied() {
-                    return 0;
-                }
-                if Some(self) == fd::WINDOWS_CACHED_STDOUT.get().copied() {
-                    return 1;
-                }
-                if Some(self) == fd::WINDOWS_CACHED_STDERR.get().copied() {
-                    return 2;
-                }
-                if fd::is_stdio_handle(fd::STD_INPUT_HANDLE, handle) {
-                    return 0;
-                }
-                if fd::is_stdio_handle(fd::STD_OUTPUT_HANDLE, handle) {
-                    return 1;
-                }
-                if fd::is_stdio_handle(fd::STD_ERROR_HANDLE, handle) {
-                    return 2;
-                }
-                panic!(
-                    "Fd::crt({}) on a HANDLE makes closing impossible!\n\n\
-                     The supplier of the fd should call `make_crt_owned_for_syscall()`,\n\
-                     probably where open() was called.",
-                    self,
-                );
-            }
+            DecodeWindows::Windows(_) => panic!(
+                "Fd::crt({}) on a HANDLE makes closing impossible!\n\n\
+                 The supplier of the fd should call `make_crt_owned_for_syscall()`,\n\
+                 probably where open() was called.",
+                self,
+            ),
         }
     }
 

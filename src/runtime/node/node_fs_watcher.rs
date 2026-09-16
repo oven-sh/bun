@@ -372,8 +372,6 @@ impl FSWatcher {
         this.current_task.with_mut(|t| t.append(event, true));
     }
 
-    pub(crate) const ON_PATH_UPDATE: fn(Option<*mut c_void>, Event, bool) = Self::on_path_update;
-
     pub(crate) fn on_update_end(ctx: Option<*mut c_void>) {
         let this = Self::from_ctx(ctx);
         if this.verbose {
@@ -938,14 +936,7 @@ impl FSWatcher {
         ctx_ref
             .path_watcher
             .set(if args.signal.is_none_or(|s| !s.aborted()) {
-                let r = path_watcher::watch(
-                    vm_ref,
-                    file_path,
-                    args.recursive,
-                    FSWatcher::ON_PATH_UPDATE,
-                    FSWatcher::on_update_end,
-                    ctx.cast::<c_void>(),
-                );
+                let r = path_watcher::watch(file_path, args.recursive, ctx.cast::<c_void>());
                 match r {
                     Ok(r) => Some(r),
                     Err(err) => {

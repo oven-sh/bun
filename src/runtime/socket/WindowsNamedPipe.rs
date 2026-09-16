@@ -12,8 +12,7 @@ use core::cell::Cell;
 use core::ffi::{c_uint, c_void};
 
 use bun_boringssl_sys as boringssl;
-use bun_core::timespec;
-use bun_io::windows::{ConnectRequest, Pipe, ReadEvent};
+use bun_io::windows::{ConnectRequest, Pipe, PipeOrigin, ReadEvent};
 use bun_io::{Source, StreamingWriter, WriteStatus};
 use bun_jsc::JsCell;
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -22,15 +21,13 @@ use bun_uws::us_bun_verify_error_t;
 
 use crate::socket::SSLConfig;
 use crate::socket::ssl_wrapper::{self, SSLWrapper};
-use crate::timer::{ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
+use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 
 bun_output::declare_scope!(WindowsNamedPipe, visible);
 
 pub type CertError = crate::socket::upgraded_duplex::CertError;
 
 type WrapperType = SSLWrapper<*mut WindowsNamedPipe>;
-
-use crate::jsc_hooks::timer_all_mut as timer_all;
 
 pub struct WindowsNamedPipe {
     pub(crate) wrapper: JsCell<Option<WrapperType>>,
@@ -321,17 +318,7 @@ impl WindowsNamedPipe {
         bun_output::scoped_log!(WindowsNamedPipe, "onHandshake");
         let _keep_alive = self.keep_alive();
 
-        self.ssl_error.set(CertError {
-            error_no: ssl_error.error_no,
-            code: ssl_error
-                .code()
-                .filter(|_| ssl_error.error_no != 0)
-                .map(Into::into),
-            reason: ssl_error
-                .reason()
-                .filter(|_| ssl_error.error_no != 0)
-                .map(Into::into),
-        });
+        self.ssl_error.set(CertError::from_verify_error(&ssl_error));
         (self.handlers.on_handshake)(self.handlers.ctx, handshake_success, ssl_error);
         // Retry writes parked during the handshake; a TLS 1.2 client's completion sends nothing.
         if handshake_success && !self.is_shutdown() {
@@ -549,11 +536,12 @@ impl WindowsNamedPipe {
             result?;
         }
         let loop_ = self.vm.uws_loop();
-        let pipe = if created_here {
-            Pipe::open_owned(loop_, fd, true)?
+        let origin = if created_here {
+            PipeOrigin::Created
         } else {
-            Pipe::open_foreign(loop_, fd, true)?
+            PipeOrigin::Foreign
         };
+        let pipe = Pipe::open(loop_, fd, origin, true)?;
 
         let _keep_alive = self.keep_alive();
         self.on_connected(pipe);
@@ -736,13 +724,7 @@ impl WindowsNamedPipe {
 
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__ssl_error", no_catch)]
     pub fn ssl_error(&self) -> us_bun_verify_error_t {
-        let err = self.ssl_error.get();
-        us_bun_verify_error_t {
-            error_no: err.error_no,
-            // CertError.code/.reason are owned `Box<CStr>`s; fall back to "" when absent.
-            code: err.code.as_deref().map_or(c"".as_ptr(), |c| c.as_ptr()),
-            reason: err.reason.as_deref().map_or(c"".as_ptr(), |c| c.as_ptr()),
-        }
+        self.ssl_error.get().as_verify_error()
     }
 
     pub(crate) fn reset_timeout(&self) {
@@ -750,30 +732,10 @@ impl WindowsNamedPipe {
     }
 
     pub(crate) fn set_timeout_in_milliseconds(&self, ms: c_uint) {
-        if self.event_loop_timer.get().state == EventLoopTimerState::ACTIVE {
-            timer_all().remove(self.event_loop_timer.as_ptr());
-        }
-        self.current_timeout.set(ms);
-
-        // if the interval is 0 means that we stop the timer
-        if ms == 0 {
-            return;
-        }
-
-        // reschedule the timer
-        // `EventLoopTimer.next` is the lower-tier `ElTimespec`;
-        // bridge from `bun_core::Timespec`.
-        let next = timespec::ms_from_now(bun_core::TimespecMockMode::ForceRealTime, ms as i64);
-        self.event_loop_timer.with_mut(|t| {
-            t.next = ElTimespec {
-                sec: next.sec,
-                nsec: next.nsec,
-            };
-        });
-        timer_all().insert(
-            core::ptr::addr_of!(self.event_loop_timer)
-                .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
-                .cast_mut(),
+        crate::socket::upgraded_duplex::set_socket_timeout(
+            &self.event_loop_timer,
+            &self.current_timeout,
+            ms,
         );
     }
 

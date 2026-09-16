@@ -344,20 +344,6 @@ extern "C"
     }
   }
 
-  void uws_app_run(int ssl, uws_app_t *app)
-  {
-    if (ssl)
-    {
-      uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
-      uwsApp->run();
-    }
-    else
-    {
-      uWS::App *uwsApp = (uWS::App *)app;
-      uwsApp->run();
-    }
-  }
-
   void uws_app_close(int ssl, uws_app_t *app)
   {
     if (ssl)

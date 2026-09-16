@@ -110,6 +110,14 @@ impl ChildStdio {
         let pair = stdio::create_pipe_pair(child)?;
         self.to_close.push(pair.child);
         self.parent_ends.push(pair.parent);
+        if win32::SetHandleInformation(
+            pair.child,
+            win32::HANDLE_FLAG_INHERIT,
+            win32::HANDLE_FLAG_INHERIT,
+        ) == 0
+        {
+            return Err(win32::GetLastError());
+        }
         Ok((
             ChildFd {
                 handle: pair.child,
@@ -134,6 +142,7 @@ fn make_slot(
     index: usize,
     options: &SpawnOptions,
 ) -> Result<Slot, bun_sys::Error> {
+    // `uv_spawn` is the `syscall` name a `Bun.spawn` error carries on Windows.
     let spawn_error = |code: DWORD| win32::sys_error(code, Tag::uv_spawn);
     let duplex = |overlapped: bool| ChildPipe {
         readable: true,
@@ -542,8 +551,7 @@ unsafe fn spawn(options: &SpawnOptions, argv: Argv, envp: Envp) -> bun_sys::Resu
         job::global_job().map_err(spawn_error)?
     };
 
-    // SAFETY: all-zero is a valid PROCESS_INFORMATION.
-    let mut info: win32::PROCESS_INFORMATION = unsafe { core::mem::zeroed() };
+    let mut info: win32::PROCESS_INFORMATION = bun_core::ffi::zeroed();
     loop {
         let attribute_count =
             DWORD::from(!job.is_null()) + DWORD::from(options.pseudoconsole.is_some());

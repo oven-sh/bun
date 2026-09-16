@@ -1519,7 +1519,12 @@ fn spawn_maybe_sync(
         // created for the channel.
         #[cfg(windows)]
         if let Err(err) = unsafe {
-            IPC::SendQueue::open_pipe(ipc_data.as_ctx_ptr(), loop_handle.loop_(), ipc_fd, true)
+            IPC::SendQueue::open_pipe(
+                ipc_data.as_ctx_ptr(),
+                loop_handle.loop_(),
+                ipc_fd,
+                bun_io::windows::PipeOrigin::Created,
+            )
         } {
             return Some(err);
         }

@@ -2237,19 +2237,13 @@ pub use crate::shell::states::assigns::AssignCtx;
 /// writable: `setup_io_before_run` installs the result as the stdout/stderr
 /// `IOWriter` target (and `init` uses it for stdin), so `RDWR` covers both.
 fn open_null_device() -> bun_sys::Result<Fd> {
-    #[cfg(unix)]
-    {
-        bun_sys::open(
-            bun_core::ZStr::from_static(b"/dev/null\0"),
-            bun_sys::O::RDWR,
-            0,
-        )
-    }
-    #[cfg(windows)]
-    {
-        // Windows NUL is bidirectional regardless of the open flags.
-        bun_sys::open(bun_core::ZStr::from_static(b"nul\0"), bun_sys::O::RDWR, 0)
-    }
+    // Windows NUL is bidirectional regardless of the open flags.
+    const NULL_DEVICE: &bun_core::ZStr = if cfg!(windows) {
+        bun_core::zstr!("nul")
+    } else {
+        bun_core::zstr!("/dev/null")
+    };
+    bun_sys::open(NULL_DEVICE, bun_sys::O::RDWR, 0)
 }
 
 /// `false` when `fstat` fails (non-pollable → synchronous write path).

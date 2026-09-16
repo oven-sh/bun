@@ -1242,7 +1242,7 @@ pub use dir::*;
 #[cfg(unix)]
 pub type Stat = libc::stat;
 #[cfg(windows)]
-pub use windows::fs::{Stat, StatTimespec};
+pub use windows::fs::Stat;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Syscall surface — real posix libc FFI. Windows path lives in
@@ -1378,7 +1378,6 @@ impl Tag {
     pub const setsockopt: Tag = Tag(86);
     pub const rm: Tag = Tag(88);
     pub const uv_spawn: Tag = Tag(89);
-    pub const uv_pipe: Tag = Tag(90);
     pub const uv_tty_set_mode: Tag = Tag(91);
     pub const uv_os_homedir: Tag = Tag(93);
     pub const WriteFile: Tag = Tag(94);
@@ -3517,8 +3516,8 @@ mod windows_impl {
 
     pub use w::fs::{
         chmod, chown, fchmod, fchown, fdatasync, fstat, fsync, ftruncate, futimens, isatty,
-        junction, lchown, link, lstat, lutimens, mkdir, mkdtemp, open, pipe, readlink, realpath,
-        rename, stat, symlink, symlink_dir, unlink, utimens,
+        junction, lchown, link, lstat, lutimens, mkdir, mkdtemp, open, pipe, pread, pwrite, read,
+        readlink, realpath, rename, stat, symlink, symlink_dir, unlink, utimens, write,
     };
 
     pub fn close(fd: Fd) -> Maybe<()> {
@@ -3526,182 +3525,6 @@ mod windows_impl {
             Some(e) => Err(e),
             None => Ok(()),
         }
-    }
-    pub fn read(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
-        let adjusted_len = buf.len().min(MAX_COUNT) as w::DWORD;
-        // Stdin callers route through this function (via
-        // `File::stdin().read_to_end_into` / `output_sink().read`), so the
-        // OPERATION_ABORTED retry lives here.
-        loop {
-            let mut amount_read: w::DWORD = 0;
-            // SAFETY: FFI; buf valid for `adjusted_len`.
-            let rc = unsafe {
-                w::kernel32::ReadFile(
-                    fd.native(),
-                    buf.as_mut_ptr(),
-                    adjusted_len,
-                    &mut amount_read,
-                    core::ptr::null_mut(),
-                )
-            };
-            if rc == 0 {
-                let er = w::Win32Error::get();
-                if er == w::Win32Error::OPERATION_ABORTED {
-                    continue;
-                }
-                return match w::fs::read_error(er, Tag::read) {
-                    Some(err) => Err(err.with_fd(fd)),
-                    None => Ok(0),
-                };
-            }
-            return Ok(amount_read as usize);
-        }
-    }
-    pub fn write(fd: Fd, buf: &[u8]) -> Maybe<usize> {
-        let adjusted_len = buf.len().min(MAX_COUNT) as w::DWORD;
-        let mut bytes_written: w::DWORD = 0;
-        // SAFETY: FFI; buf valid for `adjusted_len`.
-        let rc = unsafe {
-            w::kernel32::WriteFile(
-                fd.native(),
-                buf.as_ptr(),
-                adjusted_len,
-                &mut bytes_written,
-                core::ptr::null_mut(),
-            )
-        };
-        if rc == 0 {
-            return Err(w::fs::write_error(w::Win32Error::get(), Tag::write).with_fd(fd));
-        }
-        Ok(bytes_written as usize)
-    }
-    /// A positioned `ReadFile`/`WriteFile` on a synchronous handle moves its
-    /// file pointer too. `fs.read(fd, .., position)` must leave it alone, so it
-    /// is put back for the fds JS can see (CRT fds). HANDLE-kind callers never
-    /// mix positioned and sequential I/O on one handle and skip the two calls.
-    pub(crate) struct RestoreFilePointer {
-        handle: w::HANDLE,
-        saved: Option<i64>,
-    }
-    impl RestoreFilePointer {
-        pub(crate) fn new(fd: Fd) -> Self {
-            const FILE_POSITION_INFORMATION: bun_windows_sys::FILE_INFORMATION_CLASS =
-                bun_windows_sys::FILE_INFORMATION_CLASS(14);
-            let handle = fd.native();
-            let mut saved = None;
-            if fd.kind() == FdKind::Crt {
-                let mut io: bun_windows_sys::IO_STATUS_BLOCK = bun_core::ffi::zeroed();
-                let mut current: i64 = 0;
-                // One system call; `SetFilePointerEx(FILE_CURRENT)` is this
-                // query followed by a set.
-                // SAFETY: FFI; `handle` is the fd's HANDLE, and the class
-                // writes one `LARGE_INTEGER` into `current`.
-                let status = unsafe {
-                    bun_windows_sys::ntdll::NtQueryInformationFile(
-                        handle,
-                        &mut io,
-                        core::ptr::from_mut(&mut current).cast(),
-                        core::mem::size_of::<i64>() as u32,
-                        FILE_POSITION_INFORMATION,
-                    )
-                };
-                if bun_windows_sys::NT_SUCCESS(status) {
-                    saved = Some(current);
-                }
-            }
-            Self { handle, saved }
-        }
-    }
-    impl Drop for RestoreFilePointer {
-        fn drop(&mut self) {
-            if let Some(position) = self.saved {
-                // SAFETY: FFI; `handle` outlives the guard.
-                unsafe {
-                    w::SetFilePointerEx(self.handle, position, core::ptr::null_mut(), w::FILE_BEGIN)
-                };
-            }
-        }
-    }
-
-    /// A negative `off` reads at the file pointer.
-    pub fn pread(fd: Fd, buf: &mut [u8], off: i64) -> Maybe<usize> {
-        if off < 0 {
-            return read(fd, buf);
-        }
-        let _restore = RestoreFilePointer::new(fd);
-        pread_at(fd, buf, off as u64)
-    }
-    /// `pread` under a [`RestoreFilePointer`] the caller holds.
-    pub(crate) fn pread_at(fd: Fd, buf: &mut [u8], off: u64) -> Maybe<usize> {
-        let adjusted_len = buf.len().min(MAX_COUNT) as w::DWORD;
-        loop {
-            let mut overlapped = w::OVERLAPPED {
-                Internal: 0,
-                InternalHigh: 0,
-                Offset: off as w::DWORD,
-                OffsetHigh: (off >> 32) as w::DWORD,
-                hEvent: core::ptr::null_mut(),
-            };
-            let mut amount_read: w::DWORD = 0;
-            // SAFETY: FFI; `buf` valid for `adjusted_len`, `overlapped` lives
-            // for the synchronous call (handle was not opened
-            // FILE_FLAG_OVERLAPPED).
-            let rc = unsafe {
-                w::kernel32::ReadFile(
-                    fd.native(),
-                    buf.as_mut_ptr(),
-                    adjusted_len,
-                    &mut amount_read,
-                    core::ptr::from_mut(&mut overlapped).cast(),
-                )
-            };
-            if rc == 0 {
-                let er = w::Win32Error::get();
-                if er == w::Win32Error::OPERATION_ABORTED {
-                    continue;
-                }
-                return match w::fs::read_error(er, Tag::read) {
-                    Some(err) => Err(err.with_fd(fd)),
-                    None => Ok(0),
-                };
-            }
-            return Ok(amount_read as usize);
-        }
-    }
-    /// A negative `off` writes at the file pointer; see `pread`.
-    pub fn pwrite(fd: Fd, buf: &[u8], off: i64) -> Maybe<usize> {
-        if off < 0 {
-            return write(fd, buf);
-        }
-        let _restore = RestoreFilePointer::new(fd);
-        pwrite_at(fd, buf, off as u64)
-    }
-    /// `pwrite` under a [`RestoreFilePointer`] the caller holds.
-    pub(crate) fn pwrite_at(fd: Fd, buf: &[u8], off: u64) -> Maybe<usize> {
-        let adjusted_len = buf.len().min(MAX_COUNT) as w::DWORD;
-        let mut overlapped = w::OVERLAPPED {
-            Internal: 0,
-            InternalHigh: 0,
-            Offset: off as w::DWORD,
-            OffsetHigh: (off >> 32) as w::DWORD,
-            hEvent: core::ptr::null_mut(),
-        };
-        let mut bytes_written: w::DWORD = 0;
-        // SAFETY: FFI; `buf` valid for `adjusted_len`, `overlapped` lives for
-        // the synchronous call (handle was not opened FILE_FLAG_OVERLAPPED).
-        let rc = unsafe {
-            w::kernel32::WriteFile(
-                fd.native(),
-                buf.as_ptr(),
-                adjusted_len,
-                &mut bytes_written,
-                core::ptr::from_mut(&mut overlapped).cast(),
-            )
-        };
-        if rc == 0 {
-            return Err(w::fs::write_error(w::Win32Error::get(), Tag::write).with_fd(fd));
-        }
-        Ok(bytes_written as usize)
     }
     pub fn openat(dir: impl AsFd, path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
         let dir = dir.as_fd();
@@ -4122,6 +3945,7 @@ mod windows_impl {
         // before the `usize → i32` cast — otherwise ≥2 GiB buffers wrap to a
         // negative length and Winsock fails with WSAEFAULT.
         let len = buf.len().min(i32::MAX as usize) as i32;
+        // SAFETY: FFI; `buf` is writable for `len` bytes.
         let rc =
             unsafe { w::ws2_32::recv(fd.native() as _, buf.as_mut_ptr().cast::<_>(), len, flags) };
         if rc < 0 {
@@ -4133,6 +3957,7 @@ mod windows_impl {
         // Winsock `send`. Clamp to `i32::MAX` so the
         // `usize → i32` cast can't wrap to a negative length on huge buffers.
         let len = buf.len().min(i32::MAX as usize) as i32;
+        // SAFETY: FFI; `buf` is readable for `len` bytes.
         let rc = unsafe { w::ws2_32::send(fd.native() as _, buf.as_ptr().cast::<_>(), len, flags) };
         if rc < 0 {
             return Err(Error::from_win32(w::Win32Error::get(), Tag::send).with_fd(fd));
@@ -4197,12 +4022,10 @@ fn read_fill_vec(
 // ──────────────────────────────────────────────────────────────────────────
 // `bun.PlatformIOVecConst` / `bun.platformIOVecConstCreate` — POSIX
 // `iovec_const` (= `struct iovec` with the writev contract that `base` is
-// not written through). On Windows it has the layout of
-// `PlatformIoVec`; that arm is below.
-// On POSIX the layout matches `libc::iovec` (`{ *void, usize }`) so a
-// `&[PlatformIoVecConst]` can be passed straight to `pwritev(2)`.
+// not written through). The layout is that of `PlatformIoVec`
+// (`{ *void, usize }`): on POSIX a `&[PlatformIoVecConst]` can be passed
+// straight to `pwritev(2)`.
 // ──────────────────────────────────────────────────────────────────────────
-#[cfg(unix)]
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct PlatformIoVecConst {
@@ -4210,15 +4033,12 @@ pub struct PlatformIoVecConst {
     pub len: usize,
 }
 // SAFETY: `{ *const u8, usize }` — `(null, 0)` is a valid empty iovec.
-#[cfg(unix)]
 unsafe impl bun_core::ffi::Zeroable for PlatformIoVecConst {}
-#[cfg(unix)]
 const _: () = assert!(
-    core::mem::size_of::<PlatformIoVecConst>() == core::mem::size_of::<libc::iovec>()
-        && core::mem::align_of::<PlatformIoVecConst>() == core::mem::align_of::<libc::iovec>()
+    core::mem::size_of::<PlatformIoVecConst>() == core::mem::size_of::<PlatformIoVec>()
+        && core::mem::align_of::<PlatformIoVecConst>() == core::mem::align_of::<PlatformIoVec>()
 );
 
-#[cfg(unix)]
 #[inline]
 pub fn platform_iovec_const_create(buf: &[u8]) -> PlatformIoVecConst {
     PlatformIoVecConst {
@@ -4294,8 +4114,7 @@ pub fn pwritev(fd: Fd, vecs: &[PlatformIoVecConst], offset: i64) -> Maybe<usize>
 // ──────────────────────────────────────────────────────────────────────────
 // `bun.PlatformIOVec` — mutable iovec. On POSIX it is `libc::iovec`, so a
 // `&[PlatformIoVec]` can be passed straight to `readv(2)`/`writev(2)`. On
-// Windows it has the layout of `WSABUF`: `{ ULONG len; char* buf; }`, the
-// fields in the opposite order.
+// Windows it is a struct of the same shape.
 // ──────────────────────────────────────────────────────────────────────────
 #[cfg(unix)]
 pub type PlatformIoVec = libc::iovec;
@@ -4303,10 +4122,10 @@ pub type PlatformIoVec = libc::iovec;
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct PlatformIoVec {
-    pub len: windows::ULONG,
-    pub base: *mut u8,
+    pub iov_base: *mut core::ffi::c_void,
+    pub iov_len: usize,
 }
-// SAFETY: `{ ULONG, *mut u8 }` — `(0, null)` is a valid empty buffer.
+// SAFETY: `{ *mut c_void, usize }` — `(null, 0)` is a valid empty buffer.
 #[cfg(windows)]
 unsafe impl bun_core::ffi::Zeroable for PlatformIoVec {}
 pub use PlatformIoVec as PlatformIOVec;
@@ -4314,60 +4133,15 @@ pub use PlatformIoVecConst as PlatformIOVecConst;
 
 #[inline]
 pub fn platform_iovec_create(buf: &mut [u8]) -> PlatformIoVec {
-    #[cfg(unix)]
-    {
-        PlatformIoVec {
-            iov_base: buf.as_mut_ptr().cast(),
-            iov_len: buf.len(),
-        }
-    }
-    #[cfg(windows)]
-    {
-        debug_assert!(buf.len() <= windows::ULONG::MAX as usize);
-        PlatformIoVec {
-            len: buf.len() as windows::ULONG,
-            base: buf.as_mut_ptr(),
-        }
+    PlatformIoVec {
+        iov_base: buf.as_mut_ptr().cast(),
+        iov_len: buf.len(),
     }
 }
 
 #[inline]
 pub const fn platform_iovec_len(iov: &PlatformIoVec) -> usize {
-    #[cfg(unix)]
-    {
-        iov.iov_len
-    }
-    #[cfg(windows)]
-    {
-        iov.len as usize
-    }
-}
-
-/// Windows `PlatformIOVecConst` — the layout of `PlatformIoVec`, with `base`
-/// typed `*const u8` so callers can build it from `&[u8]` without casts.
-#[cfg(windows)]
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct PlatformIoVecConst {
-    pub len: windows::ULONG,
-    pub(crate) base: *const u8,
-}
-// SAFETY: `{ ULONG, *const u8 }` — `(0, null)` is a valid empty buffer.
-#[cfg(windows)]
-unsafe impl bun_core::ffi::Zeroable for PlatformIoVecConst {}
-#[cfg(windows)]
-const _: () = assert!(
-    core::mem::size_of::<PlatformIoVecConst>() == core::mem::size_of::<PlatformIoVec>()
-        && core::mem::align_of::<PlatformIoVecConst>() == core::mem::align_of::<PlatformIoVec>()
-);
-#[cfg(windows)]
-#[inline]
-pub fn platform_iovec_const_create(buf: &[u8]) -> PlatformIoVecConst {
-    debug_assert!(buf.len() <= windows::ULONG::MAX as usize);
-    PlatformIoVecConst {
-        len: buf.len() as windows::ULONG,
-        base: buf.as_ptr(),
-    }
+    iov.iov_len
 }
 
 /// `bun.sys.writev` — gather-write. Retries on EINTR

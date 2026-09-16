@@ -43,6 +43,7 @@ impl PollOrFd {
         }
     }
 
+    #[cfg(unix)]
     pub(crate) fn get_poll_mut(&mut self) -> Option<FilePollRef> {
         match self {
             PollOrFd::Poll(poll) => Some(*poll),

@@ -116,6 +116,8 @@ function systemLibs(cfg: Config): string[] {
       "crypt32.lib",
       "wsock32.lib", // ws2_32 + wsock32 — wsock32 has TransmitFile (sendfile equiv)
       "ws2_32.lib",
+      "iphlpapi.lib",
+      "advapi32.lib",
       "delayimp.lib", // required for /delayload: in release
     );
   }

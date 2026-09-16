@@ -32,7 +32,7 @@ use super::sys as win;
 use super::sys::{HANDLE, INVALID_HANDLE_VALUE, Win32Error};
 use super::tty_input::{self, RawInputState};
 use super::tty_output::{self, OutputState};
-use super::{Callback, Link, Port};
+use super::{Callback, Link, Port, ReadCallback};
 
 /// How console input is delivered.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -309,15 +309,6 @@ pub fn is_console(handle: HANDLE) -> bool {
     unsafe { win::GetConsoleMode(handle, &raw mut mode) != 0 }
 }
 
-type ReadCallback = unsafe fn(*const (), *mut c_void, ReadEvent<'_>);
-
-#[derive(Clone, Copy)]
-struct Reader {
-    ctx: *mut c_void,
-    f: *const (),
-    call: ReadCallback,
-}
-
 /// The owner's handle to a console. Dropping it closes without telling anyone.
 pub struct Tty {
     inner: NonNull<Inner>,
@@ -346,7 +337,7 @@ struct Inner {
     duplicated: bool,
     flags: Flags,
 
-    reader: Option<Reader>,
+    reader: Option<ReadCallback>,
     raw_state: RawInputState,
     raw_op: *mut RawOp,
     line_op: *mut LineOp,
@@ -411,24 +402,8 @@ impl Tty {
     pub fn open(loop_: *mut Loop, fd: Fd, close_fd: bool) -> sys::Result<Tty> {
         let original = fd.native();
         let (handle, close_with) = if fd.stdio_tag().is_some() {
-            let mut dup: HANDLE = ptr::null_mut();
-            // SAFETY: both process handles are the pseudo-handle; `original`
-            // is the caller's open HANDLE.
-            let ok = unsafe {
-                win::DuplicateHandle(
-                    win::GetCurrentProcess(),
-                    original,
-                    win::GetCurrentProcess(),
-                    &raw mut dup,
-                    0,
-                    0,
-                    win::DUPLICATE_SAME_ACCESS,
-                )
-            };
-            if ok == 0 {
-                return Err(sys::Error::from_win32(win::last_error(), Tag::dup).with_fd(fd));
-            }
-            (dup, Some(Fd::from_system(dup)))
+            let dup = sys::dup(fd)?;
+            (dup.native(), Some(dup))
         } else {
             (original, close_fd.then_some(fd))
         };
@@ -574,24 +549,13 @@ impl Tty {
         ctx: *mut T,
         on_read: unsafe fn(*mut T, ReadEvent<'_>),
     ) -> sys::Result<()> {
-        unsafe fn call<T>(f: *const (), ctx: *mut c_void, event: ReadEvent<'_>) {
-            // SAFETY: `f` was erased from exactly this type below.
-            let f =
-                unsafe { core::mem::transmute::<*const (), unsafe fn(*mut T, ReadEvent<'_>)>(f) };
-            // SAFETY: the owner keeps `ctx` valid while reading.
-            unsafe { f(ctx.cast::<T>(), event) }
-        }
         let this = self.raw();
         // SAFETY: `inner` is live while the owner's `Tty` is.
         unsafe {
             if (*this).flags.contains(Flags::DETACHED) || !(*this).flags.contains(Flags::READABLE) {
                 return Err(sys::Error::from_code(E::EBADF, Tag::read));
             }
-            (*this).reader = Some(Reader {
-                ctx: ctx.cast(),
-                f: on_read as *const (),
-                call: call::<T>,
-            });
+            (*this).reader = Some(ReadCallback::new(ctx, on_read));
             if (*this).flags.contains(Flags::READING) {
                 return Ok(());
             }
@@ -702,14 +666,14 @@ impl Tty {
         let this = self.raw();
         core::mem::forget(self);
         // SAFETY: `this` is live until `Inner::close` decides otherwise.
-        unsafe { Inner::close(this, false) };
+        unsafe { Inner::close(this, true) };
     }
 }
 
 impl Drop for Tty {
     fn drop(&mut self) {
         // SAFETY: `inner` is live until `Inner::close` decides otherwise.
-        unsafe { Inner::close(self.raw(), true) };
+        unsafe { Inner::close(self.raw(), false) };
     }
 }
 
@@ -869,7 +833,7 @@ impl Inner {
         // SAFETY: caller contract.
         unsafe {
             if let Some(reader) = (*this).reader {
-                (reader.call)(reader.f, reader.ctx, event);
+                reader.invoke(event);
             }
         }
     }
@@ -897,11 +861,11 @@ impl Inner {
 
     /// # Safety
     /// `this` is live; the owner's `Tty` is consumed or being dropped.
-    unsafe fn close(this: *mut Inner, silent: bool) {
+    unsafe fn close(this: *mut Inner, report_writes: bool) {
         // SAFETY: caller contract.
         unsafe {
             (*this).flags.insert(Flags::OWNER_GONE);
-            if silent {
+            if !report_writes {
                 (*this).flags.insert(Flags::SILENT);
             }
             (*this).reader = None;

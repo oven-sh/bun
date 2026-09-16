@@ -407,6 +407,15 @@ static void us_internal_rearm_writable(struct us_socket_t *s) {
                    LIBUS_SOCKET_WRITABLE | ((s->flags.is_paused || s->read_eof) ? 0 : LIBUS_SOCKET_READABLE));
 }
 
+int us_socket_get_error(struct us_socket_t *s) {
+    int error = 0;
+    socklen_t len = sizeof(error);
+    if (getsockopt(us_poll_fd(&s->p), SOL_SOCKET, SO_ERROR, (char *) &error, &len) == -1) {
+        return LIBUS_ERR;
+    }
+    return error;
+}
+
 /* See libusockets.h: whether a zero-progress write on a writable event proves
  * the peer is gone. Only Windows has to ask the kernel. */
 int us_socket_stalled_write_means_peer_gone(struct us_socket_t *s) {

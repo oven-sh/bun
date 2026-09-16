@@ -209,7 +209,7 @@ pub(crate) fn check_console_size_after_wake() {
         raise_if_console_resized();
     } else if !CONSOLE_SIZE_CHECK_DEFERRED.load(Ordering::Relaxed)
         && !CONSOLE_SIZE_CHECK_DEFERRED.swap(true, Ordering::AcqRel)
-        && !compare_in(CONSOLE_SIZE_INTERVAL_MS - since)
+        && !schedule_deferred_size_check(CONSOLE_SIZE_INTERVAL_MS - since)
     {
         CONSOLE_SIZE_CHECK_DEFERRED.store(false, Ordering::Release);
         raise_if_console_resized();
@@ -218,7 +218,7 @@ pub(crate) fn check_console_size_after_wake() {
 
 /// Have a pool thread make one comparison `ms` from now. `false` if the system
 /// has no timer to give.
-fn compare_in(ms: u64) -> bool {
+fn schedule_deferred_size_check(ms: u64) -> bool {
     let mut timer = DEFERRED_CHECK_TIMER.load(Ordering::Acquire);
     if timer.is_null() {
         // SAFETY: the callback takes no context; a null environment is the

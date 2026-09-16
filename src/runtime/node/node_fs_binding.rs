@@ -7,18 +7,17 @@ use bun_sys_jsc::SystemErrorJsc as _;
 
 use crate::node::ThreadIsolated;
 use crate::node::fs::{
-    self, AsyncCpTask, AsyncReaddirRecursiveTask, Flavor, FsArgument, FsReturn, NodeFS,
-    NodeFSDispatch, NodeFSFunctionEnum, Op, args, async_, ret,
+    self, AsyncCpTask, AsyncFSTask, AsyncReaddirRecursiveTask, Flavor, FsArgument, FsReturn,
+    NodeFS, NodeFSDispatch, NodeFSFunctionEnum, Op, args, async_, ret,
 };
 
 /// Signature of every generated NodeFS host function.
 pub(crate) type NodeFSFunction =
     fn(this: &Binding, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue>;
 
-// The (`args::*`, `ret::*`, `NodeFS::<method>`, `async_::*`) quadruples are
-// spelled out once in `node_fs.rs` (the `NodeFS::dispatch` table +
-// `async_::*` aliases) and reused here via the `node_fs_bindings!` macro at
-// the bottom of this file.
+// The (`args::*`, `ret::*`, `NodeFS::<method>`) triples are spelled out once in
+// `node_fs.rs` (the `NodeFS::dispatch` table) and reused here via the
+// `node_fs_bindings!` macro at the bottom of this file.
 
 /// Returns bindings to call jsc.Node.fs.NodeFS.<function>.
 /// Async calls use a thread pool.
@@ -52,20 +51,19 @@ where
 
 /// `Bindings(FunctionEnum).runAsync` for every operation except `.cp` /
 /// `.readdir` (those have bespoke entry points below).
-///
-/// `create_task` is `async_::<FunctionName>::create`.
-fn run_async<A: FsArgument>(
-    this: &Binding,
+fn run_async<R: FsReturn + 'static, A: FsArgument + 'static, const F: NodeFSFunctionEnum>(
     global: &JSGlobalObject,
     frame: &CallFrame,
-    create_task: fn(&JSGlobalObject, &Binding, ThreadIsolated<A>, &mut VirtualMachine) -> JSValue,
-) -> JsResult<JSValue> {
+) -> JsResult<JSValue>
+where
+    Op<{ F }>: NodeFSDispatch<R, A>,
+{
     let args = match parse_async_args::<A>(global, frame) {
         Ok(args) => args,
         Err(result) => return result,
     };
     let vm: &mut VirtualMachine = global.bun_vm().as_mut();
-    Ok(create_task(global, this, args, vm))
+    Ok(AsyncFSTask::<R, A, F>::create(global, args, vm))
 }
 
 /// Parses a promise-returning binding's arguments; `Err` is what the binding returns instead.
@@ -153,13 +151,17 @@ impl Binding {
     // ── Hand-written bindings for ops outside `NodeFSFunctionEnum` ────────
 
     /// `callAsync(.cp)`.
-    pub(crate) fn cp(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn cp(
+        _this: &Self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         let cp_args = match parse_async_args::<args::Cp<'static>>(global, frame) {
             Ok(args) => args,
             Err(result) => return result,
         };
         let vm: &mut VirtualMachine = global.bun_vm().as_mut();
-        Ok(AsyncCpTask::create(global, this, cp_args, vm))
+        Ok(AsyncCpTask::create(global, cp_args, vm))
     }
 
     /// `callSync(.cp)`.
@@ -185,7 +187,7 @@ impl Binding {
     /// `callAsync(.readdir)` — `args.recursive` selects
     /// `AsyncReaddirRecursiveTask` instead of the generic `AsyncFSTask`.
     pub(crate) fn readdir(
-        this: &Self,
+        _this: &Self,
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -200,7 +202,7 @@ impl Binding {
         if rd_args.recursive && !is_bunfs {
             return Ok(AsyncReaddirRecursiveTask::create(global, rd_args, vm));
         }
-        Ok(async_::Readdir::create(global, this, rd_args, vm))
+        Ok(async_::Readdir::create(global, rd_args, vm))
     }
 
     /// `callSync(.watch)` — `args::Watch` borrows `globalThis` so it can't go
@@ -258,11 +260,11 @@ macro_rules! node_fs_bindings {
                 pub const $sync: NodeFSFunction =
                     call_sync::<$Ret, $Args, { NodeFSFunctionEnum::$F }>();
                 pub fn $async_(
-                    this: &Self,
+                    _this: &Self,
                     global: &JSGlobalObject,
                     frame: &CallFrame,
                 ) -> JsResult<JSValue> {
-                    run_async::<$Args>(this, global, frame, async_::$F::create)
+                    run_async::<$Ret, $Args, { NodeFSFunctionEnum::$F }>(global, frame)
                 }
             )*
         }

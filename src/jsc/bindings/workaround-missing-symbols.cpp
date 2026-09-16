@@ -35,13 +35,6 @@ extern "C" int stat64(
     return _stat64(_FileName, _Stat);
 }
 
-extern "C" int Bun__Process__kill(int pid, int signum);
-
-extern "C" int kill(int pid, int sig)
-{
-    return Bun__Process__kill(pid, sig);
-}
-
 #endif
 
 #if !defined(WIN32)

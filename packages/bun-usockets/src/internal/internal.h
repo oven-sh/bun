@@ -41,9 +41,9 @@ typedef SSIZE_T ssize_t;
 #include <sys/types.h>
 #endif
 
+#if defined(LIBUS_USE_EPOLL) || defined(LIBUS_USE_KQUEUE)
 #define LIBUS_MAX_READY_POLLS 1024
 
-#if defined(LIBUS_USE_EPOLL) || defined(LIBUS_USE_KQUEUE)
 void us_internal_loop_update_pending_ready_polls(struct us_loop_t *loop,
                                                  struct us_poll_t *old_poll,
                                                  struct us_poll_t *new_poll,
@@ -159,6 +159,11 @@ extern struct addrinfo_result *Bun__addrinfo_getRequestResult(struct addrinfo_re
 #define LIBUS_POLL_EOF 1
 #define LIBUS_POLL_HANGUP 2
 void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, int events);
+/* Pointer tags are used to indicate a Bun pointer versus a uSockets pointer */
+#define UNSET_BITS_49_UNTIL_64 0x0000FFFFFFFFFFFF
+#define CLEAR_POINTER_TAG(p) ((void *) ((uintptr_t) (p) & UNSET_BITS_49_UNTIL_64))
+/* Dispatch of a ready poll that Bun owns (`poll` is tagged). */
+void Bun__internal_dispatch_ready_poll(void *loop, void *poll);
 void us_internal_timer_sweep(us_loop_r loop);
 void us_internal_enable_sweep_timer(struct us_loop_t *loop);
 void us_internal_disable_sweep_timer(struct us_loop_t *loop);
@@ -168,6 +173,10 @@ void us_internal_disable_sweep_timer(struct us_loop_t *loop);
 uint64_t us_internal_monotonic_ns(void);
 long long us_internal_sweep_timeout_ns(struct us_loop_t *loop);
 void us_internal_sweep_if_due(struct us_loop_t *loop);
+/* What a tick about to park does when mimalloc has no scavenger to hand this thread's heaps
+ * to: sweeps them here, at most once per 100ms. `now_ns` as for us_loop_run_bun_tick; nothing
+ * measures a deadline against it. */
+void us_internal_idle_sweep(uint64_t now_ns);
 void us_internal_free_closed_sockets(us_loop_r loop);
 void us_internal_loop_link_group(struct us_loop_t *loop, struct us_socket_group_t *group);
 void us_internal_loop_unlink_group(struct us_loop_t *loop, struct us_socket_group_t *group);
@@ -422,7 +431,6 @@ struct us_udp_socket_t {
 struct us_internal_callback_t {
   alignas(LIBUS_EXT_ALIGNMENT) struct us_poll_t p;
   struct us_loop_t *loop;
-  int cb_expects_the_loop;
   int leave_poll_ready;
   void (*cb)(struct us_internal_callback_t *cb);
   mach_port_t port;
@@ -434,7 +442,6 @@ struct us_internal_callback_t {
 struct us_internal_callback_t {
   alignas(LIBUS_EXT_ALIGNMENT) struct us_poll_t p;
   struct us_loop_t *loop;
-  int cb_expects_the_loop;
   int leave_poll_ready;
   void (*cb)(struct us_internal_callback_t *cb);
 #ifdef LIBUS_USE_IOCP

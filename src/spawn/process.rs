@@ -250,7 +250,7 @@ impl Process {
     /// for FilePoll/KeepAlive calls; reconstitutes the aio-level ctx here.
     #[inline]
     fn event_loop_ctx(&self) -> bun_io::EventLoopCtx {
-        event_loop_handle_to_ctx(self.event_loop)
+        self.event_loop.as_event_loop_ctx()
     }
 }
 
@@ -326,17 +326,6 @@ impl Process {
         call_exit_handler(&exit_handler, self, status, rusage);
     }
 
-    #[cfg(unix)]
-    pub(crate) fn wait_posix(&mut self, sync_: bool) {
-        let mut rusage = rusage_zeroed();
-        let waitpid_result = posix_spawn::wait4(
-            self.pid,
-            if sync_ { 0 } else { libc::WNOHANG as u32 },
-            Some(&mut rusage),
-        );
-        self.on_wait_pid(&waitpid_result, &rusage);
-    }
-
     /// The process handle is signalled: report how the process ended.
     #[cfg(windows)]
     fn on_process_signaled(&mut self) {
@@ -351,33 +340,34 @@ impl Process {
         } else if self.exit_signal > 0 && self.exit_signal < bun_core::SignalCode::SIGSYS as u8 {
             Status::Signaled(self.exit_signal)
         } else {
-            Status::Exited(Exited {
-                code: exit_code as u8,
-                signal: 0,
-                raw: exit_code,
-            })
+            Status::Exited(Exited::from_exit_code(exit_code))
         };
         bun_core::scoped_log!(PROCESS, "Process.onExit({}) {}", self.pid, status);
         self.on_exit(status, &rusage);
     }
 
-    #[cfg(windows)]
-    pub(crate) fn wait_windows(&mut self, sync_: bool) {
-        use bun_spawn_sys::windows::win32;
-        if self.has_exited() || self.process_handle == bun_sys::windows::INVALID_HANDLE_VALUE {
-            return;
-        }
-        let timeout = if sync_ { win32::INFINITE } else { 0 };
-        if win32::WaitForSingleObject(self.process_handle, timeout) == win32::WAIT_OBJECT_0 {
-            self.on_process_signaled();
-        }
-    }
-
     pub fn wait(&mut self, sync_: bool) {
         #[cfg(unix)]
-        self.wait_posix(sync_);
+        {
+            let mut rusage = rusage_zeroed();
+            let waitpid_result = posix_spawn::wait4(
+                self.pid,
+                if sync_ { 0 } else { libc::WNOHANG as u32 },
+                Some(&mut rusage),
+            );
+            self.on_wait_pid(&waitpid_result, &rusage);
+        }
         #[cfg(windows)]
-        self.wait_windows(sync_);
+        {
+            use bun_spawn_sys::windows::win32;
+            if self.has_exited() || self.process_handle == bun_sys::windows::INVALID_HANDLE_VALUE {
+                return;
+            }
+            let timeout = if sync_ { win32::INFINITE } else { 0 };
+            if win32::WaitForSingleObject(self.process_handle, timeout) == win32::WAIT_OBJECT_0 {
+                self.on_process_signaled();
+            }
+        }
     }
 
     /// # Safety
@@ -396,7 +386,7 @@ impl Process {
         // SAFETY: `_guard` keeps `this` live; `&mut` scoped to the poller unref.
         unsafe {
             if let Poller::WaiterThread(waiter) = &mut (*this).poller {
-                let ctx = event_loop_handle_to_ctx((*this).event_loop);
+                let ctx = (*this).event_loop.as_event_loop_ctx();
                 waiter.unref(ctx);
                 (*this).poller = Poller::Detached;
             }
@@ -655,7 +645,7 @@ impl Process {
             if let Poller::Wait(exit_wait, mut keep_alive) =
                 core::mem::replace(&mut self.poller, Poller::Detached)
             {
-                keep_alive.unref(event_loop_handle_to_ctx(self.event_loop));
+                keep_alive.unref(self.event_loop.as_event_loop_ctx());
                 let exit_wait = exit_wait.as_ptr();
                 // SAFETY: `exit_wait` is live while the poller holds it. Once the
                 // wait is stopped nothing refers to it; otherwise its packet is
@@ -783,6 +773,28 @@ pub struct Exited {
     pub raw: u32,
 }
 
+impl Exited {
+    /// From a `GetExitCodeProcess` DWORD.
+    #[cfg(windows)]
+    fn from_exit_code(raw: u32) -> Exited {
+        Exited {
+            code: raw as u8,
+            signal: 0,
+            raw,
+        }
+    }
+
+    /// Ended by the default Ctrl+C handler (`STATUS_CONTROL_C_EXIT`). Never on
+    /// POSIX, where that is a `SIGINT` death.
+    #[inline]
+    pub fn is_ctrl_c_exit(&self) -> bool {
+        #[cfg(windows)]
+        return self.raw == bun_sys::windows::STATUS_CONTROL_C_EXIT;
+        #[cfg(not(windows))]
+        false
+    }
+}
+
 impl Status {
     pub fn is_ok(&self) -> bool {
         matches!(self, Status::Exited(e) if e.code == 0)
@@ -881,34 +893,42 @@ impl core::fmt::Display for Status {
     }
 }
 
-#[cfg(unix)]
-pub enum PollerPosix {
+pub enum Poller {
     /// Hive-allocated `bun_io::FilePoll` slot. Pointer (not `Box`) because the
     /// poll lives in `Store`; freed via `FilePoll::deinit`,
     /// never via Rust `drop`.
+    #[cfg(unix)]
     Fd(core::ptr::NonNull<FilePoll>),
+    #[cfg(unix)]
     WaiterThread(KeepAlive),
+    /// Watching the process handle through the loop's completion port.
+    #[cfg(windows)]
+    Wait(core::ptr::NonNull<ExitWait>, KeepAlive),
     Detached,
 }
 
-#[cfg(unix)]
-impl PollerPosix {
+impl Poller {
     /// NOT `impl Drop`: this enum is reassigned freely (`self.poller =
     /// Poller::Detached`, `Poller::WaiterThread(..)`, etc.) and `close()`
     /// already performs the same teardown explicitly before reassigning. A
     /// `Drop` impl would double-free the hive slot on those reassignments.
-    /// Called only from `Process` drop.
+    /// Called only from `Process` drop. A Windows watch holds a ref on the
+    /// `Process`, so none is left by then.
     pub(crate) fn deinit(&mut self) {
+        #[cfg(unix)]
         if let Some(poll) = self.fd_poll_mut() {
             poll.deinit();
-        } else if let PollerPosix::WaiterThread(w) = self {
+        } else if let Poller::WaiterThread(w) = self {
             w.disable();
         }
+        #[cfg(windows)]
+        debug_assert!(matches!(self, Poller::Detached));
     }
 
+    #[cfg(unix)]
     fn into_fd(self) -> Option<core::ptr::NonNull<FilePoll>> {
         match self {
-            PollerPosix::Fd(f) => Some(f),
+            Poller::Fd(f) => Some(f),
             _ => None,
         }
     }
@@ -920,6 +940,7 @@ impl PollerPosix {
     /// is the `NonNull` inside this enum, so `&mut self` ⇒ the returned
     /// `&mut FilePoll` is the only live reference to the slot
     /// (event-loop-thread exclusive).
+    #[cfg(unix)]
     #[inline]
     fn fd_poll_mut(&mut self) -> Option<&mut FilePoll> {
         match self {
@@ -927,32 +948,44 @@ impl PollerPosix {
             // only via `deinit` (which consumes the variant). `&mut self` ⇒
             // exclusive access to the unique handle ⇒ exclusive access to
             // the hive slot.
-            PollerPosix::Fd(poll) => Some(unsafe { poll.as_mut() }),
+            Poller::Fd(poll) => Some(unsafe { poll.as_mut() }),
+            _ => None,
+        }
+    }
+
+    /// The `KeepAlive` a poller without a `FilePoll` carries.
+    fn keep_alive_mut(&mut self) -> Option<&mut KeepAlive> {
+        match self {
+            #[cfg(unix)]
+            Poller::WaiterThread(keep_alive) => Some(keep_alive),
+            #[cfg(windows)]
+            Poller::Wait(_, keep_alive) => Some(keep_alive),
             _ => None,
         }
     }
 
     pub(crate) fn enable_keeping_event_loop_alive(&mut self, ctx: bun_io::EventLoopCtx) {
+        #[cfg(unix)]
         if let Some(poll) = self.fd_poll_mut() {
             poll.enable_keeping_process_alive(ctx);
-        } else if let PollerPosix::WaiterThread(waiter) = self {
-            waiter.ref_(ctx);
+            return;
+        }
+        if let Some(keep_alive) = self.keep_alive_mut() {
+            keep_alive.ref_(ctx);
         }
     }
 
     pub(crate) fn disable_keeping_event_loop_alive(&mut self, ctx: bun_io::EventLoopCtx) {
+        #[cfg(unix)]
         if let Some(poll) = self.fd_poll_mut() {
             poll.disable_keeping_process_alive(ctx);
-        } else if let PollerPosix::WaiterThread(waiter) = self {
-            waiter.unref(ctx);
+            return;
+        }
+        if let Some(keep_alive) = self.keep_alive_mut() {
+            keep_alive.unref(ctx);
         }
     }
 }
-
-#[cfg(unix)]
-pub type Poller = PollerPosix;
-#[cfg(windows)]
-pub type Poller = PollerWindows;
 
 /// The op a process-exit wait completes with. Heap-allocated on its own: the
 /// loop owns it from `us_iocp_wait_start` until its packet is dequeued or
@@ -1067,37 +1100,9 @@ impl ExitWait {
             if let Poller::Wait(_, mut keep_alive) =
                 core::mem::replace(&mut (*process).poller, Poller::Detached)
             {
-                keep_alive.unref(event_loop_handle_to_ctx((*process).event_loop));
+                keep_alive.unref((*process).event_loop.as_event_loop_ctx());
             }
             (*process).on_process_signaled();
-        }
-    }
-}
-
-#[cfg(windows)]
-pub enum PollerWindows {
-    /// Watching the process handle through the loop's completion port.
-    Wait(core::ptr::NonNull<ExitWait>, KeepAlive),
-    Detached,
-}
-
-#[cfg(windows)]
-impl PollerWindows {
-    /// Not `Drop` — see `PollerPosix::deinit`. A watch holds a ref on the
-    /// `Process`, so none is left by the time it is dropped.
-    pub(crate) fn deinit(&mut self) {
-        debug_assert!(matches!(self, PollerWindows::Detached));
-    }
-
-    pub(crate) fn enable_keeping_event_loop_alive(&mut self, ctx: bun_io::EventLoopCtx) {
-        if let PollerWindows::Wait(_, keep_alive) = self {
-            keep_alive.ref_(ctx);
-        }
-    }
-
-    pub(crate) fn disable_keeping_event_loop_alive(&mut self, ctx: bun_io::EventLoopCtx) {
-        if let PollerWindows::Wait(_, keep_alive) = self {
-            keep_alive.unref(ctx);
         }
     }
 }
@@ -1451,11 +1456,6 @@ pub mod waiter_thread_posix {
 
     impl WaiterThreadPosix {
         #[inline]
-        pub fn set_should_use_waiter_thread() {
-            bun_spawn_sys::waiter_thread_flag::set();
-        }
-
-        #[inline]
         pub(crate) fn should_use_waiter_thread() -> bool {
             bun_spawn_sys::waiter_thread_flag::get()
         }
@@ -1594,16 +1594,6 @@ pub mod waiter_thread_posix {
     }
 }
 
-/// Windows stand-in for the unix `WaiterThread`, so callers can call
-/// `WaiterThread::set_should_use_waiter_thread()` on every platform.
-#[cfg(not(unix))]
-pub enum WaiterThread {}
-
-#[cfg(not(unix))]
-impl WaiterThread {
-    pub fn set_should_use_waiter_thread() {}
-}
-
 /// Event-loop-aware extension on the raw [`SpawnResult`] from
 /// `bun_spawn_sys`. The result type itself lives in the leaf `-sys` crate (no
 /// `Process`/`EventLoopHandle` dependency), so `to_process` is a trait method.
@@ -1732,11 +1722,6 @@ mod spawn_process_body {
 
     pub mod sync {
         use super::*;
-        // A type alias, not `pub use`: the `use super::*` glob already binds the
-        // name privately (E0365).
-        #[cfg(windows)]
-        pub type WindowsOptions = bun_spawn_sys::WindowsOptions;
-
         pub struct Options {
             pub stdin: SyncStdio,
             pub stdout: SyncStdio,
@@ -2074,11 +2059,7 @@ mod spawn_process_body {
 
             let [stdout, stderr] = &mut drains;
             Ok(Ok(Result {
-                status: Status::Exited(Exited {
-                    code: exit_code as u8,
-                    signal: 0,
-                    raw: exit_code,
-                }),
+                status: Status::Exited(Exited::from_exit_code(exit_code)),
                 stdout: core::mem::take(&mut stdout.bytes),
                 stderr: core::mem::take(&mut stderr.bytes),
             }))

@@ -11,7 +11,7 @@ use bun_core::{Global, Output};
 use bun_io::BufferedReader;
 use bun_io::heap as io_heap;
 #[cfg(unix)]
-use bun_io::{FilePollFlag, PosixFlags};
+use bun_io::{FilePollFlag, ReaderFlags};
 
 use bun_core::ZStr;
 use bun_spawn::SpawnResultExt as _;
@@ -401,9 +401,9 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     fn reset_output_flags(output: &mut OutputReader, fd: Fd) {
         output
             .flags
-            .insert(PosixFlags::NONBLOCKING | PosixFlags::SOCKET);
+            .insert(ReaderFlags::NONBLOCKING | ReaderFlags::SOCKET);
         output.flags.remove(
-            PosixFlags::MEMFD | PosixFlags::RECEIVED_EOF | PosixFlags::CLOSED_WITHOUT_REPORTING,
+            ReaderFlags::MEMFD | ReaderFlags::RECEIVED_EOF | ReaderFlags::CLOSED_WITHOUT_REPORTING,
         );
 
         #[cfg(debug_assertions)]

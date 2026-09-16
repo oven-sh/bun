@@ -3,10 +3,10 @@ use core::mem::size_of;
 use bun_event_loop::EventLoopHandle;
 use bun_io::{BufferedWriter, WriteStatus};
 use bun_ptr::{RawSlice, RefCount, RefPtr};
-use bun_sys;
+use bun_sys::{self, Fd, FdExt as _};
 
 use crate::process::StdioKind;
-use crate::subprocess::{Source, StdioResult};
+use crate::subprocess::Source;
 
 bun_output::declare_scope!(StaticPipeWriter, hidden);
 
@@ -40,7 +40,7 @@ pub struct StaticPipeWriter<P: StaticPipeWriterProcess> {
     /// Intrusive refcount; `ref`/`deref` provided via `bun_ptr::RefCount`.
     pub(crate) ref_count: RefCount<Self>,
     pub(crate) writer: IOWriter<P>,
-    pub(crate) stdio_result: StdioResult,
+    pub(crate) stdio_result: Option<Fd>,
     pub source: Source,
     /// BACKREF: parent process is notified on close; never owned/destroyed here.
     pub(crate) process: *mut P,
@@ -106,7 +106,7 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
     pub fn create(
         event_loop: EventLoopHandle,
         subprocess: *mut P,
-        result: StdioResult,
+        result: Option<Fd>,
         source: Source,
     ) -> RefPtr<Self> {
         let boxed = Box::new(Self {
@@ -138,7 +138,6 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         unsafe { RefCount::<Self>::ref_(std::ptr::from_mut::<Self>(self)) };
         // Self-borrow into `self.source` — see `buffer` field invariant.
         self.buffer = RawSlice::new(self.source.slice());
-        use bun_sys::FdExt as _;
         let fd = self.stdio_result.unwrap();
         match self.writer.start(fd, true) {
             bun_sys::Result::Err(err) => {

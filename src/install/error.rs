@@ -10,8 +10,6 @@ pub enum Error {
     NameTooLong,
     #[error("SymLinkLoop")]
     SymLinkLoop,
-    #[error("SystemFdQuotaExceeded")]
-    SystemFdQuotaExceeded,
     #[error("SystemResources")]
     SystemResources,
     #[error("TarballHTTP400")]
@@ -246,7 +244,6 @@ impl Error {
             Self::NotDir => "NotDir",
             Self::NameTooLong => "NameTooLong",
             Self::SymLinkLoop => "SymLinkLoop",
-            Self::SystemFdQuotaExceeded => "SystemFdQuotaExceeded",
             Self::SystemResources => "SystemResources",
             Self::TarballHTTP400 => "TarballHTTP400",
             Self::TarballHTTP401 => "TarballHTTP401",

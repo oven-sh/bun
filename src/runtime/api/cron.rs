@@ -2077,12 +2077,13 @@ fn spawn_cmd_prepare<T: SpawnCmdTarget>(
                 let _ = sys::set_nonblocking(stdout);
                 this.remaining_fds().set(this.remaining_fds().get() + 1);
                 let started = this.stdout_reader().with_mut(|r| {
-                    use bun_io::pipe_reader::PosixFlags;
-                    r.flags.insert(PosixFlags::NONBLOCKING | PosixFlags::SOCKET);
+                    use bun_io::pipe_reader::ReaderFlags;
+                    r.flags
+                        .insert(ReaderFlags::NONBLOCKING | ReaderFlags::SOCKET);
                     r.flags.remove(
-                        PosixFlags::MEMFD
-                            | PosixFlags::RECEIVED_EOF
-                            | PosixFlags::CLOSED_WITHOUT_REPORTING,
+                        ReaderFlags::MEMFD
+                            | ReaderFlags::RECEIVED_EOF
+                            | ReaderFlags::CLOSED_WITHOUT_REPORTING,
                     );
                     r.start(stdout, true)
                 });

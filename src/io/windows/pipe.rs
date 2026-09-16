@@ -31,7 +31,7 @@ use bun_uws_sys::iocp::{self, Op, OverlappedEntry, Wait};
 
 use super::sys as win;
 use super::sys::{HANDLE, INVALID_HANDLE_VALUE, Win32Error};
-use super::{Callback, Link, Port};
+use super::{Callback, Link, Port, ReadCallback};
 
 bun_core::declare_scope!(WinPipe, hidden);
 
@@ -51,6 +51,39 @@ enum Mode {
     Sync,
 }
 
+/// Where a pipe HANDLE came from, which decides how it is driven.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum PipeOrigin {
+    /// An overlapped end Bun created (a spawned child's stdio, a pseudoconsole
+    /// pipe, a connected client). It is associated with the loop's completion
+    /// port.
+    Created,
+    /// An end somebody else created (inherited stdio, an fd that came from
+    /// JS). A standard handle is duplicated and the original is left alone.
+    Foreign,
+    /// An end this process inherited and that nobody else does I/O on, by the
+    /// protocol it came with (the IPC channel a parent names in
+    /// `NODE_CHANNEL_FD`). A completion port on its file object then affects
+    /// nobody else, so an overlapped end is driven through the loop's port
+    /// like a pipe Bun created. A standard handle is [`Foreign`](Self::Foreign)
+    /// all the same: others in this process use it by number too.
+    InheritedUnshared,
+}
+
+impl PipeOrigin {
+    /// What `is_pollable` of a reader's or writer's `start` says on Windows:
+    /// set for an overlapped pipe end Bun created; clear for anything else,
+    /// which [`Source::open`](crate::source::Source::open) classifies and, if
+    /// it is a pipe, treats as somebody else's.
+    pub(crate) fn from_is_pollable(is_pollable: bool) -> PipeOrigin {
+        if is_pollable {
+            PipeOrigin::Created
+        } else {
+            PipeOrigin::Foreign
+        }
+    }
+}
+
 /// What a read produced.
 pub enum ReadEvent<'a> {
     /// Bytes from the pipe. The `Vec` may be taken (`mem::take`, `mem::swap`
@@ -61,15 +94,6 @@ pub enum ReadEvent<'a> {
     Eof,
     /// Reading has stopped.
     Err(sys::Error),
-}
-
-type ReadCallback = unsafe fn(*const (), *mut c_void, ReadEvent<'_>);
-
-#[derive(Clone, Copy)]
-struct Reader {
-    ctx: *mut c_void,
-    f: *const (),
-    call: ReadCallback,
 }
 
 /// The owner's handle to a pipe. Dropping it closes the pipe without telling
@@ -112,7 +136,7 @@ struct Inner {
     flags: Flags,
     port: Option<Arc<Port>>,
 
-    reader: Option<Reader>,
+    reader: Option<ReadCallback>,
     read_op: *mut ReadOp,
     read_size: usize,
     /// `Sync` mode: data may leave the pipe before the owner has seen the chunk
@@ -227,13 +251,11 @@ struct ReadOp {
     /// The most this read may take: the owner's read size when it was
     /// submitted. Every mode reads against this one number.
     max_len: u32,
-    // `Sync` mode; the reader thread's from `request` until it posts the op:
+    /// `Sync` mode; the reader thread's from `request` until it posts the op.
     read_ahead: bool,
-    sync_bytes: u32,
-    sync_error: u32,
     /// `read_stop` took the wait out of the kernel: an aborted completion is
     /// not an error.
-    stopped: AtomicBool,
+    stopped: bool,
     /// `Event` and `Sync` modes: the operation out waits for data (a zero-byte
     /// read) and takes none. Its completion says the pipe is readable; the loop
     /// then asks for the bytes, if its owner still wants them.
@@ -243,10 +265,10 @@ struct ReadOp {
 type WriteResult = sys::Result<usize>;
 
 /// How an operation went when Bun queued its packet itself, because the call
-/// finished or failed without the kernel queuing one: the result and the bytes
-/// moved. `None` on an operation means the kernel's packet (or the wait packet
-/// of an I/O that pended) brought it, and only then does its OVERLAPPED say
-/// how it went.
+/// finished or failed without the kernel queuing one, or a helper thread made
+/// it: the result and the bytes moved. `None` on an operation means the
+/// kernel's packet (or the wait packet of an I/O that pended) brought it, and
+/// only then does its OVERLAPPED say how it went.
 type Posted = Option<(Win32Error, usize)>;
 
 #[repr(C)]
@@ -267,7 +289,6 @@ struct WriteOp {
     // `Sync` mode:
     handle: HANDLE,
     port: Option<Arc<Port>>,
-    sync_error: u32,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -275,11 +296,17 @@ struct WriteOp {
 // ──────────────────────────────────────────────────────────────────────────
 
 impl Pipe {
-    /// Take over an overlapped pipe end that Bun created (a spawned child's
-    /// stdio, a pseudoconsole pipe, a connected client). The HANDLE is
-    /// associated with the loop's completion port, and closed with the pipe
-    /// when `close_fd` is set. On `Err` the caller still owns `fd`.
-    pub fn open_owned(loop_: *mut Loop, fd: Fd, close_fd: bool) -> sys::Result<Pipe> {
+    /// Take over the pipe end `fd`. It is closed with the pipe when `close_fd`
+    /// is set (a standard handle never is). On `Err` the caller still owns `fd`.
+    pub fn open(loop_: *mut Loop, fd: Fd, origin: PipeOrigin, close_fd: bool) -> sys::Result<Pipe> {
+        match origin {
+            PipeOrigin::Created => Self::open_created(loop_, fd, close_fd),
+            PipeOrigin::Foreign => Self::open_foreign(loop_, fd, close_fd),
+            PipeOrigin::InheritedUnshared => Self::open_inherited_unshared(loop_, fd, close_fd),
+        }
+    }
+
+    fn open_created(loop_: *mut Loop, fd: Fd, close_fd: bool) -> sys::Result<Pipe> {
         let handle = fd.native();
         // SAFETY: `loop_` is the caller's live loop.
         let port = unsafe { iocp::us_loop_iocp(loop_) };
@@ -300,31 +327,11 @@ impl Pipe {
         Self::create(loop_, handle, Some(Fd::from_system(handle)), Mode::Owned)
     }
 
-    /// Take over a pipe end somebody else created. Standard handles are
-    /// duplicated and the original is left alone; any other `fd` is closed
-    /// with the pipe when `close_fd` is set. On `Err` the caller still owns
-    /// `fd`.
-    pub fn open_foreign(loop_: *mut Loop, fd: Fd, close_fd: bool) -> sys::Result<Pipe> {
+    fn open_foreign(loop_: *mut Loop, fd: Fd, close_fd: bool) -> sys::Result<Pipe> {
         let original = fd.native();
         let (handle, close_with) = if fd.stdio_tag().is_some() {
-            let mut dup: HANDLE = ptr::null_mut();
-            // SAFETY: both process handles are the pseudo-handle; `original`
-            // is the caller's open HANDLE.
-            let ok = unsafe {
-                win::DuplicateHandle(
-                    win::GetCurrentProcess(),
-                    original,
-                    win::GetCurrentProcess(),
-                    &raw mut dup,
-                    0,
-                    0,
-                    win::DUPLICATE_SAME_ACCESS,
-                )
-            };
-            if ok == 0 {
-                return Err(sys::Error::from_win32(win::last_error(), Tag::dup).with_fd(fd));
-            }
-            (dup, Some(Fd::from_system(dup)))
+            let dup = sys::dup(fd)?;
+            (dup.native(), Some(dup))
         } else {
             (original, close_fd.then_some(fd))
         };
@@ -369,15 +376,8 @@ impl Pipe {
         Ok(pipe)
     }
 
-    /// Take over a pipe end this process inherited and that nobody else does
-    /// I/O on, by the protocol it came with (the IPC channel a parent names in
-    /// `NODE_CHANNEL_FD`). A completion port on its file object then affects
-    /// nobody else, so an overlapped end is driven through the loop's port like
-    /// a pipe Bun created. `fd` is closed with the pipe when `close_fd` is set;
-    /// on `Err` the caller still owns it.
-    pub fn open_inherited_unshared(loop_: *mut Loop, fd: Fd, close_fd: bool) -> sys::Result<Pipe> {
+    fn open_inherited_unshared(loop_: *mut Loop, fd: Fd, close_fd: bool) -> sys::Result<Pipe> {
         if fd.stdio_tag().is_some() {
-            // Others in this process use a standard handle by number too.
             return Self::open_foreign(loop_, fd, close_fd);
         }
         let handle = fd.native();
@@ -546,6 +546,7 @@ fn probe_mode(handle: HANDLE) -> Result<Mode, E> {
         0
     }
 
+    // Not `sys::dup`: `handle` may be no handle at all, which is this call's to find out.
     let mut duplicate: HANDLE = ptr::null_mut();
     // SAFETY: plain Win32 call; `duplicate` is a live local.
     let duplicated = unsafe {
@@ -692,13 +693,6 @@ impl Pipe {
         ctx: *mut T,
         on_read: unsafe fn(*mut T, ReadEvent<'_>),
     ) -> sys::Result<()> {
-        unsafe fn call<T>(f: *const (), ctx: *mut c_void, event: ReadEvent<'_>) {
-            // SAFETY: `f` was erased from exactly this type below.
-            let f =
-                unsafe { core::mem::transmute::<*const (), unsafe fn(*mut T, ReadEvent<'_>)>(f) };
-            // SAFETY: the owner keeps `ctx` valid while reading (see `read_start`).
-            unsafe { f(ctx.cast::<T>(), event) }
-        }
         let this = self.raw();
         // SAFETY: `inner` is live while the owner's `Pipe` is; no reference
         // into it is held across the calls below.
@@ -706,11 +700,7 @@ impl Pipe {
             if (*this).flags.contains(Flags::DETACHED) {
                 return Err(sys::Error::from_code(E::EBADF, Tag::read));
             }
-            (*this).reader = Some(Reader {
-                ctx: ctx.cast(),
-                f: on_read as *const (),
-                call: call::<T>,
-            });
+            (*this).reader = Some(ReadCallback::new(ctx, on_read));
             if (*this).flags.contains(Flags::READING) {
                 return Ok(());
             }
@@ -745,7 +735,7 @@ impl Pipe {
                 Mode::Owned => {}
                 Mode::Sync => {
                     if in_flight {
-                        (*read).stopped.store(true, Ordering::Release);
+                        (*read).stopped = true;
                     }
                     // Also with nothing in flight: the thread may be waiting
                     // for the chunk after the one being delivered.
@@ -755,7 +745,7 @@ impl Pipe {
                 }
                 Mode::Event => {
                     if in_flight && (*read).zero_wait {
-                        (*read).stopped.store(true, Ordering::Release);
+                        (*read).stopped = true;
                         win::CancelIoEx((*this).handle, (&raw mut (*read).op).cast());
                     }
                 }
@@ -892,6 +882,12 @@ fn is_eof(err: Win32Error) -> bool {
     err == Win32Error::BROKEN_PIPE || err == Win32Error::HANDLE_EOF
 }
 
+/// How the operation behind a dequeued packet went: what `posted` says, else
+/// what the kernel left in its OVERLAPPED.
+fn completed(op: &Op, posted: Posted) -> (Win32Error, usize) {
+    posted.unwrap_or_else(|| (win::status_to_win32(op.status()), op.bytes_transferred()))
+}
+
 impl Inner {
     fn has_writes(&self) -> bool {
         self.writes_in_flight > 0 || !self.write_head.is_null()
@@ -962,9 +958,7 @@ impl Inner {
                     lane: Lane::NONE,
                     max_len: 0,
                     read_ahead: false,
-                    sync_bytes: 0,
-                    sync_error: 0,
-                    stopped: AtomicBool::new(false),
+                    stopped: false,
                     zero_wait: false,
                 }));
             }
@@ -1147,8 +1141,6 @@ impl Inner {
                         (*this).sync_reader = Some(SyncReader::start((*this).handle, port)?);
                     }
                     (*op).read_ahead = (*this).read_ahead;
-                    (*op).sync_bytes = 0;
-                    (*op).sync_error = 0;
                     // Nothing leaves the pipe until this loop has seen that
                     // data is there and still wants it: see `complete`.
                     (*op).zero_wait = true;
@@ -1203,7 +1195,6 @@ impl Inner {
                 error: None,
                 handle: (*this).handle,
                 port: None,
-                sync_error: 0,
             }));
             if (*this).write_tail.is_null() {
                 (*this).write_head = op;
@@ -1382,7 +1373,6 @@ impl Inner {
                     None => (win::last_error(), 0),
                     Some(port) => {
                         (*op).port = Some(port);
-                        (*op).handle = (*this).handle;
                         if super::queue_blocking_work(WriteOp::sync_write_thread, op.cast()) {
                             super::op_submitted(loop_);
                             return None;
@@ -1650,23 +1640,16 @@ impl ReadOp {
             }
 
             if (*this).state == ReadState::InFlight {
-                let mode = (*pipe).mode;
                 if core::mem::take(&mut (*this).zero_wait)
-                    && match ((*this).posted, mode) {
-                        (Some((err, _)), _) => err == Win32Error::SUCCESS,
-                        (None, Mode::Sync) => (*this).sync_error == 0,
-                        (None, _) => {
-                            win::status_to_win32((*this).op.status()) == Win32Error::SUCCESS
-                        }
-                    }
+                    && Self::result(this).0 == Win32Error::SUCCESS
                 {
                     if !(*pipe).flags.contains(Flags::READING) {
                         // Stopped since: what arrived stays in the pipe.
-                        (*this).stopped.store(false, Ordering::Release);
+                        (*this).stopped = false;
                         (*this).state = ReadState::Idle;
                         return;
                     }
-                    let fetch = match mode {
+                    let fetch = match (*pipe).mode {
                         Mode::Sync => Inner::sync_fetch(pipe, this, loop_),
                         _ => Inner::event_fetch(pipe, this),
                     };
@@ -1679,8 +1662,8 @@ impl ReadOp {
                         Err(err) => (*this).posted = Some((err, 0)),
                     }
                 }
-                (*this).outcome = Self::outcome(this, (*pipe).mode);
-                if (*this).stopped.swap(false, Ordering::AcqRel)
+                (*this).outcome = Self::outcome(this);
+                if core::mem::take(&mut (*this).stopped)
                     && matches!(&(*this).outcome, Outcome::Err(err) if *err == Win32Error::OPERATION_ABORTED)
                 {
                     // `read_stop` interrupted the wait: nothing was read.
@@ -1706,17 +1689,17 @@ impl ReadOp {
                 Outcome::None => {}
                 Outcome::Data if (*this).buf.is_empty() => {}
                 Outcome::Data => {
-                    (reader.call)(reader.f, reader.ctx, ReadEvent::Data(&mut (*this).buf));
+                    reader.invoke(ReadEvent::Data(&mut (*this).buf));
                 }
                 Outcome::Eof => {
                     (*pipe).flags.remove(Flags::READING);
                     (*pipe).flags.insert(Flags::READ_ENDED);
-                    (reader.call)(reader.f, reader.ctx, ReadEvent::Eof);
+                    reader.invoke(ReadEvent::Eof);
                 }
                 Outcome::Err(err) => {
                     (*pipe).flags.remove(Flags::READING);
                     (*pipe).flags.insert(Flags::READ_ENDED);
-                    (reader.call)(reader.f, reader.ctx, ReadEvent::Err(read_error(err)));
+                    reader.invoke(ReadEvent::Err(read_error(err)));
                 }
             }
             (*pipe).pins -= 1;
@@ -1739,25 +1722,23 @@ impl ReadOp {
         }
     }
 
+    /// How the operation whose packet was just dequeued went.
+    ///
+    /// # Safety
+    /// `this` just completed.
+    unsafe fn result(this: *mut ReadOp) -> (Win32Error, usize) {
+        // SAFETY: caller contract.
+        unsafe { completed(&(*this).op, (*this).posted) }
+    }
+
     /// # Safety
     /// `this` just completed; its buffer holds what the kernel wrote.
-    unsafe fn outcome(this: *mut ReadOp, mode: Mode) -> Outcome {
+    unsafe fn outcome(this: *mut ReadOp) -> Outcome {
         // SAFETY: caller contract. The kernel initialized the first `bytes`
         // bytes of the buffer's capacity.
         unsafe {
-            let (err, bytes) = if let Some(posted) = (*this).posted.take() {
-                posted
-            } else if mode == Mode::Sync {
-                (
-                    Win32Error::from_u32((*this).sync_error),
-                    (*this).sync_bytes as usize,
-                )
-            } else {
-                (
-                    win::status_to_win32((*this).op.status()),
-                    (*this).op.bytes_transferred(),
-                )
-            };
+            let (err, bytes) = Self::result(this);
+            (*this).posted = None;
             // A message-mode pipe reports the part of a message that fit as
             // MORE_DATA; the bytes are as good as any.
             if err == Win32Error::SUCCESS || err == win::MORE_DATA {
@@ -2016,10 +1997,9 @@ impl SyncShared {
     /// # Safety
     /// `op` was taken from `request`; it is not touched after this.
     unsafe fn answer(&self, op: *mut ReadOp, error: u32) {
-        // SAFETY: caller contract; the loop reads these once it dequeues the packet.
+        // SAFETY: caller contract; the loop reads it once it dequeues the packet.
         unsafe {
-            (*op).sync_error = error;
-            (*op).sync_bytes = (*op).buf.len() as u32;
+            (*op).posted = Some((Win32Error::from_u32(error), (*op).buf.len()));
             self.port.post(&raw mut (*op).op);
         }
     }
@@ -2172,19 +2152,7 @@ impl WriteOp {
         unsafe {
             super::op_dequeued(loop_);
             let pipe = (*this).pipe;
-            let (err, bytes) = if let Some(posted) = (*this).posted.take() {
-                posted
-            } else if (*pipe).mode == Mode::Sync {
-                (
-                    Win32Error::from_u32((*this).sync_error),
-                    (*this).chunk as usize,
-                )
-            } else {
-                (
-                    win::status_to_win32((*this).op.status()),
-                    (*this).op.bytes_transferred(),
-                )
-            };
+            let (err, bytes) = completed(&(*this).op, (*this).posted.take());
             if err != Win32Error::SUCCESS {
                 (*this).error = Some(err);
             } else {
@@ -2243,6 +2211,7 @@ impl WriteOp {
         // dequeued.
         unsafe {
             let mut written = 0u32;
+            let mut error = Win32Error::SUCCESS;
             let data = (*op).data.add((*op).done);
             while written < (*op).chunk {
                 let mut n: u32 = 0;
@@ -2254,7 +2223,7 @@ impl WriteOp {
                     ptr::null_mut(),
                 ) == 0
                 {
-                    (*op).sync_error = win::last_error().int().into();
+                    error = win::last_error();
                     break;
                 }
                 // A `PIPE_NOWAIT` end with no room takes nothing and says so by
@@ -2265,8 +2234,7 @@ impl WriteOp {
                 }
                 written += n;
             }
-            // What `complete` counts.
-            (*op).chunk = written;
+            (*op).posted = Some((error, written as usize));
             if let Some(port) = (*op).port.take() {
                 port.post(&raw mut (*op).op);
             }
@@ -2493,7 +2461,7 @@ impl ConnectOp {
             }
             let result = if connected {
                 let fd = Fd::from_system(this.handle);
-                Pipe::open_owned(loop_, fd, true).inspect_err(|_| {
+                Pipe::open(loop_, fd, PipeOrigin::Created, true).inspect_err(|_| {
                     win::CloseHandle(this.handle);
                 })
             } else {

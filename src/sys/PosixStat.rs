@@ -84,10 +84,7 @@ pub fn stat_atime(s: &Stat) -> Timespec {
     }
     #[cfg(windows)]
     {
-        Timespec {
-            sec: s.atim.sec as i64,
-            nsec: s.atim.nsec as i64,
-        }
+        s.atim
     }
 }
 #[inline]
@@ -101,10 +98,7 @@ pub fn stat_mtime(s: &Stat) -> Timespec {
     }
     #[cfg(windows)]
     {
-        Timespec {
-            sec: s.mtim.sec as i64,
-            nsec: s.mtim.nsec as i64,
-        }
+        s.mtim
     }
 }
 #[inline]
@@ -118,10 +112,7 @@ pub fn stat_ctime(s: &Stat) -> Timespec {
     }
     #[cfg(windows)]
     {
-        Timespec {
-            sec: s.ctim.sec as i64,
-            nsec: s.ctim.nsec as i64,
-        }
+        s.ctim
     }
 }
 #[inline]
@@ -132,10 +123,7 @@ pub fn stat_birthtime(s: &Stat) -> Timespec {
     // must NOT fall into the ctime arm.
     #[cfg(windows)]
     {
-        Timespec {
-            sec: s.birthtim.sec as i64,
-            nsec: s.birthtim.nsec as i64,
-        }
+        s.birthtim
     }
     #[cfg(any(
         target_os = "macos",

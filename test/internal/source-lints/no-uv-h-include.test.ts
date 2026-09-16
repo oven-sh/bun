@@ -3,14 +3,9 @@ import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-// Bun links no libuv. src/jsc/bindings/libuv holds libuv's headers for the
-// uv_* stubs and polyfills that Node-API addons import, and uv-polyfills.h is
-// the one place that includes uv.h. On Windows uv.h includes uv/win.h, which
-// includes winsock2.h and windows.h and defines SIGHUP, SIGKILL, S_IFLNK, F_OK
-// and friends; in a unified build those leak into every source file that
-// follows in the same bundle. A file that needs one uv_* function declares it;
-// a file that needs the UV__E* numbers includes <uv/errno.h>, which defines
-// only those.
+// On Windows uv.h pulls in windows.h and winsock2.h and defines SIGHUP, S_IFLNK, F_OK and friends; in a
+// unified build those leak into every later file of the bundle. Declare the one uv_* function you need, or
+// include <uv/errno.h> for the UV__E* numbers.
 test("only uv-polyfills.h includes uv.h", async () => {
   const repoRoot = path.resolve(import.meta.dir, "..", "..", "..");
 

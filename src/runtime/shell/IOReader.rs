@@ -135,7 +135,7 @@ impl IOReader {
         #[cfg(not(windows))]
         this.reader()
             .flags
-            .remove(bun_io::pipe_reader::PosixFlags::CLOSE_HANDLE);
+            .remove(bun_io::pipe_reader::ReaderFlags::CLOSE_HANDLE);
         // The parent backref is set after the Arc allocation so the address
         // is stable.
         let parent: *const IOReader = std::sync::Arc::as_ptr(&this);
@@ -181,7 +181,7 @@ impl IOReader {
         // still there, finished.
         #[cfg(windows)]
         let need_start =
-            r.source.is_none() || r.flags.contains(bun_io::pipe_reader::PosixFlags::IS_DONE);
+            r.source.is_none() || r.flags.contains(bun_io::pipe_reader::ReaderFlags::IS_DONE);
         if need_start {
             let s = self.state();
             s.raw_err = None;

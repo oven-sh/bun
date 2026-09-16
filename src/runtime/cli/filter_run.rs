@@ -14,7 +14,7 @@ use bun_core::{ZStr, strings};
 use bun_event_loop::EventLoopHandle;
 use bun_event_loop::MiniEventLoop::{self as MiniEventLoopMod, MiniEventLoop};
 use bun_io::{BufferedReader, ReadState};
-use bun_sys as sys;
+use bun_sys::{self as sys, FdExt as _};
 
 // The string fields below are owned boxes, except `combined` which is interned
 // in the process-lifetime CLI arena.
@@ -142,12 +142,10 @@ impl<'a> ProcessHandle<'a> {
             (stderr_fd, &mut handle.stderr),
         ] {
             let Some(fd) = fd else { continue };
-            #[cfg(unix)]
             let _ = sys::set_nonblocking(fd);
             handle.remaining_fds += 1;
             if let Err(err) = reader.start(fd, true) {
                 // A reader that fails to start (Windows only) has not taken the fd.
-                use bun_sys::FdExt as _;
                 fd.close();
                 return Err(err.into());
             }

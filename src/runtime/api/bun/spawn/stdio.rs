@@ -13,8 +13,6 @@ use crate::webcore::node_types::{PathLike, PathOrFileDescriptor};
 // keep `process` leaf; `subprocess` re-exports it).
 use crate::api::bun_process::{self as process, Dup2 as ProcessDup2, StdioKind};
 
-pub(crate) type SpawnOptionsStdio = process::Stdio;
-
 // `bun.FD.Stdio` (the StdIn/StdOut/StdErr tag enum) is `bun_core::Stdio`,
 // re-exported through `bun_sys`.
 use sys::Stdio as FdStdio;
@@ -71,7 +69,7 @@ pub(crate) enum ResultT<T> {
     Err(ToSpawnOptsError),
 }
 
-pub(crate) type Result = ResultT<SpawnOptionsStdio>;
+pub(crate) type Result = ResultT<process::Stdio>;
 
 pub(crate) enum ToSpawnOptsError {
     StdinUsedAsOut,
@@ -210,7 +208,7 @@ impl Stdio {
                             match file.pathlike {
                                 PathOrFileDescriptor::Fd(store_fd) => {
                                     if Some(store_fd) == fd {
-                                        break 'brk SpawnOptionsStdio::Inherit;
+                                        break 'brk process::Stdio::Inherit;
                                     }
 
                                     if let Some(tag) = store_fd.stdio_tag() {
@@ -232,10 +230,10 @@ impl Stdio {
                                         }
                                     }
 
-                                    break 'brk SpawnOptionsStdio::Pipe(store_fd);
+                                    break 'brk process::Stdio::Pipe(store_fd);
                                 }
                                 PathOrFileDescriptor::Path(ref path) => {
-                                    break 'brk SpawnOptionsStdio::Path(
+                                    break 'brk process::Stdio::Path(
                                         path.slice().to_vec().into_boxed_slice(),
                                     );
                                 }
@@ -248,22 +246,22 @@ impl Stdio {
                     return ResultT::Err(ToSpawnOptsError::BlobUsedAsOut);
                 }
 
-                SpawnOptionsStdio::Buffer
+                process::Stdio::Buffer
             }
-            Self::Dup2(d) => SpawnOptionsStdio::Dup2(ProcessDup2 {
+            Self::Dup2(d) => process::Stdio::Dup2(ProcessDup2 {
                 out: d.out,
                 to: d.to,
             }),
-            Self::Capture(_) | Self::Pipe | Self::ReadableStream(_) => SpawnOptionsStdio::Buffer,
-            Self::SocketFd => SpawnOptionsStdio::SocketFd,
-            Self::Ipc => SpawnOptionsStdio::Ipc,
-            Self::Fd(fd) => SpawnOptionsStdio::Pipe(*fd),
-            Self::Memfd(fd) => SpawnOptionsStdio::Pipe(*fd),
+            Self::Capture(_) | Self::Pipe | Self::ReadableStream(_) => process::Stdio::Buffer,
+            Self::SocketFd => process::Stdio::SocketFd,
+            Self::Ipc => process::Stdio::Ipc,
+            Self::Fd(fd) => process::Stdio::Pipe(*fd),
+            Self::Memfd(fd) => process::Stdio::Pipe(*fd),
             Self::Path(pathlike) => {
-                SpawnOptionsStdio::Path(pathlike.slice().to_vec().into_boxed_slice())
+                process::Stdio::Path(pathlike.slice().to_vec().into_boxed_slice())
             }
-            Self::Inherit => SpawnOptionsStdio::Inherit,
-            Self::Ignore => SpawnOptionsStdio::Ignore,
+            Self::Inherit => process::Stdio::Inherit,
+            Self::Ignore => process::Stdio::Ignore,
         };
         ResultT::Result(result)
     }

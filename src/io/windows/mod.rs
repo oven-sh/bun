@@ -24,7 +24,7 @@ mod tty_input;
 mod tty_output;
 
 pub use file::File;
-pub use pipe::{ConnectRequest, Pipe, ReadEvent};
+pub use pipe::{ConnectRequest, Pipe, PipeOrigin, ReadEvent};
 pub use pipe_server::PipeServer;
 pub use tty::Tty;
 
@@ -276,6 +276,38 @@ impl<A> Callback<A> {
     pub(crate) unsafe fn invoke(self, arg: A) {
         // SAFETY: caller contract.
         unsafe { (self.call)(self.f, self.ctx, arg) }
+    }
+}
+
+/// [`Callback`] for a [`ReadEvent`], whose lifetime `Callback<A>` cannot name.
+#[derive(Clone, Copy)]
+pub(crate) struct ReadCallback {
+    ctx: *mut c_void,
+    f: *const (),
+    call: unsafe fn(*const (), *mut c_void, ReadEvent<'_>),
+}
+
+impl ReadCallback {
+    pub(crate) fn new<T>(ctx: *mut T, f: unsafe fn(*mut T, ReadEvent<'_>)) -> Self {
+        unsafe fn call<T>(f: *const (), ctx: *mut c_void, event: ReadEvent<'_>) {
+            // SAFETY: `f` was erased from exactly this type in `new`.
+            let f =
+                unsafe { core::mem::transmute::<*const (), unsafe fn(*mut T, ReadEvent<'_>)>(f) };
+            // SAFETY: the owner that supplied `ctx` keeps it valid while it reads.
+            unsafe { f(ctx.cast::<T>(), event) }
+        }
+        ReadCallback {
+            ctx: ctx.cast(),
+            f: f as *const (),
+            call: call::<T>,
+        }
+    }
+
+    /// # Safety
+    /// The `ctx` given to `new` is still valid.
+    pub(crate) unsafe fn invoke(self, event: ReadEvent<'_>) {
+        // SAFETY: caller contract.
+        unsafe { (self.call)(self.f, self.ctx, event) }
     }
 }
 

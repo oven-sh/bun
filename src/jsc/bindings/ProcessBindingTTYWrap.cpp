@@ -115,8 +115,6 @@ public:
         static_cast<TTYWrapObject*>(cell)->TTYWrapObject::~TTYWrapObject();
     }
 
-    ~TTYWrapObject() = default;
-
     int fd = -1;
     BunTTYState ttyState {};
 

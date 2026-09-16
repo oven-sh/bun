@@ -6,7 +6,7 @@ use bun_collections::VecExt;
 use bun_io as aio;
 #[cfg(not(windows))]
 use bun_io::FileType;
-use bun_io::{BufferedReader, Chunk, ReadState};
+use bun_io::{BufferedReader, Chunk, ReadState, ReaderFlags};
 use bun_jsc::JsCell;
 use bun_ptr::{AsCtxPtr, RefPtr};
 #[cfg(unix)]
@@ -334,13 +334,10 @@ impl FileReader {
                             {
                                 file_type = opened.file_type;
                             }
-                            {
-                                use bun_io::pipe_reader::PosixFlags;
-                                self.reader()
-                                    .flags
-                                    .set(PosixFlags::NONBLOCKING, opened.nonblocking);
-                                self.reader().flags.set(PosixFlags::POLLABLE, pollable);
-                            }
+                            self.reader()
+                                .flags
+                                .set(ReaderFlags::NONBLOCKING, opened.nonblocking);
+                            self.reader().flags.set(ReaderFlags::POLLABLE, pollable);
                         }
                     }
                 }
@@ -399,33 +396,27 @@ impl FileReader {
                 }
                 return streams::Start::Err(e);
             }
-        } else {
-            {
-                use bun_io::pipe_reader::PosixFlags;
-                if !self.started.get()
-                    && !self.waiting_for_on_reader_done.get()
-                    && self.reader().flags.contains(PosixFlags::POLLABLE)
-                    && !self.reader().is_done()
-                {
-                    self.waiting_for_on_reader_done.set(true);
-                    // SAFETY: see `parent()`.
-                    unsafe { (*self.parent()).increment_count() };
-                }
-            }
+        } else if !self.started.get()
+            && !self.waiting_for_on_reader_done.get()
+            && self.reader().flags.contains(ReaderFlags::POLLABLE)
+            && !self.reader().is_done()
+        {
+            self.waiting_for_on_reader_done.set(true);
+            // SAFETY: see `parent()`.
+            unsafe { (*self.parent()).increment_count() };
         }
 
         #[cfg(unix)]
         {
-            use bun_io::pipe_reader::PosixFlags;
             if file_type == FileType::Socket {
-                self.reader().flags.insert(PosixFlags::SOCKET);
+                self.reader().flags.insert(ReaderFlags::SOCKET);
             }
 
             let r = self.reader();
             if let Some(poll) = r.handle.get_poll() {
                 // `bun_io::FilePoll` is an opaque vtable wrapper; flag
                 // mutation goes through `set_flag(FilePollFlag)`.
-                if file_type == FileType::Socket || r.flags.contains(PosixFlags::SOCKET) {
+                if file_type == FileType::Socket || r.flags.contains(ReaderFlags::SOCKET) {
                     poll.set_flag(bun_io::FilePollFlag::Socket);
                 } else {
                     // if it's a TTY, we report it as a fifo
@@ -433,7 +424,7 @@ impl FileReader {
                     poll.set_flag(bun_io::FilePollFlag::Fifo);
                 }
 
-                if r.flags.contains(PosixFlags::NONBLOCKING) {
+                if r.flags.contains(ReaderFlags::NONBLOCKING) {
                     poll.set_flag(bun_io::FilePollFlag::Nonblocking);
                 }
             }
@@ -448,18 +439,13 @@ impl FileReader {
                     self.buffered.replace(Vec::new()),
                 ));
             }
-        } else {
-            {
-                use bun_io::pipe_reader::PosixFlags;
-                if !was_lazy && self.reader().flags.contains(PosixFlags::POLLABLE) {
-                    // A from_pipe() reader may arrive with IS_PAUSED set (lazy
-                    // subprocess stdio); clear it so read() does not no-op.
-                    self.reader().unpause();
-                    // SAFETY: the reader cell is live for `self`'s lifetime; `read` is
-                    // the raw re-entrancy-safe entry (its dispatch runs user JS).
-                    unsafe { IOReader::read(self.reader.get()) };
-                }
-            }
+        } else if !was_lazy && self.reader().flags.contains(ReaderFlags::POLLABLE) {
+            // A from_pipe() reader may arrive with IS_PAUSED set (lazy
+            // subprocess stdio); clear it so read() does not no-op.
+            self.reader().unpause();
+            // SAFETY: the reader cell is live for `self`'s lifetime; `read` is
+            // the raw re-entrancy-safe entry (its dispatch runs user JS).
+            unsafe { IOReader::read(self.reader.get()) };
         }
 
         streams::Start::Ready

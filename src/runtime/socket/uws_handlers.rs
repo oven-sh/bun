@@ -10,7 +10,7 @@
 
 use bun_jsc::JsResult;
 use bun_ptr::{RefPtr, ThisPtr};
-use core::ffi::{c_int, c_void};
+use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use bun_uws::{ConnectingSocket, NewSocketHandler};
@@ -20,6 +20,7 @@ use bun_uws_sys::vtable::Handler as VHandler;
 use bun_uws_sys::{CloseCode, us_bun_verify_error_t, us_socket_t};
 
 use crate::api;
+#[cfg(not(windows))]
 use crate::ipc as IPC;
 use crate::valkey_jsc::js_valkey;
 use bun_http_jsc::websocket_client;
@@ -744,11 +745,15 @@ pub(crate) type Valkey<const SSL: bool> =
 // Ext is `*IPC.SendQueue` for both child-side `process.send` and parent-side
 // `Bun.spawn({ipc})`. The IPC handlers are free functions, not
 // methods on SendQueue, so we adapt manually here.
+#[cfg(not(windows))]
 pub struct SpawnIPC;
 
-use IPC::IPCHandlers::PosixSocket as IpcH;
+#[cfg(not(windows))]
+use IPC::posix_socket as IpcH;
+#[cfg(not(windows))]
 type IpcS = NewSocketHandler<false>;
 
+#[cfg(not(windows))]
 impl VHandler for SpawnIPC {
     type Ext = ExtSlot<IPC::SendQueue>;
 
@@ -765,7 +770,7 @@ impl VHandler for SpawnIPC {
         let Some(this) = ext.owner_ref() else { return };
         IpcH::on_data(this, IpcS::from(s), data);
     }
-    fn on_fd(ext: &mut Self::Ext, s: *mut us_socket_t, fd: c_int) {
+    fn on_fd(ext: &mut Self::Ext, s: *mut us_socket_t, fd: core::ffi::c_int) {
         let Some(this) = ext.owner_ref() else { return };
         IpcH::on_fd(this, IpcS::from(s), fd);
     }

@@ -19,7 +19,7 @@
 #ifndef UWS_LOOP_H
 #define UWS_LOOP_H
 
-/* The loop is lazily created per-thread and run with run() */
+/* The loop is lazily created per-thread */
 
 #include "LoopData.h"
 #include <libusockets.h>
@@ -83,8 +83,8 @@ private:
         return this;
     }
 
-    static Loop *create(void *hint) {
-        Loop *loop = (Loop *) us_create_loop(hint, wakeupCb, preCb, postCb, sizeof(LoopData));
+    static Loop *create() {
+        Loop *loop = (Loop *) us_create_loop(wakeupCb, preCb, postCb, sizeof(LoopData));
         if (!loop) {
             /* The per-thread loop is not recoverable; every caller of get()
              * dereferences it. Only Bun.spawnSync's isolated loop (created
@@ -98,13 +98,11 @@ private:
     struct LoopCleaner {
         ~LoopCleaner() {
             // There's no need to call this destructor if Bun is in the process of exiting.
-            if(loop && cleanMe && !bun_is_exiting()) {
-                cleanMe = false;
+            if(loop && !bun_is_exiting()) {
                 loop->free();
             }
         }
         Loop *loop = nullptr;
-        bool cleanMe = false;
     };
 
     static LoopCleaner &getLazyLoop() {
@@ -117,8 +115,7 @@ public:
      * Will automatically free all initialized loops at exit. */
     static Loop *get() {
         if (!getLazyLoop().loop) {
-            getLazyLoop().loop = create(nullptr);
-            getLazyLoop().cleanMe = true;
+            getLazyLoop().loop = create();
         }
 
         return getLazyLoop().loop;
@@ -184,17 +181,7 @@ public:
         us_wakeup_loop((us_loop_t *) this);
     }
 
-    /* Actively block and run this loop */
-    void run() {
-        us_loop_run((us_loop_t *) this);
-    }
-
 };
-
-/* Can be called from any thread to run the thread local loop */
-inline void run() {
-    Loop::get()->run();
-}
 
 }
 

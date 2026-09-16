@@ -167,6 +167,7 @@ impl MaxBuf {
     /// Trims `buf` to the remaining budget plus `OVERREAD_ALLOWANCE`: unclamped,
     /// a 256 KB scratch read off a socketpair overshoots `maxBuffer` by hundreds
     /// of KB. Never empties a non-empty `buf` (that would read as EOF).
+    #[cfg(unix)]
     pub(crate) fn clamp_read_buf(this: Option<NonNull<MaxBuf>>, buf: &mut [u8]) -> &mut [u8] {
         let len = Self::clamp_read_len(this, buf.len());
         &mut buf[..len]

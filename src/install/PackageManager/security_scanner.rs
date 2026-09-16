@@ -15,9 +15,8 @@ use bun_event_loop::EventLoopHandle;
 use bun_install::{
     DependencyID, PackageID, PackageManager, invalid_dependency_id, invalid_package_id,
 };
-use bun_io::Loop as AsyncLoop;
 #[cfg(unix)]
-use bun_io::pipe_reader::PosixFlags;
+use bun_io::pipe_reader::ReaderFlags;
 use bun_io::{BufferedReader, ReadState};
 use bun_ptr::{RefCount, RefPtr};
 use bun_spawn::SpawnResultExt as _;
@@ -998,7 +997,7 @@ bun_io::impl_buffered_reader_parent! {
     on_read_chunk   = |this, chunk, has_more| (*this).on_read_chunk(&chunk, has_more);
     on_reader_done  = |this| (*this).on_reader_done();
     on_reader_error = |this, err| (*this).on_reader_error(err);
-    loop_           = |this| (*this).loop_();
+    loop_           = |this| (*this).manager.event_loop.loop_();
     event_loop      = |this| (*this).event_loop_handle.as_event_loop_ctx();
 }
 
@@ -1054,6 +1053,32 @@ impl<'a> SecurityScanSubprocess<'a> {
         Ok(())
     }
 
+    /// Start the scanner with `extra_fds` at fd 3 and 4.
+    fn spawn_scanner(
+        argv: &mut [*const core::ffi::c_char; 5],
+        extra_fds: Box<[Stdio]>,
+    ) -> Result<spawn::SpawnResult, Error> {
+        let spawn_options = SpawnOptions {
+            stdout: Stdio::Inherit,
+            stderr: Stdio::Inherit,
+            stdin: Stdio::Inherit,
+            cwd: Box::from(FileSystem::instance().top_level_dir()),
+            extra_fds,
+            ..Default::default()
+        };
+
+        // SAFETY: `argv` is a local null-terminated C-string array with a
+        // non-null argv[0]; `environ_ptr()` is the process environ block.
+        Ok(unsafe {
+            spawn::spawn_process(
+                &spawn_options,
+                argv.as_mut_ptr().cast(),
+                bun_sys::environ_ptr(),
+            )
+        }?
+        .map_err(|e| e.to_zig_err())?)
+    }
+
     /// fd 3 is a plain pipe whose write end the child inherits. fd 4 is a
     /// `Stdio::Buffer` socketpair made by spawn; the parent's end comes back in
     /// `extra_pipes`.
@@ -1068,35 +1093,16 @@ impl<'a> SecurityScanSubprocess<'a> {
             Stdio::Pipe(ipc_output_fds[1]), // fd 3: child inherits write end
             Stdio::Buffer,                  // fd 4: socketpair, parent's end in extra_pipes
         ]);
-
-        let spawn_options = SpawnOptions {
-            stdout: Stdio::Inherit,
-            stderr: Stdio::Inherit,
-            stdin: Stdio::Inherit,
-            cwd: Box::from(FileSystem::instance().top_level_dir()),
-            extra_fds,
-            ..Default::default()
-        };
-
-        // SAFETY: `argv` is a local null-terminated C-string array with a
-        // non-null argv[0]; `environ_ptr()` is the process environ block.
-        let mut spawned = unsafe {
-            spawn::spawn_process(
-                &spawn_options,
-                argv.as_mut_ptr().cast(),
-                bun_sys::environ_ptr(),
-            )
-        }?
-        .map_err(|e| e.to_zig_err())?;
+        let spawned = Self::spawn_scanner(argv, extra_fds)?;
 
         ipc_output_fds[1].close();
 
         let _ = bun_sys::set_nonblocking(ipc_output_fds[0]);
-        self.ipc_reader.flags.insert(PosixFlags::NONBLOCKING);
-        self.ipc_reader.flags.remove(PosixFlags::SOCKET);
+        self.ipc_reader.flags.insert(ReaderFlags::NONBLOCKING);
+        self.ipc_reader.flags.remove(ReaderFlags::SOCKET);
 
         let json_fd = spawned.extra_pipes[1].fd();
-        self.finish_spawn(&mut spawned, ipc_output_fds[0], json_fd)
+        self.finish_spawn(spawned, ipc_output_fds[0], json_fd)
     }
 
     /// The child reads fd 4 and writes fd 3 synchronously, so its ends must not
@@ -1138,26 +1144,7 @@ impl<'a> SecurityScanSubprocess<'a> {
             Stdio::Pipe(pipes[1]), // fd 3: child inherits write end
             Stdio::Pipe(pipes[3]), // fd 4: child inherits read end
         ]);
-
-        let spawn_options = SpawnOptions {
-            stdout: Stdio::Inherit,
-            stderr: Stdio::Inherit,
-            stdin: Stdio::Inherit,
-            cwd: Box::from(FileSystem::instance().top_level_dir()),
-            extra_fds,
-            ..Default::default()
-        };
-
-        // SAFETY: `argv` is a local null-terminated C-string array with a
-        // non-null argv[0]; `environ_ptr()` is the process environ block.
-        let mut spawned = unsafe {
-            spawn::spawn_process(
-                &spawn_options,
-                argv.as_mut_ptr().cast(),
-                bun_sys::environ_ptr(),
-            )
-        }?
-        .map_err(|e| e.to_zig_err())?;
+        let spawned = Self::spawn_scanner(argv, extra_fds)?;
 
         // `finish_spawn` takes the parent ends whether or not it succeeds.
         let [ipc_read_fd, ipc_child_fd, json_write_fd, json_child_fd] =
@@ -1165,14 +1152,14 @@ impl<'a> SecurityScanSubprocess<'a> {
         ipc_child_fd.close();
         json_child_fd.close();
 
-        self.finish_spawn(&mut spawned, ipc_read_fd, json_write_fd)
+        self.finish_spawn(spawned, ipc_read_fd, json_write_fd)
     }
 
     /// Common post-spawn setup: start the fd 3 reader, attach the process,
     /// start the fd 4 JSON writer, and begin watching for exit.
     fn finish_spawn(
         &mut self,
-        spawned: &mut spawn::SpawnResult,
+        spawned: spawn::SpawnResult,
         ipc_read_fd: Fd,
         json_write_fd: Fd,
     ) -> Result<(), Error> {
@@ -1189,10 +1176,8 @@ impl<'a> SecurityScanSubprocess<'a> {
         // StaticPipeWriter still holds a pointer to it (child crash case).
         self.remaining_fds = 2;
 
-        // `to_process` consumes the `SpawnResult`; take ownership of it and let
-        // the moved-from `*spawned` drop empty (`extra_pipes` already read).
         let event_loop = EventLoopHandle::from_any(&mut self.manager.event_loop);
-        let process_handle = std::mem::take(spawned).to_process_handle(event_loop);
+        let process_handle = spawned.to_process_handle(event_loop);
         let process: *mut Process = process_handle.as_ptr();
 
         // Derive the raw backref once and use it for all subsequent field
@@ -1288,10 +1273,6 @@ impl<'a> SecurityScanSubprocess<'a> {
 
     pub(crate) fn is_done(&self) -> bool {
         self.exit_status.is_some() && self.remaining_fds == 0
-    }
-
-    pub(crate) fn loop_(&mut self) -> *mut AsyncLoop {
-        self.manager.event_loop.loop_()
     }
 
     pub(crate) fn on_reader_done(&mut self) {

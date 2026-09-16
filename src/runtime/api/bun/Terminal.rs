@@ -11,16 +11,13 @@
 
 use core::cell::Cell;
 use core::ffi::{c_int, c_void};
-#[cfg(windows)]
-use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::node::StringOrBuffer;
 use bun_core::EncodedSlice;
 use bun_core::SignalCode;
-use bun_io::Loop as AsyncLoop;
 use bun_io::pipe_reader::BufferedReaderParent;
 #[cfg(unix)]
-use bun_io::pipe_reader::PosixFlags;
+use bun_io::pipe_reader::ReaderFlags;
 use bun_io::{BufferedReader, ReadState, StreamingWriter, WriteStatus};
 use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::{
@@ -496,7 +493,7 @@ impl Terminal {
                         if let Some(poll) = r.handle.get_poll() {
                             // PTY behaves like a pipe, not a socket
                             r.flags
-                                .insert(PosixFlags::NONBLOCKING | PosixFlags::POLLABLE);
+                                .insert(ReaderFlags::NONBLOCKING | ReaderFlags::POLLABLE);
                             poll.set_flag(bun_io::FilePollFlag::Nonblocking);
                         }
                     });
@@ -1087,7 +1084,7 @@ fn create_overlapped_pipe_pair(
     const FILE_FLAG_FIRST_PIPE_INSTANCE: u32 = 0x00080000;
 
     let pid: u32 = windows::GetCurrentProcessId();
-    let counter = PIPE_SERIAL.fetch_add(1, Ordering::Relaxed);
+    let counter = windows::fs::next_pipe_serial();
     let mut name_utf8_buf = [0u8; 96];
     let name = {
         use std::io::Write;
@@ -1160,107 +1157,48 @@ fn create_overlapped_pipe_pair(
 }
 
 #[cfg(windows)]
-static PIPE_SERIAL: AtomicU32 = AtomicU32::new(0);
-
-#[cfg(windows)]
 fn create_pty_windows(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
-    // Track ownership explicitly: handles are nulled out as they are closed or
-    // transferred so `cleanup!()` never double-closes.
-    let mut out_server: Option<windows::HANDLE> = None;
-    let mut out_client: Option<windows::HANDLE> = None;
-    let mut in_server: Option<windows::HANDLE> = None;
-    let mut in_client: Option<windows::HANDLE> = None;
-    let mut hpcon: Option<windows::HPCON> = None;
-
-    // Must run on every `return Err`.
-    macro_rules! cleanup {
-        () => {
-            // SAFETY: every Some(h) is a valid open Win32 handle still owned by
-            // this fn (not yet transferred); ClosePseudoConsole/CloseHandle are
-            // safe on those values.
-            unsafe {
-                if let Some(h) = hpcon {
-                    windows::ClosePseudoConsole(h);
-                }
-                if let Some(h) = out_server {
-                    let _ = windows::CloseHandle(h);
-                }
-                if let Some(h) = out_client {
-                    let _ = windows::CloseHandle(h);
-                }
-                if let Some(h) = in_server {
-                    let _ = windows::CloseHandle(h);
-                }
-                if let Some(h) = in_client {
-                    let _ = windows::CloseHandle(h);
-                }
-            }
-        };
-    }
+    let close = |handles: [windows::HANDLE; 2]| {
+        for handle in handles {
+            // SAFETY: both are open handles this function still owns.
+            let _ = unsafe { windows::CloseHandle(handle) };
+        }
+    };
 
     // Output pipe: ConPTY writes (client), we read (overlapped server).
-    {
-        let pair = match create_overlapped_pipe_pair(windows::PIPE_ACCESS_INBOUND) {
-            Ok(p) => p,
-            Err(e) => {
-                cleanup!();
-                return Err(e);
-            }
-        };
-        out_server = Some(pair.server);
-        out_client = Some(pair.client);
-    }
-
+    let out = create_overlapped_pipe_pair(windows::PIPE_ACCESS_INBOUND)?;
     // Input pipe: we write (overlapped server), ConPTY reads (client).
-    {
-        let pair = match create_overlapped_pipe_pair(windows::PIPE_ACCESS_OUTBOUND) {
-            Ok(p) => p,
-            Err(e) => {
-                cleanup!();
-                return Err(e);
-            }
-        };
-        in_server = Some(pair.server);
-        in_client = Some(pair.client);
-    }
+    let input = match create_overlapped_pipe_pair(windows::PIPE_ACCESS_OUTBOUND) {
+        Ok(pair) => pair,
+        Err(e) => {
+            close([out.server, out.client]);
+            return Err(e);
+        }
+    };
 
     let size = windows::COORD {
         X: clamp_to_coord(cols),
         Y: clamp_to_coord(rows),
     };
-    {
-        let mut pc: windows::HPCON = core::ptr::null_mut();
-        // SAFETY: in_client/out_client are valid open HANDLEs; pc is a valid out-ptr.
-        if unsafe {
-            windows::CreatePseudoConsole(size, in_client.unwrap(), out_client.unwrap(), 0, &mut pc)
-        } < 0
-        {
-            cleanup!();
-            return Err(CreatePtyError::OpenPtyFailed);
-        }
-        hpcon = Some(pc);
-    }
-
+    let mut hpcon: windows::HPCON = core::ptr::null_mut();
+    // SAFETY: both client ends are valid open HANDLEs; `hpcon` is a valid out-ptr.
+    let created =
+        unsafe { windows::CreatePseudoConsole(size, input.client, out.client, 0, &mut hpcon) } >= 0;
     // ConPTY duplicated the client handles internally; close our copies.
-    // SAFETY: in_client/out_client are valid open HANDLEs.
-    unsafe {
-        let _ = windows::CloseHandle(in_client.take().unwrap());
-        let _ = windows::CloseHandle(out_client.take().unwrap());
+    close([input.client, out.client]);
+    if !created {
+        close([input.server, out.server]);
+        return Err(CreatePtyError::OpenPtyFailed);
     }
 
     // The server (overlapped) ends go to BufferedReader/StreamingWriter.start()
     // as they are.
-    let read_fd = Fd::from_system(out_server.take().unwrap());
-    let write_fd = Fd::from_system(in_server.take().unwrap());
-
-    let result_hpcon = hpcon.take().unwrap();
-
     Ok(PtyResult {
         master: Fd::INVALID,
-        read_fd,
-        write_fd,
+        read_fd: Fd::from_system(out.server),
+        write_fd: Fd::from_system(input.server),
         slave: Fd::INVALID,
-        hpcon: result_hpcon,
+        hpcon,
     })
 }
 
@@ -1947,10 +1885,6 @@ impl Terminal {
         true // Continue reading
     }
 
-    fn loop_(&self) -> *mut AsyncLoop {
-        self.event_loop_handle.r#loop().cast()
-    }
-
     pub(crate) fn finalize(&self) {
         bun_output::scoped_log!(Terminal, "finalize");
         jsc::mark_binding();
@@ -1994,7 +1928,7 @@ impl BufferedReaderParent for Terminal {
         Self::from_parent_ptr(this).on_reader_error(&err);
     }
     unsafe fn loop_(this: *mut Self) -> *mut bun_io::pipe_reader::Loop {
-        Self::from_parent_ptr(this).loop_().cast()
+        Self::from_parent_ptr(this).event_loop_handle.r#loop()
     }
     unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
         Self::from_parent_ptr(this)

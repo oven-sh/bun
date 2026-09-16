@@ -555,7 +555,7 @@ void *us_ssl_get_session_sink_owner(struct ssl_st *ssl);
 /* Public interfaces for loops */
 
 /* Returns a new event loop with user data extension */
-struct us_loop_t *us_create_loop(void *hint, void (*wakeup_cb)(us_loop_r loop),
+struct us_loop_t *us_create_loop(void (*wakeup_cb)(us_loop_r loop),
     void (*pre_cb)(us_loop_r loop), void (*post_cb)(us_loop_r loop), unsigned int ext_size);
 
 /* Frees the loop immediately */
@@ -564,9 +564,10 @@ void us_loop_free(us_loop_r loop) nonnull_fn_decl;
 /* Returns the loop user data extension */
 void *us_loop_ext(us_loop_r loop) nonnull_fn_decl;
 
-/* Blocks the calling thread and drives the event loop until no more non-fallthrough polls are scheduled */
-void us_loop_run(us_loop_r loop) nonnull_fn_decl;
-
+struct timespec;
+/* One iteration of the loop: waits for at most `timeout` (NULL: until something is ready) and dispatches what is ready.
+ * `now_ns` is the us_internal_monotonic_ns reading `timeout` was picked from, or 0 when there is none to share. */
+void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec *timeout, uint64_t now_ns);
 
 /* Signals the loop from any thread to wake up and execute its wakeup handler from the loop's own running thread.
  * This is the only fully thread-safe function and serves as the basis for thread safety */

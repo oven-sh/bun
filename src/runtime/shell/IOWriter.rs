@@ -108,6 +108,27 @@ pub struct Flags {
     pub(crate) broken_pipe: bool,
 }
 
+impl Flags {
+    #[cfg_attr(windows, allow(unused_variables))]
+    pub(crate) fn classified(pollable: bool, nonblock: bool, is_socket: bool) -> Flags {
+        Flags {
+            #[cfg(not(windows))]
+            pollable,
+            #[cfg(not(windows))]
+            nonblock,
+            #[cfg(not(windows))]
+            is_socket,
+            broken_pipe: false,
+        }
+    }
+
+    /// The write end of a pipe between two commands, which on POSIX is a
+    /// socketpair end.
+    pub(crate) fn pipe() -> Flags {
+        Flags::classified(true, false, true)
+    }
+}
+
 /// One queued chunk: which child enqueued it, its bytes, how many of those
 /// have been written so far, and an optional `Vec<u8>` to tee into.
 struct Writer {
@@ -897,8 +918,8 @@ bun_io::impl_buffered_writer_parent! {
     event_loop = |this| (*this).io_evtloop(),
     // INVARIANT: `this` is `Arc::as_ptr` stashed via `writer.set_parent` in
     // `IOWriter::init` (sole constructor); passing a non-Arc ptr is UB.
-    ref_       = |this| std::sync::Arc::increment_strong_count(this as *const Self),
-    deref      = |this| std::sync::Arc::decrement_strong_count(this as *const Self),
+    ref_       = |this| std::sync::Arc::increment_strong_count(this.cast_const()),
+    deref      = |this| std::sync::Arc::decrement_strong_count(this.cast_const()),
 }
 
 // ──────────────────────────────────────────────────────────────────────────

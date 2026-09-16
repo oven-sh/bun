@@ -12,7 +12,7 @@ use bun_core::{Output, strings};
 use bun_event_loop::EventLoopHandle;
 use bun_io::BufferedReader;
 #[cfg(unix)]
-use bun_io::{FilePollFlag, PosixFlags};
+use bun_io::{FilePollFlag, ReaderFlags};
 use bun_paths as Path;
 use bun_ptr::{BackRef, JsCell, RefPtr, ThisPtr};
 use bun_spawn::SpawnResultExt as _;
@@ -642,7 +642,10 @@ impl GitSubprocess {
             #[cfg(unix)]
             {
                 let _ = bun_sys::set_nonblocking(fd);
-                reader.with_mut(|r| r.flags.insert(PosixFlags::NONBLOCKING | PosixFlags::SOCKET));
+                reader.with_mut(|r| {
+                    r.flags
+                        .insert(ReaderFlags::NONBLOCKING | ReaderFlags::SOCKET)
+                });
             }
             if let Err(err) = reader.with_mut(|r| r.start(fd, true)) {
                 // Windows only: POSIX reports a failed start through `on_reader_error`

@@ -9,10 +9,14 @@ use core::ffi::c_void;
 use core::ptr;
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use bun_core::{S, ZStr};
+use bun_core::{S, Timespec, ZStr};
+use bun_paths::{is_drive_letter_t, is_sep_any_t};
 use bun_windows_sys as win32;
 
-use super::{HANDLE, INVALID_HANDLE_VALUE, NTSTATUS, O, Win32Error, Win32ErrorExt as _};
+use super::{
+    EPOCH_DIFFERENCE_100NS, HANDLE, INVALID_HANDLE_VALUE, NTSTATUS, O, Win32Error,
+    Win32ErrorExt as _,
+};
 use crate::{E, Error, Fd, Maybe, Mode, PlatformIoVec, PlatformIoVecConst, Tag, TimeLike};
 
 type Win32Result<T> = core::result::Result<T, Win32Error>;
@@ -23,14 +27,6 @@ pub(crate) const SHARE_ALL: u32 =
 // ──────────────────────────────────────────────────────────────────────────
 // Types
 // ──────────────────────────────────────────────────────────────────────────
-
-/// Seconds + nanoseconds since the Unix epoch.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct StatTimespec {
-    pub sec: i64,
-    pub nsec: i64,
-}
 
 /// `bun_sys::Stat` on Windows. Every numeric field is a `u64` so the values
 /// reach JS `Stats` without per-field width handling.
@@ -47,16 +43,14 @@ pub struct Stat {
     pub st_size: u64,
     pub st_blksize: u64,
     pub st_blocks: u64,
-    pub st_flags: u64,
-    pub st_gen: u64,
-    pub atim: StatTimespec,
-    pub mtim: StatTimespec,
-    pub ctim: StatTimespec,
-    pub birthtim: StatTimespec,
+    pub atim: Timespec,
+    pub mtim: Timespec,
+    pub ctim: Timespec,
+    pub birthtim: Timespec,
 }
 impl Stat {
     #[inline]
-    pub fn mtime(&self) -> StatTimespec {
+    pub fn mtime(&self) -> Timespec {
         self.mtim
     }
     #[inline]
@@ -82,45 +76,27 @@ pub struct StatFS {
     pub f_bavail: u64,
     pub f_files: u64,
     pub f_ffree: u64,
-    pub f_spare: [u64; 4],
 }
 // SAFETY: integers only; all-zero is a valid value.
 unsafe impl bun_core::ffi::Zeroable for StatFS {}
 
-/// 100 ns ticks between 1601-01-01 (FILETIME epoch) and 1970-01-01.
-const WIN_TO_UNIX_TICK_OFFSET: i64 = super::EPOCH_DIFFERENCE_100NS;
 const TICKS_PER_SEC: i64 = 10_000_000;
 
-fn filetime_to_timespec(filetime: i64) -> StatTimespec {
+fn filetime_to_timespec(filetime: i64) -> Timespec {
     // Split before moving the epoch: the subtraction cannot overflow then,
     // whatever the volume has stored.
-    let sec = filetime.div_euclid(TICKS_PER_SEC) - WIN_TO_UNIX_TICK_OFFSET / TICKS_PER_SEC;
+    let sec = filetime.div_euclid(TICKS_PER_SEC) - EPOCH_DIFFERENCE_100NS / TICKS_PER_SEC;
     let nsec = filetime.rem_euclid(TICKS_PER_SEC) * 100;
-    StatTimespec { sec, nsec }
+    Timespec { sec, nsec }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 // Helpers
 // ──────────────────────────────────────────────────────────────────────────
 
-#[inline]
-fn nt_error(status: NTSTATUS) -> Win32Error {
-    Win32Error::from_ntstatus(status)
-}
-
-#[inline]
-fn is_slash(c: u16) -> bool {
-    c == b'\\' as u16 || c == b'/' as u16
-}
-
-#[inline]
-fn is_letter(c: u16) -> bool {
-    (c >= b'a' as u16 && c <= b'z' as u16) || (c >= b'A' as u16 && c <= b'Z' as u16)
-}
-
 /// The error for a write that failed with `code`: a closed pipe is `EPIPE`.
 /// (Everywhere else `ERROR_BROKEN_PIPE` is `EOF` and `ERROR_NO_DATA` is `EAGAIN`.)
-pub(crate) fn write_error(code: Win32Error, tag: Tag) -> Error {
+fn write_error(code: Win32Error, tag: Tag) -> Error {
     match code {
         Win32Error::BROKEN_PIPE | Win32Error::NO_DATA => Error::from_code(E::EPIPE, tag),
         // Writing through a handle that was not opened for writing.
@@ -131,7 +107,7 @@ pub(crate) fn write_error(code: Win32Error, tag: Tag) -> Error {
 
 /// The error for a read that failed with `code`, or `None` when the failure
 /// means end-of-file.
-pub(crate) fn read_error(code: Win32Error, tag: Tag) -> Option<Error> {
+fn read_error(code: Win32Error, tag: Tag) -> Option<Error> {
     match code {
         Win32Error::BROKEN_PIPE | Win32Error::HANDLE_EOF => None,
         // Reading through a handle that was not opened for reading.
@@ -200,10 +176,10 @@ const LONG_PATH_THRESHOLD: usize = 248;
 /// `\\?\…` and `\\.\…`.
 fn is_device_path(path: &[u16]) -> bool {
     path.len() >= 4
-        && is_slash(path[0])
-        && is_slash(path[1])
+        && is_sep_any_t(path[0])
+        && is_sep_any_t(path[1])
         && (path[2] == b'?' as u16 || path[2] == b'.' as u16)
-        && is_slash(path[3])
+        && is_sep_any_t(path[3])
 }
 
 /// Whether Win32 holds `path` to `MAX_PATH`. A relative path counts with the
@@ -215,8 +191,8 @@ fn exceeds_max_path(path: &[u16]) -> bool {
     if path.len() >= LONG_PATH_THRESHOLD {
         return true;
     }
-    let is_absolute = path.len() >= 3 && path[1] == b':' as u16 && is_slash(path[2])
-        || path.len() >= 2 && is_slash(path[0]) && is_slash(path[1]);
+    let is_absolute = path.len() >= 3 && path[1] == b':' as u16 && is_sep_any_t(path[2])
+        || path.len() >= 2 && is_sep_any_t(path[0]) && is_sep_any_t(path[1]);
     if is_absolute {
         return false;
     }
@@ -254,7 +230,7 @@ fn write_long_path(path: *const u16, full: &mut [u16]) -> Win32Result<(usize, us
     Ok(if is_device_path(resolved) {
         // A device name resolved to `\\.\NAME`.
         (RESERVE, n)
-    } else if n >= 2 && is_slash(resolved[0]) && is_slash(resolved[1]) {
+    } else if n >= 2 && is_sep_any_t(resolved[0]) && is_sep_any_t(resolved[1]) {
         // `\\server\share\…` → `\\?\UNC\server\share\…`
         let start = RESERVE + 1 - 7;
         for (dst, src) in full[start..start + 7].iter_mut().zip(b"\\\\?\\UNC") {
@@ -299,14 +275,14 @@ pub fn kernel32_path(buf: &mut [u16], path: &[u8]) -> Win32Result<usize> {
 ///
 /// Short paths are passed through as given, so Win32 resolves relative paths,
 /// drive-relative paths, `.`/`..` and device names (`NUL`, `CON`) as usual.
-struct WPath {
+pub struct WPath {
     buf: bun_paths::w_path_buffer_pool::Guard,
     start: usize,
     len: usize,
 }
 
 impl WPath {
-    fn new(path: &[u8]) -> Win32Result<WPath> {
+    pub fn new(path: &[u8]) -> Win32Result<WPath> {
         use bun_paths::string_paths;
         if !string_paths::fits_in_wide_path_buffer(string_paths::without_nt_prefix(path)) {
             return Err(Win32Error::FILENAME_EXCED_RANGE);
@@ -349,7 +325,7 @@ impl WPath {
     }
 
     #[inline]
-    fn as_ptr(&self) -> *const u16 {
+    pub fn as_ptr(&self) -> *const u16 {
         self.buf[self.start..].as_ptr()
     }
 
@@ -412,10 +388,6 @@ fn open_impl(path: &[u8], flags: i32, mode: Mode) -> core::result::Result<HANDLE
         access |= win32::FILE_APPEND_DATA;
     }
 
-    // All sharing modes, to match UNIX semantics: in particular the file can
-    // be deleted or renamed while it is open.
-    let share = if flags & O::EXLOCK != 0 { 0 } else { SHARE_ALL };
-
     const CREAT_EXCL: i32 = O::CREAT | O::EXCL;
     const CREAT_TRUNC_EXCL: i32 = O::CREAT | O::TRUNC | O::EXCL;
     const TRUNC_EXCL: i32 = O::TRUNC | O::EXCL;
@@ -437,22 +409,6 @@ fn open_impl(path: &[u8], flags: i32, mode: Mode) -> core::result::Result<HANDLE
         if (mode & !umask) & S::IWUSR == 0 {
             attributes |= win32::FILE_ATTRIBUTE_READONLY;
         }
-    }
-
-    if flags & O::TEMPORARY != 0 {
-        attributes |= win32::FILE_FLAG_DELETE_ON_CLOSE | win32::FILE_ATTRIBUTE_TEMPORARY;
-        access |= win32::DELETE;
-    }
-
-    if flags & O::SHORT_LIVED != 0 {
-        attributes |= win32::FILE_ATTRIBUTE_TEMPORARY;
-    }
-
-    match flags & (O::SEQUENTIAL | O::RANDOM) {
-        0 => {}
-        O::SEQUENTIAL => attributes |= win32::FILE_FLAG_SEQUENTIAL_SCAN,
-        O::RANDOM => attributes |= win32::FILE_FLAG_RANDOM_ACCESS,
-        _ => return Err(E::EINVAL),
     }
 
     if flags & O::DIRECT != 0 {
@@ -479,7 +435,9 @@ fn open_impl(path: &[u8], flags: i32, mode: Mode) -> core::result::Result<HANDLE
     attributes |= win32::FILE_FLAG_BACKUP_SEMANTICS;
 
     let wpath = WPath::new(path).map_err(|e| e.to_e())?;
-    match create_file(wpath.as_ptr(), access, share, disposition, attributes) {
+    // All sharing modes, to match UNIX semantics: in particular the file can
+    // be deleted or renamed while it is open.
+    match create_file(wpath.as_ptr(), access, SHARE_ALL, disposition, attributes) {
         Ok(handle) => {
             let raw = handle.0;
             core::mem::forget(handle);
@@ -494,29 +452,180 @@ fn open_impl(path: &[u8], flags: i32, mode: Mode) -> core::result::Result<HANDLE
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Vectored I/O
+// read / write
 // ──────────────────────────────────────────────────────────────────────────
+
+pub fn read(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
+    read_at(fd, buf, None)
+}
+
+pub fn write(fd: Fd, buf: &[u8]) -> Maybe<usize> {
+    write_at(fd, buf, None)
+}
+
+/// The `OVERLAPPED` of a synchronous `ReadFile`/`WriteFile` at `off`.
+fn overlapped_at(off: u64) -> win32::OVERLAPPED {
+    win32::OVERLAPPED {
+        Internal: 0,
+        InternalHigh: 0,
+        Offset: off as u32,
+        OffsetHigh: (off >> 32) as u32,
+        hEvent: core::ptr::null_mut(),
+    }
+}
+
+/// A positioned `ReadFile`/`WriteFile` on a synchronous handle moves its
+/// file pointer too. `fs.read(fd, .., position)` must leave it alone, so it
+/// is put back for the fds JS can see (CRT fds). HANDLE-kind callers never
+/// mix positioned and sequential I/O on one handle and skip the two calls.
+struct RestoreFilePointer {
+    handle: HANDLE,
+    saved: Option<i64>,
+}
+
+impl RestoreFilePointer {
+    fn new(fd: Fd) -> Self {
+        const FILE_POSITION_INFORMATION: win32::FILE_INFORMATION_CLASS =
+            win32::FILE_INFORMATION_CLASS(14);
+        let handle = fd.native();
+        let mut saved = None;
+        if fd.kind() == crate::FdKind::Crt {
+            let mut io: win32::IO_STATUS_BLOCK = bun_core::ffi::zeroed();
+            let mut current: i64 = 0;
+            // One system call; `SetFilePointerEx(FILE_CURRENT)` is this
+            // query followed by a set.
+            // SAFETY: FFI; `handle` is the fd's HANDLE, and the class
+            // writes one `LARGE_INTEGER` into `current`.
+            let status = unsafe {
+                win32::ntdll::NtQueryInformationFile(
+                    handle,
+                    &mut io,
+                    core::ptr::from_mut(&mut current).cast(),
+                    core::mem::size_of::<i64>() as u32,
+                    FILE_POSITION_INFORMATION,
+                )
+            };
+            if win32::NT_SUCCESS(status) {
+                saved = Some(current);
+            }
+        }
+        Self { handle, saved }
+    }
+}
+
+impl Drop for RestoreFilePointer {
+    fn drop(&mut self) {
+        if let Some(position) = self.saved {
+            // SAFETY: FFI; `handle` outlives the guard.
+            unsafe {
+                win32::SetFilePointerEx(
+                    self.handle,
+                    position,
+                    core::ptr::null_mut(),
+                    win32::FILE_BEGIN,
+                )
+            };
+        }
+    }
+}
+
+/// A negative `off` reads at the file pointer.
+pub fn pread(fd: Fd, buf: &mut [u8], off: i64) -> Maybe<usize> {
+    if off < 0 {
+        return read(fd, buf);
+    }
+    let _restore = RestoreFilePointer::new(fd);
+    read_at(fd, buf, Some(off as u64))
+}
+
+/// `ReadFile` at `at`, or at the file pointer. A positioned read runs
+/// under a [`RestoreFilePointer`] the caller holds.
+fn read_at(fd: Fd, buf: &mut [u8], at: Option<u64>) -> Maybe<usize> {
+    let adjusted_len = buf.len().min(crate::MAX_COUNT) as u32;
+    // Stdin callers route through this function (via
+    // `File::stdin().read_to_end_into` / `output_sink().read`), so the
+    // OPERATION_ABORTED retry lives here.
+    loop {
+        let mut overlapped = at.map(overlapped_at);
+        let mut amount_read: u32 = 0;
+        // SAFETY: FFI; `buf` valid for `adjusted_len`, `overlapped` lives
+        // for the synchronous call (handle was not opened
+        // FILE_FLAG_OVERLAPPED).
+        let rc = unsafe {
+            win32::kernel32::ReadFile(
+                fd.native(),
+                buf.as_mut_ptr(),
+                adjusted_len,
+                &mut amount_read,
+                overlapped
+                    .as_mut()
+                    .map_or(core::ptr::null_mut(), |o| core::ptr::from_mut(o).cast()),
+            )
+        };
+        if rc == 0 {
+            let er = Win32Error::get();
+            if er == Win32Error::OPERATION_ABORTED {
+                continue;
+            }
+            return match read_error(er, Tag::read) {
+                Some(err) => Err(err.with_fd(fd)),
+                None => Ok(0),
+            };
+        }
+        return Ok(amount_read as usize);
+    }
+}
+
+/// A negative `off` writes at the file pointer; see `pread`.
+pub fn pwrite(fd: Fd, buf: &[u8], off: i64) -> Maybe<usize> {
+    if off < 0 {
+        return write(fd, buf);
+    }
+    let _restore = RestoreFilePointer::new(fd);
+    write_at(fd, buf, Some(off as u64))
+}
+
+/// `WriteFile` at `at`, or at the file pointer. A positioned write runs
+/// under a [`RestoreFilePointer`] the caller holds.
+fn write_at(fd: Fd, buf: &[u8], at: Option<u64>) -> Maybe<usize> {
+    let adjusted_len = buf.len().min(crate::MAX_COUNT) as u32;
+    let mut overlapped = at.map(overlapped_at);
+    let mut bytes_written: u32 = 0;
+    // SAFETY: FFI; `buf` valid for `adjusted_len`, `overlapped` lives for
+    // the synchronous call (handle was not opened FILE_FLAG_OVERLAPPED).
+    let rc = unsafe {
+        win32::kernel32::WriteFile(
+            fd.native(),
+            buf.as_ptr(),
+            adjusted_len,
+            &mut bytes_written,
+            overlapped
+                .as_mut()
+                .map_or(core::ptr::null_mut(), |o| core::ptr::from_mut(o).cast()),
+        )
+    };
+    if rc == 0 {
+        return Err(write_error(Win32Error::get(), Tag::write).with_fd(fd));
+    }
+    Ok(bytes_written as usize)
+}
 
 /// One `ReadFile` per buffer. `position < 0` reads at the file pointer.
 /// A short read goes on to the next buffer, as libuv's `fs__read` does (on a
 /// pipe that waits for more); a read of nothing ends it. An error after some
 /// bytes were read reports those bytes instead.
 pub fn preadv(fd: Fd, bufs: &[PlatformIoVec], position: i64) -> Maybe<usize> {
-    let _restore = (position >= 0).then(|| crate::RestoreFilePointer::new(fd));
+    let _restore = (position >= 0).then(|| RestoreFilePointer::new(fd));
     let mut total: usize = 0;
     for buf in bufs {
-        if buf.len == 0 {
+        if buf.iov_len == 0 {
             continue;
         }
-        // SAFETY: a `PlatformIoVec` describes a writable buffer of `len`
+        // SAFETY: a `PlatformIoVec` describes a writable buffer of `iov_len`
         // bytes that the caller keeps alive for the call.
-        let slice = unsafe { core::slice::from_raw_parts_mut(buf.base, buf.len as usize) };
-        let result = if position < 0 {
-            crate::read(fd, slice)
-        } else {
-            crate::pread_at(fd, slice, position as u64 + total as u64)
-        };
-        match result {
+        let slice = unsafe { core::slice::from_raw_parts_mut(buf.iov_base.cast(), buf.iov_len) };
+        let at = (position >= 0).then(|| position as u64 + total as u64);
+        match read_at(fd, slice, at) {
             Ok(n) => {
                 total += n;
                 if n == 0 {
@@ -532,7 +641,7 @@ pub fn preadv(fd: Fd, bufs: &[PlatformIoVec], position: i64) -> Maybe<usize> {
 
 /// One `WriteFile` per buffer. `position < 0` writes at the file pointer.
 pub fn pwritev(fd: Fd, bufs: &[PlatformIoVecConst], position: i64) -> Maybe<usize> {
-    let _restore = (position >= 0).then(|| crate::RestoreFilePointer::new(fd));
+    let _restore = (position >= 0).then(|| RestoreFilePointer::new(fd));
     let mut total: usize = 0;
     for buf in bufs {
         if buf.len == 0 {
@@ -540,13 +649,9 @@ pub fn pwritev(fd: Fd, bufs: &[PlatformIoVecConst], position: i64) -> Maybe<usiz
         }
         // SAFETY: a `PlatformIoVecConst` describes a readable buffer of `len`
         // bytes that the caller keeps alive for the call.
-        let slice = unsafe { core::slice::from_raw_parts(buf.base, buf.len as usize) };
-        let result = if position < 0 {
-            crate::write(fd, slice)
-        } else {
-            crate::pwrite_at(fd, slice, position as u64 + total as u64)
-        };
-        match result {
+        let slice = unsafe { core::slice::from_raw_parts(buf.base, buf.len) };
+        let at = (position >= 0).then(|| position as u64 + total as u64);
+        match write_at(fd, slice, at) {
             Ok(n) => {
                 total += n;
                 if n < slice.len() {
@@ -626,7 +731,7 @@ fn stat_path(path: &[u8], do_lstat: bool) -> Win32Result<Stat> {
     // Strip one trailing slash, unless it follows a drive colon (`C:\`).
     let units = wpath.units();
     let len = units.len();
-    if len > 1 && units[len - 2] != b':' as u16 && is_slash(units[len - 1]) {
+    if len > 1 && units[len - 2] != b':' as u16 && is_sep_any_t(units[len - 1]) {
         wpath.truncate(len - 1);
     }
 
@@ -747,7 +852,7 @@ fn stat_handle(handle: HANDLE, do_lstat: bool) -> Win32Result<Stat> {
         )
     };
     if win32::NT_ERROR(status) {
-        return Err(nt_error(status));
+        return Err(Win32Error::from_ntstatus(status));
     }
     if device_info.DeviceType == win32::FILE_DEVICE_NULL {
         return Ok(null_device_stat());
@@ -772,7 +877,7 @@ fn stat_file_handle(handle: HANDLE, do_lstat: bool) -> Win32Result<Stat> {
         )
     };
     if win32::NT_ERROR(status) {
-        return Err(nt_error(status));
+        return Err(Win32Error::from_ntstatus(status));
     }
 
     let volume_serial = volume_serial_number(handle)?;
@@ -798,13 +903,9 @@ fn stat_file_handle(handle: HANDLE, do_lstat: bool) -> Win32Result<Stat> {
             AllocationSize: file_info.StandardInformation.AllocationSize,
             EndOfFile: end_of_file,
             FileAttributes: attributes,
-            ReparseTag: 0,
             NumberOfLinks: file_info.StandardInformation.NumberOfLinks,
-            DeviceType: 0,
-            DeviceCharacteristics: 0,
-            Reserved: 0,
             VolumeSerialNumber: i64::from(volume_serial),
-            FileId128: [0; 16],
+            ..bun_core::ffi::zeroed()
         },
         do_lstat,
     ))
@@ -829,7 +930,7 @@ fn volume_serial_number(handle: HANDLE) -> Win32Result<u32> {
         return Ok(0);
     }
     if win32::NT_ERROR(status) {
-        return Err(nt_error(status));
+        return Err(Win32Error::from_ntstatus(status));
     }
     Ok(volume_info.VolumeSerialNumber)
 }
@@ -893,7 +994,7 @@ fn stat_from_directory_listing(
     // Find where the last component starts.
     let mut split = len;
     let mut includes_name = false;
-    while split > 0 && !is_slash(path[split - 1]) && path[split - 1] != b':' as u16 {
+    while split > 0 && !is_sep_any_t(path[split - 1]) && path[split - 1] != b':' as u16 {
         if path[split - 1] != b'.' as u16 {
             includes_name = true;
         }
@@ -908,7 +1009,7 @@ fn stat_from_directory_listing(
     let dir: *const u16 = if split == 0 && includes_name {
         // A bare relative name.
         DOT.as_ptr()
-    } else if split > 0 && is_slash(path[split - 1]) {
+    } else if split > 0 && is_sep_any_t(path[split - 1]) {
         if !includes_name {
             // `dir\`, `dir\..`: the whole path is the directory.
             split = len;
@@ -987,7 +1088,7 @@ fn stat_from_directory_listing(
             return Err(if status == NTSTATUS::NO_MORE_FILES {
                 Win32Error::PATH_NOT_FOUND
             } else {
-                nt_error(status)
+                Win32Error::from_ntstatus(status)
             });
         }
 
@@ -1018,14 +1119,10 @@ fn stat_from_directory_listing(
                     dir_info.EndOfFile
                 },
                 FileAttributes: dir_info.FileAttributes,
-                ReparseTag: 0,
                 // Not part of a directory listing.
                 NumberOfLinks: 1,
-                DeviceType: 0,
-                DeviceCharacteristics: 0,
-                Reserved: 0,
                 VolumeSerialNumber: i64::from(volume_serial),
-                FileId128: [0; 16],
+                ..bun_core::ffi::zeroed()
             },
             do_lstat,
         ))
@@ -1041,7 +1138,8 @@ fn stat_from_directory_listing(
 // Reparse points
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Aligned storage for a `REPARSE_DATA_BUFFER`:
+/// Aligned storage for a `REPARSE_DATA_BUFFER` (the first
+/// `MAXIMUM_REPARSE_DATA_BUFFER_SIZE` bytes of a pooled wide path buffer):
 ///
 /// ```text
 ///  0  u32 ReparseTag
@@ -1054,11 +1152,13 @@ fn stat_from_directory_listing(
 /// 16  mount point: PathBuffer
 ///  8  app exec link: u32 StringCount, then NUL-separated strings at 12
 /// ```
-struct ReparseBuffer([u16; win32::MAXIMUM_REPARSE_DATA_BUFFER_SIZE / 2]);
+struct ReparseBuffer(bun_paths::w_path_buffer_pool::Guard);
+
+const _: () = assert!(bun_paths::PATH_MAX_WIDE >= win32::MAXIMUM_REPARSE_DATA_BUFFER_SIZE / 2);
 
 impl ReparseBuffer {
     fn new() -> Self {
-        Self([0; win32::MAXIMUM_REPARSE_DATA_BUFFER_SIZE / 2])
+        Self(bun_paths::w_path_buffer_pool::get())
     }
 
     /// The path a symlink-like reparse point on `handle` points to, as the
@@ -1091,7 +1191,7 @@ impl ReparseBuffer {
         let tag = u32::from(units[0]) | u32::from(units[1]) << 16;
         let is_drive_path = |t: &[u16]| {
             t.len() >= 2
-                && is_letter(t[0])
+                && is_drive_letter_t(t[0])
                 && t[1] == b':' as u16
                 && (t.len() == 2 || t[2] == b'\\' as u16)
         };
@@ -1255,7 +1355,7 @@ fn unlink_or_rmdir(path: &[u8], is_rmdir: bool) -> core::result::Result<(), E> {
         )
     };
     if !win32::NT_SUCCESS(status) {
-        return Err(nt_error(status).to_e());
+        return Err(Win32Error::from_ntstatus(status).to_e());
     }
     let attributes = info.FileAttributes;
     let is_directory = attributes & win32::FILE_ATTRIBUTE_DIRECTORY != 0;
@@ -1300,7 +1400,7 @@ fn unlink_or_rmdir(path: &[u8], is_rmdir: bool) -> core::result::Result<(), E> {
     if win32::NT_SUCCESS(status) {
         return Ok(());
     }
-    let error = nt_error(status);
+    let error = Win32Error::from_ntstatus(status);
     // The errors libuv takes to mean that the file system or the OS has no
     // POSIX delete.
     if !matches!(
@@ -1341,7 +1441,7 @@ fn unlink_or_rmdir(path: &[u8], is_rmdir: bool) -> core::result::Result<(), E> {
             )
         };
         if !win32::NT_SUCCESS(status) {
-            return Err(nt_error(status).to_e());
+            return Err(Win32Error::from_ntstatus(status).to_e());
         }
     }
 
@@ -1359,7 +1459,7 @@ fn unlink_or_rmdir(path: &[u8], is_rmdir: bool) -> core::result::Result<(), E> {
     if win32::NT_SUCCESS(status) {
         Ok(())
     } else {
-        Err(nt_error(status).to_e())
+        Err(Win32Error::from_ntstatus(status).to_e())
     }
 }
 
@@ -1604,9 +1704,9 @@ fn junction_impl(target: &[u8], link: &[u8]) -> core::result::Result<(), E> {
     let is_long_path = target.len() >= 4 && target[..4] == super::LONG_PATH_PREFIX;
     let is_absolute = is_long_path
         || (target.len() >= 3
-            && is_letter(target[0])
+            && is_drive_letter_t(target[0])
             && target[1] == b':' as u16
-            && is_slash(target[2]));
+            && is_sep_any_t(target[2]));
     if !is_absolute {
         return Err(E::EINVAL);
     }
@@ -1624,7 +1724,7 @@ fn junction_impl(target: &[u8], link: &[u8]) -> core::result::Result<(), E> {
     let append_target = |buffer: &mut [u16], at: &mut usize| {
         let mut pending_slash = false;
         for &c in target {
-            if is_slash(c) {
+            if is_sep_any_t(c) {
                 pending_slash = true;
                 continue;
             }
@@ -1773,7 +1873,7 @@ fn fchmod_handle(handle: HANDLE, mode: Mode) -> Win32Result<()> {
         )
     };
     if !win32::NT_SUCCESS(status) {
-        return Err(nt_error(status));
+        return Err(Win32Error::from_ntstatus(status));
     }
 
     let mut set = |info: &mut win32::FILE_BASIC_INFORMATION| {
@@ -1790,7 +1890,7 @@ fn fchmod_handle(handle: HANDLE, mode: Mode) -> Win32Result<()> {
         if win32::NT_SUCCESS(status) {
             Ok(())
         } else {
-            Err(nt_error(status))
+            Err(Win32Error::from_ntstatus(status))
         }
     };
 
@@ -1909,7 +2009,6 @@ fn statfs_impl(path: &[u8]) -> Win32Result<StatFS> {
         f_bavail: u64::from(free_clusters),
         f_files: 0,
         f_ffree: 0,
-        f_spare: [0; 4],
     })
 }
 
@@ -1943,7 +2042,7 @@ fn time_like_to_filetime(
         .sec
         .checked_mul(TICKS_PER_SEC)
         .and_then(|ticks| ticks.checked_add(time.nsec / 100))
-        .and_then(|ticks| ticks.checked_add(WIN_TO_UNIX_TICK_OFFSET))
+        .and_then(|ticks| ticks.checked_add(EPOCH_DIFFERENCE_100NS))
         .and_then(|ticks| u64::try_from(ticks).ok())
         .ok_or(Win32Error::INVALID_PARAMETER)?;
     Ok(Some(win32::FILETIME {
@@ -2043,7 +2142,9 @@ pub fn ftruncate(fd: Fd, len: i64) -> Maybe<()> {
         )
     };
     if !win32::NT_SUCCESS(status) {
-        return Err(Error::from_win32(nt_error(status), Tag::ftruncate).with_fd(fd));
+        return Err(
+            Error::from_win32(Win32Error::from_ntstatus(status), Tag::ftruncate).with_fd(fd),
+        );
     }
     Ok(())
 }

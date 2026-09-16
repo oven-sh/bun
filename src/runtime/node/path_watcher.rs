@@ -23,12 +23,7 @@
 
 use core::cell::{Cell, UnsafeCell};
 use core::ffi::c_void;
-#[cfg(any(
-    target_os = "linux",
-    target_os = "android",
-    target_os = "freebsd",
-    windows
-))]
+#[cfg(not(target_os = "macos"))]
 use core::sync::atomic::{AtomicBool, Ordering};
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -37,12 +32,7 @@ use bun_collections::{ArrayHashMap, StringArrayHashMap};
 use bun_core::ZBox;
 #[cfg(any(target_os = "linux", target_os = "android", windows))]
 use bun_core::strings;
-#[cfg(any(
-    target_os = "linux",
-    target_os = "android",
-    target_os = "freebsd",
-    windows
-))]
+#[cfg(not(target_os = "macos"))]
 use bun_core::{Output, zstr};
 use bun_core::{ZStr, handle_oom};
 use bun_paths as path;
@@ -50,18 +40,11 @@ use bun_paths as path;
 use bun_paths::platform;
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 use bun_paths::resolve_path::join_z_buf_spill;
-#[cfg(any(
-    target_os = "linux",
-    target_os = "android",
-    target_os = "freebsd",
-    windows
-))]
+#[cfg(not(target_os = "macos"))]
 use bun_sys::FdExt;
 use bun_sys::{self as sys, E, Fd, Tag};
 use bun_threading::Mutex;
 use bun_wyhash::hash;
-
-use bun_jsc::VirtualMachineRef as VirtualMachine;
 
 use crate::node::node_fs_watcher::{Event, FSWatcher, WatchEventKind};
 
@@ -111,21 +94,11 @@ pub(crate) struct PathWatcherManager {
     /// spawns, never reassigned (process-lifetime singleton, no teardown). Hoisted
     /// out of `UnsafeCell<Platform>` so reads are safe `Cell::get()` instead of
     /// raw deref; thread-spawn happens-before makes the cross-thread read sound.
-    #[cfg(any(
-        target_os = "linux",
-        target_os = "android",
-        target_os = "freebsd",
-        windows
-    ))]
+    #[cfg(not(target_os = "macos"))]
     platform_fd: Cell<Fd>,
 
     /// Reader-thread loop flag. Initialized `true`, never cleared (no teardown).
-    #[cfg(any(
-        target_os = "linux",
-        target_os = "android",
-        target_os = "freebsd",
-        windows
-    ))]
+    #[cfg(not(target_os = "macos"))]
     running: AtomicBool,
 
     /// Monotonic kevent generation counter (FreeBSD). Bumped under `mutex`.
@@ -153,19 +126,9 @@ impl Default for PathWatcherManager {
             watchers: UnsafeCell::new(StringArrayHashMap::default()),
             #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
             platform: UnsafeCell::new(Platform::default()),
-            #[cfg(any(
-                target_os = "linux",
-                target_os = "android",
-                target_os = "freebsd",
-                windows
-            ))]
+            #[cfg(not(target_os = "macos"))]
             platform_fd: Cell::new(Fd::INVALID),
-            #[cfg(any(
-                target_os = "linux",
-                target_os = "android",
-                target_os = "freebsd",
-                windows
-            ))]
+            #[cfg(not(target_os = "macos"))]
             running: AtomicBool::new(true),
             #[cfg(target_os = "freebsd")]
             next_gen: Cell::new(1),
@@ -223,12 +186,7 @@ pub struct PathWatcher {
     /// Canonical absolute path (realpath of the user-supplied path). Owned.
     path: ZBox,
     recursive: bool,
-    #[cfg(any(
-        target_os = "linux",
-        target_os = "android",
-        target_os = "freebsd",
-        windows
-    ))]
+    #[cfg(not(target_os = "macos"))]
     is_file: bool,
 
     /// JS `FSWatcher` contexts sharing this OS watch. Each gets its own ChangeEvent
@@ -276,9 +234,6 @@ impl ChangeEvent {
     }
 }
 
-pub(crate) type Callback = fn(ctx: Option<*mut c_void>, event: Event, is_file: bool);
-pub(crate) type UpdateEndCallback = fn(ctx: Option<*mut c_void>);
-
 impl PathWatcher {
     /// Heap-allocate and return a raw pointer.
     fn new(init: PathWatcher) -> *mut PathWatcher {
@@ -294,11 +249,7 @@ impl PathWatcher {
         let h = hash(rel_path);
         for (&ctx, ev) in self.handlers.iter() {
             if ev.should_emit(h, timestamp, event_type) {
-                (FSWatcher::ON_PATH_UPDATE)(
-                    Some(ctx),
-                    event_type.to_event(rel_path.into()),
-                    is_file,
-                );
+                FSWatcher::on_path_update(Some(ctx), event_type.to_event(rel_path.into()), is_file);
             }
         }
     }
@@ -311,7 +262,7 @@ impl PathWatcher {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn emit_unsuppressed(&self, event_type: WatchEventKind, rel_path: &[u8], is_file: bool) {
         for &ctx in self.handlers.keys() {
-            (FSWatcher::ON_PATH_UPDATE)(Some(ctx), event_type.to_event(rel_path.into()), is_file);
+            FSWatcher::on_path_update(Some(ctx), event_type.to_event(rel_path.into()), is_file);
         }
     }
 
@@ -322,17 +273,13 @@ impl PathWatcher {
     #[cfg(any(target_os = "linux", target_os = "android", windows))]
     fn emit_overflow(&self) {
         for &ctx in self.handlers.keys() {
-            (FSWatcher::ON_PATH_UPDATE)(
-                Some(ctx),
-                Event::NoFilename(WatchEventKind::Change),
-                false,
-            );
+            FSWatcher::on_path_update(Some(ctx), Event::NoFilename(WatchEventKind::Change), false);
         }
     }
 
     fn emit_error(&self, err: &sys::Error, close: bool) {
         for &ctx in self.handlers.keys() {
-            (FSWatcher::ON_PATH_UPDATE)(
+            FSWatcher::on_path_update(
                 Some(ctx),
                 Event::Error {
                     err: err.clone(),
@@ -445,20 +392,10 @@ impl PathWatcher {
 // ────────────────────────────────────────────────────────────────────────────────
 
 pub(crate) fn watch(
-    vm: &VirtualMachine,
     path: &ZStr,
     recursive: bool,
-    callback: Callback,
-    update_end: UpdateEndCallback,
     ctx: *mut c_void,
 ) -> sys::Result<*mut PathWatcher> {
-    // Assert the callback/updateEnd are what node_fs_watcher passes.
-    // Compare against the *exact* fn pointers `FSWatcher` passes (not local wrappers,
-    // which would be distinct fn items with distinct addresses).
-    debug_assert!(callback as usize == FSWatcher::ON_PATH_UPDATE as usize);
-    debug_assert!(update_end as usize == (FSWatcher::on_update_end as UpdateEndCallback) as usize);
-    let _ = vm;
-
     let manager = PathWatcherManager::get()?;
 
     let mut resolve_buf = path::path_buffer_pool::get();
@@ -485,12 +422,7 @@ pub(crate) fn watch(
         manager: Some(manager),
         path: ZBox::from_bytes(resolved.as_bytes()),
         recursive,
-        #[cfg(any(
-            target_os = "linux",
-            target_os = "android",
-            target_os = "freebsd",
-            windows
-        ))]
+        #[cfg(not(target_os = "macos"))]
         is_file,
         handlers: ArrayHashMap::default(),
         platform: PlatformWatch::default(),
@@ -603,15 +535,8 @@ fn resolve<'a>(
         }
     };
     let _close_probe = sys::CloseOnDrop::new(probe_fd);
-    let resolved: &ZStr = match sys::get_fd_path(probe_fd, resolve_buf) {
-        Err(_) => path, // fall back to the caller's path; best effort
-        Ok(r) => {
-            let len = r.len();
-            resolve_buf[len] = 0;
-            // SAFETY: resolve_buf[len] == 0 written above.
-            ZStr::from_buf(&resolve_buf[..], len)
-        }
-    };
+    // Best effort: the caller's path when the OS cannot name the descriptor.
+    let resolved = sys::get_fd_path_z(probe_fd, resolve_buf).unwrap_or(path);
     Ok((resolved, is_file))
 }
 
@@ -1729,15 +1654,8 @@ fn resolve<'a>(
         return Err(sys::Error::from_win32(w::Win32Error::get(), Tag::watch));
     }
     let _close = sys::CloseOnDrop::new(Fd::from_system(handle));
-    let resolved: &ZStr = match sys::get_fd_path(Fd::from_system(handle), resolve_buf) {
-        Err(_) => path, // fall back to the caller's path; best effort
-        Ok(r) => {
-            let len = r.len();
-            resolve_buf[len] = 0;
-            // SAFETY: resolve_buf[len] == 0 written above.
-            ZStr::from_buf(&resolve_buf[..], len)
-        }
-    };
+    // Best effort: the caller's path when the OS cannot name the handle.
+    let resolved = sys::get_fd_path_z(Fd::from_system(handle), resolve_buf).unwrap_or(path);
     Ok((resolved, is_file))
 }
 

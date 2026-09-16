@@ -457,7 +457,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
                 // cmd.exe exits 0 after abandoning a line whose command was Ctrl+C'd.
                 #[cfg(windows)]
-                if exit_code.raw == bun_sys::windows::STATUS_CONTROL_C_EXIT
+                if exit_code.is_ctrl_c_exit()
                     || (bun_spawn::ctrl_c::take_received() && exit_code.raw == 0)
                 {
                     bun_spawn::ctrl_c::exit_like_child();
@@ -2198,8 +2198,7 @@ impl RunCommand {
                             Global::raise_ignoring_panic_handler(sc);
                         }
 
-                        #[cfg(windows)]
-                        if exit_code.raw == bun_sys::windows::STATUS_CONTROL_C_EXIT {
+                        if exit_code.is_ctrl_c_exit() {
                             bun_spawn::ctrl_c::exit_like_child();
                         }
 

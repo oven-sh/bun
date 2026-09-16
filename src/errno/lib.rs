@@ -48,22 +48,22 @@ macro_rules! __decl_uv_e {
         /// Full (negated code, name) table: libuv-synthetic codes (libuv's include/uv/errno.h)
         /// first, then per-OS rows. Consumed by `name()` and node:util `getSystemErrorMap()`.
         pub static ENTRIES: &[(i32, &'static str)] = &[
-            (-4095, "EOF"),
-            (-4094, "UNKNOWN"),
-            (-3000, "EAI_ADDRFAMILY"),
-            (-3001, "EAI_AGAIN"),
-            (-3002, "EAI_BADFLAGS"),
-            (-3003, "EAI_CANCELED"),
-            (-3004, "EAI_FAIL"),
-            (-3005, "EAI_FAMILY"),
-            (-3006, "EAI_MEMORY"),
-            (-3007, "EAI_NODATA"),
-            (-3008, "EAI_NONAME"),
-            (-3009, "EAI_OVERFLOW"),
-            (-3010, "EAI_SERVICE"),
-            (-3011, "EAI_SOCKTYPE"),
-            (-3013, "EAI_BADHINTS"),
-            (-3014, "EAI_PROTOCOL"),
+            ($crate::uv_codes::UV_EOF, "EOF"),
+            ($crate::uv_codes::UV_UNKNOWN, "UNKNOWN"),
+            ($crate::uv_codes::UV_EAI_ADDRFAMILY, "EAI_ADDRFAMILY"),
+            ($crate::uv_codes::UV_EAI_AGAIN, "EAI_AGAIN"),
+            ($crate::uv_codes::UV_EAI_BADFLAGS, "EAI_BADFLAGS"),
+            ($crate::uv_codes::UV_EAI_CANCELED, "EAI_CANCELED"),
+            ($crate::uv_codes::UV_EAI_FAIL, "EAI_FAIL"),
+            ($crate::uv_codes::UV_EAI_FAMILY, "EAI_FAMILY"),
+            ($crate::uv_codes::UV_EAI_MEMORY, "EAI_MEMORY"),
+            ($crate::uv_codes::UV_EAI_NODATA, "EAI_NODATA"),
+            ($crate::uv_codes::UV_EAI_NONAME, "EAI_NONAME"),
+            ($crate::uv_codes::UV_EAI_OVERFLOW, "EAI_OVERFLOW"),
+            ($crate::uv_codes::UV_EAI_SERVICE, "EAI_SERVICE"),
+            ($crate::uv_codes::UV_EAI_SOCKTYPE, "EAI_SOCKTYPE"),
+            ($crate::uv_codes::UV_EAI_BADHINTS, "EAI_BADHINTS"),
+            ($crate::uv_codes::UV_EAI_PROTOCOL, "EAI_PROTOCOL"),
             $( (-($ident), $display) ),+
         ];
 
@@ -89,8 +89,9 @@ macro_rules! __decl_uv_e {
 // (native `SystemErrno::$e as i32` on POSIX vs libuv-synthetic
 // `-uv_codes::UV_E*` on Windows / for codes the host OS lacks). Rather
 // than re-list the rows 4×, the caller supplies a tiny *value-producer* macro
-// `$cb!($id, $e, $uv) -> i32-expr` and this forwards each row to the existing
-// `__decl_uv_e!` expander (consts + reverse `name()` fn).
+// `$cb!($id, $e, $uv) -> i32-expr` and this forwards each row to the
+// `__decl_uv_e!` expander (consts + reverse `name()` fn). The `@each` form
+// hands the rows to any other expander (`uv_codes::UV_TO_E` on Windows).
 //
 // `$id`/`$e`/`$uv` are passed as **literal** tokens (never captured as
 // `:ident`), so the per-OS `$cb` can override individual rows by literal-token
@@ -101,78 +102,91 @@ macro_rules! __decl_uv_e {
 #[doc(hidden)]
 macro_rules! __uv_e_rows {
     ($cb:ident) => {
-        $crate::__decl_uv_e! {
+        $crate::__uv_e_rows!(@each __decl_uv_e_rows $cb);
+    };
+    // `$expand! { $($pre)* @rows [IDENT, E*, UV_E*, "E*"]… }`
+    (@each $expand:ident $($pre:tt)*) => {
+        $expand! { $($pre)* @rows
             // Rust idents can't start with a digit → `_2BIG`.
-            _2BIG          = $cb!(_2BIG,          E2BIG,           UV_E2BIG)           => "E2BIG",
-            ACCES          = $cb!(ACCES,          EACCES,          UV_EACCES)          => "EACCES",
-            ADDRINUSE      = $cb!(ADDRINUSE,      EADDRINUSE,      UV_EADDRINUSE)      => "EADDRINUSE",
-            ADDRNOTAVAIL   = $cb!(ADDRNOTAVAIL,   EADDRNOTAVAIL,   UV_EADDRNOTAVAIL)   => "EADDRNOTAVAIL",
-            AFNOSUPPORT    = $cb!(AFNOSUPPORT,    EAFNOSUPPORT,    UV_EAFNOSUPPORT)    => "EAFNOSUPPORT",
-            AGAIN          = $cb!(AGAIN,          EAGAIN,          UV_EAGAIN)          => "EAGAIN",
-            ALREADY        = $cb!(ALREADY,        EALREADY,        UV_EALREADY)        => "EALREADY",
-            BADF           = $cb!(BADF,           EBADF,           UV_EBADF)           => "EBADF",
-            BUSY           = $cb!(BUSY,           EBUSY,           UV_EBUSY)           => "EBUSY",
-            CANCELED       = $cb!(CANCELED,       ECANCELED,       UV_ECANCELED)       => "ECANCELED",
-            CHARSET        = $cb!(CHARSET,        ECHARSET,        UV_ECHARSET)        => "ECHARSET",
-            CONNABORTED    = $cb!(CONNABORTED,    ECONNABORTED,    UV_ECONNABORTED)    => "ECONNABORTED",
-            CONNREFUSED    = $cb!(CONNREFUSED,    ECONNREFUSED,    UV_ECONNREFUSED)    => "ECONNREFUSED",
-            CONNRESET      = $cb!(CONNRESET,      ECONNRESET,      UV_ECONNRESET)      => "ECONNRESET",
-            DESTADDRREQ    = $cb!(DESTADDRREQ,    EDESTADDRREQ,    UV_EDESTADDRREQ)    => "EDESTADDRREQ",
-            EXIST          = $cb!(EXIST,          EEXIST,          UV_EEXIST)          => "EEXIST",
-            FAULT          = $cb!(FAULT,          EFAULT,          UV_EFAULT)          => "EFAULT",
-            HOSTUNREACH    = $cb!(HOSTUNREACH,    EHOSTUNREACH,    UV_EHOSTUNREACH)    => "EHOSTUNREACH",
-            INTR           = $cb!(INTR,           EINTR,           UV_EINTR)           => "EINTR",
-            INVAL          = $cb!(INVAL,          EINVAL,          UV_EINVAL)          => "EINVAL",
-            IO             = $cb!(IO,             EIO,             UV_EIO)             => "EIO",
-            ISCONN         = $cb!(ISCONN,         EISCONN,         UV_EISCONN)         => "EISCONN",
-            ISDIR          = $cb!(ISDIR,          EISDIR,          UV_EISDIR)          => "EISDIR",
-            LOOP           = $cb!(LOOP,           ELOOP,           UV_ELOOP)           => "ELOOP",
-            MFILE          = $cb!(MFILE,          EMFILE,          UV_EMFILE)          => "EMFILE",
-            MSGSIZE        = $cb!(MSGSIZE,        EMSGSIZE,        UV_EMSGSIZE)        => "EMSGSIZE",
-            NAMETOOLONG    = $cb!(NAMETOOLONG,    ENAMETOOLONG,    UV_ENAMETOOLONG)    => "ENAMETOOLONG",
-            NETDOWN        = $cb!(NETDOWN,        ENETDOWN,        UV_ENETDOWN)        => "ENETDOWN",
-            NETUNREACH     = $cb!(NETUNREACH,     ENETUNREACH,     UV_ENETUNREACH)     => "ENETUNREACH",
-            NFILE          = $cb!(NFILE,          ENFILE,          UV_ENFILE)          => "ENFILE",
-            NOBUFS         = $cb!(NOBUFS,         ENOBUFS,         UV_ENOBUFS)         => "ENOBUFS",
-            NODEV          = $cb!(NODEV,          ENODEV,          UV_ENODEV)          => "ENODEV",
-            NOENT          = $cb!(NOENT,          ENOENT,          UV_ENOENT)          => "ENOENT",
-            NOMEM          = $cb!(NOMEM,          ENOMEM,          UV_ENOMEM)          => "ENOMEM",
-            NONET          = $cb!(NONET,          ENONET,          UV_ENONET)          => "ENONET",
-            NOSPC          = $cb!(NOSPC,          ENOSPC,          UV_ENOSPC)          => "ENOSPC",
-            NOSYS          = $cb!(NOSYS,          ENOSYS,          UV_ENOSYS)          => "ENOSYS",
-            NOTCONN        = $cb!(NOTCONN,        ENOTCONN,        UV_ENOTCONN)        => "ENOTCONN",
-            NOTDIR         = $cb!(NOTDIR,         ENOTDIR,         UV_ENOTDIR)         => "ENOTDIR",
-            NOTEMPTY       = $cb!(NOTEMPTY,       ENOTEMPTY,       UV_ENOTEMPTY)       => "ENOTEMPTY",
-            NOTSOCK        = $cb!(NOTSOCK,        ENOTSOCK,        UV_ENOTSOCK)        => "ENOTSOCK",
-            NOTSUP         = $cb!(NOTSUP,         ENOTSUP,         UV_ENOTSUP)         => "ENOTSUP",
-            PERM           = $cb!(PERM,           EPERM,           UV_EPERM)           => "EPERM",
-            PIPE           = $cb!(PIPE,           EPIPE,           UV_EPIPE)           => "EPIPE",
-            PROTO          = $cb!(PROTO,          EPROTO,          UV_EPROTO)          => "EPROTO",
-            PROTONOSUPPORT = $cb!(PROTONOSUPPORT, EPROTONOSUPPORT, UV_EPROTONOSUPPORT) => "EPROTONOSUPPORT",
-            PROTOTYPE      = $cb!(PROTOTYPE,      EPROTOTYPE,      UV_EPROTOTYPE)      => "EPROTOTYPE",
-            ROFS           = $cb!(ROFS,           EROFS,           UV_EROFS)           => "EROFS",
-            SHUTDOWN       = $cb!(SHUTDOWN,       ESHUTDOWN,       UV_ESHUTDOWN)       => "ESHUTDOWN",
-            SPIPE          = $cb!(SPIPE,          ESPIPE,          UV_ESPIPE)          => "ESPIPE",
-            SRCH           = $cb!(SRCH,           ESRCH,           UV_ESRCH)           => "ESRCH",
-            TIMEDOUT       = $cb!(TIMEDOUT,       ETIMEDOUT,       UV_ETIMEDOUT)       => "ETIMEDOUT",
-            TXTBSY         = $cb!(TXTBSY,         ETXTBSY,         UV_ETXTBSY)         => "ETXTBSY",
-            XDEV           = $cb!(XDEV,           EXDEV,           UV_EXDEV)           => "EXDEV",
-            FBIG           = $cb!(FBIG,           EFBIG,           UV_EFBIG)           => "EFBIG",
-            NOPROTOOPT     = $cb!(NOPROTOOPT,     ENOPROTOOPT,     UV_ENOPROTOOPT)     => "ENOPROTOOPT",
-            RANGE          = $cb!(RANGE,          ERANGE,          UV_ERANGE)          => "ERANGE",
-            NXIO           = $cb!(NXIO,           ENXIO,           UV_ENXIO)           => "ENXIO",
-            MLINK          = $cb!(MLINK,          EMLINK,          UV_EMLINK)          => "EMLINK",
-            HOSTDOWN       = $cb!(HOSTDOWN,       EHOSTDOWN,       UV_EHOSTDOWN)       => "EHOSTDOWN",
-            REMOTEIO       = $cb!(REMOTEIO,       EREMOTEIO,       UV_EREMOTEIO)       => "EREMOTEIO",
-            NOTTY          = $cb!(NOTTY,          ENOTTY,          UV_ENOTTY)          => "ENOTTY",
-            FTYPE          = $cb!(FTYPE,          EFTYPE,          UV_EFTYPE)          => "EFTYPE",
-            ILSEQ          = $cb!(ILSEQ,          EILSEQ,          UV_EILSEQ)          => "EILSEQ",
-            OVERFLOW       = $cb!(OVERFLOW,       EOVERFLOW,       UV_EOVERFLOW)       => "EOVERFLOW",
-            SOCKTNOSUPPORT = $cb!(SOCKTNOSUPPORT, ESOCKTNOSUPPORT, UV_ESOCKTNOSUPPORT) => "ESOCKTNOSUPPORT",
-            NODATA         = $cb!(NODATA,         ENODATA,         UV_ENODATA)         => "ENODATA",
-            UNATCH         = $cb!(UNATCH,         EUNATCH,         UV_EUNATCH)         => "EUNATCH",
-            NOEXEC         = $cb!(NOEXEC,         ENOEXEC,         UV_ENOEXEC)         => "ENOEXEC",
+            [_2BIG,           E2BIG,            UV_E2BIG,            "E2BIG"]
+            [ACCES,           EACCES,           UV_EACCES,           "EACCES"]
+            [ADDRINUSE,       EADDRINUSE,       UV_EADDRINUSE,       "EADDRINUSE"]
+            [ADDRNOTAVAIL,    EADDRNOTAVAIL,    UV_EADDRNOTAVAIL,    "EADDRNOTAVAIL"]
+            [AFNOSUPPORT,     EAFNOSUPPORT,     UV_EAFNOSUPPORT,     "EAFNOSUPPORT"]
+            [AGAIN,           EAGAIN,           UV_EAGAIN,           "EAGAIN"]
+            [ALREADY,         EALREADY,         UV_EALREADY,         "EALREADY"]
+            [BADF,            EBADF,            UV_EBADF,            "EBADF"]
+            [BUSY,            EBUSY,            UV_EBUSY,            "EBUSY"]
+            [CANCELED,        ECANCELED,        UV_ECANCELED,        "ECANCELED"]
+            [CHARSET,         ECHARSET,         UV_ECHARSET,         "ECHARSET"]
+            [CONNABORTED,     ECONNABORTED,     UV_ECONNABORTED,     "ECONNABORTED"]
+            [CONNREFUSED,     ECONNREFUSED,     UV_ECONNREFUSED,     "ECONNREFUSED"]
+            [CONNRESET,       ECONNRESET,       UV_ECONNRESET,       "ECONNRESET"]
+            [DESTADDRREQ,     EDESTADDRREQ,     UV_EDESTADDRREQ,     "EDESTADDRREQ"]
+            [EXIST,           EEXIST,           UV_EEXIST,           "EEXIST"]
+            [FAULT,           EFAULT,           UV_EFAULT,           "EFAULT"]
+            [HOSTUNREACH,     EHOSTUNREACH,     UV_EHOSTUNREACH,     "EHOSTUNREACH"]
+            [INTR,            EINTR,            UV_EINTR,            "EINTR"]
+            [INVAL,           EINVAL,           UV_EINVAL,           "EINVAL"]
+            [IO,              EIO,              UV_EIO,              "EIO"]
+            [ISCONN,          EISCONN,          UV_EISCONN,          "EISCONN"]
+            [ISDIR,           EISDIR,           UV_EISDIR,           "EISDIR"]
+            [LOOP,            ELOOP,            UV_ELOOP,            "ELOOP"]
+            [MFILE,           EMFILE,           UV_EMFILE,           "EMFILE"]
+            [MSGSIZE,         EMSGSIZE,         UV_EMSGSIZE,         "EMSGSIZE"]
+            [NAMETOOLONG,     ENAMETOOLONG,     UV_ENAMETOOLONG,     "ENAMETOOLONG"]
+            [NETDOWN,         ENETDOWN,         UV_ENETDOWN,         "ENETDOWN"]
+            [NETUNREACH,      ENETUNREACH,      UV_ENETUNREACH,      "ENETUNREACH"]
+            [NFILE,           ENFILE,           UV_ENFILE,           "ENFILE"]
+            [NOBUFS,          ENOBUFS,          UV_ENOBUFS,          "ENOBUFS"]
+            [NODEV,           ENODEV,           UV_ENODEV,           "ENODEV"]
+            [NOENT,           ENOENT,           UV_ENOENT,           "ENOENT"]
+            [NOMEM,           ENOMEM,           UV_ENOMEM,           "ENOMEM"]
+            [NONET,           ENONET,           UV_ENONET,           "ENONET"]
+            [NOSPC,           ENOSPC,           UV_ENOSPC,           "ENOSPC"]
+            [NOSYS,           ENOSYS,           UV_ENOSYS,           "ENOSYS"]
+            [NOTCONN,         ENOTCONN,         UV_ENOTCONN,         "ENOTCONN"]
+            [NOTDIR,          ENOTDIR,          UV_ENOTDIR,          "ENOTDIR"]
+            [NOTEMPTY,        ENOTEMPTY,        UV_ENOTEMPTY,        "ENOTEMPTY"]
+            [NOTSOCK,         ENOTSOCK,         UV_ENOTSOCK,         "ENOTSOCK"]
+            [NOTSUP,          ENOTSUP,          UV_ENOTSUP,          "ENOTSUP"]
+            [PERM,            EPERM,            UV_EPERM,            "EPERM"]
+            [PIPE,            EPIPE,            UV_EPIPE,            "EPIPE"]
+            [PROTO,           EPROTO,           UV_EPROTO,           "EPROTO"]
+            [PROTONOSUPPORT,  EPROTONOSUPPORT,  UV_EPROTONOSUPPORT,  "EPROTONOSUPPORT"]
+            [PROTOTYPE,       EPROTOTYPE,       UV_EPROTOTYPE,       "EPROTOTYPE"]
+            [ROFS,            EROFS,            UV_EROFS,            "EROFS"]
+            [SHUTDOWN,        ESHUTDOWN,        UV_ESHUTDOWN,        "ESHUTDOWN"]
+            [SPIPE,           ESPIPE,           UV_ESPIPE,           "ESPIPE"]
+            [SRCH,            ESRCH,            UV_ESRCH,            "ESRCH"]
+            [TIMEDOUT,        ETIMEDOUT,        UV_ETIMEDOUT,        "ETIMEDOUT"]
+            [TXTBSY,          ETXTBSY,          UV_ETXTBSY,          "ETXTBSY"]
+            [XDEV,            EXDEV,            UV_EXDEV,            "EXDEV"]
+            [FBIG,            EFBIG,            UV_EFBIG,            "EFBIG"]
+            [NOPROTOOPT,      ENOPROTOOPT,      UV_ENOPROTOOPT,      "ENOPROTOOPT"]
+            [RANGE,           ERANGE,           UV_ERANGE,           "ERANGE"]
+            [NXIO,            ENXIO,            UV_ENXIO,            "ENXIO"]
+            [MLINK,           EMLINK,           UV_EMLINK,           "EMLINK"]
+            [HOSTDOWN,        EHOSTDOWN,        UV_EHOSTDOWN,        "EHOSTDOWN"]
+            [REMOTEIO,        EREMOTEIO,        UV_EREMOTEIO,        "EREMOTEIO"]
+            [NOTTY,           ENOTTY,           UV_ENOTTY,           "ENOTTY"]
+            [FTYPE,           EFTYPE,           UV_EFTYPE,           "EFTYPE"]
+            [ILSEQ,           EILSEQ,           UV_EILSEQ,           "EILSEQ"]
+            [OVERFLOW,        EOVERFLOW,        UV_EOVERFLOW,        "EOVERFLOW"]
+            [SOCKTNOSUPPORT,  ESOCKTNOSUPPORT,  UV_ESOCKTNOSUPPORT,  "ESOCKTNOSUPPORT"]
+            [NODATA,          ENODATA,          UV_ENODATA,          "ENODATA"]
+            [UNATCH,          EUNATCH,          UV_EUNATCH,          "EUNATCH"]
+            [NOEXEC,          ENOEXEC,          UV_ENOEXEC,          "ENOEXEC"]
         }
+    };
+}
+
+/// `__uv_e_rows!` expander for a per-OS `uv_e` module: `$cb!(IDENT, E*, UV_E*)` is the row's value.
+#[macro_export]
+#[doc(hidden)]
+macro_rules! __decl_uv_e_rows {
+    ($cb:ident @rows $([$id:tt, $e:tt, $uv:tt, $display:literal])+) => {
+        $crate::__decl_uv_e! { $( $id = $cb!($id, $e, $uv) => $display ),+ }
     };
 }
 

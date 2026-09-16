@@ -627,15 +627,7 @@ impl Builtin {
                 // takes the pollable path.
                 let redirect_writer = IOWriter::init(
                     redirfd,
-                    io_writer::Flags {
-                        #[cfg(not(windows))]
-                        pollable,
-                        #[cfg(not(windows))]
-                        nonblock: is_nonblocking,
-                        #[cfg(not(windows))]
-                        is_socket,
-                        ..Default::default()
-                    },
+                    io_writer::Flags::classified(pollable, is_nonblocking, is_socket),
                     interp,
                 );
 

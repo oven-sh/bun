@@ -11,6 +11,8 @@ unsafe extern "C" {
     safe fn bun_sysconf__SC_NPROCESSORS_ONLN() -> i32;
 }
 
+/// Milliseconds. The layout of `BunCpuInfo::cpu_times` (`OsBinding.h`).
+#[repr(C)]
 #[derive(Default, Clone, Copy)]
 pub(crate) struct CPUTimes {
     pub user: u64,
@@ -47,7 +49,7 @@ mod _impl {
     /// Win32 declarations for `node:os`, and the C++ exports
     /// (`OsBinding.cpp`) behind `os.cpus()` / `os.networkInterfaces()`.
     #[cfg(windows)]
-    #[allow(non_snake_case, non_camel_case_types, clippy::upper_case_acronyms)]
+    #[allow(non_snake_case, clippy::upper_case_acronyms)]
     mod win32 {
         use bun_sys::windows::ws2_32::{sockaddr_in, sockaddr_in6};
         use bun_sys::windows::{BOOL, DWORD, HANDLE};
@@ -128,15 +130,7 @@ mod _impl {
         pub(super) struct CpuInfo {
             pub(super) model: *mut c_char,
             pub(super) speed: c_int,
-            pub(super) cpu_times: CpuTimes,
-        }
-        #[repr(C)]
-        pub(super) struct CpuTimes {
-            pub(super) user: u64,
-            pub(super) nice: u64,
-            pub(super) sys: u64,
-            pub(super) idle: u64,
-            pub(super) irq: u64,
+            pub(super) cpu_times: super::CPUTimes,
         }
 
         /// `BunInterfaceAddress` (`OsBinding.h`).
@@ -775,14 +769,6 @@ mod _impl {
         let infos =
             unsafe { bun_core::ffi::slice(cpu_infos, usize::try_from(count).expect("int cast")) };
         for (i, cpu_info) in infos.iter().enumerate() {
-            let times = CPUTimes {
-                user: cpu_info.cpu_times.user,
-                nice: cpu_info.cpu_times.nice,
-                sys: cpu_info.cpu_times.sys,
-                idle: cpu_info.cpu_times.idle,
-                irq: cpu_info.cpu_times.irq,
-            };
-
             let cpu = JSValue::create_empty_object(global_this, 3);
             // SAFETY: cpu_info.model is a NUL-terminated C string
             let model = unsafe { bun_core::ffi::cstr(cpu_info.model) }.to_bytes();
@@ -796,7 +782,11 @@ mod _impl {
                 b"speed",
                 JSValue::js_number(cpu_info.speed as f64),
             );
-            cpu.put(global_this, b"times", times.to_value(global_this));
+            cpu.put(
+                global_this,
+                b"times",
+                cpu_info.cpu_times.to_value(global_this),
+            );
 
             values.put_index(global_this, u32::try_from(i).expect("int cast"), cpu)?;
         }
@@ -814,10 +804,7 @@ mod _impl {
             let err = SystemError {
                 message: BunString::static_("no such process"),
                 code: BunString::static_("ESRCH"),
-                #[cfg(not(windows))]
-                errno: -(bun_sys::posix::E::ESRCH as c_int),
-                #[cfg(windows)]
-                errno: bun_errno::uv_codes::UV_ESRCH,
+                errno: -bun_sys::UV_E::SRCH,
                 syscall: BunString::static_("uv_os_getpriority"),
                 ..Default::default()
             };
@@ -830,10 +817,7 @@ mod _impl {
         // In Node.js, this is a wrapper around uv_os_homedir.
         #[cfg(windows)]
         {
-            return match homedir_windows() {
-                Ok(home) => Ok(home),
-                Err(err) => Err(global.throw_value(err.to_js(global))),
-            };
+            return homedir_windows().map_err(|err| global.throw_value(err.to_js(global)));
         }
         #[cfg(not(windows))]
         {
@@ -1735,11 +1719,6 @@ mod _impl {
         Ok(result)
     }
 
-    #[cfg(windows)]
-    pub(crate) fn version() -> JsResult<BunString> {
-        Ok(version_windows())
-    }
-
     #[cfg(not(windows))]
     pub(crate) fn version() -> JsResult<BunString> {
         let mut name_buffer = [0u8; HOST_NAME_MAX];
@@ -1765,12 +1744,15 @@ mod _impl {
     /// The registry's `ProductName`, then the service pack if there is one
     /// (libuv's `uv_os_uname`).
     #[cfg(windows)]
-    fn version_windows() -> BunString {
+    pub(crate) fn version() -> JsResult<BunString> {
+        /// Room for `ProductName`, in UTF-16 units.
+        const PRODUCT_NAME_MAX: usize = 256;
         let info = win32::os_version();
-        let mut version = [0u16; 256 + 1 + 128];
+        // The product name, a space, the service pack (`szCSDVersion`).
+        let mut version = [0u16; PRODUCT_NAME_MAX + 1 + 128];
         let mut len: usize = 0;
 
-        let mut size = (256 * core::mem::size_of::<u16>()) as windows::DWORD;
+        let mut size = (PRODUCT_NAME_MAX * core::mem::size_of::<u16>()) as windows::DWORD;
         // SAFETY: both names are NUL-terminated; `version` is writable for `size` bytes.
         let rc = unsafe {
             win32::RegGetValueW(
@@ -1784,7 +1766,7 @@ mod _impl {
             )
         };
         if rc == 0 {
-            len = slice_to_nul_u16(&version[..256]).len();
+            len = slice_to_nul_u16(&version[..PRODUCT_NAME_MAX]).len();
             // Windows 11 kept `dwMajorVersion` 10 and the "Windows 10" product
             // name; its builds start at 22000.
             let windows_10 = bun_core::w!("Windows 10");
@@ -1792,7 +1774,7 @@ mod _impl {
                 && info.dwBuildNumber >= 22000
                 && version[..len].starts_with(windows_10)
             {
-                version[9] = u16::from(b'1');
+                version[windows_10.len() - 1] = u16::from(b'1');
             }
         }
 
@@ -1806,7 +1788,7 @@ mod _impl {
             len += service_pack.len();
         }
 
-        BunString::clone_utf16(&version[..len])
+        Ok(BunString::clone_utf16(&version[..len]))
     }
 } // mod _impl
 pub use _impl::*;

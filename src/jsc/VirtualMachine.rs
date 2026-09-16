@@ -3742,7 +3742,7 @@ impl VirtualMachine {
             // lookups on start for obscure flags which we do not want others to
             // depend on.
             if map.get(b"BUN_FEATURE_FLAG_FORCE_WAITER_THREAD").is_some() {
-                bun_spawn::process::WaiterThread::set_should_use_waiter_thread();
+                bun_spawn::waiter_thread_flag::set();
             }
             // Only allowed for testing
             if map.get(b"BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING").is_some() {

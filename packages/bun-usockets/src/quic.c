@@ -1132,8 +1132,9 @@ void us_quic_stream_want_read(us_quic_stream_t *s, int want) {
     if (s->stream) lsquic_stream_wantread(s->stream, want);
 }
 
-void us_quic_stream_want_write(us_quic_stream_t *s, int want) {
-    if (s->stream) lsquic_stream_wantwrite(s->stream, want);
+int us_quic_stream_want_write(us_quic_stream_t *s, int want) {
+    if (!s->stream) return -1;
+    return lsquic_stream_wantwrite(s->stream, want) < 0 ? -1 : 0;
 }
 
 /* lsquic_stream_send_headers only buffers, and a flush is a no-op while lsquic

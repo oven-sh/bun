@@ -2102,7 +2102,7 @@ describe("Bun.serve HTTP/3 response that the client stopped while its request is
   const taskHop = () => new Promise<void>(resolve => setImmediate(resolve));
 
   // A POST whose request side stays open, then STOP_SENDING for its response.
-  async function stoppedRequest(port: number, stopWhen: () => Promise<void>) {
+  async function stoppedRequest(port: number, stopWhen: () => Promise<unknown>, onheaders?: () => void) {
     const endpoint = new QuicEndpoint();
     const client = await connect(`127.0.0.1:${port}`, {
       endpoint,
@@ -2112,7 +2112,7 @@ describe("Bun.serve HTTP/3 response that the client stopped while its request is
       onerror() {},
     });
     await client.opened;
-    const stream = await client.createBidirectionalStream();
+    const stream = await client.createBidirectionalStream({ onheaders });
     stream.closed.catch(() => {});
     stream.sendHeaders(requestHeaders("/", { ":method": "POST" }));
     stream.writer.writeSync(new TextEncoder().encode("the start of an upload"));
@@ -2171,6 +2171,69 @@ describe("Bun.serve HTTP/3 response that the client stopped while its request is
 
     expect(await ended.promise).toBe("aborted");
   });
+
+  // With bytes already queued, a later write is only appended to them, so no
+  // write reaches lsquic. What fails is the request for a writable callback:
+  // lsquic refuses it once its RESET_STREAM is out. When the write comes in
+  // the flight that carried the STOP_SENDING, the RESET_STREAM is not out yet,
+  // and the callback's own write gets the -1.
+  test.each([
+    { when: "a later flight", turnsBetween: 2 },
+    { when: "the same flight", turnsBetween: 0 },
+  ])(
+    "aborts the request when bytes were queued before the STOP_SENDING and the response writes again in $when",
+    async ({ turnsBetween }) => {
+      const queued = Promise.withResolvers<void>();
+      const sawHeaders = Promise.withResolvers<void>();
+      const writeAgain = Promise.withResolvers<void>();
+      const ended = Promise.withResolvers<string>();
+      await using server = Bun.serve({
+        port: 0,
+        tls,
+        http3: true,
+        routes: {
+          "/write-again": () => {
+            writeAgain.resolve();
+            return new Response("ok");
+          },
+        },
+        fetch(req) {
+          return new Response(
+            new ReadableStream({
+              type: "direct",
+              async pull(controller) {
+                // Far more than the client's window takes: the rest is queued.
+                controller.write(Buffer.alloc(8 * 1024 * 1024, "q"));
+                controller.flush();
+                queued.resolve();
+                await writeAgain.promise;
+                let writes = 0;
+                // A bound for a build that never aborts.
+                while (writes < 300 && !req.signal.aborted) {
+                  controller.write("tail");
+                  controller.flush();
+                  writes++;
+                  await taskHop();
+                }
+                ended.resolve(req.signal.aborted ? `aborted after ${writes} write` : "never aborted");
+              },
+            }),
+          );
+        },
+      });
+
+      await using stopped = await stoppedRequest(
+        server.port,
+        () => Promise.all([queued.promise, sawHeaders.promise]),
+        sawHeaders.resolve,
+      );
+      for (let i = 0; i < turnsBetween; i++) await taskHop();
+      const second = await stopped.client.createBidirectionalStream({ headers: requestHeaders("/write-again") });
+      for await (const _ of second as AsyncIterable<Uint8Array[]>);
+
+      expect(await ended.promise).toBe("aborted after 1 write");
+    },
+  );
 
   // end() completes the response even when its bytes cannot go out, as it
   // does over HTTP/1, so there is no abort event. The server still has to let

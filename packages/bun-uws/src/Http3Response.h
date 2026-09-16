@@ -76,7 +76,7 @@ struct Http3Response {
         if (d->backpressure.length() != 0) {
             d->backpressure.append(data.data(), data.length());
             if (writtenPtr) *writtenPtr = 0;
-            us_quic_stream_want_write((us_quic_stream_t *) this, 1);
+            wantWrite();
             return false;
         }
         int w = us_quic_stream_write((us_quic_stream_t *) this, data.data(), (unsigned) data.length());
@@ -89,7 +89,7 @@ struct Http3Response {
         if (writtenPtr) *writtenPtr = (size_t) w;
         if ((size_t) w < data.length()) {
             d->backpressure.append(data.data() + w, data.length() - (size_t) w);
-            us_quic_stream_want_write((us_quic_stream_t *) this, 1);
+            wantWrite();
             return false;
         }
         return true;
@@ -125,7 +125,7 @@ struct Http3Response {
         flushHeaders();
         if (d->backpressure.length() != 0) {
             d->endAfterDrain = true;
-            us_quic_stream_want_write((us_quic_stream_t *) this, 1);
+            wantWrite();
             return false;
         }
         us_quic_stream_shutdown((us_quic_stream_t *) this);
@@ -186,7 +186,11 @@ struct Http3Response {
         while (d->backpressure.length() != 0) {
             int w = us_quic_stream_write((us_quic_stream_t *) this,
                 d->backpressure.data(), (unsigned) d->backpressure.length());
-            if (w <= 0) return false;
+            if (w < 0) {
+                failStream();
+                return true;
+            }
+            if (w == 0) return false;
             d->offset += (uint64_t) w;
             d->backpressure.erase((unsigned) w);
         }
@@ -226,7 +230,17 @@ private:
      * tells the peer that the message is incomplete. on_stream_close then
      * reports the abort to the holder through onAborted. */
     void failStream() {
+        Http3ResponseData *d = getHttpResponseData();
+        d->backpressure.clear();
+        d->endAfterDrain = false;
         us_quic_stream_reset_internal_error((us_quic_stream_t *) this);
+    }
+
+    /* lsquic refuses once the peer's STOP_SENDING made it send RESET_STREAM.
+     * Then the queued bytes can never go out, and without this every later
+     * write is only appended to them. */
+    void wantWrite() {
+        if (us_quic_stream_want_write((us_quic_stream_t *) this, 1) < 0) failStream();
     }
 
     bool internalEnd(std::string_view data, uint64_t totalSize, bool optional,
@@ -253,7 +267,7 @@ private:
             if (optional) return false;
             d->backpressure.append(data.data(), data.length());
             d->endAfterDrain = true;
-            us_quic_stream_want_write((us_quic_stream_t *) this, 1);
+            wantWrite();
             return false;
         }
 
@@ -268,12 +282,12 @@ private:
         d->offset += (uint64_t) w;
         if ((size_t) w < data.length()) {
             if (optional) {
-                us_quic_stream_want_write((us_quic_stream_t *) this, 1);
+                wantWrite();
                 return false;
             }
             d->backpressure.append(data.data() + w, data.length() - (size_t) w);
             d->endAfterDrain = true;
-            us_quic_stream_want_write((us_quic_stream_t *) this, 1);
+            wantWrite();
             return false;
         }
 
@@ -282,7 +296,7 @@ private:
             markDone(d);
             return true;
         }
-        us_quic_stream_want_write((us_quic_stream_t *) this, 1);
+        wantWrite();
         return false;
     }
 

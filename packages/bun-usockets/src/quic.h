@@ -136,7 +136,9 @@ void us_quic_socket_context_on_stream_close(us_quic_socket_context_t *ctx,
  * does not help. */
 int us_quic_stream_write(us_quic_stream_t *s, const char *data, unsigned int len);
 void us_quic_stream_want_read(us_quic_stream_t *s, int want);
-void us_quic_stream_want_write(us_quic_stream_t *s, int want);
+/* -1 when lsquic refuses: the send half is finished (a FIN or a RESET_STREAM
+ * is out), so no on_stream_writable comes for it any more. */
+int us_quic_stream_want_write(us_quic_stream_t *s, int want);
 /* 0 once lsquic owns the header block. -1 when the block cannot go out, for
  * example a name or value over 65535 bytes, an encoded block over lsquic's
  * 64 KB limit, or a closed send half. */

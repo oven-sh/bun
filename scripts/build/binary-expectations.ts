@@ -229,6 +229,13 @@ function runtimeInitializers(cfg: Config): string[] {
     // compiler-rt's outline-atomics probe and bionic's cpu-feature init.
     initializers.push("init_have_lse_atomics", "__init_cpu_features");
   }
+  if (cfg.arm64 && cfg.freebsd) {
+    // compiler-rt's outline-atomics probe and its cpu-feature init. clang 23
+    // made -moutline-atomics the FreeBSD aarch64 default
+    // (FreeBSD::IsAArch64OutlineAtomicsDefault), so both our objects and the
+    // prebuilt WebKit's call the __aarch64_* helpers that bring these in.
+    initializers.push("init_have_lse_atomics", "__init_cpu_features");
+  }
   return initializers;
 }
 

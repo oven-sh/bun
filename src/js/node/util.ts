@@ -628,6 +628,12 @@ function onAbortedCallback(promise: Promise<void>) {
   $resolvePromiseWithFirstResolvingFunctionCallCheck(promise, undefined);
 }
 
+// Its own function so the listener's scope holds `promise` and not aborted()'s `resource`. Not
+// onAbortedCallback.bind(): that looks up `bind` on Function.prototype, which user code can replace.
+function createAbortedListener(promise: Promise<void>) {
+  return () => onAbortedCallback(promise);
+}
+
 function aborted(signal: AbortSignal, resource: object) {
   if (!$isObject(signal) || !(signal instanceof AbortSignal)) {
     throw $ERR_INVALID_ARG_TYPE("signal", "AbortSignal", signal);
@@ -642,14 +648,8 @@ function aborted(signal: AbortSignal, resource: object) {
   }
 
   const promise = $newPromise();
-  const listener = onAbortedCallback.bind(undefined, promise);
-  signal.addEventListener(
-    "abort",
-    // Do not leak the current scope into the listener.
-    // Instead, create a new function.
-    listener,
-    resistStopPropagation({ __proto__: null, once: true }),
-  );
+  const listener = createAbortedListener(promise);
+  signal.addEventListener("abort", listener, resistStopPropagation({ __proto__: null, once: true }));
 
   if (!lazyAbortedRegistry) {
     lazyAbortedRegistry = new FinalizationRegistry(({ ref, listener }) => {

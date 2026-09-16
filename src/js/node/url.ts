@@ -127,12 +127,7 @@ function urlParse(
   if ($isObject(url) && url instanceof Url) return url;
 
   var u = new Url();
-  try {
-    u.parse(url, parseQueryString, slashesDenoteHost);
-  } catch (e) {
-    $putByIdDirect(e, "input", url);
-    throw e;
-  }
+  u.parse(url, parseQueryString, slashesDenoteHost);
   return u;
 }
 

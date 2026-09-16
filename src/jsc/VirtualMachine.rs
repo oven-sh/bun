@@ -3482,17 +3482,24 @@ fn normalize_specifier_for_resolution<'a>(
     specifier_: &'a [u8],
     query_string: &mut &'a [u8],
 ) -> &'a [u8] {
-    // In a `data:` URL everything after the comma is the payload; a `?` is
-    // part of the data, not a query string.
+    // In a `data:` URL everything after the comma is the payload; URL suffix
+    // delimiters can be part of that data.
     if bun_core::strings::has_prefix_comptime(specifier_, b"data:") {
         return specifier_;
     }
-    if let Some(i) = bun_core::strings::index_of_char_usize(specifier_, b'?') {
-        *query_string = &specifier_[i..];
-        &specifier_[..i]
-    } else {
-        specifier_
+    let query_start = bun_core::strings::index_of_char_usize(specifier_, b'?');
+    let fragment_start = bun_core::strings::index_of_char_usize(specifier_, b'#');
+    let suffix_start = match (query_start, fragment_start) {
+        (Some(query_start), Some(fragment_start)) => Some(query_start.min(fragment_start)),
+        (Some(query_start), None) => Some(query_start),
+        (None, Some(fragment_start)) => Some(fragment_start),
+        (None, None) => None,
+    };
+    if let Some(suffix_start) = suffix_start {
+        *query_string = &specifier_[suffix_start..];
+        return &specifier_[..suffix_start];
     }
+    specifier_
 }
 
 /// Heap-backed so only a pointer lives in TLS; see test/js/bun/binary/tls-segment-size.

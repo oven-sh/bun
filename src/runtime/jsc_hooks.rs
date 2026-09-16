@@ -3897,7 +3897,7 @@ fn loader_for_path(path: &Fs::Path<'_>, loaders: &bun_ast::LoaderHashTable) -> O
 }
 
 /// `options.normalizeSpecifier(jsc_vm, slice)` — strip the VM's origin
-/// host/path prefix and split off the `?query`.
+/// host/path prefix and split off the URL query/fragment suffix.
 ///
 /// # Safety
 /// `jsc_vm` is the live per-thread VM.
@@ -3926,10 +3926,21 @@ unsafe fn normalize_specifier_for_loader<'a>(
     }
     let specifier = slice;
     let mut query: &[u8] = b"";
-    if let Some(i) = bun_core::strings::index_of_char_usize(slice, b'?') {
-        let i = i as usize;
-        query = &slice[i..];
-        slice = &slice[..i];
+    let query_start = bun_core::strings::index_of_char_usize(slice, b'?');
+    let fragment_start = bun_core::strings::index_of_char_usize(slice, b'#');
+    if let Some(query_start) = query_start
+        && fragment_start.is_none_or(|fragment_start| query_start < fragment_start)
+    {
+        let query_end = fragment_start.unwrap_or(slice.len());
+        query = &slice[query_start..query_end];
+    }
+    if let Some(suffix_start) = match (query_start, fragment_start) {
+        (Some(query_start), Some(fragment_start)) => Some(query_start.min(fragment_start)),
+        (Some(query_start), None) => Some(query_start),
+        (None, Some(fragment_start)) => Some(fragment_start),
+        (None, None) => None,
+    } {
+        slice = &slice[..suffix_start];
     }
     (slice, specifier, query)
 }

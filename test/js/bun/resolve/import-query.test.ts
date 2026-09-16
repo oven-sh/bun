@@ -1,5 +1,6 @@
 import { beforeEach, expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import path from "node:path";
 globalThis.importQueryFixtureOrder = [];
 const resolvedPath = require.resolve("./import-query-fixture.ts");
 const resolvedURL = Bun.pathToFileURL(resolvedPath).href;
@@ -9,6 +10,8 @@ beforeEach(() => {
   delete require.cache[resolvedPath];
   delete require.cache[resolvedPath + "?query"];
   delete require.cache[resolvedPath + "?query2"];
+  delete require.cache[resolvedPath + "#fragment"];
+  delete require.cache[resolvedPath + "?query#fragment"];
 });
 
 test("[query, no query]", async () => {
@@ -23,6 +26,50 @@ test("[no query, query]", async () => {
   const second = await import("./import-query-fixture.ts?query");
   expect(second.url).toBe(first.url + "?query");
   expect(globalThis.importQueryFixtureOrder).toEqual([resolvedURL, resolvedURL + "?query"]);
+});
+
+test("fragment and query+fragment module identities", async () => {
+  const fragment = await import("./import-query-fixture.ts#fragment");
+  const queryAndFragment = await import("./import-query-fixture.ts?query#fragment");
+  const plain = await import("./import-query-fixture.ts");
+
+  expect(fragment.url).toBe(plain.url + "#fragment");
+  expect(queryAndFragment.url).toBe(plain.url + "?query#fragment");
+  expect(await import("./import-query-fixture.ts#fragment")).toBe(fragment);
+  expect(await import("./import-query-fixture.ts?query#fragment")).toBe(queryAndFragment);
+  expect(fragment).not.toBe(plain);
+  expect(queryAndFragment).not.toBe(fragment);
+});
+
+test("static imports preserve fragments and query loaders", async () => {
+  using dir = tempDir("import-fragment-static", {
+    "target.js": "export const url = import.meta.url;",
+    "target.txt": "payload",
+    "entry.js": `
+      import { url as fragment } from "./target.js#fragment";
+      import { url as queryAndFragment } from "./target.js?query#fragment";
+      import { url as fragmentContainingQuery } from "./target.js#fragment?raw";
+      import raw from "./target.txt?raw#fragment";
+      console.log(JSON.stringify({ fragment, queryAndFragment, fragmentContainingQuery, raw }));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    fragment: Bun.pathToFileURL(path.join(String(dir), "target.js")).href + "#fragment",
+    queryAndFragment: Bun.pathToFileURL(path.join(String(dir), "target.js")).href + "?query#fragment",
+    fragmentContainingQuery: Bun.pathToFileURL(path.join(String(dir), "target.js")).href + "#fragment?raw",
+    raw: "payload",
+  });
+  expect(exitCode).toBe(0);
 });
 
 for (let order of [

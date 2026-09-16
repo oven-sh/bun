@@ -104,6 +104,7 @@ impl ClientContext {
     }
 
     /// Find or open a connection to `hostname:port` and queue `client` on it.
+    /// `false` leaves `client` on no session, for the caller to fail.
     pub(crate) fn connect(&mut self, client: &mut HTTPClient, hostname: &[u8], port: u16) -> bool {
         let reject = client.flags.reject_unauthorized;
         for &s in self.sessions.iter() {
@@ -175,6 +176,11 @@ impl ClientContext {
                     bstr::BStr::new(hostname),
                     port,
                 );
+                // `fail_session` fails what is queued, and that dispatch frees
+                // the `AsyncHTTP` the caller still holds. Queue nothing.
+                if let Some(stream) = client.h3 {
+                    session_mut(session).detach(stream.as_ptr());
+                }
                 self.unregister(session_mut(session));
                 PendingConnect::fail_session(session, crate::Error::ConnectionRefused);
                 return false;

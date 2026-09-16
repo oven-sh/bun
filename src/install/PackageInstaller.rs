@@ -1531,15 +1531,40 @@ impl<'a> PackageInstaller<'a> {
                 installer.cache_dir = Fd::cwd();
             }
             resolution::Tag::Symlink => {
-                let directory = package_manager::global_link_dir(self.manager_mut());
-
                 let folder_str = *resolution.symlink();
                 let folder = folder_str.slice(string_buf!());
 
                 if folder.is_empty() || (folder.len() == 1 && folder[0] == b'.') {
                     installer.cache_dir_subpath = ZStr::from_static(b".\0");
                     installer.cache_dir = Fd::cwd();
+                } else if crate::dependency::is_link_path(folder) {
+                    if folder.len() >= self.folder_path_buf.len()
+                        || !self
+                            .lockfile()
+                            .link_target_allowed_for_package(package_id, folder)
+                    {
+                        if log_level != Options::LogLevel::Silent {
+                            bun_core::pretty_errorln!(
+                                "<r><red>error<r>: refusing to link dependency <b>{}<r> to \"{}\": only the root package.json, a workspace, or an override may link to a path outside the project",
+                                bstr::BStr::new(pkg_name.slice(string_buf!())),
+                                bstr::BStr::new(folder),
+                            );
+                        }
+                        self.summary.fail += 1;
+                        self.increment_tree_install_count(
+                            !is_pending_package_install,
+                            self.current_tree_id,
+                            log_level,
+                        );
+                        return;
+                    }
+                    self.folder_path_buf[..folder.len()].copy_from_slice(folder);
+                    self.folder_path_buf[folder.len()] = 0;
+                    installer.cache_dir_subpath =
+                        ZStr::from_buf(&self.folder_path_buf, folder.len());
+                    installer.cache_dir = Fd::cwd();
                 } else {
+                    let directory = package_manager::global_link_dir(self.manager_mut());
                     let global_link_dir = package_manager::global_link_dir_path(self.manager_mut());
                     let buf = self.folder_path_buf.as_mut_slice();
                     let mut len = 0usize;

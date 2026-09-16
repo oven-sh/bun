@@ -1894,6 +1894,46 @@ impl Package<u64> {
                 dependency_version.value.folder = string_builder
                     .append::<String>(if relative.is_empty() { b"." } else { relative });
             }
+            dependency::version::Tag::Symlink => {
+                let symlink = *dependency_version.symlink();
+                if dependency::is_link_path(symlink.slice(buf)) {
+                    let mut symlink_buf = PathBuffer::uninit();
+                    let Some(joined) =
+                        resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
+                            FileSystem::instance().top_level_dir(),
+                            &mut symlink_buf.0,
+                            &[source.path.name().dir, symlink.slice(buf)],
+                        )
+                    else {
+                        log.add_error_fmt(
+                            source,
+                            value_loc_of(source, key_loc),
+                            format_args!(
+                                "Dependency \"{}\" has an unsafe folder path",
+                                bstr::BStr::new(external_alias.slice(buf)),
+                            ),
+                        );
+                        return Err(crate::Error::InstallFailed);
+                    };
+                    let relative =
+                        resolve_path::relative(FileSystem::instance().top_level_dir(), joined);
+                    let mut stored_buf = PathBuffer::uninit();
+                    let Some(stored) =
+                        dependency::link_path_for_lockfile(relative, &mut stored_buf)
+                    else {
+                        log.add_error_fmt(
+                            source,
+                            value_loc_of(source, key_loc),
+                            format_args!(
+                                "Dependency \"{}\" has an unsafe folder path",
+                                bstr::BStr::new(external_alias.slice(buf)),
+                            ),
+                        );
+                        return Err(crate::Error::InstallFailed);
+                    };
+                    dependency_version.value.symlink = string_builder.append::<String>(stored);
+                }
+            }
             dependency::version::Tag::Npm => {
                 if let Some(workspace_path) = lockfile::linked_workspace_path(
                     pm.options.link_workspace_packages,
@@ -2491,7 +2531,8 @@ impl Package<u64> {
                             // If it's a folder or workspace, pessimistically assume we will need a maximum path
                             match dependency::version::Tag::infer(value) {
                                 dependency::version::Tag::Folder
-                                | dependency::version::Tag::Workspace => {
+                                | dependency::version::Tag::Workspace
+                                | dependency::version::Tag::Symlink => {
                                     string_builder.cap += MAX_PATH_BYTES;
                                 }
                                 _ => {}

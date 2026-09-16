@@ -1244,6 +1244,25 @@ impl DirectoryWatchStore {
             _ => debug_assert!(false),
         }
 
+        self.watch_specifier(import_source, specifier, renderer)
+    }
+
+    /// Watches a missing root as an import of its own name from its own directory.
+    pub(crate) fn track_missing_root(
+        &mut self,
+        abs_path: &[u8],
+        renderer: Graph,
+    ) -> Result<(), bun_alloc::AllocError> {
+        self.watch_specifier(abs_path, bun_paths::basename(abs_path), renderer)
+    }
+
+    /// Invalidates `import_source` once `specifier` resolves from its directory.
+    fn watch_specifier(
+        &mut self,
+        import_source: &[u8],
+        specifier: &[u8],
+        renderer: Graph,
+    ) -> Result<(), bun_alloc::AllocError> {
         let mut buf = bun_paths::path_buffer_pool::get();
         let joined = bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
             bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(import_source),

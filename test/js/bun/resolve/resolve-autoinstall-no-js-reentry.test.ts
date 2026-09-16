@@ -114,24 +114,39 @@ describe.concurrent("auto-install does not run the event loop inside", () => {
         BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache"),
       },
       stdout: "pipe",
-      stderr: "inherit",
+      stderr: "pipe",
     });
 
+    const stderr = proc.stderr.text();
+    // If the child dies, the step that waits on it fails with the child's
+    // stderr. Without this, a crash is a timeout or a JSON parse error.
+    const died = proc.exited.then(async code => {
+      throw new Error(`the child exited (code ${code}, signal ${proc.signalCode}):\n${await stderr}`);
+    });
+    died.catch(() => {});
+
     const output = lines(proc.stdout);
-    const { port } = JSON.parse((await output.next()).value!) as { port: number };
+    const nextJson = async () => {
+      const line = await Promise.race([output.next(), died]);
+      return line.done ? await died : JSON.parse(line.value);
+    };
+    const { port } = (await nextJson()) as { port: number };
 
     const first = await connectTo(port);
     const second = await connectTo(port);
     try {
       await write(first, "/first", "first.example");
       // The handler is inside the call now, waiting for the registry.
-      await gate.requested;
+      await Promise.race([gate.requested, died]);
       await write(second, "/second", "second.example");
       gate.release();
 
-      expect(JSON.parse((await output.next()).value!)).toEqual({
+      const result = await nextJson();
+      proc.kill();
+      expect({ ...result, stderr: await stderr }).toEqual({
         url: "http://first.example/first",
         ranInsideTheCall: [],
+        stderr: "",
       });
     } finally {
       first.destroy();

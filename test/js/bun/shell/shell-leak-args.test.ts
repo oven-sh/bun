@@ -114,3 +114,16 @@ test.each([
   expect(created).toBeGreaterThanOrEqual(10);
   expect(created).toBeLessThan(20);
 });
+
+test("the arena of a script that fails to parse is not kept", async () => {
+  await $`echo warmup`.quiet();
+  const before = mimallocHeapsCreated();
+  for (let i = 0; i < 10; i++) {
+    expect(() => $`echo ${i} <!INVALID ==== SYNTAX!>`).toThrow("Redirection with no file");
+    await $`echo ${i}`.quiet();
+  }
+  const created = mimallocHeapsCreated() - before;
+  // The failed parse destroys the arena it took, and the script after it starts a new one.
+  expect(created).toBeGreaterThanOrEqual(10);
+  expect(created).toBeLessThan(20);
+});

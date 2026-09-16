@@ -369,7 +369,7 @@ pub use self::top_exception_scope::{
 /// is reachable as `bun_jsc::cpp::Name(...)` with a properly-scoped exception
 /// check (no `global.has_exception()` after-the-fact).
 pub mod cpp;
-pub use self::common_strings::CommonStrings;
+pub use self::common_strings::{CommonStrings, CommonStringsForRust as CommonString};
 pub use self::dom_url::DOMURL;
 pub use self::js_big_int::JSBigInt;
 

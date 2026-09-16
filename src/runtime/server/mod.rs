@@ -2846,7 +2846,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         } = &this_ref.config.address
         {
             let hostname = hostname.as_bytes();
-            if !bun_dns::is_valid_hostname(strip_ipv6_brackets(hostname)) {
+            if !bun_dns::is_valid_hostname(bun_core::ip_address::strip_ipv6_brackets(hostname)) {
                 let _ = global.throw_value(crate::dns_jsc::cares_jsc::not_a_hostname_error(
                     global, hostname,
                 ));
@@ -3098,7 +3098,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     let mut host: *const c_char = core::ptr::null();
                     if let Some(existing) = hostname.as_deref() {
                         let bytes = existing.as_bytes();
-                        let bare = strip_ipv6_brackets(bytes);
+                        let bare = bun_core::ip_address::strip_ipv6_brackets(bytes);
                         host = if bare.len() == bytes.len() {
                             existing.as_ptr()
                         } else {
@@ -3605,16 +3605,6 @@ mod ffi {
             node_response_ptr: &mut *mut NodeHTTPResponse,
         ) -> jsc::JSValue;
     }
-}
-
-/// `Bun.serve({ hostname: "[::1]" })`: uSockets wants the IPv6 literal bare.
-fn strip_ipv6_brackets(hostname: &[u8]) -> &[u8] {
-    if let [b'[', inner @ .., b']'] = hostname {
-        if bun_core::ip_address::to_ip_address(inner).is_some_and(|ip| ip.is_ipv6()) {
-            return inner;
-        }
-    }
-    hostname
 }
 
 /// Drain the BoringSSL error queue; if non-empty, throw the top error on

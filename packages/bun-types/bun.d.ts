@@ -8893,6 +8893,122 @@ declare module "bun" {
   // ): number;
 
   /**
+   * The proxy a `fetch()` uses.
+   *
+   * - A URL string, a `URL`, or `{ url, headers, respectNoProxy }` selects that proxy.
+   * - `false` connects directly, even when `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` are set.
+   * - `undefined` uses the proxy environment variables.
+   */
+  type FetchProxyOption =
+    | string
+    | URL
+    | false
+    | {
+        /**
+         * The proxy URL, as a string or a `URL`.
+         */
+        url: string | URL;
+        /**
+         * Custom headers to send to the proxy server.
+         * These headers are sent in the CONNECT request (for HTTPS targets)
+         * or in the proxy request (for HTTP targets).
+         */
+        headers?: HeadersInit | undefined;
+        /**
+         * Whether hosts listed in `NO_PROXY` / `no_proxy` bypass this proxy.
+         * Set to `false` to send every request through the proxy.
+         *
+         * @default true
+         */
+        respectNoProxy?: boolean | undefined;
+      };
+
+  interface FetchSessionInit {
+    /**
+     * TLS options for the connections of this session. A request that passes
+     * its own `tls` uses that instead, as a whole.
+     *
+     * A `checkServerIdentity` given here runs once per connection, and the
+     * connection is then shared by the requests of this session.
+     */
+    tls?: BunFetchRequestInitTLS | undefined;
+    /**
+     * The proxy for the requests of this session.
+     */
+    proxy?: FetchProxyOption | undefined;
+    /**
+     * Connection reuse. `false` closes every connection after its response.
+     * The limits do not apply to HTTP/3 connections.
+     *
+     * @default true
+     */
+    keepAlive?:
+      | boolean
+      | {
+          /**
+           * Seconds an idle connection stays in the pool before it is closed.
+           * The socket timer is coarse: it moves in 4 second steps up to four
+           * minutes, and in whole minutes beyond that.
+           *
+           * @default 300
+           */
+          idleTimeout?: number | undefined;
+          /**
+           * Most idle connections this session keeps per kind of connection
+           * (plain, TLS, each distinct `tls` configuration, Unix socket). When
+           * one more is released, the longest-idle one is closed.
+           */
+          maxIdleSockets?: number | undefined;
+        }
+      | undefined;
+    /**
+     * Send the requests of this session over a Unix socket.
+     */
+    unix?: string | undefined;
+  }
+
+  /**
+   * Connection settings shared by the `fetch()` calls that name it, and the
+   * keep-alive connection pool they share. Connections are never shared between
+   * two sessions, or between a session and plain `fetch()`.
+   *
+   * @example
+   * ```ts
+   * const session = new Bun.FetchSession({
+   *   proxy: { url: "http://proxy.internal:8080", respectNoProxy: false },
+   *   tls: { ca: await Bun.file("corp-ca.pem").text() },
+   * });
+   *
+   * const response = await session.fetch("https://example.com");
+   * // the same request, as an option of the global fetch():
+   * await fetch("https://example.com", { session });
+   * ```
+   */
+  class FetchSession {
+    constructor(init?: FetchSessionInit);
+    /**
+     * `fetch()` with this session. The function is bound: hand it to anything
+     * that takes a `fetch`. A `session` in `init` does not replace this one.
+     *
+     * It has no `preconnect`, so where an option is typed `typeof fetch`
+     * (which in Bun includes `fetch.preconnect`), pass
+     * `session.fetch as typeof fetch`.
+     *
+     * @example
+     * ```ts
+     * const client = new SomeClient({ fetch: session.fetch });
+     * ```
+     */
+    readonly fetch: (input: string | URL | Request, init?: BunFetchRequestInit) => Promise<Response>;
+    /**
+     * Close the idle connections in this session's pool. Requests in flight
+     * finish, and the session stays usable.
+     */
+    close(): void;
+    [Symbol.dispose](): void;
+  }
+
+  /**
    * Resolve routes against a directory of files using Next.js-style (`pages`
    * directory) conventions.
    */

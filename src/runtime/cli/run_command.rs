@@ -874,6 +874,14 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 Global::exit(1);
             }
 
+            // A request to an origin the environment proxies never dials it.
+            if VirtualMachine::get()
+                .env_loader()
+                .get_http_proxy_for(&url)
+                .is_some()
+            {
+                continue;
+            }
             bun_http::async_http::preconnect(url, false);
         }
     }

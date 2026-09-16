@@ -152,7 +152,8 @@ pub struct MultiPartUpload {
     pub(crate) uploaded_bytes: Cell<u64>,
 
     pub path: Box<[u8]>,
-    pub(crate) proxy: Box<[u8]>,
+    /// As `S3SimpleRequestOptions::proxy_url`.
+    pub(crate) proxy: Option<Box<[u8]>>,
     pub(crate) content_type: Option<Box<[u8]>>,
     pub(crate) content_disposition: Option<Box<[u8]>>,
     pub(crate) content_encoding: Option<Box<[u8]>>,
@@ -1020,7 +1021,7 @@ impl MultiPartUpload {
     }
 
     pub(crate) fn proxy_url(&self) -> Option<&[u8]> {
-        Some(&self.proxy)
+        self.proxy.as_deref()
     }
 
     fn process_buffered(&self, part_size: usize) {

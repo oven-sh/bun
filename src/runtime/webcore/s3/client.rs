@@ -64,7 +64,6 @@ pub(crate) fn stat(
     path: &[u8],
     callback: fn(S3StatResult, *mut c_void) -> JsResult<()>,
     callback_context: *mut c_void,
-    proxy_url: Option<&[u8]>,
     request_payer: bool,
 ) -> JsResult<()> {
     s3_simple_request::execute_simple_s3_request(
@@ -73,7 +72,6 @@ pub(crate) fn stat(
         s3_simple_request::Options {
             path,
             method: bun_http::Method::HEAD,
-            proxy_url,
             body: b"",
             request_payer,
             ..Default::default()
@@ -89,7 +87,6 @@ pub(crate) fn download(
     path: &[u8],
     callback: fn(S3DownloadResult, *mut c_void) -> JsResult<()>,
     callback_context: *mut c_void,
-    proxy_url: Option<&[u8]>,
     request_payer: bool,
 ) -> JsResult<()> {
     s3_simple_request::execute_simple_s3_request(
@@ -98,7 +95,6 @@ pub(crate) fn download(
         s3_simple_request::Options {
             path,
             method: bun_http::Method::GET,
-            proxy_url,
             body: b"",
             request_payer,
             ..Default::default()
@@ -116,7 +112,6 @@ pub(crate) fn download_slice(
     size: Option<usize>,
     callback: fn(S3DownloadResult, *mut c_void) -> JsResult<()>,
     callback_context: *mut c_void,
-    proxy_url: Option<&[u8]>,
     request_payer: bool,
 ) -> JsResult<()> {
     let range: Option<Vec<u8>> = 'brk: {
@@ -143,7 +138,6 @@ pub(crate) fn download_slice(
         s3_simple_request::Options {
             path,
             method: bun_http::Method::GET,
-            proxy_url,
             body: b"",
             range: range.map(Vec::into_boxed_slice),
             request_payer,
@@ -160,7 +154,6 @@ pub(crate) fn delete(
     path: &[u8],
     callback: fn(S3DeleteResult, *mut c_void) -> JsResult<()>,
     callback_context: *mut c_void,
-    proxy_url: Option<&[u8]>,
     request_payer: bool,
 ) -> JsResult<()> {
     s3_simple_request::execute_simple_s3_request(
@@ -169,7 +162,6 @@ pub(crate) fn delete(
         s3_simple_request::Options {
             path,
             method: bun_http::Method::DELETE,
-            proxy_url,
             body: b"",
             request_payer,
             ..Default::default()
@@ -185,7 +177,6 @@ pub(crate) fn list_objects(
     list_options: &S3ListObjectsOptions,
     callback: fn(S3ListObjectsResult, *mut c_void) -> JsResult<()>,
     callback_context: *mut c_void,
-    proxy_url: Option<&[u8]>,
 ) -> JsResult<()> {
     let mut search_params: Vec<u8> = Vec::<u8>::default();
 
@@ -296,6 +287,7 @@ pub(crate) fn list_objects(
     drop(search_params);
 
     let headers = bun_http::Headers::from_pico_http_headers(result.headers());
+    let proxy_url = s3_simple_request::resolve_proxy(None, &result.url);
 
     let task_ptr = bun_core::heap::into_raw(Box::new(S3HttpSimpleTask {
         // Written below via `MaybeUninit::write` before any read.
@@ -308,7 +300,7 @@ pub(crate) fn list_objects(
         response_buffer: MutableString::default(),
         result: bun_http::HTTPClientResult::default(),
         concurrent_task: Default::default(),
-        proxy_url: Box::default(),
+        proxy_url,
         body: Box::default(),
         poll_ref: bun_io::KeepAlive::init(),
         signal_store: Default::default(),
@@ -319,13 +311,6 @@ pub(crate) fn list_objects(
     let task = unsafe { &mut *task_ptr };
 
     task.poll_ref.ref_(bun_io::js_vm_ctx());
-
-    let proxy = proxy_url.unwrap_or(b"");
-    task.proxy_url = if !proxy.is_empty() {
-        Box::<[u8]>::from(proxy)
-    } else {
-        Box::<[u8]>::default()
-    };
 
     // SAFETY: lifetime extension — `url`, `headers_buf`, and `proxy_url` borrow from
     // heap-allocated fields of `*task` which the task outlives. AsyncHTTP::init wants
@@ -395,7 +380,6 @@ pub(crate) fn upload(
     content_disposition: Option<&[u8]>,
     content_encoding: Option<&[u8]>,
     acl: Option<ACL>,
-    proxy_url: Option<&[u8]>,
     storage_class: Option<StorageClass>,
     request_payer: bool,
     callback: fn(S3UploadResult, *mut c_void) -> JsResult<()>,
@@ -407,7 +391,6 @@ pub(crate) fn upload(
         s3_simple_request::Options {
             path,
             method: bun_http::Method::PUT,
-            proxy_url,
             body: content,
             content_type,
             content_disposition,
@@ -433,7 +416,6 @@ pub(crate) fn writable_stream(
     content_type: Option<&[u8]>,
     content_disposition: Option<&[u8]>,
     content_encoding: Option<&[u8]>,
-    proxy: Option<&[u8]>,
     storage_class: Option<StorageClass>,
     request_payer: bool,
 ) -> JsResult<JSValue> {
@@ -503,7 +485,6 @@ pub(crate) fn writable_stream(
         NetworkSink::on_writable(task, ctx.cast::<NetworkSink>(), flushed);
     }
 
-    let proxy_url = proxy.unwrap_or(b"");
     // `credentials` ref adopted by value — moved into the MultiPartUpload below.
     // JSC_BORROW: `global_this` outlives the task (it owns the VM/heap that owns the JS
     // objects which keep the task alive); stored via `GlobalRef` in the heap-allocated
@@ -532,11 +513,7 @@ pub(crate) fn writable_stream(
         buffered: JsCell::new(StreamBuffer::default()),
         uploaded_bytes: Cell::new(0),
         path: Box::<[u8]>::from(path),
-        proxy: if !proxy_url.is_empty() {
-            Box::<[u8]>::from(proxy_url)
-        } else {
-            Box::default()
-        },
+        proxy: None,
         content_type: content_type.map(Box::<[u8]>::from),
         content_disposition: content_disposition.map(Box::<[u8]>::from),
         content_encoding: content_encoding.map(Box::<[u8]>::from),
@@ -838,7 +815,6 @@ pub(crate) fn upload_stream(
     callback: Option<fn(S3UploadResult, *mut c_void)>,
     callback_context: *mut c_void,
 ) -> JsResult<JSValue> {
-    let proxy_url = proxy.unwrap_or(b"");
     if readable_stream.is_disturbed(cx.global()) {
         return Ok(bun_jsc::JSPromise::rejected_promise(
             cx.global(),
@@ -956,11 +932,7 @@ pub(crate) fn upload_stream(
         buffered: JsCell::new(StreamBuffer::default()),
         uploaded_bytes: Cell::new(0),
         path: Box::<[u8]>::from(path),
-        proxy: if !proxy_url.is_empty() {
-            Box::<[u8]>::from(proxy_url)
-        } else {
-            Box::default()
-        },
+        proxy: proxy.map(Box::<[u8]>::from),
         content_type: content_type.map(Box::<[u8]>::from),
         content_disposition: content_disposition.map(Box::<[u8]>::from),
         content_encoding: content_encoding.map(Box::<[u8]>::from),
@@ -1151,7 +1123,6 @@ fn download_stream(
     path: &[u8],
     offset: usize,
     size: Option<usize>,
-    proxy_url: Option<&[u8]>,
     request_payer: bool,
     callback: fn(
         chunk: &MutableString,
@@ -1225,12 +1196,7 @@ fn download_stream(
             break 'brk bun_http::Headers::from_pico_http_headers(result.headers());
         }
     };
-    let proxy = proxy_url.unwrap_or(b"");
-    let owned_proxy: Box<[u8]> = if !proxy.is_empty() {
-        Box::<[u8]>::from(proxy)
-    } else {
-        Box::<[u8]>::default()
-    };
+    let owned_proxy = s3_simple_request::resolve_proxy(None, &result.url);
     let task_ptr = bun_core::heap::into_raw(S3HttpDownloadStreamingTask::new(
         S3HttpDownloadStreamingTask {
             // `http: undefined` — fully overwritten by `task.http.write(AsyncHTTP::init(...))` below.
@@ -1492,7 +1458,6 @@ pub(crate) fn readable_stream(
     path: &[u8],
     offset: usize,
     size: Option<usize>,
-    proxy_url: Option<&[u8]>,
     request_payer: bool,
     cx: &bun_jsc::JsThread<'_>,
 ) -> JsResult<JSValue> {
@@ -1538,7 +1503,6 @@ pub(crate) fn readable_stream(
         path,
         offset,
         size,
-        proxy_url,
         request_payer,
         S3DownloadStreamWrapper::opaque_callback,
         wrapper.cast::<c_void>(),

@@ -272,8 +272,13 @@ impl JSValkeyClient {
             debug_assert!(callback.is_callable());
             // `event_loop_mut()` is the safe accessor for the VM-owned
             // event-loop self-pointer (see `VirtualMachine::event_loop_mut`).
-            vm.event_loop_mut()
-                .run_callback(callback, global_object, JSValue::UNDEFINED, args);
+            vm.event_loop_mut().run_callback(
+                bun_event_loop::TaskContext::Of(self.context),
+                callback,
+                global_object,
+                JSValue::UNDEFINED,
+                args,
+            );
         }
         Ok(())
     }

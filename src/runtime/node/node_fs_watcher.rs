@@ -868,6 +868,7 @@ impl FSWatcher {
                 // Reported here rather than returned: the watcher still closes
                 // (and emits 'close') below whatever the listener did.
                 global_this.bun_vm().event_loop_mut().run_callback(
+                    bun_event_loop::TaskContext::Always,
                     listener,
                     &global_this,
                     global_this.to_js_value(),
@@ -898,6 +899,7 @@ impl FSWatcher {
                 let args = [EventType::Error.to_js(&global_object), err_js];
                 // As `emit_abort`: reported here so the close below still runs.
                 global_object.bun_vm().event_loop_mut().run_callback(
+                    bun_event_loop::TaskContext::Always,
                     listener,
                     &global_object,
                     global_object.to_js_value(),
@@ -969,6 +971,7 @@ fn emit_js<const EVENT_TYPE: EventType>(
 ) {
     let args = [EVENT_TYPE.to_js(global_object), filename];
     global_object.bun_vm().event_loop_mut().run_callback(
+        bun_event_loop::TaskContext::Always,
         listener,
         global_object,
         global_object.to_js_value(),
@@ -1054,6 +1057,7 @@ impl FSWatcher {
                     // Node too (it emits on the next tick).
                     let global = self.global_this;
                     global.bun_vm().event_loop_mut().run_callback(
+                        bun_event_loop::TaskContext::Always,
                         listener,
                         &global,
                         global.to_js_value(),

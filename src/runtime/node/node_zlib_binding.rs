@@ -581,8 +581,13 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         // `init()` caches the JS write callback; a handle whose `init()` was
         // never called has none, so there is nothing to notify.
         if let Some(write_callback) = T::write_callback_get_cached(this_value) {
-            vm.event_loop_ref()
-                .run_callback(write_callback, global, this_value, &[]);
+            vm.event_loop_ref().run_callback(
+                bun_event_loop::TaskContext::Always,
+                write_callback,
+                global,
+                this_value,
+                &[],
+            );
         }
 
         if this.pending_close().get() {
@@ -858,6 +863,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
             // SAFETY: `bun_vm()` and `event_loop()` are non-null for a Bun-owned global.
             let vm = global_this.bun_vm();
             vm.event_loop_ref().run_callback(
+                bun_event_loop::TaskContext::Always,
                 callback,
                 global_this,
                 this_value,

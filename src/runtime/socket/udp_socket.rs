@@ -852,6 +852,7 @@ impl UDPSocket {
         // A top-level call from the UDP socket callbacks: what `error` itself
         // throws is reported.
         vm.event_loop_mut().run_callback(
+            bun_event_loop::TaskContext::Always,
             callback,
             global_this,
             this_value,

@@ -941,14 +941,13 @@ impl Interpreter {
             || self.node(id).base().is_some_and(|b| b.interrupted)
     }
 
-    /// Enters the context of the script that started this (a `Bun.ModuleGraph`'s), if it has one.
-    fn enter_context<'a>(
-        &self,
-        global_this: &'a crate::jsc::JSGlobalObject,
-    ) -> Option<bun_jsc::virtual_machine::ContextScope<'a>> {
-        self.context
-            .get()
-            .map(|id| global_this.bun_vm().enter_context(id))
+    /// Whose script the shell's completion continues: the one that started it (a `Bun.ModuleGraph`'s),
+    /// if it has one.
+    fn task_context(&self) -> bun_event_loop::TaskContext {
+        match self.context.get() {
+            Some(context) => bun_event_loop::TaskContext::Of(context),
+            None => bun_event_loop::TaskContext::Always,
+        }
     }
 
     /// The `Bun.ModuleGraph` whose script started this was disposed (or its realm is going).
@@ -1316,10 +1315,9 @@ impl Interpreter {
                     // (allocation failure), the promise is rejected with that
                     // instead; a terminating VM settles nothing.
                     let event_loop = global_this.bun_vm().event_loop_mut();
-                    // Settled for the script that started the shell.
-                    let _context = self.enter_context(global_this);
                     match buffers {
                         Ok((buffered_stdout, buffered_stderr)) => event_loop.run_callback(
+                            self.task_context(),
                             resolve,
                             global_this,
                             JSValue::UNDEFINED,
@@ -1335,6 +1333,7 @@ impl Interpreter {
                                 JSShellInterpreter::reject_get_cached(this_jsvalue)
                             {
                                 event_loop.run_callback(
+                                    self.task_context(),
                                     reject,
                                     global_this,
                                     JSValue::UNDEFINED,
@@ -1392,9 +1391,8 @@ impl Interpreter {
                 .global_this_ref()
                 .expect("take_failure returned a rejection on the Js path");
             let _entered = self.event_loop.entered();
-            // Settled for the script that started the shell.
-            let _context = self.enter_context(global_this);
             global_this.bun_vm().event_loop_mut().run_callback(
+                self.task_context(),
                 reject,
                 global_this,
                 crate::jsc::JSValue::UNDEFINED,

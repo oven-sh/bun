@@ -31,6 +31,7 @@ pub use bun_event_loop::DeferredTaskQueue::{self, DeferredRepeatingTask};
 pub use bun_event_loop::ManagedTask;
 pub use bun_event_loop::MiniEventLoop;
 pub use bun_event_loop::Task;
+pub use bun_event_loop::TaskContext;
 pub use bun_event_loop::any_event_loop::{AnyEventLoop, EventLoopHandle, EventLoopTask};
 pub use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
 
@@ -469,11 +470,28 @@ impl EventLoop {
                 && callback.is_from_retired_test_isolation_realm())
     }
 
+    /// The scope a callback of `context` is called inside of.
+    fn entered(
+        context: TaskContext,
+        global_object: &JSGlobalObject,
+    ) -> Option<crate::virtual_machine::ContextScope<'_>> {
+        match context {
+            TaskContext::Always => None,
+            TaskContext::Of(context) => Some(global_object.bun_vm().enter_context(context)),
+        }
+    }
+
     /// When you call a JavaScript function from outside the event loop task
     /// queue, it has to be wrapped in `runCallback` to ensure that microtasks
     /// are drained and errors are handled.
+    ///
+    /// `context`: whose script `callback` continues, as a task says it. The call is made inside
+    /// that context (a stopped one is called for nobody: `JSValue::call`). `Always`: no context of
+    /// the caller's to enter (nothing owns the callback, or it carries its own: one stored with
+    /// `with_async_context_if_needed`).
     pub fn run_callback(
         &mut self,
+        context: TaskContext,
         callback: JSValue,
         global_object: &JSGlobalObject,
         this_value: JSValue,
@@ -488,6 +506,7 @@ impl EventLoop {
         if !Self::may_enter_js(callback, global_object) {
             return;
         }
+        let _context = Self::entered(context, global_object);
         // R-2 noalias mitigation (see PORT_NOTES_PLAN R-2; precedent
         // `b818e70e1c57` NodeHTTPResponse::cork): `&mut self` carries LLVM
         // `noalias`, and `callback.call()` receives nothing derived from
@@ -515,8 +534,10 @@ impl EventLoop {
         // Note: reshaped for borrowck — `defer this.exit()` moved to tail; no early returns
     }
 
+    /// `context`: as for [`run_callback`](Self::run_callback).
     pub fn run_callback_with_result(
         &mut self,
+        context: TaskContext,
         callback: JSValue,
         global_object: &JSGlobalObject,
         this_value: JSValue,
@@ -525,6 +546,7 @@ impl EventLoop {
         if !Self::may_enter_js(callback, global_object) {
             return JSValue::ZERO;
         }
+        let _context = Self::entered(context, global_object);
         // R-2 noalias mitigation — see `run_callback` above.
         let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
         // SAFETY: `this` is the unique live `EventLoop`; short-lived `&mut`.
@@ -1216,8 +1238,10 @@ impl EventLoop {
     }
 
     /// Prefer `runCallbackWithResult` unless you really need to make sure that microtasks are drained.
+    /// `context`: as for [`run_callback`](Self::run_callback).
     pub fn run_callback_with_result_and_forcefully_drain_microtasks(
         &mut self,
+        context: TaskContext,
         callback: JSValue,
         global_object: &JSGlobalObject,
         this_value: JSValue,
@@ -1226,6 +1250,7 @@ impl EventLoop {
         if !Self::may_enter_js(callback, global_object) {
             return Ok(JSValue::UNDEFINED);
         }
+        let _context = Self::entered(context, global_object);
         let result = callback.call(global_object, this_value, arguments)?;
         result.ensure_still_alive();
         let jsc_vm = global_object.bun_vm().jsc_vm();
@@ -1414,10 +1439,14 @@ pub fn event_loop_run_callback2(
     arg0: JSValue,
     arg1: JSValue,
 ) {
-    global
-        .bun_vm()
-        .event_loop_mut()
-        .run_callback(callback, global, this_value, &[arg0, arg1]);
+    // The webview backends' callbacks: a WebView has no context of its own.
+    global.bun_vm().event_loop_mut().run_callback(
+        TaskContext::Always,
+        callback,
+        global,
+        this_value,
+        &[arg0, arg1],
+    );
 }
 
 // HOST_EXPORT(Bun__EventLoop__enter, c)

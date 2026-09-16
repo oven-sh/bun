@@ -98,7 +98,13 @@ impl InternalMsgHolder {
 
         let event_loop = global.bun_vm().event_loop_mut();
 
-        event_loop.run_callback(cb, global, worker, &[message, handle]);
+        event_loop.run_callback(
+            bun_event_loop::TaskContext::Always,
+            cb,
+            global,
+            worker,
+            &[message, handle],
+        );
         Ok(())
     }
 

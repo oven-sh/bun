@@ -696,9 +696,13 @@ impl Handlers {
         if self.should_skip_dispatch(data) {
             return false;
         }
-        self.vm
-            .event_loop_ref()
-            .run_callback(callback, &self.global(), context, data);
+        self.vm.event_loop_ref().run_callback(
+            bun_event_loop::TaskContext::Always,
+            callback,
+            &self.global(),
+            context,
+            data,
+        );
         true
     }
 
@@ -709,9 +713,13 @@ impl Handlers {
         if self.should_skip_dispatch(data) {
             return false;
         }
-        self.vm
-            .event_loop_ref()
-            .run_callback(callback, &self.global(), JSValue::UNDEFINED, data);
+        self.vm.event_loop_ref().run_callback(
+            bun_event_loop::TaskContext::Always,
+            callback,
+            &self.global(),
+            JSValue::UNDEFINED,
+            data,
+        );
         true
     }
 
@@ -728,6 +736,7 @@ impl Handlers {
             return JSValue::ZERO;
         }
         self.vm.event_loop_ref().run_callback_with_result(
+            bun_event_loop::TaskContext::Always,
             callback,
             &self.global(),
             this_value,
@@ -6345,6 +6354,7 @@ impl H2FrameParser {
                 continue;
             };
             this.handlers.get().vm.event_loop_mut().run_callback(
+                bun_event_loop::TaskContext::Always,
                 callback,
                 global_object,
                 this_value,

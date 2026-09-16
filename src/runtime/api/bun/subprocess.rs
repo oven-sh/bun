@@ -1197,7 +1197,15 @@ impl Subprocess<'_> {
                     }
 
                     // SAFETY: event_loop points into the live VM.
-                    unsafe { (*event_loop).run_callback(callback, global_this, this_value, &args) };
+                    unsafe {
+                        (*event_loop).run_callback(
+                            bun_event_loop::TaskContext::Of(self.context),
+                            callback,
+                            global_this,
+                            this_value,
+                            &args,
+                        )
+                    };
                 }
             }
         }
@@ -1440,6 +1448,7 @@ impl Subprocess<'_> {
                         // accessed on the single JS mutator thread.
                         unsafe {
                             (*event_loop).run_callback(
+                                bun_event_loop::TaskContext::Of(self.context),
                                 cb,
                                 global_this,
                                 this_jsvalue,
@@ -1481,6 +1490,7 @@ impl Subprocess<'_> {
                 // accessed on the single JS mutator thread.
                 unsafe {
                     (*event_loop).run_callback(
+                        bun_event_loop::TaskContext::Of(self.context),
                         callback,
                         global_this,
                         this_jsvalue,

@@ -292,6 +292,7 @@ impl Handlers {
         }
 
         global_object.bun_vm().event_loop_mut().run_callback(
+            bun_event_loop::TaskContext::Always,
             on_error,
             &global_object,
             this_value,

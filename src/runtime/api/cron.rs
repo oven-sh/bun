@@ -1591,9 +1591,13 @@ impl CronJob {
         // job is re-armed, so an `uncaughtException` handler's `stop()` is
         // observed by `schedule_next`), and does not stop the job — as with a
         // rejected tick.
-        let result = vm
-            .event_loop_mut()
-            .run_callback_with_result(cb, &this.global, js_this, &[]);
+        let result = vm.event_loop_mut().run_callback_with_result(
+            bun_event_loop::TaskContext::Always,
+            cb,
+            &this.global,
+            js_this,
+            &[],
+        );
         this.in_fire.set(false);
 
         // terminate() may have arrived while the callback was running; bail out

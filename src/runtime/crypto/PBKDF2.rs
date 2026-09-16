@@ -289,7 +289,13 @@ impl JobContext for Pbkdf2Job {
         let callback = js.callback.get();
         if this.err {
             let err = global_this.create_error_instance(format_args!("PBKDF2 derivation failed"));
-            event_loop.run_callback(callback, global_this, JSValue::UNDEFINED, &[err]);
+            event_loop.run_callback(
+                bun_event_loop::TaskContext::Always,
+                callback,
+                global_this,
+                JSValue::UNDEFINED,
+                &[err],
+            );
             return Ok(());
         }
 
@@ -298,6 +304,7 @@ impl JobContext for Pbkdf2Job {
         // Ownership transfers to JSC (freed via MarkedArrayBuffer_deallocator → mimalloc free).
         match JSValue::create_buffer(global_this, output_slice.leak()) {
             Ok(buffer_value) => event_loop.run_callback(
+                bun_event_loop::TaskContext::Always,
                 callback,
                 global_this,
                 JSValue::UNDEFINED,
@@ -306,6 +313,7 @@ impl JobContext for Pbkdf2Job {
             // The result could not be built (allocation failure): that is this
             // derivation's error.
             Err(err) => event_loop.run_callback(
+                bun_event_loop::TaskContext::Always,
                 callback,
                 global_this,
                 JSValue::UNDEFINED,

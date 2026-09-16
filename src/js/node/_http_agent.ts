@@ -1,7 +1,13 @@
 // This is a port of Node.js's lib/_http_agent.js
 // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_agent.js
 const EventEmitter = require("node:events");
-const { parseProxyConfigFromEnv, kProxyConfig, checkShouldUseProxy, kWaitForProxyTunnel } = require("internal/http");
+const {
+  parseProxyConfigFromEnv,
+  kProxyConfig,
+  checkShouldUseProxy,
+  kWaitForProxyTunnel,
+  kPerRequestCheckServerIdentity,
+} = require("internal/http");
 const { getLazy, kEmptyObject, once } = require("internal/shared");
 const { validateNumber, validateOneOf, validateString } = require("internal/validators");
 const { isIP } = require("internal/net/isIP");
@@ -105,7 +111,13 @@ function Agent(options): void {
 
     // If there are no pending requests, then put it in the freeSockets pool, but only if we're allowed to do so.
     const req = socket._httpMessage;
-    if (!req || !req.shouldKeepAlive || !this.keepAlive) {
+    // No request shares the name of one that has its own checkServerIdentity, so
+    // nothing would take its pooled socket. Node refuses that socket in
+    // https.Agent#keepSocketAlive, from a mark that https.Agent's createConnection
+    // puts on it. An Agent that replaces createConnection, or an http.Agent that
+    // borrows https.Agent#getName (agent-base), gets the name without the mark
+    // and parks one socket per request. The options decide here for all of them.
+    if (!req || !req.shouldKeepAlive || !this.keepAlive || options?.[kPerRequestCheckServerIdentity]) {
       socket.destroy();
       return;
     }
@@ -235,7 +247,6 @@ Agent.prototype.addRequest = function addRequest(req, options, port /* legacy */
   normalizeServerName(options, req);
 
   const name = this.getName(options);
-  this.sockets[name] ||= [];
 
   const freeSockets = this.freeSockets[name];
   let socket;
@@ -247,14 +258,17 @@ Agent.prototype.addRequest = function addRequest(req, options, port /* legacy */
     if (!freeSockets.length) delete this.freeSockets[name];
   }
 
+  // Node makes the sockets[name] entry up front. When no socket arrives (a
+  // failed proxy tunnel, a createConnection that throws) nothing removes it,
+  // and a request with its own checkServerIdentity has a name of its own.
   const freeLen = freeSockets ? freeSockets.length : 0;
-  const sockLen = freeLen + this.sockets[name].length;
+  const sockLen = freeLen + (this.sockets[name]?.length ?? 0);
 
   // Reusing a socket from the pool.
   if (socket) {
     this.reuseSocket(socket, req);
     setRequestSocket(this, req, socket);
-    this.sockets[name].push(socket);
+    (this.sockets[name] ||= []).push(socket);
   } else if (sockLen < this.maxSockets && this.totalSocketCount < this.maxTotalSockets) {
     $debug("call onSocket", sockLen, freeLen);
     // If we are under maxSockets create a new one.

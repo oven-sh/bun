@@ -2,12 +2,14 @@
  * All tests in this file run in both Bun and Node.js: `bun test` runs them
  * here, and the last test runs this same file under Node.js.
  *
- * An https.Agent reuses a connection in two ways: a keep-alive socket from its
- * pool (keepAlive: true), or a cached TLS session on a new socket, which skips
- * the identity check (keepAlive: false). Neither may carry the verdict of one
- * request's `checkServerIdentity` to a request that has a different check.
- * Node fixed this in nodejs/node 52a8ace880 (CVE-2026-58040): a request with its
- * own callback gets a socket and a session that nothing else shares.
+ * An https.Agent hands a connection from one request to the next in three ways:
+ * a keep-alive socket from its pool (keepAlive: true), a cached TLS session on a
+ * new socket, which skips the identity check (keepAlive: false), and a socket
+ * made for a queued request with the options of the request before it. None may
+ * carry the verdict of one request's `checkServerIdentity` to a request that has
+ * a different check. Node fixed this in nodejs/node 52a8ace880 (CVE-2026-58040):
+ * a request with its own callback gets a socket and a session that nothing else
+ * shares.
  */
 import assert from "node:assert";
 import { once } from "node:events";
@@ -21,11 +23,16 @@ import { describe, test } from "node:test";
 import tls from "node:tls";
 import { fileURLToPath } from "node:url";
 
-// CN=agent1, no subjectAltName, signed by ca1.
 const keys = join(dirname(fileURLToPath(import.meta.url)), "..", "test", "fixtures", "keys");
-const key = readFileSync(join(keys, "agent1-key.pem"), "utf8");
-const cert = readFileSync(join(keys, "agent1-cert.pem"), "utf8");
-const ca = readFileSync(join(keys, "ca1-cert.pem"), "utf8");
+const readKey = (name: string) => readFileSync(join(keys, name), "utf8");
+// The target: CN=agent1, no subjectAltName, signed by ca1.
+const key = readKey("agent1-key.pem");
+const cert = readKey("agent1-cert.pem");
+const ca = readKey("ca1-cert.pem");
+// The https proxy: CN=localhost, signed by the fake StartCom root.
+const proxyKey = readKey("agent9-key.pem");
+const proxyCert = readKey("agent9-cert.pem");
+const proxyRoot = readKey("fake-startcom-root-cert.pem");
 
 // Node ships the fix in v22.23.2, v24.18.1 and v26.5.1. An older Node shares the
 // connection, so the cases below only describe it from those versions on. Bun
@@ -40,20 +47,29 @@ const runtimeHasFix = (() => {
 const fixTest = runtimeHasFix ? test : test.skip;
 // The Agent `proxyEnv` option is newer than Node 22.
 const tunnelFixTest = runtimeHasFix && (process.versions.bun || nodeMajor >= 24) ? test : test.skip;
+// Two costs of the unique Agent name that Node (as of v26.5.1) has and Bun avoids.
+const bunOnlyTest = process.versions.bun ? test : test.skip;
 
 type Exchange = { status?: number; reusedSocket?: boolean; sessionReused?: boolean; error?: string };
 type Scenario = {
-  agent: https.Agent;
+  agent: http.Agent;
   /** How many TLS connections the requests the server has answered came in on. */
   connections: () => number;
   exchange: (options?: https.RequestOptions) => Promise<Exchange>;
 };
+type ScenarioOptions = {
+  /** Tunnel through a CONNECT proxy of this kind, set through the Agent's `proxyEnv`. */
+  proxy?: "http" | "https";
+  /** The proxy answers every CONNECT with 503. */
+  proxyRefuses?: boolean;
+  createAgent?: (options: https.AgentOptions) => http.Agent;
+};
 
-// An HTTP proxy that tunnels CONNECT requests, for an Agent with `proxyEnv`.
-async function listenProxy() {
+async function listenProxy(kind: "http" | "https", refuses: boolean) {
   const sockets = new Set<Duplex>();
-  const proxy = http.createServer();
+  const proxy = kind === "https" ? https.createServer({ key: proxyKey, cert: proxyCert }) : http.createServer();
   proxy.on("connect", (req, clientSocket, head) => {
+    if (refuses) return clientSocket.end("HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n");
     const [host, port] = req.url!.split(":");
     const targetSocket = net.connect(Number(port), host, () => {
       clientSocket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
@@ -67,12 +83,20 @@ async function listenProxy() {
       socket.on("close", () => sockets.delete(socket));
     }
   });
-  await once(proxy.listen(0, "127.0.0.1"), "listening");
+  // The https proxy's certificate names "localhost", whichever address that is here.
+  const host = kind === "https" ? "localhost" : "127.0.0.1";
+  await once(kind === "https" ? proxy.listen(0) : proxy.listen(0, host), "listening");
+  // The Agent takes no TLS options for its connection to the proxy, so the
+  // proxy's root has to be a default CA while the scenario runs.
+  const defaultCAs = kind === "https" ? tls.getCACertificates("default") : undefined;
+  if (defaultCAs) tls.setDefaultCACertificates([...defaultCAs, proxyRoot]);
   return {
-    url: `http://127.0.0.1:${(proxy.address() as AddressInfo).port}`,
+    url: `${kind}://${host}:${(proxy.address() as AddressInfo).port}`,
     async close() {
+      if (defaultCAs) tls.setDefaultCACertificates(defaultCAs);
       for (const socket of sockets) socket.destroy();
       proxy.close();
+      proxy.closeAllConnections();
       await once(proxy, "close");
     },
   };
@@ -81,7 +105,7 @@ async function listenProxy() {
 async function scenario(
   agentOptions: https.AgentOptions,
   run: (scenario: Scenario) => Promise<void>,
-  { throughProxy = false } = {},
+  { proxy: proxyKind, proxyRefuses = false, createAgent = options => new https.Agent(options) }: ScenarioOptions = {},
 ) {
   const clientPorts = new Set<number | undefined>();
   // TLS 1.2 delivers the session during the handshake, so the Agent has cached
@@ -91,8 +115,9 @@ async function scenario(
     res.end("ok");
   });
   await once(server.listen(0, "127.0.0.1"), "listening");
-  const proxy = throughProxy ? await listenProxy() : undefined;
-  const agent = new https.Agent(proxy ? { ...agentOptions, proxyEnv: { HTTPS_PROXY: proxy.url } } : agentOptions);
+  const proxy = proxyKind ? await listenProxy(proxyKind, proxyRefuses) : undefined;
+  const proxyEnv = proxy && ({ HTTPS_PROXY: proxy.url } as http.ProxyEnv);
+  const agent = createAgent(proxyEnv ? { ...agentOptions, proxyEnv } : agentOptions);
   const { port } = server.address() as AddressInfo;
 
   // Resolves after the Agent has dealt with the socket ("free" for a keep-alive
@@ -133,6 +158,8 @@ async function scenario(
 
 const fresh: Exchange = { status: 200, reusedSocket: false, sessionReused: false };
 const rejected: Exchange = { error: "PIN MISMATCH" };
+const permissive = () => undefined;
+const rejecting = () => new Error("PIN MISMATCH");
 
 for (const { keepAlive, carrier, reused } of [
   { keepAlive: true, carrier: "pooled socket", reused: { status: 200, reusedSocket: true, sessionReused: false } },
@@ -159,15 +186,11 @@ for (const { keepAlive, carrier, reused } of [
 
     fixTest(`a rejecting callback does not ride the ${carrier} of the default check`, async () => {
       await scenario({ keepAlive }, async ({ exchange }) => {
-        let calls = 0;
         const first = await exchange();
-        const second = await exchange({ checkServerIdentity: () => (calls++, new Error("PIN MISMATCH")) });
+        const second = await exchange({ checkServerIdentity: rejecting });
         // The rejected request took nothing from the requests around it.
         const third = await exchange();
-        assert.deepStrictEqual(
-          { first, second, third, calls },
-          { first: fresh, second: rejected, third: reused, calls: 1 },
-        );
+        assert.deepStrictEqual({ first, second, third }, { first: fresh, second: rejected, third: reused });
       });
     });
 
@@ -175,55 +198,64 @@ for (const { keepAlive, carrier, reused } of [
     // request through, and the default check must still reject the second.
     fixTest(`the default check does not ride the ${carrier} of a permissive callback`, async () => {
       await scenario({ keepAlive }, async ({ exchange }) => {
-        const first = await exchange({ servername: "not-agent1", checkServerIdentity: () => undefined });
+        const first = await exchange({ servername: "not-agent1", checkServerIdentity: permissive });
         const second = await exchange({ servername: "not-agent1" });
         assert.deepStrictEqual({ first, second }, { first: fresh, second: { error: "ERR_TLS_CERT_ALTNAME_INVALID" } });
       });
     });
 
     // Also for one function passed twice: the Agent does not compare callbacks.
-    fixTest(`every request with its own callback gets its own connection and caches no session`, async () => {
+    fixTest(`every request with its own callback gets its own connection, parked nowhere`, async () => {
       await scenario({ keepAlive }, async ({ agent, exchange, connections }) => {
         let calls = 0;
         const checkServerIdentity = () => void calls++;
         const first = await exchange({ checkServerIdentity });
         const second = await exchange({ checkServerIdentity });
-        const cachedSessions: string[] = [...(agent as any)._sessionCache.list];
         assert.deepStrictEqual(
-          { first, second, calls, connections: connections(), cachedSessions },
-          { first: fresh, second: fresh, calls: 2, connections: 2, cachedSessions: [] },
+          {
+            first,
+            second,
+            calls,
+            connections: connections(),
+            freeSockets: Object.keys(agent.freeSockets),
+            cachedSessions: [...(agent as any)._sessionCache.list],
+          },
+          { first: fresh, second: fresh, calls: 2, connections: 2, freeSockets: [], cachedSessions: [] },
         );
       });
     });
 
     // In Bun the tunnel path caches the target's TLS session on its own, in
-    // establishTunnel. Node caches no session there.
-    tunnelFixTest(
-      `a rejecting callback does not ride the ${carrier} of a permissive callback through a proxy tunnel`,
-      async () => {
-        await scenario(
-          { keepAlive },
-          async ({ agent, exchange }) => {
-            const calls: string[] = [];
-            const first = await exchange({ checkServerIdentity: () => void calls.push("permissive") });
-            const cachedSessions: string[] = [...(agent as any)._sessionCache.list];
-            const second = await exchange({
-              checkServerIdentity: () => (calls.push("rejecting"), new Error("PIN MISMATCH")),
-            });
-            assert.deepStrictEqual(
-              { first, cachedSessions, second, calls },
-              { first: fresh, cachedSessions: [], second: rejected, calls: ["permissive", "rejecting"] },
-            );
-          },
-          { throughProxy: true },
-        );
-      },
-    );
+    // establishTunnel, and a session offered over the TLS socket to an https
+    // proxy is resumed. Node caches no session on this path.
+    for (const proxy of ["http", "https"] as const) {
+      tunnelFixTest(
+        `a rejecting callback does not ride the ${carrier} of a permissive callback through an ${proxy} proxy`,
+        async () => {
+          await scenario(
+            { keepAlive },
+            async ({ agent, exchange }) => {
+              const calls: string[] = [];
+              const first = await exchange({ checkServerIdentity: () => void calls.push("permissive") });
+              const cachedSessions: string[] = [...(agent as any)._sessionCache.list];
+              const second = await exchange({
+                checkServerIdentity: () => (calls.push("rejecting"), new Error("PIN MISMATCH")),
+              });
+              assert.deepStrictEqual(
+                { first, cachedSessions, second, calls },
+                { first: fresh, cachedSessions: [], second: rejected, calls: ["permissive", "rejecting"] },
+              );
+            },
+            { proxy },
+          );
+        },
+      );
+    }
 
     // Agent options override request options, so every request on this Agent
     // has the same check and the request's own callback never runs.
     test(`an Agent-level callback still shares its ${carrier}`, async () => {
-      await scenario({ keepAlive, checkServerIdentity: () => undefined }, async ({ exchange }) => {
+      await scenario({ keepAlive, checkServerIdentity: permissive }, async ({ exchange }) => {
         let ownCallbackRan = false;
         const first = await exchange({ servername: "not-agent1" });
         const second = await exchange({
@@ -246,6 +278,130 @@ for (const { keepAlive, carrier, reused } of [
     });
   });
 }
+
+// No pool and no session cache: what is left is Agent#removeSocket, which makes
+// the socket of a queued request with the same name from the options of the
+// socket that closed. maxSockets queues by name, maxTotalSockets across names.
+describe("https.Agent with a full socket budget and a request's own checkServerIdentity", () => {
+  for (const limit of [{ maxSockets: 1 }, { maxTotalSockets: 1 }]) {
+    const agentOptions = { keepAlive: false, maxCachedSessions: 0, ...limit };
+
+    fixTest(`a queued request runs its own callback (${Object.keys(limit)})`, async () => {
+      await scenario(agentOptions, async ({ agent, exchange }) => {
+        const calls: string[] = [];
+        const results = await Promise.all([
+          exchange(),
+          exchange({ checkServerIdentity: () => void calls.push("permissive") }),
+          exchange({ checkServerIdentity: () => (calls.push("rejecting"), new Error("PIN MISMATCH")) }),
+          exchange(),
+        ]);
+        assert.deepStrictEqual(
+          { results: results.map(r => r.status ?? r.error), calls: calls.sort(), queued: Object.keys(agent.requests) },
+          { results: [200, 200, "PIN MISMATCH", 200], calls: ["permissive", "rejecting"], queued: [] },
+        );
+      });
+    });
+
+    fixTest(
+      `a queued default check does not get the callback of the request ahead (${Object.keys(limit)})`,
+      async () => {
+        await scenario(agentOptions, async ({ agent, exchange }) => {
+          let calls = 0;
+          const results = await Promise.all([
+            exchange({ servername: "not-agent1", checkServerIdentity: () => void calls++ }),
+            exchange({ servername: "not-agent1" }),
+          ]);
+          assert.deepStrictEqual(
+            { results: results.map(r => r.status ?? r.error), calls, queued: Object.keys(agent.requests) },
+            { results: [200, "ERR_TLS_CERT_ALTNAME_INVALID"], calls: 1, queued: [] },
+          );
+        });
+      },
+    );
+  }
+});
+
+describe("what the unique Agent name of such a request leaves behind", () => {
+  // Agent#addRequest in Node makes the agent.sockets entry before a socket
+  // exists. No socket comes out of a refused tunnel, so nothing removes it.
+  bunOnlyTest("a refused proxy tunnel leaves no entry in agent.sockets", async () => {
+    await scenario(
+      { keepAlive: true },
+      async ({ agent, exchange }) => {
+        const results = [
+          await exchange({ checkServerIdentity: permissive }),
+          await exchange({ checkServerIdentity: permissive }),
+          await exchange(),
+        ];
+        assert.deepStrictEqual(
+          { results: results.map(r => r.error), sockets: Object.keys(agent.sockets) },
+          { results: ["ERR_PROXY_TUNNEL", "ERR_PROXY_TUNNEL", "ERR_PROXY_TUNNEL"], sockets: [] },
+        );
+      },
+      { proxy: "http", proxyRefuses: true },
+    );
+  });
+
+  // Node refuses the socket in https.Agent#keepSocketAlive, from a mark that
+  // https.Agent's createConnection puts on it. These Agents get the unique name
+  // without the mark, and park one socket per request that nothing can take.
+  class BorrowsGetName extends http.Agent {
+    // What agent-base does (https-proxy-agent, socks-proxy-agent, ...).
+    getName(options: https.RequestOptions) {
+      return https.Agent.prototype.getName.call(this, options);
+    }
+    createConnection(options: tls.ConnectionOptions) {
+      return tls.connect(options);
+    }
+  }
+  class ReplacesCreateConnection extends https.Agent {
+    createConnection(options: tls.ConnectionOptions) {
+      return tls.connect(options);
+    }
+  }
+  for (const [name, createAgent] of [
+    [
+      "an http.Agent that borrows https.Agent#getName",
+      (options: https.AgentOptions) => new BorrowsGetName({ ...options, protocol: "https:", defaultPort: 443 } as any),
+    ],
+    [
+      "an https.Agent that replaces createConnection",
+      (options: https.AgentOptions) => new ReplacesCreateConnection(options),
+    ],
+  ] as const) {
+    bunOnlyTest(`${name} parks no socket for it`, async () => {
+      await scenario(
+        { keepAlive: true },
+        async ({ agent, exchange, connections }) => {
+          const first = await exchange({ checkServerIdentity: permissive });
+          const second = await exchange({ checkServerIdentity: rejecting });
+          // The pool still works for the requests that can share it.
+          const third = await exchange();
+          const fourth = await exchange();
+          assert.deepStrictEqual(
+            {
+              first,
+              second,
+              third,
+              fourth,
+              connections: connections(),
+              freeSockets: Object.keys(agent.freeSockets).length,
+            },
+            {
+              first: fresh,
+              second: rejected,
+              third: fresh,
+              fourth: { status: 200, reusedSocket: true, sessionReused: false },
+              connections: 2,
+              freeSockets: 1,
+            },
+          );
+        },
+        { createAgent },
+      );
+    });
+  }
+});
 
 // Only in Bun: when Node.js runs this file it must not spawn itself again.
 if (typeof Bun !== "undefined") {

@@ -6,7 +6,12 @@ const { isIP } = require("internal/net/isIP");
 const { urlToHttpOptions } = require("internal/url");
 const { kEmptyObject, once } = require("internal/shared");
 const { validateObject } = require("internal/validators");
-const { kProxyConfig, checkShouldUseProxy, kWaitForProxyTunnel } = require("internal/http");
+const {
+  kProxyConfig,
+  checkShouldUseProxy,
+  kWaitForProxyTunnel,
+  kPerRequestCheckServerIdentity,
+} = require("internal/http");
 const { validateHeaderValue } = require("node:_http_common");
 
 const ArrayPrototypeShift = Array.prototype.shift;
@@ -15,10 +20,9 @@ const ArrayPrototypeUnshift = Array.prototype.unshift;
 const JSONStringify = JSON.stringify;
 
 // A request that carries its own checkServerIdentity gets a unique Agent name,
-// caches no TLS session and never returns its socket to the pool: a connection
-// one callback approved must not serve a request that has a different one.
-// https://github.com/nodejs/node/commit/52a8ace880 (CVE-2026-58040)
-const kPerRequestCheckServerIdentity = Symbol("per-request checkServerIdentity");
+// caches no TLS session, and the Agent's 'free' handler never pools its socket:
+// a connection one callback approved must not serve a request that has a
+// different one. https://github.com/nodejs/node/commit/52a8ace880 (CVE-2026-58040)
 let perRequestCheckServerIdentityIndex = 0;
 
 // Agent options override request options (Agent#addRequest), so with an
@@ -214,12 +218,10 @@ function establishTunnel(agent, socket, options, tunnelConfig, afterSocket) {
         socket.emit("free");
       }
       tunneledSocket = require("node:tls").connect(requestOptions, onTLSHandshakeSuccess);
-      const perRequestCheckServerIdentity = requestOptions[kPerRequestCheckServerIdentity];
-      if (perRequestCheckServerIdentity) tunneledSocket[kPerRequestCheckServerIdentity] = true;
       tunneledSocket.on("free", onTunneledSocketFree);
       tunneledSocket.on("error", onTLSHandshakeError);
       const agentKey = requestOptions._agentKey;
-      if (agentKey && !perRequestCheckServerIdentity) {
+      if (agentKey && !requestOptions[kPerRequestCheckServerIdentity]) {
         // The tunneled socket carries the TLS session with the target; cache
         // it (and evict on close) under the target's agent key.
         tunneledSocket.on("session", onSocketSession.bind(agent, agentKey));
@@ -288,8 +290,7 @@ function createConnection(...args) {
   $debug("https createConnection", options);
 
   const agentKey = options._agentKey;
-  const perRequestCheckServerIdentity = options[kPerRequestCheckServerIdentity];
-  const reuseSession = agentKey && !perRequestCheckServerIdentity;
+  const reuseSession = agentKey && !options[kPerRequestCheckServerIdentity];
   if (reuseSession) {
     const session = this._getSession(agentKey);
     if (session) {
@@ -357,8 +358,6 @@ function createConnection(...args) {
     socket[kWaitForProxyTunnel] = true;
   }
 
-  if (perRequestCheckServerIdentity) socket[kPerRequestCheckServerIdentity] = true;
-
   if (reuseSession && tunnelConfig === null) {
     // Cache new session for reuse. On the proxy-tunnel path `socket` is the
     // connection to the proxy, not the target - establishTunnel attaches
@@ -399,11 +398,6 @@ function Agent(options) {
 }
 $toClass(Agent, "Agent", http.Agent);
 Agent.prototype.createConnection = createConnection;
-Agent.prototype.keepSocketAlive = function keepSocketAlive(socket) {
-  if (socket[kPerRequestCheckServerIdentity]) return false;
-
-  return http.Agent.prototype.keepSocketAlive.$call(this, socket);
-};
 
 /**
  * Gets a unique name for a set of options.

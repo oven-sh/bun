@@ -614,8 +614,6 @@ impl QuicSession {
     pub(super) fn is_server(&self) -> bool {
         self.is_server.get()
     }
-    /// The negotiated application's "internal error" code (H3_INTERNAL_ERROR
-    /// for HTTP/3, 1 otherwise).
     pub(super) fn internal_error_code(&self) -> u64 {
         self.with_state(|s| s.internal_error_code)
     }

@@ -386,10 +386,8 @@ function ipToInt(ip) {
   return result >>> 0;
 }
 
-// Removes the credentials from a proxy URL that does not parse, for ERR_PROXY_INVALID_CONFIG messages.
-// An unescaped "/", "?" or "#" in the password ends the authority early, so the userinfo is taken to
-// run up to the last "@" of the whole string. Node prints the raw string in these messages:
-// https://github.com/nodejs/node/blob/3e9954a88b6a291fc4041aa7ff2b9725f4f86025/lib/internal/http.js#L114
+// Node prints the raw string: https://github.com/nodejs/node/blob/3e9954a88b6a291fc4041aa7ff2b9725f4f86025/lib/internal/http.js#L114
+// The userinfo runs to the last "@" of the string: an unescaped "/" in a password ends the authority early.
 function redactInvalidProxyUrl(proxyUrl) {
   proxyUrl = `${proxyUrl}`;
   const userinfoEnd = proxyUrl.lastIndexOf("@");

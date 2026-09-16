@@ -1541,6 +1541,11 @@ extern "C" void Bun__ensureSignalHandler();
 extern "C" bool Bun__isMainThreadVM();
 extern "C" void Bun__onPosixSignal(int signalNumber);
 extern "C" void Bun__onSignalListenerCountChanged(int signalNumber, int listenerCount);
+#if !OS(WINDOWS)
+// Call this after the disposition of a signal changed for its JS listeners. Native code that
+// needs the same signal (the spawn waiter thread needs SIGCHLD) takes the disposition back there.
+extern "C" void Bun__onSignalDispositionChanged(int signalNumber, bool hasListeners);
+#endif
 
 __attribute__((noinline)) static void forwardSignal(int signalNumber)
 {
@@ -1653,6 +1658,7 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
 #if !OS(WINDOWS)
                         Bun__ensureSignalHandler();
                         installForwardSignalHandler(signalNumber);
+                        Bun__onSignalDispositionChanged(signalNumber, true);
 #else
                         signal_handle.handle = Bun__UVSignalHandle__init(
                             eventEmitter.scriptExecutionContext()->jsGlobalObject(),
@@ -1676,6 +1682,7 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
                                 // Don't uninstall the old handler if it's not the one we installed.
                                 signal(signalNumber, oldHandler);
                             }
+                            Bun__onSignalDispositionChanged(signalNumber, false);
 #else
                             SignalHandleValue signal_handle = signalToContextIdsMap->get(signalNumber);
                             Bun__UVSignalHandle__close(signal_handle.handle);

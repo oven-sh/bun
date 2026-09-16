@@ -229,10 +229,9 @@ fn create_parsed_shell_script_impl(
         marked_argument_buffer,
     )?;
 
-    // Box<ShellArgs> drops automatically on every early `return` below, so no
-    // scopeguard is needed.
-    let (arena, arena_bytes) = global.bun_vm().as_mut().rare_data().take_shell_arena();
-    let mut shargs: Box<ShellArgs> = ShellArgs::init(arena, arena_bytes);
+    // Box<ShellArgs> drops on every early `return` below, so no scopeguard is needed.
+    let (arena, arena_usage) = global.bun_vm().as_mut().rare_data().take_shell_arena();
+    let mut shargs: Box<ShellArgs> = ShellArgs::init(arena, arena_usage);
 
     // Reshaped for borrowck — `out_parser`/`out_lex_result` borrow
     // `shargs.__arena`, so they're scoped to a block that ends before

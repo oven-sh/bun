@@ -98,16 +98,19 @@ test("a finished script gives its parse arena to the next script", async () => {
   expect(mimallocHeapsCreated() - before).toBeLessThan(10);
 });
 
-test("a script larger than the parked arena's cap does not stay in it", async () => {
-  const big = `echo ${Buffer.alloc(1024 * 1024, "bun!").toString()}`;
-  await $`${{ raw: big }}`.quiet();
+// The cap is on what the arena's pages hold. The second script's AST is under it,
+// but the buffers its lexer grew and freed are not.
+test.each([
+  ["with an AST over the cap", `echo ${Buffer.alloc(1024 * 1024, "bun!").toString()}`],
+  ["that leaves large free blocks", `echo '${Buffer.alloc(100 * 1024, "x").toString()}'`],
+])("the arena of a script %s is not kept", async (_, script) => {
+  await $`${{ raw: script }}`.quiet();
   const before = mimallocHeapsCreated();
   for (let i = 0; i < 10; i++) {
-    await $`${{ raw: big }}`.quiet();
+    await $`${{ raw: script }}`.quiet();
   }
   const created = mimallocHeapsCreated() - before;
-  // Each one leaves more than the cap behind, so its arena is destroyed and
-  // the next script starts a new one.
+  // Its arena is destroyed at finish, and the next script starts a new one.
   expect(created).toBeGreaterThanOrEqual(10);
   expect(created).toBeLessThan(20);
 });

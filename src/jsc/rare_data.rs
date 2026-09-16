@@ -273,8 +273,8 @@ pub struct RareData {
     websocket_inflate_scratch: Option<Vec<u8>>,
     /// One libdeflate handle for every JS-thread one-shot inflate; see [`Self::libdeflate_decompressor`].
     libdeflate_decompressor: Option<libdeflate::OwnedDecompressor>,
-    /// Arena of the last finished `Bun.$` script and its `allocated_bytes()`; see [`Self::take_shell_arena`].
-    shell_arena: Option<(bun_alloc::Arena, usize)>,
+    /// Arena of the last finished `Bun.$` script and its `usage()`; see [`Self::take_shell_arena`].
+    shell_arena: Option<(bun_alloc::Arena, bun_alloc::ArenaUsage)>,
 
     // There is intentionally no `aws_signature_cache` field — storage lives in
     // `bun_s3_signing::credentials::AWS_SIGNATURE_CACHE` (process static; it
@@ -681,22 +681,16 @@ impl RareData {
         }
     }
 
-    /// Arena for the tokens and AST of one `Bun.$` script, and the `allocated_bytes()` it
-    /// already holds. A `bun_alloc::Arena` is a whole mimalloc heap, and one create/destroy
-    /// pair costs more than a shell builtin takes to run, so a finished script parks its arena
-    /// here and the next script parses into it. By value: scripts overlap, and one that finds
-    /// the slot empty gets a fresh arena.
-    pub fn take_shell_arena(&mut self) -> (bun_alloc::Arena, usize) {
+    /// Arena for one `Bun.$` script's parse, with its `usage()`: an arena is a whole mimalloc heap, too costly per script.
+    pub fn take_shell_arena(&mut self) -> (bun_alloc::Arena, bun_alloc::ArenaUsage) {
         self.shell_arena.take().unwrap_or_default()
     }
 
-    /// Hand a taken arena back with its current `allocated_bytes()`. An arena frees nothing
-    /// until it is destroyed, so the slot keeps the first one returned only while the dead
-    /// ASTs in it are small, and lets a larger one go.
-    pub fn put_back_shell_arena(&mut self, arena: bun_alloc::Arena, allocated_bytes: usize) {
+    /// Keeps the first arena returned, and only while its pages (dead ASTs, free blocks) hold at most `KEEP`.
+    pub fn put_back_shell_arena(&mut self, arena: bun_alloc::Arena, usage: bun_alloc::ArenaUsage) {
         const KEEP: usize = 256 * 1024;
-        if self.shell_arena.is_none() && allocated_bytes <= KEEP {
-            self.shell_arena = Some((arena, allocated_bytes));
+        if self.shell_arena.is_none() && usage.committed <= KEEP {
+            self.shell_arena = Some((arena, usage));
         }
     }
 

@@ -5978,6 +5978,40 @@ impl<'a> Resolver<'a> {
         dec_ret!(None);
     }
 
+    /// Calls `each` with every file that `load_as_file` accepts for an entry point at `path`.
+    pub fn for_each_entry_file_candidate(&self, path: &[u8], mut each: impl FnMut(&[u8])) {
+        each(path);
+        let mut candidate = Vec::with_capacity(path.len() + 8);
+        let order = self
+            .opts
+            .extension_order
+            .kind(ast::ImportKind::EntryPointRun, false);
+        let appended = [
+            self.opts.ext_order_slice(order),
+            &self.opts.extra_cjs_extensions,
+        ];
+        for ext in appended.into_iter().flatten() {
+            candidate.clear();
+            candidate.extend_from_slice(path);
+            candidate.extend_from_slice(ext);
+            each(&candidate);
+        }
+        let base = bun_paths::basename(path);
+        let Some(dot) = strings::last_index_of_char(base, b'.') else {
+            return;
+        };
+        let stem = &path[..path.len() - base.len() + dot];
+        let exts = rewritten_file_extensions(&base[dot..], || {
+            strings::path_contains_node_modules_folder(path)
+        });
+        for ext in exts {
+            candidate.clear();
+            candidate.extend_from_slice(stem);
+            candidate.extend_from_slice(ext);
+            each(&candidate);
+        }
+    }
+
     fn load_extension(
         &mut self,
         base: &[u8],

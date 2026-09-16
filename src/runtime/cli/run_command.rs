@@ -25,6 +25,7 @@ use bun_paths::strings;
 use bun_paths::{self as paths, DELIMITER, MAX_PATH_BYTES, PathBuffer, SEP};
 use bun_resolver::package_json::PackageJSON;
 use bun_sys::{self as sys, Fd, FdExt as _};
+use bun_watcher::restart_on_change;
 use bun_which::which;
 
 use crate::cli;
@@ -2679,19 +2680,18 @@ impl RunCommand {
                     <&'static str>::from(loader),
                 );
             } else {
-                let default_loader = Self::default_loader_for(target_name);
-                if default_loader
-                    .map(Loader::is_javascript_like_or_json)
-                    .unwrap_or(false)
-                    || (!target_name.is_empty()
-                        && (target_name[0] == b'.'
-                            || target_name[0] == b'/'
-                            || paths::is_absolute(target_name)))
-                {
+                if Self::names_a_module(target_name) {
                     pretty_errorln!(
                         "<r><red>error<r><d>:<r> <b>Module not found \"<b>{}<r>\"",
                         bstr::BStr::new(target_name),
                     );
+                    if ctx.debug.hot_reload == cli::command::HotReload::Watch {
+                        Self::wait_for_entry_file(
+                            &this_transpiler.resolver,
+                            fs_top_level_dir,
+                            target_name,
+                        );
+                    }
                 } else if !paths::extension(target_name).is_empty() {
                     pretty_errorln!(
                         "<r><red>error<r><d>:<r> <b>File not found \"<b>{}<r>\"",
@@ -2708,6 +2708,49 @@ impl RunCommand {
         }
 
         Ok(false)
+    }
+
+    /// Under --watch, waits until a file that `target` can resolve to exists, then restarts the process.
+    fn wait_for_entry_file(
+        resolver: &bun_resolver::Resolver<'_>,
+        top_level_dir: &[u8],
+        target: &[u8],
+    ) {
+        use bun_core::{FileKind, ZBox};
+        let mut buf = bun_paths::path_buffer_pool::get();
+        // With the start directory gone, `top_level_dir` is a fallback where the entry never was.
+        if !paths::is_absolute(target) && bun_core::getcwd(&mut buf).is_err() {
+            return;
+        }
+        let Some(path) = paths::resolve_path::join_abs_string_buf_checked::<
+            paths::resolve_path::platform::Auto,
+        >(top_level_dir, &mut buf[..], &[target]) else {
+            return;
+        };
+        let path = ZBox::from_bytes(path);
+        // A directory runs through its package.json, and nothing on disk shows when that starts to resolve.
+        if restart_on_change::kind_of(path.as_zstr()) == Some(FileKind::Directory) {
+            return;
+        }
+        let mut files: Vec<ZBox> = Vec::new();
+        resolver.for_each_entry_file_candidate(path.as_bytes(), |file| {
+            files.push(ZBox::from_bytes(file))
+        });
+        restart_on_change::restart_when(path.as_bytes(), || {
+            restart_on_change::kind_of(path.as_zstr()) == Some(FileKind::Directory)
+                || files
+                    .iter()
+                    .any(|file| restart_on_change::kind_of(file.as_zstr()) == Some(FileKind::File))
+        });
+    }
+
+    /// Whether a target that was not found names a module (a path, a JS-like extension), not a script.
+    fn names_a_module(target: &[u8]) -> bool {
+        Self::default_loader_for(target)
+            .map(Loader::is_javascript_like_or_json)
+            .unwrap_or(false)
+            || (!target.is_empty()
+                && (target[0] == b'.' || target[0] == b'/' || paths::is_absolute(target)))
     }
 
     /// Fast-path file probe: if `target` resolves to an existing regular file,

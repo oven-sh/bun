@@ -29,6 +29,8 @@ pub mod watcher_impl;
 
 pub mod error;
 
+pub mod restart_on_change;
+
 // ─── public re-exports ────────────────────────────────────────────────────
 
 pub use error::{Error, Result};

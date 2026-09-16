@@ -1,8 +1,18 @@
 import type { Subprocess } from "bun";
 import { spawn } from "bun";
-import { afterEach, expect, it } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isBroken, isLinux, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
-import { readdirSync, readlinkSync, realpathSync, rmSync, symlinkSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readlinkSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 
 let watchee: Subprocess;
@@ -552,3 +562,216 @@ test("ready", () => console.log("ready", x, y));
     },
   );
 }
+
+// A --watch start that fails before the VM exists (bunfig.toml does not parse,
+// the entry file is missing) has no file watcher, so it has to wait for the
+// file it could not use, then pick up later saves as usual. Each `waitFor`
+// consumes the output up to its match, so a repeated line is seen once per run.
+function streamWaiter(name: string, stream: ReadableStream<Uint8Array>) {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let output = "";
+  let consumed = 0;
+  return {
+    waitFor: async (needle: string) => {
+      let at: number;
+      while ((at = output.indexOf(needle, consumed)) === -1) {
+        const { value, done } = await reader.read();
+        // The pipes survive the restart, so a closed one means the session ended.
+        if (done) throw new Error(`${name} closed before ${JSON.stringify(needle)}: ${JSON.stringify(output)}`);
+        output += decoder.decode(value, { stream: true });
+      }
+      consumed = at + needle.length;
+    },
+  };
+}
+
+function spawnWatch(cmd: string[], cwd: string) {
+  const proc = spawn({ cmd: [bunExe(), ...cmd], cwd, env: bunEnv, stdout: "pipe", stderr: "pipe", stdin: "ignore" });
+  return { proc, stdout: streamWaiter("stdout", proc.stdout), stderr: streamWaiter("stderr", proc.stderr) };
+}
+
+// On Windows the watcher can lose a change made right after a process starts
+// (#40017), and nothing reports when it is ready. So there the save is repeated
+// until the process reacts.
+async function saveUntil(seen: Promise<void>, save: () => void) {
+  save();
+  if (isWindows) {
+    let pending = true;
+    const settled = seen.then(
+      () => void (pending = false),
+      () => void (pending = false),
+    );
+    while (pending) {
+      await Promise.race([settled, Bun.sleep(1000)]);
+      if (pending) save();
+    }
+  }
+  await seen;
+}
+
+const entrySource = (version: string) => `console.log("run ${version}");\nsetInterval(() => {}, 1 << 30);\n`;
+
+// An editor that saves by rename leaves the entry file away for a moment (#8520).
+// The resolver also runs "./entry" and "main.js" from entry.mjs and main.ts.
+describe.each([
+  ["entry.mjs", "entry.mjs"],
+  ["./entry", "entry.mjs"],
+  ["main.js", "main.ts"],
+])("--watch %s", (target, file) => {
+  it.concurrent("waits for an entry file that is missing when the process restarts", async () => {
+    using dir = tempDir("watch-restart-entry-missing", { [file]: entrySource("v0") });
+    const entry = join(String(dir), file);
+    const { proc, stdout, stderr } = spawnWatch(["--watch", target], String(dir));
+    await using _ = proc;
+
+    await stdout.waitFor("run v0");
+    // Windows cannot rename over the file that the first process still has open.
+    let away = 0;
+    await saveUntil(stderr.waitFor(`Module not found "${target}"`), () => {
+      if (!existsSync(entry)) writeFileSync(entry, entrySource("v0"));
+      renameSync(entry, `${entry}~${away++}`);
+    });
+    writeFileSync(entry + "~", entrySource("v1"));
+    renameSync(entry + "~", entry);
+    await stdout.waitFor("run v1");
+    await saveUntil(stdout.waitFor("run v2"), () => writeFileSync(entry, entrySource("v2")));
+  });
+});
+
+// #22404: the entry file is the output of a build that has not run yet.
+it.concurrent("--watch waits for an entry file that does not exist yet", async () => {
+  using dir = tempDir("watch-first-start-entry-missing", {});
+  const cwd = String(dir);
+  const { proc, stdout, stderr } = spawnWatch(["--watch", "dist/index.js"], cwd);
+  await using _ = proc;
+
+  await stderr.waitFor(`Module not found "dist/index.js"`);
+  mkdirSync(join(cwd, "dist"));
+  writeFileSync(join(cwd, "dist", "index.js"), entrySource("v0"));
+  await stdout.waitFor("run v0");
+  await saveUntil(stdout.waitFor("run v1"), () => writeFileSync(join(cwd, "dist", "index.js"), entrySource("v1")));
+});
+
+// Nothing on disk shows when one of these starts to resolve, so a wait could be one that never ends.
+describe.each([
+  ["nope", `error: Script not found "nope"`],
+  [".", `error: Module not found "."`],
+])("--watch %s", (target, error) => {
+  it.concurrent("still exits when the target does not name a file", async () => {
+    using dir = tempDir("watch-not-a-file", {
+      "package.json": `{ "name": "watch-not-a-file", "main": "dist/index.js" }`,
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), "--watch", target],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr: stderr.trim(), exitCode }).toEqual({ stdout: "", stderr: error, exitCode: 1 });
+  });
+});
+
+// Without a cwd Bun looks next to its own executable, where the entry never was.
+it.concurrent.skipIf(isWindows)("--watch still exits when its start directory is gone", async () => {
+  using dir = tempDir("watch-start-dir-gone", {
+    "launch.mjs": `
+      import { mkdirSync, rmdirSync } from "node:fs";
+      mkdirSync("gone");
+      process.chdir("gone");
+      rmdirSync("../gone");
+      // The timeout only bounds a start that waits: it has to exit on its own.
+      const { exitCode, signalCode, stderr } = Bun.spawnSync({
+        cmd: [process.execPath, "--watch", "entry.mjs"],
+        stderr: "pipe",
+        timeout: 3000,
+      });
+      console.log(JSON.stringify({ exitCode, signalCode: signalCode ?? null, stderr: stderr.toString().trim() }));
+    `,
+  });
+  await using proc = spawn({
+    cmd: [bunExe(), "launch.mjs"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect({ result: JSON.parse(stdout), exitCode }).toEqual({
+    result: { exitCode: 1, signalCode: null, stderr: `error: Module not found "entry.mjs"` },
+    exitCode: 0,
+  });
+});
+
+const preloadBunfig = `preload = ["./pre.mjs"]\n`;
+const preloadFixture = {
+  "bunfig.toml": preloadBunfig,
+  "pre.mjs": `globalThis.pre = "pre";\n`,
+  "dep.mjs": `export const dep = "v0";\n`,
+  "entry.mjs": `import { dep } from "./dep.mjs";\nconsole.log("run", dep, globalThis.pre);\nsetInterval(() => {}, 1 << 30);\n`,
+};
+const depSource = (version: string) => `export const dep = "${version}";\n`;
+
+it.concurrent("--watch waits for a bunfig.toml that does not parse when the process restarts", async () => {
+  using dir = tempDir("watch-restart-bunfig-broken", preloadFixture);
+  const cwd = String(dir);
+  const { proc, stdout, stderr } = spawnWatch(["--watch", "entry.mjs"], cwd);
+  await using _ = proc;
+
+  await stdout.waitFor("run v0 pre");
+  await saveUntil(stderr.waitFor("Unterminated array"), () => {
+    writeFileSync(join(cwd, "bunfig.toml"), `preload = [\n`);
+    writeFileSync(join(cwd, "dep.mjs"), depSource("v1"));
+  });
+  writeFileSync(join(cwd, "bunfig.toml"), preloadBunfig);
+  await stdout.waitFor("run v1 pre");
+  await saveUntil(stdout.waitFor("run v2 pre"), () => writeFileSync(join(cwd, "dep.mjs"), depSource("v2")));
+});
+
+// On Windows the first process is not yet the child of a watcher manager, so
+// this start restarts through a different path than the one above.
+it.concurrent("--watch waits for a bunfig.toml that does not parse on the first start", async () => {
+  using dir = tempDir("watch-first-start-bunfig-broken", { ...preloadFixture, "bunfig.toml": `preload = [\n` });
+  const cwd = String(dir);
+  const { proc, stdout, stderr } = spawnWatch(["--watch", "entry.mjs"], cwd);
+  await using _ = proc;
+
+  await stderr.waitFor("Unterminated array");
+  writeFileSync(join(cwd, "bunfig.toml"), preloadBunfig);
+  await stdout.waitFor("run v0 pre");
+  await saveUntil(stdout.waitFor("run v1 pre"), () => writeFileSync(join(cwd, "dep.mjs"), depSource("v1")));
+});
+
+it.concurrent("bun build --watch waits for a bunfig.toml that does not parse when the process restarts", async () => {
+  const bunfig = `[install]\nauto = "disable"\n`;
+  // The bundle goes outside the watched directory. On Windows the watcher can
+  // drop the event of a save that follows a burst of its own output writes (#40017).
+  using dir = tempDir("watch-restart-build-bunfig-broken", {
+    "project/bunfig.toml": bunfig,
+    "project/entry.mjs": `console.log("v0");\n`,
+  });
+  const cwd = join(String(dir), "project");
+  const outdir = join(String(dir), "out");
+  const bundle = join(outdir, "entry.js");
+  const { proc, stdout, stderr } = spawnWatch(["build", "--watch", "entry.mjs", "--outdir", outdir], cwd);
+  await using _ = proc;
+
+  // One "entry.js" line per build. A repeated save gives a repeated build, so
+  // the bundle is read after each line until it has the new source.
+  const built = async (source: string) => {
+    do await stdout.waitFor("entry.js");
+    while (!(await Bun.file(bundle).text()).includes(source));
+  };
+  await built(`"v0"`);
+  await saveUntil(stderr.waitFor("failed to load bunfig"), () => {
+    writeFileSync(join(cwd, "bunfig.toml"), `[install\n`);
+    writeFileSync(join(cwd, "entry.mjs"), `console.log("v1");\n`);
+  });
+  writeFileSync(join(cwd, "bunfig.toml"), bunfig);
+  await built(`"v1"`);
+  await saveUntil(built(`"v2"`), () => writeFileSync(join(cwd, "entry.mjs"), `console.log("v2");\n`));
+});

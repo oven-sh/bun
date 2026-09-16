@@ -8,10 +8,11 @@ use bun_bundler::options;
 use bun_core::ZStr;
 use bun_core::{self, Global, Output, env_var};
 use bun_options_types::command_tag::{ALWAYS_LOADS_CONFIG, Tag as CommandTag};
-use bun_options_types::context::Context;
+use bun_options_types::context::{Context, HotReload};
 use bun_paths::PathBuffer;
 use bun_paths::resolve_path::{self, platform};
 use bun_standalone_graph::StandaloneModuleGraph::StandaloneModuleGraph;
+use bun_watcher::restart_on_change;
 
 use crate::bunfig::Bunfig;
 
@@ -133,8 +134,13 @@ pub fn load_config_path(
     load_bunfig(cmd, auto_loaded, config_path, ctx)
 }
 
+/// Under `--watch`, `watched` is the config file: wait for its next save instead of exiting.
 #[cold]
-fn report_bunfig_load_failure(log: *mut bun_ast::Log, err: crate::Error) -> ! {
+fn report_bunfig_load_failure(
+    log: *mut bun_ast::Log,
+    err: crate::Error,
+    watched: Option<restart_on_change::Input>,
+) -> ! {
     // SAFETY: process-global Log; see `load_bunfig` note.
     let log = unsafe { &mut *log };
     if log.has_any() {
@@ -142,6 +148,9 @@ fn report_bunfig_load_failure(log: *mut bun_ast::Log, err: crate::Error) -> ! {
         Output::print_error("\n");
     }
     Output::err(err, "failed to load bunfig", ());
+    if let Some(config) = watched {
+        restart_on_change::restart_when(config.path(), || config.changed());
+    }
     Global::crash();
 }
 
@@ -169,7 +178,7 @@ pub fn load_config(
 
             if let Some(path) = get_home_config_path(&mut config_buf) {
                 if let Err(err) = load_config_path(cmd, true, path, ctx) {
-                    report_bunfig_load_failure(ctx.log, err);
+                    report_bunfig_load_failure(ctx.log, err, None);
                 }
             }
         }
@@ -236,8 +245,10 @@ pub fn load_config(
         );
     };
 
+    let watched = (ctx.debug.hot_reload == HotReload::Watch)
+        .then(|| restart_on_change::Input::new(config_path));
     if let Err(err) = load_config_path(cmd, auto_loaded, config_path, ctx) {
-        report_bunfig_load_failure(ctx.log, err);
+        report_bunfig_load_failure(ctx.log, err, watched);
     }
     Ok(())
 }

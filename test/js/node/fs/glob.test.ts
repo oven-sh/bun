@@ -3,7 +3,7 @@
  * tested elsewhere. These tests check API compatibility with Node.js.
  */
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { isWindows, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
 import fs from "node:fs";
 
 let tmp: string;
@@ -267,6 +267,40 @@ describe("fs.promises.glob", () => {
     expect(Array.fromAsync(fs.promises.glob(["a/bar.txt", "a/baz.js"], { cwd: tmp }))).resolves.toStrictEqual(expected);
   });
 }); // </fs.promises.glob>
+
+describe("fs.glob walk", () => {
+  it.concurrent("does not call path.join() or path.resolve() once per entry", async () => {
+    const files: Record<string, string> = {};
+    for (let i = 0; i < 200; i++) files[`f${i}.txt`] = "";
+    using flat = tempDir("fs-glob-flat", files);
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const path = require("node:path");
+          const calls = { join: 0, resolve: 0 };
+          for (const name of ["join", "resolve"]) {
+            const original = path[name];
+            path[name] = (...args) => (calls[name]++, original(...args));
+          }
+          const fs = require("node:fs");
+          const cwd = process.argv[1];
+          const sync = fs.globSync("*.txt", { cwd }).length;
+          const async = (await Array.fromAsync(fs.promises.glob("*.txt", { cwd }))).length;
+          console.log(JSON.stringify({ sync, async, perEntry: calls.join >= 200 || calls.resolve >= 200 }));
+        `,
+        String(flat),
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ sync: 200, async: 200, perEntry: false });
+    expect(exitCode).toBe(0);
+  });
+});
 
 describe("fs.globSync exclude with withFileTypes", () => {
   it("invokes the exclude callback with Dirents when cwd differs from process.cwd()", () => {

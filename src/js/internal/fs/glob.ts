@@ -15,7 +15,7 @@
 // version on main). Replace this with Bun.Glob once those gaps are closed
 // natively.
 const { validateObject, validateString, validateBoolean, validateArray } = require("internal/validators");
-const { join, resolve, basename, dirname, isAbsolute } = require("node:path");
+const { join, resolve, basename, dirname, isAbsolute, sep } = require("node:path");
 const { kEmptyObject } = require("internal/shared");
 
 const isWindows = process.platform === "win32";
@@ -57,6 +57,10 @@ function makeMatchersExclude(matchers) {
 }
 function statForFileTypes(cache, root, path) {
   return cache.statSync(isAbsolute(path) ? path : join(root, path));
+}
+// joinPrefix(dir) + name equals join(dir, name) for a name from readdir: it has no ".", ".." or separator.
+function joinPrefix(dir) {
+  return dir === "." ? "" : join(dir, sep);
 }
 
 const kStats = Symbol("stats");
@@ -298,14 +302,17 @@ class Cache {
 class Pattern {
   #pattern;
   #globStrings;
+  // cacheKey() by index. Every child() shares it.
+  #cacheKeys;
   indexes;
   symlinks;
   realpaths;
   last;
 
-  constructor(pattern, globStrings, indexes, symlinks, realpaths = new Set()) {
+  constructor(pattern, globStrings, indexes, symlinks, realpaths = new Set(), cacheKeys = []) {
     this.#pattern = pattern;
     this.#globStrings = globStrings;
+    this.#cacheKeys = cacheKeys;
     this.indexes = indexes;
     this.symlinks = symlinks;
     this.realpaths = realpaths;
@@ -331,7 +338,7 @@ class Pattern {
     return this.#pattern.at(index);
   }
   child(indexes, symlinks = new Set(), realpaths = this.realpaths) {
-    return new Pattern(this.#pattern, this.#globStrings, indexes, symlinks, realpaths);
+    return new Pattern(this.#pattern, this.#globStrings, indexes, symlinks, realpaths, this.#cacheKeys);
   }
   test(index, path) {
     if (index > this.#pattern.length) {
@@ -351,14 +358,7 @@ class Pattern {
   }
 
   cacheKey(index) {
-    let key = "";
-    for (let i = index; i < this.#globStrings.length; i++) {
-      key += this.#globStrings[i];
-      if (i !== this.#globStrings.length - 1) {
-        key += "/";
-      }
-    }
-    return key;
+    return (this.#cacheKeys[index] ??= this.#globStrings.slice(index).join("/"));
   }
 }
 
@@ -372,7 +372,7 @@ class ResultSet extends Set {
   }
 
   add(value): any {
-    if (this.#isExcluded(resolve(this.#root, value))) {
+    if (this.#isExcluded !== excludeNothing && this.#isExcluded(resolve(this.#root, value))) {
       return false;
     }
     super.add(value);
@@ -515,14 +515,16 @@ class Glob {
     return real !== null && pattern.realpaths.has(real);
   }
   #addSubpattern(path, pattern) {
-    if (this.#isExcluded(path)) {
-      return;
-    }
-    const fullpath = resolve(this.#root, path);
+    if (this.#isExcluded !== excludeNothing) {
+      if (this.#isExcluded(path)) {
+        return;
+      }
+      const fullpath = resolve(this.#root, path);
 
-    // If path is a directory, add trailing slash and test patterns again.
-    if (this.#isExcluded(`${fullpath}/`) && this.#cache.statSync(fullpath).isDirectory()) {
-      return;
+      // If path is a directory, add trailing slash and test patterns again.
+      if (this.#isExcluded(`${fullpath}/`) && this.#cache.statSync(fullpath).isDirectory()) {
+        return;
+      }
     }
 
     if (this.#exclude) {
@@ -532,7 +534,7 @@ class Glob {
         // process.cwd() instead of options.cwd (upstream passes `path`
         // here, which silently skips the exclude callback when cwd
         // differs).
-        const stat = this.#cache.statSync(fullpath);
+        const stat = this.#cache.statSync(resolve(this.#root, path));
         if (stat !== null) {
           if (this.#exclude(stat)) {
             return;
@@ -611,6 +613,9 @@ class Glob {
     const nextRealpaths = this.#nextRealpathsSync(fullpath, isDirectory, pattern);
 
     let children;
+    // Set when `children` comes from readdir; see joinPrefix().
+    let entryPathPrefix;
+    let entryFullpathPrefix;
     const firstPattern = pattern.indexes.size === 1 && pattern.at(pattern.indexes.values().next().value);
     if (typeof firstPattern === "string") {
       const stat = this.#cache.statSync(join(fullpath, firstPattern));
@@ -622,12 +627,15 @@ class Glob {
       }
     } else {
       children = this.#cache.readdirSync(fullpath);
+      entryPathPrefix = joinPrefix(path);
+      entryFullpathPrefix = joinPrefix(fullpath);
     }
 
     for (let i = 0; i < children.length; i++) {
       const entry = children[i];
-      const entryPath = join(path, entry.name);
-      const entryFullpath = join(fullpath, entry.name);
+      const entryPath = entryPathPrefix === undefined ? join(path, entry.name) : entryPathPrefix + entry.name;
+      const entryFullpath =
+        entryFullpathPrefix === undefined ? join(fullpath, entry.name) : entryFullpathPrefix + entry.name;
       this.#cache.addToStatCache(entryFullpath, entry);
       const entryIsDirectory =
         entry.isDirectory() ||
@@ -828,6 +836,9 @@ class Glob {
     const nextRealpaths = await this.#nextRealpaths(fullpath, isDirectory, pattern);
 
     let children;
+    // Set when `children` comes from readdir; see joinPrefix().
+    let entryPathPrefix;
+    let entryFullpathPrefix;
     const firstPattern = pattern.indexes.size === 1 && pattern.at(pattern.indexes.values().next().value);
     if (typeof firstPattern === "string") {
       const stat = await this.#cache.stat(join(fullpath, firstPattern));
@@ -839,12 +850,15 @@ class Glob {
       }
     } else {
       children = await this.#cache.readdir(fullpath);
+      entryPathPrefix = joinPrefix(path);
+      entryFullpathPrefix = joinPrefix(fullpath);
     }
 
     for (let i = 0; i < children.length; i++) {
       const entry = children[i];
-      const entryPath = join(path, entry.name);
-      const entryFullpath = join(fullpath, entry.name);
+      const entryPath = entryPathPrefix === undefined ? join(path, entry.name) : entryPathPrefix + entry.name;
+      const entryFullpath =
+        entryFullpathPrefix === undefined ? join(fullpath, entry.name) : entryFullpathPrefix + entry.name;
       this.#cache.addToStatCache(entryFullpath, entry);
       const entryIsDirectory =
         entry.isDirectory() ||

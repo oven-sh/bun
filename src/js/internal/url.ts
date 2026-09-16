@@ -1,3 +1,8 @@
+// Node's isURL (lib/internal/url.js). Legacy url.parse() objects have auth and path.
+function isURL(self) {
+  return Boolean(self?.href && self.protocol && self.auth === undefined && self.path === undefined);
+}
+
 function urlToHttpOptions(url) {
   const options = {
     ...url,
@@ -23,5 +28,6 @@ function urlToHttpOptions(url) {
 }
 
 export default {
+  isURL,
   urlToHttpOptions,
 };

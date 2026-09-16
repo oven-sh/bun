@@ -1,6 +1,7 @@
 // fs.watch is lazily loaded so the FSWatcher class is only set up when it is used.
 const EventEmitter = require("node:events");
 const { basename } = require("node:path");
+const { isURL } = require("internal/url");
 
 // The native `node:fs` binding, shared via `internal/fs/binding`.
 const fs = require("internal/fs/binding");
@@ -138,7 +139,7 @@ class FSWatcher extends EventEmitter {
   constructor(path, options, listener) {
     super();
 
-    if (path instanceof URL) {
+    if (isURL(path)) {
       path = Bun.fileURLToPath(path);
     } else if (typeof path === "string" && path.startsWith("file:")) {
       path = Bun.fileURLToPath(path);

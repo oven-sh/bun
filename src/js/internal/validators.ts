@@ -1,7 +1,10 @@
 const { hideFromStack } = require("internal/shared");
+const { isURL } = require("internal/url");
+const { isUint8Array } = require("node:util/types");
 
 const RegExpPrototypeExec = RegExp.prototype.exec;
 const ArrayIsArray = Array.isArray;
+const Uint8ArrayPrototypeIncludes = Uint8Array.prototype.includes;
 
 const tokenRegExp = /^[\^_`a-zA-Z\-0-9!#$%&'*+.|~]+$/;
 /**
@@ -87,7 +90,7 @@ function validateBoolean(value, name) {
 
 /** Validate a string-or-URL path and return it resolved to an absolute path string. */
 function getValidatedPath(p: any) {
-  if (p instanceof URL) return Bun.fileURLToPath(p as URL);
+  if (isURL(p)) return Bun.fileURLToPath(p);
   if (typeof p !== "string") throw $ERR_INVALID_ARG_TYPE("path", "string or URL", p);
   if (p.startsWith("file:")) return Bun.fileURLToPath(p);
   return require("node:path").resolve(p);
@@ -99,21 +102,17 @@ function throwIfNullBytesInFileName(filename: string) {
   }
 }
 
-/**
- * node's fs getValidatedPath (lib/internal/fs/utils.js): converts URL
- * *instances* via fileURLToPath, accepts strings and Buffers as-is (no
- * path.resolve, no "file:"-prefix string sniffing), and rejects null bytes.
- */
+/** node's fs getValidatedPath (lib/internal/fs/utils.js): a URL becomes a path, strings and Buffers pass as-is. */
 function getValidatedFsPath(p: any, propName: string = "path") {
-  if (p instanceof URL) p = Bun.fileURLToPath(p);
+  if (isURL(p)) p = Bun.fileURLToPath(p);
   if (typeof p === "string") {
     if (p.indexOf("\u0000") !== -1) {
       throw $ERR_INVALID_ARG_VALUE(propName, p, "must be a string, Uint8Array, or URL without null bytes");
     }
     return p;
   }
-  if (p instanceof Uint8Array) {
-    if (p.indexOf(0) !== -1) {
+  if (isUint8Array(p)) {
+    if (Uint8ArrayPrototypeIncludes.$call(p, 0)) {
       throw $ERR_INVALID_ARG_VALUE(propName, p, "must be a string, Uint8Array, or URL without null bytes");
     }
     return p;
@@ -171,7 +170,7 @@ export default {
   validateBuffer: $newCppFunction("NodeValidator.cpp", "jsFunction_validateBuffer", 0),
   /** `(value, name, oneOf)` */
   validateOneOf: $newCppFunction("NodeValidator.cpp", "jsFunction_validateOneOf", 0),
-  isUint8Array: value => value instanceof Uint8Array,
+  isUint8Array,
   /** `(path)` — accepts a string or file URL, returns it resolved to an absolute path string */
   getValidatedPath,
   getValidatedFsPath,

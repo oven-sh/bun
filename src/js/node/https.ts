@@ -3,7 +3,7 @@
 // https://github.com/nodejs/node/blob/v26.3.0/lib/https.js
 const http = require("node:http");
 const { isIP } = require("internal/net/isIP");
-const { urlToHttpOptions } = require("internal/url");
+const { isURL, urlToHttpOptions } = require("internal/url");
 const { kEmptyObject, once } = require("internal/shared");
 const { validateObject } = require("internal/validators");
 const { kProxyConfig, checkShouldUseProxy, kWaitForProxyTunnel } = require("internal/http");
@@ -20,7 +20,7 @@ function request(...args) {
   if (typeof args[0] === "string") {
     const urlStr = ArrayPrototypeShift.$call(args);
     options = urlToHttpOptions(new URL(urlStr));
-  } else if (args[0] instanceof URL) {
+  } else if (isURL(args[0])) {
     options = urlToHttpOptions(ArrayPrototypeShift.$call(args));
   }
 

@@ -463,7 +463,18 @@ Agent.prototype.removeSocket = function removeSocket(s, options) {
 
   if (req && options) {
     req[kRequestOptions] = undefined;
-    this.createSocket(req, options, onSocketCreatedForPending.bind(this, req, queueName));
+    let created = false;
+    const onCreated = (err, socket) => {
+      created = true;
+      onSocketCreatedForPending.$call(this, req, queueName, err, socket);
+    };
+    try {
+      this.createSocket(req, options, onCreated);
+    } catch (err) {
+      // Nobody called this function for the request, so the request has to get the error.
+      if (created) throw err;
+      onCreated(err, null);
+    }
   }
 };
 

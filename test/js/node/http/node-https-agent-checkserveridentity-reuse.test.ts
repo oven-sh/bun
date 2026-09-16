@@ -376,33 +376,46 @@ describe("what the unique Agent name of such a request leaves behind", () => {
     });
   });
 
-  // The refused request stays at the head of its own queue in Node. removeSocket()
-  // only looks at the first queue, so the request behind it is never served.
-  bunOnlyTest("a queued request whose proxy tunnel is refused does not block the queue behind it", async () => {
-    await scenario(
-      { keepAlive: false, maxTotalSockets: 1 },
-      async ({ agent, exchange, held, release }) => {
-        // Each pair: the first request holds the only slot while the second one joins the queue.
-        const results: Exchange[] = [];
-        for (let pair = 0; pair < 2; pair++) {
-          const holdsTheSlot = exchange({ path: "/hold" });
-          await held();
-          const queued = exchange({ checkServerIdentity: permissive });
-          release();
-          results.push(await holdsTheSlot, await queued);
-        }
-        assert.deepStrictEqual(
-          {
-            results: results.map(r => r.status ?? r.error),
-            queued: Object.keys(agent.requests),
-            sockets: Object.keys(agent.sockets),
-          },
-          { results: [200, "ERR_PROXY_TUNNEL", 200, 200], queued: [], sockets: [] },
-        );
-      },
-      { proxy: "http", proxyRefuses: nth => nth === 2 },
-    );
-  });
+  // The failed request stays at the head of its own queue in Node. removeSocket()
+  // only looks at the first queue, so the request behind it is never served. A
+  // createConnection() that throws there is an uncaught exception in Node.
+  class SecondConnectionThrows extends https.Agent {
+    connections = 0;
+    createConnection(...args: Parameters<https.Agent["createConnection"]>) {
+      if (++this.connections === 2) throw new Error("createConnection threw");
+      return super.createConnection(...args);
+    }
+  }
+  for (const [failure, error, options] of [
+    ["proxy tunnel is refused", "ERR_PROXY_TUNNEL", { proxy: "http", proxyRefuses: nth => nth === 2 }],
+    ["createConnection throws", "createConnection threw", { createAgent: o => new SecondConnectionThrows(o) }],
+  ] as [string, string, ScenarioOptions][]) {
+    bunOnlyTest(`a queued request whose ${failure} does not block the queue behind it`, async () => {
+      await scenario(
+        { keepAlive: false, maxTotalSockets: 1 },
+        async ({ agent, exchange, held, release }) => {
+          // Each pair: the first request holds the only slot while the second one joins the queue.
+          const results: Exchange[] = [];
+          for (let pair = 0; pair < 2; pair++) {
+            const holdsTheSlot = exchange({ path: "/hold" });
+            await held();
+            const queued = exchange({ checkServerIdentity: permissive });
+            release();
+            results.push(await holdsTheSlot, await queued);
+          }
+          assert.deepStrictEqual(
+            {
+              results: results.map(r => r.status ?? r.error),
+              queued: Object.keys(agent.requests),
+              sockets: Object.keys(agent.sockets),
+            },
+            { results: [200, error, 200, 200], queued: [], sockets: [] },
+          );
+        },
+        options,
+      );
+    });
+  }
 
   proxyTest("agent.sockets has the entry of a request whose proxy tunnel is still connecting", async () => {
     await scenario(

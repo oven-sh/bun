@@ -263,8 +263,8 @@ pub struct DevServer {
     /// To validate the DevServer has not been collected, this can be checked.
     /// When freed, this is set to `undefined`. UAF here also trips ASAN.
     pub(crate) magic: Magic,
-    /// Absolute path to project root directory. For the HMR
-    /// runtime, its module IDs are strings relative to this.
+    /// Project root: `app.root`, else the cwd at creation. Module ids are relative to it,
+    /// in `relative_path` and in the bundler (it is the transpilers' `root_dir`).
     pub(crate) root: Box<[u8]>,
     /// Unique identifier for this DevServer instance. Used to identify it
     /// when using the debugger protocol.
@@ -589,13 +589,6 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     let global = options.vm.global();
 
     let generic_action = "while initializing development server";
-    // FileSystem is a process-lifetime singleton; `init` interns the path into
-    // the `DirnameStore` (process-lifetime arena) so no caller-side leak is
-    // needed for the `'static` it stores.
-    let _fs = match bun_resolver::fs::FileSystem::init(Some(root)) {
-        Ok(fs) => fs,
-        Err(err) => return Err(global.throw_error(err, generic_action)),
-    };
     let top_level_dir: &'static [u8] = bun_resolver::fs::FileSystem::get().top_level_dir;
 
     // `.bun_watcher = undefined` → `Watcher.init(DevServer, dev, fs, ...)`
@@ -652,6 +645,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
             log,
             bake::Mode::Development,
             bake::Graph::Server,
+            root,
             &mut *addr_of_mut!((*p).server_transpiler),
             &bundler_options.server,
         ) {
@@ -663,6 +657,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
             log,
             bake::Mode::Development,
             bake::Graph::Client,
+            root,
             &mut *addr_of_mut!((*p).client_transpiler),
             &bundler_options.client,
         ) {
@@ -675,6 +670,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
                 log,
                 bake::Mode::Development,
                 bake::Graph::Ssr,
+                root,
                 &mut *addr_of_mut!((*p).ssr_transpiler),
                 &bundler_options.ssr,
             ) {

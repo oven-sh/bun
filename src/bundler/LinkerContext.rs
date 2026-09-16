@@ -496,7 +496,10 @@ impl<'a> LinkerContext<'a> {
         path: &bun_paths::fs::Path<'static>,
         arena: &Bump,
     ) -> Result<bun_paths::fs::Path<'static>, BunError> {
-        let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
+        let top_level_dir = self
+            .options
+            .dev_server_root
+            .unwrap_or(bun_resolver::fs::FileSystem::get().top_level_dir);
         generic_path_with_pretty_initialized(path, self.options.target, top_level_dir, arena)
     }
 
@@ -1448,6 +1451,9 @@ pub struct LinkerOptions {
     pub(crate) mode: LinkerOptionsMode,
 
     pub(crate) public_path: &'static [u8],
+    /// `BundleOptions::root_dir` when a dev server drives the bundle. The cwd is not cached
+    /// here: `process.chdir()` rewrites its buffer in place.
+    pub(crate) dev_server_root: Option<&'static [u8]>,
 }
 
 impl LinkerOptions {
@@ -1491,6 +1497,7 @@ impl Default for LinkerOptions {
             metafile_markdown_path: b"",
             mode: LinkerOptionsMode::Bundle,
             public_path: b"",
+            dev_server_root: None,
         }
     }
 }

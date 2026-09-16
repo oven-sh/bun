@@ -2348,8 +2348,9 @@ pub mod bv2_impl {
             // direct `self.transpiler.options.*` accesses are shared reads that occur after the
             // last `&mut *transpiler` deref on their control path.
             let transpiler: *mut Transpiler<'a> = self.transpiler_for_target(target);
-            let source_dir =
-                Fs::PathName::init(&import_record.source_file).dir_with_trailing_slash();
+            let source_dir = self.resolve_dir(
+                Fs::PathName::init(&import_record.source_file).dir_with_trailing_slash(),
+            );
 
             // Check the FileMap first for in-memory files
             if let Some(file_map) = self.file_map {
@@ -2597,9 +2598,7 @@ pub mod bv2_impl {
                 let rel = bun_paths::resolve_path::relative_platform::<
                     bun_paths::resolve_path::platform::Loose,
                     false,
-                >(
-                    bun_resolver::fs::FileSystem::get().top_level_dir, path.text
-                );
+                >(self.transpiler.options.top_level_dir(), path.text);
                 // SAFETY: arena outlives the bundle pass; raw-pointer detour erases the
                 // `&self` lifetime so the resulting `&'static [u8]` doesn't pin `self`.
                 path.pretty =
@@ -3053,6 +3052,12 @@ pub mod bv2_impl {
             // SAFETY: same `'a`-owned `Transpiler` field as `banner` above.
             this.linker.options.public_path =
                 unsafe { interned_slice(&this.transpiler.options.public_path) };
+            // SAFETY: same `'a`-owned `Transpiler` field as `banner` above.
+            this.linker.options.dev_server_root = this
+                .transpiler
+                .options
+                .has_dev_server()
+                .then(|| unsafe { interned_slice(&this.transpiler.options.root_dir) });
             this.linker.options.target = this.transpiler.options.target;
             this.linker.options.output_format = this.transpiler.options.output_format;
             this.linker.options.generate_bytecode_cache = this.transpiler.options.bytecode;
@@ -6005,10 +6010,20 @@ pub mod bv2_impl {
             let out = generic_path_with_pretty_initialized(
                 path,
                 target,
-                self.transpiler.fs().top_level_dir,
+                self.transpiler.options.top_level_dir(),
                 bump,
             )?;
             Ok(out)
+        }
+
+        /// The directory an import resolves in. A virtual importer (a framework built-in
+        /// module) has no absolute one, and the resolver then uses the process cwd. A dev
+        /// server uses its root instead.
+        fn resolve_dir<'s>(&self, source_dir: &'s [u8]) -> &'s [u8] {
+            match self.linker.options.dev_server_root {
+                Some(root) if !bun_paths::is_absolute(source_dir) => root,
+                _ => source_dir,
+            }
         }
 
         fn reserve_source_indexes_for_bake(&mut self) -> Result<(), Error> {
@@ -6206,7 +6221,7 @@ pub mod bv2_impl {
         ) -> ResolveImportRecordResult {
             let source = ctx.source;
             let loader = ctx.loader;
-            let source_dir = source.path.source_dir();
+            let source_dir = self.resolve_dir(source.path.source_dir());
             let only_records = ctx.only_records;
             debug_assert!(only_records.is_none_or(<[u32]>::is_sorted));
             let mut estimated_resolve_queue_count: usize = 0;
@@ -6620,12 +6635,13 @@ pub mod bv2_impl {
                                     } else {
                                         #[cfg(windows)]
                                         let mut buf = bun_paths::path_buffer_pool::get();
+                                        // Undo the join `HTMLScanner` did for root-absolute specifiers.
+                                        let top_level_dir = transpiler.options.top_level_dir();
                                         let specifier_to_use: &[u8] = if loader == Loader::Html
-                                            && import_record.path.text.starts_with(
-                                                Fs::FileSystem::instance().top_level_dir,
-                                            ) {
-                                            let specifier_to_use = &import_record.path.text
-                                                [Fs::FileSystem::instance().top_level_dir.len()..];
+                                            && import_record.path.text.starts_with(top_level_dir)
+                                        {
+                                            let specifier_to_use =
+                                                &import_record.path.text[top_level_dir.len()..];
                                             #[cfg(windows)]
                                             {
                                                 &*bun_paths::resolve_path::path_to_posix_buf::<u8>(
@@ -6728,12 +6744,6 @@ pub mod bv2_impl {
                         import_record.source_index = Index::INVALID;
 
                         if let Some(entry) = dev_server.is_file_cached(path.text, bake_graph) {
-                            let rel = bun_paths::resolve_path::relative_platform::<
-                                bun_paths::resolve_path::platform::Loose,
-                                false,
-                            >(
-                                self.transpiler.fs().top_level_dir, path.text
-                            );
                             if loader == Loader::Html && entry.kind == bake_types::CacheKind::Asset
                             {
                                 // Overload `path.text` to point to the final URL
@@ -6761,8 +6771,6 @@ pub mod bv2_impl {
                                 };
                                 import_record.path.is_disabled = false;
                             } else {
-                                import_record.path.text = path.text;
-                                import_record.path.pretty = rel;
                                 import_record.path = path_as_static(
                                     &self
                                         .path_with_pretty_initialized(path, target)

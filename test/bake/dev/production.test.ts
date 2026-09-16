@@ -401,7 +401,7 @@ export default function () {
   // A production build has no client references without a separate SSR graph.
   // The build used to abort instead of reporting the file: in the parser when it
   // wraps an exported value, and in the linker when it has nothing to wrap.
-  test.each([
+  test.concurrent.each([
     ["an exported function", `export function Button() {}`],
     ["an export clause", `function Button() {}\nexport { Button };`],
   ])('a "use client" module without a separate SSR graph is a build error (%s)', async (_, exports) => {

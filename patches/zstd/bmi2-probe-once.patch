@@ -1,0 +1,37 @@
+Probe BMI2 support once instead of once per context.
+
+ZSTD_cpuSupportsBmi2() runs on every CCtx and DCtx init when DYNAMIC_BMI2 is
+on, which it is for Bun's x64 builds (they target nehalem, so __BMI2__ is not
+defined). It executes CPUID twice. Under a hypervisor each CPUID is a VM exit
+of about 2 us, so a create + free of a DCtx costs 3.6 us instead of 30 ns, and
+a one-shot ZSTD_decompress() of 1 KB costs 3.9 us instead of 0.4 us.
+
+facebook/zstd#4767 removed the per-context probe for Linux kernel builds only.
+Userspace builds still run it.
+
+--- a/lib/common/zstd_internal.h
++++ b/lib/common/zstd_internal.h
+@@ -314,11 +314,21 @@
+ 
+ /**
+  * @returns true iff the CPU supports dynamic BMI2 dispatch.
++ *
++ * Bun: every CCtx and DCtx init calls this, and CPUID is a VM exit under a
++ * hypervisor (about 2 us each, two per call). The answer cannot change, so
++ * probe once per translation unit. 0: not probed yet, 1: no BMI2, 2: BMI2.
+  */
+ MEM_STATIC int ZSTD_cpuSupportsBmi2(void)
+ {
+-    ZSTD_cpuid_t cpuid = ZSTD_cpuid();
+-    return ZSTD_cpuid_bmi1(cpuid) && ZSTD_cpuid_bmi2(cpuid);
++    static int cached = 0;
++    int state = __atomic_load_n(&cached, __ATOMIC_RELAXED);
++    if (state == 0) {
++        ZSTD_cpuid_t const cpuid = ZSTD_cpuid();
++        state = 1 + (ZSTD_cpuid_bmi1(cpuid) && ZSTD_cpuid_bmi2(cpuid));
++        __atomic_store_n(&cached, state, __ATOMIC_RELAXED);
++    }
++    return state - 1;
+ }
+ 
+ #endif   /* ZSTD_CCOMMON_H_MODULE */

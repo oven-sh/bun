@@ -431,13 +431,16 @@ static JSValue writeToTextSink(JSGlobalObject* globalObject, JSDirectStreamContr
             ropeString = jsString(vm, accumulator.rope.toString());
             RETURN_IF_EXCEPTION(scope, {});
         }
-        // GC-allocation is done; the barrier container is only mutated under the cell lock.
-        Locker locker { controller->cellLock() };
-        if (ropeString) {
-            accumulator.pieces.append(WriteBarrier<Unknown>(vm, controller, ropeString));
-            accumulator.rope.clear();
+        // GC-allocation is done; the barrier container is only mutated under the cell lock, and the throw waits for the unlock.
+        bool appended;
+        {
+            Locker locker { controller->cellLock() };
+            appended = accumulator.tryAppendPieces(locker, vm, controller, ropeString, chunk);
         }
-        accumulator.pieces.append(WriteBarrier<Unknown>(vm, controller, chunk));
+        if (!appended) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return {};
+        }
     }
     accumulator.estimatedLength += byteLength;
     return jsNumber(byteLength);
@@ -763,6 +766,11 @@ JSValue JSDirectStreamController::onPull(JSGlobalObject* globalObject, bool read
     // Re-entrant pull while a pull is already running.
     if (m_deferClose == -1)
         return jsUndefined();
+    // Refuse before pull() runs, or a close() that pull() defers is lost with the read.
+    if (!readRequestQueued && m_pendingRead && readableStreamReadRequestsFull(stream)) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
 
     int8_t deferredClose = 0;
     int8_t deferredFlush = 0;
@@ -827,7 +835,8 @@ JSValue JSDirectStreamController::onPull(JSGlobalObject* globalObject, bool read
         else {
             auto* runtime = JSStreamsRuntime::from(globalObject);
             auto* readRequest = JSReadRequest::create(vm, runtime->readRequestStructure(defaultGlobalObject(globalObject)), ReadRequestKind::Promise, promiseToReturn);
-            readableStreamAddReadRequest(vm, stream, readRequest);
+            readableStreamAddReadRequest(globalObject, stream, readRequest);
+            RETURN_IF_EXCEPTION(scope, {});
         }
     }
 

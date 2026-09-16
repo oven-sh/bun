@@ -407,64 +407,28 @@ impl ProxyEnvStorage {
     }
 }
 
+/// Uppercase first: on Windows the case-insensitive compare in `slot` matches
+/// the uppercase entry for either input case.
+const PROXY_ENV_KEYS: [&[u8]; 8] = [
+    b"HTTP_PROXY",
+    b"http_proxy",
+    b"HTTPS_PROXY",
+    b"https_proxy",
+    b"ALL_PROXY",
+    b"all_proxy",
+    b"NO_PROXY",
+    b"no_proxy",
+];
+
+/// One value per `PROXY_ENV_KEYS` entry.
 #[derive(Default)]
-pub struct ProxyEnvSlots {
-    #[allow(non_snake_case)]
-    pub(crate) HTTP_PROXY: Option<Arc<RefCountedEnvValue>>,
-    pub(crate) http_proxy: Option<Arc<RefCountedEnvValue>>,
-    #[allow(non_snake_case)]
-    pub(crate) HTTPS_PROXY: Option<Arc<RefCountedEnvValue>>,
-    pub(crate) https_proxy: Option<Arc<RefCountedEnvValue>>,
-    #[allow(non_snake_case)]
-    pub(crate) NO_PROXY: Option<Arc<RefCountedEnvValue>>,
-    pub(crate) no_proxy: Option<Arc<RefCountedEnvValue>>,
-}
+pub struct ProxyEnvSlots([Option<Arc<RefCountedEnvValue>>; PROXY_ENV_KEYS.len()]);
 
 pub struct Slot<'a> {
-    /// Static-lifetime field name (e.g. "NO_PROXY") — safe to use as
+    /// Static-lifetime name (e.g. "NO_PROXY") — safe to use as
     /// the env map key without duping.
     pub key: &'static [u8],
     pub ptr: &'a mut Option<Arc<RefCountedEnvValue>>,
-}
-
-/// Helper macro: expands `$body` once per proxy-env field, binding `$name`
-/// (the static byte-string key) and `$field` (the field ident).
-macro_rules! for_each_proxy_field {
-    ($self:expr, |$name:ident, $field:ident| $body:block) => {{
-        // Uppercase fields are declared first. On Windows the case-insensitive
-        // eql matches the uppercase field for either input case and returns
-        // before reaching lowercase.
-        {
-            let $name: &'static [u8] = b"HTTP_PROXY";
-            let $field = &mut $self.HTTP_PROXY;
-            $body
-        }
-        {
-            let $name: &'static [u8] = b"http_proxy";
-            let $field = &mut $self.http_proxy;
-            $body
-        }
-        {
-            let $name: &'static [u8] = b"HTTPS_PROXY";
-            let $field = &mut $self.HTTPS_PROXY;
-            $body
-        }
-        {
-            let $name: &'static [u8] = b"https_proxy";
-            let $field = &mut $self.https_proxy;
-            $body
-        }
-        {
-            let $name: &'static [u8] = b"NO_PROXY";
-            let $field = &mut $self.NO_PROXY;
-            $body
-        }
-        {
-            let $name: &'static [u8] = b"no_proxy";
-            let $field = &mut $self.no_proxy;
-            $body
-        }
-    }};
 }
 
 impl ProxyEnvSlots {
@@ -482,28 +446,18 @@ impl ProxyEnvSlots {
         } else {
             strings::eql
         };
-        for_each_proxy_field!(self, |fname, field| {
-            if eql(name, fname) {
-                return Some(Slot {
-                    key: fname,
-                    ptr: field,
-                });
-            }
-        });
-        None
+        let index = PROXY_ENV_KEYS.iter().position(|key| eql(name, key))?;
+        Some(Slot {
+            key: PROXY_ENV_KEYS[index],
+            ptr: &mut self.0[index],
+        })
     }
 
     /// Bump refcounts on all non-null values so a worker can share the
     /// parent's strings. Caller passes the parent's locked guard — the `Arc`
     /// load + clone is not atomic with respect to `Bun__setEnvValue`'s drop.
     pub(crate) fn clone_from(&mut self, parent: &ProxyEnvSlots) {
-        // Arc::clone bumps the refcount.
-        self.HTTP_PROXY.clone_from(&parent.HTTP_PROXY);
-        self.http_proxy.clone_from(&parent.http_proxy);
-        self.HTTPS_PROXY.clone_from(&parent.HTTPS_PROXY);
-        self.https_proxy.clone_from(&parent.https_proxy);
-        self.NO_PROXY.clone_from(&parent.NO_PROXY);
-        self.no_proxy.clone_from(&parent.no_proxy);
+        self.0.clone_from(&parent.0);
     }
 
     /// Overwrite proxy-var entries in an env map with this storage's reffed
@@ -512,28 +466,18 @@ impl ProxyEnvSlots {
     /// clone captured a snapshot the storage doesn't hold a ref on (e.g. an
     /// initial-environ value later overwritten by the setter).
     pub(crate) fn sync_into(&self, map: &mut bun_dotenv::Map) {
-        macro_rules! sync_one {
-            ($name:literal, $field:ident) => {
-                if let Some(val) = &self.$field {
-                    bun_core::handle_oom(map.put($name, &val.bytes));
-                }
-            };
+        for (key, value) in PROXY_ENV_KEYS.iter().zip(&self.0) {
+            if let Some(value) = value {
+                bun_core::handle_oom(map.put(key, &value.bytes));
+            }
         }
-        sync_one!(b"HTTP_PROXY", HTTP_PROXY);
-        sync_one!(b"http_proxy", http_proxy);
-        sync_one!(b"HTTPS_PROXY", HTTPS_PROXY);
-        sync_one!(b"https_proxy", https_proxy);
-        sync_one!(b"NO_PROXY", NO_PROXY);
-        sync_one!(b"no_proxy", no_proxy);
     }
 
     /// Undo every `Bun__setEnvValue` since `snapshot` was captured: drop the
     /// slot refs and put the captured values back into `map`. Caller holds
     /// the `ProxyEnvStorage` lock, like the setter.
     pub(crate) fn restore(&mut self, map: &mut bun_dotenv::Map, snapshot: &ProxyEnvSnapshot) {
-        for_each_proxy_field!(self, |_name, field| {
-            *field = None;
-        });
+        self.0 = Default::default();
         for (key, value) in &snapshot.entries {
             match value {
                 Some(value) => bun_core::handle_oom(map.put(key, value)),
@@ -543,21 +487,12 @@ impl ProxyEnvSlots {
     }
 }
 
-const PROXY_ENV_KEYS: [&[u8]; 6] = [
-    b"HTTP_PROXY",
-    b"http_proxy",
-    b"HTTPS_PROXY",
-    b"https_proxy",
-    b"NO_PROXY",
-    b"no_proxy",
-];
-
-/// The six proxy keys as the env map held them when the test runner started.
+/// The proxy keys as the env map held them when the test runner started.
 /// `process.env` writes to these keys go through `Bun__setEnvValue` into the
 /// per-VM env map, which seeds every later global's `process.env`, so
 /// `--isolate` restores them from this between files.
 pub struct ProxyEnvSnapshot {
-    entries: [(&'static [u8], Option<Box<[u8]>>); 6],
+    entries: [(&'static [u8], Option<Box<[u8]>>); PROXY_ENV_KEYS.len()],
 }
 
 impl ProxyEnvSnapshot {
@@ -801,20 +736,26 @@ impl RareData {
             .push(CleanupHook::from(global_this, ctx, func));
     }
 
-    pub fn spawn_sync_event_loop(&mut self, vm: &mut VirtualMachine) -> &mut SpawnSyncEventLoop {
+    /// `None` if the loop cannot be created; nothing is cached, so a later call retries.
+    pub fn spawn_sync_event_loop(
+        &mut self,
+        vm: &mut VirtualMachine,
+    ) -> Option<&mut SpawnSyncEventLoop> {
         if self.spawn_sync_event_loop_.is_none() {
             // In-place out-param init: `event_loop` inside captures the
             // `self` address, so the value must not move after init; allocate
             // the Box first, then init into it.
             let mut boxed = Box::<SpawnSyncEventLoop>::new_uninit();
-            SpawnSyncEventLoop::init(
+            if !SpawnSyncEventLoop::init(
                 &mut *boxed,
                 core::ptr::from_mut::<VirtualMachine>(vm).cast::<()>(),
-            );
-            // SAFETY: `init` fully initialised the slot.
+            ) {
+                return None;
+            }
+            // SAFETY: `init` fully initialised the slot when it returned `true`.
             self.spawn_sync_event_loop_ = Some(unsafe { boxed.assume_init() });
         }
-        self.spawn_sync_event_loop_.as_mut().unwrap()
+        self.spawn_sync_event_loop_.as_deref_mut()
     }
 
     // ── watch-mode listen sockets ─────────────────────────────────────────

@@ -6011,8 +6011,7 @@ impl DevServer {
             return &path[self.root.len() + 1..];
         }
 
-        // The result is at most `path` plus one "../" for each segment of `root`. A relative
-        // `root` has no such bound, because it is joined to the cwd first.
+        // Each segment of an absolute `root` adds at most one "../" to `path`.
         let root_segments =
             strings::count_char(&self.root, b'/') + strings::count_char(&self.root, b'\\') + 1;
         if !paths::is_absolute(&self.root)

@@ -7852,10 +7852,7 @@ pub mod bv2_impl {
         None
     }
 
-    /// The `pretty` of a file path: `path` relative to `top_level_dir`, with `/` separators.
-    /// A dev server bundle registers each module under its `pretty`, so
-    /// `DevServer::relative_path` has to derive the ids it asks for here too. `platform::Auto`
-    /// gives another result: on Windows it ignores letter case, and `Loose` compares bytes.
+    /// The `pretty` of a file path, which `DevServer::relative_path` needs as the module id.
     pub fn pretty_relative_path<'a>(
         buf: &'a mut [u8],
         top_level_dir: &[u8],

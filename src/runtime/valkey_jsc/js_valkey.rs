@@ -952,6 +952,11 @@ impl JSValkeyClient {
         let promise_ptr = JSPromise::create(global_object);
         let promise = promise_ptr.to_js();
         Js::connection_promise_set_cached(this_value, global_object, promise);
+        // What script of a disposed `Bun.ModuleGraph` starts does not start: nothing is dialed,
+        // nothing keeps the loop alive, and the promise stays pending.
+        if self.context_stopped() {
+            return Ok(promise);
+        }
 
         // If was manually closed, reset that flag
         self.client_mut().flags.is_manually_closed = false;
@@ -1162,8 +1167,8 @@ impl JSValkeyClient {
         }
 
         // No reconnecting on a VM that is exiting: its stop phase would only
-        // have to close the new socket again.
-        if self.vm().is_shutting_down() {
+        // have to close the new socket again. Nor for a context that has stopped.
+        if self.vm().is_shutting_down() || self.context_stopped() {
             bun_core::hint::cold();
             return Ok(());
         }
@@ -1561,6 +1566,10 @@ impl JSValkeyClient {
             return;
         }
         bun_core::hint::cold();
+        // (Of a context that has stopped: the command waits behind a dial that is never made.)
+        if self.context_stopped() {
+            return;
+        }
 
         match self.connect() {
             // The command is queued as for a dial in flight; the deferred

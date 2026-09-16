@@ -890,6 +890,13 @@ const dir = String(
         // (A fetch that was dropped a moment after it started still got as far as connecting, now and then: several.)
         for (let i = 0; i < 8; i++) fetch("http://127.0.0.1:" + port + "/").catch(() => {});
         for (let i = 0; i < 8; i++) new Bun.FetchSession().fetch("http://127.0.0.1:" + port + "/", { method: "POST", body: "x" }).catch(() => {});
+        // The clients that dial by themselves: each of these opened a connection and sent nothing on it.
+        new WebSocket("ws://127.0.0.1:" + port + "/").onerror = () => {};
+        const redis = new Bun.RedisClient("redis://127.0.0.1:" + port);
+        redis.get("key").catch(() => {});
+        new Bun.RedisClient("redis://127.0.0.1:" + port).connect().catch(() => {});
+        new Bun.SQL("postgres://user:pw@127.0.0.1:" + port + "/db")\`select 1\`.catch(() => {});
+        new Bun.SQL("mysql://user:pw@127.0.0.1:" + port + "/db")\`select 1\`.catch(() => {});
       });
     `,
     "dials-after-it-was-disposed.mjs": `
@@ -3531,7 +3538,7 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
       exitCode: 0,
     });
   });
-  test("a node:net or node:http dial or a fetch() its leftover script makes does not go out, as a Bun.connect() does not", async () => {
+  test("a node:net or node:http dial, a fetch(), a WebSocket, a RedisClient or a Bun.SQL its leftover script makes does not go out, as a Bun.connect() does not", async () => {
     expect(await runsFixture("dials-after-it-was-disposed.mjs")).toEqual({
       stdout: `{"arrivedFromTheGraph":0}`,
       exitCode: 0,

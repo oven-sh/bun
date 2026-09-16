@@ -575,6 +575,11 @@ __attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url,
         m_connectionType = is_secure ? ConnectionType::TLS : ConnectionType::Plain;
     }
 
+    // What script of a disposed Bun.ModuleGraph starts does not start: nothing is dialed, nothing
+    // keeps this alive, and it stays CONNECTING.
+    if (auto* context = scriptExecutionContext(); context->isForModuleGraph() && context->isStopped())
+        return {};
+
     m_pendingActivity = makePendingActivity(*this);
 
     // Prepare proxy parameters (use local variables, not member fields).

@@ -7,6 +7,7 @@ const {
   symbols: { _strings, _values },
 } = require("internal/sql/query");
 const AsyncContextFrame = require("internal/async_context_frame");
+const { isStoppedModuleGraphRunning } = require("internal/shared");
 
 declare global {
   interface NumberConstructor {
@@ -891,6 +892,10 @@ async function createPooledConnectionHandle<ConnectionHandle>(
     path,
     allowPublicKeyRetrieval = false,
   } = options;
+
+  // What script of a disposed Bun.ModuleGraph starts does not start: nothing is dialed, and what
+  // waits for this connection waits.
+  if (isStoppedModuleGraphRunning()) return null;
 
   let password: Bun.MaybePromise<string> | string | undefined | (() => Bun.MaybePromise<string>) = options.password;
 

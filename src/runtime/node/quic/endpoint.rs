@@ -1101,7 +1101,6 @@ impl QuicEndpoint {
         frame: &CallFrame,
         this_value: JSValue,
     ) -> JsResult<*mut Self> {
-        bun_uws_sys::quic::global_init();
         lsquic::debug_assert_layout();
 
         let this = QuicEndpoint {

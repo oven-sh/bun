@@ -26,18 +26,3 @@ pub use self::stream::Stream;
 
 pub use self::header::Header;
 pub use self::header::Qpack;
-
-unsafe extern "C" {
-    // safe: no args; thread-safe, once-guarded C-side initialization with no
-    // preconditions.
-    pub(crate) safe fn us_quic_global_init();
-}
-
-/// Process-wide lsquic init. Every lsquic user (H3 server, H3 fetch client,
-/// node:quic) calls this before it creates an engine. The once guard is in
-/// C, so a second caller on another thread does not re-run
-/// `lsquic_global_init` and invalidate the sessions of the first.
-#[inline]
-pub fn global_init() {
-    us_quic_global_init()
-}

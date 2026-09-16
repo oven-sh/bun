@@ -786,9 +786,9 @@ static const struct lsquic_logger_if us_quic_logger = { us_quic_log_buf };
 /* lsquic_global_init is not idempotent: each call allocates a fresh
  * SSL ex_data index for the enc session, so a session created before a
  * second call can no longer find itself from the BoringSSL callbacks and
- * its handshake fails. Three users share this process (the H3 server, the
- * H3 fetch client on the HTTP thread, node:quic on the JS thread), so the
- * once guard lives here, on the only entry point. */
+ * its handshake fails. Three engines share this process (the H3 server, the
+ * H3 fetch client on the HTTP thread, node:quic on the JS thread), so every
+ * lsquic_engine_new call site runs this guard first. */
 static void us_quic_global_init_impl(void) {
     lsquic_global_init(LSQUIC_GLOBAL_SERVER | LSQUIC_GLOBAL_CLIENT);
 #ifdef BUN_DEBUG
@@ -831,6 +831,7 @@ us_quic_socket_context_t *us_create_quic_socket_context(
     struct us_loop_t *loop, struct us_bun_socket_context_options_t options,
     unsigned int ext_size, unsigned int idle_timeout_s)
 {
+    us_quic_global_init();
     enum create_bun_socket_error_t ssl_err = 0;
     SSL_CTX *ssl = us_ssl_ctx_build_raw(options, &ssl_err);
     if (!ssl) return NULL;
@@ -1369,6 +1370,7 @@ us_quic_socket_context_t *us_create_quic_client_context(
     struct us_loop_t *loop, unsigned int ext_size,
     unsigned int conn_ext_size, unsigned int stream_ext_size)
 {
+    us_quic_global_init();
     SSL_CTX *ssl = SSL_CTX_new(TLS_method());
     if (!ssl) return NULL;
     SSL_CTX_set_min_proto_version(ssl, TLS1_3_VERSION);

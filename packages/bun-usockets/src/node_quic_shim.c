@@ -1,4 +1,5 @@
 #include "internal/internal.h"
+#include "quic.h"
 #include "lsquic.h"
 #include "lsxpack_header.h"
 #include <openssl/ssl.h>
@@ -491,6 +492,7 @@ lsquic_engine_t *us_nq_engine_new(int is_server, int is_http,
                                   struct us_nq_vtable *vt,
                                   const struct lsquic_engine_settings *settings,
                                   const char *alpn) {
+    us_quic_global_init();
     struct lsquic_engine_api api;
     memset(&api, 0, sizeof(api));
     api.ea_settings = settings;

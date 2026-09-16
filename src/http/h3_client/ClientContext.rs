@@ -73,7 +73,6 @@ impl ClientContext {
         if let Some(i) = INSTANCE.load() {
             return Some(i);
         }
-        quic::global_init();
         // SAFETY: `loop_` is the live HTTP-thread uws loop (NonNull invariant).
         let qctx = unsafe {
             quic::Context::create_client(

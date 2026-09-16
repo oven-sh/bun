@@ -22,7 +22,6 @@ pub(crate) mod kind_enum {
 use bun_paths::strings;
 use core::cell::UnsafeCell;
 
-use bun_alloc::Arena as ArenaAllocator;
 use bun_ast as Log;
 use bun_core::{EncodedSlice, String as BunString, Utf8Bytes};
 use bun_jsc::bun_string_jsc;
@@ -82,7 +81,7 @@ impl<'a, 'r> Router::ResolverLike for RouterResolver<'a, 'r> {
 bun_jsc::codegen_cached_accessors!("FileSystemRouter"; routes);
 
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
-// interior mutability via `JsCell` for the two fields that `reload`/`match`
+// interior mutability via `JsCell` for `router`, the field that `reload`/`match`
 // mutate. The codegen shim may still emit `this: &mut FileSystemRouter` —
 // `&mut T` reborrows to `&T` so the impls compile against either.
 #[bun_jsc::JsClass]
@@ -92,10 +91,6 @@ pub struct FileSystemRouter {
     pub(crate) origin: Option<BackRef<RefString>>,
     pub(crate) base_dir: Option<BackRef<RefString>>,
     pub(crate) router: JsCell<Router::Router>,
-    // Router borrows slices from this arena across calls;
-    // kept as boxed arena per LIFETIMES.tsv (OWNED). `bun_alloc::Arena` (mimalloc heap) is
-    // the runtime-wide arena type, so allocations here are individually freeable too.
-    pub(crate) arena: JsCell<Box<ArenaAllocator>>,
     pub(crate) asset_prefix: Option<BackRef<RefString>>,
 }
 
@@ -167,9 +162,7 @@ impl FileSystemRouter {
                 global_this.throw_invalid_arguments(format_args!("Expected dir to be a string"))
             );
         }
-        // extensions/asset_prefix/log are all allocated from this arena.
-        let arena = Box::new(ArenaAllocator::new());
-        let mut extensions: Vec<&[u8]> = Vec::new();
+        let mut extensions: Vec<Box<[u8]>> = Vec::new();
         if let Some(file_extensions) = argument.get(global_this, "fileExtensions")? {
             if !file_extensions.js_type().is_array() {
                 return Err(global_this.throw_invalid_arguments(format_args!(
@@ -189,12 +182,7 @@ impl FileSystemRouter {
                     continue;
                 }
                 let utf8 = val.to_utf8(global_this)?;
-                // SAFETY: arena is boxed and moved into the returned `FileSystemRouter`, so the
-                // backing allocation outlives this slice. Cast through raw ptr to detach the
-                // borrow from `arena` so it can be moved below.
-                let leaked: &'static [u8] =
-                    unsafe { bun_ptr::detach_lifetime(arena.alloc_slice_copy(utf8.slice())) };
-                extensions.push(&leaked[1..]);
+                extensions.push(Box::from(&utf8.slice()[1..]));
             }
         }
 
@@ -245,7 +233,7 @@ impl FileSystemRouter {
         let mut router = Router::Router::init(RouteConfig {
             dir: Box::from(&path_to_use[..]),
             extensions: if !extensions.is_empty() {
-                extensions.iter().map(|s| Box::<[u8]>::from(*s)).collect()
+                extensions.into_boxed_slice()
             } else {
                 DEFAULT_EXTENSIONS
                     .iter()
@@ -323,7 +311,6 @@ impl FileSystemRouter {
                 None
             },
             router: JsCell::new(router),
-            arena: JsCell::new(arena),
         });
 
         // RouteConfig::dir is an owned `Box<[u8]>`, so copy the bytes; the
@@ -436,7 +423,6 @@ impl FileSystemRouter {
     ) -> JsResult<JSValue> {
         let this_value = callframe.this();
 
-        let arena = Box::new(ArenaAllocator::new());
         // SAFETY: `bun_vm()` returns the live VM raw pointer for this global.
         let vm_ptr = global_this.bun_vm_ptr();
 
@@ -503,11 +489,7 @@ impl FileSystemRouter {
             }
         }
 
-        // `this.router.deinit(); this.arena.deinit(); destroy(this.arena)` — drop old values.
-        // Note: order matters — old router borrows slices from old arena, so it must drop
-        // first.
         this.router.set(router);
-        this.arena.set(arena);
         // `js.routesSetCached` — wired via `codegen_cached_accessors!` above.
         routes_set_cached(this_value, global_this, JSValue::ZERO);
         Ok(this_value)

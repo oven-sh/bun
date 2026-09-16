@@ -1,4 +1,5 @@
 import { cssInternals } from "bun:internal-for-testing";
+import { heapStats } from "bun:jsc";
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
@@ -25,6 +26,26 @@ test("class and id selectors inside an of-list keep their escapes when printed",
   expect(minifyTest(":nth-child(2n of .a\\{b) {width: 20px}", "")).toBe(":nth-child(2n of .a\\{b){width:20px}");
   expect(minifyTest(":nth-child(2n of .md\\:flex) {width: 20px}", "")).toBe(":nth-child(2n of .md\\:flex){width:20px}");
   expect(minifyTest(":nth-last-child(1 of #a\\}b) {width: 20px}", "")).toBe(":nth-last-child(1 of #a\\}b){width:20px}");
+});
+
+// `2n-3` is one dimension token with the unit `n-3`. `n-5`, `-n-5` and the `n-7` of `+n-7` are one ident token. The
+// parser reads the digits after `n-` with a second tokenizer, which borrows the arena of the stylesheet.
+test.each([
+  ["2n-3", "2n-3"],
+  ["n-5", "n-5"],
+  ["-n-5", "-n-5"],
+  ["+n-7", "n-7"],
+])(":nth-child(%s) creates no allocator heap per selector", (arg, printed) => {
+  const heapsCreatedByRules = (count: number) => {
+    const rules = (arg: string, separator: string) =>
+      Array.from({ length: count }, (_, i) => `.a${i}:nth-child(${arg}){width:${i + 1}px}`).join(separator);
+    const before = heapStats().mimalloc.heaps.total;
+    const output = minifyTest(rules(arg, "\n"), "");
+    const heaps = heapStats().mimalloc.heaps.total - before;
+    expect(output).toBe(rules(printed, ""));
+    return heaps;
+  };
+  expect(heapsCreatedByRules(100)).toBe(heapsCreatedByRules(1));
 });
 
 test("fuzzer-minimized input: unterminated :nth-child( with an `Nn` ident", async () => {

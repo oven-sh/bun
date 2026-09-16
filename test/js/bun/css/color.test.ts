@@ -823,14 +823,15 @@ describe.concurrent("mimalloc heaps", () => {
             const transpiler = new Bun.Transpiler();
             transpiler.transformSync("1");
             keep.push(transpiler);
-            return seqs().filter(seq => !before.has(seq));
+            return Math.max(...seqs().filter(seq => !before.has(seq)));
           };
           Bun.color("red", "css");
           const a = newestHeap();
-          for (let i = 0; i < 1000; i++) Bun.color("#ff8800", "css");
+          // Nothing runs between these two, so the difference is what the probe itself creates.
           const b = newestHeap();
-          const observed = a.length > 0 && b.length > 0;
-          console.log(JSON.stringify({ observed, fewHeaps: observed && Math.max(...b) - Math.max(...a) < 50 }));
+          for (let i = 0; i < 1000; i++) Bun.color("#ff8800", "css");
+          const c = newestHeap();
+          console.log(JSON.stringify({ observed: b > a, heapsPerThousandCalls: c - b - (b - a) }));
         `,
       ],
       env: bunEnv,
@@ -838,15 +839,13 @@ describe.concurrent("mimalloc heaps", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    expect(JSON.parse(stdout)).toEqual({ observed: true, fewHeaps: true });
+    expect(JSON.parse(stdout)).toEqual({ observed: true, heapsPerThousandCalls: 0 });
     expect(exitCode).toBe(0);
   });
 
-  test(
-    "a Worker that called Bun.color leaves no heap behind when it exits",
-    async () => {
-      using dir = tempDir("color-worker-heap", {
-        "color-worker-heap-fixture.js": `
+  test("a Worker that called Bun.color leaves no heap behind when it exits", async () => {
+    using dir = tempDir("color-worker-heap", {
+      "color-worker-heap-fixture.js": `
         import { heapStats } from "bun:jsc";
         import { Worker, isMainThread } from "node:worker_threads";
         if (!isMainThread) {
@@ -859,28 +858,21 @@ describe.concurrent("mimalloc heaps", () => {
               worker.on("error", reject);
               worker.on("exit", code => (code === 0 ? resolve() : reject(new Error("worker exited with " + code))));
             });
-          // Whatever the process sets up lazily for its first Worker is part of the baseline.
-          await runWorker();
           const before = liveHeaps();
-          // A heap left behind shows up once per Worker, so one more Worker is enough.
           await runWorker();
           console.log(JSON.stringify({ leaked: liveHeaps() - before }));
         }
       `,
-      });
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "color-worker-heap-fixture.js"],
-        env: bunEnv,
-        cwd: String(dir),
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).toBe("");
-      expect(JSON.parse(stdout)).toEqual({ leaked: 0 });
-      expect(exitCode).toBe(0);
-      // Two Worker VMs start one after the other. On a loaded debug ASAN machine each took
-      // 1.2 to 1.9 s, which put the test at the 5 s default. Release builds keep the default.
-    },
-    isDebug || isASAN ? 30_000 : undefined,
-  );
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "color-worker-heap-fixture.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ leaked: 0 });
+    expect(exitCode).toBe(0);
+  });
 });

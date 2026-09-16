@@ -14,6 +14,27 @@ const ObjectAssign = Object.assign;
 const ArrayPrototypeUnshift = Array.prototype.unshift;
 const JSONStringify = JSON.stringify;
 
+// A request that carries its own checkServerIdentity gets a unique Agent name,
+// caches no TLS session and never returns its socket to the pool: a connection
+// one callback approved must not serve a request that has a different one.
+// https://github.com/nodejs/node/commit/52a8ace880 (CVE-2026-58040)
+const kPerRequestCheckServerIdentity = Symbol("per-request checkServerIdentity");
+let perRequestCheckServerIdentityIndex = 0;
+
+// Agent options override request options (Agent#addRequest), so with an
+// Agent-level callback every request on that Agent has the same policy.
+function hasAgentCheckServerIdentity(options) {
+  let { agent } = options;
+  if (agent === false) return false;
+
+  if (agent === null || agent === undefined) {
+    if (typeof options.createConnection === "function") return false;
+    agent = https.globalAgent;
+  }
+
+  return agent?.options?.checkServerIdentity !== undefined;
+}
+
 function request(...args) {
   let options = {};
 
@@ -26,6 +47,14 @@ function request(...args) {
 
   if (args[0] && typeof args[0] !== "function") {
     ObjectAssign.$call(null, options, ArrayPrototypeShift.$call(args));
+  }
+
+  if (
+    options.checkServerIdentity !== undefined &&
+    options.checkServerIdentity !== require("node:tls").checkServerIdentity &&
+    !hasAgentCheckServerIdentity(options)
+  ) {
+    options[kPerRequestCheckServerIdentity] = ++perRequestCheckServerIdentityIndex;
   }
 
   options._defaultAgent = https.globalAgent;
@@ -185,10 +214,12 @@ function establishTunnel(agent, socket, options, tunnelConfig, afterSocket) {
         socket.emit("free");
       }
       tunneledSocket = require("node:tls").connect(requestOptions, onTLSHandshakeSuccess);
+      const perRequestCheckServerIdentity = requestOptions[kPerRequestCheckServerIdentity];
+      if (perRequestCheckServerIdentity) tunneledSocket[kPerRequestCheckServerIdentity] = true;
       tunneledSocket.on("free", onTunneledSocketFree);
       tunneledSocket.on("error", onTLSHandshakeError);
       const agentKey = requestOptions._agentKey;
-      if (agentKey) {
+      if (agentKey && !perRequestCheckServerIdentity) {
         // The tunneled socket carries the TLS session with the target; cache
         // it (and evict on close) under the target's agent key.
         tunneledSocket.on("session", onSocketSession.bind(agent, agentKey));
@@ -257,7 +288,9 @@ function createConnection(...args) {
   $debug("https createConnection", options);
 
   const agentKey = options._agentKey;
-  if (agentKey) {
+  const perRequestCheckServerIdentity = options[kPerRequestCheckServerIdentity];
+  const reuseSession = agentKey && !perRequestCheckServerIdentity;
+  if (reuseSession) {
     const session = this._getSession(agentKey);
     if (session) {
       $debug("reuse session for %j", agentKey);
@@ -324,7 +357,9 @@ function createConnection(...args) {
     socket[kWaitForProxyTunnel] = true;
   }
 
-  if (agentKey && tunnelConfig === null) {
+  if (perRequestCheckServerIdentity) socket[kPerRequestCheckServerIdentity] = true;
+
+  if (reuseSession && tunnelConfig === null) {
     // Cache new session for reuse. On the proxy-tunnel path `socket` is the
     // connection to the proxy, not the target - establishTunnel attaches
     // these listeners to the tunneled target socket instead, so the proxy's
@@ -364,6 +399,11 @@ function Agent(options) {
 }
 $toClass(Agent, "Agent", http.Agent);
 Agent.prototype.createConnection = createConnection;
+Agent.prototype.keepSocketAlive = function keepSocketAlive(socket) {
+  if (socket[kPerRequestCheckServerIdentity]) return false;
+
+  return http.Agent.prototype.keepSocketAlive.$call(this, socket);
+};
 
 /**
  * Gets a unique name for a set of options.
@@ -454,6 +494,9 @@ Agent.prototype.getName = function getName(options = kEmptyObject) {
 
   name += ":";
   if (privateKeyEngine) name += privateKeyEngine;
+
+  const perRequestCheckServerIdentity = options[kPerRequestCheckServerIdentity];
+  if (perRequestCheckServerIdentity) name += `:${perRequestCheckServerIdentity}`;
 
   return name;
 };

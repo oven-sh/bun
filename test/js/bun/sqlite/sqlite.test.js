@@ -2838,59 +2838,43 @@ it("exec/run with an embedded NUL byte in the SQL string does not hang", async (
   });
 });
 
-it("binds statements with more than 65535 parameters without truncating the count", () => {
-  const N = 65537; // uint16_t wraps this to 1
-  const db = new Database(":memory:");
-  db.exec("CREATE TABLE t(a)");
-
-  let sel;
+// Bun's bundled SQLite allows 250000 parameters. A system libsqlite3 (macOS) can stop at 32766.
+const sqliteAllowsMoreThan65535Parameters = (() => {
+  using db = new Database(":memory:");
   try {
-    sel = db.prepare("SELECT count(*) c FROM t WHERE a IN (" + Array(N).fill("?").join(",") + ")");
-  } catch (e) {
-    // macOS system libsqlite3 may be built with SQLITE_MAX_VARIABLE_NUMBER below
-    // 65537; the truncation this test guards against can't occur there.
-    expect(e.message).toContain("too many SQL variables");
-    db.close();
-    return;
+    db.prepare("SELECT ?65537").finalize();
+    return true;
+  } catch {
+    return false;
   }
+})();
 
-  expect(sel.paramsCount).toBe(N);
+it.skipIf(!sqliteAllowsMoreThan65535Parameters)(
+  "binds statements with more than 65535 parameters without truncating the count",
+  () => {
+    using db = new Database(":memory:");
+    db.exec("CREATE TABLE t(a)");
 
-  // Before the fix the parameter count was stored in a uint16_t, so the arity
-  // check compared against N % 65536 == 1: the correct count was rejected and a
-  // single value was accepted, leaving ?2..?N bound to NULL.
-  expect(() => sel.get([999])).toThrow(`SQLite query expected ${N} values, received 1`);
+    // ?65537 gives a statement 65537 parameters with a short SQL text. A uint16_t
+    // count wraps that to 1: one value was accepted, which left ?65537 NULL, and
+    // 65537 values were rejected.
+    const N = 65537;
+    const values = Array(N).fill(null);
+    values[N - 1] = 7;
 
-  db.run("INSERT INTO t VALUES (999)");
-  const values = Array(N).fill(0);
-  values[N - 1] = 999;
-  expect(sel.get(values)).toEqual({ c: 1 });
+    const select = db.prepare(`SELECT ?${N} AS v`);
+    expect(select.paramsCount).toBe(N);
+    expect(() => select.get([7])).toThrow(`SQLite query expected ${N} values, received 1`);
+    expect(select.get(values)).toEqual({ v: 7 });
 
-  const ins = db.prepare("INSERT INTO t(a) VALUES " + Array(N).fill("(?)").join(","));
-  expect(() => ins.run([42])).toThrow(`SQLite query expected ${N} values, received 1`);
-  expect(ins.run(Array(N).fill(42)).changes).toBe(N);
-  expect(db.query("SELECT count(*) c FROM t WHERE a IS NULL").get()).toEqual({ c: 0 });
+    // Object bindings walk the same count, so names past the wrapped count stayed NULL.
+    const named = db.prepare(`SELECT ?${N} AS v, $name AS n`);
+    expect(named.get({ [`?${N}`]: 7, $name: "x" })).toEqual({ v: 7, n: "x" });
 
-  // Numbered parameters: a lone ?70000 makes sqlite3_bind_parameter_count return
-  // 70000 through the same truncated field (previously reported as 70000 % 65536
-  // = 4464 required values).
-  const M = 70000;
-  const numbered = db.prepare(`SELECT ?${M} AS v`);
-  expect(numbered.paramsCount).toBe(M);
-  expect(() => numbered.get([7])).toThrow(`SQLite query expected ${M} values, received 1`);
-  const numberedValues = Array(M).fill(null);
-  numberedValues[M - 1] = 7;
-  expect(numbered.get(numberedValues)).toEqual({ v: 7 });
-
-  // Object bindings walk the same count, so names past the wrapped count stayed NULL.
-  const named = db.prepare(`SELECT ?${M} AS v, $name AS n`);
-  expect(named.get({ [`?${M}`]: 7, $name: "x" })).toEqual({ v: 7, n: "x" });
-
-  // Database#run(sql, values) builds its own bindings map from the same count.
-  const runSql = `INSERT INTO t(a) VALUES (?${M})`;
-  expect(() => db.run(runSql, [7])).toThrow(`SQLite query expected ${M} values, received 1`);
-  expect(db.run(runSql, numberedValues).changes).toBe(1);
-  expect(db.query("SELECT count(*) c FROM t WHERE a = 7").get()).toEqual({ c: 1 });
-
-  db.close();
-});
+    // Database#run(sql, values) builds its own bindings map from the same count.
+    const insert = `INSERT INTO t(a) VALUES (?${N})`;
+    expect(() => db.run(insert, [7])).toThrow(`SQLite query expected ${N} values, received 1`);
+    expect(db.run(insert, values).changes).toBe(1);
+    expect(db.query("SELECT a FROM t").all()).toEqual([{ a: 7 }]);
+  },
+);

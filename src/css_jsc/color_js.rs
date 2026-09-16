@@ -210,10 +210,7 @@ fn zero_if_none(component: f32) -> f32 {
     if component.is_nan() { 0.0 } else { component }
 }
 
-/// The VM's parked scratch arena, held for one call and handed back on every
-/// exit path. The CSS parser and printer want an arena but rarely allocate
-/// from it for a bare color, so a fresh `Arena::new()` per call was almost
-/// all `mi_heap_new()` + `mi_heap_destroy()`.
+/// The VM's scratch arena for one call; `Drop` hands it back on every exit path.
 struct ScratchArena<'a> {
     global: &'a JSGlobalObject,
     arena: Option<Arena>,
@@ -276,8 +273,7 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
         break 'brk OutputColorFormat::Css;
     };
     let input: Utf8Bytes;
-    // One arena serves the parse and the print of the same call. Taken only
-    // by the paths that need one.
+    // Shared by the parse and the print of one call.
     let mut scratch: Option<ScratchArena> = None;
 
     let parsed_color: css::CssColorParseResult = 'brk: {

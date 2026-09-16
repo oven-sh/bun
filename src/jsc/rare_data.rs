@@ -681,16 +681,14 @@ impl RareData {
         }
     }
 
-    /// A private mimalloc heap costs about a microsecond to create and destroy, more than a
-    /// small parse. By value, like [`Self::take_h2_padded_frame_buffer`]: a caller that runs JS
-    /// can reach this path again before the arena comes back. Owned by the VM, not a
-    /// thread-local, so `VirtualMachine::destroy` frees the heap on a Worker's own thread.
+    /// Reused mimalloc heap for a short synchronous parse. By value, like
+    /// [`Self::take_h2_padded_frame_buffer`]. Per VM, not per thread: mimalloc keeps a heap
+    /// whose thread exits, and `VirtualMachine::destroy` frees this one on the Worker's thread.
     pub fn take_scratch_arena(&mut self) -> bun_alloc::Arena {
         self.scratch_arena.take().unwrap_or_default()
     }
 
-    /// Hand a taken arena back; the slot keeps the first one returned. Blocks the caller left
-    /// behind stay until they pass `KEEP`, then the heap is recycled.
+    /// Hand a taken arena back; the slot keeps the first one returned and recycles it past `KEEP`.
     pub fn put_back_scratch_arena(&mut self, mut arena: bun_alloc::Arena) {
         const KEEP: usize = 64 * 1024;
         if self.scratch_arena.is_none() {

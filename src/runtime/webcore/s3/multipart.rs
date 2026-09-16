@@ -1025,6 +1025,13 @@ impl MultiPartUpload {
     }
 
     fn process_buffered(&self, part_size: usize) {
+        // The upload of a context that has stopped sends nothing (its writer is a disposed
+        // `Bun.ModuleGraph`'s leftover script): what stops a context aborts it, a turn later for
+        // one that was made in a context already stopped. Not refused request by request: a
+        // refusal is a completion, and this can be running inside the sink's write.
+        if self.abort_handle.context_stopped() {
+            return;
+        }
         if self.ended.get()
             && self.buffered.get().size() < self.part_size_in_bytes()
             && self.state.get() == State::NotStarted

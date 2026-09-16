@@ -388,6 +388,11 @@ impl S3Ext for S3 {
             }
         }
 
+        // (`list_objects` puts its request on the HTTP thread itself: asked here, before there is
+        // a completion to release, as `execute_simple_s3_request` asks for the others.)
+        if crate::webcore::s3::simple_request::nothing_new_leaves(cx.context()) {
+            return Ok(bun_jsc::JSPromise::create(cx.global()).to_js());
+        }
         let promise = bun_jsc::JSPromiseStrong::init(cx.global());
         let value = promise.value();
         let aws_options = self.get_credentials_with_options(extra_options, cx.global())?;

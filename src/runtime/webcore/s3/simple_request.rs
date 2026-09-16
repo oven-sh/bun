@@ -574,8 +574,9 @@ pub(crate) fn resolve_proxy(proxy_url: Option<&[u8]>, url: &[u8]) -> Box<[u8]> {
     }
 }
 
-/// What the three functions that put an S3 request on the HTTP thread (this file's,
-/// `client::list_objects`, `client::download_stream`) ask before anything else.
+/// What puts an S3 request on the HTTP thread asks first: this file's function and
+/// `client::download_stream` before anything else, the caller of `client::list_objects` before
+/// it allocates. (A `MultiPartUpload` asks its own abort handle: see `process_buffered`.)
 pub(crate) fn nothing_new_leaves(context: &bun_jsc::ScriptExecutionContext) -> bool {
     !VirtualMachine::get().script_allowed() || context.is_stopped()
 }

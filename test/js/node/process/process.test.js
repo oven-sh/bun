@@ -1526,20 +1526,26 @@ describe.concurrent(() => {
     expect(() => process.dlopen({ module: { exports: Symbol("123") } }, Symbol("badddd"))).toThrow();
   });
 
-  it("dlopen rejects over-length paths with ERR_DLOPEN_FAILED", async () => {
-    // Spawn so an unfixed build crashing doesn't take the whole suite down.
+  it.each([
     // On Windows the path is widened into a 32767-unit WPathBuffer; an
     // over-length path must come back as an error, not a Rust panic across
-    // the extern "C" boundary. POSIX already surfaces dlerror() here.
+    // the extern "C" boundary.
+    ["longer than the Windows path buffer", `Buffer.alloc(40000, "x").toString()`],
+    // glibc's dlopen() copies a name that has no "/" to the stack with
+    // alloca(), so a name longer than the stack is a segfault inside dlopen().
+    ["longer than the stack", `Buffer.alloc(16 * 1024 * 1024, "x").toString()`],
+    ["longer than the stack, UTF-16", `"\\u0100" + Buffer.alloc(16 * 1024 * 1024, "x").toString()`],
+  ])("dlopen rejects over-length paths with ERR_DLOPEN_FAILED (%s)", async (_, filename) => {
+    // Spawn so an unfixed build crashing doesn't take the whole suite down.
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         `try {
-          process.dlopen({ exports: {} }, Buffer.alloc(40000, "x").toString());
+          process.dlopen({ exports: {} }, ${filename});
           console.log("FAIL: did not throw");
         } catch (e) {
-          console.log("CODE:" + e.code);
+          console.log(e.code + ": " + e.message);
         }`,
       ],
       env: bunEnv,
@@ -1548,7 +1554,10 @@ describe.concurrent(() => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
-      stdout: "CODE:ERR_DLOPEN_FAILED",
+      // POSIX rejects the path before dlopen() sees it, so the message does not depend on the libc.
+      stdout: isWindows
+        ? expect.stringMatching(/^ERR_DLOPEN_FAILED: /)
+        : "ERR_DLOPEN_FAILED: dlopen failed: File name too long",
       stderr: "",
       exitCode: 0,
     });

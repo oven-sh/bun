@@ -450,12 +450,7 @@ impl ElfFile {
 
     // --- Internal helpers ---
 
-    /// Whether `.bun` is a payload that `write_bun_section` appended (the executable is itself a `--compile`
-    /// output), not BUN_COMPILED as linked, which holds 0. A payload is known by the one layout that function
-    /// produces: at the first page boundary past the linked sections, file-backed, and the end of the highest
-    /// `PT_LOAD`, so a longer payload runs into no other mapping. Anything else is `BunSectionAlreadyWritten`.
-    /// That covers what 1.3.14 to 1.4.x wrote into a compiled executable: a second payload behind the one
-    /// BUN_COMPILED still points at.
+    /// Whether `.bun` is a payload that an earlier `write_bun_section` appended, in the layout that it produces.
     fn bun_section_is_payload(
         &self,
         ehdr: Elf64_Ehdr,
@@ -469,7 +464,7 @@ impl ElfFile {
             .and_then(|offset| self.data.get(offset..)?.first_chunk::<8>())
             .map(|bytes| u64::from_le_bytes(*bytes))
             .ok_or(ElfError::InvalidElfFile)?;
-        // A payload starts with its length, and `to_executable` writes no empty one.
+        // BUN_COMPILED as linked. A payload starts with its length, and `to_executable` writes no empty one.
         if first_word == 0 {
             return Ok(false);
         }
@@ -485,25 +480,35 @@ impl ElfFile {
             .map(|shdr| shdr.sh_addr.saturating_add(shdr.sh_size))
             .max()
             .unwrap_or(0);
-
         let rw_vaddr_end = rw_phdr.p_vaddr.checked_add(rw_phdr.p_memsz);
         let payload_vaddr_end = bun_section
             .size
             .checked_next_multiple_of(page_size)
             .and_then(|aligned_size| bun_section.vaddr.checked_add(aligned_size));
-        let is_payload = bun_section.size.checked_sub(size_of::<u64>() as u64) == Some(first_word)
-            && bun_section.vaddr.is_multiple_of(page_size)
-            && bun_section
-                .vaddr
-                .checked_sub(linked_end)
-                .is_some_and(|gap| gap < page_size)
-            && bun_section.vaddr.checked_sub(rw_phdr.p_vaddr)
-                == bun_section.file_offset.checked_sub(rw_phdr.p_offset)
-            && rw_phdr.p_filesz == rw_phdr.p_memsz
-            && rw_vaddr_end == Some(max_vaddr_end)
-            && payload_vaddr_end == rw_vaddr_end;
 
-        if is_payload {
+        let is_length_then_bytes =
+            bun_section.size.checked_sub(size_of::<u64>() as u64) == Some(first_word);
+        let starts_a_page = bun_section.vaddr.is_multiple_of(page_size);
+        // 1.3.14 to 1.4.x left a second payload behind the one BUN_COMPILED points at: a page or more later.
+        let follows_linked_sections = bun_section
+            .vaddr
+            .checked_sub(linked_end)
+            .is_some_and(|gap| gap < page_size);
+        let offset_matches_segment = bun_section.vaddr.checked_sub(rw_phdr.p_vaddr)
+            == bun_section.file_offset.checked_sub(rw_phdr.p_offset);
+        let is_file_backed = rw_phdr.p_filesz == rw_phdr.p_memsz;
+        // Nothing is mapped past the payload, so a longer one runs into no other mapping.
+        let segment_is_highest = rw_vaddr_end == Some(max_vaddr_end);
+        let ends_segment = payload_vaddr_end == rw_vaddr_end;
+
+        if is_length_then_bytes
+            && starts_a_page
+            && follows_linked_sections
+            && offset_matches_segment
+            && is_file_backed
+            && segment_is_highest
+            && ends_segment
+        {
             Ok(true)
         } else {
             Err(ElfError::BunSectionAlreadyWritten)

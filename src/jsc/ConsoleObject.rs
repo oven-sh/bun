@@ -566,7 +566,8 @@ fn message_with_type_and_level_(
 pub struct TablePrinter<'a> {
     global_object: &'a JSGlobalObject,
     /// Per-cell value formatter. Public so callers (e.g. `Bun.inspect.table`)
-    /// can override `depth` / `ordered_properties` / `single_line` after init.
+    /// can override `ordered_properties` / `single_line` after init. The start
+    /// depth goes through `set_start_depth`.
     pub value_formatter: Formatter<'a>,
 
     tabular_data: JSValue,
@@ -673,6 +674,11 @@ impl<'a> TablePrinter<'a> {
             values_col_width: None,
             values_col_idx: usize::MAX,
         })
+    }
+
+    /// Cells start at nesting level `depth`, out of the formatter's `max_depth`.
+    pub fn set_start_depth(&mut self, depth: u16) {
+        self.value_formatter.depth = depth.min(self.value_formatter.max_depth);
     }
 
     /// Format `value` exactly once (bare for strings, quoted otherwise),
@@ -1592,6 +1598,9 @@ pub mod formatter {
         pub(crate) indent: u32,
         pub depth: u16,
         pub(crate) max_depth: u16,
+        /// The caller's `max_depth`, held while the error property dump
+        /// narrows `max_depth` to one level.
+        pub(crate) outer_max_depth: Option<u16>,
         pub quote_strings: bool,
         pub quote_keys: bool,
         pub(crate) failed: bool,
@@ -1622,6 +1631,7 @@ pub mod formatter {
                 indent: 0,
                 depth: 0,
                 max_depth: 8,
+                outer_max_depth: None,
                 quote_strings: false,
                 quote_keys: false,
                 failed: false,
@@ -1660,6 +1670,7 @@ pub mod formatter {
                 indent: self.indent,
                 depth: self.depth,
                 max_depth: self.max_depth,
+                outer_max_depth: self.outer_max_depth,
                 quote_strings: self.quote_strings,
                 quote_keys: self.quote_keys,
                 failed: self.failed,
@@ -1733,6 +1744,11 @@ pub mod formatter {
 
         pub fn add_for_new_line(&mut self, len: usize) {
             self.estimated_line_length = self.estimated_line_length.saturating_add(len);
+        }
+
+        /// Depth cap for the `cause` and `AggregateError.errors` walks.
+        pub(crate) fn error_chain_max_depth(&self) -> u16 {
+            self.outer_max_depth.unwrap_or(self.max_depth)
         }
     }
 
@@ -4223,7 +4239,8 @@ pub mod formatter {
             value: JSValue,
             js_type: jsc::JSType,
         ) -> JsResult<()> {
-            if self.depth > self.max_depth {
+            let len = value.get_length(self.global_this)?;
+            if len != 0 && self.depth > self.max_depth {
                 return self.print_depth_exceeded_marker::<C>(writer_, "Array");
             }
             // Cache once: `disable_inspect_custom` does not change inside this
@@ -4240,8 +4257,6 @@ pub mod formatter {
                     pfmt!($s, C)
                 };
             }
-
-            let len = value.get_length(self.global_this)?;
 
             // TODO: DerivedArray does not get passed along in JSType, and it's
             // not clear why.
@@ -4567,16 +4582,6 @@ pub mod formatter {
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
         ) -> JsResult<()> {
-            let map_name = if value.js_type() == jsc::JSType::WeakMap {
-                "WeakMap"
-            } else {
-                "Map"
-            };
-
-            if self.depth > self.max_depth {
-                return self.print_depth_exceeded_marker::<C>(writer_, map_name);
-            }
-
             let length_value = value
                 .get(self.global_this, "size")?
                 .unwrap_or_else(|| JSValue::js_number_from_int32(0));
@@ -4586,9 +4591,19 @@ pub mod formatter {
             self.quote_strings = true;
             let _qs = defer_restore!(self.quote_strings, prev_quote_strings);
 
+            let map_name = if value.js_type() == jsc::JSType::WeakMap {
+                "WeakMap"
+            } else {
+                "Map"
+            };
+
             if length == 0 {
                 let _ = write!(writer_, "{map_name} {{}}");
                 return Ok(());
+            }
+
+            if self.depth > self.max_depth {
+                return self.print_depth_exceeded_marker::<C>(writer_, map_name);
             }
 
             if self.single_line {
@@ -4716,16 +4731,6 @@ pub mod formatter {
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
         ) -> JsResult<()> {
-            let set_name = if value.js_type() == jsc::JSType::WeakSet {
-                "WeakSet"
-            } else {
-                "Set"
-            };
-
-            if self.depth > self.max_depth {
-                return self.print_depth_exceeded_marker::<C>(writer_, set_name);
-            }
-
             let length_value = value
                 .get(self.global_this, "size")?
                 .unwrap_or_else(|| JSValue::js_number_from_int32(0));
@@ -4735,9 +4740,19 @@ pub mod formatter {
             self.quote_strings = true;
             let _qs = defer_restore!(self.quote_strings, prev_quote_strings);
 
+            let set_name = if value.js_type() == jsc::JSType::WeakSet {
+                "WeakSet"
+            } else {
+                "Set"
+            };
+
             if length == 0 {
                 let _ = write!(writer_, "{set_name} {{}}");
                 return Ok(());
+            }
+
+            if self.depth > self.max_depth {
+                return self.print_depth_exceeded_marker::<C>(writer_, set_name);
             }
 
             if self.single_line {

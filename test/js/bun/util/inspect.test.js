@@ -1090,6 +1090,13 @@ describe("depth cap applies to Map/Set/Array and Error cause chains", () => {
     expect(Bun.inspect([[[si()]]], { depth: Infinity })).toContain('"leaf"');
   });
 
+  it("an empty Array, Map, or Set past max_depth prints as empty", () => {
+    const value = { a: [], b: new Map(), c: new Set(), d: [1], e: new Map([[1, 2]]), f: new Set([1]) };
+    expect(Bun.inspect(value, { depth: 0 })).toBe(
+      "{\n  a: [],\n  b: Map {},\n  c: Set {},\n  d: [Array ...],\n  e: [Map ...],\n  f: [Set ...],\n}",
+    );
+  });
+
   it("console.log of deeply nested Map/Set/Array/Error does not blow up or throw", async () => {
     const src = `
       let m = new Map([["leaf", 1]]);
@@ -1160,6 +1167,32 @@ describe("depth cap applies to Map/Set/Array and Error cause chains", () => {
     expect(out).toContain('"b"');
     expect(out).not.toContain("info: [Object ...]");
     expect(out).not.toContain("tags: [Array ...]");
+  });
+
+  it("an Error nested in an Error property walks its cause to the caller's depth", () => {
+    const make = () => {
+      const outer = new Error("outer");
+      outer.details = { inner: new Error("inner", { cause: new Error("deep one") }) };
+      outer.list = [new Error("listed", { cause: new Error("deep two") })];
+      outer.group = { agg: new AggregateError([new Error("member")], "agg") };
+      return outer;
+    };
+    // An inspected Error shows a preview of this file's source. Drop those lines.
+    const inspect = depth => Bun.inspect(make(), { depth }).replace(/^ *\d+ \|.*\n/gm, "");
+
+    const full = inspect(Infinity);
+    expect(full).toContain("error: deep one");
+    expect(full).toContain("error: deep two");
+    expect(full).toContain("error: member");
+    expect(full).not.toContain("[Error ...]");
+
+    const capped = inspect(2);
+    expect(capped).toContain("error: inner");
+    expect(capped).toContain("error: listed");
+    expect(capped).toContain("[Error ...]");
+    expect(capped).not.toContain("error: deep one");
+    expect(capped).not.toContain("error: deep two");
+    expect(capped).not.toContain("error: member");
   });
 
   it("nested AggregateError recursion truncates at max_depth", () => {

@@ -5434,7 +5434,7 @@ impl VirtualMachine {
                 let writer = unsafe { &mut *ctx.writer };
                 ctx.printed_member = true;
                 formatter.depth = formatter.depth.saturating_add(1);
-                if formatter.depth > formatter.max_depth
+                if formatter.depth > formatter.error_chain_max_depth()
                     || !formatter.stack_check.is_safe_to_recurse()
                 {
                     let _ = if ctx.allow_ansi_color {
@@ -6569,9 +6569,11 @@ impl VirtualMachine {
                     let prev_disable_inspect_custom = formatter.disable_inspect_custom;
                     let prev_quote_strings = formatter.quote_strings;
                     let prev_max_depth = formatter.max_depth;
+                    let prev_outer_max_depth = formatter.outer_max_depth;
                     let prev_format_buffer_as_text = formatter.format_buffer_as_text;
                     formatter.depth += 1;
                     formatter.format_buffer_as_text = true;
+                    formatter.outer_max_depth = Some(formatter.error_chain_max_depth());
                     formatter.max_depth = formatter.depth;
                     formatter.quote_strings = true;
                     formatter.disable_inspect_custom = true;
@@ -6581,12 +6583,14 @@ impl VirtualMachine {
                         d: bool,
                         q: bool,
                         m: u16,
+                        o: Option<u16>,
                         b: bool,
                     }
                     impl Drop for RestoreFmt<'_, '_> {
                         fn drop(&mut self) {
                             self.f.depth -= 1;
                             self.f.max_depth = self.m;
+                            self.f.outer_max_depth = self.o;
                             self.f.quote_strings = self.q;
                             self.f.disable_inspect_custom = self.d;
                             self.f.format_buffer_as_text = self.b;
@@ -6597,6 +6601,7 @@ impl VirtualMachine {
                         d: prev_disable_inspect_custom,
                         q: prev_quote_strings,
                         m: prev_max_depth,
+                        o: prev_outer_max_depth,
                         b: prev_format_buffer_as_text,
                     };
                     let formatter = &mut *restore.f;
@@ -6707,7 +6712,8 @@ impl VirtualMachine {
             writer.write_all(b"\n")?;
             let prev_depth = formatter.depth;
             formatter.depth = formatter.depth.saturating_add(1);
-            let result: crate::CrateResult<()> = if formatter.depth > formatter.max_depth {
+            let over_cap = formatter.depth > formatter.error_chain_max_depth();
+            let result: crate::CrateResult<()> = if over_cap {
                 pretty_write!(writer, "<r><cyan>[Error ...]<r>").map_err(Into::into)
             } else {
                 self.print_error_instance_js(

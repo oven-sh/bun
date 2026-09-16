@@ -688,6 +688,7 @@ fn lower_simple_assignment(
                     object,
                     property: PropertyLiteral::String(d.name),
                     value: right,
+                    update: None,
                     loc: left_loc,
                 },
             )?;
@@ -707,6 +708,7 @@ fn lower_simple_assignment(
                         object,
                         property: PropertyLiteral::Number(FloatValue::new(num.value())),
                         value: right,
+                        update: None,
                         loc: left_loc,
                     },
                 )?
@@ -719,6 +721,7 @@ fn lower_simple_assignment(
                         object,
                         property: prop,
                         value: right,
+                        update: None,
                         loc: left_loc,
                     },
                 )?
@@ -882,17 +885,23 @@ fn lower_compound_assignment(
                     loc: member_loc,
                 },
             )?;
+            // Unlike upstream: the store prints as the compound assignment, see `MemberUpdate`.
+            let update = Some(MemberUpdate::AssignmentExpression {
+                operator: binary_op,
+            });
             match lowered_property {
                 MemberProperty::Literal(prop_literal) => Ok(InstructionValue::PropertyStore {
                     object,
                     property: prop_literal,
                     value: result,
+                    update,
                     loc: member_loc,
                 }),
                 MemberProperty::Computed(prop_place) => Ok(InstructionValue::ComputedStore {
                     object,
                     property: prop_place,
                     value: result,
+                    update,
                     loc: member_loc,
                 }),
             }
@@ -1091,19 +1100,25 @@ fn lower_update(
                 builder,
                 InstructionValue::BinaryExpression {
                     operator: binary_op,
-                    left: prev_value.clone(),
+                    left: prev_value,
                     right: one,
                     loc: member_loc,
                 },
             )?;
 
-            let new_value_place = match lowered_property {
+            // Unlike upstream: the store prints as the update expression, in place. It is the
+            // value of a postfix update too. Upstream returns `prev_value` for that. The store
+            // then prints as a statement, and in a nested function `prev_value` prints again
+            // after it.
+            let update = Some(MemberUpdate::UpdateExpression { operation, prefix });
+            let result_place = match lowered_property {
                 MemberProperty::Literal(prop_literal) => lower_value_to_temporary(
                     builder,
                     InstructionValue::PropertyStore {
                         object,
                         property: prop_literal,
                         value: updated,
+                        update,
                         loc: member_loc,
                     },
                 )?,
@@ -1113,12 +1128,12 @@ fn lower_update(
                         object,
                         property: prop_place,
                         value: updated,
+                        update,
                         loc: member_loc,
                     },
                 )?,
             };
 
-            let result_place = if prefix { new_value_place } else { prev_value };
             Ok(InstructionValue::LoadLocal {
                 loc: result_place.loc,
                 place: result_place,

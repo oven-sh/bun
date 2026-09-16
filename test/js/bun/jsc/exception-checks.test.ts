@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 // Each snippet reaches a native code path that used to run a second JSC
 // operation, or return from a ThrowScope, while an exception check was still
@@ -10,7 +10,8 @@ import { bunEnv, bunExe } from "harness";
 // A string built at run time is a rope; reading it resolves the rope under a
 // ThrowScope, which is what makes the snippets below observable to the
 // validator.
-const snippets: Record<string, { code: string; stdout: string }> = {
+type Snippet = { code: string; stdout: string; env?: Record<string, string>; files?: Record<string, string> };
+const snippets: Record<string, Snippet> = {
   "Bun.deepEquals with one argument": {
     code: `try { Bun.deepEquals(1); } catch (e) { console.log(e.constructor.name + ": " + e.message); }`,
     stdout: "TypeError: Expected 2 values to compare",
@@ -27,13 +28,23 @@ const snippets: Record<string, { code: string; stdout: string }> = {
     code: `const a = "SIG"; const b = "BOGUS"; try { process.kill(process.pid, a + b); } catch (e) { console.log(e.code); }`,
     stdout: "ERR_UNKNOWN_SIGNAL",
   },
+  // JSC's parser builds a left-deep chain without recursion and its bytecode generator recurses once per operator.
+  // With the stack capped, the module parses and then fails ("Out of memory") when the link step generates its code.
+  "import of a module whose code generation fails": {
+    files: { "deep.mjs": `let a = 1;\nexport default a${Buffer.alloc(40_000, "-a").toString()};\n` },
+    env: { BUN_JSC_maxPerThreadStackUsage: "1000000" },
+    code: `try { await import("./deep.mjs"); console.log("imported"); } catch (e) { console.log(e.constructor.name + ": " + e.message); }`,
+    stdout: "RangeError: Out of memory",
+  },
 };
 
-for (const [name, { code, stdout: expected }] of Object.entries(snippets)) {
+for (const [name, { code, stdout: expected, env, files }] of Object.entries(snippets)) {
   test.concurrent(name, async () => {
+    using dir = tempDir("exception-checks", files ?? {});
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", code],
-      env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1", BUN_JSC_dumpSimulatedThrows: "1" },
+      env: { ...bunEnv, ...env, BUN_JSC_validateExceptionChecks: "1", BUN_JSC_dumpSimulatedThrows: "1" },
+      cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
     });

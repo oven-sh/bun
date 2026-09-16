@@ -123,11 +123,10 @@ size_t JSFetchHeaders::estimatedSize(JSC::JSCell* cell, JSC::VM& vm)
     return Base::estimatedSize(cell, vm) + wrapped.memoryCost();
 }
 
-// Only a primitive entry is echoed. "Received an instance of X" reads `constructor.name`,
-// and the conversion runs no user code that Web IDL does not ask for.
 static void throwEntryIsNotPair(JSGlobalObject& lexicalGlobalObject, ThrowScope& scope, ASCIILiteral name, size_t index, JSValue entry)
 {
     auto entryName = makeString(name, '[', index, ']');
+    // INVALID_ARG_INSTANCE describes an object by its `constructor.name`, which runs user code.
     if (!entry.isObject()) {
         Bun::ERR::INVALID_ARG_INSTANCE(scope, &lexicalGlobalObject, entryName, "Array"_s, entry);
         return;
@@ -159,8 +158,7 @@ static FetchHeaders::Init convertHeadersInitNamed(JSGlobalObject& lexicalGlobalO
 
         Vector<String> pair;
         if (JSC::getIterationMode(nextValue) == JSC::IterationMode::FastArray) {
-            // A fast array is iterable, so it needs no check. The sequence converter walks it
-            // with no Symbol.iterator lookup, which is 13% of `new Headers()` for 8 pairs.
+            // No Symbol.iterator lookup: it is 13% of `new Headers()` for 8 pairs.
             pair = Converter<IDLSequence<IDLStringType>>::convert(lexicalGlobalObject, nextValue);
         } else {
             auto* entry = nextValue.getObject();

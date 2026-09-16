@@ -11,8 +11,7 @@ bun_opaque::opaque_ffi! {
     pub struct FetchHeaders;
 }
 
-/// The option that held the value given to [`FetchHeaders::create_from_js_named`].
-/// A conversion error names it. Mirrors `HeadersInitName` in headers-handwritten.h.
+/// Mirrors `HeadersInitName` in headers-handwritten.h.
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum HeadersInitName {

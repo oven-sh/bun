@@ -5080,6 +5080,16 @@ extern "C" JSC::EncodedJSValue JSC__VM__terminationException(JSC::VM* vm)
     return JSC::JSValue::encode(JSC::JSValue(vm->ensureTerminationException()));
 }
 
+// The JSC::Exception of the VM's most recent throw when it threw exactly `value`, else null. The VM
+// roots it and drops it on the next VM entry. Same test as WebCore's RejectedPromiseTracker.
+extern "C" JSC::Exception* JSC__VM__lastExceptionThatThrew(JSC::VM* vm, JSC::EncodedJSValue encodedValue)
+{
+    JSC::Exception* exception = vm->lastException();
+    if (!exception || exception->value() != JSC::JSValue::decode(encodedValue))
+        return nullptr;
+    return exception;
+}
+
 // The one crossing from the loop-level stop into the exception currency: a nested wait/drain inside a
 // host function learned of a stop and must hand a JsError to its caller, so it throws the VM's
 // TerminationException for real -- what VMTraps::handleTraps(NeedTermination) does. Always leaves it

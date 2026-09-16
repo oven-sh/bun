@@ -1138,6 +1138,7 @@ pub fn write_trace(writer: &mut dyn bun_io::Write, global: &JSGlobalObject) {
         holder.zig_exception(),
         err,
         None,
+        None,
         &mut need_to_clear,
         &mut source_code_slice,
         false,

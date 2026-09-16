@@ -1,6 +1,6 @@
 use core::ffi::c_void;
 
-use crate::{JSGlobalObject, JSValue, JsError};
+use crate::{Exception, JSGlobalObject, JSValue, JsError};
 
 // All JSC__VM__* shims take only a `JSC::VM*` (and at most a
 // `JSGlobalObject*` / `JSC::Exception*` / scalar). `VM` and `JSGlobalObject`
@@ -35,6 +35,7 @@ unsafe extern "C" {
     safe fn JSC__VM__notifyNeedTermination(vm: &VM);
     safe fn JSC__VM__isEntered(vm: &VM) -> bool;
     safe fn JSC__VM__terminationException(vm: &VM) -> JSValue;
+    safe fn JSC__VM__lastExceptionThatThrew(vm: &VM, value: JSValue) -> *mut Exception;
     safe fn JSC__VM__throwError(vm: &VM, global_object: &JSGlobalObject, value: JSValue);
     safe fn JSC__VM__releaseWeakRefs(vm: &VM);
     safe fn JSC__VM__drainMicrotasks(vm: &VM);
@@ -132,6 +133,14 @@ impl VM {
     /// until thrown.
     pub fn termination_exception(&self) -> JSValue {
         JSC__VM__terminationException(self)
+    }
+
+    /// The `JSC::Exception` of this VM's most recent throw, when that throw delivered exactly `value`.
+    /// JSC roots it only until the next VM entry: past that the stack scan keeps the cell alive, for
+    /// as long as the caller's frame holds it.
+    pub fn last_exception_that_threw<'a>(&self, value: JSValue) -> Option<&'a Exception> {
+        let exception = JSC__VM__lastExceptionThatThrew(self, value);
+        (!exception.is_null()).then(|| Exception::opaque_ref(exception))
     }
 
     #[track_caller]

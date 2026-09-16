@@ -5004,6 +5004,19 @@ impl VirtualMachine {
         // `defer formatter.deinit()` → Drop.
     }
 
+    /// The `JSC::Exception` of the throw that delivered `value`, for a reported `value` that arrived
+    /// bare (off a rejected promise, or out of a JS `catch`). An Error has its own stack, and a
+    /// BuildMessage or ResolveMessage its own location.
+    pub fn throw_site_of<'a>(&self, value: JSValue) -> Option<&'a Exception> {
+        if value.is_error()
+            || value.as_class_ref::<crate::BuildMessage>().is_some()
+            || value.as_class_ref::<crate::ResolveMessage>().is_some()
+        {
+            return None;
+        }
+        self.jsc_vm().last_exception_that_threw(value)
+    }
+
     /// Deletes the synthetic main-entry module from the module registry.
     pub fn clear_entry_point(&mut self) -> JsResult<()> {
         if self.main().is_empty() {
@@ -5467,6 +5480,7 @@ impl VirtualMachine {
 
         let was_internal = self.print_error_from_maybe_private_data(
             value,
+            exception,
             exception_list.as_deref_mut(),
             formatter,
             writer,
@@ -5497,6 +5511,7 @@ impl VirtualMachine {
     fn print_error_from_maybe_private_data(
         &mut self,
         value: JSValue,
+        exception: Option<&Exception>,
         exception_list: Option<&mut ExceptionList>,
         formatter: &mut crate::console_object::Formatter,
         writer: &mut bun_core::io::Writer,
@@ -5559,6 +5574,7 @@ impl VirtualMachine {
 
         if let Err(err) = self.print_error_instance_js(
             value,
+            exception,
             exception_list,
             formatter,
             writer,
@@ -5734,10 +5750,12 @@ impl VirtualMachine {
     }
 
     /// Fills `exception` from `error_instance`, remapping stack frames through source maps.
+    /// `throw_site` is the `JSC::Exception` that delivered `error_instance`, when known.
     pub(crate) fn remap_zig_exception(
         &mut self,
         exception: &mut ZigException,
         error_instance: JSValue,
+        throw_site: Option<&Exception>,
         exception_list: Option<&mut ExceptionList>,
         must_reset_parser_arena_later: &mut bool,
         source_code_slice: &mut Option<bun_core::Utf8Bytes<'static>>,
@@ -5747,6 +5765,15 @@ impl VirtualMachine {
         // and survives the `&mut self` reborrows below.
         let global = self.global();
         error_instance.to_zig_exception(global, exception);
+        // A thrown value with no location of its own gets the frames of the throw that delivered
+        // it. `frames_owner` is the cell whose frame vector `jsc_stack_frame_index` indexes.
+        let frames_owner = match throw_site {
+            Some(throw_site) if exception.stack.frames_len == 0 => {
+                throw_site.get_stack_trace(global, &mut exception.stack);
+                throw_site.value()
+            }
+            _ => error_instance,
+        };
         // `Cell<bool>` so the `Tail` drop-guard below can hold a shared `&Cell`
         // and read the *current* value at scope-exit without a raw-ptr deref,
         // while the body freely `.set()`s it.
@@ -5992,7 +6019,7 @@ impl VirtualMachine {
             };
 
             if enable_source_code_preview.get() && code.slice().is_empty() {
-                exception.collect_source_lines(error_instance, global);
+                exception.collect_source_lines(frames_owner, global);
             }
 
             // Direct copy; both sides are `bun_core::Ordinal`.
@@ -6036,7 +6063,7 @@ impl VirtualMachine {
                 *source_code_slice = Some(code);
             }
         } else if enable_source_code_preview.get() {
-            exception.collect_source_lines(error_instance, global);
+            exception.collect_source_lines(frames_owner, global);
         }
 
         if frames.len() > 1 {
@@ -6102,6 +6129,7 @@ impl VirtualMachine {
     fn print_error_instance_js(
         &mut self,
         error_instance: JSValue,
+        throw_site: Option<&Exception>,
         exception_list: Option<&mut ExceptionList>,
         formatter: &mut crate::console_object::Formatter,
         writer: &mut bun_core::io::Writer,
@@ -6157,6 +6185,7 @@ impl VirtualMachine {
             // SAFETY: `exception` points into stack-local `exception_holder`.
             unsafe { &mut *exception },
             error_instance,
+            throw_site,
             exception_list,
             &mut exception_holder.need_to_clear_parser_arena_on_deinit,
             &mut source_code_slice,
@@ -6691,6 +6720,7 @@ impl VirtualMachine {
             writer.write_all(b"\n")?;
             self.print_error_instance_js(
                 err,
+                None,
                 exception_list.as_deref_mut(),
                 formatter,
                 writer,

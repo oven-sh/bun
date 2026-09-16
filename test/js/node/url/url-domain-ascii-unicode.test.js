@@ -158,8 +158,8 @@ describe("url.domainToUnicode with many xn-- labels", () => {
         "--expose-internals",
         "-e",
         `
-          const url = require("node:url");
-          const { internalBinding } = require("internal/test/binding");
+          import url from "node:url";
+          import { internalBinding } from "internal/test/binding";
           const icu = internalBinding("icu");
           const inputs = JSON.parse(process.argv[1]);
           const rows = inputs.map(input => {

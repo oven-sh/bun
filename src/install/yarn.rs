@@ -29,7 +29,6 @@ use crate::repository::Repository;
 use crate::resolution_real::{Resolution, Tag as ResolutionTag, TaggedValue as ResolutionValue};
 use crate::versioned_url::VersionedURL;
 use bun_core::strings;
-use bun_paths::PathBuffer;
 use bun_semver::{self as Semver, SlicedString, String as SemverString};
 use bun_sys::Fd;
 
@@ -640,7 +639,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
     };
 
     // `package_json_source.path` borrows this buffer (lifetime-erased); keep it alive until the overrides are parsed below.
-    let mut package_json_path_buf = PathBuffer::uninit();
+    let mut package_json_path_buf = bun_paths::path_buffer_pool::get();
     let package_json_source = {
         let Ok(package_json_path) =
             bun_sys::get_fd_path(package_json_fd.handle(), &mut package_json_path_buf)
@@ -1901,6 +1900,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
             lockfile::DependencyIDSlice::new(resolutions_off, dep_count);
     }
 
+    this.tag_workspace_links(manager.options.link_workspace_packages);
     // `Lockfile::resolve` returns `Result<(), tree::SubtreeError>`; surface as
     // a tagged error until `From<SubtreeError>` lands.
     if let Err(_e) = this.resolve(log) {

@@ -52,10 +52,6 @@ function rejected(message: string) {
   return { stdout: `error: parsing failed: ${message}`, stderr: "", exitCode: 0 };
 }
 
-function minified(output: string) {
-  return { stdout: `ok: ${output}`, stderr: "", exitCode: 0 };
-}
-
 // --- :nth-child(An+B of <selectors>) ---
 
 test.concurrent("an of-list made only of a pseudo-element invalidates the rule", async () => {
@@ -71,8 +67,9 @@ test.concurrent("an of-list made only of a lexically invalid selector invalidate
 });
 
 test.concurrent("an of-list made only of a bad-string token invalidates the rule", async () => {
+  // A bad-string token ends at the newline, so it prints with no closing quote.
   expect(await minifyInChild('div:nth-child(2n of [q="x\n]) { color: red }')).toEqual(
-    rejected("Invalid selector. Invalid value in attribute selector: x"),
+    rejected('Invalid selector. Invalid value in attribute selector: "x'),
   );
 });
 
@@ -102,16 +99,15 @@ test.concurrent("an empty selector before a comma invalidates the of-list", asyn
   );
 });
 
-test.concurrent("valid of-lists still parse and minify", async () => {
-  expect(await minifyInChild(":nth-child(even of li.important) {width: 20px}")).toEqual(
-    minified(":nth-child(2n of li.important){width:20px}"),
+// Valid input never reaches the empty of-list, so it does not need a child process.
+test("valid of-lists still parse and minify", () => {
+  expect(minifyTest(":nth-child(even of li.important) {width: 20px}", "")).toBe(
+    ":nth-child(2n of li.important){width:20px}",
   );
-  expect(await minifyInChild(":nth-last-child(2n of li.important, .other) {width: 20px}")).toEqual(
-    minified(":nth-last-child(2n of li.important, .other){width:20px}"),
+  expect(minifyTest(":nth-last-child(2n of li.important, .other) {width: 20px}", "")).toBe(
+    ":nth-last-child(2n of li.important, .other){width:20px}",
   );
-  expect(await minifyInChild("a:nth-child(2n of *) { color: red }")).toEqual(
-    minified("a:nth-child(2n of *){color:red}"),
-  );
+  expect(minifyTest("a:nth-child(2n of *) { color: red }", "")).toBe("a:nth-child(2n of *){color:red}");
 });
 
 // --- :has(<relative-selector-list>) ---
@@ -132,9 +128,9 @@ test.concurrent("a valid selector does not rescue a :has() list with an invalid 
   );
 });
 
-test.concurrent("valid :has() lists still parse and minify", async () => {
-  expect(await minifyInChild("a:has(.x) { color: red }")).toEqual(minified("a:has(.x){color:red}"));
-  expect(await minifyInChild("a:has(> .x, ~ .y) { color: red }")).toEqual(minified("a:has(>.x,~.y){color:red}"));
+test("valid :has() lists still parse and minify", () => {
+  expect(minifyTest("a:has(.x) { color: red }", "")).toBe("a:has(.x){color:red}");
+  expect(minifyTest("a:has(> .x, ~ .y) { color: red }", "")).toBe("a:has(>.x,~.y){color:red}");
 });
 
 // --- empty selectors ---
@@ -150,4 +146,40 @@ test("a forgiving list drops an empty selector instead of keeping it", () => {
   expect(minifyTest("a:is(, .x) { color: red }", "a.x{color:red}")).toBe("a.x{color:red}");
   // `a:is()` matches nothing; it must not be reduced to `a` (which matches everything).
   expect(minifyTest("a:is() { color: red }", "a:is(){color:red}")).toBe("a:is(){color:red}");
+});
+
+// --- tokens in error messages ---
+
+// The message interpolates the offending token. It must print as CSS, with the
+// sigil that says what kind of token it is. It used to print the payload bare,
+// so `@x`, `#x`, `"x"`, and `url(x)` all read as `x`.
+function parseErrorMessage(css: string): string {
+  try {
+    minifyTest(css, "");
+  } catch (e) {
+    return (e as Error).message;
+  }
+  throw new Error(`expected a parse error for ${css}`);
+}
+
+test.each([
+  [":nth-child(@x) {}", "Unexpected token: @x"],
+  [":nth-child(#x) {}", "Unexpected token: #x"],
+  [':nth-child("x") {}', 'Unexpected token: "x"'],
+  [':nth-child("a\\"b") {}', 'Unexpected token: "a\\"b"'],
+  [":nth-child(url(x)) {}", "Unexpected token: url(x)"],
+  ["a { background: url(a b) }", "Unexpected token: url(a b)"],
+  [":nth-child(fn(1)) {}", "Unexpected token: fn("],
+  ["[@foo] {}", "Invalid selector. Missing qualified name in attribute selector: @foo"],
+  [".a[b @c] {}", "Invalid selector. Unexpected token in attribute selector: @c"],
+  [".a[b=foo(1)] {}", "Invalid selector. Invalid value in attribute selector: foo("],
+  [".a[b=#x] {}", "Invalid selector. Invalid value in attribute selector: #x"],
+  [".a[b=#1] {}", "Invalid selector. Invalid value in attribute selector: #1"],
+  [".a[b=url(x)] {}", "Invalid selector. Invalid value in attribute selector: url(x)"],
+  [".a[b=1px] {}", "Invalid selector. Invalid value in attribute selector: 1px"],
+  [".a[b=50%] {}", "Invalid selector. Invalid value in attribute selector: 50%"],
+  [".#x {}", "Invalid selector. Expected identifier after '.' in class selector, found: #x"],
+  [".a::before@x {}", "Invalid selector. Unexpected selector after pseudo-element: @x"],
+])("a parse error prints the token as CSS: %s", (css, message) => {
+  expect(parseErrorMessage(css)).toBe(`parsing failed: ${message}`);
 });

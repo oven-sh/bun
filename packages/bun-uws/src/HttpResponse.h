@@ -75,7 +75,7 @@ public:
 
     /* Write an unsigned 64-bit integer */
     void writeUnsigned64(uint64_t value) {
-        char buf[20];
+        char buf[utils::U64_MAX_DIGITS];
         int length = utils::u64toa(value, buf);
 
         /* For now we do this copy */
@@ -106,6 +106,32 @@ public:
                     return true;
                 }
             }
+        }
+        return false;
+    }
+
+    /* Called when a response completes on a corked socket. Returns true when the
+     * caller has to run the close gate now, false when onData runs it.
+     *
+     * The socket onData is parsing gets onData's uncork and close gate once the
+     * read is consumed: false. A Bun.serve response leaves the cork to onData,
+     * so the responses to requests pipelined in one read share one send(). Bun
+     * sends them earlier, with sendCorked(), when the handler of a later
+     * request is about to run JavaScript. A node:http response is still sent
+     * now: its 'finish' event and end() callback run before onData gets control
+     * back and expect the bytes to be out.
+     *
+     * Any other socket (an async handler completing, possibly inside another
+     * socket's parse window via a drained microtask) is uncorked here and gets
+     * no later uncork or gate: true. */
+    bool uncorkCompletedResponse() {
+        HttpContext<SSL> *httpContext = HttpContext<SSL>::fromSocket((us_socket_t *) this);
+        if (httpContext->getSocketContextData()->parsingSocket != (us_socket_t *) this) {
+            this->uncork();
+            return true;
+        }
+        if (httpContext->isNodeHttp()) {
+            this->uncork();
         }
         return false;
     }
@@ -213,21 +239,8 @@ public:
             httpResponseData->markDone(this);
 
             /* We need to check if we should close this socket here now */
-            if (!Super::isCorked()) {
+            if (!Super::isCorked() || uncorkCompletedResponse()) {
                 if (closeIfDoneAndMarked(httpResponseData)) {
-                    return true;
-                }
-            } else {
-                this->uncork();
-                /* That uncork released our cork slot, so the cork() wrapper's
-                 * post-uncork close gate will not run. When THIS socket is the
-                 * one being parsed, onData's post-parse gate closes it once
-                 * the buffer is fully consumed; any other socket (an async
-                 * handler completing, possibly inside another socket's parse
-                 * window via a drained microtask) gets no later gate, so close
-                 * here. */
-                if (HttpContext<SSL>::fromSocket((us_socket_t *) this)->getSocketContextData()->parsingSocket != (us_socket_t *) this
-                    && closeIfDoneAndMarked(httpResponseData)) {
                     return true;
                 }
             }
@@ -289,16 +302,8 @@ public:
                 httpResponseData->markDone(this);
 
                 /* We need to check if we should close this socket here now */
-                if (!Super::isCorked()) {
+                if (!Super::isCorked() || uncorkCompletedResponse()) {
                     closeIfDoneAndMarked(httpResponseData);
-                } else {
-                    this->uncork();
-                    /* Same as the chunked arm above: the cork slot is gone, so
-                     * run the close gate here unless THIS socket is the one
-                     * being parsed (then onData's post-parse gate handles it). */
-                    if (HttpContext<SSL>::fromSocket((us_socket_t *) this)->getSocketContextData()->parsingSocket != (us_socket_t *) this) {
-                        closeIfDoneAndMarked(httpResponseData);
-                    }
                 }
             }
 

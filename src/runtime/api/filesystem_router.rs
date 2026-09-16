@@ -896,9 +896,7 @@ impl MatchedRoute {
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_script_src(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        // `bun_object::get_public_path_with_asset_prefix` takes `core::fmt::Write`, so write
-        // into a `String` (path components are UTF-8 in practice).
-        let mut writer = String::with_capacity(MAX_PATH_BYTES);
+        let mut src: Vec<u8> = Vec::new();
         let origin_url = if let Some(ref origin) = this.origin {
             URL::parse(origin.leak())
         } else {
@@ -917,10 +915,10 @@ impl MatchedRoute {
             } else {
                 b""
             },
-            &mut writer,
+            &mut src,
             path::Platform::Posix,
         );
-        bun_string_jsc::create_utf8_for_js(global_this, writer.as_bytes())
+        bun_string_jsc::create_utf8_for_js(global_this, &src)
     }
 
     #[bun_jsc::host_fn(getter)]

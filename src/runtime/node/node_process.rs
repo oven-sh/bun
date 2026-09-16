@@ -38,8 +38,8 @@ extern "C" fn get_exec_path(global_object: &JSGlobalObject) -> JSValue {
 }
 
 /// A worker's `argv`/`execArgv` strings live in its parent-thread
-/// `WorkerOptions`; the worker thread gets its own copy (thread-affine
-/// refcounts), and an empty one is spelled as `BunString::EMPTY`.
+/// `WorkerOptions`; the worker thread gets its own copy (the parent may
+/// atomize its impls), and an empty one is spelled as `BunString::EMPTY`.
 pub(crate) fn worker_option_string(wtf: bun_core::WTFStringImpl) -> bun_core::String {
     // SAFETY: non-null impl borrowed from the live `WorkerOptions`.
     let imp = unsafe { &*wtf };
@@ -167,7 +167,6 @@ mod _impl {
     use bun_jsc::{
         EncodedSliceJsc as _, JSGlobalObject, JSValue, JsResult, StringJsc, SysErrorJsc, WebWorker,
     };
-    use bun_paths::PathBuffer;
 
     #[cfg(windows)]
     unsafe extern "C" {
@@ -443,7 +442,7 @@ mod _impl {
     fn get_cwd(global_object: &JSGlobalObject) -> JsResult<JSValue> {
         // Real syscall (not the resolver's cached top_level_dir): Node's
         // process.cwd() calls uv_cwd() so a deleted cwd must surface here.
-        let mut buf = PathBuffer::uninit();
+        let mut buf = bun_paths::path_buffer_pool::get();
         match bun_sys::getcwd(&mut buf[..]) {
             bun_sys::Result::Ok(len) => {
                 bun_string_jsc::create_utf8_for_js(global_object, &buf[..len])
@@ -494,7 +493,7 @@ mod _impl {
         // the process-lifetime singleton (centralised single-unsafe deref).
         let fs = vm.transpiler.fs_mut();
 
-        let mut buf = PathBuffer::uninit();
+        let mut buf = bun_paths::path_buffer_pool::get();
         let Ok(slice) = to.slice_z_buf(&mut buf) else {
             return Err(global_object.throw(format_args!("Invalid path")));
         };

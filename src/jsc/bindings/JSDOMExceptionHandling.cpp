@@ -61,11 +61,6 @@ void reportException(JSGlobalObject* lexicalGlobalObject, JSC::Exception* except
     int lineNumber = 0;
     int columnNumber = 0;
     String exceptionSourceURL;
-    // if (auto* callFrame = callStack->firstNonNativeCallFrame()) {
-    //     lineNumber = callFrame->lineNumber();
-    //     columnNumber = callFrame->columnNumber();
-    //     exceptionSourceURL = callFrame->sourceURL();
-    // }
 
     // The listener's realm may be a node:vm context, not a Zig::GlobalObject.
     Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(lexicalGlobalObject, exception);

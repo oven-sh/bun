@@ -1464,6 +1464,12 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
     return value.length();
   }
 
+  bool uws_req_has_transfer_encoding(uws_req_t *res)
+  {
+    uWS::HttpRequest *uwsReq = (uWS::HttpRequest *)res;
+    return uwsReq->getHasTransferEncoding();
+  }
+
   us_socket_t *uws_res_upgrade(int ssl, uws_res_r res, void *data,
                              const char *sec_web_socket_key,
                              size_t sec_web_socket_key_length,
@@ -1516,6 +1522,20 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
     {
       uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
       uwsRes->uncork();
+    }
+  }
+
+  void uws_res_send_corked(int ssl, uws_res_r res)
+  {
+    if (ssl)
+    {
+      uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+      uwsRes->sendCorked();
+    }
+    else
+    {
+      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+      uwsRes->sendCorked();
     }
   }
 

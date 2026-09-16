@@ -322,19 +322,6 @@ JSValue HTTPParser::duration() const
     return jsNumber(duration);
 }
 
-bool HTTPParser::lessThan(HTTPParser& other) const
-{
-    if (m_lastMessageStart == 0 && other.m_lastMessageStart == 0) {
-        return this < &other;
-    } else if (m_lastMessageStart == 0) {
-        return true;
-    } else if (other.m_lastMessageStart == 0) {
-        return false;
-    }
-
-    return m_lastMessageStart < other.m_lastMessageStart;
-}
-
 int HTTPParser::stopForPendingException()
 {
     llhttp_set_error_reason(&m_parserData, "HPE_USER:JS Exception");

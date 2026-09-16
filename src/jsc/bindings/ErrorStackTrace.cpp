@@ -262,15 +262,6 @@ JSC::JSString* JSCStackFrame::functionName()
     return jsString(this->m_vm, m_functionName);
 }
 
-JSC::JSString* JSCStackFrame::typeName()
-{
-    if (!m_typeName) {
-        m_typeName = retrieveTypeName();
-    }
-
-    return jsString(this->m_vm, m_typeName);
-}
-
 JSCStackFrame::SourcePositions* JSCStackFrame::getSourcePositions()
 {
     if (SourcePositionsState::NotCalculated == m_sourcePositionsState) {
@@ -342,12 +333,6 @@ ALWAYS_INLINE String JSCStackFrame::retrieveFunctionName()
     }
 
     return emptyString();
-}
-
-ALWAYS_INLINE String JSCStackFrame::retrieveTypeName()
-{
-    JSC::JSObject* calleeObject = uncheckedDowncast<JSC::JSObject>(m_callee);
-    return calleeObject->className();
 }
 
 // General flow here is based on JSC's appendSourceToError (ErrorInstance.cpp)
@@ -471,7 +456,7 @@ String functionName(JSC::VM& vm, JSC::CodeBlock* codeBlock)
     }
 
     if (codeType == JSC::FunctionCode) {
-        return uncheckedDowncast<JSC::FunctionExecutable>(executable)->ecmaName().string();
+        return uncheckedDowncast<JSC::FunctionExecutable>(executable)->ecmaNameWithoutGC();
     }
 
     return String();
@@ -518,7 +503,7 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::
                 auto* function = uncheckedDowncast<JSC::JSFunction>(object);
                 functionName = function->nameWithoutGC(vm);
                 if (functionName.isEmpty() && !function->isHostFunction()) {
-                    functionName = function->jsExecutable()->ecmaName().string();
+                    functionName = function->jsExecutable()->ecmaNameWithoutGC();
                 }
             } else if (jstype == JSC::InternalFunctionType) {
                 functionName = uncheckedDowncast<JSC::InternalFunction>(object)->name();
@@ -585,7 +570,7 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, const
                     auto str = function->nameWithoutGC(vm);
                     if (str.isEmpty() && !function->isHostFunction()) {
                         setTypeFlagsIfNecessary();
-                        return function->jsExecutable()->ecmaName().string();
+                        return function->jsExecutable()->ecmaNameWithoutGC();
                     }
                     setTypeFlagsIfNecessary();
                     return str;

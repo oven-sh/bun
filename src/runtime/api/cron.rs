@@ -27,9 +27,7 @@ use bun_jsc::{
     self as jsc, CallFrame, EncodedSliceJsc as _, EventLoopHandle, GlobalRef, JSFunction,
     JSGlobalObject, JSObject, JSValue, JsCell, JsRef, JsResult,
 };
-#[cfg(not(target_os = "macos"))]
-use bun_paths::PathBuffer;
-use bun_paths::{self as path};
+use bun_paths as path;
 use bun_ptr::{BackRef, RefPtr, ThisPtr};
 use bun_resolver::fs::FileSystem;
 #[cfg(not(target_os = "macos"))]
@@ -75,7 +73,7 @@ use crate::jsc_hooks::timer_all_mut as timer_all;
 // in-flight dealloc UB) and touches nothing after the call that may free
 // `this`. Mutable state lives in `Cell`/`JsCell` fields so every access is a
 // short shared borrow.
-trait CronJobBase: Sized + bun_ptr::AnyRefCounted<DestructorCtx = ()> {
+trait CronJobBase: Sized + bun_ptr::AnyRefCounted {
     /// The single owning ref; released by `finish`.
     fn owner(&self) -> &Cell<Option<RefPtr<Self>>>;
     fn promise(&self) -> &JsCell<jsc::JSPromiseStrong>;
@@ -149,7 +147,7 @@ trait CronJobBase: Sized + bun_ptr::AnyRefCounted<DestructorCtx = ()> {
                 .promise()
                 .with_mut(|p| p.resolve(&global, JSValue::UNDEFINED));
         }
-        owner.deref();
+        drop(owner);
         ev.exit();
     }
 
@@ -189,7 +187,7 @@ trait CronJobBase: Sized + bun_ptr::AnyRefCounted<DestructorCtx = ()> {
             let _ = write!(
                 &mut msg,
                 "Failed to read process output: {}",
-                <&'static str>::from(err.get_errno())
+                bstr::BStr::new(err.name())
             );
             self.err_msg().set(Some(msg));
         }
@@ -393,7 +391,7 @@ impl CronJobBase for CronRegisterJob {
             Status::Err(err) => {
                 self.set_err(format_args!(
                     "Process error: {}",
-                    <&'static str>::from(err.get_errno())
+                    bstr::BStr::new(err.name())
                 ));
                 return JobAction::Finish;
             }
@@ -1125,7 +1123,7 @@ impl CronJobBase for CronRemoveJob {
             Status::Err(err) => {
                 self.set_err(format_args!(
                     "Process error: {}",
-                    <&'static str>::from(err.get_errno())
+                    bstr::BStr::new(err.name())
                 ));
                 return JobAction::Finish;
             }
@@ -1370,7 +1368,6 @@ impl Drop for CronRemoveJob {
 // + `UnsafeCell`-backed fields suppresses `noalias` on the receiver.
 #[bun_jsc::JsClass(no_constructor)]
 #[derive(bun_ptr::CellRefCounted)]
-#[ref_count(destroy = Self::destroy_impl)]
 pub struct CronJob {
     ref_count: Cell<u32>,
     /// Set from the allocating `RefPtr` so `&self` host fns can reach the
@@ -1416,19 +1413,6 @@ pub enum ClearMode {
 }
 
 impl CronJob {
-    /// `CellRefCounted::destroy` target (refcount hit zero).
-    ///
-    /// Safe fn: only reachable via the `#[ref_count(destroy = …)]` derive,
-    /// whose generated trait `destroy` upholds the sole-owner contract.
-    fn destroy_impl(this: *mut Self) {
-        // deinit: this_value.deinit() then destroy.
-        // Note: `JsRef::deinit()` was dropped — Strong's Drop on
-        // reassignment handles teardown (JSRef.rs trailer).
-        bun_ptr::destroy_box_with(this, |job| job.this_value.set(JsRef::empty()));
-    }
-}
-
-impl CronJob {
     /// Defer downgrading the JS wrapper to weak until any in-flight promise
     /// has settled, so onPromiseReject can still read pendingPromise from
     /// the wrapper and pass the real Promise to unhandledRejection.
@@ -1443,9 +1427,8 @@ impl CronJob {
 
     /// May free `this`.
     fn release_pending_ref(this: ThisPtr<Self>) {
-        if let Some(pending) = this.pending_ref.replace(None) {
+        if let Some(_pending) = this.pending_ref.replace(None) {
             this.maybe_downgrade();
-            pending.deref();
         }
     }
 
@@ -1494,7 +1477,7 @@ impl CronJob {
             return;
         };
         if let Some(i) = jobs.iter().position(|j| j.as_ptr() == this.as_ptr()) {
-            jobs.swap_remove(i).deref();
+            drop(jobs.swap_remove(i));
         }
     }
 
@@ -1514,12 +1497,11 @@ impl CronJob {
             if MODE == ClearMode::Teardown {
                 Self::release_pending_ref(this);
             }
-            job.deref();
         }
     }
 
-    pub fn finalize(self: Box<Self>) {
-        bun_ptr::finalize_js_box(self, |this| this.this_value.with_mut(|v| v.finalize()));
+    pub fn finalize(&self) {
+        self.this_value.with_mut(|v| v.finalize());
     }
 
     fn compute_next_timespec(&self) -> Option<bun_core::Timespec> {
@@ -1571,7 +1553,7 @@ impl CronJob {
         // scheduleNext → finishDeferredStop downgrades this_value and derefs the
         // list entry; bracket-ref so that path can't drop the last ref mid-function.
         // Timer heap holds the entry; `this` is live until the guard drops.
-        let _guard = this.ref_guard();
+        let _guard = RefPtr::from_this(this);
         // R-2: shared borrows only — `cb.call()` re-enters JS, which may call
         // `stop()`/`ref()`/`unref()` on this same wrapper; a `noalias`
         // `&mut Self` here would be Stacked-Borrows UB. All mutation is
@@ -1743,7 +1725,6 @@ impl CronJob {
         job.self_ref.set(BackRef::from(job.this_ptr()));
 
         let Some(next_time) = job.compute_next_timespec() else {
-            job.deref();
             return Err(global.throw_invalid_arguments(format_args!(
                 "Cron expression '{}' has no future occurrences",
                 bstr::BStr::new(schedule_slice.slice())
@@ -1755,12 +1736,12 @@ impl CronJob {
         // so skip the list ref + append entirely.
         if vm.hot_reload == HotReload::Hot || vm.worker.is_some() {
             if let Some(jobs) = crate::jsc_hooks::cron_jobs_mut() {
-                jobs.push(job.dupe_ref());
+                jobs.push(job.clone());
             }
         }
 
         // `job`'s ref moves to the JS wrapper (released via `finalize`).
-        let js_value = Self::to_js_nonnull(job.data, global);
+        let js_value = Self::to_js_nonnull(job.as_non_null(), global);
         let job = job.into_this_ptr();
         job.this_value.with_mut(|v| v.set_strong(js_value, global));
         js::cron_set_cached(js_value, global, schedule_arg);
@@ -2020,7 +2001,7 @@ fn spawn_cmd_prepare<T: SpawnCmdTarget>(
     // Hoisted to function scope: `resolved_argv0` borrows into this buffer on
     // Windows and must outlive the spawn below.
     #[cfg(windows)]
-    let mut path_buf = PathBuffer::uninit();
+    let mut path_buf = bun_paths::path_buffer_pool::get();
     #[cfg(windows)]
     {
         // Resolve the executable via bun.which, matching Bun.spawn's behavior.
@@ -2206,7 +2187,7 @@ fn find_crontab() -> Option<ZString> {
     #[cfg(not(windows))]
     {
         let path_env = env_var::PATH.get().unwrap_or(b"/usr/bin:/bin");
-        let mut buf = PathBuffer::uninit();
+        let mut buf = bun_paths::path_buffer_pool::get();
         let found = bun_which::which(&mut buf, path_env, b"", b"crontab")?;
         Some(ZString::from_bytes(found.as_bytes()))
     }
@@ -2241,7 +2222,7 @@ fn alloc_print_z(args: core::fmt::Arguments<'_>) -> Result<ZString, bun_alloc::A
 /// Create a temp file path with a random suffix to avoid TOCTOU/symlink attacks.
 #[cfg(not(target_os = "macos"))]
 fn make_temp_path(prefix: &'static str) -> Result<ZString, bun_alloc::AllocError> {
-    let mut name_buf = PathBuffer::uninit();
+    let mut name_buf = bun_paths::path_buffer_pool::get();
     let mut full_prefix = Vec::with_capacity(prefix.len() + 3);
     full_prefix.extend_from_slice(prefix.as_bytes());
     full_prefix.extend_from_slice(b"tmp");

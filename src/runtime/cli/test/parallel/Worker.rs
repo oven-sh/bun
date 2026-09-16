@@ -38,9 +38,7 @@ pub struct Worker {
     // dereferenced unsafely.
     pub(crate) coord: *const Coordinator<'static>,
     pub(crate) idx: u32,
-    // Intrusive-refcounted (`ThreadSafeRefCount`); `to_process` returns a
-    // `heap::alloc`ed `*mut Process`.
-    pub(crate) process: Option<*mut Process>,
+    pub(crate) process: Option<spawn::ProcessHandle>,
 
     /// Bidirectional IPC over fd 3. POSIX: usockets adopted from a socketpair.
     /// Windows: `uv.Pipe` (the parent end of `.buffer` extra-fd, full-duplex).
@@ -71,6 +69,13 @@ pub struct Worker {
     /// this and `ipc.done` so trailing IPC frames are decoded first.
     pub(crate) exit_status: Option<Status>,
     pub(crate) reap_pending: bool,
+    /// Set when this process sends `.ready`; reset before each respawn.
+    /// `inflight == None` with `!reached_ready` at reap distinguishes a
+    /// startup failure from a clean post-shutdown exit.
+    pub(crate) reached_ready: bool,
+    /// Consecutive (re)spawns of this slot that exited before `.ready`;
+    /// reset on `.ready`. Bounds the respawn loop in `reap_worker`.
+    pub(crate) startup_failures: u8,
 }
 
 impl Worker {
@@ -96,14 +101,8 @@ impl Worker {
         // which fields are populated doesn't matter.
         let mut this = scopeguard::guard(self, |this| {
             if let Some(p) = this.process.take() {
-                // SAFETY: `p` is a live intrusive-refcounted *mut Process
-                // produced by `to_process` below; sole owner until reaped.
-                unsafe {
-                    (*p).exit_handler = Default::default();
-                    if !(*p).has_exited() {
-                        let _ = (*p).kill(9);
-                    }
-                    (*p).close();
+                if !p.has_exited() {
+                    let _ = p.kill(9);
                 }
             }
             // Reset to fresh state after deinit so reapWorker's `!respawned`
@@ -155,9 +154,11 @@ impl Worker {
             let stdout = spawned.stdout;
             let stderr = spawned.stderr;
             let extra_pipes = core::mem::take(&mut spawned.extra_pipes);
-            this.process = Some(spawned.to_process(bun_event_loop::EventLoopHandle::init(
-                coord.vm.event_loop().cast(),
-            )));
+            this.process = Some(
+                spawned.to_process_handle(bun_event_loop::EventLoopHandle::init(
+                    coord.vm.event_loop().cast(),
+                )),
+            );
             if let Some(fd) = stdout {
                 this.out
                     .reader
@@ -247,7 +248,7 @@ impl Worker {
                     let _ = raw;
                 }
             }
-            this.process = Some(spawned.to_process(coord.vm.event_loop()));
+            this.process = Some(spawned.to_process_handle(coord.vm.event_loop()));
 
             if let spawn::WindowsStdioResult::Buffer(pipe) = spawned.stdout.take() {
                 // SAFETY: `pipe` is a Box<uv::Pipe> just produced by spawn_process;
@@ -283,10 +284,9 @@ impl Worker {
             let _ = scopeguard::ScopeGuard::into_inner(ipc_pipe_guard);
         }
 
-        let process_ptr = this.process.expect("set above");
-        // SAFETY: process_ptr is the live intrusive-refcounted *mut Process from
-        // `to_process` above; sole owner until reaped.
-        let process = unsafe { &mut *process_ptr };
+        let process: *mut Process = this.process.as_ref().expect("set above").as_ptr();
+        // SAFETY: just spawned; sole owner until reaped.
+        let process = unsafe { &mut *process };
         #[cfg(windows)]
         {
             if let Some(job) = coord.windows_job {
@@ -355,7 +355,7 @@ impl Worker {
         f.begin(frame::Kind::Shutdown);
         self.ipc.send(f.finish());
         // Leave the channel open so the reader drains trailing
-        // repeat_bufs / junit_chunk / coverage_chunk frames; the worker exits on
+        // repeat_bufs / coverage_file frames; the worker exits on
         // `.shutdown` and its exit closes the peer end.
     }
 }
@@ -378,9 +378,8 @@ impl ChannelOwner for Worker {
         if self.ipc.is_attached() {
             // Corrupt frame path — kill the worker so onWorkerExit accounts for
             // the in-flight file and the slot can respawn.
-            if let Some(p) = self.process {
-                // SAFETY: `p` is the live intrusive-refcounted *mut Process.
-                let _ = unsafe { (*p).kill(9) };
+            if let Some(p) = &self.process {
+                let _ = p.kill(9);
             }
         }
         // SAFETY: coord backref valid; mutation — see `coord` field doc (provenance caveats).

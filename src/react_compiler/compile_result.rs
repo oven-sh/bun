@@ -5,7 +5,7 @@
     reason = "ported types consumed by sibling stubs not yet wired"
 )]
 
-use crate::diagnostics::{CompilerError, SourceLocation};
+use crate::diagnostics::CompilerError;
 
 /// Source location with index and filename fields for logger event serialization.
 /// Matches the Babel SourceLocation format that the TS compiler emits in logger events.
@@ -22,31 +22,6 @@ pub struct LoggerPosition {
     pub line: u32,
     pub column: u32,
     pub index: Option<u32>,
-}
-
-impl LoggerSourceLocation {
-    /// Create from a diagnostics SourceLocation, adding index and filename.
-    pub fn from_loc(
-        loc: &SourceLocation,
-        filename: Option<&str>,
-        start_index: Option<u32>,
-        end_index: Option<u32>,
-    ) -> Self {
-        Self {
-            start: LoggerPosition {
-                line: loc.start.line,
-                column: loc.start.column,
-                index: start_index,
-            },
-            end: LoggerPosition {
-                line: loc.end.line,
-                column: loc.end.column,
-                index: end_index,
-            },
-            filename: filename.map(|s| s.to_string()),
-            identifier_name: None,
-        }
-    }
 }
 
 /// A variable rename from lowering, serialized for the JS shim.
@@ -144,16 +119,6 @@ pub struct DebugLogEntry {
     pub kind: &'static str,
     pub name: String,
     pub value: String,
-}
-
-impl DebugLogEntry {
-    pub fn new(name: impl Into<String>, value: impl Into<String>) -> Self {
-        Self {
-            kind: "debug",
-            name: name.into(),
-            value: value.into(),
-        }
-    }
 }
 
 /// Logger events emitted during compilation.

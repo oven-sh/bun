@@ -13,6 +13,7 @@ use crate::node::util::validators;
 use crate::webcore::{Blob, Request, Response};
 
 pub use jsc::MarkedArrayBuffer as Buffer;
+use jsc::PinnedArrayBuffer;
 
 // `jsc.ArgumentsSlice` — cursor over CallFrame args.
 pub use jsc::ArgumentsSlice;
@@ -62,7 +63,7 @@ pub use bun_sys::PlatformIoVec;
 /// path per flavor (`read_file`'s scratch buffer, recursive `readdir`), and
 /// the arguments parsed for an async call must outlive it off the JS thread:
 /// strings are copied or re-referenced thread-safely, buffers are pinned and
-/// `protect()`ed until the owner calls [`bun_jsc::Unprotect::unprotect`].
+/// GC-rooted until the parsed value drops ([`PinnedArrayBuffer`]).
 #[derive(Copy, Clone, PartialEq, Eq, core::marker::ConstParamTy)]
 pub enum Flavor {
     Sync,
@@ -123,53 +124,24 @@ impl BlobOrStringOrBuffer {
         self.slice().len()
     }
 
-    pub(crate) fn from_js_maybe_file_maybe_async(
-        global: &JSGlobalObject,
-        value: JSValue,
-        file_blobs: FileBlobs,
-        flavor: Flavor,
-    ) -> JsResult<Option<BlobOrStringOrBuffer>> {
-        // Check StringOrBuffer first because it's more common and cheaper.
-        let str = StringOrBuffer::from_js_maybe_async(global, value, flavor, StringObjects::Allow)?;
-        let str = match str {
-            Some(s) => s,
-            None => {
-                // `as_class_ref` is the safe shared-borrow downcast (centralised
-                // deref proof in `JSValue`); the JS wrapper roots the payload
-                // while `value` is on the stack. All `Blob` accessors below
-                // take `&self`.
-                let Some(blob) = value.as_class_ref::<Blob>() else {
-                    return Ok(None);
-                };
-                if file_blobs == FileBlobs::Reject && blob.needs_to_read_file() {
-                    return Err(global
-                        .throw_invalid_arguments(format_args!("File blob cannot be used here")));
-                }
-
-                if flavor == Flavor::Async {
-                    // For async/cross-thread usage, copy the blob data to an owned slice
-                    // rather than referencing the store which isn't thread-safe
-                    let blob_data = blob.shared_view();
-                    let owned_data: Vec<u8> = blob_data.to_vec();
-                    return Ok(Some(Self::StringOrBuffer(StringOrBuffer::owned(
-                        owned_data,
-                    ))));
-                }
-
-                // `Blob::dupe()` clones the StoreRef (bumps refcount) and bit-copies fields.
-                return Ok(Some(Self::Blob(Box::new(blob.dupe()))));
-            }
-        };
-
-        Ok(Some(Self::StringOrBuffer(str)))
-    }
-
     pub(crate) fn from_js_maybe_file(
         global: &JSGlobalObject,
         value: JSValue,
         file_blobs: FileBlobs,
     ) -> JsResult<Option<BlobOrStringOrBuffer>> {
-        Self::from_js_maybe_file_maybe_async(global, value, file_blobs, Flavor::Sync)
+        // Check StringOrBuffer first because it's more common and cheaper.
+        if let Some(str) = StringOrBuffer::from_js(global, value)? {
+            return Ok(Some(Self::StringOrBuffer(str)));
+        }
+        let Some(blob) = value.as_class_ref::<Blob>() else {
+            return Ok(None);
+        };
+        if file_blobs == FileBlobs::Reject && blob.needs_to_read_file() {
+            return Err(
+                global.throw_invalid_arguments(format_args!("File blob cannot be used here"))
+            );
+        }
+        Ok(Some(Self::Blob(Box::new(blob.dupe()))))
     }
 
     pub fn from_js(
@@ -177,13 +149,6 @@ impl BlobOrStringOrBuffer {
         value: JSValue,
     ) -> JsResult<Option<BlobOrStringOrBuffer>> {
         Self::from_js_maybe_file(global, value, FileBlobs::Reject)
-    }
-
-    pub(crate) fn from_js_async(
-        global: &JSGlobalObject,
-        value: JSValue,
-    ) -> JsResult<Option<BlobOrStringOrBuffer>> {
-        Self::from_js_maybe_file_maybe_async(global, value, FileBlobs::Reject, Flavor::Async)
     }
 
     /// Like [`from_js_with_encoding_value_allow_request_response`] but takes an
@@ -269,13 +234,54 @@ impl BlobOrStringOrBuffer {
 
 // ──────────────────────────────────────────────────────────────────────────
 
+/// # Safety
+/// As the type's `from_js_async` parser or owned constructor builds it — JS
+/// buffers pinned and GC-rooted, strings thread-isolated — nothing in it is
+/// thread-affine: a work-pool job may read it and the JS thread drops it.
+pub unsafe trait ThreadIsolatedArg {}
+
+/// A `T` built by its `from_js_async` parser or owned constructor (see
+/// [`ThreadIsolatedArg`]); nothing else constructs one.
+pub struct ThreadIsolated<T>(T);
+
+impl<T: ThreadIsolatedArg> ThreadIsolated<T> {
+    /// # Safety
+    /// `value` was built as [`ThreadIsolatedArg`] describes (async parse or
+    /// owned data only).
+    #[inline]
+    pub(crate) unsafe fn new(value: T) -> Self {
+        Self(value)
+    }
+}
+
+// SAFETY: `new`'s contract is exactly what makes the value sendable.
+unsafe impl<T: ThreadIsolatedArg> Send for ThreadIsolated<T> {}
+
+impl<T> core::ops::Deref for ThreadIsolated<T> {
+    type Target = T;
+    #[inline]
+    fn deref(&self) -> &T {
+        &self.0
+    }
+}
+
+impl<T> core::ops::DerefMut for ThreadIsolated<T> {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut T {
+        &mut self.0
+    }
+}
+
 /// Parsed from JS it is `StringOrBuffer<'static>`; `Utf8` may instead borrow
 /// Rust-side bytes for a synchronous call ([`StringOrBuffer::borrowed`]).
 pub enum StringOrBuffer<'a> {
     String(Utf8WithString),
-    ThreadsafeString(Utf8WithString),
+    ThreadIsolatedString(Utf8WithString),
     Utf8(Utf8Bytes<'a>),
+    /// A JS buffer borrowed for a synchronous call, or owned result bytes not yet handed to JS.
     Buffer(Buffer),
+    /// A JS buffer parsed for an async call: pinned and GC-rooted until this drops.
+    PinnedBuffer(PinnedArrayBuffer),
 }
 
 impl Default for StringOrBuffer<'_> {
@@ -300,38 +306,10 @@ impl<'a> StringOrBuffer<'a> {
     pub(crate) fn slice(&self) -> &[u8] {
         match self {
             Self::String(str) => str.slice(),
-            Self::ThreadsafeString(str) => str.slice(),
+            Self::ThreadIsolatedString(str) => str.slice(),
             Self::Utf8(str) => str.slice(),
             Self::Buffer(str) => str.slice(),
-        }
-    }
-}
-
-impl bun_jsc::Unprotect for BlobOrStringOrBuffer {
-    /// JS-side half of cleanup — owned
-    /// payloads are released by `Drop` (which runs next when held in a
-    /// [`bun_jsc::ThreadSafe`]).
-    #[inline]
-    fn unprotect(&mut self) {
-        if let Self::StringOrBuffer(sob) = self {
-            sob.unprotect();
-        }
-    }
-}
-
-impl bun_jsc::Unprotect for StringOrBuffer<'static> {
-    /// JS-side half of cleanup — undo the
-    /// `protect()` taken by [`StringOrBuffer::to_thread_safe`] /
-    /// `from_js_maybe_async(.., Flavor::Async, ..)`. Owned slices are released
-    /// by `Drop`.
-    #[inline]
-    fn unprotect(&mut self) {
-        if let Self::Buffer(buffer) = self {
-            if buffer.pinned {
-                buffer.pinned = false;
-                buffer.buffer.unpin();
-            }
-            buffer.buffer.value.unprotect();
+            Self::PinnedBuffer(buffer) => buffer.slice(),
         }
     }
 }
@@ -339,7 +317,7 @@ impl bun_jsc::Unprotect for StringOrBuffer<'static> {
 impl StringOrBuffer<'_> {
     pub fn into_js(self, ctx: &JSGlobalObject) -> JsResult<JSValue> {
         match self {
-            Self::ThreadsafeString(str) | Self::String(str) => str.into_js(ctx),
+            Self::ThreadIsolatedString(str) | Self::String(str) => str.into_js(ctx),
             Self::Utf8(utf8) => bun_string_jsc::create_utf8_for_js(ctx, &utf8),
             Self::Buffer(mut buffer) => {
                 if buffer.buffer.value != JSValue::ZERO {
@@ -347,32 +325,35 @@ impl StringOrBuffer<'_> {
                 }
                 buffer.to_node_buffer(ctx)
             }
-        }
-    }
-
-    /// Returns the buffer payload if this is `Self::Buffer`.
-    #[inline]
-    pub(crate) fn buffer(&self) -> Option<&Buffer> {
-        if let Self::Buffer(b) = self {
-            Some(b)
-        } else {
-            None
+            Self::PinnedBuffer(buffer) => Ok(buffer.value),
         }
     }
 }
 
+// SAFETY: `Flavor::Async` yields `ThreadIsolatedString` / `Utf8` / `PinnedBuffer` only.
+unsafe impl ThreadIsolatedArg for StringOrBuffer<'static> {}
+
 impl StringOrBuffer<'static> {
-    pub(crate) fn to_thread_safe(&mut self) {
-        match self {
-            Self::String(s) => {
-                s.to_thread_safe();
-                let str = core::mem::take(s);
-                *self = Self::ThreadsafeString(str);
-            }
-            Self::ThreadsafeString(_) | Self::Utf8(_) => {}
-            Self::Buffer(buffer) => {
-                buffer.buffer.value.protect();
-            }
+    /// Rust-owned bytes for a work-pool job.
+    #[inline]
+    pub(crate) fn owned_isolated(bytes: Vec<u8>) -> ThreadIsolated<Self> {
+        // SAFETY: owned bytes only.
+        unsafe { ThreadIsolated::new(Self::owned(bytes)) }
+    }
+
+    /// `value` is ArrayBuffer-like (the caller checked): borrowed for `Sync`,
+    /// pinned and GC-rooted for `Async`.
+    pub(crate) fn buffer_from_js(
+        global: &JSGlobalObject,
+        value: JSValue,
+        flavor: Flavor,
+    ) -> JsResult<Self> {
+        if flavor == Flavor::Sync {
+            return Ok(Self::Buffer(Buffer::from_array_buffer(global, value)));
+        }
+        match PinnedArrayBuffer::root(global, value) {
+            Some(buffer) => Ok(Self::PinnedBuffer(buffer)),
+            None => Err(global.throw_out_of_memory()),
         }
     }
 
@@ -422,8 +403,8 @@ impl StringOrBuffer<'static> {
                 *out = if flavor == Flavor::Async {
                     shared_or_utf8(
                         global,
-                        str.into_utf8_with_string_thread_safe(),
-                        Self::ThreadsafeString,
+                        str.into_utf8_with_string_thread_isolated(),
+                        Self::ThreadIsolatedString,
                         Self::Utf8,
                     )
                 } else {
@@ -446,18 +427,7 @@ impl StringOrBuffer<'static> {
             | JSType::BigInt64Array
             | JSType::BigUint64Array
             | JSType::DataView => {
-                let buffer = if flavor == Flavor::Async {
-                    Buffer::from_js_pinned(global, value)
-                        .unwrap_or_else(|| Buffer::from_array_buffer(global, value))
-                } else {
-                    Buffer::from_array_buffer(global, value)
-                };
-
-                if flavor == Flavor::Async {
-                    buffer.buffer.value.protect();
-                }
-
-                *out = Self::Buffer(buffer);
+                *out = Self::buffer_from_js(global, value, flavor)?;
                 Ok(true)
             }
             _ => Ok(false),
@@ -482,6 +452,23 @@ impl StringOrBuffer<'static> {
     #[inline]
     pub fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Self>> {
         Self::from_js_maybe_async(global, value, Flavor::Sync, StringObjects::Allow)
+    }
+
+    /// [`from_js`](Self::from_js) for a work-pool job that reads the bytes itself: strings thread-isolated, buffers pinned and GC-rooted, a resizable buffer copied ([`PinnedArrayBuffer::copy_if_resizable`]).
+    #[inline]
+    pub(crate) fn from_js_async(
+        global: &JSGlobalObject,
+        value: JSValue,
+    ) -> JsResult<Option<ThreadIsolated<Self>>> {
+        let mut parsed =
+            Self::from_js_maybe_async(global, value, Flavor::Async, StringObjects::Allow)?;
+        if let Some(Self::PinnedBuffer(buffer)) = &mut parsed
+            && !buffer.copy_if_resizable(global)
+        {
+            return Err(global.throw_out_of_memory());
+        }
+        // SAFETY: parsed with `Flavor::Async`.
+        Ok(parsed.map(|v| unsafe { ThreadIsolated::new(v) }))
     }
 
     #[inline]
@@ -530,16 +517,7 @@ impl StringOrBuffer<'static> {
         string_objects: StringObjects,
     ) -> JsResult<bool> {
         if value.is_cell() && value.js_type().is_array_buffer_like() {
-            let buffer = if flavor == Flavor::Async {
-                Buffer::from_js_pinned(global, value)
-                    .unwrap_or_else(|| Buffer::from_array_buffer(global, value))
-            } else {
-                Buffer::from_array_buffer(global, value)
-            };
-            if flavor == Flavor::Async {
-                buffer.buffer.value.protect();
-            }
-            *out = Self::Buffer(buffer);
+            *out = Self::buffer_from_js(global, value, flavor)?;
             return Ok(true);
         }
 
@@ -822,7 +800,7 @@ pub struct NameTooLong;
 
 /// `bun_runtime`-tier behaviour layered on `bun_jsc::node_path::PathLike`.
 ///
-/// `to_thread_safe` / `into_thread_safe` / `slice` / `estimated_size` are
+/// `thread_isolated_copy` / `slice` / `estimated_size` are
 /// inherent on the lower-tier type (see `bun_jsc::node_path`); this trait
 /// adds only the path-buffer slicers and JS-argument parsing that depend on
 /// `bun_runtime` types (`Valid`, `ArgumentsSlice` cursor flow).
@@ -1126,37 +1104,20 @@ impl PathLikeExt for PathLike<'_> {
         };
         use jsc::JSType;
         let path = match arg.js_type() {
-            JSType::Uint8Array | JSType::DataView => {
-                let mut buffer = Buffer::from_js_pinned(ctx, arg)
-                    .unwrap_or_else(|| Buffer::from_typed_array(ctx, arg));
-                if let Err(err) = Valid::path_buffer(&buffer, ctx)
-                    .and_then(|_| Valid::path_null_bytes(buffer.slice(), ctx))
-                {
-                    if buffer.pinned {
-                        buffer.pinned = false;
-                        buffer.buffer.unpin();
-                    }
-                    return Err(err);
+            JSType::Uint8Array | JSType::DataView | JSType::ArrayBuffer => {
+                let mut buffer = if arguments.will_be_async {
+                    PinnedArrayBuffer::root(ctx, arg)
+                } else {
+                    PinnedArrayBuffer::pin(ctx, arg)
                 }
-
-                arguments.protect_eat();
-                PathLike::Buffer(buffer)
-            }
-
-            JSType::ArrayBuffer => {
-                let mut buffer = Buffer::from_js_pinned(ctx, arg)
-                    .unwrap_or_else(|| Buffer::from_array_buffer(ctx, arg));
-                if let Err(err) = Valid::path_buffer(&buffer, ctx)
-                    .and_then(|_| Valid::path_null_bytes(buffer.slice(), ctx))
-                {
-                    if buffer.pinned {
-                        buffer.pinned = false;
-                        buffer.buffer.unpin();
-                    }
-                    return Err(err);
+                .ok_or_else(|| ctx.throw_out_of_memory())?;
+                // Read after this call (pool thread, a later argument's getter, a `Blob` store): a shrink in between unmaps the pages.
+                if !buffer.copy_if_resizable(ctx) {
+                    return Err(ctx.throw_out_of_memory());
                 }
-
-                arguments.protect_eat();
+                Valid::path_buffer(buffer.slice(), ctx)?;
+                Valid::path_null_bytes(buffer.slice(), ctx)?;
+                arguments.eat();
                 PathLike::Buffer(buffer)
             }
 
@@ -1234,7 +1195,7 @@ fn path_like_from_string(
     will_be_async: bool,
 ) -> JsResult<PathLike<'static>> {
     let utf8 = if will_be_async {
-        str.into_utf8_with_string_thread_safe()
+        str.into_utf8_with_string_thread_isolated()
     } else {
         str.into_utf8_with_string()
     };
@@ -1242,7 +1203,7 @@ fn path_like_from_string(
     Valid::path_null_bytes(utf8.slice(), global)?;
 
     let shared = if will_be_async {
-        PathLike::ThreadsafeString
+        PathLike::ThreadIsolatedString
     } else {
         PathLike::String
     };
@@ -1305,8 +1266,8 @@ impl Valid {
         Ok(PathLike::default())
     }
 
-    pub(crate) fn path_buffer(buffer: &Buffer, ctx: &JSGlobalObject) -> JsResult<()> {
-        if buffer.slice().is_empty() {
+    pub(crate) fn path_buffer(slice: &[u8], ctx: &JSGlobalObject) -> JsResult<()> {
+        if slice.is_empty() {
             return Err(
                 ctx.throw_invalid_arguments(format_args!("Invalid path buffer: can't be empty"))
             );
@@ -1333,28 +1294,25 @@ impl Valid {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct VectorArrayBuffer {
-    // bare JSValue field — only sound while this lives on the stack.
-    // Stored in a stack-local during writev; never heap-allocated.
     pub value: JSValue,
     pub(crate) buffers: Vec<PlatformIoVec>,
     /// The collected elements, in order. Rooted (and their backing stores
-    /// pinned) for the lifetime of an async operation; see [`Self::release`].
+    /// pinned), along with `value`, from `from_js(.., pin: true)` until drop.
     pub(crate) views: Vec<JSValue>,
     pinned: bool,
 }
 
-impl VectorArrayBuffer {
-    /// Release the per-element roots and pins taken by `from_js(.., pin: true)`.
-    /// Must run on the JS thread, exactly once, after the I/O completes.
-    pub(crate) fn release(&mut self) {
+impl Drop for VectorArrayBuffer {
+    /// Releases the roots and pins taken by `from_js(.., pin: true)` (JS thread).
+    fn drop(&mut self) {
         if !self.pinned {
             return;
         }
-        self.pinned = false;
-        for view in self.views.drain(..) {
+        for view in &self.views {
             view.unpin_array_buffer();
             view.unprotect();
         }
+        self.value.unprotect();
     }
 }
 
@@ -1400,9 +1358,9 @@ impl VectorArrayBuffer {
     /// getter, a proxy trap) cannot free a backing store that has already been
     /// captured.
     ///
-    /// `pin` is required when the spans outlive this call (async I/O): each
-    /// element is rooted and its backing store is pinned against detach until
-    /// [`Self::release`] runs.
+    /// `pin` is required when the spans outlive this call (async I/O): `val` and
+    /// each element are rooted and each backing store is pinned against detach
+    /// until the value drops.
     pub fn from_js(
         global_object: &JSGlobalObject,
         val: JSValue,
@@ -1431,25 +1389,18 @@ impl VectorArrayBuffer {
             // The C++ side already pinned each backing store; root the views
             // themselves so a getter-returned element that is not reachable
             // from `value` survives until completion. Set `pinned` even on
-            // failure so `release()` balances the elements collected before
-            // the error.
+            // failure so `Drop` balances the elements collected before the error.
             out.pinned = true;
             for view in &out.views {
                 view.protect();
             }
+            val.protect();
         }
         match status {
             0 => Ok(out),
-            -1 => {
-                out.release();
-                Err(jsc::JsError::Thrown)
-            }
-            2 => {
-                out.release();
-                Err(global_object.throw_out_of_memory())
-            }
+            -1 => Err(jsc::JsError::Thrown),
+            2 => Err(global_object.throw_out_of_memory()),
             _ => {
-                out.release();
                 Err(global_object
                     .throw_invalid_arguments(format_args!("Expected ArrayBufferView[]")))
             }

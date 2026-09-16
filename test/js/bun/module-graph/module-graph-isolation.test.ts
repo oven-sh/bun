@@ -412,66 +412,52 @@ const dir = String(
         await graph.run(() => app.fetchHeaders(process.env.NEVER_ENDING_URL));
       });
     `,
-    "isolated/control.test.js": `
-      import { test } from "bun:test";
-      // The same fetch, still receiving when this file ends, by the file's own script.
-      test("a fetch of the file's own that is still receiving when this file ends", async () => {
-        globalThis.response = await fetch(process.env.NEVER_ENDING_URL);
-      });
-    `,
     "isolated/second.test.js": `
       import { test } from "bun:test";
       import { heapStats, generateHeapSnapshotForDebugging } from "bun:jsc";
-      test("the realm of the file before is collected", async () => {
-        let realms;
-        for (let i = 0; i < 100 && realms !== 1; i++) {
-          Bun.gc(true);
-          await new Promise(resolve => setImmediate(resolve));
-          realms = heapStats().objectTypeCounts.GlobalObject;
+      // The realm of the file before is gone, or it is there and no root reaches it: a collection
+      // does not promise to free what nothing refers to (its scan of the machine stack may still see
+      // it; builds with assertions keep the last realm that way, with no graph anywhere).
+      test("no root reaches the realm of the file before", async () => {
+        let reached = [];
+        for (let attempt = 0; attempt < 4; attempt++) {
+          let realms;
+          for (let i = 0; i < 25 && realms !== 1; i++) {
+            Bun.gc(true);
+            await new Promise(resolve => setImmediate(resolve));
+            realms = heapStats().objectTypeCounts.GlobalObject;
+          }
+          reached = realms === 1 ? [] : realmsARootReaches();
+          if (reached.length === 0) break;
         }
-        console.log("realms: " + realms);
-        // (For the log, should the count differ from that of a run whose first file left nothing behind.)
-        if (realms !== 1) console.log(whatKeepsEachRealm());
+        console.log("realms a root reaches: " + JSON.stringify(reached));
       });
-      // For the log of a failing run: every GlobalObject, what points at it, and how a root reaches it.
-      function whatKeepsEachRealm() {
+      // Every GlobalObject but the one running now that a root reaches, with the shortest path from that root.
+      // A root that an output constraint adds (the listeners of an emitter that is already marked) follows from
+      // whatever marked the emitter, so it is not one.
+      function realmsARootReaches() {
         const { nodes, nodeClassNames, edges, edgeTypes, edgeNames, roots, labels } = generateHeapSnapshotForDebugging();
-        const classOf = new Map(), labelOf = new Map(), outgoing = new Map(), incoming = new Map(), rootsOf = new Map(), lines = [];
+        const classOf = new Map(), labelOf = new Map(), outgoing = new Map(), rootsOf = new Map();
         for (let i = 0; i < nodes.length; i += 7) (classOf.set(nodes[i], nodeClassNames[nodes[i + 2]]), labelOf.set(nodes[i], labels?.[nodes[i + 4]] ?? ""));
         for (let i = 0; i < (roots?.length ?? 0); i += 3) rootsOf.set(roots[i], [labels?.[roots[i + 1]], labels?.[roots[i + 2]]].filter(Boolean).join("/") || "root");
         for (let e = 0; e < edges.length; e += 4) {
           const type = edgeTypes[edges[e + 2]];
           const via = type === "Property" || type === "Variable" ? "." + edgeNames[edges[e + 3]] : type === "Index" ? "[" + edges[e + 3] + "]" : "";
           (outgoing.get(edges[e]) ?? outgoing.set(edges[e], []).get(edges[e])).push([edges[e + 1], via]);
-          (incoming.get(edges[e + 1]) ?? incoming.set(edges[e + 1], []).get(edges[e + 1])).push([edges[e], via]);
         }
         const name = id => classOf.get(id) + (labelOf.get(id) ? ' "' + String(labelOf.get(id)).slice(0, 30) + '"' : "") + (rootsOf.has(id) ? " {root: " + rootsOf.get(id) + "}" : "");
-        // Shortest path to the target from a root (not through the realm running now, not from the target itself). Roots
-        // an output constraint adds (listeners of an emitter that is already marked) come second: they follow from something else.
-        const pathTo = (target, avoid) => {
-          for (const derived of [false, true]) {
-            const from = new Map(), queue = [];
-            for (const [id, why] of rootsOf) if (id !== target && id !== avoid && why.includes("DOMGCOutput") === derived) (from.set(id, null), queue.push(id));
-            for (let at = 0; at < queue.length; at++) {
-              if (queue[at] === target) {
-                const hops = [];
-                for (let id = target; id !== null; id = from.get(id)?.[0] ?? null) hops.unshift((from.get(id)?.[1] ?? "") + " " + name(id));
-                return hops.slice(0, 14).join(" ->");
-              }
-              for (const [to, via] of outgoing.get(queue[at]) ?? []) if (!from.has(to) && to !== avoid) (from.set(to, [queue[at], via]), queue.push(to));
-            }
-          }
-          return "no root reaches it";
-        };
         const globals = [...classOf].filter(([, kind]) => kind === "GlobalObject").map(([id]) => id);
         const current = globals.find(id => rootsOf.has(id));
-        for (const id of globals) {
-          const holders = new Map();
-          for (const [from, via] of incoming.get(id) ?? []) holders.set(name(from) + via, (holders.get(name(from) + via) ?? 0) + 1);
-          const sorted = [...holders].sort((x, y) => y[1] - x[1]).slice(0, 8).map(([from, count]) => from + (count > 1 ? " x" + count : ""));
-          lines.push("GlobalObject#" + id + (id === current ? " (running now)" : " reached by: " + pathTo(id, current)) + " | pointed at by: " + sorted.join("; "));
-        }
-        return lines.join("\\n");
+        // One search from every root at once, never through the realm running now.
+        const from = new Map(), queue = [];
+        for (const [id, why] of rootsOf) if (id !== current && !why.includes("DOMGCOutput")) (from.set(id, null), queue.push(id));
+        for (let at = 0; at < queue.length; at++)
+          for (const [to, via] of outgoing.get(queue[at]) ?? []) if (!from.has(to) && to !== current) (from.set(to, [queue[at], via]), queue.push(to));
+        return globals.filter(id => id !== current && from.has(id)).map(id => {
+          const hops = [];
+          for (let at = id; at !== null; at = from.get(at)?.[0] ?? null) hops.unshift((from.get(at)?.[1] ?? "") + " " + name(at));
+          return hops.slice(0, 16).join(" ->").trim();
+        });
       }
     `,
     "observes-and-connects.mjs": `
@@ -3546,31 +3532,21 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
           new ReadableStream({ pull: controller => (controller.enqueue(new Uint8Array(1024)), new Promise(() => {})) }),
         ),
     });
-    // How many realms are left once the next file runs, against a first file that leaves nothing
-    // behind: a collection does not promise to free a realm nothing refers to (a build with
-    // assertions keeps the last one around), so the count itself is the engine's business.
-    const realmsAfter = async (first: string) => {
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "test", "--isolate", first, "second.test.js"],
-        cwd: join(dir, "isolated"),
-        env: { ...bunEnv, NEVER_ENDING_URL: neverEnding.url.href },
-        stdout: "pipe",
-        stderr: "pipe",
-        timeout: 30_000,
-        killSignal: "SIGKILL",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      const output = stdout + stderr;
-      return { realms: output.match(/realms: \d+/)?.[0], exitCode, keptBy: output.match(/^GlobalObject#.*$/gm) ?? [] };
-    };
-    const [control, withTheGraph] = [await realmsAfter("control.test.js"), await realmsAfter("first.test.js")];
-    expect({ ...withTheGraph, keptBy: withTheGraph.realms === control.realms ? [] : withTheGraph.keptBy }).toEqual({
-      realms: control.realms,
-      exitCode: 0,
-      keptBy: [],
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--isolate", "first.test.js", "second.test.js"],
+      cwd: join(dir, "isolated"),
+      env: { ...bunEnv, NEVER_ENDING_URL: neverEnding.url.href },
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 30_000,
+      killSignal: "SIGKILL",
     });
-    expect(control.exitCode).toBe(0);
-    // (Two runs of the test runner.)
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ said: (stdout + stderr).match(/^realms a root reaches: .*$/m)?.[0], exitCode }).toEqual({
+      said: "realms a root reaches: []",
+      exitCode: 0,
+    });
+    // (A heap snapshot or four, on the builds where the realm is still there.)
   }, 30_000);
   test("a CommonJS wrapper made inside another function keeps that function's scope", async () => {
     expect(await runsFixture("custom-commonjs-wrapper.mjs")).toEqual({

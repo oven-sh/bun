@@ -14,6 +14,7 @@ use super::client_context::ClientContext;
 use super::encode;
 use super::stream::Stream;
 use crate::h3_client as H3;
+use crate::http_thread::WriteMessageType;
 use crate::internal_state::HTTPStage;
 use crate::signals::Field as Signal;
 use crate::{HTTPClient, HeaderResult, Protocol};
@@ -146,7 +147,11 @@ impl ClientSession {
         }
     }
 
-    pub(crate) fn stream_body_by_http_id(&mut self, async_http_id: u32, ended: bool) -> bool {
+    pub(crate) fn stream_body_by_http_id(
+        &mut self,
+        async_http_id: u32,
+        message: WriteMessageType,
+    ) -> bool {
         for &stream_ptr in self.pending.iter() {
             let stream = stream_mut(stream_ptr);
             let Some(client) = stream.client else {
@@ -157,7 +162,11 @@ impl ClientSession {
                 continue;
             }
             if let crate::HTTPRequestBody::Stream(s) = &mut client.state.original_request_body {
-                s.ended = ended;
+                if message == WriteMessageType::LengthMismatch {
+                    self.fail(stream_ptr, crate::Error::RequestBodyLengthMismatch);
+                    return true;
+                }
+                s.ended = message == WriteMessageType::End;
                 if let Some(qs) = stream.qstream_mut() {
                     encode::drain_send_body(stream, qs);
                 }
@@ -290,8 +299,11 @@ impl ClientSession {
         // `host` drops here (was `defer bun.default_allocator.free(host)`).
     }
 
-    /// Locate first, then act: `fail` mutates `pending`, so it cannot run inside this loop.
-    fn pending_stream_by_http_id(&self, async_http_id: u32) -> Option<*mut Stream> {
+    pub(crate) fn abort_by_http_id(&mut self, async_http_id: u32) -> bool {
+        // `fail` mutates `pending`, so it cannot be called while the iterator
+        // holds `&self.pending`, and only one entry can match — so locate
+        // first via raw-ptr reads, then act.
+        let mut found: *mut Stream = core::ptr::null_mut();
         for &stream_ptr in self.pending.iter() {
             // pending entries are live until detach(); `stream_ref` reads the
             // Copy `client` field — no `&mut Stream` materialized.
@@ -301,35 +313,15 @@ impl ClientSession {
             // `Stream.client` is a live backref while attached; `ParentRef`
             // reads the Copy `async_http_id` field via shared deref.
             if bun_ptr::ParentRef::from(cl).async_http_id == async_http_id {
-                return Some(stream_ptr);
+                found = stream_ptr;
+                break;
             }
         }
-        None
-    }
-
-    pub(crate) fn abort_by_http_id(&mut self, async_http_id: u32) -> bool {
-        let Some(found) = self.pending_stream_by_http_id(async_http_id) else {
-            return false;
-        };
-        self.fail(found, crate::Error::Aborted);
-        true
-    }
-
-    /// Fails the request only while its stream body is still the one being sent.
-    pub(crate) fn fail_request_body_by_http_id(&mut self, async_http_id: u32) -> bool {
-        let Some(found) = self.pending_stream_by_http_id(async_http_id) else {
-            return false;
-        };
-        let sending_stream_body = stream_ref(found).client.is_some_and(|cl| {
-            matches!(
-                bun_ptr::ParentRef::from(cl).state.original_request_body,
-                crate::HTTPRequestBody::Stream(_)
-            )
-        });
-        if sending_stream_body {
-            self.fail(found, crate::Error::RequestBodyLengthMismatch);
+        if !found.is_null() {
+            self.fail(found, crate::Error::Aborted);
+            return true;
         }
-        true
+        false
     }
 
     /// Runs from inside lsquic's process_conns via on_stream_{headers,data,close}.

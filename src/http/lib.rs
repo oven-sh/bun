@@ -123,7 +123,8 @@ pub enum Protocol {
 
 pub use bun_http_types::Encoding::Encoding;
 pub use header_value_iterator::{
-    HeaderValueIterator, connection_header_keep_alive, upgrade_header_is_not_h2,
+    HeaderValueIterator, connection_header_keep_alive, fold_transfer_encoding,
+    upgrade_header_is_not_h2,
 };
 pub use init_error::InitError;
 
@@ -2438,9 +2439,7 @@ impl<'a> HTTPClient<'a> {
             match hash {
                 h if h == hash_header_const(b"Content-Length") => {
                     // Content-Length is always consumed (never written to the buffer).
-                    if !self.flags.is_streaming_request_body {
-                        original_content_length = Some(self.header_str(header_values[i]));
-                    }
+                    original_content_length = Some(self.header_str(header_values[i]));
                     continue;
                 }
                 h if h == hash_header_const(b"Connection") => {
@@ -2541,13 +2540,11 @@ impl<'a> HTTPClient<'a> {
         if body_len > 0 || self.method.has_request_body() {
             if self.flags.is_streaming_request_body {
                 // `StreamFraming`, decided by the producer. An upgrade tunnels the bytes unframed.
-                let (content_length, transfer_encoding) = match &self.state.original_request_body {
-                    HTTPRequestBody::Stream(stream) => {
-                        (stream.content_length, stream.transfer_encoding)
-                    }
-                    _ => (None, None),
+                let framing = match &self.state.original_request_body {
+                    HTTPRequestBody::Stream(stream) => stream.framing,
+                    _ => Default::default(),
                 };
-                if let Some(content_length) = content_length {
+                if let Some(content_length) = framing.content_length {
                     let value: &[u8] = bun_core::fmt::int_as_bytes(
                         &mut self.request_content_len_buf,
                         content_length,
@@ -2558,7 +2555,7 @@ impl<'a> HTTPClient<'a> {
                         picohttp::Header::new(CONTENT_LENGTH_HEADER_NAME, value);
                     header_count += 1;
                 } else if self.flags.upgrade_state == HTTPUpgradeState::None {
-                    request_headers_buf[header_count] = match transfer_encoding {
+                    request_headers_buf[header_count] = match framing.transfer_encoding {
                         Some(value) => picohttp::Header::new(
                             CHUNKED_ENCODED_HEADER.name(),
                             self.header_str(value),
@@ -4909,11 +4906,10 @@ impl<'a> HTTPClient<'a> {
                     // Content-Length is an unrecoverable framing error —
                     // falling back to 0 would release a desynchronized socket
                     // into the keep-alive pool.
-                    let value = header.value();
-                    if value.is_empty() || !value.iter().all(u8::is_ascii_digit) {
-                        return Err(crate::Error::InvalidContentLength);
-                    }
-                    let Ok(content_length) = bun_core::parse_unsigned::<usize>(value, 10) else {
+                    let Some(content_length) =
+                        bun_http_types::parse_content_length_strict(header.value())
+                            .and_then(|n| usize::try_from(n).ok())
+                    else {
                         return Err(crate::Error::InvalidContentLength);
                     };
                     if self.method.has_body() {
@@ -4956,19 +4952,7 @@ impl<'a> HTTPClient<'a> {
                     }
                 }
                 h if h == hash_header_const(b"Transfer-Encoding") => {
-                    // RFC 9112 §6.1: `chunked`, if present, must be the final coding.
-                    for token in HeaderValueIterator::init(header.value()) {
-                        if self.state.transfer_encoding == Encoding::Chunked {
-                            return Err(crate::Error::UnsupportedTransferEncoding);
-                        }
-                        match Encoding::from_token(token) {
-                            Some(Encoding::Chunked) => {
-                                self.state.transfer_encoding = Encoding::Chunked;
-                            }
-                            Some(_) => {}
-                            None => return Err(crate::Error::UnsupportedTransferEncoding),
-                        }
-                    }
+                    fold_transfer_encoding(header.value(), &mut self.state.transfer_encoding)?;
                 }
                 h if h == hash_header_const(b"Location") => {
                     location = header.value();

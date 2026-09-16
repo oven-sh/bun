@@ -49,6 +49,7 @@ use crate::webcore::jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSPromise, JSValue, JsResult, VirtualMachine,
 };
 use bun_core::{String as BunString, Tag as BunStringTag};
+use bun_http::http_request_body::StreamFraming;
 use bun_http::{self as http, FetchRedirect, Headers, HeadersExt as _, MimeType};
 use bun_http_jsc::method_jsc;
 use bun_http_types::Method::Method;
@@ -381,6 +382,21 @@ enum URLType {
 // ──────────────────────────────────────────────────────────────────────────
 // fetchImpl — shared implementation
 // ──────────────────────────────────────────────────────────────────────────
+
+/// Nothing was queued yet: cancel a stream body with `reason` and reject with it.
+fn reject_before_send(
+    global_this: &JSGlobalObject,
+    body: &mut HTTPRequestBody,
+    reason: JSValue,
+) -> JsResult<JSValue> {
+    if let HTTPRequestBody::ReadableStream(stream_ref) = &*body {
+        if let Some(stream) = stream_ref.get() {
+            stream.cancel_with_reason(global_this, reason)?;
+        }
+    }
+    body.detach();
+    Ok(JSPromise::rejected_promise(global_this, reason).to_js())
+}
 
 /// Shared implementation of fetch
 fn fetch_impl<const ALLOW_GET_BODY: bool>(
@@ -1463,13 +1479,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     if let Some(sig) = &signal {
         if sig.aborted() {
             let reason = sig.js_reason(global_this);
-            if let HTTPRequestBody::ReadableStream(stream_ref) = &body {
-                if let Some(stream) = stream_ref.get() {
-                    stream.cancel_with_reason(global_this, reason)?;
-                }
-            }
-            body.detach();
-            return Ok(JSPromise::rejected_promise(global_this, reason).to_js());
+            return reject_before_send(global_this, &mut body, reason);
         }
     }
 
@@ -1878,43 +1888,28 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     }
 
     // Decided before anything is queued, so an unusable framing header rejects up front.
-    let mut stream_framing = http::http_request_body::StreamFraming::default();
+    let mut stream_framing = StreamFraming::default();
     if matches!(body, HTTPRequestBody::ReadableStream(_))
         && let Some(request_headers) = &headers
     {
-        use http::http_request_body::{InvalidStreamFraming, StreamFraming};
-        if upgraded_connection {
-            stream_framing = StreamFraming::for_upgrade(request_headers);
+        stream_framing = if upgraded_connection {
+            StreamFraming::for_upgrade(request_headers)
         } else {
             match StreamFraming::for_body(request_headers) {
-                Ok(framing) => stream_framing = framing,
+                Ok(framing) => framing,
                 Err(invalid) => {
-                    let err = match invalid {
-                        InvalidStreamFraming::ContentLength(value) => global_this.to_type_error(
-                            jsc::ErrorCode::HTTP_INVALID_HEADER_VALUE,
-                            format_args!(
-                                "Invalid value \"{}\" for header \"Content-Length\": a request with a streaming body needs a count of bytes",
-                                bstr::BStr::new(value)
-                            ),
+                    let err = global_this.to_type_error(
+                        jsc::ErrorCode::HTTP_INVALID_HEADER_VALUE,
+                        format_args!(
+                            "Invalid value \"{}\" for header \"{}\"",
+                            bstr::BStr::new(invalid.value),
+                            invalid.name
                         ),
-                        InvalidStreamFraming::TransferEncoding(value) => global_this.to_type_error(
-                            jsc::ErrorCode::HTTP_INVALID_HEADER_VALUE,
-                            format_args!(
-                                "Invalid value \"{}\" for header \"Transfer-Encoding\": fetch() chunk-encodes a streaming body, so the final coding must be \"chunked\"",
-                                bstr::BStr::new(value)
-                            ),
-                        ),
-                    };
-                    if let HTTPRequestBody::ReadableStream(stream_ref) = &body {
-                        if let Some(stream) = stream_ref.get() {
-                            stream.cancel_with_reason(global_this, err)?;
-                        }
-                    }
-                    body.detach();
-                    return Ok(JSPromise::rejected_promise(global_this, err).to_js());
+                    );
+                    return reject_before_send(global_this, &mut body, err);
                 }
             }
-        }
+        };
     }
 
     // Only create this after we have validated all the input.

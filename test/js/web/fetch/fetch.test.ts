@@ -3486,19 +3486,12 @@ describe("fetch() with a streaming request body and caller framing headers", () 
       expect(origin.connections).toBe(rows.length);
     });
 
-    it("rejects a Transfer-Encoding that does not end in chunked, before anything is sent", async () => {
+    it("rejects a Transfer-Encoding that is not a list of known codings ending in chunked, before anything is sent", async () => {
       await using origin = await rawOrigin();
       const rows: HeadersInit[] = [
-        ...[
-          "identity",
-          "gzip",
-          "chunked, gzip",
-          "chunked, chunked",
-          "gzip,, chunked",
-          "chunked,",
-          "gzip; q=1, chunked",
-          "",
-        ].map(value => ({ "Transfer-Encoding": value })),
+        ...["identity", "gzip", "chunked, gzip", "chunked, chunked", "gzip; q=1, chunked", "br2, chunked", ""].map(
+          value => ({ "Transfer-Encoding": value }),
+        ),
         // A usable Content-Length does not rescue it.
         { "Transfer-Encoding": "gzip", "Content-Length": String(body.length) },
       ];

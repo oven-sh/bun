@@ -1,5 +1,7 @@
 use bun_core::strings;
 
+use crate::Encoding;
+
 /// Iterates comma-separated HTTP header list tokens, trimming OWS and skipping empties.
 pub struct HeaderValueIterator<'a> {
     remaining: &'a [u8],
@@ -39,6 +41,22 @@ impl<'a> Iterator for HeaderValueIterator<'a> {
 pub fn upgrade_header_is_not_h2(value: &[u8]) -> bool {
     HeaderValueIterator::init(value)
         .any(|token| !strings::eql_any_case_insensitive_ascii(token, &[b"h2", b"h2c"]))
+}
+
+/// Folds one `Transfer-Encoding` field line into `coding`; `Err` for a coding `Encoding` lacks.
+/// RFC 9112 §6.1: `chunked`, if present, must be the final coding.
+pub fn fold_transfer_encoding(value: &[u8], coding: &mut Encoding) -> crate::Result<()> {
+    for token in HeaderValueIterator::init(value) {
+        if *coding == Encoding::Chunked {
+            return Err(crate::Error::UnsupportedTransferEncoding);
+        }
+        match Encoding::from_token(token) {
+            Some(Encoding::Chunked) => *coding = Encoding::Chunked,
+            Some(_) => {}
+            None => return Err(crate::Error::UnsupportedTransferEncoding),
+        }
+    }
+    Ok(())
 }
 
 /// `Some(false)` if any token is `close` (wins), `Some(true)` if `keep-alive`, else `None`.

@@ -622,8 +622,6 @@ impl HttpThread {
             };
             for write in &queued_writes {
                 let message = write.kind;
-                let ended = message == WriteMessageType::End;
-                let mismatch = message == WriteMessageType::LengthMismatch;
 
                 if let Some(socket_ptr) = abort_tracker().get(&write.async_http_id) {
                     match *socket_ptr {
@@ -634,19 +632,13 @@ impl HttpThread {
                             let tagged = HTTPContext::<true>::get_tagged_from_socket(socket);
                             if let Some(client) = tagged.client_mut() {
                                 client.on_request_stream_message::<true>(message, socket);
-                            } else if let Some(session) = tagged.session() {
-                                if mismatch {
-                                    h2::ClientSession::fail_request_body_by_http_id(
-                                        session,
-                                        write.async_http_id,
-                                    );
-                                } else {
-                                    h2::ClientSession::stream_body_by_http_id(
-                                        session,
-                                        write.async_http_id,
-                                        ended,
-                                    );
-                                }
+                            }
+                            if let Some(session) = tagged.session() {
+                                h2::ClientSession::stream_body_by_http_id(
+                                    session,
+                                    write.async_http_id,
+                                    message,
+                                );
                             }
                         }
                         uws::AnySocket::SocketTcp(socket) => {
@@ -656,26 +648,18 @@ impl HttpThread {
                             let tagged = HTTPContext::<false>::get_tagged_from_socket(socket);
                             if let Some(client) = tagged.client_mut() {
                                 client.on_request_stream_message::<false>(message, socket);
-                            } else if let Some(session) = tagged.session() {
-                                if mismatch {
-                                    h2::ClientSession::fail_request_body_by_http_id(
-                                        session,
-                                        write.async_http_id,
-                                    );
-                                } else {
-                                    h2::ClientSession::stream_body_by_http_id(
-                                        session,
-                                        write.async_http_id,
-                                        ended,
-                                    );
-                                }
+                            }
+                            if let Some(session) = tagged.session() {
+                                h2::ClientSession::stream_body_by_http_id(
+                                    session,
+                                    write.async_http_id,
+                                    message,
+                                );
                             }
                         }
                     }
-                } else if mismatch {
-                    h3::ClientContext::fail_request_body_by_http_id(write.async_http_id);
                 } else {
-                    h3::ClientContext::stream_body_by_http_id(write.async_http_id, ended);
+                    h3::ClientContext::stream_body_by_http_id(write.async_http_id, message);
                 }
             }
             let len = queued_writes.len();

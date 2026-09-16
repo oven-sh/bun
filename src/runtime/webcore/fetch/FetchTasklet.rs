@@ -2163,8 +2163,7 @@ impl FetchTasklet {
                 http::HTTPRequestBody::Stream(http::http_request_body::Stream {
                     buffer: core::ptr::NonNull::new(buffer),
                     ended: false,
-                    content_length: framing.content_length,
-                    transfer_encoding: framing.transfer_encoding,
+                    framing,
                 });
         }
         // TODO is this necessary? the http client already sets the redirect type,

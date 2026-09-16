@@ -936,7 +936,12 @@ const modulesRoute = (...specifiers: string[]) =>
 async function clientScriptHasBox(dev: any, path: string) {
   const { modules } = await dev.fetch(path).json();
   expect(modules).toHaveLength(1);
-  return (await dev.fetch(modules[0]).text()).includes("BOX_CODE_MARKER");
+  const res = await dev.fetch(modules[0]);
+  expect(res.status).toBe(200);
+  const script = await res.text();
+  // The real client script always holds the router type's client entry point.
+  expect(script).toInclude("CLIENT_ENTRY");
+  return script.includes("BOX_CODE_MARKER");
 }
 devTest("route starts to import an already bundled client component", {
   framework: clientEntryFramework,

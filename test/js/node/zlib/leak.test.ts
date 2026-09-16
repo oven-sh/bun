@@ -70,10 +70,10 @@ describe("zlib compression does not leak memory", () => {
         openHandles: 3,
       });
       // A leak is one native handle for each call, so one for each hundred
-      // calls is not a leak. The count is not always 0: about 1 run in 15 of an
-      // async method still counts the handle of its last call, and never more.
-      // In a heap snapshot nothing that a root reaches points at it, and one
-      // event loop turn later it is gone.
+      // calls is not a leak. The count is not always 0: now and then an async
+      // method still counts the handle of its last call, and never more than
+      // that one. In a heap snapshot nothing that a root reaches points at it,
+      // and one event loop turn later it is gone.
       expect(leakedHandles).toBeLessThan((rounds * callsPerRound) / 100);
       expect(samples).toHaveLength(rounds);
 

@@ -245,3 +245,28 @@ test("Response import is added when Response is global, but not when shadowed", 
   // Global Response is transformed to import_bun_app.Response
   expect(serverResult).toContain("var lmao = new import_bun_app.Response");
 });
+
+test('a "use server" module is a build error, not a crash', async () => {
+  using dir = tempDir("use-server-module", {
+    "action.js": `
+      "use server";
+      export async function save(x) {
+        return "saved " + x;
+      }
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "action.js", "--target=bun", "--server-components"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain('error: "use server" is not supported yet');
+  expect(stderr).toContain("action.js:2:7");
+  expect(stdout).toBe("");
+  expect(exitCode).toBe(1);
+});

@@ -452,15 +452,15 @@ describe("util", () => {
 
     it("does not call a replaced RegExp.prototype[Symbol.replace]", async () => {
       const script = `
-        const util = require("node:util");
+        import { stripVTControlCharacters } from "node:util";
         const original = RegExp.prototype[Symbol.replace];
         let calls = 0;
-        const before = util.stripVTControlCharacters("\\x1b[31mred\\x1b[0m");
+        const before = stripVTControlCharacters("\\x1b[31mred\\x1b[0m");
         RegExp.prototype[Symbol.replace] = function (...args) {
           calls++;
           return original.apply(this, args);
         };
-        const after = util.stripVTControlCharacters("\\x1b[31mred\\x1b[0m");
+        const after = stripVTControlCharacters("\\x1b[31mred\\x1b[0m");
         RegExp.prototype[Symbol.replace] = original;
         console.log(JSON.stringify({ before, after, calls }));
       `;

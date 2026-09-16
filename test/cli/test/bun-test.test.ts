@@ -1969,31 +1969,26 @@ describe.concurrent("test file discovery (scanner)", () => {
     };
   }
 
-  for (const args of [
-    ["./nested", "./"],
-    ["./", "./nested"],
-  ]) {
-    test(`path arguments "${args.join(" ")}" run every test below both, once`, async () => {
-      using dir = tempDir("scanner-two-paths", {
-        "root_only.test.ts": ranTest("root"),
-        "nested/inner.test.ts": ranTest("inner"),
-        "nested/deeper/most.test.ts": ranTest("most"),
-        "other/other.test.ts": ranTest("other"),
-      });
-
-      expect(await discover(String(dir), args)).toEqual({
-        ran: ["RAN inner", "RAN most", "RAN other", "RAN root"],
-        summary: "Ran 4 tests across 4 files.",
-        exitCode: 0,
-      });
+  test.each(["./nested ./", "./ ./nested"])('path arguments "%s" run every test below both, once', async order => {
+    using dir = tempDir("scanner-two-paths", {
+      "root_only.test.ts": ranTest("root"),
+      "nested/inner.test.ts": ranTest("inner"),
+      "nested/deeper/most.test.ts": ranTest("most"),
+      "other/other.test.ts": ranTest("other"),
     });
-  }
 
-  for (const [how, args, bunfig] of [
-    ["a path argument", ["../../"], {}],
-    ["the bunfig test root", [], { "pkg/app/bunfig.toml": `[test]\nroot = "../../"\n` }],
-  ] as const) {
-    test(`${how} that is a parent of the cwd runs the tests in every directory`, async () => {
+    expect(await discover(String(dir), order.split(" "))).toEqual({
+      ran: ["RAN inner", "RAN most", "RAN other", "RAN root"],
+      summary: "Ran 4 tests across 4 files.",
+      exitCode: 0,
+    });
+  });
+
+  describe.each([
+    { how: "a path argument", args: ["../../"], bunfig: {} },
+    { how: "the bunfig test root", args: [], bunfig: { "pkg/app/bunfig.toml": `[test]\nroot = "../../"\n` } },
+  ])("$how that is a parent of the cwd", ({ args, bunfig }) => {
+    test("runs the tests in every directory", async () => {
       using dir = tempDir("scanner-parent-of-cwd", {
         ...bunfig,
         "top.test.ts": ranTest("top"),
@@ -2012,7 +2007,7 @@ describe.concurrent("test file discovery (scanner)", () => {
     });
 
     // Without the walk this run finds no test file and exits 1.
-    test(`${how} that is a parent of the cwd finds a test that is only below the cwd`, async () => {
+    test("finds a test that is only below the cwd", async () => {
       using dir = tempDir("scanner-parent-of-cwd-only", {
         ...bunfig,
         "pkg/app/app.test.ts": ranTest("app"),
@@ -2024,7 +2019,7 @@ describe.concurrent("test file discovery (scanner)", () => {
         exitCode: 0,
       });
     });
-  }
+  });
 
   // The scanner builds every absolute path in a PathBuffer of MAX_PATH_BYTES:
   // 4096 on Linux, 1024 on every other POSIX (src/bun_core/util.rs). On Windows

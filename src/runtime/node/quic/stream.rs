@@ -530,8 +530,9 @@ impl QuicStream {
 
     /// -1 (EILSEQ, ECONNRESET, EBADF) is not flow control: no write event clears it.
     fn on_write_failed(&self, s: lsquic::Stream) {
+        // `reset` alone is a peer RESET_STREAM, which leaves the send side open.
         let send_open = self.peer_stop_sending_code.get().is_none()
-            && self.with_state(|st| st.write_ended == 0 && st.fin_sent == 0 && st.reset == 0);
+            && self.with_state(|st| st.write_ended == 0 && st.fin_sent == 0);
         if !send_open {
             self.drop_outbound(s);
         } else if self.header_block.get().refused() {

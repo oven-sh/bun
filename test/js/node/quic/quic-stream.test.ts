@@ -635,6 +635,58 @@ describe("a body written before the header block", () => {
     expect(body).toBe("body");
   });
 
+  // A peer RESET_STREAM closes the read side only. The response still goes out.
+  test("is delivered after sendHeaders() when the peer reset its send side first", async () => {
+    const serverSaw = Promise.withResolvers<void>();
+    await using server = await listen(
+      async serverSession => {
+        serverSession.onstream = (stream: any) => {
+          stream.closed.catch(() => {});
+          stream.onreset = async () => {
+            stream.writer.writeSync(new TextEncoder().encode("body"));
+            await tick();
+            stream.sendHeaders({ ":status": "200" });
+            stream.writer.endSync();
+            serverSaw.resolve();
+          };
+        };
+        await serverSession.closed.catch(() => {});
+      },
+      {
+        sni: { "*": { keys: [key], certs: [cert] } },
+        transportParams: { maxIdleTimeout: 1 },
+        onheaders() {},
+      },
+    );
+
+    const client = await connect(server.address, {
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 1 },
+      onerror() {},
+    });
+    await client.opened;
+    const gotHeaders = Promise.withResolvers<string>();
+    const stream = await client.createBidirectionalStream({
+      onheaders(headers: Record<string, string>) {
+        gotHeaders.resolve(headers[":status"]);
+      },
+    });
+    stream.closed.catch(() => {});
+    stream.sendHeaders({ ":method": "POST", ":path": "/", ":scheme": "https", ":authority": "localhost" });
+    stream.resetStream(0n);
+
+    let body = "";
+    for await (const batch of stream) {
+      for (const chunk of batch) body += Buffer.from(chunk).toString();
+    }
+    await serverSaw.promise;
+    client.close();
+
+    expect(await gotHeaders.promise).toBe("200");
+    expect(body).toBe("body");
+  });
+
   test("a retried header block after a refused terminal one keeps the body open", async () => {
     const { status, body } = await responseTo(async stream => {
       expect(

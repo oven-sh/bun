@@ -10,9 +10,9 @@ import {
   isBroken,
   isDebug,
   isLinux,
-  isMusl,
   isPosix,
   isWindows,
+  libcPathForDlopen,
   shellExe,
   tempDir,
   tmpdirSync,
@@ -634,12 +634,12 @@ it.skipIf(Boolean(process.env.BUN_FEATURE_FLAG_FORCE_WAITER_THREAD) || (!isLinux
 );
 
 // With the waiter thread, each child exit runs a SIGCHLD handler on the thread that spawned
-// the child. A blocking syscall in code that does not retry EINTR (an FFI library, a native
-// addon, the sanitizer runtime) must restart after the handler, not fail.
-it.skipIf(!isLinux)("the waiter thread's SIGCHLD handler does not fail a blocking syscall with EINTR", async () => {
-  const libc = isMusl ? (process.arch === "arm64" ? "libc.musl-aarch64.so.1" : "libc.musl-x86_64.so.1") : "libc.so.6";
+// the child. A restartable blocking syscall (read, wait4, futex) in code that does not retry
+// EINTR (an FFI library, a native addon, the sanitizer runtime) must restart after the
+// handler, not fail.
+it.skipIf(!isLinux)("the waiter thread's SIGCHLD handler does not fail a blocking read() with EINTR", async () => {
   await using proc = spawn({
-    cmd: [bunExe(), join(import.meta.dir, "spawn-sigchld-restart-fixture.ts"), libc],
+    cmd: [bunExe(), join(import.meta.dir, "spawn-sigchld-restart-fixture.ts"), libcPathForDlopen()],
     env: {
       ...bunEnv,
       BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1",

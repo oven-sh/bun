@@ -243,7 +243,7 @@ bool JSNodeHTTPServerSocket::isClosed() const
 }
 
 template<bool SSL>
-static bool deferShutdownUntilResponseDrains(us_socket_t* socket)
+static bool deferShutdownUntilResponseDrains(us_socket_t* socket, bool thenClose)
 {
     if (reinterpret_cast<uWS::AsyncSocket<SSL>*>(socket)->getBufferedAmount() == 0) {
         return false;
@@ -253,18 +253,22 @@ static bool deferShutdownUntilResponseDrains(us_socket_t* socket)
      * is sequenced after the response bytes (like Node's destroySoon). */
     auto* httpResponseData = reinterpret_cast<uWS::HttpResponseData<SSL>*>(us_socket_ext(socket));
     httpResponseData->state |= uWS::HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
+    if (thenClose) {
+        /* destroySoon(): and closes it there, even if the response never ends. */
+        httpResponseData->state |= uWS::HttpResponseData<SSL>::HTTP_NODE_CLOSE_AFTER_DRAIN;
+    }
     return true;
 }
 
-bool JSNodeHTTPServerSocket::shutdownAfterResponseDrains()
+bool JSNodeHTTPServerSocket::shutdownAfterResponseDrains(bool thenClose)
 {
     if (!socket || upgraded || us_socket_is_closed(socket) || us_socket_is_shut_down(socket)) {
         return false;
     }
     if (is_ssl) {
-        return deferShutdownUntilResponseDrains<true>(socket);
+        return deferShutdownUntilResponseDrains<true>(socket, thenClose);
     }
-    return deferShutdownUntilResponseDrains<false>(socket);
+    return deferShutdownUntilResponseDrains<false>(socket, thenClose);
 }
 
 template<bool SSL>

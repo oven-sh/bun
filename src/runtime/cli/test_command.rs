@@ -2371,12 +2371,11 @@ impl TestCommand {
         // which the transpiler never touches. The test harness syncs on the
         // "Ran N tests" summary (printed after this), so seeding completes
         // before the next file edit.
-        if ctx.test_options.changed.is_some() && vm.is_watcher_enabled() {
-            // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set by
-            // `enable_hot_module_reloading`; non-null because
-            // `is_watcher_enabled()` checked it.
-            let watcher =
-                unsafe { &mut *vm.bun_watcher.cast::<jsc::hot_reloader::ImportWatcher>() };
+        let import_watcher = vm.import_watcher();
+        if ctx.test_options.changed.is_some() && !import_watcher.is_null() {
+            // SAFETY: non-null (checked above) `*mut ImportWatcher`, leaked for
+            // the process lifetime by `enable_hot_module_reloading`.
+            let watcher = unsafe { &mut *import_watcher };
             for path in &changed_module_graph_files {
                 let _ = watcher.add_file_by_path_slow(path);
             }

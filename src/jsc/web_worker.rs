@@ -64,6 +64,10 @@ pub struct WebWorker {
     parent: *mut VirtualMachine,
     /// The parent's `--hot` / `--watch` mode, inherited by the worker VM.
     hot_reload: crate::virtual_machine::HotReload,
+    /// Under `--watch`, the parent's `import_watcher()`: where the worker VM
+    /// registers the files it loads. Process-lifetime once installed. Null
+    /// under `--hot` and when not watching.
+    parent_import_watcher: *mut crate::hot_reloader::ImportWatcher,
     /// Whether the worker VM arms `bun_jsc::vm_handle`'s test gate (debug
     /// builds, `BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE`, first-level workers only:
     /// a nested worker parked on a post to its worker parent would keep that
@@ -398,6 +402,16 @@ impl WebWorker {
             messaging_proxy: proxy,
             parent,
             hot_reload: parent_ref.hot_reload,
+            // `--watch` restarts the whole process, so a file a worker loaded
+            // counts. `--hot` re-evaluates the entry point on the main thread
+            // only: a running worker keeps its code, so workers stay out.
+            parent_import_watcher: if parent_ref.hot_reload
+                == crate::virtual_machine::HotReload::Watch
+            {
+                parent_ref.import_watcher()
+            } else {
+                core::ptr::null_mut()
+            },
             arm_test_gate: cfg!(debug_assertions)
                 && parent_ref.is_main_thread()
                 && bun_core::env_var::feature_flag::BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE::get()
@@ -576,6 +590,11 @@ impl WebWorker {
     #[inline]
     pub(crate) fn hot_reload(&self) -> crate::virtual_machine::HotReload {
         self.hot_reload
+    }
+
+    #[inline]
+    pub(crate) fn parent_import_watcher(&self) -> *mut crate::hot_reloader::ImportWatcher {
+        self.parent_import_watcher
     }
 
     #[inline]

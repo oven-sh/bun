@@ -26,7 +26,7 @@ To run your tests in `--watch` mode:
 bun --watch test
 ```
 
-In `--watch` mode, Bun keeps track of all imported files and watches them for changes. When a file changes, Bun restarts the process with the same CLI arguments and environment variables as the initial run. If Bun crashes, `--watch` attempts to restart the process.
+In `--watch` mode, Bun keeps track of all imported files and watches them for changes. The files that a [`Worker`](/runtime/workers) loads count as imported files. When a file changes, Bun restarts the process with the same CLI arguments and environment variables as the initial run. If Bun crashes, `--watch` attempts to restart the process.
 
 <Note>
 

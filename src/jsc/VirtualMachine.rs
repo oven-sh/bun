@@ -140,10 +140,16 @@ pub struct VirtualMachine {
     // self-referential and cannot carry `<'a>`, so we erase to `'static` and the
     // owner guarantees the borrowed `log` outlives the VM (see `init`).
     pub transpiler: Transpiler<'static>,
-    /// Hot-reload import watcher (heap `Box`, installed by
+    /// The import watcher that reloads this VM (heap `Box`, installed by
     /// [`crate::hot_reloader::HotReloaderCtx::install_bun_watcher`]); null when
-    /// hot reload is disabled. Read via [`Self::bun_watcher_ptr`].
-    pub bun_watcher: *mut crate::hot_reloader::ImportWatcher,
+    /// hot reload is disabled, and always null on a worker. Gates the reload
+    /// control flow ([`Self::is_watcher_enabled`]). To register a loaded file,
+    /// use [`Self::import_watcher`], which a worker has too.
+    pub(crate) bun_watcher: *mut crate::hot_reloader::ImportWatcher,
+    /// On a worker under `--watch`, the parent's [`Self::import_watcher`] when
+    /// the worker was created; null otherwise, `--hot` included. A worker is
+    /// not reloaded on its own, so its `bun_watcher` stays null.
+    pub(crate) parent_import_watcher: *mut crate::hot_reloader::ImportWatcher,
     pub(crate) console: *mut crate::console_object::ConsoleObject,
     // BORROW_PARAM (`&'a mut bun_ast::Log` per LIFETIMES.tsv) — raw NonNull
     // used because VM is self-referential and cannot carry `<'a>`.
@@ -1139,6 +1145,22 @@ impl VirtualMachine {
     #[inline]
     pub(crate) fn bun_watcher_ptr(&self) -> *mut crate::hot_reloader::ImportWatcher {
         self.bun_watcher
+    }
+
+    /// The watcher that the files this VM loads are registered with, or null:
+    /// `bun_watcher` on the VM that `--hot` / `--watch` reloads, and on a
+    /// worker under `--watch` the one its parent registers with, so a change
+    /// to a file that only a worker loaded restarts the process as well.
+    /// Null on a worker under `--hot`.
+    ///
+    /// The pointee is shared between threads; see [`Self::bun_watcher_ptr`].
+    #[inline]
+    pub fn import_watcher(&self) -> *mut crate::hot_reloader::ImportWatcher {
+        if self.bun_watcher.is_null() {
+            self.parent_import_watcher
+        } else {
+            self.bun_watcher
+        }
     }
 
     /// `event_loop().enter()` now, `.exit()` on drop. Safe wrapper over
@@ -4227,6 +4249,7 @@ impl VirtualMachine {
         // executable) resolve against the real filesystem and fail.
         vm_ref.transpiler.resolver.standalone_module_graph = opts.graph;
         vm_ref.hot_reload = worker.hot_reload();
+        vm_ref.parent_import_watcher = worker.parent_import_watcher();
         vm_ref.initial_script_execution_context_identifier = worker.execution_context_id() as i32;
         vm_ref.transpiler.resolver.store_fd = opts.store_fd;
         if opts.graph.is_none() {

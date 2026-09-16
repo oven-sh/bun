@@ -2209,7 +2209,7 @@ unsafe fn __bun_transpile_source_code(
 /// error flow.
 ///
 /// Note: takes `*mut VirtualMachine` (NOT `&mut`) — the body re-enters
-/// `vm.transpiler` while also touching `vm.module_loader` / `vm.bun_watcher`,
+/// `vm.transpiler` while also touching `vm.module_loader` / `vm.import_watcher()`,
 /// which would alias under `&mut` (PORTING.md §Forbidden). Per-field deref via
 /// the raw ptr, mirroring `auto_tick` above.
 fn transpile_source_code_inner(
@@ -2381,10 +2381,9 @@ fn transpile_source_code_inner(
             // ── Watcher package_json lookup ─────────────────────────────────
             let mut package_json: Option<&'static bun_watcher::PackageJSON> = None;
             {
-                // SAFETY: `bun_watcher` is the `*mut ImportWatcher`
-                // set during VM init (BACKREF); cast recovers the concrete type.
+                // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
                 let import_watcher: *mut bun_jsc::ImportWatcher =
-                    unsafe { &*jsc_vm }.bun_watcher.cast();
+                    unsafe { &*jsc_vm }.import_watcher();
                 if !import_watcher.is_null() {
                     // SAFETY: non-null per check above. Never read through the
                     // watchlist's stored fd; see
@@ -3413,7 +3412,8 @@ fn transpile_source_code_inner(
                     break 'auto_watch;
                 }
                 // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-                if !unsafe { &*jsc_vm }.is_watcher_enabled() {
+                let import_watcher = unsafe { &*jsc_vm }.import_watcher();
+                if import_watcher.is_null() {
                     break 'auto_watch;
                 }
                 if !bun_paths::is_absolute(path.text)
@@ -3437,11 +3437,9 @@ fn transpile_source_code_inner(
                     bun_sys::Fd::INVALID
                 };
                 let hash = bun_watcher::Watcher::get_hash(path.text);
-                // SAFETY: `bun_watcher` is the `*mut ImportWatcher`
-                // set when `is_watcher_enabled()`; cast recovers the concrete
-                // type.
-                let watcher =
-                    unsafe { &mut *(*jsc_vm).bun_watcher.cast::<bun_jsc::ImportWatcher>() };
+                // SAFETY: non-null (checked above) `*mut ImportWatcher`, leaked
+                // for the process lifetime when it was installed.
+                let watcher = unsafe { &mut *import_watcher };
                 let added =
                     watcher.add_file::<true>(input_fd, path.text, hash, bun_sys::Fd::INVALID, None);
                 if !matches!(added, Ok(bun_watcher::FdOwnership::Watcher)) {
@@ -3521,7 +3519,8 @@ fn maybe_watch_file(
     package_json: Option<&'static bun_watcher::PackageJSON>,
 ) {
     // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-    if !unsafe { &*jsc_vm }.is_watcher_enabled() {
+    let import_watcher = unsafe { &*jsc_vm }.import_watcher();
+    if import_watcher.is_null() {
         return;
     }
     if !input_file_fd.is_valid() {
@@ -3533,9 +3532,9 @@ fn maybe_watch_file(
     {
         return;
     }
-    // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set when
-    // `is_watcher_enabled()`; cast recovers the concrete type.
-    let watcher = unsafe { &mut *(*jsc_vm).bun_watcher.cast::<bun_jsc::ImportWatcher>() };
+    // SAFETY: non-null (checked above) `*mut ImportWatcher`, leaked for the
+    // process lifetime when it was installed.
+    let watcher = unsafe { &mut *import_watcher };
     if matches!(
         watcher.add_file::<true>(
             input_file_fd,

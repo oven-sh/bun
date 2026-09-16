@@ -396,6 +396,99 @@ it("--watch forced restart clears the terminal when colors are enabled", async (
   expect(await stderr).toContain(clearScreen);
 }, 30000);
 
+// A worker has no watcher of its own. The files it loads are registered with
+// the watcher of the thread that created it, so an edit to one of them
+// restarts the process like an edit to a file the main thread imported.
+//
+// The two cases reach every place the module loader registers a file: the
+// entry and a require() are transpiled on the worker's JS thread, an ESM
+// import on the transpiler pool, and an asset goes through the file loader.
+const webWorkerEntry = (entry: string) => `
+  import { readFileSync } from "node:fs";
+  import { dep } from "./worker-dep.js";
+  import asset from "./worker-asset.file";
+  postMessage(["${entry}", dep, readFileSync(asset, "utf8")].join(" "));
+`;
+const nodeWorkerEntry = (entry: string) => `
+  const { parentPort } = require("node:worker_threads");
+  const { dep } = require("./worker-dep.cjs");
+  parentPort.postMessage("${entry} " + dep);
+`;
+const workerCases = [
+  {
+    name: "Worker with an ESM import and a file-loader asset",
+    files: {
+      "main.js": `
+        console.log("main start");
+        new Worker("./worker.js").onmessage = e => console.log("worker says " + e.data);
+      `,
+      "worker.js": webWorkerEntry("entry-1"),
+      "worker-dep.js": `export const dep = "dep-1";`,
+      "worker-asset.file": "asset-1",
+    },
+    firstLine: "worker says entry-1 dep-1 asset-1",
+    edits: [
+      { file: "worker.js", contents: webWorkerEntry("entry-2"), line: "worker says entry-2 dep-1 asset-1" },
+      { file: "worker-dep.js", contents: `export const dep = "dep-2";`, line: "worker says entry-2 dep-2 asset-1" },
+      { file: "worker-asset.file", contents: "asset-2", line: "worker says entry-2 dep-2 asset-2" },
+    ],
+  },
+  {
+    name: "node:worker_threads Worker with a require()",
+    files: {
+      "main.js": `
+        const { Worker } = require("node:worker_threads");
+        console.log("main start");
+        new Worker(require("node:path").join(__dirname, "worker.cjs")).on("message", m => console.log("worker says " + m));
+      `,
+      "worker.cjs": nodeWorkerEntry("entry-1"),
+      "worker-dep.cjs": `exports.dep = "dep-1";`,
+    },
+    firstLine: "worker says entry-1 dep-1",
+    edits: [
+      { file: "worker.cjs", contents: nodeWorkerEntry("entry-2"), line: "worker says entry-2 dep-1" },
+      { file: "worker-dep.cjs", contents: `exports.dep = "dep-2";`, line: "worker says entry-2 dep-2" },
+    ],
+  },
+];
+
+it.each(workerCases)(
+  "--watch restarts when a file that only a worker loaded changes: $name",
+  async ({ files, firstLine, edits }) => {
+    using dir = tempDir("watch-worker-file", files);
+
+    watchee = spawn({
+      cmd: [bunExe(), "--watch", "main.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+
+    const { waitFor, release, output } = stdoutWaiter(watchee);
+
+    // The worker posts after it loaded its whole graph, so all of its files
+    // are on the watchlist once the message is printed.
+    await waitFor(firstLine + "\n");
+    for (const { file, contents, line } of edits) {
+      await Bun.write(join(String(dir), file), contents);
+      await waitFor(line + "\n");
+    }
+
+    release();
+    watchee.kill("SIGKILL");
+    await watchee.exited;
+
+    // One save can raise more than one watcher event, so a line can repeat.
+    const said = output()
+      .split("\n")
+      .filter(line => line.startsWith("worker says "));
+    expect([...new Set(said)]).toEqual([firstLine, ...edits.map(edit => edit.line)]);
+    expect(output().split("main start\n").length - 1).toBeGreaterThanOrEqual(1 + edits.length);
+  },
+  30000,
+);
+
 // execve replaces the process without reaching on_exit(), so the compile
 // cache must be flushed explicitly on the reload path; otherwise
 // NODE_COMPILE_CACHE never writes anything under --watch.

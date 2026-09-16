@@ -469,6 +469,10 @@ impl ElfFile {
             .and_then(|offset| self.data.get(offset..)?.first_chunk::<8>())
             .map(|bytes| u64::from_le_bytes(*bytes))
             .ok_or(ElfError::InvalidElfFile)?;
+        // A payload starts with its length, and `to_executable` writes no empty one.
+        if first_word == 0 {
+            return Ok(false);
+        }
 
         // Where the linked image ends. `.tbss` takes no room in it.
         let linked_end = (0..ehdr.e_shnum)
@@ -501,8 +505,6 @@ impl ElfFile {
 
         if is_payload {
             Ok(true)
-        } else if first_word == 0 {
-            Ok(false)
         } else {
             Err(ElfError::BunSectionAlreadyWritten)
         }

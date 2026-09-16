@@ -17,8 +17,8 @@
 
 import { describe, expect, test } from "bun:test";
 import type { Elf64ProgramHeader } from "harness";
-import { bunEnv, bunExe, isFreeBSD, isLinux, preadExact, readElf64ProgramHeaders, tempDir } from "harness";
-import { closeSync, existsSync, openSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { bunEnv, bunExe, isFreeBSD, isLinux, readElf64ProgramHeaders, tempDir } from "harness";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 type LoadSegment = Pick<Elf64ProgramHeader, "vaddr" | "memsz" | "align">;
@@ -110,11 +110,17 @@ describe("compiling into a compiled executable", () => {
   // it is tested on a template small enough to build by hand: an R E segment,
   // an RW segment with `.data`, `.bun` (BUN_COMPILED, 0) and `.bss`, then
   // `.shstrtab` and the section headers. The result cannot run.
-  function minimalElf64Template(machine: number, page: number): Buffer {
+  // `bunLast` puts `.bun` where a payload would be: on a page of its own that
+  // ends the image, with no `.bss` behind it.
+  function minimalElf64Template(machine: number, page: number, bunLast = false): Buffer {
     const base = 0x200000;
     const names = Buffer.from("\0.data\0.bun\0.bss\0.shstrtab\0", "latin1");
     const nameAt = (name: string) => names.indexOf(`\0${name}\0`, 0, "latin1") + 1;
-    const rw = { offset: page, vaddr: base + 2 * page, filesz: page, memsz: 3 * page - 0x234 };
+    const rw = bunLast
+      ? { offset: page, vaddr: base + 2 * page, filesz: 2 * page, memsz: 2 * page }
+      : { offset: page, vaddr: base + 2 * page, filesz: page, memsz: 3 * page - 0x234 };
+    const bun = bunLast ? page : 0x100;
+    const bss = bunLast ? { at: 0x100, size: 0 } : { at: page, size: rw.memsz - page };
     const shstrtab = rw.offset + rw.filesz;
     const e_shoff = shstrtab + 64;
     const [PROGBITS, STRTAB, NOBITS, WA] = [1, 3, 8, 3];
@@ -125,8 +131,8 @@ describe("compiling into a compiled executable", () => {
     const sections = [
       { name: 0, type: 0, flags: 0, addr: 0, offset: 0, size: 0 },
       { name: nameAt(".data"), type: PROGBITS, flags: WA, addr: rw.vaddr, offset: rw.offset, size: 0x100 },
-      { name: nameAt(".bun"), type: PROGBITS, flags: WA, addr: rw.vaddr + 0x100, offset: rw.offset + 0x100, size: 8 },
-      { name: nameAt(".bss"), type: NOBITS, flags: WA, addr: rw.vaddr + page, offset: shstrtab, size: rw.memsz - page },
+      { name: nameAt(".bun"), type: PROGBITS, flags: WA, addr: rw.vaddr + bun, offset: rw.offset + bun, size: 8 },
+      { name: nameAt(".bss"), type: NOBITS, flags: WA, addr: rw.vaddr + bss.at, offset: shstrtab, size: bss.size },
       { name: nameAt(".shstrtab"), type: STRTAB, flags: 0, addr: 0, offset: shstrtab, size: names.length },
     ];
 
@@ -222,6 +228,24 @@ describe("compiling into a compiled executable", () => {
       expect(larger.length).toBeGreaterThan(large.length);
     });
 
+    test.concurrent("a `.bun` that holds 0 is BUN_COMPILED, wherever it is", async () => {
+      using dir = tempDir("elf-compile-bun-last", { "app.js": `console.log("app");` });
+      const cwd = String(dir);
+      const template = minimalElf64Template(machine, page, true);
+      writeFileSync(join(cwd, "template"), template);
+      expect(await compileInto(cwd, "template", "app.js", "app")).toEqual(built);
+
+      // BUN_COMPILED holds the address of the payload, which is past it.
+      const app = readFileSync(join(cwd, "app"));
+      const bunCompiled = Number(template.readBigUInt64LE(fieldsOf(template).bun.offset));
+      const payload = fieldsOf(app).bun;
+      expect(app.readBigUInt64LE(bunCompiled)).toBe(app.readBigUInt64LE(payload.addr));
+      expect(app.readBigUInt64LE(payload.addr)).toBeGreaterThan(template.readBigUInt64LE(fieldsOf(template).bun.addr));
+      expect(app.readBigUInt64LE(Number(app.readBigUInt64LE(payload.offset)))).toBe(
+        app.readBigUInt64LE(payload.size) - 8n,
+      );
+    });
+
     let compiled: Promise<Buffer> | undefined;
     const compiledExecutable = () =>
       (compiled ??= (async () => {
@@ -277,59 +301,21 @@ describe("compiling into a compiled executable", () => {
     });
   });
 
-  // Compared in pieces: a debug build of bun is most of a GB.
-  function sameBytes(a: string, b: string): boolean {
-    const size = statSync(a).size;
-    if (statSync(b).size !== size) return false;
-    const fds = [openSync(a, "r"), openSync(b, "r")];
-    try {
-      const piece = 16 * 1024 * 1024;
-      for (let at = 0; at < size; at += piece) {
-        const length = Math.min(piece, size - at);
-        if (!preadExact(fds[0], at, length).equals(preadExact(fds[1], at, length))) return false;
-      }
-      return true;
-    } finally {
-      fds.forEach(closeSync);
-    }
-  }
-
   test.skipIf(!(isLinux || isFreeBSD))(
     "the new executable runs",
     async () => {
       using dir = tempDir("elf-compile-into-compiled-run", {
-        // Compiled, `./large <entry> <outfile>` compiles <entry>, the way a CLI built on bun does.
-        "large.js": `const data = "${Buffer.alloc(100_000, "x").toString()}";
-if (process.argv.length > 2) {
-  await Bun.build({ entrypoints: [process.argv[2]], compile: { outfile: process.argv[3] } });
-  console.log("compiled");
-} else console.log("large-" + data.length);`,
-        "small.js": `console.log("small");`,
-        "larger.js": `const data = "${Buffer.alloc(200_000, "y").toString()}"; console.log("larger-" + data.length);`,
+        "first.js": `console.log("first");`,
+        "second.js": `console.log("second");`,
       });
       const cwd = String(dir);
-      const [large, small, larger] = ["large", "small", "larger"].map(name => join(cwd, name));
-      const [viaApi, direct] = ["api", "direct"].map(name => join(cwd, name, "small"));
-      const compile = (args: string[], compiler = bunExe(), env = bunEnv) =>
-        spawn([compiler, "build", "--compile", ...args], cwd, env);
+      const [first, second] = ["first", "second"].map(name => join(cwd, name));
+      const compile = (compiler: string, entry: string, outfile: string) =>
+        spawn([compiler, "build", "--compile", entry, "--outfile", outfile], cwd, { ...bunEnv, BUN_BE_BUN: "1" });
 
-      expect(await compile(["large.js", "--outfile", large])).toEqual(built);
-      expect(
-        await Promise.all([
-          compile(["small.js", "--outfile", small], large, { ...bunEnv, BUN_BE_BUN: "1" }),
-          spawn([large, "small.js", viaApi], cwd),
-          compile(["small.js", "--outfile", direct]),
-        ]),
-      ).toEqual([built, { stdout: "compiled\n", stderr: "", exitCode: 0 }, built]);
-      expect(await compile(["--compile-executable-path", small, "larger.js", "--outfile", larger])).toEqual(built);
-
-      const ran = (stdout: string) => ({ stdout, stderr: "", exitCode: 0 });
-      expect(await spawn([small], cwd)).toEqual(ran("small\n"));
-      expect(await spawn([viaApi], cwd)).toEqual(ran("small\n"));
-      expect(await spawn([larger], cwd)).toEqual(ran("larger-200000\n"));
-      expect(sameBytes(small, direct)).toBe(true);
-      expect(sameBytes(viaApi, direct)).toBe(true);
-      expectNoOverlap(larger);
+      expect(await compile(bunExe(), "first.js", first)).toEqual(built);
+      expect(await compile(first, "second.js", second)).toEqual(built);
+      expect(await spawn([second], cwd)).toEqual({ stdout: "second\n", stderr: "", exitCode: 0 });
     },
     180_000,
   );

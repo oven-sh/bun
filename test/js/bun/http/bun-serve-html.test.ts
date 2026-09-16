@@ -1,6 +1,7 @@
 import type { Server, Subprocess } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isLinux, tempDir, tempDirWithFiles } from "harness";
+import { writeFileSync } from "fs";
+import { bunEnv, bunExe, forEachLine, isDebug, isLinux, tempDir, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 function replaceHash(html: string) {
@@ -1292,6 +1293,67 @@ test.concurrent("server.reload() with another `development` than the server was 
     }),
     exitCode: 0,
   });
+});
+
+// Under `bun --hot` an edit evaluates serve.ts again, and its Bun.serve() reloads
+// the server that the first evaluation started: a second way into the same
+// reload.
+test.concurrent("bun --hot: a Bun.serve() that adds the first html route starts the dev server", async () => {
+  const serveSource = (withHtml: boolean) => /*ts*/ `
+    import html from "./index.html";
+
+    const server = Bun.serve({
+      port: 0,
+      development: true,
+      routes: ${withHtml} ? { "/": html } : {},
+      fetch: () => new Response("fallback"),
+    });
+    console.log(JSON.stringify({ withHtml: ${withHtml}, port: server.port }));
+  `;
+  using dir = tempDir("bun-serve-html-hot-first-html-route", {
+    "index.html": `<!DOCTYPE html><html><head><title>t</title></head><body><script type="module" src="./app.ts"></script></body></html>`,
+    "app.ts": `console.log("app");`,
+    "serve.ts": serveSource(false),
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--hot", "--no-clear-screen", "serve.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+  });
+  const lines = forEachLine(proc.stdout);
+  async function portOfEvaluation(withHtml: boolean): Promise<number> {
+    for (;;) {
+      const { value, done } = await lines.next();
+      if (done) throw new Error("serve.ts exited");
+      const start = value.indexOf("{");
+      if (start === -1) continue;
+      const evaluation = JSON.parse(value.slice(start));
+      if (evaluation.withHtml === withHtml) return evaluation.port;
+    }
+  }
+
+  const port = await portOfEvaluation(false);
+  const before = await (await fetch(`http://localhost:${port}/`)).text();
+
+  writeFileSync(join(String(dir), "serve.ts"), serveSource(true));
+  const portAfter = await portOfEvaluation(true);
+
+  const page = await (await fetch(`http://localhost:${port}/`)).text();
+  const ws = new WebSocket(`ws://localhost:${port}/_bun/hmr`);
+  const { promise: hmrSocket, resolve } = Promise.withResolvers<boolean>();
+  ws.onopen = () => resolve(true);
+  ws.onerror = ws.onclose = () => resolve(false);
+  expect({
+    before,
+    samePort: portAfter === port,
+    script: page.match(/src="([^"]+\.js)"/)?.[1].replace(/[0-9a-z]{8,}/, "HASH"),
+    hmrSocket: await hmrSocket,
+  }).toEqual({ before: "fallback", samePort: true, script: "/_bun/client/index-HASH.js", hmrSocket: true });
+  ws.onclose = null;
+  ws.close();
 });
 
 // process.chdir() leaves the cached top-level directory with a trailing slash,

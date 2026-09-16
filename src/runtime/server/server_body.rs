@@ -2086,24 +2086,14 @@ where
         {
             return Ok(());
         }
-        if new_config.bake.is_none() {
-            let has_html_route = new_config
-                .static_routes
-                .iter()
-                .any(|entry| matches!(entry.route, AnyRoute::Html(_)));
-            if !has_html_route {
-                return Ok(());
-            }
-            // `from_js` left the options out: the new config's `development` is not HMR.
-            new_config.bake = Some(ServerConfig::dev_server_options(
-                global,
-                Vec::new(),
-                bake::StringRefList::EMPTY,
-            )?);
+        if !self
+            .config
+            .take_dev_server_options_from(new_config, global)?
+        {
+            return Ok(());
         }
-        self.config.bake = new_config.bake.take();
         if let Err(err) = self.init_dev_server() {
-            self.config.bake = None;
+            self.config.drop_dev_server_options();
             return Err(err);
         }
         Ok(())

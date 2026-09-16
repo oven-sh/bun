@@ -608,7 +608,7 @@ fn convert_file_system_router_type(
 impl ServerConfig {
     /// The DevServer options for routes that hold an html import or a
     /// framework router.
-    pub(crate) fn dev_server_options(
+    fn dev_server_options(
         global: &JSGlobalObject,
         framework_router_list: Vec<crate::bake::FileSystemRouterType>,
         allocations: crate::bake::StringRefList,
@@ -678,6 +678,41 @@ impl ServerConfig {
         }
 
         Ok(user_options)
+    }
+
+    /// For the reload of a server that has no DevServer yet: moves the
+    /// DevServer options of `new_config` into `self` and reports whether there
+    /// are any.
+    ///
+    /// `from_js` leaves them out when the `development` key of `new_config` is
+    /// not HMR. A reload cannot change the mode of the server, so an html route
+    /// gets them built here.
+    pub(crate) fn take_dev_server_options_from(
+        &mut self,
+        new_config: &mut ServerConfig,
+        global: &JSGlobalObject,
+    ) -> JsResult<bool> {
+        self.bake = match new_config.bake.take() {
+            Some(options) => Some(options),
+            None if new_config
+                .static_routes
+                .iter()
+                .any(|entry| matches!(entry.route, AnyRoute::Html(_))) =>
+            {
+                Some(Self::dev_server_options(
+                    global,
+                    Vec::new(),
+                    crate::bake::StringRefList::EMPTY,
+                )?)
+            }
+            None => None,
+        };
+        Ok(self.bake.is_some())
+    }
+
+    /// The DevServer did not start.
+    pub(crate) fn drop_dev_server_options(&mut self) {
+        self.bake = None;
     }
 
     pub fn from_js(

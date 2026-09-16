@@ -5,7 +5,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { isWindows, tempDir, tempDirWithFiles } from "harness";
 import fs from "node:fs";
-import { sep } from "node:path";
+import { relative, sep } from "node:path";
 
 let tmp: string;
 beforeAll(() => {
@@ -345,5 +345,106 @@ describe("a directory that is listed after one of its children was traversed", (
       fs.glob(pattern, { cwd: String(dir) }, (err, paths) => (err ? reject(err) : resolve(paths)));
       expect((await promise).sort()).toEqual(sorted);
     });
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/42876
+describe("a pattern array or brace group returns the union of its patterns", () => {
+  const cases = [
+    {
+      // "d/x" is queued by all three patterns in one step. The seen cache
+      // reported it as a repeat for "./d/x/x/*" and "d/x/*" because of the
+      // "x/*" tail they share with "**/x/*", and their walk was skipped.
+      name: "patterns that share a tail",
+      tree: { d: { x: { x: { f1: "" }, f2: "" } } },
+      pattern: ["**/x/*", "./d/x/x/*", "d/x/*"],
+      expected: ["d/x/f2", "d/x/x", "d/x/x/f1"],
+    },
+    {
+      name: "patterns that share a tail after '**'",
+      tree: { x: { y: { g: "", z: { y: { f: "" } } } } },
+      pattern: ["x/**/y/*", "./x/y/**/y/*", "x/y/*"],
+      expected: ["x/y/g", "x/y/z", "x/y/z/y/f"],
+    },
+    {
+      // "**/.." queues the directory and its parent for the rest of the
+      // pattern. The second alternative found them queued and was dropped.
+      name: "a brace group after '**/..'",
+      tree: { a: { b: {}, x: "", z: "" } },
+      pattern: "a/**/../{x,z}",
+      expected: ["a/x", "a/z"],
+    },
+    {
+      // A trailing ".." records its results in the seen cache under the key
+      // of a literal ".." walk from the same directory, in either order.
+      name: "a trailing '..' and a literal '..' from the same directory",
+      tree: { b: { c: {} } },
+      pattern: ["b/**/..", "./.."],
+      expected: [".", "..", "b"],
+    },
+    {
+      name: "a literal '..' and a trailing '..' from the same directory",
+      tree: { b: { c: {} } },
+      pattern: ["./..", "b/**/.."],
+      expected: [".", "..", "b"],
+    },
+    {
+      // A pattern that is only ".." matches nothing but was recorded at "."
+      // under the key of the "./.." walk.
+      name: "a pattern that is only '..'",
+      tree: { b: { c: {} } },
+      pattern: ["..", "./.."],
+      expected: [".."],
+    },
+  ];
+
+  describe.each(cases)("$name", ({ tree, pattern, expected }) => {
+    const sorted = expected.map(path => path.replaceAll("/", sep)).sort();
+
+    it("fs.globSync", () => {
+      using dir = tempDir("fs-glob-union", tree);
+      expect(fs.globSync(pattern, { cwd: String(dir) }).sort()).toEqual(sorted);
+    });
+
+    it("fs.promises.glob", async () => {
+      using dir = tempDir("fs-glob-union", tree);
+      const paths = await Array.fromAsync(fs.promises.glob(pattern, { cwd: String(dir) }));
+      expect(paths.sort()).toEqual(sorted);
+    });
+
+    it("fs.glob", async () => {
+      using dir = tempDir("fs-glob-union", tree);
+      const { promise, resolve, reject } = Promise.withResolvers<string[]>();
+      fs.glob(pattern, { cwd: String(dir) }, (err, paths) => (err ? reject(err) : resolve(paths)));
+      expect((await promise).sort()).toEqual(sorted);
+    });
+  });
+});
+
+describe("a literal '..' segment keeps the name of the directory entry", () => {
+  // The walk of a literal ".." used to rename the cached Dirent of the parent
+  // directory to "..". The readdir cache holds the same object, so a later
+  // listing of the grandparent did not match that entry.
+  const tree = { a: { b: { c: { d: {} } }, x: "" } };
+  const pattern = "a/*/**/../../*";
+  const expected = [
+    ["", "a"],
+    ["a", "b"],
+    ["a", "x"],
+    ["a/b", "c"],
+  ].map(([parent, name]) => [parent.replaceAll("/", sep), name]);
+  const pathsOf = (dir: string, dirents: fs.Dirent[]) =>
+    dirents.map(d => [relative(dir, String(d.parentPath)), d.name]).sort();
+
+  it("fs.globSync", () => {
+    using dir = tempDir("fs-glob-dirent-name", tree);
+    const dirents = fs.globSync(pattern, { cwd: String(dir), withFileTypes: true });
+    expect(pathsOf(String(dir), dirents)).toEqual(expected);
+  });
+
+  it("fs.promises.glob", async () => {
+    using dir = tempDir("fs-glob-dirent-name", tree);
+    const dirents = await Array.fromAsync(fs.promises.glob(pattern, { cwd: String(dir), withFileTypes: true }));
+    expect(pathsOf(String(dir), dirents)).toEqual(expected);
   });
 });

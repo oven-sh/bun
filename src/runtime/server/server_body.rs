@@ -2062,11 +2062,12 @@ where
     }
 
     /// `init()` creates the DevServer for a first config with an html route. A reload that brings the first one creates it here.
+    /// Returns whether it did.
     fn init_dev_server_for_reload(
         &mut self,
         new_config: &mut ServerConfig,
         global: &JSGlobalObject,
-    ) -> JsResult<()> {
+    ) -> JsResult<bool> {
         // The DevServer is HTTP/1-only: with it, an html route answers HTTP/2 and HTTP/3 with a 503.
         if self.dev_server.is_some()
             || !self.config.development.is_hmr_enabled()
@@ -2074,19 +2075,19 @@ where
             || self.h3_app.is_some()
             || !self.has_listener()
         {
-            return Ok(());
+            return Ok(false);
         }
         if !self
             .config
             .take_dev_server_options_from(new_config, global)?
         {
-            return Ok(());
+            return Ok(false);
         }
         if let Err(err) = self.init_dev_server() {
             self.config.drop_dev_server_options();
             return Err(err);
         }
-        Ok(())
+        Ok(true)
     }
 
     /// Swaps the live server's mutable
@@ -2104,7 +2105,18 @@ where
         httplog!("onReload");
 
         // Before anything is swapped, so that a failure leaves the server as it was.
-        self.init_dev_server_for_reload(new_config, global)?;
+        let dev_server_created = self.init_dev_server_for_reload(new_config, global)?;
+
+        // A DevServer builds its router list once, at start.
+        if !dev_server_created
+            && new_config.had_routes_object
+            && self.config.framework_routers_differ(new_config)
+        {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "server.reload() cannot add, remove, or change a framework router route ({{ dir, style }}). \
+                 Restart the server with the new routes."
+            )));
+        }
 
         // SAFETY: `on_reload` is only reachable while the server is running
         // (`self.app` set in `listen()`).

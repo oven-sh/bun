@@ -73,6 +73,8 @@ pub struct ServerConfig {
     pub(crate) user_routes_to_build: Vec<UserRouteBuilder>,
 
     pub(crate) bake: Option<crate::bake::UserOptions>,
+    /// The `{ dir, style }` entries of `routes`. A DevServer serves the ones it started with, and only those.
+    pub(crate) framework_routers: Vec<crate::bake::FileSystemRouterType>,
 }
 
 impl Default for ServerConfig {
@@ -105,6 +107,7 @@ impl Default for ServerConfig {
             negative_routes: Vec::new(),
             user_routes_to_build: Vec::new(),
             bake: None,
+            framework_routers: Vec::new(),
         }
     }
 }
@@ -297,6 +300,7 @@ impl ServerConfig {
             negative_routes: core::mem::take(&mut self.negative_routes),
             user_routes_to_build: core::mem::take(&mut self.user_routes_to_build),
             bake: self.bake.take(),
+            framework_routers: core::mem::take(&mut self.framework_routers),
         };
 
         that.normalize_static_routes_list()?;
@@ -573,7 +577,7 @@ fn get_routes_object(global: &JSGlobalObject, arg: JSValue) -> JsResult<Option<J
 /// slices live as long as `UserOptions.arena`.
 fn convert_file_system_router_type(
     arena: &bun_alloc::Arena,
-    src: crate::bake::FileSystemRouterType,
+    src: &crate::bake::FileSystemRouterType,
 ) -> crate::bake::bake_body::FileSystemRouterType {
     use crate::bake::bake_body as bb;
     // NOTE: `bb::arena_erase` is the single sanctioned `'bump → 'static`
@@ -600,7 +604,7 @@ fn convert_file_system_router_type(
         ignore_underscores: src.ignore_underscores,
         ignore_dirs: dupe_slice_of(arena, &src.ignore_dirs),
         extensions: dupe_slice_of(arena, &src.extensions),
-        style: src.style,
+        style: src.style.clone(),
         allow_layouts: src.allow_layouts,
     }
 }
@@ -609,7 +613,7 @@ impl ServerConfig {
     /// The DevServer options for html and framework router routes.
     fn dev_server_options(
         global: &JSGlobalObject,
-        framework_router_list: Vec<crate::bake::FileSystemRouterType>,
+        framework_router_list: &[crate::bake::FileSystemRouterType],
         allocations: crate::bake::StringRefList,
     ) -> JsResult<crate::bake::UserOptions> {
         use crate::bake::bake_body as bb;
@@ -623,7 +627,7 @@ impl ServerConfig {
         );
 
         let router_types: Vec<bb::FileSystemRouterType> = framework_router_list
-            .into_iter()
+            .iter()
             .map(|t| convert_file_system_router_type(&arena, t))
             .collect();
 
@@ -677,7 +681,10 @@ impl ServerConfig {
         global: &JSGlobalObject,
     ) -> JsResult<bool> {
         self.bake = match new_config.bake.take() {
-            Some(options) => Some(options),
+            Some(options) => {
+                self.framework_routers = core::mem::take(&mut new_config.framework_routers);
+                Some(options)
+            }
             None if new_config
                 .static_routes
                 .iter()
@@ -685,7 +692,7 @@ impl ServerConfig {
             {
                 Some(Self::dev_server_options(
                     global,
-                    Vec::new(),
+                    &[],
                     crate::bake::StringRefList::EMPTY,
                 )?)
             }
@@ -697,6 +704,48 @@ impl ServerConfig {
     /// The DevServer did not start.
     pub(crate) fn drop_dev_server_options(&mut self) {
         self.bake = None;
+        self.framework_routers.clear();
+    }
+
+    /// `dir` resolves against the root the DevServer started with, not the current directory.
+    pub(crate) fn framework_routers_differ(&self, new_config: &ServerConfig) -> bool {
+        let served = &self.framework_routers;
+        let requested = &new_config.framework_routers;
+        if served.len() != requested.len() {
+            return true;
+        }
+        if requested.is_empty() {
+            return false;
+        }
+        let Some(root) = self.bake.as_ref().map(|options| options.root.as_bytes()) else {
+            return true;
+        };
+        // `None` for a `dir` too long for a path. No router serves it, so it matches nothing.
+        let resolve = |dir: &[u8]| -> Option<Vec<u8>> {
+            let mut buf = bun_paths::path_buffer_pool::get();
+            let joined = bun_paths::resolve_path::join_abs_string_buf_checked::<
+                bun_paths::platform::Auto,
+            >(root, &mut buf[..], &[dir])?;
+            Some(strings::without_trailing_slash(joined).to_vec())
+        };
+        let mut matched = vec![false; served.len()];
+        'requested: for router in requested {
+            let Some(dir) = resolve(&router.root) else {
+                return true;
+            };
+            for (i, candidate) in served.iter().enumerate() {
+                if !matched[i]
+                    && candidate.prefix == router.prefix
+                    && candidate.style == router.style
+                    && resolve(&candidate.root).as_deref() == Some(dir.as_slice())
+                {
+                    matched[i] = true;
+                    continue 'requested;
+                }
+            }
+            return true;
+        }
+        false
     }
 
     pub fn from_js(
@@ -1032,12 +1081,13 @@ impl ServerConfig {
                 if args.development.is_hmr_enabled() {
                     args.bake = Some(Self::dev_server_options(
                         global,
-                        core::mem::take(&mut init_ctx.framework_router_list),
+                        &init_ctx.framework_router_list,
                         core::mem::replace(
                             &mut init_ctx.js_string_allocations,
                             crate::bake::StringRefList::EMPTY,
                         ),
                     )?);
+                    args.framework_routers = core::mem::take(&mut init_ctx.framework_router_list);
                 } else {
                     if !init_ctx.framework_router_list.is_empty() {
                         return Err(global.throw_invalid_arguments(format_args!(

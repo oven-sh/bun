@@ -398,6 +398,44 @@ export default function () {
     expect(exitCode).toBe(1);
   });
 
+  // A production build has no client references without a separate SSR graph.
+  // The build used to abort instead of reporting the file: in the parser when it
+  // wraps an exported value, and in the linker when it has nothing to wrap.
+  test.each([
+    ["an exported function", `export function Button() {}`],
+    ["an export clause", `function Button() {}\nexport { Button };`],
+  ])('a "use client" module without a separate SSR graph is a build error (%s)', async (_, exports) => {
+    const framework = {
+      ...minimalFramework,
+      serverComponents: { ...minimalFramework.serverComponents!, separateSSRGraph: false },
+    };
+    using dir = tempDir("bake-production-use-client-single-graph", {
+      "app.ts": `export default { app: { framework: ${JSON.stringify(framework)} } };`,
+      "routes/index.ts": `
+import { Button } from "../components/Button";
+export default function () {
+  return new Response("Hello, " + typeof Button);
+}
+`,
+      "components/Button.ts": `"use client";\n${exports}\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--app", "./app.ts", "--outdir", "./dist"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain(
+      `error: "use client" is not supported yet in a production build unless 'framework.serverComponents.separateSSRGraph' is true`,
+    );
+    expect(normalizePath(stderr)).toContain("/components/Button.ts:1:1");
+    expect(existsSync(path.join(String(dir), "dist"))).toBe(false);
+    expect(exitCode).toBe(1);
+  });
+
   test("handles build with no pages directory without crashing", async () => {
     const dir = await tempDirWithBakeDeps("bake-production-no-pages", {
       "app.ts": `export default { app: { framework: "react" } };`,

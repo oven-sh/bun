@@ -2605,6 +2605,23 @@ pub mod parse_worker {
         } else {
             bun_ast::runtime::ServerComponentsMode::None
         };
+        // The steps after the parser do not implement these directives. They abort the process.
+        let unsupported_directive: Option<&'static [u8]> = match use_directive {
+            // Every later step that handles `UseDirective::Server` is a `todo_panic!`.
+            UseDirective::Server => Some(b"\"use server\" is not supported yet"),
+            // Only the dev server has client references without a separate SSR graph:
+            // https://github.com/oven-sh/bun/issues/14763
+            UseDirective::Client
+                if opts.features.server_components
+                    == bun_ast::runtime::ServerComponentsMode::WrapExportsForClientReference
+                    && !topts.has_dev_server() =>
+            {
+                Some(
+                    b"\"use client\" is not supported yet in a production build unless 'framework.serverComponents.separateSSRGraph' is true",
+                )
+            }
+            UseDirective::Client | UseDirective::None => None,
+        };
 
         // `transpiler.options.framework: Option<&bake_types::Framework>`
         // vs `opts.framework: Option<&js_parser::options::Framework>` — both
@@ -2687,13 +2704,8 @@ pub mod parse_worker {
         // raw `*mut Transpiler` and reborrow `(*transpiler).options` mutably.
         let _ = topts;
         let ast_result: core::result::Result<JSAst, AnyError> =
-            if use_directive == UseDirective::Server {
-                // Every later step that handles `UseDirective::Server` is a `todo_panic!`.
-                log.add_range_error(
-                    Some(source),
-                    UseDirective::range(entry_contents),
-                    b"\"use server\" is not supported yet",
-                );
+            if let Some(message) = unsupported_directive {
+                log.add_range_error(Some(source), UseDirective::range(entry_contents), message);
                 Err(crate::Error::ParserError)
             } else if !is_empty || loader.handles_empty_file() {
                 get_ast(

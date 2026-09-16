@@ -8624,12 +8624,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             bun_core::todo_panic!("registerServerReference");
         }
 
+        // Dev server only: `ParseTask` fails a production build before it parses in this mode.
+        // The dev server loads a module by its source path.
         let module_path = self.new_expr(
-            E::String::init(if self.options.jsx.development {
-                self.source.path.pretty
-            } else {
-                bun_core::todo_panic!("unique_key here")
-            }),
+            E::String::init(self.source.path.pretty),
             bun_ast::Loc::EMPTY,
         );
 

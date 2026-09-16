@@ -74,7 +74,8 @@ async function listenCutShort() {
   }
 }
 
-// Every try opens its own TCP connection, like c-ares 1.34.6 and Node.
+// Every try opens its own TCP connection, like c-ares up to 1.34.6. Node 26.6+
+// and 24.20+ ship c-ares 1.34.8 with the same bug and report ETIMEOUT here.
 test.each([1, 2])("a TCP answer that is cut short fails the query with ECONNREFUSED (tries: %d)", async tries => {
   using server = await listenCutShort();
   const resolver = new Resolver({ timeout: 3000, tries });

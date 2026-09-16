@@ -125,25 +125,38 @@ async function checkParentPaths(src, srcStat, dest) {
 // raises ERR_FS_CP_SOCKET / ERR_FS_CP_FIFO_PIPE for special files, and the
 // native copy handles symlinks like node only when `nativeResolvesSymlinks`.
 // Any other entry bails to the ported walker. Scan errors also bail so the
-// walker surfaces them the way node would.
+// walker surfaces them the way node would. The scan reads one level of the
+// tree at a time, `kScanConcurrency` directories in parallel. Awaiting one
+// readdir per directory takes about four times as long on a large tree.
+const kScanConcurrency = 64;
 async function nativeCanCopyTree(root) {
-  const stack = [root];
-  while (stack.length) {
-    const dir = stack.pop();
-    let entries;
-    try {
-      entries = await readdir(dir, { withFileTypes: true });
-    } catch {
-      return false;
-    }
-    for (let i = 0; i < entries.length; i++) {
-      const entry = entries[i];
-      if (entry.isDirectory()) {
-        stack.push(join(dir, entry.name));
-      } else if (!entry.isFile() && !(nativeResolvesSymlinks && entry.isSymbolicLink())) {
+  let dirs = [root];
+  while (dirs.length) {
+    const next = [];
+    for (let start = 0; start < dirs.length; start += kScanConcurrency) {
+      const pending = [];
+      for (let d = start; d < dirs.length && d < start + kScanConcurrency; d++) {
+        pending.push(readdir(dirs[d], { withFileTypes: true }));
+      }
+      let lists;
+      try {
+        lists = await Promise.all(pending);
+      } catch {
         return false;
       }
+      for (let d = 0; d < lists.length; d++) {
+        const entries = lists[d];
+        for (let i = 0; i < entries.length; i++) {
+          const entry = entries[i];
+          if (entry.isDirectory()) {
+            next.push(join(dirs[start + d], entry.name));
+          } else if (!entry.isFile() && !(nativeResolvesSymlinks && entry.isSymbolicLink())) {
+            return false;
+          }
+        }
+      }
     }
+    dirs = next;
   }
   return true;
 }

@@ -413,6 +413,18 @@ for (const [name, copy] of impls) {
       expect(e.code).toBe("ERR_FS_CP_FIFO_PIPE");
     });
 
+    test.skipIf(isWindows)("recursive - FIFO in one of many sibling directories is rejected", async () => {
+      // More directories on one level than the source scan reads at a time.
+      await using basename = tempDir("cp", {
+        "from/a.txt": "a",
+      });
+      for (let d = 0; d < 130; d++) fs.mkdirSync(join(basename, "from", `dir-${d}`));
+      mkfifo(join(basename, "from", "dir-129", "pipe"), 0o666);
+
+      const e = await copyShouldThrow(join(basename, "from"), join(basename, "result"), { recursive: true });
+      expect(e.code).toBe("ERR_FS_CP_FIFO_PIPE");
+    });
+
     test("filter - works", async () => {
       await using basename = tempDir("cp", {
         "from/a.txt": "a",

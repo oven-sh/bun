@@ -86,11 +86,10 @@ using namespace JSC;
 using namespace Zig;
 
 // Node: RETURN_STATUS_IF_FALSE(env, env->can_call_into_js(), ...)
-// (And not while a completion runs for a Bun.ModuleGraph context that has stopped: see m_isCompletingForStoppedContext.)
-#define NAPI_RETURN_IF_CANNOT_CALL_INTO_JS(_env)                                              \
-    do {                                                                                      \
-        if (!(_env)->canCallIntoJS() || (_env)->m_isCompletingForStoppedContext) [[unlikely]] \
-            return napi_set_last_error(_env, (_env)->cannotCallIntoJSStatus());               \
+#define NAPI_RETURN_IF_CANNOT_CALL_INTO_JS(_env)                                \
+    do {                                                                        \
+        if (!(_env)->canCallIntoJS()) [[unlikely]]                              \
+            return napi_set_last_error(_env, (_env)->cannotCallIntoJSStatus()); \
     } while (0)
 
 // Every NAPI function should use this at the start. It does the following:

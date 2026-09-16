@@ -1695,13 +1695,28 @@ extern "C" fn napi_resolve_deferred(
     resolution_: napi_value,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_resolve_deferred");
-    let env = preamble!(env_);
+    let env = get_env!(env_);
+    if env.has_pending_exception() {
+        return env.pending_exception();
+    }
     // SAFETY: deferred was created by heap::alloc in napi_create_promise.
-    let deferred_box = unsafe { bun_core::heap::take(deferred) };
-    // `deferred_box` drops at scope exit (deinit + free).
-    if !env.to_js().bun_vm().is_context_live(deferred_box.context) {
+    if !env
+        .to_js()
+        .bun_vm()
+        .is_context_live(unsafe { (*deferred).context })
+    {
+        // Of a Bun.ModuleGraph that has been disposed: released, and nothing is settled. Before
+        // the gate, which refuses a completion for such a graph whatever would run its script.
+        // SAFETY: as above; the addon is done with it on napi_ok.
+        drop(unsafe { bun_core::heap::take(deferred) });
         return env.ok();
     }
+    if let Err(status) = env.check_can_call_into_js() {
+        return status;
+    }
+    // SAFETY: as above.
+    let deferred_box = unsafe { bun_core::heap::take(deferred) };
+    // `deferred_box` drops at scope exit (deinit + free).
     let resolution = resolution_.get();
     let prom = deferred_box.promise.get();
     if prom.resolve(env.to_js(), resolution).is_err() {
@@ -1717,12 +1732,27 @@ extern "C" fn napi_reject_deferred(
     rejection_: napi_value,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_reject_deferred");
-    let env = preamble!(env_);
+    let env = get_env!(env_);
+    if env.has_pending_exception() {
+        return env.pending_exception();
+    }
     // SAFETY: deferred was created by heap::alloc in napi_create_promise.
-    let deferred_box = unsafe { bun_core::heap::take(deferred) };
-    if !env.to_js().bun_vm().is_context_live(deferred_box.context) {
+    if !env
+        .to_js()
+        .bun_vm()
+        .is_context_live(unsafe { (*deferred).context })
+    {
+        // Of a Bun.ModuleGraph that has been disposed: released, and nothing is settled. Before
+        // the gate, which refuses a completion for such a graph whatever would run its script.
+        // SAFETY: as above; the addon is done with it on napi_ok.
+        drop(unsafe { bun_core::heap::take(deferred) });
         return env.ok();
     }
+    if let Err(status) = env.check_can_call_into_js() {
+        return status;
+    }
+    // SAFETY: as above.
+    let deferred_box = unsafe { bun_core::heap::take(deferred) };
     let rejection = rejection_.get();
     let prom = deferred_box.promise.get();
     if prom.reject(env.to_js(), Ok(rejection)).is_err() {

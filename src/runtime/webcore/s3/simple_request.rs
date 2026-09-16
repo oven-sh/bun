@@ -574,6 +574,18 @@ pub(crate) fn resolve_proxy(proxy_url: Option<&[u8]>, url: &[u8]) -> Box<[u8]> {
     }
 }
 
+/// What the three functions that put an S3 request on the HTTP thread (this file's,
+/// `client::list_objects`, `client::download_stream`) ask before anything else.
+pub(crate) fn nothing_new_leaves(context: &bun_jsc::ScriptExecutionContext) -> bool {
+    !VirtualMachine::get().script_allowed() || context.is_stopped()
+}
+
+/// What the completion of such a request is told.
+pub(crate) const NOTHING_NEW_LEAVES: S3Error<'static> = S3Error {
+    code: b"ERR_S3_VM_SHUTDOWN",
+    message: b"The JavaScript VM that owns this request is shutting down",
+};
+
 pub(crate) fn execute_simple_s3_request(
     this: &S3Credentials,
     context: &bun_jsc::ScriptExecutionContext,
@@ -582,12 +594,14 @@ pub(crate) fn execute_simple_s3_request(
     callback_context: *mut c_void,
 ) -> bun_jsc::JsResult<()> {
     // A multipart/retry continuation can reach here from teardown's queue
-    // release; nothing new leaves a VM that is stopping.
-    if !VirtualMachine::get().script_allowed() {
+    // release; nothing new leaves a VM that is stopping. Nor for a context
+    // that has stopped (a disposed `Bun.ModuleGraph`'s leftover script): the
+    // completion is released as for a failure, which is reported to nobody.
+    if nothing_new_leaves(context) {
         drop(options.range);
         callback.fail(
-            b"ERR_S3_VM_SHUTDOWN",
-            b"The JavaScript VM that owns this request is shutting down",
+            NOTHING_NEW_LEAVES.code,
+            NOTHING_NEW_LEAVES.message,
             callback_context,
         )?;
         return Ok(());

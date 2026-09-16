@@ -178,6 +178,12 @@ pub(crate) fn list_objects(
     callback: fn(S3ListObjectsResult, *mut c_void) -> JsResult<()>,
     callback_context: *mut c_void,
 ) -> JsResult<()> {
+    if s3_simple_request::nothing_new_leaves(context) {
+        return callback(
+            S3ListObjectsResult::Failure(s3_simple_request::NOTHING_NEW_LEAVES),
+            callback_context,
+        );
+    }
     let mut search_params: Vec<u8> = Vec::<u8>::default();
 
     let _ = search_params.append_slice(b"?"); // OOM/capacity: fire-and-forget
@@ -1132,6 +1138,15 @@ fn download_stream(
     ),
     callback_context: *mut c_void,
 ) -> *mut S3HttpDownloadStreamingTask {
+    if s3_simple_request::nothing_new_leaves(context) {
+        callback(
+            &MutableString::default(),
+            false,
+            Some(s3_simple_request::NOTHING_NEW_LEAVES),
+            callback_context,
+        );
+        return core::ptr::null_mut();
+    }
     let range: Option<Vec<u8>> = 'brk: {
         if let Some(size_) = size {
             let mut end = offset + size_;

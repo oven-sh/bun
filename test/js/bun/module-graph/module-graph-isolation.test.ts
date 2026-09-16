@@ -628,6 +628,37 @@ const dir = String(
       // Not process.exit(): a build still waiting for the plugin's answer would keep this process here.
       console.log("idle");
     `,
+    "uses-s3-later.mjs": `
+      // From a microtask, which still runs once the graph has been disposed: every kind of S3 request.
+      export const later = endpoint => queueMicrotask(() => {
+        const client = new Bun.S3Client({ accessKeyId: "a", secretAccessKey: "b", bucket: "bucket", endpoint });
+        const file = client.file("key");
+        file.delete().catch(() => {});
+        file.write("overwritten").catch(() => {});
+        file.stat().catch(() => {});
+        file.text().catch(() => {});
+        client.list().catch(() => {});
+        file.stream().getReader().read().catch(() => {});
+        file.write(new Response(new ReadableStream({ pull(controller) { controller.enqueue(new Uint8Array(8 << 20)); controller.close(); } }))).catch(() => {});
+        const writer = file.writer({ partSize: 5 << 20 });
+        writer.write(new Uint8Array(6 << 20));
+        writer.end().catch?.(() => {});
+      });
+    `,
+    "s3-after-it-was-disposed.mjs": `
+      // A bucket of the host's: what is asked of it.
+      const asked = [];
+      const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: request => { asked.push(request.method + " " + new URL(request.url).pathname); return new Response("", { status: 500 }); } });
+      const graph = new Bun.ModuleGraph();
+      const app = await graph.import(import.meta.dir + "/uses-s3-later.mjs");
+      graph.run(() => app.later(server.url.href));
+      graph.dispose();
+      // The same of the host's own, afterwards, has arrived: the graph's would have too.
+      await new Bun.S3Client({ accessKeyId: "a", secretAccessKey: "b", bucket: "bucket", endpoint: server.url.href }).file("the-hosts").stat().catch(() => {});
+      for (let i = 0; i < 20; i++) await new Promise(resolve => setImmediate(resolve));
+      console.log(JSON.stringify({ asked }));
+      process.exit(0);
+    `,
     "uploads-to-s3.mjs": `
       const client = endpoint => new Bun.S3Client({ accessKeyId: "a", secretAccessKey: "b", bucket: "bucket", endpoint });
       export const chunks = { pulled: 0 };
@@ -3455,6 +3486,12 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
     expect({ stdout: stdout.trim(), exitCode }).toEqual({
       stdout: `{"sameServer":true,"answers":["the second","the second","nobody"]}`,
+      exitCode: 0,
+    });
+  });
+  test("nothing its leftover script asks of an S3 bucket is sent: not a delete, not a write", async () => {
+    expect(await runsFixture("s3-after-it-was-disposed.mjs")).toEqual({
+      stdout: `{"asked":["HEAD /bucket/the-hosts"]}`,
       exitCode: 0,
     });
   });

@@ -58,7 +58,7 @@ export const cares: Dependency = {
     commit: CARES_COMMIT,
   }),
 
-  patches: ["patches/cares/accept-rdata-compression.patch"],
+  patches: ["patches/cares/accept-rdata-compression.patch", "patches/cares/close-tcp-conn-on-partial-answer.patch"],
 
   build: cfg => ({
     kind: "direct",

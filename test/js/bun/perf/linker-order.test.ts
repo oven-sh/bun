@@ -293,7 +293,18 @@ describe("finding an earlier build to inherit from", () => {
   const pipeline = "https://buildkite.com/bun/bun";
 
   /** Walk back from build #1000 on main. `main` lists the branch's earlier builds; every other number is a PR's. */
-  async function walk({ main, newestPassed }: { main: number[]; newestPassed?: number }) {
+  async function walk({
+    main,
+    newestPassed,
+    from = {},
+    // Buildkite repeats the request's query on the Location it answers with.
+    location = (build: number) => `${pipeline}/builds/${build}?branch=main&state=passed`,
+  }: {
+    main: number[];
+    newestPassed?: number;
+    from?: Partial<OrderFileContext>;
+    location?: (build: number) => string;
+  }) {
     const requested: string[] = [];
     const lookups: BuildLookups = {
       async build(url) {
@@ -303,13 +314,11 @@ describe("finding an earlier build to inherit from", () => {
         if (Number.isNaN(number)) return undefined;
         return { id: `id-${number}`, number, branch_name: main.includes(number) ? "main" : "some-pr" };
       },
-      // Buildkite repeats the request's query on the Location it answers with.
-      redirect: async () =>
-        newestPassed === undefined ? null : `${pipeline}/builds/${newestPassed}?branch=main&state=passed`,
+      redirect: async () => (newestPassed === undefined ? null : location(newestPassed)),
     };
     const found: (number | undefined)[] = [];
-    const from = ctx({ buildUrl: `${pipeline}/builds/1000`, buildNumber: 1000 });
-    for await (const build of candidateBuilds(from, lookups)) found.push(build.number);
+    const start = ctx({ buildUrl: `${pipeline}/builds/1000`, buildNumber: 1000, ...from });
+    for await (const build of candidateBuilds(start, lookups)) found.push(build.number);
     return { found, requested };
   }
 
@@ -329,6 +338,18 @@ describe("finding an earlier build to inherit from", () => {
     const crowded = Array.from({ length: 60 }, (_, i) => 999 - i);
     const { found } = await walk({ main: [...crowded, 640], newestPassed: 640 });
     expect(found).toEqual([...crowded.slice(0, 50), 640]);
+  });
+
+  it("asks only for the newest passed build when this build has no number to probe from", async () => {
+    const { found, requested } = await walk({ main: [990], newestPassed: 640, from: { buildNumber: undefined } });
+    expect({ found, requested }).toEqual({ found: [640], requested: [`${pipeline}/builds/640.json`] });
+  });
+
+  it("resolves a relative Location against the pipeline", async () => {
+    const relative = (build: number) => `/bun/bun/builds/${build}?branch=main&state=passed`;
+    const { found, requested } = await walk({ main: [], newestPassed: 640, location: relative });
+    expect(found).toEqual([640]);
+    expect(requested.at(-1)).toBe(`${pipeline}/builds/640.json`);
   });
 
   it("finds nothing when the branch has no passed build either", async () => {

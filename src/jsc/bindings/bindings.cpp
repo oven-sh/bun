@@ -2318,17 +2318,6 @@ inline bool deepEqualsWrapperImpl(JSC::EncodedJSValue a, JSC::EncodedJSValue b, 
     bool result = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(global, JSC::JSValue::decode(a), JSC::JSValue::decode(b), args, stack, scope, true);
     RELEASE_AND_RETURN(scope, result);
 }
-
-ASCIILiteral headersInitNameLiteral(HeadersInitName name)
-{
-    switch (name) {
-    case HeadersInitName::Headers:
-        return "headers"_s;
-    case HeadersInitName::ProxyHeaders:
-        return "proxy.headers"_s;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
 }
 
 extern "C" {
@@ -2360,7 +2349,7 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromJS(JSC::JSGlobalObject* 
     //  and error on invalid names and values
     std::optional<WebCore::FetchHeaders::Init> init;
     if (!argument0.value().isUndefined())
-        init = convertHeadersInit<IDLDOMString>(*lexicalGlobalObject, argument0.value(), headersInitNameLiteral(name));
+        init = convertHeadersInit<IDLDOMString>(*lexicalGlobalObject, argument0.value(), name);
     RETURN_IF_EXCEPTION(throwScope, nullptr);
 
     // if the headers are empty, return null

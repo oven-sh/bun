@@ -22,6 +22,7 @@
 
 #include "FetchHeaders.h"
 #include "JSDOMWrapper.h"
+#include "headers-handwritten.h"
 
 namespace WebCore {
 
@@ -84,9 +85,9 @@ JSC::EncodedJSValue fetchHeadersGetSetCookie(JSC::JSGlobalObject* lexicalGlobalO
 
 // Converts a HeadersInit, `sequence<sequence<T>> or record<T, T>`, with the steps of the
 // IDLUnion converter. T is IDLDOMString or IDLByteString. A TypeError that the conversion
-// itself raises names `name`, the argument or option that held the value. An exception
-// from user code (a getter, an iterator, toString) propagates unchanged.
+// itself raises names the option that held the value. An exception from user code (a
+// getter, an iterator, toString) propagates unchanged.
 template<typename IDLStringType>
-FetchHeaders::Init convertHeadersInit(JSC::JSGlobalObject&, JSC::JSValue, ASCIILiteral name);
+FetchHeaders::Init convertHeadersInit(JSC::JSGlobalObject&, JSC::JSValue, HeadersInitName);
 
 } // namespace WebCore

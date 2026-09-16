@@ -137,7 +137,7 @@ static void throwEntryIsNotPair(JSGlobalObject& lexicalGlobalObject, ThrowScope&
 }
 
 template<typename IDLStringType>
-FetchHeaders::Init convertHeadersInit(JSGlobalObject& lexicalGlobalObject, JSValue value, ASCIILiteral name)
+static FetchHeaders::Init convertHeadersInitNamed(JSGlobalObject& lexicalGlobalObject, JSValue value, ASCIILiteral name)
 {
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -179,8 +179,20 @@ FetchHeaders::Init convertHeadersInit(JSGlobalObject& lexicalGlobalObject, JSVal
     return pairs;
 }
 
-template FetchHeaders::Init convertHeadersInit<IDLDOMString>(JSGlobalObject&, JSValue, ASCIILiteral);
-template FetchHeaders::Init convertHeadersInit<IDLByteString>(JSGlobalObject&, JSValue, ASCIILiteral);
+template<typename IDLStringType>
+FetchHeaders::Init convertHeadersInit(JSGlobalObject& lexicalGlobalObject, JSValue value, HeadersInitName name)
+{
+    switch (name) {
+    case HeadersInitName::Headers:
+        return convertHeadersInitNamed<IDLStringType>(lexicalGlobalObject, value, "headers"_s);
+    case HeadersInitName::ProxyHeaders:
+        return convertHeadersInitNamed<IDLStringType>(lexicalGlobalObject, value, "proxy.headers"_s);
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+template FetchHeaders::Init convertHeadersInit<IDLDOMString>(JSGlobalObject&, JSValue, HeadersInitName);
+template FetchHeaders::Init convertHeadersInit<IDLByteString>(JSGlobalObject&, JSValue, HeadersInitName);
 
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSFetchHeadersDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
@@ -202,7 +214,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSFetchHeadersDOMConstru
             RETURN_IF_EXCEPTION(throwScope, {});
             return JSValue::encode(jsValue);
         }
-        init = convertHeadersInit<IDLDOMString>(*lexicalGlobalObject, argument0.value(), "init"_s);
+        init = convertHeadersInitNamed<IDLDOMString>(*lexicalGlobalObject, argument0.value(), "init"_s);
     }
 
     RETURN_IF_EXCEPTION(throwScope, {});

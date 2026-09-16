@@ -236,7 +236,7 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
         RETURN_IF_EXCEPTION(throwScope, {});
         if (headersValue) {
             if (!headersValue.isUndefinedOrNull()) {
-                headersInit = convertHeadersInit<IDLByteString>(*lexicalGlobalObject, headersValue, "headers"_s);
+                headersInit = convertHeadersInit<IDLByteString>(*lexicalGlobalObject, headersValue, HeadersInitName::Headers);
                 RETURN_IF_EXCEPTION(throwScope, {});
             }
         }
@@ -324,7 +324,7 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
                             proxyHeadersInit = WTF::move(pairs);
                         } else {
                             // Fall back to IDL conversion for plain objects/arrays
-                            proxyHeadersInit = convertHeadersInit<IDLByteString>(*lexicalGlobalObject, proxyHeadersValue, "proxy.headers"_s);
+                            proxyHeadersInit = convertHeadersInit<IDLByteString>(*lexicalGlobalObject, proxyHeadersValue, HeadersInitName::ProxyHeaders);
                             RETURN_IF_EXCEPTION(throwScope, {});
                         }
                     }

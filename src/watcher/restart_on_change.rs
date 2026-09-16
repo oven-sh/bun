@@ -1,14 +1,10 @@
-//! A `--watch` process builds its watch list from the files it loads. A start
-//! that fails before the VM exists (bunfig.toml does not parse, the entry file
-//! is missing) has no watcher at all, so nothing could restart it. It waits
-//! here for the file it could not use.
+//! Under `--watch`, a start that fails before the VM exists has no watcher: it waits here for its input.
 
 use core::time::Duration;
 
 use bun_core::{Timespec, ZBox, ZStr};
 
-/// What `stat` reports for a path: inode, size and mtime. `None` when the path
-/// cannot be read, so a file that appears or goes away counts as changed.
+/// Inode, size and mtime of a path. `None` if `stat` fails, so a file that appears or goes away differs.
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct Stamp(Option<(u64, u64, Timespec)>);
 
@@ -21,8 +17,7 @@ impl Stamp {
     }
 }
 
-/// A path the start depends on, stamped before the start looks at it. A stamp
-/// taken after the failure would miss a save that lands between the two.
+/// A path the start depends on, stamped before the start looks at it so that no save is missed.
 pub struct Input {
     path: ZBox,
     seen: Stamp,
@@ -37,9 +32,7 @@ impl Input {
         }
     }
 
-    /// `path` and its directory. The name may resolve to another file in that
-    /// directory (`./entry` to `./entry.ts`), which shows only as a change of
-    /// the directory.
+    /// `path` and its directory: `./entry` resolves to `./entry.ts`, which only the directory shows.
     pub fn with_dir(path: &[u8]) -> Vec<Input> {
         let mut inputs = vec![Input::new(path)];
         if let Some(dir) = bun_paths::dirname(path) {
@@ -53,13 +46,10 @@ impl Input {
     }
 }
 
-// No watcher exists yet, and the file may not exist either, so there is
-// nothing to hand to inotify / kqueue / ReadDirectoryChangesW. `stat` covers
-// every platform and every way an editor saves a file.
+// No watcher exists yet and the file may not exist, so there is nothing to give the OS watcher.
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
 
-/// Blocks until one of `inputs` no longer looks like its stamp, then restarts
-/// the process. Call it after the error is printed.
+/// Blocks until one of `inputs` changes, then restarts the process. Call it after the error is printed.
 pub fn restart_after_change(inputs: &[Input]) -> ! {
     if let Some(first) = inputs.first() {
         bun_core::pretty_errorln!(
@@ -79,8 +69,7 @@ pub fn restart_after_change(inputs: &[Input]) -> ! {
 
     #[cfg(windows)]
     if !bun_sys::windows::is_watcher_child() {
-        // The first start parses its arguments before it turns into the watcher
-        // manager, so no parent exists yet to spawn the next child.
+        // The first start has not become the watcher manager yet: no parent would spawn the next child.
         bun_sys::windows::become_watcher_manager();
     }
     bun_core::reload_process(false, false);

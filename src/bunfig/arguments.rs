@@ -134,8 +134,7 @@ pub fn load_config_path(
     load_bunfig(cmd, auto_loaded, config_path, ctx)
 }
 
-/// `watched` is the config file under `--watch`: the session waits for the next
-/// save of it instead of ending.
+/// Under `--watch`, `watched` is the config file: wait for its next save instead of exiting.
 #[cold]
 fn report_bunfig_load_failure(
     log: *mut bun_ast::Log,

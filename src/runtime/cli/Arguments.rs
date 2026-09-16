@@ -921,9 +921,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     ctx.args.absolute_working_dir = Some(cwd);
     ctx.positionals = slice_to_owned(args.positionals());
 
-    // The config loader reads this: under --watch a bunfig.toml that does not
-    // parse waits for the next save instead of ending the session. The flag's
-    // other effects are applied with the rest of the command's flags below.
+    // `load_config` reads this: under --watch a bunfig.toml that does not parse waits for a save.
     let watch = match cmd {
         CommandTag::AutoCommand
         | CommandTag::RunCommand

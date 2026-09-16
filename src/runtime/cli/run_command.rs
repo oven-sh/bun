@@ -2332,9 +2332,7 @@ impl RunCommand {
             );
         }
 
-        // Under --watch an entry file that is missing waits for the next save
-        // instead of ending the session (an editor that saves by rename leaves
-        // it away for a moment). Stamped before the first look at the file.
+        // Stamped before the first look at the entry: under --watch a missing one waits for a save.
         let watched_entry = if ctx.debug.hot_reload == cli::command::HotReload::Watch
             && Self::names_a_module(target_name)
         {
@@ -2717,8 +2715,7 @@ impl RunCommand {
         Ok(false)
     }
 
-    /// Whether a `bun run` target that was not found names a module (a path,
-    /// or a name with a JavaScript-like extension) and not a script or a binary.
+    /// Whether a target that was not found names a module (a path, a JS-like extension), not a script.
     fn names_a_module(target: &[u8]) -> bool {
         Self::default_loader_for(target)
             .map(Loader::is_javascript_like_or_json)

@@ -1010,23 +1010,27 @@ describe.concurrent("bun-install", () => {
       });
     });
 
-    it("does not hand the credentials to the host behind a backslash", async () => {
+    it("sends the credentials to the host in front of a backslash, not the one behind it", async () => {
       // `new URL("http://u:p@first\\x@second/pkg.tgz")` reads the host as `first` and the
       // credentials as `u:p`, because a `\` ends the authority of an http URL. npm reads it the
-      // same way. Neither host may receive the credentials the other was given.
+      // same way. The path of the request is not compared: Windows turns the `\` into a `/`.
       const firstReceived: Received[] = [];
       const secondReceived: Received[] = [];
-      await using first = serveTarball(firstReceived, null);
+      await using first = serveTarball(firstReceived, basic("u:p"));
       await using second = serveTarball(secondReceived, null);
 
       const result = await install(
         String.raw`http://u:p@127.0.0.1:${first.port}\x@127.0.0.1:${second.port}${tarballPath}`,
       );
 
-      expect({ firstReceived, secondReceived, exitCode: result.exitCode }).toEqual({
-        firstReceived: [],
+      expect({
+        first: firstReceived.map(({ url, authorization }) => ({ host: new URL(url).host, authorization })),
+        secondReceived,
+        ...result,
+      }).toEqual({
+        first: [{ host: `127.0.0.1:${first.port}`, authorization: basic("u:p") }],
         secondReceived: [],
-        exitCode: 1,
+        ...installed,
       });
     });
 

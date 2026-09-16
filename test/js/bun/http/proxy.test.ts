@@ -2467,32 +2467,24 @@ describe("proxy resolution", () => {
       ["http://example.test/#a@b", "", "", "example.test", ""],
       ["http://example.test:8080/user@other.test:9090", "", "", "example.test", "8080"],
       ["http://user:pass@example.test/path@other.test", "user", "pass", "example.test", ""],
-      // A `\` ends the authority of http, https, ws, wss, ftp and file, as it does for `new URL()`,
-      // so an `@` after it is not userinfo. `hostname` runs on to the next `/`: no name that resolves.
-      [
-        String.raw`http://user:pass@example.test\x@other.test/`,
-        "user",
-        "pass",
-        String.raw`example.test\x@other.test`,
-        "",
-      ],
-      [String.raw`http://a:b@c\@d/`, "a", "b", String.raw`c\@d`, ""],
-      [String.raw`http://example.test\@other.test/`, "", "", String.raw`example.test\@other.test`, ""],
-      [
-        String.raw`HTTPS://user:pass@example.test\@other.test/`,
-        "user",
-        "pass",
-        String.raw`example.test\@other.test`,
-        "",
-      ],
-      [String.raw`ws://user:pass@example.test\@other.test/`, "user", "pass", String.raw`example.test\@other.test`, ""],
-      [String.raw`wss://user:pass@example.test\@other.test/`, "user", "pass", String.raw`example.test\@other.test`, ""],
-      [String.raw`ftp://user:pass@example.test\@other.test/`, "user", "pass", String.raw`example.test\@other.test`, ""],
-      [String.raw`file://example.test\@other.test/`, "", "", String.raw`example.test\@other.test`, ""],
-      [String.raw`http://example.test\\@other.test/`, "", "", String.raw`example.test\\@other.test`, ""],
-      [`http://example.test\t\\@other.test/`, "", "", `example.test\t\\@other.test`, ""],
-      [String.raw`http://example.test\@[::1]:8080/`, "", "", String.raw`example.test\@[`, ":1]:8080"],
-      [String.raw`http://u:p@[::1]:80\@other.test:8080/sub`, "u", "p", "[::1]", String.raw`80\@other.test:8080`],
+      // A `\` ends the authority of http, https, ws, wss, ftp and file, as it does for `new URL()`:
+      // an `@` after it is not userinfo, and the host and the port end there too.
+      [String.raw`http://user:pass@example.test\x@other.test/`, "user", "pass", "example.test", ""],
+      [String.raw`http://a:b@c\@d/`, "a", "b", "c", ""],
+      [String.raw`http://example.test\@other.test/`, "", "", "example.test", ""],
+      [String.raw`HTTPS://user:pass@example.test\@other.test/`, "user", "pass", "example.test", ""],
+      [String.raw`ws://user:pass@example.test\@other.test/`, "user", "pass", "example.test", ""],
+      [String.raw`wss://user:pass@example.test\@other.test/`, "user", "pass", "example.test", ""],
+      [String.raw`ftp://user:pass@example.test\@other.test/`, "user", "pass", "example.test", ""],
+      [String.raw`file://example.test\@other.test/`, "", "", "example.test", ""],
+      [String.raw`http://example.test\\@other.test/`, "", "", "example.test", ""],
+      [String.raw`http://example.test\@[::1]:8080/`, "", "", "example.test", ""],
+      [String.raw`http://u:p@[::1]:80\@other.test:8080/sub`, "u", "p", "[::1]", "80"],
+      [String.raw`http://u:p@example.test:8080\@other.test:9090/`, "u", "p", "example.test", "8080"],
+      // `new URL()` drops a tab before it parses. This keeps it, so the name resolves to nothing.
+      [`http://example.test\t\\@other.test/`, "", "", "example.test\t", ""],
+      // A `#` ends the authority too, with or without a `/` in front of it.
+      ["http://u:p@example.test:8080#@other.test/", "u", "p", "example.test", "8080"],
       // In any other scheme a `\` is part of the userinfo, again as for `new URL()`.
       [
         String.raw`socks5://user:pass@example.test\x@other.test/`,
@@ -2719,6 +2711,19 @@ describe.concurrent("proxy environment", () => {
       `,
     );
     expect(results).toEqual(["proxy", "origin"]);
+  });
+
+  test("fetch('s3://…') reaches a proxy whose variable holds a domain login", async () => {
+    // S3 keeps the proxy as a string and parses it again, so it needs the same reading as fetch().
+    const results = await run(
+      () => ({}),
+      `
+      const s3 = { accessKeyId: "test", secretAccessKey: "test", endpoint: "http://127.0.0.1:" + ORIGIN_PORT };
+      process.env.HTTP_PROXY = PROXY.replace("http://", "http://DOMAIN" + String.fromCharCode(92) + "user:pass@");
+      console.log(JSON.stringify([await fetch("s3://bucket/key", { s3 }).then(r => r.text(), e => e.code)]));
+      `,
+    );
+    expect(results).toEqual(["proxy"]);
   });
 
   test("a worker starts from the proxy environment its parent has at that moment", async () => {

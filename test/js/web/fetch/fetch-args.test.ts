@@ -31,6 +31,12 @@ test("fetch(request subclass with headers)", async () => {
   expect(headers.get("hello")).toBe("world");
 });
 
+test("fetch(host:port/path) without a scheme is an http request", async () => {
+  // `new URL()` reads `localhost` as the scheme of this string. The client reads a host and a port.
+  const response = await fetch(`localhost:${server!.port}/hello`, { headers: { hello: "world" } });
+  expect({ status: response.status, hello: response.headers.get("hello") }).toEqual({ status: 200, hello: "world" });
+});
+
 test("fetch(RequestInit, headers)", async () => {
   const myRequest = {
     headers: {
@@ -162,8 +168,7 @@ describe.concurrent("fetch() early rejections are reported when unhandled", () =
     ["blank url", `fetch("")`, "fetch() URL must not be a blank string"],
     ["invalid url", `fetch("not a url")`, "fetch() URL is invalid"],
     ["unsupported protocol", `fetch("gopher://example.com/")`, "protocol must be http:, https: or s3:"],
-    // A scheme `URL::parse` does not take leaves the protocol empty. The request still has to be
-    // refused: the host of `blob:http://example.com/id` is `blob` to this parser.
+    // No host may be read behind the second scheme, and the request still has to be refused.
     ["a scheme in front of a scheme", `fetch("blob:http://example.com/id")`, "protocol must be http:, https: or s3:"],
     ["view-source:", `fetch("view-source:http://example.com/")`, "protocol must be http:, https: or s3:"],
     [

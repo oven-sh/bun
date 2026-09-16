@@ -442,17 +442,26 @@ impl<'a> URL<'a> {
         )
     }
 
+    fn backslash_ends_authority(&self, end: AuthorityEnd) -> bool {
+        end == AuthorityEnd::LikeNewURL && self.has_special_scheme()
+    }
+
+    /// The one definition of where an authority ends, for the userinfo, the host and the port.
+    fn ends_authority(byte: u8, backslash_ends_it: bool) -> bool {
+        matches!(byte, b'/' | b'?' | b'#') || (backslash_ends_it && byte == b'\\')
+    }
+
     /// The last `@` of the authority of `after_scheme`, the text after `scheme://`.
     pub fn userinfo_end(&self, after_scheme: &[u8], end: AuthorityEnd) -> Option<usize> {
-        let backslash_ends_it = end == AuthorityEnd::LikeNewURL && self.has_special_scheme();
+        let backslash_ends_it = self.backslash_ends_authority(end);
         let mut last_at = None;
         // One pass over the authority, which is short.
         for (i, &byte) in after_scheme.iter().enumerate() {
-            match byte {
-                b'@' => last_at = Some(i),
-                b'/' | b'?' | b'#' => break,
-                b'\\' if backslash_ends_it => break,
-                _ => {}
+            if Self::ends_authority(byte, backslash_ends_it) {
+                break;
+            }
+            if byte == b'@' {
+                last_at = Some(i);
             }
         }
         last_at
@@ -832,16 +841,20 @@ impl<'a> URL<'a> {
         }
         for i in 0..str.len() {
             match str[i] {
-                // RFC 3986 §3.1, and `new URL()`: the scheme ends at the first `:`.
+                b'/' | b'?' | b'%' => {
+                    return None;
+                }
                 b':' => {
                     if i + 3 <= str.len() && str[i + 1] == b'/' && str[i + 2] == b'/' {
                         self.protocol = &str[0..i];
-                        return Some(u32::try_from(i + 3).expect("int cast"));
+                        // RFC 3986 §3.1: only behind a scheme of these bytes is there an authority.
+                        let is_scheme = self.protocol.iter().all(|byte| {
+                            matches!(byte, b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'+' | b'-' | b'.')
+                        });
+                        return is_scheme.then(|| u32::try_from(i + 3).expect("int cast"));
                     }
-                    return None;
                 }
-                b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'+' | b'-' | b'.' => {}
-                _ => return None,
+                _ => {}
             }
         }
 
@@ -879,6 +892,7 @@ impl<'a> URL<'a> {
 
     pub(crate) fn parse_host(&mut self, str: &'a [u8]) -> Option<u32> {
         let mut i: u32 = 0;
+        let backslash_ends_it = self.backslash_ends_authority(self.authority_end);
 
         // reset it
         self.host = b"";
@@ -902,12 +916,8 @@ impl<'a> URL<'a> {
                 } else {
                     colon_i
                 };
-                match str[i as usize] {
-                    // alright, we found the slash or "?"
-                    b'?' | b'/' => {
-                        break;
-                    }
-                    _ => {}
+                if Self::ends_authority(str[i as usize], backslash_ends_it) {
+                    break;
                 }
                 i += 1;
             }
@@ -936,12 +946,8 @@ impl<'a> URL<'a> {
                     colon_i
                 };
 
-                match str[i as usize] {
-                    // alright, we found the slash or "?"
-                    b'?' | b'/' => {
-                        break;
-                    }
-                    _ => {}
+                if Self::ends_authority(str[i as usize], backslash_ends_it) {
+                    break;
                 }
                 i += 1;
             }

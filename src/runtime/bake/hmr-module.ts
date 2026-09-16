@@ -58,10 +58,7 @@ export async function loadExports<T>(id: Id): Promise<T> {
   return m.esm ? m.exports : m.cjs.exports;
 }
 
-/** The export names of a module, without evaluating it: its own, plus those of every
- * `export * from` target. That is lowered to a spread, so `default` is forwarded too.
- * `null` when one of those modules is not an ES module in the registry (CommonJS,
- * external, or a file with a build error): only an evaluation can tell then. */
+/** `export * from` is lowered to a spread, so it forwards `default` too. `null` if only an evaluation can tell. */
 export function staticExportNames(id: Id): string[] | null {
   const names = new Set<string>();
   const queue: Id[] = [id];

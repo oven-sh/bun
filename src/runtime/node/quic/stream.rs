@@ -1045,8 +1045,7 @@ impl QuicStream {
             }
             Ok(JSValue::js_boolean(true))
         } else {
-            // A refused terminal block, or queued output that can no longer
-            // follow a header block, fails the stream at the next write event.
+            // Queued output or a terminal refusal fails the stream at the next write event.
             let pending = {
                 let out = self.outbound.get();
                 !out.data.is_empty() || out.end != PendingEnd::None

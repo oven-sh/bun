@@ -412,9 +412,13 @@ const dir = String(
         await graph.run(() => app.fetchHeaders(process.env.NEVER_ENDING_URL));
       });
     `,
+    "isolated/control.test.js": `
+      import { test } from "bun:test";
+      test("a file that leaves nothing behind", () => {});
+    `,
     "isolated/second.test.js": `
       import { test } from "bun:test";
-      import { heapStats } from "bun:jsc";
+      import { heapStats, generateHeapSnapshotForDebugging } from "bun:jsc";
       test("the realm of the file before is collected", async () => {
         let realms;
         for (let i = 0; i < 100 && realms !== 1; i++) {
@@ -423,7 +427,32 @@ const dir = String(
           realms = heapStats().objectTypeCounts.GlobalObject;
         }
         console.log("realms: " + realms);
+        // (For the log, should the count differ from that of a run whose first file left nothing behind.)
+        if (realms !== 1) console.log(whatKeepsEachRealm());
       });
+      // For the log of a failing run: every GlobalObject, what points at it and whether it is a root.
+      function whatKeepsEachRealm() {
+        const snapshot = generateHeapSnapshotForDebugging();
+        const { nodes, nodeClassNames, edges, edgeTypes, edgeNames, roots, labels } = snapshot;
+        const classOf = new Map(), lines = [];
+        for (let i = 0; i < nodes.length; i += 7) classOf.set(nodes[i], nodeClassNames[nodes[i + 2]]);
+        const rootsOf = new Map();
+        for (let i = 0; i < (roots?.length ?? 0); i += 3) rootsOf.set(roots[i], [labels?.[roots[i + 1]], labels?.[roots[i + 2]]].filter(Boolean).join("/") || "root");
+        for (const [id, name] of classOf) {
+          if (name !== "GlobalObject") continue;
+          const incoming = new Map();
+          for (let e = 0; e < edges.length; e += 4) {
+            if (edges[e + 1] !== id) continue;
+            const type = edgeTypes[edges[e + 2]];
+            const via = type === "Property" || type === "Variable" ? "." + edgeNames[edges[e + 3]] : type === "Index" ? "[" + edges[e + 3] + "]" : " (internal)";
+            const from = classOf.get(edges[e]) + via + (rootsOf.has(edges[e]) ? " {root: " + rootsOf.get(edges[e]) + "}" : "");
+            incoming.set(from, (incoming.get(from) ?? 0) + 1);
+          }
+          const sorted = [...incoming].sort((x, y) => y[1] - x[1]).slice(0, 14).map(([from, count]) => from + (count > 1 ? " x" + count : ""));
+          lines.push("GlobalObject#" + id + (rootsOf.has(id) ? " {root: " + rootsOf.get(id) + "}" : "") + " <- " + (sorted.join("; ") || "nothing"));
+        }
+        return lines.join("\\n");
+      }
     `,
     "observes-and-connects.mjs": `
       import http2 from "node:http2";
@@ -3497,21 +3526,32 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
           new ReadableStream({ pull: controller => (controller.enqueue(new Uint8Array(1024)), new Promise(() => {})) }),
         ),
     });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", "--isolate", "first.test.js", "second.test.js"],
-      cwd: join(dir, "isolated"),
-      env: { ...bunEnv, NEVER_ENDING_URL: neverEnding.url.href },
-      stdout: "pipe",
-      stderr: "pipe",
-      timeout: 30_000,
-      killSignal: "SIGKILL",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ realms: (stdout + stderr).match(/realms: \d+/)?.[0], exitCode }).toEqual({
-      realms: "realms: 1",
+    // How many realms are left once the next file runs, against a first file that leaves nothing
+    // behind: a collection does not promise to free a realm nothing refers to (a build with
+    // assertions keeps the last one around), so the count itself is the engine's business.
+    const realmsAfter = async (first: string) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "--isolate", first, "second.test.js"],
+        cwd: join(dir, "isolated"),
+        env: { ...bunEnv, NEVER_ENDING_URL: neverEnding.url.href },
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 30_000,
+        killSignal: "SIGKILL",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const output = stdout + stderr;
+      return { realms: output.match(/realms: \d+/)?.[0], exitCode, keptBy: output.match(/^GlobalObject#.*$/gm) ?? [] };
+    };
+    const [control, withTheGraph] = [await realmsAfter("control.test.js"), await realmsAfter("first.test.js")];
+    expect({ ...withTheGraph, keptBy: withTheGraph.realms === control.realms ? [] : withTheGraph.keptBy }).toEqual({
+      realms: control.realms,
       exitCode: 0,
+      keptBy: [],
     });
-  });
+    expect(control.exitCode).toBe(0);
+    // (Two runs of the test runner.)
+  }, 30_000);
   test("a CommonJS wrapper made inside another function keeps that function's scope", async () => {
     expect(await runsFixture("custom-commonjs-wrapper.mjs")).toEqual({
       stdout: `["of the wrapper","undefined"]`,

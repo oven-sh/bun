@@ -1530,14 +1530,16 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    expect(stdout.split(/\r?\n/).filter(Boolean)).toEqual([
-      "call_register",
-      "init_static",
-      "register_cb_a",
-      "register_cb_b",
-      "register_cb_reentrant x 64",
-      "register_cb",
-    ]);
+    // On Windows each addon has its own stdout buffer, so only the order of the lines of one addon is fixed.
+    const lines = stdout.split(/\r?\n/).filter(Boolean);
+    const outer = ["call_register", "init_static", "register_cb"];
+    expect({
+      outer: lines.filter(line => outer.includes(line)),
+      inner: lines.filter(line => !outer.includes(line)),
+    }).toEqual({
+      outer,
+      inner: ["register_cb_a", "register_cb_b", "register_cb_reentrant x 64"],
+    });
     expect(exitCode).toBe(0);
   });
 

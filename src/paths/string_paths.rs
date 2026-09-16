@@ -347,6 +347,7 @@ pub fn to_kernel32_path<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a WStr {
 }
 
 /// As [`to_kernel32_path`]; `None` for a path that is not WTF-8 or does not fit.
+#[cfg(windows)]
 pub fn try_to_kernel32_path<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> Option<&'a WStr> {
     let len = kernel32_path_units::<true>(wbuf, utf8)?;
     Some(wstr_in_buf(wbuf, len))

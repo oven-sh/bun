@@ -723,11 +723,13 @@ devTest("framework route with a stylesheet that fails to build", {
     expect(before).toHaveLength(1);
     expect((await dev.fetch(before[0])).status).toBe(200);
 
-    // The route answers with the error page, like an html route whose stylesheet fails.
+    // The route answers with the error page, like an html route whose stylesheet fails. The page
+    // lists the failure once: the rebuild of the route parses the stylesheet again, with the
+    // target of the route, and that must not add a second entry.
     await dev.write("one.css", `.one { color }`, { errors: null });
-    const during = await dev.fetch("/");
-    expect(await during.text()).toContain("Build Failed");
-    expect(during.status).toBe(500);
+    {
+      await using c = await dev.client("/", { errors: ["one.css:1:14: error: Unexpected end of input"] });
+    }
 
     await dev.write("one.css", `.one { color: #00f; }`);
     const after: string[] = await dev.fetch("/").json();
@@ -794,5 +796,37 @@ devTest("framework route edited while its stylesheet fails to build", {
 
     await dev.write("one.css", `.one { color: #00f; }`);
     expect(await dev.fetch("/").json()).toEqual(["edited", ...before]);
+  },
+});
+
+devTest("framework route whose stylesheet fails to build at the first request", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": `
+      import "../one.css";
+      export default (req, meta) => Response.json(meta.styles);
+    `,
+    "one.css": `.one { color }`,
+  },
+  async test(dev) {
+    const error = "one.css:1:14: error: Unexpected end of input";
+    {
+      await using c = await dev.client("/", { errors: [error] });
+    }
+
+    // The stylesheet never built, so the route learns of it only through the server graph.
+    await dev.write("one.css", `.one { color: red; }`);
+    const styles: string[] = await dev.fetch("/").json();
+    expect(styles).toHaveLength(1);
+    await dev.fetch(styles[0]).expect.toContain("red");
+
+    await dev.write("one.css", `.one { color }`, { errors: null });
+    {
+      await using c = await dev.client("/", { errors: [error] });
+    }
+
+    await dev.write("one.css", `.one { color: #00f; }`);
+    expect(await dev.fetch("/").json()).toEqual(styles);
+    await dev.fetch(styles[0]).expect.toContain("#00f");
   },
 });

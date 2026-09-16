@@ -5513,6 +5513,7 @@ pub mod bv2_impl {
 
             self.dynamic_import_entry_points = ArrayHashMap::new();
             let mut html_files: ArrayHashMap<Index, ()> = ArrayHashMap::new();
+            let mut failed_css_imported_on_server: ArrayHashMap<Index, ()> = ArrayHashMap::new();
 
             // Separate non-failing files into two lists: JS and CSS
             let js_reachable_files: &[Index] = 'reachable_files: {
@@ -5622,6 +5623,10 @@ pub mod bv2_impl {
                                     // a source index the HMR conversion would
                                     // keep the import as a module dependency.
                                     record.path.is_disabled = true;
+                                    if target != Target::Browser {
+                                        failed_css_imported_on_server
+                                            .put(record.source_index, ())?;
+                                    }
                                     record.source_index = Index::INVALID;
                                     continue;
                                 }
@@ -5828,6 +5833,7 @@ pub mod bv2_impl {
                         chunks,
                         css_file_list: core::mem::take(&mut start.css_entry_points),
                         html_files,
+                        failed_css_imported_on_server,
                     },
                 )
                 .map_err(|_| AllocError)
@@ -7594,10 +7600,21 @@ pub mod bv2_impl {
                                 [err.source_index.get() as usize]
                                 .path
                                 .text;
+                            // A stylesheet lives in the client graph, whichever
+                            // target imported it. Its syntax error goes there too,
+                            // so the rebuild of the stylesheet clears it.
+                            let is_css_parse_failure = err.step == parse_task::Step::Parse
+                                && this.graph.input_files.items_loader()
+                                    [err.source_index.get() as usize]
+                                    == Loader::Css;
                             dev_server
                                 .handle_parse_task_failure(
                                     err.err,
-                                    err.target.bake_graph(),
+                                    if is_css_parse_failure {
+                                        bake::Graph::Client
+                                    } else {
+                                        err.target.bake_graph()
+                                    },
                                     abs_path,
                                     &raw const err.log,
                                     std::ptr::from_mut(this),
@@ -8007,6 +8024,9 @@ pub mod bv2_impl {
         pub chunks: &'a mut [Chunk],
         pub css_file_list: ArrayHashMap<Index, CssEntryPointMeta>,
         pub html_files: ArrayHashMap<Index, ()>,
+        /// Stylesheets that failed to build and that a server file imports.
+        /// They get a stub in the server graph like the ones that built.
+        pub failed_css_imported_on_server: ArrayHashMap<Index, ()>,
     }
 
     pub(crate) fn generate_unique_key() -> u64 {

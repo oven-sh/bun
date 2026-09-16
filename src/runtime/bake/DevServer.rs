@@ -2227,6 +2227,8 @@ fn check_route_failures(
     resp: Option<DevResponse>,
 ) -> crate::Result<CheckResult> {
     let mut gts = dev.init_graph_trace_state(0)?;
+    // The trace collects into this list, which still holds what the last bundle added.
+    dev.incremental_result.failures_added.clear();
     // Note: erase to a raw pointer so the deferred cleanup only fires on
     // scope exit when no other borrow of `dev` is live.
     let dev_ptr = std::ptr::from_mut::<DevServer>(dev);
@@ -4952,29 +4954,26 @@ impl DevServer {
             // conflicting with the `keys()` iterator borrow.
             for i in 0..self.next_bundle.route_queue.len() {
                 let route_bundle_index = self.next_bundle.route_queue.keys()[i];
+                let entry_point_count = entry_points.set.len();
                 self.append_route_entry_points_if_not_stale(&mut entry_points, route_bundle_index)
                     .expect("oom");
-            }
 
-            // The bundle that just ended can have covered every file of the queued routes, like in
-            // the `Unqueued` arm of `ensure_route_is_bundled`. A failure on record still gates a
-            // route that reaches it: bundle that route again so that `finalize_bundle` reports it.
-            if entry_points.set.is_empty() && !self.bundling_failures.is_empty() {
-                // `check_route_failures` collects into this list, which still holds what the
-                // last bundle added.
-                self.incremental_result.failures_added.clear();
-                for i in 0..self.next_bundle.route_queue.len() {
-                    let route_bundle_index = self.next_bundle.route_queue.keys()[i];
-                    if matches!(
+                // The bundle that just ended can have covered every file of this route, like in
+                // the `Unqueued` arm of `ensure_route_is_bundled`. A failure on record still gates
+                // the route if it reaches it: bundle the route again so that `finalize_bundle`
+                // reports the failure.
+                if entry_points.set.len() == entry_point_count
+                    && !self.bundling_failures.is_empty()
+                    && matches!(
                         check_route_failures(self, route_bundle_index, None).expect("oom"),
                         CheckResult::Rebuild
-                    ) {
-                        self.append_route_entry_points_if_not_stale(
-                            &mut entry_points,
-                            route_bundle_index,
-                        )
-                        .expect("oom");
-                    }
+                    )
+                {
+                    self.append_route_entry_points_if_not_stale(
+                        &mut entry_points,
+                        route_bundle_index,
+                    )
+                    .expect("oom");
                 }
             }
 

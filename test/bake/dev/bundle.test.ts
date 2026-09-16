@@ -513,6 +513,81 @@ devTest("route queued behind a bundle that covers all of its files reports a fai
     await dev.fetch("/b").equals("b: 1");
   },
 });
+// Same as above, but a third route that nothing has bundled yet is queued too, so the next bundle is not empty.
+devTest("route queued with a cold route behind a bundle that covers all of its files reports a failure it reaches", {
+  framework: minimalFramework,
+  files: {
+    "routes/a.ts": `
+      import './b';
+      import { value } from '../shared/broken';
+      export default function (req, meta) {
+        return new Response('a: ' + value);
+      }
+    `,
+    "routes/b.ts": `
+      import './a';
+      import { value } from '../shared/broken';
+      export default function (req, meta) {
+        return new Response('b: ' + value);
+      }
+    `,
+    "routes/c.ts": `
+      export default function (req, meta) {
+        return new Response('c');
+      }
+    `,
+    "shared/broken.ts": `
+      export const value = (((((;
+    `,
+  },
+  async test(dev) {
+    const [a, b] = await Promise.all([dev.fetch("/a"), dev.fetch("/b"), dev.fetch("/c")]);
+    for (const res of [a, b]) {
+      expect(res.status).toBe(500);
+      expect(await res.text()).toInclude("<title>Bun - Build Failed</title>");
+    }
+    await dev.write("shared/broken.ts", `export const value = 1;`);
+    await dev.fetch("/a").equals("a: 1");
+    await dev.fetch("/b").equals("b: 1");
+    await dev.fetch("/c").equals("c");
+  },
+});
+// The check of a route against the failures on record must not start from the failures of the last bundle.
+devTest("route that reaches no failure is not answered with the failure of another route", {
+  framework: minimalFramework,
+  // With this set, a route that reaches a failure is answered with the failure page and not bundled again.
+  env: { BUN_ASSUME_PERFECT_INCREMENTAL: "1" },
+  files: {
+    "routes/a.ts": `
+      import { name } from './b';
+      export default function (req, meta) {
+        return new Response('a sees ' + name);
+      }
+    `,
+    "routes/b.ts": `
+      export const name = "B";
+      export default function (req, meta) {
+        return new Response('b');
+      }
+    `,
+    "routes/c.ts": `
+      import { value } from '../shared/broken';
+      export default function (req, meta) {
+        return new Response('c: ' + value);
+      }
+    `,
+    "shared/broken.ts": `
+      export const value = (((((;
+    `,
+  },
+  async test(dev) {
+    // This bundle also covers routes/b.ts.
+    await dev.fetch("/a").equals("a sees B");
+    expect((await dev.fetch("/c")).status).toBe(500);
+    // No file of /b is stale. A failure is on record, so the route is checked against it.
+    await dev.fetch("/b").equals("b");
+  },
+});
 // What a formatter run or `git stash pop` does: one watcher batch carries the fix of a failing page and both framework
 // entry points, and the page is requested while that rebuild runs. The request marks every file of the route as stale
 // and waits for the next bundle. The rebuild clears those marks, so the next bundle has nothing to bundle.
@@ -554,6 +629,7 @@ devTest("requests made while a rebuild fixes their route are answered", {
         routes: {
           "/rebuild/hold": () => ((rebuild.hold = true), new Response("ok")),
           "/rebuild/started": async () => (await rebuild.started.promise, new Response("ok")),
+          "/rebuild/pending": (req, server) => new Response(String(server.pendingRequests)),
           "/rebuild/resume": () => (rebuild.resume.resolve(), new Response("ok")),
         },
       };
@@ -595,7 +671,11 @@ devTest("requests made while a rebuild fixes their route are answered", {
     const rebuilt = batch[Symbol.asyncDispose]();
 
     await dev.fetch("/rebuild/started").equals("ok");
+    const pending = async () => Number(await dev.fetch("/rebuild/pending").text());
+    const before = await pending();
     const during = [dev.fetch("/about").text(), dev.fetch("/about").text()];
+    // The rebuild continues only after the server holds both requests.
+    while ((await pending()) < before + 2) {}
     await dev.fetch("/rebuild/resume").equals("ok");
     await rebuilt;
 

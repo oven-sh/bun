@@ -135,9 +135,7 @@ static const Char* findWordSeparator(const Char* start, const Char* end)
 // Row Management (using WTF::Vector)
 // ============================================================================
 
-// The caller's string sizes both a row and the list of rows, and
-// Vector::append() calls CRASH() when the buffer cannot grow. Every append
-// here is fallible: false travels up to the binding, which throws.
+// The input sizes a row and the row list, and Vector::append() calls CRASH() when it cannot grow, so every append is fallible.
 template<typename Char>
 class Row {
 public:
@@ -305,9 +303,7 @@ static void trimRowTrailingSpaces(Row<Char>& row, bool ambiguousIsNarrow)
         return;
 
     // wrap-ansi's stringVisibleTrimSpacesRight: past the last visible word only
-    // the separator spaces go; escapes and zero-width text stay. Compacted in
-    // place (the write position never passes the read position), so a long
-    // zero-width tail needs no second buffer.
+    // the separator spaces go; escapes and zero-width text stay.
     Char* write = data + (lastVisibleEnd - data);
     for (const Char* it = lastVisibleEnd; it != end;) {
         if (ANSI::isEscapeCharacter(*it)) {

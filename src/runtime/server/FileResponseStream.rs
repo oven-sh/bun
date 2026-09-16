@@ -190,6 +190,9 @@ impl FileResponseStream {
 
         let resp = this_ref.resp.get();
         resp.timeout(opts.idle_timeout);
+        if opts.length.is_some() {
+            resp.mark_fixed_length_file_body();
+        }
         resp.on_aborted(
             |p: *mut FileResponseStream, r| {
                 // SAFETY: uWS hands back the userdata pointer set below; the

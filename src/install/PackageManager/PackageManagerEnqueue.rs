@@ -640,6 +640,7 @@ pub fn enqueue_dependency_to_root(
                 this.start_progress_bar_if_none();
             }
 
+            this.root_lookups_waiting += 1;
             let mgr: *mut PackageManager = this;
             let mut closure = Closure {
                 err: None,
@@ -651,6 +652,7 @@ pub fn enqueue_dependency_to_root(
             // `Closure::is_done`, so the callback's `&mut *closure.manager`
             // is the unique live borrow.
             unsafe { PackageManager::sleep_until(mgr, &mut closure, Closure::is_done) };
+            this.root_lookups_waiting -= 1;
 
             if this.options.log_level.show_progress() {
                 this.end_progress_bar();

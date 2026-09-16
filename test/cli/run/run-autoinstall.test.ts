@@ -232,34 +232,56 @@ describe.concurrent("a failed registry lookup is asked again by the next resolve
       },
     };
 
-  for (const [name, { respond, requestsPerLookup, busy }] of Object.entries(failures)) {
-    test(name, async () => {
-      using registry = flakyRegistry(respond);
-      const { stdout, exitCode } = await run(
-        registry,
-        `
-          const attempt = () => {
-            ${busy ? "queueMicrotask(() => { const end = performance.now() + 100; while (performance.now() < end); });" : ""}
-            try { return require("flaky-pkg").version; } catch (e) { return e.code; }
-          };
-          const results = [attempt()];
-          await fetch(registry + "__next");
-          results.push(attempt());
-          await fetch(registry + "__heal");
-          await fetch(registry + "__next");
-          results.push(attempt());
-          results.push(await import("flaky-pkg").then(m => m.default.version, e => e.code));
-          console.log(JSON.stringify(results));
-        `,
-      );
+  test.each(Object.entries(failures))("%s", async (_, { respond, requestsPerLookup, busy }) => {
+    using registry = flakyRegistry(respond);
+    const { stdout, exitCode } = await run(
+      registry,
+      `
+        const attempt = () => {
+          ${busy ? "queueMicrotask(() => { const end = performance.now() + 100; while (performance.now() < end); });" : ""}
+          try { return require("flaky-pkg").version; } catch (e) { return e.code; }
+        };
+        const results = [attempt()];
+        await fetch(registry + "__next");
+        results.push(attempt());
+        await fetch(registry + "__heal");
+        await fetch(registry + "__next");
+        results.push(attempt());
+        results.push(await import("flaky-pkg").then(m => m.default.version, e => e.code));
+        console.log(JSON.stringify(results));
+      `,
+    );
 
-      expect(stdout).toBe(JSON.stringify(["MODULE_NOT_FOUND", "MODULE_NOT_FOUND", "1.0.0", "1.0.0"]));
-      // Each failing resolve is one lookup, and so is the resolve after the registry recovers.
-      const lookup = Array(requestsPerLookup).fill("/flaky-pkg");
-      expect(registry.lookups).toEqual([lookup, lookup, ["/flaky-pkg", "/flaky-pkg/-/flaky-pkg-1.0.0.tgz"]]);
-      expect(exitCode).toBe(0);
-    });
-  }
+    expect(stdout).toBe(JSON.stringify(["MODULE_NOT_FOUND", "MODULE_NOT_FOUND", "1.0.0", "1.0.0"]));
+    // Each failing resolve is one lookup, and so is the resolve after the registry recovers.
+    const lookup = Array(requestsPerLookup).fill("/flaky-pkg");
+    expect(registry.lookups).toEqual([lookup, lookup, ["/flaky-pkg", "/flaky-pkg/-/flaky-pkg-1.0.0.tgz"]]);
+    expect(exitCode).toBe(0);
+  });
+
+  // The wait for the registry runs the event loop, so a microtask can resolve inside it. That
+  // nested resolve ends first. It must not drop the record the outer resolve's second pass needs.
+  test("a resolve nested in the wait does not make the outer resolve ask twice", async () => {
+    using registry = flakyRegistry(() => new Response("{}", { status: 404 }));
+    const { stdout, exitCode } = await run(
+      registry,
+      `
+        const attempt = name => { try { return require(name).version; } catch (e) { return e.code; } };
+        const inner = new Promise(resolve => queueMicrotask(() => resolve(attempt("flaky-inner"))));
+        const first = [attempt("flaky-outer"), await inner];
+        await fetch(registry + "__next");
+        console.log(JSON.stringify([first, [attempt("flaky-outer"), attempt("flaky-inner")]]));
+      `,
+    );
+
+    const notFound = ["MODULE_NOT_FOUND", "MODULE_NOT_FOUND"];
+    expect(JSON.parse(stdout)).toEqual([notFound, notFound]);
+    expect(registry.lookups).toEqual([
+      ["/flaky-outer", "/flaky-inner"],
+      ["/flaky-outer", "/flaky-inner"],
+    ]);
+    expect(exitCode).toBe(0);
+  });
 
   test("through every way to resolve", async () => {
     using registry = flakyRegistry(() => new Response("{}", { status: 404 }));

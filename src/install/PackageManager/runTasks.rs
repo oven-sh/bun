@@ -1966,6 +1966,10 @@ unsafe fn release_network_task(pool: &super::PreallocatedNetworkTasks, task: *mu
 
 /// For the runtime, whose manager outlives a resolve: the next resolve asks the registry again.
 pub(crate) fn forget_failed_manifest_tasks(this: &mut PackageManager) {
+    // A resolve nested in a lookup's wait ends first; the waiting lookup's second pass needs its record.
+    if this.root_lookups_waiting > 0 {
+        return;
+    }
     for task_id in this.failed_manifest_tasks.drain(..) {
         let _ = this.network_dedupe_map.remove(&task_id);
         // A resolver pass that ran after the failure queued its waiter again.

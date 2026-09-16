@@ -363,6 +363,8 @@ pub struct PackageManager {
     pub(crate) network_dedupe_map: crate::network_task::DedupeMap,
     /// Manifest tasks that failed, until `forget_failed_manifest_tasks`.
     pub(crate) failed_manifest_tasks: Vec<Task::Id>,
+    /// Runtime lookups inside `sleep_until`, where JS runs and can resolve again.
+    pub(crate) root_lookups_waiting: u32,
     pub(crate) async_network_task_queue: AsyncNetworkTaskQueue,
     pub(crate) network_tarball_batch: thread_pool::Batch,
     pub(crate) network_resolve_batch: thread_pool::Batch,
@@ -2111,6 +2113,7 @@ pub fn init(
         wr!(appended_task_packages, AppendedTaskPackageMap::default());
         wr!(network_dedupe_map, Default::default());
         wr!(failed_manifest_tasks, Vec::new());
+        wr!(root_lookups_waiting, 0);
         wr!(async_network_task_queue, AsyncNetworkTaskQueue::default());
         wr!(network_tarball_batch, thread_pool::Batch::default());
         wr!(network_resolve_batch, thread_pool::Batch::default());
@@ -2573,6 +2576,7 @@ fn init_with_runtime_once(
         wr!(appended_task_packages, AppendedTaskPackageMap::default());
         wr!(network_dedupe_map, Default::default());
         wr!(failed_manifest_tasks, Vec::new());
+        wr!(root_lookups_waiting, 0);
         wr!(async_network_task_queue, AsyncNetworkTaskQueue::default());
         wr!(network_tarball_batch, thread_pool::Batch::default());
         wr!(network_resolve_batch, thread_pool::Batch::default());

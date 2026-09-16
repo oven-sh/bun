@@ -261,7 +261,6 @@ CPP_DECL void JSC__JSValue__toZigException(JSC::EncodedJSValue JSValue0, JSC::JS
 #pragma mark - JSC::VM
 
 CPP_DECL uint64_t JSC__VM__totalBytesAllocated(JSC::VM* arg0);
-CPP_DECL size_t JSC__VM__allocationBudgetThisCycle(JSC::VM* arg0);
 CPP_DECL void JSC__VM__collectAsync(JSC::VM* arg0, bool full);
 CPP_DECL void JSC__VM__collectIdle(JSC::VM* arg0, bool arg1);
 CPP_DECL bool JSC__VM__shrinkFootprintNow(JSC::VM* arg0);

@@ -5773,10 +5773,6 @@ extern "C" uint64_t JSC__VM__totalBytesAllocated(JSC::VM* vm)
 {
     return vm->heap.totalBytesAllocated();
 }
-extern "C" size_t JSC__VM__allocationBudgetThisCycle(JSC::VM* vm)
-{
-    return vm->heap.allocationBudgetThisCycle();
-}
 extern "C" size_t JSC__VM__externalMemorySize(JSC::VM* vm)
 {
 #if ENABLE(RESOURCE_USAGE)

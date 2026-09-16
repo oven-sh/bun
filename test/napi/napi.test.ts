@@ -1077,6 +1077,42 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     expect(exitCode).toBe(0);
   });
 
+  it("a threadsafe function a disposed Bun.ModuleGraph's script created does not keep the process running", async () => {
+    // The addon releases this one from its call_js, after calling the script's callback: which
+    // a disposed graph's is refused, so this addon returns early and never releases it.
+    using dir = tempDir("napi-module-graph-tsfn", {
+      "tenant.mjs": `
+        import { createRequire } from "node:module";
+        const addon = createRequire(import.meta.url)(addonPath);
+        export const start = () => void addon.create_promise_with_threadsafe_function(() => {});
+      `,
+      "fixture.mjs": `
+        const graph = new Bun.ModuleGraph({ globals: { addonPath: process.argv[2] } });
+        const app = await graph.import(import.meta.dir + "/tenant.mjs");
+        graph.run(() => app.start());
+        graph.dispose();
+        console.log("disposed");
+        // Nothing of the host's is open: the process ends when nothing of the graph's holds it.
+      `,
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), "fixture.mjs", join(__dirname, "napi-app/build/Debug/napitests.node")],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 30_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect({ disposed: stdout.split(/\r?\n/).includes("disposed"), signal: proc.signalCode, exitCode }).toEqual({
+      disposed: true,
+      signal: null,
+      exitCode: 0,
+    });
+  });
+
   describe("napi_adjust_external_memory", () => {
     it("applies negative deltas and reports the running total", async () => {
       const result = await checkSameOutput("test_napi_adjust_external_memory", []);

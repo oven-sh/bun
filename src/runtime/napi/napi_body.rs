@@ -2559,6 +2559,10 @@ pub(crate) struct ThreadSafeFunction {
     pub(crate) tracker: Debugger::AsyncTaskTracker,
     /// The context whose script created the function: its calls run in it.
     pub(crate) context: bun_jsc::ContextId,
+    /// Armed in that context until the JS thread lets go of the function (`finalize`,
+    /// `env_teardown`): once the context has stopped, the function no longer keeps the loop
+    /// alive. Addon threads can still call it and it is finalized as usual.
+    abort_handle: bun_jsc::AbortHandle,
 
     /// Dropped on the JS thread by `env_teardown`; `None` afterwards.
     pub(crate) env: Option<NapiEnvRef>,
@@ -2581,6 +2585,11 @@ pub(crate) struct ThreadSafeFunction {
     /// Also written under `lock`, once `finalize` or `env_teardown` has released every JS-thread-owned resource; until then the thread that drops the last `thread_count` reference must not free this (Node's `kClosed`).
     pub(crate) resources_released: AtomicBool,
 }
+
+bun_jsc::impl_abort_handle_owner!(ThreadSafeFunction, abort_handle, |this, _cause| {
+    // SAFETY: trait contract: `this` is live, and this is the JS thread.
+    unsafe { &mut *this }.unref()
+});
 
 pub(crate) enum TsfnCallback {
     Js(StrongOptional),
@@ -3066,6 +3075,7 @@ impl ThreadSafeFunction {
             let self_ = &mut *this;
             // The same critical section reads thread_count, so a thread that drops the last reference frees only if it sees this store.
             let _g = self_.lock.lock_guard();
+            self_.abort_handle.leave();
             self_.event_loop = None;
             drop(self_.env.take());
             self_.resources_released.store(true, Ordering::SeqCst);
@@ -3165,6 +3175,7 @@ impl ThreadSafeFunction {
         let _g = self.lock.lock_guard();
         self.callback = TsfnCallback::Js(StrongOptional::empty());
         self.poll_ref.disable();
+        self.abort_handle.leave();
         self.event_loop = None;
         drop(self.env.take());
         self.resources_released.store(true, Ordering::SeqCst);
@@ -3334,6 +3345,7 @@ extern "C" fn napi_create_threadsafe_function(
         poll_ref: KeepAlive::init(),
         tracker: Debugger::AsyncTaskTracker::init(vm),
         context: vm.context_of_caller_no_frame().id(),
+        abort_handle: bun_jsc::AbortHandle::for_owner::<ThreadSafeFunction>(),
         finalizer_fun: thread_finalize_cb,
         finalizer_data: thread_finalize_data,
         has_queued_finalizer: false,
@@ -3363,6 +3375,9 @@ extern "C" fn napi_create_threadsafe_function(
     // nodejs by default keeps the event loop alive until the thread-safe function is unref'd
     // SAFETY: function is non-null (just allocated) and not yet handed out.
     unsafe { (*function).ref_() };
+    // (Unless the context whose script is creating it stops first.)
+    // SAFETY: a heap allocation that leaves its context on this thread before it is freed.
+    unsafe { bun_jsc::AbortHandle::arm_owner(function, vm.context_of_caller_no_frame()) };
     // SAFETY: as above.
     unsafe { (*function).tracker.did_schedule(vm.global()) };
 

@@ -87,14 +87,17 @@ _read_scripts_in_package_json() {
         fi
 
         if (( in_scripts )); then
-            while [[ "${rest}" =~ [[:space:]]*\"([^\"\\]+)\"[[:space:]]*:[[:space:]]*\"([^\"]*)\"(.*) ]]; do
-                script_names+=( "${BASH_REMATCH[1]}" )
-                rest="${BASH_REMATCH[3]}"
+            while true; do
+                if [[ "${rest}" =~ ^[[:space:]]*\}[[:space:]]*,? ]]; then
+                    in_scripts=0
+                    break
+                elif [[ "${rest}" =~ ^[[:space:]]*,?[[:space:]]*\"([^\"\\]+)\"[[:space:]]*:[[:space:]]*\"([^\"]*)\"(.*) ]]; then
+                    script_names+=( "${BASH_REMATCH[1]}" )
+                    rest="${BASH_REMATCH[3]}"
+                else
+                    break
+                fi
             done
-            if [[ "${line_content}" =~ ^[[:space:]]*\}[[:space:]]*,? ]] || [[ "${rest}" =~ ^[[:space:]]*\}[[:space:]]*,? ]]; then
-                in_scripts=0
-                break
-            fi
         fi
     done < "${pkg_file}"
 

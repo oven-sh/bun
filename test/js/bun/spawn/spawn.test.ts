@@ -640,7 +640,14 @@ it.skipIf(!isLinux)("the waiter thread's SIGCHLD handler does not fail a blockin
   const libc = isMusl ? (process.arch === "arm64" ? "libc.musl-aarch64.so.1" : "libc.musl-x86_64.so.1") : "libc.so.6";
   await using proc = spawn({
     cmd: [bunExe(), join(import.meta.dir, "spawn-sigchld-restart-fixture.ts"), libc],
-    env: { ...bunEnv, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1", BUN_GARBAGE_COLLECTOR_LEVEL: "1" },
+    env: {
+      ...bunEnv,
+      BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1",
+      BUN_GARBAGE_COLLECTOR_LEVEL: "1",
+      // bun:ffi's dlopen has a suppressed leak. On the asan lane LeakSanitizer spends about
+      // 4 s in llvm-symbolizer at exit to match that suppression.
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+    },
     stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",

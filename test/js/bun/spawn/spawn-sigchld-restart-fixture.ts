@@ -25,7 +25,8 @@ const [goRead, goWrite] = pipe();
 const [doneRead, doneWrite] = pipe();
 
 // The shell waits for "go", then for this thread to sleep (in the read() below), then it
-// exits. The kernel sends its SIGCHLD to the thread that spawned it, which is this one.
+// exits. The kernel offers a child's SIGCHLD first to the thread that spawned the child
+// (complete_signal() in kernel/signal.c), which is this one.
 // The background subshell keeps the write end of the "done" pipe. It writes one byte when
 // the shell is gone, that is, after the SIGCHLD handler woke the waiter thread to reap it.
 const script = [

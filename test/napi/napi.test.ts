@@ -1079,10 +1079,16 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
 
   it.each([
     ["does not keep the process running", [], ["disposed", "it asked to be held again", "ran dry at once"]],
-    [
-      "is the host's once the host refs it",
-      ["the host takes it over"],
+    // The addon is everyone's: the function is the host's from the moment the host asks it to hold the loop.
+    ...["after the graph was disposed", "while the graph lived"].map(when => [
+      "is the host's once the host refs it, " + when,
+      [when],
       ["disposed", "it asked to be held again", "ran dry once the host let go"],
+    ]),
+    [
+      "that its leftover script made is the host's once the host refs it",
+      ["that the graph's leftover script made"],
+      ["disposed", "ran dry once the host let go"],
     ],
   ])("a threadsafe function a disposed Bun.ModuleGraph's script created %s", async (_what, args, said) => {
     // Nobody ever releases this one, and its call_js refs it again, as addons with more work
@@ -1092,26 +1098,42 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
         import { createRequire } from "node:module";
         const addon = createRequire(import.meta.url)(addonPath);
         export const start = () => addon.threadsafe_function_that_refs_itself();
+        // (From a microtask, which still runs once the graph has been disposed.)
+        export const startLater = () => queueMicrotask(() => addon.threadsafe_function_that_refs_itself(false));
       `,
       "fixture.mjs": `
         import { createRequire } from "node:module";
         const addon = createRequire(import.meta.url)(process.argv[2]);
         const graph = new Bun.ModuleGraph({ globals: { addonPath: process.argv[2] } });
         const app = await graph.import(import.meta.dir + "/tenant.mjs");
-        graph.run(() => app.start());
-        graph.dispose();
+        const when = process.argv[3];
+        if (when === "that the graph's leftover script made") {
+          graph.run(() => app.startLater());
+          graph.dispose();
+          // (The leftover microtask has run by now, and what closes its function has not.)
+          await Promise.resolve();
+          addon.ref_that_function();
+        } else {
+          graph.run(() => app.start());
+          if (when === "while the graph lived") addon.ref_that_function();
+          graph.dispose();
+        }
         console.log("disposed");
-        // The addon's thread's call arrives now that the graph is gone: the ref is accepted and holds nothing.
-        while (!addon.completion_statuses().includes("threadsafe_function_ref:0")) await new Promise(resolve => setImmediate(resolve));
-        console.log("it asked to be held again");
+        if (when === "that the graph's leftover script made") {
+          // (Nobody calls that one. What closes what a disposed graph's script opens has run by now.)
+          for (let i = 0; i < 10; i++) await new Promise(resolve => setImmediate(resolve));
+        } else {
+          // The addon's thread's call arrives now that the graph is gone: the ref is accepted and holds nothing.
+          while (!addon.completion_statuses().includes("threadsafe_function_ref:0")) await new Promise(resolve => setImmediate(resolve));
+          console.log("it asked to be held again");
+        }
         // 'beforeExit' is the loop running dry. Nothing else of the host's is open.
         let letGo = false;
         process.once("beforeExit", () => console.log(letGo ? "ran dry once the host let go" : "ran dry at once"));
-        if (process.argv[3] === "the host takes it over") {
-          // The addon is everyone's: asked for by the host, the function is the host's from here,
-          // and holds the loop until the host lets go. (The timer holds nothing itself: with the
+        if (when === "after the graph was disposed") addon.ref_that_function();
+        if (when) {
+          // It holds the loop until the host lets go. (The timer holds nothing itself: with the
           // loop dry it never fires.)
-          addon.ref_that_function();
           setTimeout(() => {
             letGo = true;
             addon.unref_that_function();

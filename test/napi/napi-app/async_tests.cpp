@@ -278,8 +278,9 @@ void complete_for_cancel(napi_env env, napi_status status, void *data) {
 //   call_back_from_threadsafe_function(callback): `call_js` calls `callback`
 //   promise_the_next_async_work_settles(): a promise that the `complete` of the
 //     next settle_that_promise_from_async_work() resolves, whoever queues that
-//   threadsafe_function_that_refs_itself(): its `call_js` refs it again ("more
-//     work is coming"), and nobody ever releases it
+//   threadsafe_function_that_refs_itself(call = true): its `call_js` refs it
+//     again ("more work is coming"), and nobody ever releases it; a thread
+//     calls it once, unless `call` is false
 //   ref_that_function() / unref_that_function(): the caller refs / unrefs the
 //     last such function
 //   completion_statuses(): "<which>:<napi_status>" for each completion so far
@@ -422,6 +423,9 @@ threadsafe_function_that_refs_itself(const Napi::CallbackInfo &info) {
                Napi::String::New(env, "threadsafe_function_that_refs_itself"),
                0, 1, data, finalize_self_reffing_function, data,
                call_js_by_reffing, &data->tsfn));
+  if (info.Length() > 0 && info[0].IsBoolean() &&
+      !info[0].As<Napi::Boolean>().Value())
+    return ok(env);
   std::thread([tsfn = data->tsfn]() {
     napi_call_threadsafe_function(tsfn, nullptr, napi_tsfn_blocking);
   }).detach();

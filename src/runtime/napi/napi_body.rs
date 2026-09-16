@@ -3188,15 +3188,19 @@ impl ThreadSafeFunction {
 
     /// `napi_ref_threadsafe_function` — JS thread only (as in Node).
     pub(crate) fn ref_(&mut self) {
-        if self.abort_handle.context_stopped() {
-            // Nothing of a context that has stopped holds the loop. An addon is shared, though:
-            // asked for by script of a live context (not from this function's own call_js, which
-            // runs in the stopped one), the function is that context's from here. It holds the
-            // loop for it, goes with it, and its calls run in it.
-            let caller = VirtualMachine::get().context_of_caller_no_frame();
-            if caller.is_stopped() {
+        let caller = VirtualMachine::get().context_of_caller_no_frame();
+        if caller.is_stopped() {
+            // Nothing of a context that has stopped holds the loop: asked for from the function's
+            // own call_js (which runs in its context) once that has stopped, it holds nothing.
+            if self.abort_handle.context_stopped() {
                 return;
             }
+        } else if caller.id() != self.context {
+            // An addon is shared by the process: one long-lived function, made by whichever
+            // script used the addon first, is reffed while anybody's work is in flight. It is
+            // the context's that asks it to hold the loop: it goes with that one (not with its
+            // maker, before or after that stops), and its calls run in it.
+            self.abort_handle.leave();
             self.context = caller.id();
             // SAFETY: as at creation: a heap allocation that leaves its context on this thread
             // before it is freed.

@@ -21,8 +21,10 @@
 // a NUL terminator, so it cannot borrow. `bun:sqlite` and `node:sqlite` made that
 // copy with `utf8()`, which asserts the same way, and now throw
 // `RangeError: Out of memory` through `Bun::tryUTF8`. The console label functions
-// convert the label in Rust, which has no such limit. A user or group name is
-// bounded before the lookup instead (the last test).
+// convert the label in Rust, which has no such limit. `process.initgroups` hands a
+// string user to initgroups(3) as it is, so it is one more `const char*` row. A
+// user or group name that bun looks up itself is bounded before the lookup
+// instead (the last test).
 import { decodeURIComponentSIMD } from "bun:internal-for-testing";
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
@@ -96,6 +98,9 @@ const fixture = `
     "backup path": text => backup(nodeDb, text),
     "backup source": text => backup(nodeDb, ":memory:", { source: text }),
     "backup target": text => backup(nodeDb, ":memory:", { target: text }),
+    ...(${isWindows} ? {} : {
+      "process.initgroups user": text => process.initgroups(text, 0),
+    }),
     ...(${sqliteHasLoadExtension} ? {
       "Database#loadExtension path": text => db.loadExtension(text),
       "Database#loadExtension entryPoint": text => db.loadExtension("extension", text),
@@ -197,6 +202,7 @@ test.skipIf(totalmem() < 8 * 1024 ** 3)(
           "backup path",
           "backup source",
           "backup target",
+          ...(isWindows ? [] : ["process.initgroups user"]),
           ...(sqliteHasLoadExtension
             ? [
                 "Database#loadExtension path",
@@ -261,7 +267,7 @@ test.each([
   const path = join(String(dir), `${text}.sqlite`);
   using fileDb = new Database(path);
   fileDb.run("CREATE TABLE t (v TEXT)");
-  const nodeDb = new DatabaseSync(path);
+  using nodeDb = new DatabaseSync(path);
   nodeDb.exec(`INSERT INTO t VALUES ('${text}')`);
   nodeDb.function(text, () => text);
 
@@ -303,7 +309,6 @@ test.each([
     nodeFunction: { v: text },
     nodeNamedParameter: { v: text },
   });
-  nodeDb.close();
 });
 
 // The label functions key their table by the UTF-8 bytes of the label and print those bytes. The escapes stay
@@ -345,7 +350,7 @@ test("a short console label of each encoding converts as before", async () => {
   });
 });
 
-// A user or group name went to getpwnam_r / getgrnam_r through `utf8()` as well. A passwd or group entry has to
+// A user or group name that bun looks up went to getpwnam_r / getgrnam_r through `utf8()` as well. A passwd or group entry has to
 // fit in the 8192 byte buffer that the lookup fills, so a longer name cannot match, and it no longer reaches the
 // lookup. Where nss-systemd is configured, a name of 4 MiB aborted the process inside the lookup
 // (`Assertion '_nn_ <= ALLOCA_MAX' failed`), long before the 2**30 characters that `utf8()` asserts on.
@@ -363,7 +368,6 @@ test.skipIf(isWindows)(
           "setgid": name => process.setgid(name),
           "setegid": name => process.setegid(name),
           "setgroups": name => process.setgroups([name]),
-          "initgroups user": name => process.initgroups(name, 0),
           "initgroups extraGroup": name => process.initgroups(0, name),
         };
         for (const length of [8192, 4 * 1024 * 1024]) {
@@ -388,7 +392,6 @@ test.skipIf(isWindows)(
       `setgid: ERR_UNKNOWN_CREDENTIAL: Group identifier does not exist: q x ${length}`,
       `setegid: ERR_UNKNOWN_CREDENTIAL: Group identifier does not exist: q x ${length}`,
       `setgroups: ERR_UNKNOWN_CREDENTIAL: Group identifier does not exist: q x ${length}`,
-      `initgroups user: ERR_UNKNOWN_CREDENTIAL: User identifier does not exist: q x ${length}`,
       `initgroups extraGroup: ERR_UNKNOWN_CREDENTIAL: Group identifier does not exist: q x ${length}`,
     ];
     expect({ stdout: stdout.trim().split("\n"), stderr, exitCode }).toEqual({

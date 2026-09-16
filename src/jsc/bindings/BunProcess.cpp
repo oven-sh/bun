@@ -34,6 +34,7 @@
 #include "ZigGlobalObject.h"
 #include "FormatStackTraceForJS.h"
 #include "headers.h"
+#include "BunString.h"
 #include "JSEnvironmentVariableMap.h"
 #include "ImportMetaObject.h"
 #include "JavaScriptCore/ScriptCallStackFactory.h"
@@ -3586,12 +3587,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functioninitgroups, (JSGlobalObject * globalObj
     if (user.isString()) {
         auto str = user.getString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        // No user has a name that does not fit in a passwd entry: see maybe_uid_by_name.
-        if (str.length() >= sizeof(buf)) [[unlikely]] {
-            throwUnknownCredential(scope, globalObject, "User identifier does not exist: "_s, str);
-            return {};
-        }
-        userNameUTF8 = str.utf8();
+        userNameUTF8 = Bun::tryUTF8(globalObject, scope, str);
+        RETURN_IF_EXCEPTION(scope, {});
         userName = userNameUTF8.data();
     } else {
         uid_t uid = static_cast<uid_t>(user.toUInt32(globalObject));

@@ -657,7 +657,9 @@ const dir = String(
       await new Bun.S3Client({ accessKeyId: "a", secretAccessKey: "b", bucket: "bucket", endpoint: server.url.href }).file("the-hosts").stat().catch(() => {});
       for (let i = 0; i < 20; i++) await new Promise(resolve => setImmediate(resolve));
       console.log(JSON.stringify({ asked }));
-      process.exit(0);
+      // Not process.exit(): what the graph's uploads hold is released when the heap is torn down, and a build that looks
+      // for leaks at exit looks after that. (An upload refused in the middle of its own write left its parts behind for good.)
+      server.stop(true);
     `,
     "uploads-to-s3.mjs": `
       const client = endpoint => new Bun.S3Client({ accessKeyId: "a", secretAccessKey: "b", bucket: "bucket", endpoint });

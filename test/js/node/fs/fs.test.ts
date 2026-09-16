@@ -1,5 +1,4 @@
 import { beforeAll, describe, expect, it, spyOn } from "bun:test";
-import { Worker } from "node:worker_threads";
 import {
   bunEnv,
   bunExe,
@@ -59,6 +58,7 @@ import fs, {
 import * as os from "node:os";
 import path, { dirname, relative, resolve } from "node:path";
 import { inspect, promisify } from "node:util";
+import { Worker } from "node:worker_threads";
 
 import _promises, { type FileHandle } from "node:fs/promises";
 

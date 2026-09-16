@@ -2754,7 +2754,7 @@ function getAnsiRegExp() {
   ));
 }
 
-// For $call. A call through the bound function that uncurryThis() returns costs more than the work it wraps here.
+// For $call: the bound function uncurryThis() returns costs more per call than these do.
 const StringPrototypeIndexOfUnbound = String.prototype.indexOf;
 const StringPrototypeReplaceUnbound = String.prototype.replace;
 
@@ -2767,8 +2767,7 @@ function stripVTControlCharacters(str) {
   ) {
     return str;
   }
-  // node calls RegExp.prototype[Symbol.replace]. In JavaScriptCore only String.prototype.replace
-  // has the fast path for an untouched RegExp, and the result is the same.
+  // Not RegExpPrototypeSymbolReplace as in node: JavaScriptCore has no fast path for it.
   return StringPrototypeReplaceUnbound.$call(str, getAnsiRegExp(), "");
 }
 

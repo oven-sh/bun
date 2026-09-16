@@ -361,9 +361,7 @@ pub struct PackageManager {
     pub(crate) appended_task_packages: AppendedTaskPackageMap,
 
     pub(crate) network_dedupe_map: crate::network_task::DedupeMap,
-    /// Manifest requests that ended without a manifest. Their `network_dedupe_map`
-    /// entries stay for a `bun install` run; the runtime drops them after each
-    /// resolve with `forget_failed_manifest_tasks`.
+    /// Manifest tasks that failed, until `forget_failed_manifest_tasks`.
     pub(crate) failed_manifest_tasks: Vec<Task::Id>,
     pub(crate) async_network_task_queue: AsyncNetworkTaskQueue,
     pub(crate) network_tarball_batch: thread_pool::Batch,

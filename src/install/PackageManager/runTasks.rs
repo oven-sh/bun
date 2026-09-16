@@ -1948,22 +1948,14 @@ pub(crate) fn network_task_has_failed(this: &PackageManager, task_id: Task::Id) 
         .is_some_and(|e| e.failed)
 }
 
-/// A manifest task that ended without a manifest. Nothing will run its waiters,
-/// so they go. Its `network_dedupe_map` entry stays: one `bun install` run asks
-/// for, and reports, a package once. `failed_manifest_tasks` records it for
-/// `forget_failed_manifest_tasks`.
+/// Its waiters never run. `bun install` keeps the `network_dedupe_map` entry to ask once per run.
 fn manifest_task_failed(this: &mut PackageManager, task_id: Task::Id) {
     let _ = this.task_queue.remove(&task_id);
     this.failed_manifest_tasks.push(task_id);
 }
 
-/// Returns the `NetworkTask` of a finished request to the pool.
-/// `unsafe_http_client` is `MaybeUninit`, so `put()`'s `drop_in_place` skips
-/// it: drop it here, or its header lists leak once per put/get cycle.
-///
-/// # Safety
-/// The request ran, so `for_manifest`/`for_tarball` initialized the client and
-/// the HTTP thread is done with the task. Nothing uses `task` after this.
+/// `put()` skips the `MaybeUninit` HTTP client, so drop it first or its header lists leak.
+/// SAFETY: the request ran, which initialized the client, and nothing uses `task` after this.
 unsafe fn release_network_task(pool: &super::PreallocatedNetworkTasks, task: *mut NetworkTask) {
     // SAFETY: fn contract.
     unsafe {
@@ -1972,10 +1964,7 @@ unsafe fn release_network_task(pool: &super::PreallocatedNetworkTasks, task: *mu
     }
 }
 
-/// The runtime's package manager lives as long as the process. There the
-/// `network_dedupe_map` entry of a failed manifest request would make the
-/// package unresolvable until exit, so the runtime calls this after each
-/// resolve and the next resolve asks the registry again.
+/// For the runtime, whose manager outlives a resolve: the next resolve asks the registry again.
 pub(crate) fn forget_failed_manifest_tasks(this: &mut PackageManager) {
     for task_id in this.failed_manifest_tasks.drain(..) {
         let _ = this.network_dedupe_map.remove(&task_id);

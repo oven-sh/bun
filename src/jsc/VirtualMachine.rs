@@ -4868,8 +4868,7 @@ impl VirtualMachine {
             mode.is_esm(),
             IS_A_FILE_PATH,
         );
-        // A registry lookup that failed is remembered for this resolve only:
-        // the second pass of `_resolve` does not ask again, the next resolve does.
+        // Both passes of `_resolve` share one failed registry lookup; the next resolve asks again.
         if let Some(pm) = jsc_vm.transpiler.resolver.package_manager {
             // SAFETY: sole `dyn AutoInstaller` impl is `PackageManager`.
             unsafe {

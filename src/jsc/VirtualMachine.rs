@@ -135,10 +135,12 @@ pub struct VirtualMachine {
     // self-referential and cannot carry `<'a>`, so we erase to `'static` and the
     // owner guarantees the borrowed `log` outlives the VM (see `init`).
     pub transpiler: Transpiler<'static>,
-    /// Hot-reload import watcher (heap `Box`, installed by
+    /// The import watcher that reloads this VM (heap `Box`, installed by
     /// [`crate::hot_reloader::HotReloaderCtx::install_bun_watcher`]); null when
-    /// hot reload is disabled. Read via [`Self::bun_watcher_ptr`].
-    pub bun_watcher: *mut crate::hot_reloader::ImportWatcher,
+    /// hot reload is disabled and on every worker. See [`Self::import_watcher`].
+    pub(crate) bun_watcher: *mut crate::hot_reloader::ImportWatcher,
+    /// Set on a worker under `--watch` only. See [`Self::import_watcher`].
+    pub(crate) parent_import_watcher: *mut crate::hot_reloader::ImportWatcher,
     pub(crate) console: *mut crate::console_object::ConsoleObject,
     // BORROW_PARAM (`&'a mut bun_ast::Log` per LIFETIMES.tsv) — raw NonNull
     // used because VM is self-referential and cannot carry `<'a>`.
@@ -1134,6 +1136,19 @@ impl VirtualMachine {
     #[inline]
     pub(crate) fn bun_watcher_ptr(&self) -> *mut crate::hot_reloader::ImportWatcher {
         self.bun_watcher
+    }
+
+    /// Where this VM registers the files it loads, or null: its own
+    /// `bun_watcher`, or on a worker under `--watch` the one its parent
+    /// registers with. Shared between threads; see [`Self::bun_watcher_ptr`].
+    /// `TranspilerJob::run` inlines this body. Keep the two in step.
+    #[inline]
+    pub fn import_watcher(&self) -> *mut crate::hot_reloader::ImportWatcher {
+        if self.bun_watcher.is_null() {
+            self.parent_import_watcher
+        } else {
+            self.bun_watcher
+        }
     }
 
     /// `event_loop().enter()` now, `.exit()` on drop. Safe wrapper over
@@ -4223,6 +4238,7 @@ impl VirtualMachine {
         // executable) resolve against the real filesystem and fail.
         vm_ref.transpiler.resolver.standalone_module_graph = opts.graph;
         vm_ref.hot_reload = worker.hot_reload();
+        vm_ref.parent_import_watcher = worker.parent_import_watcher();
         vm_ref.initial_script_execution_context_identifier = worker.execution_context_id() as i32;
         if opts.graph.is_none() {
             vm_ref.transpiler.configure_linker();

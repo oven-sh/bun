@@ -1,9 +1,20 @@
 import type { Subprocess } from "bun";
 import { spawn } from "bun";
-import { afterEach, expect, it } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isBroken, isLinux, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
-import { readdirSync, readlinkSync, realpathSync, rmSync, symlinkSync } from "node:fs";
-import { join } from "node:path";
+import {
+  closeSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  readlinkSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeSync,
+} from "node:fs";
+import { basename, join } from "node:path";
 
 let watchee: Subprocess;
 
@@ -395,6 +406,170 @@ it("--watch forced restart clears the terminal when colors are enabled", async (
   expect(afterReload).toContain("iter second");
   expect(await stderr).toContain(clearScreen);
 }, 30000);
+
+// A worker has no watcher of its own. The files it loads are registered with
+// the watcher of the thread that created it, so an edit to one of them
+// restarts the process like an edit to a file the main thread imported.
+//
+// The two cases reach every place the module loader registers a file: the
+// entry and a require() are transpiled on the worker's JS thread, an ESM
+// import on the transpiler pool, and an asset goes through the file loader.
+// An in-place save, like the one in the bug report, but as one write with no
+// truncate: a truncate is a watcher event of its own, and the process it
+// restarts can read the file while it is still empty. Without the truncate
+// the file is never half-written, so the new contents must be exactly as long
+// as the old ones.
+function overwriteInPlace(path: string, contents: string) {
+  const bytes = Buffer.from(contents);
+  expect(bytes.length).toBe(statSync(path).size);
+  const fd = openSync(path, "r+");
+  try {
+    writeSync(fd, bytes, 0, bytes.length, 0);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+const webWorkerEntry = (entry: string) => `
+  import { readFileSync } from "node:fs";
+  import { dep } from "./worker-dep.js";
+  import asset from "./worker-asset.file";
+  postMessage(["${entry}", dep, readFileSync(asset, "utf8")].join(" "));
+`;
+const nodeWorkerEntry = (entry: string) => `
+  const { parentPort } = require("node:worker_threads");
+  const { dep } = require("./worker-dep.cjs");
+  parentPort.postMessage("${entry} " + dep);
+`;
+const workerCases = [
+  {
+    name: "Worker with an ESM import and a file-loader asset",
+    files: {
+      "main.js": `
+        console.log("main start");
+        new Worker("./worker.js").onmessage = e => console.log("worker says " + e.data);
+      `,
+      "worker.js": webWorkerEntry("entry-1"),
+      "worker-dep.js": `export const dep = "dep-1";`,
+      "worker-asset.file": "asset-1",
+    },
+    firstLine: "worker says entry-1 dep-1 asset-1",
+    edits: [
+      { file: "worker.js", contents: webWorkerEntry("entry-2"), line: "worker says entry-2 dep-1 asset-1" },
+      { file: "worker-dep.js", contents: `export const dep = "dep-2";`, line: "worker says entry-2 dep-2 asset-1" },
+      { file: "worker-asset.file", contents: "asset-2", line: "worker says entry-2 dep-2 asset-2" },
+    ],
+  },
+  {
+    name: "node:worker_threads Worker with a require()",
+    files: {
+      "main.js": `
+        const { Worker } = require("node:worker_threads");
+        console.log("main start");
+        new Worker(require("node:path").join(__dirname, "worker.cjs")).on("message", m => console.log("worker says " + m));
+      `,
+      "worker.cjs": nodeWorkerEntry("entry-1"),
+      "worker-dep.cjs": `exports.dep = "dep-1";`,
+    },
+    firstLine: "worker says entry-1 dep-1",
+    edits: [
+      { file: "worker.cjs", contents: nodeWorkerEntry("entry-2"), line: "worker says entry-2 dep-1" },
+      { file: "worker-dep.cjs", contents: `exports.dep = "dep-2";`, line: "worker says entry-2 dep-2" },
+    ],
+  },
+];
+
+describe.each(workerCases)("--watch and a file that only a worker loaded: $name", ({ files, firstLine, edits }) => {
+  // Each edit is a full process restart plus a worker start, one after the
+  // other, which a debug build does not finish inside the default timeout.
+  it("restarts when the file changes", async () => {
+    using dir = tempDir("watch-worker-file", files);
+
+    watchee = spawn({
+      cmd: [bunExe(), "--watch", "main.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+
+    const { waitFor, release, output } = stdoutWaiter(watchee);
+
+    // The worker posts after it loaded its whole graph, so all of its files
+    // are on the watchlist once the message is printed.
+    await waitFor(firstLine + "\n");
+    for (const { file, contents, line } of edits) {
+      overwriteInPlace(join(String(dir), file), contents);
+      await waitFor(line + "\n");
+    }
+
+    release();
+    watchee.kill("SIGKILL");
+    await watchee.exited;
+
+    // One save can raise more than one watcher event, so a line can repeat.
+    const said = output()
+      .split("\n")
+      .filter(line => line.startsWith("worker says "));
+    expect([...new Set(said)]).toEqual([firstLine, ...edits.map(edit => edit.line)]);
+    expect(output().split("main start\n").length - 1).toBeGreaterThanOrEqual(1 + edits.length);
+  }, 30000);
+});
+
+// --hot re-evaluates the entry point on the main thread, and a running worker
+// keeps the code it started with, so a worker's files stay off the watchlist.
+//
+// The watcher trace has one key per watchlist entry that changed. A change in
+// a watched directory names the file under "changed", not as a key. The edit
+// to main.js comes second and its reload is awaited, so by then the trace
+// already holds an event for worker.js if that file is on the watchlist.
+it("--hot does not watch a file that only a worker loaded", async () => {
+  const main = (generation: number) => `
+    console.log("main ${generation}");
+    globalThis.worker ??= new Worker("./worker.js");
+    globalThis.worker.onmessage = e => console.log("worker says " + e.data);
+  `;
+  const worker = (version: string) => `postMessage("${version}"); setInterval(() => {}, 1000);`;
+  using dir = tempDir("hot-worker-file", {
+    "main.js": main(1),
+    "worker.js": worker("v1"),
+  });
+  const traceFile = join(String(dir), "trace.log");
+
+  watchee = spawn({
+    cmd: [bunExe(), "--hot", "main.js"],
+    cwd: String(dir),
+    env: { ...bunEnv, BUN_WATCHER_TRACE: traceFile },
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+
+  const { waitFor, release, output } = stdoutWaiter(watchee);
+
+  await waitFor("worker says v1\n");
+  overwriteInPlace(join(String(dir), "worker.js"), worker("v2"));
+  overwriteInPlace(join(String(dir), "main.js"), main(2));
+  await waitFor("main 2\n");
+
+  release();
+  watchee.kill("SIGKILL");
+  await watchee.exited;
+
+  const changedEntries = readFileSync(traceFile, "utf8")
+    .split("\n")
+    // What follows the last newline is empty, or a line the kill cut short.
+    .slice(0, -1)
+    .flatMap(line => Object.keys(JSON.parse(line).files))
+    .map(path => basename(path));
+  expect(changedEntries).toContain("main.js");
+  expect(changedEntries).not.toContain("worker.js");
+
+  // The reload keeps the same worker, which has nothing new to say.
+  const said = output()
+    .split("\n")
+    .filter(line => line.startsWith("worker says "));
+  expect(said).toEqual(["worker says v1"]);
+});
 
 // execve replaces the process without reaching on_exit(), so the compile
 // cache must be flushed explicitly on the reload path; otherwise

@@ -1700,11 +1700,8 @@ extern "C" fn napi_resolve_deferred(
         return env.pending_exception();
     }
     // SAFETY: deferred was created by heap::alloc in napi_create_promise.
-    if !env
-        .to_js()
-        .bun_vm()
-        .is_context_live(unsafe { (*deferred).context })
-    {
+    let context = unsafe { (*deferred).context };
+    if !env.to_js().bun_vm().is_context_live(context) {
         // Of a Bun.ModuleGraph that has been disposed: released, and nothing is settled. Before
         // the gate, which refuses a completion for such a graph whatever would run its script.
         // SAFETY: as above; the addon is done with it on napi_ok.
@@ -1737,11 +1734,8 @@ extern "C" fn napi_reject_deferred(
         return env.pending_exception();
     }
     // SAFETY: deferred was created by heap::alloc in napi_create_promise.
-    if !env
-        .to_js()
-        .bun_vm()
-        .is_context_live(unsafe { (*deferred).context })
-    {
+    let context = unsafe { (*deferred).context };
+    if !env.to_js().bun_vm().is_context_live(context) {
         // Of a Bun.ModuleGraph that has been disposed: released, and nothing is settled. Before
         // the gate, which refuses a completion for such a graph whatever would run its script.
         // SAFETY: as above; the addon is done with it on napi_ok.

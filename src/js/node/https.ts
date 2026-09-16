@@ -19,14 +19,10 @@ const ObjectAssign = Object.assign;
 const ArrayPrototypeUnshift = Array.prototype.unshift;
 const JSONStringify = JSON.stringify;
 
-// A request that carries its own checkServerIdentity gets a unique Agent name,
-// caches no TLS session, and the Agent's 'free' handler never pools its socket:
-// a connection one callback approved must not serve a request that has a
-// different one. https://github.com/nodejs/node/commit/52a8ace880 (CVE-2026-58040)
+// Port of https://github.com/nodejs/node/commit/52a8ace880 (CVE-2026-58040).
 let perRequestCheckServerIdentityIndex = 0;
 
-// Agent options override request options (Agent#addRequest), so with an
-// Agent-level callback every request on that Agent has the same policy.
+// Agent options override request options, so an Agent-level callback is one policy for its whole pool.
 function hasAgentCheckServerIdentity(options) {
   let { agent } = options;
   if (agent === false) return false;

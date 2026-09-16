@@ -111,12 +111,7 @@ function Agent(options): void {
 
     // If there are no pending requests, then put it in the freeSockets pool, but only if we're allowed to do so.
     const req = socket._httpMessage;
-    // No request shares the name of one that has its own checkServerIdentity, so
-    // nothing would take its pooled socket. Node refuses that socket in
-    // https.Agent#keepSocketAlive, from a mark that https.Agent's createConnection
-    // puts on it. An Agent that replaces createConnection, or an http.Agent that
-    // borrows https.Agent#getName (agent-base), gets the name without the mark
-    // and parks one socket per request. The options decide here for all of them.
+    // Node decides this in https.Agent#keepSocketAlive, which agent-base style Agents never reach.
     if (!req || !req.shouldKeepAlive || !this.keepAlive || options?.[kPerRequestCheckServerIdentity]) {
       socket.destroy();
       return;
@@ -258,9 +253,7 @@ Agent.prototype.addRequest = function addRequest(req, options, port /* legacy */
     if (!freeSockets.length) delete this.freeSockets[name];
   }
 
-  // Node makes the sockets[name] entry up front. When no socket arrives (a
-  // failed proxy tunnel, a createConnection that throws) nothing removes it,
-  // and a request with its own checkServerIdentity has a name of its own.
+  // Unlike Node, no sockets[name] entry before a socket exists: a failed createSocket would leave it behind.
   const freeLen = freeSockets ? freeSockets.length : 0;
   const sockLen = freeLen + (this.sockets[name]?.length ?? 0);
 

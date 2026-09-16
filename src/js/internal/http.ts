@@ -361,8 +361,6 @@ const kOutHeaders = Symbol("kOutHeaders");
 const kNeedDrain = Symbol("kNeedDrain");
 const kProxyConfig = Symbol("kProxyConfig");
 const kWaitForProxyTunnel = Symbol("kWaitForProxyTunnel");
-// On the options of an https request that passed its own checkServerIdentity.
-// https.request() sets it, https.Agent#getName and the Agent's 'free' handler read it.
 const kPerRequestCheckServerIdentity = Symbol("kPerRequestCheckServerIdentity");
 
 // Cached HTTP Date header value, refreshed once a second like Node.js does.

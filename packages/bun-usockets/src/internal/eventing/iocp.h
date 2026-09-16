@@ -34,6 +34,8 @@ struct us_loop_t;
 struct us_iocp_op {
     OVERLAPPED overlapped;
     void (*complete)(struct us_loop_t *loop, struct us_iocp_op *op, OVERLAPPED_ENTRY *entry);
+    /* The op behind this one in the loop's ready_ops. */
+    struct us_iocp_op *next_ready;
 };
 
 struct us_internal_afd_poll;
@@ -64,10 +66,6 @@ struct us_loop_t {
     /* Number of polls owned by bun */
     unsigned int bun_polls;
 
-    /* Incremented atomically by wakeup(), swapped to 0 before waiting.
-     * If non-zero, the event loop will return immediately so we can skip the GC safepoint. */
-    unsigned int pending_wakeups;
-
     /* Readiness of the Bun-owned poll being dispatched (LIBUS_SOCKET_* bits),
      * and whether it failed / saw the peer's FIN. */
     int current_ready_events;
@@ -85,9 +83,6 @@ struct us_loop_t {
     struct us_internal_acceptor *acceptors;
     /* A poll cancelled to widen its mask was dequeued and waits for the flush. */
     unsigned char afd_saw_cancelled;
-    /* A connection was taken and its AcceptEx started again: with more
-     * connections queued, that one's packet is on the port already. */
-    unsigned char accept_rearmed;
     /* us_loop_free is collecting what is still in flight: nothing is reported or re-armed. */
     unsigned char closing;
 
@@ -97,6 +92,11 @@ struct us_loop_t {
 
     /* Ops submitted and not yet dequeued. The port is closed only at zero. */
     unsigned int pending_ops;
+
+    /* Ops handed to us_iocp_op_ready and not completed yet, oldest first. */
+    struct us_iocp_op *ready_ops_head;
+    struct us_iocp_op *ready_ops_tail;
+    unsigned int num_ready_ops;
 
     /* Sub-tick wait timeouts: a high-resolution waitable timer delivered into
      * the port by a wait completion packet. NULL where either is unavailable. */
@@ -129,6 +129,14 @@ HANDLE us_loop_iocp(struct us_loop_t *loop);
  * pending, or success without FILE_SKIP_COMPLETION_PORT_ON_SUCCESS); the loop
  * balances it when the packet is dequeued. */
 void us_iocp_op_submitted(struct us_loop_t *loop);
+
+/* For an op whose outcome its owner already knows (the call that would have
+ * started it failed or finished on the spot) and whose `complete` has to run
+ * from the loop all the same. The next tick runs it before it takes packets
+ * from the port, in the order of these calls, with an entry that carries the
+ * op and nothing else. Loop thread only. Counts as submitted: call
+ * us_iocp_op_submitted as for a packet. */
+void us_iocp_op_ready(struct us_loop_t *loop, struct us_iocp_op *op);
 
 /* Deliver `op` once when `handle` becomes signalled (process exit, event,
  * console input...). us_iocp_wait_stop returns nonzero if the wait was removed

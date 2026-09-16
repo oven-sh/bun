@@ -972,11 +972,9 @@ impl Inner {
             match (*op).state {
                 ReadState::InFlight | ReadState::Replaying | ReadState::Delivering => Ok(()),
                 ReadState::Held => {
-                    // Back through the port so the owner hears of it from the
-                    // loop, not from inside `read_start`.
-                    if !super::post_to_loop((*this).link.loop_, &raw mut (*op).op) {
-                        return Err(win::last_error());
-                    }
+                    // The owner hears of it from the loop, not from inside
+                    // `read_start`.
+                    super::complete_from_loop((*this).link.loop_, &raw mut (*op).op);
                     (*this).pending += 1;
                     (*op).state = ReadState::Replaying;
                     Ok(())
@@ -1130,19 +1128,15 @@ impl Inner {
                         super::op_submitted(loop_);
                     } else {
                         (*op).posted = Some((win::last_error(), 0));
-                        if !super::post_to_loop(loop_, &raw mut (*op).op) {
-                            return Err(win::last_error());
-                        }
+                        super::complete_from_loop(loop_, &raw mut (*op).op);
                     }
                 }
                 Mode::Event => {
                     // Wait with a zero-byte read and take the data when it
                     // completes: see `read_stop`.
                     (*op).zero_wait = true;
-                    if !Self::event_read(this, op, 0)?
-                        && !super::post_to_loop(loop_, &raw mut (*op).op)
-                    {
-                        return Err(win::last_error());
+                    if !Self::event_read(this, op, 0)? {
+                        super::complete_from_loop(loop_, &raw mut (*op).op);
                     }
                 }
                 Mode::Sync => {
@@ -1217,18 +1211,27 @@ impl Inner {
                 (*(*this).write_tail).next = op;
             }
             (*this).write_tail = op;
+            let refused = Self::pump_writes(this, op);
             Self::update_keep_alive(this);
-            Self::pump_writes(this);
-            Ok(())
+            match refused {
+                Some(err) => Err(write_error(err)),
+                None => Ok(()),
+            }
         }
     }
 
     /// Hand queued writes to the kernel: all of them on a HANDLE Bun owns
     /// (the kernel keeps them in order), one at a time otherwise.
     ///
+    /// `fresh` is the write the caller queued just now, or null. When the
+    /// kernel refuses that one at once, it is freed without its callback and
+    /// the refusal is returned: the caller of `write` hears of it before it
+    /// can close the pipe. Any other write that cannot start reports through
+    /// the port, since its `write` call returned long ago.
+    ///
     /// # Safety
     /// `this` is live and not closing.
-    unsafe fn pump_writes(this: *mut Inner) {
+    unsafe fn pump_writes(this: *mut Inner, fresh: *mut WriteOp) -> Option<Win32Error> {
         // SAFETY: caller contract; queued ops are owned by `this`.
         unsafe {
             loop {
@@ -1237,7 +1240,7 @@ impl Inner {
                     || !(*this).chunked_write.is_null()
                     || ((*this).mode != Mode::Owned && (*this).writes_in_flight > 0)
                 {
-                    return;
+                    return None;
                 }
                 (*this).write_head = (*op).next;
                 if (*this).write_head.is_null() {
@@ -1249,18 +1252,59 @@ impl Inner {
                 if (*op).len - (*op).done > MAX_WRITE_CHUNK {
                     (*this).chunked_write = op;
                 }
-                Self::submit_write(this, op);
+                match Self::start_write(this, op) {
+                    None => {}
+                    Some((err, _)) if op == fresh && err != Win32Error::SUCCESS => {
+                        if (*this).chunked_write == op {
+                            (*this).chunked_write = ptr::null_mut();
+                        }
+                        (*this).writes_in_flight -= 1;
+                        (*this).pending -= 1;
+                        drop(bun_core::heap::take(op));
+                        return Some(err);
+                    }
+                    Some(finished) => Self::post_finished_write(this, op, finished),
+                }
             }
         }
     }
 
-    /// Start (or continue) `op`. A failure to start travels through the port
-    /// like any other completion.
+    /// Start (or continue) `op` and, when no packet of the kernel's will
+    /// announce how it went, queue one that does.
+    ///
+    /// # Safety
+    /// As [`start_write`](Self::start_write).
+    unsafe fn submit_write(this: *mut Inner, op: *mut WriteOp) {
+        // SAFETY: caller contract.
+        unsafe {
+            if let Some(finished) = Self::start_write(this, op) {
+                Self::post_finished_write(this, op, finished);
+            }
+        }
+    }
+
+    /// # Safety
+    /// `this` and `op` are live; `op` is counted in `writes_in_flight` and
+    /// `pending`, and no packet for it is on its way.
+    unsafe fn post_finished_write(
+        this: *mut Inner,
+        op: *mut WriteOp,
+        finished: (Win32Error, usize),
+    ) {
+        // SAFETY: caller contract.
+        unsafe {
+            (*op).posted = Some(finished);
+            super::complete_from_loop((*this).link.loop_, &raw mut (*op).op);
+        }
+    }
+
+    /// Hand `op`'s next chunk to the kernel. `None`: a packet will announce
+    /// how it went. Otherwise it is over already, with this result and count.
     ///
     /// # Safety
     /// `this` and `op` are live; `op` is counted in `writes_in_flight` and
     /// `pending`.
-    unsafe fn submit_write(this: *mut Inner, op: *mut WriteOp) {
+    unsafe fn start_write(this: *mut Inner, op: *mut WriteOp) -> Option<(Win32Error, usize)> {
         // SAFETY: caller contract. The OVERLAPPED lives in `op`, freed only
         // from its own completion.
         unsafe {
@@ -1275,7 +1319,7 @@ impl Inner {
             (*op).op.overlapped.offset_high = 0;
             let data = (*op).data.add((*op).done);
 
-            // Every arm returns once a packet is on its way by other means.
+            // Every arm returns `None` once a packet is on its way.
             let finished: (Win32Error, usize) = match (*this).mode {
                 Mode::Owned => {
                     (*op).op.overlapped.event = ptr::null_mut();
@@ -1288,7 +1332,7 @@ impl Inner {
                     );
                     if ok != 0 || win::last_error() == win::IO_PENDING {
                         super::op_submitted(loop_);
-                        return;
+                        return None;
                     }
                     (win::last_error(), 0)
                 }
@@ -1313,7 +1357,7 @@ impl Inner {
                             {
                                 super::wait_submitted(loop_);
                                 (*this).event_write = op;
-                                return;
+                                return None;
                             }
                             // Nothing will announce the completion: wait for
                             // it here (the reader decides how long that is).
@@ -1341,7 +1385,7 @@ impl Inner {
                         (*op).handle = (*this).handle;
                         if super::queue_blocking_work(WriteOp::sync_write_thread, op.cast()) {
                             super::op_submitted(loop_);
-                            return;
+                            return None;
                         }
                         let err = win::last_error();
                         (*op).port = None;
@@ -1349,12 +1393,7 @@ impl Inner {
                     }
                 },
             };
-            (*op).posted = Some(finished);
-            if !super::post_to_loop(loop_, &raw mut (*op).op) {
-                // The port is unusable; the operation can only be abandoned.
-                (*op).error = Some(Win32Error::OPERATION_ABORTED);
-                WriteOp::finish(op);
-            }
+            Some(finished)
         }
     }
 
@@ -1524,7 +1563,7 @@ impl Inner {
                 win::CancelIoEx(handle, (&raw mut (*(*this).event_write).op).cast());
             }
             // Queued writes never reached the kernel; they complete as
-            // cancelled, in order, through the port.
+            // cancelled, in order, from the loop.
             let mut op = core::mem::replace(&mut (*this).write_head, ptr::null_mut());
             (*this).write_tail = ptr::null_mut();
             while !op.is_null() {
@@ -1533,10 +1572,7 @@ impl Inner {
                 (*op).posted = Some((Win32Error::OPERATION_ABORTED, 0));
                 (*this).writes_in_flight += 1;
                 (*this).pending += 1;
-                if !super::post_to_loop(loop_, &raw mut (*op).op) {
-                    (*op).error = Some(Win32Error::OPERATION_ABORTED);
-                    WriteOp::finish(op);
-                }
+                super::complete_from_loop(loop_, &raw mut (*op).op);
                 op = next;
             }
         }
@@ -2195,7 +2231,7 @@ impl WriteOp {
                 Inner::maybe_finish(pipe);
                 return;
             }
-            Inner::pump_writes(pipe);
+            Inner::pump_writes(pipe, ptr::null_mut());
             Inner::update_keep_alive(pipe);
         }
     }
@@ -2335,7 +2371,8 @@ impl Pipe {
                 }
             } else {
                 // The outcome is known; it is still reported from the loop.
-                super::post_to_loop(loop_, &raw mut (*op).op)
+                super::complete_from_loop(loop_, &raw mut (*op).op);
+                true
             };
             if !started {
                 let err = win::last_error();

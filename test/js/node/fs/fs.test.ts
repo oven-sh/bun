@@ -1,4 +1,5 @@
 import { beforeAll, describe, expect, it, spyOn } from "bun:test";
+import { Worker } from "node:worker_threads";
 import {
   bunEnv,
   bunExe,
@@ -1551,6 +1552,99 @@ it("stat == statSync", async () => {
 });
 
 // https://github.com/oven-sh/bun/issues/1887
+it("mkdtempSync names do not repeat from one thread to the next", async () => {
+  using dir = tempDir("mkdtemp-threads", {});
+  const prefix = join(String(dir), "t-");
+  const worker = `
+    const fs = require("node:fs");
+    const { parentPort, workerData } = require("node:worker_threads");
+    parentPort.postMessage([fs.mkdtempSync(workerData), fs.mkdtempSync(workerData), fs.mkdtempSync(workerData)]);
+  `;
+  const names: string[] = [];
+  for (let i = 0; i < 3; i++) {
+    const { promise, resolve, reject } = Promise.withResolvers<string[]>();
+    const w = new Worker(worker, { eval: true, workerData: prefix });
+    w.once("message", resolve);
+    w.once("error", reject);
+    names.push(...(await promise));
+    await w.terminate();
+  }
+  // Each thread's first names: a generator every thread seeds alike gives the same three, three times.
+  expect(new Set(names.map(name => name.slice(prefix.length))).size).toBe(9);
+});
+
+// libuv's path conversion refuses bytes that are not WTF-8 with ERROR_INVALID_NAME; Node reports ENOENT.
+it.skipIf(!isWindows)("a Buffer path that is not UTF-8 names no file", () => {
+  using dir = tempDir("fs-invalid-utf8-path", {});
+  const bad = Buffer.concat([Buffer.from(String(dir) + "\\a"), Buffer.from([0xff, 0xfe]), Buffer.from("b")]);
+  const truncated = Buffer.concat([Buffer.from(String(dir) + "\\a"), Buffer.from([0xe2, 0x82])]);
+  const code = (fn: () => unknown) => {
+    try {
+      fn();
+      return "no error";
+    } catch (e: any) {
+      return e.code;
+    }
+  };
+  expect({
+    open: code(() => fs.closeSync(fs.openSync(bad, "w"))),
+    writeFile: code(() => fs.writeFileSync(truncated, "x")),
+    mkdir: code(() => fs.mkdirSync(bad)),
+    unlink: code(() => fs.unlinkSync(bad)),
+    rename: code(() => fs.renameSync(bad, join(String(dir), "c"))),
+    stat: code(() => fs.statSync(truncated)),
+    entries: fs.readdirSync(String(dir)),
+  }).toEqual({
+    open: "ENOENT",
+    writeFile: "ENOENT",
+    mkdir: "ENOENT",
+    unlink: "ENOENT",
+    rename: "ENOENT",
+    stat: "ENOENT",
+    entries: [],
+  });
+});
+
+// libuv makes one read per buffer, short or not, and so waits on a pipe for as many writes as there are buffers.
+it("readvSync on a pipe goes on to the next buffer after a short read", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const fs = require("node:fs");
+      const a = Buffer.alloc(4), b = Buffer.alloc(100);
+      console.log("READING");
+      const first = fs.readvSync(0, [a, b]);
+      console.log(JSON.stringify({ first, a: a.toString("hex"), b: b.subarray(0, 6).toString() }));
+      `,
+    ],
+    env: bunEnv,
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const reader = proc.stdout.getReader();
+  const decoder = new TextDecoder();
+  let stdout = "";
+  while (!stdout.includes("READING\n")) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    stdout += decoder.decode(value, { stream: true });
+  }
+  proc.stdin.write("ab");
+  await proc.stdin.flush();
+  proc.stdin.write("cdefgh");
+  await proc.stdin.end();
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    stdout += decoder.decode(value, { stream: true });
+  }
+  expect(stdout.trim().split("\n")).toEqual(["READING", JSON.stringify({ first: 8, a: "61620000", b: "cdefgh" })]);
+  expect(await proc.exited).toBe(0);
+});
+
 it("mkdtempSync, readdirSync, rmdirSync and unlinkSync with non-ascii", () => {
   const tempdir = mkdtempSync(`${tmpdir()}/emoji-fruit-🍇 🍈 🍉 🍊 🍋`);
   expect(existsSync(tempdir)).toBe(true);

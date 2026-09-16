@@ -2635,11 +2635,12 @@ pub fn is_writable(fd: Fd) -> Pollable {
 // ── os_entropy ────────────────────────────────────────────────────────────
 // Raw OS entropy source: getrandom(2) on Linux, getentropy on Darwin/BSD,
 // RtlGenRandom on Windows. bun_core sits below boringssl_sys in the crate
-// graph so it cannot reach `RAND_bytes`; this is used only to seed
-// `fast_random()`'s thread-local PRNG once per thread. Every other caller
+// graph so it cannot reach `RAND_bytes`; this seeds `fast_random()`'s
+// thread-local PRNG once per thread, and crates at this tier take from it
+// what must not repeat across threads (a `mkdtemp` name). Every other caller
 // must use `bun_boringssl_sys::rand_bytes` (userspace DRBG, no syscall per
 // call).
-fn os_entropy(bytes: &mut [u8]) {
+pub fn os_entropy(bytes: &mut [u8]) {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         let mut filled = 0usize;

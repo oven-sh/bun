@@ -68,15 +68,19 @@ extern "system" fn on_console_ctrl(ctrl_type: win::DWORD) -> win::BOOL {
     win::TRUE
 }
 
+/// Once, at startup. Windows calls control routines newest first, so one
+/// added at the first `process.on("SIGINT")` would come before every routine
+/// registered earlier, such as the one `vm`'s `breakOnSigint` installs.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__installWindowsSignalHandler() {
+    let _ = win::SetConsoleCtrlHandler(Some(on_console_ctrl), win::TRUE);
+}
+
 /// First `process.on(<signal>)` listener for `signum` on the main thread.
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__watchWindowsSignal(signum: c_int) {
     match signum {
         SIGINT | SIGBREAK | SIGHUP => {
-            static INSTALL: std::sync::Once = std::sync::Once::new();
-            INSTALL.call_once(|| {
-                let _ = win::SetConsoleCtrlHandler(Some(on_console_ctrl), win::TRUE);
-            });
             WATCHED.fetch_or(1 << signum, Ordering::Release);
         }
         SIGWINCH => watch_console_size(),

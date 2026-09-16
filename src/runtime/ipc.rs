@@ -903,6 +903,10 @@ pub struct SendQueue {
     /// This side is done with the channel (disconnect(), a broken stream) and
     /// the close itself comes later: what the peer sends meanwhile is dropped.
     input_stopped: Cell<bool>,
+    /// Input that could not be decoded closed the channel: what follows it in
+    /// the same read is not delivered (a `disconnect()` from a handler is
+    /// different, see `accepts_input`).
+    input_failed: Cell<bool>,
 
     #[cfg(windows)]
     incoming_frames: JsCell<IncomingFrames>,
@@ -1029,6 +1033,7 @@ impl SendQueue {
             write_in_progress: Cell::new(false),
             close_event_sent: Cell::new(false),
             input_stopped: Cell::new(false),
+            input_failed: Cell::new(false),
             #[cfg(windows)]
             incoming_frames: JsCell::new(IncomingFrames::default()),
         });
@@ -1790,6 +1795,9 @@ impl SendQueue {
         let global_this = this.get_global_this();
         let _scope = global_this.bun_vm().enter_event_loop_scope();
         for event in events.drain(..) {
+            if this.input_failed.get() {
+                break;
+            }
             match event {
                 FrameEvent::Data(range) => on_data2(this, &chunk[range]),
                 // As an fd received over a POSIX channel: the `NODE_HANDLE`
@@ -2159,6 +2167,7 @@ fn finish_decode(send_queue: &SendQueue, step: &DecodeStep) {
         }
         DecodeStep::Fail(IPCDecodeError::Js(JsError::OutOfMemory)) => {
             Output::print_errorln("IPC message is too long.");
+            send_queue.input_failed.set(true);
             send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
         }
         // Materializing the message (structured-clone deserialize, buffer
@@ -2167,9 +2176,11 @@ fn finish_decode(send_queue: &SendQueue, step: &DecodeStep) {
         // input.
         DecodeStep::Fail(IPCDecodeError::Js(err)) => {
             crate::dispatch::fold(Err(*err));
+            send_queue.input_failed.set(true);
             send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
         }
         DecodeStep::Fail(_) => {
+            send_queue.input_failed.set(true);
             send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
         }
     }

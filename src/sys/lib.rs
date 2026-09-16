@@ -6685,7 +6685,9 @@ fn convert_path_u8_to_u16<'a>(buf: &'a mut [u16], path: &[u8]) -> Maybe<&'a mut 
     {
         return Err(Error::from_code(E::ENAMETOOLONG, Tag::open));
     }
-    Ok(bun_core::convert_utf8_to_utf16_in_buffer(buf, path))
+    // Bytes that are no name: `ERROR_INVALID_NAME`, which is `ENOENT`.
+    bun_core::strings::try_convert_wtf8_to_utf16_in_buffer(buf, path)
+        .ok_or_else(|| Error::from_code(E::ENOENT, Tag::open))
 }
 
 #[cfg(windows)]

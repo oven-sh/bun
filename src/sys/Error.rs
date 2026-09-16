@@ -102,17 +102,16 @@ impl Error {
     pub fn from_code_int(errno: c_int, syscall_tag: Tag) -> Error {
         debug_assert!((0..=c_int::from(u16::MAX)).contains(&errno));
         Error {
-            // The kernel is not bound to the table (FUSE, drivers): what it
-            // does not declare is stored as EUNKNOWN, so the code and message
-            // lookups agree with `get_errno`.
-            errno: u16::try_from(errno).map_or(E::EUNKNOWN, E::from_raw) as Int,
+            // The kernel's number, also one the table does not declare (FUSE,
+            // drivers): JS reports it as `err.errno`, as Node does.
+            errno: errno as Int,
             syscall: syscall_tag,
             ..Default::default()
         }
     }
 
-    /// `self.errno` is an `E`/`SystemErrno` discriminant on every platform (not
-    /// a Win32 code or a `UV_E*` number); one the enum does not declare is `EUNKNOWN`.
+    /// `self.errno` is a host errno on every platform (not a Win32 code or a
+    /// `UV_E*` number); one the enum does not declare is `EUNKNOWN`.
     #[inline]
     pub fn get_errno(&self) -> E {
         E::from_raw(self.errno)
@@ -225,9 +224,13 @@ impl Error {
         self.resolve_system_errno().unwrap_or(SystemErrno::EIO)
     }
 
-    /// The errno and its name (e.g. `"ENOENT"`) for printing.
+    /// The errno and its name (e.g. `"ENOENT"`) for printing. A number the
+    /// table does not declare prints as `EUNKNOWN`, as `get_errno` has it.
     pub fn get_error_code_tag_name(&self) -> Option<(&'static str, SystemErrno)> {
-        let e = self.resolve_system_errno()?;
+        if self.errno == 0 {
+            return None;
+        }
+        let e = SystemErrno::from_repr(self.errno).unwrap_or(SystemErrno::EUNKNOWN);
         // strum::IntoStaticStr — variant name (e.g., "ENOENT").
         Some((<&'static str>::from(e), e))
     }

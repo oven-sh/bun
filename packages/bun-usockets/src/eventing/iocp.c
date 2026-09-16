@@ -211,6 +211,17 @@ void us_iocp_op_submitted(struct us_loop_t *loop) {
     InterlockedIncrement((volatile LONG *) &loop->pending_ops);
 }
 
+void us_iocp_op_ready(struct us_loop_t *loop, struct us_iocp_op *op) {
+    op->next_ready = NULL;
+    if (loop->ready_ops_tail) {
+        loop->ready_ops_tail->next_ready = op;
+    } else {
+        loop->ready_ops_head = op;
+    }
+    loop->ready_ops_tail = op;
+    loop->num_ready_ops++;
+}
+
 /* AFD helper handles */
 
 static struct us_internal_afd_helper *afd_helper_acquire(struct us_loop_t *loop) {
@@ -924,6 +935,25 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
     }
 }
 
+/* Completes the ops that were ready when the tick began; one that becomes ready
+ * meanwhile is the next tick's, so the port is looked at in between. Each is
+ * taken off the list before it runs: a callback can re-enter the loop, and the
+ * nested tick carries on with the rest. */
+static void us_internal_complete_ready_ops(struct us_loop_t *loop) {
+    for (unsigned int budget = loop->num_ready_ops; budget && loop->ready_ops_head; budget--) {
+        struct us_iocp_op *op = loop->ready_ops_head;
+        loop->ready_ops_head = op->next_ready;
+        if (!loop->ready_ops_head) {
+            loop->ready_ops_tail = NULL;
+        }
+        loop->num_ready_ops--;
+        InterlockedDecrement((volatile LONG *) &loop->pending_ops);
+        OVERLAPPED_ENTRY entry = {0};
+        entry.lpOverlapped = &op->overlapped;
+        op->complete(loop, op, &entry);
+    }
+}
+
 static void us_internal_iocp_dequeue(struct us_loop_t *loop, DWORD timeout_ms) {
     ULONG count = 0;
     if (!GetQueuedCompletionStatusEx(loop->iocp, loop->ready_polls, US_IOCP_MAX_ENTRIES, &count, timeout_ms, FALSE)) {
@@ -1020,18 +1050,18 @@ static long long us_internal_timespec_ns(const struct timespec *timeout) {
  * submits the wider one, and what it was widened for (a resumed socket's
  * queued data) completes it at once. Taking that now reports it in the same
  * iteration an epoll_ctl would have. */
-static void us_internal_drain_ready_polls(struct us_loop_t *loop) {
-    int drain_count = 48;
-    while ((loop->num_ready_polls == US_IOCP_MAX_ENTRIES || loop->afd_saw_cancelled || loop->accept_rearmed) && --drain_count != 0 && loop->num_polls > 0) {
-        loop->afd_saw_cancelled = 0;
-        loop->accept_rearmed = 0;
-        afd_flush_updates(loop);
-        us_internal_iocp_dequeue(loop, 0);
-        if (loop->num_ready_polls == 0) {
-            break;
-        }
-        us_internal_dispatch_ready_polls(loop);
+/* A tick dispatches one batch of packets: what runs between ticks (timers, the
+ * loop's post handlers) waits for no more than that. A poll that was cancelled
+ * to widen its mask is the exception: it goes back to the kernel and the port
+ * is looked at once more, so the events asked for arrive in this tick. */
+static void us_internal_resubmit_cancelled_polls(struct us_loop_t *loop) {
+    if (!loop->afd_saw_cancelled || loop->num_polls <= 0) {
+        return;
     }
+    loop->afd_saw_cancelled = 0;
+    afd_flush_updates(loop);
+    us_internal_iocp_dequeue(loop, 0);
+    us_internal_dispatch_ready_polls(loop);
 }
 
 /* Bound `timeout_ns` by the socket-timeout sweep deadline. */
@@ -1054,12 +1084,13 @@ void us_loop_run(struct us_loop_t *loop) {
         acceptors_retry_starved(loop);
 
         us_internal_dispatch_ready_polls(loop);
-        long long timeout_ns = us_internal_clamp_to_sweep(loop, -1);
+        us_internal_complete_ready_ops(loop);
+        long long timeout_ns = loop->ready_ops_head ? 0 : us_internal_clamp_to_sweep(loop, -1);
         us_internal_before_wait(loop, timeout_ns);
         us_internal_iocp_wait(loop, timeout_ns, 0);
 
         us_internal_dispatch_ready_polls(loop);
-        us_internal_drain_ready_polls(loop);
+        us_internal_resubmit_cancelled_polls(loop);
         us_internal_sweep_if_due(loop);
 
         us_internal_loop_post(loop);
@@ -1082,6 +1113,7 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec *timeout
 
     /* Only a tick entered from a completion callback has anything left here. */
     us_internal_dispatch_ready_polls(loop);
+    us_internal_complete_ready_ops(loop);
 
     long long timeout_ns = us_internal_timespec_ns(timeout);
 
@@ -1098,12 +1130,12 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec *timeout
 
     timeout_ns = us_internal_clamp_to_sweep(loop, timeout_ns);
 
-    const unsigned int had_wakeups = (unsigned int) InterlockedExchange((volatile LONG *) &loop->pending_wakeups, 0);
-    if (had_wakeups != 0) {
-        timeout_ns = 0;
-    }
     if (timeout_ns != 0 && loop->data.jsc_vm)
         Bun__JSC_onBeforeWait(loop->data.jsc_vm);
+
+    /* No packet stands behind a ready op: nothing would end a wait for it. */
+    if (loop->ready_ops_head)
+        timeout_ns = 0;
 
     /* What follows prepares to park the thread. A tick that finds packets
      * waiting does not park, however long it would have been willing to.
@@ -1145,7 +1177,7 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec *timeout
         mi_on_thread_idle_end();
 
     us_internal_dispatch_ready_polls(loop);
-    us_internal_drain_ready_polls(loop);
+    us_internal_resubmit_cancelled_polls(loop);
     us_internal_sweep_if_due(loop);
 
     us_internal_loop_post(loop);
@@ -1178,6 +1210,7 @@ void us_loop_free(struct us_loop_t *loop) {
      * the kernel. */
     for (int rounds = 0; rounds < 64; rounds++) {
         afd_flush_updates(loop);
+        us_internal_complete_ready_ops(loop);
         if (loop->pending_ops == 0) {
             break;
         }
@@ -1413,13 +1446,18 @@ static void accept_slot_complete(struct us_loop_t *loop, struct us_iocp_op *op, 
     us_internal_dispatch_ready_poll(a->owner, 0, 0, LIBUS_SOCKET_READABLE);
     a->dispatching--;
     if (slot->accepted) {
-        /* Not taken: the listener was closed first, or us_internal_accept was made to fail. */
+        /* Not taken: the listener was closed first, or us_internal_accept was made
+         * to fail. Reset, as the connections still in the backlog are. */
         slot->accepted = 0;
+        struct linger reset = {.l_onoff = 1, .l_linger = 0};
+        setsockopt(slot->socket, SOL_SOCKET, SO_LINGER, (const char *) &reset, sizeof(reset));
         closesocket(slot->socket);
         slot->socket = INVALID_SOCKET;
-        if (a->owner) {
-            accept_slot_arm(slot);
-        }
+    }
+    /* The owner accepts until nothing is left, which starts AcceptEx again.
+     * When it stopped before that, this does. */
+    if (a->owner && !slot->in_flight) {
+        accept_slot_arm(slot);
     }
     acceptor_maybe_free(a);
 }
@@ -1465,6 +1503,12 @@ static struct us_internal_acceptor *acceptor_create(struct us_loop_t *loop, stru
     if (WSAIoctl(listener, SIO_GET_EXTENSION_FUNCTION_POINTER, &accept_ex_id, sizeof(accept_ex_id), &accept_ex, sizeof(accept_ex), &bytes, NULL, NULL) != 0 ||
         WSAIoctl(listener, SIO_GET_EXTENSION_FUNCTION_POINTER, &get_addresses_id, sizeof(get_addresses_id), &get_addresses, sizeof(get_addresses), &bytes, NULL,
                  NULL) != 0) {
+        return NULL;
+    }
+
+    /* The backlog behind the connection AcceptEx took is drained with accept(). */
+    u_long nonblocking = 1;
+    if (ioctlsocket(listener, FIONBIO, &nonblocking) == SOCKET_ERROR) {
         return NULL;
     }
 
@@ -1539,22 +1583,18 @@ LIBUS_SOCKET_DESCRIPTOR us_internal_accept(struct us_poll_t *p, struct bsd_addr_
     if (!a) {
         return bsd_accept_socket(p->fd, addr);
     }
-    ssize_t injected = 0;
-    int unused = 0;
-    if (US_FAULT_CHECK(US_FAULT_ACCEPT, p->fd, injected, unused)) {
-        return LIBUS_SOCKET_ERROR;
-    }
-    (void) injected;
-    (void) unused;
     for (int i = 0; i < US_ACCEPTS_PER_LISTENER; i++) {
         struct us_internal_accept_slot *slot = &a->slots[i];
         if (!slot->accepted) {
-            if (!slot->in_flight) {
-                /* Polled because AcceptEx could not be started; a connection is waiting now. */
-                accept_slot_arm(slot);
-            }
             continue;
         }
+        ssize_t injected = 0;
+        int unused = 0;
+        if (US_FAULT_CHECK(US_FAULT_ACCEPT, p->fd, injected, unused)) {
+            return LIBUS_SOCKET_ERROR;
+        }
+        (void) injected;
+        (void) unused;
         SOCKET accepted = slot->socket;
         slot->accepted = 0;
         slot->socket = INVALID_SOCKET;
@@ -1574,14 +1614,21 @@ LIBUS_SOCKET_DESCRIPTOR us_internal_accept(struct us_poll_t *p, struct bsd_addr_
         addr->len = remote_length;
         internal_finalize_bsd_addr(addr);
 
-        /* The kernel can take the next connection while this one is handled. */
-        accept_slot_arm(slot);
-        /* With another connection queued, that AcceptEx is over already and its
-         * packet is on the port. */
-        if (slot->in_flight && (NTSTATUS) slot->op.overlapped.Internal != STATUS_PENDING) {
-            a->loop->accept_rearmed = 1;
-        }
         return accepted;
+    }
+    if (a->in_flight) {
+        /* An AcceptEx is outstanding: the next connection is the one it takes. */
+        return LIBUS_SOCKET_ERROR;
+    }
+    /* What AcceptEx took has been handed over. The callers accept until nothing
+     * is left, as on the other backends: the rest of the backlog, oldest first,
+     * and then AcceptEx waits for the next connection. */
+    LIBUS_SOCKET_DESCRIPTOR next = bsd_accept_socket(a->listener, addr);
+    if (next != LIBUS_SOCKET_ERROR) {
+        return next;
+    }
+    for (int i = 0; i < US_ACCEPTS_PER_LISTENER; i++) {
+        accept_slot_arm(&a->slots[i]);
     }
     return LIBUS_SOCKET_ERROR;
 }

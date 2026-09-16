@@ -199,6 +199,20 @@ JSC_DEFINE_HOST_FUNCTION(jsDomainToUnicode, (JSC::JSGlobalObject * globalObject,
     return JSC::JSValue::encode(JSC::jsString(vm, unicode));
 }
 
+// For name lookups that hand the name to the system resolver, which would
+// otherwise encode it by its own rules (Windows: IDNA2003, which maps ß to ss).
+// Writes the ASCII form of the UTF-16 `name` to `out` as UTF-16 and returns
+// its length, or -1 when the name has none or it does not fit.
+extern "C" int32_t Bun__domainToASCII16(const char16_t* name, int32_t length, char16_t* out, int32_t capacity)
+{
+    auto result = icuToASCII(String(std::span { name, static_cast<size_t>(length) }), IDNAMode::Default);
+    if (result.isNull() || static_cast<int32_t>(result.length()) > capacity)
+        return -1;
+    for (unsigned i = 0; i < result.length(); i++)
+        out[i] = result[i];
+    return static_cast<int32_t>(result.length());
+}
+
 // Standalone UTS #46 domain-to-ascii (Node's encoding_binding toASCII, i.e.
 // ada::idna::to_ascii): returns "" on failure. url.parse's IDNA step — unlike
 // domainToASCII, no host parsing (no IPv4 canonicalization, ':' allowed, ...).

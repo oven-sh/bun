@@ -178,6 +178,29 @@ mod _impl {
             );
         }
 
+        /// `process.report` prints an interface's addresses as
+        /// `os.networkInterfaces()` does. `address` is a `sockaddr_in` or a
+        /// `sockaddr_in6`, read as far as its family says.
+        #[unsafe(no_mangle)]
+        pub(super) unsafe extern "C" fn Bun__Os__formatAddress(
+            address: *const core::ffi::c_void,
+            buffer: *mut u8,
+            capacity: usize,
+        ) -> usize {
+            // SAFETY: caller contract.
+            let address = unsafe { bun_sys::net::Address::init_posix(address.cast()) };
+            // SAFETY: `buffer` is valid for `capacity` bytes.
+            let into = unsafe { core::slice::from_raw_parts_mut(buffer, capacity) };
+            // `format_ip` strips the brackets, so the text need not start at `into[0]`.
+            let start = into.as_ptr() as usize;
+            let Ok(text) = bun_core::fmt::format_ip(&address, into) else {
+                return 0;
+            };
+            let (offset, len) = (text.as_ptr() as usize - start, text.len());
+            into.copy_within(offset..offset + len, 0);
+            len
+        }
+
         /// `RtlGetVersion`, which unlike `GetVersionExW` is not subject to
         /// the application manifest's compatibility shims.
         pub(super) fn os_version() -> OSVERSIONINFOW {

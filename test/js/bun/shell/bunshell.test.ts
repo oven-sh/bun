@@ -929,6 +929,34 @@ describe("bunshell", () => {
     });
   });
 
+  // These builtins queue a chunk per directory or per file and count the completions. `true` reads
+  // nothing, so the pipe breaks with most of them still queued.
+  describe("a builtin with several chunks queued ends when its pipe's reader has gone", () => {
+    const tree = () => {
+      const files: Record<string, Record<string, string>> = {};
+      for (let d = 0; d < 40; d++) {
+        files["d" + d] = {};
+        for (let f = 0; f < 25; f++) files["d" + d][Buffer.alloc(100, "x").toString() + f] = "";
+      }
+      return files;
+    };
+
+    test("ls -R", async () => {
+      using dir = tempDir("shell-broken-pipe-ls", tree());
+      const { exitCode } = await $`ls -R . | true`.cwd(String(dir)).nothrow().quiet();
+      expect(exitCode).toBe(0);
+    });
+
+    test("rm -rv", async () => {
+      using dir = tempDir("shell-broken-pipe-rm", tree());
+      const { exitCode } = await $`rm -rv ${{ raw: Object.keys(tree()).join(" ") }} | true`
+        .cwd(String(dir))
+        .nothrow()
+        .quiet();
+      expect(exitCode).toBe(0);
+    });
+  });
+
   // A pipeline's pipes and a child's stdio pipes are created side by side in one process. Each
   // script runs in a fresh process so that the two start from the same state no matter what ran
   // earlier in this file.

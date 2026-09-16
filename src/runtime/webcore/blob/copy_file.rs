@@ -202,7 +202,7 @@ impl CopyFile {
                 self.source_file_store
                     .pathlike
                     .path()
-                    .slice_z(&mut path_buf1),
+                    .slice_z_as_written(&mut path_buf1),
                 OPEN_SOURCE_FLAGS,
                 0,
             ) {
@@ -542,7 +542,7 @@ impl CopyFile {
                 .destination_file_store
                 .pathlike
                 .path()
-                .slice_z(&mut dest_buf)
+                .slice_z_as_written(&mut dest_buf)
                 .len();
             // SAFETY: `slice_z` wrote `dest_len` bytes + NUL into `dest_buf`.
             let dest = bun_core::ZStr::from_buf(&dest_buf[..], dest_len);
@@ -550,7 +550,7 @@ impl CopyFile {
                 self.source_file_store
                     .pathlike
                     .path()
-                    .slice_z(&mut source_buf),
+                    .slice_z_as_written(&mut source_buf),
                 dest,
             ) {
                 bun_sys::Result::Err(errno) => {
@@ -635,7 +635,7 @@ impl CopyFile {
                             self.source_file_store
                                 .pathlike
                                 .path()
-                                .slice_z(&mut path_buf),
+                                .slice_z_as_written(&mut path_buf),
                         ) {
                             bun_sys::Result::Ok(result) => {
                                 stat_ = Some(result);
@@ -670,7 +670,7 @@ impl CopyFile {
                                             self.destination_file_store
                                                 .pathlike
                                                 .path()
-                                                .slice_z(&mut path_buf)
+                                                .slice_z_as_written(&mut path_buf)
                                                 .as_ptr(),
                                             i64::try_from(self.max_length).expect("int cast"),
                                         )
@@ -687,7 +687,7 @@ impl CopyFile {
                                         self.destination_file_store
                                             .pathlike
                                             .path()
-                                            .slice_z(&mut path_buf),
+                                            .slice_z_as_written(&mut path_buf),
                                         mode,
                                     ) {
                                         bun_sys::Result::Err(err) => {

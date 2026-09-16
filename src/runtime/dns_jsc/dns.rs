@@ -1018,7 +1018,37 @@ pub mod get_addr_info_request {
         else {
             return uv::UV_EAI_NONAME;
         };
-        host_buf[host_len] = 0;
+        // The resolver would encode a name that is not ASCII by its own rules,
+        // which are not the ones URLs and Node go by.
+        let mut ascii_buf = [0u16; 256];
+        let host_ptr = if host.is_ascii() {
+            host_buf[host_len] = 0;
+            host_buf.as_ptr()
+        } else {
+            unsafe extern "C" {
+                fn Bun__domainToASCII16(
+                    name: *const u16,
+                    length: i32,
+                    out: *mut u16,
+                    capacity: i32,
+                ) -> i32;
+            }
+            // SAFETY: `host_buf[..host_len]` is initialized; `ascii_buf` has
+            // room for the capacity passed, less one for the terminator.
+            let len = unsafe {
+                Bun__domainToASCII16(
+                    host_buf.as_ptr(),
+                    host_len as i32,
+                    ascii_buf.as_mut_ptr(),
+                    (ascii_buf.len() - 1) as i32,
+                )
+            };
+            let Ok(len) = usize::try_from(len) else {
+                return uv::UV_EAI_NONAME;
+            };
+            ascii_buf[len] = 0;
+            ascii_buf.as_ptr()
+        };
         // The service is the decimal port.
         for (dst, src) in service_buf.iter_mut().zip(service) {
             *dst = u16::from(*src);
@@ -1028,7 +1058,7 @@ pub mod get_addr_info_request {
         // `result` is a valid out-pointer.
         let err = unsafe {
             GetAddrInfoW(
-                host_buf.as_ptr(),
+                host_ptr,
                 service_buf.as_ptr(),
                 hints.map_or(ptr::null(), std::ptr::from_ref),
                 result,

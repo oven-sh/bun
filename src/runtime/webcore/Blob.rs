@@ -4008,7 +4008,7 @@ fn write_file_with_empty_source_to_destination(
                                 let mode: bun_sys::Mode =
                                     options.mode.unwrap_or(node::fs::DEFAULT_PERMISSION);
                                 match bun_sys::File::open(
-                                    file.pathlike.path().slice_z(&mut buf),
+                                    file.pathlike.path().slice_z_as_written(&mut buf),
                                     bun_sys::O::CREAT | bun_sys::O::TRUNC,
                                     mode,
                                 ) {
@@ -4896,7 +4896,7 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
     } else {
         let mut file_path = bun_paths::path_buffer_pool::get();
         match bun_sys::open(
-            pathlike.path().slice_z(&mut file_path),
+            pathlike.path().slice_z_as_written(&mut file_path),
             // we deliberately don't use O_TRUNC here
             // it's a perf optimization
             bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::NONBLOCK,
@@ -4979,7 +4979,7 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
         let mut file_path = bun_paths::path_buffer_pool::get();
         let flags = bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::NONBLOCK;
         match bun_sys::open(
-            pathlike.path().slice_z(&mut file_path),
+            pathlike.path().slice_z_as_written(&mut file_path),
             flags,
             WRITE_PERMISSIONS,
         ) {
@@ -5532,7 +5532,7 @@ fn resolve_file_stat(store: &RefPtr<Store>) {
     match &file.pathlike {
         PathOrFileDescriptor::Path(path) => {
             let mut buffer = bun_paths::path_buffer_pool::get();
-            match bun_sys::stat(path.slice_z(&mut buffer)) {
+            match bun_sys::stat(path.slice_z_as_written(&mut buffer)) {
                 bun_sys::Result::Ok(stat) => {
                     file.max_size = if bun_sys::S::ISREG(stat.st_mode as _) || stat.st_size > 0 {
                         ((stat.st_size.max(0)) as u64) as SizeType
@@ -6217,7 +6217,7 @@ pub trait FileOpener: Sized {
             PathOrFileDescriptor::Path(p) => p.clone(),
             PathOrFileDescriptor::Fd(_) => unreachable!(),
         };
-        let path = path_string.slice_z(&mut buf);
+        let path = path_string.slice_z_as_written(&mut buf);
 
         loop {
             match bun_sys::open(

@@ -251,21 +251,11 @@ impl Inner {
                 }
             };
             (*slot).posted = ended;
-            // What the call decided goes through the port too, so the owner
-            // hears of every client from the loop.
-            let queued = match ended {
-                None => {
-                    super::op_submitted(loop_);
-                    true
-                }
-                Some(_) => super::post_to_loop(loop_, &raw mut (*slot).op),
-            };
-            if !queued {
-                if (*slot).handle != INVALID_HANDLE_VALUE {
-                    win::CloseHandle((*slot).handle);
-                    (*slot).handle = INVALID_HANDLE_VALUE;
-                }
-                return;
+            // What the call decided is reported from the loop too, so the owner
+            // hears of every client from there.
+            match ended {
+                None => super::op_submitted(loop_),
+                Some(_) => super::complete_from_loop(loop_, &raw mut (*slot).op),
             }
             (*slot).in_flight = true;
             (*this).pending += 1;

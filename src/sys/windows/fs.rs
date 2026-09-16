@@ -289,7 +289,9 @@ fn lengthen_path_in_place(buf: &mut [u16], len: usize) -> Win32Result<usize> {
 /// the form Win32 takes past `MAX_PATH` when it needs that. Returns its length.
 /// Every path that reaches a Win32 call outside a [`WPath`] goes through here.
 pub fn kernel32_path(buf: &mut [u16], path: &[u8]) -> Win32Result<usize> {
-    let len = bun_paths::string_paths::to_kernel32_path(buf, path).len();
+    let len = bun_paths::string_paths::try_to_kernel32_path(buf, path)
+        .ok_or(Win32Error::INVALID_NAME)?
+        .len();
     lengthen_path_in_place(buf, len)
 }
 
@@ -310,7 +312,10 @@ impl WPath {
             return Err(Win32Error::FILENAME_EXCED_RANGE);
         }
         let mut buf = bun_paths::w_path_buffer_pool::get();
-        let len = string_paths::to_w_path(&mut buf[..], path).len();
+        // Bytes that are no name fail as they do in libuv and Node (`ENOENT`).
+        let len = string_paths::try_to_w_path(&mut buf[..], path)
+            .ok_or(Win32Error::INVALID_NAME)?
+            .len();
 
         // `\??\` is the NT spelling of `\\?\`; Win32 only documents the latter.
         if len >= 4 && buf[..4] == super::NT_OBJECT_PREFIX {
@@ -337,7 +342,9 @@ impl WPath {
             return Err(Win32Error::FILENAME_EXCED_RANGE);
         }
         let mut buf = bun_paths::w_path_buffer_pool::get();
-        let len = bun_paths::string_paths::to_w_path(&mut buf[..], path).len();
+        let len = bun_paths::string_paths::try_to_w_path(&mut buf[..], path)
+            .ok_or(Win32Error::INVALID_NAME)?
+            .len();
         Ok(WPath { buf, start: 0, len })
     }
 
@@ -491,8 +498,9 @@ fn open_impl(path: &[u8], flags: i32, mode: Mode) -> core::result::Result<HANDLE
 // ──────────────────────────────────────────────────────────────────────────
 
 /// One `ReadFile` per buffer. `position < 0` reads at the file pointer.
-/// Stops at the first short read; an error after some bytes were read
-/// reports those bytes instead.
+/// A short read goes on to the next buffer, as libuv's `fs__read` does (on a
+/// pipe that waits for more); a read of nothing ends it. An error after some
+/// bytes were read reports those bytes instead.
 pub fn preadv(fd: Fd, bufs: &[PlatformIoVec], position: i64) -> Maybe<usize> {
     let _restore = (position >= 0).then(|| crate::RestoreFilePointer::new(fd));
     let mut total: usize = 0;
@@ -511,7 +519,7 @@ pub fn preadv(fd: Fd, bufs: &[PlatformIoVec], position: i64) -> Maybe<usize> {
         match result {
             Ok(n) => {
                 total += n;
-                if n < slice.len() {
+                if n == 0 {
                     break;
                 }
             }
@@ -1357,18 +1365,19 @@ fn unlink_or_rmdir(path: &[u8], is_rmdir: bool) -> core::result::Result<(), E> {
 
 /// `mode` is ignored: a Windows directory has no permission bits to set.
 pub fn mkdir(path: &ZStr, _mode: Mode) -> Maybe<()> {
-    let result = WPath::new(path.as_bytes())
-        .and_then(|wpath| {
-            // SAFETY: `wpath` is NUL-terminated.
-            if unsafe { win32::CreateDirectoryW(wpath.as_ptr(), ptr::null_mut()) } == 0 {
-                return Err(Win32Error::get());
-            }
-            Ok(())
-        })
-        .map_err(|e| match e {
-            Win32Error::INVALID_NAME | Win32Error::DIRECTORY => E::EINVAL,
-            e => e.to_e(),
-        });
+    // libuv's mapping of what `CreateDirectoryW` reports; a path that does
+    // not convert is `ENOENT` as for every other call.
+    let result = match WPath::new(path.as_bytes()) {
+        Err(e) => Err(e.to_e()),
+        // SAFETY: `wpath` is NUL-terminated.
+        Ok(wpath) if unsafe { win32::CreateDirectoryW(wpath.as_ptr(), ptr::null_mut()) } == 0 => {
+            Err(match Win32Error::get() {
+                Win32Error::INVALID_NAME | Win32Error::DIRECTORY => E::EINVAL,
+                e => e.to_e(),
+            })
+        }
+        Ok(_) => Ok(()),
+    };
     crate::syslog!("mkdir({}) = {:?}", bstr::BStr::new(path.as_bytes()), result);
     result.map_err(|errno| Error::from_code(errno, Tag::mkdir).with_path(path.as_bytes()))
 }
@@ -1396,7 +1405,10 @@ pub fn mkdtemp(template: &mut [u8]) -> Maybe<()> {
     }
     let mut last = Win32Error::ALREADY_EXISTS;
     for _ in 0..TRIES {
-        let mut v = bun_core::fast_random();
+        // Not `fast_random`: every thread's generator starts from one seed.
+        let mut v = [0u8; 8];
+        bun_core::os_entropy(&mut v);
+        let mut v = u64::from_ne_bytes(v);
         let mut name = [0u8; NUM_X];
         for c in &mut name {
             *c = CHARS[(v % CHARS.len() as u64) as usize];

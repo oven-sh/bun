@@ -464,10 +464,10 @@ if (isWindows) {
 }
 
 // `CreateFileW` has rules for names: `NUL` and `LPT1` are devices, in a directory too, and a trailing
-// dot or space is dropped. Which names those are differs between Windows versions, so the two ways of
-// writing a `Bun.file` are compared with each other.
+// dot or space is dropped. Which names those are differs between Windows versions, so the ways of
+// writing a `Bun.file` are compared with each other, for a relative name and for the absolute path of it.
 it.skipIf(!isWindows)(
-  "Bun.file(name).writer() writes where Bun.write(Bun.file(name)) does for names Win32 treats specially",
+  "every way of writing a Bun.file writes to the same place for names Win32 treats specially",
   async () => {
     const names = ["NUL", "nul", "sub/NUL", "lpt1", "conin$", "trail.", "sp "];
     using dir = tempDir("filesink-win32-names", {
@@ -478,6 +478,8 @@ it.skipIf(!isWindows)(
         const root = process.cwd();
         const apis = {
           write: name => Bun.write(Bun.file(name), "x"),
+          writePath: name => Bun.write(name, "x"),
+          writeStream: name => Bun.write(name, new Response(new Blob(["x"]).stream())),
           writer: async name => {
             const writer = Bun.file(name).writer();
             writer.write("x");
@@ -487,20 +489,27 @@ it.skipIf(!isWindows)(
         const results = {};
         let count = 0;
         for (const name of JSON.parse(process.argv[2])) {
-          results[name] = {};
-          for (const [api, run] of Object.entries(apis)) {
-            const cwd = path.join(root, "d" + count++);
-            fs.mkdirSync(path.join(cwd, "sub"), { recursive: true });
-            process.chdir(cwd);
-            let ok = true;
-            try {
-              await run(name);
-            } catch {
-              ok = false;
+          for (const absolute of [false, true]) {
+            const key = (absolute ? "absolute " : "") + name;
+            results[key] = {};
+            for (const [api, run] of Object.entries(apis)) {
+              const cwd = path.join(root, "d" + count++);
+              fs.mkdirSync(path.join(cwd, "sub"), { recursive: true });
+              process.chdir(cwd);
+              // Not path.join: it drops a trailing dot.
+              const target = absolute ? cwd + path.sep + name : name;
+              let ok = true;
+              try {
+                await run(target);
+              } catch {
+                ok = false;
+              }
+              const created = fs.readdirSync(cwd, { recursive: true }).filter(entry => entry !== "sub");
+              // What a file was written under is what it is read under. A device has nothing to read.
+              const readBack = created.length ? await Bun.file(target).text().catch(error => error.code) : null;
+              process.chdir(root);
+              results[key][api] = { ok, created: created.sort(), readBack };
             }
-            process.chdir(root);
-            const created = fs.readdirSync(cwd, { recursive: true }).filter(entry => entry !== "sub");
-            results[name][api] = { ok, created: created.sort() };
           }
         }
         console.log(JSON.stringify(results));
@@ -518,15 +527,22 @@ it.skipIf(!isWindows)(
       stderr: "inherit",
     });
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    type Result = { ok: boolean; created: string[]; readBack: string | null };
     const results = JSON.parse(stdout) as Record<
       string,
-      Record<"write" | "writer", { ok: boolean; created: string[] }>
+      Record<"write" | "writePath" | "writeStream" | "writer", Result>
     >;
-    expect(Object.fromEntries(names.map(name => [name, results[name].writer]))).toEqual(
-      Object.fromEntries(names.map(name => [name, results[name].write])),
-    );
-    // A bare `NUL` is the null device on every Windows version.
-    expect(results.NUL.write).toEqual({ ok: true, created: [] });
+    const keys = names.flatMap(name => [name, "absolute " + name]);
+    for (const api of ["writePath", "writeStream", "writer"] as const) {
+      expect(Object.fromEntries(keys.map(key => [key, { api, ...results[key][api] }]))).toEqual(
+        Object.fromEntries(keys.map(key => [key, { api, ...results[key].write }])),
+      );
+    }
+    // A bare `NUL` is the null device on every Windows version, under any directory.
+    expect(results.NUL.write).toEqual({ ok: true, created: [], readBack: null });
+    expect(results["absolute NUL"].write).toEqual({ ok: true, created: [], readBack: null });
+    // What was written under a name can be read under that name.
+    expect(results["absolute trail."].write).toEqual({ ok: true, created: ["trail"], readBack: "x" });
     expect(exitCode).toBe(0);
   },
 );

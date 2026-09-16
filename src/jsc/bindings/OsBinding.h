@@ -42,6 +42,9 @@ struct BunInterfaceAddress {
 int Bun__Os__cpuInfo(BunCpuInfo** cpuInfos, int* count);
 void Bun__Os__freeCpuInfo(BunCpuInfo* cpuInfos, int count);
 int Bun__Os__interfaceAddresses(BunInterfaceAddress** addresses, int* count);
+// Writes `address` (a sockaddr_in or sockaddr_in6) the way `os.networkInterfaces()` prints it and
+// returns the length; 0 if it does not fit.
+size_t Bun__Os__formatAddress(const void* address, char* buffer, size_t capacity);
 void Bun__Os__freeInterfaceAddresses(BunInterfaceAddress* addresses, int count);
 }
 

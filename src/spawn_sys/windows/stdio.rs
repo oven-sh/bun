@@ -52,19 +52,6 @@ pub fn make_crt_block(fds: &[ChildFd]) -> Vec<u8> {
     block
 }
 
-/// The handles to name in `PROC_THREAD_ATTRIBUTE_HANDLE_LIST`. The list may
-/// not contain a handle twice, nor `INVALID_HANDLE_VALUE` (either fails
-/// `CreateProcessW` with `ERROR_INVALID_PARAMETER`).
-pub fn make_handle_list(fds: &[ChildFd]) -> Vec<HANDLE> {
-    let mut list: Vec<HANDLE> = Vec::with_capacity(fds.len());
-    for fd in fds {
-        if fd.handle != INVALID_HANDLE_VALUE && !fd.handle.is_null() && !list.contains(&fd.handle) {
-            list.push(fd.handle);
-        }
-    }
-    list
-}
-
 /// CRT flags for a handle of unknown kind. `FDEV` makes the child's `isatty()`
 /// true, so it is only for character devices.
 pub fn crt_flags_for(handle: HANDLE) -> Result<u8, DWORD> {
@@ -310,30 +297,5 @@ mod tests {
     fn largest_block_fits_cb_reserved2() {
         let fds = [ChildFd::CLOSED; MAX_STDIO];
         assert!(u16::try_from(make_crt_block(&fds).len()).is_ok());
-    }
-
-    #[test]
-    fn handle_list_has_no_duplicates_or_closed_slots() {
-        let fds = [
-            ChildFd {
-                handle: h(8),
-                crt_flags: FOPEN,
-            },
-            ChildFd {
-                handle: h(12),
-                crt_flags: FOPEN,
-            },
-            ChildFd {
-                handle: h(12),
-                crt_flags: FOPEN,
-            },
-            ChildFd::CLOSED,
-            ChildFd {
-                handle: ptr::null_mut(),
-                crt_flags: 0,
-            },
-        ];
-        assert_eq!(make_handle_list(&fds), [h(8), h(12)]);
-        assert!(make_handle_list(&[ChildFd::CLOSED; 3]).is_empty());
     }
 }

@@ -257,7 +257,22 @@ impl FileRoute {
 
         let open_flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NONBLOCK;
 
-        let Ok(fd) = bun_sys::open_a(path, open_flags, 0) else {
+        // Opened as every `Bun.file` path is, so that a route and
+        // `Bun.file(path).text()` agree on what `path` names.
+        let mut path_buf = bun_paths::path_buffer_pool::get();
+        let opened = if path.len() < path_buf.len() {
+            bun_sys::open(
+                bun_paths::resolve_path::z(path, &mut path_buf),
+                open_flags,
+                0,
+            )
+        } else {
+            Err(bun_sys::Error::from_code(
+                bun_sys::E::ENAMETOOLONG,
+                bun_sys::Tag::open,
+            ))
+        };
+        let Ok(fd) = opened else {
             req.set_yield(true);
             route.on_response_complete(resp);
             return;

@@ -293,6 +293,36 @@ describe("Bun.Terminal platform behaviour", () => {
     );
   }
 
+  // The key that ends input is Ctrl-Z at the start of a line on Windows and Ctrl-D on POSIX.
+  test("SAME: a shell builtin that reads the terminal ends at the end-of-input key, and the next one reads on", async () => {
+    const end = isWindows ? "\x1a\r" : "\x04";
+    const { output } = await runInTerminal(
+      `import { $ } from "bun";
+       process.stdout.write("READY\\n");
+       for (const name of ["FIRST", "SECOND"]) {
+         const text = await $\`cat\`.text();
+         process.stdout.write(name + ":" + JSON.stringify(text.replaceAll("\\r\\n", "\\n")) + "\\n");
+       }`,
+      {
+        done: o => o.includes("SECOND:"),
+        afterReady: async (t, _output, waitFor) => {
+          t.write("one\r");
+          // Inside a line the key is a character like any other.
+          if (isWindows) t.write("a\x1ab\r");
+          t.write(end);
+          await waitFor("FIRST:");
+          t.write("two\r");
+          t.write(end);
+        },
+      },
+    );
+    const results = Bun.stripANSI(output).match(/(?:FIRST|SECOND):"(?:[^"\\]|\\.)*"/g) ?? [];
+    expect([...new Set(results)]).toEqual([
+      isWindows ? 'FIRST:"one\\na\\u001ab\\n"' : 'FIRST:"one\\n"',
+      'SECOND:"two\\n"',
+    ]);
+  });
+
   // System conhost's ConPTY does not translate \x03 input to CTRL_C_EVENT.
   test.todoIf(isWindows)("SAME: Ctrl+C input interrupts the child", async () => {
     const { output } = await runInTerminal(

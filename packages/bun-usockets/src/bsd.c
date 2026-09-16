@@ -74,7 +74,10 @@ static BOOL CALLBACK bsd_winsock_init(PINIT_ONCE once, PVOID param, PVOID *conte
     (void) param;
     (void) context;
     WSADATA wsa_data;
-    return WSAStartup(MAKEWORD(2, 2), &wsa_data) == 0;
+    /* Tried once: where it fails (safe mode without networking), every Winsock
+     * call reports WSANOTINITIALISED, which is the error to show. */
+    WSAStartup(MAKEWORD(2, 2), &wsa_data);
+    return TRUE;
 }
 
 void us_internal_winsock_ensure(void) {

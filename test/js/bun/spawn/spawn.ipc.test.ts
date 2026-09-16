@@ -378,6 +378,63 @@ describe("a channel this side is done with", () => {
     expect(exitCode).toBe(0);
   });
 
+  // The child sends the parent's own message back three times, with a message of an unknown type after
+  // the first, all in one write.
+  it("a message that does not decode ends delivery, also of what came with it in the same read", async () => {
+    const received: unknown[] = [];
+    const disconnected = Promise.withResolvers<void>();
+    await using child = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const net = require("node:net");
+        const channel = net.connect({ fd: 3 });
+        channel.on("error", () => process.exit(0));
+        const framed = process.platform === "win32";
+        const frame = payload => {
+          if (!framed) return payload;
+          const header = Buffer.alloc(16);
+          header.writeUInt32LE(1, 0);
+          header.writeUInt32LE(payload.length, 8);
+          return Buffer.concat([header, payload]);
+        };
+        let raw = Buffer.alloc(0), payload = Buffer.alloc(0), sent = false;
+        channel.on("data", chunk => {
+          if (framed) {
+            raw = Buffer.concat([raw, chunk]);
+            while (raw.length >= 16 && raw.length >= 16 + raw.readUInt32LE(8)) {
+              const length = raw.readUInt32LE(8);
+              payload = Buffer.concat([payload, raw.subarray(16, 16 + length)]);
+              raw = raw.subarray(16 + length);
+            }
+          } else {
+            payload = Buffer.concat([payload, chunk]);
+          }
+          // A 5-byte version packet, then the message: a type byte, its length, its bytes.
+          if (sent || payload.length < 10 || payload.length < 10 + payload.readUInt32LE(6)) return;
+          sent = true;
+          const message = payload.subarray(5, 10 + payload.readUInt32LE(6));
+          const unknownType = Buffer.from([0xee, 1, 0, 0, 0, 0]);
+          channel.write(
+            Buffer.concat([frame(message), frame(unknownType), frame(message), frame(message)]),
+            () => process.exit(0),
+          );
+        });
+        `,
+      ],
+      env: bunEnv,
+      stdio: ["ignore", "inherit", "inherit"],
+      serialization: "advanced",
+      ipc: message => void received.push(message),
+      onDisconnect: () => disconnected.resolve(),
+    });
+    child.send("hello");
+    const [exitCode] = await Promise.all([child.exited, disconnected.promise]);
+    expect(received).toEqual(["hello"]);
+    expect(exitCode).toBe(0);
+  });
+
   it.skipIf(!isWindows)("a frame that breaks the framing ends delivery, also behind a send in flight", async () => {
     const received: unknown[] = [];
     const disconnected = Promise.withResolvers<void>();

@@ -1218,12 +1218,7 @@ impl EventLoop {
 
         self.process_gc_timer();
         // `tick()` below can start work (e.g. a --hot reload) whose only wake
-        // source is a cross-thread `wakeup()`. On Windows that is a packet on
-        // the loop's port, which stays queued until a wait takes it, so the
-        // park needs no bound; elsewhere it is bounded at 1 s.
-        #[cfg(windows)]
-        let timeout: Option<&bun_core::Timespec> = None;
-        #[cfg(not(windows))]
+        // source is a cross-thread `wakeup()`; bound the park.
         let timeout = Some(&bun_core::Timespec { sec: 1, nsec: 0 });
         // SAFETY: as above — the tick runs loop callbacks that reach the loop
         // themselves, so the exclusive borrow is scoped to this call only.

@@ -125,6 +125,34 @@ describe("net.BlockList subnet rules", () => {
   });
 });
 
+it.skipIf(!isWindows)("a write to a pipe whose other end is gone is an error before 'close'", async () => {
+  const name = `\\\\.\\pipe\\bun-test-${randomUUID()}`;
+  const events: string[] = [];
+  const { promise, resolve } = Promise.withResolvers<void>();
+  const server = createServer(socket => {
+    socket.on("data", () => {});
+    // The client has closed its end by now, so the kernel refuses the write on the spot.
+    socket.on("end", () => socket.write("bye", err => events.push("write:" + (err ? (err as any).code : "ok"))));
+    socket.on("error", err => events.push("error:" + (err as any).code));
+    socket.on("close", hadError => {
+      events.push("close:" + hadError);
+      server.close(() => resolve());
+    });
+  });
+  server.listen(name, () => {
+    const client = connect(name, () => {
+      client.write("hello");
+      client.end();
+    });
+    client.on("error", () => {});
+  });
+  await promise;
+  expect(events.filter(event => event !== "write:ok" && event !== "write:EPIPE")).toEqual([
+    "error:EPIPE",
+    "close:true",
+  ]);
+});
+
 describe("net.Socket read", () => {
   var unix_servers = 0;
   for (let [message, label] of [

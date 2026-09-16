@@ -212,6 +212,11 @@ impl IOReader {
         if started.is_err() {
             own.close();
         }
+        // A builtin reads bytes until they end; at a console the user ends
+        // them with Ctrl-Z, as for any other program that reads it so.
+        if let Some(bun_io::Source::Tty(tty)) = &mut r.source {
+            tty.end_input_at_ctrl_z();
+        }
         started
     }
 

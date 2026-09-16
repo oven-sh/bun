@@ -293,20 +293,9 @@ impl Settle {
         let settle = bun_core::heap::into_raw(Box::new(Settle {
             op: Op::new(Settle::complete),
         }));
-        // SAFETY: caller contract; `settle` is freed by its completion.
-        unsafe {
-            if super::sys::PostQueuedCompletionStatus(
-                iocp::us_loop_iocp(loop_),
-                0,
-                0,
-                (&raw mut (*settle).op).cast(),
-            ) == 0
-            {
-                // Nothing will be dequeued for it: the loop's count of packets
-                // it is owed stays one too high.
-                Self::complete(loop_, &raw mut (*settle).op, core::ptr::null_mut());
-            }
-        }
+        // SAFETY: caller contract; `settle` is freed by its completion. The
+        // loop already counts the request's packet as owed.
+        unsafe { iocp::us_iocp_op_ready(loop_, &raw mut (*settle).op) };
     }
 
     unsafe extern "C" fn complete(loop_: *mut Loop, op: *mut Op, _entry: *mut OverlappedEntry) {

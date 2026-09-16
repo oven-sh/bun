@@ -69,24 +69,20 @@ pub(crate) unsafe fn op_dequeued(loop_: *mut Loop) {
     unsafe { (*loop_).dec() };
 }
 
-/// Queue `op` on the loop's own thread so its `complete` runs from the loop
-/// rather than re-entrantly. Returns `false` if the port refused the packet.
-/// No kernel I/O stands behind such a packet: `complete` learns how the
+/// Have `op`'s `complete` run from the loop rather than re-entrantly: from
+/// its next tick, before that tick takes packets from the port, in the order of
+/// these calls. No kernel I/O stands behind it: `complete` learns how the
 /// operation went from what the caller stored in it, not from its OVERLAPPED.
 ///
 /// # Safety
 /// `loop_` is the live loop of the calling thread; `op` stays allocated until
-/// its `complete` has run.
-pub(crate) unsafe fn post_to_loop(loop_: *mut Loop, op: *mut iocp::Op) -> bool {
-    // SAFETY: caller contract; `Op` starts with the OVERLAPPED the packet carries.
+/// its `complete` has run, and is not on its way through here already.
+pub(crate) unsafe fn complete_from_loop(loop_: *mut Loop, op: *mut iocp::Op) {
+    // SAFETY: caller contract.
     unsafe {
-        if sys::PostQueuedCompletionStatus(iocp::us_loop_iocp(loop_), 0, 0, op.cast()) == 0 {
-            return false;
-        }
-        // Only this thread dequeues, so the packet is still queued.
         op_submitted(loop_);
+        iocp::us_iocp_op_ready(loop_, op);
     }
-    true
 }
 
 /// The loop's completion port as seen from other threads. It is a duplicate of

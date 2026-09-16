@@ -1614,6 +1614,17 @@ describe.concurrent(() => {
     JSON.stringify(process.report.getReport(), null, 2);
   });
 
+  it.skipIf(!isWindows)("process.report prints an interface's addresses as os.networkInterfaces() does", () => {
+    const fromOS = Object.values(require("node:os").networkInterfaces())
+      .flat()
+      .map(({ address, netmask, family }) => ({ address, netmask, family }));
+    const fromReport = process.report
+      .getReport()
+      .header.networkInterfaces.map(({ address, netmask, family }) => ({ address, netmask, family }));
+    expect(fromReport.length).toBeGreaterThan(0);
+    expect(fromReport.filter(entry => !fromOS.some(other => Bun.deepEquals(other, entry)))).toEqual([]);
+  });
+
   // The name of a loaded module can be longer than MAX_PATH (260, terminator included).
   it.skipIf(!isWindows).each([259, 260, 261, 400])(
     "process.report.getReport().sharedObjects has all of a %d-unit module path",

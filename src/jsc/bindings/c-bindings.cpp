@@ -656,6 +656,8 @@ BOOL WINAPI Ctrlhandler(DWORD signal)
     return FALSE;
 }
 
+extern "C" void Bun__installWindowsSignalHandler();
+
 extern "C" void Bun__setCTRLHandler(BOOL add)
 {
     SetConsoleCtrlHandler(Ctrlhandler, add);
@@ -824,6 +826,8 @@ extern "C" void bun_initialize_process()
 
     // add ctrl+c handler on windows
     Bun__setCTRLHandler(1);
+    // After it, so that it is asked first: it passes on what has no listener.
+    Bun__installWindowsSignalHandler();
 #endif
 
 #if OS(DARWIN)

@@ -899,6 +899,48 @@ test.concurrent("pause() and resume() around chunks of a bulk transfer lose and 
   expect(exitCode).toBe(0);
 });
 
+// The limit counts what earlier reads took. The child says when it is reading, so the first write is one
+// read of its own; the second arrives once the grandchild's marker cannot have been printed without it.
+test.concurrent("a size-limited read of stdin that takes several reads stops at its limit", async () => {
+  using dir = tempDir("stdin-slice-limit-reads", {
+    "grandchild.js": `let data = ""; for await (const chunk of Bun.stdin.stream()) data += Buffer.from(chunk).toString(); console.log("GRANDCHILD:" + JSON.stringify(data));`,
+    "child.js": `
+      console.log("READING");
+      console.log("CHILD:" + JSON.stringify(await Bun.stdin.slice(0, 10).text()));
+      const proc = Bun.spawn({ cmd: [process.execPath, "grandchild.js"], stdin: "inherit", stdout: "inherit", stderr: "inherit" });
+      process.exit(await proc.exited);`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "child.js"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const reader = proc.stdout.getReader();
+  const decoder = new TextDecoder();
+  let stdout = "";
+  while (!stdout.includes("READING\n")) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    stdout += decoder.decode(value, { stream: true });
+  }
+  proc.stdin.write("01234");
+  await proc.stdin.flush();
+  // Ten bytes are asked for and five are there, so the read of the first five has been made and
+  // another is waiting when this arrives.
+  proc.stdin.write("56789" + "abcdefghij" + "\n");
+  await proc.stdin.end();
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    stdout += decoder.decode(value, { stream: true });
+  }
+  expect(stdout.trim().split("\n")).toEqual(["READING", 'CHILD:"0123456789"', 'GRANDCHILD:"abcdefghij\\n"']);
+  expect(await proc.exited).toBe(0);
+});
+
 // The bytes after the slice are in the pipe before the child reads, and belong to whoever reads fd 0 next.
 test.concurrent("a size-limited read of stdin takes nothing past its limit", async () => {
   using dir = tempDir("stdin-slice-limit", {

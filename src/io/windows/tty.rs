@@ -132,6 +132,12 @@ pub fn set_console_mode(input: HANDLE, mode: Mode) -> sys::Result<()> {
     if unsafe { win::GetConsoleMode(input, &raw mut previous) } == 0 {
         return Err(fail(win::last_error()));
     }
+    // A screen buffer has a mode too, with other bits.
+    let mut events: u32 = 0;
+    // SAFETY: `events` is a live local.
+    if unsafe { win::GetNumberOfConsoleInputEvents(input, &raw mut events) } == 0 {
+        return Err(sys::Error::from_code(E::EINVAL, Tag::uv_tty_set_mode));
+    }
     if ORIGINAL_INPUT_MODE
         .compare_exchange(u32::MAX, previous, Ordering::AcqRel, Ordering::Acquire)
         .is_ok()
@@ -347,6 +353,10 @@ struct Inner {
     /// A line that arrived while the owner was not reading.
     held: Vec<u8>,
     held_error: Option<Win32Error>,
+    /// See [`Tty::end_input_at_ctrl_z`].
+    ctrl_z_ends_input: bool,
+    /// A line that started with Ctrl-Z arrived; nothing was read after it.
+    held_end: bool,
 
     output: OutputState,
     writes_in_flight: u32,
@@ -450,6 +460,8 @@ impl Tty {
             line_op: ptr::null_mut(),
             held: Vec::new(),
             held_error: None,
+            ctrl_z_ends_input: false,
+            held_end: false,
             output: OutputState::new(),
             writes_in_flight: 0,
             pending: 0,
@@ -543,9 +555,20 @@ impl Tty {
         set_console_mode(self.handle(), mode)
     }
 
+    /// A line that starts with Ctrl-Z ends the input (`ReadEvent::Eof`), and
+    /// the rest of that line is dropped: what a `ReadFile` of a console in line
+    /// mode does, and so what `type con`, `more` and the C runtime's `read` do.
+    /// For an owner that reads the console as a stream of bytes. Reading again
+    /// starts with the next line.
+    pub fn end_input_at_ctrl_z(&mut self) {
+        // SAFETY: `inner` is live while the owner's `Tty` is.
+        unsafe { (*self.raw()).ctrl_z_ends_input = true };
+    }
+
     /// Deliver console input to `on_read(ctx, ..)`, always from the loop. `ctx`
-    /// must stay valid until `read_stop`, an `Err` event, or the `Tty` is
-    /// closed or dropped. A console has no end of file.
+    /// must stay valid until `read_stop`, an `Err` or `Eof` event, or the `Tty`
+    /// is closed or dropped. A console has no end of file but the one
+    /// [`end_input_at_ctrl_z`](Self::end_input_at_ctrl_z) asks for.
     pub fn read_start<T>(
         &mut self,
         ctx: *mut T,
@@ -613,24 +636,16 @@ impl Tty {
             if (*this).flags.intersects(Flags::DETACHED | Flags::READABLE) {
                 return Err(sys::Error::from_code(E::EBADF, Tag::write));
             }
-            // The packet first: once the text is on the screen there has to
-            // be a way to say so.
+            let result = self.try_write(data);
             let op = bun_core::heap::into_raw(Box::new(PostedOp {
                 op: Op::new(PostedOp::complete),
                 tty: this,
-                write: Some((Callback::new(ctx, on_write), Ok(0))),
+                write: Some((Callback::new(ctx, on_write), result)),
             }));
-            if !super::post_to_loop((*this).link.loop_, &raw mut (*op).op) {
-                drop(bun_core::heap::take(op));
-                return Err(sys::Error::from_win32(win::last_error(), Tag::write));
-            }
+            super::complete_from_loop((*this).link.loop_, &raw mut (*op).op);
             (*this).pending += 1;
             (*this).writes_in_flight += 1;
             Inner::update_keep_alive(this);
-            // This thread is the one that dequeues the packet: `op` is still there.
-            if let Some((_, result)) = &mut (*op).write {
-                *result = self.try_write(data);
-            }
         }
         Ok(())
     }
@@ -761,10 +776,7 @@ impl Inner {
                     tty: this,
                     write: None,
                 }));
-                if !super::post_to_loop(loop_, &raw mut (*op).op) {
-                    drop(bun_core::heap::take(op));
-                    return Err(win::last_error());
-                }
+                super::complete_from_loop(loop_, &raw mut (*op).op);
                 (*this).pending += 1;
                 return Ok(());
             }
@@ -1197,7 +1209,12 @@ impl LineOp {
             if (*line).error != 0 {
                 (*this).held_error = Some(Win32Error::from_u32((*line).error));
             } else if !(*line).woken {
-                (*this).held.append(&mut (*line).bytes);
+                if (*this).ctrl_z_ends_input && (*line).bytes.first() == Some(&0x1A) {
+                    (*line).bytes.clear();
+                    (*this).held_end = true;
+                } else {
+                    (*this).held.append(&mut (*line).bytes);
+                }
             }
             Inner::flush_held(this);
         }
@@ -1226,6 +1243,11 @@ impl Inner {
                 {
                     (*this).flags.remove(Flags::READING);
                     Self::deliver(this, ReadEvent::Err(sys::Error::from_win32(err, Tag::read)));
+                }
+                if (*this).held_end && (*this).flags.contains(Flags::READING) {
+                    (*this).held_end = false;
+                    (*this).flags.remove(Flags::READING);
+                    Self::deliver(this, ReadEvent::Eof);
                 }
             });
             if !open {

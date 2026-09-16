@@ -137,7 +137,10 @@ void us_internal_loop_data_free(struct us_loop_t *loop) {
 }
 
 __attribute__((always_inline)) void us_wakeup_loop(struct us_loop_t *loop) {
+#ifndef LIBUS_USE_IOCP
+    /* A completion port's wakeup is a packet, which the tick sees on the port. */
     __atomic_fetch_add(&loop->pending_wakeups, 1, __ATOMIC_RELEASE);
+#endif
     us_internal_async_wakeup(loop->data.wakeup_async);
 }
 

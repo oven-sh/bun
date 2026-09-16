@@ -29,7 +29,6 @@
 #include "JavaScriptCore/Interpreter.h"
 #include "wtf/text/OrdinalNumber.h"
 #include "OsBinding.h"
-#include <ws2tcpip.h>
 #include <windows.h>
 #include <psapi.h>
 #include <versionhelpers.h>
@@ -208,24 +207,18 @@ JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Pr
                 Bun::putDirectNamed(vm, iface, "name"_s, jsString(vm, String::fromUTF8(interfaces[i].name)));
                 Bun::putDirectNamed(vm, iface, "internal"_s, jsBoolean(interfaces[i].is_internal));
 
-                char addr[INET6_ADDRSTRLEN];
+                auto formatted = [&](const void* address) {
+                    char text[64];
+                    size_t length = Bun__Os__formatAddress(address, text, sizeof(text));
+                    return jsString(vm, String::fromUTF8(std::span<const char> { text, length }));
+                };
                 if (interfaces[i].address.address4.sin_family == AF_INET) {
-                    inet_ntop(AF_INET, &interfaces[i].address.address4.sin_addr, addr, sizeof(addr));
-                    Bun::putDirectNamed(vm, iface, "address"_s, jsString(vm, String::fromUTF8(addr)));
-
-                    char netmask[INET_ADDRSTRLEN];
-                    inet_ntop(AF_INET, &interfaces[i].netmask.netmask4.sin_addr, netmask, sizeof(netmask));
-                    Bun::putDirectNamed(vm, iface, "netmask"_s, jsString(vm, String::fromUTF8(netmask)));
-
+                    Bun::putDirectNamed(vm, iface, "address"_s, formatted(&interfaces[i].address));
+                    Bun::putDirectNamed(vm, iface, "netmask"_s, formatted(&interfaces[i].netmask));
                     Bun::putDirectNamed(vm, iface, "family"_s, jsString(vm, String::fromLatin1("IPv4")));
                 } else if (interfaces[i].address.address6.sin6_family == AF_INET6) {
-                    inet_ntop(AF_INET6, &interfaces[i].address.address6.sin6_addr, addr, sizeof(addr));
-                    Bun::putDirectNamed(vm, iface, "address"_s, jsString(vm, String::fromUTF8(addr)));
-
-                    char netmask[INET6_ADDRSTRLEN];
-                    inet_ntop(AF_INET6, &interfaces[i].netmask.netmask6.sin6_addr, netmask, sizeof(netmask));
-                    Bun::putDirectNamed(vm, iface, "netmask"_s, jsString(vm, String::fromUTF8(netmask)));
-
+                    Bun::putDirectNamed(vm, iface, "address"_s, formatted(&interfaces[i].address));
+                    Bun::putDirectNamed(vm, iface, "netmask"_s, formatted(&interfaces[i].netmask));
                     Bun::putDirectNamed(vm, iface, "family"_s, jsString(vm, String::fromLatin1("IPv6")));
                     Bun::putDirectNamed(vm, iface, "scopeid"_s, jsNumber(interfaces[i].address.address6.sin6_scope_id));
                 }

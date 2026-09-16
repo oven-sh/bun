@@ -814,6 +814,15 @@ pub trait PathLikeExt {
     fn slice_z<'a>(&'a self, buf: &'a mut PathBuffer) -> &'a ZStr
     where
         Self: Sized;
+    /// The path as it was written, NUL-terminated, for a call that applies the
+    /// platform's own rules for names. On Windows those are Win32's: a device
+    /// name (`NUL`, `CON`) is the device, trailing dots and spaces are dropped,
+    /// and the call puts a path past `MAX_PATH` in the long form itself.
+    /// `Bun.file` paths are opened this way, as Node opens every path.
+    /// [`slice_z`](Self::slice_z) is `node:fs`'s, which names files literally.
+    fn slice_z_as_written<'a>(&'a self, buf: &'a mut PathBuffer) -> &'a ZStr
+    where
+        Self: Sized;
     fn slice_w<'a>(&'a self, buf: &'a mut WPathBuffer) -> Result<&'a WStr, NameTooLong>
     where
         Self: Sized;
@@ -897,6 +906,46 @@ fn kernel32_path_past_max_path<'a>(
     Ok(WStr::from_buf(buf_u16, len))
 }
 
+/// `sliced` with a NUL after it: itself when it has one, in `buf` otherwise.
+fn plain_z<'a, const FORCE: bool>(sliced: &'a [u8], buf: &'a mut PathBuffer) -> &'a ZStr {
+    if sliced.is_empty() {
+        if !FORCE {
+            return ZStr::EMPTY;
+        }
+
+        buf[0] = 0;
+        // SAFETY: buf[0] == 0 written above.
+        return ZStr::from_buf(&buf[..], 0);
+    }
+
+    if !FORCE {
+        if sliced[sliced.len() - 1] == 0 {
+            // SAFETY: last byte is NUL.
+            return ZStr::from_slice_with_nul(sliced);
+        }
+    }
+
+    if sliced.len() >= buf.len() {
+        bun_core::debug_warn!(
+            "path too long: {} bytes exceeds PathBuffer capacity of {}\n",
+            sliced.len(),
+            buf.len()
+        );
+        if !FORCE {
+            return ZStr::EMPTY;
+        }
+
+        buf[0] = 0;
+        // SAFETY: buf[0] == 0 written above.
+        return ZStr::from_buf(&buf[..], 0);
+    }
+
+    buf[..sliced.len()].copy_from_slice(sliced);
+    buf[sliced.len()] = 0;
+    // SAFETY: buf[sliced.len()] == 0 written above.
+    ZStr::from_buf(&buf[..], sliced.len())
+}
+
 impl PathLikeExt for PathLike<'_> {
     // Const-generics can't change return mutability, so this always returns
     // `&ZStr`. A future force=true caller that needs `&mut ZStr` will need a
@@ -957,42 +1006,19 @@ impl PathLikeExt for PathLike<'_> {
             }
         }
 
-        if sliced.is_empty() {
-            if !FORCE {
-                return ZStr::EMPTY;
-            }
+        plain_z::<FORCE>(sliced, buf)
+    }
 
-            buf[0] = 0;
-            // SAFETY: buf[0] == 0 written above.
-            return ZStr::from_buf(&buf[..], 0);
+    #[inline]
+    fn slice_z_as_written<'a>(&'a self, buf: &'a mut PathBuffer) -> &'a ZStr {
+        #[cfg(windows)]
+        {
+            plain_z::<false>(self.slice(), buf)
         }
-
-        if !FORCE {
-            if sliced[sliced.len() - 1] == 0 {
-                // SAFETY: last byte is NUL.
-                return ZStr::from_slice_with_nul(sliced);
-            }
+        #[cfg(not(windows))]
+        {
+            self.slice_z(buf)
         }
-
-        if sliced.len() >= buf.len() {
-            bun_core::debug_warn!(
-                "path too long: {} bytes exceeds PathBuffer capacity of {}\n",
-                sliced.len(),
-                buf.len()
-            );
-            if !FORCE {
-                return ZStr::EMPTY;
-            }
-
-            buf[0] = 0;
-            // SAFETY: buf[0] == 0 written above.
-            return ZStr::from_buf(&buf[..], 0);
-        }
-
-        buf[..sliced.len()].copy_from_slice(sliced);
-        buf[sliced.len()] = 0;
-        // SAFETY: buf[sliced.len()] == 0 written above.
-        ZStr::from_buf(&buf[..], sliced.len())
     }
 
     #[inline]

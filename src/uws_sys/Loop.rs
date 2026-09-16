@@ -49,6 +49,7 @@ pub struct Loop {
 
     /// Incremented atomically by wakeup(), swapped to 0 before the loop waits.
     /// If non-zero, the event loop will return immediately so we can skip the GC safepoint.
+    #[cfg(not(windows))]
     pub pending_wakeups: u32,
 
     /// Readiness of the Bun-owned socket poll being dispatched.
@@ -128,8 +129,7 @@ const _: () = {
     // `HANDLE iocp` is pointer-aligned, so it sits 4 bytes later than `int fd`.
     assert!(offset_of!(Loop, iocp) == offset_of!(Loop, num_polls) + 16);
     assert!(offset_of!(Loop, active) == offset_of!(Loop, num_polls) + 24);
-    assert!(offset_of!(Loop, pending_wakeups) == offset_of!(Loop, num_polls) + 28);
-    assert!(offset_of!(Loop, current_ready_events) == offset_of!(Loop, num_polls) + 32);
+    assert!(offset_of!(Loop, current_ready_events) == offset_of!(Loop, num_polls) + 28);
 };
 
 /// Loop handler trait with optional `pre`/`post` hooks. Implementors override

@@ -1782,7 +1782,7 @@ where
             file.pathlike.fd()
         } else {
             match bun_sys::open(
-                file.pathlike.path().slice_z(&mut file_buf),
+                file.pathlike.path().slice_z_as_written(&mut file_buf),
                 bun_sys::O::RDONLY | bun_sys::O::NONBLOCK | bun_sys::O::CLOEXEC,
                 0,
             ) {

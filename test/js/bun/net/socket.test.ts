@@ -4811,3 +4811,57 @@ it("concurrent end() on two allowHalfOpen TLS peers closes both sockets", async 
 
   await Promise.all([serverClosed.promise, clientClosed.promise]);
 });
+
+// The listener takes every connection that is waiting when it is told of one, on every platform.
+it("connections that queued up while the loop was busy are all accepted in one turn of the loop", async () => {
+  using dir = tempDir("accept-backlog", {
+    "server.js": `
+      const fs = require("node:fs");
+      let accepted = 0;
+      const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { open() { accepted++; }, data() {} } });
+      const clients = Bun.spawn({
+        cmd: [process.execPath, "clients.js", String(server.port), process.argv[2]],
+        stdin: "pipe",
+        stdout: "inherit",
+        stderr: "inherit",
+      });
+      // Without a turn of the loop: the clients connect, and nothing here accepts them.
+      while (!fs.existsSync(process.argv[2])) Bun.sleepSync(1);
+      const before = accepted;
+      while (accepted === 0) await new Promise(resolve => setImmediate(resolve));
+      console.log(JSON.stringify({ before, firstSeen: accepted }));
+      clients.stdin.end();
+      await clients.exited;
+      server.stop(true);
+    `,
+    "clients.js": `
+      const net = require("node:net");
+      const fs = require("node:fs");
+      const [port, flag] = [Number(process.argv[2]), process.argv[3]];
+      const sockets = [];
+      let connected = 0;
+      for (let i = 0; i < 20; i++) {
+        const socket = net.connect(port, "127.0.0.1", () => {
+          if (++connected === 20) fs.writeFileSync(flag, "");
+        });
+        socket.on("error", () => {});
+        sockets.push(socket);
+      }
+      process.stdin.on("data", () => {});
+      process.stdin.on("end", () => process.exit(0));
+    `,
+  });
+  await using proc = spawn({
+    cmd: [bunExe(), "server.js", join(String(dir), "connected")],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr }).toEqual({
+    stdout: JSON.stringify({ before: 0, firstSeen: 20 }),
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});

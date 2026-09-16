@@ -45,6 +45,8 @@ pub type CompleteFn = unsafe extern "C" fn(*mut Loop, *mut Op, *mut OverlappedEn
 pub struct Op {
     pub overlapped: Overlapped,
     pub complete: Option<CompleteFn>,
+    /// The loop's, while the op is on its way through `us_iocp_op_ready`.
+    next_ready: *mut Op,
 }
 
 impl Op {
@@ -58,6 +60,7 @@ impl Op {
                 event: core::ptr::null_mut(),
             },
             complete: Some(complete),
+            next_ready: core::ptr::null_mut(),
         }
     }
 
@@ -95,6 +98,9 @@ unsafe extern "C" {
     /// `FILE_SKIP_COMPLETION_PORT_ON_SUCCESS`). The loop balances it when the
     /// packet is dequeued, and does not close the port while any are out.
     pub fn us_iocp_op_submitted(loop_: *mut Loop);
+    /// `op`'s `complete` runs from the loop's next tick, before that tick
+    /// takes packets from the port. Loop thread only; counted like a packet.
+    pub fn us_iocp_op_ready(loop_: *mut Loop, op: *mut Op);
 
     pub fn us_iocp_wait_create(loop_: *mut Loop) -> *mut Wait;
     /// 0, or -1 if the wait could not be registered.

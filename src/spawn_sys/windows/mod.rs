@@ -421,6 +421,19 @@ unsafe fn spawn(options: &SpawnOptions, argv: Argv, envp: Envp) -> bun_sys::Resu
         return Err(spawn_error(win32::ERROR_NOT_SUPPORTED));
     }
 
+    // `CreateProcessW` below gives the child every inheritable handle of this
+    // process, as libuv and so Node do: a handle the program marked inheritable
+    // (an addon, `bun:ffi`, one this process was itself started with) reaches
+    // the child by value. The handles made here for this child are inheritable
+    // too, so another thread must not spawn between their creation and their
+    // closing, or its child would hold them as well (a pipe would not reach EOF
+    // until that child exits).
+    // TODO: name exactly the child's handles with
+    // PROC_THREAD_ATTRIBUTE_HANDLE_LIST once dropping the others is known not to
+    // break too much; the lock goes with it.
+    static INHERITABLE_HANDLES: bun_core::Mutex<()> = bun_core::Mutex::new(());
+    let _inheritable_handles = INHERITABLE_HANDLES.lock();
+
     let mut result = SpawnResult::default();
     let mut child_stdio = ChildStdio {
         fds: Vec::new(),
@@ -490,7 +503,6 @@ unsafe fn spawn(options: &SpawnOptions, argv: Argv, envp: Envp) -> bun_sys::Resu
     }
 
     let mut crt_block = stdio::make_crt_block(&child_stdio.fds);
-    let handle_list = stdio::make_handle_list(&child_stdio.fds);
 
     // SAFETY: all-zero is a valid STARTUPINFOEXW.
     let mut startup: win32::STARTUPINFOEXW = unsafe { core::mem::zeroed() };
@@ -533,26 +545,16 @@ unsafe fn spawn(options: &SpawnOptions, argv: Argv, envp: Envp) -> bun_sys::Resu
     // SAFETY: all-zero is a valid PROCESS_INFORMATION.
     let mut info: win32::PROCESS_INFORMATION = unsafe { core::mem::zeroed() };
     loop {
-        let attribute_count = DWORD::from(!handle_list.is_empty())
-            + DWORD::from(!job.is_null())
-            + DWORD::from(options.pseudoconsole.is_some());
+        let attribute_count =
+            DWORD::from(!job.is_null()) + DWORD::from(options.pseudoconsole.is_some());
         let mut attributes = if attribute_count == 0 {
             None
         } else {
             Some(AttributeList::new(attribute_count).map_err(spawn_error)?)
         };
         if let Some(attributes) = &mut attributes {
-            // SAFETY: `handle_list`, `job` and the pseudoconsole outlive `attributes`.
+            // SAFETY: `job` and the pseudoconsole outlive `attributes`.
             unsafe {
-                if !handle_list.is_empty() {
-                    attributes
-                        .set(
-                            win32::PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
-                            handle_list.as_ptr().cast(),
-                            size_of_val(handle_list.as_slice()),
-                        )
-                        .map_err(spawn_error)?;
-                }
                 if !job.is_null() {
                     attributes
                         .set(
@@ -593,8 +595,8 @@ unsafe fn spawn(options: &SpawnOptions, argv: Argv, envp: Envp) -> bun_sys::Resu
                 command_line.as_mut_ptr(),
                 ptr::null_mut(),
                 ptr::null_mut(),
-                // A handle list requires it, and restricts it to the list.
-                i32::from(!handle_list.is_empty()),
+                // A pseudoconsole's child takes its std handles from it.
+                i32::from(use_stdio),
                 process_flags | extended,
                 env_block
                     .as_mut()

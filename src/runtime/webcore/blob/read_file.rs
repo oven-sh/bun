@@ -495,6 +495,19 @@ impl ReadFile {
             if bun_sys::S::ISSOCK(self.file_store.mode) {
                 break 'brk bun_sys::recv_non_block(self.opened_fd, buf);
             }
+            // NOTE: on Windows a `Bun.file(fd)` of a regular file is read at a
+            // position and the descriptor's own position stays where it was,
+            // so reading it twice gives the content twice. Elsewhere `read`
+            // moves the position. TODO: find out how much relies on either
+            // before making them one.
+            #[cfg(windows)]
+            if self.reads_at_position() {
+                break 'brk bun_sys::pread(
+                    self.opened_fd,
+                    buf,
+                    (self.offset + self.read_off) as i64,
+                );
+            }
             break 'brk bun_sys::read(self.opened_fd, buf);
         };
 
@@ -666,11 +679,21 @@ impl ReadFile {
             self.size = self.max_length.min(4096);
         }
 
+        #[cfg(windows)]
+        if self.reads_at_position() {
+            return;
+        }
         if self.offset > 0 {
             // We DO support offset in Bun.file()
             // we ignore errors because it should continue to work even if its a pipe
             let _ = bun_sys::set_file_offset(fd, self.offset);
         }
+    }
+
+    /// A regular file the caller gave as a descriptor. See `do_read`.
+    #[cfg(windows)]
+    fn reads_at_position(&self) -> bool {
+        !self.could_block && !self.file_store.pathlike.is_path()
     }
 
     fn run_async_with_fd(&mut self, fd: Fd) {
@@ -782,6 +805,8 @@ impl ReadFile {
                     // SAFETY: read() wrote `read_amount` initialized bytes into spare capacity.
                     unsafe { bun_core::vec::commit_spare(&mut buffer, read_amount) };
                 }
+                // The next read asks for what is left of `max_length`.
+                self.read_off += read_amount as SizeType;
                 // - If they DID set a max length, we should stop
                 //   reading after that.
                 //

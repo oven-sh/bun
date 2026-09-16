@@ -324,9 +324,9 @@ test.skipIf(!fault.available() || !isWindows)(
   },
 );
 
-// A Windows listener takes connections with AcceptEx. When that cannot be started (no socket to
-// accept into) it waits for a connection with a poll instead, and when the poll cannot be handed
-// to the kernel either, every tick tries again. 10055 is WSAENOBUFS.
+// A Windows listener waits for a connection with AcceptEx. When that cannot be started (no socket
+// to accept into) it waits with a poll instead and takes what arrives with accept(), and when the
+// poll cannot be handed to the kernel either, every tick tries again. 10055 is WSAENOBUFS.
 test.skipIf(!fault.available() || !isWindows)(
   "a listener that could neither accept nor be polled takes the waiting connection once it can",
   async () => {
@@ -368,15 +368,19 @@ test.skipIf(!fault.available() || !isWindows)(
           fault.set({ syscall: "socket", action: "errno", errno: 10055, fd: server.fd, repeat: -1 });
           await connect();
           await acceptedReaches(2);
-          // The listener is polled now. The next connection completes the poll, and it cannot go back.
+          // The listener is polled now. The next connection completes the poll and is taken, and
+          // the poll cannot go back: nothing tells the listener about the connection after that.
           fault.set({ syscall: "poll_start", action: "errno", errno: 10055, fd: server.fd, repeat: -1 });
           await connect();
-          for (let i = 0; i < 4; i++) await tick();
-          if (accepted !== 2) throw new Error("accepted " + accepted + " connections with no socket to accept into");
-          fault.clear();
           await acceptedReaches(3);
+          for (let i = 0; i < 4; i++) await tick();
           await connect();
+          for (let i = 0; i < 4; i++) await tick();
+          if (accepted !== 3) throw new Error("accepted " + accepted + " connections with nothing waiting for them");
+          fault.clear();
           await acceptedReaches(4);
+          await connect();
+          await acceptedReaches(5);
           console.log("OK");
         } finally {
           fault.clear();

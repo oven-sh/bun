@@ -1,6 +1,6 @@
 import type { Subprocess } from "bun";
 import { spawn } from "bun";
-import { afterEach, expect, it } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isBroken, isLinux, isWindows, tempDir, tmpdirSync } from "harness";
 import { mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -498,25 +498,27 @@ const entrySource = (version: string) => `console.log("run ${version}");\nsetInt
 
 // An editor that saves by rename leaves the entry file away for a moment (#8520).
 // "./entry" resolves to entry.mjs, so only its directory shows the file's return.
-it.concurrent.each(["entry.mjs", "./entry"])(
-  "--watch waits for an entry file that is missing when the process restarts (%s)",
-  async target => {
-    using dir = tempDir("watch-restart-entry-missing", { "entry.mjs": entrySource("v0") });
-    const cwd = String(dir);
-    const { proc, stdout, stderr } = spawnWatch(["--watch", target], cwd);
-    await using _ = proc;
+describe.each(["entry.mjs", "./entry"])("--watch %s", target => {
+  it.concurrent(
+    "waits for an entry file that is missing when the process restarts",
+    async () => {
+      using dir = tempDir("watch-restart-entry-missing", { "entry.mjs": entrySource("v0") });
+      const cwd = String(dir);
+      const { proc, stdout, stderr } = spawnWatch(["--watch", target], cwd);
+      await using _ = proc;
 
-    await stdout.waitFor("run v0");
-    renameSync(join(cwd, "entry.mjs"), join(cwd, "entry.mjs~"));
-    await stderr.waitFor(`Module not found "${target}"`);
-    writeFileSync(join(cwd, "entry.mjs~"), entrySource("v1"));
-    renameSync(join(cwd, "entry.mjs~"), join(cwd, "entry.mjs"));
-    await stdout.waitFor("run v1");
-    writeFileSync(join(cwd, "entry.mjs"), entrySource("v2"));
-    await stdout.waitFor("run v2");
-  },
-  30000,
-);
+      await stdout.waitFor("run v0");
+      renameSync(join(cwd, "entry.mjs"), join(cwd, "entry.mjs~"));
+      await stderr.waitFor(`Module not found "${target}"`);
+      writeFileSync(join(cwd, "entry.mjs~"), entrySource("v1"));
+      renameSync(join(cwd, "entry.mjs~"), join(cwd, "entry.mjs"));
+      await stdout.waitFor("run v1");
+      writeFileSync(join(cwd, "entry.mjs"), entrySource("v2"));
+      await stdout.waitFor("run v2");
+    },
+    30000,
+  );
+});
 
 // #22404: the entry file is the output of a build that has not run yet.
 it.concurrent(

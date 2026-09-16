@@ -477,8 +477,6 @@ impl QuicStream {
         }
     }
 
-    /// A -1 from `lsquic_stream_write` (EILSEQ, ECONNRESET, EBADF) never
-    /// clears with a write event; flow control is a short or zero write.
     fn fail_outbound(&self, s: lsquic::Stream) {
         let code = self
             .session_ref()
@@ -511,6 +509,7 @@ impl QuicStream {
                 (a.to_vec(), a.len())
             };
             let n = s.write(&slice);
+            // -1 is a dead send side (EILSEQ, ECONNRESET, EBADF), not flow control.
             if n < 0 {
                 self.fail_outbound(s);
                 return;

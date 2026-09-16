@@ -2554,8 +2554,7 @@ test.skipIf(memoryForLongStrings < 10 * 1024 ** 3)(
 
 // A vm context has no process object of its own, so an exception the runtime reports against one (the
 // realm of a FinalizationRegistry or of a listener function created in the context) goes to this thread's
-// process, as in Node. It used to be printed and set exit code 1 without running any of the handlers.
-// Node prints the same lines and exits 0 for each of these children.
+// process, as in Node. Node prints the same lines and exits 0 for each of these children.
 describe("an exception reported against a vm context reaches the process uncaughtException handlers", () => {
   const thrower = `vm.runInNewContext('(function () { throw new Error("thrown in vm context"); })')`;
   const dispatchToListenerFromContext = `
@@ -2617,7 +2616,7 @@ describe("an exception reported against a vm context reaches the process uncaugh
   });
 
   // In a worker the exception belongs to the worker's process. Without a handler there it becomes the
-  // Worker's 'error' event, as in Node; that path used to crash on the context's global.
+  // Worker's 'error' event, as in Node.
   test.concurrent.each([
     [
       "the worker's uncaughtException handler",

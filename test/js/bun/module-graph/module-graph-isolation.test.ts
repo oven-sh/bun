@@ -851,6 +851,37 @@ const dir = String(
       fs.rmSync(dir, { recursive: true });
       process.exit(0);
     `,
+    "cluster-worker-that-listens.mjs": `
+      import http from "node:http";
+      http.createServer((request, response) => response.end("the worker")).listen(0, "127.0.0.1");
+    `,
+    "forks-a-cluster-worker.mjs": `
+      import cluster from "node:cluster";
+      const who = () => (Bun.ModuleGraph.current ? "the graph" : "the host");
+      // The primary hears of its worker through messages the worker sends it: whose script is running when it does.
+      // Resolves with the port the primary listens on for the worker, once the worker says it is listening.
+      export const fork = (exec, heard) => new Promise(resolve => {
+        cluster.setupPrimary({ exec });
+        cluster.fork()
+          .on("online", () => { heard.online = who(); })
+          .on("exit", () => { heard.exit = who(); })
+          .on("listening", address => { heard.listening = who(); resolve(address.port); });
+      });
+    `,
+    "cluster-of-a-disposed-graph.mjs": `
+      import net from "node:net";
+      const graph = new Bun.ModuleGraph();
+      const app = await graph.import(import.meta.dir + "/forks-a-cluster-worker.mjs");
+      const heard = {};
+      const port = await graph.run(() => app.fork(import.meta.dir + "/cluster-worker-that-listens.mjs", heard));
+      const answered = await fetch("http://127.0.0.1:" + port + "/").then(response => response.text());
+      graph.dispose();
+      // The server the primary opened for the graph's worker was the graph's.
+      const afterwards = await new Promise(resolve => net.connect(port, "127.0.0.1").on("connect", () => resolve("connected")).on("error", error => resolve(error.code)));
+      // (No process.exit(): nothing of the cluster is left to keep the process running. Its worker is killed, and
+      // the disposed graph does not hear of the exit.)
+      process.on("beforeExit", () => console.log(JSON.stringify({ heard, answered, afterwards })));
+    `,
     "serves-who.mjs": `
       export const serve = who => Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response(who) });
     `,
@@ -3670,6 +3701,16 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
     async () => {
       expect(await runsFixture("closes-its-files-before-it-is-disposed.mjs")).toEqual({
         stdout: `{"open":26,"leftOpen":0,"theHostsReferences":[true,true]}`,
+        exitCode: 0,
+      });
+    },
+  );
+  // The primary's side of node:cluster runs from the worker's messages: they are the forking graph's callbacks.
+  test.skipIf(isWindows)(
+    "node:cluster: what a worker it forked tells the primary is heard as the graph, and nothing of it is left",
+    async () => {
+      expect(await runsFixture("cluster-of-a-disposed-graph.mjs")).toEqual({
+        stdout: `{"heard":{"online":"the graph","listening":"the graph"},"answered":"the worker","afterwards":"ECONNREFUSED"}`,
         exitCode: 0,
       });
     },

@@ -551,6 +551,15 @@ describe("Bun.serve() directory routes", () => {
     ).toThrow(expect.objectContaining({ code: "ENOTDIR" }));
   });
 
+  it("rejects a dir with an embedded null byte", () => {
+    using dir = tempDir("serve-dir-nul", { "public/x.txt": "x" });
+    const withNul = join(String(dir), "public") + "\0ignored";
+    expect(() => serve({ port: 0, routes: { "/*": { dir: withNul } } })).toThrow(/null bytes/);
+    expect(() =>
+      serve({ port: 0, development: true, routes: { "/*": { dir: withNul, style: "nextjs-pages" } } }),
+    ).toThrow(/null bytes/);
+  });
+
   it("throws if the directory of a { dir, style } mount is too long for a path", () => {
     const dir = Buffer.alloc(100_000, "a").toString();
     expect(() =>

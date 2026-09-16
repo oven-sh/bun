@@ -799,6 +799,11 @@ impl AnyRoute {
                         "To mount a directory, make sure the path ends in `/*`"
                     )));
                 }
+                if strings::contains_char(relative_root, 0) {
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "\"dir\" must not contain null bytes"
+                    )));
+                }
 
                 let style_js = argument.get(global, b"style")?;
                 if style_js.is_none() {

@@ -6417,9 +6417,8 @@ impl VirtualMachine {
         impl Drop for UnprotectAll {
             fn drop(&mut self) {
                 // BackRef invariant: borrows the caller's stack `Vec`, live for this scope.
-                for (v, label) in self.0.iter() {
+                for (v, _) in self.0.iter() {
                     v.unprotect();
-                    label.deref();
                 }
             }
         }
@@ -6461,7 +6460,7 @@ impl VirtualMachine {
                         saw_cause = true;
                     }
                     value.protect();
-                    let label = field.dupe_ref();
+                    let label = (*field).clone();
                     errors_to_append.push((value, label));
                 } else if kind.is_object()
                     || kind.is_array()

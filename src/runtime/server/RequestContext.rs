@@ -958,9 +958,9 @@ where
         ctx_log!("deinit<d> ({:p})<r>", self);
         debug_assert!(self.flags.has_finalized());
 
-        // A client abort reclaims the claim of the body stream's promise, so the reactions
-        // that consume the sink (`handleResolveStream` / `handleRejectStream`) do nothing
-        // for it and the abort reaches deinit with the sink still owned here.
+        // A client abort while the body stream is in flight reclaims the claim of the promise
+        // whose reactions consume the sink (`handleResolveStream` / `handleRejectStream`),
+        // so a client abort in that state reaches deinit with the sink still owned here.
         // This is the owner's last exit: release it exactly like the settle paths do.
         if let Some(wrapper_ptr) = self.sink.take() {
             // SAFETY: deinit runs once, after `detach_response()` removed the uWS callbacks;
@@ -2913,8 +2913,8 @@ where
         stream_log!("onResolve({})", wrote_anything);
         // HTTP/1 only: the sink already fully ended the response, so `resp`
         // can no longer be dereferenced (see `end_already_responded_stream`).
-        // H2/H3 keep the end_stream() path: their `resp` is still alive here
-        // and its still-armed onAborted must be disarmed.
+        // H2/H3 keep the end_stream() path: their `resp` is still
+        // alive here and its still-armed onAborted must be disarmed.
         if !MUX && ended_response {
             self.end_already_responded_stream();
             return;

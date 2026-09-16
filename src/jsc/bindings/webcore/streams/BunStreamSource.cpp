@@ -756,8 +756,7 @@ JSValue readDirectStream(JSGlobalObject* globalObject, JSReadableStream* stream,
     JSValue maybePromise = call(globalObject, pull, getCallData(pull), source->thisValue(), pullArgs);
     RETURN_IF_EXCEPTION(scope, {});
 
-    // The owner waits for the controller to close, not for pull() to return: a pull() can outlive its own close()/end().
-    // An async pull() that settles with the controller still open closes it from its reaction.
+    // The owner hears the controller close, not pull() return: a pull() reaction only closes a controller that an async pull() left open.
     if (auto* pullPromise = dynamicDowncast<JSPromise>(maybePromise))
         pullPromise->performPromiseThenWithContext(vm, globalObject, runtime->onReadDirectStreamPullFulfilled(), runtime->onReadDirectStreamPullRejected(), jsUndefined(), sinkController);
     // pull() already called close(error).
@@ -1353,8 +1352,7 @@ extern "C" void Bun__NativeStreamSourceAdapter__onClose(JSGlobalObject* globalOb
     Bun::WebStreams::queueStreamsMicrotask(globalObject, WebCore::JSStreamsRuntime::from(globalObject)->onNativeSourceHandleClosedMicrotask(), jsUndefined(), JSValue::decode(adapter));
 }
 
-// The two reactions below close a controller that pull() left open. They settle the owner's promise themselves, so the owner
-// hears what that close throws and pull()'s own rejection reason. Null once the controller has closed: the owner has heard.
+// A pull() reaction that closes the controller settles the owner's promise in place of that close: with what end() throws, or pull()'s own reason. Null: it closed earlier.
 static JSPromise* takeClosePromise(WebCore::JSReadableSinkControllerBase* sinkController)
 {
     auto* closePromise = sinkController->m_closePromise.get();

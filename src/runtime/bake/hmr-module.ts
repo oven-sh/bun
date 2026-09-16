@@ -58,6 +58,26 @@ export async function loadExports<T>(id: Id): Promise<T> {
   return m.esm ? m.exports : m.cjs.exports;
 }
 
+/** The export names of a module, without evaluating it: its own, plus those of every
+ * `export * from` target. That is lowered to a spread, so `default` is forwarded too.
+ * `null` when one of those modules is not an ES module in the registry (CommonJS,
+ * external, or a file with a build error): only an evaluation can tell then. */
+export function staticExportNames(id: Id): string[] | null {
+  const names = new Set<string>();
+  const queue: Id[] = [id];
+  const visited = new Set<Id>();
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    if (visited.has(current)) continue;
+    visited.add(current);
+    const unloaded = unloadedModuleRegistry[current];
+    if (!Array.isArray(unloaded)) return null;
+    for (const name of unloaded[ESMProps.exports]) names.add(name);
+    queue.push(...unloaded[ESMProps.stars]);
+  }
+  return [...names];
+}
+
 interface HotAccept {
   modules: string[];
   cb: HotAcceptFunction;

@@ -156,11 +156,11 @@ describe.skipIf(isDebug)("GarbageCollectionController eden cadence", () => {
 // is every chunk of a node:fs, node:stream or node:zlib style loop (oven-sh/WebKit#684).
 describe("short-lived typed arrays and ArrayBuffers", () => {
   // With the concurrent collector off, a collection runs at the allocation that passes the budget. The collections
-  // then follow from what the heap counted as allocated and from nothing else: 20000 arrays of 16 KB against the 8 MB
-  // budget of a small heap are 39 eden collections.
-  async function collectionsIn(loopBody: string) {
+  // then follow from what the heap counted as allocated and from nothing else: 10000 arrays of 16 KB against the 8 MB
+  // budget of a small heap are 19 eden collections.
+  async function run(loopBody: string) {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", `for (let i = 0; i < 20000; i++) { ${loopBody}; }`],
+      cmd: [bunExe(), "-e", `for (let i = 0; i < 10000; i++) { ${loopBody}; }`],
       env: {
         ...bunEnv,
         BUN_GC_TIMER_DISABLE: "1",
@@ -179,9 +179,17 @@ describe("short-lived typed arrays and ArrayBuffers", () => {
     return { eden, full, total: eden + full };
   }
 
+  // Several tests look at the same loop. Each loop runs once, so the file starts six children and not nine.
+  const runs = new Map<string, ReturnType<typeof run>>();
+  function collectionsIn(loopBody: string) {
+    let result = runs.get(loopBody);
+    if (!result) runs.set(loopBody, (result = run(loopBody)));
+    return result;
+  }
+
   // A typed array of more than 1000 elements owns a malloc'ed vector, and the heap counts that vector when the array
   // allocates it. `.buffer`, `subarray()` and Buffer's `slice()` wrap the same vector in an ArrayBuffer. The heap
-  // counted the whole vector as allocated a second time there, and the loop ran 79 collections. A count well under
+  // counted the whole vector as allocated a second time there, and the loop ran 39 collections. A count well under
   // that of the array alone would mean the vector is not counted at all.
   test.concurrent.each([
     ["new Uint8Array(16384).buffer", "new Uint8Array(16384)"],
@@ -189,14 +197,14 @@ describe("short-lived typed arrays and ArrayBuffers", () => {
     ["Buffer.allocUnsafe(16384).slice(0, 10)", "Buffer.allocUnsafe(16384)"],
   ])("the vector of %s counts as allocated once", async (withArrayBuffer, arrayAlone) => {
     const [alone, withBuffer] = await Promise.all([collectionsIn(arrayAlone), collectionsIn(withArrayBuffer)]);
-    expect(alone.total).toBeGreaterThan(20);
+    expect(alone.total).toBeGreaterThan(10);
     expect(withBuffer.total).toBeGreaterThanOrEqual(alone.total * 0.75);
     expect(withBuffer.total).toBeLessThanOrEqual(alone.total * 1.25);
   });
 
   // An eden collection frees the ArrayBuffers that died young, but the size of the heap kept counting them until the
   // next full collection. One eden's worth of dead buffers made the heap look full, so every second collection was a
-  // full one: 19 of 39 here. What is left is a full collection at exit in the builds that tear the VM down.
+  // full one: 9 of 19 here. What is left is a full collection at exit in the builds that tear the VM down.
   test.concurrent.each([
     "new ArrayBuffer(16384)",
     "new Uint8Array(16384).buffer",
@@ -204,7 +212,7 @@ describe("short-lived typed arrays and ArrayBuffers", () => {
   ])("%s that die young do not make every second collection a full one", async loopBody => {
     const { full, total } = await collectionsIn(loopBody);
     expect(full).toBeLessThanOrEqual(2);
-    expect(total).toBeGreaterThan(20);
+    expect(total).toBeGreaterThan(10);
   });
 });
 

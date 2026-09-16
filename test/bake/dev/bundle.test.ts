@@ -412,6 +412,75 @@ devTest("removing 'use client' from a component with a pending resolution failur
     expect(res).toBeInstanceOf(Response);
   },
 });
+// With separateSSRGraph: false the parser wraps each export of a "use client"
+// module in registerClientReference. Every export form has to get a reference,
+// not only `export default`, `export function` and `export const`.
+devTest("'use client' wraps every export form in a client reference", {
+  framework: minimalFramework,
+  files: {
+    "impl.ts": `
+      export function Inner() {}
+      export default function ImplDefault() {}
+    `,
+    "Button.ts": `
+      "use client";
+      // An export clause above the declarations it names (a class and a const
+      // have no hoisting) has to work too.
+      export { Early, Panel as EarlyPanel, label as earlyLabel };
+      function Button() {}
+      function Early() {}
+      export { Button };
+      export { Button as Renamed };
+      export { Button as default };
+      export { Button as "with space" };
+      export class Panel {
+        static count = 1;
+      }
+      export const label = "label";
+      export function Plain() {}
+      export { Inner, Inner as Outer, default as ImplDefault } from "./impl";
+      import { Inner as Local } from "./impl";
+      export { Local };
+    `,
+    "routes/index.ts": `
+      import * as all from "../Button";
+      export default function () {
+        const refs = Object.keys(all)
+          .sort()
+          .map(name => {
+            const value = all[name];
+            const isRef = value && typeof value === "object" && value.file.endsWith("Button.ts") && value.uid === name;
+            return name + "=" + (isRef ? "ref" : "raw " + typeof value);
+          });
+        return new Response(refs.join(", "));
+      }
+    `,
+  },
+  async test(dev) {
+    await dev
+      .fetch("/")
+      .equals(
+        [
+          "Early=ref",
+          "EarlyPanel=ref",
+          "earlyLabel=ref",
+          "Button=ref",
+          "ImplDefault=ref",
+          "Inner=ref",
+          "Local=ref",
+          "Outer=ref",
+          "Panel=ref",
+          "Plain=ref",
+          "Renamed=ref",
+          "default=ref",
+          "label=ref",
+          "with space=ref",
+        ]
+          .sort()
+          .join(", "),
+      );
+  },
+});
 devTest("deinit with a free-list slot in DirectoryWatchStore.dependencies", {
   files: {
     "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),

@@ -43,6 +43,16 @@ declare module "bun:sqlite" {
     create?: boolean;
 
     /**
+     * When the database is created, also create its parent directory if it
+     * doesn't exist. Has no effect on read-only or in-memory databases.
+     *
+     * Mirrors the `createPath` option of {@link Bun.write}.
+     *
+     * @default true
+     */
+    createPath?: boolean;
+
+    /**
      * Open the database as read-write
      *
      * Equivalent to {@link constants.SQLITE_OPEN_READWRITE}

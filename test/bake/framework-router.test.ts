@@ -1,6 +1,7 @@
 import { frameworkRouterInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { mkdirSync, writeFileSync } from "fs";
+import { bunEnv, bunExe, isMacOS, isWindows, tempDir } from "harness";
 import path from "path";
 
 const { parseRoutePattern, FrameworkRouter } = frameworkRouterInternals;
@@ -236,6 +237,32 @@ describe.concurrent("fileSystemRouterTypes[n].root outside the project root", ()
     const indent = Buffer.alloc(`error: "`.length + label.indexOf("["), " ").toString();
     expect(stderr).toContain(`error: "${label}" is not a valid route\n`);
     expect(stderr).toContain(`\n${indent}Missing "]" to match this route parameter\n`);
+    expect(exitCode).toBe(0);
+  });
+
+  // Every segment of the project root becomes "../" in the label of a file outside it. The label can
+  // outgrow a path buffer while both paths fit in one. The label is then the path below the router root.
+  // MAX_PATH_BYTES is 98302 on Windows, and no two valid paths there give a label that long.
+  test.skipIf(isWindows)("a route error label that does not fit a path buffer", async () => {
+    const maxPathBytes = isMacOS ? 1024 : 4096;
+    using dir = tempDir("fsr-long-label", {});
+    // Long directories below the router root. The route file path stays under the limit.
+    const longDirCount = Math.floor((maxPathBytes - String(dir).length - 80) / 201);
+    const below = Array.from({ length: longDirCount }, () => Buffer.alloc(200, "d").toString()).join("/");
+    // One-letter segments for the project root, enough of them to push the label over the limit.
+    const depth = Math.ceil((maxPathBytes - below.length) / 3) + 10;
+    const projectRoot = path.join(String(dir), "p", Buffer.alloc(depth * 2 - 1, "a/").toString());
+    const fixture = serveFixture(Buffer.alloc((depth + 1) * 3, "../").toString() + "routes");
+
+    mkdirSync(projectRoot, { recursive: true });
+    writeFileSync(path.join(projectRoot, "server.ts"), fixture["apps/api/server.ts"]);
+    writeFileSync(path.join(projectRoot, "start.ts"), fixture["apps/api/start.ts"]);
+    mkdirSync(path.join(String(dir), "routes", below), { recursive: true });
+    writeFileSync(path.join(String(dir), "routes", below, "[oops.ts"), `export default () => new Response("");`);
+
+    const { stdout, stderr, exitCode } = await run(projectRoot, ["start.ts"]);
+    expect(stdout, stderr).toBe("/ 404 not routed\n/blog/hello-world 404 not routed\n");
+    expect(stderr).toContain(`error: "/${below}/[oops.ts" is not a valid route\n`);
     expect(exitCode).toBe(0);
   });
 });

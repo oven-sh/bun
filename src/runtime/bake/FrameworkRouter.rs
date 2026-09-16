@@ -1601,19 +1601,26 @@ impl FrameworkRouter {
                         );
                         let rel_path: &[u8] = &rel_path_buf[0..rel_path_len];
 
-                        // Errors label the file relative to the project root.
+                        // Errors label the file relative to the project root. Every segment of
+                        // `self.root` can become "../", so this has the bound of
+                        // `DevServer::relative_path`. Past it, `rel_path` is the label.
                         let mut full_rel_path_buf = bun_paths::path_buffer_pool::get();
-                        let full_rel_path_len = paths::resolve_path::relative_normalized_buf::<
-                            paths::platform::Auto,
-                            true,
-                        >(
-                            &mut full_rel_path_buf[..], &self.root, abs_path
-                        )
-                        .len();
-                        paths::resolve_path::platform_to_posix_in_place(
-                            &mut full_rel_path_buf[0..full_rel_path_len],
-                        );
-                        let full_rel_path: &[u8] = &full_rel_path_buf[0..full_rel_path_len];
+                        let full_rel_path: &[u8] =
+                            if abs_path.len() + self.root.len() * 2 >= MAX_PATH_BYTES {
+                                rel_path
+                            } else {
+                                let len = paths::resolve_path::relative_normalized_buf::<
+                                    paths::platform::Auto,
+                                    true,
+                                >(
+                                    &mut full_rel_path_buf[..], &self.root, abs_path
+                                )
+                                .len();
+                                paths::resolve_path::platform_to_posix_in_place(
+                                    &mut full_rel_path_buf[0..len],
+                                );
+                                &full_rel_path_buf[0..len]
+                            };
 
                         let mut log = TinyLog::empty();
                         // The arena is reset at the end of every arm via

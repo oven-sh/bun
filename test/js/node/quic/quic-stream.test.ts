@@ -383,7 +383,7 @@ describe("a response after a refused header block", () => {
   const H3_INTERNAL_ERROR = 0x102n;
   const refused = { ":status": "200", "x-one": Buffer.alloc(70000, "~").toString() };
 
-  async function roundTrip(respond: (stream: any) => boolean | undefined) {
+  async function roundTrip(respond: (stream: any) => boolean | undefined | Promise<boolean | undefined>) {
     const serverSide = Promise.withResolvers<{ sent: boolean | undefined; error: any }>();
     await using server = await listen(
       async serverSession => {
@@ -396,10 +396,11 @@ describe("a response after a refused header block", () => {
         sni: { "*": { keys: [key], certs: [cert] } },
         transportParams: { maxIdleTimeout: 1 },
         onheaders(this: any) {
-          const sent = respond(this);
-          this.closed.then(
-            () => serverSide.resolve({ sent, error: undefined }),
-            (error: any) => serverSide.resolve({ sent, error }),
+          Promise.resolve(respond(this)).then(sent =>
+            this.closed.then(
+              () => serverSide.resolve({ sent, error: undefined }),
+              (error: any) => serverSide.resolve({ sent, error }),
+            ),
           );
         },
       },
@@ -464,6 +465,24 @@ describe("a response after a refused header block", () => {
     const { sent, clientError, serverError } = await roundTrip(stream =>
       stream.sendHeaders(refused, { terminal: true }),
     );
+    expect(sent).toBe(false);
+    expect({ code: clientError?.code, errorCode: clientError?.errorCode }).toEqual({
+      code: "ERR_QUIC_APPLICATION_ERROR",
+      errorCode: H3_INTERNAL_ERROR,
+    });
+    expect({ code: serverError?.code, errorCode: serverError?.errorCode }).toEqual({
+      code: "ERR_QUIC_APPLICATION_ERROR",
+      errorCode: H3_INTERNAL_ERROR,
+    });
+  });
+
+  test("a body parked before a refused header block resets the stream with H3_INTERNAL_ERROR", async () => {
+    const { sent, clientError, serverError } = await roundTrip(async stream => {
+      stream.writer.writeSync(new TextEncoder().encode("body"));
+      // Let the first write fail and park while the stream has no header block.
+      for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve));
+      return stream.sendHeaders(refused);
+    });
     expect(sent).toBe(false);
     expect({ code: clientError?.code, errorCode: clientError?.errorCode }).toEqual({
       code: "ERR_QUIC_APPLICATION_ERROR",
@@ -596,6 +615,20 @@ describe("a body written before the header block", () => {
       stream.writer.writeSync(new TextEncoder().encode("body"));
       await tick();
       stream.sendHeaders({ ":status": "200" });
+      stream.writer.endSync();
+    });
+    expect(status).toBe("200");
+    expect(body).toBe("body");
+  });
+
+  test("a refused block after an accepted interim block leaves the stream open for a retry", async () => {
+    const { status, body } = await responseTo(async stream => {
+      expect(stream.sendInformationalHeaders({ ":status": "100" })).toBe(true);
+      expect(stream.sendHeaders({ ":status": "200", "x-one": Buffer.alloc(70000, "~").toString() })).toBe(false);
+      // The accepted block armed a write event. It must not fail the stream.
+      await tick();
+      expect(stream.sendHeaders({ ":status": "200" })).toBe(true);
+      stream.writer.writeSync(new TextEncoder().encode("body"));
       stream.writer.endSync();
     });
     expect(status).toBe("200");

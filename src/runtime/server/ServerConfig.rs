@@ -606,8 +606,7 @@ fn convert_file_system_router_type(
 }
 
 impl ServerConfig {
-    /// The DevServer options for routes that hold an html import or a
-    /// framework router.
+    /// The DevServer options for html and framework router routes.
     fn dev_server_options(
         global: &JSGlobalObject,
         framework_router_list: Vec<crate::bake::FileSystemRouterType>,
@@ -616,8 +615,6 @@ impl ServerConfig {
         use crate::bake::bake_body as bb;
         use bun_options_types::schema::api::DotEnvBehavior;
 
-        // NOTE: the arena is created here and moved into
-        // `UserOptions` (lives until the options are dropped).
         let arena = bun_alloc::Arena::new();
 
         let root = bb::arena_dupe_z(
@@ -625,10 +622,6 @@ impl ServerConfig {
             bun_paths::fs::FileSystem::instance().top_level_dir(),
         );
 
-        // Convert `crate::bake::FileSystemRouterType` (Cow-backed)
-        // into `bake_body::FileSystemRouterType` (`&'static` slices)
-        // by duping every string into the arena. Type
-        // duplication; remove once the two structs unify.
         let router_types: Vec<bb::FileSystemRouterType> = framework_router_list
             .into_iter()
             .map(|t| convert_file_system_router_type(&arena, t))
@@ -652,10 +645,7 @@ impl ServerConfig {
 
         match o.serve_env_behavior {
             DotEnvBehavior::prefix => {
-                // NOTE: `serve_env_prefix` is `Option<Box<[u8]>>`
-                // owned by the long-lived `transform_options`; dupe
-                // into the arena so the `&'static [u8]` field is
-                // backed by `UserOptions.arena`.
+                // Duped into the arena so that `UserOptions.arena` backs the `&'static [u8]`.
                 user_options.bundler_options.client.env_prefix = o
                     .serve_env_prefix
                     .as_deref()
@@ -680,13 +670,7 @@ impl ServerConfig {
         Ok(user_options)
     }
 
-    /// For the reload of a server that has no DevServer yet: moves the
-    /// DevServer options of `new_config` into `self` and reports whether there
-    /// are any.
-    ///
-    /// `from_js` leaves them out when the `development` key of `new_config` is
-    /// not HMR. A reload cannot change the mode of the server, so an html route
-    /// gets them built here.
+    /// For a reload, whose `development` key cannot change the server's mode: an html route gets the options even when `from_js` left them out.
     pub(crate) fn take_dev_server_options_from(
         &mut self,
         new_config: &mut ServerConfig,

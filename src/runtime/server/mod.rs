@@ -2195,10 +2195,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             (*server).any_server_packed = AnyServer::from(server.cast_const()).to_packed() as usize;
         }
 
-        // Initialise DevServer AFTER the server box exists so the
-        // `Options::arena` borrow points into the heap-allocated config rather
-        // than the caller's (since-moved) stack slot. On Err, the `Box<Self>`
-        // drop frees the half-built server.
+        // The bake options (and the arena that backs `root`) live in
+        // `(*server).config.bake` for the server's lifetime. Initialise
+        // DevServer AFTER the server box exists so the `Options::arena` borrow
+        // points into the heap-allocated config rather than the caller's
+        // (since-moved) stack slot. On Err, the `Box<Self>` drop frees the
+        // half-built server.
         // SAFETY: `server` is the freshly-boxed `*mut Self`; uniquely owned here.
         if let Err(e) = unsafe { (*server).init_dev_server() } {
             // SAFETY: paired with heap::alloc above.
@@ -2215,9 +2217,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         Ok(server)
     }
 
-    /// Creates the DevServer when `self.config.bake` holds its options. The
-    /// options (and the arena that backs `root`) stay in `self.config.bake`
-    /// for the server's lifetime, so `self` must be at its final heap address.
+    /// Creates the DevServer from `self.config.bake`, which must be at its final heap address.
     pub(super) fn init_dev_server(&mut self) -> JsResult<()> {
         let Some(bake_options) = &mut self.config.bake else {
             return Ok(());
@@ -2227,18 +2227,14 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             root: bake_options.root,
             // SAFETY: per-thread VM singleton; STATIC lifetime.
             vm: jsc::VirtualMachine::get(),
-            // LAYERING: `UserOptions` carries the `bake_body` shapes;
-            // `DevServer::Options` consumes the keystone shapes;
-            // `From` impls in `bake/mod.rs` bridge
-            // until the duplicates are collapsed.
+            // LAYERING: the `From` impls in `bake/mod.rs` bridge `bake_body` shapes to the keystone shapes.
             framework: core::mem::take(&mut bake_options.framework).into(),
             bundler_options: core::mem::take(&mut bake_options.bundler_options).into(),
             broadcast_console_log_from_browser_to_server: self
                 .config
                 .broadcast_console_log_from_browser_to_server_for_bake,
         })?;
-        // Zero until the inspector registers the server, which on the
-        // `reload()` path has already happened.
+        // Set already when a reload gets here. `set_inspector_server_id` covers the other order.
         dev.inspector_server_id = self.inspector_server_id;
         self.dev_server = Some(dev);
         Ok(())

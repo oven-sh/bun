@@ -2061,23 +2061,13 @@ where
         Ok(JSValue::TRUE)
     }
 
-    /// `init()` only creates the DevServer when the first config holds an html
-    /// route. A server that gets its first one from a reload creates it here.
-    ///
-    /// A reload cannot change `development`, so the server's mode decides and
-    /// not the new config's. Were the new config able to veto the DevServer,
-    /// its html route would take the bundler path, and that route's build
-    /// could finish after a later reload did create the DevServer:
-    /// `html_bundle::Route::on_complete` rewrites the static routes, which
-    /// `DevServer::html_router` points into.
+    /// `init()` creates the DevServer for a first config with an html route. A reload that brings the first one creates it here.
     fn init_dev_server_for_reload(
         &mut self,
         new_config: &mut ServerConfig,
         global: &JSGlobalObject,
     ) -> JsResult<()> {
-        // The DevServer is HTTP/1-only: once it exists an html route answers
-        // HTTP/2 and HTTP/3 with a 503, so a server with those apps keeps the
-        // bundler path.
+        // The DevServer is HTTP/1-only: with it, an html route answers HTTP/2 and HTTP/3 with a 503.
         if self.dev_server.is_some()
             || !self.config.development.is_hmr_enabled()
             || self.h2_app.is_some()

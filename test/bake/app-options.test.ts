@@ -190,7 +190,8 @@ describe("a directory that does not fit a path buffer is an error", () => {
     });
     await using proc = Bun.spawn({
       cmd: [bunExe(), "build", "--app", "./app.ts"],
-      env: bunEnv,
+      // `bun build --app` fails exception validation while it loads any config (#41185).
+      env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "0" },
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",

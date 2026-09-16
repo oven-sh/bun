@@ -292,13 +292,13 @@ const PREBUILT_BMALLOC_DLLEXPORTS = {
 export function binaryExpectations(cfg: Config): BinaryExpectations {
   const format = binaryFormat(cfg);
   const src = (f: string) => join(cfg.cwd, "src", f);
-  // A sanitizer build links its runtime (and, on macOS, our dyld shim for
-  // it) and gains a module constructor per translation unit; those are
+  // A sanitizer build links its runtime and gains a module constructor per
+  // translation unit; those are
   // properties of the flavour, so the library set is opened up for them and
   // the initializer audit is skipped there. Debug and release are held to
   // the same list: an initializer that only -O2 folds away is still one we
   // wrote (make it constexpr/constinit instead).
-  const sanitizerLibs = cfg.asan ? ["*clang_rt.asan*", "*asan-dyld-shim*", "libgcc_s.so.1"] : [];
+  const sanitizerLibs = cfg.asan ? ["*clang_rt.asan*", "libgcc_s.so.1"] : [];
   // Android: -llog (WTF's logging goes to logcat) is linked --as-needed, so
   // liblog.so is NEEDED exactly when a live __android_log_* reference
   // survives — a system library either way, allowed rather than pinned.

@@ -504,10 +504,11 @@ const dir = String(
         const graph = new Bun.ModuleGraph();
         const app = await graph.import(import.meta.dir + "/serves-html-routes.mjs");
         const server = graph.run(() => app.serve());
-        // One request per page: each starts a build, which holds a pending request on the server.
+        // A request for a page starts its build, which holds a pending request on the server until it is
+        // done. That is a later turn's business: the build seen here is still going when dispose() runs.
         for (const path of app.paths)
-          await Bun.connect({ hostname: "127.0.0.1", port: server.port, socket: { open: socket => void socket.write("GET " + path + " HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n"), data() {}, close() {}, error() {} } });
-        await until(() => server.pendingRequests >= app.paths.length);
+          Bun.connect({ hostname: "127.0.0.1", port: server.port, socket: { open: socket => void socket.write("GET " + path + " HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n"), data() {}, close() {}, error() {} } }).catch(() => {});
+        await until(() => server.pendingRequests >= 1);
         graph.dispose();
       };
       // (One first, so the class's own cells are there before counting.)

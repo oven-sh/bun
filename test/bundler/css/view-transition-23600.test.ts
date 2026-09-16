@@ -162,9 +162,8 @@ describe("css", () => {
   // `@view-transition` rule are in css-view-transitions-2. They must not warn.
   // A CSS module prints the same text: it does not hash a view transition type.
   // https://github.com/oven-sh/bun/issues/42777
-  test.each(["in.css", "in.module.css"])(
-    ":active-view-transition-type() and @view-transition do not warn in %s (#42777)",
-    async name => {
+  describe.each(["in.css", "in.module.css"])("%s", name => {
+    test(":active-view-transition-type() and @view-transition do not warn (#42777)", async () => {
       using dir = tempDir("css-42777-types", {
         [name]: `
           :root:active-view-transition { color: blue }
@@ -201,8 +200,8 @@ describe("css", () => {
       const again = await Bun.build({ entrypoints: [printed], minify: true, throw: true });
       expect(again.logs.map(String)).toEqual([]);
       expect(await again.outputs[0].text()).toBe(out);
-    },
-  );
+    });
+  });
 
   itBundled("css/view-transition-rule-and-types", {
     files: {
@@ -256,21 +255,24 @@ describe("css", () => {
 
   // No browser takes these. The build fails, as it does for `:dir(sideways)`
   // or for `@font-face` in a style rule.
-  test.each([
-    [":active-view-transition-type()", "a:active-view-transition-type() { color: red }"],
-    [":active-view-transition-type(a b)", "a:active-view-transition-type(a b) { color: red }"],
-    [":active-view-transition-type(a,)", "a:active-view-transition-type(a,) { color: red }"],
-    [":active-view-transition-type(*)", "a:active-view-transition-type(*) { color: red }"],
-    [':active-view-transition-type("a")', 'a:active-view-transition-type("a") { color: red }'],
-    ["@view-transition in a style rule", "a { @view-transition { navigation: auto } }"],
-    ["@view-transition with a prelude", "@view-transition foo { navigation: auto }"],
-  ])("%s is an error", async (_, source) => {
-    using dir = tempDir("css-view-transition-invalid", { "in.css": source });
-    const result = await Bun.build({
-      entrypoints: [path.join(String(dir), "in.css")],
-      throw: false,
+  describe.each([
+    ["a:active-view-transition-type() { color: red }", "Unexpected end of input"],
+    ["a:active-view-transition-type(a b) { color: red }", "Unexpected token: b"],
+    ["a:active-view-transition-type(a,) { color: red }", "Unexpected end of input"],
+    ["a:active-view-transition-type(*) { color: red }", "Unexpected token: *"],
+    ['a:active-view-transition-type("a") { color: red }', 'Unexpected token: "a"'],
+    ["a { @view-transition { navigation: auto } }", "Unknown at-rule @view-transition"],
+    ["@view-transition foo { navigation: auto }", "Unexpected token: foo"],
+    ["@view-transition;", "Unexpected token: ;"],
+  ])("%s", (source, message) => {
+    test("is an error", async () => {
+      using dir = tempDir("css-view-transition-invalid", { "in.css": source });
+      const result = await Bun.build({
+        entrypoints: [path.join(String(dir), "in.css")],
+        throw: false,
+      });
+      expect(result.logs.map(log => [log.level, log.message])).toEqual([["error", message]]);
+      expect(result.success).toBe(false);
     });
-    expect(result.logs.map(log => log.level)).toEqual(["error"]);
-    expect(result.success).toBe(false);
   });
 });

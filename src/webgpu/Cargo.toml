@@ -12,6 +12,8 @@ workspace = true
 # wgpu-core is the WebGPU validation layer plus the native backends (the same
 # crate Firefox and Deno embed). Each OS table below enables exactly one backend.
 [dependencies]
+bun_core.workspace = true
+bun_threading.workspace = true
 wgpu-core = { version = "30.0.1", default-features = false, features = ["std", "wgsl"] }
 wgpu-types = { version = "30.0.1", default-features = false, features = ["std"] }
 
@@ -21,7 +23,6 @@ wgpu-core = { version = "30.0.1", default-features = false, features = ["vulkan"
 [target.'cfg(target_vendor = "apple")'.dependencies]
 wgpu-core = { version = "30.0.1", default-features = false, features = ["metal"] }
 # apple.rs: dlopen and dlsym for the frameworks the Metal backend imports from.
-bun_core.workspace = true
 bun_sys.workspace = true
 
 [target.'cfg(windows)'.dependencies]

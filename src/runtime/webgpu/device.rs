@@ -177,12 +177,11 @@ fn lost_info_to_js(
     reason: &'static str,
     message: &str,
 ) -> JsResult<JSValue> {
-    use bun_jsc::StringJsc as _;
     js_module(
         global,
         "createDeviceLostInfo",
         &[
-            bun_core::String::static_(reason).to_js(global)?,
+            bun_jsc::bun_string_jsc::create_utf8_for_js(global, reason.as_bytes())?,
             bun_jsc::bun_string_jsc::create_utf8_for_js(global, message.as_bytes())?,
         ],
     )
@@ -296,18 +295,22 @@ impl GPUDeviceHandle {
         _callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         let state = &self.state;
-        if !state.lost.get() {
-            let mapped = state.mapped_buffers.take();
-            for weak in &mapped {
-                if let Some(buffer) = weak.get() {
-                    if let Some(b) = buffer.as_class_ref::<GPUBuffer>() {
-                        b.unmap_for_destroy(global, buffer)?;
-                    }
+        if state.lost.get() {
+            instance().device_destroy(state.id());
+            return Ok(JSValue::UNDEFINED);
+        }
+        state.lost.set(true);
+        let mapped = state.mapped_buffers.take();
+        for weak in &mapped {
+            if let Some(buffer) = weak.get() {
+                if let Some(b) = buffer.as_class_ref::<GPUBuffer>() {
+                    b.unmap_for_destroy(global, buffer)?;
                 }
             }
-            state.resolve_lost(global, "destroyed", "device.destroy() was called")?;
         }
+        // Before `lost` resolves: that can run script (a `then` getter on Object.prototype), which has to see a destroyed device.
         instance().device_destroy(state.id());
+        state.resolve_lost(global, "destroyed", "device.destroy() was called")?;
         Ok(JSValue::UNDEFINED)
     }
 
@@ -592,42 +595,40 @@ pub(crate) fn parse_device_descriptor(
 
     let mut limits = wgt::Limits::default();
     if let Some(record) = d.get("requiredLimits")? {
-        if !record.is_object() {
-            return Err(global.throw_type_error(format_args!(
-                "GPUDeviceDescriptor.requiredLimits: expected an object"
-            )));
-        }
-        let keys = record.keys(global)?;
-        let mut iter = keys.array_iterator(global)?;
-        while let Some(key) = iter.next()? {
-            let name = args::to_utf8(global, key)?;
-            let Some(value) = record.get(global, &*name)? else {
-                continue;
-            };
-            let Some(limit) = bun_webgpu::names::find_limit(&name) else {
-                return Ok(Err(DescriptorError::Operation(format!(
+        let mut bad_limit: Option<String> = None;
+        const WHAT: &str = "GPUDeviceDescriptor.requiredLimits";
+        args::for_each_entry(global, record, WHAT, |name, value| {
+            if value.is_undefined() {
+                return Ok(true);
+            }
+            let Some(limit) = bun_webgpu::names::find_limit(name) else {
+                bad_limit = Some(format!(
                     "requiredLimits: '{}' is not a limit",
-                    bstr::BStr::new(&*name)
-                ))));
+                    bstr::BStr::new(name)
+                ));
+                return Ok(false);
             };
             let value = args::to_u64(global, value, limit.name)?;
             let alignment = limit.class == bun_webgpu::names::LimitClass::Alignment;
             if alignment && !(value.is_power_of_two() && value <= u64::from(u32::MAX)) {
-                return Ok(Err(DescriptorError::Operation(format!(
+                bad_limit = Some(format!(
                     "requiredLimits: '{}' has to be a power of 2 below 2^32, got {value}",
                     limit.name
-                ))));
+                ));
+                return Ok(false);
             }
             // A value that is not better than the default leaves the default in place (WebGPU spec).
-            if !limit.is_better(value, (limit.get)(&limits)) {
-                continue;
-            }
-            if !(limit.set)(&mut limits, value) {
-                return Ok(Err(DescriptorError::Operation(format!(
+            if limit.is_better(value, (limit.get)(&limits)) && !(limit.set)(&mut limits, value) {
+                bad_limit = Some(format!(
                     "requiredLimits: {value} is out of range for '{}'",
                     limit.name
-                ))));
+                ));
+                return Ok(false);
             }
+            Ok(true)
+        })?;
+        if let Some(message) = bad_limit {
+            return Ok(Err(DescriptorError::Operation(message)));
         }
     }
 

@@ -119,7 +119,6 @@ impl Waiter for MapWait {
             return Ok(());
         };
         buffer.in_flight.set(false);
-        buffer.device.deliver_loss(global)?;
         let result = result
             .unwrap_or_else(|| Err((true, String::from("mapAsync: the map did not complete"))));
 
@@ -247,6 +246,9 @@ impl GPUBuffer {
     }
 
     pub(crate) fn estimated_size(&self) -> usize {
+        if self.invalid {
+            return core::mem::size_of::<Self>();
+        }
         core::mem::size_of::<Self>()
             .saturating_add(usize::try_from(self.size).unwrap_or(usize::MAX))
     }
@@ -427,30 +429,33 @@ impl GPUBuffer {
             )
         };
 
-        let MapState::Mapped {
-            start,
-            end: mapped_end,
-            ranges,
-            ..
-        } = self.map.get()
-        else {
-            return Err(operation_error("the buffer is not mapped"));
+        let index = {
+            let MapState::Mapped {
+                start,
+                end: mapped_end,
+                ranges,
+                ..
+            } = self.map.get()
+            else {
+                return Err(operation_error("the buffer is not mapped"));
+            };
+            if offset % 8 != 0 {
+                return Err(operation_error("offset is not a multiple of 8"));
+            }
+            if size % 4 != 0 {
+                return Err(operation_error("size is not a multiple of 4"));
+            }
+            let Some(end) = offset
+                .checked_add(size)
+                .filter(|end| offset >= *start && *end <= *mapped_end)
+            else {
+                return Err(operation_error("the range is outside the mapped range"));
+            };
+            if ranges.iter().any(|(o, s)| offset < o + s && *o < end) {
+                return Err(operation_error("the range overlaps one returned earlier"));
+            }
+            ranges.len() as u32
         };
-        if offset % 8 != 0 {
-            return Err(operation_error("offset is not a multiple of 8"));
-        }
-        if size % 4 != 0 {
-            return Err(operation_error("size is not a multiple of 4"));
-        }
-        let Some(end) = offset
-            .checked_add(size)
-            .filter(|end| offset >= *start && *end <= *mapped_end)
-        else {
-            return Err(operation_error("the range is outside the mapped range"));
-        };
-        if ranges.iter().any(|(o, s)| offset < o + s && *o < end) {
-            return Err(operation_error("the range overlaps one returned earlier"));
-        }
         let array_buffer = if self.invalid {
             let mut zeroes = Vec::new();
             if usize::try_from(size).is_err() || zeroes.try_reserve_exact(size as usize).is_err() {
@@ -487,7 +492,7 @@ impl GPUBuffer {
             }
         };
         // A direct index put and get: `push` and iteration would run a setter or getter script put on `Array.prototype`.
-        list.put_index(global, ranges.len() as u32, array_buffer)?;
+        list.put_index(global, index, array_buffer)?;
         pin_array_buffer(array_buffer);
         self.map.with_mut(|state| {
             if let MapState::Mapped { ranges, .. } = state {

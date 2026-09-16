@@ -36,21 +36,11 @@ fn parse_stage(
     let entry_point = d.string("entryPoint")?.map(Cow::Owned);
     let mut constants = wgc::naga::back::PipelineConstants::default();
     if let Some(record) = d.get("constants")? {
-        if !record.is_object() {
-            return Err(d
-                .global
-                .throw_type_error(format_args!("{}.constants: expected an object", d.name)));
-        }
-        let keys = record.keys(d.global)?;
-        let mut iter = keys.array_iterator(d.global)?;
-        while let Some(key) = iter.next()? {
-            let name = args::to_string(d.global, key)?;
-            let Some(value) = record.get(d.global, name.as_bytes())? else {
-                continue;
-            };
-            let value = args::to_f64(d.global, value, "GPUProgrammableStage.constants")?;
-            constants.insert(name, value);
-        }
+        const WHAT: &str = "GPUProgrammableStage.constants";
+        args::for_each_entry(d.global, record, WHAT, |name, value| {
+            constants.insert(args::usv_string(name), args::to_f64(d.global, value, WHAT)?);
+            Ok(true)
+        })?;
     }
     Ok(pl::ProgrammableStageDescriptor {
         module,

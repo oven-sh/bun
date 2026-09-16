@@ -281,44 +281,90 @@ render_commands!(GPURenderPassEncoder {
     draw_indexed_indirect: render_pass_draw_indexed_indirect_with_id,
 });
 
-/// A `GPUTexture` stands for its default view, parked in `implicit` until the pass has begun.
+/// What `beginRenderPass` keeps until wgpu-core has the pass.
+#[derive(Default)]
+struct Attachments {
+    held: Held,
+    /// The default views of attachments that are a `GPUTexture`, and the stand-ins for bad resolve targets.
+    views: Vec<bun_webgpu::TextureView>,
+    textures: Vec<bun_webgpu::Texture>,
+    /// A descriptor error that wgpu-core is not asked about. The encoder reports it in `finish()`.
+    invalid: Option<String>,
+}
+
+impl Attachments {
+    /// A view wgpu-core rejects as invalid, which makes the pass and its encoder invalid.
+    fn invalid_view(&mut self, device: &DeviceRef) -> wgc::id::TextureViewId {
+        let desc = wgc::resource::TextureDescriptor {
+            label: None,
+            size: wgt::Extent3d::default(),
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgt::TextureDimension::D2,
+            format: wgt::TextureFormat::Rgba8Unorm,
+            usage: wgt::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: Vec::new(),
+        };
+        let texture = instance().create_texture_error(device.id(), None, &desc);
+        self.textures.push(bun_webgpu::Texture::new(texture));
+        let desc = wgc::resource::TextureViewDescriptor::default();
+        let (view, _) = instance().texture_create_view(texture, &desc, None);
+        self.views.push(bun_webgpu::TextureView::new(view));
+        view
+    }
+}
+
+/// A `GPUTexture` stands for its default view, parked in `attachments` until the pass has begun.
 fn attachment_view(
     global: &JSGlobalObject,
     device: &DeviceRef,
     value: JSValue,
     what: &str,
-    held: &mut Held,
-    implicit: &mut Vec<bun_webgpu::TextureView>,
+    resolve_target: bool,
+    attachments: &mut Attachments,
 ) -> JsResult<wgc::id::TextureViewId> {
-    if let Some(view) = held.try_id::<GPUTextureView>(value) {
-        return Ok(view);
-    }
-    if let Some(texture) = held.try_id::<GPUTexture>(value) {
+    let held = &mut attachments.held;
+    let (id, resolvable) = if let Some(view) =
+        held.try_read::<GPUTextureView, _>(value, GPUTextureView::is_resolvable)
+    {
+        view
+    } else if let Some((texture, resolvable)) =
+        held.try_read::<GPUTexture, _>(value, GPUTexture::is_resolvable)
+    {
         let desc = wgc::resource::TextureViewDescriptor::default();
         let (id, err) = instance().texture_create_view(texture, &desc, None);
-        implicit.push(bun_webgpu::TextureView::new(id));
+        attachments.views.push(bun_webgpu::TextureView::new(id));
         device.check(global, err)?;
-        return Ok(id);
+        (id, resolvable)
+    } else {
+        return Err(global.throw_type_error(format_args!(
+            "{what}: expected a GPUTextureView or a GPUTexture"
+        )));
+    };
+    if resolve_target && !resolvable {
+        // wgpu-core 30 panics on a 1d or 3d resolve target (`check_attachment_overlap` in command/render.rs).
+        attachments.invalid.get_or_insert_with(|| {
+            format!("{what}: a resolve target has to be a 2d or 2d-array view of a 2d texture")
+        });
+        return Ok(attachments.invalid_view(device));
     }
-    Err(global.throw_type_error(format_args!(
-        "{what}: expected a GPUTextureView or a GPUTexture"
-    )))
+    Ok(id)
 }
 
 impl GPURenderPassEncoder {
     /// Nothing to keep: the pass resolves each id in the call that names it.
     fn keep(&self, _held: Held) {}
 
+    /// Returns the pass, and a descriptor error for the encoder to report in `finish()`.
     pub(crate) fn begin(
         global: &JSGlobalObject,
         device: &DeviceRef,
         encoder: wgc::id::CommandEncoderId,
         descriptor: JSValue,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<(JSValue, Option<String>)> {
         let d = Dict::new(global, descriptor, "GPURenderPassDescriptor")?;
         let label = d.label()?;
-        let mut held = Held::default();
-        let mut implicit_views = Vec::new();
+        let mut attachments = Attachments::default();
 
         let mut color_attachments = Vec::new();
         d.require_each("colorAttachments", |item| {
@@ -332,8 +378,8 @@ impl GPURenderPassEncoder {
                 device,
                 a.require("view")?,
                 "GPURenderPassColorAttachment.view",
-                &mut held,
-                &mut implicit_views,
+                false,
+                &mut attachments,
             )?;
             let resolve_target = match a.get("resolveTarget")? {
                 Some(v) => Some(attachment_view(
@@ -341,8 +387,8 @@ impl GPURenderPassEncoder {
                     device,
                     v,
                     "GPURenderPassColorAttachment.resolveTarget",
-                    &mut held,
-                    &mut implicit_views,
+                    true,
+                    &mut attachments,
                 )?),
                 None => None,
             };
@@ -376,8 +422,8 @@ impl GPURenderPassEncoder {
                     device,
                     a.require("view")?,
                     "GPURenderPassDepthStencilAttachment.view",
-                    &mut held,
-                    &mut implicit_views,
+                    false,
+                    &mut attachments,
                 )?;
                 let depth_clear = match a.get("depthClearValue")? {
                     Some(v) => Some(args::to_f32(
@@ -419,7 +465,7 @@ impl GPURenderPassEncoder {
         };
 
         let occlusion_query_set = match d.get("occlusionQuerySet")? {
-            Some(v) => Some(held.id::<GPUQuerySet>(
+            Some(v) => Some(attachments.held.id::<GPUQuerySet>(
                 global,
                 v,
                 "GPURenderPassDescriptor.occlusionQuerySet",
@@ -435,21 +481,23 @@ impl GPURenderPassEncoder {
             timestamp_writes: parse_timestamp_writes(
                 &d,
                 "GPURenderPassTimestampWrites",
-                &mut held,
+                &mut attachments.held,
             )?,
             occlusion_query_set,
             multiview_mask: None,
         };
         let (id, err) = instance().command_encoder_begin_render_pass_with_id(encoder, &desc, None);
         let raw = bun_webgpu::RenderPassEncoder::new(id);
-        drop((held, implicit_views));
+        let invalid = attachments.invalid.take();
+        drop(attachments);
         device.check(global, err)?;
-        Ok(GPURenderPassEncoder {
+        let pass = GPURenderPassEncoder {
             device: Rc::clone(device),
             raw,
             label: JsCell::new(label),
         }
-        .to_js(global))
+        .to_js(global);
+        Ok((pass, invalid))
     }
 
     pub(crate) fn set_viewport(

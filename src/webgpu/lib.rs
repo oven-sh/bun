@@ -3,7 +3,10 @@
 // The proof that `wgpu_core::global::Global` is `Sync` is deeper than the default of 128.
 #![recursion_limit = "256"]
 
-use std::sync::OnceLock;
+use std::sync::{Once, OnceLock};
+use std::time::{Duration, Instant};
+
+use bun_threading::Guarded;
 
 pub use wgpu_core as wgc;
 pub use wgpu_types as wgt;
@@ -105,15 +108,68 @@ owned_id!(
     render_bundle_encoder_drop
 );
 
+/// A device that exists, for [`wait_for_idle_at_exit`].
+struct LiveDevice {
+    id: id::DeviceId,
+    /// [`release_device`] is waiting for its queue on the helper thread.
+    releasing: bool,
+}
+
+static DEVICES: Guarded<Vec<LiveDevice>> = Guarded::new(Vec::new());
+
+/// How long an exit waits for the GPU. A shader that does not end has to lose.
+const EXIT_WAIT: Duration = Duration::from_secs(10);
+
+/// An ASAN build leaves through libc's `exit()`, which unloads the Vulkan driver under its own threads if they still run a submission.
+extern "C" fn wait_for_idle_at_exit() {
+    let deadline = Instant::now() + EXIT_WAIT;
+    loop {
+        let busy = DEVICES.lock().iter().any(|device| {
+            device.releasing
+                || matches!(
+                    instance().device_poll(device.id, wgt::PollType::Poll),
+                    Ok(status) if !status.is_queue_empty()
+                )
+        });
+        if !busy || Instant::now() >= deadline {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
+/// wgpu-core's `Queue::drop` blocks until the GPU has finished the queue's work.
+fn release_device(device: id::DeviceId, queue: id::QueueId) {
+    let global = instance();
+    global.queue_drop(queue);
+    let mut devices = DEVICES.lock();
+    devices.retain(|live| live.id != device);
+    global.device_drop(device);
+}
+
 /// A device and its queue. wgpu-core keeps the device alive while its resources exist.
 pub struct Device {
     device: id::DeviceId,
     queue: id::QueueId,
+    /// Held by [`poll`](Self::poll) on the pool thread and by [`exclusive`](Self::exclusive) on the JS thread.
+    poll_lock: Guarded<()>,
 }
 
 impl Device {
     pub fn new(device: id::DeviceId, queue: id::QueueId) -> Self {
-        Self { device, queue }
+        static AT_EXIT: Once = Once::new();
+        if bun_core::env::ENABLE_ASAN {
+            AT_EXIT.call_once(|| bun_core::add_exit_callback(wait_for_idle_at_exit));
+        }
+        DEVICES.lock().push(LiveDevice {
+            id: device,
+            releasing: false,
+        });
+        Self {
+            device,
+            queue,
+            poll_lock: Guarded::new(()),
+        }
     }
     #[inline]
     pub fn id(&self) -> id::DeviceId {
@@ -126,17 +182,32 @@ impl Device {
 
     /// Fires the ready callbacks; `false` if the device is lost. Never a timed `Wait`: gfx-rs/wgpu#9958 aborts on it.
     pub fn poll(&self) -> bool {
+        let _exclusive = self.poll_lock.lock();
         instance()
             .device_poll(self.device, wgt::PollType::Poll)
             .is_ok()
+    }
+
+    /// Runs `f` while no [`poll`](Self::poll) runs. A poll on the pool thread maps buffers, and it frees every mapping when it finds the device lost.
+    pub fn exclusive<R>(&self, f: impl FnOnce() -> R) -> R {
+        let _exclusive = self.poll_lock.lock();
+        f()
     }
 }
 
 impl Drop for Device {
     fn drop(&mut self) {
-        let global = instance();
-        global.queue_drop(self.queue);
-        global.device_drop(self.device);
+        let (device, queue) = (self.device, self.queue);
+        if let Some(live) = DEVICES.lock().iter_mut().find(|live| live.id == device) {
+            live.releasing = true;
+        }
+        // Not here: this is the JS thread, often inside a finalizer, and the wait can be long.
+        let spawned = std::thread::Builder::new()
+            .name(String::from("bun-webgpu-release"))
+            .spawn(move || release_device(device, queue));
+        if spawned.is_err() {
+            release_device(device, queue);
+        }
     }
 }
 

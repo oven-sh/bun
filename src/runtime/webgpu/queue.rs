@@ -5,7 +5,6 @@ use std::sync::Arc;
 
 use bun_jsc::{
     CallFrame, JSGlobalObject, JSPromiseStrong, JSValue, JsCell, JsClass, JsResult, JsThread,
-    Strong,
 };
 use bun_webgpu::{GpuError, instance};
 
@@ -27,17 +26,9 @@ struct WorkDone;
 
 impl Waiter for WorkDone {
     type Result = ();
-    /// The promise, and the `GPUQueue` it came from.
-    type Js = (JSPromiseStrong, Strong);
+    type Js = JSPromiseStrong;
 
-    fn settle(
-        _result: Option<()>,
-        (mut promise, queue): Self::Js,
-        cx: &JsThread<'_>,
-    ) -> JsResult<()> {
-        if let Some(queue) = queue.get().as_class_ref::<GPUQueue>() {
-            queue.device.deliver_loss(cx.global())?;
-        }
+    fn settle(_result: Option<()>, mut promise: Self::Js, cx: &JsThread<'_>) -> JsResult<()> {
         promise.resolve(cx.global(), JSValue::UNDEFINED)
     }
 }
@@ -79,7 +70,6 @@ impl GPUQueue {
         &self,
         global: &JSGlobalObject,
         _callframe: &CallFrame,
-        this_value: JSValue,
     ) -> JsResult<JSValue> {
         let promise = JSPromiseStrong::init(global);
         let value = promise.value();
@@ -91,12 +81,7 @@ impl GPUQueue {
                 Box::new(move || slot.fill(())),
             );
         }
-        wait::wait::<WorkDone>(
-            &self.device,
-            &global.js_thread(),
-            slot,
-            (promise, Strong::create(this_value, global)),
-        );
+        wait::wait::<WorkDone>(&self.device, &global.js_thread(), slot, promise);
         Ok(value)
     }
 

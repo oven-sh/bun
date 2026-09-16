@@ -25,6 +25,8 @@ pub struct GPUTexture {
     format: wgt::TextureFormat,
     usage: u32,
     destroyed: Cell<bool>,
+    /// Creation failed validation: there is no GPU memory behind it.
+    invalid: bool,
 }
 
 super::gpu_object!(GPUTexture, label);
@@ -75,19 +77,21 @@ impl GPUTexture {
             usage: wgt::TextureUsages::from_bits_truncate(usage & ALL_USAGES),
             view_formats,
         };
-        let raw = if usage & !ALL_USAGES != 0 {
+        let (raw, invalid) = if usage & !ALL_USAGES != 0 {
             device.report(
                 global,
                 GpuError::validation(format!(
                     "createTexture: usage 0x{usage:x} has bits that are not a GPUTextureUsage"
                 )),
             )?;
-            bun_webgpu::Texture::new(instance().create_texture_error(device.id(), None, &desc))
+            let id = instance().create_texture_error(device.id(), None, &desc);
+            (bun_webgpu::Texture::new(id), true)
         } else {
             let (id, err) = instance().device_create_texture(device.id(), &desc, None);
             let raw = bun_webgpu::Texture::new(id);
+            let invalid = err.is_some();
             device.check(global, err)?;
-            raw
+            (raw, invalid)
         };
         Ok(GPUTexture {
             device: Rc::clone(device),
@@ -100,6 +104,7 @@ impl GPUTexture {
             format,
             usage,
             destroyed: Cell::new(false),
+            invalid,
         }
         .to_js(global))
     }
@@ -153,6 +158,11 @@ impl GPUTexture {
             // wgpu-core hands out an invalid view only from a failed creation: ask for a mip level no texture has.
             desc.range.base_mip_level = u32::MAX;
         }
+        let resolvable = self.is_resolvable()
+            && matches!(
+                desc.dimension,
+                None | Some(wgt::TextureViewDimension::D2 | wgt::TextureViewDimension::D2Array)
+            );
         let (id, err) = instance().texture_create_view(self.raw.id(), &desc, None);
         let raw = Rc::new(bun_webgpu::TextureView::new(id));
         if !unknown_usage {
@@ -161,6 +171,7 @@ impl GPUTexture {
         Ok(GPUTextureView {
             raw,
             label: JsCell::new(label),
+            resolvable,
         }
         .to_js(global))
     }
@@ -176,8 +187,16 @@ impl GPUTexture {
         Ok(JSValue::UNDEFINED)
     }
 
+    /// Whether the default view can be a `resolveTarget`: only a 2d texture has 2d views.
+    pub(crate) fn is_resolvable(&self) -> bool {
+        self.dimension == wgt::TextureDimension::D2
+    }
+
     /// A rough figure for the collector: 4 bytes per texel, plus a third for the mip chain.
     pub(crate) fn estimated_size(&self) -> usize {
+        if self.invalid {
+            return core::mem::size_of::<Self>();
+        }
         let texels = u64::from(self.size.width)
             .saturating_mul(u64::from(self.size.height))
             .saturating_mul(u64::from(self.size.depth_or_array_layers))
@@ -228,10 +247,18 @@ impl GPUTexture {
 pub struct GPUTextureView {
     raw: Rc<bun_webgpu::TextureView>,
     label: JsCell<bun_core::String>,
+    /// A 2d or 2d-array view. wgpu-core 30 panics on any other dimension as a `resolveTarget`.
+    resolvable: bool,
 }
 
 super::gpu_object!(GPUTextureView, label);
 super::resource!(GPUTextureView, bun_webgpu::TextureView);
+
+impl GPUTextureView {
+    pub(crate) fn is_resolvable(&self) -> bool {
+        self.resolvable
+    }
+}
 
 #[bun_jsc::JsClass]
 pub struct GPUSampler {

@@ -143,13 +143,24 @@ pub(crate) struct Held {
 impl Held {
     /// The id of the `T` wrapper `v`, or `None` if `v` is something else.
     pub(crate) fn try_id<T: Resource>(&mut self, v: JSValue) -> Option<<T::Raw as OwnedId>::Id> {
-        let handle = Rc::clone(v.as_class_ref::<T>()?.handle());
+        self.try_read::<T, ()>(v, |_| ()).map(|(id, ())| id)
+    }
+
+    /// [`try_id`](Self::try_id), plus what `read` takes from the wrapper while it is known to be alive.
+    pub(crate) fn try_read<T: Resource, R>(
+        &mut self,
+        v: JSValue,
+        read: impl FnOnce(&T) -> R,
+    ) -> Option<(<T::Raw as OwnedId>::Id, R)> {
+        let wrapper = v.as_class_ref::<T>()?;
+        let handle = Rc::clone(wrapper.handle());
+        let read = read(wrapper);
         let id = handle.id();
         match self.first {
             None => self.first = Some(handle),
             Some(_) => self.rest.push(handle),
         }
-        Some(id)
+        Some((id, read))
     }
 
     /// An interface type: `v` has to be a `T` wrapper.
@@ -171,6 +182,46 @@ impl Held {
         self.rest.extend(other.first);
         self.rest.extend(other.rest);
     }
+}
+
+/// `Some(index)` if `key` spells an array index. JSC stores such a property by index, and a lookup by name does not find it.
+fn array_index(key: &[u8]) -> Option<u32> {
+    let canonical = matches!(key, [b'0'] | [b'1'..=b'9', ..]) && key.len() <= 10;
+    if !canonical || !key.iter().all(u8::is_ascii_digit) {
+        return None;
+    }
+    let index = key
+        .iter()
+        .fold(0u64, |n, digit| n * 10 + u64::from(digit - b'0'));
+    u32::try_from(index).ok().filter(|i| *i != u32::MAX)
+}
+
+/// Runs `f(key, value)` on each entry of a WebIDL `record`: its own enumerable string keys, in order. `f` returns `false` to stop.
+pub(crate) fn for_each_entry<F>(
+    global: &JSGlobalObject,
+    record: JSValue,
+    what: &str,
+    mut f: F,
+) -> JsResult<()>
+where
+    F: FnMut(&[u8], JSValue) -> JsResult<bool>,
+{
+    if !record.is_object() {
+        return Err(global.throw_type_error(format_args!("{what}: expected an object")));
+    }
+    let keys = record.keys(global)?;
+    let mut iter = keys.array_iterator(global)?;
+    while let Some(key) = iter.next()? {
+        let name = to_utf8(global, key)?;
+        let value = match array_index(&name) {
+            Some(index) => record.get_index(global, index)?,
+            None => record.get(global, &*name)?.unwrap_or(JSValue::UNDEFINED),
+        };
+        if !f(&name, value)? {
+            break;
+        }
+    }
+    Ok(())
 }
 
 /// Runs `f` on each element of a WebIDL `sequence<T>`: an array or any other iterable.

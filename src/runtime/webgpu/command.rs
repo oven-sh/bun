@@ -15,6 +15,8 @@ pub struct GPUCommandEncoder {
     device: DeviceRef,
     raw: bun_webgpu::CommandEncoder,
     label: JsCell<bun_core::String>,
+    /// A pass descriptor error found here and not by wgpu-core. `finish()` reports it in place of wgpu-core's.
+    invalid: JsCell<Option<String>>,
 }
 
 super::gpu_object!(GPUCommandEncoder, label);
@@ -37,6 +39,7 @@ impl GPUCommandEncoder {
             device: Rc::clone(device),
             raw,
             label: JsCell::new(label),
+            invalid: JsCell::new(None),
         }
         .to_js(global))
     }
@@ -54,7 +57,16 @@ impl GPUCommandEncoder {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        GPURenderPassEncoder::begin(global, &self.device, self.raw.id(), callframe.argument(0))
+        let (pass, invalid) = GPURenderPassEncoder::begin(
+            global,
+            &self.device,
+            self.raw.id(),
+            callframe.argument(0),
+        )?;
+        if let Some(message) = invalid {
+            self.invalid.with_mut(|first| first.get_or_insert(message).len());
+        }
+        Ok(pass)
     }
 
     /// `copyBufferToBuffer(src, dst, size?)` or `(src, srcOffset, dst, dstOffset, size?)`.
@@ -282,7 +294,9 @@ impl GPUCommandEncoder {
         };
         let (id, err) = instance().command_encoder_finish(self.raw.id(), &desc, None);
         let raw = Rc::new(bun_webgpu::CommandBuffer::new(id));
-        if let Some((_, err)) = err {
+        if let Some(message) = self.invalid.take() {
+            self.device.report(global, GpuError::validation(message))?;
+        } else if let Some((_, err)) = err {
             self.device.report(global, GpuError::from_wgpu(&err))?;
         }
         Ok(GPUCommandBuffer {

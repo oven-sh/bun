@@ -146,7 +146,9 @@ fn deliver(device: &DeviceRef, failed: bool, cx: &JsThread<'_>) -> JsResult<()> 
             result = settled;
         }
     }
-    result
+    // Last: resolving `lost` can run script (a `then` getter on Object.prototype).
+    let delivered = device.deliver_loss(cx.global());
+    result.and(delivered)
 }
 
 struct Poller;

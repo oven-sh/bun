@@ -1755,6 +1755,7 @@ version = "0.0.0"
 dependencies = [
  "bun_core",
  "bun_sys",
+ "bun_threading",
  "wgpu-core",
  "wgpu-types",
 ]

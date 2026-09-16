@@ -186,8 +186,9 @@ public:
     ExceptionOr<void> close(std::optional<unsigned short> code, const String& reason);
     ExceptionOr<void> terminate();
     // Receive-side flow control (non-standard; mirrors Bun.Socket). pause()
-    // stops kernel reads so TCP backpressure reaches the peer; frames already
-    // decoded still dispatch. Before OPEN it latches and applies on connect.
+    // stops kernel reads so TCP backpressure reaches the peer; the client
+    // holds the bytes it already read and parses them after resume(). Before
+    // OPEN it latches and applies on connect.
     bool pause();
     bool resume();
     bool isPaused() const { return m_paused; }

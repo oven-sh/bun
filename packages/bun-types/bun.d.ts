@@ -5130,15 +5130,20 @@ declare module "bun" {
 
     /**
      * Stops reading from the underlying socket, so the peer sees TCP
-     * backpressure instead of the client buffering in memory. Messages
-     * already received may still be dispatched. A pause before the
-     * connection opens takes effect once it does.
+     * backpressure instead of the client buffering in memory. No `message`,
+     * `ping`, or `pong` event fires after this returns, until `resume()`.
+     * Data that was already read (at most one socket read) waits in memory.
+     * A pause before the connection opens takes effect once it does.
+     *
+     * A paused client does not answer pings, and does not see a Close frame
+     * or the end of the connection until `resume()`.
      * @returns `true` if the socket was paused (or will be on open), `false` if there is no socket to pause
      */
     pause(): boolean;
 
     /**
-     * Resumes reading from the underlying socket after `pause()`.
+     * Resumes reading from the underlying socket after `pause()`. Data that
+     * waited in memory is delivered first, in a microtask.
      * @returns `true` if the socket was resumed (or will be on open), `false` if there is no socket to resume
      */
     resume(): boolean;

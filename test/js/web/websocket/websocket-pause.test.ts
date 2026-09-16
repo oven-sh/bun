@@ -1,7 +1,10 @@
 import { describe, expect, it } from "bun:test";
 import { tls } from "harness";
+import { createHash } from "node:crypto";
 import net from "node:net";
 import nodeTls from "node:tls";
+import { constants as zlibConstants, deflateRawSync } from "node:zlib";
+import { WebSocket as WsWebSocket } from "ws";
 
 const CHUNK = new Uint8Array(64 * 1024);
 const TOTAL = 4096; // 256 MiB, far past any socket/TLS buffer
@@ -311,7 +314,292 @@ describe("WebSocket.pause() before open", () => {
   });
 });
 
+// One unmasked server-to-client frame.
+function frame(payload: string | Uint8Array, { opcode = 1, rsv1 = false } = {}): Buffer {
+  const body = Buffer.from(payload);
+  const header =
+    body.length < 126
+      ? Buffer.from([0x80 | (rsv1 ? 0x40 : 0) | opcode, body.length])
+      : Buffer.from([0x80 | (rsv1 ? 0x40 : 0) | opcode, 126, body.length >> 8, body.length & 0xff]);
+  return Buffer.concat([header, body]);
+}
+
+// One permessage-deflate message (RFC 7692 7.2.1: a sync flush without its 00 00 ff ff tail).
+function compressedFrame(payload: string): Buffer {
+  const deflated = deflateRawSync(payload, { finishFlush: zlibConstants.Z_SYNC_FLUSH });
+  return frame(deflated.subarray(0, -4), { rsv1: true });
+}
+
+function closeFrame(code: number): Buffer {
+  return frame(Buffer.from([code >> 8, code & 0xff]), { opcode: 8 });
+}
+
+// A peer that writes raw frames, so a test decides which bytes share one
+// write. One small write is one TCP segment (or one TLS record), and so one
+// read in the client. `withResponse` goes out in the same write as the 101.
+// After that, each chunk from the client triggers the next entry of `writes`.
+async function rawPeer(
+  secure: boolean,
+  {
+    deflate = false,
+    withResponse = [],
+    writes = [],
+  }: { deflate?: boolean; withResponse?: Buffer[]; writes?: Buffer[] },
+) {
+  const sockets = new Set<net.Socket>();
+  function onConnection(socket: net.Socket) {
+    sockets.add(socket);
+    socket.on("error", () => {});
+    const pending = [...writes];
+    let request: string | undefined = "";
+    socket.on("data", chunk => {
+      if (request === undefined) {
+        const next = pending.shift();
+        if (next) socket.write(next);
+        return;
+      }
+      request += chunk.toString("latin1");
+      if (!request.includes("\r\n\r\n")) return;
+      const key = /sec-websocket-key: (.*)\r\n/i.exec(request)![1];
+      request = undefined;
+      const accept = createHash("sha1")
+        .update(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
+        .digest("base64");
+      const response =
+        "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
+        `Sec-WebSocket-Accept: ${accept}\r\n` +
+        (deflate
+          ? "Sec-WebSocket-Extensions: permessage-deflate; server_no_context_takeover; client_no_context_takeover\r\n"
+          : "") +
+        "\r\n";
+      socket.write(Buffer.concat([Buffer.from(response), ...withResponse]));
+    });
+  }
+  const server = secure
+    ? nodeTls.createServer({ key: tls.key, cert: tls.cert }, onConnection)
+    : net.createServer(onConnection);
+  const port = await new Promise<number>(resolve =>
+    server.listen(0, "127.0.0.1", () => resolve((server.address() as net.AddressInfo).port)),
+  );
+  return {
+    url: `${secure ? "wss" : "ws"}://127.0.0.1:${port}`,
+    [Symbol.dispose]() {
+      server.close();
+      for (const socket of sockets) socket.destroy();
+    },
+  };
+}
+
+function echoServer() {
+  return Bun.serve({
+    port: 0,
+    fetch(req, server) {
+      if (server.upgrade(req)) return;
+      return new Response();
+    },
+    websocket: {
+      message(ws, message) {
+        ws.send(message);
+      },
+    },
+  });
+}
+
+// The handler pauses on every message. So each resume() must deliver exactly
+// the next message of `expected`, and nothing may arrive in between.
+async function expectOneMessagePerResume(ws: WebSocket, clock: WebSocket, expected: string[], start: () => void) {
+  const received: string[] = [];
+  let next = Promise.withResolvers<void>();
+  ws.onmessage = ({ data }) => {
+    received.push(data);
+    ws.pause();
+    next.resolve();
+  };
+  start();
+  for (let i = 1; i <= expected.length; i++) {
+    await next.promise;
+    await ioRoundtrips(clock, 3);
+    expect({ received, isPaused: ws.isPaused }).toEqual({ received: expected.slice(0, i), isPaused: true });
+    next = Promise.withResolvers();
+    ws.resume();
+  }
+}
+
+describe.each([false, true])("WebSocket.pause() holds data that was already read (tls: %p)", secure => {
+  const options = { tls: { rejectUnauthorized: false } };
+  const MESSAGES = ["m1", "m2", "m3", "m4", "m5"];
+
+  it.each(["while CONNECTING", "inside onopen"])(
+    "a pause %s holds the frames that arrive with the 101",
+    async where => {
+      using peer = await rawPeer(secure, { withResponse: MESSAGES.map(m => frame(m)) });
+      using echo = echoServer();
+
+      const ws = new WebSocket(peer.url, options);
+      const received: string[] = [];
+      const { promise: done, resolve: resolveDone } = Promise.withResolvers<void>();
+      ws.onmessage = ({ data }) => {
+        received.push(data);
+        if (received.length === MESSAGES.length) resolveDone();
+      };
+      if (where === "while CONNECTING") expect(ws.pause()).toBe(true);
+      await new Promise<void>(resolve => {
+        ws.onopen = () => {
+          if (where === "inside onopen") ws.pause();
+          resolve();
+        };
+      });
+      const clock = new WebSocket(`ws://localhost:${echo.port}`);
+      await open(clock);
+
+      await ioRoundtrips(clock, 5);
+      expect({ received, isPaused: ws.isPaused }).toEqual({ received: [], isPaused: true });
+
+      expect(ws.resume()).toBe(true);
+      await done;
+      expect(received).toEqual(MESSAGES);
+      ws.close();
+      clock.close();
+    },
+  );
+
+  it("pause() inside onmessage holds the rest of the read, and a Close frame behind it", async () => {
+    using peer = await rawPeer(secure, {
+      writes: [Buffer.concat([...MESSAGES.map(m => frame(m)), closeFrame(1000)])],
+    });
+    using echo = echoServer();
+
+    const ws = new WebSocket(peer.url, options);
+    const closed = new Promise<CloseEvent>(resolve => (ws.onclose = resolve));
+    await open(ws);
+    const clock = new WebSocket(`ws://localhost:${echo.port}`);
+    await open(clock);
+
+    await expectOneMessagePerResume(ws, clock, MESSAGES, () => ws.send("go"));
+    // The last resume() reached the Close frame.
+    const { code, wasClean } = await closed;
+    expect({ code, wasClean }).toEqual({ code: 1000, wasClean: true });
+    clock.close();
+  });
+
+  it("pause() inside onmessage holds compressed messages", async () => {
+    // Each message inflates to 64 KiB. The five of them are one small write.
+    const messages = MESSAGES.map(m => Buffer.alloc(64 * 1024, m).toString());
+    using peer = await rawPeer(secure, {
+      deflate: true,
+      writes: [Buffer.concat(messages.map(compressedFrame))],
+    });
+    using echo = echoServer();
+
+    const ws = new WebSocket(peer.url, options);
+    await open(ws);
+    expect(ws.extensions).toContain("permessage-deflate");
+    const clock = new WebSocket(`ws://localhost:${echo.port}`);
+    await open(clock);
+
+    await expectOneMessagePerResume(ws, clock, messages, () => ws.send("go"));
+    ws.close();
+    clock.close();
+  });
+
+  it("a frame can start in the held bytes and end in the next read", async () => {
+    const m3 = frame("m3 is split");
+    using peer = await rawPeer(secure, {
+      writes: [
+        Buffer.concat([frame("m1"), frame("m2"), m3.subarray(0, 5)]),
+        Buffer.concat([m3.subarray(5), frame("m4")]),
+      ],
+    });
+    using echo = echoServer();
+
+    const ws = new WebSocket(peer.url, options);
+    await open(ws);
+    const clock = new WebSocket(`ws://localhost:${echo.port}`);
+    await open(clock);
+
+    await expectOneMessagePerResume(ws, clock, ["m1", "m2"], () => ws.send("first write"));
+    await expectOneMessagePerResume(ws, clock, ["m3 is split", "m4"], () => ws.send("second write"));
+    ws.close();
+    clock.close();
+  });
+
+  it("pause() then resume() in one handler keeps the messages coming", async () => {
+    using peer = await rawPeer(secure, { writes: [Buffer.concat(MESSAGES.map(m => frame(m)))] });
+
+    const ws = new WebSocket(peer.url, options);
+    const received: string[] = [];
+    const { promise: done, resolve: resolveDone } = Promise.withResolvers<void>();
+    ws.onmessage = ({ data }) => {
+      received.push(data);
+      ws.pause();
+      ws.resume();
+      if (received.length === MESSAGES.length) resolveDone();
+    };
+    await open(ws);
+    ws.send("go");
+    await done;
+    expect(received).toEqual(MESSAGES);
+    ws.close();
+  });
+
+  it("close() while paused drops the held messages", async () => {
+    using peer = await rawPeer(secure, { writes: [Buffer.concat(MESSAGES.map(m => frame(m)))] });
+    using echo = echoServer();
+
+    const ws = new WebSocket(peer.url, options);
+    const received: string[] = [];
+    const { promise: paused, resolve: resolvePaused } = Promise.withResolvers<void>();
+    ws.onmessage = ({ data }) => {
+      received.push(data);
+      ws.pause();
+      resolvePaused();
+    };
+    await open(ws);
+    const clock = new WebSocket(`ws://localhost:${echo.port}`);
+    await open(clock);
+    ws.send("go");
+    await paused;
+    // Let the read that carried the five frames end, so that four of them are held.
+    await ioRoundtrips(clock, 2);
+
+    const closed = new Promise<CloseEvent>(resolve => (ws.onclose = resolve));
+    ws.close(1000);
+    expect((await closed).code).toBe(1000);
+    expect(received).toEqual(["m1"]);
+    clock.close();
+  });
+});
+
 describe("ws package", () => {
+  it("pause() inside a message handler holds the rest of the read", async () => {
+    const MESSAGES = ["m1", "m2", "m3"];
+    using peer = await rawPeer(false, { writes: [Buffer.concat(MESSAGES.map(m => frame(m)))] });
+    using echo = echoServer();
+
+    const ws = new WsWebSocket(peer.url);
+    const received: string[] = [];
+    let next = Promise.withResolvers<void>();
+    ws.on("message", data => {
+      received.push(String(data));
+      ws.pause();
+      next.resolve();
+    });
+    await new Promise(resolve => ws.once("open", resolve));
+    const clock = new WebSocket(`ws://localhost:${echo.port}`);
+    await open(clock);
+
+    ws.send("go");
+    for (let i = 1; i <= MESSAGES.length; i++) {
+      await next.promise;
+      await ioRoundtrips(clock, 3);
+      expect({ received, isPaused: ws.isPaused }).toEqual({ received: MESSAGES.slice(0, i), isPaused: true });
+      next = Promise.withResolvers();
+      ws.resume();
+    }
+    ws.close();
+    clock.close();
+  });
+
   it("pause()/resume()/isPaused reach the socket", async () => {
     const { WebSocket: WS } = await import("ws");
     const signals = newSignals();

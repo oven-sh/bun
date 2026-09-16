@@ -354,7 +354,11 @@ socket.addEventListener("message", event => {
 });
 ```
 
-`pause()` and `resume()` return `true` when they took effect (or will, once a connecting socket opens) and `false` when there is no socket to act on; `socket.isPaused` reports the current state. Messages already decoded when `pause()` is called may still be delivered. The `ws` package's `pause()`, `resume()`, and `isPaused` map to the same methods.
+`pause()` and `resume()` return `true` when they took effect (or will, once a connecting socket opens) and `false` when there is no socket to act on; `socket.isPaused` reports the current state. The `ws` package's `pause()`, `resume()`, and `isPaused` map to the same methods.
+
+`pause()` takes effect at once, also from inside a `message` handler: Bun parses no more frames until `resume()`, so no `message`, `ping`, or `pong` event fires. Data that was already read from the socket (at most one read, 512 KB) stays in memory and is delivered after `resume()`.
+
+A paused client reads nothing. It does not answer pings, and it does not see a Close frame or the end of the connection until `resume()`. A connection reset still closes it. A server that uses pings to find dead connections can drop a client that stays paused.
 
 ---
 

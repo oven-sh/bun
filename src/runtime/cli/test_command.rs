@@ -2,6 +2,7 @@ use bun_io::Write as _;
 
 use crate::cli::Command;
 use crate::cli::test::changed_files_filter as ChangedFilesFilter;
+use crate::cli::test::new_test_file_watch::NewTestFileWatch;
 use crate::cli::test::parallel_runner as ParallelRunner;
 use crate::cli::test::scanner::{self, Scanner};
 use crate::cli::test::timings::Timings;
@@ -2171,6 +2172,20 @@ impl TestCommand {
         // so the watcher-enable check below can read it without reborrowing.
         let all_test_files_count = all_test_files.len();
         let search_count = scanner.search_count;
+        let new_test_file_watch = (ctx.debug.hot_reload == jsc::virtual_machine::HotReload::Watch)
+            .then(|| {
+                NewTestFileWatch::init(
+                    if has_relative_path {
+                        &[]
+                    } else {
+                        ctx.positionals.get(1..).unwrap_or_default()
+                    },
+                    &ctx.test_options.path_ignore_patterns,
+                    &vm.transpiler.options.loaders,
+                    core::mem::take(&mut scanner.roots),
+                    &all_test_files,
+                )
+            });
         drop(scanner);
 
         // When --changed or --shard filters the discovered test files
@@ -2379,6 +2394,11 @@ impl TestCommand {
             for path in &changed_module_graph_files {
                 let _ = watcher.add_file_by_path_slow(path);
             }
+        }
+
+        // After runAllTests, like the seeding above: the files the run loaded get their watches first.
+        if let Some(new_test_file_watch) = new_test_file_watch {
+            new_test_file_watch.start(vm);
         }
 
         let write_snapshots_success = jest::Jest::runner()

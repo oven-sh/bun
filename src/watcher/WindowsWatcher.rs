@@ -436,7 +436,7 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
                 // block so the borrows of `this.watchlist` / `this.platform.buf`
                 // are released before we touch `this.watch_events` or hand the
                 // whole `&mut Watcher` to `process_watch_event_batch`.
-                let rel = {
+                let (rel, holds_entry) = {
                     let eventpath = &this.platform.buf[..eventpath_len];
                     let path = &this.watchlist.items_file_path()[item_idx];
                     let rel = is_parent_or_equal(path.as_ref(), eventpath);
@@ -450,7 +450,12 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
                             ParentEqual::Unrelated => "unrelated",
                         }
                     );
-                    rel
+                    // The entry is directly in this directory, not in one below it.
+                    let holds_entry = rel == ParentEqual::Parent && {
+                        let dir_len = strings::trim_right(path.as_ref(), b"/\\").len();
+                        strings::index_of_any(&eventpath[dir_len + 1..], b"/\\").is_none()
+                    };
+                    (rel, holds_entry)
                 };
                 // skip unrelated items
                 if rel == ParentEqual::Unrelated {
@@ -475,7 +480,7 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
                 }
 
                 this.watch_events[event_id] =
-                    create_watch_event(&event, item_idx as WatchItemIndex);
+                    create_watch_event(&event, item_idx as WatchItemIndex, holds_entry);
                 event_id += 1;
             }
         }
@@ -528,7 +533,8 @@ fn process_watch_event_batch(this: &mut Watcher, event_count: usize) -> bun_sys:
     Ok(())
 }
 
-fn create_watch_event(event: &FileEvent, index: WatchItemIndex) -> WatchEvent {
+/// `holds_entry`: the watch item is the directory that directly holds the entry the event names.
+fn create_watch_event(event: &FileEvent, index: WatchItemIndex, holds_entry: bool) -> WatchEvent {
     let mut op = Op::empty();
     if event.action == Action::Removed {
         op |= Op::DELETE;
@@ -538,6 +544,12 @@ fn create_watch_event(event: &FileEvent, index: WatchItemIndex) -> WatchEvent {
     }
     if event.action == Action::Modified {
         op |= Op::WRITE;
+    }
+    if holds_entry && event.action == Action::Added {
+        op |= Op::CREATE;
+    }
+    if holds_entry && event.action == Action::RenamedNew {
+        op |= Op::MOVE_TO;
     }
     WatchEvent {
         op,

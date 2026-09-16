@@ -2092,3 +2092,134 @@ describe.concurrent("test file discovery (scanner)", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+// https://github.com/oven-sh/bun/issues/8342
+describe.concurrent("--watch and a test file that is added later", () => {
+  const testFile = (name: string) => `import { test } from "bun:test"; test("${name}", () => {});`;
+
+  function watchTests(prefix: string, files: Record<string, string>, args: string[] = []) {
+    const dir = tempDirWithFiles(prefix, files);
+    const proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--watch", "--no-clear-screen", ...args],
+      env: bunEnv,
+      cwd: dir,
+      stdout: "ignore",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const reader = proc.stderr.getReader();
+    const decoder = new TextDecoder();
+    let output = "";
+    return {
+      dir,
+      // Every run of the watched process appends to the same stream, so a
+      // summary that counts the added file can only come from a later run.
+      async waitFor(needle: string | RegExp): Promise<string> {
+        for (;;) {
+          const found = typeof needle === "string" ? (output.includes(needle) ? needle : null) : output.match(needle);
+          if (found) return typeof found === "string" ? found : found[0];
+          const { value, done } = await reader.read();
+          if (done) throw new Error(`bun test --watch exited before it printed ${needle}\n${output}`);
+          output += decoder.decode(value, { stream: true });
+        }
+      },
+      // On Windows the watcher records nothing until its thread issues the first
+      // ReadDirectoryChangesW (#40017), so an entry that is added right after the first
+      // run can go unreported there. Any later entry in `inDir` makes bun read `inDir` again.
+      async waitForRerun(inDir: string, summary: string) {
+        let ticks = 0;
+        const tick = isWindows
+          ? setInterval(() => writeFileSync(join(inDir, `tick-${ticks++}.txt`), ""), 100)
+          : undefined;
+        try {
+          await this.waitFor(summary);
+        } finally {
+          clearInterval(tick);
+        }
+      },
+      async [Symbol.asyncDispose]() {
+        proc.kill("SIGKILL");
+        await proc.exited;
+        // On Windows the process that runs the tests is a child of the one killed above. It
+        // keeps the directory busy until the job object ends it, a moment later.
+        for (;;) {
+          try {
+            rmSync(dir, { recursive: true, force: true });
+            return;
+          } catch (e: any) {
+            if (!isWindows || !["EBUSY", "EPERM", "ENOTEMPTY"].includes(e?.code)) throw e;
+          }
+          await Bun.sleep(50);
+        }
+      },
+    };
+  }
+
+  test("runs it next to a test file that ran", async () => {
+    await using watcher = watchTests("watch-new-test-file-sibling", { "a.test.ts": testFile("a") });
+
+    await watcher.waitFor("Ran 1 test across 1 file.");
+    writeFileSync(join(watcher.dir, "b.test.ts"), testFile("b"));
+    await watcher.waitForRerun(watcher.dir, "Ran 2 tests across 2 files.");
+  });
+
+  test("runs it in a directory that no run loaded a file from", async () => {
+    await using watcher = watchTests("watch-new-test-file-unloaded-dir", {
+      "a.test.ts": testFile("a"),
+      "lib/deep/not-imported.ts": `export {};`,
+    });
+
+    await watcher.waitFor("Ran 1 test across 1 file.");
+    writeFileSync(join(watcher.dir, "lib", "deep", "b.spec.tsx"), testFile("b"));
+    await watcher.waitForRerun(join(watcher.dir, "lib", "deep"), "Ran 2 tests across 2 files.");
+  });
+
+  test("runs it in a directory that is created with it", async () => {
+    await using watcher = watchTests("watch-new-test-file-new-dir", { "a.test.ts": testFile("a") });
+
+    await watcher.waitFor("Ran 1 test across 1 file.");
+    mkdirSync(join(watcher.dir, "new", "deeper"), { recursive: true });
+    writeFileSync(join(watcher.dir, "new", "deeper", "b_test.js"), testFile("b"));
+    await watcher.waitForRerun(watcher.dir, "Ran 2 tests across 2 files.");
+  });
+
+  // Only a file that is added after a run may start the next run. A file that was there
+  // already must not, or the process reloads forever. Each run counts itself in runs.txt.
+  // It reports once the event loop is idle, which a reload right after the run never is.
+  const reportsWhenIdle = `
+    import { existsSync, readFileSync, writeFileSync } from "node:fs";
+    const run = Number(existsSync("runs.txt") ? readFileSync("runs.txt", "utf8") : 0) + 1;
+    writeFileSync("runs.txt", String(run));
+    const timer = setInterval(() => {
+      if (!existsSync("sentinel.txt")) return;
+      clearInterval(timer);
+      console.error("IDLE after run " + run);
+    }, 10);
+  `;
+
+  test("stays idle when the scan missed a test file", async () => {
+    // With these arguments the scan does not find root.test.ts.
+    await using watcher = watchTests(
+      "watch-new-test-file-scan-miss",
+      { "root.test.ts": testFile("root"), "sub/a.test.ts": reportsWhenIdle + testFile("a") },
+      ["./sub", "./"],
+    );
+
+    await watcher.waitFor(/Ran \d+ tests? across \d+ files?\./);
+    writeFileSync(join(watcher.dir, "sentinel.txt"), "");
+    expect(await watcher.waitFor(/IDLE after run \d+/)).toBe("IDLE after run 1");
+  });
+
+  test("stays idle when each run writes a new test file", async () => {
+    await using watcher = watchTests("watch-new-test-file-self-written", {
+      "gen.test.ts":
+        reportsWhenIdle +
+        `writeFileSync("fresh-" + run + ".spec.js", ${JSON.stringify(testFile("fresh"))});` +
+        testFile("gen"),
+    });
+
+    await watcher.waitFor("Ran 1 test across 1 file.");
+    writeFileSync(join(watcher.dir, "sentinel.txt"), "");
+    expect(await watcher.waitFor(/IDLE after run \d+/)).toBe("IDLE after run 1");
+  });
+});

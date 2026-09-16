@@ -272,6 +272,10 @@ pub mod test {
     #[path = "Scanner.rs"]
     pub mod scanner;
 
+    /// `bun test --watch`: run again when a test file is added.
+    #[path = "NewTestFileWatch.rs"]
+    pub mod new_test_file_watch;
+
     /// `bun test --changed`: git-diff → bundler module graph → reverse-import
     /// walk to filter test files.
     #[path = "ChangedFilesFilter.rs"]

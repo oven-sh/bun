@@ -514,6 +514,15 @@ impl WebSocketProxyTunnel {
             SocketUnion::None => false,
         }
     }
+
+    /// Arms the proxy connection's timeout. The upgrade client owns it and closes it on timeout.
+    pub(crate) fn set_timeout(&self, seconds: core::ffi::c_uint) {
+        match &self.socket {
+            SocketUnion::Tcp(s) => s.set_timeout(seconds),
+            SocketUnion::Ssl(s) => s.set_timeout(seconds),
+            SocketUnion::None => {}
+        }
+    }
 }
 
 // HOST_EXPORT(WebSocketProxyTunnel__setConnectedWebSocket, c)

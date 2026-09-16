@@ -222,22 +222,24 @@ describe.concurrent("fileSystemRouterTypes[n].root outside the project root", ()
   });
 
   // The message of a route syntax error starts in the column of the character it is about.
-  test.each([
+  describe.each([
     ["pages", "apps/api/pages"],
     ["../web/pages", "apps/web/pages"],
-  ])("a route syntax error under %s points at the bad character", async (root, prefix) => {
-    using dir = tempDir("fsr-root-error-column", {
-      ...serveFixture(root),
-      ...pages(prefix),
-      [`${prefix}/blog/[oops.ts`]: `export default () => new Response("");`,
+  ])("a route syntax error under %s", (root, prefix) => {
+    test("points at the bad character", async () => {
+      using dir = tempDir("fsr-root-error-column", {
+        ...serveFixture(root),
+        ...pages(prefix),
+        [`${prefix}/blog/[oops.ts`]: `export default () => new Response("");`,
+      });
+      const { stdout, stderr, exitCode } = await start(String(dir));
+      expect(stdout, stderr).toBe("/ 200 index\n/blog/hello-world 200 slug:hello-world\n");
+      const label = `${root}/blog/[oops.ts`;
+      const indent = Buffer.alloc(`error: "`.length + label.indexOf("["), " ").toString();
+      expect(stderr).toContain(`error: "${label}" is not a valid route\n`);
+      expect(stderr).toContain(`\n${indent}Missing "]" to match this route parameter\n`);
+      expect(exitCode).toBe(0);
     });
-    const { stdout, stderr, exitCode } = await start(String(dir));
-    expect(stdout, stderr).toBe("/ 200 index\n/blog/hello-world 200 slug:hello-world\n");
-    const label = `${root}/blog/[oops.ts`;
-    const indent = Buffer.alloc(`error: "`.length + label.indexOf("["), " ").toString();
-    expect(stderr).toContain(`error: "${label}" is not a valid route\n`);
-    expect(stderr).toContain(`\n${indent}Missing "]" to match this route parameter\n`);
-    expect(exitCode).toBe(0);
   });
 
   // Every segment of the project root becomes "../" in the label of a file outside it. The label can

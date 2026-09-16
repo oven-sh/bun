@@ -1,5 +1,6 @@
 import { socketFaultInjection as fault } from "bun:internal-for-testing";
 import { afterEach, describe, expect, test } from "bun:test";
+import { isWindows } from "harness";
 
 const skip = !fault.available();
 
@@ -108,11 +109,17 @@ describe.skipIf(skip)("socketFaultInjection control surface", () => {
     }
   });
 
-  // These have enum slots but no bsd.c hooks; arming them used to "succeed"
-  // and then never fire.
+  // A rule nothing checks would arm and then never fire. "socket" and "poll_slow"
+  // have their hooks in the Windows event loop backend only.
   test("set() rejects syscalls that have no fault hook", () => {
-    for (const sc of ["socket", "close", "shutdown"]) {
+    for (const sc of ["close", "shutdown", ...(isWindows ? [] : ["socket", "poll_slow"])]) {
       expect(() => fault.set({ syscall: sc as any, action: "none" })).toThrow(/rule\.syscall must be one of/);
+    }
+  });
+
+  test.skipIf(!isWindows)("rules can target the hooks of the Windows backend", () => {
+    for (const sc of ["socket", "poll_slow"]) {
+      expect(fault.set({ syscall: sc as any, action: "none" })).toBe(true);
     }
   });
 

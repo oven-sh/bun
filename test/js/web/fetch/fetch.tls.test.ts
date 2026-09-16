@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isASAN, isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, tempDir, tmpdirSync } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import tls from "node:tls";
@@ -1099,5 +1099,55 @@ describe.concurrent("fetch-tls", () => {
       expect(stderr).toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
       expect(stderr).toContain("ignoring extra certs");
     }
+  });
+
+  it("resolves a relative tls.caFile against the cwd at fetch() time", async () => {
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      tls: validTls,
+      fetch() {
+        return new Response("OK", { headers: { Connection: "close" } });
+      },
+    });
+    // Both directories hold a `ca.pem`. Only the one in `trusts-server`
+    // signs the server certificate.
+    using dir = tempDir("fetch-tls-cafile-cwd", {
+      "trusts-server/ca.pem": validTls.cert,
+      "other-ca/ca.pem": expiredTls.cert,
+    });
+    const script = `
+      async function attempt() {
+        try {
+          const res = await fetch(process.env.SERVER, { keepalive: false, tls: { caFile: "ca.pem" } });
+          return await res.text();
+        } catch (e) {
+          return e.code;
+        }
+      }
+      const out = [];
+      process.chdir(process.env.DIR_TRUSTED);
+      out.push(await attempt());
+      process.chdir(process.env.DIR_OTHER);
+      out.push(await attempt());
+      process.chdir(process.env.DIR_TRUSTED);
+      out.push(await attempt());
+      console.log(JSON.stringify(out));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: {
+        ...bunEnv,
+        SERVER: `https://127.0.0.1:${server.port}`,
+        DIR_TRUSTED: join(String(dir), "trusts-server"),
+        DIR_OTHER: join(String(dir), "other-ca"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout ? JSON.parse(stdout) : stderr).toEqual(["OK", "DEPTH_ZERO_SELF_SIGNED_CERT", "OK"]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
   });
 });

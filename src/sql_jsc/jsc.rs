@@ -151,6 +151,24 @@ pub(crate) fn create_bun_socket_error_to_js(
                 format_args!("Failed to set ECDH curve"),
             )
             .to_js(),
+        E::load_key_file => global
+            .err(
+                ErrorCode::BORINGSSL,
+                format_args!("Failed to load key file"),
+            )
+            .to_js(),
+        E::load_cert_file => global
+            .err(
+                ErrorCode::BORINGSSL,
+                format_args!("Failed to load certificate file"),
+            )
+            .to_js(),
+        E::load_dh_params_file => global
+            .err(
+                ErrorCode::BORINGSSL,
+                format_args!("Failed to load DH params file"),
+            )
+            .to_js(),
     }
 }
 

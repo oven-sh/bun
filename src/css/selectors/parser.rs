@@ -991,6 +991,14 @@ pub enum PseudoClass {
     /// The [:autofill](https://html.spec.whatwg.org/multipage/semantics-other.html#selector-autofill) pseudo class.
     Autofill(css::VendorPrefix),
 
+    /// The [:active-view-transition](https://drafts.csswg.org/css-view-transitions-2/#the-active-view-transition-pseudo) pseudo class.
+    ActiveViewTransition,
+    /// The [:active-view-transition-type()](https://drafts.csswg.org/css-view-transitions-2/#the-active-view-transition-type-pseudo) pseudo class.
+    ActiveViewTransitionType {
+        /// A list of view transition types.
+        types: Vec<CustomIdent>,
+    },
+
     // CSS modules
     /// The CSS modules :local() pseudo class.
     Local {
@@ -1363,6 +1371,10 @@ impl<'a> SelectorParser<'a> {
             b"dir" => PseudoClass::Dir {
                 direction: Direction::parse(parser)?,
             },
+            // https://drafts.csswg.org/css-view-transitions-2/#the-active-view-transition-type-pseudo
+            b"active-view-transition-type" => PseudoClass::ActiveViewTransitionType {
+                types: parser.parse_comma_separated(CustomIdent::parse)?,
+            },
             b"local" if self.options.css_modules.is_some() => PseudoClass::Local {
                 selector: Box::new(Selector::parse(self, parser)?),
             },
@@ -1514,6 +1526,8 @@ fn lookup_non_ts_pseudo_class(name: &[u8]) -> Option<PseudoClass> {
         b"autofill" => P::Autofill(VP::NONE),
         b"-webkit-autofill" => P::Autofill(VP::WEBKIT),
         b"-o-autofill" => P::Autofill(VP::O),
+        // https://drafts.csswg.org/css-view-transitions-2/#pseudo-classes-for-selective-vt
+        b"active-view-transition" => P::ActiveViewTransition,
         // https://webkit.org/blog/363/styling-scrollbars/
         b"horizontal" => P::WebkitScrollbar(WS::Horizontal),
         b"vertical" => P::WebkitScrollbar(WS::Vertical),

@@ -454,6 +454,65 @@ describe("css", () => {
     },
   });
 
+  // A view transition type is a name the page shares with script
+  // (`document.startViewTransition({ types })`). The exports object has only
+  // classes and ids, so JS could not get a hashed type. The idents in
+  // `:active-view-transition-type()` and in the `types` descriptor of
+  // `@view-transition` stay as written.
+  itBundled("css-module/ViewTransitionTypesNotScoped", {
+    files: {
+      "/entry.js": `
+        import styles from './styles.module.css';
+        console.log(styles);
+      `,
+      "/styles.module.css": `
+        .card:active-view-transition-type(slide-in, reverse) { color: red }
+        :root:active-view-transition-type(forwards) .card { color: green }
+        :root:active-view-transition .card { color: blue }
+        @view-transition { navigation: auto; types: slide-in forwards }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      const css = api.readFile("/out/entry.css");
+      const card = css.match(/\.card_([A-Za-z0-9_-]+):/);
+      expect(card, ".card should be scoped").not.toBeNull();
+      const hash = card![1];
+
+      expect(css).toEqualIgnoringWhitespace(`
+        /* styles.module.css */
+        .card_${hash}:active-view-transition-type(slide-in, reverse) {
+          color: red;
+        }
+
+        :root:active-view-transition-type(forwards) .card_${hash} {
+          color: green;
+        }
+
+        :root:active-view-transition .card_${hash} {
+          color: #00f;
+        }
+
+        @view-transition {
+          navigation: auto;
+          types: slide-in forwards;
+        }
+      `);
+
+      const js = api.readFile("/out/entry.js");
+      expect(js).toEqualIgnoringWhitespace(`
+        // styles.module.css
+        var styles_module_default = {
+          card: "card_${hash}"
+        };
+
+        // entry.js
+        console.log(styles_module_default);
+      `);
+    },
+  });
+
   // Values the grammar rejects stay untouched, so a future keyword or a
   // var() reference is not hashed as if it were a name.
   itBundled("css-module/ViewTransitionUnparsedValuesNotScoped", {

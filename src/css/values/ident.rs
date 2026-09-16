@@ -495,12 +495,21 @@ impl NoneOrCustomIdentList {
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+        self.to_css_with_options(dest, true)
+    }
+
+    /// Write the list to CSS. See [`CustomIdent::to_css_with_options`].
+    pub(crate) fn to_css_with_options(
+        &self,
+        dest: &mut Printer,
+        enabled_css_modules: bool,
+    ) -> Result<(), PrintErr> {
         match self {
             Self::None => dest.write_str(b"none"),
             Self::Idents(idents) => dest.write_separated(
                 idents.slice(),
                 |d| d.write_char(b' '),
-                |d, ident| ident.to_css(d),
+                |d, ident| ident.to_css_with_options(d, enabled_css_modules),
             ),
         }
     }

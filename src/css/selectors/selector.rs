@@ -1107,6 +1107,16 @@ pub(crate) mod serialize {
             // https://html.spec.whatwg.org/multipage/semantics-other.html#selector-autofill
             PseudoClass::Autofill(prefix) => write_prefixed(dest, *prefix, b"autofill")?,
 
+            // https://drafts.csswg.org/css-view-transitions-2/#pseudo-classes-for-selective-vt
+            PseudoClass::ActiveViewTransition => dest.write_str(b":active-view-transition")?,
+            PseudoClass::ActiveViewTransitionType { types } => {
+                dest.write_str(b":active-view-transition-type(")?;
+                // A view transition type is a name the page shares with script
+                // (`startViewTransition({ types })`), so a CSS module keeps it as written.
+                dest.write_comma_separated(types.iter(), |d, ty| ty.to_css_with_options(d, false))?;
+                dest.write_char(b')')?;
+            }
+
             PseudoClass::Local { selector } => serialize_selector(selector, dest, context, false)?,
             PseudoClass::Global { selector } => {
                 let css_module = dest.css_module.take();

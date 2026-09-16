@@ -5723,6 +5723,15 @@ describe("css tests", () => {
     minify_test("::slotted(:hover) {color: red}", "::slotted(:hover){color:red}");
 
     minify_test(":root::view-transition {position: fixed}", ":root::view-transition{position:fixed}");
+    minify_test(":root:active-view-transition {position: fixed}", ":root:active-view-transition{position:fixed}");
+    minify_test(
+      ":root:active-view-transition-type(slide-in) {position: fixed}",
+      ":root:active-view-transition-type(slide-in){position:fixed}",
+    );
+    minify_test(
+      ":root:active-view-transition-type(slide-in, reverse) {position: fixed}",
+      ":root:active-view-transition-type(slide-in,reverse){position:fixed}",
+    );
 
     for (const name of [
       "view-transition-group",
@@ -7691,6 +7700,19 @@ describe("css tests", () => {
     minify_test("@font-palette-values --x{override-colors:-1 red}", "@font-palette-values --x{override-colors:-1 red}");
     // Fuzzer-minimized input: unterminated block with an overflowing index.
     minify_test("@font-palette-values --{base-palette:99999", "@font-palette-values --{base-palette:99999}");
+  });
+
+  describe("view-transition", () => {
+    minify_test("@view-transition { navigation: auto }", "@view-transition{navigation:auto}");
+    minify_test("@view-transition { navigation: auto; types: none; }", "@view-transition{navigation:auto;types:none}");
+    minify_test(
+      "@view-transition { navigation: auto; types: foo bar; }",
+      "@view-transition{navigation:auto;types:foo bar}",
+    );
+    minify_test(
+      "@layer { @view-transition { navigation: auto; types: foo bar; } }",
+      "@layer{@view-transition{navigation:auto;types:foo bar}}",
+    );
   });
 
   describe("grid-template-areas", () => {

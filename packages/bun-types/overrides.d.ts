@@ -344,54 +344,67 @@ declare global {
   }
 }
 
+// @types/node declares each builtin under one name and re-exports it under the
+// other; which is which flipped in @types/node 25. Both are augmented so the
+// additions reach `"x"` and `"node:x"` on either layout.
+declare module "fs/promises" {
+  function exists(path: Bun.PathLike): Promise<boolean>;
+}
 declare module "node:fs/promises" {
   function exists(path: Bun.PathLike): Promise<boolean>;
 }
 
-declare module "node:tls" {
-  interface BunConnectionOptions extends Omit<ConnectionOptions, "key" | "ca" | "tls" | "cert"> {
-    /**
-     * Override the trusted CA certificates. The default is the list of
-     * well-known CAs curated by Mozilla; setting this option replaces
-     * that list entirely.
-     */
-    ca?: string | Buffer | NodeJS.TypedArray | Bun.BunFile | Array<string | Buffer | Bun.BunFile> | undefined;
-    /**
-     * Cert chains in PEM format. Provide one cert chain per private key.
-     * Each chain consists of the PEM certificate for its private key,
-     * followed by the PEM intermediate certificates (if any) in order,
-     * not including the root CA (the root CA must be pre-known to the
-     * peer, see `ca`). Multiple cert chains do not have to be in the
-     * same order as their private keys in `key`. Without the
-     * intermediate certificates, the peer cannot validate the
-     * certificate and the handshake fails.
-     */
-    cert?:
-      | string
-      | Buffer
-      | NodeJS.TypedArray
-      | Bun.BunFile
-      | Array<string | Buffer | NodeJS.TypedArray | Bun.BunFile>
-      | undefined;
-    /**
-     * Private keys in PEM format. PEM keys may be encrypted. Multiple
-     * keys using different algorithms can be provided either as an array
-     * of unencrypted key strings or buffers, or as an array of objects in
-     * the form `{pem: <string|buffer>[, passphrase: <string>]}`. The
-     * object form can only occur in an array, and `object.passphrase` is
-     * optional. Encrypted keys are decrypted with `object.passphrase` if
-     * provided, otherwise with `options.passphrase`.
-     */
-    key?:
-      | string
-      | Buffer
-      | Bun.BunFile
-      | NodeJS.TypedArray
-      | Array<string | Buffer | Bun.BunFile | NodeJS.TypedArray | KeyObject>
-      | undefined;
-  }
+interface BunTLSConnectionOptions extends Omit<import("node:tls").ConnectionOptions, "key" | "ca" | "tls" | "cert"> {
+  /**
+   * Override the trusted CA certificates. The default is the list of
+   * well-known CAs curated by Mozilla; setting this option replaces
+   * that list entirely.
+   */
+  ca?: string | Buffer | NodeJS.TypedArray | Bun.BunFile | Array<string | Buffer | Bun.BunFile> | undefined;
+  /**
+   * Cert chains in PEM format. Provide one cert chain per private key.
+   * Each chain consists of the PEM certificate for its private key,
+   * followed by the PEM intermediate certificates (if any) in order,
+   * not including the root CA (the root CA must be pre-known to the
+   * peer, see `ca`). Multiple cert chains do not have to be in the
+   * same order as their private keys in `key`. Without the
+   * intermediate certificates, the peer cannot validate the
+   * certificate and the handshake fails.
+   */
+  cert?:
+    | string
+    | Buffer
+    | NodeJS.TypedArray
+    | Bun.BunFile
+    | Array<string | Buffer | NodeJS.TypedArray | Bun.BunFile>
+    | undefined;
+  /**
+   * Private keys in PEM format. PEM keys may be encrypted. Multiple
+   * keys using different algorithms can be provided either as an array
+   * of unencrypted key strings or buffers, or as an array of objects in
+   * the form `{pem: <string|buffer>[, passphrase: <string>]}`. The
+   * object form can only occur in an array, and `object.passphrase` is
+   * optional. Encrypted keys are decrypted with `object.passphrase` if
+   * provided, otherwise with `options.passphrase`.
+   */
+  key?:
+    | string
+    | Buffer
+    | Bun.BunFile
+    | NodeJS.TypedArray
+    | Array<string | Buffer | Bun.BunFile | NodeJS.TypedArray | import("node:tls").KeyObject>
+    | undefined;
+}
 
-  function connect(options: BunConnectionOptions, secureConnectListener?: () => void): TLSSocket;
+declare module "tls" {
+  interface BunConnectionOptions extends BunTLSConnectionOptions {}
+
+  function connect(options: BunConnectionOptions, secureConnectListener?: () => void): import("node:tls").TLSSocket;
+}
+declare module "node:tls" {
+  interface BunConnectionOptions extends BunTLSConnectionOptions {}
+
+  function connect(options: BunConnectionOptions, secureConnectListener?: () => void): import("node:tls").TLSSocket;
 }
 
 declare module "console" {

@@ -397,8 +397,7 @@ function check(hostParts, pattern, wildcards) {
 
   const { 0: prefix, 1: suffix } = patternSubdomainParts;
 
-  // Node lets "*" match an empty label. domainToASCII turns "。example.com"
-  // into ".example.com", which is not a name below "*.example.com".
+  // Node lets "*" match the empty label of ".example.com", the IDNA form of "。example.com".
   if (hostSubdomain === "") return false;
 
   if (prefix.length + suffix.length > hostSubdomain.length) return false;
@@ -455,9 +454,7 @@ function checkServerIdentity(hostname, cert) {
   const ips = [];
 
   hostname = "" + hostname;
-  // UTS #46 maps U+3002, U+FF0E and U+FF61 to ".", so DNS names are matched on
-  // the ASCII form of the host (CVE-2026-48618).
-  // https://github.com/nodejs/node/commit/1efb4ff51a0624236332ea98b23bd1106f68d8af
+  // CVE-2026-48618, https://github.com/nodejs/node/commit/1efb4ff51a: IDNA maps "。" to ".".
   const hostnameASCII = domainToASCII(hostname);
 
   // Remove trailing dots for error messages and matching.
@@ -480,8 +477,7 @@ function checkServerIdentity(hostname, cert) {
   let valid = false;
   let reason = "Unknown reason";
 
-  // IP hosts use the original text: domainToASCII("::1") is "".
-  // https://github.com/nodejs/node/commit/1d87a240505ab59ee23df3de892c9baff3ae9cc8
+  // https://github.com/nodejs/node/commit/1d87a24050: domainToASCII("::1") is "", so IP hosts stay as typed.
   if (net.isIP(hostname)) {
     valid = ArrayPrototypeIncludes.$call(ips, canonicalizeIP(hostname));
     if (!valid) reason = `IP: ${hostname} is not in the cert's list: ` + ArrayPrototypeJoin.$call(ips, ", ");

@@ -400,9 +400,7 @@ fn match_hostname(pattern: &[u8], hostname: &[u8], opts: MatchOpts) -> bool {
         &hostname[..end]
     };
 
-    // A label has at least one byte, as in OpenSSL `wildcard_match`. Node lets
-    // `*` match the empty label of ".example.com", which is what
-    // `domainToASCII` makes of "。example.com".
+    // Node lets `*` match the empty label of ".example.com", the IDNA form of "。example.com".
     if host_first.is_empty() {
         return false;
     }
@@ -441,19 +439,15 @@ fn match_dns_name(pattern: &[u8], hostname: &[u8]) -> bool {
 }
 
 unsafe extern "C" {
-    /// `url.domainToASCII` (NodeURL.cpp). `Tag::Dead` when `domain` does not
-    /// parse as a host.
+    /// `url.domainToASCII` in NodeURL.cpp. `Tag::Dead` when `domain` is not a valid host.
     safe fn Bun__domainToASCII(domain: &bun_core::String) -> bun_core::String;
 }
 
 pub fn check_x509_server_identity(x509: &mut boring::X509, hostname: &[u8]) -> bool {
-    // Node.js `checkServerIdentity` (CVE-2026-48618): a host is an IP address
-    // only as typed, and DNS names are matched on `domainToASCII(host)`. UTS #46
-    // maps U+3002, U+FF0E and U+FF61 to ".", so the bytes of such a host do not
-    // split into the labels that get resolved. An ASCII host has no such
-    // mapping and is matched as typed.
+    // As in Node.js, a host is an IP address only as typed, not after the IDNA mapping.
     let host_is_ip = bun_core::ip_address::is_ip_address(unfqdn(hostname));
     let ascii_hostname;
+    // CVE-2026-48618: IDNA maps "。" to ".", so a non-ASCII host is matched on `domainToASCII(host)`.
     let hostname = if strings::first_non_ascii(hostname).is_some() {
         let ascii = Bun__domainToASCII(&bun_core::String::borrow_utf8(hostname));
         if ascii.is_dead() {
@@ -679,8 +673,7 @@ impl core::fmt::Display for NameBytes<'_> {
     }
 }
 
-/// The host as typed, which is how Node.js prints it. Bytes that are not
-/// UTF-8 take the certificate-name escaping.
+/// The host as typed, as Node.js prints it. Invalid UTF-8 takes the `NameBytes` escaping.
 struct HostName<'a>(&'a [u8]);
 
 impl core::fmt::Display for HostName<'_> {

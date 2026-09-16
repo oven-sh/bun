@@ -157,8 +157,7 @@ static String parseDomainAsHost(const String& domain)
     return parsedHost;
 }
 
-// url.domainToASCII for the native certificate name check (src/boringssl/lib.rs),
-// which also runs off the JS thread. Dead when host parsing fails.
+// url.domainToASCII for src/boringssl/lib.rs, on any thread. Dead when the host does not parse.
 extern "C" BunString Bun__domainToASCII(const BunString* domain)
 {
     auto host = parseDomainAsHost(domain->toWTFString());

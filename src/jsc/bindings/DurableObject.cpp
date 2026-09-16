@@ -13,6 +13,8 @@
 #include "ZigGeneratedClasses.h"
 #include "ZigGlobalObject.h"
 #include "ActiveDOMObject.h"
+#include "BunString.h"
+#include "EncodeURIComponent.h"
 
 #include <JavaScriptCore/DateInstance.h>
 #include <JavaScriptCore/FunctionPrototype.h>
@@ -707,13 +709,14 @@ static JSValue invokeEvent(Zig::GlobalObject* globalObject, JSDurableObjectActor
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSObject* instance = actor->instance();
-    auto handler = [&](ASCIILiteral name, const ArgList& arguments, bool required) -> JSValue {
-        JSValue method = instance->get(globalObject, ident(vm, name));
+    auto& names = WebCore::builtinNames(vm);
+    auto handler = [&](const Identifier& name, const ArgList& arguments, bool required) -> JSValue {
+        JSValue method = instance->get(globalObject, name);
         RETURN_IF_EXCEPTION(scope, {});
         auto callData = JSC::getCallData(method);
         if (callData.type == CallData::Type::None) {
             if (required)
-                throwTypeError(globalObject, scope, makeString("The Durable Object \""_s, actor->ns()->name(), "\" has no "_s, name, "() handler"_s));
+                throwTypeError(globalObject, scope, makeString("The Durable Object \""_s, actor->ns()->name(), "\" has no "_s, name.string(), "() handler"_s));
             return jsUndefined();
         }
         RELEASE_AND_RETURN(scope, call(globalObject, method, callData, instance, arguments));
@@ -760,23 +763,23 @@ static JSValue invokeEvent(Zig::GlobalObject* globalObject, JSDurableObjectActor
             event->internalField(static_cast<uint32_t>(JSDurableObjectEvent::Field::C)).set(vm, event, server);
             arguments.append(server);
         }
-        return handler("fetch"_s, arguments, true);
+        return handler(ident(vm, "fetch"_s), arguments, true);
     }
     case DurableObjectEventKind::Alarm: {
         MarkedArgumentBuffer arguments;
         arguments.append(event->a());
-        return handler("alarm"_s, arguments, true);
+        return handler(names.alarmPublicName(), arguments, true);
     }
     case DurableObjectEventKind::SocketOpen: {
         MarkedArgumentBuffer arguments;
         arguments.append(event->a());
-        return handler("webSocketOpen"_s, arguments, false);
+        return handler(names.webSocketOpenPublicName(), arguments, false);
     }
     case DurableObjectEventKind::SocketMessage: {
         MarkedArgumentBuffer arguments;
         arguments.append(event->a());
         arguments.append(event->b());
-        return handler("webSocketMessage"_s, arguments, false);
+        return handler(names.webSocketMessagePublicName(), arguments, false);
     }
     case DurableObjectEventKind::SocketClose: {
         MarkedArgumentBuffer arguments;
@@ -784,12 +787,12 @@ static JSValue invokeEvent(Zig::GlobalObject* globalObject, JSDurableObjectActor
         arguments.append(event->b());
         arguments.append(event->c());
         arguments.append(jsBoolean(event->b().isInt32() && event->b().asInt32() != 1006));
-        return handler("webSocketClose"_s, arguments, false);
+        return handler(names.webSocketClosePublicName(), arguments, false);
     }
     case DurableObjectEventKind::SocketDrain: {
         MarkedArgumentBuffer arguments;
         arguments.append(event->a());
-        return handler("webSocketDrain"_s, arguments, false);
+        return handler(names.webSocketDrainPublicName(), arguments, false);
     }
     default:
         return jsUndefined();
@@ -1312,7 +1315,7 @@ JSArray* JSDurableObjectActor::socketsWithTag(Zig::GlobalObject* globalObject, c
             if (!tagged)
                 continue;
         }
-        JSValue readyState = socket->target().get(globalObject, ident(vm, "readyState"_s));
+        JSValue readyState = socket->target().get(globalObject, WebCore::builtinNames(vm).readyStatePublicName());
         RETURN_IF_EXCEPTION(scope, nullptr);
         if (readyState.isInt32() && readyState.asInt32() == 1)
             sockets.append(socket->target());
@@ -1465,12 +1468,11 @@ void JSDurableObjectActor::unload(Zig::GlobalObject* globalObject)
 
 #define THIS_STATE(method)                                                                                                         \
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);                                                                 \
-    VM& vm = globalObject->vm();                                                                                                   \
+    [[maybe_unused]] VM& vm = globalObject->vm();                                                                                                   \
     auto scope = DECLARE_THROW_SCOPE(vm);                                                                                          \
     auto* handle = toCurrentHandle(globalObject, scope, callFrame->thisValue(), HandleKind::State, "DurableObjectState"_s, method);      \
     RETURN_IF_EXCEPTION(scope, {});                                                                                                \
-    auto* actor = handle->actor();                                                                                                 \
-    (void)vm;
+    auto* actor = handle->actor();
 
 JSC_DEFINE_HOST_FUNCTION(jsDurableObjectStateWaitUntil, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
@@ -1585,7 +1587,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDurableObjectStateAcceptWebSocket, (JSGlobalObject * 
         return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "ws"_s, "ServerWebSocket"_s, ws);
     if (auto* accepted = socketOf(globalObject, ws); accepted && !accepted->m_rolledBack)
         return Bun::ERR::INVALID_STATE(scope, globalObject, "This WebSocket was already accepted by a Durable Object"_s);
-    JSValue readyState = ws.get(globalObject, ident(vm, "readyState"_s));
+    JSValue readyState = ws.get(globalObject, WebCore::builtinNames(vm).readyStatePublicName());
     RETURN_IF_EXCEPTION(scope, {});
     if (!readyState.isInt32() || readyState.asInt32() != 1)
         return Bun::ERR::INVALID_STATE(scope, globalObject, "This WebSocket is not open"_s);
@@ -1688,12 +1690,11 @@ static const HashTableValue statePrototypeValues[] = {
 
 #define THIS_SERVER(method)                                                                                                      \
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);                                                               \
-    VM& vm = globalObject->vm();                                                                                                 \
+    [[maybe_unused]] VM& vm = globalObject->vm();                                                                                                 \
     auto scope = DECLARE_THROW_SCOPE(vm);                                                                                        \
     auto* handle = dynamicDowncast<JSDurableObjectHandle>(callFrame->thisValue());                                               \
     if (!handle || handle->kind() != HandleKind::Server) [[unlikely]]                                                                  \
-        return WebCore::throwThisTypeError(*globalObject, scope, "Server"_s, method);                                            \
-    (void)vm;
+        return WebCore::throwThisTypeError(*globalObject, scope, "Server"_s, method);
 
 // The socket is this object's: its events come to the object's webSocket*() handlers, and it
 // stays connected while the object is evicted.
@@ -1752,7 +1753,7 @@ FORWARDED_SERVER_FUNCTION(subscriberCount)
 #define FORWARDED_SERVER_GETTER(name)                                                                                                 \
     JSC_DEFINE_CUSTOM_GETTER(jsDurableObjectServerGetter_##name, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName)) \
     {                                                                                                                                 \
-        VM& vm = globalObject->vm();                                                                                                  \
+        [[maybe_unused]] VM& vm = globalObject->vm();                                                                                                  \
         auto scope = DECLARE_THROW_SCOPE(vm);                                                                                         \
         auto* handle = dynamicDowncast<JSDurableObjectHandle>(JSValue::decode(thisValue));                                            \
         if (!handle || handle->kind() != HandleKind::Server) [[unlikely]]                                                                   \
@@ -1952,11 +1953,6 @@ Structure* JSDurableObjectNamespace::createStructure(VM& vm, JSGlobalObject* glo
     return createClassStructure(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
 }
 
-void JSDurableObjectNamespace::finishCreation(VM& vm)
-{
-    Base::finishCreation(vm);
-}
-
 template<typename Visitor>
 void JSDurableObjectNamespace::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
@@ -2027,12 +2023,11 @@ JSString* JSDurableObjectNamespace::sealId(Zig::GlobalObject* globalObject, std:
     unsigned macLength = 0;
     HMAC(EVP_sha256(), m_key.data(), m_key.size(), bytes.data(), 24, mac.data(), &macLength);
     memcpy(bytes.data() + 24, mac.data(), 8);
-    static constexpr char digits[] = "0123456789abcdef";
     std::span<Latin1Character> characters;
     String hex = String::createUninitialized(64, characters);
     for (unsigned i = 0; i < 32; i++) {
-        characters[i * 2] = static_cast<Latin1Character>(digits[bytes[i] >> 4]);
-        characters[i * 2 + 1] = static_cast<Latin1Character>(digits[bytes[i] & 15]);
+        characters[i * 2] = upperNibbleToLowercaseASCIIHexDigit(bytes[i]);
+        characters[i * 2 + 1] = lowerNibbleToLowercaseASCIIHexDigit(bytes[i]);
     }
     return jsNontrivialString(globalObject->vm(), WTF::move(hex));
 }
@@ -2045,10 +2040,11 @@ JSDurableObjectId* JSDurableObjectNamespace::idFromName(Zig::GlobalObject* globa
     RETURN_IF_EXCEPTION(scope, nullptr);
     if (auto* known = m_namedIds.get(key))
         return known;
-    CString utf8 = key.utf8();
+    auto utf8 = UTF8View::tryCreate(globalObject, scope, key);
+    RETURN_IF_EXCEPTION(scope, nullptr);
     std::array<uint8_t, 32> payload;
     unsigned length = 0;
-    HMAC(EVP_sha256(), m_key.data(), m_key.size(), reinterpret_cast<const uint8_t*>(utf8.data()), utf8.length(), payload.data(), &length);
+    HMAC(EVP_sha256(), m_key.data(), m_key.size(), utf8->bytes().data(), utf8->bytes().size(), payload.data(), &length);
     payload[0] |= 0x80;
     auto* id = JSDurableObjectId::create(vm, JSDurableObjectRealm::of(globalObject)->structure(Field::IdStructure), this, sealId(globalObject, payload), name);
     m_namedIds.set(key.isolatedCopy(), id);
@@ -2070,15 +2066,11 @@ JSDurableObjectId* JSDurableObjectNamespace::idFromString(Zig::GlobalObject* glo
     RETURN_IF_EXCEPTION(scope, nullptr);
     std::array<uint8_t, 32> bytes;
     bool valid = hex.length() == 64;
-    for (unsigned i = 0; valid && i < 64; i++) {
-        char16_t c = hex[i];
-        int digit = c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : -1;
-        if (digit < 0)
-            valid = false;
-        else if (i & 1)
-            bytes[i / 2] |= static_cast<uint8_t>(digit);
-        else
-            bytes[i / 2] = static_cast<uint8_t>(digit << 4);
+    for (unsigned i = 0; valid && i < 32; i++) {
+        char16_t high = hex[i * 2], low = hex[i * 2 + 1];
+        valid = isASCIIHexDigit(high) && isASCIIHexDigit(low) && !isASCIIUpper(high) && !isASCIIUpper(low);
+        if (valid)
+            bytes[i] = toASCIIHexValue(high, low);
     }
     if (!valid) {
         Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "id"_s, hexString, "is not a Durable Object id (64 lowercase hex digits)"_s);
@@ -2156,26 +2148,30 @@ void JSDurableObjectNamespace::actorBecameIdle(JSDurableObjectActor* actor)
         vm().writeBarrier(this, actor);
     }
     if (m_closing) {
-        m_context->postTask([ns = Strong<JSDurableObjectNamespace>(vm(), this)](WebCore::ScriptExecutionContext& context) {
-            auto* self = ns.get();
-            ModuleGraphContextScope scope(self->context());
-            self->finishClosing(defaultGlobalObject(context.jsGlobalObject()));
-        });
+        later(&JSDurableObjectNamespace::finishClosing);
         return;
     }
     if (!m_sweepTimer.isActive())
         m_sweepTimer.startOneShot(Seconds::fromMilliseconds(std::max(1.0, m_idleTimeoutMs)));
 }
 
+// From the event loop, in the namespace's own context.
+void JSDurableObjectNamespace::later(void (JSDurableObjectNamespace::*step)(Zig::GlobalObject*))
+{
+    m_context->postTask([ns = Strong<JSDurableObjectNamespace>(vm(), this), step](WebCore::ScriptExecutionContext& context) {
+        auto* self = ns.get();
+        if (self->m_contextStopped)
+            return;
+        ModuleGraphContextScope scope(self->context());
+        (self->*step)(defaultGlobalObject(context.jsGlobalObject()));
+    });
+}
+
 void JSDurableObjectNamespace::actorWasReset()
 {
     if (!m_closing)
         return;
-    m_context->postTask([ns = Strong<JSDurableObjectNamespace>(vm(), this)](WebCore::ScriptExecutionContext& context) {
-        auto* self = ns.get();
-        ModuleGraphContextScope scope(self->context());
-        self->finishClosing(defaultGlobalObject(context.jsGlobalObject()));
-    });
+    later(&JSDurableObjectNamespace::finishClosing);
 }
 
 void JSDurableObjectNamespace::actorBecameBusy(JSDurableObjectActor* actor)
@@ -2194,11 +2190,7 @@ void JSDurableObjectNamespace::forget(JSDurableObjectActor* actor)
 
 void JSDurableObjectNamespace::sweepTimerFired()
 {
-    m_context->postTask([ns = Strong<JSDurableObjectNamespace>(vm(), this)](WebCore::ScriptExecutionContext& context) {
-        auto* self = ns.get();
-        ModuleGraphContextScope scope(self->context());
-        self->sweep(defaultGlobalObject(context.jsGlobalObject()));
-    });
+    later(&JSDurableObjectNamespace::sweep);
 }
 
 void JSDurableObjectNamespace::sweep(Zig::GlobalObject* globalObject)
@@ -2262,11 +2254,7 @@ void JSDurableObjectNamespace::scheduleAlarms()
 void JSDurableObjectNamespace::alarmTimerFired()
 {
     m_alarmTimerAt = 0;
-    m_context->postTask([ns = Strong<JSDurableObjectNamespace>(vm(), this)](WebCore::ScriptExecutionContext& context) {
-        auto* self = ns.get();
-        ModuleGraphContextScope scope(self->context());
-        self->fireAlarms(defaultGlobalObject(context.jsGlobalObject()));
-    });
+    later(&JSDurableObjectNamespace::fireAlarms);
 }
 
 void JSDurableObjectNamespace::fireAlarms(Zig::GlobalObject* globalObject)
@@ -2487,24 +2475,20 @@ JSC_DEFINE_HOST_FUNCTION(callDurableObject, (JSGlobalObject * globalObject, Call
     return throwVMTypeError(globalObject, scope, "Class constructor DurableObject cannot be invoked without 'new'"_s);
 }
 
-// encodeURIComponent(name), except that a name of nothing but dots does not come out as "." or "..".
-static String directoryNameFor(const String& name)
+// encodeURIComponent(name), except for what a file system would take for something else: a name of
+// nothing but dots, and `*`. Null with an exception thrown for a name that is not well-formed Unicode.
+static String directoryNameFor(Zig::GlobalObject* globalObject, ThrowScope& scope, const String& name)
 {
-    CString utf8 = name.utf8();
-    bool onlyDots = true;
-    for (char c : utf8.span())
-        onlyDots = onlyDots && c == '.';
     StringBuilder builder;
-    static constexpr char digits[] = "0123456789ABCDEF";
-    for (char c : utf8.span()) {
-        auto byte = static_cast<uint8_t>(c);
-        bool plain = isASCIIAlphanumeric(byte) || byte == '-' || byte == '_' || byte == '!' || byte == '~' || byte == '*' || byte == '\'' || byte == '(' || byte == ')' || (byte == '.' && !onlyDots);
-        if (plain)
-            builder.append(static_cast<Latin1Character>(byte));
-        else
-            builder.append('%', digits[byte >> 4], digits[byte & 15]);
+    auto result = JSC::encodeURIComponent(globalObject->vm(), name, builder);
+    if (result.hasException()) {
+        WebCore::propagateException(*globalObject, scope, result.releaseException());
+        return String();
     }
-    return builder.toString();
+    String encoded = builder.toString();
+    if (encoded.containsOnly<[](char16_t c) { return c == '.'; }>())
+        return makeStringByReplacingAll(encoded, "."_s, "%2E"_s);
+    return makeStringByReplacingAll(encoded, "*"_s, "%2A"_s);
 }
 
 // new Bun.DurableObjectNamespace({ class | module, export?, name?, storage?, env?, idleTimeout?, globals?, onError? })
@@ -2609,7 +2593,9 @@ JSC_DEFINE_HOST_FUNCTION(constructDurableObjectNamespace, (JSGlobalObject * lexi
         if (storage != ":memory:"_s) {
             String root = pathResolveWTFString(globalObject, storage);
             RETURN_IF_EXCEPTION(scope, {});
-            options.storageDirectory = makeString(root, PLATFORM_SEP_s, directoryNameFor(options.name));
+            String directory = directoryNameFor(globalObject, scope, options.name);
+            RETURN_IF_EXCEPTION(scope, {});
+            options.storageDirectory = makeString(root, PLATFORM_SEP_s, directory);
         }
     }
 
@@ -2659,7 +2645,7 @@ JSC_DEFINE_HOST_FUNCTION(constructDurableObject, (JSGlobalObject * lexicalGlobal
         RETURN_IF_EXCEPTION(scope, {});
     }
     JSObject* instance = constructEmptyObject(vm, structure);
-    instance->putDirect(vm, ident(vm, "ctx"_s), state, 0);
+    instance->putDirect(vm, WebCore::builtinNames(vm).ctxPublicName(), state, 0);
     instance->putDirect(vm, ident(vm, "env"_s), callFrame->argument(1), 0);
     return JSValue::encode(instance);
 }

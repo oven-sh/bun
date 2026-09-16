@@ -72,7 +72,7 @@ async increment() {
 }
 ```
 
-`ctx.blockConcurrencyWhile(fn)` holds every other event until `fn`'s promise settles. Use it in the constructor to load state before the first event.
+`ctx.blockConcurrencyWhile(fn)` starts no other event until `fn`'s promise settles. Use it in the constructor to load state before the first event. An event that was already waiting on I/O when it was called still resumes when that I/O completes.
 
 ## Storage
 
@@ -91,8 +91,8 @@ const recent = this.ctx.storage.sql.exec("SELECT * FROM messages ORDER BY id DES
 
 - Writes made without an `await` in between are committed together, and nothing the object returns leaves before they are.
 - `transactionSync(fn)` rolls back what `fn` wrote if it throws. A `sql.exec()` of several statements is all or nothing too; its bindings and its cursor are the last statement's.
-- A cursor reads its rows as you iterate. One you keep across an `await` has the rest of its rows in memory from then on.
-- The promise-returning `get` / `put` / `delete` / `list` / `transaction` of Cloudflare's API are there too.
+- A cursor reads its rows as you iterate. Rows you have not read are gone if the object is evicted first.
+- The promise-returning `get` / `put` / `delete` / `list` of Cloudflare's API are there too. `transaction(async txn => …)` buffers what `txn` writes and applies it, all or nothing, when the closure finishes.
 - `sql.exec()` cannot run `BEGIN` / `COMMIT` / `SAVEPOINT`, attach databases, or touch tables named `_cf_*`.
 - An object that stores nothing leaves no file.
 

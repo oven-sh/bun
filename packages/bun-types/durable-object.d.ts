@@ -58,34 +58,18 @@ declare module "bun" {
     readonly scheduledTime: number;
   }
 
-  interface DurableObjectNamespaceOptions<T extends object = object> {
-    /**
-     * The class of the objects. Every object runs in a context of its own for
-     * timers and I/O (see {@link ModuleGraph}); module state is shared, as it
-     * is between instances of any class.
-     */
-    class?: new (ctx: DurableObjectState, env: any) => T;
-    /**
-     * Instead of `class`: a module that exports the class. Every object loads
-     * the module into a {@link ModuleGraph} of its own, so module-level state
-     * is per object too. Compiled code is shared.
-     */
-    module?: string;
-    /** The export of `module` that is the class. Default `"default"`. */
-    export?: string;
-    /** Values for free identifiers in `module`'s code; see {@link ModuleGraphOptions.globals}. */
-    globals?: Record<string, unknown>;
+  interface DurableObjectNamespaceCommonOptions {
     /**
      * Identifies the namespace: ids are derived from it and storage is kept
      * under it. Defaults to the class's name.
      */
-    name?: string;
+    name?: string | undefined;
     /**
      * Directory to keep the objects' SQLite databases in. One namespace, in
      * one process, uses a directory at a time. Without it, storage is in
      * memory and lasts as long as the namespace.
      */
-    storage?: string;
+    storage?: string | undefined;
     /** Passed to every object's constructor. */
     env?: unknown;
     /**
@@ -93,15 +77,45 @@ declare module "bun" {
      * twice that) is evicted from memory; its storage, alarm and WebSockets
      * stay. `0` evicts an object as soon as it is idle. Default `10_000`.
      */
-    idleTimeout?: number;
+    idleTimeout?: number | undefined;
     /**
      * Errors nobody is waiting for: an `alarm()` or `webSocket*()` handler
-     * that throws, a rejected `waitUntil()` promise, and uncaught errors of an
+     * that throws, a rejected `waitUntil()` promise, an object that cannot be
+     * started for an alarm or a WebSocket message, and uncaught errors of an
      * object's own timers and I/O. Without it they are uncaught exceptions of
      * the process.
      */
-    onError?(error: unknown, id: DurableObjectId): void;
+    onError?: ((error: unknown, id: DurableObjectId) => void) | undefined;
   }
+
+  type DurableObjectNamespaceOptions<T extends object = object> = DurableObjectNamespaceCommonOptions &
+    (
+      | {
+          /**
+           * The class of the objects. Every object runs in a context of its own
+           * for timers and I/O (see {@link ModuleGraph}); module state is shared,
+           * as it is between instances of any class.
+           */
+          class: new (ctx: DurableObjectState, env: any) => T;
+          module?: never;
+          export?: never;
+          globals?: never;
+        }
+      | {
+          class?: never;
+          /**
+           * Instead of `class`: a module that exports the class, resolved like an
+           * `import()` from the working directory. Every object loads the module
+           * into a {@link ModuleGraph} of its own, so module-level state is per
+           * object too. Compiled code is shared.
+           */
+          module: string;
+          /** The export of `module` that is the class. Default `"default"`. */
+          export?: string | undefined;
+          /** Values for free identifiers in `module`'s code, as they are now; see {@link ModuleGraphOptions.globals}. */
+          globals?: Record<string, unknown> | undefined;
+        }
+    );
 
   /**
    * The objects of one Durable Object class.
@@ -179,9 +193,10 @@ declare module "bun" {
     /** Keeps the object in memory until the promise settles. */
     waitUntil(promise: Promise<unknown>): void;
     /**
-     * No other event is delivered to the object until the callback's promise
-     * settles. If it rejects, or takes more than 30 seconds, the object is reset.
-     * In a constructor: nothing is delivered until the object has initialized.
+     * No other event is started until the callback's promise settles (one that
+     * was already waiting on I/O resumes when that completes). If it rejects,
+     * or takes more than 30 seconds, the object is reset. In a constructor:
+     * nothing is delivered until the object has initialized.
      */
     blockConcurrencyWhile<T>(callback: () => T | Promise<T>): Promise<T>;
     /**
@@ -211,7 +226,10 @@ declare module "bun" {
      * Upgrades the request to a WebSocket that is this object's (see
      * {@link DurableObjectState.acceptWebSocket}). `data` becomes `ws.data`.
      */
-    upgrade(request: Request, options?: { data?: unknown; headers?: HeadersInit; tags?: string[] }): boolean;
+    upgrade(
+      request: Request,
+      options?: { data?: unknown; headers?: HeadersInit | undefined; tags?: string[] | undefined },
+    ): boolean;
     requestIP(request: Request): SocketAddress | null;
     timeout(request: Request, seconds: number): void;
     publish(topic: string, data: string | ArrayBufferView | ArrayBuffer, compress?: boolean): number;
@@ -221,15 +239,19 @@ declare module "bun" {
     readonly hostname: string | undefined;
     readonly development: boolean;
     readonly id: string;
+    readonly address: SocketAddress | null;
+    readonly protocol: "http" | "https" | null;
+    readonly pendingRequests: number;
+    readonly pendingWebSockets: number;
   }
 
   interface DurableObjectListOptions {
-    start?: string;
-    startAfter?: string;
-    end?: string;
-    prefix?: string;
-    reverse?: boolean;
-    limit?: number;
+    start?: string | undefined;
+    startAfter?: string | undefined;
+    end?: string | undefined;
+    prefix?: string | undefined;
+    reverse?: boolean | undefined;
+    limit?: number | undefined;
   }
 
   /**
@@ -253,7 +275,12 @@ declare module "bun" {
     delete(keys: string[]): Promise<number>;
     /** Deletes everything the object stored: keys, tables made with `sql`, and the alarm. */
     deleteAll(): Promise<void>;
-    /** What `closure` writes is committed when its promise fulfills and rolled back when it rejects. Other events wait. */
+    /**
+     * What `closure` writes through `txn` is kept in memory and applied, all or
+     * nothing, when its promise fulfills; nothing is applied when it rejects or
+     * calls `txn.rollback()`. Other events are not held back meanwhile. For
+     * writes that must not interleave with anything, use `transactionSync()`.
+     */
     transaction<T>(closure: (txn: DurableObjectTransaction) => T | Promise<T>): Promise<T>;
     /** What `closure` writes is kept when it returns and rolled back when it throws. */
     transactionSync<T>(closure: () => T): T;
@@ -287,7 +314,7 @@ declare module "bun" {
     list<T = unknown>(options?: DurableObjectListOptions): IterableIterator<[string, T]>;
   }
 
-  type DurableObjectSqlValue = string | number | null | Uint8Array;
+  type DurableObjectSqlValue = string | number | null | Uint8Array<ArrayBuffer>;
 
   /** `ctx.storage.sql` */
   interface DurableObjectSql {
@@ -297,8 +324,9 @@ declare module "bun" {
      * happened. Transactions are controlled with `transactionSync()`, not with
      * SQL; names that start with `_cf_` are reserved.
      *
-     * The cursor reads rows as it is iterated. One that is kept across an
-     * `await` holds the rest of its rows in memory from then on.
+     * A statement that reads is run as the cursor is iterated; rows not read
+     * yet are gone if the object is evicted first. A statement that writes has
+     * run to its end when `exec()` returns.
      */
     exec<T extends Record<string, DurableObjectSqlValue> = Record<string, DurableObjectSqlValue>>(
       query: string,

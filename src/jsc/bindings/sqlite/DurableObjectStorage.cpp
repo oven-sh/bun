@@ -896,6 +896,15 @@ static StorageAccess accessStorage(Zig::GlobalObject* globalObject, ThrowScope& 
     return { actor, database };
 }
 
+// As the database orders keys: by their UTF-8 bytes (which is code point order, not UTF-16 order).
+static int compareBytes(std::span<const uint8_t> a, std::span<const uint8_t> b)
+{
+    int order = memcmp(a.data(), b.data(), std::min(a.size(), b.size()));
+    if (order)
+        return order;
+    return a.size() < b.size() ? -1 : a.size() > b.size();
+}
+
 static bool hasLoneSurrogate(StringView view)
 {
     if (view.is8Bit())
@@ -1105,9 +1114,8 @@ static EncodedJSValue settled(Zig::GlobalObject* globalObject, ThrowScope& scope
 
 #define STORAGE_FUNCTION_PROLOGUE()                                 \
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);  \
-    VM& vm = globalObject->vm();                                    \
-    auto scope = DECLARE_THROW_SCOPE(vm);                           \
-    (void)vm;
+    [[maybe_unused]] VM& vm = globalObject->vm();                                    \
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
 #define STORAGE_ACCESS(kind, className, method)                                                                                                       \
     StorageAccess access = accessStorage(globalObject, scope, callFrame->thisValue(), JSDurableObjectHandle::Kind::kind, className, method);          \
@@ -1119,7 +1127,7 @@ static EncodedJSValue settled(Zig::GlobalObject* globalObject, ThrowScope& scope
 static JSValue getMany(Zig::GlobalObject* globalObject, ThrowScope& scope, Vector<StorageKey>& keys, const Function<JSValue(const StorageKey&)>& get)
 {
     VM& vm = globalObject->vm();
-    std::sort(keys.begin(), keys.end(), [](const StorageKey& a, const StorageKey& b) { return codePointCompare(a.string, b.string) < 0; });
+    std::sort(keys.begin(), keys.end(), [](const StorageKey& a, const StorageKey& b) { return compareBytes(a.bytes(), b.bytes()) < 0; });
     JSMap* map = JSMap::create(vm, globalObject->mapStructure());
     for (auto& key : keys) {
         JSValue value = get(key);
@@ -1289,7 +1297,7 @@ static bool requireAlarmHandler(Zig::GlobalObject* globalObject, ThrowScope& sco
     JSObject* instance = handle ? handle->actor()->instance() : nullptr;
     if (!instance)
         return true;
-    JSValue handler = instance->get(globalObject, Identifier::fromString(globalObject->vm(), "alarm"_s));
+    JSValue handler = instance->get(globalObject, WebCore::builtinNames(globalObject->vm()).alarmPublicName());
     RETURN_IF_EXCEPTION(scope, false);
     if (handler.isCallable())
         return true;
@@ -1494,13 +1502,19 @@ JSC_DEFINE_HOST_FUNCTION(jsDurableObjectTransactionGet, (JSGlobalObject * lexica
     return settled(globalObject, scope, map);
 }
 
+static int compareKeys(const String& a, const String& b)
+{
+    CString left = a.utf8(), right = b.utf8();
+    return compareBytes(byteCast<uint8_t>(left.span()), byteCast<uint8_t>(right.span()));
+}
+
 static bool keyIsSelected(const String& key, const DurableObjectDatabase::ListOptions& options)
 {
-    if (!options.start.isNull() && codePointCompare(key, options.start) < 0)
+    if (!options.start.isNull() && compareKeys(key, options.start) < 0)
         return false;
-    if (!options.startAfter.isNull() && codePointCompare(key, options.startAfter) <= 0)
+    if (!options.startAfter.isNull() && compareKeys(key, options.startAfter) <= 0)
         return false;
-    if (!options.end.isNull() && codePointCompare(key, options.end) >= 0)
+    if (!options.end.isNull() && compareKeys(key, options.end) >= 0)
         return false;
     return options.prefix.isEmpty() || key.startsWith(options.prefix);
 }
@@ -1515,6 +1529,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDurableObjectTransactionList, (JSGlobalObject * lexic
     // What is committed, without the limit, then what the transaction wrote over it.
     struct Row {
         String key;
+        CString bytes;
         JSValue value;
     };
     Vector<Row> rows;
@@ -1525,7 +1540,8 @@ JSC_DEFINE_HOST_FUNCTION(jsDurableObjectTransactionList, (JSGlobalObject * lexic
         if (writes->has(globalObject, key))
             return;
         values.append(value);
-        rows.append({ key->tryGetValue(), value });
+        String string = key->tryGetValue();
+        rows.append({ string, string.utf8(), value });
     });
     if (scope.exception()) [[unlikely]]
         return settled(globalObject, scope, {});
@@ -1539,10 +1555,10 @@ JSC_DEFINE_HOST_FUNCTION(jsDurableObjectTransactionList, (JSGlobalObject * lexic
         if (scope.exception()) [[unlikely]]
             return settled(globalObject, scope, {});
         values.append(value);
-        rows.append({ key, value });
+        rows.append({ key, key.utf8(), value });
     }
     std::sort(rows.begin(), rows.end(), [&](const Row& a, const Row& b) {
-        auto order = codePointCompare(a.key, b.key);
+        int order = compareBytes(byteCast<uint8_t>(a.bytes.span()), byteCast<uint8_t>(b.bytes.span()));
         return options.reverse ? order > 0 : order < 0;
     });
     JSMap* map = JSMap::create(vm, globalObject->mapStructure());
@@ -1719,6 +1735,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDurableObjectStorageTransaction, (JSGlobalObject * le
     auto* realm = JSDurableObjectRealm::of(globalObject);
     auto* transaction = JSDurableObjectHandle::create(vm, realm->structure(JSDurableObjectRealm::Field::TransactionStructure), JSDurableObjectHandle::Kind::Transaction, access.actor);
     transaction->setExtra(vm, JSMap::create(vm, globalObject->mapStructure()));
+    transaction->setTarget(vm, jsUndefined());
     JSPromise* outer = JSPromise::create(vm, globalObject->promiseStructure());
     auto* continuation = JSDurableObjectEvent::create(vm, globalObject, DurableObjectEventKind::Transaction, access.actor, transaction, jsUndefined(), jsUndefined(), outer);
 
@@ -1847,11 +1864,10 @@ public:
     JSDurableObjectSqlCursor* source() { return m_source ? m_source.get() : this; }
     bool isRaw() const { return !!m_source; }
 
-    void open(VM& vm, Ref<DurableObjectOpenStatement>&& statement)
+    void open(Ref<DurableObjectOpenStatement>&& statement)
     {
         m_open = WTF::move(statement);
         m_open->cursor = JSC::Weak<JSDurableObjectSqlCursor>(this);
-        (void)vm;
     }
     sqlite3_stmt* statement() const { return m_open ? m_open->statement : nullptr; }
 
@@ -1867,8 +1883,9 @@ public:
     // Makes the next row ready. False at the end, or with an exception thrown.
     bool advance(Zig::GlobalObject* globalObject, ThrowScope& scope)
     {
-        if (m_hasRow)
+        if (m_hasRow && (m_buffer || statement()))
             return true;
+        m_hasRow = false;
         if (JSArray* buffer = m_buffer.get()) {
             if (m_bufferIndex < buffer->length())
                 return m_hasRow = true;
@@ -1889,15 +1906,23 @@ public:
             DurableObjectDatabase::UserScope restricted(*database);
             result = sqlite3_step(statement());
         }
-        if (result == SQLITE_ROW) {
-            m_rowsRead++;
-            return m_hasRow = true;
-        }
-        if (result != SQLITE_DONE) {
+        if (result != SQLITE_ROW && result != SQLITE_DONE) {
             JSValue error = createSQLiteErrorFor(globalObject, database->handle());
             close(false);
             throwException(globalObject, scope, error);
             return false;
+        }
+        // Not before the first step: that is when a kept statement is compiled again if the schema changed.
+        if (!m_columnNames && sqlite3_column_count(statement())) {
+            setColumns(globalObject, scope);
+            if (scope.exception()) [[unlikely]] {
+                close(false);
+                return false;
+            }
+        }
+        if (result == SQLITE_ROW) {
+            m_rowsRead++;
+            return m_hasRow = true;
         }
         close(true);
         return false;
@@ -2148,6 +2173,7 @@ static JSObject* createNotAuthorizedError(Zig::GlobalObject* globalObject, ASCII
     error->putDirect(vm, vm.propertyNames->name, jsString(vm, String("SQLiteError"_s)), static_cast<unsigned>(PropertyAttribute::DontEnum));
     error->putDirect(vm, WebCore::builtinNames(vm).codePublicName(), jsString(vm, String("SQLITE_AUTH"_s)), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     error->putDirect(vm, WebCore::builtinNames(vm).errnoPublicName(), jsNumber(SQLITE_AUTH), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    error->putDirect(vm, vm.propertyNames->byteOffset, jsNumber(-1), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     return error;
 }
 
@@ -2168,7 +2194,6 @@ JSC_DEFINE_HOST_FUNCTION(jsDurableObjectSqlExec, (JSGlobalObject * lexicalGlobal
 
     auto* realm = JSDurableObjectRealm::of(globalObject);
     auto* cursor = JSDurableObjectSqlCursor::create(vm, realm->structure(JSDurableObjectRealm::Field::CursorStructure), nullptr);
-    DurableObjectDatabase::UserScope restricted(*database);
     int changesBefore = sqlite3_total_changes(database->handle());
 
     // A script is all or nothing. So is a statement that renames a table: what it renamed it to is only known afterwards.
@@ -2211,7 +2236,12 @@ JSC_DEFINE_HOST_FUNCTION(jsDurableObjectSqlExec, (JSGlobalObject * lexicalGlobal
         bool single = true;
         for (;;) {
             sqlite3_stmt* next = nullptr;
-            if (!database->prepareNext(sql, offset, next)) {
+            bool compiled;
+            {
+                DurableObjectDatabase::UserScope restricted(*database);
+                compiled = database->prepareNext(sql, offset, next);
+            }
+            if (!compiled) {
                 JSValue error = createSQLiteErrorFor(globalObject, database->handle());
                 closeScope(false);
                 throwException(globalObject, scope, error);
@@ -2228,6 +2258,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDurableObjectSqlExec, (JSGlobalObject * lexicalGlobal
             if (sqlite3_bind_parameter_count(next))
                 error = createError(globalObject, "Only the last statement of a query can have parameter bindings"_s);
             else if (openScope() && aboutToWrite(next)) {
+                DurableObjectDatabase::UserScope restricted(*database);
                 int result;
                 while ((result = sqlite3_step(next)) == SQLITE_ROW) { }
                 if (result != SQLITE_DONE)
@@ -2249,7 +2280,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDurableObjectSqlExec, (JSGlobalObject * lexicalGlobal
         if (single && !database->m_sawAlterTable)
             cacheKey = query;
     }
-    cursor->open(vm, database->opened(prepared, cacheKey, changesBefore));
+    cursor->open(database->opened(prepared, cacheKey, changesBefore));
     auto fail = [&] {
         cursor->close(false);
         closeScope(false);
@@ -2264,11 +2295,6 @@ JSC_DEFINE_HOST_FUNCTION(jsDurableObjectSqlExec, (JSGlobalObject * lexicalGlobal
     }
     for (int i = 0; i < given; i++) {
         if (!bindParameter(globalObject, scope, prepared, i + 1, callFrame->uncheckedArgument(static_cast<size_t>(i) + 1)))
-            return fail();
-    }
-    if (sqlite3_column_count(prepared)) {
-        cursor->setColumns(globalObject, scope);
-        if (scope.exception()) [[unlikely]]
             return fail();
     }
     bool writes = !sqlite3_stmt_readonly(prepared);

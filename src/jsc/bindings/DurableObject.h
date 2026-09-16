@@ -232,7 +232,6 @@ public:
 
     Kind kind() const { return m_kind; }
     JSDurableObjectActor* actor() const { return m_actor.get(); }
-    uint32_t generation() const { return m_generation; }
     // Whether the life of the object this was made in is still the current one.
     bool isCurrent() const;
 
@@ -508,7 +507,7 @@ public:
 
 private:
     JSDurableObjectNamespace(JSC::VM&, JSC::Structure*, Ref<WebCore::ScriptExecutionContext>&&);
-    void finishCreation(JSC::VM&);
+    void later(void (JSDurableObjectNamespace::*)(Zig::GlobalObject*));
     void alarmTimerFired();
     void sweepTimerFired();
     void fireAlarms(Zig::GlobalObject*);

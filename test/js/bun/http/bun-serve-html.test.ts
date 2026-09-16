@@ -1530,6 +1530,33 @@ describe("server.reload() and the framework router routes", () => {
   });
 });
 
+// A function `style` is not implemented. It used to pass the option parser and
+// abort the process when the dev server started.
+test.concurrent("a framework router route with a function style is rejected", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      /*ts*/ `
+        try {
+          Bun.serve({ port: 0, development: true, routes: { "/*": { dir: ".", style: () => null } }, fetch: () => new Response("") });
+          console.log("started");
+        } catch (e) {
+          console.log(e.message);
+        }
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), exitCode }, stderr).toEqual({
+    stdout: `'style' must be either "nextjs-pages", "nextjs-app-ui", or "nextjs-app-routes".`,
+    exitCode: 0,
+  });
+});
+
 test("wildcard static routes", async () => {
   await using dir = tempDir("bun-serve-html-error-handling", {
     "index.html": /*html*/ `

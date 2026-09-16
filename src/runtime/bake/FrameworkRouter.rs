@@ -639,13 +639,11 @@ impl Clone for Style {
 
 impl PartialEq for Style {
     fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Style::NextjsPages, Style::NextjsPages)
-            | (Style::NextjsAppUi, Style::NextjsAppUi)
-            | (Style::NextjsAppRoutes, Style::NextjsAppRoutes) => true,
-            (Style::JavascriptDefined(a), Style::JavascriptDefined(b)) => a.get() == b.get(),
-            _ => false,
-        }
+        core::mem::discriminant(self) == core::mem::discriminant(other)
+            && match (self, other) {
+                (Style::JavascriptDefined(a), Style::JavascriptDefined(b)) => a.get() == b.get(),
+                _ => true,
+            }
     }
 }
 
@@ -657,9 +655,11 @@ bun_core::comptime_string_map! {
     };
 }
 
-const STYLE_ERROR_MESSAGE: &str = "'style' must be either \"nextjs-pages\", \"nextjs-app-ui\", \"nextjs-app-routes\", or a function.";
+const STYLE_ERROR_MESSAGE: &str =
+    "'style' must be either \"nextjs-pages\", \"nextjs-app-ui\", or \"nextjs-app-routes\".";
 
 impl Style {
+    /// A function `style` (`JavascriptDefined`) is not implemented: `parse` and `clone` panic on it.
     pub fn from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<Style> {
         if value.is_string() {
             let bun_string = value.to_bun_string(global)?;
@@ -667,8 +667,6 @@ impl Style {
             if let Some(style) = STYLE_MAP.get(utf8.slice()) {
                 return Ok(style());
             }
-        } else if value.is_callable() {
-            return Ok(Style::JavascriptDefined(Strong::create(value, global)));
         }
 
         Err(global.throw_invalid_arguments(format_args!("{STYLE_ERROR_MESSAGE}")))

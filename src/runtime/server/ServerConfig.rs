@@ -722,20 +722,24 @@ impl ServerConfig {
         let Some(root) = self.bake.as_ref().map(|options| options.root.as_bytes()) else {
             return true;
         };
-        let resolve = |dir: &[u8]| -> Vec<u8> {
-            strings::without_trailing_slash(bun_paths::resolve_path::join_abs::<
+        // `None` for a `dir` too long for a path. No router serves it, so it matches nothing.
+        let resolve = |dir: &[u8]| -> Option<Vec<u8>> {
+            let mut buf = bun_paths::path_buffer_pool::get();
+            let joined = bun_paths::resolve_path::join_abs_string_buf_checked::<
                 bun_paths::platform::Auto,
-            >(root, dir))
-            .to_vec()
+            >(root, &mut buf[..], &[dir])?;
+            Some(strings::without_trailing_slash(joined).to_vec())
         };
         let mut matched = vec![false; served.len()];
         'requested: for router in requested {
-            let dir = resolve(&router.root);
+            let Some(dir) = resolve(&router.root) else {
+                return true;
+            };
             for (i, candidate) in served.iter().enumerate() {
                 if !matched[i]
                     && candidate.prefix == router.prefix
                     && candidate.style == router.style
-                    && resolve(&candidate.root) == dir
+                    && resolve(&candidate.root).as_deref() == Some(dir.as_slice())
                 {
                     matched[i] = true;
                     continue 'requested;

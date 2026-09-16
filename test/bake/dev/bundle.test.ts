@@ -1,5 +1,6 @@
 // Bundle tests are tests concerning bundling bugs that only occur in DevServer.
 import { expect } from "bun:test";
+import net from "node:net";
 import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
 devTest("import identifier doesnt get renamed", {
@@ -917,5 +918,42 @@ devTest("barrel optimization: namespace re-export cycle through a star-exported 
   async test(dev) {
     await using c = await dev.client("/");
     await c.expectMessage("result: object Y KEEP DEEP OTHER");
+  },
+});
+// The dev server answers the oversized POST with 413 before it can park the request. That must not start a bundle
+// for the route or change its state, or the next request for the route finds a bundle that never settles.
+devTest("request rejected with 413 before it is parked does not leave the route in the bundling state", {
+  files: {
+    "routes/about.ts": `
+      export default function (req, meta) {
+        return new Response('about');
+      }
+    `,
+    "bun.app.ts": `
+      export default {
+        maxRequestBodySize: 1024,
+        app: { framework: ${JSON.stringify(minimalFramework)} },
+      };
+    `,
+  },
+  async test(dev) {
+    const statusLine = await new Promise<string>((resolve, reject) => {
+      let data = "";
+      const socket = net.connect(dev.port, "localhost", () => {
+        socket.write("POST /about HTTP/1.1\r\nHost: localhost\r\nContent-Length: 999999\r\n\r\n");
+      });
+      socket.on("data", chunk => {
+        data += chunk;
+        if (data.includes("\r\n")) {
+          socket.destroy();
+          resolve(data.split("\r\n")[0]);
+        }
+      });
+      socket.on("error", reject);
+    });
+    expect(statusLine).toBe("HTTP/1.1 413 Request Entity Too Large");
+
+    await dev.fetch("/about").equals("about");
+    await dev.fetch("/about").equals("about");
   },
 });

@@ -483,7 +483,7 @@ impl QuicStream {
     /// write. A retry from `on_write` would run on every engine tick until
     /// the connection idles out, so the queue is dropped and the stream is
     /// reset with the application's internal error code.
-    fn fail_outbound(&self, s: &lsquic::Stream) {
+    fn fail_outbound(&self, s: lsquic::Stream) {
         let code = self
             .session_ref()
             .map_or(1, QuicSession::internal_error_code);
@@ -516,7 +516,7 @@ impl QuicStream {
             };
             let n = s.write(&slice);
             if n < 0 {
-                self.fail_outbound(&s);
+                self.fail_outbound(s);
                 return;
             }
             if n == 0 {

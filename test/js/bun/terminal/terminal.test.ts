@@ -870,7 +870,13 @@ describe("Bun.Terminal", () => {
       const childSrc = /* js */ `
         const N = 4;
         let collected = 0;
-        const registry = new FinalizationRegistry(() => collected++);
+        // Which terminals are still held, and what write() did to each: printed when one is not collected.
+        const held = new Set();
+        const writes = [];
+        const registry = new FinalizationRegistry(i => {
+          collected++;
+          held.delete(i);
+        });
         let exits = 0;
         const cmd = process.platform === "win32" ? ["cmd.exe", "/c", "exit 0"] : ["sh", "-c", "exit 0"];
 
@@ -887,13 +893,19 @@ describe("Bun.Terminal", () => {
           });
           let terminal = proc.terminal;
           registry.register(terminal, i);
+          held.add(i);
           const procExited = proc.exited;
           proc = null;
           await procExited;
           await ptyClosed;
+          const closedBefore = terminal.closed;
+          let outcome;
           try {
-            terminal.write("x");
-          } catch {}
+            outcome = terminal.write("x");
+          } catch (error) {
+            outcome = error.code ?? String(error);
+          }
+          writes.push({ i, outcome, closedBefore, closedAfter: terminal.closed });
           terminal = null;
         }
 
@@ -908,6 +920,7 @@ describe("Bun.Terminal", () => {
           Bun.gc(true);
           await new Promise(r => setImmediate(r));
         }
+        if (collected < N) console.error(JSON.stringify({ held: [...held], writes }));
         console.log(JSON.stringify({ exits, collected }));
       `;
 

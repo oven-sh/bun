@@ -2122,7 +2122,7 @@ mod windows_only {
         pub szCSDVersion: [WCHAR; 128],
     }
 
-    #[link(name = "kernel32")]
+    #[cfg_attr(windows, link(name = "kernel32"))]
     unsafe extern "system" {
         /// A bad handle is `WAIT_FAILED`.
         pub safe fn WaitForSingleObject(hHandle: HANDLE, dwMilliseconds: DWORD) -> DWORD;
@@ -2165,7 +2165,7 @@ mod windows_only {
         ) -> c_int;
     }
 
-    #[link(name = "advapi32")]
+    #[cfg_attr(windows, link(name = "advapi32"))]
     unsafe extern "system" {
         /// Returns a Win32 error code, `ERROR_SUCCESS` on success.
         pub fn RegGetValueW(
@@ -2179,7 +2179,7 @@ mod windows_only {
         ) -> LONG;
     }
 
-    #[link(name = "ntdll")]
+    #[cfg_attr(windows, link(name = "ntdll"))]
     unsafe extern "system" {
         /// Fills `lpVersionInformation`, whose `dwOSVersionInfoSize` the caller set.
         pub safe fn RtlGetVersion(lpVersionInformation: &mut OSVERSIONINFOW) -> NTSTATUS;

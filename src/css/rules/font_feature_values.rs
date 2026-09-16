@@ -313,6 +313,7 @@ const _: () = {
             if indices.is_empty() {
                 return Err(input.new_custom_error(ParserError::invalid_value));
             }
+            input.expect_exhausted()?;
 
             let existing = this.declarations.iter_mut().find(|d| d.name.v() == name);
             match existing {

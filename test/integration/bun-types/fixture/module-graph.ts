@@ -10,7 +10,8 @@ import { expectType } from "./utilities";
   });
   const app = await graph.import<{ start(): void }>("./app.mjs");
   app.start();
-  expectType(graph.mainModule).is<string | undefined>();
+  // @ts-expect-error there is no mainModule: the host has what import() gave it
+  graph.mainModule;
   expectType(graph.import("./x.ts")).is<Promise<any>>();
   // @ts-expect-error onError must be a function
   new Bun.ModuleGraph({ onError: 1 });

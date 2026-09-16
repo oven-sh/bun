@@ -5148,7 +5148,9 @@ declare module "bun" {
     resume(): boolean;
 
     /**
-     * Whether the connection is currently paused via `pause()`.
+     * The state that `pause()` and `resume()` last asked for: `true` after
+     * `pause()`, `false` after `resume()`, also when that call returned
+     * `false`. The value does not change when the connection closes.
      */
     readonly isPaused: boolean;
 

@@ -6455,7 +6455,7 @@ impl VirtualMachine {
                 }
 
                 let kind = value.js_type();
-                if kind == JSType::ErrorInstance && !prev_had_errors {
+                if kind == JSType::ErrorInstance {
                     if field.eq_ascii(b"cause") {
                         saw_cause = true;
                     }

@@ -586,10 +586,46 @@ const agg = new AggregateError([m1, m2], ["agg", "msg"].join("-"), { cause });
     const { stderr, exitCode } = await run(
       `const e = new Error(${JSON.stringify("outer-" + M1)}, { cause: new Error(${JSON.stringify("inner-" + M2)}) }); console.error(e);`,
     );
+    // outer header, then the label, then the cause: each check fails if its marker is missing.
+    const outer = stderr.indexOf("error: outer-" + M1);
     const causeLabel = stderr.indexOf("[cause]:");
-    expect(causeLabel).toBeGreaterThan(-1);
+    expect(outer).toBeGreaterThan(-1);
+    expect(causeLabel).toBeGreaterThan(outer);
     expect(stderr.indexOf("error: inner-" + M2)).toBeGreaterThan(causeLabel);
-    expect(stderr.indexOf("error: outer-" + M1)).toBeLessThan(causeLabel);
+    expect(exitCode).toBe(0);
+  });
+
+  // An assigned `cause` is an enumerable own property. On an error that is not
+  // the outermost one it used to be printed inline as a property and then a
+  // second time as a block.
+  test.concurrent.each([
+    [
+      "on an AggregateError member",
+      `const inner = new Error(["in", "ner"].join("-"));
+       const member = new Error(["mem", "ber"].join("-"));
+       member.cause = inner;
+       console.error(new AggregateError([member], ["agg", "msg"].join("-")));`,
+      ["AggregateError: " + AGG, "[errors]:", "error: mem-ber", "[cause]:", "error: in-ner"],
+    ],
+    [
+      "two levels down a cause chain",
+      `const inner = new Error(["in", "ner"].join("-"));
+       const middle = new Error(["mid", "dle"].join("-"));
+       middle.cause = inner;
+       console.error(new Error(["out", "er"].join("-"), { cause: middle }));`,
+      ["error: out-er", "[cause]:", "error: mid-dle", "[cause]:", "error: in-ner"],
+    ],
+  ])("an assigned cause %s is printed once, as a [cause] block", async (_, code, sequence) => {
+    const { stderr, exitCode } = await run(code);
+    expect(count(stderr, "error: in-ner")).toBe(1);
+    // Where each marker is found when searching after the previous one; -1 once one is missing.
+    let from = 0;
+    const positions = sequence.map(marker => {
+      const at = from < 0 ? -1 : stderr.indexOf(marker, from);
+      from = at < 0 ? -1 : at + marker.length;
+      return at;
+    });
+    expect(positions).not.toContain(-1);
     expect(exitCode).toBe(0);
   });
 

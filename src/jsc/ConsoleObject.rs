@@ -566,8 +566,7 @@ fn message_with_type_and_level_(
 pub struct TablePrinter<'a> {
     global_object: &'a JSGlobalObject,
     /// Per-cell value formatter. Public so callers (e.g. `Bun.inspect.table`)
-    /// can override `ordered_properties` / `single_line` after init. The start
-    /// depth goes through `set_start_depth`.
+    /// can override `depth` / `ordered_properties` / `single_line` after init.
     pub value_formatter: Formatter<'a>,
 
     tabular_data: JSValue,
@@ -1598,8 +1597,7 @@ pub mod formatter {
         pub(crate) indent: u32,
         pub depth: u16,
         pub(crate) max_depth: u16,
-        /// The caller's `max_depth`, held while the error property dump
-        /// narrows `max_depth` to one level.
+        /// `max_depth` before the error property dump narrowed it.
         pub(crate) outer_max_depth: Option<u16>,
         pub quote_strings: bool,
         pub quote_keys: bool,

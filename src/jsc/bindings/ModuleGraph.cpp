@@ -5,6 +5,7 @@
 #include "BunClientData.h"
 #include "BunProcess.h"
 #include "ErrorCode.h"
+#include "isBuiltinModule.h"
 #include "JSDOMExceptionHandling.h"
 #include "NodeValidator.h"
 #include "PathInlines.h"
@@ -607,8 +608,9 @@ JSPromise* JSModuleGraph::import(Zig::GlobalObject* globalObject, JSValue specif
     auto referrer = Identifier::fromString(vm, makeString(cwd, PLATFORM_SEP, "[module-graph]"_s));
     Identifier key = loader->resolve(globalObject, Identifier::fromString(vm, specifier), referrer, nullptr, false);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    // The first import makes its module main, whether or not it then loads.
-    bool becomesMain = !m_mainPath;
+    // The first import makes its module main, whether or not it then loads. (Not a builtin: it
+    // is no graph's module.)
+    bool becomesMain = !m_mainPath && !Bun::isBuiltinModule(key.string());
     if (becomesMain)
         m_mainPath.set(vm, this, jsString(vm, key.string()));
     JSPromise* loaded = loader->requestImportModule(globalObject, key, Identifier(), nullptr, nullptr);

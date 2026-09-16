@@ -1179,6 +1179,21 @@ describe("Bun.ModuleGraph — error attribution matrix", () => {
       exitCode: 0,
     });
   });
+  test("a builtin import()ed first is not the graph's main: the first file module is", async () => {
+    using d = tempDir("module-graph-main-builtin-first", {
+      "a.mjs": `export const main = import.meta.main;`,
+      "b.mjs": `export const main = import.meta.main;`,
+    });
+    const g = new ModuleGraphClass();
+    const builtins = [typeof (await g.import("node:fs")).readFileSync, typeof (await g.import("bun:sqlite")).Database];
+    const a = await g.import(join(String(d), "a.mjs"));
+    const b = await g.import(join(String(d), "b.mjs"));
+    expect({ builtins, aMain: a.main, bMain: b.main }).toEqual({
+      builtins: ["function", "function"],
+      aMain: true,
+      bMain: false,
+    });
+  });
   test("a first import() with a query is main: import.meta.main compares registry keys, not paths", async () => {
     using d = tempDir("module-graph-main-query", {
       "m.mjs": `export const main = import.meta.main;`,

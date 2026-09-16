@@ -1408,6 +1408,11 @@ class ChildProcess extends EventEmitter {
     // child without a handle, as after a failed spawn, but with no 'error' and no 'close'.
     if (require("internal/shared").isStoppedModuleGraphRunning()) {
       this.#handle = null;
+      // (fork() always gives its child a channel: this one sends nothing.)
+      if (has_ipc) {
+        this.send = () => false;
+        this.disconnect = () => {};
+      }
       return;
     }
 

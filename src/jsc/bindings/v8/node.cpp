@@ -107,9 +107,7 @@ v8::MaybeLocal<v8::Value> MakeCallback(v8::Isolate* isolate,
 void node_module_register(void* opaque_mod)
 {
     // TODO unify this with napi_module_register
-    // An addon calls this from a static constructor, inside dlopen(), before its later static constructors have run.
-    // Only queue the module, as Node does. process.dlopen() runs the entry point after dlopen() returns.
-    // https://github.com/nodejs/node/blob/b7e6a5d37e7a14ef0f2cc95214b95d66c4081415/src/node_binding.cc#L275-L290
+    // Only queue, as Node does (https://github.com/nodejs/node/blob/b7e6a5d37e7a14ef0f2cc95214b95d66c4081415/src/node_binding.cc#L275-L290): this runs in a static constructor of the addon.
     auto* globalObject = defaultGlobalObject();
     globalObject->m_pendingV8Modules.append(reinterpret_cast<struct node_module*>(opaque_mod));
     globalObject->napiModuleRegisterCallCount++;
@@ -137,8 +135,7 @@ void executePendingV8Module(Zig::GlobalObject* globalObject, node_module* mod, J
     JSValue exportsValue = object->get(globalObject, WebCore::builtinNames(vm).exportsPublicName());
     RETURN_IF_EXCEPTION(scope, void());
 
-    // Convert exports to object, matching Node.js behavior.
-    // This throws for null/undefined and creates wrapper objects for primitives.
+    // Like Node, convert exports to an object: null and undefined throw, a primitive gets a wrapper object.
     JSObject* exportsObject = exportsValue.toObject(globalObject);
     RETURN_IF_EXCEPTION(scope, void());
 

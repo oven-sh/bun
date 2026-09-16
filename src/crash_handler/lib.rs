@@ -3651,9 +3651,7 @@ mod draft {
         );
     }
 
-    /// Sets the thread's action to `Dlopen(path)`. `CrashHandler__endDlOpenAction` puts back the action it replaces:
-    /// process.dlopen() runs under another action in a macro, and under its own when an addon's init calls it again.
-    ///
+    /// Sets the thread's action to `Dlopen(path)` until `CrashHandler__endDlOpenAction` puts back the one it replaces.
     /// # Safety
     /// `path` must be a valid NUL-terminated C string that outlives the returned guard.
     #[unsafe(no_mangle)]
@@ -3665,8 +3663,7 @@ mod draft {
         bun_core::heap::into_raw(Box::new(scoped_action(Action::Dlopen(s))))
     }
 
-    /// # Safety
-    /// `guard` must come from `CrashHandler__beginDlOpenAction`, on this thread, and must not be used again.
+    /// SAFETY: `guard` must come from `CrashHandler__beginDlOpenAction`, on this thread, and must not be used again.
     #[unsafe(no_mangle)]
     unsafe extern "C" fn CrashHandler__endDlOpenAction(guard: *mut ActionGuard) {
         // SAFETY: guard is a live Box from CrashHandler__beginDlOpenAction (caller contract)

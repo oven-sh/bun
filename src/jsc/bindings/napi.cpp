@@ -759,8 +759,7 @@ void Napi::executePendingNapiModule(Zig::GlobalObject* globalObject, const napi_
     JSValue exportsObject = object->get(globalObject, WebCore::builtinNames(vm).exportsPublicName());
     RETURN_IF_EXCEPTION(scope, void());
 
-    // Convert exports to object, matching Node.js behavior.
-    // This throws for null/undefined and creates wrapper objects for primitives.
+    // Like Node, convert exports to an object: null and undefined throw, a primitive gets a wrapper object.
     JSObject* exports = exportsObject.toObject(globalObject);
     RETURN_IF_EXCEPTION(scope, void());
 
@@ -809,9 +808,8 @@ extern "C" void napi_module_register(napi_module* mod)
     // knows that napi_module_register was attempted
     globalObject->napiModuleRegisterCallCount++;
 
-    // Append to vector to accumulate ALL module registrations during dlopen. A module without an entry point is
-    // queued too: this runs inside dlopen() and cannot throw, so executePendingNapiModule throws for it, as Node does.
-    // https://github.com/nodejs/node/blob/b7e6a5d37e7a14ef0f2cc95214b95d66c4081415/src/node_api.cc#L804-L808
+    // Append to vector to accumulate ALL module registrations during dlopen
+    // This runs inside dlopen() and cannot throw. A module with no entry point is queued too, and executePendingNapiModule throws.
     globalObject->m_pendingNapiModules.append(mod ? *mod : napi_module {});
     if (mod && mod->nm_register_func) {
         // Increment the counter to signal that a module registered itself

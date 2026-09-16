@@ -537,8 +537,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
         utf8 = *utf8_filename;
     }
 
-    // Registrations made during the dlopen() below belong to this call. An init function can call process.dlopen()
-    // again, so set aside what an outer call has queued and, whatever happens below, put it back.
+    // An init function can call process.dlopen() again: set aside what the outer call has queued, and put it back on return.
     auto outerNapiModules = std::exchange(globalObject->m_pendingNapiModules, {});
     auto outerV8Modules = std::exchange(globalObject->m_pendingV8Modules, {});
     auto outerRegisterCallCount = std::exchange(globalObject->napiModuleRegisterCallCount, 0);
@@ -636,9 +635,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
             }
         }
 
-        // Execute all V8 modules. Like Node, do it here and not inside node_module_register(): that runs in one of
-        // the addon's static constructors, before the later ones (https://github.com/oven-sh/bun/issues/20454).
-        // https://github.com/nodejs/node/blob/b7e6a5d37e7a14ef0f2cc95214b95d66c4081415/src/node_binding.cc#L480-L486
+        // V8 init functions run here and not in node_module_register(): https://github.com/oven-sh/bun/issues/20454
         for (auto* mod : pendingV8Modules) {
             node::executePendingV8Module(globalObject, mod, strongModule.get());
             RETURN_IF_EXCEPTION(scope, {});

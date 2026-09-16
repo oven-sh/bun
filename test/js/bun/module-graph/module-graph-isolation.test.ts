@@ -851,6 +851,20 @@ const dir = String(
       fs.rmSync(dir, { recursive: true });
       process.exit(0);
     `,
+    "schedules-a-cron-job.mjs": `
+      export const schedule = () => Bun.cron("* * * * *", () => {});
+    `,
+    "cron-job-of-a-disposed-graph.mjs": `
+      const graph = new Bun.ModuleGraph();
+      const app = await graph.import(import.meta.dir + "/schedules-a-cron-job.mjs");
+      const job = graph.run(() => app.schedule());
+      // One of the host's own, stopped by the host: a graph's going leaves it alone.
+      const own = Bun.cron("* * * * *", () => {});
+      graph.dispose();
+      console.log(JSON.stringify({ stopReturnsTheJob: job.stop() === job }));
+      own.stop();
+      // (No process.exit(): the graph's job went with the graph, so nothing is scheduled any more.)
+    `,
     "cluster-worker-that-listens.mjs": `
       import http from "node:http";
       http.createServer((request, response) => response.end("the worker")).listen(0, "127.0.0.1");
@@ -3705,6 +3719,13 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
       });
     },
   );
+  // An in-process Bun.cron() job re-arms itself after every tick and keeps the loop alive, like a setInterval().
+  test("a Bun.cron() job it scheduled is stopped: the process ends by itself", async () => {
+    expect(await runsFixture("cron-job-of-a-disposed-graph.mjs")).toEqual({
+      stdout: `{"stopReturnsTheJob":true}`,
+      exitCode: 0,
+    });
+  });
   // The primary's side of node:cluster runs from the worker's messages: they are the forking graph's callbacks.
   test.skipIf(isWindows)(
     "node:cluster: what a worker it forked tells the primary is heard as the graph, and nothing of it is left",

@@ -835,11 +835,8 @@ impl AnyRoute {
                     FrameworkRouter::Style::from_js(style_js.unwrap(), global)?;
                 // Style impls Drop; `?` drops it on the error path.
 
-                // The dev server silently skips a router type whose root is
-                // missing, because a framework package may list optional
-                // roots. A user-written `{ dir, style }` mount names exactly
-                // one directory, so a root that cannot be opened is an error
-                // here, like `{ dir }` without `style`.
+                // The dev server skips a missing router root (framework
+                // packages list optional roots), so check the user's `dir` here.
                 {
                     use bun_sys_jsc::ErrorJsc;
                     let mut buf = paths::path_buffer_pool::get();

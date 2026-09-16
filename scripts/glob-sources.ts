@@ -34,7 +34,7 @@ interface SourcePattern {
 const patterns = {
   /** `packages/bun-error/*` — error overlay page */
   bunError: {
-    paths: ["packages/bun-error/*.{json,ts,tsx,css}", "packages/bun-error/img/*"],
+    paths: ["packages/bun-error/*.{json,ts,tsx,css}"],
   },
   /** `*.string-map.ts` — input to generate-string-map codegen */
   stringMaps: {

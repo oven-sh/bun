@@ -1,4 +1,5 @@
 import { gunzipSync, gzipSync, type Server } from "bun";
+import { fetchH3Internals } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir, tls } from "harness";
 
@@ -8,6 +9,7 @@ import { bunEnv, bunExe, tempDir, tls } from "harness";
 let server: Server;
 let base: string;
 const big = Buffer.alloc(256 * 1024, "abcdefghijklmnop");
+const { liveCounts } = fetchH3Internals;
 
 beforeAll(async () => {
   server = Bun.serve({
@@ -332,6 +334,23 @@ describe("fetch protocol: http3", () => {
       const res = await fetch(`${base}/hello`, h3);
       expect(await res.text()).toBe("hello over h3");
     }
+  });
+
+  test("a FetchSession has its own connection, and close() closes it once idle", async () => {
+    using one = new Bun.FetchSession();
+    using other = new Bun.FetchSession();
+    const text = (session: Bun.FetchSession) => fetch(`${base}/hello`, { ...h3, session }).then(r => r.text());
+    const before = liveCounts().sessions;
+    expect(await text(one)).toBe("hello over h3");
+    expect(await text(one)).toBe("hello over h3");
+    expect(liveCounts().sessions).toBe(before + 1);
+    expect(await text(other)).toBe("hello over h3");
+    expect(liveCounts().sessions).toBe(before + 2);
+    one.close();
+    while (liveCounts().sessions !== before + 1) await new Promise(resolve => setImmediate(resolve));
+    // `other` still has its connection.
+    expect(await text(other)).toBe("hello over h3");
+    expect(liveCounts().sessions).toBe(before + 1);
   });
 
   test("50 concurrent requests", async () => {

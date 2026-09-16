@@ -121,8 +121,6 @@ pub struct QuicStream {
     peer_stop_sending_code: Cell<Option<u64>>,
     wrote_to_lsquic: Cell<bool>,
     headers_received: Cell<bool>,
-    /// lsquic refused the last outgoing header block. A body write on an
-    /// HTTP stream without headers fails with EILSEQ, and nothing retries it.
     headers_refused: Cell<bool>,
     /// RFC 9218 (urgency, incremental).
     priority: Cell<(u8, bool)>,
@@ -483,8 +481,6 @@ impl QuicStream {
         }
     }
 
-    /// The send side takes no more data: drop the queue and stop asking for
-    /// write events.
     fn drop_outbound(&self, s: lsquic::Stream) {
         self.outbound.with_mut(|o| {
             o.data.clear();
@@ -494,8 +490,6 @@ impl QuicStream {
         s.want_write(false);
     }
 
-    /// The stream cannot carry its queued data (lsquic refused the header
-    /// block): reset it with the application's internal error code.
     fn fail_outbound(&self, s: lsquic::Stream) {
         let code = self
             .session_ref()
@@ -511,11 +505,7 @@ impl QuicStream {
         s.reset(code);
     }
 
-    /// `lsquic_stream_write` returned -1. Flow control is a short or zero
-    /// write, so no write event clears this. Either the send side is already
-    /// reset or finished (ECONNRESET, EBADF), or an HTTP stream has no header
-    /// block yet (EILSEQ). The latter waits for `send_headers` unless lsquic
-    /// refused the block, in which case the stream is failed.
+    /// -1 (EILSEQ, ECONNRESET, EBADF) is not flow control: no write event clears it.
     fn on_write_failed(&self, s: lsquic::Stream) {
         let send_open = self.peer_stop_sending_code.get().is_none()
             && self.with_state(|st| st.write_ended == 0 && st.fin_sent == 0 && st.reset == 0);
@@ -524,6 +514,7 @@ impl QuicStream {
         } else if self.headers_refused.get() {
             self.fail_outbound(s);
         } else {
+            // No header block yet: a later send_headers re-arms the write.
             s.want_write(false);
         }
     }
@@ -833,9 +824,6 @@ impl QuicStream {
                     .is_some_and(|session| session.has_deferred_abort(s.raw()));
                 if !deferred {
                     let send_ended = write_done || self.outbound.get().end != PendingEnd::None;
-                    // Nothing to deliver when lsquic refused the header
-                    // block: the caller's code goes on the wire, not the
-                    // internal error a drain would send.
                     if code != 0 || !send_ended || self.headers_refused.get() {
                         s.reset(code);
                     } else {

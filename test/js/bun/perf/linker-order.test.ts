@@ -325,6 +325,12 @@ describe("finding an earlier build to inherit from", () => {
     expect(requested.at(-1)).toBe(`${pipeline}/builds/640.json`);
   });
 
+  it("still offers the newest passed build after a crowded window used up the probe's candidates", async () => {
+    const crowded = Array.from({ length: 60 }, (_, i) => 999 - i);
+    const { found } = await walk({ main: [...crowded, 640], newestPassed: 640 });
+    expect(found).toEqual([...crowded.slice(0, 50), 640]);
+  });
+
   it("finds nothing when the branch has no passed build either", async () => {
     expect((await walk({ main: [] })).found).toEqual([]);
   });

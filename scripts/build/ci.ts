@@ -686,10 +686,10 @@ async function waitForStepOutcome(stepKey: string): Promise<void> {
 // inherit, PRs do neither; one that inherits nothing generates, seeding the chain.
 // ═══════════════════════════════════════════════════════════════════════════
 
-/** Cap on builds we ask for an order file before giving up and generating one. */
+/** Cap on probed builds we ask for an order file. The newest passed build is asked on top of these. */
 const PREVIOUS_BUILDS_TO_TRY = 50;
 
-/** Bound on the number-probe fallback: a branch is sparse among build numbers. */
+/** Bound on the number probe: a branch is sparse among build numbers. */
 const NUMBER_PROBE_BUDGET = 200;
 
 /** Per-attempt cap, so a hung agent cannot blow the step's budget. */
@@ -850,6 +850,7 @@ export async function* candidateBuilds(
   // linked and published.
   let number = ctx.buildNumber;
   for (let probes = 0; number !== undefined && number > 1 && probes < NUMBER_PROBE_BUDGET; probes++) {
+    if (seen.size >= PREVIOUS_BUILDS_TO_TRY) break;
     number -= 1;
     const body = await lookups.build(`${pipeline}/builds/${number}.json`);
     if (!body?.id || body.branch_name !== branch) continue;
@@ -886,7 +887,7 @@ export async function inheritOrderFile(cfg: Config, ctx: OrderFileContext): Prom
   let tried = 0;
 
   for await (const build of candidateBuilds(ctx)) {
-    if (++tried > PREVIOUS_BUILDS_TO_TRY) break;
+    tried++;
     // No --step: exactly one step per build publishes the target-unique name —
     // packageAndUpload() for a lane that traced its own binary, the sibling
     // trace-order step (.buildkite/ci.mjs) for a cross-compiled one.

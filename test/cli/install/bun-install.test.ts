@@ -14,10 +14,13 @@ import {
   runBunInstall,
   tempDir,
   textLockfile,
+  tls,
   toBeValidBin,
   toBeWorkspaceLink,
   toHaveBins,
 } from "harness";
+import { once } from "node:events";
+import { connect, createServer, type Socket as NetSocket } from "node:net";
 import { join, resolve, sep } from "path";
 import {
   createTestContext,
@@ -151,18 +154,19 @@ function serveDirectory(root: string) {
 }
 
 /**
- * Serves URL dependencies (`http://github.com/<user>/<repo>/tarball/<ref>`, `http://some.url/path?stuff`) without
+ * Serves URL dependencies (`https://github.com/<user>/<repo>/tarball/<ref>`, `https://some.url/path?stuff`) without
  * the network. `bun install` downloads such URLs as-is (there is no `GITHUB_API_URL` equivalent to point at a test
- * server), so the returned `env` instead points the install's `http_proxy` at this server. A proxied plain-http
- * request arrives in absolute form, so `request.url` is the dependency URL itself and the specifiers keep the real
- * hosts bun classifies them by. The dependencies must use `http://`: `https://` would be tunneled (CONNECT) to the
- * real host. Every URL seen is pushed to `urls`. A URL registered with tarball bytes is answered with them, one
- * registered with a `Response` (e.g. a redirect) with that response, anything else with a 404. The context's registry
- * bypasses the proxy, so its `urls`/`requested` are unaffected.
+ * server), so the returned `env` sets `https_proxy` to a CONNECT proxy that opens every tunnel to one local TLS server
+ * instead of the host it was asked for. The specifiers keep the real hosts bun classifies them by, and the server
+ * sees them: `request.url` is the dependency URL. `targets` holds the `host:port` of every tunnel and `urls` every URL
+ * requested. A URL registered with tarball bytes is answered with them, one registered with a `Response` (e.g. a
+ * redirect) with that response, anything else with a 404. The context's registry is plain http and bypasses the proxy,
+ * so its `urls`/`requested` are unaffected.
  */
-function urlTarballProxy(ctx: TestContext, urls: string[], responses: Record<string, Uint8Array | Response>) {
-  const server = Bun.serve({
+async function urlTarballProxy(ctx: TestContext, urls: string[], responses: Record<string, Uint8Array | Response>) {
+  const origin = Bun.serve({
     port: 0,
+    tls,
     fetch(request) {
       urls.push(request.url);
       const registered = responses[request.url];
@@ -170,11 +174,53 @@ function urlTarballProxy(ctx: TestContext, urls: string[], responses: Record<str
       return registered instanceof Response ? registered.clone() : new Response(registered);
     },
   });
-  const proxy_url = server.url.href.replace(/\/+$/, "");
+
+  const targets: string[] = [];
+  const sockets = new Set<NetSocket>();
+  const proxy = createServer(client => {
+    sockets.add(client);
+    client.on("error", () => {});
+    client.on("close", () => sockets.delete(client));
+    let head = "";
+    client.on("data", function onData(chunk: Buffer) {
+      head += chunk.toString("latin1");
+      if (!head.includes("\r\n\r\n")) return;
+      client.off("data", onData);
+      // `pipe()` below resumes the socket once the upstream is connected.
+      client.pause();
+      targets.push(head.split(" ")[1]);
+      const upstream = connect(origin.port, "127.0.0.1", () => {
+        client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+        client.pipe(upstream);
+        upstream.pipe(client);
+      });
+      sockets.add(upstream);
+      upstream.on("error", () => client.destroy());
+      upstream.on("close", () => sockets.delete(upstream));
+      client.on("close", () => upstream.destroy());
+    });
+  });
+  proxy.listen(0, "127.0.0.1");
+  await once(proxy, "listening");
+
+  const proxy_url = `http://127.0.0.1:${(proxy.address() as { port: number }).port}`;
   const registry_host = new URL(ctx.registry_url).hostname;
   return {
-    env: { ...env, http_proxy: proxy_url, HTTP_PROXY: proxy_url, no_proxy: registry_host, NO_PROXY: registry_host },
-    [Symbol.asyncDispose]: () => server.stop(true),
+    targets,
+    env: {
+      ...env,
+      https_proxy: proxy_url,
+      HTTPS_PROXY: proxy_url,
+      no_proxy: registry_host,
+      NO_PROXY: registry_host,
+      // The local server's certificate is not for github.com.
+      NODE_TLS_REJECT_UNAUTHORIZED: "0",
+    },
+    async [Symbol.asyncDispose]() {
+      for (const socket of sockets) socket.destroy();
+      proxy.close();
+      await Promise.all([once(proxy, "close"), origin.stop(true)]);
+    },
   };
 }
 
@@ -4683,19 +4729,19 @@ describe.concurrent("bun-install", () => {
   });
 
   // The second variant also sets GITHUB_API_URL: it only applies to `github:` dependencies, so the tarball URL
-  // must still be fetched verbatim (any request reaching the local stand-in would show up in `urls`).
+  // must still be fetched verbatim (a request to it would show up in `proxied_urls` and `proxy.targets`).
   for (const with_github_api_url of [false, true]) {
     it(
-      "should handle GitHub tarball URL in dependencies (http://github.com/user/repo/tarball/ref)" +
+      "should handle GitHub tarball URL in dependencies (https://github.com/user/repo/tarball/ref)" +
         (with_github_api_url ? " with custom GITHUB_API_URL" : ""),
       async () => {
         await withContext(defaultOpts, async ctx => {
           const urls: string[] = [];
           setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
-          const tarball_url = "http://github.com/cujojs/when/tarball/1.0.2";
-          const codeload_url = "http://codeload.github.com/cujojs/when/legacy.tar.gz/refs/tags/1.0.2";
+          const tarball_url = "https://github.com/cujojs/when/tarball/1.0.2";
+          const codeload_url = "https://codeload.github.com/cujojs/when/legacy.tar.gz/refs/tags/1.0.2";
           const proxied_urls: string[] = [];
-          await using proxy = urlTarballProxy(ctx, proxied_urls, {
+          await using proxy = await urlTarballProxy(ctx, proxied_urls, {
             [tarball_url]: new Response(null, { status: 302, headers: { Location: codeload_url } }),
             [codeload_url]: await when_tarball,
           });
@@ -4715,7 +4761,7 @@ describe.concurrent("bun-install", () => {
             stdout: "pipe",
             stdin: "pipe",
             stderr: "pipe",
-            env: with_github_api_url ? { ...proxy.env, GITHUB_API_URL: `${ctx.registry_url}github/api` } : proxy.env,
+            env: with_github_api_url ? { ...proxy.env, GITHUB_API_URL: "https://example.com/github/api" } : proxy.env,
           });
           const err = await stderr.text();
           expect(err).toContain("Saved lockfile");
@@ -4731,6 +4777,7 @@ describe.concurrent("bun-install", () => {
           ]);
           expect(await exited).toBe(0);
           expect(proxied_urls).toEqual([tarball_url, codeload_url]);
+          expect(proxy.targets).toEqual(["github.com:443", "codeload.github.com:443"]);
           expect(urls.sort()).toBeEmpty();
           expect(ctx.requested).toBe(0);
           expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "when"]);
@@ -4756,7 +4803,7 @@ describe.concurrent("bun-install", () => {
     );
   }
 
-  it("should treat non-GitHub http(s) URLs as tarballs (http://some.url/path?stuff)", async () => {
+  it("should treat non-GitHub http(s) URLs as tarballs (https://some.url/path?stuff)", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
       setContextHandler(
@@ -4765,9 +4812,9 @@ describe.concurrent("bun-install", () => {
           "4.3.0": { as: "4.3.0" },
         }),
       );
-      const tarball_url = "http://gitpkg-fork.vercel.sh/vercel/turbo/crates/turbopack-node/js?turbopack-230922.2";
+      const tarball_url = "https://gitpkg-fork.vercel.sh/vercel/turbo/crates/turbopack-node/js?turbopack-230922.2";
       const proxied_urls: string[] = [];
-      await using proxy = urlTarballProxy(ctx, proxied_urls, {
+      await using proxy = await urlTarballProxy(ctx, proxied_urls, {
         [tarball_url]: await new Bun.Archive(
           {
             "package/package.json": JSON.stringify({
@@ -4813,6 +4860,7 @@ describe.concurrent("bun-install", () => {
       ]);
       expect(await exited).toBe(0);
       expect(proxied_urls).toEqual([tarball_url]);
+      expect(proxy.targets).toEqual(["gitpkg-fork.vercel.sh:443"]);
       expect(urls.sort()).toEqual([`${ctx.registry_url}loader-runner`, `${ctx.registry_url}loader-runner-4.3.0.tgz`]);
       expect(ctx.requested).toBe(2);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([

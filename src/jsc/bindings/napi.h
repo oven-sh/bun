@@ -504,10 +504,9 @@ public:
     inline bool isFinishingFinalizers() const { return m_isFinishingFinalizers; }
 
     // Node's env->can_call_into_js(). False for the whole of cleanup(): on_exit() stops the handle first.
-    // And while a completion runs for a Bun.ModuleGraph context that has stopped (see below).
     inline bool canCallIntoJS() const
     {
-        return !m_isCompletingForStoppedContext && !WebCore::clientData(m_vm)->isStoppingOrStopped(m_vm);
+        return !WebCore::clientData(m_vm)->isStoppingOrStopped(m_vm);
     }
 
     // The status of a call that Node refuses because !can_call_into_js().

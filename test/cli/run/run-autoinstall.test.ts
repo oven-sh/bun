@@ -200,47 +200,73 @@ describe.concurrent("auto-install reads a package.json dependency version from t
     );
 
     const cache = join(String(dir), "cache");
-    const { stderr } = await runWithCache(app, cache, "index.js");
+    const { stdout, stderr, exitCode } = await runWithCache(app, cache, "index.js");
     expect(stderr).not.toContain("git clone");
     // A git package is checked out into `@G@<commit>` in the cache.
     expect(await Bun.file(join(cache, `@G@${commit}`, "package.json")).json()).toEqual({
       name: "git-dep",
       version: "1.0.0",
     });
+    expect(stderr).toContain("Cannot find package 'git-dep'");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
   });
 
-  // The versions of a package.json are only parsed once the package manager
-  // exists, and the first bare import creates it. So the two tests below import
-  // left-pad first and declare their dependencies in a directory that is read
-  // after that.
-
-  // The parse of sub/package.json recorded its alias in the package manager,
-  // which reads those with the lockfile's strings. one-range-dep depends on
-  // the real no-deps@^1.0.0, and bun looked that up as `/0.0.tgzon`.
-  test("npm: alias under the name of a package that another package depends on", async () => {
+  // A value with an escape is not a slice of the source, so it has no offset
+  // into it. bun records the dependency by name only, and an import of it asks
+  // for the name as written, like an import that no package.json lists.
+  test("value with a JSON escape", async () => {
     using registry = fixtureRegistry();
-    using dir = tempDir("autoinstall-alias-key", {
-      "package.json": JSON.stringify({ name: "root" }),
-      "index.js": `require("left-pad");\nrequire("./sub/index.js");\n`,
-      "sub/package.json": JSON.stringify({ name: "sub", dependencies: { "no-deps": "npm:is-number@1.0.0" } }),
-      // The index.js of one-range-dep exports its package.json, with each
-      // dependency replaced by what `require` gives for it.
-      "sub/index.js": `const dep = require("one-range-dep").dependencies["no-deps"];\nconsole.log(dep.name + "@" + dep.version);\n`,
+    using dir = tempDir("autoinstall-escaped-value", {
+      "package.json": String.raw`{"name":"app","dependencies":{"my-alias":"npm:is-number@\u0031.0.0"}}`,
+      "index.js": `try {\n  require("my-alias");\n} catch (e) {\n  console.log(e.code);\n}\n`,
       "bunfig.toml": registry.bunfig,
     });
 
     const { stdout, exitCode } = await runWithCache(String(dir), join(String(dir), ".bun-cache"), "index.js");
-    expect(stdout).toBe("no-deps@1.1.0\n");
-    expect(registry.requests.toSorted()).toEqual([
-      "/left-pad",
-      "/left-pad/-/left-pad-1.0.0.tgz",
-      "/no-deps",
-      "/no-deps/-/no-deps-1.1.0.tgz",
-      "/one-range-dep",
-      "/one-range-dep/-/one-range-dep-1.0.0.tgz",
-    ]);
+    expect(stdout).toBe("MODULE_NOT_FOUND\n");
+    expect([...new Set(registry.requests)]).toEqual(["/my-alias"]);
     expect(exitCode).toBe(0);
   });
+
+  // The versions of a package.json are only parsed once the package manager
+  // exists, and the first bare import creates it. So the tests below import
+  // another package first and declare their dependencies in a directory that
+  // is read after that.
+
+  // one-range-dep depends on no-deps@^1.0.0. The alias of sub/ has that name
+  // and a version in that range, so one-range-dep gets the target of the alias,
+  // as it does from `bun install`. The package manager reads a recorded alias
+  // with the lockfile's strings, and the parse of sub/package.json recorded it
+  // with offsets into sub/package.json: bun asked for `/:%2f%2f127.0.`. A
+  // target name of up to 8 bytes is inline and has no offset.
+  test.each(["left-pad@1.0.0", "is-number@1.0.0"])(
+    "npm: alias of %s under the name of a package that another package depends on",
+    async target => {
+      using registry = fixtureRegistry();
+      const [name, version] = target.split("@");
+      const first = name === "left-pad" ? "is-number" : "left-pad";
+      using dir = tempDir("autoinstall-alias-key", {
+        "package.json": JSON.stringify({ name: "root" }),
+        "index.js": `require("${first}");\nrequire("./sub/index.js");\n`,
+        "sub/package.json": JSON.stringify({ name: "sub", dependencies: { "no-deps": `npm:${target}` } }),
+        // The index.js of one-range-dep exports its package.json, with each
+        // dependency replaced by what `require` gives for it.
+        "sub/index.js": `const dep = require("one-range-dep").dependencies["no-deps"];\nconsole.log(dep.name + "@" + dep.version);\n`,
+        "bunfig.toml": registry.bunfig,
+      });
+
+      const { stdout, exitCode } = await runWithCache(String(dir), join(String(dir), ".bun-cache"), "index.js");
+      expect(stdout).toBe(target + "\n");
+      expect(registry.requests.filter(path => !path.startsWith(`/${first}`)).toSorted()).toEqual([
+        `/${name}`,
+        `/${name}/-/${name}-${version}.tgz`,
+        "/one-range-dep",
+        "/one-range-dep/-/one-range-dep-1.0.0.tgz",
+      ]);
+      expect(exitCode).toBe(0);
+    },
+  );
 
   // No version of prereleases-3 is in the range of b/. The check for a match
   // among the installed packages compared the tag of the range with the

@@ -131,43 +131,39 @@ describe.concurrent("a failed auto-install download does not lower the concurren
     // A burst is as large as the cap: all of it is in flight at once only while the cap is whole.
     const requests = Number(process.env.BUN_CONFIG_MAX_HTTP_REQUESTS);
     let inFlight = 0;
-    let peak = 0;
     let release;
-    let quiet;
     // Holds every response until all the requests of a burst are in flight at once.
     using server = Bun.serve({
       port: 0,
       hostname: "127.0.0.1",
       async fetch() {
-        peak = Math.max(peak, ++inFlight);
-        clearTimeout(quiet);
-        if (inFlight === requests) release.resolve();
-        // Under a lower cap the rest of the burst waits in the client, and no event says that
-        // nothing more will arrive. Only then does this timer run out, so that the burst ends and
-        // reports its peak. A burst that is in flight as a whole never waits for it.
-        else quiet = setTimeout(release.resolve, 2000);
+        if (++inFlight === requests) release.resolve();
         await release.promise;
         inFlight--;
         return new Response("ok");
       },
     });
-    // Starts all the fetch() calls together. How many of them were in flight at once?
     async function burst() {
-      peak = 0;
       release = Promise.withResolvers();
+      // Under a lowered cap the rest of the burst waits in the client for a response that never
+      // comes, and no event reports that. This bound only ends such a burst: the child says how
+      // far the burst came and exits. A burst that fits under the cap takes a few milliseconds.
+      const stuck = setTimeout(() => {
+        console.log(inFlight + " requests in flight at once");
+        process.exit(1);
+      }, 4000);
       await Promise.all(Array.from({ length: requests }, () => fetch(server.url).then(res => res.text())));
-      clearTimeout(quiet);
-      return peak;
+      clearTimeout(stuck);
+      console.log(requests + " requests in flight at once");
     }
 
-    const before = await burst();
-    let code;
+    await burst();
     try {
       require("never-there");
     } catch (e) {
-      code = e.code;
+      console.log(e.code);
     }
-    console.log(JSON.stringify({ before, code, after: await burst() }));
+    await burst();
   `;
 
   test.each(["manifest", "tarball"] as const)("when the %s request fails", async failing => {
@@ -218,8 +214,8 @@ describe.concurrent("a failed auto-install download does not lower the concurren
     });
     const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect({ stdout: stdout.trim(), manifests, droppedConnections, exitCode }).toEqual({
-      stdout: JSON.stringify({ before: 8, code: "MODULE_NOT_FOUND", after: 8 }),
+    expect({ stdout: stdout.trim().split("\n"), manifests, droppedConnections, exitCode }).toEqual({
+      stdout: ["8 requests in flight at once", "MODULE_NOT_FOUND", "8 requests in flight at once"],
       manifests: failing === "manifest" ? [] : ["never-there"],
       // the failed request and its one retry
       droppedConnections: 2,

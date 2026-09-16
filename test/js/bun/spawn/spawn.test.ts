@@ -10,6 +10,7 @@ import {
   isBroken,
   isDebug,
   isLinux,
+  isMusl,
   isPosix,
   isWindows,
   shellExe,
@@ -631,6 +632,22 @@ it.skipIf(Boolean(process.env.BUN_FEATURE_FLAG_FORCE_WAITER_THREAD) || (!isLinux
   },
   192_000,
 );
+
+// With the waiter thread, each child exit runs a SIGCHLD handler on the thread that spawned
+// the child. A blocking syscall in code that does not retry EINTR (an FFI library, a native
+// addon, the sanitizer runtime) must restart after the handler, not fail.
+it.skipIf(!isLinux)("the waiter thread's SIGCHLD handler does not fail a blocking syscall with EINTR", async () => {
+  const libc = isMusl ? (process.arch === "arm64" ? "libc.musl-aarch64.so.1" : "libc.musl-x86_64.so.1") : "libc.so.6";
+  await using proc = spawn({
+    cmd: [bunExe(), join(import.meta.dir, "spawn-sigchld-restart-fixture.ts"), libc],
+    env: { ...bunEnv, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1", BUN_GARBAGE_COLLECTOR_LEVEL: "1" },
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: `{"read":1,"byte":"x"}`, exitCode: 0 });
+});
 
 describe("spawn unref and kill should not hang", () => {
   const cmd = [shellExe(), "-c", "sleep 0.001"];

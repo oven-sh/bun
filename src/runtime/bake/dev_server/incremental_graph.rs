@@ -1154,6 +1154,21 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     if goal == TraceDependencyGoal::StopAtBoundary {
                         return Ok(());
                     }
+                } else if goal == TraceDependencyGoal::NoStop {
+                    // A stylesheet that server files import has a `FileKind::Css` entry under the
+                    // same key on the server graph, and that entry holds the edges to them
+                    // (`insert_css_file_on_server`). `StopAtBoundary` does not cross over: the
+                    // client swaps an edited stylesheet in place, so those routes do not reload.
+                    let key = bun_ptr::RawSlice::new(
+                        &*self.bundled_files.keys()[file_index.get() as usize],
+                    );
+                    // SAFETY: cross-graph sibling access; `server_graph` disjoint.
+                    let server_graph = unsafe { &mut (*dev).server_graph };
+                    if let Some(index) = server_graph.get_file_index(key.slice()) {
+                        if server_graph.get_file_by_index(index).kind == FileKind::Css {
+                            server_graph.trace_dependencies(index, gts, goal, index)?;
+                        }
+                    }
                 }
             }
         }

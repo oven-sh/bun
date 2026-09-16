@@ -50,6 +50,122 @@ devTest("symbol collision with import identifier", {
     await dev.fetch("/").equals("Hello, 456, 987!");
   },
 });
+// With 0 (the default of a release build) a request for a failed route bundles the route again.
+// With 1 (the default of a debug build) it answers with the failure that is on record.
+for (const assumePerfectIncremental of ["0", "1"]) {
+  devTest(
+    `framework route fails while the stylesheet its page imports has an error (BUN_ASSUME_PERFECT_INCREMENTAL=${assumePerfectIncremental})`,
+    {
+      // The error page reloads into the route, so the route needs an HMR client: a client entry point.
+      framework: {
+        ...minimalFramework,
+        fileSystemRouterTypes: [{ ...minimalFramework.fileSystemRouterTypes![0], clientEntryPoint: "./client.ts" }],
+      },
+      env: { BUN_ASSUME_PERFECT_INCREMENTAL: assumePerfectIncremental },
+      files: {
+        "client.ts": `
+          globalThis.clientEntryPointLoaded = true;
+        `,
+        "routes/index.ts": `
+          import "./styles.css";
+          export default function (req, meta) {
+            const links = meta.styles.map(href => '<link rel="stylesheet" href="' + href + '">').join("");
+            const script = '<script type="module" src="' + meta.modules[0] + '"></script>';
+            const html = "<!doctype html><html><head>" + links + "</head><body>page v1" + script + "</body></html>";
+            return new Response(html, { headers: { "content-type": "text/html" } });
+          }
+        `,
+        "routes/styles.css": `
+          .a { color: red; }
+        `,
+      },
+      async test(dev) {
+        const first = await dev.fetch("/").text();
+        expect(first).toContain("page v1");
+        const stylesheet = first.match(/<link rel="stylesheet" href="([^"]+\.css)">/)![1];
+        const error = "routes/styles.css:1:20: error: Unexpected end of input";
+        // Only the stylesheet is saved. The page itself does not change.
+        await dev.write(
+          "routes/styles.css",
+          `
+            .a { color: red; }}
+          `,
+          { errors: null },
+        );
+        // The route answers the build error page, and the page lists the failure once.
+        await using c = await dev.client("/", { errors: [error] });
+        // A save of the page bundles the stylesheet for the server. That is still one failure.
+        await dev.patch("routes/index.ts", { find: "page v1", replace: "page v2", errors: [error] });
+        // The error page reloads by itself when the stylesheet compiles again.
+        await c.expectReload(async () => {
+          await dev.write(
+            "routes/styles.css",
+            `
+              .a { color: blue; }
+            `,
+          );
+        });
+        // The route serves the page that was saved while the stylesheet was broken.
+        const fixed = await dev.fetch("/").text();
+        expect(fixed).toBe(first.replace("page v1", "page v2"));
+        await dev.fetch(stylesheet).expect.toMatch(/color:\s*#00f/);
+      },
+    },
+  );
+}
+devTest("stylesheet that compiles does not reload the framework route whose page imports it", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": `
+      import "./styles.css";
+      export default function (req, meta) {
+        return Response.json({ styles: meta.styles });
+      }
+    `,
+    "routes/styles.css": `
+      .a { color: red; }
+    `,
+  },
+  async test(dev) {
+    const first = await dev.fetch("/").json();
+    // A viewer of "/", as the HMR client of a page is: it subscribes to hot updates and names its route.
+    const ws = new WebSocket(dev.baseUrl + "/_bun/hmr");
+    ws.binaryType = "arraybuffer";
+    const received: DataView[] = [];
+    let onReceived = () => {};
+    ws.onmessage = event => {
+      received.push(new DataView(event.data));
+      onReceived();
+    };
+    async function nextMessage(id: string) {
+      for (;;) {
+        const index = received.findIndex(view => view.getUint8(0) === id.charCodeAt(0));
+        if (index !== -1) return received.splice(index, 1)[0];
+        await new Promise<void>(resolve => (onReceived = resolve));
+      }
+    }
+    try {
+      await nextMessage("V"); // MessageId.version
+      ws.send("sh"); // IncomingMessageId.subscribe to hot_update
+      ws.send("n/"); // IncomingMessageId.set_url
+      await nextMessage("n"); // MessageId.set_url_response
+      await dev.write(
+        "routes/styles.css",
+        `
+          .a { color: blue; }
+        `,
+      );
+      const update = await nextMessage("u"); // MessageId.hot_update
+      // The first list holds the routes whose server code changed, then -1. A viewer reloads those.
+      // A stylesheet is not server code: the viewer swaps it from the third list.
+      expect(update.getInt32(1, true)).toBe(-1);
+      expect(new TextDecoder().decode(update.buffer)).toMatch(/color:\s*#00f/);
+    } finally {
+      ws.close();
+    }
+    expect(await dev.fetch("/").json()).toEqual(first);
+  },
+});
 devTest('uses "development" condition', {
   framework: minimalFramework,
   files: {

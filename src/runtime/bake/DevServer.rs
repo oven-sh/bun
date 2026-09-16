@@ -4947,6 +4947,25 @@ impl DevServer {
         }
     }
 
+    /// The graph that records a failure of `abs_path`, which was parsed for `graph`. A stylesheet
+    /// that a server file imports is parsed for the server target, but its entry on the server
+    /// graph is a placeholder (`insert_css_file_on_server`) that no bundle ever receives. Its
+    /// content is on the client graph, so its failure goes there, where `receive_chunk` removes
+    /// it once the stylesheet compiles.
+    fn graph_of_failure(&self, abs_path: &[u8], graph: bake::Graph) -> bake::Graph {
+        let has_css_placeholder = graph != bake::Graph::Client
+            && self
+                .server_graph
+                .bundled_files
+                .get(abs_path)
+                .is_some_and(|file| file.kind == FileKind::Css);
+        if has_css_placeholder {
+            bake::Graph::Client
+        } else {
+            graph
+        }
+    }
+
     /// Note: The log is not consumed here
     pub(crate) fn handle_parse_task_failure(
         &mut self,
@@ -4993,7 +5012,7 @@ impl DevServer {
                 }
             }
         } else {
-            match graph {
+            match self.graph_of_failure(abs_path, graph) {
                 bake::Graph::Server => self.server_graph.insert_failure(
                     incremental_graph::InsertFailureKey::AbsPath(abs_path),
                     log,
@@ -5036,6 +5055,7 @@ impl DevServer {
 
         let _g = self.graph_safety_lock.guard();
 
+        let graph = self.graph_of_failure(abs_path, graph);
         let owner: serialized_failure::OwnerPacked = if graph == bake::Graph::Client {
             let idx = self.client_graph.insert_stale(abs_path, graph)?;
             serialized_failure::OwnerPacked::new(bake::Side::Client, idx.get())

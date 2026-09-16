@@ -335,6 +335,13 @@ static void acceptors_retry_starved(struct us_loop_t *loop);
 
 /* 0, or -1 with the Winsock error set when the kernel refused the poll (no packet follows). */
 static int afd_poll_submit(struct us_internal_afd_poll *poll) {
+#if defined(LIBUS_SOCKET_FAULT_INJECTION) && LIBUS_SOCKET_FAULT_INJECTION
+    ssize_t injected = 0;
+    int unused = 0;
+    if (US_FAULT_CHECK(US_FAULT_POLL_START, poll->socket, injected, unused)) {
+        return -1;
+    }
+#endif
     if (poll->slow) {
         return slow_poll_submit(poll);
     }
@@ -1287,6 +1294,13 @@ static void acceptor_maybe_free(struct us_internal_acceptor *a) {
 /* Returns 0 once a packet for the slot is on its way. */
 static int accept_slot_start(struct us_internal_accept_slot *slot) {
     struct us_internal_acceptor *a = slot->acceptor;
+#if defined(LIBUS_SOCKET_FAULT_INJECTION) && LIBUS_SOCKET_FAULT_INJECTION
+    ssize_t injected = 0;
+    int unused = 0;
+    if (US_FAULT_CHECK(US_FAULT_SOCKET, a->listener, injected, unused)) {
+        return -1;
+    }
+#endif
     slot->socket = WSASocketW(a->family, a->type, a->protocol, NULL, 0, WSA_FLAG_OVERLAPPED | WSA_FLAG_NO_HANDLE_INHERIT);
     if (slot->socket == INVALID_SOCKET) {
         return -1;
@@ -1340,6 +1354,12 @@ static void accept_slot_arm(struct us_internal_accept_slot *slot) {
         if (WSAGetLastError() != WSAECONNRESET) {
             break;
         }
+    }
+    /* A poll whose re-submit failed is neither with the kernel nor queued to go there. */
+    struct us_internal_afd_poll *poll = a->owner->afd;
+    if (poll && poll->state == AFD_POLL_STATE_IDLE && !poll->queued_for_update && !poll->slow_requests) {
+        afd_poll_stop(poll);
+        a->owner->afd = NULL;
     }
     if (!a->owner->afd) {
         a->owner->afd = afd_poll_create(a->loop, a->owner, a->listener, LIBUS_SOCKET_READABLE);
@@ -1636,15 +1656,6 @@ struct us_poll_t *us_poll_resize(struct us_poll_t *p, struct us_loop_t *loop, un
 
 int us_poll_start_rc(struct us_poll_t *p, struct us_loop_t *loop, int events) {
     p->poll_type = (unsigned char) (us_internal_poll_type(p) | ((events & LIBUS_SOCKET_READABLE) ? POLL_TYPE_POLLING_IN : 0) | ((events & LIBUS_SOCKET_WRITABLE) ? POLL_TYPE_POLLING_OUT : 0));
-
-#if defined(LIBUS_SOCKET_FAULT_INJECTION) && LIBUS_SOCKET_FAULT_INJECTION
-    ssize_t injected = 0;
-    int unused = 0;
-    if (US_FAULT_CHECK(US_FAULT_POLL_START, p->fd, injected, unused)) {
-        errno = (int) -injected;
-        return (int) injected;
-    }
-#endif
 
     /* Readiness only means something for a non-blocking socket. This is also
      * where a descriptor that is not a socket gets rejected. */

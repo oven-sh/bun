@@ -35,16 +35,19 @@ enum us_fault_syscall {
     US_FAULT_RECVMSG,
     US_FAULT_CONNECT,
     US_FAULT_ACCEPT,
-    /* Reserved: no bsd.c hooks yet, so the JS setter does not accept them. */
+    /* Windows: the socket a listener's AcceptEx accepts into, matched against
+     * the listener's fd. Only US_FAULT_ERRNO applies. */
     US_FAULT_SOCKET,
+    /* Reserved: no bsd.c hooks yet, so the JS setter does not accept them. */
     US_FAULT_CLOSE,
     US_FAULT_SHUTDOWN,
     /* Not a syscall: the per-loop TLS plaintext buffer allocated once by
      * us_internal_init_loop_ssl_data. Only US_FAULT_ERRNO applies — there is
      * no byte count to clamp and no zero return to fake. */
     US_FAULT_SSL_LOOP_BUFFER,
-    /* Not a syscall: poll registration in us_poll_start_rc (afd_poll_create
-     * on Windows, EPOLL_CTL_ADD / kevent on epoll/kqueue). The fd is
+    /* Not a syscall: poll registration in us_poll_start_rc (every hand-over of
+     * an AFD poll to the kernel and a listener's start on Windows,
+     * EPOLL_CTL_ADD / kevent on epoll/kqueue). The fd is
      * always fresh from the kernel here, so the failure path is unreachable
      * without fault injection. Only US_FAULT_ERRNO applies. */
     US_FAULT_POLL_START,

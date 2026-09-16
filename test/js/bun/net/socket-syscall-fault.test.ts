@@ -324,6 +324,77 @@ test.skipIf(!fault.available() || !isWindows)(
   },
 );
 
+// A Windows listener takes connections with AcceptEx. When that cannot be started (no socket to
+// accept into) it waits for a connection with a poll instead, and when the poll cannot be handed
+// to the kernel either, every tick tries again. 10055 is WSAENOBUFS.
+test.skipIf(!fault.available() || !isWindows)(
+  "a listener that could neither accept nor be polled takes the waiting connection once it can",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { socketFaultInjection: fault } = require("bun:internal-for-testing");
+        let accepted = 0;
+        const waiters = [];
+        const acceptedReaches = n => new Promise(resolve => (accepted >= n ? resolve() : waiters.push([n, resolve])));
+        const server = Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
+          socket: {
+            open() {
+              accepted++;
+              for (const [n, resolve] of waiters) if (accepted >= n) resolve();
+            },
+            data() {},
+          },
+        });
+        const connect = () =>
+          new Promise((resolve, reject) =>
+            Bun.connect({
+              hostname: "127.0.0.1",
+              port: server.port,
+              socket: { open: resolve, data() {}, connectError: (_, e) => reject(e), error: (_, e) => reject(e) },
+            }).catch(reject),
+          );
+        // A turn of the loop. A poll that reported goes back to the kernel at the start of the
+        // tick after the one that reported it.
+        const tick = () => new Promise(resolve => setImmediate(resolve));
+        try {
+          await connect();
+          await acceptedReaches(1);
+          // The AcceptEx in flight takes the next connection; the one after it cannot be started.
+          fault.set({ syscall: "socket", action: "errno", errno: 10055, fd: server.fd, repeat: -1 });
+          await connect();
+          await acceptedReaches(2);
+          // The listener is polled now. The next connection completes the poll, and it cannot go back.
+          fault.set({ syscall: "poll_start", action: "errno", errno: 10055, fd: server.fd, repeat: -1 });
+          await connect();
+          for (let i = 0; i < 4; i++) await tick();
+          if (accepted !== 2) throw new Error("accepted " + accepted + " connections with no socket to accept into");
+          fault.clear();
+          await acceptedReaches(3);
+          await connect();
+          await acceptedReaches(4);
+          console.log("OK");
+        } finally {
+          fault.clear();
+          server.stop(true);
+        }
+        process.exit(0);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr: stderr.trim() }).toEqual({ stdout: "OK", stderr: "" });
+    expect(exitCode).toBe(0);
+  },
+);
+
 // An injected send() errno that is neither would-block/transient
 // (EAGAIN/ENOBUFS/ENOMEM) nor a known peer-gone error (EPIPE/ECONNRESET/...)
 // exercises the bounded unclassified-errno retry in

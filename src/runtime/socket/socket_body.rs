@@ -5060,11 +5060,13 @@ pub mod testing_apis {
                 fi::SESSION_BUFFER
             } else if syscall_str.eq_ascii(b"poll_slow") {
                 fi::POLL_SLOW
+            } else if syscall_str.eq_ascii(b"socket") {
+                fi::SOCKET
             } else {
-                // socket/close/shutdown have enum slots but no bsd.c hooks;
+                // close/shutdown have enum slots but no bsd.c hooks;
                 // accepting them would arm rules that can never fire.
                 return Err(global.throw(format_args!(
-                    "rule.syscall must be one of: recv, send, writev, sendmsg, recvmsg, connect, accept, ssl_loop_buffer, poll_start, session_buffer, poll_slow"
+                    "rule.syscall must be one of: recv, send, writev, sendmsg, recvmsg, connect, accept, ssl_loop_buffer, poll_start, session_buffer, poll_slow, socket"
                 )));
             };
 

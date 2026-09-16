@@ -18,7 +18,6 @@ import {
   observe as directObserve,
   readerConsumers as directReaderConsumers,
   shapes as directShapes,
-  waitsForPullToReturn as directWaitsForPullToReturn,
 } from "./direct-stream-contract";
 
 it("TransformStream", async () => {
@@ -4123,11 +4122,7 @@ describe("direct stream contract", () => {
   const cannotSurfaceErrors = new Set(["Bun.spawn({ stdin: s })"]);
   describe.each(Object.keys(directShapes))("%s", shapeName => {
     const shape = directShapes[shapeName];
-    const cells = Object.keys(consumers).filter(
-      name =>
-        !(shape.oneShotOnly && directReaderConsumers.has(name)) &&
-        !(shape.pullNeverReturns && directWaitsForPullToReturn.has(name)),
-    );
+    const cells = Object.keys(consumers).filter(name => !(shape.oneShotOnly && directReaderConsumers.has(name)));
     test.concurrent.each(cells)("%s", async consumerName => {
       const got = await directObserve(shape, consumers[consumerName]);
       if ("error" in shape.expect && cannotSurfaceErrors.has(consumerName)) {
@@ -4422,6 +4417,197 @@ describe("direct stream edge cases", () => {
       expect(JSON.parse(stdout)).toEqual({ unhandled: 0 });
       expect(exitCode).toBe(0);
     });
+  });
+
+  // The buffer consumers call pull() once with a throwaway controller. Its end()/close() is the end of the
+  // stream: they settle there, not when pull() settles. The contract matrix runs the "never returns" shapes for
+  // every consumer.
+  describe("an async pull() that outlives its own end()/close()", () => {
+    const never = () => new Promise(() => {});
+    const bufferConsumers = [
+      ["readableStreamToBytes", readableStreamToBytes],
+      ["readableStreamToArrayBuffer", readableStreamToArrayBuffer],
+    ];
+
+    test.each(bufferConsumers)("%s leaves the stream closed and unlocked once it settles", async (_, consume) => {
+      for (const when of ["before the first await", "after an await"]) {
+        for (const tail of ["returns", "never returns"]) {
+          const t = tally();
+          const rs = direct(t, async c => {
+            c.write("hello");
+            if (when === "after an await") await later();
+            c.end();
+            if (tail === "never returns") await never();
+          });
+          const body = txt(new Uint8Array(await consume(rs)));
+          // Read the state before anything else gets a turn: this is what the caller sees when its await resumes.
+          const locked = rs.locked;
+          expect({ when, tail, body, locked, next: await rs.getReader().read(), pulls: t.pulls }).toEqual({
+            when,
+            tail,
+            body: "hello",
+            locked: false,
+            next: { done: true, value: undefined },
+            pulls: 1,
+          });
+        }
+      }
+    });
+
+    // The exception: end() inside the pull() call itself does not close the stream yet. A throw that follows it
+    // is the result, and it errors the stream.
+    test.each(bufferConsumers)(
+      "%s: a sync pull() that throws after end() rejects with the throw and errors the stream",
+      async (_, consume) => {
+        const t = tally();
+        const rs = direct(t, c => {
+          c.write("hello");
+          c.end();
+          throw new Error("thrown after end()");
+        });
+        const result = await settle(consume(rs));
+        expect({ result, next: await settle(rs.getReader().read()), pulls: t.pulls }).toEqual({
+          result: { err: "thrown after end()" },
+          next: { err: "thrown after end()" },
+          pulls: 1,
+        });
+      },
+    );
+
+    // A source reports its failure with close(error). The caller catches the rejection, so nothing else may report
+    // it: the process used to print the error and exit with code 1.
+    test.concurrent.each([
+      [
+        "an async pull() that closes in catch and cleans up in finally",
+        `async pull(c) {
+          try {
+            c.write("partial");
+            await later();
+            throw new Error("source failed");
+          } catch (e) {
+            c.close(e);
+          } finally {
+            await later();
+          }
+        }`,
+        "source failed",
+      ],
+      [
+        "a sync pull() that closes and then throws",
+        `pull(c) {
+          c.write("partial");
+          c.close(new Error("source failed"));
+          throw new Error("thrown after close(error)");
+        }`,
+        "thrown after close(error)",
+      ],
+    ])("close(error) from %s: the caller's try/catch is the only report", async (_, pull, message) => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          const later = () => new Promise(r => setImmediate(r));
+          const make = () => new ReadableStream({ type: "direct", ${pull} });
+          const consumers = {
+            "new Response(s).bytes()": s => new Response(s).bytes(),
+            "new Response(s).arrayBuffer()": s => new Response(s).arrayBuffer(),
+            "Bun.readableStreamToBytes": s => Bun.readableStreamToBytes(s),
+            "Bun.readableStreamToArrayBuffer": s => Bun.readableStreamToArrayBuffer(s),
+          };
+          const out = {};
+          for (const [name, consume] of Object.entries(consumers)) {
+            try {
+              await consume(make());
+              out[name] = "resolved";
+            } catch (e) {
+              out[name] = "caught: " + e?.message;
+            }
+            await later();
+          }
+          console.log(JSON.stringify(out));
+          `,
+        ],
+        env: bunEnv,
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(JSON.parse(stdout)).toEqual({
+        "new Response(s).bytes()": "caught: " + message,
+        "new Response(s).arrayBuffer()": "caught: " + message,
+        "Bun.readableStreamToBytes": "caught: " + message,
+        "Bun.readableStreamToArrayBuffer": "caught: " + message,
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    // close(error) rejects the promise the caller holds, so the caller decides whether the rejection is handled.
+    test.concurrent(
+      "close(error) is reported as unhandled only when the caller ignores the rejection, and then once",
+      async () => {
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `
+          const later = () => new Promise(r => setImmediate(r));
+          const unhandled = [];
+          process.on("unhandledRejection", e => unhandled.push(e?.message));
+          const make = when => new ReadableStream({
+            type: "direct",
+            async pull(c) {
+              c.write("partial");
+              if (when === "after an await") await later();
+              c.close(new Error("source failed"));
+              await new Promise(() => {});
+            },
+          });
+          const consumers = {
+            "new Response(s).bytes()": s => new Response(s).bytes(),
+            "new Response(s).arrayBuffer()": s => new Response(s).arrayBuffer(),
+            "Bun.readableStreamToBytes": s => Bun.readableStreamToBytes(s),
+            "Bun.readableStreamToArrayBuffer": s => Bun.readableStreamToArrayBuffer(s),
+          };
+          const out = {};
+          for (const when of ["before the first await", "after an await"]) {
+            out[when] = {};
+            for (const [name, consume] of Object.entries(consumers)) {
+              // Event loop turns, not an await on the consumer: a consumer that stays pending must not park this process.
+              let handled = "pending";
+              consume(make(when)).then(() => (handled = "resolved"), e => (handled = "rejected: " + e?.message));
+              for (let i = 0; i < 3; i++) await later();
+              const strayWhenHandled = unhandled.splice(0);
+              consume(make(when));
+              for (let i = 0; i < 3; i++) await later();
+              out[when][name] = { handled, strayWhenHandled, reportedWhenIgnored: unhandled.splice(0) };
+            }
+          }
+          console.log(JSON.stringify(out));
+          process.exit(0);
+          `,
+          ],
+          env: bunEnv,
+          stderr: "inherit",
+        });
+        const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+        const each = {
+          handled: "rejected: source failed",
+          strayWhenHandled: [],
+          reportedWhenIgnored: ["source failed"],
+        };
+        const everyConsumer = {
+          "new Response(s).bytes()": each,
+          "new Response(s).arrayBuffer()": each,
+          "Bun.readableStreamToBytes": each,
+          "Bun.readableStreamToArrayBuffer": each,
+        };
+        expect(JSON.parse(stdout)).toEqual({
+          "before the first await": everyConsumer,
+          "after an await": everyConsumer,
+        });
+        expect(exitCode).toBe(0);
+      },
+    );
   });
 
   describe("pipes", () => {

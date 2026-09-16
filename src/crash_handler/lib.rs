@@ -3651,24 +3651,32 @@ mod draft {
         );
     }
 
+    /// Sets the thread's action to `Dlopen(action)`, or clears it when `action` is null. Returns the path of the
+    /// `Dlopen` action it replaces, or null, so that a nested process.dlopen() can put the outer one back.
+    ///
     /// # Safety
-    /// `action` must be null or a valid NUL-terminated C string that outlives the dlopen call.
+    /// `action` must be null or a valid NUL-terminated C string that stays valid until the action is replaced.
     #[unsafe(no_mangle)]
-    unsafe extern "C" fn CrashHandler__setDlOpenAction(action: *const c_char) {
-        if !action.is_null() {
-            debug_assert!(CURRENT_ACTION.with(|c| c.get()).is_none());
-            // SAFETY: action is a valid NUL-terminated C string for the duration of the dlopen call
+    unsafe extern "C" fn CrashHandler__setDlOpenAction(action: *const c_char) -> *const c_char {
+        let previous = match CURRENT_ACTION.with(|c| c.get()) {
+            Some(Action::Dlopen(path)) => path.as_ptr().cast::<c_char>(),
+            other => {
+                // Only a `Dlopen` action can be cleared or replaced here.
+                debug_assert!(other.is_none() && !action.is_null());
+                core::ptr::null()
+            }
+        };
+        let next = if action.is_null() {
+            None
+        } else {
+            // SAFETY: action is a valid NUL-terminated C string until the action is replaced
             let s = unsafe { bun_core::ffi::cstr(action) }.to_bytes();
             // SAFETY: noreturn-on-crash usage; the C string outlives the action via caller contract
             let s: &'static [u8] = unsafe { bun_collections::detach_lifetime(s) };
-            CURRENT_ACTION.with(|c| c.set(Some(Action::Dlopen(s))));
-        } else {
-            debug_assert!(matches!(
-                CURRENT_ACTION.with(|c| c.get()),
-                Some(Action::Dlopen(_))
-            ));
-            CURRENT_ACTION.with(|c| c.set(None));
-        }
+            Some(Action::Dlopen(s))
+        };
+        CURRENT_ACTION.with(|c| c.set(next));
+        previous
     }
 
     pub fn fix_dead_code_elimination() {

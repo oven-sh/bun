@@ -689,8 +689,8 @@ public:
 };
 
 // If a module registered itself by calling napi_module_register in a static constructor, run this
-// to run the module's entrypoint.
-void executePendingNapiModule(Zig::GlobalObject* globalObject);
+// to run the module's entrypoint with moduleObject as `module`. Throws on failure.
+void executePendingNapiModule(Zig::GlobalObject* globalObject, JSC::JSObject* moduleObject);
 
 }
 

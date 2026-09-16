@@ -433,14 +433,13 @@ static char* toFileURI(std::span<const char> span)
 
 extern "C" size_t Bun__process_dlopen_count;
 
-extern "C" void CrashHandler__setDlOpenAction(const char* action);
+extern "C" const char* CrashHandler__setDlOpenAction(const char* action);
 extern "C" bool Bun__VM__allowAddons(void* vm);
 extern "C" int32_t Bun__addonNeedsGlibcOnMusl(const char* path, size_t len, char* soname_out, size_t soname_cap);
 
 JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((minsize)), (JSC::JSGlobalObject * globalObject_, JSC::CallFrame* callFrame))
 {
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(globalObject_);
-    auto callCountAtStart = globalObject->napiModuleRegisterCallCount;
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
     auto& vm = JSC::getVM(globalObject);
 
@@ -468,9 +467,6 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
         JSC::throwTypeError(globalObject, scope, "dlopen requires an object with an exports property"_s);
         return {};
     }
-
-    globalObject->m_pendingNapiModuleAndExports[0].set(vm, globalObject, moduleObject);
-    globalObject->m_pendingNapiModuleAndExports[1].set(vm, globalObject, exports);
 
     Strong<JSC::Unknown> strongExports;
 
@@ -540,6 +536,17 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
         utf8 = *utf8_filename;
     }
 
+    // Registrations belong to the dlopen() call below. Drop any made outside of one (Node asserts there is none:
+    // https://github.com/nodejs/node/blob/b7e6a5d37e7a14ef0f2cc95214b95d66c4081415/src/node_binding.cc#L454), and
+    // whatever happens below, leave none for the next call.
+    auto resetPendingRegistrations = [globalObject] {
+        globalObject->m_pendingV8Modules.clear();
+        globalObject->m_pendingNapiModules.clear();
+        globalObject->napiModuleRegisterCallCount = 0;
+    };
+    resetPendingRegistrations();
+    auto resetPendingRegistrationsOnExit = WTF::makeScopeExit(resetPendingRegistrations);
+
     Bun__process_dlopen_count++;
 
 #if OS(WINDOWS)
@@ -564,9 +571,11 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
         }
     }
 #endif
-    CrashHandler__setDlOpenAction(utf8.data());
+    // Name the addon in a crash report until this call returns: its init functions run below, after dlopen().
+    // An init function can call process.dlopen() again, so put back the action that this one replaces.
+    const char* outerDlOpenAction = CrashHandler__setDlOpenAction(utf8.data());
+    auto restoreDlOpenAction = WTF::makeScopeExit([outerDlOpenAction] { CrashHandler__setDlOpenAction(outerDlOpenAction); });
     void* handle = dlopen(utf8.data(), RTLD_LAZY);
-    CrashHandler__setDlOpenAction(nullptr);
 #endif
 
     globalObject->m_pendingNapiModuleDlopenHandle = handle;
@@ -607,7 +616,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
         return throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED, msg);
     }
 
-    if (callCountAtStart != globalObject->napiModuleRegisterCallCount) {
+    if (globalObject->napiModuleRegisterCallCount != 0) {
         // Module self-registered via static constructor(s).
         // Move pending registrations into locals before iterating: an
         // nm_register_func can itself call napi_module_register(), which
@@ -616,14 +625,6 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
         // iterator dangling.
         auto pendingNapiModules = std::exchange(globalObject->m_pendingNapiModules, {});
         auto pendingV8Modules = std::exchange(globalObject->m_pendingV8Modules, {});
-        // Whatever happens below, no registration state may leak into the next dlopen().
-        auto resetPendingRegistrations = WTF::makeScopeExit([&] {
-            globalObject->m_pendingV8Modules.clear();
-            globalObject->m_pendingNapiModules.clear();
-            globalObject->napiModuleRegisterCallCount = 0;
-            globalObject->m_pendingNapiModuleAndExports[0].clear();
-            globalObject->m_pendingNapiModuleAndExports[1].clear();
-        });
 
         if (handle) {
             // Save all NAPI module registrations
@@ -638,9 +639,13 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
             }
         }
 
-        // A V8-style module's nm_register_func already ran inside dlopen() (node_module_register)
-        // and may have thrown.
-        RETURN_IF_EXCEPTION(scope, {});
+        // Execute all V8 modules. Like Node, do it here and not inside node_module_register(): that runs in one of
+        // the addon's static constructors, before the later ones (https://github.com/oven-sh/bun/issues/20454).
+        // https://github.com/nodejs/node/blob/b7e6a5d37e7a14ef0f2cc95214b95d66c4081415/src/node_binding.cc#L480-L486
+        for (auto* mod : pendingV8Modules) {
+            node::executePendingV8Module(globalObject, mod, strongModule.get());
+            RETURN_IF_EXCEPTION(scope, {});
+        }
 
         // Execute all NAPI modules. If an nm_register_func registers more
         // modules re-entrantly, they accumulate back in m_pendingNapiModules;
@@ -651,7 +656,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
                 // executePendingNapiModule clears it, so we must set it for each module
                 globalObject->m_pendingNapiModuleDlopenHandle = handle;
                 globalObject->m_pendingNapiModule = mod;
-                Napi::executePendingNapiModule(globalObject);
+                Napi::executePendingNapiModule(globalObject, strongModule.get());
                 globalObject->m_pendingNapiModule = {};
                 RETURN_IF_EXCEPTION(scope, {});
             }
@@ -660,33 +665,16 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
             pendingNapiModules = std::exchange(globalObject->m_pendingNapiModules, {});
         }
 
-        JSValue resultValue = globalObject->m_pendingNapiModuleAndExports[0].get();
-        if (resultValue && resultValue != strongModule.get()) {
-            if (resultValue.isCell() && resultValue.getObject()->isErrorInstance()) {
-                JSC::throwException(globalObject, scope, resultValue);
-                return {};
-            }
-        }
-
         return JSValue::encode(jsUndefined());
     }
 
     // Module didn't self-register on this load. Check if we have cached registrations.
     if (auto cachedModules = Bun::DLHandleMap::singleton().get(handle)) {
-        // (The V8 registrations are already in DLHandleMap; nothing here re-saves them.)
-        auto resetPendingRegistrations = WTF::makeScopeExit([&] {
-            globalObject->m_pendingV8Modules.clear();
-            globalObject->m_pendingNapiModules.clear();
-            globalObject->napiModuleRegisterCallCount = 0;
-            globalObject->m_pendingNapiModuleAndExports[0].clear();
-            globalObject->m_pendingNapiModuleAndExports[1].clear();
-        });
-
         // Replay all registrations from this handle. napi ones only queue into
         // m_pendingNapiModules; a V8 one runs its nm_register_func right here.
         for (auto& registration : *cachedModules) {
             if (auto* const* nodeModule = std::get_if<node::node_module*>(&registration)) {
-                node::node_module_register(*nodeModule);
+                node::executePendingV8Module(globalObject, *nodeModule, strongModule.get());
                 RETURN_IF_EXCEPTION(scope, {});
             } else {
                 napi_module_register(std::get<napi_module*>(registration));
@@ -703,17 +691,9 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
                 // executePendingNapiModule clears it, so we must set it for each module
                 globalObject->m_pendingNapiModuleDlopenHandle = handle;
                 globalObject->m_pendingNapiModule = mod;
-                Napi::executePendingNapiModule(globalObject);
+                Napi::executePendingNapiModule(globalObject, strongModule.get());
                 globalObject->m_pendingNapiModule = {};
                 RETURN_IF_EXCEPTION(scope, {});
-            }
-        }
-
-        JSValue resultValue = globalObject->m_pendingNapiModuleAndExports[0].get();
-        if (resultValue && resultValue != strongModule.get()) {
-            if (resultValue.isCell() && resultValue.getObject()->isErrorInstance()) {
-                JSC::throwException(globalObject, scope, resultValue);
-                return {};
             }
         }
 
@@ -798,8 +778,6 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
         }
     }
 
-    globalObject->m_pendingNapiModuleAndExports[0].clear();
-    globalObject->m_pendingNapiModuleAndExports[1].clear();
     globalObject->m_pendingNapiModuleDlopenHandle = nullptr;
 
     // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/src/node_api.cc#L734-L742

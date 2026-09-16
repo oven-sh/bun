@@ -437,7 +437,6 @@ public:
     using LazyPropertyOfGlobalObject = LazyProperty<JSGlobalObject, T>;
 
     using ThenablesArray = std::array<WriteBarrier<JSFunction>, promiseFunctionsSize + 1>;
-    using NapiModuleAndExports = std::array<WriteBarrier<Unknown>, 2>;
     // Native module default-export cache so require(id) === (await import(id)).default.
     // Visited via FOR_EACH_GLOBALOBJECT_GC_MEMBER's std::array<WriteBarrier> overload.
     using NativeModuleDefaultsArray = std::array<WriteBarrier<JSObject>, NativeModuleDefaultSlotCount>;
@@ -507,9 +506,6 @@ public:
                                                                                                              \
     /* Error.prepareStackTrace */                                                                            \
     V(public, WriteBarrier<JSC::Unknown>, m_errorConstructorPrepareStackTraceValue)                          \
-                                                                                                             \
-    /* When a napi module initializes on dlopen, we need to know what the value is */                        \
-    V(public, NapiModuleAndExports, m_pendingNapiModuleAndExports)                                           \
                                                                                                              \
     /* The handle scope where all new NAPI values will be created. You must not pass any napi_values */      \
     /* back to a NAPI function without putting them in the handle scope, as the NAPI function may */         \

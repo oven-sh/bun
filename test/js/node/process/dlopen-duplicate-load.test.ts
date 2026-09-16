@@ -1,14 +1,18 @@
 import { spawnSync } from "bun";
 import { beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, canBuildNodeAddons, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, canBuildNodeAddons, isWindows, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 // These tests share one node-gyp-built V8 addon (the compile dominates the wall
-// time), covering two previously-broken paths:
+// time), covering four previously-broken paths:
 // - duplicate loads: the second dlopen of the same module used to fail with
 //   "symbol 'napi_register_module_v1' not found" because static constructors
 //   only run once, so the module registration wasn't replayed
 // - non-object exports: null/undefined/primitive exports used to segfault
+// - nested calls: a dlopen made while the filename converts to a string used
+//   to take the registration of the outer call
+// - static constructor order: the init function used to run inside dlopen(),
+//   before the static constructors that follow the module registration
 
 describe.skipIf(!canBuildNodeAddons())("process.dlopen native addon", () => {
   let addonPath: string;
@@ -16,9 +20,12 @@ describe.skipIf(!canBuildNodeAddons())("process.dlopen native addon", () => {
   beforeAll(() => {
     const addonSource = `
 #include <node.h>
+#include <node_api.h>
+#include <cstdlib>
 
 namespace demo {
 
+using v8::Boolean;
 using v8::Context;
 using v8::FunctionCallbackInfo;
 using v8::Isolate;
@@ -26,6 +33,9 @@ using v8::Local;
 using v8::Object;
 using v8::String;
 using v8::Value;
+
+// Set by the constructor of late_static, which is defined after the module registration.
+static bool late_static_constructed = false;
 
 void Hello(const FunctionCallbackInfo<Value>& args) {
   Isolate* isolate = args.GetIsolate();
@@ -36,12 +46,29 @@ void Initialize(Local<Object> exports,
                 Local<Value> module,
                 Local<Context> context,
                 void* priv) {
+  if (std::getenv("DLOPEN_TEST_FATAL_IN_INIT") != nullptr) {
+    napi_fatal_error("Initialize", NAPI_AUTO_LENGTH, "fatal error in init", NAPI_AUTO_LENGTH);
+  }
   NODE_SET_METHOD(exports, "hello", Hello);
+  Isolate* isolate = Isolate::GetCurrent();
+  exports->Set(context,
+               String::NewFromUtf8(isolate, "lateStaticConstructed").ToLocalChecked(),
+               Boolean::New(isolate, late_static_constructed)).Check();
 }
 
 }  // namespace demo
 
 NODE_MODULE_CONTEXT_AWARE(addon, demo::Initialize)
+
+namespace demo {
+
+// The registration above runs from a static constructor. This one runs after it, like re2's addonDataMap.
+struct LateStatic {
+  LateStatic() { late_static_constructed = true; }
+};
+static LateStatic late_static;
+
+}  // namespace demo
 `;
 
     const bindingGyp = `
@@ -157,6 +184,90 @@ NODE_MODULE_CONTEXT_AWARE(addon, demo::Initialize)
       expect(stdout).toContain("m1.exports.hello: world");
       expect(stdout).toContain("m2.exports.initial: true");
       expect(stdout).toContain("m2.exports.hello: world");
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  describe.concurrent("process.dlopen init function", () => {
+    // https://github.com/oven-sh/bun/issues/20454
+    test("runs after every static constructor of the addon", async () => {
+      const testScript = `
+      const m = { exports: {} };
+      process.dlopen(m, ${JSON.stringify(addonPath)});
+      console.log(JSON.stringify({ hello: m.exports.hello(), lateStaticConstructed: m.exports.lateStaticConstructed }));
+    `;
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", testScript],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({ hello: "world", lateStaticConstructed: true });
+      expect(exitCode).toBe(0);
+    });
+
+    // The crash handler records which addon is loading only on POSIX.
+    test.skipIf(isWindows)(
+      "a crash in it names the addon",
+      async () => {
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `process.dlopen({ exports: {} }, ${JSON.stringify(addonPath)}); console.log("loaded");`,
+          ],
+          env: { ...bunEnv, DLOPEN_TEST_FATAL_IN_INIT: "1", BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT: "1" },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+
+        const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+        expect(stderr).toContain("NAPI FATAL ERROR: Initialize fatal error in init");
+        expect(stderr).toContain(`Crashed while loading native module: ${addonPath}`);
+        expect(stdout).not.toContain("loaded");
+        // A debug build symbolizes the whole stack before it exits.
+      },
+      10_000,
+    );
+  });
+
+  describe.concurrent("process.dlopen nested in the filename's toString()", () => {
+    test.each([
+      ["fails", { outer: "function", inner: "undefined" }],
+      ["succeeds", { outer: "function", inner: "function" }],
+    ])("the outer module gets the exports when the nested dlopen %s", async (nested, expected) => {
+      const testScript = `
+      const addonPath = ${JSON.stringify(addonPath)};
+      const inner = { exports: {} };
+      const outer = { exports: {} };
+      process.dlopen(outer, {
+        toString() {
+          try {
+            process.dlopen(inner, ${nested === "fails" ? `addonPath + ".missing"` : "addonPath"});
+          } catch {}
+          return addonPath;
+        },
+      });
+      console.log(JSON.stringify({ outer: typeof outer.exports.hello, inner: typeof inner.exports.hello }));
+    `;
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", testScript],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual(expected);
       expect(exitCode).toBe(0);
     });
   });

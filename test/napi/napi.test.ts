@@ -1460,6 +1460,25 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
   it("works when the module register function throws", async () => {
     expect(() => require("./napi-app/build/Debug/throw_addon.node")).toThrow(new Error("oops!"));
   });
+  // The crash handler records which addon is loading only on POSIX.
+  it.skipIf(isWindows)(
+    "names the addon when the module register function crashes",
+    async () => {
+      const addon = join(__dirname, "napi-app/build/Debug/fatal_addon.node");
+      await using proc = spawn({
+        cmd: [bunExe(), "-e", `require(${JSON.stringify(addon)}); console.log("loaded");`],
+        env: { ...bunEnv, BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain("NAPI FATAL ERROR: NAPI_MODULE_INIT fatal error in init");
+      expect(stderr).toMatch(/Crashed while loading native module: .*fatal_addon\.node/);
+      expect(stdout).not.toContain("loaded");
+      // A debug build symbolizes the whole stack before it exits.
+    },
+    10_000,
+  );
 
   it("runs the napi_module_register callback after dlopen finishes", async () => {
     await checkSameOutput("test_constructor_order", []);

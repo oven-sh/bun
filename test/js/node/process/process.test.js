@@ -3,7 +3,7 @@ import { CString, dlopen, ptr } from "bun:ffi";
 import { memoryUsage as jscMemoryUsage } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import { familySync } from "detect-libc";
-import { bunEnv, bunExe, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isMacOS, isWindows, libcPathForDlopen, tempDir, tmpdirSync } from "harness";
 import { basename, join, resolve } from "path";
 import { getHeapStatistics } from "v8";
 
@@ -1609,6 +1609,63 @@ describe.concurrent(() => {
     expect(() => process.dlopen(mod, "file://asd[kasd[po@[p1o23]1po!-10923-095-@$@8123=-9123=-0==][pc;!")).toThrow(
       "invalid file: URL passed to dlopen",
     );
+  });
+
+  // Serial: if process.dlopen keeps the module on the global object, a concurrent process.dlopen replaces it and hides that.
+  describe.serial("a failed dlopen does not keep module or module.exports alive", () => {
+    // Each filename fails at a different return in process.dlopen.
+    const cases = [
+      ["missing file", () => join(tmpdirSync(), "not-found.node"), { code: "ERR_DLOPEN_FAILED" }],
+      [
+        "library without napi_register_module_v1",
+        () => (isWindows ? join(process.env.SystemRoot, "System32", "kernel32.dll") : libcPathForDlopen()),
+        { message: "symbol 'napi_register_module_v1' not found in native module. Is this a Node API (napi) module?" },
+      ],
+      ["empty filename", () => "", { message: "dlopen requires a non-empty string as the second argument" }],
+      ["invalid file: URL", () => "file://[", { message: "invalid file: URL passed to dlopen" }],
+      [
+        "better_sqlite3.node",
+        () => join(tmpdirSync(), "better_sqlite3.node"),
+        {
+          code: "ERR_DLOPEN_FAILED",
+          message: expect.stringContaining("'better-sqlite3' is not yet supported in Bun."),
+        },
+      ],
+      [
+        "filename whose toString() throws",
+        () => ({
+          toString() {
+            throw new Error("from toString");
+          },
+        }),
+        { message: "from toString" },
+      ],
+    ];
+
+    function failedDlopen(filename) {
+      const mod = { exports: {} };
+      let error;
+      try {
+        process.dlopen(mod, filename);
+      } catch (e) {
+        error = e;
+      }
+      return { error, refs: [new WeakRef(mod), new WeakRef(mod.exports)] };
+    }
+
+    it.each(cases)("%s", async (_, filename, expected) => {
+      const { error, refs } = failedDlopen(filename());
+      expect(error).toMatchObject(expected);
+
+      // Nothing in JS refers to the module now, so a full collection frees it unless process.dlopen kept a reference.
+      let alive = refs.length;
+      for (let i = 0; i < 10 && alive > 0; i++) {
+        Bun.gc(true);
+        alive = refs.filter(ref => ref.deref() !== undefined).length;
+        if (alive > 0) await new Promise(resolve => setImmediate(resolve));
+      }
+      expect(alive).toBe(0);
+    });
   });
 
   it("process.constrainedMemory()", () => {

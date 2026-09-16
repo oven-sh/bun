@@ -56,7 +56,17 @@ public:
     static ExceptionOr<Ref<FetchHeaders>> create(std::optional<Init>&&);
 
     static Ref<FetchHeaders> create(Guard guard = Guard::None, HTTPHeaderMap&& headers = {}) { return adoptRef(*new FetchHeaders { guard, WTF::move(headers) }); }
-    static Ref<FetchHeaders> create(const FetchHeaders& headers) { return adoptRef(*new FetchHeaders { headers }); }
+
+    // Copies a Headers object that was given as a HeadersInit. Web IDL reads it through its
+    // iterator and https://fetch.spec.whatwg.org/#concept-headers-fill appends each pair, so a
+    // combined value is normalized again: "1, " (from "1" and "") becomes "1,".
+    // fill(const FetchHeaders&) is the other copy. It keeps the header list as is.
+    static Ref<FetchHeaders> createFromHeadersInit(const FetchHeaders& init)
+    {
+        auto headers = adoptRef(*new FetchHeaders { init });
+        headers->m_headers.normalizeValues();
+        return headers;
+    }
 
     ExceptionOr<void> append(const String& name, const String& value);
     ExceptionOr<void> remove(const StringView);

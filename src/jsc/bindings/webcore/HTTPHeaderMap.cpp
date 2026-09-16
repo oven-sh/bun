@@ -32,6 +32,7 @@
 #include "config.h"
 #include "HTTPHeaderMap.h"
 
+#include "HTTPParsers.h"
 #include <utility>
 #include <wtf/text/StringView.h>
 
@@ -145,7 +146,7 @@ void HTTPHeaderMap::addUncommonHeader(const String& name, const String& value)
     if (index == notFound)
         m_uncommonHeaders.append(UncommonHeader { name, value });
     else
-        m_uncommonHeaders[index].value = makeString(m_uncommonHeaders[index].value, ", "_s, value);
+        join(m_uncommonHeaders[index].value, ", "_s, value);
 }
 
 void HTTPHeaderMap::addUncommonHeaderCloneName(const StringView name, const String& value)
@@ -159,7 +160,7 @@ void HTTPHeaderMap::addUncommonHeaderCloneName(const StringView name, const Stri
         memcpy(ptr.data(), name.span8().data(), name.length());
         m_uncommonHeaders.append(UncommonHeader { nameCopy, value });
     } else
-        m_uncommonHeaders[index].value = makeString(m_uncommonHeaders[index].value, ", "_s, value);
+        join(m_uncommonHeaders[index].value, ", "_s, value);
 }
 
 void HTTPHeaderMap::add(const String& name, const String& value)
@@ -175,7 +176,7 @@ void HTTPHeaderMap::add(const String& name, const String& value)
     if (index == notFound)
         m_uncommonHeaders.append(UncommonHeader { name, value });
     else
-        m_uncommonHeaders[index].value = makeString(m_uncommonHeaders[index].value, ", "_s, value);
+        join(m_uncommonHeaders[index].value, ", "_s, value);
 }
 
 bool HTTPHeaderMap::contains(const StringView name) const
@@ -285,12 +286,36 @@ bool HTTPHeaderMap::setIndex(HTTPHeaderMap::HeaderIndex index, const String& val
     if (!index.isValid())
         return false;
 
+    // FetchHeaders::append joins the value itself and stores the result here.
+    didJoin(value);
     if (index.isCommon) {
         m_commonHeaders[index.index].value = value;
     } else {
         m_uncommonHeaders[index.index].value = value;
     }
     return true;
+}
+
+void HTTPHeaderMap::join(String& combined, ASCIILiteral separator, const String& value)
+{
+    combined = makeString(combined, separator, value);
+    didJoin(combined);
+}
+
+void HTTPHeaderMap::didJoin(const String& combined)
+{
+    if (!combined.isEmpty() && isHTTPSpace(combined[combined.length() - 1]))
+        m_mayHaveTrailingSpace = true;
+}
+
+void HTTPHeaderMap::normalizeValuesSlow()
+{
+    // Set-Cookie values are never joined.
+    for (auto& header : m_commonHeaders)
+        header.value = header.value.trim(isHTTPSpace);
+    for (auto& header : m_uncommonHeaders)
+        header.value = header.value.trim(isHTTPSpace);
+    m_mayHaveTrailingSpace = false;
 }
 
 bool HTTPHeaderMap::contains(HTTPHeaderName name) const
@@ -327,7 +352,7 @@ void HTTPHeaderMap::add(HTTPHeaderName name, const String& value)
         return header.key == name;
     });
     if (index != notFound)
-        m_commonHeaders[index].value = makeString(m_commonHeaders[index].value, name == HTTPHeaderName::Cookie ? "; "_s : ", "_s, value);
+        join(m_commonHeaders[index].value, name == HTTPHeaderName::Cookie ? "; "_s : ", "_s, value);
     else
         m_commonHeaders.append(CommonHeader { name, value });
 }

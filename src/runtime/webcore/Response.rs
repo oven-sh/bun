@@ -8,8 +8,8 @@ use bun_jsc::{AbortSignal, AbortSignalRef, GlobalRef};
 use bun_ptr::RefPtr;
 
 use crate::webcore::jsc::{
-    BuiltinName, CallFrame, HTTPHeaderName, JSGlobalObject, JSType, JSValue, JsError, JsRef,
-    JsResult, StringJsc as _,
+    BuiltinName, CallFrame, HTTPHeaderName, HeadersCopy, JSGlobalObject, JSType, JSValue, JsError,
+    JsRef, JsResult, StringJsc as _,
 };
 use bun_core::Output;
 use bun_core::{String as BunString, Utf8Bytes};
@@ -79,9 +79,19 @@ impl HeadersRef {
     /// `FetchHeaders.cloneThis(global)` — deep copy on the C++ side.
     #[inline]
     pub(crate) fn clone_this(&self, global: &JSGlobalObject) -> JsResult<Option<Self>> {
+        self.copy(global, HeadersCopy::List)
+    }
+
+    /// `FetchHeaders.copy(global, copy)` — deep copy on the C++ side.
+    #[inline]
+    pub(crate) fn copy(
+        &self,
+        global: &JSGlobalObject,
+        copy: HeadersCopy,
+    ) -> JsResult<Option<Self>> {
         // SAFETY: C++ returns a +1 ref or null.
         Ok(bun_opaque::opaque_deref_mut(self.0.as_ptr())
-            .clone_this(global)?
+            .copy(global, copy)?
             .map(|p| unsafe { Self::adopt(p) }))
     }
 }
@@ -799,7 +809,7 @@ impl Response {
         // `Body` has NO `Drop`; arm a guard so the
         // `?` below releases the cloned body payload.
         let body = scopeguard::guard(body, |b| b.reset());
-        let init = self.init.get().clone(global_this)?;
+        let init = self.init.get().clone(global_this, HeadersCopy::List)?;
         Ok(Response {
             body: JsCell::new(scopeguard::ScopeGuard::into_inner(body)),
             init: JsCell::new(init),
@@ -921,7 +931,7 @@ impl Response {
                         u16::try_from(0.max(arg_init.to_int32()).min(i32::from(u16::MAX))).unwrap();
                 });
             } else {
-                if let Some(init) = Init::init(global_this, arg_init)? {
+                if let Some(init) = Init::init(global_this, arg_init, HeadersCopy::AsInit)? {
                     response.init.set(init);
                 }
             }
@@ -1001,7 +1011,7 @@ impl Response {
                     let status =
                         Self::validate_redirect_status_code(global_this, arg_init.to_int32())?;
                     response.init.with_mut(|i| i.status_code = status);
-                } else if let Some(init) = Init::init(global_this, arg_init)? {
+                } else if let Some(init) = Init::init(global_this, arg_init, HeadersCopy::AsInit)? {
                     // cleanup is handled by Init's drop glue on `?` below
                     response.init.set(init);
 
@@ -1128,7 +1138,8 @@ impl Response {
                 };
             }
             if arguments[1].is_object() {
-                break 'brk Init::init(global_this, arguments[1])?.expect("unreachable");
+                break 'brk Init::init(global_this, arguments[1], HeadersCopy::AsInit)?
+                    .expect("unreachable");
             }
             return Err(global_this.throw_invalid_arguments(format_args!(
                 "Failed to construct 'Response': The provided body value is not of type 'ResponseInit'",
@@ -1211,12 +1222,12 @@ impl Default for Init {
 }
 
 impl Init {
-    pub(crate) fn clone(&self, ctx: &JSGlobalObject) -> JsResult<Init> {
+    pub(crate) fn clone(&self, ctx: &JSGlobalObject, copy: HeadersCopy) -> JsResult<Init> {
         let headers = match &self.headers {
-            // `clone_this` does a deep copy on the C++ side and may return
+            // `copy` does a deep copy on the C++ side and may return
             // null on OOM/throw. Flatten the
             // `Option<HeadersRef>` so a null clone leaves `headers` empty.
-            Some(head) => head.clone_this(ctx)?,
+            Some(head) => head.copy(ctx, copy)?,
             None => None,
         };
         Ok(Init {
@@ -1227,9 +1238,12 @@ impl Init {
         })
     }
 
+    /// `headers_copy` is `AsInit` unless `response_init` is the `input` of the
+    /// Request constructor.
     pub(crate) fn init(
         global_this: &JSGlobalObject,
         response_init: JSValue,
+        headers_copy: HeadersCopy,
     ) -> JsResult<Option<Init>> {
         let mut result = Init {
             status_code: 200,
@@ -1256,7 +1270,7 @@ impl Init {
                 // Everything touched is `&self`.
                 let req = unsafe { &*req };
                 if let Some(headers) = req.get_fetch_headers_unless_empty() {
-                    result.headers = headers.clone_this(global_this)?;
+                    result.headers = headers.copy(global_this, headers_copy)?;
                 }
 
                 result.method = req.method;
@@ -1267,7 +1281,7 @@ impl Init {
                 // SAFETY: `as_direct` returned a live `*mut Response` owned by the
                 // JS wrapper cell; rooted by `response_init` for this call.
                 let resp = unsafe { &*resp };
-                return Ok(Some(resp.init.get().clone(global_this)?));
+                return Ok(Some(resp.init.get().clone(global_this, headers_copy)?));
             }
         }
 
@@ -1280,8 +1294,8 @@ impl Init {
                 // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
                 let orig = bun_opaque::opaque_deref_mut(orig.as_ptr());
                 if !orig.is_empty() {
-                    result.headers = orig.clone_this(global_this)?.map(|p| {
-                        // SAFETY: `clone_this` returns a fresh +1-ref'd `FetchHeaders*`;
+                    result.headers = orig.copy(global_this, headers_copy)?.map(|p| {
+                        // SAFETY: `copy` returns a fresh +1-ref'd `FetchHeaders*`;
                         // ownership of that ref is transferred into the `HeadersRef`.
                         unsafe { HeadersRef::adopt(p) }
                     });

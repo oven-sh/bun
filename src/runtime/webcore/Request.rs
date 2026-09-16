@@ -12,7 +12,7 @@ use crate::api::AnyRequestContext;
 use crate::webcore::BlobExt as _;
 use crate::webcore::body::{self, BodyHiveHandle, BodyMixin, Value as BodyValue};
 use crate::webcore::jsc::{
-    CallFrame, HTTPHeaderName, JSGlobalObject, JSValue, JsError, JsRef, JsResult,
+    CallFrame, HTTPHeaderName, HeadersCopy, JSGlobalObject, JSValue, JsError, JsRef, JsResult,
 };
 use crate::webcore::{AbortSignal, Blob, CookieMap, FetchHeaders, ReadableStream, Response};
 use bun_alloc::AllocError;
@@ -321,6 +321,7 @@ impl Request {
     pub(crate) fn clone_headers(
         &self,
         global_this: &JSGlobalObject,
+        copy: HeadersCopy,
     ) -> JsResult<Option<HeadersRef>> {
         if self.headers.get().is_none() {
             if let Some(uws_req) = self.request_context.get_request() {
@@ -335,7 +336,7 @@ impl Request {
                 return Ok(None);
             }
 
-            return head.clone_this(global_this);
+            return head.copy(global_this, copy);
         }
 
         Ok(None)
@@ -1077,8 +1078,15 @@ impl Request {
         let values_to_try = &values_to_try_[0..((!is_first_argument_a_url) as usize
             + (arguments.len() > 1 && arguments[1].is_object()) as usize)];
 
-        for &value in values_to_try {
+        for (i, &value) in values_to_try.iter().enumerate() {
             let value_type = value.js_type();
+            // `values_to_try` is `[init?, input?]`.
+            let is_input = !is_first_argument_a_url && i == values_to_try.len() - 1;
+            let headers_copy = if is_input {
+                HeadersCopy::List
+            } else {
+                HeadersCopy::AsInit
+            };
             let explicit_check = values_to_try.len() == 2
                 && value_type == bun_jsc::JSType::FinalObject
                 && values_to_try[1].js_type() == bun_jsc::JSType::DOMWrapper;
@@ -1092,6 +1100,7 @@ impl Request {
                             &mut req,
                             global_this,
                             fields.contains(Fields::Url),
+                            headers_copy,
                         ) {
                             Ok(()) => {}
                             Err(e) => bail!(Err(e)),
@@ -1122,7 +1131,7 @@ impl Request {
                     }
 
                     if !fields.contains(Fields::Headers) {
-                        match request.clone_headers(global_this) {
+                        match request.clone_headers(global_this, headers_copy) {
                             Ok(Some(headers)) => {
                                 req.headers.set(Some(headers));
                                 fields.insert(Fields::Headers);
@@ -1161,9 +1170,9 @@ impl Request {
                             // The flag is set unconditionally once `getInitHeaders()` yielded a
                             // value, even if `cloneThis` returns null — so a later arg can't
                             // repopulate headers from a different source.
-                            match headers.clone_this(global_this) {
+                            match headers.copy(global_this, headers_copy) {
                                 Ok(h) => {
-                                    // SAFETY: clone_this returns a +1 ref FetchHeaders.
+                                    // SAFETY: copy returns a +1 ref FetchHeaders.
                                     req.headers.set(h.map(|p| unsafe { HeadersRef::adopt(p) }));
                                     fields.insert(Fields::Headers);
                                 }
@@ -1298,7 +1307,7 @@ impl Request {
             }
 
             if !fields.contains(Fields::Method) || !fields.contains(Fields::Headers) {
-                match crate::webcore::response::Init::init(global_this, value) {
+                match crate::webcore::response::Init::init(global_this, value, headers_copy) {
                     Ok(Some(response_init)) => {
                         let header_check = !explicit_check
                             || (explicit_check
@@ -1463,6 +1472,7 @@ impl Request {
         req: &mut Request,
         global_this: &JSGlobalObject,
         preserve_url: bool,
+        headers_copy: HeadersCopy,
     ) -> JsResult<()> {
         // allocator param dropped (global mimalloc)
         let _ = self.ensure_url();
@@ -1471,7 +1481,7 @@ impl Request {
         let body = body::hive_alloc(body_);
         // Last fallible call; an early return here leaves `req.url` untouched.
         // `body` (a `BodyHiveHandle`) drops on the `?` error path, releasing its +1.
-        let headers = self.clone_headers(global_this)?;
+        let headers = self.clone_headers(global_this, headers_copy)?;
         let url = if preserve_url {
             req.url.take()
         } else {
@@ -1536,7 +1546,7 @@ impl Request {
             reported_estimated_size: Cell::new(0),
         });
         // Box<Request> drops on the error path automatically
-        self.clone_into(&mut req, global_this, false)?;
+        self.clone_into(&mut req, global_this, false, HeadersCopy::List)?;
         Ok(req)
     }
 }

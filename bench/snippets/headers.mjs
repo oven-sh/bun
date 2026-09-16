@@ -128,6 +128,14 @@ bench("new Headers(hugeObject)", () => {
   });
 });
 
+bench("new Headers(headers)", () => {
+  return new Headers(big);
+});
+
+bench("new Response(null, { headers })", () => {
+  return new Response(null, { headers: big });
+});
+
 bench("Header.get", function () {
   return big.get("Content-Type");
 });

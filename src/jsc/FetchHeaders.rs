@@ -26,6 +26,7 @@ unsafe extern "C" {
         arg0: &FetchHeaders,
         arg1: &JSGlobalObject,
     ) -> *mut FetchHeaders;
+    safe fn WebCore__FetchHeaders__cloneAsInit(arg0: &FetchHeaders) -> *mut FetchHeaders;
     fn WebCore__FetchHeaders__copyTo(
         arg0: *mut FetchHeaders,
         arg1: *mut StringPointer,
@@ -88,6 +89,18 @@ unsafe extern "C" {
 struct PicoHeaders {
     ptr: *const c_void,
     len: usize,
+}
+
+/// The two copies the Fetch standard makes of a `Headers` object.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HeadersCopy {
+    /// The header list as is: `clone()`, and the `input` of the Request constructor.
+    List,
+    /// The object is a `HeadersInit`: the `headers` member of an init dictionary, or
+    /// of a Request/Response used as one. The standard reads it through its iterator
+    /// and appends each pair, so a combined value is normalized again: `"1, "` (from
+    /// `"1"` and `""`) becomes `"1,"`.
+    AsInit,
 }
 
 // The 4 forwarding wrappers below pass *mut StringPointer/*mut u8 straight to
@@ -267,6 +280,17 @@ impl FetchHeaders {
         host_fn::from_js_host_call_generic(global, || {
             NonNull::new(WebCore__FetchHeaders__cloneThis(self, global))
         })
+    }
+
+    pub fn copy(
+        &mut self,
+        global: &JSGlobalObject,
+        copy: HeadersCopy,
+    ) -> JsResult<Option<NonNull<FetchHeaders>>> {
+        match copy {
+            HeadersCopy::List => self.clone_this(global),
+            HeadersCopy::AsInit => Ok(NonNull::new(WebCore__FetchHeaders__cloneAsInit(self))),
+        }
     }
 
     pub fn deref(&mut self) {

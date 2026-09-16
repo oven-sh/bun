@@ -217,11 +217,15 @@ ExceptionOr<void> FetchHeaders::fill(const FetchHeaders& otherHeaders)
         headers.commonHeaders().appendVector(otherHeaders.m_headers.commonHeaders());
         headers.uncommonHeaders().appendVector(otherHeaders.m_headers.uncommonHeaders());
         headers.getSetCookieHeaders().appendVector(otherHeaders.m_headers.getSetCookieHeaders());
+        if (otherHeaders.m_headers.mayHaveTrailingSpace())
+            headers.setMayHaveTrailingSpace();
         setInternalHeaders(WTF::move(headers));
         m_updateCounter++;
         return {};
     }
 
+    if (otherHeaders.m_headers.mayHaveTrailingSpace())
+        m_headers.setMayHaveTrailingSpace();
     for (auto& header : otherHeaders.m_headers) {
         auto result = appendToHeaderMap(header, m_headers, m_guard);
         if (result.hasException())
@@ -383,3 +387,8 @@ FetchHeaders::Iterator::Iterator(FetchHeaders& headers, bool lowerCaseKeys = tru
 }
 
 } // namespace WebCore
+
+extern "C" WebCore::FetchHeaders* WebCore__FetchHeaders__cloneAsInit(const WebCore::FetchHeaders* headers)
+{
+    return &WebCore::FetchHeaders::createFromHeadersInit(*headers).leakRef();
+}

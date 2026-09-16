@@ -233,6 +233,144 @@ describe("Headers", () => {
       ).toThrow(error);
     });
   });
+  // A Headers object given as a HeadersInit is read through its iterator, and each
+  // combined value is appended again, so append strips the whitespace that a trailing
+  // empty value leaves behind. A copy of the header list itself keeps that whitespace.
+  describe("copies", () => {
+    const url = "http://localhost/";
+    function fill<T extends Headers>(headers: T): T {
+      headers.append("cookie", "a=1");
+      headers.append("cookie", "");
+      headers.append("x-trailing", "1");
+      headers.append("x-trailing", "");
+      headers.append("x-leading", "");
+      headers.append("x-leading", "2");
+      headers.append("accept", "");
+      headers.append("accept", "");
+      return headers;
+    }
+    const headerList = [
+      ["accept", ", "],
+      ["cookie", "a=1; "],
+      ["x-leading", ", 2"],
+      ["x-trailing", "1, "],
+    ];
+    const appendedAgain = [
+      ["accept", ","],
+      ["cookie", "a=1;"],
+      ["x-leading", ", 2"],
+      ["x-trailing", "1,"],
+    ];
+    class SubRequest extends Request {}
+    const filled = <T extends Request | Response>(target: T): T => (fill(target.headers), target);
+    const request = () => filled(new Request(url));
+    const response = () => filled(new Response(null));
+    // These three are Request objects that do not take the native fast path.
+    const subclassRequest = () => filled(new SubRequest(url));
+    const expandoRequest = () => Object.assign(request(), { extra: 1 });
+    const reprototypedRequest = () => Object.setPrototypeOf(request(), Object.create(Request.prototype)) as Request;
+
+    test.each<[string, () => Headers]>([
+      ["new Headers(headers)", () => new Headers(fill(new Headers()))],
+      ["new Headers(subclassInstance)", () => new Headers(fill(new (class extends Headers {})()))],
+      ["new Subclass(headers)", () => new (class extends Headers {})(fill(new Headers()))],
+      ["new Headers(response.clone().headers)", () => new Headers(response().clone().headers)],
+      ["new Headers(request.clone().headers)", () => new Headers(request().clone().headers)],
+      ["new Response(null, { headers })", () => new Response(null, { headers: fill(new Headers()) }).headers],
+      ["new Response(null, response)", () => new Response(null, response()).headers],
+      ["new Response(null, request)", () => new Response(null, request() as ResponseInit).headers],
+      ["new Response(null, subclassRequest)", () => new Response(null, subclassRequest() as ResponseInit).headers],
+      ["new Request(url, { headers })", () => new Request(url, { headers: fill(new Headers()) }).headers],
+      ["new Request(url, request)", () => new Request(url, request()).headers],
+      ["new Request(url, subclassRequest)", () => new Request(url, subclassRequest()).headers],
+      ["new Request(url, expandoRequest)", () => new Request(url, expandoRequest()).headers],
+      ["new Request(url, response)", () => new Request(url, response() as RequestInit).headers],
+      ["new Request(request, { headers })", () => new Request(request(), { headers: fill(new Headers()) }).headers],
+      ["new Request(request, otherRequest)", () => new Request(new Request(url), request()).headers],
+    ])("%s appends each combined value again", (_, copy) => {
+      expect([...copy()]).toEqual(appendedAgain);
+    });
+
+    test.each<[string, () => Headers]>([
+      ["request.clone()", () => request().clone().headers],
+      ["subclassRequest.clone()", () => subclassRequest().clone().headers],
+      ["response.clone()", () => response().clone().headers],
+      ["new Request(request)", () => new Request(request()).headers],
+      ["new Request(request, { method })", () => new Request(request(), { method: "POST" }).headers],
+      ["new Request(subclassRequest)", () => new Request(subclassRequest()).headers],
+      ["new Request(subclassRequest, { method })", () => new Request(subclassRequest(), { method: "POST" }).headers],
+      ["new SubRequest(subclassRequest)", () => new SubRequest(subclassRequest()).headers],
+      ["new Request(expandoRequest)", () => new Request(expandoRequest()).headers],
+      ["new Request(expandoRequest, { method })", () => new Request(expandoRequest(), { method: "POST" }).headers],
+      ["new Request(reprototypedRequest)", () => new Request(reprototypedRequest()).headers],
+    ])("%s keeps the header list as is", (_, copy) => {
+      expect([...copy()]).toEqual(headerList);
+    });
+
+    test("new Headers(headers) leaves the source and every Set-Cookie value as is", () => {
+      const headers = fill(new Headers());
+      headers.append("set-cookie", "");
+      headers.append("set-cookie", "b=2");
+      const copy = new Headers(headers);
+      expect(copy.getSetCookie()).toEqual(["", "b=2"]);
+      expect(copy.get("x-trailing")).toBe("1,");
+      expect(headers.get("x-trailing")).toBe("1, ");
+    });
+
+    // The HTTP parsers join a repeated name the same way append does.
+    const repeated = "X-Dup: 1\r\nX-Dup:\r\nAccept-Ranges: a\r\nAccept-Ranges:\r\n";
+    const pick = (headers: Headers) => ({
+      "x-dup": headers.get("x-dup"),
+      "accept-ranges": headers.get("accept-ranges"),
+    });
+
+    test("fetch() response headers with a repeated name", async () => {
+      using server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: {
+          data(socket) {
+            socket.end(`HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n${repeated}\r\n`);
+          },
+        },
+      });
+      const { headers } = await fetch(`http://127.0.0.1:${server.port}/`);
+      expect({ list: pick(headers), init: pick(new Headers(headers)) }).toEqual({
+        list: { "x-dup": "1, ", "accept-ranges": "a, " },
+        init: { "x-dup": "1,", "accept-ranges": "a," },
+      });
+    });
+
+    test("Bun.serve() request headers with a repeated name", async () => {
+      await using server = Bun.serve({
+        hostname: "127.0.0.1",
+        port: 0,
+        fetch: req => Response.json({ list: pick(req.clone().headers), init: pick(new Headers(req.headers)) }),
+      });
+      const { promise, resolve, reject } = Promise.withResolvers<string>();
+      let received = "";
+      await Bun.connect({
+        hostname: "127.0.0.1",
+        port: server.port,
+        socket: {
+          open(socket) {
+            socket.write(`GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n${repeated}\r\n`);
+          },
+          data(_, chunk) {
+            received += chunk.toString();
+          },
+          close: () => resolve(received),
+          error: (_, error) => reject(error),
+          connectError: (_, error) => reject(error),
+        },
+      });
+      const body = (await promise).split("\r\n\r\n")[1];
+      expect(JSON.parse(body)).toEqual({
+        list: { "x-dup": "1, ", "accept-ranges": "a, " },
+        init: { "x-dup": "1,", "accept-ranges": "a," },
+      });
+    });
+  });
   describe("append()", () => {
     test("can append header", () => {
       const headers = new Headers();

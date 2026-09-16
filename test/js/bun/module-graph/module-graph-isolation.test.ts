@@ -414,7 +414,10 @@ const dir = String(
     `,
     "isolated/control.test.js": `
       import { test } from "bun:test";
-      test("a file that leaves nothing behind", () => {});
+      // The same fetch, still receiving when this file ends, by the file's own script.
+      test("a fetch of the file's own that is still receiving when this file ends", async () => {
+        globalThis.response = await fetch(process.env.NEVER_ENDING_URL);
+      });
     `,
     "isolated/second.test.js": `
       import { test } from "bun:test";
@@ -430,26 +433,43 @@ const dir = String(
         // (For the log, should the count differ from that of a run whose first file left nothing behind.)
         if (realms !== 1) console.log(whatKeepsEachRealm());
       });
-      // For the log of a failing run: every GlobalObject, what points at it and whether it is a root.
+      // For the log of a failing run: every GlobalObject, what points at it, and how a root reaches it.
       function whatKeepsEachRealm() {
-        const snapshot = generateHeapSnapshotForDebugging();
-        const { nodes, nodeClassNames, edges, edgeTypes, edgeNames, roots, labels } = snapshot;
-        const classOf = new Map(), lines = [];
-        for (let i = 0; i < nodes.length; i += 7) classOf.set(nodes[i], nodeClassNames[nodes[i + 2]]);
-        const rootsOf = new Map();
+        const { nodes, nodeClassNames, edges, edgeTypes, edgeNames, roots, labels } = generateHeapSnapshotForDebugging();
+        const classOf = new Map(), labelOf = new Map(), outgoing = new Map(), incoming = new Map(), rootsOf = new Map(), lines = [];
+        for (let i = 0; i < nodes.length; i += 7) (classOf.set(nodes[i], nodeClassNames[nodes[i + 2]]), labelOf.set(nodes[i], labels?.[nodes[i + 4]] ?? ""));
         for (let i = 0; i < (roots?.length ?? 0); i += 3) rootsOf.set(roots[i], [labels?.[roots[i + 1]], labels?.[roots[i + 2]]].filter(Boolean).join("/") || "root");
-        for (const [id, name] of classOf) {
-          if (name !== "GlobalObject") continue;
-          const incoming = new Map();
-          for (let e = 0; e < edges.length; e += 4) {
-            if (edges[e + 1] !== id) continue;
-            const type = edgeTypes[edges[e + 2]];
-            const via = type === "Property" || type === "Variable" ? "." + edgeNames[edges[e + 3]] : type === "Index" ? "[" + edges[e + 3] + "]" : " (internal)";
-            const from = classOf.get(edges[e]) + via + (rootsOf.has(edges[e]) ? " {root: " + rootsOf.get(edges[e]) + "}" : "");
-            incoming.set(from, (incoming.get(from) ?? 0) + 1);
+        for (let e = 0; e < edges.length; e += 4) {
+          const type = edgeTypes[edges[e + 2]];
+          const via = type === "Property" || type === "Variable" ? "." + edgeNames[edges[e + 3]] : type === "Index" ? "[" + edges[e + 3] + "]" : "";
+          (outgoing.get(edges[e]) ?? outgoing.set(edges[e], []).get(edges[e])).push([edges[e + 1], via]);
+          (incoming.get(edges[e + 1]) ?? incoming.set(edges[e + 1], []).get(edges[e + 1])).push([edges[e], via]);
+        }
+        const name = id => classOf.get(id) + (labelOf.get(id) ? ' "' + String(labelOf.get(id)).slice(0, 30) + '"' : "") + (rootsOf.has(id) ? " {root: " + rootsOf.get(id) + "}" : "");
+        // Shortest path to the target from a root (not through the realm running now, not from the target itself). Roots
+        // an output constraint adds (listeners of an emitter that is already marked) come second: they follow from something else.
+        const pathTo = (target, avoid) => {
+          for (const derived of [false, true]) {
+            const from = new Map(), queue = [];
+            for (const [id, why] of rootsOf) if (id !== target && id !== avoid && why.includes("DOMGCOutput") === derived) (from.set(id, null), queue.push(id));
+            for (let at = 0; at < queue.length; at++) {
+              if (queue[at] === target) {
+                const hops = [];
+                for (let id = target; id !== null; id = from.get(id)?.[0] ?? null) hops.unshift((from.get(id)?.[1] ?? "") + " " + name(id));
+                return hops.slice(0, 14).join(" ->");
+              }
+              for (const [to, via] of outgoing.get(queue[at]) ?? []) if (!from.has(to) && to !== avoid) (from.set(to, [queue[at], via]), queue.push(to));
+            }
           }
-          const sorted = [...incoming].sort((x, y) => y[1] - x[1]).slice(0, 14).map(([from, count]) => from + (count > 1 ? " x" + count : ""));
-          lines.push("GlobalObject#" + id + (rootsOf.has(id) ? " {root: " + rootsOf.get(id) + "}" : "") + " <- " + (sorted.join("; ") || "nothing"));
+          return "no root reaches it";
+        };
+        const globals = [...classOf].filter(([, kind]) => kind === "GlobalObject").map(([id]) => id);
+        const current = globals.find(id => rootsOf.has(id));
+        for (const id of globals) {
+          const holders = new Map();
+          for (const [from, via] of incoming.get(id) ?? []) holders.set(name(from) + via, (holders.get(name(from) + via) ?? 0) + 1);
+          const sorted = [...holders].sort((x, y) => y[1] - x[1]).slice(0, 8).map(([from, count]) => from + (count > 1 ? " x" + count : ""));
+          lines.push("GlobalObject#" + id + (id === current ? " (running now)" : " reached by: " + pathTo(id, current)) + " | pointed at by: " + sorted.join("; "));
         }
         return lines.join("\\n");
       }

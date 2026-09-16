@@ -919,3 +919,66 @@ devTest("barrel optimization: namespace re-export cycle through a star-exported 
     await c.expectMessage("result: object Y KEEP DEEP OTHER");
   },
 });
+
+// A route's client script lists the "use client" components reachable from
+// the route file and its layouts. When a save adds or removes such an import
+// and the component itself is not re-bundled (another route already pulled
+// it into the graph), the cached script has to be dropped anyway.
+const clientEntryFramework = {
+  ...minimalFramework,
+  fileSystemRouterTypes: [
+    { ...minimalFramework.fileSystemRouterTypes![0], clientEntryPoint: "./client.ts", layouts: true },
+  ],
+};
+const modulesRoute = (...specifiers: string[]) =>
+  specifiers.map(s => `import "${s}";`).join("\n") +
+  `\nexport default (req, meta) => Response.json({ modules: meta.modules });`;
+async function clientScriptHasBox(dev: any, path: string) {
+  const { modules } = await dev.fetch(path).json();
+  expect(modules).toHaveLength(1);
+  const res = await dev.fetch(modules[0]);
+  expect(res.status).toBe(200);
+  const script = await res.text();
+  // The real client script always holds the router type's client entry point.
+  expect(script).toInclude("CLIENT_ENTRY");
+  return script.includes("BOX_CODE_MARKER");
+}
+devTest("route starts to import an already bundled client component", {
+  framework: clientEntryFramework,
+  files: {
+    "routes/index.ts": modulesRoute(),
+    "routes/other.ts": modulesRoute("../components/Box"),
+    "components/Box.ts": `"use client";\nconsole.log("BOX_CODE_MARKER");`,
+    "client.ts": `console.log("CLIENT_ENTRY");`,
+  },
+  async test(dev) {
+    expect(await clientScriptHasBox(dev, "/other")).toBe(true);
+    expect(await clientScriptHasBox(dev, "/")).toBe(false);
+
+    await dev.write("routes/index.ts", modulesRoute("../components/Box"));
+    expect(await clientScriptHasBox(dev, "/")).toBe(true);
+
+    await dev.write("routes/index.ts", modulesRoute());
+    expect(await clientScriptHasBox(dev, "/")).toBe(false);
+  },
+});
+devTest("layout starts to import an already bundled client component", {
+  framework: clientEntryFramework,
+  files: {
+    "routes/_layout.ts": modulesRoute(),
+    "routes/index.ts": modulesRoute(),
+    "routes/other.ts": modulesRoute("../components/Box"),
+    "components/Box.ts": `"use client";\nconsole.log("BOX_CODE_MARKER");`,
+    "client.ts": `console.log("CLIENT_ENTRY");`,
+  },
+  async test(dev) {
+    expect(await clientScriptHasBox(dev, "/other")).toBe(true);
+    expect(await clientScriptHasBox(dev, "/")).toBe(false);
+
+    await dev.write("routes/_layout.ts", modulesRoute("../components/Box"));
+    expect(await clientScriptHasBox(dev, "/")).toBe(true);
+
+    await dev.write("routes/_layout.ts", modulesRoute());
+    expect(await clientScriptHasBox(dev, "/")).toBe(false);
+  },
+});

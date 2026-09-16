@@ -4371,13 +4371,20 @@ pub(super) fn finalize_bundle(
         }
     }
     {
+        // An edge change can alter which client components the route reaches.
+        let had_adjusted_edges = dev.incremental_result.had_adjusted_edges;
         let mut it = framework_route_bits.iterator::<true, true>();
         while let Some(bundled_route_index) = it.next() {
-            dev.route_bundles[bundled_route_index]
-                .data
-                .framework_mut()
-                .cached_css_file_array
-                .clear_without_deallocation();
+            let route_bundle = &mut dev.route_bundles[bundled_route_index];
+            if had_adjusted_edges {
+                route_bundle.invalidate_client_bundle(&mut dev.source_maps);
+            } else {
+                route_bundle
+                    .data
+                    .framework_mut()
+                    .cached_css_file_array
+                    .clear_without_deallocation();
+            }
         }
     }
 

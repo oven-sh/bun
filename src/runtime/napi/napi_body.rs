@@ -2560,9 +2560,13 @@ pub(crate) struct ThreadSafeFunction {
     /// The context whose script created the function: its calls run in it.
     pub(crate) context: bun_jsc::ContextId,
     /// Armed in that context until the JS thread lets go of the function (`finalize`,
-    /// `env_teardown`): once the context has stopped, the function no longer keeps the loop
-    /// alive. Addon threads can still call it and it is finalized as usual.
+    /// `env_teardown`) or another context refs it: once the context has stopped, the function no
+    /// longer keeps the loop alive. Addon threads can still call it and it is finalized as usual.
     abort_handle: bun_jsc::AbortHandle,
+    /// Script of a live context other than its maker's has asked it to hold the loop. An addon
+    /// is shared by the process, and whose such a function is cannot be told from who touched
+    /// it last: from here its hold is the process's, which no context's stop lets go of.
+    held_for_the_process: bool,
 
     /// Dropped on the JS thread by `env_teardown`; `None` afterwards.
     pub(crate) env: Option<NapiEnvRef>,
@@ -3188,23 +3192,20 @@ impl ThreadSafeFunction {
 
     /// `napi_ref_threadsafe_function` — JS thread only (as in Node).
     pub(crate) fn ref_(&mut self) {
-        let caller = VirtualMachine::get().context_of_caller_no_frame();
-        if caller.is_stopped() {
-            // Nothing of a context that has stopped holds the loop: asked for from the function's
-            // own call_js (which runs in its context) once that has stopped, it holds nothing.
-            if self.abort_handle.context_stopped() {
-                return;
+        if !self.held_for_the_process {
+            let caller = VirtualMachine::get().context_of_caller_no_frame();
+            if caller.is_stopped() {
+                // Nothing of a context that has stopped holds the loop: asked for from the
+                // function's own call_js (which runs in its maker's context) once that has
+                // stopped, it holds nothing.
+                if self.abort_handle.context_stopped() {
+                    return;
+                }
+            } else if caller.id() != self.context {
+                // (Its calls stay its maker's: where they run never changes.)
+                self.held_for_the_process = true;
+                self.abort_handle.leave();
             }
-        } else if caller.id() != self.context {
-            // An addon is shared by the process: one long-lived function, made by whichever
-            // script used the addon first, is reffed while anybody's work is in flight. It is
-            // the context's that asks it to hold the loop: it goes with that one (not with its
-            // maker, before or after that stops), and its calls run in it.
-            self.abort_handle.leave();
-            self.context = caller.id();
-            // SAFETY: as at creation: a heap allocation that leaves its context on this thread
-            // before it is freed.
-            unsafe { bun_jsc::AbortHandle::arm_owner(std::ptr::from_mut(self), caller) };
         }
         self.poll_ref.ref_(bun_io::js_vm_ctx());
     }
@@ -3364,6 +3365,7 @@ extern "C" fn napi_create_threadsafe_function(
         tracker: Debugger::AsyncTaskTracker::init(vm),
         context: vm.context_of_caller_no_frame().id(),
         abort_handle: bun_jsc::AbortHandle::for_owner::<ThreadSafeFunction>(),
+        held_for_the_process: false,
         finalizer_fun: thread_finalize_cb,
         finalizer_data: thread_finalize_data,
         has_queued_finalizer: false,

@@ -1079,15 +1079,21 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
 
   it.each([
     ["does not keep the process running", [], ["disposed", "it asked to be held again", "ran dry at once"]],
-    // The addon is everyone's: the function is the host's from the moment the host asks it to hold the loop.
+    // The addon is everyone's: a function more than one context has asked to hold the loop holds it
+    // for the process, whichever of them made it and whichever goes first.
     ...["after the graph was disposed", "while the graph lived"].map(when => [
-      "is the host's once the host refs it, " + when,
+      "holds the loop for the process once the host refs it, " + when,
       [when],
       ["disposed", "it asked to be held again", "ran dry once the host let go"],
     ]),
     [
-      "that its leftover script made is the host's once the host refs it",
+      "that its leftover script made holds the loop for the process once the host refs it",
       ["that the graph's leftover script made"],
+      ["disposed", "ran dry once the host let go"],
+    ],
+    [
+      "and one the host made, which the graph reffed, holds the loop for the host still",
+      ["that the host made and the graph reffed"],
       ["disposed", "ran dry once the host let go"],
     ],
   ])("a threadsafe function a disposed Bun.ModuleGraph's script created %s", async (_what, args, said) => {
@@ -1100,6 +1106,7 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
         export const start = () => addon.threadsafe_function_that_refs_itself();
         // (From a microtask, which still runs once the graph has been disposed.)
         export const startLater = () => queueMicrotask(() => addon.threadsafe_function_that_refs_itself(false));
+        export const refTheLastOne = () => addon.ref_that_function();
       `,
       "fixture.mjs": `
         import { createRequire } from "node:module";
@@ -1113,13 +1120,17 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
           // (The leftover microtask has run by now, and what closes its function has not.)
           await Promise.resolve();
           addon.ref_that_function();
+        } else if (when === "that the host made and the graph reffed") {
+          addon.threadsafe_function_that_refs_itself(false);
+          graph.run(() => app.refTheLastOne());
+          graph.dispose();
         } else {
           graph.run(() => app.start());
           if (when === "while the graph lived") addon.ref_that_function();
           graph.dispose();
         }
         console.log("disposed");
-        if (when === "that the graph's leftover script made") {
+        if (when?.startsWith("that the ")) {
           // (Nobody calls that one. What closes what a disposed graph's script opens has run by now.)
           for (let i = 0; i < 10; i++) await new Promise(resolve => setImmediate(resolve));
         } else {

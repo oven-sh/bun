@@ -484,18 +484,6 @@ struct HttpResponseData;
             return remainingStreamingBytes != 0;
         }
 
-        /* Hands the fallback buffer to the caller, which becomes its owner. A
-         * request head that arrived split over two reads is parsed out of this
-         * buffer, so the HttpRequest the parse loop is dispatching right now
-         * holds string_views into it. HttpContext::onClose calls this before it
-         * destructs the parser under that dispatch. The move keeps the heap
-         * block, so the views stay valid: consumePostPadded reserves at least
-         * MINIMUM_HTTP_POST_PADDING bytes before it parses out of the buffer,
-         * which is past every short string optimization threshold. */
-        std::string takeFallbackBuffer() {
-            return std::move(fallback);
-        }
-
         /* Maximum number of trailer fields surfaced to JS (the section size cap
          * already bounds memory; this matches the regular-header count cap). */
         static constexpr unsigned MAX_TRAILER_FIELDS = UWS_HTTP_MAX_HEADERS_COUNT - 1;
@@ -1499,13 +1487,21 @@ public:
 
             size_t maxCopyDistance = std::min<size_t>(maxFallbackSize - fallback.length(), (size_t) length);
 
+            /* This frame owns the buffer while the head is parsed out of it. The
+             * dispatch below can destruct this parser (the socket closes or is
+             * upgraded inside the handler) while the HttpRequest it was given
+             * still holds string_views into these bytes. */
+            std::string head = std::move(fallback);
+            fallback.clear();
+
             /* We don't want fallback to be short string optimized, since we want to move it */
-            fallback.reserve(fallback.length() + maxCopyDistance + std::max<unsigned int>(MINIMUM_HTTP_POST_PADDING, sizeof(std::string)));
-            fallback.append(data, maxCopyDistance);
+            head.reserve(head.length() + maxCopyDistance + std::max<unsigned int>(MINIMUM_HTTP_POST_PADDING, sizeof(std::string)));
+            head.append(data, maxCopyDistance);
 
             // break here on break
-            HttpParserResult consumed = fenceAndConsumePostPadded<true, IsNodeHttp>(maxHeaderSize, isConnectRequest, requireHostHeader, useStrictMethodValidation, useInsecureHTTPParser, useLenientTransferEncoding, nodeHttpRequestTrailers, chunkedExtensionsByteCount, fallback.data(), (unsigned int) fallback.length(), user, &req, requestHandler, dataHandler);
-            /* Return data will be different than user if we are upgraded to WebSocket or have an error */
+            HttpParserResult consumed = fenceAndConsumePostPadded<true, IsNodeHttp>(maxHeaderSize, isConnectRequest, requireHostHeader, useStrictMethodValidation, useInsecureHTTPParser, useLenientTransferEncoding, nodeHttpRequestTrailers, chunkedExtensionsByteCount, head.data(), (unsigned int) head.length(), user, &req, requestHandler, dataHandler);
+            /* Return data will be different than user if we are upgraded to WebSocket or have an error.
+             * The parser can be gone by now: do not touch a member before this return. */
             if (consumed.returnedData != user) {
                 return consumed;
             }
@@ -1516,7 +1512,6 @@ public:
                 /* This logic assumes that we consumed everything in fallback buffer.
                 * This is critically important, as we will get an integer overflow in case
                 * of "had" being larger than what we consumed, and that we would drop data */
-                fallback.clear();
                 data += consumedBytes - had;
                 length -= consumedBytes - had;
 
@@ -1579,6 +1574,8 @@ public:
                 }
 
             } else {
+                /* Short read: nothing was dispatched, keep accumulating. */
+                fallback = std::move(head);
                 if (fallback.length() == maxFallbackSize) {
                     return HttpParserResult::error(HTTP_ERROR_431_REQUEST_HEADER_FIELDS_TOO_LARGE, HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE);
                 }

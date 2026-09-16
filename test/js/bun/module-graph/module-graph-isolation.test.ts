@@ -761,6 +761,50 @@ const dir = String(
       console.log(JSON.stringify({ sameServer, answers }));
       process.exit(0);
     `,
+    "dials-the-host.mjs": `
+      import net from "node:net";
+      import http from "node:http";
+      // From a microtask, which still runs once the graph has been disposed.
+      export const dialLater = port => queueMicrotask(() => {
+        net.connect(port, "127.0.0.1").on("error", () => {});
+        http.get({ host: "127.0.0.1", port, path: "/" }).on("error", () => {});
+      });
+    `,
+    "dials-after-it-was-disposed.mjs": `
+      let arrived = 0;
+      const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { open() { arrived++; }, data() {} } });
+      const graph = new Bun.ModuleGraph();
+      const app = await graph.import(import.meta.dir + "/dials-the-host.mjs");
+      graph.run(() => app.dialLater(server.port));
+      graph.dispose();
+      // A dial of the host's own, made afterwards, has arrived: the graph's would have too.
+      await Bun.connect({ hostname: "127.0.0.1", port: server.port, socket: { open(socket) { socket.end(); }, data() {} } });
+      for (let i = 0; i < 10; i++) await new Promise(resolve => setImmediate(resolve));
+      console.log(JSON.stringify({ arrivedFromTheGraph: arrived - 1 }));
+      process.exit(0);
+    `,
+    "requests-without-an-agent.mjs": `
+      import http from "node:http";
+      export const get = port => new Promise((resolve, reject) => http.get({ host: "127.0.0.1", port, path: "/" }, response => { response.resume(); resolve(response.statusCode); }).on("error", reject));
+    `,
+    "host-replaced-the-global-agent.mjs": `
+      import http from "node:http";
+      // As a proxy agent is: not constructed the way node's own Agent is.
+      class AgentOfTheHosts extends http.Agent {
+        constructor(where, options) {
+          if (typeof where !== "string") throw new TypeError("an AgentOfTheHosts is made with where it goes through");
+          super(options);
+        }
+      }
+      http.globalAgent = new AgentOfTheHosts("somewhere", { keepAlive: true });
+      using server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("ok") });
+      const graph = new Bun.ModuleGraph();
+      const app = await graph.import(import.meta.dir + "/requests-without-an-agent.mjs");
+      const status = await graph.run(() => app.get(server.port)).catch(error => String(error));
+      graph.dispose();
+      console.log(JSON.stringify({ status }));
+      process.exit(0);
+    `,
     "listens-and-reads-its-address.mjs": `
       import http from "node:http";
       import net from "node:net";
@@ -3326,6 +3370,15 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
       stdout: `{"sameServer":true,"answers":["the second","the second","nobody"]}`,
       exitCode: 0,
     });
+  });
+  test("a node:net or node:http dial its leftover script makes does not go out, as a Bun.connect() does not", async () => {
+    expect(await runsFixture("dials-after-it-was-disposed.mjs")).toEqual({
+      stdout: `{"arrivedFromTheGraph":0}`,
+      exitCode: 0,
+    });
+  });
+  test("a global agent the host put in place of node's is what a graph's requests without an agent go through", async () => {
+    expect(await runsFixture("host-replaced-the-global-agent.mjs")).toEqual({ stdout: `{"status":200}`, exitCode: 0 });
   });
   test("a server it was disposed in the turn it listened is not announced to it: its listen callback cannot fail the host", async () => {
     expect(await runsFixture("disposed-in-the-turn-it-listens.mjs")).toEqual({ stdout: `{"heard":[]}`, exitCode: 0 });

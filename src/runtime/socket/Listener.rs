@@ -1063,21 +1063,23 @@ impl Listener {
     // Note: no #[bun_jsc::host_fn] — BunObject.rs::static_adapters owns the
     // C-ABI shim (it extracts `opts` from the CallFrame and calls this directly).
     pub(crate) fn connect(cx: &bun_jsc::JsThread<'_>, opts: JSValue) -> JsResult<JSValue> {
-        // What script of a disposed `Bun.ModuleGraph` opens is closed at once and reports nothing.
-        // Dialing would report: a port that refuses (a listener the same script just made is one,
-        // closed at birth) rejects inside the call, and a loop that retries would never yield.
-        if cx.context().is_stopped() {
-            return Ok(jsc::JSPromise::create(cx.global()).to_js());
-        }
         Self::connect_inner(cx, None, None, opts)
     }
 
+    /// `Bun.connect`, and node:net's dial (which hands in the socket it already made).
     pub(crate) fn connect_inner(
         cx: &bun_jsc::JsThread<'_>,
         prev_maybe_tcp: Option<*mut TCPSocket>,
         prev_maybe_tls: Option<*mut TLSSocket>,
         opts: JSValue,
     ) -> JsResult<JSValue> {
+        // What script of a disposed `Bun.ModuleGraph` opens is closed at once and reports nothing.
+        // Dialing would report: a port that refuses (a listener the same script just made is one,
+        // closed at birth) fails inside the call, and a loop that redials on failure would never
+        // yield, where it did while the graph was live and the port accepted.
+        if cx.context().is_stopped() {
+            return Ok(jsc::JSPromise::create(cx.global()).to_js());
+        }
         if opts.is_empty_or_undefined_or_null() || opts.is_boolean() || !opts.is_object() {
             return Err(cx
                 .global()

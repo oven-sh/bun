@@ -380,11 +380,14 @@ function utcDate() {
 
 // The agent a request with no `agent` uses. For the script of a Bun.ModuleGraph that is the
 // graph's own copy of the realm's default agent, made on first use in the graph's context: the
-// sockets it keeps alive are then the graph's, and close with it.
+// sockets it keeps alive are then the graph's, and close with it. Only node's own Agent is copied:
+// one the host put in its place (a proxy agent, say) is built the host's way and is the host's.
 const defaultAgentsOfGraphs = new WeakMap();
 function defaultAgentOfRunningScript(realmAgent) {
   const graph = require("internal/async_context_frame").current()?.graph;
   if (graph === undefined) return realmAgent;
+  const constructor = realmAgent.constructor;
+  if (constructor !== require("node:_http_agent").Agent && constructor !== require("node:https").Agent) return realmAgent;
   let agents = defaultAgentsOfGraphs.get(graph);
   if (agents === undefined) defaultAgentsOfGraphs.set(graph, (agents = new WeakMap()));
   let agent = agents.get(realmAgent);

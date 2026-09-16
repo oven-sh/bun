@@ -1975,7 +1975,7 @@ impl GlobalData {
     pub(crate) fn init(vm: &VirtualMachine) -> Box<Self> {
         Box::new(Self {
             // The VM-global resolver serves every context of the realm.
-            resolver: Resolver::setup(vm, vm.root_context().id()),
+            resolver: Resolver::setup(vm, None),
         })
     }
 }
@@ -3738,9 +3738,10 @@ type PollsMap = ArrayHashMap<c_ares::ares_socket_t, *mut PollType>;
 pub struct Resolver {
     pub(crate) ref_count: bun_ptr::RefCount<Resolver>,
     pub(crate) channel: Cell<Option<*mut c_ares::Channel>>, // FFI
-    /// The context whose script made the resolver (the realm's, for the VM-global one): its channel is that
-    /// context's, whoever is first to query.
-    made_in: bun_jsc::ContextId,
+    /// The context whose script made the resolver: its channel is that context's, whoever is first
+    /// to query. `None`: the VM-global one, which is the realm's whatever the realm's context is
+    /// called by then (`bun test --isolate` renews it for every file).
+    made_in: Option<bun_jsc::ContextId>,
     pub(crate) vm: bun_ptr::BackRef<VirtualMachine>, // JSC_BORROW (BACKREF — VirtualMachine outlives the resolver; read-only after init)
     pub(crate) polls: JsCell<PollsMap>,
     pub(crate) options: Cell<c_ares::ChannelOptions>,
@@ -4059,7 +4060,7 @@ impl Resolver {
         unsafe { bun_ptr::RefCount::<Self>::deref(this) };
     }
 
-    pub(crate) fn setup(vm: &VirtualMachine, made_in: bun_jsc::ContextId) -> Self {
+    pub(crate) fn setup(vm: &VirtualMachine, made_in: Option<bun_jsc::ContextId>) -> Self {
         Self {
             ref_count: bun_ptr::RefCount::init(),
             channel: Cell::new(None),
@@ -4090,7 +4091,7 @@ impl Resolver {
         }
     }
 
-    pub(crate) fn init(vm: &VirtualMachine, made_in: bun_jsc::ContextId) -> *mut Self {
+    pub(crate) fn init(vm: &VirtualMachine, made_in: Option<bun_jsc::ContextId>) -> *mut Self {
         bun_output::scoped_log!(DNSResolver, "init");
         bun_core::heap::into_raw(Box::new(Self::setup(vm, made_in)))
     }
@@ -5411,9 +5412,12 @@ impl c_ares::ChannelContainer for Resolver {
         self.channel.set(Some(channel));
         // SAFETY: a resolver with a channel is at its final address (the
         // channel holds it); it leaves its context in `destroy_channel`.
-        unsafe {
-            bun_jsc::AbortHandle::arm_owner(self.as_ctx_ptr(), self.vm.context_of(self.made_in))
+        let context = match self.made_in {
+            Some(made_in) => self.vm.context_of(made_in),
+            None => self.vm.root_context(),
         };
+        // SAFETY: as above.
+        unsafe { bun_jsc::AbortHandle::arm_owner(self.as_ctx_ptr(), context) };
     }
 }
 
@@ -5993,7 +5997,7 @@ impl Resolver {
         // SAFETY: bun_vm() returns a live VM pointer for the duration of the call.
         let resolver = Resolver::init(
             global_this.bun_vm(),
-            global_this.bun_vm().context_of_caller(callframe).id(),
+            Some(global_this.bun_vm().context_of_caller(callframe).id()),
         );
 
         let options = callframe.argument(0);

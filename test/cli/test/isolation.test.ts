@@ -579,6 +579,103 @@ describe.concurrent("bun test --isolate", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("with --isolate, the default DNS resolver answers in every file, not only the first", async () => {
+    // The resolver is the VM's, and each file's queries open its channel anew.
+    using dir = tempDir("isolate-dns", {
+      "a-resolve.test.ts": `
+        import { test, expect } from "bun:test";
+        import dns from "node:dns";
+
+        test("a query through the default resolver is answered", async () => {
+          // A DNS server that answers every query with NXDOMAIN.
+          const server = await Bun.udpSocket({
+            hostname: "127.0.0.1",
+            port: 0,
+            socket: {
+              data(socket, query, port, address) {
+                const reply = Buffer.from(query);
+                reply[2] |= 0x80;
+                reply[3] = (reply[3] & 0xf0) | 3;
+                socket.send(reply, port, address);
+              },
+            },
+          });
+          try {
+            dns.setServers(["127.0.0.1:" + server.port]);
+            const outcome = await dns.promises.resolve4("isolate-dns.test").then(() => "resolved", error => error.code);
+            expect(outcome).toBe("ENOTFOUND");
+          } finally {
+            server.close();
+          }
+        });
+      `,
+      "b-resolve.test.ts": `
+        import { test, expect } from "bun:test";
+        import dns from "node:dns";
+
+        test("a query through the default resolver is answered", async () => {
+          // A DNS server that answers every query with NXDOMAIN.
+          const server = await Bun.udpSocket({
+            hostname: "127.0.0.1",
+            port: 0,
+            socket: {
+              data(socket, query, port, address) {
+                const reply = Buffer.from(query);
+                reply[2] |= 0x80;
+                reply[3] = (reply[3] & 0xf0) | 3;
+                socket.send(reply, port, address);
+              },
+            },
+          });
+          try {
+            dns.setServers(["127.0.0.1:" + server.port]);
+            const outcome = await dns.promises.resolve4("isolate-dns.test").then(() => "resolved", error => error.code);
+            expect(outcome).toBe("ENOTFOUND");
+          } finally {
+            server.close();
+          }
+        });
+      `,
+      "c-resolve.test.ts": `
+        import { test, expect } from "bun:test";
+        import dns from "node:dns";
+
+        test("a query through the default resolver is answered", async () => {
+          // A DNS server that answers every query with NXDOMAIN.
+          const server = await Bun.udpSocket({
+            hostname: "127.0.0.1",
+            port: 0,
+            socket: {
+              data(socket, query, port, address) {
+                const reply = Buffer.from(query);
+                reply[2] |= 0x80;
+                reply[3] = (reply[3] & 0xf0) | 3;
+                socket.send(reply, port, address);
+              },
+            },
+          });
+          try {
+            dns.setServers(["127.0.0.1:" + server.port]);
+            const outcome = await dns.promises.resolve4("isolate-dns.test").then(() => "resolved", error => error.code);
+            expect(outcome).toBe("ENOTFOUND");
+          } finally {
+            server.close();
+          }
+        });
+      `,
+    });
+
+    const { stderr, exitCode } = await runTests(
+      String(dir),
+      ["--isolate"],
+      ["./a-resolve.test.ts", "./b-resolve.test.ts", "./c-resolve.test.ts"],
+      bunEnv,
+    );
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("3 pass");
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
+
   test("with --isolate, leaked fs.watch is closed before next file", async () => {
     using dir = tempDir("isolate-fswatch", {
       "watched/.keep": "",

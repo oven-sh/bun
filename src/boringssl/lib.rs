@@ -107,6 +107,11 @@ pub unsafe fn ssl_ctx_setup(ctx: *mut boring::SSL_CTX) {
 // was reported as a leak at exit.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn OPENSSL_memory_alloc(size: usize) -> *mut c_void {
+    // ASan (LLVM 23+) poisons the one byte it hands back for `malloc(0)` while
+    // `malloc_usable_size` still reports it, and both `OPENSSL_memory_free`
+    // below and `OPENSSL_realloc` touch `usable_size` bytes (`CBB_init(_, 0)`
+    // then a grow is the first TLS handshake's ECDSA verify).
+    let size = if cfg!(bun_asan) && size == 0 { 1 } else { size };
     bun_alloc::default_alloc::malloc(size)
 }
 

@@ -1769,19 +1769,22 @@ describe("Bun.serve HTTP/3 request validation", () => {
 // keeps the 100 until the final response makes the test time out.
 describe.concurrent("Bun.serve HTTP/3 sends the automatic 100 Continue ahead of the final response", () => {
   async function exchange(server: { port: number }, { handshakeFirst }: { handshakeFirst: boolean }) {
+    // A session or a stream that ends before a response fails the test with
+    // its reason. Once a response is in, these rejections do nothing.
+    const firstResponse = Promise.withResolvers<void>();
+    const endedEarly = (what: string) => () => firstResponse.reject(new Error(`${what} closed before a response`));
     await using endpoint = new QuicEndpoint();
     const client = await connect(`127.0.0.1:${server.port}`, {
       endpoint,
       servername: "localhost",
       verifyPeer: "manual",
       transportParams: { maxIdleTimeout: 5 },
-      onerror() {},
+      onerror: firstResponse.reject,
     });
-    client.closed.catch(() => {});
+    client.closed.then(endedEarly("the session"), firstResponse.reject);
     if (handshakeFirst) await client.opened;
 
     const seen: string[] = [];
-    const firstResponse = Promise.withResolvers<void>();
     const stream = await client.createBidirectionalStream({
       oninfo(received: Record<string, string>) {
         seen.push("info " + received[":status"]);
@@ -1792,7 +1795,7 @@ describe.concurrent("Bun.serve HTTP/3 sends the automatic 100 Continue ahead of 
         firstResponse.resolve();
       },
     });
-    stream.closed.catch(() => {});
+    stream.closed.then(endedEarly("the stream"), firstResponse.reject);
     const writer = stream.writer;
     stream.sendHeaders(requestHeaders("/", { ":method": "POST", expect: "100-continue" }));
     await firstResponse.promise;

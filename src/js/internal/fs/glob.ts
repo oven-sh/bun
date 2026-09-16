@@ -167,6 +167,20 @@ function createMatcher(pattern, options = kEmptyObject) {
   return new (lazyMinimatch().Minimatch)(pattern, opts);
 }
 
+// How many queued directories Glob.#prefetch() reads ahead of glob().
+const kPrefetchWindow = 8;
+
+// False when #iterateSubpatterns() would only stat a literal name and not list the directory.
+function readsDirectory(patterns) {
+  for (let i = 0; i < patterns.length; i++) {
+    const { indexes } = patterns[i];
+    if (indexes.size !== 1 || typeof patterns[i].at(indexes.values().next().value) !== "string") {
+      return true;
+    }
+  }
+  return false;
+}
+
 function cloneSet(values) {
   const cloned = new Set();
   for (const value of values) {
@@ -250,6 +264,11 @@ class Cache {
   addToStatCache(path, val) {
     this.#statsCache.set(path, val);
   }
+  // What a readdir of the parent directory gave for `path`, if anything.
+  cachedDirent(path) {
+    const cached = this.#statsCache.get(path);
+    return $isPromise(cached) ? undefined : cached;
+  }
   async readdir(path) {
     const cached = this.#readdirCache.get(path);
     if (cached) {
@@ -266,6 +285,10 @@ class Cache {
     );
     this.#readdirCache.set(path, promise);
     return promise;
+  }
+  // Nothing awaits this promise, so its rejection must not count as unhandled. readdir(path) still rejects.
+  prefetchReaddir(path) {
+    this.readdir(path).$then(undefined, nullOnReject);
   }
   readdirSync(path) {
     const cached = this.#readdirCache.get(path);
@@ -385,7 +408,7 @@ class Glob {
   #exclude;
   #cache = new Cache();
   #results = new ResultSet();
-  #queue: Array<{ path: string; patterns: Pattern[] }> = [];
+  #queue: Array<{ path: string; patterns: Pattern[]; prefetched?: boolean }> = [];
   #subpatterns = new Map();
   #patterns;
   #withFileTypes;
@@ -753,15 +776,36 @@ class Glob {
 
   async *glob() {
     this.#queue.push({ __proto__: null, path: ".", patterns: this.#patterns });
+    // The lstat and the readdir of the root run side by side; see #prefetch().
+    if (readsDirectory(this.#patterns)) {
+      this.#cache.prefetchReaddir(resolve(this.#root, "."));
+    }
     while (this.#queue.length > 0) {
       const item = this.#queue.pop()!;
       for (let i = 0; i < item.patterns.length; i++) {
         yield* this.#iterateSubpatterns(item.path, item.patterns[i]);
       }
       for (const [path, patterns] of this.#subpatterns) {
-        this.#queue.push({ __proto__: null, path, patterns });
+        this.#queue.push({ __proto__: null, path, patterns, prefetched: false });
       }
       this.#subpatterns.clear();
+      this.#prefetch();
+    }
+  }
+  // Starts the readdir of the directories that glob() visits next, so that the thread pool reads them meanwhile.
+  #prefetch() {
+    const queue = this.#queue;
+    const end = queue.length > kPrefetchWindow ? queue.length - kPrefetchWindow : 0;
+    for (let i = queue.length - 1; i >= end; i--) {
+      const item = queue[i];
+      if (item.prefetched) {
+        continue;
+      }
+      item.prefetched = true;
+      const fullpath = resolve(this.#root, item.path);
+      if (this.#cache.cachedDirent(fullpath)?.isDirectory() && readsDirectory(item.patterns)) {
+        this.#cache.prefetchReaddir(fullpath);
+      }
     }
   }
   async *#iterateSubpatterns(path, pattern) {

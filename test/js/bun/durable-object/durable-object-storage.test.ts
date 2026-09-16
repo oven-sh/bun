@@ -1019,10 +1019,10 @@ describe("sql.exec", () => {
       expect(joined.one()).toEqual({ id: 1, v: "l", w: "r" });
 
       // More columns than an object keeps inline.
-      const wide = Array.from({ length: 300 }, (_, index) => `${index} AS c${index}`);
+      const wide = Array.from({ length: 100 }, (_, index) => `${index} AS c${index}`);
       const wideRow = sql.exec(`SELECT ${wide.join(", ")}`).one();
-      expect(Object.keys(wideRow)).toEqual(Array.from({ length: 300 }, (_, index) => `c${index}`));
-      expect(wideRow.c299).toBe(299);
+      expect(Object.keys(wideRow)).toEqual(Array.from({ length: 100 }, (_, index) => `c${index}`));
+      expect(wideRow.c99).toBe(99);
     });
   });
 

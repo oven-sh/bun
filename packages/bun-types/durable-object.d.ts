@@ -89,8 +89,9 @@ declare module "bun" {
     /** Passed to every object's constructor. */
     env?: unknown;
     /**
-     * An object with nothing to do is evicted from memory after this many
-     * milliseconds; its storage, alarm and WebSockets stay. Default `10_000`.
+     * An object that has had nothing to do for this many milliseconds (at most
+     * twice that) is evicted from memory; its storage, alarm and WebSockets
+     * stay. `0` evicts an object as soon as it is idle. Default `10_000`.
      */
     idleTimeout?: number;
     /**
@@ -292,8 +293,12 @@ declare module "bun" {
   interface DurableObjectSql {
     /**
      * Runs `query`. With several statements separated by `;`, the bindings and
-     * the cursor are the last one's. Transactions are controlled with
-     * `transactionSync()`, not with SQL; tables named `_cf_*` are reserved.
+     * the cursor are the last one's, and if one of them fails none of them
+     * happened. Transactions are controlled with `transactionSync()`, not with
+     * SQL; names that start with `_cf_` are reserved.
+     *
+     * The cursor reads rows as it is iterated. One that is kept across an
+     * `await` holds the rest of its rows in memory from then on.
      */
     exec<T extends Record<string, DurableObjectSqlValue> = Record<string, DurableObjectSqlValue>>(
       query: string,

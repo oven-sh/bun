@@ -1028,7 +1028,12 @@ JSValue JSDurableObjectActor::block(Zig::GlobalObject* globalObject, JSValue cal
     }
     if (!awaited) {
         unblock(globalObject, generation);
-        return JSPromise::resolvedPromise(globalObject, result);
+        JSPromise* resolved = JSPromise::resolvedPromise(globalObject, result);
+        if (scope.exception()) [[unlikely]] {
+            (void)scope.clearExceptionExceptTermination();
+            return {};
+        }
+        return resolved;
     }
     if (!m_blockTimer)
         m_blockTimer = makeUnique<RunLoop::Timer>(vm.runLoop(), "DurableObject::blockConcurrencyWhile"_s, [this] { blockTimedOut(); });

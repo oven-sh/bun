@@ -32,7 +32,7 @@ new Bun.DurableObjectNamespace({
   class: Counter, // or module: "./counter.ts", export: "Counter"
   storage: "./data", // a directory; omit to keep storage in memory
   env: { db }, // passed to every constructor
-  idleTimeout: 10_000, // ms before an idle object is evicted
+  idleTimeout: 10_000, // an object idle for this many ms is evicted
   onError(error, id) {}, // errors nobody is waiting for
 });
 ```
@@ -90,7 +90,8 @@ const recent = this.ctx.storage.sql.exec("SELECT * FROM messages ORDER BY id DES
 ```
 
 - Writes made without an `await` in between are committed together, and nothing the object returns leaves before they are.
-- `transactionSync(fn)` rolls back what `fn` wrote if it throws.
+- `transactionSync(fn)` rolls back what `fn` wrote if it throws. A `sql.exec()` of several statements is all or nothing too; its bindings and its cursor are the last statement's.
+- A cursor reads its rows as you iterate. One you keep across an `await` has the rest of its rows in memory from then on.
 - The promise-returning `get` / `put` / `delete` / `list` / `transaction` of Cloudflare's API are there too.
 - `sql.exec()` cannot run `BEGIN` / `COMMIT` / `SAVEPOINT`, attach databases, or touch tables named `_cf_*`.
 - An object that stores nothing leaves no file.
@@ -139,7 +140,7 @@ The sockets are ordinary `ServerWebSocket`s: `ws.data`, `ws.subscribe()` and `se
 
 ## Eviction and reset
 
-An object with nothing to do for `idleTimeout` is evicted: the instance is dropped and everything it opened is closed, like a terminated worker. That includes timers, sockets and servers. Its storage, alarm and WebSockets stay. Use an alarm, not `setTimeout`, for work that must happen later.
+An object with nothing to do for `idleTimeout` (at most twice that) is evicted: the instance is dropped and everything it opened is closed, like a terminated worker. That includes timers, sockets and servers. Its storage, alarm and WebSockets stay. Use an alarm, not `setTimeout`, for work that must happen later, and `ctx.waitUntil(promise)` to stay in memory until something finishes, such as a response that is still streaming.
 
 `ctx.abort(reason)` resets an object: calls in progress fail with `ERR_DURABLE_OBJECT_RESET`, uncommitted writes are rolled back, and the next call constructs it again. A `blockConcurrencyWhile()` that rejects does the same.
 

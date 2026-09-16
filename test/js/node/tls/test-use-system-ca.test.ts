@@ -1,6 +1,7 @@
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
+import { mkfifo } from "mkfifo";
 import { X509Certificate } from "node:crypto";
 import { existsSync, readFileSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
@@ -170,6 +171,81 @@ describe.skipIf(!isLinux)("tls.getCACertificates('system')", () => {
     let j = 0;
     for (const fp of withDefaultDir) if (fp === withExplicitDir[j]) j++;
     expect(j).toBe(withExplicitDir.length);
+  });
+});
+
+// A pipe or a FIFO can be read only once. On Linux the default store and the system store both read $SSL_CERT_FILE, in
+// either order, so the second one has to get what the first one read.
+describe.concurrent.skipIf(!isLinux)("SSL_CERT_FILE that can be read only once", () => {
+  const keys = join(import.meta.dir, "../test/fixtures/keys");
+  const ca1 = join(keys, "ca1-cert.pem");
+  const expected = { connected: "authorized", listed: [new X509Certificate(readFileSync(ca1)).fingerprint256] };
+
+  // Connects with the default store to a server whose certificate ca1 signed, and lists the system store.
+  const script = (first: "connect" | "list") =>
+    `const tls = require("tls"), fs = require("fs"), { X509Certificate } = require("crypto");
+     const list = () => tls.getCACertificates("system").map(pem => new X509Certificate(pem).fingerprint256);
+     const connect = () => new Promise(resolve => {
+       const server = tls.createServer({ key: fs.readFileSync(${JSON.stringify(join(keys, "agent1-key.pem"))}), cert: fs.readFileSync(${JSON.stringify(join(keys, "agent1-cert.pem"))}) }, s => s.end());
+       server.listen(0, () => {
+         const socket = tls.connect({ port: server.address().port, host: "127.0.0.1", checkServerIdentity: () => undefined }, () => {
+           resolve("authorized");
+           socket.destroy();
+           server.close();
+         });
+         socket.on("error", e => { resolve(e.code); server.close(); });
+       });
+     });
+     let connected, listed;
+     if (${first === "list"}) { listed = list(); connected = await connect(); }
+     else { connected = await connect(); listed = list(); }
+     console.log(JSON.stringify({ connected, listed }));`;
+
+  // The shell pipeline makes stdin a real pipe. A Blob stdin is a memfd, which every open reads from the start.
+  test.each(["connect", "list"] as const)("a pipe, %s first", async first => {
+    await using proc = spawn({
+      cmd: ["sh", "-c", 'cat "$CA" | "$BUN" -e "$SCRIPT"'],
+      env: {
+        ...bunEnv,
+        SSL_CERT_FILE: "/dev/stdin",
+        SSL_CERT_DIR: "",
+        NODE_USE_SYSTEM_CA: undefined,
+        CA: ca1,
+        BUN: bunExe(),
+        SCRIPT: script(first),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual(expected);
+    expect(exitCode).toBe(0);
+  });
+
+  // --use-system-ca puts the system store into the default store, so the first connection builds both.
+  test("a FIFO that one writer serves, with --use-system-ca", async () => {
+    using dir = tempDir("ssl-cert-file-fifo", {});
+    const fifo = join(String(dir), "ca.fifo");
+    mkfifo(fifo);
+    await using writer = spawn({
+      cmd: ["sh", "-c", 'cat "$CA" > "$FIFO"'],
+      env: { ...bunEnv, CA: ca1, FIFO: fifo },
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), "--use-system-ca", "-e", script("connect")],
+      env: { ...bunEnv, SSL_CERT_FILE: fifo, SSL_CERT_DIR: "" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual(expected);
+    expect(exitCode).toBe(0);
+    expect(await writer.exited).toBe(0);
   });
 });
 

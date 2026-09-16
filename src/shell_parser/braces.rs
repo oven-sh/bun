@@ -1,11 +1,9 @@
 use core::ptr;
 
-use bun_alloc::ArenaVecExt as _;
-use bun_alloc::{AllocError, Arena as Bump};
+use bun_alloc::AllocError;
 // `bun.SmallList` lives in `bun_css` (higher tier). Semantically it
 // is `smallvec::SmallVec` (inline-N, heap-spill). PORTING.md §Collections.
 use self::StringEncoding as Encoding;
-use bun_alloc::ArenaVec as BumpVec;
 use bun_core::SmolStr;
 use smallvec::SmallVec;
 
@@ -403,8 +401,8 @@ fn ast_atom_to_json(atom: &ast::Atom, out: &mut Vec<u8>) {
         }
         ast::Atom::Expansion(exp) => {
             out.extend_from_slice(b"{\"expansion\":{\"variants\":[");
-            // SAFETY: `variants` is a bump-allocated slice live for the parse arena.
-            let variants = unsafe { &*exp.variants };
+            // SAFETY: `variants` is a live boxed slice that `exp` owns.
+            let variants = unsafe { &*exp.variants.as_ptr() };
             for (i, g) in variants.iter().enumerate() {
                 if i > 0 {
                     out.push(b',');
@@ -441,8 +439,8 @@ fn ast_group_to_json(group: &ast::Group, out: &mut Vec<u8>) {
         }
         ast::GroupAtoms::Many(atoms) => {
             out.extend_from_slice(b"{\"many\":[");
-            // SAFETY: bump-allocated slice live for the parse arena.
-            let atoms = unsafe { &**atoms };
+            // SAFETY: `atoms` is a live boxed slice that `group` owns.
+            let atoms = unsafe { &*atoms.as_ptr() };
             for (i, a) in atoms.iter().enumerate() {
                 if i > 0 {
                     out.push(b',');
@@ -465,8 +463,7 @@ pub mod ast {
 
     pub enum GroupAtoms {
         Single(Atom),
-        // bump-owned slice; raw because Group has raw backrefs (see bubble_up).
-        Many(*mut [Atom]),
+        Many(OwnedSlice<Atom>),
     }
 
     pub struct Group {
@@ -477,9 +474,30 @@ pub mod ast {
     }
 
     pub struct Expansion {
-        // bump-owned mutable slice; raw because expand_nested writes
-        // bubble_up backrefs into elements while recursing through the parent.
-        pub(crate) variants: *mut [Group],
+        pub(crate) variants: OwnedSlice<Group>,
+    }
+
+    /// A `Box<[T]>` held as a raw pointer: `expand_nested` writes `bubble_up`
+    /// backrefs into the elements while it recurses through the parent that
+    /// owns them, which a `Box` reached through that parent does not allow.
+    pub struct OwnedSlice<T>(*mut [T]);
+
+    impl<T> OwnedSlice<T> {
+        pub(crate) fn new(items: Vec<T>) -> Self {
+            OwnedSlice(Box::into_raw(items.into_boxed_slice()))
+        }
+
+        pub(crate) fn as_ptr(&self) -> *mut [T] {
+            self.0
+        }
+    }
+
+    impl<T> Drop for OwnedSlice<T> {
+        fn drop(&mut self) {
+            // SAFETY: `self.0` came from `Box::into_raw` in `new` and is freed
+            // only here.
+            drop(unsafe { Box::from_raw(self.0) });
+        }
     }
 }
 
@@ -524,7 +542,6 @@ pub(crate) type ExpandError = ParserError;
 
 /// `out` is preallocated by using the result from `calculateExpandedAmount`
 pub fn expand(
-    bump: &Bump,
     tokens: &mut [Token],
     out: &mut [Vec<u8>],
     contains_nested: bool,
@@ -546,16 +563,16 @@ pub fn expand(
         );
     }
 
-    let mut parser = Parser::init(tokens, bump);
+    let mut parser = Parser::init(tokens);
     let mut root_node = parser.parse()?;
     // SAFETY: root_node lives on this stack frame for the duration of expand_nested;
-    // all bubble_up backrefs written during recursion point into bump-owned Groups
+    // all bubble_up backrefs written during recursion point into Groups it owns
     // or back at this root.
     unsafe { expand_nested(&raw mut root_node, out, 0, &mut out_key_counter, 0) }
 }
 
 // SAFETY contract: `root` must be a valid *mut Group whose `atoms` slices and
-// `expansion.variants` slices are bump-owned and outlive this call. The function
+// `expansion.variants` slices are owned by the tree and outlive this call. The function
 // writes `bubble_up` backrefs (raw pointers) into child Groups and re-enters the
 // parent through them; raw-pointer access is used throughout to avoid creating
 // overlapping `&mut` borrows.
@@ -565,7 +582,7 @@ pub fn expand(
 // `&(*many)[i_]`, `expansion`) are consumed before recursion — `variants` is
 // hoisted to a raw pointer copy ahead of the variant loop, and every arm that
 // recurses either tail-returns or returns immediately after its loop. Writes
-// during recursion target only `Group` structs (the stack root or bump-owned
+// during recursion target only `Group` structs (the stack root or
 // `variants` elements), never the `[Atom]` slices a caller frame borrowed
 // from, and bubble-up re-entry always resumes past the caller's in-progress
 // atom index, so no frame's expansion is mutated while it is on the stack.
@@ -577,7 +594,7 @@ unsafe fn expand_nested(
     start: u32,
 ) -> Result<(), ExpandError> {
     // SAFETY: see fn doc comment —
-    // bump-owned Groups outlive this call, no overlapping `&mut` borrows are held.
+    // the tree's Groups outlive this call, no overlapping `&mut` borrows are held.
     unsafe {
         if let ast::GroupAtoms::Single(_) = (*root).atoms {
             if start > 0 {
@@ -613,7 +630,7 @@ unsafe fn expand_nested(
                 }
                 ast::GroupAtoms::Single(ast::Atom::Expansion(expansion)) => {
                     let length = out[out_key].len();
-                    let variants = expansion.variants;
+                    let variants = expansion.variants.as_ptr();
                     let variants_len = variants.len();
                     for j in 0..variants_len {
                         let group: *mut ast::Group = (*variants).as_mut_ptr().add(j);
@@ -641,7 +658,7 @@ unsafe fn expand_nested(
         }
 
         let many: *mut [ast::Atom] = match &(*root).atoms {
-            ast::GroupAtoms::Many(m) => *m,
+            ast::GroupAtoms::Many(m) => m.as_ptr(),
             _ => unreachable!(),
         };
         let many_len = many.len();
@@ -664,7 +681,7 @@ unsafe fn expand_nested(
                 }
                 ast::Atom::Expansion(expansion) => {
                     let length = out[out_key].len();
-                    let variants = expansion.variants;
+                    let variants = expansion.variants.as_ptr();
                     let variants_len = variants.len();
                     for j in 0..variants_len {
                         let group: *mut ast::Group = (*variants).as_mut_ptr().add(j);
@@ -774,26 +791,21 @@ fn expand_flat(
 }
 
 // FIXME error location
-// lifetime on transient parser struct; `tokens`/`bump` borrowed from caller
+// lifetime on transient parser struct; `tokens` borrowed from caller
 // for the parse() call only — not an AST node.
 pub struct Parser<'a> {
     current: usize,
     tokens: &'a [Token],
-    bump: &'a Bump,
 }
 
 impl<'a> Parser<'a> {
-    pub fn init(tokens: &'a [Token], bump: &'a Bump) -> Parser<'a> {
-        Parser {
-            current: 0,
-            tokens,
-            bump,
-        }
+    pub fn init(tokens: &'a [Token]) -> Parser<'a> {
+        Parser { current: 0, tokens }
     }
 
     pub fn parse(&mut self) -> Result<ast::Group, ParserError> {
         check_brace_group_count(self.tokens)?;
-        let mut nodes: BumpVec<'a, ast::Atom> = BumpVec::new_in(self.bump);
+        let mut nodes: Vec<ast::Atom> = Vec::new();
         while !self.r#match(TokenTag::Eof) {
             match self.parse_atom()? {
                 Some(atom) => nodes.push(atom),
@@ -809,11 +821,10 @@ impl<'a> Parser<'a> {
                 atoms: ast::GroupAtoms::Single(single),
             })
         } else {
-            let many = std::ptr::from_mut::<[ast::Atom]>(nodes.into_bump_slice_mut());
             Ok(ast::Group {
                 bubble_up: ptr::null_mut(),
                 bubble_up_next: None,
-                atoms: ast::GroupAtoms::Many(many),
+                atoms: ast::GroupAtoms::Many(ast::OwnedSlice::new(nodes)),
             })
         }
     }
@@ -831,9 +842,9 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_expansion(&mut self) -> Result<ast::Expansion, ParserError> {
-        let mut variants: BumpVec<'a, ast::Group> = BumpVec::new_in(self.bump);
+        let mut variants: Vec<ast::Group> = Vec::new();
         loop {
-            let mut group: BumpVec<'a, ast::Atom> = BumpVec::new_in(self.bump);
+            let mut group: Vec<ast::Atom> = Vec::new();
             // Only this inner loop consumes Close/Eof so a trailing empty
             // variant (`{a,}`) is pushed before the outer loop exits.
             let close = loop {
@@ -856,11 +867,10 @@ impl<'a> Parser<'a> {
                     atoms: ast::GroupAtoms::Single(single),
                 });
             } else {
-                let many = std::ptr::from_mut::<[ast::Atom]>(group.into_bump_slice_mut());
                 variants.push(ast::Group {
                     bubble_up: ptr::null_mut(),
                     bubble_up_next: None,
-                    atoms: ast::GroupAtoms::Many(many),
+                    atoms: ast::GroupAtoms::Many(ast::OwnedSlice::new(group)),
                 });
             }
             if close {
@@ -869,7 +879,7 @@ impl<'a> Parser<'a> {
         }
 
         Ok(ast::Expansion {
-            variants: std::ptr::from_mut::<[ast::Group]>(variants.into_bump_slice_mut()),
+            variants: ast::OwnedSlice::new(variants),
         })
     }
 
@@ -1296,5 +1306,47 @@ mod tests {
             let result = Lexer::tokenize(src).unwrap();
             assert_eq!(result.tokens, expected);
         }
+    }
+
+    fn expand_all(src: &[u8]) -> Vec<Vec<u8>> {
+        let mut lexed = Lexer::tokenize(src).unwrap();
+        let count = calculate_expanded_amount(&lexed.tokens) as usize;
+        let mut out: Vec<Vec<u8>> = vec![Vec::new(); count];
+        expand(&mut lexed.tokens, &mut out, lexed.contains_nested).unwrap();
+        out
+    }
+
+    #[test]
+    fn expand_flat_groups() {
+        assert_eq!(
+            expand_all(b"x{1,2}{a,b}"),
+            [&b"x1a"[..], b"x1b", b"x2a", b"x2b"]
+        );
+    }
+
+    // Under Miri this also checks that the nested AST frees what it owns: the
+    // long atoms are heap-backed `SmolStr`s.
+    #[test]
+    fn expand_nested_groups() {
+        assert_eq!(
+            expand_all(b"a{b,{c,d}e}f{g,h}"),
+            [
+                &b"abfg"[..],
+                b"abfh",
+                b"acefg",
+                b"acefh",
+                b"adefg",
+                b"adefh"
+            ]
+        );
+        assert_eq!(
+            expand_all(b"{a_text_longer_than_inline,{b,c{d,e}}}-tail_text_longer_than_inline"),
+            [
+                &b"a_text_longer_than_inline-tail_text_longer_than_inline"[..],
+                b"b-tail_text_longer_than_inline",
+                b"cd-tail_text_longer_than_inline",
+                b"ce-tail_text_longer_than_inline",
+            ]
+        );
     }
 }

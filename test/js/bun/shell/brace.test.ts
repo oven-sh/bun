@@ -1,6 +1,7 @@
 import { $ } from "bun";
+import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, expectRssDeltaBelow, isDebug, normalizeBunSnapshot, tempDir } from "harness";
 
 describe("$.braces", () => {
   test("no-op", () => {
@@ -125,6 +126,37 @@ console.log(JSON.stringify(Bun.$.braces("{" + inner)));`,
   test("unicode", () => {
     const result = $.braces(`lol {😂,🫵,🤣}`);
     expect(result).toEqual(["lol 😂", "lol 🫵", "lol 🤣"]);
+  });
+
+  test("does not create a mimalloc heap per call", () => {
+    const heapsCreated = () => heapStats().mimalloc.heaps.total;
+    const before = heapsCreated();
+    for (let i = 0; i < 100; i++) {
+      expect($.braces(`flat${i}{1,2,3}`)).toEqual([`flat${i}1`, `flat${i}2`, `flat${i}3`]);
+      expect($.braces(`nested${i}{1,{2,3}}`)).toEqual([`nested${i}1`, `nested${i}2`, `nested${i}3`]);
+    }
+    // One per call when the expansion builds its AST in an arena of its own.
+    expect(heapsCreated() - before).toBeLessThan(10);
+  });
+
+  // A debug build lexes 256 KiB in about 100 ms, so this takes 14 s there.
+  test.skipIf(isDebug).concurrent("a nested expansion frees its atoms", async () => {
+    // An atom longer than 15 bytes is a heap allocation of its own.
+    const code = /* js */ `
+      const atom = Buffer.alloc(256 * 1024, "a").toString();
+      const pattern = "{" + atom + ",{b,c}}";
+      for (let i = 0; i < 8; i++) Bun.$.braces(pattern);
+      Bun.gc(true);
+      const before = process.memoryUsage.rss();
+      for (let i = 0; i < 128; i++) {
+        if (Bun.$.braces(pattern).length !== 3) throw new Error("expected 3 expansions");
+      }
+      Bun.gc(true);
+      console.log(JSON.stringify({ deltaMiB: (process.memoryUsage.rss() - before) / 1024 / 1024 }));
+    `;
+
+    // Unfixed: 37 MiB, one copy of the atom per call. Fixed: under 3 MiB.
+    await expectRssDeltaBelow(["--smol", "-e", code], { release: 16, debug: 16 });
   });
 });
 

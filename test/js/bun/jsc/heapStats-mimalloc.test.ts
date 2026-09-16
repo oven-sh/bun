@@ -240,4 +240,57 @@ describe("heapStats() mimalloc integration", () => {
       expect(exitCode).toBe(0);
     },
   );
+
+  // The idle sweep hands the free blocks of the allocator's 4 MiB pages back two sweeps after the page was last allocated
+  // from, and a server sits idle between two requests for far longer than that: it took the buffers of every request out
+  // of discarded memory again, a page fault for each 4 KiB of them. Most of those buffers are in pages with no other
+  // block in use, which were freed outright and made anew. A few MB of the pages that were used last now stay.
+  // Linux only: reads the minor faults of the server from /proc. Not ASAN: malloc is not mimalloc there.
+  test.skipIf(!isLinux || isASAN)(
+    "a server that gets a request now and then does not fault its buffers in again for every request",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          const server = Bun.serve({ port: 0, fetch: async req => new Response(await req.arrayBuffer()) });
+          console.log(server.port);
+          `,
+        ],
+        // An epoch of the sweep lasts 10 ms here instead of 100, so that the 50 ms between two requests are what half a
+        // second is by default: the two epochs for which free blocks stay in any case are long over. And the collector
+        // looks every 100 ms instead of every second: until it has freed the buffers of the first requests, every
+        // request gets new ones, which no allocator has in memory yet.
+        env: { ...bunEnv, MIMALLOC_PURGE_HOLES_MIN_INTERVAL: "10", BUN_GC_TIMER_INTERVAL: "100" },
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const reader = proc.stdout.getReader();
+      const { value } = await reader.read();
+      reader.releaseLock();
+      const port = Number(new TextDecoder().decode(value).trim());
+      expect(port).toBeGreaterThan(0);
+      // the minor faults of the server so far: the tenth field, and the second one can have spaces in it
+      const faults = async () => {
+        const stat = await Bun.file(`/proc/${proc.pid}/stat`).text();
+        return Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[7]);
+      };
+      const body = new Uint8Array(256 * 1024).fill(7);
+      const request = async () => {
+        const response = await fetch(`http://127.0.0.1:${port}/`, { method: "POST", body });
+        expect((await response.arrayBuffer()).byteLength).toBe(body.byteLength);
+        // The pause is the input of this test and not a wait for something: the server is to go idle and be swept.
+        await Bun.sleep(50);
+      };
+      for (let i = 0; i < 6; i++) await request();
+      const before = await faults();
+      const requests = 12;
+      for (let i = 0; i < requests; i++) await request();
+      const perRequest = ((await faults()) - before) / requests;
+      // The two 256 KiB buffers of a request are 128 pages of 4 KiB: about a hundred faults for every request when the
+      // sweeps in between give the buffers back, one or two when they leave them.
+      expect(perRequest).toBeLessThan(20);
+    },
+  );
 });

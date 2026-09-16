@@ -204,9 +204,6 @@ export default [
       hasBody: {
         getter: "getHasBody",
       },
-      ended: {
-        getter: "getEnded",
-      },
       ondata: {
         getter: "getOnData",
         setter: "setOnData",

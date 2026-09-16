@@ -1,8 +1,19 @@
 import type { Subprocess } from "bun";
 import { spawn } from "bun";
 import { afterEach, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isBroken, isLinux, isWindows, tempDir, tmpdirSync } from "harness";
-import { closeSync, openSync, readdirSync, readFileSync, rmSync, statSync, writeSync } from "node:fs";
+import { bunEnv, bunExe, isBroken, isLinux, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
+import {
+  closeSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  readlinkSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeSync,
+} from "node:fs";
 import { basename, join } from "node:path";
 
 let watchee: Subprocess;
@@ -629,3 +640,90 @@ it.skipIf(isWindows)(
   },
   30000,
 );
+
+// Paths of the files and directories a process holds open. Linux reads
+// /proc, macOS asks lsof (the kernel has no per-process fd listing there).
+function openPaths(pid: number): string[] {
+  if (isLinux) {
+    const fdDir = `/proc/${pid}/fd`;
+    return readdirSync(fdDir).flatMap(fd => {
+      // The process is live, so an fd listed a moment ago can be closed by
+      // the time it is read. A closed fd is not a held path.
+      try {
+        return [readlinkSync(join(fdDir, fd))];
+      } catch {
+        return [];
+      }
+    });
+  }
+  const out = Bun.spawnSync({ cmd: ["lsof", "-Fn", "-p", String(pid)], stdout: "pipe", stderr: "ignore" });
+  return out.stdout
+    .toString()
+    .split("\n")
+    .filter(line => line.startsWith("n/"))
+    .map(line => line.slice(1));
+}
+
+// Watch mode used to make the resolver keep every directory and symlink
+// descriptor it opened, most of them under node_modules, which the watcher
+// never registers. On macOS each one is an fd for the life of the dev
+// server, and a monorepo with the isolated linker reached tens of thousands
+// of them (#42702).
+for (const [mode, args] of [
+  ["--watch", ["--watch", "--no-clear-screen", "main.ts"]],
+  ["--hot", ["--hot", "--no-clear-screen", "main.ts"]],
+  ["test --watch", ["test", "--watch", "main.test.ts"]],
+] as const) {
+  it.skipIf(isWindows || (isMacOS && !Bun.which("lsof")))(
+    `${mode} holds no file descriptors for paths under node_modules`,
+    async () => {
+      using dir = tempDir("watch-node-modules-fds", {
+        "main.ts": `import { x } from "dep";
+import { y } from "dep2";
+console.log("ready", x, y);
+setInterval(() => {}, 1e6);
+`,
+        "main.test.ts": `import { test } from "bun:test";
+import { x } from "dep";
+import { y } from "dep2";
+test("ready", () => console.log("ready", x, y));
+`,
+        "node_modules/dep/package.json": JSON.stringify({
+          name: "dep",
+          type: "module",
+          exports: { ".": { import: "./dist/esm/index.js" } },
+        }),
+        "node_modules/dep/dist/esm/index.js": "export const x = 1;",
+        // The layout of the isolated linker: the real package lives under
+        // node_modules/.bun and node_modules/dep2 is a symlink to it.
+        "node_modules/.bun/dep2@1.0.0/node_modules/dep2/package.json": JSON.stringify({
+          name: "dep2",
+          type: "module",
+          main: "./dist/index.js",
+        }),
+        "node_modules/.bun/dep2@1.0.0/node_modules/dep2/dist/index.js": "export const y = 2;",
+      });
+      const cwd = realpathSync(String(dir));
+      symlinkSync(join(".bun", "dep2@1.0.0", "node_modules", "dep2"), join(cwd, "node_modules", "dep2"));
+
+      watchee = spawn({
+        cwd,
+        cmd: [bunExe(), ...args],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "inherit",
+        stdin: "ignore",
+      });
+      const waiter = stdoutWaiter(watchee);
+      await waiter.waitFor("ready 1 2");
+
+      const held = openPaths(watchee.pid);
+      waiter.release();
+
+      // stdin, stdout and stderr are always there, so an empty list means the
+      // listing failed rather than that nothing is held.
+      expect(held.length).toBeGreaterThan(0);
+      expect(held.filter(p => p.startsWith(cwd) && p.includes("node_modules"))).toEqual([]);
+    },
+  );
+}

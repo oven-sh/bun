@@ -425,7 +425,6 @@ impl PostgresSQLConnection {
     bun_jsc::cached_prop_hostfns! {
         crate::jsc::codegen::JSPostgresSQLConnection;
         lazy_array(get_queries => queries_get_cached, queries_set_cached),
-        (get_on_connect, set_on_connect => onconnect_get_cached, onconnect_set_cached),
         (get_on_close,   set_on_close   => onclose_get_cached, onclose_set_cached),
         (get_on_notification, set_on_notification => onnotification_get_cached, onnotification_set_cached),
     }
@@ -3035,10 +3034,6 @@ impl PostgresSQLConnection {
                 ))
             });
         }
-    }
-
-    pub fn get_connected(this: &Self, _: &JSGlobalObject) -> JSValue {
-        JSValue::from(this.status.get() == Status::Connected)
     }
 
     const MAX_INTERNED_CHANNELS: usize = 256;

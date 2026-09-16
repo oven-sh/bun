@@ -247,14 +247,21 @@ function checkParentPathsSync(src, srcStat, dest) {
   return checkParentPathsSync(src, srcStat, destParent);
 }
 
-// The native recursive copy (a single clonefile() on macOS) copies symlinks
-// verbatim and clones special files, while node rewrites relative symlink
-// targets against the source tree and raises ERR_FS_CP_SOCKET /
-// ERR_FS_CP_FIFO_PIPE. It is therefore only node-equivalent for trees made of
-// regular files and directories; anything else — including entries whose type
-// the filesystem does not report — bails to the ported walker. Scan errors
-// also bail so the walker surfaces them the way node would.
-function treeContainsOnlyFilesAndDirsSync(root) {
+// The native recursive copy on Windows fails on paths longer than MAX_PATH.
+// The walker copies them.
+const nativeCopiesTrees = process.platform !== "win32";
+
+// node rewrites a relative symlink target against the source tree. The native
+// copy does the same where it recreates the link itself. clonefile() on macOS
+// keeps the target as written, and the Windows copy resolves it to the end.
+const nativeResolvesSymlinks = process.platform !== "darwin" && process.platform !== "win32";
+
+// The native recursive copy is only node-equivalent for some trees. node
+// raises ERR_FS_CP_SOCKET / ERR_FS_CP_FIFO_PIPE for special files, and the
+// native copy handles symlinks like node only when `nativeResolvesSymlinks`.
+// Any other entry bails to the ported walker. Scan errors also bail so the
+// walker surfaces them the way node would.
+function nativeCanCopyTreeSync(root) {
   const stack = [root];
   while (stack.length) {
     const dir = stack.pop();
@@ -268,12 +275,20 @@ function treeContainsOnlyFilesAndDirsSync(root) {
       const entry = entries[i];
       if (entry.isDirectory()) {
         stack.push(join(dir, entry.name));
-      } else if (!entry.isFile()) {
+      } else if (!entry.isFile() && !(nativeResolvesSymlinks && entry.isSymbolicLink())) {
         return false;
       }
     }
   }
   return true;
+}
+
+function isEmptyDirSync(path) {
+  try {
+    return readdirSync(path).length === 0;
+  } catch {
+    return false;
+  }
 }
 
 // node-correct validation before handing off to the native fast path
@@ -292,12 +307,13 @@ function tryNativeFastPathSync(src, dest, opts) {
     });
   }
   if (srcStat.isDirectory()) {
-    // On macOS the native path clones the whole tree with a single
-    // clonefile(). Only take it when the result is indistinguishable from
-    // node's walker: dest must not exist (no merge semantics) and the tree
-    // must contain only regular files and directories.
+    // The native path is one clonefile() per tree on macOS, and far fewer
+    // calls per entry than the walker elsewhere. Only take it when the result
+    // is indistinguishable from node's walker: dest must be missing or empty
+    // (no merge semantics) and the scan must find nothing the native copy
+    // treats differently.
     return {
-      ok: process.platform === "darwin" && !destStat && treeContainsOnlyFilesAndDirsSync(src),
+      ok: nativeCopiesTrees && (!destStat || isEmptyDirSync(dest)) && nativeCanCopyTreeSync(src),
       checked,
     };
   }
@@ -523,4 +539,6 @@ export default {
   fsEisdirError,
   areIdentical,
   isSrcSubdir,
+  nativeCopiesTrees,
+  nativeResolvesSymlinks,
 };

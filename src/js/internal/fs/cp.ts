@@ -12,6 +12,8 @@ const {
   fsEisdirError,
   areIdentical,
   isSrcSubdir,
+  nativeCopiesTrees,
+  nativeResolvesSymlinks,
 } = require("internal/fs/cp-sync");
 
 const {
@@ -119,14 +121,12 @@ async function checkParentPaths(src, srcStat, dest) {
   return checkParentPaths(src, srcStat, destParent);
 }
 
-// The native recursive copy (a single clonefile() on macOS) copies symlinks
-// verbatim and clones special files, while node rewrites relative symlink
-// targets against the source tree and raises ERR_FS_CP_SOCKET /
-// ERR_FS_CP_FIFO_PIPE. It is therefore only node-equivalent for trees made of
-// regular files and directories; anything else — including entries whose type
-// the filesystem does not report — bails to the ported walker. Scan errors
-// also bail so the walker surfaces them the way node would.
-async function treeContainsOnlyFilesAndDirs(root) {
+// The native recursive copy is only node-equivalent for some trees. node
+// raises ERR_FS_CP_SOCKET / ERR_FS_CP_FIFO_PIPE for special files, and the
+// native copy handles symlinks like node only when `nativeResolvesSymlinks`.
+// Any other entry bails to the ported walker. Scan errors also bail so the
+// walker surfaces them the way node would.
+async function nativeCanCopyTree(root) {
   const stack = [root];
   while (stack.length) {
     const dir = stack.pop();
@@ -140,12 +140,20 @@ async function treeContainsOnlyFilesAndDirs(root) {
       const entry = entries[i];
       if (entry.isDirectory()) {
         stack.push(join(dir, entry.name));
-      } else if (!entry.isFile()) {
+      } else if (!entry.isFile() && !(nativeResolvesSymlinks && entry.isSymbolicLink())) {
         return false;
       }
     }
   }
   return true;
+}
+
+async function isEmptyDir(path) {
+  try {
+    return (await readdir(path)).length === 0;
+  } catch {
+    return false;
+  }
 }
 
 // node-correct validation before handing off to the native fast path
@@ -164,12 +172,14 @@ async function tryNativeFastPath(src, dest, opts) {
     });
   }
   if (srcStat.isDirectory()) {
-    // On macOS the native path clones the whole tree with a single
-    // clonefile(). Only take it when the result is indistinguishable from
-    // node's walker: dest must not exist (no merge semantics) and the tree
-    // must contain only regular files and directories.
+    // The native path copies the files in parallel on the thread pool (on
+    // macOS, one clonefile() per tree). The walker awaits several thread pool
+    // round trips per entry, one entry at a time. Only take the native path
+    // when the result is indistinguishable from node's walker: dest must be
+    // missing or empty (no merge semantics) and the scan must find nothing
+    // the native copy treats differently.
     return {
-      ok: process.platform === "darwin" && !destStat && (await treeContainsOnlyFilesAndDirs(src)),
+      ok: nativeCopiesTrees && (!destStat || (await isEmptyDir(dest))) && (await nativeCanCopyTree(src)),
       checked,
     };
   }

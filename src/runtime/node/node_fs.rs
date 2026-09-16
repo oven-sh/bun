@@ -456,6 +456,43 @@ fn directory_exists_at_os_path(dir: FD, path: &OSPathSliceZ) -> Maybe<bool> {
     }
 }
 
+/// The mode `fs.cp` gives a directory it created: node ends every such
+/// directory with `chmod(dest, srcStat.mode)`. `None` when the mode `mkdir`
+/// gave it already matches, which only Windows can tell (libuv's `chmod`
+/// there toggles nothing but the read-only attribute).
+fn cp_created_dir_mode(src_dir: FD) -> Maybe<Option<Mode>> {
+    let mode = sys::fstat(src_dir)?.st_mode as Mode;
+    if cfg!(windows) && mode & (sys::S::IWUSR as Mode) != 0 {
+        return Ok(None);
+    }
+    Ok(Some(mode & 0o7777))
+}
+
+fn chmod_os_path(path: &OSPathSliceZ, mode: Mode) -> Maybe<()> {
+    #[cfg(not(windows))]
+    {
+        Syscall::chmod(path, mode).map_err(|err| err.with_path(path.as_bytes()))
+    }
+    #[cfg(windows)]
+    {
+        let mut buf = paths::path_buffer_pool::get();
+        let path = strings::from_wpath(&mut buf[..], path.as_slice());
+        Syscall::chmod(path, mode).map_err(|err| err.with_path(path.as_bytes()))
+    }
+}
+
+/// `d_type` is `DT_UNKNOWN` on some filesystems (FUSE, NFS, bind mounts).
+#[cfg(not(windows))]
+fn cp_entry_kind(dir: FD, entry: &DirIterator::IteratorResult) -> sys::FileKind {
+    if entry.kind != sys::FileKind::Unknown {
+        return entry.kind;
+    }
+    match sys::lstatat(dir, entry.name_assume_z()) {
+        Ok(st) => sys::kind_from_mode(st.st_mode as Mode),
+        Err(_) => entry.kind,
+    }
+}
+
 type ReadPosition = i64;
 type Buffer = super::types::Buffer;
 type GidT = node::gid_t;
@@ -1371,6 +1408,11 @@ mod _async_tasks {
         /// enqueued once the count reaches zero, so subtasks still running on the
         /// thread pool never dereference a freed parent.
         pub(crate) subtask_count: AtomicUsize,
+        /// Directories this copy created, as NUL-terminated `dest` paths in the
+        /// order the scan met them, with the mode node gives each one. A mode
+        /// without `w` or `x` would fail the subtasks still copying into the
+        /// directory, so the last `on_subtask_done` applies them all.
+        created_dirs: bun_threading::Guarded<Vec<(Box<[OSPathChar]>, Mode)>>,
         /// BACKREF — `Some` iff `IS_SHELL`. The shell `ShellCpTask` owns and
         /// outlives this task; `ParentRef` gives a safe `&ShellCpTask` projection
         /// for `cp_on_copy` and round-trips the `*mut` for `cp_on_finish`.
@@ -1464,11 +1506,16 @@ mod _async_tasks {
 
             'brk: {
                 match result {
-                    Err(ref err) => {
+                    Err(err) => {
                         if err.errno == E::EEXIST as _ && !args.flags.error_on_exist {
                             break 'brk;
                         }
-                        parent.finish_concurrently(result);
+                        // The shell reads the failed operand from the error as it is.
+                        parent.finish_concurrently(Err(if IS_SHELL {
+                            err
+                        } else {
+                            node_fs.cp_entry_error(err, self.src(), self.dest())
+                        }));
                     }
                     Ok(_) => {
                         parent.on_copy(self.src(), self.dest());
@@ -1577,6 +1624,7 @@ mod _async_tasks {
                 r#ref: KeepAlive::default(),
                 tracker,
                 subtask_count: AtomicUsize::new(1),
+                created_dirs: bun_threading::Guarded::new(Vec::new()),
                 // SAFETY: `shelltask` (when non-null) is the live heap-alloc'd `ShellCpTask`
                 // that owns and outlives this task; pointer carries write provenance.
                 shelltask: unsafe { bun_ptr::ParentRef::from_nullable_mut(shelltask) },
@@ -1619,6 +1667,15 @@ mod _async_tasks {
             self.result.set(result);
         }
 
+        /// Deepest first, the order node's walker sets them in.
+        fn chmod_created_dirs(&self) -> Maybe<ret::Cp> {
+            let dirs = core::mem::take(&mut *self.created_dirs.lock());
+            for (dest, mode) in dirs.iter().rev() {
+                chmod_os_path(OSPathSliceZ::from_buf(dest, dest.len() - 1), *mode)?;
+            }
+            Ok(())
+        }
+
         /// Called exactly once by the main directory-scan task and once by each
         /// `SingleTask` when it is done touching `this`. The last caller (count
         /// drops to zero) enqueues `runFromJSThread`, which resolves the promise
@@ -1643,7 +1700,7 @@ mod _async_tasks {
             if !this_ref.has_result.load(Ordering::Relaxed) {
                 this_ref.has_result.store(true, Ordering::Relaxed);
                 // count reached zero ⇒ this thread now has exclusive access.
-                this_ref.result.set(Ok(()));
+                this_ref.result.set(this_ref.chmod_created_dirs());
             }
 
             // Count reached zero ⇒ exclusive access. `this` carries mutable
@@ -1995,7 +2052,12 @@ mod _async_tasks {
             #[cfg(not(windows))]
             let normdest: &OSPathSliceZ = dest;
 
-            let mkdir_ = nodefs.mkdir_recursive_os_path(normdest, args::Mkdir::DEFAULT_MODE, false);
+            let dest_created = CpDestDirCreated::new(normdest);
+            let mkdir_ = nodefs.mkdir_recursive_os_path_impl::<_, false>(
+                &dest_created,
+                normdest,
+                args::Mkdir::DEFAULT_MODE,
+            );
             match mkdir_ {
                 Err(err) => {
                     this_ref.finish_concurrently(Err(err));
@@ -2003,6 +2065,27 @@ mod _async_tasks {
                 }
                 Ok(_) => {
                     this_ref.on_copy(src, normdest);
+                }
+            }
+            // The shell's `cp` keeps the mode `mkdir` gave the directory.
+            if !IS_SHELL && dest_created.get() {
+                match cp_created_dir_mode(fd) {
+                    Err(err) => {
+                        this_ref.finish_concurrently(Err(
+                            err.with_path(nodefs.os_path_into_sync_error_buf(src))
+                        ));
+                        return false;
+                    }
+                    Ok(Some(mode)) => {
+                        let mut owned = Vec::with_capacity(normdest.len() + 1);
+                        owned.extend_from_slice(&normdest[..]);
+                        owned.push(0);
+                        this_ref
+                            .created_dirs
+                            .lock()
+                            .push((owned.into_boxed_slice(), mode));
+                    }
+                    Ok(None) => {}
                 }
             }
 
@@ -2046,7 +2129,11 @@ mod _async_tasks {
                     return false;
                 }
 
-                match current.kind {
+                #[cfg(windows)]
+                let kind = current.kind;
+                #[cfg(not(windows))]
+                let kind = cp_entry_kind(fd, &current);
+                match kind {
                     crate::node::dirent::Kind::Directory => {
                         let sd = src_dir_len as usize;
                         let dd = dest_dir_len as usize;
@@ -5453,19 +5540,6 @@ impl NodeFS {
         }
     }
 
-    pub(crate) fn mkdir_recursive_os_path(
-        &mut self,
-        path: &OSPathSliceZ,
-        mode: Mode,
-        return_path: bool,
-    ) -> Maybe<ret::Mkdir> {
-        if return_path {
-            self.mkdir_recursive_os_path_impl::<(), true>(&(), path, mode)
-        } else {
-            self.mkdir_recursive_os_path_impl::<(), false>(&(), path, mode)
-        }
-    }
-
     pub(crate) fn mkdir_recursive_os_path_impl<Ctx: MkdirCtx, const RETURN_PATH: bool>(
         &mut self,
         ctx: &Ctx,
@@ -7920,6 +7994,28 @@ impl NodeFS {
         Self::os_path_into_buf(&mut self.sync_error_buf, slice)
     }
 
+    /// node's `cp` copies each file of a tree with `copyFile`, which reports
+    /// every failure as `copyfile 'src' -> 'dest'`. A link keeps its syscall.
+    fn cp_entry_error(
+        &mut self,
+        err: sys::Error,
+        src: &OSPathSliceZ,
+        dest: &OSPathSliceZ,
+    ) -> sys::Error {
+        if matches!(err.syscall, sys::Tag::readlink | sys::Tag::symlink) {
+            return err;
+        }
+        let path = self.os_path_into_sync_error_buf(src).into();
+        let dest = self.os_path_into_sync_error_buf(dest).into();
+        sys::Error {
+            errno: err.errno,
+            syscall: sys::Tag::copyfile,
+            path,
+            dest,
+            ..Default::default()
+        }
+    }
+
     /// Free-function form of [`os_path_into_sync_error_buf`] that does not borrow
     /// `&mut self`. Needed by `mkdir_recursive_os_path_impl`, which holds a long-lived
     /// `&mut OSPathBuffer` reinterpreted from `sync_error_buf` and so must not reborrow
@@ -8065,10 +8161,12 @@ impl NodeFS {
         };
         let _close = scopeguard::guard(fd, |fd| fd.close());
 
-        match self.mkdir_recursive_os_path(dest, args::Mkdir::DEFAULT_MODE, false) {
-            Err(err) => return Err(err),
-            Ok(_) => {}
-        }
+        let dest_created = CpDestDirCreated::new(dest);
+        self.mkdir_recursive_os_path_impl::<_, false>(
+            &dest_created,
+            dest,
+            args::Mkdir::DEFAULT_MODE,
+        )?;
 
         // The OSPathBuffer copy below is generic over `OSPathChar`, so on Windows
         // this needs the wide (u16) iterator; the u8 path is correct for POSIX.
@@ -8109,7 +8207,11 @@ impl NodeFS {
             dest_buf[dd] = paths::SEP as OSPathChar;
             dest_buf[dd + 1 + name_slice.len()] = 0;
 
-            match current.kind {
+            #[cfg(windows)]
+            let kind = current.kind;
+            #[cfg(not(windows))]
+            let kind = cp_entry_kind(fd, &current);
+            match kind {
                 sys::FileKind::Directory => {
                     let r = self.cp_sync_inner(
                         src_buf,
@@ -8137,13 +8239,22 @@ impl NodeFS {
                         None,
                         args,
                     );
-                    if let Err(ref e) = r {
+                    if let Err(e) = r {
                         if e.errno == E::EEXIST as _ && !cp_flags.error_on_exist {
                             continue;
                         }
-                        return r;
+                        return Err(self.cp_entry_error(e, src_z, dest_z));
                     }
                 }
+            }
+        }
+
+        if dest_created.get() {
+            let mode = cp_created_dir_mode(fd)
+                .map_err(|err| err.with_path(self.os_path_into_sync_error_buf(&src_buf[..sd])))?;
+            if let Some(mode) = mode {
+                dest_buf[dd] = 0;
+                chmod_os_path(OSPathSliceZ::from_buf(&dest_buf[..], dd), mode)?;
             }
         }
         Ok(())
@@ -8227,7 +8338,11 @@ impl NodeFS {
                 ..Default::default()
             });
         };
-        let resolved_len = resolved.len();
+        // node's `path.resolve()` leaves no trailing separator ("sub/" -> "<dir>/sub").
+        let mut resolved_len = resolved.len();
+        while resolved_len > 1 && resolved[resolved_len - 1] == b'/' {
+            resolved_len -= 1;
+        }
         resolved_buf[resolved_len] = 0;
         // SAFETY: NUL written at `resolved_buf[resolved_len]`.
         Syscall::symlink(ZStr::from_buf(&resolved_buf[..], resolved_len), dest)
@@ -9016,6 +9131,31 @@ pub(crate) trait MkdirCtx {
     fn on_create_dir(&self, _path: &OSPathSliceZ) {}
 }
 impl MkdirCtx for () {}
+
+/// Whether a recursive mkdir created the directory `fs.cp` asked for, or
+/// found it there. node only sets the mode of a directory it created.
+struct CpDestDirCreated {
+    len: usize,
+    created: core::cell::Cell<bool>,
+}
+impl CpDestDirCreated {
+    fn new(dest: &OSPathSliceZ) -> Self {
+        Self {
+            len: dest.len(),
+            created: core::cell::Cell::new(false),
+        }
+    }
+    fn get(&self) -> bool {
+        self.created.get()
+    }
+}
+impl MkdirCtx for CpDestDirCreated {
+    fn on_create_dir(&self, path: &OSPathSliceZ) {
+        if path.len() == self.len {
+            self.created.set(true);
+        }
+    }
+}
 
 /// Trait abstracting over the three readdir entry types.
 ///

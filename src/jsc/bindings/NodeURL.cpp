@@ -37,9 +37,7 @@ enum class IDNAMode : uint8_t {
     Lenient,
 };
 
-// ICU takes UTF-16. A Latin-1 string past 2^31 - 13 characters has no 16-bit form, and `String::convertTo16Bit`
-// calls `CRASH()` for it. False means only that: a failed allocation keeps its out-of-memory crash, because one
-// caller has no way to report it and must not take it for a verdict.
+// False only for a Latin-1 string too long to have a 16-bit form, where `convertTo16Bit` calls `CRASH()`.
 static bool tryConvertTo16Bit(String& string)
 {
     if (string.is8Bit() && !StringImpl::isValidLength<char16_t>(string.length())) [[unlikely]]
@@ -49,8 +47,8 @@ static bool tryConvertTo16Bit(String& string)
 }
 
 // Runs a uidna_nameTo* conversion with the U_BUFFER_OVERFLOW_ERROR retry
-// protocol; on completion `status`/`info` hold the final results. `status` is
-// U_MEMORY_ALLOCATION_ERROR when the input or the output does not fit in its buffer.
+// protocol; on completion `status`/`info` hold the final results.
+// `status` is U_MEMORY_ALLOCATION_ERROR when the input or the output does not fit in its buffer.
 using UIDNAFunction = int32_t (*)(const UIDNA*, const char16_t*, int32_t, char16_t*, int32_t, UIDNAInfo*, UErrorCode*);
 
 static String runUIDNA(UIDNAFunction convert, const UIDNA* idna, const String& input, UErrorCode& status, UIDNAInfo& info)
@@ -105,9 +103,7 @@ static String icuToASCII(const String& input, IDNAMode mode)
     return result;
 }
 
-// The verdict of icuToASCII in IDNAMode::Default, without the output. ICU converts the whole name and fills
-// `info` before it reports that the output does not fit, so one pass with no output buffer judges a host of
-// any length.
+// The verdict of icuToASCII in IDNAMode::Default with no output buffer: ICU fills `info` before it reports the overflow.
 static bool icuAcceptsHost(const String& host)
 {
     // ICU cannot check a host that has no 16-bit form, so it is refused.

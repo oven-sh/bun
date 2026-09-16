@@ -1965,6 +1965,18 @@ async function h3StreamOutcomes(
   return outcomes;
 }
 
+// Resolves to `late` when `event` does not settle in time. The deadline stays
+// below the idle timeout of the connection. That timeout ends every stream, so
+// a build without the fix reports an abort and a closed stream then too, and
+// the test timeout of the CI runner is far above both.
+async function settledWithin<T>(ms: number, event: Promise<T>, late: T): Promise<T> {
+  let settled: { value: T } | undefined;
+  event.then(value => (settled = { value }));
+  const deadline = performance.now() + ms;
+  while (!settled && performance.now() < deadline) await new Promise<void>(resolve => setImmediate(resolve));
+  return settled ? settled.value : late;
+}
+
 // lsquic encodes a header block into a fixed 64 KB buffer, and lsxpack_header
 // keeps the length of each name and value in 16 bits. A response past either
 // limit cannot go out over HTTP/3.
@@ -2075,8 +2087,12 @@ describe("Bun.serve HTTP/3 response headers past the lsquic limits", () => {
 
   test("fetch() rejects with HTTP3StreamReset", async () => {
     await withCustomServer(script, async (port, _send, waitForStderr) => {
-      const post = fetchH3(port, "/after-request-body", { method: "POST", body: "request-content" });
-      await unlessServerExits(waitForStderr, expect(post).rejects.toMatchObject({ code: "HTTP3StreamReset" }));
+      const post = fetchH3(port, "/after-request-body", { method: "POST", body: "request-content" }).then(
+        res => `status ${res.status}`,
+        err => err.code,
+      );
+      const outcome = await unlessServerExits(waitForStderr, settledWithin(3000, post, "no answer within 3 s"));
+      expect(outcome).toBe("HTTP3StreamReset");
       expect(await fetchH3(port, "/ok").then(res => res.text())).toBe("ok");
     });
   });
@@ -2221,7 +2237,7 @@ describe("Bun.serve HTTP/3 response that the client stopped while its request is
       const second = await stopped.client.createBidirectionalStream({ headers: requestHeaders("/write-again") });
       for await (const _ of second as AsyncIterable<Uint8Array[]>);
 
-      expect(await aborted.promise).toBe("aborted");
+      expect(await settledWithin(3000, aborted.promise, "no abort within 3 s")).toBe("aborted");
     },
   );
 
@@ -2274,11 +2290,11 @@ describe("Bun.serve HTTP/3 response that the client stopped while its request is
     });
     for await (const _ of second as AsyncIterable<Uint8Array[]>);
 
-    // A build that keeps the stream never settles this.
-    const upload = await stopped.stream.closed.then(
+    const closed = stopped.stream.closed.then(
       () => "closed",
       () => "closed",
     );
+    const upload = await settledWithin(3000, closed, "still open after 3 s");
     expect({ status, upload, pendingRequests: server.pendingRequests }).toEqual({
       status: "200",
       upload: "closed",

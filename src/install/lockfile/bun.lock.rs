@@ -2542,9 +2542,7 @@ pub(crate) fn parse_into_binary_lockfile(
                 return Err(ParseError::InvalidPackageInfo);
             };
 
-            // The info object follows the resolution string, and for an npm
-            // resolution also the registry string: `[res, registry, {info}, integrity]`
-            // for npm, `[res, {info}]` for file:, git, tarball and workspace.
+            // Index 2 for an npm resolution (after the registry string), index 1 otherwise.
             let Some(maybe_info_obj) = pkg_info.items().iter().find_map(|item| item.as_object())
             else {
                 continue;

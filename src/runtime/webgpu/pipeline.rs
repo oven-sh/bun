@@ -112,7 +112,6 @@ impl GPUComputePipeline {
         let compiled = bun_webgpu::compile(source_len, || {
             instance().device_create_compute_pipeline(device_id, &desc, None)
         });
-        drop(held);
         let (id, err) = match compiled {
             Some((id, err)) => (id, err.map(|e| GpuError::from_wgpu(&e))),
             None => {
@@ -122,6 +121,8 @@ impl GPUComputePipeline {
                 (id, Some(no_compile_thread()))
             }
         };
+        // After the last call that names an id in `desc`.
+        drop(held);
         let value = GPUComputePipeline {
             device: Rc::clone(device),
             raw: Rc::new(bun_webgpu::ComputePipeline::new(id)),
@@ -385,7 +386,6 @@ impl GPURenderPipeline {
         let compiled = bun_webgpu::compile(source_len, || {
             instance().device_create_render_pipeline(device_id, &desc, None)
         });
-        drop(held);
         let (id, err) = match compiled {
             Some((id, err)) => (id, err.map(|e| GpuError::from_wgpu(&e))),
             None => {
@@ -396,6 +396,8 @@ impl GPURenderPipeline {
                 (id, Some(no_compile_thread()))
             }
         };
+        // After the last call that names an id in `desc`.
+        drop(held);
         let value = GPURenderPipeline {
             device: Rc::clone(device),
             raw: Rc::new(bun_webgpu::RenderPipeline::new(id)),

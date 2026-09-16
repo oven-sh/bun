@@ -1176,6 +1176,40 @@ describe.skipIf(!hasAdapter)("with a device", () => {
     device.destroy();
   });
 
+  test("a shader too large for any compile thread gives an invalid module and pipeline", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const adapter = await navigator.gpu.requestAdapter();
+          const device = await adapter.requestDevice();
+          device.addEventListener("uncapturederror", event => event.preventDefault());
+          // The compile thread's stack is sized from the source. Where the system refuses that size, the
+          // calls take their fallback path. Where it does not, this source (one comment) compiles.
+          const code = "//" + Buffer.alloc(64 * 1024 * 1024, "a").toString() + "\\n@compute @workgroup_size(1) fn main() {}";
+          const module = device.createShaderModule({ code });
+          function collect() {
+            for (let i = 0; i < 2000; i++) ({ a: [i, {}, "x" + i] });
+            Bun.gc(true);
+          }
+          // The fallback names the layout again, so it has to keep it registered until then.
+          const pipeline = device.createComputePipeline({
+            get layout() { return device.createPipelineLayout({ bindGroupLayouts: [] }); },
+            compute: { module, constants: { get x() { collect(); return 1; } } },
+          });
+          console.log(module instanceof GPUShaderModule, pipeline instanceof GPUComputePipeline);
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("true true\n");
+    expect(exitCode).toBe(0);
+  });
+
   test("a resolve target of the wrong dimension is a validation error", async () => {
     const device = await requestDevice();
     for (const size of [[4, 4, 4], [4]]) {

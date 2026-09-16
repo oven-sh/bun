@@ -64,8 +64,7 @@ pub struct WebWorker {
     parent: *mut VirtualMachine,
     /// The parent's `--hot` / `--watch` mode, inherited by the worker VM.
     hot_reload: crate::virtual_machine::HotReload,
-    /// The parent's `import_watcher()` under `--watch`, else null.
-    /// Process-lifetime, so the worker thread may use it.
+    /// Under `--watch`, the parent's process-lifetime `import_watcher()`. Else null.
     parent_import_watcher: *mut crate::hot_reloader::ImportWatcher,
     /// Whether the worker VM arms `bun_jsc::vm_handle`'s test gate (debug
     /// builds, `BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE`, first-level workers only:
@@ -399,8 +398,7 @@ impl WebWorker {
             messaging_proxy: proxy,
             parent,
             hot_reload: parent_ref.hot_reload,
-            // `--hot` re-evaluates only the main thread's entry point, and a
-            // running worker keeps its code, so only `--watch` inherits.
+            // `--hot` leaves workers out: a running worker keeps its code.
             parent_import_watcher: if parent_ref.hot_reload
                 == crate::virtual_machine::HotReload::Watch
             {

@@ -625,7 +625,13 @@ describe("a macro that runs beneath require() of an ES module", () => {
   // with-macro.ts is in progress. The failure of the second request must still fail the require().
   test("a macro that fails, with the macro's file imported earlier by the same module", async () => {
     const { lines, stderr, exitCode } = await run({
-      "m.ts": `export function value() {\n  throw new Error("macro threw");\n}\nexport const helper = "helper";\n`,
+      "m.ts": [
+        `export function value() {`,
+        `  console.log("macro ran");`,
+        `  throw new Error("macro threw");`,
+        `}`,
+        `export const helper = "helper";`,
+      ].join("\n"),
       "with-macro.ts": withMacro,
       "importer.ts": [
         `import { helper } from "./m.ts";`,
@@ -635,7 +641,7 @@ describe("a macro that runs beneath require() of an ES module", () => {
       "index.ts": index,
     });
     expect(stderr).toContain("with-macro.ts:2:24");
-    expect({ stdout: lines.join("\n"), exitCode }).toEqual({ stdout: "", exitCode: 1 });
+    expect({ lines, exitCode }).toEqual({ lines: ["macro ran"], exitCode: 1 });
   });
 
   test("with the macro's file imported earlier by an ancestor", async () => {

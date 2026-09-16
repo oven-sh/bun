@@ -67,3 +67,27 @@ test.concurrent("require() of an ES module that the enclosing graph has just fet
   });
   expect(exitCode).toBe(0);
 });
+
+// The loader reads the exports of a CommonJS module when it creates the module's record. Here the
+// import() in second.cjs comes one request after counted.cjs was fetched, and the record must still be
+// created once.
+test.concurrent("import() of a CommonJS module that the enclosing graph has just fetched", async () => {
+  using dir = tempDir("require-esm-built-once", {
+    "index.cjs": `require("./root.mjs");\nglobalThis.imported.then(ns => console.log(JSON.stringify({ reads: globalThis.reads, x: ns.x })));\n`,
+    "root.mjs": `import "./first.cjs";\nimport "./second.cjs";\n`,
+    "first.cjs": `require("./esm.mjs");\n`,
+    "esm.mjs": `import "./counted.cjs";\nimport "./second.cjs";\n`,
+    "second.cjs": `globalThis.imported = import("./counted.cjs");\n`,
+    "counted.cjs": `globalThis.reads = 0;\nObject.defineProperty(module.exports, "x", { enumerable: true, get: () => ++globalThis.reads });\n`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.cjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr }).toEqual({ stdout: JSON.stringify({ reads: 1, x: 1 }) + "\n", stderr: "" });
+  expect(exitCode).toBe(0);
+});

@@ -2063,8 +2063,7 @@ fn ensure_route_is_bundled<Ctx: EnsureRouteCtx>(
                     }
                 }
 
-                // `index_failures` also marks a route that a page navigated to
-                // with `history.pushState`. Nothing has bundled that route yet.
+                // `index_failures` can mark a route before its first bundle (`history.pushState`).
                 if dev.route_page_is_stale(route_bundle_index) {
                     state = route_bundle::State::Unqueued;
                     continue 'sw;
@@ -4472,8 +4471,7 @@ pub(super) fn finalize_bundle(
         has_route_bits_set = true;
     }
 
-    // No route imports a framework client entry point. The client bundle of
-    // every route of its router type starts at it.
+    // The client bundle of every route of a router type starts at its client entry point.
     if !dev
         .incremental_result
         .framework_client_entries_affected
@@ -5726,8 +5724,7 @@ fn mark_all_route_children(
 }
 
 impl DevServer {
-    /// Whether the page file of a framework route was never bundled, or has to
-    /// be bundled again.
+    /// Whether the page file of a framework route still has to be bundled.
     fn route_page_is_stale(&self, index: route_bundle::Index) -> bool {
         let route_bundle::Data::Framework(fw) = &self.route_bundles[index.get() as usize].data
         else {
@@ -5743,8 +5740,7 @@ impl DevServer {
             })
     }
 
-    /// Whether `incremental_result.framework_client_entries_affected` has the
-    /// client entry point of the router type of `route_bundle`.
+    /// Whether a trace reached the client entry point of the router type of `route_bundle`.
     fn loads_affected_framework_client_entry(&self, route_bundle: &RouteBundle) -> bool {
         let route_bundle::Data::Framework(fw) = &route_bundle.data else {
             return false;

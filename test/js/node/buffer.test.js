@@ -5249,7 +5249,8 @@ describe("transcode allocation limits", () => {
   });
 
   // The child never writes to the source, so it stays untouched address space and the test is cheap.
-  it("throws when the result or the UTF-16 copy passes its size limit", async () => {
+  // A small host can still refuse to reserve the 2 GiB.
+  it.skipIf(os.totalmem() < 4 * 1024 ** 3)("throws past the size limit of a Buffer or a Vector", async () => {
     const result = await runCases(`
       const memory = new ArrayBuffer(2 ** 31 + 1);
       const cases = {

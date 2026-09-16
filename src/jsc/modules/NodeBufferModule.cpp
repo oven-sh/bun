@@ -215,8 +215,9 @@ BUN_DEFINE_HOST_FUNCTION(jsBufferTranscode,
         RETURN_IF_EXCEPTION(scope, {});
         const size_t actual = simdutf::convert_utf8_to_utf16le(data, length, reinterpret_cast<char16_t*>(result->typedVector()));
         // Valid UTF-8 fills the result exactly. A source in shared memory can
-        // change between the two passes: any other count is a failure, so a
-        // result with unwritten bytes is never returned.
+        // change between the two passes, so any other count is a failure: a
+        // result with unwritten bytes is never returned. That does not bound
+        // the writes themselves, which need a source that cannot change.
         if (actual == 0 || actual != expected) {
             errorCode = U_INVALID_CHAR_FOUND_ERRNO;
             errorName = "U_INVALID_CHAR_FOUND"_s;
@@ -235,6 +236,8 @@ BUN_DEFINE_HOST_FUNCTION(jsBufferTranscode,
         result = WebCore::createUninitializedBuffer(globalObject, expected);
         RETURN_IF_EXCEPTION(scope, {});
         const size_t actual = simdutf::convert_utf16le_to_utf8(sourceBuffer.begin(), lengthInChars, reinterpret_cast<char*>(result->typedVector()));
+        // `actual == 0` also fails a source of one byte, which has no units, as Node does:
+        // https://github.com/nodejs/node/blob/v26.3.0/src/node_i18n.cc#L249-L252
         if (actual == 0 || actual != expected) {
             errorCode = U_INVALID_CHAR_FOUND_ERRNO;
             errorName = "U_INVALID_CHAR_FOUND"_s;

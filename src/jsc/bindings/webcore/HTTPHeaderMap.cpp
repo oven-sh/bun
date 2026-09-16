@@ -211,27 +211,40 @@ bool HTTPHeaderMap::removeUncommonHeader(const StringView name)
     });
 }
 
+std::optional<String> HTTPHeaderMap::tryJoinSetCookieHeaders() const
+{
+    unsigned count = m_setCookieHeaders.size();
+    switch (count) {
+    case 0:
+        return String();
+    case 1:
+        return m_setCookieHeaders[0];
+    default:
+        break;
+    }
+
+    // ", " between each pair. StringBuilder crashes past String::MaxLength.
+    uint64_t length = 2 * static_cast<uint64_t>(count - 1);
+    for (const auto& header : m_setCookieHeaders)
+        length += header.length();
+    if (length > String::MaxLength) [[unlikely]]
+        return std::nullopt;
+
+    StringBuilder builder;
+    builder.reserveCapacity(static_cast<unsigned>(length));
+    builder.append(m_setCookieHeaders[0]);
+    for (unsigned i = 1; i < count; ++i) {
+        builder.append(", "_s);
+        builder.append(m_setCookieHeaders[i]);
+    }
+    return builder.toString();
+}
+
 String HTTPHeaderMap::get(HTTPHeaderName name) const
 {
-    if (name == HTTPHeaderName::SetCookie) {
-        unsigned count = m_setCookieHeaders.size();
-        switch (count) {
-        case 0:
-            return String();
-        case 1:
-            return m_setCookieHeaders[0];
-        default: {
-            StringBuilder builder;
-            builder.reserveCapacity(m_setCookieHeaders[0].length() * count + (count - 1));
-            builder.append(m_setCookieHeaders[0]);
-            for (unsigned i = 1; i < count; ++i) {
-                builder.append(", "_s);
-                builder.append(m_setCookieHeaders[i]);
-            }
-            return builder.toString();
-        }
-        }
-    }
+    // A join past String::MaxLength reads as absent. FetchHeaders::get() throws.
+    if (name == HTTPHeaderName::SetCookie)
+        return tryJoinSetCookieHeaders().value_or(String());
 
     auto index = m_commonHeaders.findIf([&](auto& header) {
         return header.key == name;

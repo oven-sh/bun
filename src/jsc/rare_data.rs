@@ -632,29 +632,21 @@ impl SocketGroups {
         self.each().into_iter().all(|g| Self::group_is_empty(g))
     }
 
-    /// Close every socket in these groups (JS thread). Their close handlers
-    /// run and may connect again, here or through [`of`](Self::of): no borrow
-    /// of the set is held across one, and the walk repeats until nothing is left
-    /// (bounded; a handler that reconnects forever keeps its last socket).
+    /// Close every socket in these groups (JS thread), for a context that has stopped: nothing
+    /// connects for it any more, so one pass leaves them empty. Their close handlers run and
+    /// reach this set again ([`of`](Self::of)), so no borrow of it is held across one.
     ///
     /// # Safety
     /// `this` is a live, boxed set.
     pub(crate) unsafe fn close_all(this: *mut Self) {
-        for _ in 0..8 {
-            let mut closed_any = false;
-            for i in 0..Self::COUNT {
-                // SAFETY: fn contract; the borrow ends before `close_all` dispatches.
-                let group: *mut SocketGroup = unsafe { &mut *this }.each()[i];
-                // SAFETY: `group` is embedded in the live set.
-                unsafe {
-                    if !(*group).loop_.is_null() && !Self::group_is_empty(&*group) {
-                        (*group).close_all();
-                        closed_any = true;
-                    }
+        for i in 0..Self::COUNT {
+            // SAFETY: fn contract; the borrow ends before `close_all` dispatches.
+            let group: *mut SocketGroup = unsafe { &mut *this }.each()[i];
+            // SAFETY: `group` is embedded in the live set.
+            unsafe {
+                if !(*group).loop_.is_null() {
+                    (*group).close_all();
                 }
-            }
-            if !closed_any {
-                return;
             }
         }
     }

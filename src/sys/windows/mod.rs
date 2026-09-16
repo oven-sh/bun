@@ -1518,8 +1518,7 @@ pub(crate) const WATCHER_RELOAD_EXIT: DWORD = 3224497970;
 static IS_WATCHER_CHILD: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
-/// Call before `env::convert_env_to_wtf8`: the variable must not be in the
-/// copy, or every process this one spawns takes itself for a watcher child.
+/// Call before `env::convert_env_to_wtf8`, so that spawned processes do not inherit the variable.
 pub fn take_watcher_child_env() {
     if !has_watcher_child_env() {
         return;

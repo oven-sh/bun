@@ -65,12 +65,6 @@ pub(crate) fn run_as_coordinator(
     if Output::enable_ansi_colors_stderr() {
         let _ = env.map.put(b"FORCE_COLOR", b"1");
     }
-    // Each worker gets a unique JEST_WORKER_ID / BUN_TEST_WORKER_ID (1-indexed,
-    // matching Jest) so tests can pick distinct ports/databases. Serialize the
-    // env map once per worker after .put() — appending after the fact would
-    // create duplicate entries when the parent already has the variable set,
-    // and POSIX getenv() returns the first match.
-    //
     // A watcher manager does not forward fd 3, the worker's channel (#42925).
     #[cfg(windows)]
     let mark_workers = bun_sys::windows::is_watcher_child();
@@ -78,6 +72,11 @@ pub(crate) fn run_as_coordinator(
     if mark_workers {
         let _ = env.map.put(b"_BUN_WATCHER_CHILD", b"1");
     }
+    // Each worker gets a unique JEST_WORKER_ID / BUN_TEST_WORKER_ID (1-indexed,
+    // matching Jest) so tests can pick distinct ports/databases. Serialize the
+    // env map once per worker after .put() — appending after the fact would
+    // create duplicate entries when the parent already has the variable set,
+    // and POSIX getenv() returns the first match.
     let mut envps: Vec<bun_dotenv::NullDelimitedEnvMap> = Vec::with_capacity(k as usize);
     for i in 0..k {
         let mut id = Vec::new();

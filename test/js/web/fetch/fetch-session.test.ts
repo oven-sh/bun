@@ -399,10 +399,10 @@ describe("Bun.FetchSession", () => {
         new Bun.FetchSession({ tls: { checkServerIdentity } as any });
         return "constructs";
       } catch (e: any) {
-        return e.message;
+        return `${e.code}: ${e.message}`;
       }
     };
-    const message = 'The "tls.checkServerIdentity" property must be of type function.';
+    const message = 'ERR_INVALID_ARG_TYPE: The "tls.checkServerIdentity" property must be of type function.';
     expect({
       boolean: outcome(true),
       number: outcome(1),

@@ -65,6 +65,13 @@ pub(crate) fn run_as_coordinator(
     if Output::enable_ansi_colors_stderr() {
         let _ = env.map.put(b"FORCE_COLOR", b"1");
     }
+    // A watcher manager does not forward fd 3, the worker's channel (#42925).
+    #[cfg(windows)]
+    let mark_workers = bun_sys::windows::is_watcher_child();
+    #[cfg(windows)]
+    if mark_workers {
+        let _ = env.map.put(b"_BUN_WATCHER_CHILD", b"1");
+    }
     // Each worker gets a unique JEST_WORKER_ID / BUN_TEST_WORKER_ID (1-indexed,
     // matching Jest) so tests can pick distinct ports/databases. Serialize the
     // env map once per worker after .put() — appending after the fact would
@@ -77,6 +84,10 @@ pub(crate) fn run_as_coordinator(
         let _ = env.map.put(b"JEST_WORKER_ID", &id);
         let _ = env.map.put(b"BUN_TEST_WORKER_ID", &id);
         envps.push(env.map.create_null_delimited_env_map()?);
+    }
+    #[cfg(windows)]
+    if mark_workers {
+        env.map.remove(b"_BUN_WATCHER_CHILD");
     }
     let argv = build_worker_argv(ctx)?;
 

@@ -106,7 +106,7 @@ describe("url.domainToUnicode with many xn-- labels", () => {
   // The conversion runs once per xn-- label. The whole-name ICU conversion
   // moves the rest of the name for each decoded label, which is quadratic.
   test("takes linear time in the number of xn-- labels", () => {
-    const labels = 65536;
+    const labels = 262144;
     const host = Buffer.alloc(labels * 8, "xn--nxa.").toString() + "com";
     const start = performance.now();
     const unicode = url.domainToUnicode(host);

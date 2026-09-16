@@ -996,10 +996,7 @@ fn spawn_maybe_sync(
         }
     }
 
-    // A watcher manager gives the process it spawns stdin, stdout and stderr
-    // only (#42925). A child that gets another handle, such as the IPC channel
-    // of `fork()`, must not become one when it runs with `--watch` (`fork()`
-    // passes `process.execArgv`), so mark it as a watcher child.
+    // A watcher manager does not forward fd 3 and up (#42925).
     #[cfg(windows)]
     if bun_sys::windows::is_watcher_child()
         && extra_fds

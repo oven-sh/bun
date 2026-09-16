@@ -71,9 +71,7 @@ pub(crate) fn run_as_coordinator(
     // create duplicate entries when the parent already has the variable set,
     // and POSIX getenv() returns the first match.
     //
-    // A worker gets `--watch` through BUN_OPTIONS when this process does. Mark
-    // it as a watcher child, as `Bun.spawn` does for a child with fd 3 and up:
-    // a watcher manager does not forward the worker's channel (#42925).
+    // A watcher manager does not forward fd 3, the worker's channel (#42925).
     #[cfg(windows)]
     let mark_workers = bun_sys::windows::is_watcher_child();
     #[cfg(windows)]

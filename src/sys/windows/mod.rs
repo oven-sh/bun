@@ -1518,16 +1518,8 @@ pub(crate) const WATCHER_RELOAD_EXIT: DWORD = 3224497970;
 static IS_WATCHER_CHILD: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
-/// Records whether `_BUN_WATCHER_CHILD` marks this process, then removes it
-/// from the environment. `spawn_watcher_child` sets it. A watcher child also
-/// sets it for a child that gets a handle beyond stdin, stdout and stderr
-/// (`Bun.spawn`, the `bun test --parallel` coordinator). The variable marks
-/// this process only: a `bun --watch` that inherits it never becomes a watcher
-/// manager, so its first reload exits with `WATCHER_RELOAD_EXIT` and nothing
-/// respawns it.
-///
-/// Call before `env::convert_env_to_wtf8`, which copies the environment for
-/// `process.env` and for the processes this one spawns.
+/// Call before `env::convert_env_to_wtf8`: the variable must not be in the
+/// copy, or every process this one spawns takes itself for a watcher child.
 pub fn take_watcher_child_env() {
     if !has_watcher_child_env() {
         return;

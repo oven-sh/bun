@@ -128,34 +128,6 @@ impl Default for InitOptions {
     }
 }
 
-/// What a `node:fs` operation does with a descriptor its script named by number.
-#[derive(Copy, Clone)]
-pub enum FdUse {
-    None,
-    Uses(bun_sys::Fd),
-    /// `fs.close(fd)`: the number is another file's as soon as it is closed.
-    Closes(bun_sys::Fd),
-}
-
-/// See [`VirtualMachine::owned_fd_job`].
-pub struct OwnedFdJob(Option<crate::ContextId>);
-
-impl Drop for OwnedFdJob {
-    fn drop(&mut self) {
-        if let Some(owner) = self.0 {
-            VirtualMachine::get().graph_job_finished(owner);
-        }
-    }
-}
-
-/// See [`VirtualMachine::graph_jobs`].
-#[derive(Default)]
-pub struct GraphJobs {
-    outstanding: u32,
-    /// Descriptors the context owned when it stopped.
-    fds: Vec<bun_sys::Fd>,
-}
-
 pub struct VirtualMachine {
     pub global: *mut JSGlobalObject,
     // allocator dropped per §Allocators (global mimalloc)
@@ -403,10 +375,6 @@ pub struct VirtualMachine {
     /// is running continues. The dead context's, for one entered as gone (its graph has been
     /// collected; its context may not have been stopped yet: that is queued from the finalizer).
     pub(crate) innermost_scope: Cell<Option<crate::ContextId>>,
-    /// The off-thread jobs of graph contexts that have not come back, by context (JS thread).
-    /// A job may be inside a syscall on a descriptor its context owns.
-    pub(crate) graph_jobs:
-        crate::JsCell<bun_collections::ArrayHashMap<crate::ContextId, GraphJobs>>,
     pub test_isolation_enabled: bool,
     pub test_isolation_state: TestIsolationState,
 }
@@ -1174,90 +1142,6 @@ impl VirtualMachine {
         self.innermost_scope
             .get()
             .is_some_and(|context| !self.is_context_live(context))
-    }
-
-    /// An off-thread job (a pool job, a libuv fs request) was handed off for `context`'s script.
-    pub fn graph_job_started(&self, context: crate::ContextId) {
-        if self.graph_context(context).is_some() {
-            self.graph_jobs.with_mut(|jobs| {
-                bun_core::handle_oom(jobs.get_or_put(context))
-                    .value_ptr
-                    .outstanding += 1;
-            });
-        }
-    }
-
-    /// It is back on the JS thread (completed or released). The last one of a context that
-    /// stopped closes the descriptors that were waiting for it.
-    pub fn graph_job_finished(&self, context: crate::ContextId) {
-        let fds = self.graph_jobs.with_mut(|jobs| {
-            if jobs.count() == 0 {
-                return None;
-            }
-            let entry = jobs.get_mut(&context)?;
-            entry.outstanding -= 1;
-            if entry.outstanding != 0 {
-                return None;
-            }
-            jobs.fetch_swap_remove(&context).map(|(_, entry)| entry.fds)
-        });
-        for fd in fds.into_iter().flatten() {
-            bun_sys::FdExt::close(fd);
-        }
-    }
-
-    /// Script is closing `fd` by number (`fs.close(fd)`): a graph context that owns it (a stream it
-    /// opened with `autoClose: false`) stops owning it, and will not close the number when it stops.
-    pub fn disown_fd(&self, fd: bun_sys::Fd) {
-        for context in self.graph_contexts.values() {
-            // SAFETY: registered ⇒ not freed.
-            unsafe { context.as_ref() }.disown_fd(fd);
-        }
-    }
-
-    /// An off-thread job is about to use a descriptor. If a graph context other than the running
-    /// script's owns it (the host writing through a `FileHandle` a graph made), the job counts
-    /// for the owner until the guard is dropped, on this thread: the owner's `dispose()` must not
-    /// close the descriptor under it either. One that closes it also [disowns](Self::disown_fd) it.
-    pub fn owned_fd_job(
-        &self,
-        context: &crate::ScriptExecutionContext,
-        fd_use: FdUse,
-    ) -> OwnedFdJob {
-        let fd = match fd_use {
-            FdUse::Uses(fd) | FdUse::Closes(fd) if self.graph_contexts.count() != 0 => fd,
-            _ => return OwnedFdJob(None),
-        };
-        let current = context.id();
-        let owner = self.graph_contexts.values().iter().find_map(|context| {
-            // SAFETY: registered ⇒ not freed.
-            let context = unsafe { context.as_ref() };
-            (context.owns_fd(fd) && context.id() != current).then(|| context.id())
-        });
-        if let Some(owner) = owner {
-            self.graph_job_started(owner);
-        }
-        if matches!(fd_use, FdUse::Closes(_)) {
-            self.disown_fd(fd);
-        }
-        OwnedFdJob(owner)
-    }
-
-    /// `context` stopped owning `fds`. Closed now, unless a job of its is still out: a write on
-    /// the pool would land in whichever file is given the number next.
-    pub(crate) fn close_fds_after_jobs(&self, context: crate::ContextId, fds: Vec<bun_sys::Fd>) {
-        let fds = self
-            .graph_jobs
-            .with_mut(|jobs| match jobs.get_mut(&context) {
-                Some(entry) => {
-                    entry.fds.extend(fds);
-                    Vec::new()
-                }
-                None => fds,
-            });
-        for fd in fds {
-            bun_sys::FdExt::close(fd);
-        }
     }
 
     /// The context that tracks the timers set under `id`: a graph's, or the one standing in for
@@ -3285,7 +3169,6 @@ impl VirtualMachine {
             addr_of_mut!((*vm).vm_context).write(Default::default());
             addr_of_mut!((*vm).graph_contexts).write(Default::default());
             addr_of_mut!((*vm).innermost_scope).write(Cell::new(None));
-            addr_of_mut!((*vm).graph_jobs).write(crate::JsCell::new(Default::default()));
             addr_of_mut!((*vm).dead_context).write(crate::ScriptExecutionContext::dead(
                 (*vm).context_ids.next(),
             ));
@@ -5495,14 +5378,6 @@ impl VirtualMachine {
             // SAFETY: registered ⇒ live and owned here.
             drop(unsafe { Box::from_raw(context.as_ptr()) });
         }
-        // Jobs of a graph that teardown released without this count coming down (a worker
-        // terminated mid-read): what waited for them is closed with the VM.
-        for (_, jobs) in self.graph_jobs.replace(Default::default()).iter() {
-            for fd in &jobs.fds {
-                bun_sys::FdExt::close(*fd);
-            }
-        }
-
         drop_source_code_printer();
 
         // `SavedSourceMap`'s `Drop` frees each stored map along with its table.

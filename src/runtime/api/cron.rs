@@ -752,7 +752,7 @@ pub(crate) fn cron_register(global: &JSGlobalObject, frame: &CallFrame) -> JsRes
     // In-process callback cron: Bun.cron(schedule, handler, opts?)
     if args[1].is_callable() {
         let tz = resolve_cron_tz(global, args[2])?;
-        return CronJob::register(global, args[0], args[1], tz);
+        return CronJob::register(&global.js_thread_of_caller(frame), args[0], args[1], tz);
     }
     if args[0].is_string() && args[2].is_undefined() {
         return Err(global.throw_invalid_arguments(format_args!(
@@ -1395,9 +1395,18 @@ pub struct CronJob {
     pending_ref: JsCell<Option<RefPtr<CronJob>>>,
     /// True between onTimerFire's cb.call() and processing of its result.
     in_fire: Cell<bool>,
+    /// The context of the script that called `Bun.cron()`: its ticks are that script's.
+    context: bun_jsc::ContextId,
+    /// The job stops with that context, as its timers do.
+    abort_handle: bun_jsc::AbortHandle,
 }
 
 bun_event_loop::impl_timer_owner!(CronJob; from_timer_ptr => event_loop_timer);
+bun_jsc::impl_abort_handle_owner!(CronJob, abort_handle, |this, _cause| {
+    // SAFETY: trait contract — `this` is live (armed ⇒ not yet stopped).
+    let job = unsafe { &*this };
+    CronJob::self_stop(job.self_ref.get().this_ptr(), job.global.bun_vm())
+});
 
 pub mod js {
     // `jsc.Codegen.JSCronJob` cached-slot accessors. The C++ side is emitted by
@@ -1439,6 +1448,7 @@ impl CronJob {
             timer_all().remove(self.event_loop_timer.as_ptr());
         }
         self.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
+        self.abort_handle.leave();
         self.maybe_downgrade();
     }
 
@@ -1592,7 +1602,7 @@ impl CronJob {
         // observed by `schedule_next`), and does not stop the job — as with a
         // rejected tick.
         let result = vm.event_loop_mut().run_callback_with_result(
-            bun_event_loop::TaskContext::Always,
+            bun_event_loop::TaskContext::Of(this.context),
             cb,
             &this.global,
             js_this,
@@ -1686,11 +1696,12 @@ impl CronJob {
     }
 
     pub(crate) fn register(
-        global: &JSGlobalObject,
+        cx: &bun_jsc::JsThread<'_>,
         schedule_arg: JSValue,
         callback_arg: JSValue,
         tz: CronTz,
     ) -> JsResult<JSValue> {
+        let global = cx.global();
         if !schedule_arg.is_string() {
             return Err(global.throw_invalid_arguments(format_args!(
                 "Bun.cron() expects a string cron expression"
@@ -1725,6 +1736,8 @@ impl CronJob {
             last_next_ms: Cell::new(0.0),
             pending_ref: JsCell::new(None),
             in_fire: Cell::new(false),
+            context: cx.context().id(),
+            abort_handle: bun_jsc::AbortHandle::for_owner::<CronJob>(),
         });
         job.self_ref.set(BackRef::from(job.this_ptr()));
 
@@ -1756,6 +1769,8 @@ impl CronJob {
         );
 
         job.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
+        // SAFETY: heap-allocated (`RefPtr`); `stop_internal` leaves the context before the job is released.
+        unsafe { bun_jsc::AbortHandle::arm_owner(job.as_ptr(), cx.context()) };
         timer_all().update(
             job.event_loop_timer
                 .as_ptr()

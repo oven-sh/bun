@@ -37,9 +37,6 @@ where
     let vm: &VirtualMachine = global.bun_vm();
     let mut slice = ArgumentsSlice::init(vm, frame.arguments());
     let args = <A as FsArgument>::from_js(global, &mut slice)?;
-    if let bun_jsc::virtual_machine::FdUse::Closes(fd) = args.fd_use() {
-        vm.disown_fd(fd);
-    }
 
     // R-2: `JsCell::with_mut` scopes the `&mut NodeFS` to the blocking
     // syscall; `dispatch` never re-enters JS, and `Maybe<R>` is fully owned
@@ -369,90 +366,6 @@ pub(crate) fn create_binding(global: &JSGlobalObject) -> JSValue {
     // `module` was `Box::new`-allocated; ownership transfers to the GC
     // wrapper, which calls `Binding::finalize` to reclaim it.
     Binding::to_js_boxed(module, global)
-}
-
-/// `(fd)` → its owner: a node:fs stream or `FileHandle` opened `fd` for itself. If the script that is
-/// running is a `Bun.ModuleGraph`'s, that graph's context closes the descriptor when the graph is
-/// disposed (nothing is reported to a disposed graph, so the object never gets to close it), and
-/// the owner is that context's id. 0: nobody but the object closes it.
-#[bun_jsc::host_fn]
-pub(crate) fn own_fd(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    use bun_sys_jsc::FdJsc as _;
-    let vm = global.bun_vm();
-    if let (Some(context), Some(fd)) = (
-        vm.as_graph_context(vm.context_of_caller(frame)),
-        bun_sys::Fd::from_js(frame.argument(0)),
-    ) {
-        context.own_fd(fd);
-        return Ok(JSValue::js_number(f64::from(context.id().raw())));
-    }
-    Ok(JSValue::js_number(0.0))
-}
-
-/// `(owner)` → whether a descriptor [`own_fd`] gave to `owner` is still open: not once that context
-/// stopped. (The number may be another file's by then.)
-#[bun_jsc::host_fn]
-pub(crate) fn is_owned_fd_open(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let owner = frame.argument(0).coerce_to_i32(global)?;
-    Ok(JSValue::from(
-        owner == 0
-            || global
-                .bun_vm()
-                .is_context_live(bun_jsc::ContextId::from_raw(owner as u32)),
-    ))
-}
-
-/// `(fd, owner)` → whether the caller is to close `fd`, which is its own again: not if the context
-/// that owned it has stopped, and closed it.
-#[bun_jsc::host_fn]
-pub(crate) fn release_owned_fd(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    use bun_sys_jsc::FdJsc as _;
-    let owner = frame.argument(1).coerce_to_i32(global)?;
-    if owner == 0 {
-        return Ok(JSValue::TRUE);
-    }
-    let context = global
-        .bun_vm()
-        .graph_context(bun_jsc::ContextId::from_raw(owner as u32))
-        .filter(|context| !context.is_stopped());
-    if let (Some(context), Some(fd)) = (context, bun_sys::Fd::from_js(frame.argument(0))) {
-        context.disown_fd(fd);
-    }
-    Ok(JSValue::from(context.is_some()))
-}
-
-/// `(syscall)` → the error `read`, `write` or `writev` fails with on a descriptor that is not open:
-/// what a node:fs stream reports when [`is_owned_fd_open`] says its descriptor went with its owner,
-/// without handing the number (another file's by now) to the system to be told so. Made the way
-/// every failed fs call's error is.
-#[bun_jsc::host_fn]
-pub(crate) fn closed_fd_error(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let syscall = frame.argument(0).to_utf8(global)?;
-    let tag = match syscall.slice() {
-        b"read" => bun_sys::Tag::read,
-        b"write" => bun_sys::Tag::write,
-        b"writev" => bun_sys::Tag::writev,
-        _ => {
-            return Err(global.throw_invalid_arguments(format_args!(
-                "closedFdError: not a syscall a stream makes"
-            )));
-        }
-    };
-    Ok(bun_sys::Error::from_code(bun_sys::E::EBADF, tag).to_js(global))
-}
-
-/// `(owner, callback)`: `callback()` in the context [`own_fd`] named, so what it queues or throws
-/// is that context's script's. (By id: holding the context's async frame from a registry that
-/// lives as long as the realm would keep its graph from ever being collected.)
-#[bun_jsc::host_fn]
-pub(crate) fn call_in_owner(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let owner = frame.argument(0).coerce_to_i32(global)?;
-    let _context = (owner != 0).then(|| {
-        global
-            .bun_vm()
-            .enter_context(bun_jsc::ContextId::from_raw(owner as u32))
-    });
-    frame.argument(1).call(global, JSValue::UNDEFINED, &[])
 }
 
 /// Test-only (`bun:internal-for-testing`): run `(path, options)` through the

@@ -485,7 +485,6 @@ pub(crate) const DEFAULT_PERMISSION: Mode = 0;
 // `cp` builtin).
 mod _async_tasks {
     use super::*;
-    use bun_jsc::virtual_machine::FdUse;
 
     pub mod async_ {
         use super::*;
@@ -651,8 +650,6 @@ mod _async_tasks {
         pub(crate) tracker: AsyncTaskTracker,
         /// The context of the script that called.
         pub(crate) context: bun_jsc::ContextId,
-        /// Dropped with the request, on the JS thread.
-        pub(crate) _fd_job: bun_jsc::virtual_machine::OwnedFdJob,
     }
 
     #[cfg(windows)]
@@ -675,7 +672,6 @@ mod _async_tasks {
             task_args: ThreadIsolated<A>,
             vm: &mut VirtualMachine,
         ) -> JSValue {
-            let fd_job = vm.owned_fd_job(cx.context(), task_args.fd_use());
             let task = Box::new(Self {
                 promise: JSPromiseStrong::init(cx.global()),
                 args: task_args,
@@ -689,9 +685,7 @@ mod _async_tasks {
                 r#ref: KeepAlive::default(),
                 tracker: AsyncTaskTracker::init(vm),
                 context: cx.context().id(),
-                _fd_job: fd_job,
             });
-            vm.graph_job_started(task.context);
             // Transfer ownership to libuv: the box outlives the async request and is
             // reclaimed in `destroy()` (run_from_js_thread → scopeguard). `heap::release`
             // names that hand-off — it is `Box::leak` under the hood; the reclaim
@@ -991,7 +985,6 @@ mod _async_tasks {
             // SAFETY: caller guarantees `this` is the live Box-leaked allocation;
             // reclaim ownership (paired with the Box::leak in create()).
             let mut task = unsafe { bun_core::heap::take(this) };
-            task.global_object.bun_vm().graph_job_finished(task.context);
             // A result nobody took (the request's context stopped: released unrun).
             if let Ok(result) = core::mem::replace(&mut task.result, Err(sys::Error::default())) {
                 result.discard();
@@ -1027,24 +1020,11 @@ mod _async_tasks {
         fn signal(&self) -> Option<&AbortSignal> {
             None
         }
-        /// What the operation does with a descriptor script named (see `VirtualMachine::owned_fd_job`).
-        fn fd_use(&self) -> FdUse {
-            FdUse::None
-        }
     }
 
     /// Forward [`FsArgument`] to the inherent `from_js` each `args::*` struct
     /// already defines.
     macro_rules! impl_fs_argument {
-    ( fd: $( $ty:ty ),+ $(,)? ) => {
-        $(
-        // SAFETY: plain data.
-        unsafe impl ThreadIsolatedArg for $ty {}
-        impl FsArgument for $ty {
-            #[inline] fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> { <$ty>::from_js(ctx, arguments) }
-            #[inline] fn fd_use(&self) -> FdUse { FdUse::Uses(self.fd) }
-        } )+
-    };
     ( $( $ty:ty ),+ $(,)? ) => {
         $(
         // SAFETY: `from_js_async` parses paths and data thread-isolated / pinned
@@ -1080,7 +1060,7 @@ mod _async_tasks {
         args::Cp<'static>,
     );
     impl_fs_argument!(
-        fd: args::FdVectorIo,
+        args::FdVectorIo,
         args::FTruncate,
         args::Write<'static>,
         args::Read,
@@ -1090,19 +1070,8 @@ mod _async_tasks {
         args::Futimes,
         args::FdataSync,
         args::Fsync,
+        args::Close,
     );
-    // SAFETY: plain data.
-    unsafe impl ThreadIsolatedArg for args::Close {}
-    impl FsArgument for args::Close {
-        #[inline]
-        fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
-            args::Close::from_js(ctx, arguments)
-        }
-        #[inline]
-        fn fd_use(&self) -> FdUse {
-            FdUse::Closes(self.fd)
-        }
-    }
     // `ReadFile`/`WriteFile` carry an `AbortSignal` field — opt them in so the
     // `const _ = assert!(…::HAVE_ABORT_SIGNAL)` invariants in `async_` hold and
     // `signal()` exposes it to `AsyncFSTask::run_from_js_thread`.
@@ -1122,10 +1091,6 @@ mod _async_tasks {
         fn signal(&self) -> Option<&AbortSignal> {
             self.signal.as_deref()
         }
-        #[inline]
-        fn fd_use(&self) -> FdUse {
-            self.path.fd_use()
-        }
     }
     impl FsArgument for args::WriteFile<'static> {
         const HAVE_ABORT_SIGNAL: bool = true;
@@ -1136,10 +1101,6 @@ mod _async_tasks {
         #[inline]
         fn signal(&self) -> Option<&AbortSignal> {
             self.signal.as_deref()
-        }
-        #[inline]
-        fn fd_use(&self) -> FdUse {
-            self.file.fd_use()
         }
     }
     impl FsArgument for args::AppendFile<'static> {
@@ -1152,10 +1113,6 @@ mod _async_tasks {
         #[inline]
         fn signal(&self) -> Option<&AbortSignal> {
             self.0.signal.as_deref()
-        }
-        #[inline]
-        fn fd_use(&self) -> FdUse {
-            self.0.fd_use()
         }
     }
 
@@ -1303,8 +1260,6 @@ mod _async_tasks {
     pub struct AsyncFSJs {
         pub(crate) promise: JSPromiseStrong,
         pub(crate) tracker: AsyncTaskTracker,
-        /// Dropped with the job, on the JS thread.
-        pub(crate) _fd_job: bun_jsc::virtual_machine::OwnedFdJob,
     }
 
     impl<R: FsReturn + 'static, A: FsArgument + 'static, const F: NodeFSFunctionEnum>
@@ -1390,7 +1345,6 @@ mod _async_tasks {
             tracker.did_schedule(cx.global());
             let promise = JSPromiseStrong::init(cx.global());
             let value = promise.value();
-            let fd_job = vm.owned_fd_job(cx.context(), args.fd_use());
             bun_jsc::Job::<Self>::schedule(
                 cx,
                 Self {
@@ -1399,11 +1353,7 @@ mod _async_tasks {
                     // may be niche-optimised; never construct an all-zero `Result`.
                     result: Err(sys::Error::default()),
                 },
-                AsyncFSJs {
-                    promise,
-                    tracker,
-                    _fd_job: fd_job,
-                },
+                AsyncFSJs { promise, tracker },
             );
             value
         }
@@ -2460,11 +2410,7 @@ mod _async_tasks {
                     pending_err: None,
                     pending_err_mutex: bun_threading::Mutex::default(),
                 },
-                AsyncFSJs {
-                    promise,
-                    tracker,
-                    _fd_job: vm.owned_fd_job(cx.context(), FdUse::None),
-                },
+                AsyncFSJs { promise, tracker },
             );
             value
         }

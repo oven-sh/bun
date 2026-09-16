@@ -87,17 +87,22 @@ unsafe extern "C" {
 // would force needless `unsafe { &mut *ptr }` at every site.
 impl CppWebSocket {
     /// The context of the script that made this WebSocket: its connection is that context's.
+    /// C++ names a `Bun.ModuleGraph`'s context by its Rust half, and the realm's own (which has
+    /// no Rust half there) by null.
     pub(crate) fn context<'a>(
         &self,
         vm: &'a VirtualMachine,
     ) -> &'a bun_jsc::ScriptExecutionContext {
-        // SAFETY: a `Bun.ModuleGraph`'s context outlives the DOM objects made in it.
-        unsafe {
+        // SAFETY: called while the WebSocket is connecting from its constructor, inside the context
+        // that made it: a graph's context is alive while its script runs.
+        match unsafe {
             WebSocket__bunContext(self)
                 .cast::<bun_jsc::ScriptExecutionContext>()
                 .as_ref()
+        } {
+            Some(graph_context) => graph_context,
+            None => vm.root_context(),
         }
-        .unwrap_or_else(|| vm.root_context())
     }
 
     pub(crate) fn did_abrupt_close(&self, reason: ErrorCode) {

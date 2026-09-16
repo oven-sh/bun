@@ -99,24 +99,9 @@ const dir = String(
         const writer = Bun.file(dir + "/written.txt").writer();
         writer.write("x");
         await writer.flush();
-        const handle = await fs.promises.open(dir + "/handle.txt", "w");
-        const stream = fs.createWriteStream(dir + "/stream.txt");
-        await new Promise(resolve => stream.once("open", resolve));
-        return { db, statement: db.prepare("select a from t"), nodeDb, writer, handle, stream };
+        return { db, statement: db.prepare("select a from t"), nodeDb, writer };
       };
       export const observeHttp = () => new PerformanceObserver(() => {}).observe({ entryTypes: ["http"] });
-      // Streams in the middle of their work: each holds a descriptor only it would close.
-      export const streams = async (path, count) => {
-        const opened = [];
-        for (let i = 0; i < count; i++) {
-          const read = fs.createReadStream(path, { highWaterMark: 1 });
-          read.on("data", () => read.pause());
-          const write = fs.createWriteStream(path + ".out-" + i);
-          write.write("x");
-          opened.push(new Promise(resolve => read.once("data", resolve)), new Promise(resolve => write.once("open", resolve)));
-        }
-        await Promise.all(opened);
-      };
       // Children with piped stdio that say nothing: nobody is reading the pipes to their end.
       export const quietChildren = (bun, count) => { for (let i = 0; i < count; i++) childProcess.spawn(bun, ["-e", "setInterval(() => {}, 1000)"]); };
       // Request bodies that never finish: each upload is streaming for as long as its fetch lives.
@@ -132,22 +117,11 @@ const dir = String(
         new HTMLRewriter().on("p", { async element(element) { await new Promise(resolve => setTimeout(resolve, 5)); element.remove(); } })
           .transform(new Response("<p>a</p><p>b</p>")).text().then(() => say("fulfilled"), error => say("rejected: " + error.message));
       };
-      // More writes than the pool has threads, so most are still queued when this returns.
-      export const opensForWriting = (dir, count) => Promise.all(Array.from({ length: count }, (_, i) => fs.promises.open(dir + "/tenant-" + i, "w")));
-      export const queuesWrites = async (dir, count) => {
-        const data = Buffer.alloc(4 << 20, "T");
-        for (const handle of await opensForWriting(dir, count)) handle.write(data, 0, data.length, 0).catch(() => {});
-      };
       // A module loaded through a graph of its own making.
       export const loadsThroughAGraphOfItsOwn = specifier => new Bun.ModuleGraph().import(specifier);
       export const makesAGraph = options => new Bun.ModuleGraph(options);
       // (hostMakesAGraph: a function of the host's, passed in globals.)
       export const hasTheHostMakeAGraph = () => hostMakesAGraph();
-      // FileHandles nobody closes and nobody keeps.
-      export const forgetsFileHandles = async (path, count) => { for (let i = 0; i < count; i++) await fs.promises.open(path, "r"); };
-      // One the host is handed, with a stream over another.
-      export const fileHandleAndStream = async path => ({ handle: await fs.promises.open(path, "r"), stream: await new Promise(resolve => { const stream = fs.createReadStream(path, { highWaterMark: 1 }); stream.once("open", () => resolve(stream)); }) });
-      export const opens = (path, count) => { for (let i = 0; i < count; i++) fs.promises.open(path, "r").then(handle => handle.close(), () => {}); };
       // unwrapKey("jwk") of bytes that are not a JWK rejects from its first step.
       export async function failingUnwraps(count) {
         const key = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, ["encrypt", "unwrapKey"]);
@@ -180,19 +154,6 @@ const dir = String(
       for (let i = 0; i < requests; i++) await get();
       console.log(JSON.stringify({ requests, kept: objects() - before }));
       server.close();
-    `,
-    "files-of-a-disposed-graph.mjs": `
-      import fs from "node:fs";
-      const descriptors = () => fs.readdirSync(process.platform === "linux" ? "/proc/self/fd" : "/dev/fd").length;
-      const graph = new Bun.ModuleGraph();
-      const app = await graph.import(import.meta.dir + "/left-behind-tenant.mjs");
-      const before = descriptors();
-      graph.run(() => app.opens(import.meta.path, 64));
-      graph.dispose();
-      // The same work asked for afterwards has finished: the graph's had too.
-      await Promise.all(Array.from({ length: 64 }, () => fs.promises.open(import.meta.path, "r").then(handle => handle.close())));
-      await new Promise(resolve => setImmediate(resolve));
-      console.log(JSON.stringify({ leftOpen: descriptors() - before }));
     `,
     "pipes-of-a-disposed-graph.mjs": `
       import fs from "node:fs";
@@ -263,30 +224,6 @@ const dir = String(
       graph.dispose();
       // Nothing is left for the host to do: the process winds down, collecting on the way.
       process.on("exit", () => writeSync(1, JSON.stringify({ said })));
-    `,
-    "queued-writes-of-a-disposed-graph.mjs": `
-      import fs from "node:fs";
-      const dir = fs.mkdtempSync(import.meta.dir + "/queued-writes-");
-      const graph = new Bun.ModuleGraph();
-      const app = await graph.import(import.meta.dir + "/left-behind-tenant.mjs");
-      if (process.argv[2] === "host") {
-        // The host writes through handles the graph opened: the descriptors are still the graph's.
-        const data = Buffer.alloc(4 << 20, "T");
-        for (const handle of await graph.run(() => app.opensForWriting(dir, 64))) handle.write(data, 0, data.length, 0).catch(() => {});
-      } else if (process.argv[2] === "host, through Bun.file(fd)") {
-        // The same by number: Bun.write() to a descriptor the graph opened.
-        const data = Buffer.alloc(4 << 20, "T");
-        for (const handle of await graph.run(() => app.opensForWriting(dir, 64))) Bun.write(Bun.file(handle.fd), data).catch(() => {});
-      } else await graph.run(() => app.queuesWrites(dir, 64));
-      graph.dispose();
-      // The host's files are given the descriptor numbers the graph's had.
-      const mine = Array.from({ length: 64 }, (_, i) => fs.openSync(dir + "/host-" + i, "w"));
-      // The graph's writes are done (or dropped) once the pool has come round to a job queued behind them.
-      await fs.promises.readFile(import.meta.path);
-      for (let i = 0; i < 8; i++) await new Promise(resolve => setImmediate(resolve));
-      const written = mine.filter(fd => fs.fstatSync(fd).size > 0).length;
-      console.log(JSON.stringify({ hostFilesWrittenTo: written }));
-      process.exit(0);
     `,
     "not-loaded-yet.ts": Array.from(
       { length: 40 },
@@ -872,17 +809,92 @@ const dir = String(
       console.log(JSON.stringify(read()));
       process.exit(0);
     `,
-    "streams-over-file-handles.mjs": `
+    "manages-its-files.mjs": `
       import fs from "node:fs";
-      export const open = async (readFrom, writeTo) => {
-        const [reading, writing] = [await fs.promises.open(readFrom, "r"), await fs.promises.open(writeTo, "w")];
-        return { reader: reading.createReadStream(), writer: writing.createWriteStream() };
+      // A descriptor script holds is script's to manage: what this opens, it closes when it is asked to.
+      const opened = { handles: [], streams: [] };
+      export const open = async (dir, count) => {
+        for (let i = 0; i < count; i++) {
+          opened.handles.push(await fs.promises.open(dir + "/handle-" + i, "w"));
+          const streams = [fs.createReadStream(import.meta.path), fs.createWriteStream(dir + "/stream-" + i)];
+          await Promise.all(streams.map(stream => new Promise(resolve => stream.once("open", resolve))));
+          opened.streams.push(...streams);
+        }
       };
-      // From a microtask, which still runs once the graph has been disposed.
-      export const useLater = ({ reader, writer }, told) => queueMicrotask(() => {
-        reader.on("data", chunk => { told.read = "read " + chunk; }).on("error", error => { told.read = error.code; });
-        writer.on("error", () => {}).write("the graph\x27s", error => { told.wrote = error ? error.code : "wrote"; });
+      // Streams over FileHandles, which the host is handed.
+      export const openOver = async (readFrom, writeTo) => {
+        const [reading, writing] = [await fs.promises.open(readFrom, "r"), await fs.promises.open(writeTo, "w")];
+        opened.handles.push(reading, writing);
+        const streams = { reader: reading.createReadStream(), writer: writing.createWriteStream() };
+        opened.streams.push(streams.reader, streams.writer);
+        return streams;
+      };
+      export const close = async () => {
+        await Promise.all(opened.streams.map(stream => new Promise(resolve => stream.once("close", resolve).destroy())));
+        await Promise.all(opened.handles.map(handle => handle.close()));
+      };
+    `,
+    "closes-its-files-before-it-is-disposed.mjs": `
+      import fs from "node:fs";
+      const descriptors = () => fs.readdirSync(process.platform === "linux" ? "/proc/self/fd" : "/dev/fd").length;
+      const dir = fs.mkdtempSync(import.meta.dir + "/managed-files-");
+      const graph = new Bun.ModuleGraph();
+      const app = await graph.import(import.meta.dir + "/manages-its-files.mjs");
+      const before = descriptors();
+      await graph.run(() => app.open(dir, 8));
+      const streams = await graph.run(() => app.openOver(import.meta.path, dir + "/over"));
+      const open = descriptors() - before;
+      // What the host asks of a tenant before it disposes of it.
+      await graph.run(() => app.close());
+      graph.dispose();
+      console.log(JSON.stringify({ open, leftOpen: descriptors() - before, theHostsReferences: [streams.reader.destroyed, streams.writer.destroyed] }));
+      fs.rmSync(dir, { recursive: true });
+      process.exit(0);
+    `,
+    "schedules-a-cron-job.mjs": `
+      export const schedule = () => Bun.cron("* * * * *", () => {});
+    `,
+    "cron-job-of-a-disposed-graph.mjs": `
+      const graph = new Bun.ModuleGraph();
+      const app = await graph.import(import.meta.dir + "/schedules-a-cron-job.mjs");
+      const job = graph.run(() => app.schedule());
+      // One of the host's own, stopped by the host: a graph's going leaves it alone.
+      const own = Bun.cron("* * * * *", () => {});
+      graph.dispose();
+      console.log(JSON.stringify({ stopReturnsTheJob: job.stop() === job }));
+      own.stop();
+      // (No process.exit(): the graph's job went with the graph, so nothing is scheduled any more.)
+    `,
+    "cluster-worker-that-listens.mjs": `
+      import http from "node:http";
+      http.createServer((request, response) => response.end("the worker")).listen(0, "127.0.0.1");
+    `,
+    "forks-a-cluster-worker.mjs": `
+      import cluster from "node:cluster";
+      const who = () => (Bun.ModuleGraph.current ? "the graph" : "the host");
+      // The primary hears of its worker through messages the worker sends it: whose script is running when it does.
+      // Resolves with the port the primary listens on for the worker, once the worker says it is listening.
+      export const fork = (exec, heard) => new Promise(resolve => {
+        cluster.setupPrimary({ exec });
+        cluster.fork()
+          .on("online", () => { heard.online = who(); })
+          .on("exit", () => { heard.exit = who(); })
+          .on("listening", address => { heard.listening = who(); resolve(address.port); });
       });
+    `,
+    "cluster-of-a-disposed-graph.mjs": `
+      import net from "node:net";
+      const graph = new Bun.ModuleGraph();
+      const app = await graph.import(import.meta.dir + "/forks-a-cluster-worker.mjs");
+      const heard = {};
+      const port = await graph.run(() => app.fork(import.meta.dir + "/cluster-worker-that-listens.mjs", heard));
+      const answered = await fetch("http://127.0.0.1:" + port + "/").then(response => response.text());
+      graph.dispose();
+      // The server the primary opened for the graph's worker was the graph's.
+      const afterwards = await new Promise(resolve => net.connect(port, "127.0.0.1").on("connect", () => resolve("connected")).on("error", error => resolve(error.code)));
+      // (No process.exit(): nothing of the cluster is left to keep the process running. Its worker is killed, and
+      // the disposed graph does not hear of the exit.)
+      process.on("beforeExit", () => console.log(JSON.stringify({ heard, answered, afterwards })));
     `,
     "serves-who.mjs": `
       export const serve = who => Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response(who) });
@@ -1027,42 +1039,6 @@ const dir = String(
       for (let i = 0; i < 10; i++) await new Promise(resolve => setImmediate(resolve));
       console.log(JSON.stringify({ heard: app.heard }));
     `,
-    "its-own-streams-after-it-was-disposed.mjs": `
-      const [data, scratch] = ["/data.txt", "/scratch-own-" + process.pid].map(name => import.meta.dir + name);
-      const graph = new Bun.ModuleGraph();
-      const app = await graph.import(import.meta.dir + "/streams-over-file-handles.mjs");
-      const streams = await graph.run(() => app.open(data, scratch));
-      const told = {};
-      graph.run(() => app.useLater(streams, told));
-      graph.dispose();
-      // Turns enough for a stream to have reported (the host, asking the same of such streams, is
-      // told EBADF within one: "streams over its FileHandles that the host still holds").
-      for (let i = 0; i < 10; i++) await new Promise(resolve => setImmediate(resolve));
-      // The write that found the descriptor gone is not in flight: the host can still destroy the stream.
-      const closed = await new Promise(resolve => streams.writer.on("error", () => {}).on("close", () => resolve(true)).destroy());
-      console.log(JSON.stringify({ told, closed }));
-      (await import("node:fs")).rmSync(scratch);
-      process.exit(0);
-    `,
-    "host-holds-streams-over-file-handles.mjs": `
-      import fs from "node:fs";
-      const [data, scratch, hosts] = ["/data.txt", "/scratch-" + process.pid, "/hosts-" + process.pid].map(name => import.meta.dir + name);
-      fs.writeFileSync(hosts, "the host\x27s");
-      const graph = new Bun.ModuleGraph();
-      const app = await graph.import(import.meta.dir + "/streams-over-file-handles.mjs");
-      const { reader, writer } = await graph.run(() => app.open(data, scratch));
-      const theirs = [reader.fd, writer.fd];
-      graph.dispose();
-      await new Promise(resolve => setImmediate(resolve));
-      // The host opens its own file until it has been handed both numbers.
-      const mine = [];
-      for (let i = 0; i < 64 && !theirs.every(fd => mine.includes(fd)); i++) mine.push(fs.openSync(hosts, "r+"));
-      const read = new Promise(resolve => reader.on("data", chunk => resolve("read " + chunk)).on("error", error => resolve(error.code)));
-      const wrote = new Promise(resolve => writer.on("error", error => resolve(error.code)).write("the graph\x27s", error => resolve(error ? error.code : "wrote")));
-      console.log(JSON.stringify({ sameNumbers: theirs.every(fd => mine.includes(fd)), read: await read, wrote: await wrote, hosts: fs.readFileSync(hosts, "utf8") }));
-      fs.rmSync(hosts); fs.rmSync(scratch);
-      process.exit(0);
-    `,
     "disposed-after-a-graceful-stop.mjs": `
       const until = async condition => { while (!condition()) await new Promise(resolve => setImmediate(resolve)); };
       const graph = new Bun.ModuleGraph();
@@ -1077,22 +1053,6 @@ const dir = String(
       graph.run(() => (server.stop(), listener.stop()));
       graph.dispose();
       console.log(JSON.stringify({ request: await request, client: await closed.promise }));
-      process.exit(0);
-    `,
-    "closes-a-descriptor-by-number.mjs": `
-      import fs from "node:fs";
-      const data = import.meta.dir + "/data.txt";
-      const graph = new Bun.ModuleGraph();
-      const app = await graph.import(import.meta.dir + "/stops-gracefully.mjs");
-      const theirs = await graph.run(() => app.readThenCloseByNumber(data));
-      // The host opens files until it is handed the number the graph's script closed.
-      let mine;
-      for (let i = 0; i < 64 && mine !== theirs; i++) mine = fs.openSync(data, "r");
-      graph.dispose();
-      await new Promise(resolve => setImmediate(resolve));
-      let read;
-      try { read = fs.readSync(mine, Buffer.alloc(4), 0, 4, 0); } catch (error) { read = error.code; }
-      console.log(JSON.stringify({ sameNumber: mine === theirs, read }));
       process.exit(0);
     `,
     "fetches-bodies.mjs": `
@@ -1168,63 +1128,9 @@ const dir = String(
       }
       const message = fn => { try { fn(); return "returned"; } catch (error) { return error.message; } };
       console.log(JSON.stringify({
-        open: process.platform === "win32" ? 5 : open,
+        open: process.platform === "win32" ? 3 : open,
         hostUses: [message(() => kept.db.run("select 1")), message(() => kept.statement.get()), message(() => kept.nodeDb.exec("select 1"))],
       }));
-    `,
-    "streams-of-a-disposed-graph.mjs": `
-      import fs from "node:fs";
-      const descriptors = () => fs.readdirSync(process.platform === "linux" ? "/proc/self/fd" : "/dev/fd").length;
-      const graph = new Bun.ModuleGraph();
-      const app = await graph.import(import.meta.dir + "/left-behind-tenant.mjs");
-      const before = descriptors();
-      await graph.run(() => app.streams(import.meta.path, 16));
-      const open = descriptors() - before;
-      graph.dispose();
-      // (One with a read or write on the thread pool is closed when that comes back.)
-      while (descriptors() > before) await new Promise(resolve => setImmediate(resolve));
-      console.log(JSON.stringify({ open, leftOpen: descriptors() - before }));
-    `,
-    "forgotten-file-handles.mjs": `
-      import fs from "node:fs";
-      const descriptors = () => fs.readdirSync(process.platform === "linux" ? "/proc/self/fd" : "/dev/fd").length;
-      const heard = { host: [], graph: [] };
-      process.on("uncaughtException", error => heard.host.push(error.code));
-      const graph = new Bun.ModuleGraph({ onError: error => heard.graph.push(error.code) });
-      const app = await graph.import(import.meta.dir + "/left-behind-tenant.mjs");
-      const before = descriptors();
-      await graph.run(() => app.forgetsFileHandles(import.meta.path, 8));
-      const open = descriptors() - before;
-      if (process.argv[2] === "disposed") graph.dispose();
-      const leftOpenByDispose = descriptors() - before;
-      // The host forgets one as well: node:fs reporting it says the collection that took the graph's has run.
-      await (async () => void (await fs.promises.open(import.meta.path, "r")))();
-      const expected = process.argv[2] === "disposed" ? 0 : 8;
-      while (heard.host.length < 1 || heard.graph.length < expected) {
-        Bun.gc(true);
-        await new Promise(resolve => setImmediate(resolve));
-      }
-      for (let i = 0; i < 4; i++) await new Promise(resolve => setImmediate(resolve));
-      console.log(JSON.stringify({ open, leftOpenByDispose, leftOpen: descriptors() - before, ...heard }));
-    `,
-    "file-handle-the-host-holds.mjs": `
-      import fs from "node:fs";
-      const graph = new Bun.ModuleGraph();
-      const app = await graph.import(import.meta.dir + "/left-behind-tenant.mjs");
-      const { handle, stream } = await graph.run(() => app.fileHandleAndStream(import.meta.path));
-      graph.dispose();
-      // The numbers are given to the next files opened: what the graph's objects do now must not reach them.
-      const mine = [fs.openSync(import.meta.path, "r"), fs.openSync(import.meta.path, "r")];
-      const read = await handle.read(Buffer.alloc(1), 0, 1, 0).then(() => "read", error => error.code);
-      const streamed = await new Promise(resolve => {
-        let saw = "nothing";
-        stream.on("error", error => { saw = error.code; });
-        stream.on("data", () => { saw = "data"; stream.destroy(); });
-        stream.on("close", () => resolve(saw));
-      });
-      await handle.close();
-      const stillMine = mine.map(fd => { try { return fs.readSync(fd, Buffer.alloc(1), 0, 1, 0); } catch (error) { return error.code; } });
-      console.log(JSON.stringify({ fd: handle.fd, read, streamed, stillMine }));
     `,
     "subtle-after-a-disposed-graph.mjs": `
       const graph = new Bun.ModuleGraph();
@@ -3574,10 +3480,6 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
     });
     expect(control.exitCode).toBe(0);
   });
-  // (Counts the process's descriptors through /proc/self/fd or /dev/fd.)
-  test.skipIf(isWindows)("the files its fs.promises.open() calls in flight opened are closed", async () => {
-    expect(await runsFixture("files-of-a-disposed-graph.mjs")).toEqual({ stdout: `{"leftOpen":0}`, exitCode: 0 });
-  });
   test.skipIf(isWindows)("the stdio pipes of the children node:child_process spawned for it are closed", async () => {
     expect(await runsFixture("pipes-of-a-disposed-graph.mjs")).toEqual({
       stdout: `{"opened":true,"leftOpen":0}`,
@@ -3600,24 +3502,6 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
   });
   test("an HTMLRewriter rewrite it had under way is given up without a word when the process winds down", async () => {
     expect(await runsFixture("rewrite-given-up-at-exit.mjs")).toEqual({ stdout: `{"said":[]}`, exitCode: 0 });
-  });
-  test("writes it had queued on the thread pool never reach the files that are given its descriptors next", async () => {
-    expect(await runsFixture("queued-writes-of-a-disposed-graph.mjs")).toEqual({
-      stdout: `{"hostFilesWrittenTo":0}`,
-      exitCode: 0,
-    });
-  });
-  test("nor do writes the host had queued through FileHandles the graph opened", async () => {
-    expect(await runsFixture("queued-writes-of-a-disposed-graph.mjs", "host")).toEqual({
-      stdout: `{"hostFilesWrittenTo":0}`,
-      exitCode: 0,
-    });
-  });
-  test("nor do Bun.write()s the host had queued to those descriptors by number", async () => {
-    expect(await runsFixture("queued-writes-of-a-disposed-graph.mjs", "host, through Bun.file(fd)")).toEqual({
-      stdout: `{"hostFilesWrittenTo":0}`,
-      exitCode: 0,
-    });
   });
   test("the host's import() of a module parked in a top-level await is left pending: dispose() settles nothing", async () => {
     expect(await runsFixture("host-import-parked-at-dispose.mjs")).toEqual({
@@ -3797,24 +3681,6 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
       exitCode: 0,
     });
   });
-  test("streams over its FileHandles that the host still holds do not touch whoever has the numbers now", async () => {
-    expect(await runsFixture("host-holds-streams-over-file-handles.mjs")).toEqual({
-      stdout: `{"sameNumbers":true,"read":"EBADF","wrote":"EBADF","hosts":"the host's"}`,
-      exitCode: 0,
-    });
-  });
-  test("its own leftover script is told nothing of them, and the host can still destroy them", async () => {
-    expect(await runsFixture("its-own-streams-after-it-was-disposed.mjs")).toEqual({
-      stdout: `{"told":{},"closed":true}`,
-      exitCode: 0,
-    });
-  });
-  test("a descriptor its script closed by number is not closed again under whoever has the number now", async () => {
-    expect(await runsFixture("closes-a-descriptor-by-number.mjs")).toEqual({
-      stdout: `{"sameNumber":true,"read":4}`,
-      exitCode: 0,
-    });
-  });
   test("a CommonJS module that had not run yet when dispose() was called never does", async () => {
     expect(await runsFixture("disposed-before-its-commonjs-ran.mjs")).toEqual({
       stdout: `{"imported":"ERR_INVALID_STATE","told":[]}`,
@@ -3842,49 +3708,42 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
       exitCode: 0,
     });
   });
-  test("the files it held open are closed: a writer, bun:sqlite and node:sqlite databases, a FileHandle, a stream", async () => {
+  // A descriptor script holds (in a FileHandle, in a node:fs stream) is its script's to manage: dispose() does not
+  // close it. A tenant closes what it opened when the host asks it to, and is disposed of after.
+  test.skipIf(isWindows)(
+    "FileHandles and node:fs streams it closed before it was disposed leave nothing open",
+    async () => {
+      expect(await runsFixture("closes-its-files-before-it-is-disposed.mjs")).toEqual({
+        stdout: `{"open":26,"leftOpen":0,"theHostsReferences":[true,true]}`,
+        exitCode: 0,
+      });
+    },
+  );
+  // An in-process Bun.cron() job re-arms itself after every tick and keeps the loop alive, like a setInterval().
+  test("a Bun.cron() job it scheduled is stopped: the process ends by itself", async () => {
+    expect(await runsFixture("cron-job-of-a-disposed-graph.mjs")).toEqual({
+      stdout: `{"stopReturnsTheJob":true}`,
+      exitCode: 0,
+    });
+  });
+  // The primary's side of node:cluster runs from the worker's messages: they are the forking graph's callbacks.
+  test.skipIf(isWindows)(
+    "node:cluster: what a worker it forked tells the primary is heard as the graph, and nothing of it is left",
+    async () => {
+      expect(await runsFixture("cluster-of-a-disposed-graph.mjs")).toEqual({
+        stdout: `{"heard":{"online":"the graph","listening":"the graph"},"answered":"the worker","afterwards":"ECONNREFUSED"}`,
+        exitCode: 0,
+      });
+    },
+  );
+  // (What holds a descriptor inside a native object of its own. One script holds as a number, in a FileHandle or a
+  // node:fs stream, is the script's to close: a graph cannot know every number its script has.)
+  test("the files it held open are closed: a writer, bun:sqlite and node:sqlite databases", async () => {
     expect(await runsFixture("open-files-of-a-disposed-graph.mjs")).toEqual({
       stdout: JSON.stringify({
-        open: 5,
+        open: 3,
         hostUses: ["Database has closed", "Database has closed", "database is not open"],
       }),
-      exitCode: 0,
-    });
-  });
-  // (A disposed graph is told nothing, so its streams never get to close what they opened.)
-  test.skipIf(isWindows)("the files its node:fs streams had open are closed", async () => {
-    expect(await runsFixture("streams-of-a-disposed-graph.mjs")).toEqual({
-      stdout: `{"open":32,"leftOpen":0}`,
-      exitCode: 0,
-    });
-  });
-  test.skipIf(isWindows)(
-    "a FileHandle it forgot is closed by dispose(), and node:fs reports it to nobody",
-    async () => {
-      expect(await runsFixture("forgotten-file-handles.mjs", "disposed")).toEqual({
-        stdout: `{"open":8,"leftOpenByDispose":0,"leftOpen":0,"host":["ERR_INVALID_STATE"],"graph":[]}`,
-        exitCode: 0,
-      });
-    },
-  );
-  test.skipIf(isWindows)(
-    "a FileHandle a live graph forgot is reported to that graph's onError, not to the host",
-    async () => {
-      expect(await runsFixture("forgotten-file-handles.mjs", "live")).toEqual({
-        stdout: JSON.stringify({
-          open: 8,
-          leftOpenByDispose: 8,
-          leftOpen: 0,
-          host: ["ERR_INVALID_STATE"],
-          graph: Array(8).fill("ERR_INVALID_STATE"),
-        }),
-        exitCode: 0,
-      });
-    },
-  );
-  test("a FileHandle and a stream of a disposed graph that the host still holds are closed, and never touch the descriptor's next owner", async () => {
-    expect(await runsFixture("file-handle-the-host-holds.mjs")).toEqual({
-      stdout: `{"fd":-1,"read":"EBADF","streamed":"EBADF","stillMine":[1,1]}`,
       exitCode: 0,
     });
   });

@@ -178,6 +178,59 @@ describe("HTTP/3 header encoding", () => {
     expect(seen.length).toBe(1);
     expect(Object.keys(seen[0])).not.toContain("authorization");
   });
+
+  // The joined name/value buffer is about 70 KB. lsxpack offsets are 16-bit,
+  // so each header has to address its own slice of that buffer, and lsquic
+  // has to encode a header block larger than its 64 KB stack buffer.
+  test("sends a response whose header block is larger than 64 KB", async () => {
+    const n = 100;
+    const value = Buffer.alloc(700, "~").toString();
+    const big: Record<string, string> = { ":status": "200" };
+    for (let i = 0; i < n; i++) big["x-big-" + i] = value;
+    const application = { maxHeaderLength: 1 << 20, maxHeaderPairs: 1000 };
+
+    await using server = await listen(
+      async serverSession => {
+        serverSession.onstream = (stream: any) => {
+          stream.closed.catch(() => {});
+        };
+        await serverSession.closed.catch(() => {});
+      },
+      {
+        sni: { "*": { keys: [key], certs: [cert] } },
+        transportParams: { maxIdleTimeout: 1 },
+        application,
+        onheaders(this: any) {
+          this.sendHeaders(big, { terminal: true });
+        },
+      },
+    );
+
+    // The header limits are baked into the client engine when its endpoint is
+    // created, so a reused endpoint from an earlier test keeps the defaults.
+    const client = await connect(server.address, {
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 1 },
+      application,
+      reuseEndpoint: false,
+    });
+    await client.opened;
+
+    const got = Promise.withResolvers<Record<string, string>>();
+    await client.createBidirectionalStream({
+      headers: { ":method": "GET", ":path": "/", ":scheme": "https", ":authority": "localhost" },
+      onheaders(headers: Record<string, string>) {
+        got.resolve(headers);
+      },
+    });
+
+    const headers = await got.promise;
+    expect(headers[":status"]).toBe("200");
+    const values = Array.from({ length: n }, (_, i) => headers["x-big-" + i]);
+    expect(values).toEqual(Array(n).fill(value));
+    client.close();
+  });
 });
 
 // lsquic decodes a header block that follows another one while the stream is

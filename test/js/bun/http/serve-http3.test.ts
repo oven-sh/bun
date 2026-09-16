@@ -565,8 +565,9 @@ describe("Bun.serve HTTP/3 adversarial", () => {
       const size = 700;
       const res = await fetchH3(port, `/big-headers?n=${n}&size=${size}`);
       expect(res.status).toBe(200);
-      const lengths = Array.from({ length: n }, (_, i) => res.headers.get(`x-big-${i}`)?.length);
-      expect(lengths).toEqual(Array(n).fill(size));
+      const value = Buffer.alloc(size, "~").toString();
+      const values = Array.from({ length: n }, (_, i) => res.headers.get(`x-big-${i}`));
+      expect(values).toEqual(Array(n).fill(value));
       expect(await res.text()).toBe("ok");
     });
   });

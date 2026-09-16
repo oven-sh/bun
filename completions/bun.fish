@@ -71,7 +71,11 @@ function __history_completions
 end
 
 function __fish__get_bun_bun_js_files
-	string split ' ' (bun getcompletes j)
+    set -l target_cwd (__fish__bun_extract_cwd)
+    if test -d "$target_cwd"
+        builtin cd "$target_cwd"
+        string split ' ' (bun getcompletes j 2>/dev/null)
+    end
 end
 
 set -l bun_install_boolean_flags yarn production optional development no-save dry-run force no-cache silent verbose global

@@ -20,15 +20,15 @@ _filter_literal_reply() {
 _filter_words_reply() {
     local raw_words="${1}"
     local item
-    local reset
-    reset=$(shopt -p -u -s noglob 2>/dev/null)
+    local noglob_was_set=0
+    [[ "$-" == *f* ]] && noglob_was_set=1
     set -f
     for item in ${raw_words}; do
         if [[ -n "${item}" && "${item}" == "${cur_word}"* ]]; then
             COMPREPLY+=( "${item}" )
         fi
     done
-    eval "${reset}"
+    (( noglob_was_set )) || set +f
 }
 
 _compgen_file_reply() {
@@ -129,9 +129,12 @@ _bun_completions_inner() {
     local PM_OPTIONS_SHORT="-c -y -p -f -g"
 
     local cur_word="${COMP_WORDS[${COMP_CWORD}]}"
-    local prev="${COMP_WORDS[$(( COMP_CWORD - 1 ))]}"
+    local prev=""
+    if (( COMP_CWORD > 0 )); then
+        prev="${COMP_WORDS[$(( COMP_CWORD - 1 ))]}"
+    fi
 
-    if [[ "${prev}" == "=" && "${COMP_WORDS[$(( COMP_CWORD - 2 ))]}" == "--cwd" ]]; then
+    if [[ "${prev}" == "=" ]] && (( COMP_CWORD >= 2 )) && [[ "${COMP_WORDS[$(( COMP_CWORD - 2 ))]}" == "--cwd" ]]; then
         _compgen_reply -d -S / -- "${cur_word}"
         return
     fi
@@ -354,9 +357,17 @@ _bunx_completions() {
     fi
 
     local cur_word="${COMP_WORDS[${COMP_CWORD}]}"
-    local prev="${COMP_WORDS[$(( COMP_CWORD - 1 ))]}"
+    local prev=""
+    if (( COMP_CWORD > 0 )); then
+        prev="${COMP_WORDS[$(( COMP_CWORD - 1 ))]}"
+    fi
 
-    if [[ "${prev}" == "=" && "${COMP_WORDS[$(( COMP_CWORD - 2 ))]}" == "--cwd" ]] || [[ "${prev}" == "--cwd" ]]; then
+    local prev_prev=""
+    if (( COMP_CWORD >= 2 )); then
+        prev_prev="${COMP_WORDS[$(( COMP_CWORD - 2 ))]}"
+    fi
+
+    if [[ "${prev}" == "=" && "${prev_prev}" == "--cwd" ]] || [[ "${prev}" == "--cwd" ]]; then
         _compgen_reply -d -S / -- "${cur_word}"
     elif [[ "${cur_word}" == -* ]]; then
         _compgen_reply -W "--bun --install --help -h" -- "${cur_word}"

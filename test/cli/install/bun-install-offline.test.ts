@@ -289,6 +289,23 @@ it('install.prefer = "offline" and install.offline = true in bunfig.toml behave 
   expect(urls.length).toBe(before);
 });
 
+it('install.offline = "true" in bunfig.toml is an error, not an online install', async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls, { "0.0.3": {} }));
+  const dir = mkdtemp();
+  await writeFile(
+    join(dir, "bunfig.toml"),
+    Bun.TOML.stringify({
+      install: { cache: { dir: cache_dir }, registry: root_url + "/", offline: "true", linker: "hoisted" },
+    }),
+  );
+  await writeFile(join(dir, "package.json"), JSON.stringify({ name: "app", dependencies: { baz: "0.0.3" } }));
+  const r = await install(dir, []);
+  expect(r.err).toContain("error: expected boolean but received string");
+  expect(urls).toEqual([]);
+  expect(r.code).toBe(1);
+});
+
 const gitEnv = {
   ...installEnv,
   GIT_CONFIG_NOSYSTEM: "1",

@@ -327,8 +327,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         if p.wraps_exports_as_client_references() && !data.items.is_empty() {
-            // `export { a as b } from "./x"` has no local binding to wrap, so it becomes
-            // `import { a } from "./x"; export { b_ref as b }`
+            // `export { a as b } from "./x"` -> `import { a } from "./x"; export { b_ref as b }`
             let items = data.items.slice_mut();
             let mut import_items =
                 BumpVec::<js_ast::ClauseItem>::with_capacity_in(items.len(), p.arena);
@@ -1127,8 +1126,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             data.is_export = false;
         }
 
-        // The export becomes a client reference to the class, which stays a plain
-        // declaration so lowered static members and decorators still target it.
+        // The class stays a plain declaration: lowered static members target it.
         let wrap_export_as_client_reference =
             data.is_export && !mark_as_dead && p.wraps_exports_as_client_references();
         if wrap_export_as_client_reference {

@@ -487,8 +487,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// only applicable when `.options.features.server_components` is
     /// configured to wrap exports. populated before visit pass starts.
     pub(crate) server_components_wrap_ref: Ref,
-    /// Exports that `export_client_reference` rewrote. Their declarations are
-    /// emitted after the visit pass by `append_client_reference_exports`.
+    /// Filled by `export_client_reference`, drained by `append_client_reference_exports`.
     pub(crate) client_reference_exports: Vec<ClientReferenceExport<'a>>,
 
     pub(crate) jest: Jest,
@@ -8673,12 +8672,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             == options::ServerComponents::WrapExportsForClientReference
     }
 
-    /// An export whose value is not its own declaration (`export { a as b }`,
-    /// `export class A {}`, `export { a } from "./x"`). Returns the symbol the
-    /// caller exports under `alias` instead of `value`. Its declaration,
-    /// `var <alias>_ref = registerClientReference(value, path, alias)`, goes in
-    /// a part after every module statement (`append_client_reference_exports`),
-    /// so an export clause above the declaration it names still works.
+    /// The symbol to export under `alias` instead of `value`. Its declaration
+    /// comes after every module statement (`append_client_reference_exports`),
+    /// because `value` may be a class or const declared below the export clause.
     pub(crate) fn export_client_reference(
         &mut self,
         value: Ref,

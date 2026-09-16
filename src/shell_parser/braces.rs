@@ -484,7 +484,7 @@ pub mod ast {
 
     impl<T> OwnedSlice<T> {
         pub(crate) fn new(items: Vec<T>) -> Self {
-            OwnedSlice(Box::into_raw(items.into_boxed_slice()))
+            OwnedSlice(bun_core::heap::into_raw(items.into_boxed_slice()))
         }
 
         pub(crate) fn as_ptr(&self) -> *mut [T] {
@@ -494,9 +494,9 @@ pub mod ast {
 
     impl<T> Drop for OwnedSlice<T> {
         fn drop(&mut self) {
-            // SAFETY: `self.0` came from `Box::into_raw` in `new` and is freed
+            // SAFETY: `self.0` came from `heap::into_raw` in `new` and is freed
             // only here.
-            drop(unsafe { Box::from_raw(self.0) });
+            unsafe { bun_core::heap::destroy(self.0) };
         }
     }
 }

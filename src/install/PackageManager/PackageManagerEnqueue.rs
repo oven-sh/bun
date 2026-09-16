@@ -1349,8 +1349,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 return Ok(());
             }
 
-            // `git` runs as a child process on this thread's event loop. The
-            // dependency stays unresolved: the resolver reports it as not found.
+            // A git child needs this thread's event loop: leave the dependency unresolved.
             if this.waits_without_event_loop() {
                 return Ok(());
             }

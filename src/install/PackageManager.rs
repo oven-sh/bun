@@ -377,8 +377,7 @@ pub struct PackageManager {
     pub pending_tasks: AtomicU32,
     /// Bumped by every `wake_raw`. `park_until` waits on it.
     pub(crate) wake_count: AtomicU32,
-    /// Threads parked on `wake_count`. Lets `wake_raw` skip the futex syscall
-    /// when there is none, which is every `bun install` task.
+    /// Threads parked on `wake_count`. At zero, `wake_raw` skips the futex syscall.
     pub(crate) wake_waiters: AtomicU32,
     pub total_tasks: u32,
     pub(crate) preallocated_network_tasks: PreallocatedNetworkTasks,
@@ -951,9 +950,7 @@ impl PackageManager {
             }
             (*core::ptr::addr_of_mut!((*this).event_loop)).wakeup();
 
-            // SeqCst pairs with `park_until`: it registers as a waiter before it
-            // reads the count, this bumps the count before it reads the waiters,
-            // so one of the two sees the other and no wake is lost.
+            // SeqCst: each side writes its word, then reads the other's (see `park_until`).
             let wake_count = &*core::ptr::addr_of!((*this).wake_count);
             wake_count.fetch_add(1, Ordering::SeqCst);
             if (*core::ptr::addr_of!((*this).wake_waiters)).load(Ordering::SeqCst) > 0 {
@@ -962,22 +959,12 @@ impl PackageManager {
         }
     }
 
-    /// True for the resolver's auto-install manager (`init_with_runtime`). It
-    /// lives on a JS thread, and `sleep_until` parks that thread: nothing that
-    /// needs the thread's event loop to finish may be pending there.
+    /// The resolver's auto-install manager. Nothing pending on it may need the event loop.
     pub(crate) fn waits_without_event_loop(&self) -> bool {
         matches!(self.event_loop, AnyEventLoop::Js { .. })
     }
 
-    /// `sleep_until` for the manager that lives on a JS thread. The caller is
-    /// inside `require()`, `import()` or a resolve call, so the wait must not
-    /// run the JS event loop: a timer, an immediate or another socket's
-    /// callback would run inside that call. It blocks the thread instead.
-    /// Every task this manager starts finishes on the HTTP thread or on the
-    /// thread pool and ends in `wake_raw`, which is all `is_done_fn` needs.
-    ///
-    /// # Safety
-    /// Same contract as `sleep_until`.
+    /// `sleep_until` for a JS thread: blocks the thread, never runs its event loop.
     unsafe fn park_until<C>(
         this: *mut PackageManager,
         closure: &mut C,
@@ -991,8 +978,7 @@ impl PackageManager {
 
         wake_waiters().fetch_add(1, Ordering::SeqCst);
         loop {
-            // Read before `is_done_fn` drains the queues: a task that finishes
-            // after the drain bumps the count, and the wait below returns at once.
+            // Read before the drain in `is_done_fn`: a later finish then ends the wait at once.
             let seen = wake_count().load(Ordering::SeqCst);
             if is_done_fn(closure) {
                 break;

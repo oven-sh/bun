@@ -1,6 +1,6 @@
 import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isLinux, isMacOS, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isLinux, isMacOS, linuxPageSize, tempDir } from "harness";
 
 describe("heapStats() mimalloc integration", () => {
   test("mimalloc aggregate stats are present", () => {
@@ -291,6 +291,62 @@ describe("heapStats() mimalloc integration", () => {
       // The two 256 KiB buffers of a request are 128 pages of 4 KiB: about a hundred faults for every request when the
       // sweeps in between give the buffers back, one or two when they leave them.
       expect(perRequest).toBeLessThan(20);
+    },
+  );
+
+  // What the sweeps leave is not for a collect that is not forced to take. JavaScriptCore does one on the JS thread at
+  // the end of every full collection (`mi_theap_collect(theap, false)`), the allocator does one every 10000 slow-path
+  // allocations, and `Bun.gc(false)` does one: each freed the 4 MiB page that the sweep before it had just decided to
+  // keep whenever no buffer in the page was in use, and the next burst took all of its buffers out of new memory.
+  // 512 KiB buffers: nothing in the process keeps a block of that size, so their page has no block in use between bursts.
+  // Linux only: reads the faults of the process from /proc, and counts them in pages of 4 KiB. Not ASAN: malloc is not
+  // mimalloc there.
+  test.skipIf(!isLinux || isASAN || linuxPageSize() !== 4096)(
+    "a collect that is not forced leaves the large page that the idle sweep kept",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          const { readFileSync } = require("node:fs");
+          const faults = () => {
+            const stat = readFileSync("/proc/self/stat", "utf8");
+            const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+            return Number(fields[7]) + Number(fields[9]);
+          };
+          const burst = () => {
+            const buffers = [];
+            for (let i = 0; i < 4; i++) buffers.push(new Uint8Array(512 * 1024).fill(1));
+            for (const buffer of buffers) buffer.buffer.transfer(0); // frees it now: no collector in this
+          };
+          for (let i = 0; i < 3; i++) { burst(); await Bun.sleep(30); }
+          const perBurst = [];
+          for (let i = 0; i < 12; i++) {
+            const before = faults();
+            burst();
+            perBurst.push(faults() - before);
+            // The pauses are the input of this test and not a wait for something: the thread goes idle and is swept,
+            // wakes for a collect that is not forced, and goes idle again.
+            await Bun.sleep(60);
+            Bun.gc(false);
+            await Bun.sleep(40);
+          }
+          console.log(JSON.stringify(perBurst));
+          `,
+        ],
+        // An epoch of the sweep lasts 10 ms here instead of 100: the sweeps have decided about the page 60 ms after a burst.
+        env: { ...bunEnv, MIMALLOC_PURGE_HOLES_MIN_INTERVAL: "10" },
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      const perBurst: number[] = JSON.parse(stdout);
+      expect(perBurst).toHaveLength(12);
+      // The four buffers of a burst are 512 pages of 4 KiB. A burst that finds its page gone faults all of them in
+      // (every burst but the first did); one that finds it there faults a few pages of other things.
+      expect(perBurst.filter(n => n > 256)).toEqual([]);
+      expect(exitCode).toBe(0);
     },
   );
 });

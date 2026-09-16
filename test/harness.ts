@@ -1717,6 +1717,19 @@ export function isGlibcVersionAtLeast(version: string): boolean {
   return Bun.semver.satisfies(glibcVersion, `>=${version}`);
 }
 
+/** The size of a page of memory of this process in bytes, from the auxiliary vector (Linux; 0 elsewhere). */
+export function linuxPageSize(): number {
+  if (!isLinux) return 0;
+  const AT_PAGESZ = 6n;
+  try {
+    const auxv = fs.readFileSync("/proc/self/auxv");
+    for (let i = 0; i + 16 <= auxv.length; i += 16) {
+      if (auxv.readBigUInt64LE(i) === AT_PAGESZ) return Number(auxv.readBigUInt64LE(i + 8));
+    }
+  } catch {}
+  return 0;
+}
+
 let macOSVersion: string | undefined;
 
 export function getMacOSVersion(): string | undefined {

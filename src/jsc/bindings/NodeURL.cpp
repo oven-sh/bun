@@ -37,9 +37,8 @@ enum class IDNAMode : uint8_t {
     Lenient,
 };
 
-// Runs a uidna_nameTo* or uidna_labelTo* conversion with the
-// U_BUFFER_OVERFLOW_ERROR retry protocol and appends the output to `output`;
-// on completion `status`/`info` hold the final results.
+// Runs a uidna_*To* conversion with the U_BUFFER_OVERFLOW_ERROR retry
+// protocol and appends the output to `output`.
 using UIDNAFunction = int32_t (*)(const UIDNA*, const char16_t*, int32_t, char16_t*, int32_t, UIDNAInfo*, UErrorCode*);
 
 static void runUIDNA(UIDNAFunction convert, const UIDNA* idna, std::span<const char16_t> span, StringBuilder& output, UErrorCode& status, UIDNAInfo& info)
@@ -110,11 +109,8 @@ static String icuToUnicode(const String& input)
     return runUIDNA(uidna_nameToUnicode, toUnicodeIDNA(), input, status, info);
 }
 
-// ToUnicode for a host that already passed the WHATWG host parse, so it is
-// lowercase ASCII and only its xn-- labels change. uidna_nameToUnicode
-// decodes each label in place and moves the rest of the name every time,
-// which is quadratic in the number of xn-- labels. Converting one label at a
-// time with uidna_labelToUnicode gives the same output in linear time.
+// ToUnicode of a parsed (lowercase ASCII) host, one xn-- label at a time:
+// uidna_nameToUnicode moves the rest of the name for each decoded label.
 static String icuParsedHostToUnicode(const String& host)
 {
     if (!host.contains("xn--"_s))

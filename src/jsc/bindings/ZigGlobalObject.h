@@ -356,6 +356,8 @@ public:
     enum class PromiseFunctions : uint8_t {
         BunServe__Plugins__onResolve,
         BunServe__Plugins__onReject,
+        Bake__DevServer__onPluginSetupResolve,
+        Bake__DevServer__onPluginSetupReject,
         Bun__HTTPRequestContext__onReject,
         Bun__HTTPRequestContext__onRejectStream,
         Bun__HTTPRequestContext__onResolve,

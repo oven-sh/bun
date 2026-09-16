@@ -178,13 +178,97 @@ pub enum PluginState {
     /// Should ask server for plugins. Once plugins are loaded, the plugin
     /// pointer is written into `server_transpiler.options.plugin`
     Unknown,
-    // These two states mean that `server.getOrLoadPlugins()` was called.
+    // These two states mean that `server.getOrLoadPlugins()` was called, or
+    // that `app.plugins` had a `setup()` promise to wait for (`PluginSetupWaiter`).
     Pending,
     Loaded,
     /// Currently, this represents a degraded state where no bundle can
     /// be correctly executed because the plugins did not load successfully.
     Err,
 }
+
+/// The `setup()` calls of `app.plugins` that the DevServer waits for, and the
+/// context of the reaction on the `setup()` promise that is still pending. The
+/// reaction cannot be removed, and the DevServer can drop first. So each
+/// reaction holds a ref on this instead of a pointer to the DevServer.
+#[derive(bun_ptr::CellRefCounted)]
+pub(crate) struct PluginSetupWaiter {
+    ref_count: ::core::cell::Cell<u32>,
+    /// `None` after the DevServer dropped.
+    dev: ::core::cell::Cell<Option<::core::ptr::NonNull<DevServer>>>,
+    /// `None` while a reaction runs, and after the DevServer dropped.
+    pending: ::core::cell::Cell<Option<bake::bake_body::PendingPluginSetup>>,
+}
+
+impl PluginSetupWaiter {
+    fn wait_for(this: &bun_ptr::RefPtr<Self>, global: &JSGlobalObject, promise: JSValue) {
+        promise.then(
+            global,
+            // The reaction's ref, adopted by `on_settled`.
+            this.clone().into_raw(),
+            on_plugin_setup_resolve_shim,
+            on_plugin_setup_reject_shim,
+        );
+    }
+
+    /// `rejection` is the reason, when the promise rejected.
+    fn on_settled(context: JSValue, global: &JSGlobalObject, rejection: Option<JSValue>) {
+        // SAFETY: `wait_for` took this ref for the reaction that runs now.
+        let waiter = unsafe { bun_ptr::RefPtr::from_raw(context.as_promise_ptr::<Self>()) };
+        let Some(mut pending) = waiter.pending.take() else {
+            return;
+        };
+
+        let result = match rejection {
+            Some(reason) => Err(reason),
+            // `setup()` is user code. It can stop the server, which drops the DevServer.
+            None => pending
+                .advance(global)
+                .map_err(|err| global.take_exception(err)),
+        };
+
+        let Some(dev) = waiter.dev.get() else { return };
+        // SAFETY: `DevServer::drop` clears `dev`, so the DevServer is alive. This
+        // runs on the JS thread, from a promise job, so no other reference to it is live.
+        let dev = unsafe { &mut *dev.as_ptr() };
+        match result {
+            Ok(false) => {
+                let promise = pending.promise();
+                waiter.pending.set(Some(pending));
+                Self::wait_for(&waiter, global, promise);
+            }
+            Ok(true) => dev.on_plugins_loaded(),
+            Err(err) => {
+                // This can drop the DevServer, when the server was stopped before.
+                bun_core::handle_oom(dev.on_plugins_rejected());
+                Output::err_generic("Failed to load plugins for Bun.serve:", ());
+                global.bun_vm().as_mut().run_error_handler(err, None);
+            }
+        }
+    }
+}
+
+fn on_plugin_setup_resolve(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    let [_, waiter] = callframe.arguments_as_array::<2>();
+    PluginSetupWaiter::on_settled(waiter, global, None);
+    Ok(JSValue::UNDEFINED)
+}
+
+fn on_plugin_setup_reject(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    let [reason, waiter] = callframe.arguments_as_array::<2>();
+    PluginSetupWaiter::on_settled(waiter, global, Some(reason));
+    Ok(JSValue::UNDEFINED)
+}
+
+// Function symbols, because `Zig::GlobalObject::promiseHandlerID` compares addresses.
+bun_jsc::jsc_promise_handler!(
+    pub(crate) fn on_plugin_setup_resolve_shim = "Bake__DevServer__onPluginSetupResolve"
+        => on_plugin_setup_resolve
+);
+bun_jsc::jsc_promise_handler!(
+    pub(crate) fn on_plugin_setup_reject_shim = "Bake__DevServer__onPluginSetupReject"
+        => on_plugin_setup_reject
+);
 
 pub enum TestingBatchEvents {
     Disabled,
@@ -382,6 +466,7 @@ pub struct DevServer {
     /// messages with the IncrementalGraph file or Route using `SerializedFailure`
     pub(crate) log: Log,
     pub(crate) plugin_state: PluginState,
+    pub(crate) plugin_setup_waiter: Option<bun_ptr::RefPtr<PluginSetupWaiter>>,
     /// See `CurrentBundle` doc comment.
     pub(crate) current_bundle: Option<CurrentBundle>,
     /// When `current_bundle` is non-null and new requests to bundle come in,
@@ -552,6 +637,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         );
         w!(source_maps, SourceMapStore::empty());
         w!(plugin_state, PluginState::Unknown);
+        w!(plugin_setup_waiter, None);
         w!(bundling_failures, Default::default());
         w!(
             assume_perfect_incremental_bundling,
@@ -982,6 +1068,18 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     // after that line.
     dev.scan_initial_routes()?;
 
+    if let Some(pending) = dev.bundler_options.pending_plugin_setup.take() {
+        let promise = pending.promise();
+        let waiter = bun_ptr::RefPtr::new(PluginSetupWaiter {
+            ref_count: ::core::cell::Cell::new(1),
+            dev: ::core::cell::Cell::new(::core::ptr::NonNull::new(dev_ptr)),
+            pending: ::core::cell::Cell::new(Some(pending)),
+        });
+        PluginSetupWaiter::wait_for(&waiter, global, promise);
+        dev.plugin_setup_waiter = Some(waiter);
+        dev.plugin_state = PluginState::Pending;
+    }
+
     debug_assert!(dev.magic == Magic::Valid);
 
     Ok(dev)
@@ -1038,6 +1136,7 @@ impl Drop for DevServer {
                 ssr_transpiler: _,
                 log: _,
                 plugin_state: _,
+                plugin_setup_waiter: _,
                 current_bundle: _,
                 next_bundle: _,
                 deferred_request_pool: _,
@@ -1048,6 +1147,11 @@ impl Drop for DevServer {
                 assume_perfect_incremental_bundling: _,
                 broadcast_console_log_from_browser_to_server: _,
             } = &*self;
+        }
+
+        if let Some(waiter) = &self.plugin_setup_waiter {
+            waiter.dev.set(None);
+            drop(waiter.pending.take());
         }
 
         // WebSockets should be deinitialized before other parts.
@@ -6213,9 +6317,14 @@ impl DevServer {
         plugins: Option<*mut crate::api::js_bundler::Plugin>,
     ) -> crate::Result<()> {
         self.bundler_options.plugin = plugins.and_then(::core::ptr::NonNull::new);
+        self.on_plugins_loaded();
+        Ok(())
+    }
+
+    /// `bundler_options.plugin` is final. Starts the bundle that waited for it.
+    fn on_plugins_loaded(&mut self) {
         self.plugin_state = PluginState::Loaded;
         self.start_next_bundle_if_present();
-        Ok(())
     }
 
     pub(crate) fn on_plugins_rejected(&mut self) -> crate::Result<()> {

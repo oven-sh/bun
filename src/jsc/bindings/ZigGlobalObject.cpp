@@ -4361,6 +4361,10 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction h
         return GlobalObject::PromiseFunctions::BunServe__Plugins__onResolve;
     } else if (handler == BunServe__onRejectPlugins) {
         return GlobalObject::PromiseFunctions::BunServe__Plugins__onReject;
+    } else if (handler == Bake__DevServer__onPluginSetupResolve) {
+        return GlobalObject::PromiseFunctions::Bake__DevServer__onPluginSetupResolve;
+    } else if (handler == Bake__DevServer__onPluginSetupReject) {
+        return GlobalObject::PromiseFunctions::Bake__DevServer__onPluginSetupReject;
     } else if (handler == Bun__HTTPRequestContext__onReject) {
         return GlobalObject::PromiseFunctions::Bun__HTTPRequestContext__onReject;
     } else if (handler == Bun__HTTPRequestContext__onRejectStream) {

@@ -451,6 +451,9 @@ pub struct SplitBundlerOptions {
     /// FFI: `jsc.API.JSBundler.Plugin` (`JSBundlerPlugin__create`); deinit
     /// goes through the C++ side. See LIFETIMES.tsv.
     pub(crate) plugin: Option<NonNull<jsc::Plugin>>,
+    /// A `setup()` of `app.plugins` has not settled. `DevServer::init` moves
+    /// this into its `PluginSetupWaiter`.
+    pub(crate) pending_plugin_setup: Option<bake_body::PendingPluginSetup>,
     pub(crate) client: BuildConfigSubset,
     pub(crate) server: BuildConfigSubset,
     pub(crate) ssr: BuildConfigSubset,
@@ -546,6 +549,7 @@ impl From<bake_body::SplitBundlerOptions> for SplitBundlerOptions {
             // `bake_body::Plugin` and keystone `jsc::Plugin` both alias
             // `crate::api::js_bundler::Plugin` — same nominal type, no cast.
             plugin: src.plugin,
+            pending_plugin_setup: src.pending_plugin_setup,
             client: src.client.into(),
             server: src.server.into(),
             ssr: src.ssr.into(),

@@ -813,7 +813,7 @@ describe.concurrent("mimalloc heaps", () => {
         bunExe(),
         "-e",
         `
-          const { heapStats } = require("bun:jsc");
+          import { heapStats } from "bun:jsc";
           const seqs = () => heapStats({ dump: true }).mimallocDump.heaps.map(h => h.seq);
           // Heaps are numbered in creation order, and a live Bun.Transpiler owns one,
           // so a new Transpiler shows how many heaps the process has created so far.
@@ -847,15 +847,15 @@ describe.concurrent("mimalloc heaps", () => {
     async () => {
       using dir = tempDir("color-worker-heap", {
         "color-worker-heap-fixture.js": `
-        const { Worker, isMainThread } = require("node:worker_threads");
+        import { heapStats } from "bun:jsc";
+        import { Worker, isMainThread } from "node:worker_threads";
         if (!isMainThread) {
           for (const input of ["red", "#ff8800", "hsl(120, 50%, 50%)", "\\\\72 ed"]) Bun.color(input, "css");
         } else {
-          const { heapStats } = require("bun:jsc");
           const liveHeaps = () => heapStats({ dump: true }).mimallocDump.heaps.length;
           const runWorker = () =>
             new Promise((resolve, reject) => {
-              const worker = new Worker(__filename);
+              const worker = new Worker(import.meta.filename);
               worker.on("error", reject);
               worker.on("exit", code => (code === 0 ? resolve() : reject(new Error("worker exited with " + code))));
             });

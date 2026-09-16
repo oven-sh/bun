@@ -8700,6 +8700,71 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         reference
     }
 
+    /// The clause item `{ <name>_ref as <name> }` for a declared symbol.
+    pub(crate) fn client_reference_export_item(
+        &mut self,
+        value: Ref,
+        loc: bun_ast::Loc,
+    ) -> js_ast::ClauseItem {
+        let alias: &'a [u8] = self.symbols[value.inner_index() as usize]
+            .original_name
+            .slice();
+        let reference = self.export_client_reference(value, alias, loc);
+        js_ast::ClauseItem {
+            alias: js_ast::StoreStr::new(alias),
+            alias_loc: loc,
+            name: js_ast::LocRef {
+                loc,
+                ref_: reference,
+            },
+            original_name: self.symbols[reference.inner_index() as usize].original_name,
+        }
+    }
+
+    /// One clause item per identifier in an exported declaration's binding.
+    pub(crate) fn client_reference_export_items_for_binding(
+        &mut self,
+        items: &mut BumpVec<'a, js_ast::ClauseItem>,
+        binding: Binding,
+    ) {
+        match binding.data {
+            js_ast::b::B::BMissing(_) => {}
+            js_ast::b::B::BIdentifier(ident) => {
+                let ident = ident.get();
+                items.push(self.client_reference_export_item(ident.r#ref, binding.loc));
+            }
+            js_ast::b::B::BArray(array) => {
+                for prop in array.items.slice() {
+                    self.client_reference_export_items_for_binding(items, prop.binding);
+                }
+            }
+            js_ast::b::B::BObject(obj) => {
+                for prop in obj.properties.slice() {
+                    self.client_reference_export_items_for_binding(items, prop.value);
+                }
+            }
+        }
+    }
+
+    /// `export { <name>_ref as <name>, ... }` after the declaration the items name.
+    pub(crate) fn push_client_reference_export_clause(
+        &mut self,
+        stmts: &mut crate::parser::StmtList<'a>,
+        items: BumpVec<'a, js_ast::ClauseItem>,
+        loc: bun_ast::Loc,
+    ) {
+        if items.is_empty() {
+            return;
+        }
+        stmts.push(self.s(
+            S::ExportClause {
+                items: js_ast::StoreSlice::new_mut(items.into_bump_slice_mut()),
+                is_single_line: true,
+            },
+            loc,
+        ));
+    }
+
     /// The declarations that `export_client_reference` deferred, as one part.
     pub(crate) fn append_client_reference_exports(
         &mut self,
@@ -8713,13 +8778,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let exports = core::mem::take(&mut self.client_reference_exports);
         let mut stmts = BumpVec::<Stmt>::with_capacity_in(exports.len(), self.arena);
         for export in exports {
+            debug_assert!(
+                self.symbols[export.value.inner_index() as usize].kind
+                    != js_ast::symbol::Kind::Import
+            );
             self.record_usage(export.value);
-            let value = if self.is_import_item.contains_key(&export.value) {
-                self.note_import_use(export.value, IdentifierOpts::new());
-                self.new_expr(E::ImportIdentifier::new(export.value, true), export.loc)
-            } else {
-                Expr::init_identifier(export.value, export.loc)
-            };
+            let value = Expr::init_identifier(export.value, export.loc);
             let wrapped = self.wrap_value_for_server_component_reference(value, export.alias);
             self.record_declared_symbol(export.reference);
             let binding = self.b(

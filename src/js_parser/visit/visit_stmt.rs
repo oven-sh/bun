@@ -262,10 +262,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         if end > 0 && p.wraps_exports_as_client_references() {
-            // `export { a as b }` -> `export { b_ref as b }`
+            // `export { a as b }` -> `export { b_ref as b }`. An imported `a` passes
+            // through as is: its own module decides whether it is a client reference.
             for item in data.items.slice_mut() {
-                item.name.ref_ =
-                    p.export_client_reference(item.name.ref_, item.alias.slice(), item.name.loc);
+                let ref_ = item.name.ref_;
+                if p.symbols[ref_.inner_index() as usize].kind == js_ast::symbol::Kind::Import {
+                    continue;
+                }
+                item.name.ref_ = p.export_client_reference(ref_, item.alias.slice(), item.name.loc);
             }
         }
 
@@ -324,56 +328,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.record_declared_symbol(ref_);
                 item.name.ref_ = ref_;
             }
-        }
-
-        if p.wraps_exports_as_client_references() && !data.items.is_empty() {
-            // `export { a as b } from "./x"` -> `import { a } from "./x"; export { b_ref as b }`
-            let items = data.items.slice_mut();
-            let mut import_items =
-                BumpVec::<js_ast::ClauseItem>::with_capacity_in(items.len(), p.arena);
-            for item in items.iter() {
-                let ref_ = item.name.ref_;
-                p.is_import_item.insert(ref_, ());
-                if p.options.features.hot_module_reloading {
-                    let symbol = &mut p.symbols[ref_.inner_index() as usize];
-                    symbol.namespace_alias = Some(bun_alloc::ast_box(G::NamespaceAlias {
-                        namespace_ref: data.namespace_ref,
-                        alias: item.original_name,
-                        import_record_index: data.import_record_index,
-                        was_originally_property_access: false,
-                    }));
-                }
-                import_items.push(js_ast::ClauseItem {
-                    alias: item.original_name,
-                    alias_loc: item.name.loc,
-                    name: item.name,
-                    original_name: item.original_name,
-                });
-            }
-            stmts.push(p.s(
-                S::Import {
-                    namespace_ref: data.namespace_ref,
-                    items: js_ast::StoreSlice::new_mut(import_items.into_bump_slice_mut()),
-                    import_record_index: data.import_record_index,
-                    is_single_line: data.is_single_line,
-                    ..Default::default()
-                },
-                stmt.loc,
-            ));
-            for item in items.iter_mut() {
-                let reference =
-                    p.export_client_reference(item.name.ref_, item.alias.slice(), item.name.loc);
-                item.name.ref_ = reference;
-                item.original_name = p.symbols[reference.inner_index() as usize].original_name;
-            }
-            stmts.push(p.s(
-                S::ExportClause {
-                    items: data.items,
-                    is_single_line: data.is_single_line,
-                },
-                stmt.loc,
-            ));
-            return Ok(());
         }
 
         stmts.push(*stmt);
@@ -1013,33 +967,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 return Ok(());
             }
 
-            if p.options.features.server_components.wraps_exports()
+            if p.wraps_exports_as_client_references()
                 && data.func.flags.contains(flags::Function::IsExport)
             {
-                // Convert this into `export var <name> = registerClientReference(<func>, ...);`
+                // `export function f() {}` -> `function f() {} export { f_ref as f }`
                 let name = data.func.name.expect("infallible: name checked");
-                // From the inner scope, have code reference the wrapped function.
-                data.func.name = None;
-                let func_expr = p.new_expr(
-                    E::Function {
-                        func: core::mem::take(&mut data.func),
-                    },
-                    stmt.loc,
-                );
-                let wrapped = p.wrap_value_for_server_component_reference(func_expr, original_name);
-                let binding = p.b(B::Identifier { r#ref: name_ref }, name.loc);
-                stmts.push(p.s(
-                    S::Local {
-                        kind: S::Kind::KVar,
-                        is_export: true,
-                        decls: G::DeclList::from_slice(&[G::Decl {
-                            binding,
-                            value: Some(wrapped),
-                        }]),
-                        ..Default::default()
-                    },
-                    stmt.loc,
-                ));
+                data.func.flags.remove(flags::Function::IsExport);
+                stmts.push(*stmt);
+                let mut items = BumpVec::<js_ast::ClauseItem>::with_capacity_in(1, p.arena);
+                items.push(p.client_reference_export_item(name_ref, name.loc));
+                p.push_client_reference_export_clause(stmts, items, stmt.loc);
             } else {
                 stmts.push(*stmt);
             }
@@ -1143,28 +1080,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if wrap_export_as_client_reference {
                 // `export class A {}` -> `class A {} export { A_ref as A }`
                 let class_name = data.class.class_name.expect("infallible: name checked");
-                let original_name = p.symbols[class_name.ref_.inner_index() as usize]
-                    .original_name
-                    .slice();
-                let reference =
-                    p.export_client_reference(class_name.ref_, original_name, class_name.loc);
-                let reference_name = p.symbols[reference.inner_index() as usize].original_name;
-                let items = p.arena.alloc_slice_fill_with(1, |_| js_ast::ClauseItem {
-                    alias: js_ast::StoreStr::new(original_name),
-                    alias_loc: class_name.loc,
-                    name: js_ast::LocRef {
-                        loc: class_name.loc,
-                        ref_: reference,
-                    },
-                    original_name: reference_name,
-                });
-                stmts.push(p.s(
-                    S::ExportClause {
-                        items: js_ast::StoreSlice::new_mut(items),
-                        is_single_line: true,
-                    },
-                    stmt.loc,
-                ));
+                let mut items = BumpVec::<js_ast::ClauseItem>::with_capacity_in(1, p.arena);
+                items.push(p.client_reference_export_item(class_name.ref_, class_name.loc));
+                p.push_client_reference_export_clause(stmts, items, stmt.loc);
             }
         } else {
             let ref_ = data
@@ -1305,7 +1223,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         data.kind = kind;
 
+        // `export const x = 1` -> `const x = 1; export { x_ref as x }`
+        let export_client_references = data.is_export && p.wraps_exports_as_client_references();
+        if export_client_references {
+            data.is_export = false;
+        }
+
         stmts.push(*stmt);
+
+        if export_client_references {
+            let mut items =
+                BumpVec::<js_ast::ClauseItem>::with_capacity_in(data.decls.slice().len(), p.arena);
+            for decl in data.decls.slice() {
+                p.client_reference_export_items_for_binding(&mut items, decl.binding);
+            }
+            p.push_client_reference_export_clause(stmts, items, stmt.loc);
+        }
 
         if p.options.features.react_fast_refresh && p.current_scope == p.module_scope {
             for decl in data.decls.slice() {
@@ -1339,23 +1272,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         id,
                         ReactRefreshExportKind::Named,
                     )?;
-                }
-            }
-        }
-
-        if data.is_export && p.options.features.server_components.wraps_exports() {
-            for decl in data.decls.slice_mut() {
-                'try_annotate: {
-                    let Some(val) = decl.value else {
-                        break 'try_annotate;
-                    };
-                    let id = match decl.binding.data {
-                        js_ast::binding::Data::BIdentifier(b) => b.r#ref,
-                        _ => break 'try_annotate,
-                    };
-                    let original_name = p.symbols[id.inner_index() as usize].original_name.slice();
-                    decl.value =
-                        Some(p.wrap_value_for_server_component_reference(val, original_name));
                 }
             }
         }

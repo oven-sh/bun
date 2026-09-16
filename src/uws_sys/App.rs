@@ -154,7 +154,17 @@ impl<const SSL: bool> App<SSL> {
         &mut self,
         opts: &BunSocketContextOptions,
         additional_ca: &BunSocketContextOptions,
+        alpn_protocols: Option<&[u8]>,
     ) -> bool {
+        let (alpn_protocols_ptr, alpn_protocols_len) = match alpn_protocols {
+            Some(value) => {
+                let Ok(length) = c_uint::try_from(value.len()) else {
+                    return false;
+                };
+                (value.as_ptr(), length)
+            }
+            None => (core::ptr::null(), 0),
+        };
         // SAFETY: self is a live app and the CA pointers remain valid for the duration of the call.
         unsafe {
             c::uws_app_set_secure_context(
@@ -163,6 +173,22 @@ impl<const SSL: bool> App<SSL> {
                 *opts,
                 additional_ca.ca,
                 additional_ca.ca_count,
+                alpn_protocols_ptr,
+                alpn_protocols_len,
+            ) != 0
+        }
+    }
+
+    pub fn set_alpn_protocols(&mut self, protocols: &[u8]) -> bool {
+        let Ok(protocols_len) = c_uint::try_from(protocols.len()) else {
+            return false;
+        };
+        unsafe {
+            c::uws_app_set_alpn_protocols(
+                Self::SSL_FLAG,
+                self.as_raw(),
+                protocols.as_ptr(),
+                protocols_len,
             ) != 0
         }
     }
@@ -678,6 +704,14 @@ pub mod c {
             options: BunSocketContextOptions,
             additional_ca: *const *const c_char,
             additional_ca_count: c_uint,
+            alpn_protocols: *const u8,
+            alpn_protocols_len: c_uint,
+        ) -> c_int;
+        pub(crate) fn uws_app_set_alpn_protocols(
+            ssl_flag: c_int,
+            app: &mut uws_app_t,
+            protocols: *const u8,
+            protocols_len: c_uint,
         ) -> c_int;
     }
 

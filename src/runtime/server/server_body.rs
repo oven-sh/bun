@@ -1544,9 +1544,11 @@ where
             )));
         };
         // SAFETY: app is the live SSL NewApp owned by this running server.
-        if !bun_opaque::opaque_deref_mut(app)
-            .set_secure_context(&native_options, &additional_ca_options)
-        {
+        if !bun_opaque::opaque_deref_mut(app).set_secure_context(
+            &native_options,
+            &additional_ca_options,
+            config.protos_bytes(),
+        ) {
             return Err(
                 global.throw_invalid_arguments(format_args!("Failed to set the TLS context",))
             );

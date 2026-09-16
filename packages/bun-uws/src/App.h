@@ -114,6 +114,7 @@ private:
         HttpRouter<typename HttpContextData<SSL>::RouterData> *router;
     };
     std::vector<PendingServerName> pendingServerNames;
+    std::vector<unsigned char> alpnProtocols;
     /* No raw us_listen_socket_t* cache here. src/runtime/server/mod.rs's non-abrupt stop calls
      * us_listen_socket_close(ls) directly; the listener is queued for free in
      * loop_post, so any vector we kept would dangle by the time the deferred
@@ -151,6 +152,11 @@ public:
              * one. */
             if (applyClientCertPolicy) {
                 us_ssl_ctx_set_sni_policy(domainCtx, options.request_cert, options.reject_unauthorized);
+            }
+            if (!alpnProtocols.empty() && !us_ssl_ctx_set_alpn_protocols(domainCtx, alpnProtocols.data(), static_cast<unsigned int>(alpnProtocols.size()))) {
+                us_internal_ssl_ctx_unref(domainCtx);
+                if (success) *success = false;
+                return std::move(*this);
             }
             if (httpContext->getSocketContextData()->http2Context) {
                 us_ssl_ctx_enable_http2_alpn(domainCtx, httpContext->getSocketContextData()->allowHttp1);
@@ -216,7 +222,19 @@ public:
         return sslCtx;
     }
 
-    bool setSecureContext(SocketContextOptions options, const char *const *additionalCa, unsigned int additionalCaCount) {
+    bool setALPNProtocols(const unsigned char *protocols, unsigned int protocolsLength) {
+        if constexpr (!SSL) {
+            return false;
+        } else {
+            if (!us_ssl_ctx_set_alpn_protocols(sslCtx, protocols, protocolsLength)) {
+                return false;
+            }
+            alpnProtocols.assign(protocols, protocols + protocolsLength);
+            return true;
+        }
+    }
+
+    bool setSecureContext(SocketContextOptions options, const char *const *additionalCa, unsigned int additionalCaCount, const unsigned char *alpnProtocols, unsigned int alpnProtocolsLength) {
         if constexpr (!SSL) {
             return false;
         } else {
@@ -229,6 +247,10 @@ public:
                     us_internal_ssl_ctx_unref(next);
                     return false;
                 }
+            }
+            if (alpnProtocolsLength && !us_ssl_ctx_set_alpn_protocols(next, alpnProtocols, alpnProtocolsLength)) {
+                us_internal_ssl_ctx_unref(next);
+                return false;
             }
             if (httpContext->getSocketContextData()->http2Context) {
                 us_ssl_ctx_enable_http2_alpn(next, httpContext->getSocketContextData()->allowHttp1);

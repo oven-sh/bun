@@ -557,6 +557,10 @@ void us_internal_ssl_ctx_unref(struct ssl_ctx_st *ssl_ctx);
 /* Install an ALPN selector that prefers "h2", then "http/1.1" (when
  * allow_http1). Used by uWS when an App has an HTTP/2 context attached. */
 void us_ssl_ctx_enable_http2_alpn(struct ssl_ctx_st *ssl_ctx, int allow_http1);
+/* Install a server ALPN selector from the TLS wire-format protocol list. The
+ * SSL_CTX owns its copy until its final reference is released. */
+int us_ssl_ctx_set_alpn_protocols(struct ssl_ctx_st *ssl_ctx,
+    const unsigned char *protocols, unsigned int protocols_len);
 /* 1 iff the completed handshake on `s` negotiated ALPN "h2". */
 int us_socket_alpn_is_h2(us_socket_r s);
 long us_ssl_ctx_live_count(void);

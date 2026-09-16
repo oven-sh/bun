@@ -190,6 +190,8 @@ static int us_ssl_inline_reject_err_ex_idx = -1;
  * entry — see us_ssl_ctx_set_sni_policy. Absent on node:tls SecureContexts,
  * whose policy is server-level. */
 static int us_ctx_sni_policy_ex_idx = -1;
+/* (SSL_CTX) owned wire-format ALPN protocol list used by the server selector. */
+static int us_ctx_alpn_protocols_ex_idx = -1;
 /* Defined in Rust (src/uws_sys/SocketKind.rs) so the ordinal tracks the enum. */
 extern const unsigned char BUN_SOCKET_KIND_BUN_SOCKET_TLS;
 extern const unsigned char BUN_SOCKET_KIND_UWS_HTTP_TLS;
@@ -312,6 +314,17 @@ static void us_ssl_session_sink_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad
   struct us_ssl_session_sink_t *sink = ptr;
   if (sink->on_free) sink->on_free(sink->owner);
   us_free(sink);
+}
+
+struct us_ssl_alpn_protocols_t {
+  unsigned int length;
+  unsigned char data[];
+};
+
+static void us_ssl_alpn_protocols_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
+                                       int index, long argl, void *argp) {
+  (void)parent; (void)ad; (void)index; (void)argl; (void)argp;
+  if (ptr) us_free(ptr);
 }
 /* NSS key-log lines are produced from inside SSL_do_handshake/SSL_read, so
  * they are parked on the SSL the same way new sessions are and delivered once
@@ -451,6 +464,8 @@ static void us_ex_idx_init(void) {
   us_ctx_cache_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, bun_ssl_ctx_cache_on_free);
   us_ctx_user_ca_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, NULL);
   us_ctx_sni_policy_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, NULL);
+  us_ctx_alpn_protocols_ex_idx =
+      SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_alpn_protocols_free);
   us_ssl_reneg_state_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_reneg_state_free);
   us_ssl_sni_pending_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_sni_pending_free);
   us_ssl_listener_ex_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, NULL);
@@ -1726,6 +1741,46 @@ static int us_alpn_select_h2(SSL *ssl, const unsigned char **out, unsigned char 
    * and is answered at the HTTP layer). Proceed without ALPN when HTTP/1 is
    * allowed; otherwise refuse the handshake with no_application_protocol. */
   return allow_http1 ? SSL_TLSEXT_ERR_NOACK : SSL_TLSEXT_ERR_ALERT_FATAL;
+}
+
+static int us_alpn_select_protocols(SSL *ssl, const unsigned char **out,
+                                    unsigned char *outlen, const unsigned char *in,
+                                    unsigned int inlen, void *arg) {
+  (void)ssl;
+  struct us_ssl_alpn_protocols_t *protocols = arg;
+  if (!protocols) return SSL_TLSEXT_ERR_NOACK;
+  return SSL_select_next_proto((unsigned char **)out, outlen, protocols->data,
+                               protocols->length, in, inlen) == OPENSSL_NPN_NEGOTIATED
+      ? SSL_TLSEXT_ERR_OK
+      : SSL_TLSEXT_ERR_ALERT_FATAL;
+}
+
+int us_ssl_ctx_set_alpn_protocols(SSL_CTX *ctx, const unsigned char *protocols,
+                                  unsigned int protocols_len) {
+  if (!ctx || !protocols || !protocols_len) return 0;
+  for (unsigned int offset = 0; offset < protocols_len;) {
+    unsigned int length = protocols[offset];
+    if (!length || length > protocols_len - offset - 1) return 0;
+    offset += length + 1;
+  }
+
+  us_ex_idx_ensure();
+  if (us_ctx_alpn_protocols_ex_idx < 0) return 0;
+  struct us_ssl_alpn_protocols_t *owned =
+      us_malloc(sizeof(struct us_ssl_alpn_protocols_t) + protocols_len);
+  if (!owned) return 0;
+  owned->length = protocols_len;
+  memcpy(owned->data, protocols, protocols_len);
+
+  struct us_ssl_alpn_protocols_t *previous =
+      SSL_CTX_get_ex_data(ctx, us_ctx_alpn_protocols_ex_idx);
+  if (!SSL_CTX_set_ex_data(ctx, us_ctx_alpn_protocols_ex_idx, owned)) {
+    us_free(owned);
+    return 0;
+  }
+  SSL_CTX_set_alpn_select_cb(ctx, us_alpn_select_protocols, owned);
+  if (previous) us_free(previous);
+  return 1;
 }
 
 void us_ssl_ctx_enable_http2_alpn(SSL_CTX *ctx, int allow_http1) {

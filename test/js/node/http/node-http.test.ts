@@ -1420,6 +1420,16 @@ describe("node https server", async () => {
     });
   };
 
+  it("constructs HTTPS servers through both public entry points", () => {
+    for (const server of [new https.Server(httpsOptions), createHttpsServer(httpsOptions)]) {
+      expect(server).toBeInstanceOf(https.Server);
+      expect(server).toBeInstanceOf(http.Server);
+      expect(server.constructor).toBe(https.Server);
+      expect(typeof server.setSecureContext).toBe("function");
+      expect(() => server.setSecureContext(httpsOptions)).not.toThrow();
+    }
+  });
+
   it("setSecureContext updates future handshakes without closing existing connections", async () => {
     const replacement = {
       key: nodefs.readFileSync(path.join(import.meta.dir, "../tls/fixtures/agent1-key.pem")),
@@ -1428,10 +1438,11 @@ describe("node https server", async () => {
     };
     const server = createHttpsServer(httpsOptions, (_req, res) => res.end("ok"));
     const url = await listen(server, "https");
-    const connect = async () => {
+    const connect = async (servername?: string) => {
       const socket = tlsConnect({
         host: "127.0.0.1",
         port: Number(url.port),
+        servername,
         rejectUnauthorized: false,
       });
       await once(socket, "secureConnect");
@@ -1444,7 +1455,7 @@ describe("node https server", async () => {
       const originalFingerprint = existing.getPeerCertificate().fingerprint256;
 
       server.setSecureContext(replacement);
-      renewed = await connect();
+      renewed = await connect("localhost");
 
       const replacementFingerprint = renewed.getPeerCertificate().fingerprint256;
       expect(replacementFingerprint).not.toBe(originalFingerprint);
@@ -1456,7 +1467,7 @@ describe("node https server", async () => {
       for (let iteration = 0; iteration < 8; iteration++) {
         const useReplacement = iteration % 2 === 0;
         server.setSecureContext(useReplacement ? replacement : httpsOptions);
-        const probe = await connect();
+        const probe = await connect(iteration % 2 === 0 ? undefined : "localhost");
         try {
           expect(probe.getPeerCertificate().fingerprint256).toBe(
             useReplacement ? replacementFingerprint : originalFingerprint,
@@ -1469,6 +1480,56 @@ describe("node https server", async () => {
     } finally {
       existing?.destroy();
       renewed?.destroy();
+      server.close();
+    }
+  });
+
+  it("preserves static ALPN protocols after setSecureContext", async () => {
+    const replacement = {
+      key: nodefs.readFileSync(path.join(import.meta.dir, "../tls/fixtures/agent1-key.pem")),
+      cert: nodefs.readFileSync(path.join(import.meta.dir, "../tls/fixtures/agent1-cert.pem")),
+    };
+    const protocol = "openclaw-test";
+    const server = createHttpsServer({ ...httpsOptions, ALPNProtocols: [protocol] });
+    const url = await listen(server, "https");
+    const connect = async () => {
+      const socket = tlsConnect({
+        host: "127.0.0.1",
+        port: Number(url.port),
+        servername: "localhost",
+        ALPNProtocols: [protocol],
+        rejectUnauthorized: false,
+      });
+      await once(socket, "secureConnect");
+      return socket;
+    };
+    let socket;
+    let rejected;
+    try {
+      rejected = tlsConnect({
+        host: "127.0.0.1",
+        port: Number(url.port),
+        servername: "localhost",
+        ALPNProtocols: ["unsupported"],
+        rejectUnauthorized: false,
+      });
+      const rejectedOutcome = await new Promise<string>(resolve => {
+        rejected.once("secureConnect", () => resolve("connected"));
+        rejected.once("error", error => resolve(error.code));
+      });
+      expect(rejectedOutcome).toBe("ERR_SSL_TLSV1_ALERT_NO_APPLICATION_PROTOCOL");
+      rejected.destroy();
+
+      socket = await connect();
+      expect(socket.alpnProtocol).toBe(protocol);
+      socket.destroy();
+
+      server.setSecureContext(replacement);
+      socket = await connect();
+      expect(socket.alpnProtocol).toBe(protocol);
+    } finally {
+      rejected?.destroy();
+      socket?.destroy();
       server.close();
     }
   });

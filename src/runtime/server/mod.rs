@@ -2866,6 +2866,18 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // SAFETY: `this` is the live boxed server from `init()`; no other borrow is live.
             unsafe { (*this).app = Some(app) };
 
+            if let Some(protocols) = this_ref
+                .config
+                .ssl_config
+                .as_ref()
+                .and_then(|config| config.protos_bytes())
+                && !bun_opaque::opaque_deref_mut(app).set_alpn_protocols(protocols)
+            {
+                let _ = global.throw(format_args!("Failed to configure TLS ALPN protocols"));
+                Self::deinit(this);
+                return JSValue::ZERO;
+            }
+
             if Self::HAS_H3 && this_ref.config.http3 {
                 let idle_timeout = this_ref.config.idle_timeout as u32;
                 let h3 = match uws_sys::h3::App::create(&ssl_options, idle_timeout) {

@@ -1176,10 +1176,12 @@ describe.skipIf(!isWindows).each([
             }
             if (leafPid === 0) throw new Error("leaf never wrote pidfile");
             if (!k32.GenerateConsoleCtrlEvent(0, 0)) throw new Error("GenerateConsoleCtrlEvent failed");
+            let timer;
             result.parentExited = await Promise.race([
               parent.exited.then(() => true),
-              sleep(10000).then(() => false),
+              new Promise(resolve => { timer = setTimeout(() => resolve(false), 10000); }),
             ]);
+            clearTimeout(timer);
             const leafDeadline = Date.now() + 10000;
             while (isAlive(leafPid) && Date.now() < leafDeadline) await sleep(25);
             result.leafDead = !isAlive(leafPid);

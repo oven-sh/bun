@@ -8624,8 +8624,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             bun_core::todo_panic!("registerServerReference");
         }
 
-        // Dev server only: `ParseTask` fails a production build before it parses in this mode.
-        // The dev server loads a module by its source path.
+        // Dev server only (`ParseTask` rejects production), where the source path is the module id.
         let module_path = self.new_expr(
             E::String::init(self.source.path.pretty),
             bun_ast::Loc::EMPTY,

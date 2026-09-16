@@ -2609,8 +2609,7 @@ pub mod parse_worker {
         let unsupported_directive: Option<&'static [u8]> = match use_directive {
             // Every later step that handles `UseDirective::Server` is a `todo_panic!`.
             UseDirective::Server => Some(b"\"use server\" is not supported yet"),
-            // Only the dev server has client references without a separate SSR graph:
-            // https://github.com/oven-sh/bun/issues/14763
+            // Only the dev server implements this mode: https://github.com/oven-sh/bun/issues/14763
             UseDirective::Client
                 if opts.features.server_components
                     == bun_ast::runtime::ServerComponentsMode::WrapExportsForClientReference

@@ -97,7 +97,7 @@ describe("url.domainToUnicode", () => {
   }
   for (const [input, expected] of invalids) {
     test(`-> '${input}' is '${expected}'`, () => {
-      expect(url.domainToASCII(input)).toEqual(expected);
+      expect(url.domainToUnicode(input)).toEqual(expected);
     });
   }
 });

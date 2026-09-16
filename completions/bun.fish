@@ -29,20 +29,6 @@ function __fish__bun_extract_cwd
     end
     echo "$result"
 end
-        else if string match -q -- "--cwd=*" "$tokens[$i]"
-            set val (string replace -- "--cwd=" "" "$tokens[$i]")
-        end
-
-        if test -n "$val"
-            set val (string trim -c '"' -- "$val")
-            set val (string trim -c "'" -- "$val")
-            set val (string replace -r '^~' "$HOME" -- "$val")
-            echo "$val"
-            return
-        end
-    end
-    echo "."
-end
 
 function __fish__get_bun_bins
     set -l target_cwd (__fish__bun_extract_cwd)

@@ -2783,8 +2783,12 @@ pub(crate) mod __gated_printer {
                 // namespace object may not exist: the result is `{}`.
                 let namespace_unused = record.flags.contains(ImportRecordFlags::NAMESPACE_UNUSED);
 
-                // Internal "import()" of async ESM
-                if record.kind == ImportKind::Dynamic && meta.is_wrapper_async {
+                // Internal "import()" of async ESM. A file with no wrapper
+                // (`needs_wrapper_ref`) has nothing to await: its `await` was dead code.
+                if record.kind == ImportKind::Dynamic
+                    && meta.is_wrapper_async
+                    && meta.wrapper_ref.is_valid()
+                {
                     self.print_space_before_identifier();
                     self.print_symbol(meta.wrapper_ref);
                     self.print(b"()");

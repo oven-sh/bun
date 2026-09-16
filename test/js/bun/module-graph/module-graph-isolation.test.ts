@@ -2873,7 +2873,7 @@ describe.concurrent("ModuleGraph isolation: graphs that talk to each other", () 
     expect(await get()).toBe("serving");
     server.graph.dispose();
     await until(async () => (await get()) !== "serving");
-    expect(await get()).toBe("failed: ConnectionRefused");
+    expect(await get()).toBe("failed: ECONNREFUSED");
     expect(await ticks(clientTimer)).toBe(true);
     client.graph.dispose();
     expect(await ticks(clientTimer)).toBe(false);
@@ -3707,6 +3707,7 @@ test("ModuleGraph isolation: every property of Bun is classified", () => {
     spawn: "owned",
     Terminal: "owned", // module-graph-io: child processes
     fetch: "owned", // fetchInFlight
+    FetchSession: "owned", // the connections it keeps alive close with the graph whose script made it
     sleep: "owned", // a timer
     RedisClient: "owned",
     redis: "owned",
@@ -3842,7 +3843,8 @@ test("ModuleGraph isolation: every property of Bun is classified", () => {
     sql: "postgres",
     postgres: "postgres",
   };
-  const elsewhere = ["Terminal"]; // module-graph-io.test.ts
+  // Terminal: module-graph-io.test.ts. FetchSession: "the connections a Bun.FetchSession it made keeps alive are closed with it".
+  const elsewhere = ["Terminal", "FetchSession"];
   const owned = Object.keys(classified).filter(name => classified[name] === "owned");
   expect(owned.filter(name => !elsewhere.includes(name) && !(kindOf[name] in kinds))).toEqual([]);
 });

@@ -403,8 +403,7 @@ pub mod random {
             }
 
             // Uniform random in [min, max) via Lemire's nearly-divisionless
-            // rejection sampling. Samples come from the VM's entropy cache: a
-            // `RAND_bytes` call per sample costs about 0.5 µs.
+            // rejection sampling on the VM's entropy cache (`RAND_bytes` costs ~0.5 µs per call).
             let res: i64 = {
                 let range = (max - min) as u64;
                 debug_assert!(range > 0);

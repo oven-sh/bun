@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
-// Every option here is declared as `string` or `boolean` in bake.d.ts. A value
-// of another type must throw ERR_INVALID_ARG_TYPE from Bun.serve, before any
-// dev server starts.
+// Every option here is declared as `string`, `string[]` or `boolean` in
+// bake.d.ts. A value of another type must throw ERR_INVALID_ARG_TYPE from
+// Bun.serve, before any dev server starts.
 test("Bun.serve({ app }) rejects wrong-typed framework options", async () => {
   using dir = tempDir("bake-app-options", {
     "fixture.ts": `
@@ -16,6 +16,7 @@ test("Bun.serve({ app }) rejects wrong-typed framework options", async () => {
           framework: { fileSystemRouterTypes: [{ ...fsr, ignoreUnderscores: "yes" }] },
         },
         "fileSystemRouterTypes[].layouts": { framework: { fileSystemRouterTypes: [{ ...fsr, layouts: 1 }] } },
+        "fileSystemRouterTypes[].ignoreDirs": { framework: { fileSystemRouterTypes: [{ ...fsr, ignoreDirs: "api" }] } },
         "serverComponents.serverRuntimeImportSource": {
           framework: { ...framework, serverComponents: { separateSSRGraph: false, serverRuntimeImportSource: 5 } },
         },
@@ -49,6 +50,7 @@ test("Bun.serve({ app }) rejects wrong-typed framework options", async () => {
     fileSystemRouterTypes[].root -> ERR_INVALID_ARG_TYPE: The "root" property must be of type string, got number
     fileSystemRouterTypes[].ignoreUnderscores -> ERR_INVALID_ARG_TYPE: The "ignoreUnderscores" property must be of type boolean, got string
     fileSystemRouterTypes[].layouts -> ERR_INVALID_ARG_TYPE: The "layouts" property must be of type boolean, got number
+    fileSystemRouterTypes[].ignoreDirs -> ERR_INVALID_ARG_TYPE: 'ignoreDirs' must be an array of strings
     serverComponents.serverRuntimeImportSource -> ERR_INVALID_ARG_TYPE: The "serverRuntimeImportSource" property must be of type string, got number
     plugins[].name -> ERR_INVALID_ARG_TYPE: The "name" property must be of type string, got number
     plugins[].setup -> ERR_INVALID_ARG_TYPE: setup must be a function
@@ -128,6 +130,63 @@ test.concurrent("fileSystemRouterTypes[].prefix mounts each router on its prefix
     /docs/v1/about -> 200 not a route
     /docsabout -> 200 not a route
     /api/about -> 200 not a route
+    "
+  `);
+  expect(exitCode).toBe(0);
+});
+
+// `pages/api` is inside the root of the first router. The first router has to
+// skip it through `ignoreDirs`, or both routers claim `/api/ping`.
+test.concurrent("a router can mount a directory that is inside the root of another router", async () => {
+  using dir = tempDir("bake-app-prefix-nested", {
+    "framework.ts": `
+      export function render(req, meta) {
+        return new Response(meta.pageModule.default());
+      }
+    `,
+    "pages/index.ts": `export default () => "pages/index.ts";`,
+    "pages/about.ts": `export default () => "pages/about.ts";`,
+    "pages/api/index.ts": `export default () => "pages/api/index.ts";`,
+    "pages/api/ping.ts": `export default () => "pages/api/ping.ts";`,
+    "fixture.ts": `
+      const router = options => ({ style: "nextjs-pages", serverEntryPoint: "./framework.ts", ...options });
+      const server = Bun.serve({
+        port: 0,
+        development: true,
+        app: {
+          framework: {
+            fileSystemRouterTypes: [
+              router({ root: "pages", ignoreDirs: ["api"] }),
+              router({ root: "pages/api", prefix: "/api" }),
+            ],
+          },
+        },
+        fetch: () => new Response("not a route"),
+      });
+      for (const path of ["/", "/about", "/api", "/api/ping", "/ping"]) {
+        const response = await fetch(new URL(path, server.url));
+        console.log(path + " -> " + response.status + " " + (await response.text()));
+      }
+      await server.stop(true);
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.ts"],
+    env: { ...bunEnv, BUN_DEV_SERVER_TEST_RUNNER: "1" },
+    cwd: String(dir),
+    stdout: "pipe",
+    // The dev server logs "Bundled page in 12ms" for each route.
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+  expect(stdout).toMatchInlineSnapshot(`
+    "/ -> 200 pages/index.ts
+    /about -> 200 pages/about.ts
+    /api -> 200 pages/api/index.ts
+    /api/ping -> 200 pages/api/ping.ts
+    /ping -> 200 not a route
     "
   `);
   expect(exitCode).toBe(0);

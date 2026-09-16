@@ -58,6 +58,7 @@ describe("css", () => {
       "in.css": `
         @position-try --flip { top: anchor(bottom); inset-area: bottom }
         @font-feature-values Font One, "Font Two" {
+          font-display: swap;
           @styleset { nice-style: 12; fancy: 1 2 3 }
           @swash { swishy: 1 }
           @styleset { nice-style: 13; later: 4 }
@@ -73,7 +74,7 @@ describe("css", () => {
     const out = await result.outputs[0].text();
     expect(out.trim()).toBe(
       "@position-try --flip{top:anchor(bottom);inset-area:bottom}" +
-        "@font-feature-values Font One,Font Two{@styleset{nice-style:13;fancy:1 2 3;later:4}@swash{swishy:1}}",
+        "@font-feature-values Font One,Font Two{font-display:swap;@styleset{nice-style:13;fancy:1 2 3;later:4}@swash{swishy:1}}",
     );
   });
 

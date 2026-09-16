@@ -1,4 +1,5 @@
 use crate as css;
+use crate::css_properties::custom::{CustomProperty, CustomPropertyName};
 use crate::css_properties::font::FontFamily;
 use crate::css_rules::Location;
 use crate::css_values::ident::Ident;
@@ -12,6 +13,8 @@ use super::ArrayList;
 pub struct FontFeatureValuesRule {
     /// The font family names the feature values apply to.
     pub name: ArrayList<FontFamily>,
+    /// Descriptors in the rule body, such as `font-display`, kept as written.
+    pub(crate) declarations: ArrayList<CustomProperty>,
     /// The sub-rules within the `@font-feature-values` rule, one per block type.
     pub(crate) rules: ArrayList<FontFeatureSubrule>,
     /// The location of the rule in the source file.
@@ -25,8 +28,10 @@ impl FontFeatureValuesRule {
         loc: Location,
         options: &css::ParserOptions,
     ) -> css::Result<FontFeatureValuesRule> {
+        let mut declarations: ArrayList<CustomProperty> = ArrayList::new();
         let mut rules: ArrayList<FontFeatureSubrule> = ArrayList::new();
         let mut rule_parser = FontFeatureValuesRuleParser {
+            declarations: &mut declarations,
             rules: &mut rules,
             options,
         };
@@ -42,7 +47,12 @@ impl FontFeatureValuesRule {
             }
         }
 
-        Ok(FontFeatureValuesRule { name, rules, loc })
+        Ok(FontFeatureValuesRule {
+            name,
+            declarations,
+            rules,
+            loc,
+        })
     }
 
     pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
@@ -51,6 +61,16 @@ impl FontFeatureValuesRule {
         dest.whitespace()?;
         dest.write_char(b'{')?;
         dest.indent();
+        let len = self.declarations.len() + self.rules.len();
+        for (i, decl) in self.declarations.iter().enumerate() {
+            dest.newline()?;
+            decl.name.to_css(dest)?;
+            dest.delim(b':', false)?;
+            decl.value.to_css(dest, true)?;
+            if i != len - 1 || !dest.minify {
+                dest.write_char(b';')?;
+            }
+        }
         for rule in &self.rules {
             dest.newline()?;
             rule.to_css(dest)?;
@@ -63,6 +83,11 @@ impl FontFeatureValuesRule {
     pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         Self {
             name: self.name.iter().map(|f| f.deep_clone(bump)).collect(),
+            declarations: self
+                .declarations
+                .iter()
+                .map(|d| d.deep_clone(bump))
+                .collect(),
             rules: self.rules.iter().map(|r| r.deep_clone(bump)).collect(),
             loc: self.loc,
         }
@@ -149,6 +174,7 @@ impl FontFeatureSubrule {
 }
 
 struct FontFeatureValuesRuleParser<'a> {
+    declarations: &'a mut ArrayList<CustomProperty>,
     rules: &'a mut ArrayList<FontFeatureSubrule>,
     options: &'a css::ParserOptions<'a>,
 }
@@ -167,11 +193,14 @@ const _: () = {
         type Declaration = ();
 
         fn parse_value(
-            _this: &mut Self,
-            _name: &[u8],
+            this: &mut Self,
+            name: &[u8],
             input: &mut Parser,
         ) -> Result<Self::Declaration> {
-            Err(input.new_custom_error(ParserError::invalid_declaration))
+            let custom =
+                CustomProperty::parse(CustomPropertyName::from_str(name), input, this.options)?;
+            this.declarations.push(custom);
+            Ok(())
         }
     }
 
@@ -181,7 +210,7 @@ const _: () = {
         }
 
         fn parse_declarations(_this: &Self) -> bool {
-            false
+            true
         }
     }
 

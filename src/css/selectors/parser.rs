@@ -803,6 +803,10 @@ fn parse_compound_selector<Impl: BunSelectorImpl>(
                     state.insert(SelectorParsingState::AFTER_VIEW_TRANSITION);
                 }
 
+                if p.is_search_text() {
+                    state.insert(SelectorParsingState::AFTER_SEARCH_TEXT);
+                }
+
                 builder.push_simple_selector(GenericComponent::PseudoElement(p));
             }
         }
@@ -993,8 +997,8 @@ pub enum PseudoClass {
 
     /// The [:state()](https://html.spec.whatwg.org/multipage/custom-elements.html#custom-state-pseudo-class) pseudo class for custom element states.
     State {
-        /// The custom state identifier.
-        state: CustomIdent,
+        /// The custom state identifier. Script defines it, so it is a plain `<ident>`.
+        state: Ident,
     },
 
     // CSS modules
@@ -1249,7 +1253,7 @@ impl<'a> SelectorParser<'a> {
             }
             9 if name == b"highlight" => {
                 return Ok(PseudoElement::HighlightFunction {
-                    name: CustomIdent::parse(input)?,
+                    name: Ident::parse(input)?,
                 });
             }
             10 if name == b"cue-region" => {
@@ -1375,7 +1379,7 @@ impl<'a> SelectorParser<'a> {
                 direction: Direction::parse(parser)?,
             },
             b"state" => PseudoClass::State {
-                state: CustomIdent::parse(parser)?,
+                state: Ident::parse(parser)?,
             },
             b"local" if self.options.css_modules.is_some() => PseudoClass::Local {
                 selector: Box::new(Selector::parse(self, parser)?),
@@ -2697,6 +2701,7 @@ bitflags::bitflags! {
         const AFTER_WEBKIT_SCROLLBAR = 1 << 8;
         const AFTER_VIEW_TRANSITION = 1 << 9;
         const AFTER_UNKNOWN_PSEUDO_ELEMENT = 1 << 10;
+        const AFTER_SEARCH_TEXT = 1 << 11;
     }
 }
 
@@ -3016,8 +3021,8 @@ pub enum PseudoElement {
     GrammarError,
     /// The [::highlight()](https://drafts.csswg.org/css-highlight-api/#custom-highlight-pseudo) functional pseudo element.
     HighlightFunction {
-        /// A custom highlight name.
-        name: CustomIdent,
+        /// A custom highlight name. Script registers it, so it is a plain `<ident>`.
+        name: Ident,
     },
     /// An unknown pseudo element.
     Custom {
@@ -3106,6 +3111,12 @@ impl PseudoElement {
 
     pub(crate) fn is_webkit_scrollbar(&self) -> bool {
         matches!(self, PseudoElement::WebkitScrollbar(_))
+    }
+
+    /// `::search-text:current` is the active find-in-page match.
+    /// https://drafts.csswg.org/css-pseudo-4/#selectordef-search-text
+    pub(crate) fn is_search_text(&self) -> bool {
+        matches!(self, PseudoElement::SearchText)
     }
 
     pub(crate) fn is_view_transition(&self) -> bool {
@@ -3700,7 +3711,13 @@ pub(crate) fn parse_functional_pseudo_class<Impl: BunSelectorImpl>(
         });
     }
 
-    if !state.allows_custom_functional_pseudo_classes() {
+    // `:state()` is a state pseudo-class, so `::part(x):state(y)` is valid.
+    // https://drafts.csswg.org/css-shadow-parts/#part
+    let is_state_after_part = strings::eql_case_insensitive_ascii_check_length(name, b"state")
+        && !state.intersects(
+            SelectorParsingState::AFTER_SLOTTED | SelectorParsingState::AFTER_PSEUDO_ELEMENT,
+        );
+    if !state.allows_custom_functional_pseudo_classes() && !is_state_after_part {
         return Err(input
             .new_custom_error(SelectorParseErrorKind::InvalidState.into_default_parser_error()));
     }
@@ -3756,7 +3773,9 @@ pub(crate) fn parse_simple_pseudo_class<Impl: BunSelectorImpl>(
             ));
         }
     } else if state.contains(SelectorParsingState::AFTER_PSEUDO_ELEMENT) {
-        if !pseudo_class.is_user_action_state() {
+        let is_search_text_current = state.contains(SelectorParsingState::AFTER_SEARCH_TEXT)
+            && matches!(pseudo_class, PseudoClass::Current);
+        if !pseudo_class.is_user_action_state() && !is_search_text_current {
             return Err(location.new_custom_error(
                 SelectorParseErrorKind::InvalidPseudoClassAfterPseudoElement
                     .into_default_parser_error(),

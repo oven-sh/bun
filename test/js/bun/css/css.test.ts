@@ -5704,6 +5704,17 @@ describe("css tests", () => {
 
     minify_test("my-el:state(checked) { color: red }", "my-el:state(checked){color:red}");
     minify_test("my-el:STATE(checked) { color: red }", "my-el:state(checked){color:red}");
+    // The name is a plain <ident>, so CSS-wide keywords are valid names.
+    minify_test("my-el:state(initial) { color: red }", "my-el:state(initial){color:red}");
+    minify_test("::highlight(default) { color: red }", "::highlight(default){color:red}");
+    // https://drafts.csswg.org/css-shadow-parts/#part
+    minify_test("x-foo::part(bar):state(checked) { color: red }", "x-foo::part(bar):state(checked){color:red}");
+    minify_test(
+      "x-foo::part(bar):state(checked):hover { color: red }",
+      "x-foo::part(bar):state(checked):hover{color:red}",
+    );
+    // https://drafts.csswg.org/css-pseudo-4/#selectordef-search-text
+    minify_test(".foo::search-text:current { background: orange }", ".foo::search-text:current{background:orange}");
     minify_test(".foo::highlight(search) { background: yellow }", ".foo::highlight(search){background:#ff0}");
     minify_test(".foo::target-text { background: yellow }", ".foo::target-text{background:#ff0}");
     minify_test(".foo::search-text { background: yellow }", ".foo::search-text{background:#ff0}");
@@ -7719,6 +7730,11 @@ describe("css tests", () => {
       "@font-feature-values Font One{@styleset{x:1}}",
     );
     minify_test("@font-feature-values Font One {}", "@font-feature-values Font One{}");
+    // https://drafts.csswg.org/css-fonts-4/#font-display-font-feature-values
+    minify_test(
+      "@font-feature-values Font One { font-display: swap; @styleset { x: 1 } }",
+      "@font-feature-values Font One{font-display:swap;@styleset{x:1}}",
+    );
     minify_test(
       `@font-feature-values "Fancy Font Name" {
         @styleset { cursive: 1; swoopy: 7 16; }

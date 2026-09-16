@@ -991,8 +991,7 @@ pub(crate) mod serialize {
             }
             PseudoClass::State { state } => {
                 dest.write_str(b":state(")?;
-                // Script defines the name, so CSS modules do not hash it (like `::part()`).
-                state.to_css_with_options(dest, false)?;
+                state.to_css(dest)?;
                 return dest.write_str(b")");
             }
             _ => {}
@@ -1281,8 +1280,7 @@ pub(crate) mod serialize {
             PseudoElement::GrammarError => dest.write_str(b"::grammar-error")?,
             PseudoElement::HighlightFunction { name } => {
                 dest.write_str(b"::highlight(")?;
-                // Script defines the name, so CSS modules do not hash it (like `::part()`).
-                name.to_css_with_options(dest, false)?;
+                name.to_css(dest)?;
                 dest.write_char(b')')?;
             }
             PseudoElement::Custom { name } => {

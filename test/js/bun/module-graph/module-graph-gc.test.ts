@@ -1,7 +1,7 @@
 // Bun.ModuleGraph and the garbage collector: what keeps a graph (its loader, module
 // records, CommonJS modules and its context) alive, and that nothing else does.
 import { generateHeapSnapshotForDebugging, heapStats } from "bun:jsc";
-import { afterAll, describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, jest, test } from "bun:test";
 import { rmSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -45,6 +45,10 @@ const dir = String(
       }
       export function tick() {
         const interval = setInterval(() => { control.ticks++; if (control.stop) clearInterval(interval); }, 1);
+      }
+      // A cron job whose tick waits for something that never comes.
+      export function cronTickThatParks() {
+        Bun.cron("* * * * *", () => { control.ticks++; return new Promise(() => {}); });
       }
       export async function connectToOwnServer() {
         const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {}, close() { control.heard.push("server socket close"); } } });
@@ -452,6 +456,27 @@ describe("ModuleGraph GC: what the graph's context owns", () => {
     const ticks = state.ticks;
     while (state.ticks === ticks) await new Promise<void>(resolve => setImmediate(resolve));
     state.stop = true;
+    expect(await lifetimes.stillAlive("graph")).toEqual([]);
+  });
+
+  // The job holds a ref on itself while a tick's promise is pending; nothing settles it once the graph is disposed.
+  test("a Bun.cron() job whose tick is waiting when its graph is disposed goes with the graph", async () => {
+    const lifetimes = new Lifetimes();
+    const state = control();
+    jest.useFakeTimers();
+    try {
+      jest.setSystemTime(new Date("2026-01-01T12:00:00.000Z"));
+      await (async () => {
+        const graph = lifetimes.track("graph", new ModuleGraph({ globals: { control: state } }));
+        const io = await graph.import(file("io.mjs"));
+        graph.run(() => io.cronTickThatParks());
+        jest.advanceTimersByTime(60_000);
+        expect(state.ticks).toBe(1);
+        graph.dispose();
+      })();
+    } finally {
+      jest.useRealTimers();
+    }
     expect(await lifetimes.stillAlive("graph")).toEqual([]);
   });
 

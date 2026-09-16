@@ -1405,7 +1405,7 @@ bun_event_loop::impl_timer_owner!(CronJob; from_timer_ptr => event_loop_timer);
 bun_jsc::impl_abort_handle_owner!(CronJob, abort_handle, |this, _cause| {
     // SAFETY: trait contract — `this` is live (armed ⇒ not yet stopped).
     let job = unsafe { &*this };
-    CronJob::self_stop(job.self_ref.get().this_ptr(), job.global.bun_vm())
+    CronJob::stop_with_its_context(job.self_ref.get().this_ptr(), job.global.bun_vm())
 });
 
 pub mod js {
@@ -1464,6 +1464,19 @@ impl CronJob {
     /// keep the event loop alive for a timer that can no longer fire.
     pub(crate) fn stop_dropped_from_fake_heap(this: ThisPtr<Self>) {
         Self::self_stop(this, VirtualMachine::get());
+    }
+
+    /// The context of the script that scheduled the job stopped. A tick's promise that is pending
+    /// will never settle (what waits on it went with the context), so the ref held for it is
+    /// released here, as worker teardown does. With the tick's callback on the stack (it disposed
+    /// its own graph) `on_timer_fire` finishes the stop when the callback returns. May free `this`.
+    fn stop_with_its_context(this: ThisPtr<Self>, vm: &VirtualMachine) {
+        if this.in_fire.get() {
+            return Self::self_stop(this, vm);
+        }
+        this.stop_internal(vm);
+        Self::release_pending_ref(this);
+        Self::remove_from_list(this);
     }
 
     /// May free `this`.
@@ -1633,8 +1646,11 @@ impl CronJob {
                         crate::generated_host_exports::Bun__CronJob__onPromiseReject,
                     );
                     // `then()` returns `()`, so re-check the VM status and
-                    // recover on termination — otherwise `pending_ref` leaks.
-                    if vm.script_execution_status() != jsc::ScriptExecutionStatus::Running {
+                    // recover on termination — otherwise `pending_ref` leaks. Likewise when the
+                    // tick stopped its own context: nothing will settle this promise's reaction.
+                    if vm.script_execution_status() != jsc::ScriptExecutionStatus::Running
+                        || this.abort_handle.context_stopped()
+                    {
                         js::pending_promise_set_cached(js_this, &this.global, JSValue::UNDEFINED);
                         Self::release_pending_ref(this);
                         Self::schedule_next(this, vm);

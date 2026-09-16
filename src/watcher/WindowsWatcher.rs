@@ -22,8 +22,7 @@ pub struct WindowsWatcher {
     pub(crate) watcher: DirWatcher,
     pub(crate) buf: PathBuffer,
     pub(crate) base_idx: usize,
-    /// Set by a zero byte completion. Cleared once no read completes within
-    /// `Timeout::Quiet` and the resync is dispatched.
+    /// A zero byte completion was seen and the resync has not run yet.
     pub(crate) pending_resync: bool,
 }
 
@@ -334,16 +333,9 @@ impl WindowsWatcher {
                     continue;
                 }
                 if nbytes == 0 {
-                    // ReadDirectoryChangesW internal change-buffer overflow — too many
-                    // events arrived between drain and re-arm. This is NOT a shutdown
-                    // signal: stop() closes the dir handle, which surfaces as rc==0 /
-                    // ERROR_OPERATION_ABORTED above, never as rc!=0 && nbytes==0. Per
-                    // MSDN, the function returns zero bytes when its internal buffer
-                    // overflows. The lost records are unrecoverable, so the caller
-                    // treats every watched path as changed. The next `next()` call
-                    // re-arms the read. Returning ESHUTDOWN here kills the watcher
-                    // thread and the --hot child silently exits (hot.test.ts "should
-                    // work with sourcemap generation" flake).
+                    // The kernel change buffer overflowed and its records are gone.
+                    // Not a shutdown: stop() closes the dir handle, which surfaces
+                    // as rc==0 / ERROR_OPERATION_ABORTED above.
                     bun_core::scoped_log!(
                         watcher,
                         "ReadDirectoryChangesW buffer overflow (nbytes==0); resyncing"
@@ -383,19 +375,15 @@ impl WindowsWatcher {
 pub(crate) enum Timeout {
     Infinite = w::INFINITE,
     None = 0,
-    /// After an overflow: long enough that a burst which still overflows the
-    /// kernel buffer always completes a read within it, so the resync waits
-    /// for the burst to end instead of reloading into it. The longest gap
-    /// between two completions seen inside such a burst was 123 ms.
+    /// After an overflow. Inside a burst that overflows the kernel buffer a
+    /// read completes at least every 123 ms, so this never ends one early.
     Quiet = 250,
 }
 
-/// Outcome of one `WindowsWatcher::next` wait.
 enum Next {
     Events(EventIterator),
     Timeout,
-    /// The kernel discarded its change buffer (`ReadDirectoryChangesW`
-    /// completed with zero bytes). Which paths changed is unknown.
+    /// `ReadDirectoryChangesW` completed with zero bytes.
     Overflow,
 }
 
@@ -408,9 +396,7 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
     let mut quiet = false;
 
     // first wait has infinite timeout - we're waiting for the next event and don't want to spin
-    // After an overflow every wait is a short one instead: the resync below must not wait for
-    // the next change, and it must not run while records still arrive faster than this thread
-    // drains them. A reload that starts inside such a burst lands in the next overflow.
+    // After an overflow every wait is short: the resync runs once the burst ends, not inside it.
     let mut timeout = if this.platform.pending_resync {
         Timeout::Quiet
     } else {

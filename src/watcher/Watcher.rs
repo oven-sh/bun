@@ -231,12 +231,8 @@ impl Watcher {
         (self.on_file_update)(self.ctx, events, changed, &self.watchlist);
     }
 
-    /// Dispatch a synthetic `WRITE` for every watched path after the kernel
-    /// dropped an unknown set of events (a `ReadDirectoryChangesW` zero byte
-    /// completion, inotify `IN_Q_OVERFLOW`). The dropped records cannot be
-    /// recovered, so every path is treated as changed: `--watch` restarts,
-    /// `--hot` reloads, and the dev server invalidates its graph. One batch,
-    /// so the dev server gets one event and the hot reloader one pass.
+    /// The kernel dropped an unknown set of events: report every watched
+    /// path as written, in one batch.
     pub fn resync_after_overflow(&mut self) {
         let _guard = self.mutex.lock_guard();
         if !self.running.load() {
@@ -244,8 +240,6 @@ impl Watcher {
         }
         let len = self.watchlist.len().min(NO_WATCH_ITEM as usize);
         log!("overflow; re-checking all {} watched paths", len);
-        // `WRITE` (never `DELETE`) makes the context re-check each path
-        // without evicting it from the watchlist.
         let mut events: Vec<WatchEvent> = (0..len)
             .map(|index| WatchEvent {
                 op: Op::WRITE,

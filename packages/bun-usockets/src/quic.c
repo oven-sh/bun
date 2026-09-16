@@ -772,7 +772,6 @@ static const struct lsquic_hset_if us_quic_hset_if = {
     .hsi_flags = 0,
 };
 
-#ifdef BUN_DEBUG
 #include <stdio.h>
 static int us_quic_log_buf(void *ctx, const char *buf, size_t len) {
     (void) ctx;
@@ -781,22 +780,16 @@ static int us_quic_log_buf(void *ctx, const char *buf, size_t len) {
     return 0;
 }
 static const struct lsquic_logger_if us_quic_logger = { us_quic_log_buf };
-#endif
 
-/* lsquic_global_init is not idempotent: each call allocates a fresh
- * SSL ex_data index for the enc session, so a session created before a
- * second call can no longer find itself from the BoringSSL callbacks and
- * its handshake fails. Three engines share this process (the H3 server, the
- * H3 fetch client on the HTTP thread, node:quic on the JS thread), so every
- * lsquic_engine_new call site runs this guard first. */
+/* lsquic_global_init is not idempotent: each call allocates a new SSL ex_data
+ * index, and a session created under the previous index fails its handshake. */
+static int us_quic_global_init_rc = -1;
 static void us_quic_global_init_impl(void) {
-    lsquic_global_init(LSQUIC_GLOBAL_SERVER | LSQUIC_GLOBAL_CLIENT);
-#ifdef BUN_DEBUG
+    us_quic_global_init_rc = lsquic_global_init(LSQUIC_GLOBAL_SERVER | LSQUIC_GLOBAL_CLIENT);
     if (getenv("BUN_DEBUG_lsquic")) {
         lsquic_logger_init(&us_quic_logger, NULL, LLTS_HHMMSSUS);
         lsquic_set_log_level("debug");
     }
-#endif
 }
 
 #ifdef _WIN32
@@ -811,12 +804,13 @@ static BOOL CALLBACK us_quic_global_init_win(PINIT_ONCE o, PVOID p, PVOID *c) {
 static pthread_once_t us_quic_global_init_once = PTHREAD_ONCE_INIT;
 #endif
 
-void us_quic_global_init(void) {
+int us_quic_global_init(void) {
 #ifdef _WIN32
     InitOnceExecuteOnce(&us_quic_global_init_once, us_quic_global_init_win, NULL, NULL);
 #else
     pthread_once(&us_quic_global_init_once, us_quic_global_init_impl);
 #endif
+    return us_quic_global_init_rc;
 }
 
 static void us_quic_prepare_ssl_ctx(SSL_CTX *ssl, const struct us_bun_socket_context_options_t *options) {
@@ -831,7 +825,7 @@ us_quic_socket_context_t *us_create_quic_socket_context(
     struct us_loop_t *loop, struct us_bun_socket_context_options_t options,
     unsigned int ext_size, unsigned int idle_timeout_s)
 {
-    us_quic_global_init();
+    if (us_quic_global_init() != 0) return NULL;
     enum create_bun_socket_error_t ssl_err = 0;
     SSL_CTX *ssl = us_ssl_ctx_build_raw(options, &ssl_err);
     if (!ssl) return NULL;
@@ -1370,7 +1364,7 @@ us_quic_socket_context_t *us_create_quic_client_context(
     struct us_loop_t *loop, unsigned int ext_size,
     unsigned int conn_ext_size, unsigned int stream_ext_size)
 {
-    us_quic_global_init();
+    if (us_quic_global_init() != 0) return NULL;
     SSL_CTX *ssl = SSL_CTX_new(TLS_method());
     if (!ssl) return NULL;
     SSL_CTX_set_min_proto_version(ssl, TLS1_3_VERSION);

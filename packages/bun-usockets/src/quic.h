@@ -41,10 +41,10 @@ struct us_quic_header_t {
     int qpack_index;
 };
 
-/* Process-wide lsquic init. Thread-safe and idempotent. Every function that
- * calls lsquic_engine_new (here and in node_quic_shim.c) runs it first, so
- * callers never need to. */
-void us_quic_global_init(void);
+/* Process-wide lsquic init, run once. Every function that calls
+ * lsquic_engine_new (here and in node_quic_shim.c) runs it first. Returns 0,
+ * or -1 if the one lsquic_global_init call failed. */
+int us_quic_global_init(void);
 
 us_quic_socket_context_t *us_create_quic_socket_context(
     struct us_loop_t *loop, struct us_bun_socket_context_options_t options,

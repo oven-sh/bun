@@ -1918,58 +1918,73 @@ describe.concurrent("Bun.serve HTTP/3 sends the automatic 100 Continue ahead of 
 });
 
 // lsquic_global_init allocates the SSL ex_data index through which every TLS
-// callback finds its QUIC session. The three lsquic users in one process
-// (Bun.serve, fetch over HTTP/3 on the HTTP thread, node:quic on the JS thread)
-// each used to run it on their own. A second run moved the index, and a session
-// created before it could no longer find itself, so its handshake failed with
-// ERR_QUIC_TRANSPORT_ERROR. These tests create a node:quic session and then
-// start another lsquic user before the handshake completes.
+// callback finds its QUIC session, so a second call breaks every session that
+// is still in its handshake. Each case runs in a fresh process, where the
+// node:quic session is the first lsquic user, and then starts another lsquic
+// user (an HTTP/3 server or a fetch over HTTP/3) before the handshake completes.
 describe.concurrent("lsquic is initialized once per process", () => {
-  const sessionOptions = (endpoint: QuicEndpoint) => ({
-    endpoint,
-    servername: "localhost",
-    verifyPeer: "manual",
-    transportParams: { maxIdleTimeout: 5 },
-    onerror() {},
-  });
+  const clientFixture = `
+import { connect, QuicEndpoint } from "node:quic";
+const port = Number(process.env.PORT);
+const endpoint = new QuicEndpoint();
+const client = await connect("127.0.0.1:" + port, {
+  endpoint,
+  servername: "localhost",
+  verifyPeer: "manual",
+  transportParams: { maxIdleTimeout: 5 },
+  onerror() {},
+});
+client.closed.catch(() => {});
+// connect() resolves in a microtask, so the session exists and no packet from
+// the server has been processed yet when the other lsquic user starts.
+const other =
+  process.env.OTHER === "serve"
+    ? Bun.serve({ port: 0, tls: ${JSON.stringify(tls)}, http3: true, http1: false, fetch: () => new Response("x") })
+    : fetch("https://127.0.0.1:" + port + "/hello", { protocol: "http3", tls: { rejectUnauthorized: false } }).then(r => r.text());
+await client.opened;
+let status = "";
+const stream = await client.createBidirectionalStream({
+  headers: { ":method": "GET", ":path": "/hello", ":scheme": "https", ":authority": "localhost" },
+  onheaders(received) {
+    status = received[":status"];
+  },
+});
+stream.closed.catch(() => {});
+for await (const _ of stream) {
+}
+client.close().catch(() => {});
+console.log("status=" + status);
+if (process.env.OTHER === "serve") other.stop(true);
+else console.log("fetch=" + (await other));
+process.exit(0);
+`;
 
-  async function getStatus(client: Awaited<ReturnType<typeof connect>>): Promise<string> {
-    await client.opened;
-    let status = "";
-    const stream = await client.createBidirectionalStream({
-      headers: requestHeaders("/hello"),
-      onheaders(received: Record<string, string>) {
-        status = received[":status"];
-      },
+  async function runClient(port: number, other: "serve" | "fetch"): Promise<string> {
+    using dir = tempDir("h3-init-once", { "client.mjs": clientFixture });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "client.mjs"],
+      cwd: String(dir),
+      env: { ...bunEnv, PORT: String(port), OTHER: other },
+      stdout: "pipe",
+      stderr: "pipe",
     });
-    stream.closed.catch(() => {});
-    for await (const _ of stream as AsyncIterable<Uint8Array[]>) {
-    }
-    if (!client.destroyed) client.close().catch(() => {});
-    return status;
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr: stderr.replace(/^.*ExperimentalWarning.*\n.*\n/, ""), exitCode };
   }
 
   test("a node:quic handshake survives an HTTP/3 server that starts during it", async () => {
     await withServer(async port => {
-      await using endpoint = new QuicEndpoint();
-      const client = await connect(`127.0.0.1:${port}`, sessionOptions(endpoint));
-      client.closed.catch(() => {});
-      // connect() resolves in a microtask, so the session exists and no packet
-      // from the server has been processed yet when this server starts.
-      using other = Bun.serve({ port: 0, tls, http3: true, http1: false, fetch: () => new Response("x") });
-      expect(other.port).toBeGreaterThan(0);
-      expect(await getStatus(client)).toBe("200");
+      expect(await runClient(port, "serve")).toEqual({ stdout: "status=200\n", stderr: "", exitCode: 0 });
     });
   });
 
   test("a node:quic handshake survives a fetch over HTTP/3 that starts during it", async () => {
     await withServer(async port => {
-      await using endpoint = new QuicEndpoint();
-      const client = await connect(`127.0.0.1:${port}`, sessionOptions(endpoint));
-      client.closed.catch(() => {});
-      const res = fetchH3(port, "/hello");
-      expect(await getStatus(client)).toBe("200");
-      expect(await (await res).text()).toBe("hello over h3");
+      expect(await runClient(port, "fetch")).toEqual({
+        stdout: "status=200\nfetch=hello over h3\n",
+        stderr: "",
+        exitCode: 0,
+      });
     });
   });
 });

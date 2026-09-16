@@ -3115,6 +3115,14 @@ impl<'a> Resolver<'a> {
                     }
                 };
 
+                // Only an npm resolution has a folder here. On Windows "" would open the cwd.
+                if dir_path_for_resolution.is_empty() {
+                    if let Some(d) = self.debug_logs.as_mut() {
+                        d.decrease_indent();
+                    }
+                    return MatchStatus::NotFound;
+                }
+
                 match self.dir_info_for_resolution(dir_path_for_resolution, resolved_package_id) {
                     Ok(dir_info_to_use_) => {
                         if let Some(pkg_dir_info) = dir_info_to_use_ {

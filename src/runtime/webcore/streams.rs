@@ -1170,17 +1170,13 @@ pub struct HTTPServerWritable<const SSL: bool> {
     pub(crate) source_pending_pull: bool,
     pub(crate) end_len: usize,
     /// This sink fully ended the uWS response (`res.end()` / a completed
-    /// `res.try_end()`). On HTTP/1 uWS `markDone()` drops `onAborted` at that
-    /// point, so the owning `RequestContext` is never told if the peer closes
-    /// afterwards and its `resp` must not be dereferenced again: by the time
-    /// the parked stream-resolution microtask runs, uSockets may already have
-    /// freed the socket (`us_internal_free_closed_sockets`) or recycled it
-    /// onto the next keep-alive request. `handle_resolve_stream` /
-    /// `handle_reject_stream` consult this instead of reading the response's
-    /// state, and only on HTTP/1: an H2/H3 `resp` is still alive here, because
-    /// `Http{2,3}Response::markDone()` leave `onAborted` armed. When the
-    /// transport frees such a stream it calls `on_abort`, which ends the
-    /// request through `end_already_responded_stream()`.
+    /// `res.try_end()`). On HTTP/1 that drops `onAborted`, so the owning
+    /// `RequestContext` is never told the peer went away and must not
+    /// dereference `resp` again: uSockets may have freed or recycled the
+    /// socket by the time the stream reaction runs. `handle_resolve_stream` /
+    /// `handle_reject_stream` read this instead of the response state, and
+    /// act on it only for HTTP/1. An H2/H3 `resp` is still alive there, and
+    /// `on_abort` ends those requests when the transport frees the stream.
     pub(crate) ended_response: bool,
 
     pub(crate) on_first_write: Option<fn(Option<*mut c_void>)>,

@@ -84,6 +84,24 @@ private:
     JSValue m_previous;
 };
 
+// The one way into an object's context: its script runs under its graph's own frame, not on top of
+// the caller's.
+class ObjectScope {
+    WTF_MAKE_NONCOPYABLE(ObjectScope);
+    WTF_FORBID_HEAP_ALLOCATION;
+
+public:
+    ObjectScope(Zig::GlobalObject* globalObject, JSModuleGraph* graph)
+        : m_reset(globalObject)
+        , m_context(globalObject, graph)
+    {
+    }
+
+private:
+    AsyncContextReset m_reset;
+    ModuleGraphContextScope m_context;
+};
+
 static JSValue callMethod(JSGlobalObject* globalObject, JSValue target, ASCIILiteral name, const ArgList& arguments)
 {
     VM& vm = globalObject->vm();
@@ -535,7 +553,6 @@ JSDurableObjectActor* JSDurableObjectEvent::actor() const
     return uncheckedDowncast<JSDurableObjectActor>(internalField(static_cast<uint32_t>(Field::Actor)).get().asCell());
 }
 
-
 static JSWeakMap* socketMap(Zig::GlobalObject* globalObject)
 {
     return uncheckedDowncast<JSWeakMap>(JSDurableObjectRealm::of(globalObject)->object(Field::SocketMap));
@@ -817,8 +834,7 @@ bool JSDurableObjectActor::run(Zig::GlobalObject* globalObject, JSDurableObjectE
 
     JSValue result;
     {
-        AsyncContextReset reset(globalObject);
-        ModuleGraphContextScope context(globalObject, m_graph.get());
+        ObjectScope inside(globalObject, m_graph.get());
         result = invokeEvent(globalObject, this, event, arguments);
     }
     if (auto* exception = scope.exception()) [[unlikely]] {
@@ -989,8 +1005,7 @@ void JSDurableObjectActor::construct(Zig::GlobalObject* globalObject, JSValue cl
     arguments.append(ns()->env() ? ns()->env() : jsUndefined());
     JSObject* instance;
     {
-        AsyncContextReset reset(globalObject);
-        ModuleGraphContextScope context(globalObject, m_graph.get());
+        ObjectScope inside(globalObject, m_graph.get());
         instance = JSC::construct(globalObject, classValue.getObject(), JSC::getConstructData(classValue), arguments);
     }
     if (auto* exception = scope.exception()) [[unlikely]] {
@@ -1020,8 +1035,7 @@ JSValue JSDurableObjectActor::block(Zig::GlobalObject* globalObject, JSValue cal
     ns()->actorBecameBusy(this);
     JSValue result;
     {
-        AsyncContextReset reset(globalObject);
-        ModuleGraphContextScope context(globalObject, m_graph.get());
+        ObjectScope inside(globalObject, m_graph.get());
         result = call(globalObject, callback, JSC::getCallData(callback), jsUndefined(), ArgList());
     }
     JSPromise* awaited = nullptr;
@@ -1295,30 +1309,23 @@ void JSDurableObjectActor::removeSocket(JSDurableObjectHandle* socket)
     }
     ns()->m_socketCount--;
     ns()->updateKeepAlive();
-    ns()->forget(this);
 }
 
 JSArray* JSDurableObjectActor::socketsWithTag(Zig::GlobalObject* globalObject, const String& tag)
 {
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    // (A socket is on the list from its open to its close event.)
     MarkedArgumentBuffer sockets;
     for (auto* socket : m_sockets) {
         if (!tag.isNull()) {
             bool tagged = false;
-            if (auto* tags = dynamicDowncast<JSArray>(socket->extra())) {
-                for (unsigned i = 0, length = tags->length(); i < length && !tagged; i++) {
-                    tagged = asString(tags->getIndexQuickly(i))->value(globalObject) == tag;
-                    RETURN_IF_EXCEPTION(scope, nullptr);
-                }
-            }
+            auto* tags = uncheckedDowncast<JSArray>(socket->extra().asCell());
+            for (unsigned i = 0, length = tags->length(); i < length && !tagged; i++)
+                tagged = asString(tags->getIndexQuickly(i))->tryGetValue() == tag;
             if (!tagged)
                 continue;
         }
-        JSValue readyState = socket->target().get(globalObject, WebCore::builtinNames(vm).readyStatePublicName());
-        RETURN_IF_EXCEPTION(scope, nullptr);
-        if (readyState.isInt32() && readyState.asInt32() == 1)
-            sockets.append(socket->target());
+        sockets.append(socket->target());
     }
     RELEASE_AND_RETURN(scope, constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), sockets));
 }
@@ -1466,12 +1473,12 @@ void JSDurableObjectActor::unload(Zig::GlobalObject* globalObject)
 
 // ─── ctx ─────────────────────────────────────────────────────────────────────
 
-#define THIS_STATE(method)                                                                                                         \
-    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);                                                                 \
-    [[maybe_unused]] VM& vm = globalObject->vm();                                                                                                   \
-    auto scope = DECLARE_THROW_SCOPE(vm);                                                                                          \
-    auto* handle = toCurrentHandle(globalObject, scope, callFrame->thisValue(), HandleKind::State, "DurableObjectState"_s, method);      \
-    RETURN_IF_EXCEPTION(scope, {});                                                                                                \
+#define THIS_STATE(method)                                                                                                          \
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);                                                                  \
+    [[maybe_unused]] VM& vm = globalObject->vm();                                                                                   \
+    auto scope = DECLARE_THROW_SCOPE(vm);                                                                                           \
+    auto* handle = toCurrentHandle(globalObject, scope, callFrame->thisValue(), HandleKind::State, "DurableObjectState"_s, method); \
+    RETURN_IF_EXCEPTION(scope, {});                                                                                                 \
     auto* actor = handle->actor();
 
 JSC_DEFINE_HOST_FUNCTION(jsDurableObjectStateWaitUntil, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -1688,12 +1695,12 @@ static const HashTableValue statePrototypeValues[] = {
 
 // ─── The `server` of fetch(request, server) ──────────────────────────────────
 
-#define THIS_SERVER(method)                                                                                                      \
-    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);                                                               \
-    [[maybe_unused]] VM& vm = globalObject->vm();                                                                                                 \
-    auto scope = DECLARE_THROW_SCOPE(vm);                                                                                        \
-    auto* handle = dynamicDowncast<JSDurableObjectHandle>(callFrame->thisValue());                                               \
-    if (!handle || handle->kind() != HandleKind::Server) [[unlikely]]                                                                  \
+#define THIS_SERVER(method)                                                        \
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);                 \
+    [[maybe_unused]] VM& vm = globalObject->vm();                                  \
+    auto scope = DECLARE_THROW_SCOPE(vm);                                          \
+    auto* handle = dynamicDowncast<JSDurableObjectHandle>(callFrame->thisValue()); \
+    if (!handle || handle->kind() != HandleKind::Server) [[unlikely]]              \
         return WebCore::throwThisTypeError(*globalObject, scope, "Server"_s, method);
 
 // The socket is this object's: its events come to the object's webSocket*() handlers, and it
@@ -1736,13 +1743,13 @@ JSC_DEFINE_HOST_FUNCTION(jsDurableObjectServerUpgrade, (JSGlobalObject * lexical
     return JSValue::encode(upgraded);
 }
 
-#define FORWARDED_SERVER_FUNCTION(name)                                                                                         \
-    JSC_DEFINE_HOST_FUNCTION(jsDurableObjectServer_##name, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))        \
-    {                                                                                                                           \
-        static constexpr auto literal = #name##_s;                                                                              \
-        THIS_SERVER(literal)                                                                                                    \
-        ArgList arguments(callFrame);                                                                                           \
-        RELEASE_AND_RETURN(scope, JSValue::encode(callMethod(globalObject, handle->target(), literal, arguments)));      \
+#define FORWARDED_SERVER_FUNCTION(name)                                                                                   \
+    JSC_DEFINE_HOST_FUNCTION(jsDurableObjectServer_##name, (JSGlobalObject * lexicalGlobalObject, CallFrame * callFrame)) \
+    {                                                                                                                     \
+        static constexpr auto literal = #name##_s;                                                                        \
+        THIS_SERVER(literal)                                                                                              \
+        ArgList arguments(callFrame);                                                                                     \
+        RELEASE_AND_RETURN(scope, JSValue::encode(callMethod(globalObject, handle->target(), literal, arguments)));       \
     }
 
 FORWARDED_SERVER_FUNCTION(requestIP)
@@ -1750,15 +1757,15 @@ FORWARDED_SERVER_FUNCTION(timeout)
 FORWARDED_SERVER_FUNCTION(publish)
 FORWARDED_SERVER_FUNCTION(subscriberCount)
 
-#define FORWARDED_SERVER_GETTER(name)                                                                                                 \
+#define FORWARDED_SERVER_GETTER(name)                                                                                                     \
     JSC_DEFINE_CUSTOM_GETTER(jsDurableObjectServerGetter_##name, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName)) \
-    {                                                                                                                                 \
-        [[maybe_unused]] VM& vm = globalObject->vm();                                                                                                  \
-        auto scope = DECLARE_THROW_SCOPE(vm);                                                                                         \
-        auto* handle = dynamicDowncast<JSDurableObjectHandle>(JSValue::decode(thisValue));                                            \
-        if (!handle || handle->kind() != HandleKind::Server) [[unlikely]]                                                                   \
-            return WebCore::throwThisTypeError(*globalObject, scope, "Server"_s, #name##_s);                                          \
-        RELEASE_AND_RETURN(scope, JSValue::encode(handle->target().get(globalObject, ident(vm, #name##_s))));                         \
+    {                                                                                                                                     \
+        [[maybe_unused]] VM& vm = globalObject->vm();                                                                                     \
+        auto scope = DECLARE_THROW_SCOPE(vm);                                                                                             \
+        auto* handle = dynamicDowncast<JSDurableObjectHandle>(JSValue::decode(thisValue));                                                \
+        if (!handle || handle->kind() != HandleKind::Server) [[unlikely]]                                                                 \
+            return WebCore::throwThisTypeError(*globalObject, scope, "Server"_s, #name##_s);                                              \
+        RELEASE_AND_RETURN(scope, JSValue::encode(handle->target().get(globalObject, ident(vm, #name##_s))));                             \
     }
 
 FORWARDED_SERVER_GETTER(url)
@@ -1863,8 +1870,9 @@ JSC_DEFINE_HOST_FUNCTION(jsDurableObjectSocketClose, (JSGlobalObject * lexicalGl
     auto* actor = socket->actor();
     ModuleGraphContextScope context(actor->ns()->context());
     socket->m_rolledBack = true;
-    actor->post(globalObject, DurableObjectEventKind::SocketClose, ws, callFrame->argument(1), callFrame->argument(2));
     actor->removeSocket(socket);
+    actor->post(globalObject, DurableObjectEventKind::SocketClose, ws, callFrame->argument(1), callFrame->argument(2));
+    actor->ns()->forget(actor);
     return JSValue::encode(jsUndefined());
 }
 
@@ -2580,6 +2588,8 @@ JSC_DEFINE_HOST_FUNCTION(constructDurableObjectNamespace, (JSGlobalObject * lexi
         options.name = options.exportName == "default"_s ? options.modulePath : options.exportName;
     if (options.name.isEmpty())
         return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "options.name"_s, nameValue, "must be a non-empty string when the class has no name"_s);
+    if (hasUnpairedSurrogate(options.name))
+        return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "options.name"_s, jsString(vm, options.name), "must be well-formed Unicode"_s);
 
     JSValue storageValue = read("storage"_s);
     RETURN_IF_EXCEPTION(scope, {});

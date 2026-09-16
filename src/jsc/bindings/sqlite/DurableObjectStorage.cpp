@@ -905,23 +905,6 @@ static int compareBytes(std::span<const uint8_t> a, std::span<const uint8_t> b)
     return a.size() < b.size() ? -1 : a.size() > b.size();
 }
 
-static bool hasLoneSurrogate(StringView view)
-{
-    if (view.is8Bit())
-        return false;
-    auto units = view.span16();
-    for (size_t i = 0; i < units.size(); i++) {
-        if (!U16_IS_SURROGATE(units[i]))
-            continue;
-        if (U16_IS_SURROGATE_LEAD(units[i]) && i + 1 < units.size() && U16_IS_TRAIL(units[i + 1])) {
-            i++;
-            continue;
-        }
-        return true;
-    }
-    return false;
-}
-
 // A key, as the string script gave and as the bytes the database compares.
 struct StorageKey {
     String string;
@@ -938,7 +921,7 @@ static bool readKey(JSGlobalObject* globalObject, ThrowScope& scope, JSValue val
     key.string = asString(value)->value(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
     if (key.string.length() <= maxKeyBytes) {
-        if (hasLoneSurrogate(key.string)) {
+        if (hasUnpairedSurrogate(key.string)) {
             Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, name, value, "must be well-formed Unicode"_s);
             return false;
         }
@@ -1112,14 +1095,14 @@ static EncodedJSValue settled(Zig::GlobalObject* globalObject, ThrowScope& scope
     RELEASE_AND_RETURN(scope, JSValue::encode(JSPromise::resolvedPromise(globalObject, value)));
 }
 
-#define STORAGE_FUNCTION_PROLOGUE()                                 \
-    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);  \
-    [[maybe_unused]] VM& vm = globalObject->vm();                                    \
+#define STORAGE_FUNCTION_PROLOGUE()                                \
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject); \
+    [[maybe_unused]] VM& vm = globalObject->vm();                  \
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-#define STORAGE_ACCESS(kind, className, method)                                                                                                       \
-    StorageAccess access = accessStorage(globalObject, scope, callFrame->thisValue(), JSDurableObjectHandle::Kind::kind, className, method);          \
-    if (!access) [[unlikely]]                                                                                                                          \
+#define STORAGE_ACCESS(kind, className, method)                                                                                              \
+    StorageAccess access = accessStorage(globalObject, scope, callFrame->thisValue(), JSDurableObjectHandle::Kind::kind, className, method); \
+    if (!access) [[unlikely]]                                                                                                                \
         return settled(globalObject, scope, {});
 
 // ── get / list ──
@@ -1359,7 +1342,11 @@ JSC_DEFINE_HOST_FUNCTION(jsDurableObjectStorageSetAlarm, (JSGlobalObject * lexic
 {
     STORAGE_FUNCTION_PROLOGUE()
     int64_t when = 0;
-    if (!readAlarmTime(globalObject, scope, callFrame->argument(0), when) || !requireAlarmHandler(globalObject, scope, callFrame->thisValue()))
+    if (!readAlarmTime(globalObject, scope, callFrame->argument(0), when))
+        return settled(globalObject, scope, {});
+    // (A stale reference says so before anything is asked of the instance that is there now.)
+    toCurrentHandle(globalObject, scope, callFrame->thisValue(), JSDurableObjectHandle::Kind::Storage, "DurableObjectStorage"_s, "setAlarm"_s);
+    if (scope.exception() || !requireAlarmHandler(globalObject, scope, callFrame->thisValue()))
         return settled(globalObject, scope, {});
     STORAGE_ACCESS(Storage, "DurableObjectStorage"_s, "setAlarm"_s)
     storageSetAlarm(globalObject, scope, access, when);
@@ -1468,18 +1455,18 @@ static JSValue transactionGet(Zig::GlobalObject* globalObject, ThrowScope& scope
     RELEASE_AND_RETURN(scope, deserializeValue(globalObject, scope, Vector<uint8_t>(bytes->span())));
 }
 
-#define TRANSACTION_PROLOGUE(method)                                                                          \
-    STORAGE_FUNCTION_PROLOGUE()                                                                               \
+#define TRANSACTION_PROLOGUE(method)                                                                           \
+    STORAGE_FUNCTION_PROLOGUE()                                                                                \
     JSDurableObjectHandle* transaction = thisTransaction(globalObject, scope, callFrame->thisValue(), method); \
-    if (!transaction) [[unlikely]]                                                                            \
+    if (!transaction) [[unlikely]]                                                                             \
         return settled(globalObject, scope, {});
 
-#define TRANSACTION_ACCESS()                                              \
-    transaction = thisTransaction(globalObject, scope, callFrame->thisValue(), "get"_s); \
-    if (!transaction) [[unlikely]]                                        \
-        return settled(globalObject, scope, {});                          \
+#define TRANSACTION_ACCESS()                                                                     \
+    transaction = thisTransaction(globalObject, scope, callFrame->thisValue(), "get"_s);         \
+    if (!transaction) [[unlikely]]                                                               \
+        return settled(globalObject, scope, {});                                                 \
     StorageAccess access { transaction->actor(), transaction->actor()->database(globalObject) }; \
-    if (!access) [[unlikely]]                                             \
+    if (!access) [[unlikely]]                                                                    \
         return settled(globalObject, scope, {});
 
 JSC_DEFINE_HOST_FUNCTION(jsDurableObjectTransactionGet, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -2260,7 +2247,8 @@ JSC_DEFINE_HOST_FUNCTION(jsDurableObjectSqlExec, (JSGlobalObject * lexicalGlobal
             else if (openScope() && aboutToWrite(next)) {
                 DurableObjectDatabase::UserScope restricted(*database);
                 int result;
-                while ((result = sqlite3_step(next)) == SQLITE_ROW) { }
+                while ((result = sqlite3_step(next)) == SQLITE_ROW) {
+                }
                 if (result != SQLITE_DONE)
                     error = createSQLiteErrorFor(globalObject, database->handle());
             }

@@ -2882,5 +2882,15 @@ it("binds statements with more than 65535 parameters without truncating the coun
   numberedValues[M - 1] = 7;
   expect(numbered.get(numberedValues)).toEqual({ v: 7 });
 
+  // Object bindings walk the same count, so names past the wrapped count stayed NULL.
+  const named = db.prepare(`SELECT ?${M} AS v, $name AS n`);
+  expect(named.get({ [`?${M}`]: 7, $name: "x" })).toEqual({ v: 7, n: "x" });
+
+  // Database#run(sql, values) builds its own bindings map from the same count.
+  const runSql = `INSERT INTO t(a) VALUES (?${M})`;
+  expect(() => db.run(runSql, [7])).toThrow(`SQLite query expected ${M} values, received 1`);
+  expect(db.run(runSql, numberedValues).changes).toBe(1);
+  expect(db.query("SELECT count(*) c FROM t WHERE a = 7").get()).toEqual({ c: 1 });
+
   db.close();
 });

@@ -173,6 +173,9 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
     // `Bun.env`/`process.env` (env conversion).
     #[cfg(windows)]
     {
+        // Before the env conversion, so `_BUN_WATCHER_CHILD` is not in the copy.
+        bun_sys::windows::take_watcher_child_env();
+
         // `bun.handleOom(convertEnvToWTF8())` — converts the OS UTF-16 env
         // block to WTF-8 and publishes it via `bun_core::os::set_environ()`.
         // Without this, `Bun.env`/`process.env` see only `.env`-file vars.

@@ -1514,7 +1514,35 @@ const WATCHER_CHILD_ENV_Z: &[u16] = bun_core::w!("_BUN_WATCHER_CHILD\0");
 // this was randomly generated - we need to avoid using a common exit code that might be used by the script itself
 pub(crate) const WATCHER_RELOAD_EXIT: DWORD = 3224497970;
 
+// Written once by `take_watcher_child_env` in `main()`, before any other thread exists.
+static IS_WATCHER_CHILD: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
+/// Records whether `_BUN_WATCHER_CHILD` marks this process, then removes it
+/// from the environment. `spawn_watcher_child` sets it, and so does `Bun.spawn`
+/// in a watcher child for a child with an IPC channel. The variable marks this
+/// process only: a `bun --watch` that inherits it never becomes a watcher
+/// manager, so its first reload exits with `WATCHER_RELOAD_EXIT` and nothing
+/// respawns it.
+///
+/// Call before `env::convert_env_to_wtf8`, which copies the environment for
+/// `process.env` and for the processes this one spawns.
+pub fn take_watcher_child_env() {
+    if !has_watcher_child_env() {
+        return;
+    }
+    IS_WATCHER_CHILD.store(true, core::sync::atomic::Ordering::Relaxed);
+    // SAFETY: the name is NUL-terminated; a null value deletes the variable
+    unsafe {
+        let _ = SetEnvironmentVariableW(WATCHER_CHILD_ENV_Z.as_ptr(), ptr::null());
+    }
+}
+
 pub fn is_watcher_child() -> bool {
+    IS_WATCHER_CHILD.load(core::sync::atomic::Ordering::Relaxed)
+}
+
+fn has_watcher_child_env() -> bool {
     let mut buf: [u16; 1] = [0];
     // SAFETY: buf valid for 1 element
     unsafe {

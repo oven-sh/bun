@@ -7,8 +7,8 @@ import { join } from "node:path";
 
 let watchee: Subprocess;
 
-function stdoutWaiter(proc: Subprocess<"ignore", "pipe", any>) {
-  const reader = proc.stdout.getReader();
+function stdoutWaiter(proc: Subprocess<"ignore", "pipe", any>, stream: ReadableStream<Uint8Array> = proc.stdout) {
+  const reader = stream.getReader();
   const decoder = new TextDecoder();
   let output = "";
   return {
@@ -18,6 +18,10 @@ function stdoutWaiter(proc: Subprocess<"ignore", "pipe", any>) {
         if (done) throw new Error(`stream closed, output so far: ${JSON.stringify(output)}`);
         output += decoder.decode(value, { stream: true });
       }
+    },
+    // Every process that inherited the pipe has exited.
+    waitForClose: async () => {
+      while (!(await reader.read()).done) {}
     },
     release: () => reader.releaseLock(),
     output: () => output,
@@ -433,6 +437,8 @@ it("NODE_COMPILE_CACHE persists across a --watch reload", async () => {
 // NODE_CHANNEL_FD survives in environ across execve; the fd it names must
 // survive too, so the reloaded image re-attaches to a live socket instead
 // of a closed one and the parent keeps receiving 'message' events.
+// Skipped on Windows: the watcher manager does not forward the IPC pipe to
+// the process it spawns, so no message arrives at all (#42925).
 it.skipIf(isWindows)(
   "IPC to the parent survives a --watch reload",
   async () => {
@@ -465,6 +471,144 @@ it.skipIf(isWindows)(
   },
   30000,
 );
+
+// Ends the watchee and the process that its script spawned. On POSIX the
+// SIGKILL does not reach that process. On Windows it does: libuv and the
+// watcher manager hold their children in kill-on-close job objects. Every
+// process of the tree holds the write end of the watchee's stdout, so the end
+// of that stream means that none of them holds the temp directory any more.
+async function killWatcheeTree(waiter: ReturnType<typeof stdoutWaiter>, spawnedPid?: RegExp) {
+  const pid = spawnedPid && waiter.output().match(spawnedPid)?.[1];
+  if (pid && !isWindows) {
+    try {
+      process.kill(Number(pid), "SIGKILL");
+    } catch (e: any) {
+      // The process is already gone.
+      if (e?.code !== "ESRCH") throw e;
+    }
+  }
+  watchee.kill("SIGKILL");
+  await watchee.exited;
+  await waiter.waitForClose();
+  waiter.release();
+}
+
+// On Windows the process that runs the script is the child of a "watcher
+// manager" process. The manager marks it with _BUN_WATCHER_CHILD in its
+// environment and spawns it again when it exits with the reload exit code.
+// The script's own children inherited that variable, so a `bun --watch` among
+// them took itself for a watcher child: its first reload exited to a parent
+// that is not a manager, and nothing ran the new code.
+it("a bun --watch that a script under bun --watch spawns restarts on a file change", async () => {
+  using dir = tempDir("watch-nested", {
+    "outer.mjs": `
+      import { join } from "node:path";
+      const inner = Bun.spawn({
+        cmd: [process.execPath, "--watch", "inner.mjs"],
+        cwd: join(import.meta.dir, "inner"),
+        stdio: ["ignore", "inherit", "inherit"],
+      });
+      console.log("inner pid " + inner.pid);
+      // Ends the outer process too, so the test sees a closed stdout instead
+      // of waiting for output that never comes.
+      inner.exited.then(code => {
+        console.log("inner exited " + code);
+        process.exit(1);
+      });
+    `,
+    "inner/inner.mjs": `console.log("inner first");`,
+  });
+  const cwd = String(dir);
+
+  watchee = spawn({
+    cmd: [bunExe(), "--watch", "outer.mjs"],
+    cwd,
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+  });
+
+  const waiter = stdoutWaiter(watchee);
+  try {
+    await waiter.waitFor("inner first");
+    await Bun.write(join(cwd, "inner", "inner.mjs"), `console.log("inner second");`);
+    await waiter.waitFor("inner second");
+  } finally {
+    await killWatcheeTree(waiter, /inner pid (\d+)/);
+  }
+}, 30000);
+
+// fork() passes process.execArgv, so the child of a script under `bun --watch`
+// runs with --watch too. On Windows it must not become a watcher manager: the
+// manager does not forward the IPC channel to the process it spawns.
+it("a fork()ed child of a script under bun --watch keeps its IPC channel", async () => {
+  using dir = tempDir("watch-fork-ipc", {
+    "parent.cjs": `
+      const { fork } = require("node:child_process");
+      const { join } = require("node:path");
+      const child = fork(join(__dirname, "child.cjs"));
+      console.log("child pid " + child.pid);
+      child.on("message", message => console.log("parent got " + message));
+      // Ends the parent too, so the test sees a closed stdout instead of
+      // waiting for a message that never comes.
+      child.on("exit", code => {
+        console.log("child exited " + code);
+        process.exit(1);
+      });
+    `,
+    "child.cjs": `process.send("hello from child");`,
+  });
+
+  watchee = spawn({
+    cmd: [bunExe(), "--watch", "parent.cjs"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+  });
+
+  const waiter = stdoutWaiter(watchee);
+  try {
+    await waiter.waitFor("parent got hello from child");
+  } finally {
+    await killWatcheeTree(waiter, /child pid (\d+)/);
+  }
+}, 30000);
+
+// A `bun test --parallel` worker gets --watch through BUN_OPTIONS. On Windows it
+// must not become a watcher manager: the manager does not forward fd 3, the
+// worker's channel to the coordinator.
+it("bun test --parallel workers run under BUN_OPTIONS=--watch", async () => {
+  const fixture = (name: string) =>
+    `import { test, expect } from "bun:test"; test("${name}", () => expect(1).toBe(1));`;
+  using dir = tempDir("watch-test-parallel", {
+    "a.test.js": fixture("a"),
+    "b.test.js": fixture("b"),
+    "c.test.js": fixture("c"),
+  });
+
+  const proc = spawn({
+    cmd: [bunExe(), "test", "--parallel=2"],
+    cwd: String(dir),
+    env: { ...bunEnv, BUN_OPTIONS: "--watch" },
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  watchee = proc;
+
+  const waiter = stdoutWaiter(proc, proc.stderr);
+  try {
+    // The coordinator prints the summary after the last worker has exited.
+    await waiter.waitFor("Ran 3 tests across 3 files.");
+    expect(waiter.output()).toContain(" 3 pass");
+    expect(waiter.output()).toContain(" 0 fail");
+  } finally {
+    await killWatcheeTree(waiter);
+  }
+}, 30000);
 
 // Paths of the files and directories a process holds open. Linux reads
 // /proc, macOS asks lsof (the kernel has no per-process fd listing there).

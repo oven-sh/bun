@@ -1133,7 +1133,10 @@ pub mod command {
 
         #[cfg(windows)]
         {
-            if ctx.debug.hot_reload == HotReload::Watch {
+            // A `bun test --parallel` worker gets `--watch` through BUN_OPTIONS.
+            // It must not become a watcher manager: the manager does not forward
+            // fd 3, the worker's channel to the coordinator.
+            if ctx.debug.hot_reload == HotReload::Watch && !ctx.test_options.test_worker {
                 {
                     if !bun_sys::windows::is_watcher_child() {
                         bun_sys::windows::become_watcher_manager();

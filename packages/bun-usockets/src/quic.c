@@ -704,10 +704,7 @@ static void us_quic_on_read(lsquic_stream_t *stream, lsquic_stream_ctx_t *h) {
         if (!s->stream) return;
     }
     if (r == 0 && !s->fin_delivered) {
-        /* The read that reaches the end of the stream returns 0 even when it
-         * decoded a header block on its way there: a final response with no
-         * body right behind a 1xx, or trailers. Nothing reads this stream
-         * after the FIN below, so that block has to come out first. */
+        /* lsquic returns 0 even if this read decoded one more header block. */
         int delivered;
         while ((delivered = us_quic_deliver_hset(stream, s)) > 0) {}
         if (delivered < 0) return;

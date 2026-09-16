@@ -1023,8 +1023,7 @@ pub(super) unsafe extern "C" fn on_stream_read(ctx: *mut c_void, s: *mut lsquic:
     }
     // SAFETY: `ctx` is the live QuicStream we returned from on_new_stream.
     let qs = unsafe { &*ctx.cast::<QuicStream>() };
-    // Hands every header block lsquic has decoded to the session. Returns
-    // false if a malformed block reset the stream.
+    // Returns false if a malformed header block reset the stream.
     let claim_header_sets = || -> bool {
         while let Some(hset) = stream.take_header_set() {
             let pairs = hset.pairs();
@@ -1090,10 +1089,7 @@ pub(super) unsafe extern "C" fn on_stream_read(ctx: *mut c_void, s: *mut lsquic:
                 got_any = true;
             }
             0 => {
-                // The read that reaches the end of the stream returns 0 even
-                // when it decoded a header block on its way there (a final
-                // response with no body behind a 1xx, or trailers). Nothing
-                // reads this stream after the FIN, so claim that block first.
+                // lsquic returns 0 even if this read decoded one more header block.
                 if !claim_header_sets() {
                     break;
                 }

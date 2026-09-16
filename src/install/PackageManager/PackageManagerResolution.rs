@@ -155,7 +155,7 @@ impl PackageManager {
         Ok(list)
     }
 
-    /// `dep_version_buf` is the buffer `version`'s strings were parsed against.
+    /// `dep_version_buf`: the buffer `version` was parsed in.
     pub(crate) fn resolve_from_disk_cache(
         &mut self,
         package_name: &[u8],

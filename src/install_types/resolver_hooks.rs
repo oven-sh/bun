@@ -1431,9 +1431,7 @@ pub trait AutoInstaller {
     fn lockfile_dependencies_buf(&self) -> &[Dependency];
     fn lockfile_resolutions_buf(&self) -> &[PackageID];
     fn lockfile_string_bytes(&self) -> &[u8];
-    /// `version_buf` holds the strings `version` was parsed against (a
-    /// package.json's bytes, the lockfile's string buffer, or the import
-    /// specifier itself).
+    /// `version_buf`: the buffer `version` was parsed in.
     fn lockfile_resolve(
         &self,
         name: &[u8],
@@ -1489,9 +1487,7 @@ pub trait AutoInstaller {
     ) -> EnqueueResult;
 
     // ── Dependency parsing ─────────────────────────────────────────────────
-    // The strings of the result are offsets into the buffer of `sliced`.
-    // `&mut self`: the manager records an `npm:` alias, from a copy of the
-    // literal in the lockfile's strings.
+    // `&mut self`: the manager records an `npm:` alias.
     fn parse_dependency(
         &mut self,
         name: SemverString,

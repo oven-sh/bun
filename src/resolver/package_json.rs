@@ -899,11 +899,7 @@ impl PackageJSON {
                                     // isn't, still record the dependency name (with an
                                     // uninitialized-tag version) — `bun run --filter` reads
                                     // only the map keys to compute workspace ordering.
-                                    //
-                                    // The strings of a parsed version are offsets into
-                                    // `source_buf`, like `name`. A value with JSON escapes
-                                    // is decoded outside of it, so it is recorded by name
-                                    // only as well.
+                                    // Same for a value with JSON escapes: not in `source_buf`.
                                     let dependency_version = match r.auto_installer() {
                                         Some(pm)
                                             if bun_alloc::is_slice_in_buffer(

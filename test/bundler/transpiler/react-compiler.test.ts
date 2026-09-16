@@ -3033,6 +3033,18 @@ describe("bundler", () => {
       reactCompiler: true,
       backend: "cli",
       target,
+      onAfterBundle(api) {
+        if (target !== "browser") return;
+        // A function that stays uncompiled prints the same values. A compiled one starts with its memo cache.
+        const compiled = api.readFile("/out.js").matchAll(/function (\w+)\(p\) \{\s*let \$ = c\(\d+\);/g);
+        expect(Array.from(compiled, match => match[1]).sort()).toEqual([
+          "CallInTheKey",
+          "KeyIsTheLastAttribute",
+          "StatementInAChild",
+          "StatementInALaterAttribute",
+          "StoreInTheKey",
+        ]);
+      },
       run: {
         stdout: `
           CallInTheKey=[3,{"title":2,"id":[2]}]

@@ -3192,20 +3192,17 @@ impl ThreadSafeFunction {
 
     /// `napi_ref_threadsafe_function` — JS thread only (as in Node).
     pub(crate) fn ref_(&mut self) {
-        if !self.held_for_the_process {
-            let caller = VirtualMachine::get().context_of_caller_no_frame();
-            if caller.is_stopped() {
-                // Nothing of a context that has stopped holds the loop: asked for from the
-                // function's own call_js (which runs in its maker's context) once that has
-                // stopped, it holds nothing.
-                if self.abort_handle.context_stopped() {
-                    return;
-                }
-            } else if caller.id() != self.context {
-                // (Its calls stay its maker's: where they run never changes.)
-                self.held_for_the_process = true;
-                self.abort_handle.leave();
-            }
+        let caller = VirtualMachine::get().context_of_caller_no_frame();
+        // Nothing of a context that has stopped holds the loop: not the function's own call_js
+        // once its maker has stopped (that is where it runs), not a disposed graph's leftover
+        // script. Accepted, and holds nothing.
+        if caller.is_stopped() {
+            return;
+        }
+        if !self.held_for_the_process && caller.id() != self.context {
+            // (Its calls stay its maker's: where they run never changes.)
+            self.held_for_the_process = true;
+            self.abort_handle.leave();
         }
         self.poll_ref.ref_(bun_io::js_vm_ctx());
     }

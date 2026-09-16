@@ -1092,6 +1092,11 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       ["disposed", "ran dry once the host let go"],
     ],
     [
+      "that the host reffed and let go of holds nothing for its own call_js after that",
+      ["and the host had reffed and let go of it"],
+      ["disposed", "it asked to be held again", "ran dry at once"],
+    ],
+    [
       "and one the host made, which the graph reffed, holds the loop for the host still",
       ["that the host made and the graph reffed"],
       ["disposed", "ran dry once the host let go"],
@@ -1127,6 +1132,10 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
         } else {
           graph.run(() => app.start());
           if (when === "while the graph lived") addon.ref_that_function();
+          if (when === "and the host had reffed and let go of it") {
+            addon.ref_that_function();
+            addon.unref_that_function();
+          }
           graph.dispose();
         }
         console.log("disposed");
@@ -1142,7 +1151,7 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
         let letGo = false;
         process.once("beforeExit", () => console.log(letGo ? "ran dry once the host let go" : "ran dry at once"));
         if (when === "after the graph was disposed") addon.ref_that_function();
-        if (when) {
+        if (when && when !== "and the host had reffed and let go of it") {
           // It holds the loop until the host lets go. (The timer holds nothing itself: with the
           // loop dry it never fires.)
           setTimeout(() => {

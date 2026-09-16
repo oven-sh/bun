@@ -33,6 +33,13 @@ pub struct Snapshots {
     // LIFETIMES.tsv said `HashMap<usize, String>`; overridden per §Strings (data is bytes) → Box<[u8]>.
     // Key is u64 to match `bun.hash`'s return type (avoids a narrowing cast).
     values: HashMap<u64, Box<[u8]>>,
+    /// Under `--update-snapshots`: one slot per key of the existing `.snap`, in file order.
+    /// A slot holds the formatted `exports[...]` entry with this run's value once a test
+    /// reaches the key. `write_snapshot_file` emits the filled slots in this order before
+    /// the new keys and drops the empty ones.
+    existing: Vec<Option<Box<[u8]>>>,
+    /// Key hash -> index into `existing`.
+    existing_index: HashMap<u64, usize>,
     counts: StringHashMap<usize>,
     _current_file: Option<File>,
     /// Directory whose `__snapshots__/` was last created (or found existing);
@@ -62,6 +69,8 @@ impl Snapshots {
             failed: 0,
             file_buf: Vec::new(),
             values: HashMap::new(),
+            existing: Vec::new(),
+            existing_index: HashMap::new(),
             counts: StringHashMap::new(),
             _current_file: None,
             snapshot_dir_path: None,
@@ -194,9 +203,9 @@ impl Snapshots {
             + b"`] = `".len()
             + target_value.len()
             + b"`;\n".len();
-        self.file_buf.reserve(estimated_length + 10);
+        let mut entry: Vec<u8> = Vec::with_capacity(estimated_length + 10);
         write!(
-            self.file_buf,
+            entry,
             "\nexports[`{}`] = `{}`;\n",
             strings::format_escapes(
                 &name_with_counter,
@@ -215,6 +224,11 @@ impl Snapshots {
         )
         .map_err(|_| crate::Error::WriteError)?;
 
+        match self.existing_index.get(&name_hash) {
+            // The key is in the existing file: keep its position, replace its value.
+            Some(&index) => self.existing[index] = Some(entry.into_boxed_slice()),
+            None => self.file_buf.extend_from_slice(&entry),
+        }
         self.added += 1;
         self.values
             .insert(name_hash, Box::<[u8]>::from(target_value));
@@ -324,10 +338,16 @@ impl Snapshots {
                                             {
                                                 let key = index.slice(&arena);
                                                 let value = value_string.slice(&arena);
-                                                let value_clone: Box<[u8]> =
-                                                    Box::<[u8]>::from(value);
                                                 let name_hash: u64 = hash(key);
-                                                self.values.insert(name_hash, value_clone);
+                                                if self.update_snapshots {
+                                                    self.existing_index
+                                                        .insert(name_hash, self.existing.len());
+                                                    self.existing.push(None);
+                                                } else {
+                                                    let value_clone: Box<[u8]> =
+                                                        Box::<[u8]>::from(value);
+                                                    self.values.insert(name_hash, value_clone);
+                                                }
                                             }
                                         }
                                     }
@@ -346,8 +366,21 @@ impl Snapshots {
 
     pub(crate) fn write_snapshot_file(&mut self) -> Result<(), Error> {
         if let Some(file) = self._current_file.take() {
+            if self.update_snapshots {
+                // `file_buf` holds the header and the new keys. Put the kept entries,
+                // in the order of the old file, between the two.
+                let mut kept: Vec<u8> = Vec::new();
+                for entry in self.existing.drain(..).flatten() {
+                    kept.extend_from_slice(&entry);
+                }
+                self.existing_index.clear();
+                let header_len = Self::FILE_HEADER.len();
+                self.file_buf.splice(header_len..header_len, kept);
+            }
+            // The open in `get_snapshot_file` does not truncate, so drop the old tail here.
             file.file
-                .write_all(&self.file_buf)
+                .pwrite_all(&self.file_buf, 0)
+                .and_then(|()| bun_sys::ftruncate(file.file.handle, self.file_buf.len() as i64))
                 .map_err(|_| crate::Error::FailedToWriteSnapshotFile)?;
             let _ = file.file.close();
             self.file_buf.clear();
@@ -833,6 +866,11 @@ impl Snapshots {
     fn get_snapshot_file(&mut self, file_id: FileId) -> Result<bun_sys::Result<()>, Error> {
         if self._current_file.is_none() || self._current_file.as_ref().unwrap().id != file_id {
             self.write_snapshot_file()?;
+            // A failed open or parse leaves these half filled.
+            self.file_buf.clear();
+            self.values.clear();
+            self.existing.clear();
+            self.existing_index.clear();
 
             // avoid `Jest::runner()` (aliases `&mut TestRunner` over live `&mut self`).
             // SAFETY: see `parse_file` — raw-pointer projection to disjoint `.files` field.
@@ -879,10 +917,7 @@ impl Snapshots {
             // SAFETY: buf[pos] == 0 written above
             let snapshot_file_path = ZStr::from_buf(&buf[..], pos);
 
-            let mut flags: i32 = bun_sys::O::CREAT | bun_sys::O::RDWR;
-            if self.update_snapshots {
-                flags |= bun_sys::O::TRUNC;
-            }
+            let flags: i32 = bun_sys::O::CREAT | bun_sys::O::RDWR;
             let fd = match bun_sys::open(snapshot_file_path, flags, 0o644) {
                 bun_sys::Result::Ok(fd) => fd,
                 bun_sys::Result::Err(err) => return Ok(bun_sys::Result::Err(err)),
@@ -893,24 +928,27 @@ impl Snapshots {
                 file: bun_sys::File::from_fd(fd),
             };
 
-            if self.update_snapshots {
+            let length = file.file.get_end_pos().map_err(Error::from)?;
+            if length == 0 {
                 self.file_buf.extend_from_slice(Self::FILE_HEADER);
             } else {
-                let length = file.file.get_end_pos().map_err(Error::from)?;
-                if length == 0 {
-                    self.file_buf.extend_from_slice(Self::FILE_HEADER);
-                } else {
-                    let mut tmp = vec![0u8; length];
-                    let _ = file.file.pread_all(&mut tmp, 0).map_err(Error::from)?;
-                    #[cfg(windows)]
-                    {
-                        file.file.seek_to(0).map_err(Error::from)?;
-                    }
-                    self.file_buf.extend_from_slice(&tmp);
-                }
+                let mut tmp = vec![0u8; length];
+                let _ = file.file.pread_all(&mut tmp, 0).map_err(Error::from)?;
+                self.file_buf.extend_from_slice(&tmp);
             }
 
-            self.parse_file(&file)?;
+            if self.update_snapshots {
+                // A file that does not parse is rewritten from scratch.
+                if self.parse_file(&file).is_err() {
+                    self.existing.clear();
+                    self.existing_index.clear();
+                }
+                // The old entries live in `existing` now. `file_buf` collects the new keys.
+                self.file_buf.clear();
+                self.file_buf.extend_from_slice(Self::FILE_HEADER);
+            } else {
+                self.parse_file(&file)?;
+            }
             self._current_file = Some(file);
         }
 

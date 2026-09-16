@@ -510,3 +510,106 @@ describe.concurrent("AggregateError whose errors cannot be walked", () => {
     expect(exitCode).toBe(1);
   });
 });
+
+// A thrown value that is not an Error has no stack of its own. The only
+// location there is belongs to the throw that delivered it. A throw at the top
+// level of a module, in an async function or in a process.nextTick callback
+// reaches the printer as the bare value (off a rejected promise, or out of a JS
+// `catch`), and used to print with no location at all.
+describe.concurrent("uncaught value that is not an Error", () => {
+  // `thrower` starts on line 1 of every fixture and its `throw` is on line 2.
+  const thrower = value => `function thrower() {\n  throw ${value};\n}\n`;
+
+  async function run(file, source) {
+    using dir = tempDir("inspect-error-throw-site", { [file]: source });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), file],
+      cwd: String(dir),
+      // Debug builds show builtin frames unless told otherwise.
+      env: { ...bunEnv, BUN_JSC_showPrivateScriptsInStackTraces: "0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const prefix = String(dir).replaceAll("\\", "/") + "/";
+    return { stdout, stderr: stderr.replaceAll("\\", "/").replaceAll(prefix, ""), exitCode };
+  }
+
+  const frames = stderr =>
+    stderr
+      .split("\n")
+      .map(line => line.trim())
+      .filter(line => line.startsWith("at "));
+
+  const values = {
+    string: { source: '"a primitive"', printed: "error: a primitive\n" },
+    number: { source: "42", printed: "error: 42\n" },
+    object: { source: '{ a: 1, b: "two" }', printed: 'b: "two"' },
+  };
+
+  for (const [type, { source, printed }] of Object.entries(values)) {
+    test(`a ${type} thrown at the top level of a module`, async () => {
+      const { stderr, exitCode } = await run("main.mjs", thrower(source) + "thrower();\n");
+      expect(stderr).toContain(printed);
+      // The code frame ends at the line of the throw.
+      expect(stderr).toContain(`2 |   throw ${source};\n`);
+      expect(frames(stderr)).toEqual([
+        expect.stringMatching(/^at thrower \(main\.mjs:2:\d+\)$/),
+        expect.stringMatching(/^at main\.mjs:4:\d+$/),
+      ]);
+      expect(exitCode).toBe(1);
+    });
+  }
+
+  test("a string thrown at the top level of a CommonJS module", async () => {
+    const { stderr, exitCode } = await run("main.cjs", thrower('"a primitive"') + "thrower();\n");
+    expect(stderr).toContain("error: a primitive\n");
+    expect(frames(stderr)).toEqual([
+      expect.stringMatching(/^at thrower \(main\.cjs:2:\d+\)$/),
+      expect.stringMatching(/^at <anonymous> \(main\.cjs:4:\d+\)$/),
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("a string thrown in an async function", async () => {
+    const { stderr, exitCode } = await run(
+      "main.mjs",
+      thrower('"a primitive"') + "async function caller() {\n  await 1;\n  thrower();\n}\ncaller();\n",
+    );
+    expect(stderr).toContain("error: a primitive\n");
+    expect(frames(stderr)).toEqual([
+      expect.stringMatching(/^at thrower \(main\.mjs:2:\d+\)$/),
+      expect.stringMatching(/^at caller \(main\.mjs:6:\d+\)$/),
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("a string thrown in a process.nextTick callback", async () => {
+    const { stderr, exitCode } = await run("main.mjs", thrower('"a primitive"') + "process.nextTick(thrower);\n");
+    expect(stderr).toContain("error: a primitive\n");
+    expect(frames(stderr)).toEqual([expect.stringMatching(/^at thrower \(main\.mjs:2:\d+\)$/)]);
+    expect(exitCode).toBe(1);
+  });
+
+  // No throw delivered these: there is no location to print, and a throw of
+  // the same primitive that was caught earlier must not lend them its own.
+  test("a promise rejected with a primitive prints no location", async () => {
+    const { stderr, exitCode } = await run(
+      "main.mjs",
+      'function rejecter() {\n  return Promise.reject("a primitive");\n}\nrejecter();\n',
+    );
+    expect(stderr).toContain("error: a primitive\n");
+    expect(frames(stderr)).toEqual([]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("a primitive that was thrown and caught earlier does not lend its location to a rejection", async () => {
+    const { stderr, exitCode } = await run(
+      "main.mjs",
+      "function caught() {\n  try {\n    throw 1;\n  } catch {}\n}\ncaught();\nPromise.reject(1);\n",
+    );
+    expect(stderr).toContain("error: 1\n");
+    expect(frames(stderr)).toEqual([]);
+    expect(exitCode).toBe(1);
+  });
+});

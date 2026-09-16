@@ -1265,9 +1265,10 @@ fn print_exception(
         // `Formatter::new` already
         // defaults `error_display_level` to `Full` (ConsoleObject.rs:1176).
         let colors = bun_core::Output::enable_ansi_colors_stderr();
+        let throw_site = vm_ref.throw_site_of(value);
         vm_ref.print_errorlike_object(
             value,
-            None,
+            throw_site,
             exception_list,
             &mut formatter,
             writer,

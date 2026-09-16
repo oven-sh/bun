@@ -16,8 +16,14 @@ test("20980", async () => {
   expect(exitCode).toBe(1);
   expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
     "test/regression/issue/20980.fixture.ts:
+    1 | import { beforeEach, it, expect } from "bun:test";
+    2 | beforeEach(async () => {
+    3 |   await Bun.sleep(100);
+    4 |   throw 5;
+                ^
     error: 5
     5
+        at <anonymous> (file:NN:NN)
     (fail) test 0
 
      0 pass

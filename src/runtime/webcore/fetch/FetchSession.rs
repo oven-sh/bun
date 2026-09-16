@@ -37,8 +37,7 @@ pub(crate) struct TlsOption {
     pub(crate) ssl_config: Option<http::ssl_config::SharedPtr>,
     pub(crate) reject_unauthorized: Option<bool>,
     pub(crate) check_server_identity: Option<JSValue>,
-    /// A `checkServerIdentity` that is not a function. A request ignores it,
-    /// a session throws.
+    /// A `checkServerIdentity` that is not a function.
     pub(crate) unusable_check_server_identity: Option<JSValue>,
 }
 
@@ -98,8 +97,7 @@ fn invalid_proxy(global: &JSGlobalObject, proxy_arg: JSValue) -> JsError {
 pub(crate) enum ProxyArg {
     /// `undefined`, `null` or `""`: the caller's default applies.
     Absent,
-    /// Names no proxy, such as a number or an object without `url`. A request
-    /// ignores it (#25414), a session throws.
+    /// Names no proxy, such as a number or an object without `url`.
     Unusable,
     Policy(ProxyOption),
 }

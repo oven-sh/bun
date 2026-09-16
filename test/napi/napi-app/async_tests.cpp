@@ -628,9 +628,10 @@ create_threadsafe_function_after_teardown(const Napi::CallbackInfo &info) {
 }
 
 // A finalizer that runs while the env drains its finalizers at teardown and
-// registers another one: it creates an external buffer with a finalize_cb.
-// That late finalizer must run in the same teardown. Counted process-wide so
-// the parent thread can read it after the worker is gone.
+// tries to register another one: it creates an external buffer with a
+// finalize_cb. The env is torn down with script forbidden, and that call is
+// refused there (node and bun), so the late finalizer never runs. Counted
+// process-wide so the parent thread can read it after the worker is gone.
 static std::atomic<int> late_finalizer_runs{0};
 
 static void late_buffer_finalizer(napi_env env, void *data, void *hint) {
@@ -643,8 +644,9 @@ static void finalizer_that_creates_external_buffer(napi_env env, void *data,
   free(data);
   void *bytes = malloc(16);
   napi_value buffer;
-  // Script is refused during teardown, but N-API object creation is not: this
-  // registers `late_buffer_finalizer` with the env from inside its cleanup.
+  // napi_create_external_buffer is a NAPI_PREAMBLE call: refused with
+  // napi_pending_exception (this module declares NAPI_VERSION 8) while the env
+  // is torn down, so `late_buffer_finalizer` is never registered.
   napi_status status = napi_create_external_buffer(
       env, 16, bytes, late_buffer_finalizer, nullptr, &buffer);
   if (status != napi_ok) {

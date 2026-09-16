@@ -972,8 +972,9 @@ impl PackageManager {
     ) {
         // Re-derived from `this` at every use: `is_done_fn` reborrows the whole
         // `PackageManager`, so no reference may live across a call to it.
-        // SAFETY: `this` is valid per fn contract; both fields are atomics.
+        // SAFETY: `this` is valid per fn contract; the field is an atomic.
         let wake_count = || unsafe { &*core::ptr::addr_of!((*this).wake_count) };
+        // SAFETY: as for `wake_count`.
         let wake_waiters = || unsafe { &*core::ptr::addr_of!((*this).wake_waiters) };
 
         wake_waiters().fetch_add(1, Ordering::SeqCst);

@@ -12,8 +12,11 @@ import { join } from "path";
 // not watch the package's load for errors: debug builds assert in
 // JSModuleLoader::innerModuleLoading ("needsErrorReaction != ..."), release
 // builds lose a later load error of the package and the entry never runs.
+const name = "autoinstalled-pkg";
+// The manifest, then the tarball.
+const expectedRequests = [`/${name}`, `/${name}-1.0.0.tgz`];
+
 async function runWithAutoInstalledPackage(files: Record<string, string>, entry: string) {
-  const name = "autoinstalled-pkg";
   const tarball = await new Bun.Archive(
     {
       "package/package.json": JSON.stringify({ name, version: "1.0.0", type: "module", main: "index.js" }),
@@ -53,28 +56,29 @@ async function runWithAutoInstalledPackage(files: Record<string, string>, entry:
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(requests).toEqual([`/${name}`, `/${name}-1.0.0.tgz`]);
-  return { stdout, stderr, exitCode, signalCode: proc.signalCode };
+  return { stdout, stderr, exitCode, signalCode: proc.signalCode, requests };
 }
 
 test.concurrent("auto-installed package imported after a builtin loads", async () => {
-  const { stdout, stderr, exitCode } = await runWithAutoInstalledPackage(
+  const { stdout, stderr, exitCode, requests } = await runWithAutoInstalledPackage(
     { "index.js": `export const value = 42;\n` },
     `import "node:http2";\nimport { value } from "autoinstalled-pkg";\nconsole.log("value", value);\n`,
   );
   expect(stderr).toBe("");
   expect(stdout).toBe("value 42\n");
+  expect(requests).toEqual(expectedRequests);
   expect(exitCode).toBe(0);
 });
 
 test.concurrent("load error of an auto-installed package imported after a builtin is reported", async () => {
-  const { stdout, stderr, exitCode, signalCode } = await runWithAutoInstalledPackage(
+  const { stdout, stderr, exitCode, signalCode, requests } = await runWithAutoInstalledPackage(
     { "index.js": `export const value = ;\n` },
     `import "node:http2";\nimport { value } from "autoinstalled-pkg";\nconsole.log("value", value);\n`,
   );
   expect(stdout).toBe("");
   expect(stderr).toContain("error: Unexpected ;");
   expect(stderr).toContain("index.js:1:22");
+  expect(requests).toEqual(expectedRequests);
   expect(signalCode).toBeNull();
   expect(exitCode).toBe(1);
 });

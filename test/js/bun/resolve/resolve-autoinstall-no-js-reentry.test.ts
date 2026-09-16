@@ -46,7 +46,7 @@ function makeRegistry() {
       gates.set(packageName, gate);
       return gate;
     },
-    stop: () => server.stop(true),
+    [Symbol.dispose]: () => void server.stop(true),
   };
 }
 
@@ -93,7 +93,7 @@ const doors = [
 describe.concurrent("auto-install does not run the event loop inside", () => {
   test.each(doors)("%s", async door => {
     const packageName = `not-installed-${doors.indexOf(door)}`;
-    const registry = makeRegistry();
+    using registry = makeRegistry();
     const gate = registry.gateFor(packageName);
     // An empty directory, so the resolver finds no node_modules above it.
     using dir = tempDir("autoinstall-no-reentry", {});
@@ -136,7 +136,6 @@ describe.concurrent("auto-install does not run the event loop inside", () => {
     } finally {
       first.destroy();
       second.destroy();
-      registry.stop();
     }
   });
 });

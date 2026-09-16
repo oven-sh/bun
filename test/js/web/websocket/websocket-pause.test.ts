@@ -444,18 +444,20 @@ describe("WebSocket.isPaused with no connection", () => {
     });
   }
 
-  it.each(cases)("never paused: $name", async c => {
-    using server = upgradeServer();
-    const ws = await start(server, c);
-    await c.end(ws);
-    expectNotPaused(ws, c.endState);
-  });
+  describe.each(cases)("$name", c => {
+    it("never paused", async () => {
+      using server = upgradeServer();
+      const ws = await start(server, c);
+      await c.end(ws);
+      expectNotPaused(ws, c.endState);
+    });
 
-  it.each(cases)("paused first: $name", async c => {
-    using server = upgradeServer();
-    const ws = await start(server, c);
-    expect({ pause: ws.pause(), isPaused: ws.isPaused }).toEqual({ pause: true, isPaused: true });
-    await c.end(ws);
-    expectNotPaused(ws, c.endState);
+    it("paused first", async () => {
+      using server = upgradeServer();
+      const ws = await start(server, c);
+      expect({ pause: ws.pause(), isPaused: ws.isPaused }).toEqual({ pause: true, isPaused: true });
+      await c.end(ws);
+      expectNotPaused(ws, c.endState);
+    });
   });
 });

@@ -386,8 +386,7 @@ function ipToInt(ip) {
   return result >>> 0;
 }
 
-// Node prints the raw string: https://github.com/nodejs/node/blob/3e9954a88b6a291fc4041aa7ff2b9725f4f86025/lib/internal/http.js#L114
-// The userinfo runs to the last "@" of the string: an unescaped "/" in a password ends the authority early.
+// Node prints these raw (nodejs/node@3e9954a88b lib/internal/http.js#L114). An unescaped "/" in a password ends the authority early, so cut at the last "@".
 function redactInvalidProxyUrl(proxyUrl) {
   proxyUrl = `${proxyUrl}`;
   const userinfoEnd = proxyUrl.lastIndexOf("@");

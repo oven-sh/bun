@@ -11,6 +11,13 @@ import http2 from "node:http2";
 import { builtinModules } from "node:module";
 import { PerformanceObserver } from "node:perf_hooks";
 import { join } from "path";
+import {
+  listeningServer,
+  pgAuthenticationOk,
+  pgCommandComplete,
+  pgReadFrontendMessages,
+  pgReadyForQuery,
+} from "../../sql/wire-frames";
 
 const ModuleGraph = Bun.ModuleGraph;
 type Graph = InstanceType<typeof ModuleGraph>;
@@ -2782,6 +2789,52 @@ describe("ModuleGraph isolation: what is the host's, or the realm's, survives a 
         port: hostTcp.port,
         socket: { open: socket => void socket.write("drop:listen-of-the-host\n"), data() {} },
       });
+    }
+  });
+
+  test("a Bun.SQL of a graph's: dialing its listen() connection again after the server dropped it is the graph's doing too", async () => {
+    // (The close event that starts the redial comes from a socket, with no script running: what it
+    // arms, a timer, was the host's, and outlived the graph.)
+    // A backend that accepts a connection and acknowledges every LISTEN.
+    const sockets = new Set<import("node:net").Socket>();
+    const { port, server } = await listeningServer(socket => {
+      sockets.add(socket);
+      let buffered = Buffer.alloc(0);
+      socket.once("data", () => {
+        socket.write(Buffer.concat([pgAuthenticationOk(), pgReadyForQuery()]));
+        socket.on("data", data => {
+          buffered = pgReadFrontendMessages(Buffer.concat([buffered, data]), type => {
+            if (type === 0x51 /* Query */)
+              socket.write(Buffer.concat([pgCommandComplete("LISTEN"), pgReadyForQuery()]));
+          });
+        });
+      });
+      socket.on("close", () => sockets.delete(socket)).on("error", () => {});
+    });
+    // Whose script the `onlisten` callback runs as: each time the channel is being listened to (again).
+    const listeningAs: string[] = [];
+    let sql: Bun.SQL | undefined;
+    try {
+      using made = await newGraph();
+      await made.graph.run(() =>
+        made.app.call(() => {
+          sql = new Bun.SQL(`postgres://u@127.0.0.1:${port}/db`, { max: 1 });
+          return sql.listen(
+            "channel",
+            () => {},
+            () => void listeningAs.push(ModuleGraph.current === made.graph ? "the graph" : "somebody else"),
+          );
+        }),
+      );
+      expect(listeningAs).toEqual(["the graph"]);
+      // The server restarts.
+      for (const socket of sockets) socket.destroy();
+      await until(() => listeningAs.length === 2);
+      expect(listeningAs).toEqual(["the graph", "the graph"]);
+    } finally {
+      await sql?.close({ timeout: 0 }).catch(() => {});
+      for (const socket of sockets) socket.destroy();
+      server.close();
     }
   });
 

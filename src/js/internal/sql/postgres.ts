@@ -776,7 +776,7 @@ class ListenConnection {
           createPooledConnectionHandle(
             createPostgresConnection,
             { ...adapter.connectionInfo, idleTimeout: 0, maxLifetime: 0 },
-            (err, conn) => {
+            adapter.ownerCallback((err, conn) => {
               this.#handshake = null;
               if (err) return reject(wrapPostgresError(err));
               if (adapter.closed) {
@@ -790,8 +790,8 @@ class ListenConnection {
               resolve(conn);
               this.#clearSweep();
               this.#sweep();
-            },
-            err => {
+            }),
+            adapter.ownerCallback(err => {
               if (live === null) {
                 this.#handshake = null;
                 return reject(wrapPostgresError(err ?? adapter.connectionClosedError()));
@@ -800,7 +800,7 @@ class ListenConnection {
               this.#conn = null;
               for (const entry of this.#channels.values()) entry.ready = null;
               this.#scheduleSweep();
-            },
+            }),
           ),
         undefined,
       )

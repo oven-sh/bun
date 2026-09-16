@@ -642,12 +642,9 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
    */
   protected abstract isConnectFailureError(err: Error | null): boolean;
 
-  /// `method` bound to this slot for the native connection to call (from a socket event,
-  /// which has no async context): in the owning graph's context, so a retry it arms is the graph's.
+  /// `method` bound to this slot for the native connection to call.
   protected nativeCallback(method: (...args: any[]) => void): (...args: any[]) => void {
-    const graphFrame = this.adapter.ownerGraphFrame;
-    if (graphFrame === undefined) return method.bind(this);
-    return (...args) => AsyncContextFrame.run(graphFrame, method, this, ...args);
+    return this.adapter.ownerCallback(method.bind(this));
   }
 
   async #beginConnecting() {
@@ -964,6 +961,15 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
     return graphFrame === undefined && AsyncContextFrame.current()?.graph === undefined
       ? dial.$call(thisValue)
       : AsyncContextFrame.run(graphFrame, dial, thisValue);
+  }
+
+  /// `callback` for a native connection to call (from a socket event, which has no async
+  /// context): as the SQL instance's owner, so a retry timer it arms is the owner's too, and is
+  /// cancelled with the Bun.ModuleGraph that owns the instance.
+  public ownerCallback<Args extends unknown[]>(callback: (...args: Args) => void): (...args: Args) => void {
+    const graphFrame = this.ownerGraphFrame;
+    if (graphFrame === undefined) return callback;
+    return (...args) => AsyncContextFrame.run(graphFrame, callback, undefined, ...args);
   }
 
   constructor(connectionInfo: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions) {

@@ -107,9 +107,14 @@ static bool transcodeDecodeToUtf16(std::span<const uint8_t> input, TranscodeEnco
 // nullptr with an exception pending when the result cannot be allocated.
 static JSC::JSUint8Array* transcodeEncodeNarrow(JSGlobalObject* globalObject, const WTF::Vector<char16_t>& units, char16_t maxCodePoint)
 {
-    // One byte per code point: simdutf counts the units that are not a trail
-    // surrogate, which is also what the substitution path writes.
-    const size_t codePoints = simdutf::count_utf16le(units.begin(), units.size());
+    // One byte per code point. `units` is well-formed, so a trail surrogate
+    // always follows its lead, and the lead writes the one '?' of the pair.
+    // simdutf::count_utf16le is not used: the substitution path applies this
+    // same test to the same units, so its writes stay inside the result even
+    // when simdutf selects its `unsupported` implementation, which returns 0.
+    size_t codePoints = 0;
+    for (const char16_t unit : units)
+        codePoints += !U16_IS_TRAIL(unit);
     auto* result = WebCore::createUninitializedBuffer(globalObject, codePoints);
     if (!result) [[unlikely]]
         return nullptr;
@@ -122,9 +127,7 @@ static JSC::JSUint8Array* transcodeEncodeNarrow(JSGlobalObject* globalObject, co
             return result;
     }
     // Substitution path: simdutf conversions are strict, so out-of-range
-    // code points ('?' in ICU) are handled per unit. `units` is well-formed,
-    // so a trail surrogate always follows its lead, and the lead wrote the
-    // one '?' of the pair.
+    // code points ('?' in ICU) are handled per unit.
     size_t written = 0;
     for (const char16_t unit : units) {
         if (U16_IS_TRAIL(unit))
@@ -188,7 +191,10 @@ BUN_DEFINE_HOST_FUNCTION(jsBufferTranscode,
     int32_t errorCode = 0;
     ASCIILiteral errorName;
     // Each path measures its output, then converts straight into the Buffer it
-    // returns. The allocation throws when it fails or passes Buffer's limit.
+    // returns. An allocation that fails, or that passes the limit of a Buffer or
+    // of a WTF::Vector, throws RangeError: Out of memory. Node differs: its ICU
+    // paths reject a source or target above INT32_MAX as U_ILLEGAL_ARGUMENT_ERROR
+    // (https://github.com/nodejs/node/blob/v26.3.0/src/node_i18n.cc#L158-L163).
     JSC::JSUint8Array* result = nullptr;
 
     if (fromEncoding == TranscodeEncoding::Unsupported || toEncoding == TranscodeEncoding::Unsupported) {

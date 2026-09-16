@@ -3419,6 +3419,7 @@ pub struct PendingIpc {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ResolveMode {
     Esm,
+    DynamicImport,
     Require,
     /// `require.resolve()`: returns the bare specifier for Node builtins.
     RequireResolve,
@@ -3427,13 +3428,14 @@ pub enum ResolveMode {
 impl ResolveMode {
     #[inline]
     pub fn is_esm(self) -> bool {
-        matches!(self, Self::Esm)
+        matches!(self, Self::Esm | Self::DynamicImport)
     }
 
     #[inline]
     pub fn import_kind(self) -> bun_ast::ImportKind {
         match self {
             Self::Esm => bun_ast::ImportKind::Stmt,
+            Self::DynamicImport => bun_ast::ImportKind::Dynamic,
             Self::Require => bun_ast::ImportKind::Require,
             Self::RequireResolve => bun_ast::ImportKind::RequireResolve,
         }
@@ -4777,6 +4779,7 @@ impl VirtualMachine {
                     &bun_core::String::from_bytes(namespace),
                     &bun_core::String::borrow_utf8(after_namespace),
                     source,
+                    mode.import_kind(),
                     crate::BunPluginTarget::Bun,
                 )? {
                     return Ok(resolved_path);
@@ -7041,6 +7044,7 @@ pub(crate) fn plugin_runner_on_resolve_jsc(
     namespace: &bun_core::String,
     specifier: &bun_core::String,
     importer: &bun_core::String,
+    kind: bun_ast::ImportKind,
     target: crate::BunPluginTarget,
 ) -> JsResult<Option<Result<bun_core::String, JSValue>>> {
     let empty = bun_core::String::EMPTY;
@@ -7052,6 +7056,7 @@ pub(crate) fn plugin_runner_on_resolve_jsc(
         },
         specifier,
         importer,
+        kind,
         target,
     )?
     else {

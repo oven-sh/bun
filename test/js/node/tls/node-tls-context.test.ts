@@ -140,6 +140,26 @@ describe("tls.Server", () => {
     }
   });
 
+  it("addContext rejects an empty hostname up front, like Node", async () => {
+    const server = tls.createServer({ key: agent2Key, cert: agent2Cert });
+    const context = { key: agent1Key, cert: agent1Cert };
+    const requiredServerName = expect.objectContaining({
+      code: "ERR_TLS_REQUIRED_SERVER_NAME",
+      message: '"servername" is required parameter for Server.addContext',
+    });
+    try {
+      expect(() => server.addContext("", context)).toThrow(requiredServerName);
+      // Nothing was buffered for the empty name, so listen() still succeeds.
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      server.once("error", reject);
+      server.listen(0, resolve);
+      await promise;
+      expect(() => server.addContext("", context)).toThrow(requiredServerName);
+    } finally {
+      server.close();
+    }
+  });
+
   it("should select the most recently added SecureContext", async () => {
     let listening_server: tls.Server | null = null;
     const { promise, resolve, reject } = Promise.withResolvers();

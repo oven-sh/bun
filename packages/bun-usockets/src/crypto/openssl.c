@@ -1740,6 +1740,16 @@ int us_socket_alpn_is_h2(struct us_socket_t *s) {
   return len == 2 && proto[0] == 'h' && proto[1] == '2';
 }
 
+/* Clears the per-domain userdata (uWS HttpRouter*) stored on a SNI SSL_CTX.
+ * App.h::removeServerName() deletes the router while live keep-alive
+ * connections may still hold a ref on this SSL_CTX via SSL_set_SSL_CTX();
+ * without clearing, the next request on such a connection would read the
+ * freed router through us_socket_server_name_userdata(). After clearing,
+ * HttpContext.h falls back to the default router. */
+void us_internal_ssl_ctx_clear_sni_userdata(struct ssl_ctx_st *p) {
+  if (p && us_sni_ex_idx >= 0) SSL_CTX_set_ex_data(p, us_sni_ex_idx, NULL);
+}
+
 /* ── Per-socket SSL attach/detach ────────────────────────────────────────── */
 
 void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,
@@ -3084,6 +3094,14 @@ int us_ssl_ctx_reject_unauthorized(SSL_CTX *ctx) {
 int us_socket_server_name_reject_unauthorized(struct us_socket_t *s) {
   if (!s->ssl) return 0;
   return us_ssl_ctx_reject_unauthorized(SSL_get_SSL_CTX(s_ssl(s)));
+}
+
+int us_socket_server_name_request_cert(struct us_socket_t *s) {
+  if (!s->ssl || us_ctx_sni_policy_ex_idx < 0) return 0;
+  SSL_CTX *ctx = SSL_get_SSL_CTX(s_ssl(s));
+  if (!ctx) return 0;
+  uintptr_t packed = (uintptr_t)SSL_CTX_get_ex_data(ctx, us_ctx_sni_policy_ex_idx);
+  return (packed & US_SNI_POLICY_REQUEST_CERT) != 0;
 }
 
 /* Extracts the host_name from the ClientHello's server_name extension.

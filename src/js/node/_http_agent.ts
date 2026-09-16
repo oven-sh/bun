@@ -242,6 +242,7 @@ Agent.prototype.addRequest = function addRequest(req, options, port /* legacy */
   normalizeServerName(options, req);
 
   const name = this.getName(options);
+  this.sockets[name] ||= [];
 
   const freeSockets = this.freeSockets[name];
   let socket;
@@ -253,19 +254,23 @@ Agent.prototype.addRequest = function addRequest(req, options, port /* legacy */
     if (!freeSockets.length) delete this.freeSockets[name];
   }
 
-  // Unlike Node, no sockets[name] entry before a socket exists: a failed createSocket would leave it behind.
   const freeLen = freeSockets ? freeSockets.length : 0;
-  const sockLen = freeLen + (this.sockets[name]?.length ?? 0);
+  const sockLen = freeLen + this.sockets[name].length;
 
   // Reusing a socket from the pool.
   if (socket) {
     this.reuseSocket(socket, req);
     setRequestSocket(this, req, socket);
-    (this.sockets[name] ||= []).push(socket);
+    this.sockets[name].push(socket);
   } else if (sockLen < this.maxSockets && this.totalSocketCount < this.maxTotalSockets) {
     $debug("call onSocket", sockLen, freeLen);
     // If we are under maxSockets create a new one.
-    this.createSocket(req, options, onSocketCreated.bind(this, req));
+    try {
+      this.createSocket(req, options, onSocketCreated.bind(this, req, name));
+    } catch (err) {
+      dropEmptySocketsEntry(this, name);
+      throw err;
+    }
   } else {
     $debug("wait for socket");
     // We are over limit so we'll add it to the queue.
@@ -277,8 +282,24 @@ Agent.prototype.addRequest = function addRequest(req, options, port /* legacy */
     req[kRequestAsyncResource] = new (require("node:async_hooks").AsyncResource)("QueuedRequest");
 
     this.requests[name].push(req);
+
+    // It can take no pooled socket, and only maxTotalSockets blocks it: an idle socket gives up its slot.
+    if (options[kPerRequestCheckServerIdentity]) destroyOneFreeSocket(this);
   }
 };
+
+// Node leaves the entry that addRequest() made when no socket ever joins it.
+function dropEmptySocketsEntry(agent, name) {
+  if (agent.sockets[name]?.length === 0) delete agent.sockets[name];
+}
+
+function destroyOneFreeSocket(agent) {
+  const freeSockets = agent.freeSockets;
+  for (const name in freeSockets) {
+    const idle = freeSockets[name].find(socket => !socket.destroyed);
+    if (idle) return idle.destroy();
+  }
+}
 
 Agent.prototype.createSocket = function createSocket(req, options, cb) {
   options = { __proto__: null, ...options, ...this.options };
@@ -421,6 +442,7 @@ Agent.prototype.removeSocket = function removeSocket(s, options) {
   }
 
   let req;
+  let queueName = name;
   const requests = this.requests;
   if (requests[name]?.length) {
     $debug("removeSocket, have a request, make a socket");
@@ -433,18 +455,20 @@ Agent.prototype.removeSocket = function removeSocket(s, options) {
       $debug("removeSocket, have a request with different origin, make a socket");
       req = this.requests[prop][0];
       options = req[kRequestOptions];
+      queueName = prop;
       break;
     }
   }
 
   if (req && options) {
     req[kRequestOptions] = undefined;
-    this.createSocket(req, options, onSocketCreatedForPending.bind(undefined, req));
+    this.createSocket(req, options, onSocketCreatedForPending.bind(this, req, queueName));
   }
 };
 
-function onSocketCreated(this: any, req, err, socket) {
+function onSocketCreated(this: any, req, name, err, socket) {
   if (err) {
+    dropEmptySocketsEntry(this, name);
     handleSocketAfterProxy(err, req);
     req.onSocket(socket, err);
     return;
@@ -453,8 +477,16 @@ function onSocketCreated(this: any, req, err, socket) {
   setRequestSocket(this, req, socket);
 }
 
-function onSocketCreatedForPending(req, err, socket) {
+function onSocketCreatedForPending(this: any, req, queueName, err, socket) {
   if (err) {
+    // No socket of this name may ever free and take the failed request out: left at the head it blocks removeSocket().
+    const queue = this.requests[queueName];
+    const index = queue ? queue.indexOf(req) : -1;
+    if (index !== -1) {
+      queue.splice(index, 1);
+      if (queue.length === 0) delete this.requests[queueName];
+    }
+    dropEmptySocketsEntry(this, queueName);
     handleSocketAfterProxy(err, req);
     // Forward the socket (when the creation error left one behind) so
     // onSocketNT can destroy it, like the non-pending path.

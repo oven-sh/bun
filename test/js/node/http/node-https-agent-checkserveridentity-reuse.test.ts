@@ -47,7 +47,8 @@ const runtimeHasFix = (() => {
 const fixTest = runtimeHasFix ? test : test.skip;
 // The Agent `proxyEnv` option is newer than Node 22.
 const tunnelFixTest = runtimeHasFix && (process.versions.bun || nodeMajor >= 24) ? test : test.skip;
-// Two costs of the unique Agent name that Node (as of v26.5.1) has and Bun avoids.
+const proxyTest = process.versions.bun || nodeMajor >= 24 ? test : test.skip;
+// Where Bun goes further than Node (as of v26.5.1). Each case says what Node does.
 const bunOnlyTest = process.versions.bun ? test : test.skip;
 
 type Exchange = { status?: number; reusedSocket?: boolean; sessionReused?: boolean; error?: string };
@@ -55,21 +56,27 @@ type Scenario = {
   agent: http.Agent;
   /** How many TLS connections the requests the server has answered came in on. */
   connections: () => number;
-  exchange: (options?: https.RequestOptions) => Promise<Exchange>;
+  exchange: (options?: https.RequestOptions, request?: typeof https.request) => Promise<Exchange>;
+  /** Resolves when the server has a request for "/hold". It answers that one on release(). */
+  held: () => Promise<void>;
+  release: () => void;
 };
 type ScenarioOptions = {
   /** Tunnel through a CONNECT proxy of this kind, set through the Agent's `proxyEnv`. */
   proxy?: "http" | "https";
-  /** The proxy answers every CONNECT with 503. */
-  proxyRefuses?: boolean;
+  /** The proxy answers the nth CONNECT (from 1) with 503 when this returns true. */
+  proxyRefuses?: (nth: number) => boolean;
   createAgent?: (options: https.AgentOptions) => http.Agent;
 };
 
-async function listenProxy(kind: "http" | "https", refuses: boolean) {
+async function listenProxy(kind: "http" | "https", refuses: (nth: number) => boolean) {
   const sockets = new Set<Duplex>();
+  let connects = 0;
   const proxy = kind === "https" ? https.createServer({ key: proxyKey, cert: proxyCert }) : http.createServer();
   proxy.on("connect", (req, clientSocket, head) => {
-    if (refuses) return clientSocket.end("HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n");
+    if (refuses(++connects)) {
+      return clientSocket.end("HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n");
+    }
     const [host, port] = req.url!.split(":");
     const targetSocket = net.connect(Number(port), host, () => {
       clientSocket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
@@ -105,15 +112,28 @@ async function listenProxy(kind: "http" | "https", refuses: boolean) {
 async function scenario(
   agentOptions: https.AgentOptions,
   run: (scenario: Scenario) => Promise<void>,
-  { proxy: proxyKind, proxyRefuses = false, createAgent = options => new https.Agent(options) }: ScenarioOptions = {},
+  {
+    proxy: proxyKind,
+    proxyRefuses = () => false,
+    createAgent = options => new https.Agent(options),
+  }: ScenarioOptions = {},
 ) {
   const clientPorts = new Set<number | undefined>();
   // TLS 1.2 delivers the session during the handshake, so the Agent has cached
   // it before the response ends. A TLS 1.3 ticket arrives at some later point.
+  let heldResponse: http.ServerResponse | undefined;
+  let onHeld: (() => void) | undefined;
   const server = https.createServer({ key, cert, maxVersion: "TLSv1.2" }, (req, res) => {
     clientPorts.add(req.socket.remotePort);
-    res.end("ok");
+    if (req.url !== "/hold") return res.end("ok");
+    heldResponse = res;
+    onHeld?.();
   });
+  const held = () => (heldResponse ? Promise.resolve() : new Promise<void>(resolve => (onHeld = resolve)));
+  const release = () => {
+    heldResponse!.end("ok");
+    heldResponse = onHeld = undefined;
+  };
   await once(server.listen(0, "127.0.0.1"), "listening");
   const proxy = proxyKind ? await listenProxy(proxyKind, proxyRefuses) : undefined;
   const proxyEnv = proxy && ({ HTTPS_PROXY: proxy.url } as http.ProxyEnv);
@@ -123,8 +143,8 @@ async function scenario(
   // Resolves after the Agent has dealt with the socket ("free" for a keep-alive
   // socket, "close" for the rest), so the next exchange finds the pool and the
   // session cache in their final state.
-  async function exchange(options: https.RequestOptions = {}): Promise<Exchange> {
-    const req = https.request({ host: "127.0.0.1", port, agent, ca, servername: "agent1", ...options });
+  async function exchange(options: https.RequestOptions = {}, request = https.request): Promise<Exchange> {
+    const req = request({ protocol: "https:", host: "127.0.0.1", port, agent, ca, servername: "agent1", ...options });
     const released = new Promise<void>(resolve => {
       req.once("socket", socket => {
         socket.once("free", resolve);
@@ -146,7 +166,7 @@ async function scenario(
   }
 
   try {
-    await run({ agent, connections: () => clientPorts.size, exchange });
+    await run({ agent, connections: () => clientPorts.size, exchange, held, release });
   } finally {
     agent.destroy();
     await proxy?.close();
@@ -201,6 +221,20 @@ for (const { keepAlive, carrier, reused } of [
         const first = await exchange({ servername: "not-agent1", checkServerIdentity: permissive });
         const second = await exchange({ servername: "not-agent1" });
         assert.deepStrictEqual({ first, second }, { first: fresh, second: { error: "ERR_TLS_CERT_ALTNAME_INVALID" } });
+      });
+    });
+
+    // Node marks the request in https.request() only, so this route still shares there.
+    bunOnlyTest(`http.request({ protocol: "https:", agent }) gets the same rule for the ${carrier}`, async () => {
+      await scenario({ keepAlive }, async ({ exchange }) => {
+        const first = await exchange({ checkServerIdentity: permissive }, http.request);
+        const second = await exchange({ checkServerIdentity: rejecting }, http.request);
+        const third = await exchange({ servername: "not-agent1", checkServerIdentity: permissive }, http.request);
+        const fourth = await exchange({ servername: "not-agent1" }, http.request);
+        assert.deepStrictEqual(
+          { first, second, third, fourth },
+          { first: fresh, second: rejected, third: fresh, fourth: { error: "ERR_TLS_CERT_ALTNAME_INVALID" } },
+        );
       });
     });
 
@@ -322,6 +356,66 @@ describe("https.Agent with a full socket budget and a request's own checkServerI
 });
 
 describe("what the unique Agent name of such a request leaves behind", () => {
+  // Node waits here until the server closes the idle socket: nothing else frees the slot.
+  bunOnlyTest("an idle pooled socket gives up its slot when only maxTotalSockets blocks the request", async () => {
+    await scenario({ keepAlive: true, maxTotalSockets: 1 }, async ({ agent, exchange, connections }) => {
+      const first = await exchange();
+      const second = await exchange({ checkServerIdentity: permissive });
+      const third = await exchange();
+      assert.deepStrictEqual(
+        { first, second, third, connections: connections(), queued: Object.keys(agent.requests) },
+        // The third request is on a new socket too: the first one's socket is gone, its session is not.
+        {
+          first: fresh,
+          second: fresh,
+          third: { status: 200, reusedSocket: false, sessionReused: true },
+          connections: 3,
+          queued: [],
+        },
+      );
+    });
+  });
+
+  // The refused request stays at the head of its own queue in Node. removeSocket()
+  // only looks at the first queue, so the request behind it is never served.
+  bunOnlyTest("a queued request whose proxy tunnel is refused does not block the queue behind it", async () => {
+    await scenario(
+      { keepAlive: false, maxTotalSockets: 1 },
+      async ({ agent, exchange, held, release }) => {
+        // Each pair: the first request holds the only slot while the second one joins the queue.
+        const results: Exchange[] = [];
+        for (let pair = 0; pair < 2; pair++) {
+          const holdsTheSlot = exchange({ path: "/hold" });
+          await held();
+          const queued = exchange({ checkServerIdentity: permissive });
+          release();
+          results.push(await holdsTheSlot, await queued);
+        }
+        assert.deepStrictEqual(
+          {
+            results: results.map(r => r.status ?? r.error),
+            queued: Object.keys(agent.requests),
+            sockets: Object.keys(agent.sockets),
+          },
+          { results: [200, "ERR_PROXY_TUNNEL", 200, 200], queued: [], sockets: [] },
+        );
+      },
+      { proxy: "http", proxyRefuses: nth => nth === 2 },
+    );
+  });
+
+  proxyTest("agent.sockets has the entry of a request whose proxy tunnel is still connecting", async () => {
+    await scenario(
+      { keepAlive: false },
+      async ({ agent, exchange }) => {
+        const pending = exchange({ checkServerIdentity: permissive });
+        const whileConnecting = Object.values(agent.sockets).map(sockets => sockets!.length);
+        assert.deepStrictEqual({ whileConnecting, result: await pending }, { whileConnecting: [0], result: fresh });
+      },
+      { proxy: "http" },
+    );
+  });
+
   // Agent#addRequest in Node makes the agent.sockets entry before a socket
   // exists. No socket comes out of a refused tunnel, so nothing removes it.
   bunOnlyTest("a refused proxy tunnel leaves no entry in agent.sockets", async () => {
@@ -338,7 +432,7 @@ describe("what the unique Agent name of such a request leaves behind", () => {
           { results: ["ERR_PROXY_TUNNEL", "ERR_PROXY_TUNNEL", "ERR_PROXY_TUNNEL"], sockets: [] },
         );
       },
-      { proxy: "http", proxyRefuses: true },
+      { proxy: "http", proxyRefuses: () => true },
     );
   });
 

@@ -19,22 +19,6 @@ const ObjectAssign = Object.assign;
 const ArrayPrototypeUnshift = Array.prototype.unshift;
 const JSONStringify = JSON.stringify;
 
-// Port of https://github.com/nodejs/node/commit/52a8ace880 (CVE-2026-58040).
-let perRequestCheckServerIdentityIndex = 0;
-
-// Agent options override request options, so an Agent-level callback is one policy for its whole pool.
-function hasAgentCheckServerIdentity(options) {
-  let { agent } = options;
-  if (agent === false) return false;
-
-  if (agent === null || agent === undefined) {
-    if (typeof options.createConnection === "function") return false;
-    agent = https.globalAgent;
-  }
-
-  return agent?.options?.checkServerIdentity !== undefined;
-}
-
 function request(...args) {
   let options = {};
 
@@ -47,14 +31,6 @@ function request(...args) {
 
   if (args[0] && typeof args[0] !== "function") {
     ObjectAssign.$call(null, options, ArrayPrototypeShift.$call(args));
-  }
-
-  if (
-    options.checkServerIdentity !== undefined &&
-    options.checkServerIdentity !== require("node:tls").checkServerIdentity &&
-    !hasAgentCheckServerIdentity(options)
-  ) {
-    options[kPerRequestCheckServerIdentity] = ++perRequestCheckServerIdentityIndex;
   }
 
   options._defaultAgent = https.globalAgent;

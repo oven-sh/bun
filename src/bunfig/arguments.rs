@@ -105,7 +105,7 @@ fn load_global_bunfig(cmd: CommandTag, ctx: Context<'_>) -> Result<(), crate::Er
     Ok(())
 }
 
-pub fn load_config_path(
+fn load_config_path(
     cmd: CommandTag,
     auto_loaded: bool,
     config_path: &ZStr,
@@ -248,4 +248,21 @@ pub fn load_config_with_cmd_args(
     ctx: Context<'_>,
 ) -> Result<(), crate::Error> {
     load_config(cmd, args.option(b"--config"), ctx)
+}
+
+/// `./bunfig.toml` for the entry points that argument parsing leaves without a config:
+/// `bun run`, `bun repl`, the `node` shim and compiled executables. Does nothing when a
+/// config is already loaded. A file that does not parse ends the process, as in `load_config`.
+pub fn load_cwd_config_or_exit(ctx: Context<'_>) {
+    if ctx.debug.loaded_bunfig {
+        return;
+    }
+    if let Err(err) = load_config_path(
+        CommandTag::RunCommand,
+        true,
+        bun_core::zstr!("bunfig.toml"),
+        ctx,
+    ) {
+        report_bunfig_load_failure(ctx.log, err);
+    }
 }

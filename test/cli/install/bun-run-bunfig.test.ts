@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { realpathSync } from "fs";
+import { realpathSync, symlinkSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir, toTOMLString } from "harness";
 import { join as pathJoin } from "node:path";
 
@@ -246,5 +246,84 @@ describe.each(["bun run", "bun"])(`%s`, cmd => {
 
     expect(realpathSync(nodeBin)).toBe(realpathSync(node));
     expect(result.success).toBeTrue();
+  });
+});
+
+// These entry points read ./bunfig.toml after argument parsing. A file that does not parse
+// stops them with the same report as `bun <file>` and `bun run --filter`.
+describe.concurrent("bunfig.toml that does not parse", () => {
+  const configs: [problem: string, bunfig: string, stderr: string[]][] = [
+    [
+      "a TOML syntax error",
+      "[install]\nregistry =\n",
+      [
+        "2 | registry =",
+        "              ^",
+        "error: Missing value after '='; values must be on the same line",
+        "    at bunfig.toml:2:11",
+        "",
+        "SyntaxError: failed to load bunfig",
+        "",
+      ],
+    ],
+    [
+      "a value of the wrong type",
+      '[run]\nbun = "yes"\n',
+      [
+        '2 | bun = "yes"',
+        "          ^",
+        "error: Expected boolean",
+        "    at bunfig.toml:2:7",
+        "",
+        "Invalid Bunfig: failed to load bunfig",
+        "",
+      ],
+    ],
+  ];
+  const commands: [command: string, args: string[]][] = [
+    ["bun run <script>", ["run", "hello"]],
+    ["bun <script>", ["hello"]],
+    ["bun run <file>", ["run", "index.js"]],
+    ["bun run ./<file>", ["run", "./index.js"]],
+    ["bun run -", ["run", "-"]], // the script comes from stdin
+    ["bun run --watch <file>", ["run", "--watch", "index.js"]],
+    ["bun run --hot <file>", ["run", "--hot", "index.js"]],
+    ["bun repl", ["repl"]],
+  ];
+
+  async function run(bunfig: string, cmd: (dir: string) => string[]) {
+    using dir = tempDir("bunfig-does-not-parse", {
+      "bunfig.toml": bunfig,
+      "package.json": JSON.stringify({ scripts: { hello: "echo ran" } }),
+      "index.js": `console.log("ran");`,
+    });
+    await using proc = Bun.spawn({
+      cmd: cmd(String(dir)),
+      env: bunEnv,
+      cwd: String(dir),
+      stdin: new Blob([`console.log("ran");`]),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode, signalCode: proc.signalCode };
+  }
+
+  describe.each(configs)("%s", (_, bunfig, expectedStderr) => {
+    const stopped = { stdout: "", stderr: expectedStderr.join("\n"), exitCode: 1, signalCode: null };
+
+    test.each(commands)("stops %s", async (_, args) => {
+      expect(await run(bunfig, () => [bunExe(), ...args])).toEqual(stopped);
+    });
+
+    // Bun runs as node when its executable is named node. A symlink needs privileges on Windows.
+    test.skipIf(isWindows)("stops node <file> when node is bun", async () => {
+      expect(
+        await run(bunfig, dir => {
+          symlinkSync(bunExe(), pathJoin(dir, "node"));
+          return [pathJoin(dir, "node"), "index.js"];
+        }),
+      ).toEqual(stopped);
+    });
   });
 });

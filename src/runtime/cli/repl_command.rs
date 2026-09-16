@@ -45,15 +45,7 @@ impl ReplCommand {
         ctx: Command::Context<'_>,
         repl: &mut Repl<'r>,
     ) -> Result<(), crate::Error> {
-        // Load bunfig if not already loaded
-        if !ctx.debug.loaded_bunfig {
-            Arguments::load_config_path(
-                Command::Tag::RunCommand,
-                true,
-                bun_core::zstr!("bunfig.toml"),
-                ctx,
-            )?;
-        }
+        Arguments::load_cwd_config_or_exit(ctx);
 
         jsc::initialize(jsc::InitializeOptions {
             eval_mode: true,

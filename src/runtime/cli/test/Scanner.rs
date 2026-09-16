@@ -208,16 +208,10 @@ impl<'a> Scanner<'a> {
         let listing = unsafe { &mut (*fs_ptr).fs }
             .read_directory_with_iterator(name, handle, 0, false, iter)?;
 
-        // The resolver returns a listing it already has without calling the iterator:
-        // the cwd and its parents (`run_env_loader`/`read_dir_info` read them before
-        // the scanner runs) and every directory an earlier `scan` walked.
+        // On a cache hit the resolver returns the listing without calling the iterator.
         if !self.has_iterated {
             if let EntriesOption::Entries(entries) = &*listing {
-                // Hash-map iteration order is not stable. Sort by (lowercased)
-                // base name so test-file discovery order is deterministic:
-                // regression/issue/26851 relies on `a_*.test` running before
-                // `b_*.test` under `--bail`. Collecting first also keeps
-                // `self.next(…)` from overlapping the `entries.data` borrow.
+                // Sorted: hash-map order is not stable, and #26851 needs a deterministic order.
                 let mut entry_ptrs: Vec<*mut fs::Entry> = entries.data.values().copied().collect();
                 index_sort::sort_slice_by(&mut entry_ptrs, |a, b| {
                     // SAFETY: `EntryMap` stores `*mut Entry` into the

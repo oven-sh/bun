@@ -220,9 +220,7 @@ describe("scan errors", () => {
         "page.tsx": "1",
         "loading.tsx": "1",
         "docs/not-found.tsx": "1",
-        // A plain error.tsx on Windows. On POSIX this is a file whose name starts with ".\",
-        // which the scan normalizes away, so the report must be derived from the normalized path.
-        ".\\error.tsx": "1",
+        "error.tsx": "1",
       }),
     ).toEqual([
       'Invalid route "docs/not-found.tsx": Bun Bake currently does not support "not-found" files',
@@ -382,16 +380,16 @@ describe.concurrent("scan errors in the dev server and in bun build --app", () =
     ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
   };
 
-  for (const testCase of cases) {
-    const reports = [...testCase.reports].sort();
+  describe.each(cases)("$name", testCase => {
+    const reports = testCase.reports.toSorted();
 
-    test(`dev server: ${testCase.name}`, async () => {
+    test("dev server", async () => {
       using dir = tempDir("fsr-scan-errors-dev", fixture(testCase));
       const { stdout, stderr, exitCode } = await run(String(dir), bunEnv, "serve-fixture.ts");
       expect({ stdout, reports: reportsOf(stderr), exitCode }).toEqual({ stdout: "200 index\n", reports, exitCode: 0 });
     });
 
-    test(`bun build --app: ${testCase.name}`, async () => {
+    test("bun build --app", async () => {
       using dir = tempDir("fsr-scan-errors-build", fixture(testCase));
       const { stderr, exitCode } = await run(String(dir), buildEnv, "build", "--app", "./app.ts", "--outdir", "./dist");
       const wroteOutput = existsSync(path.join(String(dir), "dist"));
@@ -401,5 +399,5 @@ describe.concurrent("scan errors in the dev server and in bun build --app", () =
         wroteOutput: false,
       });
     });
-  }
+  });
 });

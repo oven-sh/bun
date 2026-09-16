@@ -5468,16 +5468,13 @@ declare module "bun" {
      * instantiate it and its dependencies into this graph, evaluating what
      * has not been evaluated in this graph yet.
      *
+     * The first module imported into a graph is its main module:
+     * `import.meta.main` is true in it and in no other module of the graph.
+     *
      * @param specifier module specifier, as for `import()`
      * @returns the module's namespace object for this graph
      */
     import<T = any>(specifier: string): Promise<T>;
-    /**
-     * Resolved path of the first module successfully `import()`ed into this
-     * graph — the module for which `import.meta.main` is true inside the
-     * graph — or `undefined` before that.
-     */
-    readonly mainModule: string | undefined;
     /**
      * Call `fn` inside the graph's context: what `fn` and everything it
      * starts open belongs to the graph.

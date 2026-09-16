@@ -580,7 +580,6 @@ void JSModuleGraph::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_onError);
     visitor.append(thisObject->m_maker);
     visitor.append(thisObject->m_mainPath);
-    visitor.append(thisObject->m_mainImport);
 }
 DEFINE_VISIT_CHILDREN(JSModuleGraph);
 
@@ -608,9 +607,8 @@ JSPromise* JSModuleGraph::import(Zig::GlobalObject* globalObject, JSValue specif
     auto referrer = Identifier::fromString(vm, makeString(cwd, PLATFORM_SEP, "[module-graph]"_s));
     Identifier key = loader->resolve(globalObject, Identifier::fromString(vm, specifier), referrer, nullptr, false);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    // The first import makes its module main. If it fails the graph is left without one (the next
-    // import becomes it) rather than with one that never ran: mainPath() looks at this promise.
-    bool becomesMain = mainPath().isUndefined();
+    // The first import makes its module main, whether or not it then loads.
+    bool becomesMain = !m_mainPath;
     if (becomesMain)
         m_mainPath.set(vm, this, jsString(vm, key.string()));
     JSPromise* loaded = loader->requestImportModule(globalObject, key, Identifier(), nullptr, nullptr);
@@ -624,8 +622,6 @@ JSPromise* JSModuleGraph::import(Zig::GlobalObject* globalObject, JSValue specif
     // handles is reported.
     JSPromise* result = JSPromise::create(vm, globalObject->promiseStructure());
     result->pipeFrom(vm, loaded);
-    if (becomesMain)
-        m_mainImport.set(vm, this, result);
     return result;
 }
 
@@ -644,10 +640,6 @@ void JSModuleGraph::dispose(Zig::GlobalObject* globalObject)
     m_requireMap->clear(globalObject);
     RETURN_IF_EXCEPTION(scope, );
     m_requireCache.clear();
-    // Only its status was still of use (mainPath); fulfilled, it holds the main module's namespace.
-    if (m_mainImport && m_mainImport->status() == JSPromise::Status::Rejected)
-        m_mainPath.clear();
-    m_mainImport.clear();
 }
 
 void disposeModuleGraphOfContext(WebCore::ScriptExecutionContext& context)
@@ -669,7 +661,6 @@ void disposeModuleGraphOfContext(WebCore::ScriptExecutionContext& context)
 static JSC_DECLARE_HOST_FUNCTION(jsModuleGraphPrototypeFunction_import);
 static JSC_DECLARE_HOST_FUNCTION(jsModuleGraphPrototypeFunction_dispose);
 static JSC_DECLARE_HOST_FUNCTION(jsModuleGraphPrototypeFunction_run);
-static JSC_DECLARE_CUSTOM_GETTER(jsModuleGraphGetter_mainModule);
 static JSC_DECLARE_CUSTOM_GETTER(jsModuleGraphConstructorGetter_current);
 
 static JSModuleGraph* thisModuleGraph(JSGlobalObject* globalObject, ThrowScope& scope, JSValue thisValue, ASCIILiteral method)
@@ -723,15 +714,6 @@ JSC_DEFINE_HOST_FUNCTION(jsModuleGraphPrototypeFunction_dispose, (JSGlobalObject
     return JSValue::encode(jsUndefined());
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsModuleGraphGetter_mainModule, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSModuleGraph* graph = thisModuleGraph(globalObject, scope, JSValue::decode(thisValue), "mainModule"_s);
-    RETURN_IF_EXCEPTION(scope, {});
-    return JSValue::encode(graph->mainPath());
-}
-
 // ModuleGraph.current: the graph whose context the calling code is running in (what it opens now
 // would be that graph's), or undefined in the host's. For host functions shared by several graphs.
 JSC_DEFINE_CUSTOM_GETTER(jsModuleGraphConstructorGetter_current, (JSGlobalObject * globalObject, EncodedJSValue, PropertyName))
@@ -776,7 +758,6 @@ static const HashTableValue JSModuleGraphPrototypeTableValues[] = {
     { "import"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsModuleGraphPrototypeFunction_import, 1 } },
     { "dispose"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsModuleGraphPrototypeFunction_dispose, 0 } },
     { "run"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsModuleGraphPrototypeFunction_run, 1 } },
-    { "mainModule"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsModuleGraphGetter_mainModule, 0 } },
 };
 
 const ClassInfo JSModuleGraphPrototype::s_info = { "ModuleGraph"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSModuleGraphPrototype) };

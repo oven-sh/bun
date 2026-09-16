@@ -5,7 +5,7 @@ description: Run many instances of one app in a single process with Bun.ModuleGr
 
 <Warning>`Bun.ModuleGraph` is experimental.</Warning>
 
-A `Bun.ModuleGraph` loads modules into the current global another time. Each graph has its own module instances, its own `require.cache`, and its own values for the names you pass as `globals`. Parsed code and bytecode are shared between graphs; ES modules share JIT-compiled code too.
+A `Bun.ModuleGraph` loads modules into the current global another time. Each graph has its own module instances, its own `require.cache`, and its own values for the names you pass as `globals`. Parsed code and bytecode are shared between graphs; ES modules share JIT-compiled code too. The first module a graph `import()`s is that graph's main module: `import.meta.main` and `require.main === module` are true in it, and in no other module of the graph.
 
 ```ts host.ts icon="/icons/typescript.svg"
 // A `process` of the tenant's own: its module code sees this one.

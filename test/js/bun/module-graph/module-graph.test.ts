@@ -118,10 +118,9 @@ describe("Bun.ModuleGraph", () => {
     g.dispose();
     (g as any)[Symbol.dispose]();
     const dir = fixture({ "x.mjs": `export const x = 1` });
-    expect([await rejection(g.import(join(dir, "x.mjs"))), g.mainModule]).toEqual([
+    expect(await rejection(g.import(join(dir, "x.mjs")))).toBe(
       "Error [ERR_INVALID_STATE]: ModuleGraph has been disposed",
-      undefined,
-    ]);
+    );
   });
 
   test("each graph gets its own module state; live bindings and imports resolve within the graph", async () => {
@@ -822,9 +821,6 @@ describe("Bun.ModuleGraph — API validation and error attribution edges", () =>
         }),
       ),
       receiver: thrown(() => (ModuleGraphClass as any).prototype.import.call({}, "x")),
-      receiverGetter: thrown(() =>
-        Object.getOwnPropertyDescriptor(ModuleGraphClass.prototype, "mainModule")!.get!.call({}),
-      ),
       // like import(): never a synchronous throw, always a rejection
       specifierType: await rejection(g.import(123 as any)),
       empty: (await rejection(g.import(""))).replace(/ imported from .*/, ""),
@@ -843,7 +839,6 @@ describe("Bun.ModuleGraph — API validation and error attribution edges", () =>
       anyNames: "no throw",
       throwingGetter: "RangeError [undefined]: from getter",
       receiver: "TypeError [ERR_INVALID_THIS]: Can only call ModuleGraph.import on instances of ModuleGraph",
-      receiverGetter: "TypeError [ERR_INVALID_THIS]: Can only call ModuleGraph.mainModule on instances of ModuleGraph",
       specifierType: `TypeError [ERR_INVALID_ARG_TYPE]: The "specifier" argument must be of type string. Received type number (123)`,
       empty: "ResolveMessage [ERR_MODULE_NOT_FOUND]: Cannot find module ''",
       directory: `ResolveMessage [ERR_MODULE_NOT_FOUND]: Cannot find module '${dir}'`,
@@ -1193,12 +1188,11 @@ describe("Bun.ModuleGraph — error attribution matrix", () => {
     const withQuery = await g.import(file + "?tenant=1");
     const otherQuery = await g.import(file + "?tenant=2");
     const plain = await g.import(file);
-    expect({
-      mainModule: g.mainModule,
-      withQuery: withQuery.main,
-      otherQuery: otherQuery.main,
-      plain: plain.main,
-    }).toEqual({ mainModule: file + "?tenant=1", withQuery: true, otherQuery: false, plain: false });
+    expect({ withQuery: withQuery.main, otherQuery: otherQuery.main, plain: plain.main }).toEqual({
+      withQuery: true,
+      otherQuery: false,
+      plain: false,
+    });
   });
   test("the first import() is main from the moment it is requested: a second one in the same tick, and evicting main from require.cache, do not change it", async () => {
     using d = tempDir("module-graph-main-first", {
@@ -1210,27 +1204,15 @@ describe("Bun.ModuleGraph — error attribution matrix", () => {
     const g = new ModuleGraphClass();
     const first = g.import(join(String(d), "a.mjs"));
     const second = g.import(join(String(d), "b.mjs"));
-    const whileLoading = g.mainModule;
     const [a, b] = await Promise.all([first, second]);
 
     const evicting = new ModuleGraphClass();
     const entry = await evicting.import(join(String(d), "entry.cjs"));
     const later = await evicting.import(join(String(d), "later.mjs"));
-    expect({
-      whileLoading,
-      main: g.mainModule,
-      aMain: a.main,
-      bMain: b.main,
-      entryWasMain: entry.default,
-      afterEviction: evicting.mainModule,
-      laterMain: later.main,
-    }).toEqual({
-      whileLoading: join(String(d), "a.mjs"),
-      main: join(String(d), "a.mjs"),
+    expect({ aMain: a.main, bMain: b.main, entryWasMain: entry.default, laterMain: later.main }).toEqual({
       aMain: true,
       bMain: false,
       entryWasMain: true,
-      afterEviction: join(String(d), "entry.cjs"),
       laterMain: false,
     });
   });
@@ -1290,7 +1272,7 @@ describe("Bun.ModuleGraph — error attribution matrix", () => {
     ]);
     expect(exitCode).toBe(0);
   });
-  test("a first import() that fails, however it fails, leaves the graph without a main module; the next successful import becomes it", async () => {
+  test("a first import() that fails, however it fails, is still the graph's main: a later import is not. One that names no module imported nothing", async () => {
     using d = tempDir("module-graph-main-after-failure", {
       "throws.mjs": `throw new Error("not today");`,
       "syntax.mjs": `export const x = ;`,
@@ -1316,18 +1298,11 @@ describe("Bun.ModuleGraph — error attribution matrix", () => {
         () => "resolved",
         () => "rejected",
       );
-      const mainAfterFailure = g.mainModule;
       const ok = await g.import(join(String(d), "ok.mjs"));
       const other = await g.import(join(String(d), "other.mjs"));
-      outcomes[bad] = {
-        failed,
-        mainAfterFailure,
-        main: g.mainModule === join(String(d), "ok.mjs"),
-        okMain: ok.main,
-        otherMain: other.main,
-      };
+      outcomes[bad] = { failed, okMain: ok.main, otherMain: other.main };
     }
-    const expected = { failed: "rejected", mainAfterFailure: undefined, main: true, okMain: true, otherMain: false };
+    const expected = { failed: "rejected", okMain: false, otherMain: false };
     expect(outcomes).toEqual({
       "throws.mjs": expected,
       "syntax.mjs": expected,
@@ -1335,7 +1310,7 @@ describe("Bun.ModuleGraph — error attribution matrix", () => {
       "bad-dependency.mjs": expected,
       "missing-dependency.mjs": expected,
       "throws.cjs": expected,
-      "missing.mjs": expected,
+      "missing.mjs": { failed: "rejected", okMain: true, otherMain: false },
     });
   });
   test("a main module that ran stays main when it is evicted and a reload of it fails", async () => {
@@ -1352,11 +1327,7 @@ describe("Bun.ModuleGraph — error attribution matrix", () => {
         (e: Error) => e.message,
       );
       const ok = await g.import(join(String(d), "ok.mjs"));
-      expect({ reload, main: g.mainModule, okMain: ok.main }).toEqual({
-        reload: "second time",
-        main: join(String(d), "entry.cjs"),
-        okMain: false,
-      });
+      expect({ reload, okMain: ok.main }).toEqual({ reload: "second time", okMain: false });
     } finally {
       delete (globalThis as any).entryRanOnce;
     }
@@ -2055,11 +2026,9 @@ describe("Bun.ModuleGraph — constructor / method contract", () => {
     expect({
       own: Object.keys(new ModuleGraphClass()),
       proto: Object.getOwnPropertyNames(ModuleGraphClass.prototype).sort(),
-      mainModuleIsGetter: typeof Object.getOwnPropertyDescriptor(ModuleGraphClass.prototype, "mainModule")?.get,
     }).toEqual({
       own: [],
-      proto: ["constructor", "dispose", "import", "mainModule", "run"],
-      mainModuleIsGetter: "function",
+      proto: ["constructor", "dispose", "import", "run"],
     });
   });
   test("re-entrancy: onExit/onError callbacks may create graphs, import, and dispose the calling graph", async () => {
@@ -3354,11 +3323,9 @@ describe("Bun.ModuleGraph — import.meta / main-module identity per graph", () 
     await second.import(join(dir, "dep.mjs"));
     expect((await second.import(join(dir, "entry.mjs"))).meta.main).toBe(false); // not this graph's first import
   });
-  test("Bun.main / process.argv[1] inside a graph (documented): host values pass through; graph.mainModule is the graph's entry", async () => {
-    const g = ModuleGraph();
-    const m = await g.import(join(dir, "entry.mjs"));
+  test("Bun.main / process.argv[1] inside a graph (documented): host values pass through", async () => {
+    const m = await ModuleGraph().import(join(dir, "entry.mjs"));
     expect([m.meta.bunMain, m.meta.argv1]).toEqual([Bun.main, process.argv[1]]);
-    expect((g as any).mainModule).toBe(join(dir, "entry.mjs"));
   });
   test("require.main inside a graph is the graph's first import when that is a CommonJS module, for every module of the graph", async () => {
     const entry = (await ModuleGraph().import(join(dir, "entry.cjs"))).default;

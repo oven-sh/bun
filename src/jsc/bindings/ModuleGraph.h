@@ -52,14 +52,8 @@ public:
     // The graph in whose context this one was made (null: the host's). Errors of a graph that was
     // given no onError go to its maker's.
     JSModuleGraph* maker() const { return m_maker.get(); }
-    // Key of the first module import()ed, unless that import failed: import.meta.main /
-    // require.main. Undefined before.
-    JSC::JSValue mainPath() const
-    {
-        if (!m_mainPath || (m_mainImport && m_mainImport->status() == JSC::JSPromise::Status::Rejected))
-            return JSC::jsUndefined();
-        return m_mainPath.get();
-    }
+    // Key of the first module import()ed: import.meta.main / require.main. Undefined before.
+    JSC::JSValue mainPath() const { return m_mainPath ? JSC::JSValue(m_mainPath.get()) : JSC::jsUndefined(); }
     bool disposed() const { return m_context->isStopped(); }
     // Its onError is running. What that throws or rejects, and an error of this graph's code that it
     // causes, is the host's: given to the graph, it would come straight back to the same onError.
@@ -86,8 +80,6 @@ private:
     JSC::WriteBarrier<JSC::JSObject> m_onError;
     JSC::WriteBarrier<JSModuleGraph> m_maker;
     JSC::WriteBarrier<JSC::JSString> m_mainPath;
-    // The loader's promise for the import that made m_mainPath main.
-    JSC::WriteBarrier<JSC::JSPromise> m_mainImport;
     bool m_inOnError { false };
     unsigned m_overlayShape { 0 };
 };

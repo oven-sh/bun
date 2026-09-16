@@ -533,7 +533,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_main, (JSGlobalObject * lexica
         JSValue mainPath = graph->mainPath();
         if (!mainPath.isString())
             return JSValue::encode(jsBoolean(false));
-        // graph.mainModule is a registry key: the path, and the query if there is one.
+        // The graph's main is a registry key: the path, and the query if there is one.
         WTF::URL url(thisObject->url);
         auto mainKey = asString(mainPath)->value(globalObject);
         RETURN_IF_EXCEPTION(scope, {});

@@ -1252,38 +1252,16 @@ impl JSValue {
         let Some(v) = self.get(global, property)? else {
             return Ok(None);
         };
-        v.function_or_nullish(global, property)
-    }
-
-    /// `get_function` for a key that is one of `BunCommonStrings.h`'s; `name` is for the error.
-    pub fn get_common_string_function(
-        self,
-        global: &JSGlobalObject,
-        key: crate::CommonString,
-        name: &[u8],
-    ) -> JsResult<Option<JSValue>> {
-        let Some(v) = self.get_common_string(global, key)? else {
-            return Ok(None);
-        };
-        v.function_or_nullish(global, name)
-    }
-
-    /// `self` as the value of the option `name`: a function, or absent when nullish.
-    fn function_or_nullish(
-        self,
-        global: &JSGlobalObject,
-        name: &[u8],
-    ) -> JsResult<Option<JSValue>> {
-        if self.is_undefined_or_null() {
+        if v.is_undefined_or_null() {
             return Ok(None);
         }
-        if !self.is_cell() || !self.is_callable() {
+        if !v.is_cell() || !v.is_callable() {
             return Err(global.throw_invalid_arguments(format_args!(
                 "{} must be a function",
-                bstr::BStr::new(name),
+                bstr::BStr::new(property),
             )));
         }
-        Ok(Some(self))
+        Ok(Some(v))
     }
     /// Missing/undefined → `None`;
     /// boolean → `Some(b)`; anything else throws `ERR_INVALID_ARG_TYPE`.

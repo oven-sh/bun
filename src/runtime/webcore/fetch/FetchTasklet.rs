@@ -139,12 +139,10 @@ pub struct FetchTasklet {
 
     // custom checkServerIdentity
     pub(crate) check_server_identity: StrongOptional,
-    /// Told the last connection's `ConnectionStats` once the HTTP thread is done.
-    pub(crate) on_stats: StrongOptional,
     /// The `Bun.FetchSession` of this request, kept from being collected (and
     /// closing its pool) while the request can still park a socket there.
     pub(crate) fetch_session: Option<super::fetch_session::SessionHold>,
-    /// The callback is the session's, which holds it; `fetch_session` holds the session.
+    /// The session has the callback, and holds it; `fetch_session` holds the session.
     pub(crate) session_check_server_identity: bool,
     pub(crate) session_on_stats: bool,
     pub(crate) reject_unauthorized: bool,
@@ -499,7 +497,6 @@ impl FetchTasklet {
 
         self.abort_reason.deinit();
         self.check_server_identity.deinit();
-        self.on_stats.deinit();
         self.fetch_session = None;
         self.clear_abort_signal();
         // Clear the sink only after the requested ended otherwise we would potentialy lose the last chunk
@@ -1266,15 +1263,11 @@ impl FetchTasklet {
     /// The HTTP thread is done with the request: hand `onStats` what its last
     /// connection did, before the promise or the body learn how it ended.
     fn report_connection_stats(&mut self, http_thread_is_done: bool) {
-        // Once per request: the request's own callback, else its session's.
-        let own = core::mem::take(&mut self.on_stats);
-        let from_session = core::mem::take(&mut self.session_on_stats);
-        let Some(callback) = own.get().or_else(|| {
-            if !from_session {
-                return None;
-            }
-            self.fetch_session.as_ref()?.on_stats()
-        }) else {
+        // Once per request.
+        if !core::mem::take(&mut self.session_on_stats) {
+            return;
+        }
+        let Some(callback) = self.fetch_session.as_ref().and_then(|s| s.on_stats()) else {
             return;
         };
         let global_this = self.global_this;
@@ -2027,7 +2020,6 @@ impl FetchTasklet {
             has_schedule_callback: AtomicBool::new(false),
             abort_reason: StrongOptional::empty(),
             check_server_identity: fetch_options.check_server_identity,
-            on_stats: fetch_options.on_stats,
             fetch_session: fetch_options.fetch_session,
             session_check_server_identity: fetch_options.session_check_server_identity,
             session_on_stats: fetch_options.session_on_stats,
@@ -2168,7 +2160,7 @@ impl FetchTasklet {
                 compress: fetch_options.compress,
                 pool: fetch_options.pool,
                 bypass_pool: fetch_options.bypass_pool,
-                collect_stats: fetch_tasklet.on_stats.has() || fetch_tasklet.session_on_stats,
+                collect_stats: fetch_tasklet.session_on_stats,
             },
         )));
         // enable streaming the write side
@@ -2772,9 +2764,8 @@ pub struct FetchOptions {
     pub(crate) compress: Option<http::compress_body::CompressOption>,
     pub(crate) pool: http::PoolOptions,
     pub(crate) bypass_pool: bool,
-    pub(crate) on_stats: StrongOptional,
     pub(crate) fetch_session: Option<super::fetch_session::SessionHold>,
-    /// The callback is the session's, which holds it; `fetch_session` holds the session.
+    /// The session has the callback, and holds it; `fetch_session` holds the session.
     pub(crate) session_check_server_identity: bool,
     pub(crate) session_on_stats: bool,
 }

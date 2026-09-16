@@ -366,7 +366,9 @@ if (typeof process !== "undefined") {
   const bound: (input: string | URL | Request, init?: RequestInit) => Promise<Response> = session.fetch;
   bound("https://example.com", { method: "POST" }).then(r => r.text());
   fetch("https://example.com", { session, proxy: false });
-  fetch("https://example.com", { proxy: false, onStats: () => {} });
+  fetch("https://example.com", { proxy: false });
+  // @ts-expect-error - onStats is a session option
+  fetch("https://example.com", { onStats: () => {} });
   fetch("https://93.184.216.34/", {
     headers: { Host: "example.com" },
     tls: { serverName: "example.com" },

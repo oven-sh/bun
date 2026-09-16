@@ -2207,14 +2207,18 @@ describe.concurrent("a CONNECT tunnel", () => {
     await using proxy = await createAdversarialProxy();
     try {
       let stats: Bun.FetchConnectionStats | undefined;
-      const error = await fetch(`https://localhost:${(origin.address() as net.AddressInfo).port}/`, {
+      using session = new Bun.FetchSession({
         proxy: `http://127.0.0.1:${proxy.port}`,
         tls: { ca: tlsCert.cert },
-        keepalive: false,
-        method: "POST",
-        body: Buffer.alloc(5000, "x"),
+        keepAlive: false,
         onStats: s => (stats = s),
-      }).catch(e => e);
+      });
+      const error = await session
+        .fetch(`https://localhost:${(origin.address() as net.AddressInfo).port}/`, {
+          method: "POST",
+          body: Buffer.alloc(5000, "x"),
+        })
+        .catch(e => e);
       expect(error.code).toBe("ECONNRESET");
       expect(stats).toMatchObject({ requestBodyBytesSent: 5000, responseStarted: false, nextHopProtocol: "http/1.1" });
       expect(stats!.bytesSent).toBeGreaterThan(5000);
@@ -2227,12 +2231,13 @@ describe.concurrent("a CONNECT tunnel", () => {
     using origin = Bun.serve({ port: 0, tls: tlsCert, fetch: () => new Response("through") });
     await using proxy = await createAdversarialProxy();
     let stats: Bun.FetchConnectionStats | undefined;
-    const response = await fetch(`https://localhost:${origin.port}/`, {
+    using session = new Bun.FetchSession({
       proxy: `http://127.0.0.1:${proxy.port}`,
       tls: { ca: tlsCert.cert },
-      keepalive: false,
+      keepAlive: false,
       onStats: s => (stats = s),
     });
+    const response = await session.fetch(`https://localhost:${origin.port}/`);
     expect(await response.text()).toBe("through");
     expect(proxy.connections.map(c => [c.method, c.target])).toEqual([["CONNECT", `localhost:${origin.port}`]]);
     expect(stats).toEqual({
@@ -3110,13 +3115,14 @@ test("a proxy's own reply to CONNECT never resolves as the https origin's respon
     });
     await once(proxy.listen(0, "127.0.0.1"), "listening");
     let stats: Bun.FetchConnectionStats | undefined;
+    using session = new Bun.FetchSession({
+      proxy: `http://127.0.0.1:${(proxy.address() as net.AddressInfo).port}`,
+      keepAlive: false,
+      onStats: s => (stats = s),
+    });
     try {
       outcomes.push({
-        ...(await fetch("https://origin.invalid/secret", {
-          proxy: `http://127.0.0.1:${(proxy.address() as net.AddressInfo).port}`,
-          keepalive: false,
-          onStats: s => (stats = s),
-        }).then(
+        ...(await session.fetch("https://origin.invalid/secret").then(
           async response => ({ resolved: response.status, body: await response.text() }),
           e => ({ code: e.code, status: e.status, authenticate: e.headers?.get("proxy-authenticate") }),
         )),

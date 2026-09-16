@@ -2026,14 +2026,6 @@ interface BunFetchRequestInit extends RequestInit {
   session?: Bun.FetchSession | undefined;
 
   /**
-   * Called once when the connection is done with this request, with what its
-   * last connection attempt did. See {@link Bun.FetchConnectionStats}.
-   *
-   * Not part of the Fetch API specification.
-   */
-  onStats?: ((stats: Bun.FetchConnectionStats) => void) | undefined;
-
-  /**
    * Override the default S3 options
    *
    * @example

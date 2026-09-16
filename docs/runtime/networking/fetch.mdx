@@ -521,12 +521,13 @@ const response = await fetch(`https://${family === 6 ? `[${address}]` : address}
 
 #### Connection stats
 
-`onStats` runs once per request that reached the HTTP client, when the connection is done with it: the response body ended, or the request failed or was aborted. When `fetch` rejects, `onStats` runs first.
+A session's `onStats` runs once per request that reached the HTTP client, when the connection is done with it: the response body ended, or the request failed or was aborted. When `fetch` rejects, `onStats` runs first. `onStats` is an option of `Bun.FetchSession` only.
 
 ```ts
 let stats;
+using session = new Bun.FetchSession({ onStats: s => (stats = s) });
 try {
-  await fetch("https://example.com/upload", { method: "POST", body, onStats: s => (stats = s) });
+  await session.fetch("https://example.com/upload", { method: "POST", body });
 } catch (error) {
   if (stats && !stats.responseStarted && stats.requestBodyBytesSent < body.byteLength) {
     // the upload never completely left this process

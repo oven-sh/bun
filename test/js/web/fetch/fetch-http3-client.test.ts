@@ -337,17 +337,11 @@ describe("fetch protocol: http3", () => {
   });
 
   test("onStats reports an h3 request, its peer, and reuse of the connection", async () => {
-    using session = new Bun.FetchSession();
     const collected: Bun.FetchConnectionStats[] = [];
+    using session = new Bun.FetchSession({ onStats: s => collected.push(s) });
     const body = Buffer.alloc(5000, "x");
     for (let i = 0; i < 2; i++) {
-      const res = await fetch(`${base}/echo`, {
-        ...h3,
-        session,
-        method: "POST",
-        body,
-        onStats: s => collected.push(s),
-      });
+      const res = await fetch(`${base}/echo`, { ...h3, session, method: "POST", body });
       expect((await res.bytes()).length).toBe(5000);
     }
     const { port } = new URL(base);

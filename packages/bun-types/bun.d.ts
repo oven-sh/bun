@@ -8904,10 +8904,11 @@ declare module "bun" {
      */
     unix?: string | undefined;
     /**
-     * Called once per request that reached the HTTP client, when the
-     * connection is done with it: the response body ended, or the request failed
-     * or was aborted. For a rejected `fetch()` it runs before the rejection is
-     * delivered.
+     * Called once per request of this session that reached the HTTP client,
+     * when the connection is done with it: the response body ended, or the
+     * request failed or was aborted. For a rejected `fetch()` it runs before
+     * the rejection is delivered. It is an option of the session only;
+     * `fetch()` itself takes no `onStats`.
      */
     onStats?: ((stats: FetchConnectionStats) => void) | undefined;
   }

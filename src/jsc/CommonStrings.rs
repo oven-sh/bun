@@ -41,15 +41,14 @@ pub enum CommonStringsForRust {
     FetchOptionDecompress = 26,
     FetchOptionKeepalive = 27,
     FetchOptionMaxRedirects = 28,
-    FetchOptionOnStats = 29,
-    FetchOptionProtocol = 30,
-    FetchOptionProxy = 31,
-    FetchOptionS3 = 32,
-    FetchOptionSession = 33,
-    FetchOptionTimeout = 34,
-    FetchOptionTls = 35,
-    FetchOptionUnix = 36,
-    FetchOptionVerbose = 37,
+    FetchOptionProtocol = 29,
+    FetchOptionProxy = 30,
+    FetchOptionS3 = 31,
+    FetchOptionSession = 32,
+    FetchOptionTimeout = 33,
+    FetchOptionTls = 34,
+    FetchOptionUnix = 35,
+    FetchOptionVerbose = 36,
 }
 
 unsafe extern "C" {

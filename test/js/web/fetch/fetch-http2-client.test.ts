@@ -1824,11 +1824,12 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
           "--no-warnings",
           "-e",
           `const url = "https://localhost:${port}/";
-           using one = new Bun.FetchSession({ tls: { rejectUnauthorized: false } });
-           using other = new Bun.FetchSession({ tls: { rejectUnauthorized: false } });
            const stats = [];
+           const init = { tls: { rejectUnauthorized: false }, onStats: s => stats.push(s) };
+           using one = new Bun.FetchSession(init);
+           using other = new Bun.FetchSession(init);
            const post = session =>
-             fetch(url, { protocol: "http2", session, method: "POST", body: Buffer.alloc(5000, "x"), onStats: s => stats.push(s) }).then(r => r.text());
+             fetch(url, { protocol: "http2", session, method: "POST", body: Buffer.alloc(5000, "x") }).then(r => r.text());
            console.log(JSON.stringify([await post(one), await post(one), await post(other)]));
            console.log(JSON.stringify(stats.map(s => [s.requestBodyBytesSent, s.bytesSent > 5000, s.responseStarted, s.connectionReused, s.nextHopProtocol])));`,
         ],

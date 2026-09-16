@@ -214,15 +214,14 @@ enum class CommonStringsForRust : uint8_t {
     fetchOptionDecompress = 26,
     fetchOptionKeepalive = 27,
     fetchOptionMaxRedirects = 28,
-    fetchOptionOnStats = 29,
-    fetchOptionProtocol = 30,
-    fetchOptionProxy = 31,
-    fetchOptionS3 = 32,
-    fetchOptionSession = 33,
-    fetchOptionTimeout = 34,
-    fetchOptionTls = 35,
-    fetchOptionUnix = 36,
-    fetchOptionVerbose = 37,
+    fetchOptionProtocol = 29,
+    fetchOptionProxy = 30,
+    fetchOptionS3 = 31,
+    fetchOptionSession = 32,
+    fetchOptionTimeout = 33,
+    fetchOptionTls = 34,
+    fetchOptionUnix = 35,
+    fetchOptionVerbose = 36,
 };
 
 static JSC::JSValue toJS(Zig::GlobalObject* globalObject, CommonStringsForRust commonString)
@@ -287,8 +286,6 @@ static JSC::JSValue toJS(Zig::GlobalObject* globalObject, CommonStringsForRust c
         return commonStrings.fetchOptionKeepaliveString();
     case CommonStringsForRust::fetchOptionMaxRedirects:
         return commonStrings.fetchOptionMaxRedirectsString();
-    case CommonStringsForRust::fetchOptionOnStats:
-        return commonStrings.fetchOptionOnStatsString();
     case CommonStringsForRust::fetchOptionProtocol:
         return commonStrings.fetchOptionProtocolString();
     case CommonStringsForRust::fetchOptionProxy:

@@ -969,21 +969,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         }
     }
 
-    // onStats: function | undefined
-    let mut on_stats: Option<JSValue> = None;
-    for obj in [
-        options_object.unwrap_or_default(),
-        request_init_object.unwrap_or_default(),
-    ] {
-        if on_stats.is_none() && !obj.is_empty() {
-            on_stats = obj.get_common_string_function(
-                global_this,
-                jsc::CommonString::FetchOptionOnStats,
-                b"onStats",
-            )?;
-        }
-    }
-    let session_on_stats = on_stats.is_none() && session.is_some_and(|s| s.on_stats().is_some());
+    // The session's `onStats`; a request has none of its own.
+    let session_on_stats = session.is_some_and(|s| s.on_stats().is_some());
     let pool = session.map(|c| c.pool()).unwrap_or_default();
 
     // signal: AbortSignal | null | undefined;
@@ -1945,10 +1932,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         pool,
         bypass_pool,
         fetch_session: session_hold,
-        on_stats: match on_stats {
-            Some(callback) => jsc::strong::Optional::create(callback, global_this),
-            None => jsc::strong::Optional::empty(),
-        },
         session_check_server_identity,
         session_on_stats,
     };

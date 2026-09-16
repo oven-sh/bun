@@ -35,7 +35,6 @@
     macro(fetchOptionDecompress, "decompress") \
     macro(fetchOptionKeepalive, "keepalive") \
     macro(fetchOptionMaxRedirects, "maxRedirects") \
-    macro(fetchOptionOnStats, "onStats") \
     macro(fetchOptionProtocol, "protocol") \
     macro(fetchOptionProxy, "proxy") \
     macro(fetchOptionS3, "s3") \

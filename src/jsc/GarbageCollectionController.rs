@@ -1,4 +1,4 @@
-//! Idle GC timer: JSC's own `GCActivityCallback` (via `WTFTimer`) paces eden/full against allocation rate; this adds a 1 s / 30 s idle `collect_async()` so a process that stops allocating still releases memory, and an idle ladder (main thread only): once the program has not been busy for a `BUN_IDLE_GC_SECONDS` entry (default "30,90,480": 30 s, 2 min and 10 min; ""/0 = off) a full collection so JSC can age out code that no longer runs. The second one (or the only one) also pages out a standalone executable's embedded module graph. Knobs: `BUN_GC_TIMER_INTERVAL` (ms), `BUN_GC_TIMER_DISABLE`. One per JS thread, not thread-safe.
+//! Idle GC timer: JSC's own `GCActivityCallback` (via `WTFTimer`) paces eden/full against allocation rate; this adds a 1 s / 30 s idle `collect_async()` so a process that stops allocating still releases memory, and an idle ladder (main thread only): once the program has not been busy for a `BUN_IDLE_GC_SECONDS` entry (default "10,110,480": 10 s, 2 min and 10 min; ""/0 = off) a full collection so JSC can age out code that no longer runs. The second one (or the only one) also pages out a standalone executable's embedded module graph. Knobs: `BUN_GC_TIMER_INTERVAL` (ms), `BUN_GC_TIMER_DISABLE`. One per JS thread, not thread-safe.
 
 use core::cell::Cell;
 use core::ffi::c_int;
@@ -106,7 +106,7 @@ impl GarbageCollectionController {
             // "a,b,c": seconds without being busy before the first rung, then between consecutive ones (at least a
             // CodeBlock-aging lease, so that each collection can expire what has not run since the previous one), an hour
             // each at most. An entry that is not a positive decimal number ("", "0", "1.5", "1,,1") turns the ladder off.
-            let spec = env_var::BUN_IDLE_GC_SECONDS::get().unwrap_or(b"30,90,480");
+            let spec = env_var::BUN_IDLE_GC_SECONDS::get().unwrap_or(b"10,110,480");
             let mut at = [0u32; 3];
             let mut sum = 0u32;
             for (slot, part) in at.iter_mut().zip(bun_core::strings::split(spec, b",")) {
@@ -253,8 +253,12 @@ impl GarbageCollectionController {
         } else {
             this.perform_gc();
         }
-        // Only growth is activity; a shrinking heap is a collection (possibly the one requested above) doing its job.
-        if this.gc_last_heap_size.get() <= prev_heap_size {
+        // A rung's collection is requested: it proceeds at the mutator's safepoints, which in a program that runs no JS
+        // are this timer's ticks, and what it frees goes back to the system on the ticks after it. On the 30 s tick that
+        // is a minute or more of holding on to a burst's garbage: the timer is on the fast tick for the next 30.
+        // Otherwise only growth is activity; a shrinking heap is a collection (possibly the one requested above) doing
+        // its job.
+        if !ran_rung && this.gc_last_heap_size.get() <= prev_heap_size {
             let ticks = this
                 .heap_size_didnt_change_for_repeating_timer_ticks_count
                 .get()

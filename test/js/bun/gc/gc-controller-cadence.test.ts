@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { closeSync, fsyncSync, openSync, statfsSync } from "fs";
+import { closeSync, fsyncSync, openSync, readFileSync, statfsSync } from "fs";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, tempDir } from "harness";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -283,6 +283,54 @@ describe.concurrent("idle release", () => {
     expect(rungs, at).toEqual([]);
     expect(exit).toEqual(clean);
   });
+  // A rung's collection is requested, not run: it proceeds at the mutator's safepoints, and in a program that runs no JS
+  // those are the timer's ticks. With the rung on the 30 s tick (a 20 ms tick goes slow after 0.6 s) a server held on to
+  // 1.5 GB of a burst's garbage for a minute and a half after its traffic stopped. 50 MB stay alive so that the
+  // collection does not finish in the step that starts it; the 300 MB that nothing refers to any more a second in have
+  // survived a full collection, so only another one frees them. Linux: it reads /proc; ASAN and debug builds take too
+  // long to fill the heap.
+  test.skipIf(!isLinux || isASAN || isDebug)(
+    "a burst's garbage is given back within seconds of the rung",
+    async () => {
+      using dir = tempDir("idle-garbage", {
+        "child.js": `
+        const entry = i => ({ id: i, name: "user-" + i + "-" + "x".repeat(200), tags: ["a" + i, "b" + i], extra: { a: i, c: [i, i + 1] } });
+        globalThis.live = new Map();
+        for (let i = 0; i < 90_000; i++) live.set(i, entry(i));
+        globalThis.junk = Array.from({ length: 300 }, (_, i) => new Array(128 * 1024).fill(i));
+        Bun.gc(true);
+        console.log("full");
+        setTimeout(() => { globalThis.junk = null; }, 1000);
+        process.stdin.once("data", () => process.exit(0));
+      `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(String(dir), "child.js")],
+        env: {
+          ...bunEnv,
+          BUN_IDLE_GC_SECONDS: "2",
+          BUN_GC_TIMER_DISABLE: undefined,
+          BUN_GC_TIMER_INTERVAL: "20",
+        },
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const resident = () =>
+        Number(/^VmRSS:\s+(\d+) kB/m.exec(readFileSync(`/proc/${proc.pid}/status`, "utf8"))![1]) >> 10;
+      await proc.stdout.getReader().read();
+      const full = resident();
+      expect(full).toBeGreaterThan(330);
+      // The rung is due 2 s after the last busy tick, which is when the heap was filled.
+      const deadline = performance.now() + 6000;
+      while (resident() > full - 250 && performance.now() < deadline) await Bun.sleep(100);
+      expect(resident()).toBeLessThan(full - 250);
+      proc.stdin.write("exit\n");
+      await proc.stdin.flush();
+      expect(await proc.exited).toBe(0);
+    },
+    20_000,
+  ); // It fills 350 MB and waits for a rung.
 });
 
 // The second rung (or the only one) also has the kernel reclaim the file-backed pages of a standalone executable's

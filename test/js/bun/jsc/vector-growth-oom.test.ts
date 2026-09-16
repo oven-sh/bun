@@ -49,6 +49,9 @@ const prelude = /* js */ `
   const registerMany = token => {
     for (let i = 0; i < items; i++) registry.register(target, 1, token);
   };
+  const registerWithTokensThatDie = () => {
+    for (let i = 0; i < 100; i++) registry.register(target, 2, {});
+  };
   const emptyModule = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]);
 `;
 
@@ -98,6 +101,14 @@ const cases: Record<string, [string, string, unknown]> = {
     `registerMany(token)`,
     `[registry.unregister(token), registry.unregister(token)]`,
     [true, false],
+  ],
+  // The throw leaves the list of the registrations without a token full. The
+  // end of a collection moves a registration there when its token dies before
+  // its target. Nothing can throw at that point, so JSC drops the registration.
+  "FinalizationRegistry: a token that dies when the list without tokens is full": [
+    `registerMany(undefined)`,
+    `(registerWithTokensThatDie(), Bun.gc(true), registry.register(target, 3, token), registry.unregister(token))`,
+    true,
   ],
   "Intl.ListFormat.prototype.format": [
     `new Intl.ListFormat("en").format(iterable("a"))`,

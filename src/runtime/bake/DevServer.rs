@@ -6011,10 +6011,12 @@ impl DevServer {
             return &path[self.root.len() + 1..];
         }
 
-        // The result is at most `path` plus one "../" for each segment of `root`.
+        // The result is at most `path` plus one "../" for each segment of `root`. A relative
+        // `root` has no such bound, because it is joined to the cwd first.
         let root_segments =
             strings::count_char(&self.root, b'/') + strings::count_char(&self.root, b'\\') + 1;
-        if path.len() + root_segments * 3 + 2 > paths::MAX_PATH_BYTES
+        if !paths::is_absolute(&self.root)
+            || path.len() + root_segments * 3 + 2 > paths::MAX_PATH_BYTES
             || self.root.len() + 2 > paths::MAX_PATH_BYTES
         {
             return path;

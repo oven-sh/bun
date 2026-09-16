@@ -346,9 +346,10 @@ devTest("client module ids with the cwd in another letter case than on disk", {
   },
 });
 // The id of a module outside of the root has one "../" for each root segment.
-// The root is long enough that `path + 2 * root` passes MAX_PATH_BYTES (4096
-// on Linux, 1024 on macOS), which is where the dev server gave up on the id.
-const longDir = new Array(isMacOS ? 2 : 7).fill(Buffer.alloc(isMacOS ? 150 : 200, "d").toString()).join("/");
+// The dev server gave up on the id when `path + 2 * root` reached
+// MAX_PATH_BYTES (4096 on Linux, 1024 on macOS). `longDir` is in the path and
+// in the root, and it alone is more than a third of that limit.
+const longDir = new Array(isMacOS ? 3 : 7).fill(Buffer.alloc(isMacOS ? 150 : 200, "d").toString()).join("/");
 devTest("module ids in a project with a long root", {
   skip: ["win32"],
   cwd: longDir + "/app",

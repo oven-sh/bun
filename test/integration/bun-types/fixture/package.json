@@ -9,6 +9,6 @@
     "typescript": "latest"
   },
   "resolutions": {
-    "@types/node": "latest"
+    "@types/node": "^26"
   }
 }

@@ -81,15 +81,24 @@ function __fish__get_bun_packages
             sub(/^[^{]*\{/, "")
         }
         in_deps {
-            while (in_deps && match($0, /"([^"\\]+)"[[:space:]]*:[[:space:]]*"[^"]*"/)) {
-                key = substr($0, RSTART, RLENGTH)
-                sub(/^[[:space:]]*"/, "", key)
-                sub(/"[[:space:]]*:.*$/, "", key)
-                print key
-                $0 = substr($0, RSTART + RLENGTH)
-            }
-            if ($0 ~ /^[[:space:]]*\}/) {
-                in_deps = 0
+            while (in_deps) {
+                sub(/^[[:space:]]+/, "", $0)
+                if (sub(/^,/, "", $0)) {
+                    sub(/^[[:space:]]+/, "", $0)
+                }
+                if (sub(/^\}/, "", $0)) {
+                    in_deps = 0
+                    break
+                }
+                if (match($0, /^"([^"\\]+)"[[:space:]]*:[[:space:]]*"[^"]*"/)) {
+                    key = substr($0, RSTART, RLENGTH)
+                    sub(/^"/, "", key)
+                    sub(/"[[:space:]]*:.*$/, "", key)
+                    print key
+                    $0 = substr($0, RSTART + RLENGTH)
+                } else {
+                    break
+                }
             }
         }
     ' "$pkg_file" 2>/dev/null

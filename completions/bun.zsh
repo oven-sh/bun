@@ -1140,7 +1140,7 @@ _bun_run_param_script_completion() {
 
     _alternative "scripts:scripts:compadd -a scripts_list"
     _alternative "bin:bin:compadd -a bins"
-    _alternative "files:file:_files -W ${(q)target_cwd} -g '*.(js|ts|jsx|tsx|wasm)'"
+    _alternative "files:file:_files -W ${(q)target_cwd} -g '*.(js|mjs|cjs|ts|jsx|tsx|wasm)'"
 }
 
 _bun_link_param_package_completion() {
@@ -1186,7 +1186,7 @@ _bun_remove_param_package_completion() {
         local -a deps
         local in_dep_block=0 line_content rest
         local dep_header_re='"(dependencies|devDependencies|peerDependencies|optionalDependencies)"[[:space:]]*:[[:space:]]*\{(.*)'
-        local dep_entry_re='[[:space:]]*"([^"\\\\]+)"[[:space:]]*:[[:space:]]*"([^"]*)"(.*)'
+        local dep_entry_re='^[[:space:]]*,?[[:space:]]*"([^"\\\\]+)"[[:space:]]*:[[:space:]]*"([^"]*)"(.*)'
         local dep_close_re='^[[:space:]]*\}[[:space:]]*,?'
 
         while IFS= read -r line_content || [[ -n "${line_content}" ]]; do
@@ -1200,13 +1200,17 @@ _bun_remove_param_package_completion() {
             fi
 
             if (( in_dep_block )); then
-                while [[ "${rest}" =~ $dep_entry_re ]]; do
-                    deps+=( "${match[1]}" )
-                    rest="${match[3]}"
+                while true; do
+                    if [[ "${rest}" =~ $dep_close_re ]]; then
+                        in_dep_block=0
+                        break
+                    elif [[ "${rest}" =~ $dep_entry_re ]]; then
+                        deps+=( "${match[1]}" )
+                        rest="${match[3]}"
+                    else
+                        break
+                    fi
                 done
-                if [[ "${line_content}" =~ $dep_close_re ]] || [[ "${rest}" =~ $dep_close_re ]]; then
-                    in_dep_block=0
-                fi
             fi
         done < "${pkg_file}"
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isMacOS, isWindows, tempDir } from "harness";
 import path from "node:path";
 
 describe("ResolveMessage", () => {
@@ -191,9 +191,9 @@ describe.concurrent("long import path overflow", () => {
     });
   }
 
-  async function run(dir: string, importExpr: string) {
+  async function runScript(dir: string, script: string) {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", `try { await import(${importExpr}); } catch {} console.log("ok");`],
+      cmd: [bunExe(), "-e", script],
       env: bunEnv,
       cwd: dir,
       stdout: "pipe",
@@ -203,6 +203,10 @@ describe.concurrent("long import path overflow", () => {
     expect(stderr).toBe("");
     expect(stdout.trim()).toBe("ok");
     expect(exitCode).toBe(0);
+  }
+
+  function run(dir: string, importExpr: string) {
+    return runScript(dir, `try { await import(${importExpr}); } catch {} console.log("ok");`);
   }
 
   it("bare package specifier (tsconfig baseUrl + import_path join)", async () => {
@@ -239,6 +243,28 @@ describe.concurrent("long import path overflow", () => {
     using dir = makeDir();
     // Walk-up loop indexed into a fixed [256]DirEntryResolveQueueItem
     await run(String(dir), `\`/\${"a/".repeat(300)}x\``);
+  });
+
+  // MAX_PATH_BYTES, the size of the resolver's path buffers.
+  const maxPathBytes = isWindows ? 32767 * 3 + 1 : isMacOS ? 1024 : 4096;
+
+  it("absolute path to a file, longer than a path buffer (load_as_file copy)", async () => {
+    using dir = makeDir();
+    // The directory is "/", which exists, so the file name reaches the extension probes.
+    await run(String(dir), `"/" + Buffer.alloc(${maxPathBytes + 1024}, "a").toString()`);
+  });
+
+  it("relative path that fits a path buffer until an extension is appended (load_extension)", async () => {
+    using dir = makeDir();
+    // One import for each joined length in the last bytes of the buffer.
+    await runScript(
+      String(dir),
+      `const dirLength = process.cwd().length + 1;
+       for (let joined = ${maxPathBytes - 8}; joined <= ${maxPathBytes + 1}; joined++) {
+         try { await import("./" + Buffer.alloc(joined - dirLength, "a").toString()); } catch {}
+       }
+       console.log("ok");`,
+    );
   });
 });
 

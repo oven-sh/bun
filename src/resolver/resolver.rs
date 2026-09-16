@@ -5749,6 +5749,11 @@ impl<'a> Resolver<'a> {
         path: &[u8],
         extension_order: options::ExtOrder,
     ) -> Option<LoadResult> {
+        // The probes below build `path` plus an extension in `bufs!(load_as_file)`.
+        if path.len() >= MAX_PATH_BYTES {
+            return None;
+        }
+
         // SAFETY: RealFS is the global singleton. Derive provenance from the raw
         // `*mut FileSystem` field so intervening `unsafe { &mut *self.fs() }` calls in
         // `load_extension` / `dirname_store.append_slice` don't invalidate `rfs`
@@ -5992,6 +5997,9 @@ impl<'a> Resolver<'a> {
         // field so `unsafe { &mut *self.fs() }` calls below (`filename_store.append_parts`) don't pop
         // its provenance under Stacked Borrows.
         let rfs: *mut Fs::file_system::RealFS = self.rfs_ptr();
+        if path.len() + ext.len() >= MAX_PATH_BYTES {
+            return None;
+        }
         let buffer = &mut bufs!(load_as_file)[0..path.len() + ext.len()];
         buffer[path.len()..].copy_from_slice(ext);
         let file_name = &buffer[path.len() - base.len()..buffer.len()];

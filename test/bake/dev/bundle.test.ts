@@ -143,6 +143,22 @@ devTest("unresolved css url() longer than a path buffer", {
     expect((await dev.fetch("/")).status).toBe(200);
   },
 });
+// The HTML scanner joins a rooted src with the project root, and a bare src with the page's directory.
+devTest("unresolved html script src longer than a path buffer", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: [
+        "/" + Buffer.alloc(pastPathBuffer, "a").toString() + ".js",
+        Buffer.alloc(pastPathBuffer, "b").toString() + ".js",
+      ],
+    }),
+  },
+  async test(dev) {
+    expect((await dev.fetch("/")).status).toBe(500);
+    await dev.write("index.html", emptyHtmlFile({}));
+    expect((await dev.fetch("/")).status).toBe(200);
+  },
+});
 devTest("default export same-scope handling", {
   files: {
     "index.html": emptyHtmlFile({

@@ -69,13 +69,17 @@ impl<'a> HTMLScanner<'a> {
 
 impl<'a> HTMLScanner<'a> {
     fn create_import_record(&mut self, input_path: &[u8], kind: ImportKind) -> Result<(), Error> {
+        // A join that does not fit keeps the attribute as written; the resolver reports it.
+        let mut buf = bun_paths::path_buffer_pool::get();
         // In HTML, sometimes people do /src/index.js
         // In that case, we don't want to use the absolute filesystem path, we want to use the path relative to the project root
         let path_to_use: &[u8] = if input_path.len() > 1 && input_path[0] == b'/' {
-            resolve_path::join_abs_string::<platform::Auto>(
+            resolve_path::join_abs_string_buf_checked::<platform::Auto>(
                 fs::FileSystem::instance().top_level_dir,
+                &mut buf[..],
                 &[&input_path[1..]],
             )
+            .unwrap_or(input_path)
         }
         // Check if imports to (e.g) "App.tsx" are actually relative imoprts w/o the "./"
         else if input_path.len() > 2 && input_path[0] != b'.' && input_path[1] != b'/' {
@@ -93,12 +97,13 @@ impl<'a> HTMLScanner<'a> {
                 if dirname.is_empty() {
                     break 'blk input_path;
                 }
-                let resolved =
-                    resolve_path::join_abs_string_z::<platform::Auto>(dirname, &[input_path]);
-                if sys::exists_z(resolved) {
-                    resolved.as_bytes()
-                } else {
-                    input_path
+                match resolve_path::join_abs_string_buf_checked::<platform::Auto>(
+                    dirname,
+                    &mut buf[..],
+                    &[input_path],
+                ) {
+                    Some(resolved) if sys::exists(resolved) => resolved,
+                    _ => input_path,
                 }
             }
         } else {

@@ -80,12 +80,12 @@ it("queueMicrotask", async () => {
   }
 });
 
-// The microtask queue is one buffer that doubles, and a buffer of 2^26 tasks is past the 2 GB limit of a
-// WTF::Vector, so the 2^25th pending task aborted the process. That count is the limit itself, so the test
-// cannot use a smaller one. The child needs about 3 GB.
+// The microtask queue is a WTF::Deque: one buffer that doubles. WTF limits that buffer (it is a Vector
+// buffer) to 2 GB, and 2^26 tasks is past that, so the 2^25th pending task aborted the process. That count
+// is the limit itself, so the test cannot use a smaller one. The child needs about 3 GB.
 //
 // A release build takes 2 to 3 s. ASAN and debug builds need minutes to run 2^25 callbacks, so there the
-// child exits when the queue has grown past the limit.
+// child exits when the queue has grown past the limit: 4 s with ASAN, 45 s in a debug build.
 const slowBuild = isASAN || isDebug;
 
 it.skipIf(totalmem() < 6 * 1024 ** 3)(
@@ -116,5 +116,5 @@ it.skipIf(totalmem() < 6 * 1024 ** 3)(
       exitCode: 0,
     });
   },
-  slowBuild ? 300_000 : 60_000,
+  isDebug ? 300_000 : 60_000,
 );

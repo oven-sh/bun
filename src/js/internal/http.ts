@@ -387,7 +387,8 @@ function defaultAgentOfRunningScript(realmAgent) {
   const graph = require("internal/async_context_frame").current()?.graph;
   if (graph === undefined) return realmAgent;
   const constructor = realmAgent.constructor;
-  if (constructor !== require("node:_http_agent").Agent && constructor !== require("node:https").Agent) return realmAgent;
+  if (constructor !== require("node:_http_agent").Agent && constructor !== require("node:https").Agent)
+    return realmAgent;
   let agents = defaultAgentsOfGraphs.get(graph);
   if (agents === undefined) defaultAgentsOfGraphs.set(graph, (agents = new WeakMap()));
   let agent = agents.get(realmAgent);

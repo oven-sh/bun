@@ -2335,6 +2335,8 @@ impl RunCommand {
         // Stamped before the first look at the entry: under --watch a missing one waits for a save.
         let watched_entry = if ctx.debug.hot_reload == cli::command::HotReload::Watch
             && Self::names_a_module(target_name)
+            // Without an extension the name resolves to another file, and nothing would show its return.
+            && !paths::extension(target_name).is_empty()
         {
             let mut buf = bun_paths::path_buffer_pool::get();
             paths::resolve_path::join_abs_string_buf_checked::<paths::resolve_path::platform::Auto>(
@@ -2342,7 +2344,8 @@ impl RunCommand {
                 &mut buf[..],
                 &[target_name],
             )
-            .map(restart_on_change::Input::with_dir)
+            .map(restart_on_change::Input::new)
+            .filter(|entry| !entry.is_dir())
         } else {
             None
         };

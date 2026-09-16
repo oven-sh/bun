@@ -149,7 +149,7 @@ fn report_bunfig_load_failure(
     }
     Output::err(err, "failed to load bunfig", ());
     if let Some(config) = watched {
-        restart_on_change::restart_after_change(&[config]);
+        restart_on_change::restart_after_change(&config);
     }
     Global::crash();
 }

@@ -10,6 +10,8 @@ import {
   indoc,
   minify_error_test_with_options,
   minify_test,
+  minify_test_with_targets,
+  minifyTest,
   minifyTestWithOptions as minify_test_with_options,
   ParserFlags,
   ParserOptions,
@@ -5331,6 +5333,84 @@ describe("css tests", () => {
     );
     minify_test(":nth-last-child(1 of li.important) {width: 20px}", ":nth-last-child(1 of li.important){width:20px}");
     minify_test(":nth-last-child(1 of.important) {width: 20px}", ":nth-last-child(1 of .important){width:20px}");
+    // The of-list prints like the lists in :is() and :not().
+    minify_test(":nth-child(2 of .a > .b, .c ~ .d) {width: 20px}", ":nth-child(2 of .a>.b,.c~.d){width:20px}");
+    minify_test(':nth-child(2 of [foo="bar"]) {width: 20px}', ":nth-child(2 of [foo=bar]){width:20px}");
+    minify_test_with_targets(
+      ".x:is(.a, .b):nth-child(1 of :is(.a, .b)) {width: 20px}",
+      ".x:-webkit-any(.a,.b):nth-child(1 of :-webkit-any(.a,.b)){width:20px}.x:is(.a,.b):nth-child(1 of :is(.a,.b)){width:20px}",
+      { safari: 9 << 16 },
+    );
+    // The of-list is not a relative selector list, so a leading `:scope` stays.
+    minify_test(":nth-child(2 of :scope > .a) {width: 20px}", ":nth-child(2 of :scope>.a){width:20px}");
+
+    describe("& in the :nth-child() of-list", () => {
+      // A nested selector with `&` in the of-list contains the nesting selector,
+      // so it gets no implicit `& ` prefix.
+      minify_test(".foo { :nth-child(1 of &) { color: red } }", ".foo{:nth-child(1 of &){color:red}}");
+      minify_test(".foo { :nth-child(1 of .x) { color: red } }", ".foo{& :nth-child(1 of .x){color:red}}");
+
+      // Chrome 95 has no CSS nesting, so `&` becomes the parent selector.
+      const chrome95 = { chrome: 95 << 16 };
+      for (const [source, expected] of [
+        [".foo { :nth-child(1 of &) { color: red } }", ":nth-child(1 of .foo){color:red}"],
+        [".bar { &:nth-child(2 of & > .x) { color: red } }", ".bar:nth-child(2 of .bar>.x){color:red}"],
+        [".foo { :nth-last-child(2n of .x &) { color: red } }", ":nth-last-child(2n of .x .foo){color:red}"],
+        [".a, .b { :nth-child(1 of &) { color: red } }", ":nth-child(1 of :is(.a,.b)){color:red}"],
+        [".a { .b { :nth-child(1 of &) { color: red } } }", ":nth-child(1 of .a .b){color:red}"],
+        ["div { :nth-child(1 of &.x) { color: red } }", ":nth-child(1 of div.x){color:red}"],
+        [".foo { :nth-child(1 of :not(&)) { color: red } }", ":nth-child(1 of :not(.foo)){color:red}"],
+        [".foo { :is(:nth-child(1 of &), .x) { color: red } }", ":is(:nth-child(1 of .foo),.x){color:red}"],
+        [".foo { @nest :nth-child(1 of &) { color: red } }", ":nth-child(1 of .foo){color:red}"],
+        [".foo { :nth-child(1 of .x) { color: red } }", ".foo :nth-child(1 of .x){color:red}"],
+        [":nth-child(1 of &) { color: red }", ":nth-child(1 of :scope){color:red}"],
+      ]) {
+        minify_test_with_targets(source, expected, chrome95);
+      }
+
+      test("each & in the of-list counts against the nesting expansion budget", () => {
+        const depth = 12;
+        const nested = "&:nth-child(1 of & &) {";
+        const source =
+          ".a {" +
+          Buffer.alloc(nested.length * depth, nested).toString() +
+          "color: red" +
+          Buffer.alloc(depth + 1, "}").toString();
+        expect(() => minifyTest(source, "", chrome95)).toThrow("Maximum nesting expansion exceeded");
+      });
+    });
+
+    // `&` inside the :host() or ::slotted() of a parent selector is the grandparent. It used to
+    // resolve to the parent itself, and the printer recursed until the stack overflowed, so
+    // this runs in a child process.
+    test("& inside :host() and ::slotted() of a parent selector", async () => {
+      const cases = [
+        [".a { :host(&) { color: red } }", ":host(.a){color:red}"],
+        [".a { :host(&) { .c { color: red } } }", ":host(.a) .c{color:red}"],
+        [".a { :host(&) { .c { &.d { color: red } } } }", ":host(.a) .c.d{color:red}"],
+        [".a { ::slotted(&) { color: red } }", "::slotted(.a){color:red}"],
+        [".a { ::slotted(&) { &:hover { color: red } } }", "::slotted(.a):hover{color:red}"],
+      ];
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const { minifyTest } = require("bun:internal-for-testing").cssInternals;
+const sources = ${JSON.stringify(cases.map(([source]) => source))};
+console.log(JSON.stringify(sources.map(source => minifyTest(source, "", { chrome: 95 << 16 }))));`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+        stdout: JSON.stringify(cases.map(([, expected]) => expected)),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
 
     minify_test('[foo="baz"] {color:red}', "[foo=baz]{color:red}");
     minify_test('[foo="foo bar"] {color:red}', "[foo=foo\\ bar]{color:red}");

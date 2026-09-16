@@ -909,6 +909,24 @@ pub(crate) mod serialize {
                 serialize_selector_list(list, dest, context, true)?;
                 return dest.write_str(b")");
             }
+            Component::NthOf(nth_of_data) => {
+                let nth_data = nth_of_data.nth_data();
+                // A selector must be a function to hold An+B notation
+                debug_assert!(nth_data.is_function);
+                // Only :nth-child or :nth-last-child can be of a selector list
+                debug_assert!(
+                    nth_data.ty == parser::NthType::Child
+                        || nth_data.ty == parser::NthType::LastChild
+                );
+                // The selector list should not be empty
+                debug_assert!(!nth_of_data.selectors.is_empty());
+                nth_data.write_start(dest, true)?;
+                nth_data.write_affine(dest)?;
+                dest.write_str(b" of ")?;
+                // Not a relative selector list: a leading `:scope` is explicit and stays.
+                serialize_selector_list(&nth_of_data.selectors, dest, context, false)?;
+                return dest.write_char(b')');
+            }
             Component::NonTsPseudoClass(pseudo) => {
                 return serialize_pseudo_class(pseudo, dest, context);
             }
@@ -930,16 +948,14 @@ pub(crate) mod serialize {
                 dest.write_str(b":host")?;
                 if let Some(sel) = selector {
                     dest.write_char(b'(')?;
-                    let ctx = dest.ctx;
-                    serialize_selector(sel, dest, ctx, false)?;
+                    serialize_selector(sel, dest, context, false)?;
                     dest.write_char(b')')?;
                 }
                 return Ok(());
             }
             Component::Slotted(selector) => {
                 dest.write_str(b"::slotted(")?;
-                let ctx = dest.ctx;
-                serialize_selector(selector, dest, ctx, false)?;
+                serialize_selector(selector, dest, context, false)?;
                 dest.write_char(b')')?;
             }
             _ => {

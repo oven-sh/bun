@@ -52,6 +52,13 @@ const prelude = /* js */ `
   const registerWithTokensThatDie = () => {
     for (let i = 0; i < 100; i++) registry.register(target, 2, {});
   };
+  const registerTargetsThatDie = () => {
+    for (let t = 0; t < 24; t++) {
+      const target = {};
+      const token = {};
+      for (let i = 0; i < 4000; i++) registry.register(target, 1, token);
+    }
+  };
   const emptyModule = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]);
 `;
 
@@ -108,6 +115,15 @@ const cases: Record<string, [string, string, unknown]> = {
   "FinalizationRegistry: a token that dies when the list without tokens is full": [
     `registerMany(undefined)`,
     `(registerWithTokensThatDie(), Bun.gc(true), registry.register(target, 3, token), registry.unregister(token))`,
+    true,
+  ],
+  // The end of a collection also moves the held values of the registrations
+  // whose target died to a second list, 8 bytes each. One list of registrations
+  // stops below the size that this second list stops at, so the registrations
+  // are spread over many tokens, each with its own target.
+  "FinalizationRegistry: more held values of dead targets than their list takes": [
+    `registerMany(undefined)`,
+    `(registerTargetsThatDie(), Bun.gc(true), registry.register(target, 3, token), registry.unregister(token))`,
     true,
   ],
   "Intl.ListFormat.prototype.format": [

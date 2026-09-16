@@ -483,7 +483,7 @@ it.skipIf(!isWindows)(
         const apis = {
           write: name => Bun.write(Bun.file(name), "x"),
           copy: name => Bun.write(Bun.file(name), Bun.file(source)),
-          copySlice: name => Bun.write(Bun.file(name), Bun.file(longer).slice(0, 1)),
+          copySlice: name => Bun.write(Bun.file(name).slice(0, 1), Bun.file(longer)),
           empty: async name => {
             await Bun.write(Bun.file(name), "xy");
             await Bun.write(Bun.file(name), "");
@@ -555,9 +555,17 @@ it.skipIf(!isWindows)(
       Record<"write" | "copy" | "copySlice" | "empty" | "writePath" | "writeStream" | "writer", Result>
     >;
     const keys = names.flatMap(name => [name, "absolute " + name]);
-    for (const api of ["copy", "copySlice", "empty", "writePath", "writeStream", "writer"] as const) {
+    for (const api of ["copy", "writePath", "writeStream", "writer"] as const) {
       expect(Object.fromEntries(keys.map(key => [key, { api, ...results[key][api] }]))).toEqual(
         Object.fromEntries(keys.map(key => [key, { api, ...results[key].write }])),
+      );
+    }
+    // These two cut the file to a length, which a device refuses: compared where the name is a file's.
+    const files = keys.filter(key => results[key].write.created.length > 0);
+    expect(files.length).toBeGreaterThan(0);
+    for (const api of ["copySlice", "empty"] as const) {
+      expect(Object.fromEntries(files.map(key => [key, { api, ...results[key][api] }]))).toEqual(
+        Object.fromEntries(files.map(key => [key, { api, ...results[key].write }])),
       );
     }
     // A bare `NUL` is the null device on every Windows version, under any directory.

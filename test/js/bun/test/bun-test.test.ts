@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 
 test("Bun.version", () => {
   expect(process.versions.bun).toBe(Bun.version);
@@ -84,22 +84,39 @@ test("toBeWithin() with missing or non-number arguments fails the test without c
   expect(exitCode).toBe(1);
 });
 
-// Printing the failure for a test that rejects with a value whose
-// toString/Symbol.toPrimitive throws used to leave that secondary exception
-// pending on the VM, aborting the whole runner when the next test callback was
-// invoked.
-test("runner survives a rejection whose toString/Symbol.toPrimitive throws", async () => {
-  using dir = tempDir("test-hostile-tostring", {
+// Printing the failure for a test or hook that rejects with a boxed primitive
+// or RegExp whose own toString/Symbol.toPrimitive throws used to leave that
+// second exception pending on the VM. The next test callback then aborted the
+// runner, or was reported as passed without running its body.
+test.concurrent("a rejection whose toString/Symbol.toPrimitive throws does not break later tests", async () => {
+  using dir = tempDir("test-hostile-rejection", {
     "hostile.test.js": `
-      import { test } from "bun:test";
-      test("boxed string", async () => {
-        throw Object.assign(new String("q"), { toString() { throw 1; }, [Symbol.toPrimitive]() { throw 1; } });
+      import { test, describe, afterEach } from "bun:test";
+
+      const hooks = { toString() { throw 1; }, [Symbol.toPrimitive]() { throw 1; } };
+      class Sub extends String {}
+
+      for (const [name, make] of [
+        ["String", () => new String("q")],
+        ["Number", () => new Number(1)],
+        ["Boolean", () => new Boolean(true)],
+        ["RegExp", () => /re/],
+        ["String subclass", () => new Sub("q")],
+      ]) {
+        test(name, async () => {
+          throw Object.assign(make(), hooks);
+        });
+      }
+
+      describe("hook", () => {
+        afterEach(async () => {
+          throw Object.assign(new String("q"), hooks);
+        });
+        test("afterEach rejects", () => {});
       });
-      test("regexp", async () => {
-        throw Object.assign(/re/, { toString() { throw 1; }, [Symbol.toPrimitive]() { throw 1; } });
-      });
-      test("next test still runs", () => {
-        throw new Error("plain error");
+
+      test("runs after the rejections", () => {
+        console.log("last test body ran");
       });
     `,
   });
@@ -113,12 +130,30 @@ test("runner survives a rejection whose toString/Symbol.toPrimitive throws", asy
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  const output = stdout + stderr;
-  expect(output).toContain("(fail) boxed string");
-  expect(output).toContain("(fail) regexp");
-  expect(output).toContain("(fail) next test still runs");
-  expect(output).toContain("error: plain error");
-  expect(output).toContain("3 fail");
+  expect(normalizeBunSnapshot(stdout, dir)).toMatchInlineSnapshot(`
+    "bun test <version> (<revision>)
+    last test body ran"
+  `);
+  expect(normalizeBunSnapshot(stderr, dir)).toMatchInlineSnapshot(`
+    "hostile.test.js:
+    error
+    (fail) String
+    error
+    (fail) Number
+    error
+    (fail) Boolean
+    error
+    (fail) RegExp
+    error
+    (fail) String subclass
+    error
+    (fail) hook > afterEach rejects
+    (pass) runs after the rejections
+
+     1 pass
+     6 fail
+    Ran 7 tests across 1 file."
+  `);
   expect(proc.signalCode).toBeNull();
   expect(exitCode).toBe(1);
 });

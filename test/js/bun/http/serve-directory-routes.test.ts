@@ -551,6 +551,17 @@ describe("Bun.serve() directory routes", () => {
     ).toThrow(expect.objectContaining({ code: "ENOTDIR" }));
   });
 
+  it("throws if the directory of a { dir, style } mount is too long for a path", () => {
+    const dir = Buffer.alloc(100_000, "a").toString();
+    expect(() =>
+      serve({
+        port: 0,
+        development: true,
+        routes: { "/*": { dir, style: "nextjs-pages" } },
+      }),
+    ).toThrow(expect.objectContaining({ code: "ENAMETOOLONG" }));
+  });
+
   it("serves correctly with more unique paths than stat-cache slots", async () => {
     const N = 300; // > STAT_CACHE_SLOTS (256)
     const files: Record<string, string> = {};

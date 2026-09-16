@@ -841,24 +841,26 @@ impl AnyRoute {
                 // one directory, so a root that cannot be opened is an error
                 // here, like `{ dir }` without `style`.
                 {
+                    use bun_sys_jsc::ErrorJsc;
                     let mut buf = paths::path_buffer_pool::get();
-                    let abs_root = paths::resolve_path::join_abs_string_buf::<
+                    let Some(abs_root) = paths::resolve_path::join_abs_string_buf_checked::<
                         paths::platform::Auto,
                     >(
                         paths::fs::FileSystem::instance().top_level_dir(),
                         &mut buf[..],
                         &[relative_root],
-                    );
+                    ) else {
+                        let err = sys::Error::from_code(sys::E::ENAMETOOLONG, sys::Tag::open)
+                            .with_path(relative_root);
+                        return Err(global.throw_value(err.to_js(global)?));
+                    };
                     match sys::open_a(
                         abs_root,
                         sys::O::DIRECTORY | sys::O::CLOEXEC | sys::O::RDONLY,
                         0,
                     ) {
                         Ok(fd) => drop(sys::File::from_fd(fd)),
-                        Err(err) => {
-                            use bun_sys_jsc::ErrorJsc;
-                            return Err(global.throw_value(err.to_js(global)?));
-                        }
+                        Err(err) => return Err(global.throw_value(err.to_js(global)?)),
                     }
                 }
 

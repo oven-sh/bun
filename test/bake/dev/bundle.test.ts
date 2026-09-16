@@ -1,6 +1,6 @@
 // Bundle tests are tests concerning bundling bugs that only occur in DevServer.
 import type { Bake } from "bun";
-import { expect } from "bun:test";
+import { describe, expect } from "bun:test";
 import { Dev, devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
 devTest("import identifier doesnt get renamed", {
@@ -584,12 +584,12 @@ async function navigateWithPushState(dev: Dev, pathname: string) {
   dev.socket!.send("n" + pathname);
   await promise;
 }
-for (const [name, file, broken] of [
+describe.each([
   ["a module under the client entry point", "client-dep.ts", `console.log("dep v2" +);`],
   ["the server entry point", "server.ts", clientEntryPointFiles["server.ts"] + "export const broken = ;"],
   ["a module that a layout imports", "nav.ts", `export const nav = ;`],
-] as const) {
-  devTest(`first request of a route that a page navigated to, with a build error in ${name}`, {
+] as const)("a build error in %s", (_, file, broken) => {
+  devTest("first request of a route that a page navigated to", {
     framework: clientEntryPointFramework,
     files: clientEntryPointFiles,
     async test(dev) {
@@ -605,7 +605,7 @@ for (const [name, file, broken] of [
       expect((await dev.fetch("/third")).status).toBe(200);
     },
   });
-}
+});
 devTest("deinit with a free-list slot in DirectoryWatchStore.dependencies", {
   files: {
     "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),

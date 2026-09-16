@@ -205,8 +205,6 @@ pub struct Flags {
     pub(crate) disable_keepalive: bool,
     /// Whether this request stays out of the keep-alive pool. See `PoolBypass`.
     pub(crate) pool_bypass: PoolBypass,
-    /// The owner reads `HTTPClientResult::stats`, so look up the peer address.
-    pub(crate) collect_stats: bool,
     pub(crate) disable_decompression: bool,
     pub(crate) did_have_handshaking_error: bool,
     /// `PooledSocket::verification` of the socket this request took from the
@@ -232,7 +230,6 @@ impl Default for Flags {
             disable_timeout: false,
             disable_keepalive: false,
             pool_bypass: PoolBypass::Off,
-            collect_stats: false,
             disable_decompression: false,
             did_have_handshaking_error: false,
             reused_socket_verification: PeerVerification::None,
@@ -490,7 +487,6 @@ pub struct HTTPClientResult<'a> {
     /// Boxed: it is large and rare, and every result is moved and dropped
     /// several times per request.
     pub proxy_connect_response: Option<Box<HTTPResponseMetadata>>,
-    pub stats: ConnectionStats,
 }
 
 /// Keep-alive pool partition of the fetch session a request belongs to.
@@ -501,31 +497,6 @@ pub struct PoolOptions {
     pub id: u64,
     pub idle_timeout_seconds: u32,
     pub max_idle_sockets: u16,
-}
-
-/// What the most recent connection attempt of a request did. Reset on every
-/// redirect hop and retry.
-#[derive(Clone, Copy, Default)]
-pub struct ConnectionStats {
-    /// Request bytes (head and body, before TLS) handed to the socket. HTTP/3
-    /// encodes the head inside lsquic, so there it is counted uncompressed.
-    pub bytes_written: u64,
-    /// The share of `bytes_written` that was request body, as framed on the
-    /// wire (after `compress`, including chunked framing).
-    pub request_body_bytes_sent: u64,
-    pub response_started: bool,
-    pub socket_reused: bool,
-    pub remote_address: Option<core::net::SocketAddr>,
-    /// Known once request bytes went out: ALPN has settled by then.
-    pub protocol: Option<Protocol>,
-}
-
-impl ConnectionStats {
-    /// HTTP/2 and HTTP/3 frame the body outside the HTTP/1.1 send cursor.
-    pub(crate) fn add_body_bytes(&mut self, sent: usize) {
-        self.bytes_written += sent as u64;
-        self.request_body_bytes_sent += sent as u64;
-    }
 }
 
 impl<'a> HTTPClientResult<'a> {
@@ -605,7 +576,6 @@ impl<'a> HTTPClientResult<'a> {
             certificate_info: self.certificate_info,
             connect_errno: self.connect_errno,
             proxy_connect_response: self.proxy_connect_response,
-            stats: self.stats,
         }
     }
 }
@@ -861,7 +831,6 @@ pub struct HTTPClient<'a> {
     /// the body hasn't been compressed yet.
     pub(crate) compressed_body_len: usize,
     pub(crate) pool: PoolOptions,
-    pub(crate) stats: ConnectionStats,
 }
 
 impl<'a> HTTPClient<'a> {
@@ -994,18 +963,6 @@ fn is_same_origin_url(a: &URL<'_>, b: &URL<'_>) -> bool {
 #[inline]
 fn is_successful_connect_status(status_code: u32) -> bool {
     (200..300).contains(&status_code)
-}
-
-fn remote_address_of<const IS_SSL: bool>(
-    socket: &HttpSocket<IS_SSL>,
-) -> Option<core::net::SocketAddr> {
-    let mut buf = [0u8; 16];
-    let port = socket.remote_port()?;
-    let ip: core::net::IpAddr = match socket.remote_address(&mut buf)? {
-        [a, b, c, d] => core::net::Ipv4Addr::new(*a, *b, *c, *d).into(),
-        v6 => core::net::Ipv6Addr::from(<[u8; 16]>::try_from(v6).ok()?).into(),
-    };
-    Some(core::net::SocketAddr::new(ip, port))
 }
 
 // ── header constants ────────────────────────────────────────────────────
@@ -1856,9 +1813,6 @@ impl<'a> HTTPClient<'a> {
         }
         self.register_abort_tracker::<IS_SSL>(socket);
         bun_core::scoped_log!(fetch, "Connected {} \n", BStr::new(self.url.href));
-        if self.flags.collect_stats {
-            self.stats.remote_address = remote_address_of(&socket);
-        }
 
         // Arm the idle timer immediately so a stalled TLS handshake (server
         // accepts TCP but never answers ClientHello, or a NAT/middlebox silently
@@ -2131,8 +2085,6 @@ impl<'a> HTTPClient<'a> {
     /// Re-enter the connect path for a request that was coalesced onto an h2
     /// session but couldn't be attached (cap reached, or ALPN chose h1).
     pub(crate) fn retry_after_h2_coalesce(&mut self) {
-        // Nothing went out on the session it was matched to.
-        self.stats = ConnectionStats::default();
         self.start_::<true>();
     }
 
@@ -2773,7 +2725,6 @@ impl<'a> HTTPClient<'a> {
     pub(crate) fn start(&mut self, body: HTTPRequestBody<'a>) {
         debug_assert!(self.state.response_message_buffer.list.capacity() == 0);
         self.state = InternalState::init(body);
-        self.stats = ConnectionStats::default();
         if self.flags.pool_bypass != PoolBypass::Off {
             self.flags.pool_bypass = if self.url.is_https() {
                 PoolBypass::ThisHop
@@ -3059,7 +3010,6 @@ impl<'a> HTTPClient<'a> {
                 bun_core::scoped_log!(fetch, "start proxy tunneling (https proxy)");
                 // DO the tunneling!
                 self.flags.proxy_tunneling = true;
-                self.state.flags.sending_connect = true;
                 write_proxy_connect(writer, self)?;
             } else {
                 bun_core::scoped_log!(fetch, "start proxy request (http proxy)");
@@ -3073,7 +3023,6 @@ impl<'a> HTTPClient<'a> {
         }
 
         let headers_len = temporary_send_buffer.len();
-        self.state.request_headers_len = headers_len;
         if !self.request_body().is_empty()
             && temporary_send_buffer.capacity() - temporary_send_buffer.len() > 0
             && !self.flags.proxy_tunneling
@@ -3547,7 +3496,6 @@ impl<'a> HTTPClient<'a> {
                     }
 
                     let headers_len = temporary_send_buffer.len();
-                    self.state.request_headers_len = headers_len;
                     if !self.request_body().is_empty()
                         && temporary_send_buffer.capacity() - temporary_send_buffer.len() > 0
                     {
@@ -3700,9 +3648,6 @@ impl<'a> HTTPClient<'a> {
             "handleOnDataHeader data: {}",
             BStr::new(incoming_data)
         );
-        if !incoming_data.is_empty() && !self.is_reading_connect_reply() {
-            self.stats.response_started = true;
-        }
         // Move the accumulation buffer out of `self` so `to_read` can be a
         // plain `&[u8]` borrow of either `incoming_data` or the local `buffer`,
         // both disjoint from `&mut self`. The short-read paths move it back;
@@ -4500,36 +4445,6 @@ impl<'a> HTTPClient<'a> {
         self.flags.proxy_tunneling && self.proxy_tunnel.is_none()
     }
 
-    /// `stats` with the byte counters read off the send cursor. HTTP/2 and
-    /// HTTP/3 frame the body in their sessions, which count into `stats` directly.
-    fn connection_stats(&self) -> ConnectionStats {
-        let mut stats = self.stats;
-        if !self.flags.collect_stats {
-            return stats;
-        }
-        if self.flags.protocol == Protocol::Http1_1 {
-            let written = if self.state.flags.sending_connect {
-                0
-            } else {
-                self.state.request_sent_len
-            };
-            let head = self.state.request_headers_len;
-            let sendfile_sent = match &self.state.original_request_body {
-                HTTPRequestBody::Sendfile(sendfile) => {
-                    sendfile.content_size.saturating_sub(sendfile.remain)
-                }
-                _ => 0,
-            };
-            let body = written.saturating_sub(head);
-            stats.bytes_written = (written + sendfile_sent) as u64;
-            stats.request_body_bytes_sent = (body + sendfile_sent) as u64;
-        }
-        if stats.bytes_written > 0 {
-            stats.protocol = Some(self.flags.protocol);
-        }
-        stats
-    }
-
     /// Build the result payload for the progress/completion callback.
     ///
     /// `body` is left `&[]`: every caller attaches it from
@@ -4551,7 +4466,6 @@ impl<'a> HTTPClient<'a> {
             self.state.cloned_metadata = None;
         }
 
-        let stats = self.connection_stats();
         let proxy_connect_response = if self.state.fail == Some(crate::Error::ProxyConnectFailed) {
             self.state.cloned_metadata.take().map(Box::new)
         } else {
@@ -4571,7 +4485,6 @@ impl<'a> HTTPClient<'a> {
                     dns_hostname: self.state.dns_hostname.take(),
                     connect_errno: self.state.connect_errno,
                     proxy_connect_response: None,
-                    stats,
                     has_more: self.state.fail.is_none() && !self.state.is_done(),
                     body_size,
                     certificate_info: None,
@@ -4592,7 +4505,6 @@ impl<'a> HTTPClient<'a> {
             dns_hostname: self.state.dns_hostname.take(),
             connect_errno: self.state.connect_errno,
             proxy_connect_response,
-            stats,
             // check if we are reporting cert errors, do not have a fail state and we are not done
             has_more: certificate_info.is_some()
                 || (self.state.fail.is_none() && !self.state.is_done()),
@@ -4903,9 +4815,6 @@ impl<'a> HTTPClient<'a> {
                 print_response(response);
             }
             return Ok(ShouldContinue::ContinueStreaming);
-        }
-        if !is_connect_reply {
-            self.stats.response_started = true;
         }
         let mut location: &[u8] = b"";
         let mut pretend_304 = false;

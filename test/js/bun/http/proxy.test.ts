@@ -2192,68 +2192,6 @@ describe.concurrent("a CONNECT tunnel", () => {
     expect(await text(one)).toBe("through");
     expect(proxy.connectCount()).toBe(2);
   });
-
-  test("stats of a request that fails inside the tunnel count what it sent", async () => {
-    // Reads the whole request through the tunnel, then resets.
-    const origin = tls.createServer({ key: tlsCert.key, cert: tlsCert.cert }, socket => {
-      socket.on("error", () => {});
-      let received = 0;
-      socket.on("data", chunk => {
-        received += chunk.length;
-        if (received > 5000) socket.destroy();
-      });
-    });
-    await once(origin.listen(0, "127.0.0.1"), "listening");
-    await using proxy = await createAdversarialProxy();
-    try {
-      let stats: Bun.FetchConnectionStats | undefined;
-      using session = new Bun.FetchSession({
-        proxy: `http://127.0.0.1:${proxy.port}`,
-        tls: { ca: tlsCert.cert },
-        keepAlive: false,
-        onStats: s => (stats = s),
-      });
-      const error = await session
-        .fetch(`https://localhost:${(origin.address() as net.AddressInfo).port}/`, {
-          method: "POST",
-          body: Buffer.alloc(5000, "x"),
-        })
-        .catch(e => e);
-      expect(error.code).toBe("ECONNRESET");
-      expect(stats).toMatchObject({ requestBodyBytesSent: 5000, responseStarted: false, nextHopProtocol: "http/1.1" });
-      expect(stats!.bytesSent).toBeGreaterThan(5000);
-    } finally {
-      origin.close();
-    }
-  });
-
-  test("stats name the proxy as the peer and leave the CONNECT exchange out", async () => {
-    using origin = Bun.serve({ port: 0, tls: tlsCert, fetch: () => new Response("through") });
-    await using proxy = await createAdversarialProxy();
-    let stats: Bun.FetchConnectionStats | undefined;
-    using session = new Bun.FetchSession({
-      proxy: `http://127.0.0.1:${proxy.port}`,
-      tls: { ca: tlsCert.cert },
-      keepAlive: false,
-      onStats: s => (stats = s),
-    });
-    const response = await session.fetch(`https://localhost:${origin.port}/`);
-    expect(await response.text()).toBe("through");
-    expect(proxy.connections.map(c => [c.method, c.target])).toEqual([["CONNECT", `localhost:${origin.port}`]]);
-    expect(stats).toEqual({
-      // The tunneled request's head: no body, and not the CONNECT request.
-      bytesSent: expect.any(Number),
-      requestBodyBytesSent: 0,
-      responseStarted: true,
-      connectionReused: false,
-      nextHopProtocol: "http/1.1",
-      remoteAddress: "127.0.0.1",
-      remotePort: proxy.port,
-      remoteFamily: "IPv4",
-    });
-    expect(stats!.bytesSent).toBeGreaterThan(0);
-    expect(stats!.bytesSent).toBeLessThan(400);
-  });
 });
 
 describe("proxy resolution", () => {
@@ -3114,39 +3052,27 @@ test("a proxy's own reply to CONNECT never resolves as the https origin's respon
       });
     });
     await once(proxy.listen(0, "127.0.0.1"), "listening");
-    let stats: Bun.FetchConnectionStats | undefined;
-    using session = new Bun.FetchSession({
-      proxy: `http://127.0.0.1:${(proxy.address() as net.AddressInfo).port}`,
-      keepAlive: false,
-      onStats: s => (stats = s),
-    });
     try {
       outcomes.push({
-        ...(await session.fetch("https://origin.invalid/secret").then(
+        ...(await fetch("https://origin.invalid/secret", {
+          proxy: `http://127.0.0.1:${(proxy.address() as net.AddressInfo).port}`,
+          keepalive: false,
+        }).then(
           async response => ({ resolved: response.status, body: await response.text() }),
           e => ({ code: e.code, status: e.status, authenticate: e.headers?.get("proxy-authenticate") }),
         )),
         connects,
-        // The CONNECT request is not the request the stats count.
-        sent: [stats?.bytesSent, stats?.requestBodyBytesSent, stats?.responseStarted],
       });
     } finally {
       proxy.close();
     }
   }
-  const nothingSent = [0, 0, false];
   expect(outcomes).toEqual([
-    {
-      code: "ERR_PROXY_TUNNEL",
-      status: 407,
-      authenticate: 'Basic realm="corp"',
-      connects: ["CONNECT"],
-      sent: nothingSent,
-    },
+    { code: "ERR_PROXY_TUNNEL", status: 407, authenticate: 'Basic realm="corp"', connects: ["CONNECT"] },
     // The JSON is not a TLS ServerHello: the handshake inside the "tunnel" fails.
-    { code: "EPROTO", status: undefined, authenticate: undefined, connects: ["CONNECT"], sent: nothingSent },
-    { code: "EPROTO", status: undefined, authenticate: undefined, connects: ["CONNECT"], sent: nothingSent },
-    { code: "ERR_PROXY_TUNNEL", status: 101, authenticate: null, connects: ["CONNECT"], sent: nothingSent },
+    { code: "EPROTO", status: undefined, authenticate: undefined, connects: ["CONNECT"] },
+    { code: "EPROTO", status: undefined, authenticate: undefined, connects: ["CONNECT"] },
+    { code: "ERR_PROXY_TUNNEL", status: 101, authenticate: null, connects: ["CONNECT"] },
   ]);
 });
 

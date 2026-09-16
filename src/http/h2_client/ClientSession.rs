@@ -540,9 +540,6 @@ impl ClientSession {
         client.h2 = NonNull::new(stream);
         client.flags.protocol = Protocol::Http2;
         client.allow_retry = false;
-        if client.flags.collect_stats {
-            client.stats.remote_address = crate::remote_address_of(&self.socket);
-        }
 
         if !self.preface_sent {
             encode::write_preface(self);

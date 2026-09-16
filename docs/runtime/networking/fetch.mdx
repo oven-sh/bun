@@ -490,7 +490,6 @@ session.close(); // closes the idle connections
 | `proxy`     | The same values as `fetch`'s `proxy`, including `false`.                                                                                                                                                                  |
 | `keepAlive` | `false` closes each connection after its response. `idleTimeout` is in seconds (default 300). `maxIdleSockets` caps the idle connections per kind (plain, TLS, Unix socket). Neither limit applies to HTTP/3 connections. |
 | `unix`      | A Unix socket path.                                                                                                                                                                                                       |
-| `onStats`   | See [Connection stats](#connection-stats).                                                                                                                                                                                |
 
 An option given on the request takes precedence over the session's, `proxy: false` included. A request's `tls` replaces the session's `tls` as a whole.
 
@@ -518,33 +517,6 @@ const response = await fetch(`https://${family === 6 ? `[${address}]` : address}
 - Bun sends `Host` as given. Include the port when it is not the scheme's default. A plain `http://` URL needs only `Host`.
 - `tls.serverName` works with HTTP/1.1 and HTTP/2. `protocol: "http3"` rejects it.
 - Each distinct `serverName` has its own TLS context and keep-alive pool. Bun caches up to 60 of them.
-
-#### Connection stats
-
-A session's `onStats` runs once per request that reached the HTTP client, when the connection is done with it: the response body ended, or the request failed or was aborted. When `fetch` rejects, `onStats` runs first. `onStats` is an option of `Bun.FetchSession` only.
-
-```ts
-let stats;
-using session = new Bun.FetchSession({ onStats: s => (stats = s) });
-try {
-  await session.fetch("https://example.com/upload", { method: "POST", body });
-} catch (error) {
-  if (stats && !stats.responseStarted && stats.requestBodyBytesSent < body.byteLength) {
-    // the upload never completely left this process
-  }
-}
-```
-
-| Field                                         | Description                                               |
-| --------------------------------------------- | --------------------------------------------------------- |
-| `bytesSent`                                   | Request bytes handed to the socket, before TLS.           |
-| `requestBodyBytesSent`                        | The body's share of `bytesSent`, as framed on the wire.   |
-| `responseStarted`                             | Whether any byte of a response arrived.                   |
-| `connectionReused`                            | Whether the request used a pooled connection.             |
-| `nextHopProtocol`                             | `"http/1.1"`, `"h2"` or `"h3"`; `""` if nothing was sent. |
-| `remoteAddress`, `remotePort`, `remoteFamily` | The peer the socket connected to, or `null`.              |
-
-The stats describe the last connection attempt: each redirect hop and each retry starts again from zero.
 
 #### Simultaneous connection limit
 

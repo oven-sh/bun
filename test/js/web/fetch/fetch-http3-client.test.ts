@@ -336,31 +336,6 @@ describe("fetch protocol: http3", () => {
     }
   });
 
-  test("onStats reports an h3 request, its peer, and reuse of the connection", async () => {
-    const collected: Bun.FetchConnectionStats[] = [];
-    using session = new Bun.FetchSession({ onStats: s => collected.push(s) });
-    const body = Buffer.alloc(5000, "x");
-    for (let i = 0; i < 2; i++) {
-      const res = await fetch(`${base}/echo`, { ...h3, session, method: "POST", body });
-      expect((await res.bytes()).length).toBe(5000);
-    }
-    const { port } = new URL(base);
-    expect(collected).toEqual([
-      {
-        bytesSent: expect.any(Number),
-        requestBodyBytesSent: 5000,
-        responseStarted: true,
-        connectionReused: false,
-        nextHopProtocol: "h3",
-        remoteAddress: expect.stringMatching(/^(127\.0\.0\.1|::1)$/),
-        remotePort: Number(port),
-        remoteFamily: expect.stringMatching(/^IPv[46]$/),
-      },
-      { ...collected[0], bytesSent: expect.any(Number), connectionReused: true },
-    ]);
-    expect(collected[0].bytesSent).toBeGreaterThan(5000);
-  });
-
   test("a FetchSession has its own connection, and close() closes it once idle", async () => {
     using one = new Bun.FetchSession();
     using other = new Bun.FetchSession();

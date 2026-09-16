@@ -349,7 +349,6 @@ fn on_handshake(
     this.state.response_stage = HTTPStage::ProxyHeaders;
     this.state.request_stage = HTTPStage::ProxyHeaders;
     this.state.request_sent_len = 0;
-    this.state.flags.sending_connect = false;
     let handshake_error = HTTPCertError::from_verify_error(ssl_error);
     if handshake_success {
         scoped_log!(http_proxy_tunnel, "ProxyTunnel onHandshake success");
@@ -799,6 +798,5 @@ impl ProxyTunnel {
         client.state.request_stage = HTTPStage::ProxyHeaders;
         client.state.response_stage = HTTPStage::ProxyHeaders;
         client.state.request_sent_len = 0;
-        client.state.flags.sending_connect = false;
     }
 }

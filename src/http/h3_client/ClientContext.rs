@@ -118,8 +118,6 @@ impl ClientContext {
                     bstr::BStr::new(hostname),
                     port,
                 );
-                // Coalescing onto a connection that is still being set up is not reuse.
-                client.stats.socket_reused = s.handshake_done;
                 s.enqueue(client);
                 return true;
             }

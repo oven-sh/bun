@@ -354,12 +354,6 @@ if (typeof process !== "undefined") {
     tls: { ca: "ca", rejectUnauthorized: true, checkServerIdentity: () => undefined },
     proxy: { url: "http://proxy:8080", headers: { "x-proxy": "1" }, respectNoProxy: false },
     keepAlive: { idleTimeout: 30, maxIdleSockets: 4 },
-    onStats(stats) {
-      const sent: number = stats.requestBodyBytesSent + stats.bytesSent;
-      const flags: boolean = stats.responseStarted && stats.connectionReused;
-      const where: string | null = stats.remoteAddress;
-      (void sent, flags, where);
-    },
   });
   fetch("https://example.com", { session });
   // The shape libraries declare for a `fetch` they accept.
@@ -367,8 +361,6 @@ if (typeof process !== "undefined") {
   bound("https://example.com", { method: "POST" }).then(r => r.text());
   fetch("https://example.com", { session, proxy: false });
   fetch("https://example.com", { proxy: false });
-  // @ts-expect-error - onStats is a session option
-  fetch("https://example.com", { onStats: () => {} });
   fetch("https://93.184.216.34/", {
     headers: { Host: "example.com" },
     tls: { serverName: "example.com" },

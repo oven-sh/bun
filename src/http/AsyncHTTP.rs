@@ -195,7 +195,6 @@ fn make_client<'a>(
         compressed_request_body: Vec::new(),
         compressed_body_len: 0,
         pool: crate::PoolOptions::default(),
-        stats: crate::ConnectionStats::default(),
     }
 }
 
@@ -259,7 +258,6 @@ pub struct Options<'a> {
     pub compress: Option<crate::compress_body::CompressOption>,
     pub pool: crate::PoolOptions,
     pub bypass_pool: bool,
-    pub collect_stats: bool,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -495,7 +493,6 @@ impl<'a> AsyncHTTP<'a> {
         if options.bypass_pool {
             this.client.flags.pool_bypass = crate::PoolBypass::NotThisHop;
         }
-        this.client.flags.collect_stats = options.collect_stats;
 
         // `client.proxy_authorization` stays `None` on the JS-thread original;
         // `on_start` derives it on the HTTP-thread clone so redirects can

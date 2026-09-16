@@ -329,7 +329,6 @@ describe("Bun.FetchSession", () => {
     expect(construct({ keepAlive: { maxIdleSockets: 0 } })).toThrow(
       'The value of "keepAlive.maxIdleSockets" is out of range. It must be >= 1 and <= 65535. Received 0',
     );
-    expect(construct({ onStats: 1 })).toThrow("onStats must be a function");
     expect(construct({ proxy: "not a url" })).toThrow("fetch() proxy URL is invalid");
     expect(construct({ proxy: { url: "http://p", respectNoProxy: 1 } })).toThrow(
       'The "respectNoProxy" property must be of type boolean',
@@ -347,14 +346,9 @@ describe("Bun.FetchSession", () => {
       proxy: null,
       keepAlive: null,
       unix: null,
-      onStats: null,
     } as any);
     expect(await (await fetch(server.url, { session })).text()).toBe("plain");
     expect(await (await fetch(server.url, { session: null } as any)).text()).toBe("plain");
-    // A request takes no `onStats`: the option is the session's, and one here is not read.
-    let called = false;
-    expect(await (await fetch(server.url, { onStats: () => (called = true) } as any)).text()).toBe("plain");
-    expect(called).toBe(false);
     using empty = new Bun.FetchSession(null as any);
     expect(await (await fetch(server.url, { session: empty })).text()).toBe("plain");
   });
@@ -669,168 +663,14 @@ describe("session.fetch", () => {
   });
 
   test("keeps its session alive", async () => {
-    using server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("ok") });
-    const calls: number[] = [];
-    const bound = (() => new Bun.FetchSession({ onStats: s => calls.push(s.bytesSent) }).fetch)();
+    using server = Bun.serve({ port: 0, tls: tlsCert, fetch: () => new Response("ok") });
+    // Only the session knows the CA; nothing else references the session.
+    const bound = (() => new Bun.FetchSession({ tls: { ca: tlsCert.cert } }).fetch)();
     Bun.gc(true);
-    expect(await (await bound(server.url)).text()).toBe("ok");
-    expect(calls.length).toBe(1);
-  });
-});
-
-describe("onStats", () => {
-  test("reports the connection of a completed request, and reuse on the next one", async () => {
-    using server = Bun.serve({
-      port: 0,
-      hostname: "127.0.0.1",
-      async fetch(req) {
-        return new Response(String((await req.arrayBuffer()).byteLength));
-      },
-    });
-    const collected: Bun.FetchConnectionStats[] = [];
-    using session = new Bun.FetchSession({ onStats: s => collected.push(s) });
-    const body = Buffer.alloc(100_000, "b");
-    for (let i = 0; i < 2; i++) {
-      const response = await fetch(server.url, { method: "POST", body, session });
-      expect(await response.text()).toBe("100000");
-    }
-    expect(collected.length).toBe(2);
-    const [first, second] = collected;
-    expect(first).toEqual({
-      bytesSent: expect.any(Number),
-      requestBodyBytesSent: body.length,
-      responseStarted: true,
-      connectionReused: false,
-      nextHopProtocol: "http/1.1",
-      remoteAddress: "127.0.0.1",
-      remotePort: server.port,
-      remoteFamily: "IPv4",
-    });
-    expect(first.bytesSent).toBeGreaterThan(body.length);
-    expect(first.bytesSent).toBeLessThan(body.length + 1024);
-    expect(second).toEqual({ ...first, connectionReused: true });
+    expect(await (await bound(`https://localhost:${server.port}/`)).text()).toBe("ok");
   });
 
-  test("runs before the rejection and shows an upload that never left", async () => {
-    // Accepts the connection, reads nothing, and resets it once the client is mid-upload.
-    const sockets: net.Socket[] = [];
-    const accepted = Promise.withResolvers<void>();
-    const server = net.createServer(socket => {
-      sockets.push(socket);
-      socket.on("error", () => {});
-      socket.pause();
-      accepted.resolve();
-    });
-    server.listen(0, "127.0.0.1");
-    await once(server, "listening");
-    const port = (server.address() as net.AddressInfo).port;
-    try {
-      // Far more than the socket buffers hold, so the write has to stall.
-      const body = Buffer.alloc(64 * 1024 * 1024, "u");
-      const order: string[] = [];
-      let stats: Bun.FetchConnectionStats | undefined;
-      const controller = new AbortController();
-      using session = new Bun.FetchSession({
-        onStats(s) {
-          order.push("stats");
-          stats = s;
-        },
-      });
-      const request = session
-        .fetch(`http://127.0.0.1:${port}/upload`, { method: "POST", body, signal: controller.signal })
-        .catch(e => {
-          order.push("rejected");
-          return e;
-        });
-      await Promise.race([accepted.promise, request.then(e => Promise.reject(e))]);
-      controller.abort();
-      const error = await request;
-      expect(error.name).toBe("AbortError");
-      expect(order).toEqual(["stats", "rejected"]);
-      expect(stats).toBeDefined();
-      expect(stats!.responseStarted).toBe(false);
-      expect(stats!.connectionReused).toBe(false);
-      // Windows' send() accepts the whole buffer at once.
-      expect(stats!.requestBodyBytesSent)[isWindows ? "toBeLessThanOrEqual" : "toBeLessThan"](body.length);
-      expect(stats!.bytesSent).toBeGreaterThanOrEqual(stats!.requestBodyBytesSent);
-      expect(stats!.remoteAddress).toBe("127.0.0.1");
-    } finally {
-      for (const socket of sockets) socket.destroy();
-      server.close();
-    }
-  });
-
-  test("counts plaintext bytes over TLS, and the last hop of a redirect", async () => {
-    using target = Bun.serve({ port: 0, tls: tlsCert, fetch: () => new Response("target") });
-    using origin = Bun.serve({
-      port: 0,
-      tls: tlsCert,
-      fetch: () => Response.redirect(`https://localhost:${target.port}/`, 302),
-    });
-    const collected: Bun.FetchConnectionStats[] = [];
-    using session = new Bun.FetchSession({ tls: { ca: tlsCert.cert }, onStats: s => collected.push(s) });
-    const response = await session.fetch(`https://localhost:${origin.port}/`, { keepalive: false });
-    expect(await response.text()).toBe("target");
-    // Once per request, for the connection that produced the response.
-    expect(collected).toEqual([
-      {
-        bytesSent: expect.any(Number),
-        requestBodyBytesSent: 0,
-        responseStarted: true,
-        connectionReused: false,
-        nextHopProtocol: "http/1.1",
-        remoteAddress: expect.stringMatching(/^(127\.0\.0\.1|::1)$/),
-        remotePort: target.port,
-        remoteFamily: expect.stringMatching(/^IPv[46]$/),
-      },
-    ]);
-    // A request head, not TLS records of a handshake.
-    expect(collected[0].bytesSent).toBeGreaterThan(40);
-    expect(collected[0].bytesSent).toBeLessThan(400);
-  });
-
-  test("counts a streamed body with its chunked framing", async () => {
-    using server = Bun.serve({
-      port: 0,
-      hostname: "127.0.0.1",
-      async fetch(req) {
-        return new Response(String((await req.arrayBuffer()).byteLength));
-      },
-    });
-    let stats: Bun.FetchConnectionStats | undefined;
-    using session = new Bun.FetchSession({ onStats: s => (stats = s) });
-    const response = await session.fetch(server.url, {
-      method: "POST",
-      body: new ReadableStream({
-        start(controller) {
-          controller.enqueue(new Uint8Array(1000));
-          controller.enqueue(new Uint8Array(2000));
-          controller.close();
-        },
-      }),
-    });
-    expect(await response.text()).toBe("3000");
-    // 3000 bytes of payload plus chunk sizes, CRLFs and the terminating chunk.
-    expect(stats!.requestBodyBytesSent).toBeGreaterThan(3000);
-    expect(stats!.requestBodyBytesSent).toBeLessThan(3100);
-    expect(stats!.bytesSent).toBeGreaterThan(stats!.requestBodyBytesSent);
-  });
-
-  test("is one shape whatever the outcome", async () => {
-    using server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("ok") });
-    using dead = await deadPort();
-    const shapes: string[] = [];
-    using session = new Bun.FetchSession({ onStats: s => void shapes.push(Object.keys(s).join()) });
-    await (await session.fetch(server.url)).text();
-    await session.fetch(`http://127.0.0.1:${dead.port}/`).catch(() => {});
-    expect(shapes).toEqual(
-      Array(2).fill(
-        "bytesSent,requestBodyBytesSent,responseStarted,connectionReused,nextHopProtocol,remoteAddress,remotePort,remoteFamily",
-      ),
-    );
-  });
-
-  test("runs for a request in flight whose session is no longer reachable", async () => {
+  test("a request in flight completes after its session is no longer reachable", async () => {
     // Holds its response until released, so the collector runs while the request is in flight.
     const held = Promise.withResolvers<() => void>();
     const sockets: net.Socket[] = [];
@@ -843,97 +683,15 @@ describe("onStats", () => {
     await once(server, "listening");
     try {
       const url = `http://127.0.0.1:${(server.address() as net.AddressInfo).port}/`;
-      const seen: number[] = [];
-      // Neither the session nor its callback is referenced after this returns.
-      const body = (() =>
-        new Bun.FetchSession({ onStats: s => void seen.push(s.bytesSent) }).fetch(url).then(r => r.text()))();
+      // The session is not referenced after this returns.
+      const body = (() => new Bun.FetchSession().fetch(url).then(r => r.text()))();
       const release = await held.promise;
       Bun.gc(true);
       release();
       expect(await body).toBe("ok");
-      expect(seen.length).toBe(1);
-      expect(seen[0]).toBeGreaterThan(0);
     } finally {
       for (const socket of sockets) socket.destroy();
       server.close();
     }
-  });
-
-  test("reports a connection that was never established", async () => {
-    using dead = await deadPort();
-    let stats: Bun.FetchConnectionStats | undefined;
-    using session = new Bun.FetchSession({ onStats: s => (stats = s) });
-    const error = await session.fetch(`http://127.0.0.1:${dead.port}/`).catch(e => e);
-    expect(error.code).toBe("ECONNREFUSED");
-    expect(stats).toEqual({
-      bytesSent: 0,
-      requestBodyBytesSent: 0,
-      responseStarted: false,
-      connectionReused: false,
-      nextHopProtocol: "",
-      remoteAddress: null,
-      remotePort: null,
-      remoteFamily: null,
-    });
-  });
-
-  test("may touch the response body of a request that resolved earlier", async () => {
-    const release = Promise.withResolvers<void>();
-    using server = Bun.serve({
-      port: 0,
-      hostname: "127.0.0.1",
-      fetch: () =>
-        new Response(
-          new ReadableStream({
-            type: "direct",
-            async pull(controller: any) {
-              controller.write("first ");
-              await controller.flush();
-              await release.promise;
-              controller.write("second");
-              controller.close();
-            },
-          } as any),
-        ),
-    });
-    const reported = Promise.withResolvers<boolean>();
-    using session = new Bun.FetchSession({
-      onStats: () => reported.resolve(response.body instanceof ReadableStream),
-    });
-    const response: Response = await session.fetch(server.url);
-    // The head is here and the body is not: onStats runs with the final chunk.
-    release.resolve();
-    expect(await reported.promise).toBe(true);
-    expect(await response.text()).toBe("first second");
-  });
-
-  test("comes from the session, and a throwing callback does not break the request", async () => {
-    using server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("fine") });
-    let fromSession = 0;
-    using session = new Bun.FetchSession({ onStats: () => void fromSession++ });
-    expect(await (await fetch(server.url, { session })).text()).toBe("fine");
-    expect(fromSession).toBe(1);
-
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
-        process.on("uncaughtException", e => console.log("uncaught:", e.message));
-        using session = new Bun.FetchSession({ onStats() { throw new Error("from onStats"); } });
-        const r = await session.fetch("${server.url}");
-        console.log(await r.text());
-        `,
-      ],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout: stdout.trim().split("\n"), stderr }).toEqual({
-      stdout: ["uncaught: from onStats", "fine"],
-      stderr: "",
-    });
-    expect(exitCode).toBe(0);
   });
 });

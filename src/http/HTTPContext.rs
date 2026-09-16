@@ -1005,7 +1005,6 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 debug_assert!(found.tunnel.is_none());
                 debug_assert!(found.h2_session.is_none());
                 client.flags.reused_socket_verification = found.verification;
-                client.stats.socket_reused = true;
                 Self::set_socket_ext(
                     sock,
                     ActiveSocket::<SSL>::init(
@@ -1083,7 +1082,6 @@ impl<const SSL: bool> HTTPContext<SSL> {
                             && client.socket_verification().admits(s.verification)
                     });
                 if let Some(session) = reusable {
-                    client.stats.socket_reused = true;
                     h2::ClientSession::adopt(session, client);
                     return Ok(None);
                 }
@@ -1142,7 +1140,6 @@ impl<const SSL: bool> HTTPContext<SSL> {
             ) {
                 let sock = found.socket;
                 client.flags.reused_socket_verification = found.verification;
-                client.stats.socket_reused = true;
                 Self::set_socket_ext(
                     sock,
                     ActiveSocket::<SSL>::init(

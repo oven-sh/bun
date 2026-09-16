@@ -8773,64 +8773,6 @@ declare module "bun" {
   // ): number;
 
   /**
-   * What the last connection attempt of a `fetch()` did, as reported to
-   * {@link FetchSessionInit.onStats | onStats}. The counters restart on every
-   * redirect hop and on the automatic retry of a request whose reused
-   * keep-alive socket turned out to be closed.
-   */
-  interface FetchConnectionStats {
-    /**
-     * Request bytes handed to the socket: the request head plus
-     * {@link requestBodyBytesSent}. Counted before TLS encryption. For an `https:`
-     * request through a proxy this counts the tunneled request, not the `CONNECT`
-     * exchange: when the proxy refuses the tunnel, nothing was sent. Over HTTP/3
-     * the head is counted before header compression.
-     */
-    bytesSent: number;
-    /**
-     * Request body bytes handed to the socket, as framed on the wire: after
-     * `compress`, and including chunked-encoding framing for a streamed body.
-     * Less than the length of the body means the upload did not completely
-     * leave this process.
-     */
-    requestBodyBytesSent: number;
-    /**
-     * Whether any byte of a response arrived on this connection.
-     */
-    responseStarted: boolean;
-    /**
-     * Whether the request went out on a keep-alive connection an earlier request
-     * opened, rather than on a new one.
-     */
-    connectionReused: boolean;
-    /**
-     * The protocol that carried the request, as its ALPN id: `"http/1.1"`,
-     * `"h2"` or `"h3"` (the values of `PerformanceResourceTiming.nextHopProtocol`).
-     * `""` when the request failed before any of it was sent.
-     */
-    nextHopProtocol: "http/1.1" | "h2" | "h3" | "";
-    /**
-     * IP address of the peer the socket connected to (the proxy's, when there is
-     * one).
-     *
-     * `null` when there is no peer address to report: the request went over a
-     * Unix socket, or it failed before a connection was established (the name
-     * did not resolve, the connect was refused, the request was aborted first).
-     */
-    remoteAddress: string | null;
-    /**
-     * Port of the peer the socket connected to. `null` exactly when
-     * {@link remoteAddress} is.
-     */
-    remotePort: number | null;
-    /**
-     * Address family of {@link remoteAddress}. `null` exactly when
-     * {@link remoteAddress} is.
-     */
-    remoteFamily: "IPv4" | "IPv6" | null;
-  }
-
-  /**
    * The proxy a `fetch()` uses.
    *
    * - A URL string, a `URL`, or `{ url, headers, respectNoProxy }` selects that proxy.
@@ -8903,14 +8845,6 @@ declare module "bun" {
      * Send the requests of this session over a Unix socket.
      */
     unix?: string | undefined;
-    /**
-     * Called once per request of this session that reached the HTTP client,
-     * when the connection is done with it: the response body ended, or the
-     * request failed or was aborted. For a rejected `fetch()` it runs before
-     * the rejection is delivered. It is an option of the session only;
-     * `fetch()` itself takes no `onStats`.
-     */
-    onStats?: ((stats: FetchConnectionStats) => void) | undefined;
   }
 
   /**

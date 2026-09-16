@@ -969,8 +969,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         }
     }
 
-    // The session's `onStats`; a request has none of its own.
-    let session_on_stats = session.is_some_and(|s| s.on_stats().is_some());
     let pool = session.map(|c| c.pool()).unwrap_or_default();
 
     // signal: AbortSignal | null | undefined;
@@ -1933,7 +1931,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         bypass_pool,
         fetch_session: session_hold,
         session_check_server_identity,
-        session_on_stats,
     };
 
     let _ = FetchTasklet::queue(

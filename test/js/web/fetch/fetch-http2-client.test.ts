@@ -1806,7 +1806,7 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
     }
   });
 
-  test("each FetchSession has its own h2 session, and onStats counts the stream's bytes", async () => {
+  test("each FetchSession has its own h2 session", async () => {
     let sessions = 0;
     const server = makeH2Server({}, (req, res) => {
       const chunks: Buffer[] = [];
@@ -1824,14 +1824,11 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
           "--no-warnings",
           "-e",
           `const url = "https://localhost:${port}/";
-           const stats = [];
-           const init = { tls: { rejectUnauthorized: false }, onStats: s => stats.push(s) };
-           using one = new Bun.FetchSession(init);
-           using other = new Bun.FetchSession(init);
+           using one = new Bun.FetchSession({ tls: { rejectUnauthorized: false } });
+           using other = new Bun.FetchSession({ tls: { rejectUnauthorized: false } });
            const post = session =>
              fetch(url, { protocol: "http2", session, method: "POST", body: Buffer.alloc(5000, "x") }).then(r => r.text());
-           console.log(JSON.stringify([await post(one), await post(one), await post(other)]));
-           console.log(JSON.stringify(stats.map(s => [s.requestBodyBytesSent, s.bytesSent > 5000, s.responseStarted, s.connectionReused, s.nextHopProtocol])));`,
+           console.log(JSON.stringify([await post(one), await post(one), await post(other)]));`,
         ],
         env: bunEnv,
         stdout: "pipe",
@@ -1844,14 +1841,7 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
           .trim()
           .split("\n")
           .map(line => JSON.parse(line)),
-      ).toEqual([
-        ["5000", "5000", "5000"],
-        [
-          [5000, true, true, false, "h2"],
-          [5000, true, true, true, "h2"],
-          [5000, true, true, false, "h2"],
-        ],
-      ]);
+      ).toEqual([["5000", "5000", "5000"]]);
       expect(sessions).toBe(2);
       expect(exitCode).toBe(0);
     } finally {

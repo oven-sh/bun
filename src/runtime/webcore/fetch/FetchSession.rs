@@ -211,9 +211,6 @@ impl SessionHold {
     pub(crate) fn check_server_identity(&self) -> Option<JSValue> {
         js::check_server_identity_get_cached(self.session().this_value.try_get()?)
     }
-    pub(crate) fn on_stats(&self) -> Option<JSValue> {
-        js::on_stats_get_cached(self.session().this_value.try_get()?)
-    }
 }
 
 impl Drop for SessionHold {
@@ -326,9 +323,6 @@ impl FetchSession {
             }
         }
 
-        if let Some(on_stats) = options.get_function(global, "onStats")? {
-            js::on_stats_set_cached(this_value, global, on_stats);
-        }
         Ok(this)
     }
 

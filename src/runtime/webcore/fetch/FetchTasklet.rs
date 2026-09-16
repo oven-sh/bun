@@ -144,7 +144,6 @@ pub struct FetchTasklet {
     pub(crate) fetch_session: Option<super::fetch_session::SessionHold>,
     /// The session has the callback, and holds it; `fetch_session` holds the session.
     pub(crate) session_check_server_identity: bool,
-    pub(crate) session_on_stats: bool,
     pub(crate) reject_unauthorized: bool,
     pub(crate) upgraded_connection: bool,
     pub(crate) unix_socket_path: Box<[u8]>,
@@ -915,9 +914,6 @@ impl FetchTasklet {
         }
 
         let global_this = self.global_this;
-        if is_done {
-            self.report_connection_stats(true);
-        }
         // explicit cleanup at each return (a closure keeps borrowck happy)
         let cleanup = |this: &mut FetchTasklet| {
             this.mutex.unlock();
@@ -1040,10 +1036,6 @@ impl FetchTasklet {
                 // we need to abort the request
                 let promise = promise_value.as_any_promise().unwrap();
                 let tracker = self.tracker;
-                // Nothing was written to the rejected peer, and nothing will be.
-                // The HTTP thread still owns the request until the shutdown
-                // lands, so the lock stays held like it was for the callback above.
-                self.report_connection_stats(false);
                 let mut result = self.on_reject();
 
                 promise_value.ensure_still_alive();
@@ -1258,63 +1250,6 @@ impl FetchTasklet {
             }
             self.fetch_session.as_ref()?.check_server_identity()
         })
-    }
-
-    /// The HTTP thread is done with the request: hand `onStats` what its last
-    /// connection did, before the promise or the body learn how it ended.
-    fn report_connection_stats(&mut self, http_thread_is_done: bool) {
-        // Once per request.
-        if !core::mem::take(&mut self.session_on_stats) {
-            return;
-        }
-        let Some(callback) = self.fetch_session.as_ref().and_then(|s| s.on_stats()) else {
-            return;
-        };
-        let global_this = self.global_this;
-        let stats = self.result.stats;
-        let (address, port, is_ipv6) = match stats.remote_address {
-            Some(remote) => {
-                let mut buf = [0u8; 64];
-                let text =
-                    bun_core::fmt::buf_print_infallible(&mut buf, format_args!("{}", remote.ip()));
-                use bun_jsc::EncodedSliceJsc as _;
-                (
-                    bun_core::EncodedSlice::latin1(text).to_js(&global_this),
-                    remote.port(),
-                    remote.is_ipv6(),
-                )
-            }
-            None => (JSValue::NULL, 0, false),
-        };
-        let object = JSFetchConnectionStats__create(
-            &global_this,
-            stats.bytes_written,
-            stats.request_body_bytes_sent,
-            stats.response_started,
-            stats.socket_reused,
-            match stats.protocol {
-                None => 0,
-                Some(http::Protocol::Http1_1) => 1,
-                Some(http::Protocol::Http2) => 2,
-                Some(http::Protocol::Http3) => 3,
-            },
-            address,
-            port,
-            is_ipv6,
-        );
-        // Once the HTTP thread is done with this request nothing contends for
-        // the lock, and the callback may touch the response body, which takes it.
-        if http_thread_is_done {
-            self.mutex.unlock();
-        }
-        crate::dispatch::fold(
-            callback
-                .call(&global_this, JSValue::UNDEFINED, &[object])
-                .map(drop),
-        );
-        if http_thread_is_done {
-            self.mutex.lock();
-        }
     }
 
     fn get_abort_error(&mut self) -> Option<BodyValueError> {
@@ -2022,7 +1957,6 @@ impl FetchTasklet {
             check_server_identity: fetch_options.check_server_identity,
             fetch_session: fetch_options.fetch_session,
             session_check_server_identity: fetch_options.session_check_server_identity,
-            session_on_stats: fetch_options.session_on_stats,
             reject_unauthorized: fetch_options.reject_unauthorized,
             upgraded_connection: fetch_options.upgraded_connection,
             unix_socket_path: fetch_options.unix_socket_path,
@@ -2160,7 +2094,6 @@ impl FetchTasklet {
                 compress: fetch_options.compress,
                 pool: fetch_options.pool,
                 bypass_pool: fetch_options.bypass_pool,
-                collect_stats: fetch_tasklet.session_on_stats,
             },
         )));
         // enable streaming the write side
@@ -2767,7 +2700,6 @@ pub struct FetchOptions {
     pub(crate) fetch_session: Option<super::fetch_session::SessionHold>,
     /// The session has the callback, and holds it; `fetch_session` holds the session.
     pub(crate) session_check_server_identity: bool,
-    pub(crate) session_on_stats: bool,
 }
 
 /// Where a request's proxy comes from.
@@ -2815,20 +2747,4 @@ impl bun_event_loop::Taskable for FetchTaskletPromiseSettle {
         // SAFETY: fn contract — the box the completion queued.
         drop(unsafe { bun_core::heap::take(this) });
     }
-}
-
-unsafe extern "C" {
-    /// An object on the cached `onStats` structure; `remote_address` is a string or null.
-    safe fn JSFetchConnectionStats__create(
-        global: &JSGlobalObject,
-        bytes_sent: u64,
-        request_body_bytes_sent: u64,
-        response_started: bool,
-        connection_reused: bool,
-        // 0 when not known, else 1 + `http::Protocol`
-        next_hop_protocol: u8,
-        remote_address: JSValue,
-        remote_port: u16,
-        is_ipv6: bool,
-    ) -> JSValue;
 }

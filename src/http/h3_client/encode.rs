@@ -116,18 +116,9 @@ pub(crate) fn write_request(
         return Err(crate::Error::HTTP3HeaderEncodingError);
     }
 
-    // QPACK runs inside lsquic; count the head as it was handed over.
-    let head_bytes: usize = headers
-        .iter()
-        .map(|h| h.name_bytes().len() + h.value_bytes().len())
-        .sum();
     // Keep `lower` alive until after send_headers (header pointers borrow it).
     drop(lower);
     drop(headers);
-    client.stats.bytes_written += head_bytes as u64;
-    if client.flags.collect_stats {
-        client.stats.remote_address = session.remote_address();
-    }
 
     if has_inline_body {
         stream.pending_body = req_body;
@@ -186,7 +177,6 @@ pub(crate) fn drain_send_body(stream: &mut Stream, qs: &mut quic::Stream) {
             written += usize::try_from(w).expect("int cast");
         }
         buffer.cursor += written;
-        client.stats.add_body_bytes(written);
         let drained = buffer.is_empty();
         if drained {
             buffer.reset();
@@ -213,9 +203,8 @@ pub(crate) fn drain_send_body(stream: &mut Stream, qs: &mut quic::Stream) {
         if w <= 0 {
             break;
         }
-        let w = usize::try_from(w).expect("int cast");
-        client.stats.add_body_bytes(w);
-        remaining = bun_ptr::RawSlice::new(&remaining.slice()[w..]);
+        remaining =
+            bun_ptr::RawSlice::new(&remaining.slice()[usize::try_from(w).expect("int cast")..]);
     }
     stream.pending_body = remaining;
     if remaining.is_empty() {

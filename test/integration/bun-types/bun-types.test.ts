@@ -7,7 +7,6 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, relative } from "node:path";
 
 import ts from "typescript";
-import { NODEJS_VERSION } from "../../../scripts/build/deps/nodejs-headers.ts";
 
 // beforeAll packs bun-types and installs it from the registry, and each case below copies
 // a fixture and type-checks it for several seconds, so everything here outlives the 5s
@@ -49,6 +48,26 @@ const bunTypesCheckoutBeforeSetup = snapshotBunTypesCheckout();
 
 let TEMP_DIR: string;
 let BASE_FIXTURE_DIR: string;
+/** The @types/node release the fixture checks bun-types against. */
+let NODE_TYPES_VERSION: string;
+
+/**
+ * The highest release of `pkg` on the registry. Not the `latest` dist-tag, and
+ * not a semver range either (bun resolves a range to `latest` whenever that tag
+ * satisfies it): DefinitelyTyped publishes the @types/node backport lines after
+ * the current line, and on 2026-09-09 that left `latest` on 22.20.2 while
+ * 26.5.1 was out. bun-types only tracks the current line, so checking it
+ * against a backport reports errors that no bun-types change can fix.
+ */
+async function newestRelease(pkg: string): Promise<string> {
+  const versions: string[] = await $`bun pm view ${pkg} versions --json`.json();
+  const newest = versions
+    .filter(version => !version.includes("-"))
+    .sort(Bun.semver.order)
+    .at(-1);
+  if (!newest) throw new Error(`the registry lists no release of ${pkg}`);
+  return newest;
+}
 
 beforeAll(async () => {
   TEMP_DIR = await mkdtemp(join(tmpdir(), "bun-types-test-"));
@@ -61,6 +80,14 @@ beforeAll(async () => {
       recursive: true,
       filter: source => basename(source) !== "node_modules",
     });
+
+    // bun-types depends on `@types/node@*`. Pin the fixture copy so that the
+    // tarball's dependency resolves to the newest release.
+    NODE_TYPES_VERSION = await newestRelease("@types/node");
+    const fixturePackageJsonPath = join(BASE_FIXTURE_DIR, "package.json");
+    const fixturePackageJson = await Bun.file(fixturePackageJsonPath).json();
+    fixturePackageJson.resolutions = { ...fixturePackageJson.resolutions, "@types/node": NODE_TYPES_VERSION };
+    await Bun.write(fixturePackageJsonPath, JSON.stringify(fixturePackageJson, null, 2) + "\n");
 
     await $`cd ${BUN_TYPES_PACKAGE_ROOT} && BUN_VERSION=${BUN_VERSION} bun run build ${bunTypesBuildDir}`.quiet();
     await $`cd ${bunTypesBuildDir} && bun pm pack --destination ${BASE_FIXTURE_DIR}`.quiet();
@@ -134,7 +161,7 @@ function typeTest(name: string, config: TypeTestConfig) {
     if (typeof config.diagnostics === "function") {
       config.diagnostics(diagnostics);
     } else {
-      expect(diagnostics).toEqual(config.diagnostics);
+      expect(diagnostics, `diagnostics with @types/node@${NODE_TYPES_VERSION}`).toEqual(config.diagnostics);
     }
   });
 }
@@ -327,21 +354,9 @@ describe("@types/bun integration test", () => {
     expect((await claude.text()).length).toBeGreaterThan(0);
   });
 
-  // fixture/package.json pins @types/node to the release for the Node.js version
-  // Bun reports. A floating version lets an upstream publish fail every PR:
-  // `latest` moved to the 22.x backport line on 2026-09-09, whose module layout
-  // bun-types does not support.
-  test("the fixture pins @types/node to the Node.js version Bun reports", async () => {
-    const { resolutions } = await Bun.file(join(FIXTURE_SOURCE_DIR, "package.json")).json();
-    const pinned: string = resolutions["@types/node"];
-    const [major, minor] = NODEJS_VERSION.split(".");
-    // The patch number of @types/node is DefinitelyTyped's own revision counter.
-    expect(pinned, `Bun reports Node.js ${NODEJS_VERSION}: pin the @types/node release for it`).toStartWith(
-      `${major}.${minor}.`,
-    );
-
+  test("the fixture resolves bun-types' @types/node dependency to the newest release", async () => {
     const installed = await Bun.file(join(BASE_FIXTURE_DIR, "node_modules", "@types", "node", "package.json")).json();
-    expect(installed.version).toBe(pinned);
+    expect(installed.version).toBe(NODE_TYPES_VERSION);
   });
 
   describe("basic type checks", () => {
@@ -878,11 +893,13 @@ describe("@types/bun integration test", () => {
         "WebGLVertexArrayObjectOES",
       ]),
       diagnostics: [
+        // lib.dom's Blob has no textStream(); node:buffer's Blob declares it
+        // since @types/node 26.5.0 (added to Node.js in v24.19.0 / v26.5.0).
         {
-          code: 2322,
+          code: 2741,
           line: "24154.ts:11:3",
           message:
-            "Type 'Blob' is not assignable to type 'import(\"node:buffer\").Blob'.\nThe types returned by 'stream()' are incompatible between these types.\nType 'ReadableStream<Uint8Array<ArrayBuffer>>' is missing the following properties from type 'ReadableStream<NonSharedUint8Array>': blob, text, bytes, json",
+            "Property 'textStream' is missing in type 'Blob' but required in type 'import(\"node:buffer\").Blob'.",
         },
         {
           code: 2769,

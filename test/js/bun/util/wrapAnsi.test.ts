@@ -942,19 +942,12 @@ describe("Bun.wrapAnsi", () => {
     });
   });
 
-  // The input sizes each row (a Vector of characters) and the list of rows of a line (a Vector
-  // of rows). WTF::Vector::append() calls CRASH() when the buffer cannot grow, so both aborted
-  // the process: the row list at 51,821,029 rows (104 MB of one-letter words at columns 1), a
-  // UTF-16 row of 900 million characters when the next word arrives. Now wrapAnsi() throws a
-  // catchable out-of-memory error. The child runs with a 64 KiB synthetic allocation limit, which
-  // brings the bounds down to 2048 rows, and to 65,536 Latin-1 or 32,768 UTF-16 characters in a
-  // row.
+  // A 64 KiB synthetic allocation limit: 2048 rows in a line, 65,536 Latin-1 or 32,768 UTF-16 characters in a row.
   describe("a row or a row list that cannot grow", () => {
     const outOfMemory = "RangeError: Out of memory";
 
-    // `cases` is the source of an object { name: [input, columns, options?] }. The child wraps
-    // each input and reports the length of the result, or the error. It builds the inputs with
-    // repeat(), which does not depend on the limit the child runs under.
+    // `cases` is the source of { name: [input, columns, options?] }. The child reports each result's length, or the
+    // error. It builds the inputs with repeat(), which does not depend on the limit the child runs under.
     async function wrapWithSyntheticLimit(cases: string) {
       await using proc = Bun.spawn({
         cmd: [
@@ -980,12 +973,12 @@ describe("Bun.wrapAnsi", () => {
     }
 
     test.concurrent("throws when the list of rows cannot grow", async () => {
-      // 1000 rows fit and 3000 do not. In each case a different statement of wrapAnsi.cpp
-      // starts the row that does not fit.
       const result = await wrapWithSyntheticLimit(`{
-        fits: ["a ".repeat(1000), 1],
-        // placeWord(): the word does not fit in the row.
-        words: ["a ".repeat(3000), 1],
+        rowsAtBound: ["a ".repeat(2048), 1],
+        rowsPastBound: ["a ".repeat(2049), 1],
+        wideRowsAtBound: ["あ ".repeat(2048), 2],
+        wideRowsPastBound: ["あ ".repeat(2049), 2],
+        // In each case below a different statement of wrapAnsi.cpp starts the row that does not fit.
         // placeWord(): the row is full and wordWrap is off.
         wordsNoWordWrap: ["a ".repeat(3000), 1, { wordWrap: false }],
         // placeWord(): a hard-wrapped word starts on a row of its own.
@@ -1000,8 +993,10 @@ describe("Bun.wrapAnsi", () => {
       }`);
       expect(result).toEqual({
         stdout: {
-          fits: 1999,
-          words: outOfMemory,
+          rowsAtBound: 4095,
+          rowsPastBound: outOfMemory,
+          wideRowsAtBound: 4095,
+          wideRowsPastBound: outOfMemory,
           wordsNoWordWrap: outOfMemory,
           hardWords: outOfMemory,
           hardWord: outOfMemory,
@@ -1015,18 +1010,18 @@ describe("Bun.wrapAnsi", () => {
     });
 
     test.concurrent("throws when one row cannot grow", async () => {
-      // No text here is wider than columns before a row passes the bound, so one row takes all
-      // of it. In each case a different statement of wrapAnsi.cpp adds the text that does not
-      // fit.
+      // No text here is wider than columns before a row passes the bound, so one row takes all of it.
       const result = await wrapWithSyntheticLimit(`{
-        fits: ["ab ".repeat(20000), 100000],
-        fitsWide: ["あ ".repeat(15000), 100000],
-        // placeWord(): the word.
-        word: ["a".repeat(70000), 100000],
-        wideWord: ["あ".repeat(40000), 100000],
+        wordAtBound: ["a".repeat(65536), 100000],
+        wordPastBound: ["a".repeat(65537), 100000],
+        wideWordAtBound: ["あ".repeat(32768), 100000],
+        wideWordPastBound: ["あ".repeat(32769), 100000],
+        // The last space is character 65,536 of its row, then character 65,537.
+        spaceAtBound: ["a" + " a".repeat(32767) + " ", 100000],
+        spacePastBound: ["aa" + " a".repeat(32767) + " ", 100000],
+        // In each case below a different statement of wrapAnsi.cpp adds the text that does not fit.
+        // placeWord(): a word after other words.
         words: ["ab ".repeat(30000), 100000],
-        // placeWord(): the space before a word. The row holds 65,536 characters at that point.
-        separatorSpace: ["aa" + " a".repeat(40000), 100000],
         // wrapWord(): one character of a hard-wrapped word.
         hardWord: ["a".repeat(70000), 69999, { hard: true }],
         // wrapWord(): an escape sequence in a hard-wrapped word.
@@ -1036,12 +1031,13 @@ describe("Bun.wrapAnsi", () => {
       }`);
       expect(result).toEqual({
         stdout: {
-          fits: 59999,
-          fitsWide: 29999,
-          word: outOfMemory,
-          wideWord: outOfMemory,
+          wordAtBound: 65536,
+          wordPastBound: outOfMemory,
+          wideWordAtBound: 32768,
+          wideWordPastBound: outOfMemory,
+          spaceAtBound: 65535,
+          spacePastBound: outOfMemory,
           words: outOfMemory,
-          separatorSpace: outOfMemory,
           hardWord: outOfMemory,
           escapesInHardWord: outOfMemory,
           trailingEscapeFoldedBack: outOfMemory,

@@ -1699,6 +1699,15 @@ describe("Bun.serve HTTP/3 production", () => {
     const big = Buffer.alloc(512 * 1024, "abcdefghijklmnop").toString();
     // A failure on the large body prints a length and a hash, not 512 KB.
     const summarize = (body: string) => (body.length > 64 ? `${body.length} bytes, hash ${Bun.hash(body)}` : body);
+    const streamed = () =>
+      new Response(
+        new ReadableStream({
+          async pull(controller) {
+            controller.enqueue(new TextEncoder().encode("streamed"));
+            controller.close();
+          },
+        }),
+      );
     const cases: Record<string, { serve: object; expected: { status: number; body: string } }> = {
       "string body after reading the request body": {
         serve: { fetch: async (req: Request) => new Response("body:" + (await req.bytes()).length) },
@@ -1713,19 +1722,11 @@ describe("Bun.serve HTTP/3 production", () => {
         expected: { status: 200, body: summarize(big) },
       },
       "ReadableStream body after reading the request body": {
-        serve: {
-          fetch: async (req: Request) => {
-            await req.bytes();
-            return new Response(
-              new ReadableStream({
-                async pull(controller) {
-                  controller.enqueue(new TextEncoder().encode("streamed"));
-                  controller.close();
-                },
-              }),
-            );
-          },
-        },
+        serve: { fetch: async (req: Request) => (await req.bytes(), streamed()) },
+        expected: { status: 200, body: "streamed" },
+      },
+      "ReadableStream body without reading the request body": {
+        serve: { fetch: streamed },
         expected: { status: 200, body: "streamed" },
       },
       "empty body": {

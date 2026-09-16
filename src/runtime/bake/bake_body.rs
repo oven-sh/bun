@@ -101,8 +101,7 @@ impl Drop for UserOptions {
 }
 
 impl UserOptions {
-    /// Does not wait for a plugin `setup()` that returns a promise that is still pending: the
-    /// caller finishes `bundler_options.pending_plugin_setup` before its first bundle.
+    /// Does not wait for a pending plugin `setup()`: see `bundler_options.pending_plugin_setup`.
     pub fn from_js(config: JSValue, global: &JSGlobalObject) -> JsResult<UserOptions> {
         let arena = Arena::new();
         // errdefer arena.deinit() — handled by Drop
@@ -246,9 +245,7 @@ pub struct SplitBundlerOptions {
     pub ssr: BuildConfigSubset,
 }
 
-/// The `setup()` calls of `plugins` that wait for a `setup()` promise that is still pending.
-/// They run one at a time, because the order in which plugins register their `onResolve` and
-/// `onLoad` callbacks decides which callback runs first.
+/// The `setup()` calls behind a pending `setup()` promise. They stay in order: the first hook wins.
 pub struct PendingPluginSetup {
     plugin: NonNull<Plugin>,
     /// What `runSetupFunction` returned for the `setup()` that has not settled.
@@ -262,36 +259,39 @@ impl PendingPluginSetup {
         self.promise.get()
     }
 
-    /// Call this after `promise()` fulfilled. It calls each `setup()` that is left, while
-    /// `owner_is_alive()` holds: a `setup()` can stop the server that these plugins are for.
-    /// On `false`, `promise()` is the next promise to wait for. On `true`, no call is left.
+    /// Call after `promise()` fulfilled. No `setup()` runs once `owner_is_alive()` fails.
     pub(crate) fn advance(
         &mut self,
         global: &JSGlobalObject,
         owner_is_alive: impl Fn() -> bool,
-    ) -> JsResult<bool> {
+    ) -> JsResult<PluginSetupProgress> {
         while owner_is_alive() {
             let Some(setup) = self.queue.pop_front() else {
                 break;
             };
             if let Some(promise) = run_plugin_setup(self.plugin, setup.get(), global)? {
                 self.promise.set(global, promise);
-                return Ok(false);
+                return Ok(PluginSetupProgress::Waiting);
             }
         }
-        Ok(true)
+        Ok(PluginSetupProgress::Done)
     }
 }
 
-/// Calls the `setup()` of one plugin. `Some` is what `runSetupFunction` returned, when that is a
-/// promise that is still pending.
+pub(crate) enum PluginSetupProgress {
+    /// `PendingPluginSetup::promise()` is the next promise to wait for.
+    Waiting,
+    /// No `setup()` call is left.
+    Done,
+}
+
+/// Calls one `setup()`. `Some`: the promise that `runSetupFunction` returned is still pending.
 fn run_plugin_setup(
     plugin: NonNull<Plugin>,
     setup: JSValue,
     global: &JSGlobalObject,
 ) -> JsResult<Option<JSValue>> {
-    // `Plugin` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-    // `SplitBundlerOptions.plugin` holds the handle live (protected JSCell).
+    // `Plugin` is an `opaque_ffi!` ZST, so `opaque_mut` is the safe deref. The cell is protected.
     let result = Plugin::opaque_mut(plugin.as_ptr()).add_plugin(
         setup,
         JSValue::create_empty_object(global, 0),
@@ -317,8 +317,7 @@ impl SplitBundlerOptions {
     // `BuildConfigSubset`) is not `const fn`, so this is now a fn-backed
     // default. Callers updated to `SplitBundlerOptions::default()`.
 
-    /// Waits for every `setup()` that has not settled. This runs the event loop, so the caller
-    /// must have no JavaScript frame below it.
+    /// Runs the event loop until every `setup()` settled. Call it with no JS frame below.
     pub(crate) fn wait_for_plugin_setup(&mut self, global: &JSGlobalObject) -> JsResult<()> {
         while let Some(mut pending) = self.pending_plugin_setup.take() {
             let promise = pending
@@ -335,7 +334,7 @@ impl SplitBundlerOptions {
                 bun_jsc::PromiseResult::Fulfilled(_) => {}
                 bun_jsc::PromiseResult::Rejected(err) => return Err(global.throw_value(err)),
             }
-            if !pending.advance(global, || true)? {
+            if let PluginSetupProgress::Waiting = pending.advance(global, || true)? {
                 self.pending_plugin_setup = Some(pending);
             }
         }

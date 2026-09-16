@@ -178,8 +178,7 @@ pub enum PluginState {
     /// Should ask server for plugins. Once plugins are loaded, the plugin
     /// pointer is written into `server_transpiler.options.plugin`
     Unknown,
-    // These two states mean that `server.getOrLoadPlugins()` was called, or
-    // that `app.plugins` had a `setup()` promise to wait for (`PluginSetupWaiter`).
+    // These two states mean that `server.getOrLoadPlugins()` or a `PluginSetupWaiter` is in use.
     Pending,
     Loaded,
     /// Currently, this represents a degraded state where no bundle can
@@ -187,10 +186,7 @@ pub enum PluginState {
     Err,
 }
 
-/// The `setup()` calls of `app.plugins` that the DevServer waits for, and the
-/// context of the reaction on the `setup()` promise that is still pending. The
-/// reaction cannot be removed, and the DevServer can drop first. So each
-/// reaction holds a ref on this instead of a pointer to the DevServer.
+/// Held by the reaction on a pending `setup()` promise, because the DevServer can drop first.
 #[derive(bun_ptr::CellRefCounted)]
 pub(crate) struct PluginSetupWaiter {
     ref_count: ::core::cell::Cell<u32>,
@@ -213,6 +209,7 @@ impl PluginSetupWaiter {
 
     /// `rejection` is the reason, when the promise rejected.
     fn on_settled(context: JSValue, global: &JSGlobalObject, rejection: Option<JSValue>) {
+        use bake::bake_body::PluginSetupProgress;
         // SAFETY: `wait_for` took this ref for the reaction that runs now.
         let waiter = unsafe { bun_ptr::RefPtr::from_raw(context.as_promise_ptr::<Self>()) };
         let mut pending = waiter.pending.take();
@@ -231,7 +228,7 @@ impl PluginSetupWaiter {
         // This runs on the JS thread, from a promise job, so no other reference to it is live.
         let dev = waiter.dev.get().map(|dev| unsafe { &mut *dev.as_ptr() });
         match result {
-            Ok(false) => {
+            Ok(PluginSetupProgress::Waiting) => {
                 if dev.is_some()
                     && let Some(pending) = pending
                 {
@@ -240,13 +237,12 @@ impl PluginSetupWaiter {
                     Self::wait_for(&waiter, global, promise);
                 }
             }
-            Ok(true) => {
+            Ok(PluginSetupProgress::Done) => {
                 if let Some(dev) = dev {
                     dev.on_plugins_loaded();
                 }
             }
-            // The promise is marked as handled, so the error is reported here, also when the
-            // server is gone.
+            // The promise is marked handled: report the error here, also when the server is gone.
             Err(err) => {
                 if let Some(dev) = dev {
                     // This can drop the DevServer, when the server was stopped before.
@@ -3176,8 +3172,7 @@ impl DeferredRequest {
         }
     }
 
-    /// Client-disconnect path (uWS `onAborted` / `RequestContext::on_abort`);
-    /// the response is already dead. Server-side abandonment uses [`fail()`].
+    /// The client disconnected, so the response is dead. When the server gives up, use `fail()`.
     fn abort(&mut self) {
         deferred_request::debug_log_dr!(
             "DeferredRequest(0x{:x}) abort",
@@ -3201,16 +3196,13 @@ impl DeferredRequest {
         }
     }
 
-    /// Server-side abandonment (plugin load failure, bundle-completion OOM
-    /// defer): respond 500 and release both `RequestContext` refs. Callers
-    /// follow with `deref_()`.
+    /// The server gives up: answer 500, release both `RequestContext` refs. `deref_()` comes next.
     fn fail(&mut self) {
         match ::core::mem::replace(&mut self.handler, Handler::Aborted) {
             Handler::ServerHandler(mut saved) => {
                 saved.response.write_status(b"500 Internal Server Error");
                 saved.response.write_header_int(b"Content-Length", 0);
-                // `end_without_body` derefs the prepare_and_save +1;
-                // `saved.deinit` derefs `defer_request`'s +1.
+                // Drops the `prepare_and_save` ref. `deinit` drops the `defer_request` ref.
                 saved.ctx.end_without_body(true);
                 saved.deinit();
             }
@@ -6340,9 +6332,7 @@ impl DevServer {
 
     pub(crate) fn on_plugins_rejected(&mut self) -> crate::Result<()> {
         self.plugin_state = PluginState::Err;
-        // Keep `pending_requests > 0` for the drain: `fail()`'s ctx deref
-        // reaches `deinit_if_we_can()`, which would drop `Box<DevServer>`
-        // (i.e. `*self`) mid-loop if `stop()` had already taken the listener.
+        // Hold a pending request, or the last deref in `fail()` can free `self` in this loop.
         let server = self.server;
         if let Some(mut s) = server {
             s.on_pending_request();

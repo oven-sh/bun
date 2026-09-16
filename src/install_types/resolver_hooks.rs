@@ -1466,6 +1466,7 @@ pub trait AutoInstaller {
         &mut self,
         name: &[u8],
         version: &DependencyVersion,
+        version_buf: &[u8],
     ) -> Option<PackageID>;
     fn enqueue_dependency_to_root(
         &mut self,
@@ -1476,11 +1477,11 @@ pub trait AutoInstaller {
     ) -> EnqueueResult;
 
     // ── Dependency parsing ─────────────────────────────────────────────────
-    // The strings of the result are offsets into the buffer of `sliced`. The
-    // parse does not record `npm:` aliases in the manager: those are read with
-    // the lockfile's string bytes.
+    // The strings of the result are offsets into the buffer of `sliced`.
+    // `&mut self`: the manager records an `npm:` alias, from a copy of the
+    // literal in the lockfile's strings.
     fn parse_dependency(
-        &self,
+        &mut self,
         name: SemverString,
         name_hash: Option<u64>,
         version: &[u8],

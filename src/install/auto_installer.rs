@@ -370,8 +370,9 @@ impl hooks::AutoInstaller for PackageManager {
         &mut self,
         name: &[u8],
         version: &hooks::DependencyVersion,
+        version_buf: &[u8],
     ) -> Option<PackageID> {
-        pm_resolution::resolve_from_disk_cache(self, name, version)
+        pm_resolution::resolve_from_disk_cache(self, name, version, version_buf)
     }
 
     fn enqueue_dependency_to_root(
@@ -396,28 +397,50 @@ impl hooks::AutoInstaller for PackageManager {
     }
 
     // ── Dependency parsing ────────────────────────────────────────────────
-    //
-    // No alias registry: `known_npm_aliases` is read with the lockfile's string
-    // bytes, and these versions hold offsets into the resolver's buffer.
-    // `clone_with_different_buffers` records the alias once the dependency is
-    // copied into the lockfile.
 
     fn parse_dependency(
-        &self,
+        &mut self,
         name: SemverString,
         name_hash: Option<u64>,
         version: &[u8],
         sliced: &SlicedString,
         log: Option<&mut bun_ast::Log>,
     ) -> Option<hooks::DependencyVersion> {
-        dependency::parse(
+        let parsed = dependency::parse(
             name,
             name_hash,
             version,
             sliced,
             log,
             None::<&mut PackageManager>,
-        )
+        )?;
+
+        // `known_npm_aliases` is read with the lockfile's strings, and `parsed`
+        // holds offsets into the resolver's buffer. Record a parse of a copy of
+        // the literal that lives in the lockfile.
+        if let Some(alias_hash) = name_hash
+            && parsed.tag == dependency::Tag::Npm
+            && parsed.npm().is_alias
+        {
+            let known_npm_aliases = &mut self.known_npm_aliases;
+            let (mut builder, _) = self.lockfile.string_builder_split();
+            builder.count(sliced.slice);
+            bun_core::handle_oom(builder.allocate());
+            let literal = builder.append::<SemverString>(sliced.slice);
+            let string_bytes = builder.string_bytes.as_slice();
+            let _ = dependency::parse_with_tag(
+                SemverString::default(),
+                Some(alias_hash),
+                bun_core::strings::trim_left(literal.slice(string_bytes), b" \t\n\r"),
+                dependency::Tag::Npm,
+                &literal.sliced(string_bytes),
+                None,
+                Some(known_npm_aliases as &mut dyn dependency::NpmAliasRegistry),
+            );
+            builder.clamp();
+        }
+
+        Some(parsed)
     }
 
     fn parse_dependency_with_tag(

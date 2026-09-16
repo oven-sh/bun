@@ -91,6 +91,98 @@ aWRnaXRzIFB0eSBMdGQwHhcNMTgwNDEwMDgwNzQ4WhcNMjgwNDA3MDgwNzQ4WjBF
     expect(exitCode).toBe(0);
     expect(stdout.trim()).toBe("OK");
   });
+
+  // One failed load is one warning, worded as Node words it, whichever API needs the extra CA list first.
+  describe("a file that cannot be loaded warns once", () => {
+    const missingWarning = "Warning: Ignoring extra certs from `missing.pem`, load failed: No such file or directory\n";
+
+    // Accepts one connection, drops it and closes, so a TLS client fails its handshake without leaving the process.
+    const deadEnd = `
+      function deadEnd(connect) {
+        const server = require("node:net").createServer(socket => {
+          socket.destroy();
+          server.close();
+        });
+        server.listen(0, "127.0.0.1", () => connect(server.address().port));
+      }
+    `;
+    const users = {
+      "tls.connect": `${deadEnd}
+        deadEnd(port => require("node:tls").connect(port, "127.0.0.1").on("error", () => {}));`,
+      "tls.createSecureContext": `require("node:tls").createSecureContext();`,
+      "tls.createServer": `require("node:tls").createServer({});`,
+      "tls.getCACertificates": `require("node:tls").getCACertificates("extra");`,
+      "fetch": `${deadEnd}
+        deadEnd(port => fetch("https://127.0.0.1:" + port).catch(() => {}));`,
+      "fetch, then node:tls": `${deadEnd}
+        deadEnd(async port => {
+          await fetch("https://127.0.0.1:" + port).catch(() => {});
+          require("node:tls").createSecureContext();
+        });`,
+      "Bun.connect": `${deadEnd}
+        deadEnd(port =>
+          Bun.connect({ hostname: "127.0.0.1", port, tls: true, socket: { data() {}, error() {}, connectError() {} } })
+            .catch(() => {}),
+        );`,
+      "node:tls on two threads": `
+        require("node:tls").createSecureContext();
+        new (require("node:worker_threads").Worker)('require("node:tls").createSecureContext()', { eval: true });`,
+      "node:tls in a Worker only": `
+        new (require("node:worker_threads").Worker)('require("node:tls").createSecureContext()', { eval: true });`,
+    };
+
+    // NODE_EXTRA_CA_CERTS is relative to `cwd`, so the warning names the same path on every platform.
+    function spawnWith(extraCACerts: string, cwd: string, code: string) {
+      return spawn({
+        cmd: [bunExe(), "-e", code],
+        env: { ...bunEnv, NODE_EXTRA_CA_CERTS: extraCACerts },
+        cwd,
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+    }
+
+    async function run(extraCACerts: string, files: Record<string, string>, code: string) {
+      using dir = tempDir("extra-ca-warning", files);
+      await using proc = spawnWith(extraCACerts, String(dir), code);
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      return { stderr, exitCode };
+    }
+
+    for (const [user, code] of Object.entries(users)) {
+      test.concurrent(user, async () => {
+        expect(await run("missing.pem", {}, code)).toEqual({ stderr: missingWarning, exitCode: 0 });
+      });
+    }
+
+    // Node warns for this file too. The reason is the TLS library's error string, which BoringSSL words differently.
+    test.concurrent("a certificate that does not parse", async () => {
+      const files = {
+        "malformed.pem": "-----BEGIN CERTIFICATE-----\nbm90IGEgY2VydGlmaWNhdGU=\n-----END CERTIFICATE-----\n",
+      };
+      expect(await run("malformed.pem", files, users["tls.createSecureContext"])).toEqual({
+        stderr: expect.stringMatching(
+          /^Warning: Ignoring extra certs from `malformed\.pem`, load failed: error:[^\n]+\n$/,
+        ),
+        exitCode: 0,
+      });
+    });
+
+    test.concurrent("when the load fails, not when the process exits", async () => {
+      using dir = tempDir("extra-ca-warning", {});
+      // This process never exits by itself: the line has to arrive before the kill on dispose.
+      const code = `${users["Bun.connect"]} setInterval(() => {}, 1000);`;
+      await using proc = spawnWith("missing.pem", String(dir), code);
+      const decoder = new TextDecoder();
+      let stderr = "";
+      for await (const chunk of proc.stderr) {
+        stderr += decoder.decode(chunk, { stream: true });
+        if (stderr.includes("\n")) break;
+      }
+
+      expect(stderr).toBe(missingWarning);
+    });
+  });
 });
 
 test("explicit ca option replaces the default trust store instead of appending to it", async () => {

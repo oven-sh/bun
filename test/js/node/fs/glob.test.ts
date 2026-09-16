@@ -396,6 +396,12 @@ describe("a pattern array or brace group returns the union of its patterns", () 
       pattern: ["..", "./.."],
       expected: [".."],
     },
+    {
+      name: "a pattern that is only '..' before '../'",
+      tree: { b: { c: {} } },
+      pattern: ["..", "../"],
+      expected: ["../"],
+    },
   ];
 
   describe.each(cases)("$name", ({ tree, pattern, expected }) => {

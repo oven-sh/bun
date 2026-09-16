@@ -613,27 +613,29 @@ class Glob {
       return false;
     }
     const first = pattern.at(0);
+    let target;
     if (isWindows && typeof first === "string" && first.endsWith(":")) {
       // Absolute path, go to root
-      this.#addSubpattern(`${first}\\`, pattern.child(new Set().add(1)));
-      return true;
-    }
-    if (first === "") {
+      target = `${first}\\`;
+    } else if (first === "") {
       // Absolute path, go to root
-      this.#addSubpattern("/", pattern.child(new Set().add(1)));
-      return true;
-    }
-    if (first === "..") {
+      target = "/";
+    } else if (first === "..") {
       // Start with .., go to parent
-      this.#addSubpattern("../", pattern.child(new Set().add(1)));
-      return true;
-    }
-    if (first === ".") {
+      target = "../";
+    } else if (first === ".") {
       // Start with ., proceed
-      this.#addSubpattern(".", pattern.child(new Set().add(1)));
-      return true;
+      target = ".";
+    } else {
+      return false;
     }
-    return false;
+    // A pattern that is only this segment matches nothing. Its index 1 is
+    // past the end and has the key of a trailing "" segment, so queuing it
+    // would block "../" or "./" at the same path.
+    if (pattern.last > 0) {
+      this.#addSubpattern(target, pattern.child(new Set().add(1)));
+    }
+    return true;
   }
   #addSubpatterns(path, pattern) {
     const fullpath = resolve(this.#root, path);

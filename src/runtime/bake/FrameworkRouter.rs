@@ -1628,13 +1628,23 @@ impl FrameworkRouter {
                                 .parse(rel_path, ext, &mut log, t.allow_layouts, arena_state);
                         let parsed = match parse_result {
                             Err(_) => {
-                                // `cursor_at` indexes `rel_path`. Both paths end with the same bytes.
-                                log.cursor_at = u32::try_from(
-                                    (log.cursor_at as usize + full_rel_path.len())
-                                        .saturating_sub(rel_path.len()),
-                                )
-                                .expect("int cast");
-                                ctx.on_router_syntax_error(full_rel_path, log)?;
+                                // `cursor_at` indexes `rel_path`. The label can show it only inside their common suffix.
+                                let common_suffix_len = rel_path
+                                    .iter()
+                                    .rev()
+                                    .zip(full_rel_path.iter().rev())
+                                    .take_while(|(a, b)| a == b)
+                                    .count();
+                                let from_end =
+                                    rel_path.len().saturating_sub(log.cursor_at as usize);
+                                let label = if from_end <= common_suffix_len {
+                                    log.cursor_at = u32::try_from(full_rel_path.len() - from_end)
+                                        .expect("int cast");
+                                    full_rel_path
+                                } else {
+                                    rel_path
+                                };
+                                ctx.on_router_syntax_error(label, log)?;
                                 arena_state.reset_retain_with_limit(8 * 1024 * 1024);
                                 continue 'outer;
                             }

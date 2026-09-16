@@ -242,6 +242,22 @@ describe.concurrent("fileSystemRouterTypes[n].root outside the project root", ()
     });
   });
 
+  // The bad segment is above the project root, so the path relative to the project root cannot show it.
+  test("a route syntax error above the project root names the path below the router root", async () => {
+    const fixture = serveFixture("..");
+    using dir = tempDir("fsr-root-error-above", {
+      "apps/[api/server.ts": fixture["apps/api/server.ts"],
+      "apps/[api/start.ts": fixture["apps/api/start.ts"],
+      ...pages("apps"),
+    });
+    const { stdout, stderr, exitCode } = await run(path.join(String(dir), "apps", "[api"), ["start.ts"]);
+    expect(stdout, stderr).toBe("/ 200 index\n/blog/hello-world 200 slug:hello-world\n");
+    expect(stderr).toContain(`error: "/[api/server.ts" is not a valid route\n`);
+    const indent = Buffer.alloc(`error: "/`.length, " ").toString();
+    expect(stderr).toContain(`\n${indent}Missing "]" to match this route parameter\n`);
+    expect(exitCode).toBe(0);
+  });
+
   // Every segment of the project root becomes "../" in the label of a file outside it. The label can
   // outgrow a path buffer while both paths fit in one. The label is then the path below the router root.
   // MAX_PATH_BYTES is 98302 on Windows, and no two valid paths there give a label that long.

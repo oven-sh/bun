@@ -1155,8 +1155,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                         return Ok(());
                     }
                 } else if goal == TraceDependencyGoal::NoStop {
-                    // The importers of a server-imported stylesheet are in the
-                    // server graph. A rebuild keeps the asset URL: no reload.
+                    // A failure reaches the server-side importers. A rebuild does not: same asset URL.
                     let key = bun_ptr::RawSlice::new(
                         &*self.bundled_files.keys()[file_index.get() as usize],
                     );

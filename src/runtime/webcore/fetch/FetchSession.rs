@@ -10,7 +10,7 @@ use bun_http_jsc::headers_jsc::from_fetch_headers;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSValue, JsCell, JsCellRefExt as _, JsClass as _,
-    JsRef, JsResult, URLJsc as _,
+    JsError, JsRef, JsResult, URLJsc as _,
 };
 
 use crate::socket::ssl_config::{SSLConfig, SSLConfigFromJs as _};
@@ -37,6 +37,8 @@ pub(crate) struct TlsOption {
     pub(crate) ssl_config: Option<http::ssl_config::SharedPtr>,
     pub(crate) reject_unauthorized: Option<bool>,
     pub(crate) check_server_identity: Option<JSValue>,
+    /// A `checkServerIdentity` that is not a function, which a request ignores.
+    pub(crate) ignored_check_server_identity: Option<JSValue>,
 }
 
 pub(crate) fn parse_tls(
@@ -48,6 +50,7 @@ pub(crate) fn parse_tls(
         ssl_config: None,
         reject_unauthorized: None,
         check_server_identity: None,
+        ignored_check_server_identity: None,
     };
     if let Some(reject) = tls.get(global, "rejectUnauthorized")? {
         if reject.is_boolean() {
@@ -59,6 +62,8 @@ pub(crate) fn parse_tls(
     if let Some(callback) = tls.get(global, "checkServerIdentity")? {
         if callback.is_cell() && callback.is_callable() {
             parsed.check_server_identity = Some(callback);
+        } else if !callback.is_null() {
+            parsed.ignored_check_server_identity = Some(callback);
         }
     }
     if let Some(config) = SSLConfig::from_js(vm, global, tls)? {
@@ -80,6 +85,14 @@ fn proxy_href(global: &JSGlobalObject, value: JSValue) -> JsResult<Box<[u8]>> {
     Ok(href.to_owned_slice().into_boxed_slice())
 }
 
+fn invalid_proxy(global: &JSGlobalObject, proxy_arg: JSValue) -> JsError {
+    global.throw_invalid_argument_type_value2(
+        "proxy",
+        "a string, a URL, an object with a \"url\", or false",
+        proxy_arg,
+    )
+}
+
 /// `None`: the value does not select a proxy policy (`undefined`, `null`,
 /// `""`, an object without `url`), so the caller's default applies.
 pub(crate) fn parse_proxy(
@@ -90,11 +103,7 @@ pub(crate) fn parse_proxy(
         // `true` names no proxy; treating it as "inherit" would go direct
         // wherever the environment has none.
         if proxy_arg.as_boolean() {
-            return Err(global.throw_invalid_argument_type_value2(
-                "proxy",
-                "a string, a URL, an object with a \"url\", or false",
-                proxy_arg,
-            ));
+            return Err(invalid_proxy(global, proxy_arg));
         }
         return Ok(Some(ProxyOption::Direct));
     }
@@ -264,6 +273,13 @@ impl FetchSession {
         if let Some(tls) = options.get(global, "tls")? {
             if tls.is_object() {
                 let parsed = parse_tls(vm, global, tls)?;
+                if let Some(value) = parsed.ignored_check_server_identity {
+                    return Err(global.throw_invalid_property_type_value(
+                        b"tls.checkServerIdentity",
+                        b"function",
+                        value,
+                    ));
+                }
                 this.ssl_config = parsed.ssl_config;
                 this.reject_unauthorized = parsed.reject_unauthorized;
                 if let Some(callback) = parsed.check_server_identity {
@@ -278,6 +294,12 @@ impl FetchSession {
 
         if let Some(proxy) = options.get(global, "proxy")? {
             this.proxy = parse_proxy(global, proxy)?;
+            // `fetch()` ignores a `proxy` that selects no policy (#25414). A
+            // session exists to pin the route, so only `null` and `""` are
+            // absent here.
+            if this.proxy.is_none() && !proxy.is_null() && !proxy.is_string() {
+                return Err(invalid_proxy(global, proxy));
+            }
         }
 
         if let Some(unix) = options.get(global, "unix")? {
@@ -305,13 +327,26 @@ impl FetchSession {
                         http::normalize_idle_timeout_seconds(seconds.ceil() as u64);
                 }
                 if let Some(count) = keep_alive.get(global, "maxIdleSockets")? {
+                    const FIELD_NAME: &[u8] = b"keepAlive.maxIdleSockets";
+                    // `validate_integer_range` takes NaN for the default.
+                    if count.is_number() && count.as_number().is_nan() {
+                        return Err(global.throw_range_error(
+                            f64::NAN,
+                            jsc::RangeErrorOptions {
+                                field_name: FIELD_NAME,
+                                min: 1,
+                                max: i64::from(u16::MAX),
+                                ..Default::default()
+                            },
+                        ));
+                    }
                     this.pool.max_idle_sockets = global.validate_integer_range::<u16>(
                         count,
                         this.pool.max_idle_sockets,
                         bun_jsc::IntegerRange {
                             min: 1,
                             max: i128::from(u16::MAX),
-                            field_name: b"keepAlive.maxIdleSockets",
+                            field_name: FIELD_NAME,
                             always_allow_zero: false,
                         },
                     )?;

@@ -20,6 +20,7 @@ use bun_threading::thread_pool as ThreadPoolLib;
 use bun_ast::Index;
 use bun_ast::{self as ast, E, Expr, G, Part};
 use bun_js_parser as js_parser;
+use bun_js_parser::scan::scan_use_directive::scan_use_directive;
 // `BundledAst<'arena>` — the bundler graph stores `'static`-erased
 // ASTs (arena outlives the link step). Use the crate-level alias so the
 // `Success`/helper signatures don't carry an explicit `'static` everywhere.
@@ -2385,12 +2386,14 @@ pub mod parse_worker {
         // pointer (which targets `(*transpiler).resolver`) remains valid.
         let topts = unsafe { &(*transpiler).options };
         // A text, JSON or markdown file can start with the same bytes as a directive.
-        let use_directive: UseDirective =
+        let found_use_directive =
             if !is_empty && topts.server_components && loader.is_javascript_like() {
-                UseDirective::parse(entry_contents).unwrap_or(UseDirective::None)
+                scan_use_directive(entry_contents, bump)
             } else {
-                UseDirective::None
+                None
             };
+        let use_directive =
+            found_use_directive.map_or(UseDirective::None, |(directive, _)| directive);
 
         if (use_directive == UseDirective::Client
         && task.known_target != options::Target::ServerComponentsSsr
@@ -2669,13 +2672,9 @@ pub mod parse_worker {
         // raw `*mut Transpiler` and reborrow `(*transpiler).options` mutably.
         let _ = topts;
         let ast_result: core::result::Result<JSAst, AnyError> =
-            if use_directive == UseDirective::Server {
+            if let Some((UseDirective::Server, range)) = found_use_directive {
                 // Every later step that handles `UseDirective::Server` is a `todo_panic!`.
-                log.add_range_error(
-                    Some(source),
-                    UseDirective::range(entry_contents),
-                    b"\"use server\" is not supported yet",
-                );
+                log.add_range_error(Some(source), range, b"\"use server\" is not supported yet");
                 Err(crate::Error::ParserError)
             } else if !is_empty || loader.handles_empty_file() {
                 get_ast(

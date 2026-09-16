@@ -624,6 +624,64 @@ describe("HTTP server CONNECT", () => {
     },
   );
 
+  test.each([
+    ["default", "false"],
+    ["explicit", "true"],
+  ])("https upgrade sockets honor the %s half-open policy", async (_label, expected) => {
+    const fixture = /* js */ `
+      const https = require("node:https");
+      const explicit = process.env.ALLOW_HALF_OPEN === "true";
+      const deadline = setTimeout(() => {
+        console.error("upgrade socket did not close");
+        process.exit(1);
+      }, 2000);
+      let request;
+      const server = https.createServer({
+        cert: process.env.CERT,
+        key: process.env.KEY,
+        ...(explicit ? { allowHalfOpen: true } : {}),
+      });
+      server.on("upgrade", (_request, socket) => {
+        console.log("allowHalfOpen:" + socket.allowHalfOpen);
+        socket.resume();
+        socket.on("end", () => {
+          console.log("end:" + socket.writable + ":" + socket.writableEnded);
+          if (explicit) socket.destroy();
+        });
+        socket.on("close", () => {
+          console.log("socket:close");
+          server.close(() => {
+            clearTimeout(deadline);
+            console.log("server:close");
+          });
+        });
+        request.destroy();
+      });
+      server.listen(0, "127.0.0.1", () => {
+        request = https.request({
+          hostname: "127.0.0.1",
+          port: server.address().port,
+          rejectUnauthorized: false,
+          headers: { Connection: "Upgrade", Upgrade: "websocket" },
+        });
+        request.on("error", () => {});
+        request.end();
+      });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: { ...bunEnv, CERT: tlsCert.cert, KEY: tlsCert.key, ALLOW_HALF_OPEN: expected },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: `allowHalfOpen:${expected}\nend:true:false\nsocket:close\nserver:close\n`,
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   test.skipIf(isWindows)(
     "AF_UNIX CONNECT sockets whose peer closes first do not spin the loop on EPOLLHUP",
     async () => {

@@ -374,6 +374,9 @@ function Server(options, callback): void {
 
   this[optionsSymbol] = options;
   storeHTTPOptions.$call(this, options);
+  // Plain HTTP keeps its parser socket half-open, while Node's HTTPS server
+  // inherits tls.Server's default and only allows half-open sockets on request.
+  this.allowHalfOpen = this[isTlsSymbol] ? options.allowHalfOpen === true : true;
 
   if (callback) this.on("request", callback);
   return this;
@@ -1486,13 +1489,13 @@ function getNodeHTTPServerSocket() {
     #pendingCallback = null;
     #pendingAbortMessage;
     constructor(server: Server, handle, encrypted) {
-      // allowHalfOpen: node's connectionListener sockets never auto-end the
-      // writable side on the peer's FIN (CONNECT/Upgrade tunnels stay writable);
-      // net.Socket would otherwise default it to false.
+      // Plain HTTP parser sockets stay half-open for CONNECT/Upgrade tunnels.
+      // HTTPS sockets inherit tls.Server's half-open policy instead.
+      const allowHalfOpen = encrypted ? server.allowHalfOpen : true;
       super(
         server[kHighWaterMark] !== undefined
-          ? { highWaterMark: server[kHighWaterMark], allowHalfOpen: true }
-          : { allowHalfOpen: true },
+          ? { highWaterMark: server[kHighWaterMark], allowHalfOpen }
+          : { allowHalfOpen },
       );
       // net.Socket's constructor wires net-handle machinery this class replaces:
       // its 'end' listener installs writeAfterFIN (breaks half-open tunnels), and

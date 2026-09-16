@@ -364,10 +364,12 @@ describe("fs.glob plain patterns", () => {
   ];
   if (!isWindows) plain.push("a:b", "c:/a");
 
-  it.each(plain)("compiles %j like minimatch", pattern => {
-    const compiled = compilePlainPattern(pattern);
-    expect(compiled).toBeDefined();
-    expect(describeMatcher(compiled)).toEqual(describeMatcher(createMatcher(pattern)));
+  describe.each(plain)("%j", pattern => {
+    it("compiles like minimatch", () => {
+      const compiled = compilePlainPattern(pattern);
+      expect(compiled).toBeDefined();
+      expect(describeMatcher(compiled)).toEqual(describeMatcher(createMatcher(pattern)));
+    });
   });
 
   const notPlain = [
@@ -399,8 +401,10 @@ describe("fs.glob plain patterns", () => {
   ];
   if (isWindows) notPlain.push("a:b", "c:/a");
 
-  it.each(notPlain)("leaves %j to minimatch", pattern => {
-    expect(compilePlainPattern(pattern)).toBeUndefined();
+  describe.each(notPlain)("%j", pattern => {
+    it("is left to minimatch", () => {
+      expect(compilePlainPattern(pattern)).toBeUndefined();
+    });
   });
 
   it("leaves a pattern that is too long to minimatch, which throws", () => {

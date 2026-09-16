@@ -22,10 +22,11 @@ function signalCount(count: number) {
   return promise;
 }
 
-// The children exit one at a time, so each exit is one SIGCHLD.
+// One child changes state at a time, and the listener hears each change before the next
+// one. So each change is one SIGCHLD.
 let expectedSignals = 0;
 
-async function childExit(child: string, listening: boolean) {
+async function childExit(child: string, listening: boolean, stopAndContinue = false) {
   const proc = spawn({ cmd: ["cat"], stdin: "pipe", stdout: "pipe", stderr: "inherit" });
 
   // The echo shows that the child runs. The waiter thread called wait4() for it when it was
@@ -33,6 +34,14 @@ async function childExit(child: string, listening: boolean) {
   proc.stdin.write("x");
   await proc.stdin.flush();
   await proc.stdout.getReader().read();
+
+  if (stopAndContinue) {
+    // A listener also hears a child that stops and a child that continues.
+    proc.kill("SIGSTOP");
+    await signalCount(++expectedSignals);
+    proc.kill("SIGCONT");
+    await signalCount(++expectedSignals);
+  }
 
   await proc.stdin.end();
   const exitCode = await proc.exited;
@@ -47,7 +56,7 @@ if (order === "before") process.on("SIGCHLD", onSIGCHLD);
 await childExit("first spawn", order === "before");
 
 if (order === "after") process.on("SIGCHLD", onSIGCHLD);
-await childExit("second spawn", true);
+await childExit("second spawn", true, true);
 
 process.off("SIGCHLD", onSIGCHLD);
 await childExit("listener removed", false);

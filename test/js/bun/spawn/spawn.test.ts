@@ -615,8 +615,9 @@ describe.skipIf(Boolean(process.env.BUN_FEATURE_FLAG_FORCE_WAITER_THREAD) || (!i
   "a SIGCHLD listener and Bun.spawn both see each child exit",
   () => {
     const waiterThread = { "BUN_FEATURE_FLAG_FORCE_WAITER_THREAD": "1", "BUN_GARBAGE_COLLECTOR_LEVEL": "1" };
-    // Number of listener calls after each of the three child exits. The listener is removed before the third.
-    const signals = { before: [1, 2, 2], after: [0, 1, 1] };
+    // Number of listener calls after each of the three child exits. The second child also stops
+    // and continues, which is one call each. The listener is removed before the third child.
+    const signals = { before: [1, 4, 4], after: [0, 3, 3] };
 
     // Not concurrent: a fixture that waits forever is only killed on the timeout of a serial test.
     it.each([

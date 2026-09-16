@@ -1544,7 +1544,7 @@ extern "C" void Bun__onSignalListenerCountChanged(int signalNumber, int listener
 #if !OS(WINDOWS)
 // Call this after the disposition of a signal changed for its JS listeners. Native code that
 // needs the same signal (the spawn waiter thread needs SIGCHLD) takes the disposition back there.
-extern "C" void Bun__onSignalDispositionChanged(int signalNumber, bool hasListeners);
+extern "C" void Bun__onSignalDispositionChanged(int signalNumber);
 #endif
 
 __attribute__((noinline)) static void forwardSignal(int signalNumber)
@@ -1632,7 +1632,9 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
 
         if (auto signalNumber = signalNameToNumberMap->get(eventName.string())) {
             int listenerCount = eventEmitter.listenerCount(eventName);
-            // Mirror the count for the watcher thread's --watch-kill-signal check.
+            // Mirror the count for the watcher thread's --watch-kill-signal check, and for the
+            // spawn waiter thread's SIGCHLD handler. Keep this before the disposition changes below:
+            // that handler can replace forwardSignal at any time and must know the listener by then.
             Bun__onSignalListenerCountChanged(signalNumber, listenerCount);
 #if OS(LINUX)
             // SIGKILL and SIGSTOP cannot be handled, and JSC needs its own signal handler to
@@ -1658,7 +1660,7 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
 #if !OS(WINDOWS)
                         Bun__ensureSignalHandler();
                         installForwardSignalHandler(signalNumber);
-                        Bun__onSignalDispositionChanged(signalNumber, true);
+                        Bun__onSignalDispositionChanged(signalNumber);
 #else
                         signal_handle.handle = Bun__UVSignalHandle__init(
                             eventEmitter.scriptExecutionContext()->jsGlobalObject(),
@@ -1682,7 +1684,7 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
                                 // Don't uninstall the old handler if it's not the one we installed.
                                 signal(signalNumber, oldHandler);
                             }
-                            Bun__onSignalDispositionChanged(signalNumber, false);
+                            Bun__onSignalDispositionChanged(signalNumber);
 #else
                             SignalHandleValue signal_handle = signalToContextIdsMap->get(signalNumber);
                             Bun__UVSignalHandle__close(signal_handle.handle);

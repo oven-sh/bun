@@ -1373,27 +1373,43 @@ pub mod waiter_thread_posix {
                 // Before the sigaction: a JS listener change that replaces `wakeup` after it
                 // must see the flag, so that it installs `wakeup` again.
                 HANDLES_SIGCHLD.store(true, Ordering::SeqCst);
+                // The JS thread and the waiter thread can both be here. With the lock, the
+                // last sigaction has the flags for the last value of `JS_LISTENS_FOR_SIGCHLD`.
+                let _lock = RELOAD_HANDLERS_LOCK.lock();
+                let js_listens = JS_LISTENS_FOR_SIGCHLD.load(Ordering::SeqCst);
                 // SAFETY: sigaction with a valid handler.
                 unsafe {
                     let mut current_mask: libc::sigset_t = bun_core::ffi::zeroed();
                     libc::sigemptyset(&raw mut current_mask);
                     libc::sigaddset(&raw mut current_mask, libc::SIGCHLD);
-                    let act = libc::sigaction {
+                    let mut act = libc::sigaction {
                         sa_sigaction: wakeup as *const () as usize,
                         sa_mask: current_mask,
                         sa_flags: libc::SA_NOCLDSTOP,
                         sa_restorer: None,
                     };
+                    if js_listens {
+                        // A JS listener also hears a stopped or a continued child, as it
+                        // does without the waiter thread.
+                        act.sa_flags &= !libc::SA_NOCLDSTOP;
+                    }
                     libc::sigaction(libc::SIGCHLD, &raw const act, core::ptr::null_mut());
                 }
             }
         }
 
-        /// `process.on("SIGCHLD")` got its first listener or lost its last one, and the
-        /// caller has set the SIGCHLD disposition for that (main thread).
+        /// `process.on("SIGCHLD")` has a listener, or has none any more (main thread). Call
+        /// this before the SIGCHLD disposition changes for that, so that `wakeup` never
+        /// runs for a listener it does not know.
         #[cfg(any(target_os = "linux", target_os = "android"))]
         pub fn set_js_listens_for_sigchld(listens: bool) {
             JS_LISTENS_FOR_SIGCHLD.store(listens, Ordering::SeqCst);
+        }
+
+        /// The caller has set the SIGCHLD disposition for the first JS listener, or for the
+        /// removal of the last one (main thread). `wakeup` takes SIGCHLD back.
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        pub fn on_sigchld_disposition_changed() {
             if HANDLES_SIGCHLD.load(Ordering::SeqCst) {
                 Self::reload_handlers();
                 // A child that exited while `wakeup` was not the handler did not wake the thread.
@@ -1443,6 +1459,9 @@ pub mod waiter_thread_posix {
     /// `wakeup` also does the work of the handler that the listener installed.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     static JS_LISTENS_FOR_SIGCHLD: AtomicBool = AtomicBool::new(false);
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    static RELOAD_HANDLERS_LOCK: bun_threading::Guarded<()> = bun_threading::Guarded::new(());
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     unsafe extern "C" {

@@ -287,6 +287,14 @@ impl Drop for EventLoopEnterNoCheckpointGuard {
     }
 }
 
+/// What [`EventLoop::enter_js`] found.
+enum EnterJs<'a> {
+    /// The callback may be called, inside this scope (none for [`TaskContext::Always`]).
+    Entered(Option<crate::virtual_machine::ContextScope<'a>>),
+    /// The callback must not be called now.
+    CannotEnter,
+}
+
 impl EventLoop {
     /// Before your code enters JavaScript at the top of the event loop, call
     /// `loop.enter()`. If running a single callback, prefer `runCallback` instead.
@@ -461,24 +469,26 @@ impl EventLoop {
         Ok(())
     }
 
-    /// `run_callback*`'s gate; also refuses a function of a realm that
-    /// `bun test --isolate` retired (a killed child's late `onExit`).
+    /// `run_callback*`'s way in: whether `callback` may be called at all, and if so the scope it
+    /// is called inside of. Not with an exception pending, and not a function of a realm that
+    /// `bun test --isolate` retired (a killed child's late `onExit`). `Of(context)` is entered
+    /// for the call; `Always` enters nothing.
     #[inline]
-    fn may_enter_js(callback: JSValue, global_object: &JSGlobalObject) -> bool {
-        !global_object.has_exception()
-            && !(global_object.bun_vm().test_isolation_enabled
-                && callback.is_from_retired_test_isolation_realm())
-    }
-
-    /// The scope a callback of `context` is called inside of.
-    fn entered(
+    fn enter_js<'a>(
         context: TaskContext,
-        global_object: &JSGlobalObject,
-    ) -> Option<crate::virtual_machine::ContextScope<'_>> {
-        match context {
+        callback: JSValue,
+        global_object: &'a JSGlobalObject,
+    ) -> EnterJs<'a> {
+        if global_object.has_exception()
+            || (global_object.bun_vm().test_isolation_enabled
+                && callback.is_from_retired_test_isolation_realm())
+        {
+            return EnterJs::CannotEnter;
+        }
+        EnterJs::Entered(match context {
             TaskContext::Always => None,
             TaskContext::Of(context) => Some(global_object.bun_vm().enter_context(context)),
-        }
+        })
     }
 
     /// When you call a JavaScript function from outside the event loop task
@@ -503,10 +513,9 @@ impl EventLoop {
         // exception already pending — a prior callback's microtasks can request
         // termination (worker.terminate()), and entering JS then would trip
         // executeCallImpl's `assertNoException`.
-        if !Self::may_enter_js(callback, global_object) {
+        let EnterJs::Entered(_context) = Self::enter_js(context, callback, global_object) else {
             return;
-        }
-        let _context = Self::entered(context, global_object);
+        };
         // R-2 noalias mitigation (see PORT_NOTES_PLAN R-2; precedent
         // `b818e70e1c57` NodeHTTPResponse::cork): `&mut self` carries LLVM
         // `noalias`, and `callback.call()` receives nothing derived from
@@ -543,10 +552,9 @@ impl EventLoop {
         this_value: JSValue,
         arguments: &[JSValue],
     ) -> JSValue {
-        if !Self::may_enter_js(callback, global_object) {
+        let EnterJs::Entered(_context) = Self::enter_js(context, callback, global_object) else {
             return JSValue::ZERO;
-        }
-        let _context = Self::entered(context, global_object);
+        };
         // R-2 noalias mitigation — see `run_callback` above.
         let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
         // SAFETY: `this` is the unique live `EventLoop`; short-lived `&mut`.
@@ -1247,10 +1255,9 @@ impl EventLoop {
         this_value: JSValue,
         arguments: &[JSValue],
     ) -> JsResult<JSValue> {
-        if !Self::may_enter_js(callback, global_object) {
+        let EnterJs::Entered(_context) = Self::enter_js(context, callback, global_object) else {
             return Ok(JSValue::UNDEFINED);
-        }
-        let _context = Self::entered(context, global_object);
+        };
         let result = callback.call(global_object, this_value, arguments)?;
         result.ensure_still_alive();
         let jsc_vm = global_object.bun_vm().jsc_vm();

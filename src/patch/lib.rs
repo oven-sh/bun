@@ -578,12 +578,8 @@ impl<'a> Hunk<'a> {
             }
         }
 
-        if original_length != self.header.original.len as usize
-            || patched_length != self.header.patched.len as usize
-        {
-            return false;
-        }
-        true
+        original_length == self.header.original.len as usize
+            && patched_length == self.header.patched.len as usize
     }
 }
 

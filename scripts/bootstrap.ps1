@@ -1,4 +1,4 @@
-# Version: 22
+# Version: 23
 # A script that installs the dependencies needed to build and test Bun on Windows.
 # Supports both x64 and ARM64 using Scoop for package management.
 # Used by Azure [build images] pipeline.
@@ -256,7 +256,7 @@ function Install-CMake {
 }
 
 function Install-Llvm {
-  $LLVM_VERSION = "21.1.8"
+  $LLVM_VERSION = "23.1.1"
   if (Which clang-cl) {
     return
   }

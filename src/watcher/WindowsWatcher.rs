@@ -447,22 +447,23 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
             //   to implement and maintain.
             // - others that i'm not thinking of
 
-            // The JS thread appends to the watchlist under `this.mutex`, and a
-            // growth frees the column this scan reads. Hold the mutex across the
-            // scan and release it around the batch dispatch, which locks itself.
-            let mut guard = this.mutex.lock_guard();
-            let mut n_items = this.watchlist.items_file_path().len();
-            for item_idx in 0..n_items {
-                if item_idx >= n_items {
-                    break;
-                }
+            let mut item_idx = 0;
+            loop {
                 // reshaped for borrowck — `rel` is computed in a scoped
                 // block so the borrows of `this.watchlist` / `this.platform.buf`
                 // are released before we touch `this.watch_events` or hand the
                 // whole `&mut Watcher` to `process_watch_event_batch`.
                 let rel = {
+                    // The JS thread appends under `this.mutex`, and a growth
+                    // frees the column this reads. One item per lock keeps the
+                    // JS thread's own appends flowing during a burst.
+                    let _guard = this.mutex.lock_guard();
+                    let paths = this.watchlist.items_file_path();
+                    if item_idx >= paths.len() {
+                        break;
+                    }
                     let eventpath = &this.platform.buf[..eventpath_len];
-                    let path = &this.watchlist.items_file_path()[item_idx];
+                    let path = &paths[item_idx];
                     let rel = is_parent_or_equal(path.as_ref(), eventpath);
                     bun_core::scoped_log!(
                         watcher,
@@ -476,6 +477,8 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
                     );
                     rel
                 };
+                let index = item_idx;
+                item_idx += 1;
                 // skip unrelated items
                 if rel == ParentEqual::Unrelated {
                     continue;
@@ -484,12 +487,8 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
 
                 // Check if we're about to exceed the watch_events array capacity
                 if event_id >= this.watch_events.len() {
-                    drop(guard);
                     // Process current batch of events
                     process_watch_event_batch(this, event_id)?;
-                    guard = this.mutex.lock_guard();
-                    // `on_file_update` may have evicted entries.
-                    n_items = this.watchlist.items_file_path().len();
                     // passing `this: &mut Watcher` above materialises a fresh Unique
                     // borrow over the whole `Watcher`, which under Stacked Borrows pops the
                     // SharedReadOnly tag that `iter.watcher` (a `*const DirWatcher` derived from
@@ -502,11 +501,9 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
                     event_id = 0;
                 }
 
-                this.watch_events[event_id] =
-                    create_watch_event(&event, item_idx as WatchItemIndex);
+                this.watch_events[event_id] = create_watch_event(&event, index as WatchItemIndex);
                 event_id += 1;
             }
-            drop(guard);
         }
     }
 

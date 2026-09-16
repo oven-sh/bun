@@ -1111,9 +1111,7 @@ pub(crate) mod serialize {
             PseudoClass::ActiveViewTransition => dest.write_str(b":active-view-transition")?,
             PseudoClass::ActiveViewTransitionType { types } => {
                 dest.write_str(b":active-view-transition-type(")?;
-                // A view transition type is a name the page shares with script
-                // (`startViewTransition({ types })`), so a CSS module keeps it as written.
-                dest.write_comma_separated(types.iter(), |d, ty| ty.to_css_with_options(d, false))?;
+                dest.write_comma_separated(types.iter(), |d, ty| ty.to_css(d))?;
                 dest.write_char(b')')?;
             }
 

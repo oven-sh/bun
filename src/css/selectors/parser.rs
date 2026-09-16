@@ -995,8 +995,10 @@ pub enum PseudoClass {
     ActiveViewTransition,
     /// The [:active-view-transition-type()](https://drafts.csswg.org/css-view-transitions-2/#the-active-view-transition-type-pseudo) pseudo class.
     ActiveViewTransitionType {
-        /// A list of view transition types.
-        types: Vec<CustomIdent>,
+        /// The view transition types. Script sets the same names
+        /// (`startViewTransition({ types })`), so they are plain idents that a
+        /// CSS module does not rename.
+        types: Vec<Ident>,
     },
 
     // CSS modules
@@ -1372,8 +1374,10 @@ impl<'a> SelectorParser<'a> {
                 direction: Direction::parse(parser)?,
             },
             // https://drafts.csswg.org/css-view-transitions-2/#the-active-view-transition-type-pseudo
+            // The grammar is `<custom-ident>#`, but Blink takes any ident, so `default`
+            // and the CSS-wide keywords must build too.
             b"active-view-transition-type" => PseudoClass::ActiveViewTransitionType {
-                types: parser.parse_comma_separated(CustomIdent::parse)?,
+                types: parser.parse_comma_separated(Ident::parse)?,
             },
             b"local" if self.options.css_modules.is_some() => PseudoClass::Local {
                 selector: Box::new(Selector::parse(self, parser)?),

@@ -128,6 +128,9 @@ const _: () = {
             name: &[u8],
             input: &mut Parser,
         ) -> Result<Self::Declaration> {
+            // A descriptor with an unknown name, a value the grammar rejects, or
+            // trailing tokens falls through to `Custom` and prints as written, as
+            // in `@font-face`. lightningcss drops an unknown name here.
             let state = input.state();
             crate::match_ignore_ascii_case! { name, {
                 b"navigation" => if let Ok(navigation) = Navigation::parse(input) {

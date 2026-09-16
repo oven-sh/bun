@@ -170,6 +170,7 @@ describe("css", () => {
           :root:active-view-transition { color: blue }
           :root:active-view-transition-type(slide-in, reverse) { color: red }
           :root:ACTIVE-VIEW-TRANSITION-TYPE( Forwards ) { color: green }
+          :root:active-view-transition-type(default, initial) { color: teal }
           @view-transition { navigation: auto; types: slide-in reverse }
           @VIEW-TRANSITION { NAVIGATION: NONE; TYPES: NONE }
           @media (prefers-reduced-motion: no-preference) {
@@ -188,10 +189,18 @@ describe("css", () => {
         ":root:active-view-transition{color:#00f}" +
           ":root:active-view-transition-type(slide-in,reverse){color:red}" +
           ":root:active-view-transition-type(Forwards){color:green}" +
+          ":root:active-view-transition-type(default,initial){color:teal}" +
           "@view-transition{navigation:auto;types:slide-in reverse}" +
           "@view-transition{navigation:none;types:none}" +
           "@media (prefers-reduced-motion:no-preference){@view-transition{navigation:auto}}",
       );
+
+      // The printed text parses back to the same rules.
+      const printed = path.join(String(dir), "printed-" + name);
+      await Bun.write(printed, out);
+      const again = await Bun.build({ entrypoints: [printed], minify: true, throw: true });
+      expect(again.logs.map(String)).toEqual([]);
+      expect(await again.outputs[0].text()).toBe(out);
     },
   );
 
@@ -229,7 +238,7 @@ describe("css", () => {
     using dir = tempDir("css-view-transition-unparsed", {
       "in.css": `
         @view-transition { navigation: sideways; types: a, b; future-descriptor: 1 2 }
-        @view-transition { navigation: auto none; types: none a; types: a none }
+        @view-transition { navigation: auto none; types: none a; types: a none; types: default }
       `,
     });
     const result = await Bun.build({
@@ -241,16 +250,18 @@ describe("css", () => {
     const out = await result.outputs[0].text();
     expect(out.trim()).toBe(
       "@view-transition{navigation:sideways;types:a,b;future-descriptor:1 2}" +
-        "@view-transition{navigation:auto none;types:none a;types:a none}",
+        "@view-transition{navigation:auto none;types:none a;types:a none;types:default}",
     );
   });
 
+  // No browser takes these. The build fails, as it does for `:dir(sideways)`
+  // or for `@font-face` in a style rule.
   test.each([
     [":active-view-transition-type()", "a:active-view-transition-type() { color: red }"],
     [":active-view-transition-type(a b)", "a:active-view-transition-type(a b) { color: red }"],
     [":active-view-transition-type(a,)", "a:active-view-transition-type(a,) { color: red }"],
-    [":active-view-transition-type(inherit)", "a:active-view-transition-type(inherit) { color: red }"],
-    [":active-view-transition-type(1)", "a:active-view-transition-type(1) { color: red }"],
+    [":active-view-transition-type(*)", "a:active-view-transition-type(*) { color: red }"],
+    [':active-view-transition-type("a")', 'a:active-view-transition-type("a") { color: red }'],
     ["@view-transition in a style rule", "a { @view-transition { navigation: auto } }"],
     ["@view-transition with a prelude", "@view-transition foo { navigation: auto }"],
   ])("%s is an error", async (_, source) => {

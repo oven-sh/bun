@@ -45,9 +45,11 @@ test.concurrent("fs.cpSync copies every entry when Array.prototype[Symbol.iterat
     `,
   });
   const { stdout, stderr, exitCode } = await runFixture(String(dir), "fixture.js");
-  expect(stdout).toBe('["1.txt","2.txt","e","e/3.txt"]\n');
-  expect(stderr).toBe("");
-  expect(exitCode).toBe(0);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: '["1.txt","2.txt","e","e/3.txt"]\n',
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 test.concurrent(
@@ -81,9 +83,7 @@ test.concurrent(
     `,
     });
     const { stdout, stderr, exitCode } = await runFixture(String(dir), "fixture.js");
-    expect(stdout).toBe("string hello written+more\n");
-    expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "string hello written+more\n", stderr: "", exitCode: 0 });
   },
 );
 
@@ -123,9 +123,11 @@ test.concurrent("fs streams keep their file descriptor when Promise.prototype.th
   const { stdout, stderr, exitCode } = await runFixture(String(dir), "fixture.js");
   // Stock bun 1.4.0 printed EBADF errors for both streams and seen: [7, 8]:
   // the descriptors passed through the patched then() and came back off by one.
-  expect(stdout).toBe(JSON.stringify({ out: "abcdef", read: "hello", seen: [] }) + "\n");
-  expect(stderr).toBe("");
-  expect(exitCode).toBe(0);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({ out: "abcdef", read: "hello", seen: [] }) + "\n",
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 test.concurrent(

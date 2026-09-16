@@ -914,7 +914,8 @@ function normalizeExecArgs(command, options, callback) {
 // spawnargs[0] is argv0 (normalizeSpawnArguments prepends it); Bun.spawn() takes argv0 separately and wants the program in cmd[0].
 function spawnCommand(file, spawnargs) {
   const cmd = ArrayPrototypeSlice.$call(spawnargs);
-  cmd[0] = file;
+  // Not cmd[0] = file: with no own index 0 (empty args) that assignment reaches a setter on Array.prototype.
+  $putByValDirect(cmd, 0, file);
   return cmd;
 }
 
@@ -1476,8 +1477,9 @@ class ChildProcess extends EventEmitter {
       }
 
       if (hasSocketsToEagerlyLoad) {
-        for (let item of this.stdio) {
-          item?.ref?.();
+        const stdio = this.stdio;
+        for (let i = 0; i < stdio.length; i++) {
+          stdio[i]?.ref?.();
         }
       }
     } catch (ex) {

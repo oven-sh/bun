@@ -106,3 +106,63 @@ test("fork() throws for a non-iterable execArgv", async () => {
     exitCode: 0,
   });
 });
+
+// A throwing iterator is the strict form of the case above: no array may be iterated at all on these
+// paths. spawn() used to for...of its stdio after the child had started, so the caller got the throw
+// while the child kept running.
+test("spawnSync, spawn, and fork never call Array.prototype[Symbol.iterator]", async () => {
+  using dir = tempDir("child-process-iterator-throws", {
+    "fixture.js": `
+      const { spawnSync, spawn, fork } = require("child_process");
+      const printArgv = "console.log(JSON.stringify(process.argv.slice(1)))";
+      const forkOptions = { stdio: ["pipe", "pipe", "pipe", "ipc"] };
+      const closed = child => new Promise(resolve => child.on("close", resolve));
+      const collect = (child, chunks) => child.stdout.on("data", d => chunks.push(d));
+
+      (async () => {
+        spawnSync(process.execPath, ["--version"]);
+        await Promise.all([closed(spawn(process.execPath, ["--version"])), closed(fork("forked.js", [], forkOptions))]);
+
+        const origIterator = Array.prototype[Symbol.iterator];
+        Array.prototype[Symbol.iterator] = function () {
+          throw new Error("Array.prototype[Symbol.iterator] was called");
+        };
+        let sync, child, forked;
+        try {
+          sync = spawnSync(process.execPath, ["-e", printArgv, "a", "b"]);
+          child = spawn(process.execPath, ["-e", printArgv, "a", "b"]);
+          forked = fork("forked.js", ["a", "b"], forkOptions);
+        } finally {
+          // Restore before anything prints, so a failure reports cleanly.
+          Array.prototype[Symbol.iterator] = origIterator;
+        }
+
+        const childOut = [];
+        const forkOut = [];
+        collect(child, childOut);
+        collect(forked, forkOut);
+        await Promise.all([closed(child), closed(forked)]);
+        console.log(
+          JSON.stringify({
+            sync: String(sync.stdout).trim(),
+            async: childOut.join("").trim(),
+            fork: forkOut.join("").trim(),
+          }),
+        );
+      })();
+    `,
+    "forked.js": "console.log(JSON.stringify(process.argv.slice(2)))",
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({ sync: '["a","b"]', async: '["a","b"]', fork: '["a","b"]' }) + "\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});

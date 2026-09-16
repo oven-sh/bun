@@ -5,6 +5,9 @@
 //   https://github.com/nodejs/node/blob/50c35fea9e64d50ab3bb5f359e8523de89d6c798/lib/internal/fs/glob.js
 // plus "fs: fix glob early return skipping sibling entries" (v26.8.0):
 //   https://github.com/nodejs/node/commit/0ea2c86b5b70fdab268597e8c51040c703ee1328
+// The seen cache is keyed by (pattern, segment index) per path, not by the
+// pattern tail as upstream (oven-sh/bun#42876): patterns that end the same way
+// do not block each other, and the results set removes the duplicates.
 // backed by a vendored copy of minimatch (Node's deps/minimatch/index.js, ISC license):
 //   https://github.com/nodejs/node/blob/50c35fea9e64d50ab3bb5f359e8523de89d6c798/deps/minimatch/index.js
 // embedded verbatim below lazyMinimatch(); the vendored block is third-party
@@ -280,17 +283,26 @@ class Cache {
     this.#readdirCache.set(path, val);
     return val;
   }
+  // Returns the indexes of `pattern` that were not recorded for `path`, or null.
   add(path, pattern) {
     let cache = this.#cache.get(path);
     if (!cache) {
       cache = new Set();
       this.#cache.set(path, cache);
     }
-    const originalSize = cache.size;
+    let unseen = null;
     for (const index of pattern.indexes) {
-      cache.add(pattern.cacheKey(index));
+      const key = pattern.cacheKey(index);
+      if (cache.has(key)) {
+        continue;
+      }
+      cache.add(key);
+      if (unseen === null) {
+        unseen = new Set();
+      }
+      unseen.add(index);
     }
-    return cache.size !== originalSize + pattern.indexes.size;
+    return unseen;
   }
   seen(path, pattern, index) {
     return this.#cache.get(path)?.has(pattern.cacheKey(index));
@@ -299,15 +311,15 @@ class Cache {
 
 class Pattern {
   #pattern;
-  #globStrings;
+  #id;
   indexes;
   symlinks;
   realpaths;
   last;
 
-  constructor(pattern, globStrings, indexes, symlinks, realpaths = new Set()) {
+  constructor(pattern, id, indexes, symlinks, realpaths = new Set()) {
     this.#pattern = pattern;
-    this.#globStrings = globStrings;
+    this.#id = id;
     this.indexes = indexes;
     this.symlinks = symlinks;
     this.realpaths = realpaths;
@@ -333,7 +345,18 @@ class Pattern {
     return this.#pattern.at(index);
   }
   child(indexes, symlinks = new Set(), realpaths = this.realpaths) {
-    return new Pattern(this.#pattern, this.#globStrings, indexes, symlinks, realpaths);
+    return new Pattern(this.#pattern, this.#id, indexes, symlinks, realpaths);
+  }
+  sameAs(other) {
+    if (this.#id !== other.#id || this.indexes.size !== other.indexes.size) {
+      return false;
+    }
+    for (const index of this.indexes) {
+      if (!other.indexes.has(index)) {
+        return false;
+      }
+    }
+    return true;
   }
   test(index, path) {
     if (index > this.#pattern.length) {
@@ -353,14 +376,7 @@ class Pattern {
   }
 
   cacheKey(index) {
-    let key = "";
-    for (let i = index; i < this.#globStrings.length; i++) {
-      key += this.#globStrings[i];
-      if (i !== this.#globStrings.length - 1) {
-        key += "/";
-      }
-    }
-    return key;
+    return `${this.#id}:${index}`;
   }
 }
 
@@ -428,11 +444,17 @@ class Glob {
     }
     this.matchers = [];
     this.#patterns = [];
+    const expansions = new Set();
     for (const pat of patterns) {
       const matcher = createMatcher(pat);
       this.matchers.push(matcher);
       for (let i = 0; i < matcher.set.length; i++) {
-        this.#patterns.push(new Pattern(matcher.set[i], matcher.globParts[i], new Set().add(0), new Set()));
+        const expansion = matcher.globParts[i].join("/");
+        if (expansions.has(expansion)) {
+          continue;
+        }
+        expansions.add(expansion);
+        this.#patterns.push(new Pattern(matcher.set[i], this.#patterns.length, new Set().add(0), new Set()));
       }
     }
   }
@@ -550,9 +572,34 @@ class Glob {
       this.#subpatterns.get(path).push(pattern);
     }
   }
+  // Queues `pattern` at `path` once per step.
+  #queueSubpattern(path, pattern) {
+    const queued = this.#subpatterns.get(path);
+    if (queued === undefined) {
+      this.#subpatterns.set(path, [pattern]);
+      return;
+    }
+    for (let i = 0; i < queued.length; i++) {
+      if (queued[i].sameAs(pattern)) {
+        return;
+      }
+    }
+    queued.push(pattern);
+  }
+  // Drops the indexes that `path` was already walked with. Null when none is left.
+  #unseenPattern(path, pattern) {
+    const unseen = this.#cache.add(path, pattern);
+    if (unseen === null) {
+      return null;
+    }
+    if (unseen.size === pattern.indexes.size) {
+      return pattern;
+    }
+    return pattern.child(unseen, pattern.symlinks, pattern.realpaths);
+  }
   #addSubpatterns(path, pattern) {
-    const seen = this.#cache.add(path, pattern);
-    if (seen) {
+    pattern = this.#unseenPattern(path, pattern);
+    if (pattern === null) {
       return;
     }
     const fullpath = resolve(this.#root, path);
@@ -617,7 +664,6 @@ class Glob {
     if (typeof firstPattern === "string") {
       const stat = this.#cache.statSync(join(fullpath, firstPattern));
       if (stat) {
-        setDirentName(stat, firstPattern);
         children = [stat];
       } else {
         return;
@@ -628,8 +674,10 @@ class Glob {
 
     for (let i = 0; i < children.length; i++) {
       const entry = children[i];
-      const entryPath = join(path, entry.name);
-      const entryFullpath = join(fullpath, entry.name);
+      // The Dirent is shared with the readdir cache and keeps its own name.
+      const name = typeof firstPattern === "string" ? firstPattern : entry.name;
+      const entryPath = join(path, name);
+      const entryFullpath = join(fullpath, name);
       this.#cache.addToStatCache(entryFullpath, entry);
       const entryIsDirectory =
         entry.isDirectory() ||
@@ -645,17 +693,17 @@ class Glob {
         const fromSymlink = !this.#followSymlinks && pattern.symlinks.has(index);
 
         if (current === lazyMinimatch().GLOBSTAR) {
-          const isDot = entry.name[0] === ".";
-          const nextMatches = pattern.test(nextIndex, entry.name);
+          const isDot = name[0] === ".";
+          const nextMatches = pattern.test(nextIndex, name);
 
           let nextNonGlobIndex = nextIndex;
           while (pattern.at(nextNonGlobIndex) === lazyMinimatch().GLOBSTAR) {
             nextNonGlobIndex++;
           }
 
-          const matchesDot = isDot && pattern.test(nextNonGlobIndex, entry.name);
+          const matchesDot = isDot && pattern.test(nextNonGlobIndex, name);
 
-          if ((isDot && !matchesDot) || (this.#exclude && this.#exclude(this.#withFileTypes ? entry : entry.name))) {
+          if ((isDot && !matchesDot) || (this.#exclude && this.#exclude(this.#withFileTypes ? entry : name))) {
             continue;
           }
           if (!fromSymlink && entryIsDirectory) {
@@ -693,11 +741,11 @@ class Glob {
             // if this is the last pattern, add to results instead
             const parent = join(path, "..");
             if (nextIndex < last) {
-              if (!this.#subpatterns.has(path) && !this.#cache.seen(path, pattern, nextIndex + 1)) {
-                this.#subpatterns.set(path, [pattern.child(new Set().add(nextIndex + 1))]);
+              if (!this.#cache.seen(path, pattern, nextIndex + 1)) {
+                this.#queueSubpattern(path, pattern.child(new Set().add(nextIndex + 1)));
               }
-              if (!this.#subpatterns.has(parent) && !this.#cache.seen(parent, pattern, nextIndex + 1)) {
-                this.#subpatterns.set(parent, [pattern.child(new Set().add(nextIndex + 1))]);
+              if (!this.#cache.seen(parent, pattern, nextIndex + 1)) {
+                this.#queueSubpattern(parent, pattern.child(new Set().add(nextIndex + 1)));
               }
             } else {
               if (!this.#cache.seen(path, pattern, nextIndex)) {
@@ -712,11 +760,11 @@ class Glob {
           }
         }
         if (typeof current === "string") {
-          if (pattern.test(index, entry.name) && index !== last) {
+          if (pattern.test(index, name) && index !== last) {
             // If current pattern matches entry name
             // the next pattern is a potential pattern
             subPatterns.add(nextIndex);
-          } else if (current === "." && pattern.test(nextIndex, entry.name)) {
+          } else if (current === "." && pattern.test(nextIndex, name)) {
             // If current pattern is ".", proceed to test next pattern
             if (nextIndex === last) {
               this.#results.add(entryPath);
@@ -725,7 +773,7 @@ class Glob {
             }
           }
         }
-        if (typeof current === "object" && pattern.test(index, entry.name)) {
+        if (typeof current === "object" && pattern.test(index, name)) {
           // If current pattern is a regex that matches entry name (e.g *.js)
           // add next pattern to potential patterns, or to results if it's the last pattern
           if (index === last) {
@@ -756,8 +804,8 @@ class Glob {
     }
   }
   async *#iterateSubpatterns(path, pattern) {
-    const seen = this.#cache.add(path, pattern);
-    if (seen) {
+    pattern = this.#unseenPattern(path, pattern);
+    if (pattern === null) {
       return;
     }
     const fullpath = resolve(this.#root, path);
@@ -831,7 +879,6 @@ class Glob {
     if (typeof firstPattern === "string") {
       const stat = await this.#cache.stat(join(fullpath, firstPattern));
       if (stat) {
-        setDirentName(stat, firstPattern);
         children = [stat];
       } else {
         return;
@@ -842,8 +889,9 @@ class Glob {
 
     for (let i = 0; i < children.length; i++) {
       const entry = children[i];
-      const entryPath = join(path, entry.name);
-      const entryFullpath = join(fullpath, entry.name);
+      const name = typeof firstPattern === "string" ? firstPattern : entry.name;
+      const entryPath = join(path, name);
+      const entryFullpath = join(fullpath, name);
       this.#cache.addToStatCache(entryFullpath, entry);
       const entryIsDirectory =
         entry.isDirectory() ||
@@ -861,17 +909,17 @@ class Glob {
         const fromSymlink = !this.#followSymlinks && pattern.symlinks.has(index);
 
         if (current === lazyMinimatch().GLOBSTAR) {
-          const isDot = entry.name[0] === ".";
-          const nextMatches = pattern.test(nextIndex, entry.name);
+          const isDot = name[0] === ".";
+          const nextMatches = pattern.test(nextIndex, name);
 
           let nextNonGlobIndex = nextIndex;
           while (pattern.at(nextNonGlobIndex) === lazyMinimatch().GLOBSTAR) {
             nextNonGlobIndex++;
           }
 
-          const matchesDot = isDot && pattern.test(nextNonGlobIndex, entry.name);
+          const matchesDot = isDot && pattern.test(nextNonGlobIndex, name);
 
-          if ((isDot && !matchesDot) || (this.#exclude && this.#exclude(this.#withFileTypes ? entry : entry.name))) {
+          if ((isDot && !matchesDot) || (this.#exclude && this.#exclude(this.#withFileTypes ? entry : name))) {
             continue;
           }
           if (!fromSymlink && entryIsDirectory) {
@@ -913,11 +961,11 @@ class Glob {
             // if this is the last pattern, add to results instead
             const parent = join(path, "..");
             if (nextIndex < last) {
-              if (!this.#subpatterns.has(path) && !this.#cache.seen(path, pattern, nextIndex + 1)) {
-                this.#subpatterns.set(path, [pattern.child(new Set().add(nextIndex + 1))]);
+              if (!this.#cache.seen(path, pattern, nextIndex + 1)) {
+                this.#queueSubpattern(path, pattern.child(new Set().add(nextIndex + 1)));
               }
-              if (!this.#subpatterns.has(parent) && !this.#cache.seen(parent, pattern, nextIndex + 1)) {
-                this.#subpatterns.set(parent, [pattern.child(new Set().add(nextIndex + 1))]);
+              if (!this.#cache.seen(parent, pattern, nextIndex + 1)) {
+                this.#queueSubpattern(parent, pattern.child(new Set().add(nextIndex + 1)));
               }
             } else {
               if (!this.#cache.seen(path, pattern, nextIndex)) {
@@ -940,11 +988,11 @@ class Glob {
           }
         }
         if (typeof current === "string") {
-          if (pattern.test(index, entry.name) && index !== last) {
+          if (pattern.test(index, name) && index !== last) {
             // If current pattern matches entry name
             // the next pattern is a potential pattern
             subPatterns.add(nextIndex);
-          } else if (current === "." && pattern.test(nextIndex, entry.name)) {
+          } else if (current === "." && pattern.test(nextIndex, name)) {
             // If current pattern is ".", proceed to test next pattern
             if (nextIndex === last) {
               if (!this.#results.has(entryPath)) {
@@ -957,7 +1005,7 @@ class Glob {
             }
           }
         }
-        if (typeof current === "object" && pattern.test(index, entry.name)) {
+        if (typeof current === "object" && pattern.test(index, name)) {
           // If current pattern is a regex that matches entry name (e.g *.js)
           // add next pattern to potential patterns, or to results if it's the last pattern
           if (index === last) {
@@ -976,20 +1024,6 @@ class Glob {
         this.#addSubpattern(entryPath, pattern.child(subPatterns, nSymlinks, nextRealpaths));
       }
     }
-  }
-}
-
-// `name` may not be writable on native Dirent instances.
-function setDirentName(dirent, name) {
-  try {
-    dirent.name = name;
-  } catch {
-    Object.defineProperty(dirent, "name", {
-      value: name,
-      writable: true,
-      enumerable: true,
-      configurable: true,
-    });
   }
 }
 

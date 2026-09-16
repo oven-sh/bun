@@ -593,6 +593,8 @@ pub fn do_patch_commit(
         Output::err(e, "failed renaming patch file to patches dir", ());
         Global::crash();
     }
+    // After an exchange the temporary name holds the patch file that was replaced.
+    let _ = sys::unlinkat(tmpdir, tempfile_name);
 
     let patchfile_path: Box<[u8]> = Box::<[u8]>::from(path_in_patches_dir.as_bytes());
     let _ = sys::unlink(resolve_path::join_z::<platform::Auto>(&[

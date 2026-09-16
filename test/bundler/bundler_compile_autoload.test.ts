@@ -1,4 +1,4 @@
-import { describe } from "bun:test";
+import { describe, expect } from "bun:test";
 import { itBundled } from "./expectBundled";
 
 // Not describe.concurrent: the backend:"cli" cases each spawn a full
@@ -149,6 +149,37 @@ console.log("PRELOAD");
     run: {
       stdout: "PRELOAD\nENTRY",
       setCwd: true,
+    },
+  });
+
+  // A bunfig.toml that does not parse stops the executable with the same report as `bun run`.
+  itBundled("compile/AutoloadBunfigDoesNotParse", {
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        console.log("ENTRY");
+      `,
+    },
+    runtimeFiles: {
+      "/bunfig.toml": `[run]\nbun = "yes"\n`,
+    },
+    run: {
+      exitCode: 1,
+      setCwd: true,
+      validate({ stdout, stderr }) {
+        expect({ stdout, stderr }).toEqual({
+          stdout: "",
+          stderr: [
+            '2 | bun = "yes"',
+            "          ^",
+            "error: Expected boolean",
+            "    at bunfig.toml:2:7",
+            "",
+            "Invalid Bunfig: failed to load bunfig",
+            "",
+          ].join("\n"),
+        });
+      },
     },
   });
 

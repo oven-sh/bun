@@ -126,6 +126,8 @@ struct us_quic_stream_s {
     struct us_quic_hset *hset;
     int headers_delivered;
     int fin_delivered;
+    /* Set by us_quic_flush_from_on_write, cleared by on_write. */
+    int flush_on_write;
     /* ext follows */
 };
 
@@ -718,7 +720,13 @@ static void us_quic_on_read(lsquic_stream_t *stream, lsquic_stream_ctx_t *h) {
 static void us_quic_on_write(lsquic_stream_t *stream, lsquic_stream_ctx_t *h) {
     us_quic_stream_t *s = (us_quic_stream_t *) h;
     lsquic_stream_wantwrite(stream, 0);
+    /* Taken before the callback: a block that on_stream_writable sends (the
+     * client's request) is for the next on_write, see the helper. */
+    int flush = s->flush_on_write;
+    s->flush_on_write = 0;
     if (s->ctx->on_stream_writable) s->ctx->on_stream_writable(s);
+    /* Last, so that it also covers what on_stream_writable wrote. */
+    if (flush) lsquic_stream_flush(stream);
 }
 
 static void us_quic_on_close(lsquic_stream_t *stream, lsquic_stream_ctx_t *h) {
@@ -1128,6 +1136,14 @@ void us_quic_stream_want_write(us_quic_stream_t *s, int want) {
     if (s->stream) lsquic_stream_wantwrite(s->stream, want);
 }
 
+/* lsquic_stream_send_headers only buffers, and a flush is a no-op while lsquic
+ * holds the block back (new connection). on_write runs after lsquic wrote it,
+ * and after a handler that answered at once put its response behind a 1xx. */
+static void us_quic_flush_from_on_write(us_quic_stream_t *s) {
+    s->flush_on_write = 1;
+    lsquic_stream_wantwrite(s->stream, 1);
+}
+
 int us_quic_stream_send_informational(us_quic_stream_t *s, const char *status3) {
     if (!s->stream) return -1;
     char buf[10];
@@ -1136,7 +1152,12 @@ int us_quic_stream_send_informational(us_quic_stream_t *s, const char *status3) 
     struct lsxpack_header xh;
     lsxpack_header_set_offset2(&xh, buf, 0, 7, 7, 3);
     lsquic_http_headers_t lh = { .count = 1, .headers = &xh };
-    return lsquic_stream_send_headers(s->stream, &lh, 0);
+    int r = lsquic_stream_send_headers(s->stream, &lh, 0);
+    if (r == 0) {
+        us_quic_flush_from_on_write(s);
+        s->ctx->pending_write_bytes++;
+    }
+    return r;
 }
 
 int us_quic_stream_send_headers(us_quic_stream_t *s,
@@ -1181,6 +1202,7 @@ int us_quic_stream_send_headers(us_quic_stream_t *s,
     if (buf != stackbuf) us_free(buf);
     if (xh != stackh) us_free(xh);
     if (end_stream && r == 0) lsquic_stream_shutdown(s->stream, 1);
+    if (!end_stream && r == 0) us_quic_flush_from_on_write(s);
     /* Mark the context dirty so drainQuicIfNecessary picks up header-only
      * responses (204/304) that never call us_quic_stream_write. */
     if (r == 0) s->ctx->pending_write_bytes += (unsigned int) total + 1;

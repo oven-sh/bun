@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import path from "node:path";
 
 // Every option here is declared as `string`, `string[]` or `boolean` in
 // bake.d.ts. A value of another type must throw ERR_INVALID_ARG_TYPE from
@@ -208,6 +209,7 @@ test.concurrent("Bun.serve({ app }) rejects a prefix that no request path can ma
         "non-ASCII": "/d\\u00f6cs",
         "route parameter": "/users/:id",
         "wildcard": "/docs/*",
+        "reserved": "/_bun/docs",
         "1 MB": "/" + Buffer.alloc(1024 * 1024, "a").toString(),
       };
       for (const [name, prefix] of Object.entries(cases)) {
@@ -267,6 +269,7 @@ test.concurrent("Bun.serve({ app }) rejects a prefix that no request path can ma
     non-ASCII -> ERR_INVALID_ARG_TYPE: 'fileSystemRouterTypes[0].prefix' can only contain printable ASCII characters, and none of ? # \\ : *
     route parameter -> ERR_INVALID_ARG_TYPE: 'fileSystemRouterTypes[0].prefix' can only contain printable ASCII characters, and none of ? # \\ : *
     wildcard -> ERR_INVALID_ARG_TYPE: 'fileSystemRouterTypes[0].prefix' can only contain printable ASCII characters, and none of ? # \\ : *
+    reserved -> ERR_INVALID_ARG_TYPE: 'fileSystemRouterTypes[0].prefix' cannot be under "/_bun", which Bun reserves
     1 MB -> ERR_INVALID_ARG_TYPE: 'fileSystemRouterTypes[0].prefix' is too long
     routes["/users/:id/*"] -> ERR_INVALID_ARG_TYPE: Directory routes do not support :parameters; use a fixed prefix ending in \`/*\`
     routes["/a//b/*"] -> ERR_INVALID_ARG_TYPE: Directory route paths cannot contain empty segments
@@ -275,5 +278,47 @@ test.concurrent("Bun.serve({ app }) rejects a prefix that no request path can ma
     "
   `);
   expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});
+
+// Only a custom framework can set a prefix, and on main every custom framework
+// aborts `bun build --app` with "panic: Runtime file not found" before a route
+// renders (#32142). Remove the `.todo` when that is fixed.
+test.todo("bun build --app writes each page under the prefix of its router", async () => {
+  using dir = tempDir("bake-app-prefix-build", {
+    "framework.ts": `
+      export function render(req, meta) {
+        return new Response(meta.pageModule.default());
+      }
+      export function prerender(meta) {
+        return { files: { "/index.html": meta.pageModule.default() } };
+      }
+    `,
+    "routes/index.ts": `export default () => "routes/index.ts";`,
+    "routes/about.ts": `export default () => "routes/about.ts";`,
+    "api/ping.ts": `export default () => "api/ping.ts";`,
+    "app.ts": `
+      const router = (root, prefix) => ({ root, prefix, style: "nextjs-pages", serverEntryPoint: "./framework.ts" });
+      export default {
+        app: { framework: { fileSystemRouterTypes: [router("routes", "/docs"), router("api", "/api/v1/")] } },
+      };
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "--app", "./app.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "inherit",
+    stderr: "inherit",
+  });
+  const exitCode = await proc.exited;
+
+  const pages = [...new Bun.Glob("**/index.html").scanSync({ cwd: path.join(String(dir), "dist") })];
+  expect(pages.map(page => page.replaceAll("\\", "/")).sort()).toEqual([
+    "api/v1/ping/index.html",
+    "docs/about/index.html",
+    "docs/index.html",
+  ]);
   expect(exitCode).toBe(0);
 });

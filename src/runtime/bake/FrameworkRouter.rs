@@ -193,6 +193,10 @@ impl Type {
         if strings::tokenize(prefix, b"/").any(|segment| segment == b"." || segment == b"..") {
             return Err("cannot contain a \".\" or \"..\" segment");
         }
+        // `/_bun` holds the dev server's own routes and the build's assets.
+        if strings::tokenize(prefix, b"/").next() == Some(b"_bun".as_slice()) {
+            return Err("cannot be under \"/_bun\", which Bun reserves");
+        }
         Ok(())
     }
 }

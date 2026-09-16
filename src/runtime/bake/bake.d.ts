@@ -253,7 +253,8 @@ declare module "bun" {
        * file `about.tsx` is served at `/docs/about` and `index.tsx` at `/docs`.
        *
        * It must start with `/`. A trailing `/` is ignored. It is a fixed
-       * path: route parameters, `.` and `..` segments are not allowed.
+       * path: route parameters, `.` and `..` segments are not allowed, and
+       * `/_bun` is reserved.
        * @default "/"
        */
       prefix?: string | undefined;

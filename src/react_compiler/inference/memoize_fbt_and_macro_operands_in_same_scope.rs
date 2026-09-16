@@ -95,9 +95,7 @@ fn fbt_tags() -> HashMap<Vec<u8>, MacroDefinition> {
 pub(crate) struct MacroOperands {
     /// The identifier IDs that are fbt/macro operands. TS: the returned `macroValues`.
     pub(crate) values: HashSet<IdentifierId>,
-    /// Not in upstream: the operands that have to print inside the macro call, where fbt
-    /// rejects a variable. The value given to a shallow macro (`fbt.param(name, value)`) is not
-    /// one of them.
+    /// Not in upstream: operands that must print inside the macro call, not `fbt.param()` values.
     pub(crate) inline: HashSet<IdentifierId>,
 }
 

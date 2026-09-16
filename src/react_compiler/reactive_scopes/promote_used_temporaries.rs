@@ -552,8 +552,7 @@ fn visit_hir_function_for_promotion(func_id: FunctionId, state: &mut State, env:
 // Phase 3: PromoteInterposedTemporaries
 // =============================================================================
 
-/// What the evaluation of a temporary, or of a statement, does to state that another evaluation
-/// can observe. Two evaluations conflict when one writes and the other reads or writes.
+/// Two evaluations conflict when one writes state and the other reads or writes it.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Effect {
     None,
@@ -574,26 +573,15 @@ struct Statements {
     write: u32,
 }
 
-/// Not in upstream, which tracks only loads, calls and stores, marks all of them at a statement
-/// with a side effect, and counts the use of a temporary by another temporary as its evaluation.
-///
-/// Codegen prints an unnamed temporary inside the statement that uses it. It prints every other
-/// instruction as a statement where it stands. So a temporary runs after every statement between
-/// its definition and that use. Here each instruction gets a position, and each temporary gets
-/// the effect of the whole expression that it prints as. A use promotes the temporary if a
-/// statement after its definition conflicts with it. The promoted temporary is then a statement
-/// at its own position.
+/// Not in upstream: a use promotes a temporary when a statement after its definition conflicts.
 struct InterState<'a> {
-    /// Keyed by declaration, as in codegen: the use of the result of a value block has another
-    /// identifier than its definition.
+    /// By declaration, as in codegen: a value block result has another identifier at its use.
     temporaries: IdMap<DeclarationId, Temporary>,
     position: u32,
     statements: Statements,
-    /// Inside a value block, an instruction with no temporary result prints in place in the
-    /// expression of that block. It is a statement only for the uses inside the same block.
+    /// Statements that print in place inside the value block being visited. They count only there.
     value_block_statements: Option<Statements>,
-    /// A macro such as fbt rejects a variable in place of these operands. They stay inline, and
-    /// the operands inside them get the names.
+    /// fbt wants these inside the macro call: they stay inline and their operands get the names.
     inline_macro_operands: &'a HashSet<IdentifierId>,
     operands_of_macro_operands: IdMap<DeclarationId, Vec<Place>>,
 }
@@ -762,8 +750,7 @@ fn promote_interposed_place(
     Effect::None
 }
 
-/// Visits the operand that was defined last first: once it is promoted, it is a statement
-/// between the definition and the use of the operands before it.
+/// Last defined first: a promoted operand becomes a statement ahead of the earlier operands.
 fn promote_interposed_operands(
     mut operands: Vec<Place>,
     state: &mut State,
@@ -793,8 +780,7 @@ fn promote_interposed_operands(
     effect
 }
 
-/// If an identifier is const, we don't need to worry about it
-/// being mutated between being loaded and being used
+/// A const cannot change between being loaded and being used.
 fn is_reassignable(id: IdentifierId, consts: &HashSet<IdentifierId>, env: &Environment) -> bool {
     let identifier = &env.identifiers[id.0 as usize];
     matches!(identifier.name, Some(IdentifierName::Named(_))) && !consts.contains(&id)
@@ -969,8 +955,7 @@ fn promote_interposed_instruction(
             }
             inter_state.temporary(declaration_id, effect);
         }
-        // If we've stripped the lvalue or promoted the lvalue, then we will emit this
-        // instruction as a statement in codegen.
+        // With no lvalue, or a named one, codegen emits this instruction as a statement.
         _ => inter_state.statement(effect),
     }
     effect
@@ -1139,8 +1124,7 @@ fn promote_interposed_terminal(
             }
         }
         ReactiveTerminal::Switch { test, cases, .. } => {
-            // Lowering evaluates the case tests ahead of the discriminant. Codegen prints them
-            // in place, where they run after it, so a name would move them ahead of it.
+            // Case tests are lowered before the discriminant and print after it: never name them.
             let mut effect = promote_interposed_place(test, state, inter_state, consts, env);
             for case in cases {
                 if let Some(t) = &case.test {

@@ -374,3 +374,63 @@ describe("headers queued before the handshake", () => {
     client.close();
   });
 });
+
+describe("a body write after a refused header block", () => {
+  // lsquic refuses a header block with a value over 65535 bytes, so
+  // sendHeaders() returns false and the body write that follows fails with
+  // EILSEQ. That failure never clears with a write event: the stream must be
+  // reset with H3_INTERNAL_ERROR, not retried on every engine tick.
+  test("resets the stream with H3_INTERNAL_ERROR instead of retrying forever", async () => {
+    const H3_INTERNAL_ERROR = 0x102n;
+    const serverSide = Promise.withResolvers<{ sent: boolean; error: any }>();
+    await using server = await listen(
+      async serverSession => {
+        serverSession.onstream = (stream: any) => {
+          stream.closed.catch(() => {});
+        };
+        await serverSession.closed.catch(() => {});
+      },
+      {
+        sni: { "*": { keys: [key], certs: [cert] } },
+        transportParams: { maxIdleTimeout: 1 },
+        onheaders(this: any) {
+          const sent = this.sendHeaders({ ":status": "200", "x-one": Buffer.alloc(70000, "~").toString() });
+          this.writer.writeSync(new TextEncoder().encode("body"));
+          this.writer.endSync();
+          this.closed.then(
+            () => serverSide.resolve({ sent, error: undefined }),
+            (error: any) => serverSide.resolve({ sent, error }),
+          );
+        },
+      },
+    );
+
+    const client = await connect(server.address, {
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 1 },
+      onerror() {},
+    });
+    await client.opened;
+    const stream = await client.createBidirectionalStream({
+      headers: { ":method": "GET", ":path": "/", ":scheme": "https", ":authority": "localhost" },
+    });
+
+    const clientError = await stream.closed.then(
+      () => undefined,
+      (error: any) => error,
+    );
+    const { sent, error: serverError } = await serverSide.promise;
+    client.close();
+
+    expect(sent).toBe(false);
+    expect({ code: clientError?.code, errorCode: clientError?.errorCode }).toEqual({
+      code: "ERR_QUIC_APPLICATION_ERROR",
+      errorCode: H3_INTERNAL_ERROR,
+    });
+    expect({ code: serverError?.code, errorCode: serverError?.errorCode }).toEqual({
+      code: "ERR_QUIC_APPLICATION_ERROR",
+      errorCode: H3_INTERNAL_ERROR,
+    });
+  });
+});

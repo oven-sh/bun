@@ -477,6 +477,32 @@ impl QuicStream {
         }
     }
 
+    /// `lsquic_stream_write` returns -1 only for a send side that no write
+    /// event reopens: no header block was sent (`EILSEQ`), the side was reset
+    /// (`ECONNRESET`) or finished (`EBADF`). Flow control is a short or zero
+    /// write. A retry from `on_write` would run on every engine tick until
+    /// the connection idles out, so the queue is dropped and the stream is
+    /// reset with the application's internal error code.
+    fn fail_outbound(&self, s: &lsquic::Stream) {
+        let code = self
+            .session_ref()
+            .map_or(1, QuicSession::internal_error_code);
+        self.outbound.with_mut(|o| {
+            o.data.clear();
+            o.end = PendingEnd::None;
+        });
+        self.with_state(|st| {
+            st.write_ended = 1;
+            st.reset = 1;
+            if st.reset_code == 0 {
+                st.reset_code = code;
+            }
+        });
+        self.wrote_to_lsquic.set(true);
+        s.want_write(false);
+        s.reset(code);
+    }
+
     fn drain_outbound(&self) {
         let Some(s) = self.ls() else { return };
         loop {
@@ -489,7 +515,11 @@ impl QuicStream {
                 (a.to_vec(), a.len())
             };
             let n = s.write(&slice);
-            if n <= 0 {
+            if n < 0 {
+                self.fail_outbound(&s);
+                return;
+            }
+            if n == 0 {
                 self.note_write_blocked();
                 break;
             }

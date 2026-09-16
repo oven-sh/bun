@@ -1433,6 +1433,13 @@ impl CapturedWriter {
                 e.syscall
             );
             self.err = Some(e);
+            // This is the last completion taken: the reader can be freed by
+            // what follows, and the chunks still queued name it.
+            if let Some(writer) = &self.writer {
+                writer.cancel_chunks(io_writer::ChildPtr::subproc_capture(
+                    std::ptr::from_mut(self).cast::<c_void>(),
+                ));
+            }
         } else if !all_written {
             return Yield::Suspended;
         }

@@ -955,6 +955,41 @@ describe("bunshell", () => {
         .quiet();
       expect(exitCode).toBe(0);
     });
+
+    // What a subprocess prints is forwarded one chunk per read, and the first failure is its last completion.
+    // Nothing reads the shell's stdout here, so the chunks queue up behind a full pipe until it is closed.
+    test("a subprocess's forwarded output", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          import { $ } from "bun";
+          const producer = 'for (let i = 0; i < 64; i++) process.stdout.write(Buffer.alloc(65536, "x")); process.stderr.write("DONE");';
+          await $\`\${process.execPath} -e \${producer}\`.nothrow();
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      let stderr = "";
+      const decoder = new TextDecoder();
+      const errors = proc.stderr.getReader();
+      while (!stderr.includes("DONE")) {
+        const { value, done } = await errors.read();
+        if (done) break;
+        stderr += decoder.decode(value, { stream: true });
+      }
+      await proc.stdout.cancel();
+      while (true) {
+        const { value, done } = await errors.read();
+        if (done) break;
+        stderr += decoder.decode(value, { stream: true });
+      }
+      expect({ stderr, signalCode: proc.signalCode }).toEqual({ stderr: "DONE", signalCode: null });
+      expect(await proc.exited).toBe(0);
+    });
   });
 
   // A pipeline's pipes and a child's stdio pipes are created side by side in one process. Each

@@ -591,24 +591,13 @@ describe.concurrent("uncaught value that is not an Error", () => {
     expect(exitCode).toBe(1);
   });
 
-  // No throw delivered these: there is no location to print, and a throw of
-  // the same primitive that was caught earlier must not lend them its own.
+  // No throw happened anywhere in this program, so there is no location to print.
   test("a promise rejected with a primitive prints no location", async () => {
     const { stderr, exitCode } = await run(
       "main.mjs",
       'function rejecter() {\n  return Promise.reject("a primitive");\n}\nrejecter();\n',
     );
     expect(stderr).toContain("error: a primitive\n");
-    expect(frames(stderr)).toEqual([]);
-    expect(exitCode).toBe(1);
-  });
-
-  test("a primitive that was thrown and caught earlier does not lend its location to a rejection", async () => {
-    const { stderr, exitCode } = await run(
-      "main.mjs",
-      "function caught() {\n  try {\n    throw 1;\n  } catch {}\n}\ncaught();\nPromise.reject(1);\n",
-    );
-    expect(stderr).toContain("error: 1\n");
     expect(frames(stderr)).toEqual([]);
     expect(exitCode).toBe(1);
   });

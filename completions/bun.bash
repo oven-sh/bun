@@ -8,6 +8,29 @@ _compgen_reply() {
     done <<< "${comp_out}"
 }
 
+_filter_literal_reply() {
+    local item
+    for item in "$@"; do
+        if [[ -n "${item}" && "${item}" == "${cur_word}"* ]]; then
+            COMPREPLY+=( "${item}" )
+        fi
+    done
+}
+
+_filter_words_reply() {
+    local raw_words="${1}"
+    local item
+    local reset
+    reset=$(shopt -p -u -s noglob 2>/dev/null)
+    set -f
+    for item in ${raw_words}; do
+        if [[ -n "${item}" && "${item}" == "${cur_word}"* ]]; then
+            COMPREPLY+=( "${item}" )
+        fi
+    done
+    eval "${reset}"
+}
+
 _compgen_file_reply() {
     local comp_out item
     comp_out=$(compgen -f "$@")
@@ -45,7 +68,7 @@ _read_scripts_in_package_json() {
     local scripts
     scripts=$(bun getcompletes s 2>/dev/null)
     if [[ -n "${scripts}" ]]; then
-        _compgen_reply -W "${scripts}" -- "${cur_word}"
+        _filter_words_reply "${scripts}"
         return 0
     fi
 
@@ -76,7 +99,7 @@ _read_scripts_in_package_json() {
     done < "${pkg_file}"
 
     if (( ${#script_names[@]} > 0 )); then
-        _compgen_reply -W "${script_names[*]}" -- "${cur_word}"
+        _filter_literal_reply "${script_names[@]}"
     fi
 }
 
@@ -226,7 +249,7 @@ _bun_completions_inner() {
             local bins
             bins=$(bun getcompletes b 2>/dev/null)
             if [[ -n "${bins}" ]]; then
-                _compgen_reply -W "${bins}" -- "${cur_word}"
+                _filter_words_reply "${bins}"
             fi
             _file_arguments "!*.@(js|ts|jsx|tsx|mjs|cjs)"
             _long_short_completion "--version --cwd --help --silent -v -h" "-v -h"
@@ -247,7 +270,7 @@ _bun_completions_inner() {
             local bins
             bins=$(bun getcompletes b 2>/dev/null)
             if [[ -n "${bins}" ]]; then
-                _compgen_reply -W "${bins}" -- "${cur_word}"
+                _filter_words_reply "${bins}"
             fi
             _file_arguments
             _long_short_completion "--bun --install --help -h" "-h"
@@ -341,7 +364,7 @@ _bunx_completions() {
         local bins
         bins=$(bun getcompletes b 2>/dev/null)
         if [[ -n "${bins}" ]]; then
-            _compgen_reply -W "${bins}" -- "${cur_word}"
+            _filter_words_reply "${bins}"
         fi
         _file_arguments
     fi

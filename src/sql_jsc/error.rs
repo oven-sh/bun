@@ -22,8 +22,6 @@ pub enum Error {
     UnsupportedArrayType,
     #[error("JSError")]
     JSError,
-    #[error("AuthenticationFailed")]
-    AuthenticationFailed,
     #[error("InvalidBinaryValue")]
     InvalidBinaryValue,
     #[error("Thrown")]
@@ -53,7 +51,6 @@ impl Error {
             Self::InvalidServerSignature => "InvalidServerSignature",
             Self::UnsupportedArrayType => "UnsupportedArrayType",
             Self::JSError => "JSError",
-            Self::AuthenticationFailed => "AuthenticationFailed",
             Self::InvalidBinaryValue => "InvalidBinaryValue",
             Self::Thrown => "Thrown",
             Self::Alloc(_) => "OutOfMemory",
@@ -72,14 +69,11 @@ pub trait ThrowSqlError {
 
 impl ThrowSqlError for bun_jsc::JSGlobalObject {
     fn throw_sql_error(&self, err: Error, fmt: &'static str) -> bun_jsc::JsError {
-        use bun_jsc::StringJsc;
         if matches!(err, Error::Alloc(_)) {
             return self.throw_out_of_memory();
         }
         debug_assert!(err != Error::JSError);
-        let msg = format!("{} {}", err.name(), fmt);
-        let instance = bun_core::String::borrow_utf8(msg.as_bytes()).to_error_instance(self);
-        self.throw_value(instance)
+        self.throw(format_args!("{} {}", err.name(), fmt))
     }
 }
 

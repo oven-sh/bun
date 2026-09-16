@@ -5,7 +5,7 @@ use std::time::Instant;
 
 #[cfg(unix)]
 use crate::api::bun::process::SpawnResultExt as _;
-use crate::api::bun::process::{self as spawn, Process, Rusage, SpawnOptions, Status};
+use crate::api::bun::process::{self as spawn, Rusage, SpawnOptions, Status};
 use crate::cli::Command;
 use crate::cli::filter_arg as FilterArg;
 use crate::cli::run_command::{ConfigureEnvOptions, RunCommand};
@@ -40,9 +40,7 @@ struct ScriptConfig {
 }
 
 struct ProcessInfo {
-    // Intrusive ref-counted (`ThreadSafeRefCount<Process>`); raw `*mut` matches
-    // `to_process()` and `set_exit_handler` callers.
-    ptr: *mut Process,
+    process: spawn::ProcessHandle,
     status: Status,
     start_time: Instant,
     /// Set together with `status` when the exit arrives.
@@ -145,7 +143,7 @@ impl<'a> ProcessHandle<'a> {
         let mut spawned = spawned;
         #[cfg(windows)]
         let (stdout_pipe, stderr_pipe) = (spawned.stdout.take(), spawned.stderr.take());
-        let process = spawned.to_process(EventLoopHandle::init_mini(state.event_loop));
+        let process = spawned.to_process_handle(EventLoopHandle::init_mini(state.event_loop));
 
         let handle_ptr = std::ptr::from_mut::<ProcessHandle<'a>>(handle).cast::<c_void>();
         handle.stdout.set_parent(handle_ptr);
@@ -183,21 +181,20 @@ impl<'a> ProcessHandle<'a> {
         }
 
         handle.process = Some(ProcessInfo {
-            ptr: process,
+            process,
             status: Status::Running,
             start_time,
             end_time: None,
         });
-        // SAFETY: `process` was just allocated by `to_process` (heap::alloc);
-        // sole owner until reaped, owner backref set before reap callback can fire.
-        let process = unsafe { &mut *process };
+        let handle_ptr = std::ptr::from_mut::<ProcessHandle<'a>>(handle);
+        // The exit handler re-borrows `handle.process`, so go through the
+        // `Process` allocation itself rather than a borrow of the slot.
+        // SAFETY: just spawned; the slot's handle keeps it live.
+        let process = unsafe { &mut *handle.process.as_ref().unwrap().process.as_ptr() };
         // SAFETY: `handle` is the live `ProcessHandle` slot in `State.handles`;
         // it owns `process` and outlives it.
         process.set_exit_handler(unsafe {
-            bun_spawn::ProcessExit::new(
-                bun_spawn::ProcessExitKind::FilterRunHandle,
-                std::ptr::from_mut::<ProcessHandle<'a>>(handle),
-            )
+            bun_spawn::ProcessExit::new(bun_spawn::ProcessExitKind::FilterRunHandle, handle_ptr)
         });
 
         match process.watch_or_reap() {
@@ -416,7 +413,11 @@ impl<'a> State<'a> {
             }
         }
         if self.pretty_output {
-            let _ = self.redraw(false);
+            // On abort `finalize` draws the last frame; drawing it here too
+            // would print everything twice once it no longer fits the screen.
+            if !self.aborted {
+                let _ = self.redraw(false);
+            }
         } else {
             self.draw_buf.clear();
             // flush any remaining buffer
@@ -519,14 +520,28 @@ impl<'a> State<'a> {
                 self.draw_buf.extend_from_slice(b"\x1b[1A\x1b[K");
             }
         }
+        // While scripts are running every chunk redraws the whole frame, so cap
+        // it to the terminal: each script shows the tail of its output. The
+        // final frame (and abort, to aid debugging) prints everything unless
+        // --elide-lines says otherwise.
+        let final_frame = is_abort || self.is_done();
+        let rows = bun_core::output::File::from(bun_core::Fd::stdout())
+            .winsize()
+            .filter(|w| w.row > 0)
+            .map_or(24, |w| w.row as usize);
+        let per_script_cap = (rows.saturating_sub(1) / self.handles.len().max(1))
+            .saturating_sub(3)
+            .max(1);
         // Reshaped for borrowck — iterating handles by index since draw_buf is also &mut self.
         for idx in 0..self.handles.len() {
             let handle = &self.handles[idx];
-            // normally we truncate the output to 10 lines, but on abort we print everything to aid debugging
+            let user_cap = handle.config.elide_count.filter(|&n| n > 0);
             let elide_lines = if is_abort {
                 None
+            } else if final_frame {
+                user_cap
             } else {
-                Some(handle.config.elide_count.unwrap_or(10))
+                Some(user_cap.map_or(per_script_cap, |n| n.min(per_script_cap)))
             };
             let e = Self::elide(&handle.buffer, elide_lines);
 
@@ -651,9 +666,7 @@ impl<'a> State<'a> {
             // SAFETY: points into `self.handles`, live for the whole run loop.
             if let Some(proc) = unsafe { (*handle).process.as_ref() } {
                 // if we get an error here we simply ignore it
-                // SAFETY: proc.ptr is a live `*mut Process` (set in start(); leaked
-                // until program exit per on_process_exit note).
-                let _ = unsafe { (*proc.ptr).kill(bun_sys::SignalCode::SIGINT.0) };
+                let _ = proc.process.kill(bun_sys::SignalCode::SIGINT.0);
             }
             // An already-exited handle may be waiting on pipes a grandchild
             // still holds; with `aborted` set this finishes it now. Killed
@@ -898,23 +911,9 @@ pub(crate) fn run_scripts_with_filter(
             // Exit silently with success when --if-present is set
             Global::exit(0);
         }
-        if ctx.workspaces {
-            Output::err_generic(
-                "No workspace packages have script \"{s}\"",
-                (bstr::BStr::new(script_name),),
-            );
-        } else {
-            let patterns: Vec<&[u8]> = ctx.filters.iter().map(|f| &**f).collect();
-            Output::err_generic(
-                "{}",
-                (bstr::BStr::new(
-                    &bun_install::package_manager::workspace_selection::unmatched_message(
-                        &patterns,
-                    ),
-                ),),
-            );
-        }
-        Global::exit(1);
+        let quoted =
+            bun_install::package_manager::workspace_selection::quote_patterns(&[script_name]);
+        selected.error_script_not_found(&*ctx, &quoted);
     }
 
     // SAFETY: Transpiler::init always sets `env` to the process-lifetime singleton.

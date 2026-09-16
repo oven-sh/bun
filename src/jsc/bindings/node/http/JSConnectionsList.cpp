@@ -62,13 +62,16 @@ JSArray* JSConnectionsList::all(JSGlobalObject* globalObject)
     JSValue item;
     size_t i = 0;
     while (iter->next(globalObject, item)) {
+        RETURN_IF_EXCEPTION(scope, nullptr);
         JSHTTPParser* parser = dynamicDowncast<JSHTTPParser>(item);
         if (!parser) {
             continue;
         }
 
         result->putDirectIndex(globalObject, i++, parser);
+        RETURN_IF_EXCEPTION(scope, nullptr);
     }
+    RETURN_IF_EXCEPTION(scope, nullptr);
 
     return result;
 }
@@ -88,6 +91,7 @@ JSArray* JSConnectionsList::idle(JSGlobalObject* globalObject)
     JSValue item;
     size_t i = 0;
     while (iter->next(globalObject, item)) {
+        RETURN_IF_EXCEPTION(scope, nullptr);
         JSHTTPParser* parser = dynamicDowncast<JSHTTPParser>(item);
         if (!parser) {
             continue;
@@ -95,8 +99,10 @@ JSArray* JSConnectionsList::idle(JSGlobalObject* globalObject)
 
         if (parser->impl()->lastMessageStart() == 0) {
             result->putDirectIndex(globalObject, i++, parser);
+            RETURN_IF_EXCEPTION(scope, nullptr);
         }
     }
+    RETURN_IF_EXCEPTION(scope, nullptr);
 
     return result;
 }
@@ -116,13 +122,16 @@ JSArray* JSConnectionsList::active(JSGlobalObject* globalObject)
     JSValue item;
     size_t i = 0;
     while (iter->next(globalObject, item)) {
+        RETURN_IF_EXCEPTION(scope, nullptr);
         JSHTTPParser* parser = dynamicDowncast<JSHTTPParser>(item);
         if (!parser) {
             continue;
         }
 
         result->putDirectIndex(globalObject, i++, parser);
+        RETURN_IF_EXCEPTION(scope, nullptr);
     }
+    RETURN_IF_EXCEPTION(scope, nullptr);
 
     return result;
 }
@@ -142,6 +151,7 @@ JSArray* JSConnectionsList::expired(JSGlobalObject* globalObject, uint64_t heade
     JSValue item;
     size_t i = 0;
     while (iter->next(globalObject, item)) {
+        RETURN_IF_EXCEPTION(scope, nullptr);
         JSHTTPParser* parser = dynamicDowncast<JSHTTPParser>(item);
         if (!parser) {
             continue;
@@ -149,9 +159,12 @@ JSArray* JSConnectionsList::expired(JSGlobalObject* globalObject, uint64_t heade
 
         if ((!parser->impl()->headersCompleted() && headersDeadline > 0 && parser->impl()->lastMessageStart() < headersDeadline) || (requestDeadline > 0 && parser->impl()->lastMessageStart() < requestDeadline)) {
             result->putDirectIndex(globalObject, i++, item);
+            RETURN_IF_EXCEPTION(scope, nullptr);
             active->remove(globalObject, item);
+            RETURN_IF_EXCEPTION(scope, nullptr);
         }
     }
+    RETURN_IF_EXCEPTION(scope, nullptr);
 
     return result;
 }

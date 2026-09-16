@@ -1,5 +1,5 @@
-// Scrapes `// HOST_EXPORT(SymbolName[, abi])` markers from `src/runtime/**/*.rs`
-// and `src/jsc/**/*.rs`, classifies the safe-signature impl that follows, and
+// Scrapes `// HOST_EXPORT(SymbolName[, abi])` markers from `src/runtime/**/*.rs`,
+// `src/jsc/**/*.rs` and `src/http_jsc/**/*.rs`, classifies the safe-signature impl that follows, and
 // emits one centralised `${codegenDir}/generated_host_exports.rs` containing
 // every `#[unsafe(no_mangle)] extern "C"` thunk. The thunk converts raw C
 // pointers back to safe `&`/`&mut` borrows and routes through
@@ -35,15 +35,15 @@
 // Anything that doesn't fit `generic` (lifetimes, generics, `impl Trait`)
 // errors at codegen time with the offending file:line.
 //
-// The generator also walks every `unsafe extern "C" {` block under `src/jsc/`
-// and `src/runtime/` and emits a per-file tally as a trailing comment block
+// The generator also walks every `unsafe extern "C" {` block under the scan
+// roots and emits a per-file tally as a trailing comment block
 // in the output (audit aid for spotting duplicate declarations).
 //
 // Usage: `bun run src/codegen/generate-host-exports.ts <codegenDir>`
 
 import { existsSync, readFileSync } from "fs";
 import path from "path";
-import { readdirRecursive, writeIfNotChanged } from "./helpers";
+import { readdirRecursive, writeIfNotChanged } from "./helpers.ts";
 
 const argv = process.argv.slice(2);
 const outBase = argv.pop();
@@ -52,10 +52,11 @@ if (!outBase) {
   process.exit(1);
 }
 
-const repoRoot = path.resolve(import.meta.dir, "..", "..");
+const repoRoot = path.resolve(import.meta.dirname, "..", "..");
 const scanRoots = [
   { dir: path.join(repoRoot, "src", "runtime"), crate: "bun_runtime" },
   { dir: path.join(repoRoot, "src", "jsc"), crate: "bun_jsc" },
+  { dir: path.join(repoRoot, "src", "http_jsc"), crate: "bun_http_jsc" },
 ];
 
 // ───────────────────────── module-path resolver ─────────────────────────────
@@ -107,6 +108,8 @@ interface Param {
   cTy: string;
   /** expression to pass into the impl from the thunk param `name` */
   callExpr: string;
+  /** `&[T]` param: the C signature carries a trailing `name_len: usize` */
+  extraLen?: boolean;
 }
 
 interface Export {
@@ -118,7 +121,7 @@ interface Export {
   modPath: string; // `crate::…` (relative to bun_runtime) or `bun_jsc::…`
   params: Param[];
   ret: string;
-  shape: "host" | "lazy" | "generic" | "rust";
+  shape: "host" | "reaction" | "lazy" | "generic" | "rust";
   isUnsafe: boolean;
 }
 
@@ -127,17 +130,39 @@ const markerRe = /^\s*\/\/\s*HOST_EXPORT\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?:,\s*(
 // a small balanced-paren scanner because params routinely span lines.
 const fnHeadRe = /^\s*pub\s+(unsafe\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/;
 
-function ptrify(ty: string): { cTy: string; deref: (n: string) => string } {
+function ptrify(ty: string): { cTy: string; deref: (n: string) => string; extraLen?: boolean } {
   ty = ty.trim();
-  // `&[T]` / `&str` are NOT FFI-safe; reject (caller should use ptr+len).
-  if (/^&\s*(?:\[|str\b)/.test(ty)) {
-    throw new Error(`slice/str param \`${ty}\` is not FFI-safe; pass (ptr, len)`);
+  // `&[T]` — C passes `(const T* name, size_t name_len)`; the thunk rebuilds
+  // the slice (null/0 → empty).
+  const slice = /^&\s*\[\s*([^;]+?)\s*\]$/.exec(ty);
+  if (slice) {
+    const elem = slice[1].trim();
+    return {
+      cTy: `*const ${elem}`,
+      extraLen: true,
+      deref: n =>
+        `{\n        // SAFETY: C++ caller passes \`${n}_len\` live elements at \`${n}\` (or 0).\n        unsafe { ::bun_core::ffi::slice(${n}, ${n}_len) }\n    }`,
+    };
+  }
+  // Other slice shapes (`&mut [T]`, `&'a [T]`) and `&str` are NOT FFI-safe; reject.
+  if (/^&[^\[]*\[/.test(ty) || /^&\s*str\b/.test(ty)) {
+    throw new Error(`slice/str param \`${ty}\` is not FFI-safe; use \`&[T]\` (const) or (ptr, len)`);
   }
   // `&mut T` / `&T` — keep as a reference in the thunk signature. `&T` and
   // `*const T` (resp. `&mut T`/`*mut T`) are ABI-identical for `extern "C"`
   // when the C++ caller guarantees non-null (it does), so the thunk param can
   // be the safe reference type directly and the body needs no `unsafe` deref.
   if (/^&/.test(ty)) return { cTy: ty, deref: n => n };
+  // `ThisPtr<T>` — C++ hands us the intrusively-refcounted `T*` it holds a
+  // ref on; wrap it once here so the impl never sees a raw pointer.
+  const thisPtr = /^(?:(?:::)?bun_ptr::)?ThisPtr\s*<\s*(.+)\s*>$/.exec(ty);
+  if (thisPtr) {
+    return {
+      cTy: `*mut ${thisPtr[1].trim()}`,
+      deref: n =>
+        `{\n        // SAFETY: C++ caller holds a ref on \`${n}\` for the duration of the call.\n        unsafe { ::bun_ptr::ThisPtr::new(${n}) }\n    }`,
+    };
+  }
   // Already a raw pointer / scalar / `Option<…>` / `JSValue` — pass through.
   return { cTy: ty, deref: n => n };
 }
@@ -172,8 +197,8 @@ function parseParams(list: string, where: string): Param[] {
       // and intentionally documentary — keep it.
       if (name === "_") name = `_a${i}`;
       const ty = raw.slice(colon + 1).trim();
-      const { cTy, deref } = ptrify(ty);
-      return { raw, name, ty, cTy, callExpr: deref(name) };
+      const { cTy, deref, extraLen } = ptrify(ty);
+      return { raw, name, ty, cTy, callExpr: deref(name), extraLen };
     });
 }
 
@@ -254,6 +279,17 @@ for (const { dir, crate } of scanRoots) {
       let shape: Export["shape"];
       if (abi === "rust") shape = "rust";
       else if (
+        params.length === 3 &&
+        /^(?:(?:::)?bun_ptr::)?ThisPtr\s*</.test(params[0].ty) &&
+        /JSGlobalObject$/.test(params[1].ty) &&
+        /CallFrame$/.test(params[2].ty) &&
+        isJsRet
+      ) {
+        // Promise reaction: `JSValue::then(global, ctx, resolve, reject)` stashes
+        // `ctx` as the trailing argument; the thunk hands it back typed.
+        shape = "reaction";
+        abi ??= "jsc";
+      } else if (
         params.length === 2 &&
         /JSGlobalObject$/.test(params[0].ty) &&
         /CallFrame$/.test(params[1].ty) &&
@@ -280,11 +316,11 @@ for (const { dir, crate } of scanRoots) {
       // compile error pointing at the thunk, which is the desired behaviour.
       let modPath: string;
       if (fm) {
-        modPath = fm.crate === "bun_jsc" ? fm.modPath.replace(/^crate/, "bun_jsc") : fm.modPath;
+        modPath = fm.crate === "bun_runtime" ? fm.modPath : fm.modPath.replace(/^crate/, fm.crate);
       } else {
-        const rel = path.relative(path.join(repoRoot, "src", "runtime"), file);
+        const rel = path.relative(dir, file);
         modPath =
-          "crate::" +
+          (crate === "bun_runtime" ? "crate::" : `${crate}::`) +
           rel
             .replace(/\.rs$/, "")
             .split(path.sep)
@@ -303,7 +339,8 @@ for (const { dir, crate } of scanRoots) {
       // bun_jsc-sourced impl would resolve as `bun_runtime::` in the
       // generated module. Rewrite to the source crate's name so
       // `*mut crate::cpp_task::CppTask` etc. round-trip.
-      const cratePrefix = fm?.crate === "bun_jsc" ? "bun_jsc::" : "crate::";
+      const srcCrate = fm ? fm.crate : crate;
+      const cratePrefix = srcCrate !== "bun_runtime" ? `${srcCrate}::` : "crate::";
       const rewriteTy = (t: string) => t.replace(/\bcrate::/g, cratePrefix);
       for (const p of params) {
         p.cTy = rewriteTy(p.cTy);
@@ -398,6 +435,22 @@ function emitThunk(e: Export): string {
 // ${loc}
 ${emitNoMangle(e.abi, e.symbol, "g: *mut JSGlobalObject, cf: *mut CallFrame", "JSValue", body, /*unsafeFn*/ true)}`;
     }
+    case "reaction": {
+      const wrap = retIsJsResult ? "host_fn::host_fn_static_raw" : "host_fn::host_fn_static_passthrough_raw";
+      const body = `    // SAFETY: JSC trampoline guarantees g/cf are non-null and valid; the
+    // trailing argument is the \`ctx\` this reaction was registered with via
+    // \`JSValue::then\`, on which the registrant holds a ref until it runs.
+    unsafe {
+        ${wrap}(g, cf, |g, cf| {
+            let args = cf.arguments();
+            let this = ::bun_ptr::ThisPtr::new(args[args.len() - 1].as_promise_ptr());
+            ${impl}(this, g, cf)
+        })
+    }`;
+      return `
+// ${loc}
+${emitNoMangle(e.abi, e.symbol, "g: *mut JSGlobalObject, cf: *mut CallFrame", "JSValue", body, /*unsafeFn*/ true)}`;
+    }
     case "lazy": {
       // Lazy property creator: `(g) -> JSValue`. ABI is whatever the C++ decl
       // uses — `e.abi` (default `c` for direct `extern "C"` calls; `jsc` for
@@ -437,7 +490,14 @@ pub extern "Rust" fn ${e.symbol}(${sig}) -> ${e.ret} {
 }`;
     }
     case "generic": {
-      const sig = e.params.map(p => `${p.name}: ${p.cTy}`).join(", ");
+      for (const p of e.params)
+        if (p.extraLen && e.params.some(q => q.name === `${p.name}_len`))
+          throw new Error(
+            `${loc}: slice param \`${p.name}\` needs a synthesized \`${p.name}_len\`, which collides with an existing param`,
+          );
+      const sig = e.params
+        .map(p => (p.extraLen ? `${p.name}: ${p.cTy}, ${p.name}_len: usize` : `${p.name}: ${p.cTy}`))
+        .join(", ");
       // Bind each ref-deref once so the call site is clean (and so a
       // `JsResult` body doesn't deref `global` twice).
       const binds = e.params
@@ -475,7 +535,7 @@ const header = `// Auto-generated by src/codegen/generate-host-exports.ts — DO
 // contain zero \`#[no_mangle]\` and zero raw-pointer-deref boilerplate.
 //
 // Adding an export: put \`// HOST_EXPORT(SymbolName)\` on the line above the
-// \`pub fn\` in any \`src/runtime/\` or \`src/jsc/\` file, re-run codegen.
+// \`pub fn\` under a scan root (src/runtime, src/jsc, src/http_jsc), re-run codegen.
 //
 // exports: ${exportsFound.length}   extern-"C" import blocks remaining: ${externTotal}
 
@@ -526,7 +586,7 @@ writeIfNotChanged(path.join(outBase, "generated_host_exports.rs"), header + impo
 
 console.log(
   `generated_host_exports.rs: ${exportsFound.length} exports ` +
-    `(host=${exportsFound.filter(e => e.shape === "host").length}, ` +
+    `(host=${exportsFound.filter(e => e.shape === "host" || e.shape === "reaction").length}, ` +
     `lazy=${exportsFound.filter(e => e.shape === "lazy").length}, ` +
     `generic=${exportsFound.filter(e => e.shape === "generic").length}, ` +
     `rust=${exportsFound.filter(e => e.shape === "rust").length}); ` +

@@ -62,6 +62,8 @@ pub struct Parser<'a> {
     pub(crate) source: &'a bun_ast::Source,
     pub(crate) define: &'a Define,
     pub(crate) bump: &'a Arena,
+    /// `log.errors` before the priming `lexer.next()` in `init`.
+    pub(crate) orig_error_count: u32,
 }
 
 pub struct Options<'a> {
@@ -107,6 +109,10 @@ pub struct Options<'a> {
 
     /// Lower `toml_datetime`-tagged strings in a lazy-export AST to `Temporal.*.from` calls.
     pub lower_toml_datetimes: bool,
+
+    /// A bundle entry point: its own output is needed, so a `module.exports = require(...)`-only file stays a real
+    /// module rather than becoming a redirect to what it re-exports.
+    pub is_entry_point: bool,
 }
 
 impl<'a> Default for Options<'a> {
@@ -139,6 +145,7 @@ impl<'a> Default for Options<'a> {
             framework: None,
             repl_mode: false,
             lower_toml_datetimes: false,
+            is_entry_point: false,
         }
     }
 }
@@ -205,6 +212,7 @@ impl<'a> Options<'a> {
                 runtime_transpiler_cache: None,
                 lower_using: f.lower_using,
                 bundler_feature_flags: None,
+                define_hash: f.define_hash,
                 repl_mode: f.repl_mode,
                 jsx_optimization_inline: f.jsx_optimization_inline,
             },
@@ -223,6 +231,7 @@ impl<'a> Options<'a> {
             framework: self.framework,
             repl_mode: self.repl_mode,
             lower_toml_datetimes: self.lower_toml_datetimes,
+            is_entry_point: self.is_entry_point,
         }
     }
 
@@ -295,6 +304,7 @@ impl<'a> Options<'a> {
             framework: None,
             repl_mode: false,
             lower_toml_datetimes: loader == options::Loader::Toml,
+            is_entry_point: false,
         };
         opts.jsx.parse = loader.is_jsx();
         opts
@@ -314,6 +324,7 @@ impl<'a> Parser<'a> {
         bump: &'a Arena,
     ) -> Result<Parser<'a>, Error> {
         source.check_parseable_len(log, "File")?;
+        let orig_error_count = log.errors;
         let mut lexer = js_lexer::Lexer::init_without_reading(log, source, bump);
         // Must be set before the priming `next()` so leading comments are seen.
         lexer.track_comments = options.features.minify_identifiers;
@@ -330,6 +341,7 @@ impl<'a> Parser<'a> {
             define,
             source,
             log: log_ptr,
+            orig_error_count,
         })
     }
 }
@@ -593,7 +605,7 @@ impl<'a> Parser<'a> {
         });
         let part = js_ast::Part {
             stmts: stmts.into(),
-            symbol_uses: core::mem::take(&mut p.symbol_uses),
+            symbol_uses: p.take_symbol_uses()?,
             ..Default::default()
         };
         let mut parts = BumpVec::with_capacity_in(2, p.arena);
@@ -741,11 +753,9 @@ impl<'a> Parser<'a> {
             source,
             define,
             bump,
+            orig_error_count,
         } = self;
 
-        // `lexer.log` aliases `log`; route through the centralised
-        // `Lexer::log()` accessor so this site stays safe.
-        let orig_error_count = lexer.log().errors;
         // `P.log` and `Lexer.log` are both `NonNull<Log>` (see P.rs / lexer.rs
         // field docs), so handing the same raw pointer to both is defined —
         // no `&mut` is materialized.
@@ -768,19 +778,16 @@ impl<'a> Parser<'a> {
         p.binary_expression_stack = BumpVec::with_capacity_in(41, p.arena);
         p.binary_expression_simplify_stack = BumpVec::with_capacity_in(47, p.arena);
 
-        // defer {
-        //     if (p.allocated_names_pool) |pool| {
-        //         pool.data = p.allocated_names;
-        //         pool.release();
-        //         p.allocated_names_pool = null;
-        //     }
-        // }
-
         // Consume a leading hashbang comment
         let mut hashbang: &[u8] = b"";
         if p.lexer.token == js_lexer::T::THashbang {
             hashbang = p.lexer.identifier;
             p.lexer.next()?;
+        }
+
+        // The first token may already have logged an error; halt before the early returns below.
+        if p.log().errors > orig_error_count {
+            return Err(crate::Error::SyntaxError);
         }
 
         // Detect a leading "// @bun" pragma
@@ -893,7 +900,7 @@ impl<'a> Parser<'a> {
 
         let mut before = BumpVec::<js_ast::Part>::new_in(p.arena);
         let mut after = BumpVec::<js_ast::Part>::new_in(p.arena);
-        let mut parts = BumpVec::<js_ast::Part>::new_in(p.arena);
+        let mut parts = BumpVec::<js_ast::Part>::with_capacity_in(stmts.len() + 2, p.arena);
         // (Element ownership is transferred into `parts` below via bitwise copy + set_len(0).)
 
         if p.options.bundle {
@@ -1213,6 +1220,153 @@ impl<'a> Parser<'a> {
             }
         }
 
+        // Finalize referenced-export tracking for `import("str")` /
+        // `require("str")`. Several namespace refs may exist for one import
+        // record (the synthetic ref from `transpose_import` plus a
+        // `const ns = …` / `.then(ns => …)` / `{...rest}` local). A record is
+        // fully tracked only when *every* such ref had all its uses accounted
+        // for (`use_count_estimate == 0`); the alias set is the union across
+        // them. Untracked records get no entry and keep every export.
+        if !p
+            .imports_to_convert_from_dynamic_import
+            .as_slice()
+            .is_empty()
+        {
+            #[derive(Default)]
+            struct PerRecord {
+                escaped: bool,
+                aliases: Vec<bun_ast::StoreStr>,
+                items: Vec<bun_ast::ast_result::DynamicImportItem>,
+                /// A name is read some other way (a `{...rest}` copy, a local
+                /// that stays one), so the call's value must hold it.
+                needs_value: bool,
+            }
+            let mut by_record: bun_collections::ArrayHashMap<u32, PerRecord> = Default::default();
+            // A namespace ref is listed once per registration and once per
+            // destructure of it; its alias map only needs one walk.
+            let mut seen_namespace: bun_collections::HashMap<(bun_ast::Ref, u32), ()> =
+                Default::default();
+            let arena = p.arena;
+            for i in 0..p.imports_to_convert_from_dynamic_import.len() {
+                let (ns_ref, import_record_id, scope) = {
+                    let d = &p.imports_to_convert_from_dynamic_import[i];
+                    (d.namespace.ref_, d.import_record_id, d.scope)
+                };
+                let escaped = {
+                    let symbol = &p.symbols[ns_ref.inner_index() as usize];
+                    // `must_not_be_renamed` / `contains_direct_eval` cover
+                    // direct `eval()` (or `with`) in scope, which can read the
+                    // namespace by name without a tracked property access. A
+                    // linked symbol was merged with another declaration (a
+                    // hoisted `var`, a parameter), so its own use count says
+                    // nothing.
+                    let tracked = p.namespace_tracked_uses.get(&ns_ref).copied().unwrap_or(0);
+                    // A source-visible local escapes when it has uses nobody
+                    // accounted for; the synthetic per-`import()` ref (never
+                    // referenced in source) escapes when its one consumer did not.
+                    (if p.dynamic_import_namespace_locals.contains_key(&ns_ref) {
+                        symbol.use_count_estimate > tracked || tracked == u32::MAX
+                    } else {
+                        tracked == 0
+                    }) || symbol.must_not_be_renamed()
+                        || symbol.has_link()
+                        || scope.is_some_and(|s| s.contains_direct_eval)
+                        || p.dynamic_import_escaped_records
+                            .contains_key(&import_record_id)
+                };
+                let entry = bun_core::handle_oom(by_record.get_or_put(import_record_id));
+                if !entry.found_existing {
+                    *entry.value_ptr = PerRecord::default();
+                }
+                let rec = entry.value_ptr;
+                rec.escaped |= escaped;
+                if rec.escaped
+                    || seen_namespace
+                        .insert((ns_ref, import_record_id), ())
+                        .is_some()
+                {
+                    continue;
+                }
+                let Some(map) = p.import_items_for_namespace.get(&ns_ref) else {
+                    continue;
+                };
+                for (key, loc_ref) in map.keys().iter().zip(map.values().iter()) {
+                    let local = loc_ref.ref_;
+                    // A destructured local that is never read does not keep
+                    // its export alive — unless it was merged with another
+                    // declaration or a direct `eval` can read it by name.
+                    if local.is_valid() {
+                        let symbol = &p.symbols[local.inner_index() as usize];
+                        if symbol.use_count_estimate == 0
+                            && !symbol.has_link()
+                            && !symbol.must_not_be_renamed()
+                        {
+                            continue;
+                        }
+                    }
+                    let alias = bun_ast::StoreStr::new(arena.alloc_slice_copy(key));
+                    rec.aliases.push(alias);
+                    let is_require_marker = p
+                        .import_records
+                        .items()
+                        .get(import_record_id as usize)
+                        .is_some_and(|record| crate::p::is_require_marker(record, key));
+                    // A read off `ns` (an item already), or a local a pattern
+                    // binds. Assigning to either, or reaching the local through
+                    // a hoisting merge or a direct `eval`, keeps the read as
+                    // written.
+                    let is_item = local.is_valid()
+                        && !is_require_marker
+                        && (p.is_import_item.contains_key(&local)
+                            || p.dynamic_import_destructured_locals.contains_key(&local))
+                        && !p.symbols[ns_ref.inner_index() as usize].has_been_assigned_to()
+                        && p.dynamic_import_namespace_locals
+                            .get(&ns_ref)
+                            .is_none_or(|records| records.len() == 1)
+                        && {
+                            let symbol = &p.symbols[local.inner_index() as usize];
+                            !symbol.has_been_assigned_to()
+                                && !symbol.has_link()
+                                && !symbol.must_not_be_renamed()
+                                && !p.named_imports.contains(&local)
+                        };
+                    if is_item {
+                        rec.items.push(bun_ast::ast_result::DynamicImportItem {
+                            local,
+                            alias,
+                            namespace_ref: ns_ref,
+                        });
+                    } else {
+                        rec.needs_value = true;
+                    }
+                }
+            }
+
+            for i in 0..by_record.len() {
+                let import_record_id = by_record.keys()[i];
+                let rec = &mut by_record.values_mut()[i];
+                if rec.escaped {
+                    continue;
+                }
+                rec.aliases.sort_by(|a, b| a.slice().cmp(b.slice()));
+                rec.aliases.dedup_by(|a, b| a.slice() == b.slice());
+                let aliases = arena.alloc_slice_copy(&rec.aliases);
+                let items = arena.alloc_slice_copy(&rec.items);
+                bun_core::handle_oom(
+                    p.dynamic_import_aliases.put(
+                        import_record_id,
+                        bun_ast::ast_result::DynamicImportUse {
+                            aliases: bun_ast::StoreSlice::new(aliases),
+                            items: bun_ast::StoreSlice::new(items),
+                            needs_namespace_object: rec.needs_value
+                                || p.dynamic_import_needs_object
+                                    .contains_key(&import_record_id),
+                        },
+                    ),
+                );
+            }
+        }
+
         // This is a workaround for broken module environment checks in packages like lodash-es
         // https://github.com/lodash/lodash/issues/5660
         let mut force_esm = false;
@@ -1305,9 +1459,15 @@ impl<'a> Parser<'a> {
                             }
                         }
 
-                        if needs_decl_count > 0 {
+                        if needs_decl_count > 0 || p.has_top_level_function_merged_with_var {
                             p.symbols.as_mut_slice()[p.exports_ref.inner_index() as usize]
                                 .use_count_estimate += export_refs_len as u32;
+                            p.deoptimize_commonjs_named_exports();
+                        } else if p.symbols.as_slice()[p.module_ref.inner_index() as usize]
+                            .use_count_estimate
+                            > p.module_exports_rewrite_count
+                        {
+                            // `module.constructor` and other uses of `module` need the wrapper.
                             p.deoptimize_commonjs_named_exports();
                         }
                     }
@@ -1420,7 +1580,9 @@ impl<'a> Parser<'a> {
 
                                     None
                                 };
-                                if let Some(id) = redirect_import_record_index {
+                                if let Some(id) = redirect_import_record_index
+                                    && !p.options.is_entry_point
+                                {
                                     part.symbol_uses = Default::default();
                                     return Ok(crate::Result::Ast(Box::new(js_ast::Ast {
                                         import_records: p.import_records.move_to_baby_list(p.arena),
@@ -1435,115 +1597,156 @@ impl<'a> Parser<'a> {
                     }
                 }
             }
+        }
 
-            if p.commonjs_named_exports_deoptimized
-                && p.options.features.unwrap_commonjs_to_esm
-                && p.unwrap_all_requires
-                && p.imports_to_convert_from_require.len() == 1
-                && p.import_records.len() == 1
-                && p.symbols.as_slice()[p.module_ref.inner_index() as usize].use_count_estimate == 1
-            {
-                'outer_part_loop: for part in parts.iter_mut() {
-                    // Specially handle modules shaped like this:
-                    //
-                    //    doSomeStuff();
-                    //    module.exports = require('./foo.js');
-                    //
-                    // An example is react-dom/index.js, which does a DCE check.
-                    // Snapshot the StoreSlice (Copy) so the `&mut` borrow over the
-                    // arena slice doesn't conflict with the `part.stmts = …` rewrite
-                    // below.
-                    let part_stmts_ss = part.stmts;
-                    let part_stmts: &mut [Stmt] = part_stmts_ss.slice_mut();
-                    if part_stmts.len() > 1 {
-                        break;
-                    }
+        // `checkDCE(); module.exports = require('./cjs/...')` (react-dom/index.js in production).
+        // The unwrapped require() is already an `import * as ns`, so `export * from` replaces
+        // the assignment and the file needs no wrapper (`convert_stmts_for_chunk` undoes it).
+        if p.options.features.unwrap_commonjs_to_esm
+            && p.unwrap_all_requires
+            && !p.options.is_entry_point
+            && !p.has_es_module_syntax
+            && p.commonjs_named_exports.count() == 0
+            && !p.has_top_level_return
+            && !p.has_with_scope
+            && !p.has_top_level_function_merged_with_var
+            && p.symbols.as_slice()[p.module_ref.inner_index() as usize].use_count_estimate == 1
+            && p.symbols.as_slice()[p.exports_ref.inner_index() as usize].use_count_estimate == 0
+        {
+            struct ModuleExportsOfNamespace {
+                part_idx: usize,
+                stmt_idx: usize,
+                /// `checkDCE(), module.exports = ns` (the `if` block folded by
+                /// minification): the operand before the assignment.
+                leading: Option<Expr>,
+                assign_loc: bun_ast::Loc,
+                namespace_ref: js_ast::Ref,
+                import_record_index: u32,
+            }
 
-                    for j in 0..part_stmts.len() {
-                        let stmt = &mut part_stmts[j];
-                        if let js_ast::StmtData::SExpr(s_expr) = &stmt.data {
-                            let value: Expr = s_expr.value;
-
-                            if let js_ast::ExprData::EBinary(bin_ptr) = value.data {
-                                let mut bin = bin_ptr;
-                                loop {
-                                    let left = bin.left;
-                                    let right = bin.right;
-
-                                    if bin.op == js_ast::op::Code::BinAssign
-                                        && let js_ast::ExprData::ERequireString(req) = right.data
-                                        && let Some(unwrapped_id) = req.unwrapped_id.get()
-                                        && matches!(&left.data, js_ast::ExprData::EDot(d)
-                                            if d.name == b"exports"
-                                                && matches!(&d.target.data, js_ast::ExprData::EIdentifier(id)
-                                                    if id.ref_.eql(p.module_ref)))
-                                    {
-                                        p.export_star_import_records.push(req.import_record_index);
-                                        let deferred = &p.imports_to_convert_from_require
-                                            [unwrapped_id.get_usize()];
-                                        let namespace_ref = deferred.namespace.ref_;
-
-                                        let stmt_loc = stmt.loc;
-                                        part.stmts = {
-                                            let mut new_stmts = BumpVec::<Stmt>::with_capacity_in(
-                                                part.stmts.len() + 1,
-                                                p.arena,
-                                            );
-                                            new_stmts.extend_from_slice(&part_stmts[0..j]);
-
-                                            new_stmts.push(Stmt::alloc(
-                                                S::ExportStar {
-                                                    import_record_index: req.import_record_index,
-                                                    namespace_ref,
-                                                    alias: None,
-                                                },
-                                                stmt_loc,
-                                            ));
-                                            new_stmts.extend_from_slice(&part_stmts[j + 1..]);
-                                            bun_ast::StoreSlice::from_bump(new_stmts)
-                                        };
-
-                                        part.import_record_indices.push(req.import_record_index);
-                                        p.symbols.as_mut_slice()
-                                            [p.module_ref.inner_index() as usize]
-                                            .use_count_estimate = 0;
-                                        let ns_idx = namespace_ref.inner_index() as usize;
-                                        p.symbols.as_mut_slice()[ns_idx].use_count_estimate =
-                                            p.symbols.as_slice()[ns_idx]
-                                                .use_count_estimate
-                                                .saturating_sub(1);
-                                        let _ = part.symbol_uses.swap_remove(&namespace_ref);
-
-                                        for (i, before_part) in before.iter().enumerate() {
-                                            if before_part.tag
-                                                == bun_ast::PartTag::ImportToConvertFromRequire
-                                            {
-                                                let _ = before.swap_remove(i);
-                                                break;
-                                            }
-                                        }
-
-                                        if p.esm_export_keyword.len == 0 {
-                                            p.esm_export_keyword.loc = stmt_loc;
-                                            p.esm_export_keyword.len = 5;
-                                        }
-                                        p.commonjs_named_exports_deoptimized = false;
-                                        break;
-                                    }
-
-                                    if let js_ast::ExprData::EBinary(rb) = right.data {
-                                        bin = rb;
-                                        continue;
-                                    }
-
-                                    break;
-                                }
-                                let _ = bin_ptr;
+            let found: Option<ModuleExportsOfNamespace> = 'search: {
+                for (part_idx, part) in parts.iter().enumerate() {
+                    for (stmt_idx, stmt) in part.stmts.iter().enumerate() {
+                        let js_ast::StmtData::SExpr(s_expr) = &stmt.data else {
+                            continue;
+                        };
+                        let value: Expr = s_expr.value;
+                        let (leading, assign): (Option<Expr>, Expr) = match value.data {
+                            js_ast::ExprData::EBinary(bin)
+                                if bin.op == js_ast::op::Code::BinComma =>
+                            {
+                                (Some(bin.left), bin.right)
                             }
+                            _ => (None, value),
+                        };
+                        let js_ast::ExprData::EBinary(bin) = assign.data else {
+                            continue;
+                        };
+                        if bin.op != js_ast::op::Code::BinAssign
+                            || !matches!(&bin.left.data, js_ast::ExprData::EDot(d)
+                                if d.name == b"exports"
+                                    && matches!(&d.target.data, js_ast::ExprData::EIdentifier(id)
+                                        if id.ref_.eql(p.module_ref)))
+                        {
+                            continue;
                         }
+                        let js_ast::ExprData::EIdentifier(id) = &bin.right.data else {
+                            continue;
+                        };
+                        let Some(deferred) = p
+                            .imports_to_convert_from_require
+                            .iter()
+                            .find(|deferred| deferred.namespace.ref_.eql(id.ref_))
+                        else {
+                            continue;
+                        };
+                        break 'search Some(ModuleExportsOfNamespace {
+                            part_idx,
+                            stmt_idx,
+                            leading,
+                            assign_loc: assign.loc,
+                            namespace_ref: id.ref_,
+                            import_record_index: deferred.import_record_id,
+                        });
                     }
-                    let _ = &mut *part;
-                    continue 'outer_part_loop;
+                }
+                None
+            };
+
+            if let Some(found) = found {
+                let part = &mut parts[found.part_idx];
+                let stmt_loc = part.stmts.slice()[found.stmt_idx].loc;
+
+                // Like `s_export_star`: the export star declares its own namespace symbol.
+                let name = p.load_name_from_ref(found.namespace_ref);
+                let export_star_ref = p.new_symbol(js_ast::symbol::Kind::Other, name);
+                VecExt::append(&mut p.module_scope_mut().generated, export_star_ref);
+                part.declared_symbols.append(DeclaredSymbol {
+                    ref_: export_star_ref,
+                    is_top_level: true,
+                })?;
+
+                part.stmts = {
+                    let old_stmts: &[Stmt] = part.stmts.slice();
+                    let mut new_stmts =
+                        BumpVec::<Stmt>::with_capacity_in(old_stmts.len() + 1, p.arena);
+                    new_stmts.extend_from_slice(&old_stmts[..found.stmt_idx]);
+                    if let Some(leading) = found.leading {
+                        new_stmts.push(Stmt::alloc(
+                            S::SExpr {
+                                value: leading,
+                                does_not_affect_tree_shaking: false,
+                            },
+                            stmt_loc,
+                        ));
+                    }
+                    new_stmts.push(Stmt::alloc(
+                        S::ExportStar {
+                            import_record_index: found.import_record_index,
+                            namespace_ref: export_star_ref,
+                            alias: None,
+                        },
+                        found.assign_loc,
+                    ));
+                    new_stmts.extend_from_slice(&old_stmts[found.stmt_idx + 1..]);
+                    bun_ast::StoreSlice::from_bump(new_stmts)
+                };
+
+                // The assignment was the only use of `module` and one use of `ns`.
+                let _ = part.symbol_uses.swap_remove(&p.module_ref);
+                p.symbols.as_mut_slice()[p.module_ref.inner_index() as usize].use_count_estimate =
+                    0;
+                match part.symbol_uses.get_mut(&found.namespace_ref) {
+                    Some(uses) if uses.count_estimate() > 1 => uses.subtract(1),
+                    _ => {
+                        let _ = part.symbol_uses.swap_remove(&found.namespace_ref);
+                    }
+                }
+                let ns_symbol =
+                    &mut p.symbols.as_mut_slice()[found.namespace_ref.inner_index() as usize];
+                ns_symbol.use_count_estimate = ns_symbol.use_count_estimate.saturating_sub(1);
+                let ns_is_unused = ns_symbol.use_count_estimate == 0
+                    && !p
+                        .import_items_for_namespace
+                        .get(&found.namespace_ref)
+                        .is_some_and(|items| items.count() > 0);
+                if ns_is_unused {
+                    // Drop the unused `import * as ns` part, keeping the other imports in order.
+                    if let Some(i) = before.iter().position(|before_part| {
+                        before_part.tag == bun_ast::PartTag::ImportToConvertFromRequire
+                            && before_part
+                                .declared_symbols
+                                .refs()
+                                .iter()
+                                .any(|declared| declared.eql(found.namespace_ref))
+                    }) {
+                        let _ = before.remove(i);
+                    }
+                }
+
+                if p.esm_export_keyword.len == 0 {
+                    p.esm_export_keyword.loc = stmt_loc;
+                    p.esm_export_keyword.len = 5;
                 }
             }
         }
@@ -1563,6 +1766,8 @@ impl<'a> Parser<'a> {
             p.symbols.as_slice()[p.module_ref.inner_index() as usize].use_count_estimate > 0;
 
         let mut wrap_mode: WrapMode = WrapMode::None;
+        // Checked after `to_ast`, which marks TypeScript type-only imports unused.
+        let mut reject_import_statements = false;
 
         if p.is_deoptimized_commonjs() {
             exports_kind = js_ast::ExportsKind::Cjs;
@@ -1573,87 +1778,7 @@ impl<'a> Parser<'a> {
             exports_kind = js_ast::ExportsKind::Cjs;
             if p.options.features.commonjs_at_runtime {
                 wrap_mode = WrapMode::BunCommonjs;
-
-                let import_record: Option<&ImportRecord> = 'brk: {
-                    for import_record in p.import_records.items() {
-                        if import_record.flags.intersects(
-                            ImportRecordFlags::IS_INTERNAL | ImportRecordFlags::IS_UNUSED,
-                        ) {
-                            continue;
-                        }
-                        if import_record.kind == bun_ast::ImportKind::Stmt {
-                            break 'brk Some(import_record);
-                        }
-                    }
-
-                    None
-                };
-
-                // make it an error to use an import statement with a commonjs exports usage
-                if let Some(record) = import_record {
-                    // find the usage of the export symbol
-
-                    let mut notes = BumpVec::<bun_ast::Data>::new_in(p.arena);
-
-                    notes.push(bun_ast::Data {
-                        text: {
-                            use std::io::Write;
-                            let mut v = Vec::<u8>::new();
-                            let _ = write!(
-                                &mut v,
-                                "Try require({}) instead",
-                                bun_core::fmt::QuotedFormatter {
-                                    text: record.path.text
-                                }
-                            );
-                            std::borrow::Cow::Owned(v)
-                        },
-                        ..Default::default()
-                    });
-
-                    if uses_module_ref {
-                        notes.push(bun_ast::Data {
-                            text: std::borrow::Cow::Borrowed(
-                                b"This file is CommonJS because 'module' was used",
-                            ),
-                            ..Default::default()
-                        });
-                    }
-
-                    if uses_exports_ref {
-                        notes.push(bun_ast::Data {
-                            text: std::borrow::Cow::Borrowed(
-                                b"This file is CommonJS because 'exports' was used",
-                            ),
-                            ..Default::default()
-                        });
-                    }
-
-                    if p.has_top_level_return {
-                        notes.push(bun_ast::Data {
-                            text: std::borrow::Cow::Borrowed(
-                                b"This file is CommonJS because top-level return was used",
-                            ),
-                            ..Default::default()
-                        });
-                    }
-
-                    if p.has_with_scope {
-                        notes.push(bun_ast::Data {
-                            text: std::borrow::Cow::Borrowed(
-                                b"This file is CommonJS because a \"with\" statement is used",
-                            ),
-                            ..Default::default()
-                        });
-                    }
-
-                    p.log().add_range_error_with_notes(
-                        Some(p.source),
-                        record.range,
-                        b"Cannot use import statement with CommonJS-only features".as_slice(),
-                        notes.into_iter().collect::<Vec<_>>().into_boxed_slice(),
-                    );
-                }
+                reject_import_statements = true;
             }
         } else {
             match p.options.module_type {
@@ -2240,12 +2365,89 @@ impl<'a> Parser<'a> {
             }
         }
 
-        Ok(crate::Result::Ast(p.to_ast(
-            &mut parts,
-            exports_kind,
-            wrap_mode,
-            hashbang,
-        )?))
+        let ast = p.to_ast(&mut parts, exports_kind, wrap_mode, hashbang)?;
+
+        if reject_import_statements {
+            // An empty range marks a parser-generated record, like the JSX runtime import.
+            let import_record: Option<&ImportRecord> =
+                ast.import_records.as_slice().iter().find(|import_record| {
+                    !import_record
+                        .flags
+                        .intersects(ImportRecordFlags::IS_INTERNAL | ImportRecordFlags::IS_UNUSED)
+                        && import_record.kind == bun_ast::ImportKind::Stmt
+                        && !import_record.range.is_empty()
+                });
+
+            if let Some(record) = import_record {
+                let mut notes = BumpVec::<bun_ast::Data>::new_in(p.arena);
+
+                notes.push(bun_ast::Data {
+                    text: {
+                        use std::io::Write;
+                        let mut v = Vec::<u8>::new();
+                        let _ = write!(
+                            &mut v,
+                            "Try require({}) instead",
+                            bun_core::fmt::QuotedFormatter {
+                                text: record.path.text
+                            }
+                        );
+                        std::borrow::Cow::Owned(v)
+                    },
+                    ..Default::default()
+                });
+
+                if uses_module_ref {
+                    notes.push(bun_ast::Data {
+                        text: std::borrow::Cow::Borrowed(
+                            b"This file is CommonJS because 'module' was used",
+                        ),
+                        ..Default::default()
+                    });
+                }
+
+                if uses_exports_ref {
+                    notes.push(bun_ast::Data {
+                        text: std::borrow::Cow::Borrowed(
+                            b"This file is CommonJS because 'exports' was used",
+                        ),
+                        ..Default::default()
+                    });
+                }
+
+                if p.has_top_level_return {
+                    notes.push(bun_ast::Data {
+                        text: std::borrow::Cow::Borrowed(
+                            b"This file is CommonJS because top-level return was used",
+                        ),
+                        ..Default::default()
+                    });
+                }
+
+                if p.has_with_scope {
+                    notes.push(bun_ast::Data {
+                        text: std::borrow::Cow::Borrowed(
+                            b"This file is CommonJS because a \"with\" statement is used",
+                        ),
+                        ..Default::default()
+                    });
+                }
+
+                p.log().add_range_error_with_notes(
+                    Some(p.source),
+                    record.range,
+                    b"Cannot use import statement with CommonJS-only features".as_slice(),
+                    notes.into_iter().collect::<Vec<_>>().into_boxed_slice(),
+                );
+            }
+        }
+
+        // If there were errors during to_ast, also halt here
+        if p.log().errors > orig_error_count {
+            return Err(crate::Error::SyntaxError);
+        }
+
+        Ok(crate::Result::Ast(ast))
     }
 
     // associated fn (was `&self` reading `self.lexer.source.contents`)

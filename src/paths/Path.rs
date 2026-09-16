@@ -67,7 +67,6 @@ pub mod options {
     impl PathSeparators {
         pub const ANY: u8 = 0;
         pub const AUTO: u8 = 1;
-        pub const POSIX: u8 = 2;
         #[inline(always)]
         pub(crate) const fn from_u8(v: u8) -> Self {
             match v {
@@ -113,12 +112,6 @@ pub mod options {
     pub enum Error {
         #[error("MaxPathExceeded")]
         MaxPathExceeded,
-    }
-
-    impl From<Error> for crate::Error {
-        fn from(_e: Error) -> Self {
-            crate::Error::MaxPathExceeded
-        }
     }
 
     // Rust cannot vary a fn's return type on a const-generic value, so all

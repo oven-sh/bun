@@ -77,7 +77,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSAbortSignalPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSAbortSignalPrototype* ptr = new (NotNull, JSC::allocateCell<JSAbortSignalPrototype>(vm)) JSAbortSignalPrototype(vm, globalObject, structure);
+        JSAbortSignalPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSAbortSignalPrototype))) JSAbortSignalPrototype(vm, globalObject, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -91,7 +91,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -123,12 +123,8 @@ template<> JSValue JSAbortSignalDOMConstructor::prototypeForStructure(JSC::VM& v
 
 template<> void JSAbortSignalDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    putDirect(vm, vm.propertyNames->length, jsNumber(0), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    JSString* nameString = jsNontrivialString(vm, "AbortSignal"_s);
-    m_originalName.set(vm, this, nameString);
-    putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    putDirect(vm, vm.propertyNames->prototype, JSAbortSignal::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
-    reifyStaticProperties(vm, JSAbortSignal::info(), JSAbortSignalConstructorTableValues, *this);
+    initializeBaseProperties(vm, 0, "AbortSignal"_s, JSAbortSignal::prototype(vm, globalObject));
+    Bun::reifyStaticPropertyTable(vm, JSAbortSignal::info(), JSAbortSignalConstructorTableValues, *this);
 }
 
 /* Hash table for prototype */
@@ -146,8 +142,8 @@ const ClassInfo JSAbortSignalPrototype::s_info = { "AbortSignal"_s, &Base::s_inf
 void JSAbortSignalPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSAbortSignal::info(), JSAbortSignalPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::reifyStaticPropertyTable(vm, JSAbortSignal::info(), JSAbortSignalPrototypeTableValues, *this);
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 const ClassInfo JSAbortSignal::s_info = { "AbortSignal"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSAbortSignal) };
@@ -351,12 +347,7 @@ size_t JSAbortSignal::estimatedSize(JSC::JSCell* cell, JSC::VM& vm)
 
 JSC::GCClient::IsoSubspace* JSAbortSignal::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSAbortSignal, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForAbortSignal.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForAbortSignal = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForAbortSignal.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForAbortSignal = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSAbortSignal, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForAbortSignal, m_subspaceForAbortSignal));
 }
 
 template<typename Visitor>

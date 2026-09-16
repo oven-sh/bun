@@ -45,7 +45,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info(), JSC::NonArray);
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info(), JSC::NonArray);
     }
 
     static JSC::JSValue getConstructor(JSC::VM&, const JSC::JSGlobalObject*);
@@ -61,8 +61,6 @@ public:
     {
         return static_cast<PerformanceResourceTiming&>(Base::wrapped());
     }
-
-    Ref<PerformanceResourceTiming> protectedWrapped() const;
 
 protected:
     JSPerformanceResourceTiming(JSC::Structure*, JSDOMGlobalObject&, Ref<PerformanceResourceTiming>&&);

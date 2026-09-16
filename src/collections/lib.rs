@@ -6,7 +6,6 @@
     unsized_const_params,
     const_cmp,
     const_trait_impl,
-    core_intrinsics,
     allocator_api
 )]
 #![allow(incomplete_features, internal_features)]
@@ -59,14 +58,6 @@ pub trait PriorityCompare<T> {
 pub struct PriorityQueue<T, C> {
     pub items: Vec<T>,
     pub(crate) context: C,
-}
-impl<T, C: Default> Default for PriorityQueue<T, C> {
-    fn default() -> Self {
-        Self {
-            items: Vec::new(),
-            context: C::default(),
-        }
-    }
 }
 impl<T, C> PriorityQueue<T, C> {
     pub fn init(context: C) -> Self {
@@ -479,5 +470,4 @@ pub mod hash_map {
 }
 
 pub mod array_list;
-pub use array_list::ArrayListAlignedIn;
 pub use array_list::ArrayListDefault;

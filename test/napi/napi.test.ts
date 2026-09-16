@@ -981,6 +981,7 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
           addon.resolve_from_async_work().then(() => ran.push("async work promise"));
           addon.call_back_from_threadsafe_function(() => ran.push("threadsafe function callback"));
         }
+        export const settleThePromiseTheHostWasGiven = () => addon.settle_that_promise_from_async_work();
         export function startIntervalFromCompletion(state) {
           addon.call_back_from_async_work(() => {
             setInterval(() => state.ticks++, 1);
@@ -1006,10 +1007,13 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
         addon.call_back_from_async_work(() => hostRan.push("async work callback"));
         addon.resolve_from_async_work().then(() => hostRan.push("async work promise"));
         addon.call_back_from_threadsafe_function(() => hostRan.push("threadsafe function callback"));
+        // A promise of the host's, settled from a completion of work the graph about to be disposed queues.
+        addon.promise_the_next_async_work_settles().then(() => hostRan.push("promise settled from the disposed graph's completion"));
+        graphs.disposed.graph.run(() => graphs.disposed.app.settleThePromiseTheHostWasGiven());
         graphs.disposed.graph.dispose();
         // The addon records every completion, the disposed graph's included.
-        await until(() => addon.completion_statuses().length === 9);
-        await until(() => graphs.live.app.ran.length === 3 && hostRan.length === 3);
+        await until(() => addon.completion_statuses().length === 10);
+        await until(() => graphs.live.app.ran.length === 3 && hostRan.length === 4);
         const statuses = addon.completion_statuses().sort();
 
         // What a live graph's completion starts is that graph's: dispose() stops it.
@@ -1046,7 +1050,8 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     expect(stderr).toBe("");
     expect(JSON.parse(stdout.trim())).toEqual({
       // 23 is napi_cannot_run_js: what the addon is also told in a VM that is stopping. Settling a
-      // promise of the disposed graph is accepted (0) and settles nothing.
+      // promise of the disposed graph is accepted (0) and settles nothing; settling the host's
+      // from the disposed graph's completion settles it.
       statuses: [
         "async_work_callback:0",
         "async_work_callback:0",
@@ -1054,13 +1059,19 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
         "async_work_deferred:0",
         "async_work_deferred:0",
         "async_work_deferred:0",
+        "async_work_deferred_of_another:0",
         "threadsafe_function_callback:0",
         "threadsafe_function_callback:0",
         "threadsafe_function_callback:23",
       ],
       disposed: [],
       live: everything,
-      host: everything,
+      host: [
+        "async work callback",
+        "async work promise",
+        "promise settled from the disposed graph's completion",
+        "threadsafe function callback",
+      ],
       ticksAfterDispose: 0,
     });
     expect(exitCode).toBe(0);

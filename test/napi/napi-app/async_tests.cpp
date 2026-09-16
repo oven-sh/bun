@@ -276,8 +276,11 @@ void complete_for_cancel(napi_env env, napi_status status, void *data) {
 //   call_back_from_async_work(callback): `complete` calls `callback`
 //   resolve_from_async_work(): `complete` resolves the returned promise
 //   call_back_from_threadsafe_function(callback): `call_js` calls `callback`
+//   promise_the_next_async_work_settles(): a promise that the `complete` of the
+//     next settle_that_promise_from_async_work() resolves, whoever queues that
 //   completion_statuses(): "<which>:<napi_status>" for each completion so far
 static std::vector<std::string> completion_statuses_so_far;
+static napi_deferred deferred_the_next_async_work_settles = nullptr;
 
 struct CompletionData {
   napi_ref callback = nullptr;
@@ -315,6 +318,20 @@ static void complete_by_resolving(napi_env env, napi_status status,
   delete data;
 }
 
+static void complete_by_resolving_anothers(napi_env env, napi_status status,
+                                           void *opaque) {
+  auto *data = reinterpret_cast<CompletionData *>(opaque);
+  napi_value undefined;
+  napi_get_undefined(env, &undefined);
+  completion_statuses_so_far.push_back(
+      "async_work_deferred_of_another:" +
+      std::to_string(napi_resolve_deferred(
+          env, deferred_the_next_async_work_settles, undefined)));
+  deferred_the_next_async_work_settles = nullptr;
+  napi_delete_async_work(env, data->work);
+  delete data;
+}
+
 static void call_js_by_calling_back(napi_env env, napi_value callback,
                                     void *context, void *opaque) {
   auto *data = reinterpret_cast<CompletionData *>(context);
@@ -346,13 +363,35 @@ static napi_value resolve_from_async_work(const Napi::CallbackInfo &info) {
   auto *data = new CompletionData();
   napi_value promise;
   NODE_API_CALL(env, napi_create_promise(env, &data->deferred, &promise));
-  NODE_API_CALL(env, napi_create_async_work(
-                         env, nullptr,
-                         Napi::String::New(env, "resolve_from_async_work"),
-                         execute_nothing, complete_by_resolving, data,
-                         &data->work));
+  NODE_API_CALL(
+      env, napi_create_async_work(
+               env, nullptr, Napi::String::New(env, "resolve_from_async_work"),
+               execute_nothing, complete_by_resolving, data, &data->work));
   NODE_API_CALL(env, napi_queue_async_work(env, data->work));
   return promise;
+}
+
+static napi_value
+promise_the_next_async_work_settles(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  napi_value promise;
+  NODE_API_CALL(env, napi_create_promise(
+                         env, &deferred_the_next_async_work_settles, &promise));
+  return promise;
+}
+
+static napi_value
+settle_that_promise_from_async_work(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  auto *data = new CompletionData();
+  NODE_API_CALL(
+      env,
+      napi_create_async_work(
+          env, nullptr,
+          Napi::String::New(env, "settle_that_promise_from_async_work"),
+          execute_nothing, complete_by_resolving_anothers, data, &data->work));
+  NODE_API_CALL(env, napi_queue_async_work(env, data->work));
+  return ok(env);
 }
 
 static napi_value
@@ -360,10 +399,11 @@ call_back_from_threadsafe_function(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
   auto *data = new CompletionData();
   NODE_API_CALL(
-      env, napi_create_threadsafe_function(
-               env, info[0], nullptr,
-               Napi::String::New(env, "call_back_from_threadsafe_function"), 0,
-               1, nullptr, nullptr, data, call_js_by_calling_back, &data->tsfn));
+      env,
+      napi_create_threadsafe_function(
+          env, info[0], nullptr,
+          Napi::String::New(env, "call_back_from_threadsafe_function"), 0, 1,
+          nullptr, nullptr, data, call_js_by_calling_back, &data->tsfn));
   std::thread([tsfn = data->tsfn]() {
     napi_call_threadsafe_function(tsfn, nullptr, napi_tsfn_blocking);
   }).detach();
@@ -656,8 +696,8 @@ static void finalizer_that_creates_external_buffer(napi_env env, void *data,
 
 // napi_wrap's finalizer is env-bound: for an object still alive when the
 // worker exits it runs from the env's cleanup (heap alive), not from GC.
-napi_value
-create_object_whose_finalizer_creates_external_buffer(const Napi::CallbackInfo &info) {
+napi_value create_object_whose_finalizer_creates_external_buffer(
+    const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
   napi_value object;
   NODE_API_CALL(env, napi_create_object(env, &object));
@@ -767,7 +807,8 @@ void register_async_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, abort_threadsafe_function_with_queued_items);
   REGISTER_FUNCTION(env, exports,
                     threadsafe_function_with_queued_items_finalized);
-  REGISTER_FUNCTION(env, exports, create_object_whose_finalizer_creates_external_buffer);
+  REGISTER_FUNCTION(env, exports,
+                    create_object_whose_finalizer_creates_external_buffer);
   REGISTER_FUNCTION(env, exports, late_finalizer_run_count);
   REGISTER_FUNCTION(env, exports, create_promise);
   REGISTER_FUNCTION(env, exports, create_promise_with_napi_cpp);
@@ -778,6 +819,8 @@ void register_async_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, call_back_from_async_work);
   REGISTER_FUNCTION(env, exports, resolve_from_async_work);
   REGISTER_FUNCTION(env, exports, call_back_from_threadsafe_function);
+  REGISTER_FUNCTION(env, exports, promise_the_next_async_work_settles);
+  REGISTER_FUNCTION(env, exports, settle_that_promise_from_async_work);
   REGISTER_FUNCTION(env, exports, completion_statuses);
   REGISTER_FUNCTION(env, exports, create_orphaned_threadsafe_functions);
   REGISTER_FUNCTION(env, exports, use_orphaned_threadsafe_functions);

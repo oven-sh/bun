@@ -1406,6 +1406,12 @@ fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
                         // SAFETY: tag was matched; ptr was inserted as `*mut $T` below.
                         let server: &mut $T = unsafe { &mut *entry.ptr.cast::<$T>() };
                         server.on_reload_from_zig(&mut config, global_object);
+                        // Its handlers are the calling script's now, and so is the server: it goes
+                        // with that script's context, not with the one that first listened.
+                        server.abort_handle.leave();
+                        server.context.set(context.id());
+                        // SAFETY: heap-allocated; leaves its context in `stop_listening` / `deinit`.
+                        unsafe { bun_jsc::AbortHandle::arm_owner(std::ptr::from_mut(server), context) };
                         return Ok(server.js_value.try_get().unwrap_or(JSValue::UNDEFINED));
                     }};
                 }

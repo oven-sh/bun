@@ -743,6 +743,24 @@ const dir = String(
         writer.on("error", () => {}).write("the graph\x27s", error => { told.wrote = error ? error.code : "wrote"; });
       });
     `,
+    "serves-who.mjs": `
+      export const serve = who => Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response(who) });
+    `,
+    "taken-over-under-hot.mjs": `
+      // Under --hot a Bun.serve() with the hostname and port of one that is up takes that server over.
+      const [first, second] = [new Bun.ModuleGraph(), new Bun.ModuleGraph()];
+      const [appOfFirst, appOfSecond] = [await first.import(import.meta.dir + "/serves-who.mjs"), await second.import(import.meta.dir + "/serves-who.mjs")];
+      const server = first.run(() => appOfFirst.serve("the first"));
+      const sameServer = second.run(() => appOfSecond.serve("the second")) === server;
+      const ask = () => fetch(server.url).then(response => response.text(), () => "nobody");
+      const answers = [await ask()];
+      first.dispose();
+      answers.push(await ask());
+      second.dispose();
+      answers.push(await ask());
+      console.log(JSON.stringify({ sameServer, answers }));
+      process.exit(0);
+    `,
     "listens-and-reads-its-address.mjs": `
       import http from "node:http";
       import net from "node:net";
@@ -3291,6 +3309,21 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
   test("the host's import() of a module parked in a top-level await is left pending: dispose() settles nothing", async () => {
     expect(await runsFixture("host-import-parked-at-dispose.mjs")).toEqual({
       stdout: `{"settled":"pending"}`,
+      exitCode: 0,
+    });
+  });
+  test("--hot: a server another graph's Bun.serve() took over is that graph's, and goes with it, not with the first", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--hot", join(dir, "taken-over-under-hot.mjs")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+      timeout: 30_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), exitCode }).toEqual({
+      stdout: `{"sameServer":true,"answers":["the second","the second","nobody"]}`,
       exitCode: 0,
     });
   });

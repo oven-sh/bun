@@ -1435,6 +1435,49 @@ describe("bundler", () => {
       stdout: "12 312\n12 3124",
     },
   });
+  // A member initialized with a concatenation is stored as a rope. Folding a
+  // template literal that inlines it used to append the template's text onto
+  // that rope, changing the member everywhere: its declaration, every inlined
+  // use in the same file and every cross-module use.
+  itBundled("edgecase/EnumInliningRopeStringTemplateLiteral", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { Routes, users } from "./routes";
+        enum Local {
+          X = "x" + "y",
+        }
+        function tail(prefix: string) {
+          return \`\${prefix}-\${Local.X}-z\`;
+        }
+        console.log(users);
+        console.log(Routes.Base);
+        console.log(\`\${Routes.Base}/posts\`);
+        console.log(JSON.stringify(Routes));
+        console.log(tail("p"));
+        console.log(Local.X);
+        console.log(JSON.stringify(Local));
+      `,
+      "/routes.ts": /* ts */ `
+        export enum Routes {
+          Base = "/api" + "/v1",
+          Health = "/health",
+        }
+        export const users = \`\${Routes.Base}/users\`;
+      `,
+    },
+    minifySyntax: true,
+    run: {
+      stdout: `
+        /api/v1/users
+        /api/v1
+        /api/v1/posts
+        {"Base":"/api/v1","Health":"/health"}
+        p-xy-z
+        xy
+        {"X":"xy"}
+      `,
+    },
+  });
   itBundled("edgecase/ProtoNullProtoInlining", {
     files: {
       "/entry.ts": `
@@ -3318,6 +3361,46 @@ describe("bundler", () => {
     target: "bun",
     run: { stdout: '[true,true,null,"{\\"__proto__\\":{\\"x\\":1},\\"a\\":2}"]' },
   });
+  // A macro result or a folded constant that is NaN, ±Infinity or undefined
+  // prints as the bare global name. The renamer reserves those names, so a
+  // user binding called NaN, Infinity or undefined is renamed instead of
+  // capturing the printed value.
+  for (const minify of [false, true]) {
+    itBundled(`edgecase/MacroNaNInfinityUndefinedShadowed${minify ? "Minified" : ""}`, {
+      files: {
+        "/entry.ts": /* js */ `
+          import { nan, inf, ninf, undef } from "./macro.ts" with { type: "macro" };
+          import * as top from "./top-level.ts";
+          function f(NaN, Infinity, undefined) {
+            return [
+              typeof nan(), typeof undef(),
+              String(nan()), String(inf()), String(ninf()), String(undef()),
+              String(+"x"), String(void 0),
+              NaN, Infinity, undefined,
+            ];
+          }
+          console.write(JSON.stringify([f("n", "i", "u"), top.NaN, top.Infinity, top.undefined, String(nan()), String(inf())]));
+        `,
+        "/macro.ts": /* js */ `
+          export function nan() { return NaN; }
+          export function inf() { return Infinity; }
+          export function ninf() { return -Infinity; }
+          export function undef() { return undefined; }
+        `,
+        "/top-level.ts": /* js */ `
+          export const NaN = "N", Infinity = "I";
+          export var undefined = "U";
+        `,
+      },
+      target: "bun",
+      minifySyntax: minify,
+      minifyIdentifiers: minify,
+      run: {
+        stdout:
+          '[["number","undefined","NaN","Infinity","-Infinity","undefined","NaN","undefined","n","i","u"],"N","I","U","NaN","Infinity"]',
+      },
+    });
+  }
   // The macro module is transpiled by the macro VM, not by the bundler. That
   // VM has to be created from the build's transform options, or the macro
   // module does not see `--define` and `--loader`. The `Bun.build()` variant
@@ -3411,6 +3494,23 @@ describe("bundler", () => {
         import * as world from "node:fs";
         import * as etc from "console";
         +[hello, world, etc];
+        "
+      `);
+    },
+  });
+  itBundled("edgecase/PrefixOperatorAtOutputStart", {
+    files: {
+      "/entry.js": `
+        ++globalThis.x;
+        +globalThis.y;
+      `,
+    },
+    target: "node",
+    onAfterBundle(api) {
+      api.expectFile("out.js").toMatchInlineSnapshot(`
+        "// entry.js
+        ++globalThis.x;
+        +globalThis.y;
         "
       `);
     },
@@ -4053,6 +4153,111 @@ describe("bundler", () => {
     },
     format: "cjs",
     run: { file: "/check.js", stdout: `{"x":1} true` },
+  });
+
+  // Standard decorator lowering declares `var _init`, `var _dec` and a WeakMap per
+  // accessor or `#private` next to each class. Every class needs its own.
+  itBundled("edgecase/StandardDecoratorTemporariesPerClass", {
+    files: {
+      "/entry.js": /* js */ `
+        function Field(_, _c) {}
+        function AccessorDecorator(_, c) {
+          return { init: () => c.name, get: () => c.name };
+        }
+        class Entity { @Field id; }
+        class Action { @AccessorDecorator accessor success; }
+        console.log(new Entity().id);
+
+        const inject = target => (_, ctx) => v => target + ":" + ctx.name + "=" + v;
+        class Test1 { @inject("test1") field1 = "a"; }
+        class Test2 { @inject("test2") field2 = "b"; }
+        console.log(new Test1().field1, new Test2().field2);
+      `,
+    },
+    run: { stdout: "undefined\ntest1:field1=a test2:field2=b" },
+  });
+  // One decorated class per file: only the bundle puts them in one scope.
+  itBundled("edgecase/StandardDecoratorTemporariesAcrossFiles", {
+    files: {
+      "/entry.js": /* js */ `
+        import { a } from "./a";
+        import { B } from "./b";
+        import { Entity } from "./ent";
+        import { Action } from "./act";
+        new Action();
+        console.log(a.x, new B().x, a.read(), new B().read(), new Entity().id);
+      `,
+      "/a.js": /* js */ `
+        function dec(_, _c) {}
+        export class A { @dec accessor x = "A.x"; @dec #p = "A.#p"; read() { return this.#p; } }
+        export const a = new A();
+      `,
+      "/b.js": /* js */ `
+        function dec(_, _c) {}
+        export class B { @dec accessor x = "B.x"; @dec #p = "B.#p"; read() { return this.#p; } }
+      `,
+      "/ent.js": /* js */ `
+        function Field(_, _c) {}
+        export class Entity { @Field id; }
+      `,
+      "/act.js": /* js */ `
+        function Acc(_, _c) { return { init: () => "success" }; }
+        export class Action { @Acc accessor status; }
+      `,
+    },
+    run: { stdout: "A.x B.x A.#p B.#p undefined" },
+  });
+  // A `var` in a block belongs to the enclosing function.
+  for (const minifyIdentifiers of [false, true]) {
+    itBundled(`edgecase/StandardDecoratorTemporariesInSiblingBlocks${minifyIdentifiers ? "Minified" : ""}`, {
+      files: {
+        "/entry.js": /* js */ `
+          function dec(_, _c) {}
+          function make() {
+            let A, B;
+            { A = class { @dec accessor x = "a"; }; }
+            { B = class { @dec accessor x = "b"; }; }
+            return [new A().x, new B().x];
+          }
+          let C, D;
+          { C = class { @dec accessor x = "c"; }; }
+          { D = class { @dec accessor x = "d"; }; }
+          console.log(...make(), new C().x, new D().x);
+        `,
+      },
+      minifyIdentifiers,
+      run: { stdout: "a b c d" },
+    });
+  }
+  // The `var`s of a class in a parameter default are declared outside the function.
+  itBundled("edgecase/StandardDecoratorTemporariesInParameterDefaults", {
+    files: {
+      "/entry.js": /* js */ `
+        function dec(_, _c) {}
+        function f(C = class { @dec accessor x = "f"; }) { return C; }
+        function g(C = class { @dec accessor x = "g"; }) { return C; }
+        const F = f(), G = g();
+        console.log(new F().x, new G().x);
+      `,
+    },
+    run: { stdout: "f g" },
+  });
+  // `recv.#m()` on a lowered private method captures the receiver in a `var _obj`
+  // inside the calling method.
+  itBundled("edgecase/StandardDecoratorReceiverTemporaryVsUserBinding", {
+    files: {
+      "/entry.js": /* js */ `
+        const _obj = "user";
+        function dec(_, _c) {}
+        class A {
+          @dec #m() { return "m"; }
+          call(o) { return o.get().#m() + " " + _obj; }
+        }
+        const a = new A();
+        console.log(a.call({ get: () => a }));
+      `,
+    },
+    run: { stdout: "m user" },
   });
 });
 

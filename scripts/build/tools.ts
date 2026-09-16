@@ -18,7 +18,7 @@ import { BuildError } from "./error.ts";
 // ───────────────────────────────────────────────────────────────────────────
 
 /**
- * Parse a version like "21.1.8" out of arbitrary text (tool --version output).
+ * Parse a version like "23.1.1" out of arbitrary text (tool --version output).
  * Returns the first X.Y.Z found, or undefined.
  */
 function parseVersion(text: string): string | undefined {
@@ -88,7 +88,7 @@ export interface ToolSpec {
   paths?: string[];
   /** Search only `paths`, never $PATH. */
   pathsOnly?: boolean;
-  /** Version constraint, e.g. `">=21.1.0 <22.0.0"`. */
+  /** Version constraint, e.g. `">=23.1.0 <24.0.0"`. */
   version?: string;
   /** How to get the version. `"--version"` (default) or `"version"` (go/zig style). */
   versionArg?: string;
@@ -278,10 +278,10 @@ export function findTool(spec: ToolSpec): FoundTool | undefined {
 
 /**
  * LLVM version constraint. Any version in the same major.minor range is
- * accepted (e.g. Alpine 3.23 ships 21.1.2 while we target 21.1.8).
+ * accepted (e.g. apt.llvm.org serves 23.1.2 snapshots while we target 23.1.1).
  */
-export const LLVM_VERSION = "21.1.8";
-const LLVM_MAJOR = "21";
+export const LLVM_VERSION = "23.1.1";
+const LLVM_MAJOR = "23";
 const LLVM_MINOR = "1";
 const LLVM_VERSION_RANGE = `>=${LLVM_MAJOR}.${LLVM_MINOR}.0 <${LLVM_MAJOR}.${LLVM_MINOR}.99`;
 
@@ -349,7 +349,7 @@ function llvmSearchPaths(os: OS, arch: Arch): string[] {
 }
 
 /**
- * Version-suffixed command names (e.g. clang-21, clang-21.1).
+ * Version-suffixed command names (e.g. clang-23, clang-23.1).
  * Unix distros often only ship these suffixed versions.
  */
 function llvmNameVariants(name: string): string[] {
@@ -429,6 +429,9 @@ export function resolveLlvmToolchain(
   | "strip"
   | "llvmStrip"
   | "nm"
+  | "readobj"
+  | "objdump"
+  | "cxxfilt"
   | "dsymutil"
   | "ccache"
   | "rc"
@@ -548,6 +551,11 @@ export function resolveLlvmToolchain(
   // so it is only ever missing from a partial LLVM install; then the checks
   // are skipped rather than the build refused.
   const nm = findLlvmTool("llvm-nm", paths, os, { checkVersion: false, required: false })?.path;
+  // The post-link binary checks (verify-binary.ts) read the executable with
+  // these; a partial install skips the checks rather than the build.
+  const readobj = findLlvmTool("llvm-readobj", paths, os, { checkVersion: false, required: false })?.path;
+  const objdump = findLlvmTool("llvm-objdump", paths, os, { checkVersion: false, required: false })?.path;
+  const cxxfilt = findLlvmTool("llvm-cxxfilt", paths, os, { checkVersion: false, required: false })?.path;
 
   // dsymutil: required on darwin; optional elsewhere (needed only when
   // cross-compiling a darwin release from a non-darwin host).
@@ -614,6 +622,9 @@ export function resolveLlvmToolchain(
     strip,
     llvmStrip,
     nm,
+    readobj,
+    objdump,
+    cxxfilt,
     dsymutil,
     ccache,
     rc,
@@ -683,8 +694,8 @@ export function findRustLld(os: OS): {
   // installed there yet. `rustc --print sysroot` (a rustup proxy invocation)
   // would auto-install — but the download blows past a short spawnSync timeout
   // and the silent failure leaves `rustLld` undefined, which falls back to the
-  // system lld. With cross-language LTO that means lld 21 reading rust-emitted
-  // LLVM 22 bitcode → `Invalid record`. Pre-flight a `rustup toolchain
+  // system lld. With cross-language LTO that means an older lld reading newer
+  // rust-emitted bitcode → `Invalid record`. Pre-flight a `rustup toolchain
   // install` so the proxy resolves instantly: idempotent (~0.5s, it re-checks
   // the channel manifest) when already installed, downloads on a stale agent.
   // `-q` also hides the download progress, so say how long it took whenever
@@ -698,7 +709,19 @@ export function findRustLld(os: OS): {
     const started = performance.now();
     spawnSync(
       rustup,
-      ["-q", "toolchain", "install", channel, "--no-self-update", "--profile", "minimal", "--component", "rust-src"],
+      [
+        "-q",
+        "toolchain",
+        "install",
+        channel,
+        "--no-self-update",
+        "--profile",
+        "minimal",
+        "--component",
+        "rust-src",
+        "--component",
+        "llvm-tools",
+      ],
       {
         encoding: "utf8",
         timeout: 300_000,

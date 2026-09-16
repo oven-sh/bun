@@ -140,6 +140,17 @@ public:
         return getLoopData()->findCorkSlot(this) != LoopData::INVALID_CORK_SLOT;
     }
 
+    /* Sends what the cork buffer holds for this socket. The socket stays corked. */
+    void sendCorked() {
+        LoopData *loopData = getLoopData();
+        int slot = loopData->findCorkSlot(this);
+        if (slot == LoopData::INVALID_CORK_SLOT || loopData->getCorkSlot(slot)->offset == 0) {
+            return;
+        }
+        uncork();
+        cork();
+    }
+
     /* Returns a suitable buffer for temporary assemblation of send data */
     std::pair<char *, SendBufferAttribute> getSendBuffer(size_t size) {
         LoopData *loopData = getLoopData();

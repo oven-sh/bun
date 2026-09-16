@@ -352,6 +352,11 @@ impl JSValue {
         }
         JSC__JSValue__isAnyError(self)
     }
+    /// Whether this object's realm was retired by `bun test --isolate` (its file finished).
+    #[inline]
+    pub fn is_from_retired_test_isolation_realm(self) -> bool {
+        self.is_cell() && Bun__JSValue__isFromRetiredTestIsolationRealm(self)
+    }
     /// `JSValue.isError()` — true iff this is an
     /// `ErrorInstance` cell (does NOT match `Exception`).
     #[inline]
@@ -1086,6 +1091,22 @@ impl JSValue {
         })?;
         // `.property_does_not_exist_on_object` (0x4) and
         // `.js_undefined` map to None; `.zero` ⇒ exception (handled above).
+        if v.0 == JSValue::PROPERTY_DOES_NOT_EXIST.0 || v.is_undefined() {
+            Ok(None)
+        } else {
+            Ok(Some(v))
+        }
+    }
+
+    /// `get` for a key that is one of `BunCommonStrings.h`'s, without the
+    /// per-call `StringImpl` and atom-table probe.
+    pub fn get_common_string(
+        self,
+        global: &JSGlobalObject,
+        key: crate::CommonString,
+    ) -> JsResult<Option<JSValue>> {
+        debug_assert!(self.is_object());
+        let v = host_fn::from_js_host_call_generic(global, || key.get_property(self, global))?;
         if v.0 == JSValue::PROPERTY_DOES_NOT_EXIST.0 || v.is_undefined() {
             Ok(None)
         } else {
@@ -2136,6 +2157,7 @@ unsafe extern "C" {
     ) -> JSValue;
     safe fn Bun__JSValue__protect(this: JSValue);
     safe fn Bun__JSValue__unprotect(this: JSValue);
+    safe fn Bun__JSValue__isFromRetiredTestIsolationRealm(this: JSValue) -> bool;
 }
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -369,7 +369,7 @@ pub use self::top_exception_scope::{
 /// is reachable as `bun_jsc::cpp::Name(...)` with a properly-scoped exception
 /// check (no `global.has_exception()` after-the-fact).
 pub mod cpp;
-pub use self::common_strings::CommonStrings;
+pub use self::common_strings::{CommonStrings, CommonStringsForRust as CommonString};
 pub use self::dom_url::DOMURL;
 pub use self::js_big_int::JSBigInt;
 
@@ -818,8 +818,6 @@ pub mod resolved_source_tag {
 
     #[allow(non_upper_case_globals)]
     impl ResolvedSourceTag {
-        /// `InternalModuleRegistryFlag` in SyntheticModuleType.h: builtin-module tags are `(1 << 9) | InternalModuleRegistry id`.
-        pub const INTERNAL_MODULE_REGISTRY_FLAG: u32 = 1 << 9;
         // Structural variants — keep in lock-step with the generated
         // `build/*/codegen/SyntheticModuleType.h` and
         // `src/jsc/bindings/headers-handwritten.h` (`ResolvedSourceTagPackageJSONTypeModule = 1`).

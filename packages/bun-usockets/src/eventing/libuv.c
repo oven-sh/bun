@@ -308,6 +308,11 @@ struct us_loop_t *us_create_loop(void *hint,
       (struct us_loop_t *)us_calloc(1, sizeof(struct us_loop_t) + ext_size);
 
   loop->uv_loop = hint ? hint : uv_loop_new();
+  /* NULL when uv_loop_init fails (CreateIoCompletionPort under handle exhaustion). */
+  if (!loop->uv_loop) {
+    us_free(loop);
+    return NULL;
+  }
   loop->is_default = hint != 0;
 
   loop->uv_pre = us_malloc(sizeof(uv_prepare_t));
@@ -323,7 +328,8 @@ struct us_loop_t *us_create_loop(void *hint,
   loop->uv_check->data = loop;
 
   // here we create two unreffed handles - timer and async
-  us_internal_loop_data_init(loop, wakeup_cb, pre_cb, post_cb);
+  // Cannot fail here: this backend's us_internal_create_async acquires no OS resource.
+  (void)us_internal_loop_data_init(loop, wakeup_cb, pre_cb, post_cb);
 
   // if we do not own this loop, we need to integrate and set up timer
   if (hint) {
@@ -346,6 +352,10 @@ void us_loop_free(struct us_loop_t *loop) {
   loop->uv_check->data = loop->uv_check;
   uv_close((uv_handle_t *)loop->uv_check, close_cb_free);
 
+  if (loop->idle_sweep_timer) {
+    us_timer_close(loop->idle_sweep_timer, 0);
+  }
+
   us_internal_loop_data_free(loop);
 
 // we need to run the loop one last round to call all close callbacks
@@ -359,7 +369,9 @@ void us_loop_free(struct us_loop_t *loop) {
   us_free(loop);
 }
 
-extern void Bun__JSC_onBeforeWait(void *jsc_vm, uint64_t now_ns);
+extern unsigned int Bun__JSC_onBeforeWait(void *jsc_vm, uint64_t now_ns);
+
+static void idle_sweep_again_cb(struct us_timer_t *t) {}
 
 void us_loop_run(struct us_loop_t *loop) {
   us_loop_integrate(loop);
@@ -371,7 +383,18 @@ void us_loop_run(struct us_loop_t *loop) {
   if (loop->data.jsc_vm) {
     /* uv_update_time() above just refreshed libuv's cached monotonic clock, so
      * uv_now() reads that cache rather than taking the clock again. */
-    Bun__JSC_onBeforeWait(loop->data.jsc_vm, (uint64_t) uv_now(loop->uv_loop) * 1000000ULL);
+    const unsigned int run_again_ms =
+        Bun__JSC_onBeforeWait(loop->data.jsc_vm, (uint64_t) uv_now(loop->uv_loop) * 1000000ULL);
+    if (run_again_ms) {
+      /* The allocator's idle sweep wants another turn even if nothing else ends
+       * the poll. Unref'd: it bounds the poll, it does not keep the loop alive.
+       * Counted from after the sweep, hence the second uv_update_time(). */
+      if (!loop->idle_sweep_timer) {
+        loop->idle_sweep_timer = us_create_timer(loop, 1, 0);
+      }
+      uv_update_time(loop->uv_loop);
+      us_timer_set(loop->idle_sweep_timer, idle_sweep_again_cb, (int) run_again_ms, 0);
+    }
   }
 
   uv_run(loop->uv_loop, UV_RUN_ONCE);

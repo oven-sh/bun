@@ -127,6 +127,15 @@ bool extractCachedData(JSValue cachedDataValue, WTF::Vector<uint8_t>& outCachedD
     return false;
 }
 
+Ref<JSC::CachedBytecode> createOwnedCachedBytecode(std::span<const uint8_t> bytes)
+{
+    // UnlinkedFunctionExecutable's Decoder constructor (CachedTypes.cpp) keeps the Decoder and a
+    // payload offset, and decodes the body on the function's first call, borrowed payload or not.
+    auto payload = WTF::MallocSpan<uint8_t, JSC::VMMalloc>::malloc(bytes.size());
+    WTF::memcpySpan(payload.mutableSpan(), bytes);
+    return JSC::CachedBytecode::create(WTF::move(payload), {});
+}
+
 JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, const ArgList& args, const SourceOrigin& sourceOrigin, CompileFunctionOptions&& options, JSC::SourceTaintedOrigin sourceTaintOrigin, JSC::JSScope* scope)
 {
     ASSERT(scope);
@@ -219,7 +228,7 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
     TriState bytecodeAccepted = TriState::Indeterminate;
 
     if (!options.cachedData.isEmpty()) {
-        cachedBytecode = CachedBytecode::create(std::span(options.cachedData), nullptr, {});
+        cachedBytecode = createOwnedCachedBytecode(options.cachedData.span());
         SourceCodeKey key(sourceCode, {}, JSC::SourceCodeType::ProgramType, lexicallyScopedFeatures, JSC::JSParserScriptMode::Classic, JSC::DerivedContextType::None, JSC::EvalContextType::None, false, {}, std::nullopt);
         unlinkedProgramCodeBlock = JSC::decodeCodeBlock<UnlinkedProgramCodeBlock>(vm, key, *cachedBytecode);
         if (unlinkedProgramCodeBlock == nullptr) {
@@ -412,7 +421,8 @@ String stringifyAnonymousFunction(JSGlobalObject* globalObject, const ArgList& a
     } else {
         // Process parameters and body
         unsigned parameterCount = args.size() - 1;
-        StringBuilder paramString;
+        // The params come from JS. Past `String::MaxLength` a default `StringBuilder` calls `CRASH()`.
+        StringBuilder paramString { OverflowPolicy::RecordOverflow };
 
         for (unsigned i = 0; i < parameterCount; ++i) {
             auto param = args.at(i).toWTFString(globalObject);
@@ -423,6 +433,11 @@ String stringifyAnonymousFunction(JSGlobalObject* globalObject, const ArgList& a
             }
 
             paramString.append(param);
+        }
+
+        if (paramString.hasOverflowed()) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return {};
         }
 
         auto body = args.at(parameterCount).toWTFString(globalObject);
@@ -521,10 +536,13 @@ static void writeArrowHeaderStack(VM& vm, ErrorInstance* errorInstance, const St
         for (unsigned i = 1; i < caretColumn1Based; i++)
             caretLine.append(i <= sourceLineText.length() && sourceLineText[i - 1] == '\t' ? '\t' : ' ');
         caretLine.append('^');
-        prepend = makeString(url, ':', reportedLine, '\n', sourceLineText, '\n', caretLine.toString(), "\n\n"_s, stack);
+        prepend = tryMakeString(url, ':', reportedLine, '\n', sourceLineText, '\n', caretLine.toString(), "\n\n"_s, stack);
     } else {
-        prepend = makeString(url, ':', reportedLine, '\n', stack);
+        prepend = tryMakeString(url, ':', reportedLine, '\n', stack);
     }
+    // The URL and the stack come from JS. Past `String::MaxLength` `makeString` calls `CRASH()`. The error keeps its stack, without the header.
+    if (prepend.isNull()) [[unlikely]]
+        return;
     const auto& decoratedName = WebCore::builtinNames(vm).vmErrorDecoratedPrivateName();
     errorInstance->putDirect(vm, vm.propertyNames->stack, jsString(vm, prepend), JSC::PropertyAttribute::DontEnum | 0);
     errorInstance->putDirect(vm, decoratedName, jsBoolean(true), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly);
@@ -958,6 +976,7 @@ const JSC::GlobalObjectMethodTable& NodeVMGlobalObject::globalObjectMethodTable(
         &shouldInterruptScript,
         &javaScriptRuntimeFlags,
         nullptr, // shouldInterruptScriptBeforeTimeout,
+        nullptr, // moduleTypeIsAllowed
         &moduleLoaderImportModule,
         nullptr, // moduleLoaderResolve
         nullptr, // moduleLoaderFetch
@@ -1376,7 +1395,7 @@ bool NodeVMGlobalObject::defineOwnProperty(JSObject* cell, JSGlobalObject* globa
     // observe the [[DefineOwnProperty]] exactly once, like V8's contextify
     // PropertyDefinerCallback.
     if (descriptor.isAccessorDescriptor()) {
-        RELEASE_AND_RETURN(scope, contextifiedObject->methodTable()->defineOwnProperty(contextifiedObject, contextifiedObject->globalObject(), propertyName, descriptor, shouldThrow));
+        RELEASE_AND_RETURN(scope, contextifiedObject->methodTable()->defineOwnProperty(contextifiedObject, globalObject, propertyName, descriptor, shouldThrow));
     }
 
     // The lookup above may have filled `slot` as cacheable (e.g. a lazy global
@@ -1389,10 +1408,10 @@ bool NodeVMGlobalObject::defineOwnProperty(JSObject* cell, JSGlobalObject* globa
     RETURN_IF_EXCEPTION(scope, false);
 
     if (isDeclaredOnSandbox && !isDeclaredOnGlobalProxy) {
-        RELEASE_AND_RETURN(scope, contextifiedObject->methodTable()->defineOwnProperty(contextifiedObject, contextifiedObject->globalObject(), propertyName, descriptor, shouldThrow));
+        RELEASE_AND_RETURN(scope, contextifiedObject->methodTable()->defineOwnProperty(contextifiedObject, globalObject, propertyName, descriptor, shouldThrow));
     }
 
-    auto did = contextifiedObject->methodTable()->defineOwnProperty(contextifiedObject, contextifiedObject->globalObject(), propertyName, descriptor, shouldThrow);
+    auto did = contextifiedObject->methodTable()->defineOwnProperty(contextifiedObject, globalObject, propertyName, descriptor, shouldThrow);
     RETURN_IF_EXCEPTION(scope, false);
     if (!did) return false;
 
@@ -1653,7 +1672,12 @@ static JSPromise* moduleLoaderImportModuleInner(NodeVMGlobalObject* globalObject
     RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(vm, scope));
 
     scope.release();
-    promise->reject(vm, createError(globalObject, makeString("Could not import the module '"_s, moduleNameString.data, "'."_s)));
+    // The specifier comes from JS. Past `String::MaxLength`, `makeString` calls `CRASH()` and `tryMakeString` returns null.
+    auto message = tryMakeString("Could not import the module '"_s, moduleNameString.data, "'."_s);
+    if (!message) [[unlikely]]
+        promise->reject(vm, createOutOfMemoryError(globalObject));
+    else
+        promise->reject(vm, createError(globalObject, message));
     return promise;
 }
 
@@ -1721,29 +1745,14 @@ JSC::JSValue createNodeVMBinding(Zig::GlobalObject* globalObject)
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "isModuleNamespaceObject"_s)),
         JSC::JSFunction::create(vm, globalObject, 0, "isModuleNamespaceObject"_s, vmIsModuleNamespaceObject, ImplementationVisibility::Public), 1);
     obj->putDirect(
-        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "kUnlinked"_s)),
-        JSC::jsNumber(static_cast<unsigned>(NodeVMSourceTextModule::Status::Unlinked)), 0);
-    obj->putDirect(
-        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "kLinking"_s)),
-        JSC::jsNumber(static_cast<unsigned>(NodeVMSourceTextModule::Status::Linking)), 0);
-    obj->putDirect(
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "kLinked"_s)),
         JSC::jsNumber(static_cast<unsigned>(NodeVMSourceTextModule::Status::Linked)), 0);
-    obj->putDirect(
-        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "kEvaluating"_s)),
-        JSC::jsNumber(static_cast<unsigned>(NodeVMSourceTextModule::Status::Evaluating)), 0);
     obj->putDirect(
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "kEvaluated"_s)),
         JSC::jsNumber(static_cast<unsigned>(NodeVMSourceTextModule::Status::Evaluated)), 0);
     obj->putDirect(
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "kErrored"_s)),
         JSC::jsNumber(static_cast<unsigned>(NodeVMSourceTextModule::Status::Errored)), 0);
-    obj->putDirect(
-        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "kSourceText"_s)),
-        JSC::jsNumber(static_cast<unsigned>(NodeVMModule::Type::SourceText)), 0);
-    obj->putDirect(
-        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "kSynthetic"_s)),
-        JSC::jsNumber(static_cast<unsigned>(NodeVMModule::Type::Synthetic)), 0);
     obj->putDirect(
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "DONT_CONTEXTIFY"_s)),
         globalObject->m_nodeVMDontContextify.get(globalObject), 0);

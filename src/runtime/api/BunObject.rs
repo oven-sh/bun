@@ -295,6 +295,7 @@ pub mod bun_object {
         BunObject_lazyPropCb_CryptoHasher => Crypto::CryptoHasher::getter,
         BunObject_lazyPropCb_CSRF => super::get_csrf_object,
         BunObject_lazyPropCb_FFI => crate::ffi::ffi_object_draft::getter,
+        BunObject_lazyPropCb_FetchSession => super::get_fetch_session_constructor,
         BunObject_lazyPropCb_FileSystemRouter => super::get_file_system_router,
         BunObject_lazyPropCb_Glob => super::get_glob_constructor,
         BunObject_lazyPropCb_Image => super::get_image_constructor,
@@ -1032,7 +1033,7 @@ fn sleep_sync(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult
 
 // HOST_EXPORT(Bun__gc, c)
 pub fn gc(vm: &mut VirtualMachine, sync: bool) -> usize {
-    vm.garbage_collect(sync)
+    vm.garbage_collect_from_js(sync)
 }
 
 #[bun_jsc::host_fn]
@@ -1684,6 +1685,10 @@ fn get_transpiler_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSV
     jsc::codegen::js::get_constructor::<crate::api::js_transpiler::JSTranspiler>(global_this)
 }
 
+fn get_fetch_session_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
+    jsc::codegen::js::get_constructor::<crate::webcore::fetch::FetchSession>(global_this)
+}
+
 fn get_file_system_router(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     jsc::codegen::js::get_constructor::<crate::api::filesystem_router::FileSystemRouter>(
         global_this,
@@ -1993,25 +1998,11 @@ pub(crate) mod environment_variables {
         false
     }
 
-    /// The value borrows the env map; the caller copies before the map can
-    /// mutate. `Dead` when absent.
-    #[unsafe(no_mangle)]
-    extern "C" fn Bun__getEnvValueBunString<'a>(
-        global_object: &'a JSGlobalObject,
-        name: &BunString,
-    ) -> bun_core::StringView<'a> {
-        let vm = global_object.bun_vm();
-        let name_slice = name.to_utf8();
-        match vm.env_loader().get(name_slice.slice()) {
-            Some(val) => bun_core::StringView::borrow_utf8(val),
-            None => bun_core::StringView::DEAD,
-        }
-    }
-
     /// Sync a process.env write back to the native env map so that native
     /// consumers (e.g. fetch's proxy resolution via env.getHttpProxyFor)
-    /// observe the updated value. Used by custom setters for proxy-related
-    /// env vars (HTTP_PROXY, HTTPS_PROXY, NO_PROXY and lowercase variants).
+    /// observe the updated value. Used by process.env's write and delete paths for proxy-related
+    /// env vars (HTTP_PROXY, HTTPS_PROXY, ALL_PROXY, NO_PROXY and lowercase variants).
+    /// A `Dead` value removes the variable.
     ///
     /// Values are ref-counted in RareData.proxy_env_storage so that
     /// worker_threads share the parent's strings (refcount bumped at spawn)
@@ -2042,6 +2033,12 @@ pub(crate) mod environment_variables {
         *slot.ptr = None;
 
         let env_map = &mut vm.transpiler.env_mut().map;
+
+        // `delete process.env.X`
+        if value.tag() == bun_core::Tag::Dead {
+            env_map.remove(slot.key);
+            return;
+        }
 
         if value.is_empty() {
             // Store a static empty string rather than removing, so that

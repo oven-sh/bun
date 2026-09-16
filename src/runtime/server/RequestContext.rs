@@ -98,6 +98,20 @@ pub(crate) enum UpgradeState {
     Upgraded,
 }
 
+/// The root on the Response being rendered. A plain Blob body is read in the frame that returned it, so it is left unrooted (see `response_weakref`); a file or streaming body is read after that frame, so [`set_rooted`](Self::set_rooted) roots it.
+#[derive(Default)]
+pub(crate) struct ResponseRoot(JsCell<bun_jsc::strong::Optional>);
+
+impl ResponseRoot {
+    pub(crate) fn set_rooted(&self, value: JSValue, global: &JSGlobalObject) {
+        self.0.set(bun_jsc::strong::Optional::create(value, global));
+    }
+
+    pub(crate) fn clear(&self) {
+        self.0.set(bun_jsc::strong::Optional::empty());
+    }
+}
+
 /// `align(16)`: `NativePromiseContext`'s deferred-deref task packs a 4-bit
 /// type tag into the low bits of a pointer to this.
 #[repr(align(16))]
@@ -132,12 +146,7 @@ pub struct RequestContext<
 
     /// We can only safely free once the request body promise is finalized
     /// and the response is rejected
-    // Deliberately a bare JSValue with manual protect()/unprotect() gated by
-    // the `response_protected` flag: plain Blob/InternalBlob
-    // bodies intentionally leave the value unprotected on the hot path and
-    // fall back to `response_weakref` (see its doc below), so a `Strong`
-    // here would root the Response unconditionally and change GC behavior.
-    pub(crate) response_jsvalue: Cell<JSValue>,
+    pub(crate) response_root: ResponseRoot,
     root: Cell<*mut Self>,
     pub(crate) ref_count: Cell<u8>,
     pub(crate) pin_count: Cell<u8>,
@@ -147,7 +156,7 @@ pub struct RequestContext<
     /// on tryEnd() backpressure. onAbort / handleResolveStream /
     /// handleRejectStream only use this for best-effort readable-stream
     /// cleanup and safely observe null instead of UAF. File/.Locked
-    /// bodies still protect() response_jsvalue, so the pointer stays
+    /// bodies still root it through `response_root`, so the pointer stays
     /// valid for renderMetadata() on those paths.
     pub(crate) response_weakref: JsCell<response::WeakRef>,
     pub(crate) blob: JsCell<AnyBlob>,
@@ -837,15 +846,7 @@ where
         if self.reject_unsendable_response(unsafe { (*response).status_code() }) {
             return;
         }
-        // An async error() Response may replace a still-protected streaming
-        // Response; release the original before overwriting.
-        if self.flags.response_protected() {
-            self.response_jsvalue.get().unprotect();
-            self.flags.set_response_protected(false);
-        }
-        self.response_jsvalue.set(value);
-        self.flags.set_response_protected(true);
-        value.protect();
+        self.response_root.set_rooted(value, global_this);
 
         if self.method == Method::HEAD {
             if let Some(resp) = self.resp.get() {
@@ -1282,27 +1283,19 @@ where
         }
     }
 
-    /// HTTP/1 only: `end_stream()` for a response the JS sink already fully
-    /// ended (`HTTPServerWritable::ended_response`). HTTP/1's uWS `markDone()`
-    /// drops its `onAborted` on end, so nothing nulls `self.resp` if the peer
-    /// closes afterwards: by the time the parked stream-resolution microtask
-    /// runs, uSockets may already have freed the socket
-    /// (`us_internal_free_closed_sockets`) or recycled it onto the next
-    /// keep-alive request. Release the handle without dereferencing it. The
-    /// `clear_on_data()`/`clear_aborted()`/`clear_timeout()` calls
-    /// `detach_response()` would make are already covered by `markDone()`,
-    /// which is also why a later `server.stop(true)` cannot reach `on_abort`:
-    /// callers come here even once the server is terminated.
+    /// `end_stream()` for a response the sink already ended
+    /// (`HTTPServerWritable::ended_response`), where `resp` must no longer be
+    /// dereferenced. `markDone()` already did what `detach_response()` would.
     ///
-    /// HTTP/2 and HTTP/3 must never reach this. `Http{2,3}Response::markDone()`
-    /// deliberately leave `onAborted` armed so the stream teardown can notify
-    /// the holder, which also proves `resp` is still alive here (`on_abort`
-    /// nulls it first). They therefore need `end_stream()`'s
-    /// `detach_response()` to disarm that callback before the context is
-    /// released, or the later stream teardown invokes it on a freed pool slot.
+    /// HTTP/1 arrives from the stream's resolve/reject reaction, by then
+    /// uSockets may have freed or recycled the socket. HTTP/2 and HTTP/3
+    /// arrive from `on_abort`, which is the last call on a freed stream.
+    ///
+    /// An H2/H3 reaction must use `end_stream()` instead: its `resp` is still
+    /// alive, and `detach_response()` has to disarm the still-armed
+    /// `onAborted` before the context goes, or it fires on a freed pool slot.
     pub(crate) fn end_already_responded_stream(&self) {
         ctx_log!("endAlreadyRespondedStream");
-        debug_assert!(!MUX);
         // `resp` may be freed (see above); the sink resumed it at `ended_response = true`.
         self.flags.set_request_body_paused(false);
         if self.resp.take().is_some() {
@@ -1431,7 +1424,7 @@ where
                 cookies: JsCell::new(None),
                 flags: Flags::<DEBUG_MODE>::default(),
                 upgrade_context: Cell::new(UpgradeState::None),
-                response_jsvalue: Cell::new(JSValue::ZERO),
+                response_root: ResponseRoot::default(),
                 ref_count: Cell::new(1),
                 pin_count: Cell::new(0),
                 response_weakref: JsCell::new(response::WeakRef::EMPTY),
@@ -1460,20 +1453,29 @@ where
         let pinned = RequestContextRef::pin(this);
         let this = pinned.ctx();
         debug_assert!(this.resp.get().is_some());
-        // An HTTP/2 or HTTP/3 stream is destroyed once both sides finish,
-        // so this also fires after a successful end(). HTTP/1 sockets persist
-        // for keep-alive, so the equivalent never happens there. Drop the
-        // pointer; everything else cleans up via the resolve/reject path.
+        debug_assert!(this.server.get().is_some());
+        let server = this.server();
+        let vm = server.vm();
+        // Both arms below can reject a parked request-body read and drain.
+        // The held count keeps that drain from checkpointing mid-frame.
+        let _entered = vm.enter_event_loop_scope_without_checkpoint();
+        // An H2/H3 stream is destroyed once both sides finish, so this also
+        // fires after a successful end(); HTTP/1 keep-alive sockets never do.
+        // Only the sink ends a response without `detach_response()`, and its
+        // reaction does nothing once `resp` is gone, so end the request here.
         if MUX {
             // SAFETY: FFI handle
             if resp.has_responded() {
-                this.resp.set(None);
-                this.flags.set_has_abort_handler(false);
+                // The sink can outlive this call; `resp` dies with the stream.
+                if let Some(wrapper) = this.sink_mut() {
+                    wrapper.sink.res = None;
+                }
+                // Releases the base ref itself, so no `_ref` adoption here.
+                this.end_already_responded_stream();
                 return;
             }
         }
         debug_assert!(!this.flags.aborted());
-        debug_assert!(this.server.get().is_some());
         // mark request as aborted
         this.flags.set_aborted(true);
         let abort = this.additional_on_abort.replace(None);
@@ -1484,12 +1486,7 @@ where
 
         this.detach_response();
         let any_js_calls = core::cell::Cell::new(false);
-        let server = this.server();
-        let vm = server.vm();
         let global_this = server.global_this();
-        // Entered for the abort listeners below, and (dropped last) for the
-        // drains below and in the release of `_ref`.
-        let _entered = vm.enter_event_loop_scope_without_checkpoint();
         let _ref = RequestContextRef::adopt(this.as_ctx_ptr());
         // This is a task in the event loop.
         // If we called into JavaScript, we must drain the microtask queue.
@@ -1528,10 +1525,7 @@ where
                     sink_ptr.as_ptr().cast::<ResponseStream<SSL_ENABLED>>(),
                 );
             }
-            // End request streaming here, not in deinit: a `Used` body
-            // (textStream) can only be rejected through
-            // request_body_readable_stream_ref, and finalize_without_deinit
-            // drops that ref without erroring it. any_js_calls is already set.
+            // Reject a parked request-body read while this abort still drains microtasks.
             let _ = this.end_request_streaming();
             this.reclaim_promise_cell();
             return;
@@ -1566,8 +1560,7 @@ where
 
         // Reclaim only after the block above: the claim's ref must still
         // count in `is_dead_request`, so a parked request-body read goes
-        // through `end_request_streaming` and rejects instead of being
-        // silently dropped by `finalize_without_deinit`.
+        // through `end_request_streaming` here and its rejection is drained.
         this.reclaim_promise_cell();
     }
 
@@ -1595,20 +1588,11 @@ where
             release_body_stream(resp, global_this);
         }
 
-        let response_jsvalue = self.response_jsvalue.get();
-        if !response_jsvalue.is_empty() {
-            ctx_log!("finalizeWithoutDeinit: response_jsvalue != .zero");
-            if self.flags.response_protected() {
-                response_jsvalue.unprotect();
-                self.flags.set_response_protected(false);
-            }
-            self.response_jsvalue.set(JSValue::ZERO);
-        }
+        self.response_root.clear();
         self.response_weakref.set(response::WeakRef::EMPTY);
 
+        // The stream ref itself is errored and released by `end_request_streaming()` below.
         self.detach_request_body_producer();
-        self.request_body_readable_stream_ref
-            .with_mut(|s| s.deinit());
 
         // Releases the ref taken in `set_cookies` (via `CookieMapRef::drop`).
         drop(self.cookies.replace(None));
@@ -2167,22 +2151,13 @@ where
             return;
         }
 
-        #[cfg(debug_assertions)]
-        if resp.has_responded() {
-            stream_log!("responded");
-        }
-
-        if let Some(err_value) = assignment_result.to_error() {
-            stream_log!("returned an error");
-            ResponseStreamJSSink::<SSL_ENABLED>::detach(
-                &mut response_stream.sink.source,
-                global_this,
-            );
-            this.sink.set(None);
-            Self::destroy_sink(response_stream_ptr);
-            return this.handle_reject(err_value);
-        }
-
+        // Checked before the thrown-error arm below: a sync `pull()` that ends
+        // the response and then throws has already put a complete body on the
+        // wire, so the throw must not end the response again. `handle_reject()`
+        // does nothing once the response has responded, which leaves the
+        // request looking unanswered: the handler tail
+        // (`should_render_missing()` in `mod.rs`) then ends it a second time,
+        // writing a second chunked last-chunk.
         if resp.has_responded() {
             stream_log!("done");
             ResponseStreamJSSink::<SSL_ENABLED>::detach(
@@ -2198,6 +2173,17 @@ where
             return;
         }
 
+        if let Some(err_value) = assignment_result.to_error() {
+            stream_log!("returned an error");
+            ResponseStreamJSSink::<SSL_ENABLED>::detach(
+                &mut response_stream.sink.source,
+                global_this,
+            );
+            this.sink.set(None);
+            Self::destroy_sink(response_stream_ptr);
+            return this.handle_reject(err_value);
+        }
+
         // A fully-synchronous ReadableStream can drain through writeBytes
         // and reach endFromJS() inside assignToStream(). If tryEnd() then
         // hits transport backpressure (common on QUIC right after the
@@ -2207,7 +2193,7 @@ where
         // above resolves it) instead of falling through to the cancel path.
         let mut effective_result = assignment_result;
         if effective_result.is_empty_or_undefined_or_null() {
-            if let Some(flush) = response_stream.sink.pending_flush {
+            if let Some(flush) = response_stream.sink.pending_flush() {
                 // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*const → &` deref.
                 effective_result = jsc::JSPromise::opaque_ref(flush).to_js();
             }
@@ -2409,44 +2395,46 @@ where
 
         self.request_body_buf.set(Vec::new());
 
-        // if we cannot, we have to reject pending promises
-        // first, we reject the request body promise
+        let mut any_js_calls = false;
+
+        // Reject a pending .text()/.json()/.blob()/... whose body never fully arrived.
         if let Some(body) = self.request_body_mut() {
-            // User called .blob(), .json(), text(), or .arrayBuffer() on the Request object
-            // but we received nothing or the connection was aborted
             if matches!(body, Body::Value::Locked(_)) {
                 let global_this = self.server().global_this();
                 body.to_error_instance(
                     Body::ValueError::AbortReason(jsc::CommonAbortReason::ConnectionClosed),
                     global_this,
                 )?;
-                return Ok(true);
+                any_js_calls = true;
             }
         }
 
-        // `req.textStream()` transitions the body to `Value::Used`, so the
-        // Locked check above falls through. Error the ByteStream via our own
-        // strong ref instead so a pending read rejects rather than hanging.
-        if self.request_body_readable_stream_ref.with_mut(|s| s.has()) {
-            let global_this = self.server().global_this();
-            let strong = self
-                .request_body_readable_stream_ref
-                .replace(readable_stream::Strong::default());
-            if let Some(readable) = strong.get() {
-                readable.value.ensure_still_alive();
-                if let Some(bytes) = readable.ptr.bytes() {
+        // Nothing feeds our ByteStream from here on; after `req.clone()`/`textStream()` only this ref reaches it.
+        let strong = self
+            .request_body_readable_stream_ref
+            .replace(readable_stream::Strong::default());
+        if let Some(readable) = strong.get() {
+            readable.value.ensure_still_alive();
+            if let Some(bytes) = readable.ptr.bytes() {
+                bytes
+                    .parent_const()
+                    .producer
+                    .set(WebCore::streams::SourceHandle::None);
+                // False unless `to_error_instance` above reached this same stream through the body.
+                if !bytes.has_received_last_chunk.get() {
+                    let global_this = self.server().global_this();
                     let mut err =
                         Body::ValueError::AbortReason(jsc::CommonAbortReason::ConnectionClosed);
                     bytes.on_data(WebCore::streams::Result::Err(
                         err.to_stream_error(global_this),
                     ));
                     err.reset();
-                    return Ok(true);
+                    any_js_calls = true;
                 }
             }
         }
 
-        Ok(false)
+        Ok(any_js_calls)
     }
 
     fn detach_response(&self) {
@@ -2638,22 +2626,11 @@ where
                     };
                     let credentials = s3.get_credentials();
                     let path = s3.path();
-                    // `Transpiler::env_mut` is the safe accessor for the
-                    // process-singleton dotenv loader (set during init).
-                    let proxy_url = global_this
-                        .bun_vm()
-                        .as_mut()
-                        .transpiler
-                        .env_mut()
-                        .get_http_proxy(true, None, None)
-                        .map(|proxy| proxy.href);
-
                     let _ = S3::client::stat(
                         credentials,
                         path,
                         Self::on_s3_size_resolved_thunk,
                         this.as_ctx_ptr().cast::<c_void>(),
-                        proxy_url,
                         s3.request_payer,
                     ); // TODO: properly propagate exception upwards
                     return;
@@ -2764,9 +2741,8 @@ where
             if ctx.reject_unsendable_response(unsafe { (*response).status_code() }) {
                 return;
             }
-            ctx.response_jsvalue.set(response_value);
+            ctx.response_root.clear();
             response_value.ensure_still_alive();
-            ctx.flags.set_response_protected(false);
             if ctx.method == Method::HEAD {
                 if let Some(resp) = ctx.resp.get() {
                     let mut pair = HeaderResponsePair {
@@ -2823,9 +2799,8 @@ where
                         return;
                     }
 
-                    ctx.response_jsvalue.set(fulfilled_value);
+                    ctx.response_root.clear();
                     fulfilled_value.ensure_still_alive();
-                    ctx.flags.set_response_protected(false);
                     if ctx.method == Method::HEAD {
                         if let Some(resp) = ctx.resp.get() {
                             let mut pair = HeaderResponsePair {
@@ -2870,7 +2845,7 @@ where
                 // flush_promise) is armed on `resp`. With no response the flush
                 // can never settle, so taking a ref and attaching here would
                 // leak the ref and hang the request; fall through to teardown.
-                if let Some(flush) = wrapper.sink.pending_flush
+                if let Some(flush) = wrapper.sink.pending_flush()
                     && self.resp.get().is_some()
                 {
                     stream_log!("handleResolveStream: waiting for pending flush");
@@ -2922,13 +2897,8 @@ where
         // from `&self`.
         let global_this = self.server().global_this();
         if let Some(resp) = self.response_mut() {
-            if let Some(stream) = resp.get_body_readable_stream() {
-                stream.value.ensure_still_alive();
-                resp.detach_readable_stream(global_this);
-
-                stream.done();
-            }
-
+            release_body_stream(resp, global_this);
+            // Unlike the reject path: used whatever it held, not only when `Locked`.
             *resp.get_body_value() = Body::Value::Used;
         }
 
@@ -3005,14 +2975,8 @@ where
                 self.flags.set_request_body_paused(false);
                 self.detach_request_body_producer();
             }
-            if let Some(prom) = wrapper.sink.pending_flush.take() {
-                // The promise value was protected when pending_flush was
-                // assigned (flushFromJS / endFromJS). Drop that root before
-                // abandoning the pointer, otherwise it leaks for the
-                // lifetime of the VM.
-                // S008: `JSPromise` is an `opaque_ffi!` ZST — safe deref.
-                bun_opaque::opaque_deref_mut(prom).to_js().unprotect();
-            }
+            // The body failed: a parked flush()/end() promise is abandoned, not resolved by the teardown below.
+            let _ = wrapper.sink.take_pending_flush();
             wrapper.sink.set_done();
             let aborted = self.flags.aborted() || wrapper.sink.is_aborted();
             self.flags.set_aborted(aborted);
@@ -3688,11 +3652,7 @@ where
                             // so root the Response the way the async error
                             // path does or the deferred flush can read a
                             // collected weakref.
-                            if self.flags.response_protected() {
-                                self.response_jsvalue.get().unprotect();
-                            }
-                            self.response_jsvalue.set(result);
-                            self.flags.set_response_protected(false);
+                            self.response_root.clear();
                             // SAFETY: as above.
                             unsafe { self.protect_for_body_and_render(result, response) };
                             return;
@@ -3742,13 +3702,8 @@ where
                     return;
                 }
 
-                // Same as handle_resolve: release a still-protected original.
-                if ctx.flags.response_protected() {
-                    ctx.response_jsvalue.get().unprotect();
-                }
-                ctx.response_jsvalue.set(fulfilled_value);
+                ctx.response_root.clear();
                 fulfilled_value.ensure_still_alive();
-                ctx.flags.set_response_protected(false);
 
                 // SAFETY: `response` is the live, rooted cell pointer.
                 unsafe { ctx.protect_for_body_and_render(fulfilled_value, response) };
@@ -3785,7 +3740,7 @@ where
         // For plain in-memory bodies this runs synchronously from
         // render() before any backpressure gap, so the Response is
         // always live here. File / stream bodies that call this after
-        // an async hop keep the Response rooted via response_protected.
+        // an async hop keep the Response rooted via `response_root`.
         let response: &mut Response = self.response_mut().unwrap();
         let sendfile = self.sendfile.get();
         let mut status = response.status_code();
@@ -4020,11 +3975,10 @@ where
         self.do_render();
     }
 
-    /// [`Self::render`] for the Response a handler just returned, whose JS
-    /// wrapper `response_value` is already stored in `response_jsvalue`. A
-    /// file or streaming body is still being sent after this frame returns,
-    /// so for those the wrapper is protected first; in-memory bodies leave it
-    /// unprotected (see `response_jsvalue`).
+    /// [`Self::render`] for the Response a handler just returned. A file or
+    /// streaming body is still being sent after this frame returns, so for
+    /// those `response_root` roots the wrapper first; in-memory bodies leave
+    /// it unrooted.
     ///
     /// # Safety
     /// Same contract as [`Self::render`].
@@ -4039,8 +3993,8 @@ where
             _ => false,
         };
         if sent_after_return {
-            response_value.protect();
-            self.flags.set_response_protected(true);
+            self.response_root
+                .set_rooted(response_value, self.server().global_this());
         }
         // SAFETY: caller contract.
         unsafe { self.render(response) };
@@ -4089,6 +4043,18 @@ where
 
                 let _exit = vm.enter_event_loop_scope();
 
+                // Body first (a tee branch after `req.clone()`), before endRequestStreaming()'s ConnectionClosed.
+                if let Some(body) = this.request_body_mut() {
+                    if matches!(body, Body::Value::Locked(_)) {
+                        let _ = body.to_error_instance(
+                            Body::ValueError::Message(BunString::static_(
+                                "Request body exceeded maxRequestBodySize",
+                            )),
+                            global_this,
+                        );
+                    }
+                }
+
                 // Release the strong stream ref like the `last` arm does, then
                 // error the stream so a pending or future read rejects instead
                 // of hanging forever.
@@ -4100,13 +4066,16 @@ where
                 if let Some(bytes) = readable.ptr.bytes() {
                     let source = bytes.parent_const();
                     source.producer.set(WebCore::streams::SourceHandle::None);
-                    let mut err = Body::ValueError::Message(BunString::static_(
-                        "Request body exceeded maxRequestBodySize",
-                    ));
-                    bytes.on_data(WebCore::streams::Result::Err(
-                        err.to_stream_error(global_this),
-                    ));
-                    err.reset();
+                    // False unless `to_error_instance` above reached this same stream through the body.
+                    if !bytes.has_received_last_chunk.get() {
+                        let mut err = Body::ValueError::Message(BunString::static_(
+                            "Request body exceeded maxRequestBodySize",
+                        ));
+                        bytes.on_data(WebCore::streams::Result::Err(
+                            err.to_stream_error(global_this),
+                        ));
+                        err.reset();
+                    }
                 }
 
                 // Route through the normal end path so this.resp is detached
@@ -4667,7 +4636,6 @@ bitflags::bitflags! {
         /// Used to avoid looking at the uws.Request struct after it's been freed
         const IS_WEB_BROWSER_NAVIGATION   = 1 << 10;
         const HAS_WRITTEN_STATUS          = 1 << 11;
-        const RESPONSE_PROTECTED          = 1 << 12;
         const ABORTED                     = 1 << 13;
         const HAS_FINALIZED               = 1 << 14;
         const IS_ERROR_PROMISE_PENDING    = 1 << 15;
@@ -4739,11 +4707,6 @@ impl<const DEBUG_MODE: bool> Flags<DEBUG_MODE> {
         has_written_status,
         set_has_written_status,
         HAS_WRITTEN_STATUS
-    );
-    flag_accessor!(
-        response_protected,
-        set_response_protected,
-        RESPONSE_PROTECTED
     );
     flag_accessor!(aborted, set_aborted, ABORTED);
     flag_accessor!(

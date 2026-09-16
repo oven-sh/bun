@@ -183,6 +183,7 @@ impl<const SSL: bool> App<SSL> {
         let Ok(protocols_len) = c_uint::try_from(protocols.len()) else {
             return false;
         };
+        // SAFETY: self is a live app, and C++ copies protocols into SSL_CTX-owned storage.
         unsafe {
             c::uws_app_set_alpn_protocols(
                 Self::SSL_FLAG,

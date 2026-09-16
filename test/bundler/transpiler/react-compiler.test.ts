@@ -1038,6 +1038,52 @@ describe("bundler", () => {
     },
   });
 
+  // Regression: constant propagation marked the result temporary of a store
+  // (`x = 10`) or an update (`x++`) as constant. When a consumer folded that
+  // temporary away (`-(x = 10)` -> `-10`), the store lost its lvalue and codegen
+  // printed it as a statement ahead of an earlier store that was still inlined
+  // at its use (`x = 10; return [x = 5, -10, x++]`). See #42628.
+  itBundled("react-compiler/StoreOrderInSameExpression", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        const Stub = () => null;
+        function InCallback() {
+          const f = () => {
+            let x;
+            return [(x = 5), -(x = 10), x++];
+          };
+          return <Stub run={f} />;
+        }
+        function InBody() {
+          let x;
+          const v = [(x = 5), -(x = 10)];
+          return <Stub v={v} x={x++} />;
+        }
+        function UpdateInCallback({ cond }) {
+          const f = () => {
+            let x = 1;
+            const a = [(x = 5), -(x++)];
+            if (cond) x = 100;
+            return [a, x];
+          };
+          return <Stub run={f} />;
+        }
+        console.log(
+          JSON.stringify([
+            InCallback().p.run(),
+            InBody().p,
+            UpdateInCallback({ cond: false }).p.run(),
+          ]),
+        );
+      `,
+      ...stubReact,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "api",
+    run: { stdout: '[[5,-10,10],{"v":[5,-10],"x":10},[[5,-5],6]]' },
+  });
+
   itBundled("react-compiler/HoistsMemoCacheSentinel", {
     files: {
       "/entry.jsx": /* jsx */ `
@@ -1262,6 +1308,109 @@ describe("bundler", () => {
         "SpreadThenAttr",
       ]);
       expect(body("Getter")).toContain("get g()");
+    },
+  });
+
+  // prune_non_escaping_scopes does not visit the test of a `?:`. A reactive
+  // scope that only the test reaches gets no node, but the local that scope
+  // reassigns still refers to it. Once that local has to be memoized, Babel
+  // raises `Invariant: Expected a node for all scopes` and skips that one
+  // function. The last two functions are the controls.
+  //
+  // A compiled function calls the fake `c` once per render, so the second
+  // number of each pair is 1 for a compiled function and 0 for a skipped one.
+  itBundled("react-compiler/AssignmentInConditionalTestSkipsOnlyThatFunction", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { calls } from "react/compiler-runtime";
+
+        function CallInTest(p) {
+          let m;
+          const r = (m = p.f()) ? 1 : 0;
+          return <div data-v={[m, r]} />;
+        }
+        function ArrayInTest(p) {
+          let m;
+          const r = (m = [p.a]) ? 1 : 0;
+          return <div data-v={[m]} data-r={r} />;
+        }
+        function ObjectInTest(p) {
+          let m = null;
+          const r = (m = { a: p.a }) ? p.b : p.c;
+          return <div data-v={{ m, r }} />;
+        }
+        function useInHook(p) {
+          "use memo";
+          let m;
+          const r = ((m = p.f()) ? 1 : 0) + 1;
+          return [m, r];
+        }
+        // https://github.com/facebook/react/issues/37228: the same invariant
+        // with no assignment, from a \`?:\` in a \`try\` in an inlined IIFE.
+        const check = v => v.ok;
+        function useValue() {
+          return { ok: true };
+        }
+        function ConditionalInTryInIife() {
+          const raw = useValue();
+          return (() => {
+            try {
+              return check(raw) ? raw : null;
+            } catch {
+              return null;
+            }
+          })();
+        }
+        function AssignedLocalNotMemoized(p) {
+          let m;
+          const r = (m = p.f()) ? 1 : 0;
+          return <div data-m={m} data-r={r} />;
+        }
+        function Plain({ name }) {
+          return <div>Hello {name}</div>;
+        }
+
+        function render(fn, props) {
+          const before = calls();
+          const result = fn(props);
+          return [result.props ?? result, calls() - before];
+        }
+        console.log(JSON.stringify({
+          CallInTest: render(CallInTest, { f: () => "x" }),
+          ArrayInTest: render(ArrayInTest, { a: 1 }),
+          ObjectInTest: render(ObjectInTest, { a: 1, b: 2, c: 3 }),
+          useInHook: render(useInHook, { f: () => "y" }),
+          ConditionalInTryInIife: render(ConditionalInTryInIife),
+          AssignedLocalNotMemoized: render(AssignedLocalNotMemoized, { f: () => "z" }),
+          Plain: render(Plain, { name: "bun" }),
+        }));
+      `,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+      "/node_modules/react/index.js": `exports.createElement = () => null;`,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => ({ type, props });`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => ({ type, props });`,
+      "/node_modules/react/compiler-runtime.js": `
+        let count = 0;
+        exports.c = size => {
+          count++;
+          return new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+        };
+        exports.calls = () => count;
+      `,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: {
+      stdout: JSON.stringify({
+        CallInTest: [{ "data-v": ["x", 1] }, 0],
+        ArrayInTest: [{ "data-v": [[1]], "data-r": 1 }, 0],
+        ObjectInTest: [{ "data-v": { m: { a: 1 }, r: 2 } }, 0],
+        useInHook: [["y", 2], 0],
+        ConditionalInTryInIife: [{ ok: true }, 0],
+        AssignedLocalNotMemoized: [{ "data-m": "z", "data-r": 1 }, 1],
+        Plain: [{ children: ["Hello ", "bun"] }, 1],
+      }),
     },
   });
 
@@ -2343,6 +2492,570 @@ describe("bundler", () => {
       expect(api.readFile("/out.js")).not.toContain("useMemoCache");
     },
     run: { stdout: '{"h":"div","props":{"title":"A"},"children":["hi"]}' },
+  });
+
+  // `a.b = a = c` and `a[i] = i++` read `a` and `i` for the member target
+  // before the right-hand side runs. The compiler removes assignments and
+  // propagates constants by the order of its own instructions, so it has to
+  // lower the target's object and key first too.
+  for (const target of ["bun", "browser"] as const) {
+    itBundled(`react-compiler/MemberAssignmentReadsTargetBeforeRightHandSide-${target}`, {
+      files: {
+        "/entry.ts": /* ts */ `
+          import * as forms from "./forms";
+          const props = { items: [1, 2, 3], key: "next", flag: true };
+          const lines: string[] = [];
+          for (const [name, Form] of Object.entries(forms)) {
+            try {
+              lines.push(name + "=" + Form(props).props.children);
+            } catch (e) {
+              lines.push(name + " threw " + e);
+            }
+          }
+          console.log(lines.join("\\n"));
+        `,
+        "/forms.jsx": /* jsx */ `
+          function values(head, next = "next") {
+            const out = [];
+            for (let node = head; node; node = node[next]) out.push(node.v);
+            return out.join();
+          }
+
+          export function AppendInLoop(p) {
+            const head = { v: 0, next: null };
+            let tail = head;
+            for (const x of p.items) {
+              tail.next = tail = { v: x, next: null };
+            }
+            return <div>{values(head)}</div>;
+          }
+          export function AppendTwice(p) {
+            const head = { v: 0, next: null };
+            let tail = head;
+            tail.next = tail = { v: p.items[0], next: null };
+            tail.next = tail = { v: p.items[1], next: null };
+            return <div>{values(head)}</div>;
+          }
+          export function AppendInCallback(p) {
+            const list = items => {
+              const head = { v: 0, next: null };
+              let tail = head;
+              for (const x of items) {
+                tail.next = tail = { v: x, next: null };
+              }
+              return values(head);
+            };
+            return <div>{list(p.items)}</div>;
+          }
+          export function AppendWithComputedKey(p) {
+            const head = { v: 0, next: null };
+            let tail = head;
+            for (const x of p.items) {
+              tail[p.key] = tail = { v: x, next: null };
+            }
+            return <div>{values(head)}</div>;
+          }
+          export function AppendWithNumericKey(p) {
+            const head = { v: 0, 0: null };
+            let tail = head;
+            for (const x of p.items) {
+              tail[0] = tail = { v: x, 0: null };
+            }
+            return <div>{values(head, 0)}</div>;
+          }
+          export function ConstantOnTheRight(p) {
+            let v = {};
+            const first = v;
+            if (p.flag) {
+              v.z = v = 80;
+            }
+            return <div>{JSON.stringify([first, v])}</div>;
+          }
+          export function KeyIsReassignedOnTheRight(p) {
+            let key = "a";
+            const o = {};
+            if (p.flag) {
+              o[key] = key = "b";
+            }
+            return <div>{JSON.stringify([o, key])}</div>;
+          }
+          export function KeyIsIncrementedOnTheRight() {
+            const arr = [];
+            let i = 0;
+            arr[i] = i++;
+            arr[i] = i++;
+            return <div>{JSON.stringify([arr, i])}</div>;
+          }
+          // The right-hand side is the member assignment here, so it already ran first.
+          export function MemberAssignmentOnTheRight(p) {
+            const head = { v: 0, next: null };
+            let tail = head;
+            for (const x of p.items) {
+              tail = tail.next = { v: x, next: null };
+            }
+            return <div>{values(head)}</div>;
+          }
+        `,
+        "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+        "/node_modules/react/index.js": ``,
+        "/node_modules/react/jsx-runtime.js": /* js */ `
+          export const jsx = (type, props) => ({ type, props });
+          export const jsxs = jsx;
+        `,
+        "/node_modules/react/jsx-dev-runtime.js": /* js */ `
+          export const jsxDEV = (type, props) => ({ type, props });
+        `,
+        "/node_modules/react/compiler-runtime.js": /* js */ `
+          export function c(size) {
+            return new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+          }
+        `,
+      },
+      reactCompiler: true,
+      backend: "cli",
+      target,
+      run: {
+        stdout: `
+          AppendInCallback=0,1,2,3
+          AppendInLoop=0,1,2,3
+          AppendTwice=0,1,2
+          AppendWithComputedKey=0,1,2,3
+          AppendWithNumericKey=0,1,2,3
+          ConstantOnTheRight=[{"z":80},80]
+          KeyIsIncrementedOnTheRight=[[0,1],2]
+          KeyIsReassignedOnTheRight=[{"a":"b"},"b"]
+          MemberAssignmentOnTheRight=0,1,2,3
+        `,
+      },
+    });
+  }
+
+  // The value of `i += 2` is the value it stores. When it is lowered to a
+  // store and then a new read of `i`, the store prints as a statement ahead of
+  // the expression it is part of, and an earlier operand of that expression
+  // that reads `i` prints after it. As a statement, `i += 2` leaves that read
+  // behind as a stray `i;`, which can land after the memo block that declares
+  // `i`: "ReferenceError: i is not defined".
+  for (const target of ["bun", "browser"] as const) {
+    itBundled(`react-compiler/CompoundAssignmentToALocalStaysInPlace-${target}`, {
+      files: {
+        "/entry.ts": /* ts */ `
+          import * as forms from "./forms";
+          const lines: string[] = [];
+          for (const [name, Form] of Object.entries(forms)) {
+            try {
+              const children = Form({ n: 1, flag: true, items: [5, 6, 7, 8] }).props.children;
+              lines.push(name + "=" + (typeof children === "function" ? children() : children));
+            } catch (e) {
+              lines.push(name + " threw " + e);
+            }
+          }
+          console.log(lines.join("\\n"));
+        `,
+        "/forms.jsx": /* jsx */ `
+          const list = (...values) => values;
+
+          export function ComputedKey(p) {
+            const o = {};
+            let i = p.n;
+            o["k" + i] = i += 2;
+            return <div>{JSON.stringify(o)}</div>;
+          }
+          export function TemplateKey(p) {
+            const o = {};
+            let i = p.n;
+            o[\`k\${i}\`] = i += 2;
+            return <div>{JSON.stringify(o)}</div>;
+          }
+          export function Arguments(p) {
+            let i = p.n;
+            const r = list(\`k\${i}\`, i++, "k" + i + "z", (i += 2), typeof i + i);
+            return <div>{JSON.stringify(r)}</div>;
+          }
+          export function ArrayAndObjectLiterals(p) {
+            let i = p.n;
+            const r = [[i, -i], { a: "k" + i }, (i += 2)];
+            return <div>{JSON.stringify(r)}</div>;
+          }
+          export function JsxAttribute(p) {
+            let i = p.n;
+            const el = <a title={"k" + i} id={(i += 2)} />;
+            return <div>{JSON.stringify(el.props)}</div>;
+          }
+          export function InLoop(p) {
+            let i = p.n;
+            const out = [];
+            for (const x of [1, 2]) {
+              out.push(list("k" + i, (i += x)));
+            }
+            return <div>{JSON.stringify(out)}</div>;
+          }
+          export function InTernaryBranch(p) {
+            let i = p.n;
+            const r = p.flag ? list("k" + i, (i += 2)) : null;
+            return <div>{JSON.stringify(r)}</div>;
+          }
+          export function InCallback(p) {
+            const run = n => {
+              const o = {};
+              let i = n;
+              o["k" + i] = i += 2;
+              return list(o, "k" + i, (i *= 2));
+            };
+            return <div>{JSON.stringify(run(p.n))}</div>;
+          }
+          export function CapturedLocal(p) {
+            let i = p.n;
+            const read = () => i;
+            const r = list("k" + i, (i += 2), read());
+            return <div>{JSON.stringify(r)}</div>;
+          }
+          export function CapturedBeforeItsDeclaration(p) {
+            const read = () => i;
+            let i = p.n;
+            i *= 3;
+            return <div>{read}</div>;
+          }
+          export function OperandIsATernary(p) {
+            let i = p.n;
+            const r = list(p.flag ? i : 0, (i += 2));
+            return <div>{JSON.stringify(r)}</div>;
+          }
+          export function OperandIsALogical(p) {
+            let i = p.n;
+            const r = list(p.flag && i, (i += 2));
+            return <div>{JSON.stringify(r)}</div>;
+          }
+          export function OperandIsAnOptionalChain(p) {
+            let i = p.n;
+            const r = list(p.items?.[i], (i += 2));
+            return <div>{JSON.stringify(r)}</div>;
+          }
+          export function OperandIsAComma(p) {
+            let i = p.n;
+            const r = list((0, "k" + i), (i += 2));
+            return <div>{JSON.stringify(r)}</div>;
+          }
+          // An operand that updates \`i\` stays ahead of the operand that reads it.
+          export function UpdateInAnEarlierTernary(p) {
+            let i = p.n;
+            let j = p.n;
+            const r = list(p.flag ? i++ : 0, "k" + i, i, (j += 2));
+            return <div>{JSON.stringify(r)}</div>;
+          }
+          export function Statements(p) {
+            let i = p.n;
+            i += 2;
+            for (let j = 0; j < 2; j += 1) i *= 2;
+            return <div>{i}</div>;
+          }
+        `,
+        "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+        "/node_modules/react/index.js": ``,
+        "/node_modules/react/jsx-runtime.js": /* js */ `
+          export const jsx = (type, props) => ({ type, props });
+          export const jsxs = jsx;
+        `,
+        "/node_modules/react/jsx-dev-runtime.js": /* js */ `
+          export const jsxDEV = (type, props) => ({ type, props });
+        `,
+        "/node_modules/react/compiler-runtime.js": /* js */ `
+          export function c(size) {
+            return new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+          }
+        `,
+      },
+      reactCompiler: true,
+      backend: "cli",
+      target,
+      run: {
+        stdout: `
+          Arguments=["k1",1,"k2z",4,"number4"]
+          ArrayAndObjectLiterals=[[1,-1],{"a":"k1"},3]
+          CapturedBeforeItsDeclaration=3
+          CapturedLocal=["k1",3,3]
+          ComputedKey={"k1":3}
+          InCallback=[{"k1":3},"k3",6]
+          InLoop=[["k1",2],["k2",4]]
+          InTernaryBranch=["k1",3]
+          JsxAttribute={"title":"k1","id":3}
+          OperandIsAComma=["k1",3]
+          OperandIsALogical=[1,3]
+          OperandIsATernary=[1,3]
+          OperandIsAnOptionalChain=[6,3]
+          Statements=12
+          TemplateKey={"k1":3}
+          UpdateInAnEarlierTernary=[1,"k2",2,3]
+        `,
+      },
+    });
+  }
+
+  // Codegen prints an instruction with an unnamed result inside the statement
+  // that uses it, and every other instruction as a statement where it stands.
+  // So a statement in the middle of an expression (the body of an inlined
+  // IIFE, a memo block, an operand that has a name) runs ahead of the earlier
+  // operands that are still inline. PromoteInterposedTemporaries names those
+  // operands, but it knew only loads, calls and stores, and only statements
+  // with a side effect. It also took a store inside a comma operand for a
+  // statement, and named a later operand ahead of an earlier one for it.
+  for (const target of ["bun", "browser"] as const) {
+    itBundled(`react-compiler/OperandsKeepSourceOrderAroundAStatement-${target}`, {
+      files: {
+        "/entry.ts": /* ts */ `
+          import * as forms from "./forms";
+          const lines: string[] = [];
+          for (const [name, Form] of Object.entries(forms)) {
+            try {
+              lines.push(name + "=" + Form({ n: 2, flag: true, items: [5, 6, 7, 8] }).props.children);
+            } catch (e) {
+              lines.push(name + " threw " + e);
+            }
+          }
+          console.log(lines.join("\\n"));
+        `,
+        "/forms.jsx": /* jsx */ `
+          const list = (...values) => values;
+          class Box {
+            constructor(v) {
+              this.v = v;
+            }
+          }
+          const makeCursor = pos => ({
+            pos,
+            [Symbol.iterator]() {
+              return { next: () => ({ done: false, value: ++this.pos }) };
+            },
+          });
+
+          // The operand is not a load, it is an expression over one.
+          export function OperandOverALoad(p) {
+            const r = { n: p.n };
+            const v = list(-r.n, r.n + 1, \`\${r.n}\`, [r.n], { a: r.n }, new Box(r.n).v, (() => {
+              r.n = 10;
+              return r.n;
+            })());
+            return <div>{JSON.stringify(v)}</div>;
+          }
+          // A spread, \`in\` and the conversion of an object to a string read the object.
+          export function OperandThatReadsAnObject(p) {
+            const m = [p.n, 6];
+            const r = { n: p.n };
+            const v = list(\`\${m}\`, m + "", { ...r }, [...m], "n" in r, (() => {
+              m.push(7);
+              delete r.n;
+              return 1;
+            })());
+            return <div>{JSON.stringify(v)}</div>;
+          }
+          export function CompoundOperand(p) {
+            const r = { n: p.n };
+            const v = list(p.flag ? r.n : 0, p.flag && r.n, p.items?.[r.n], (0, r.n), (() => {
+              r.n = 3;
+              return r.n;
+            })());
+            return <div>{JSON.stringify(v)}</div>;
+          }
+          export function CallInsideACompoundOperand(p) {
+            const r = { n: p.n };
+            const bump = () => ++r.n;
+            const v = list(p.flag ? bump() : 0, (() => {
+              r.n *= 10;
+              return r.n;
+            })());
+            return <div>{JSON.stringify(v)}</div>;
+          }
+          // An array pattern runs the iterator, also in a declaration.
+          export function DestructuringRunsAnIterator(p) {
+            const cursor = makeCursor(p.n);
+            const v = list(cursor.pos, (() => {
+              const [x] = cursor;
+              return x;
+            })());
+            return <div>{JSON.stringify(v)}</div>;
+          }
+          // Client mode: the memo block of \`[i, p.n]\` reads \`i\`, and the stores before it are inline.
+          export function StoreAheadOfAMemoBlock(p) {
+            const r = { n: p.n };
+            let i = 1;
+            const el = <a title={++r.n && (i += 2)} id={[i, p.n]}>{p.flag ? r.n : (i += 2)}</a>;
+            return <div>{JSON.stringify([el.props, i, r.n])}</div>;
+          }
+          // The name for the stores makes them a statement ahead of \`r.n * 2\`.
+          export function OperandAheadOfANamedStore(p) {
+            const r = { n: p.n };
+            let i = 1;
+            const el = <a lang={r.n * 2} title={++r.n && (i += 2)} id={[i, p.n]}>{p.flag ? r.n : (i += 2)}</a>;
+            return <div>{JSON.stringify([el.props, i, r.n])}</div>;
+          }
+          // Client mode: the template literal has a name, because the memo block of \`new Box\` depends on it.
+          export function StoreAheadOfANamedOperand(p) {
+            const r = { n: p.n };
+            const el = <a title={[list(r.n), ++r.n]}>{new Box(\`\${p.flag ? r.n : 0}\`).v}</a>;
+            return <div>{JSON.stringify([el.props, r.n])}</div>;
+          }
+          // The store in the comma operand prints in place, so no operand needs a name.
+          export function StoreInsideACommaOperand(p) {
+            const r = { n: p.n };
+            const a = list(-r.n, new Box(++r.n).v, (--r.n, 2));
+            return <div>{JSON.stringify([a, r.n])}</div>;
+          }
+          // A name for \`k\` is a declaration inside the update, which codegen rejects.
+          export function CommaInTheUpdateOfAFor(p) {
+            const r = { n: p.n };
+            const v = [];
+            for (let k = 0; k < 2; k += (--r.n, 1)) v.push(r.n);
+            return <div>{JSON.stringify(v)}</div>;
+          }
+          // Lowering evaluates a case test ahead of the discriminant. It prints in place, behind it.
+          export function CaseTestStaysBehindTheDiscriminant(p) {
+            const r = { n: p.n };
+            const bump = o => ++o.n;
+            let v = 0;
+            switch (list((r.n = 4)).length) {
+              case bump(r):
+                v = 1;
+                break;
+              default:
+                v = 2;
+            }
+            return <div>{JSON.stringify([v, r.n])}</div>;
+          }
+        `,
+        "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+        "/node_modules/react/index.js": ``,
+        "/node_modules/react/jsx-runtime.js": /* js */ `
+          export const jsx = (type, props) => ({ type, props });
+          export const jsxs = jsx;
+        `,
+        "/node_modules/react/jsx-dev-runtime.js": /* js */ `
+          export const jsxDEV = (type, props) => ({ type, props });
+        `,
+        "/node_modules/react/compiler-runtime.js": /* js */ `
+          export function c(size) {
+            return new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+          }
+        `,
+      },
+      reactCompiler: true,
+      backend: "cli",
+      target,
+      onAfterBundle(api) {
+        if (target !== "browser") return;
+        // A compiled function starts with its memo cache.
+        const compiled = api.readFile("/out.js").matchAll(/function (\w+)\(p\) \{\s*let \$ = c\(\d+\);/g);
+        expect(Array.from(compiled, match => match[1])).toContain("CommaInTheUpdateOfAFor");
+      },
+      run: {
+        stdout: `
+          CallInsideACompoundOperand=[3,30]
+          CaseTestStaysBehindTheDiscriminant=[2,5]
+          CommaInTheUpdateOfAFor=[2,1]
+          CompoundOperand=[2,2,7,2,3]
+          DestructuringRunsAnIterator=[2,3]
+          OperandAheadOfANamedStore=[{"lang":4,"title":3,"id":[3,2],"children":3},3,3]
+          OperandOverALoad=[-2,3,"2",[2],{"a":2},2,10]
+          OperandThatReadsAnObject=["2,6","2,6",{"n":2},[2,6],true,1]
+          StoreAheadOfAMemoBlock=[{"title":3,"id":[3,2],"children":3},3,3]
+          StoreAheadOfANamedOperand=[{"title":[[2],3],"children":"3"},3]
+          StoreInsideACommaOperand=[[-2,3,2],2]
+        `,
+      },
+    });
+  }
+
+  // The fbt transform rejects a variable in place of a nested fbt.param()
+  // call, so the call stays inside the fbt() call. The value given to
+  // fbt.param() can be a variable, and it keeps its place ahead of a statement.
+  itBundled("react-compiler/MacroOperandStaysInsideTheMacroCall", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import fbt from "fbt";
+        const list = (...values) => values;
+        const Name = () => null;
+
+        // The first call is pending when the memo block of the second element reads \`p.lastname\`.
+        function ParameterAheadOfAMemoBlock(p) {
+          return (
+            <div>
+              {fbt(
+                [
+                  "Name: ",
+                  fbt.param("firstname", <Name key={0} name={p.firstname} />),
+                  ", ",
+                  fbt.param("lastname", <Name key={1} name={p.lastname} />),
+                ],
+                "Name",
+              )}
+            </div>
+          );
+        }
+        function ParameterValueAheadOfAStatement(p) {
+          const r = { n: p.n };
+          const text = fbt(["a", fbt.param("n", r.n), fbt.param("m", (() => {
+            r.n = r.n * 10;
+            return r.n;
+          })())], "d");
+          return <div>{text}</div>;
+        }
+        // The arrow is an operand of the macro call. The \`let\` it captures is still a \`let\`.
+        function LetCapturedInsideTheMacroCall(p) {
+          let i = p.n;
+          const read = fbt(() => i, "d");
+          const v = list(i, (() => {
+            i = 5;
+            return i;
+          })());
+          return <div>{[v, read()]}</div>;
+        }
+
+        for (const Form of [ParameterAheadOfAMemoBlock, ParameterValueAheadOfAStatement, LetCapturedInsideTheMacroCall]) {
+          console.log(Form.name + "=" + JSON.stringify(Form({ n: 2, firstname: "A", lastname: "B" }).props.children));
+        }
+      `,
+      "/node_modules/fbt/package.json": `{"name":"fbt","main":"./index.js"}`,
+      "/node_modules/fbt/index.js": /* js */ `
+        const fbt = (parts, description) => parts;
+        fbt.param = (name, value) => [name, value?.props ?? value];
+        export default fbt;
+      `,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+      "/node_modules/react/index.js": ``,
+      "/node_modules/react/jsx-dev-runtime.js": /* js */ `
+        export const jsxDEV = (type, props) => ({ type, props });
+      `,
+      "/node_modules/react/compiler-runtime.js": /* js */ `
+        export function c(size) {
+          return new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+        }
+      `,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    target: "browser",
+    onAfterBundle(api) {
+      // Every fbt() call with an array, with the names of the import and of the temporaries normalized.
+      const calls = api
+        .readFile("/out.js")
+        .match(/\w+\(\[[^\]]*\], "\w+"\)/g)!
+        .map(call =>
+          call
+            .replace(/\s+/g, " ")
+            .replace(/\bfbt\w*/g, "fbt")
+            .replace(/\bt\d+\b/g, "t"),
+        );
+      expect(calls).toEqual([
+        `fbt([ "Name: ", fbt.param("firstname", t), ", ", fbt.param("lastname", t) ], "Name")`,
+        `fbt([ "a", fbt.param("n", t), fbt.param("m", r.n) ], "d")`,
+      ]);
+    },
+    run: {
+      stdout: `
+        ParameterAheadOfAMemoBlock=["Name: ",["firstname",{"name":"A"}],", ",["lastname",{"name":"B"}]]
+        ParameterValueAheadOfAStatement=["a",["n",2],["m",20]]
+        LetCapturedInsideTheMacroCall=[[2,5],5]
+      `,
+    },
   });
 });
 

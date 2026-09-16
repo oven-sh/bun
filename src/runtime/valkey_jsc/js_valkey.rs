@@ -1730,14 +1730,8 @@ impl<const SSL: bool> SocketHandler<SSL> {
                 };
                 // URL.host() serialises IPv6 literals with surrounding brackets
                 // (e.g. "[::1]"). Strip them so checkServerIdentity can recognise
-                // the value as an IP and match against IP SAN entries; this
-                // mirrors what connectAnon already does before getaddrinfo.
-                if hostname.len() >= 2
-                    && hostname[0] == b'['
-                    && hostname[hostname.len() - 1] == b']'
-                {
-                    hostname = &hostname[1..hostname.len() - 1];
-                }
+                // the value as an IP and match against IP SAN entries.
+                hostname = bun_core::ip_address::strip_ipv6_brackets(hostname);
                 if !hostname.is_empty()
                     // SAFETY: in the TLS handshake-success path the socket's native
                     // handle is a live `SSL*`.

@@ -126,6 +126,8 @@ struct us_quic_stream_s {
     struct us_quic_hset *hset;
     int headers_delivered;
     int fin_delivered;
+    /* Set by us_quic_flush_from_on_write, cleared by on_write. */
+    int flush_on_write;
     /* ext follows */
 };
 
@@ -673,27 +675,29 @@ static lsquic_stream_ctx_t *us_quic_on_new_stream(void *if_ctx, lsquic_stream_t 
     return (lsquic_stream_ctx_t *) s;
 }
 
+/* Hands the next header block lsquic has decoded to on_stream_headers.
+ * Returns 1 for a block, 0 for none, -1 if on_stream_headers closed the stream. */
+static int us_quic_deliver_hset(lsquic_stream_t *stream, us_quic_stream_t *s) {
+    struct us_quic_hset *hset = (struct us_quic_hset *) lsquic_stream_get_hset(stream);
+    if (!hset) return 0;
+    us_quic_hset_finalize(hset);
+    us_quic_hset_free(s->hset);
+    s->hset = hset;
+    s->headers_delivered = 1;
+    if (s->ctx->on_stream_headers) s->ctx->on_stream_headers(s);
+    return s->stream ? 1 : -1;
+}
+
 static void us_quic_on_read(lsquic_stream_t *stream, lsquic_stream_ctx_t *h) {
     us_quic_stream_t *s = (us_quic_stream_t *) h;
     us_quic_socket_context_t *ctx = s->ctx;
 
     /* lsquic queues a fresh hset for every HEADERS block (1xx interims,
      * the final response, trailers). lsquic_stream_get_hset returns the
-     * next undelivered one and lsquic_stream_read won't drain DATA past
-     * an unconsumed hset, so re-dispatch on_stream_headers each time
-     * instead of latching after the first. */
-    {
-        struct us_quic_hset *hset = (struct us_quic_hset *) lsquic_stream_get_hset(stream);
-        if (hset) {
-            us_quic_hset_finalize(hset);
-            us_quic_hset_free(s->hset);
-            s->hset = hset;
-            s->headers_delivered = 1;
-            if (ctx->on_stream_headers) ctx->on_stream_headers(s);
-            /* on_stream_headers may have closed us */
-            if (!s->stream) return;
-        }
-    }
+     * next undelivered one and lsquic_stream_read fails while one is
+     * queued, so re-dispatch on_stream_headers each time instead of
+     * latching after the first. */
+    if (us_quic_deliver_hset(stream, s) < 0) return;
 
     ssize_t r;
     while ((r = lsquic_stream_read(stream, ctx->read_buf, US_QUIC_READ_BUF)) > 0) {
@@ -702,6 +706,10 @@ static void us_quic_on_read(lsquic_stream_t *stream, lsquic_stream_ctx_t *h) {
         if (!s->stream) return;
     }
     if (r == 0 && !s->fin_delivered) {
+        /* lsquic returns 0 even if this read decoded one more header block. */
+        int delivered;
+        while ((delivered = us_quic_deliver_hset(stream, s)) > 0) {}
+        if (delivered < 0) return;
         s->fin_delivered = 1;
         lsquic_stream_wantread(stream, 0);
         lsquic_stream_shutdown(stream, 0);
@@ -712,7 +720,13 @@ static void us_quic_on_read(lsquic_stream_t *stream, lsquic_stream_ctx_t *h) {
 static void us_quic_on_write(lsquic_stream_t *stream, lsquic_stream_ctx_t *h) {
     us_quic_stream_t *s = (us_quic_stream_t *) h;
     lsquic_stream_wantwrite(stream, 0);
+    /* Taken before the callback: a block that on_stream_writable sends (the
+     * client's request) is for the next on_write, see the helper. */
+    int flush = s->flush_on_write;
+    s->flush_on_write = 0;
     if (s->ctx->on_stream_writable) s->ctx->on_stream_writable(s);
+    /* Last, so that it also covers what on_stream_writable wrote. */
+    if (flush) lsquic_stream_flush(stream);
 }
 
 static void us_quic_on_close(lsquic_stream_t *stream, lsquic_stream_ctx_t *h) {
@@ -1122,6 +1136,14 @@ void us_quic_stream_want_write(us_quic_stream_t *s, int want) {
     if (s->stream) lsquic_stream_wantwrite(s->stream, want);
 }
 
+/* lsquic_stream_send_headers only buffers, and a flush is a no-op while lsquic
+ * holds the block back (new connection). on_write runs after lsquic wrote it,
+ * and after a handler that answered at once put its response behind a 1xx. */
+static void us_quic_flush_from_on_write(us_quic_stream_t *s) {
+    s->flush_on_write = 1;
+    lsquic_stream_wantwrite(s->stream, 1);
+}
+
 int us_quic_stream_send_informational(us_quic_stream_t *s, const char *status3) {
     if (!s->stream) return -1;
     char buf[10];
@@ -1130,7 +1152,12 @@ int us_quic_stream_send_informational(us_quic_stream_t *s, const char *status3) 
     struct lsxpack_header xh;
     lsxpack_header_set_offset2(&xh, buf, 0, 7, 7, 3);
     lsquic_http_headers_t lh = { .count = 1, .headers = &xh };
-    return lsquic_stream_send_headers(s->stream, &lh, 0);
+    int r = lsquic_stream_send_headers(s->stream, &lh, 0);
+    if (r == 0) {
+        us_quic_flush_from_on_write(s);
+        s->ctx->pending_write_bytes++;
+    }
+    return r;
 }
 
 int us_quic_stream_send_headers(us_quic_stream_t *s,
@@ -1175,6 +1202,7 @@ int us_quic_stream_send_headers(us_quic_stream_t *s,
     if (buf != stackbuf) us_free(buf);
     if (xh != stackh) us_free(xh);
     if (end_stream && r == 0) lsquic_stream_shutdown(s->stream, 1);
+    if (!end_stream && r == 0) us_quic_flush_from_on_write(s);
     /* Mark the context dirty so drainQuicIfNecessary picks up header-only
      * responses (204/304) that never call us_quic_stream_write. */
     if (r == 0) s->ctx->pending_write_bytes += (unsigned int) total + 1;
@@ -1211,9 +1239,13 @@ void lsquic_stream_maybe_reset(struct lsquic_stream *, uint64_t error_code, int)
  * client is abandoning the upload short — the server's lsquic will
  * CONNECTION_CLOSE on the mismatch (RFC 9114 §4.1.2). RESET_STREAM is
  * the wire-level "I'm cancelling this send" and lets the server treat it
- * as a stream-level cancellation rather than a malformed message. */
+ * as a stream-level cancellation rather than a malformed message.
+ * Sends nothing once lsquic_stream_close/shutdown has run, so call it first. */
 void us_quic_stream_reset(us_quic_stream_t *s) {
-    if (s->stream) lsquic_stream_maybe_reset(s->stream, 0x10C, 1);
+    if (!s->stream) return;
+    /* do_close=0: with no reset due, maybe_reset's own close shuts only the read half. */
+    lsquic_stream_maybe_reset(s->stream, 0x10C, 0);
+    lsquic_stream_close(s->stream);
 }
 
 int us_quic_stream_has_unacked(us_quic_stream_t *s) {

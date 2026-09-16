@@ -373,10 +373,10 @@ describe("bundler", () => {
       `,
     },
     run: {
-      // The default import is `module.exports`, which for a lifted CommonJS
-      // module is the namespace object itself, so the namespace has no
-      // separate `default` key (the same as a lone `import *`, Test 6).
-      stdout: '{"default":{"foo":"foo","bar":"bar"},"named":"foo","namespace":{"foo":"foo","bar":"bar"}}',
+      // The default import is held as a value, so the module keeps its
+      // CommonJS wrapper and the namespace goes through __toESM, as in Node.
+      stdout:
+        '{"default":{"foo":"foo","bar":"bar"},"named":"foo","namespace":{"default":{"foo":"foo","bar":"bar"},"foo":"foo","bar":"bar"}}',
     },
   });
 

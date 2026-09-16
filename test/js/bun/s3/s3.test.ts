@@ -33,7 +33,7 @@ if (isDockerEnabled()) {
   // Get container name for docker exec
   const containerName = child_process
     .execSync(
-      `docker ps --filter "ancestor=minio/minio:latest" --filter "status=running" --format "{{.Names}}" | head -1`,
+      `docker ps --filter "ancestor=quay.io/minio/minio:latest" --filter "status=running" --format "{{.Names}}" | head -1`,
       { encoding: "utf-8" },
     )
     .trim();

@@ -480,6 +480,7 @@ describe("WebSocket.close() while paused", () => {
             } else {
               ws.close();
               expect(ws.pause()).toBe(false);
+              expect(ws.isPaused).toBe(false);
             }
             // The Close frame had to wait.
             expect(ws.bufferedAmount).toBeGreaterThan(0);

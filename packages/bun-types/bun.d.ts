@@ -5133,10 +5133,6 @@ declare module "bun" {
      * backpressure instead of the client buffering in memory. Messages
      * already received may still be dispatched. A pause before the
      * connection opens takes effect once it does.
-     *
-     * A paused connection reads no frames at all. It does not answer a ping.
-     * It does not see a close from the peer, so `readyState` stays `OPEN`
-     * until `resume()`. `close()` works while paused.
      * @returns `true` if the socket was paused (or will be on open), `false` if there is no socket to pause
      */
     pause(): boolean;
@@ -5148,9 +5144,7 @@ declare module "bun" {
     resume(): boolean;
 
     /**
-     * The state that `pause()` and `resume()` last asked for: `true` after
-     * `pause()`, `false` after `resume()`, also when that call returned
-     * `false`. The value does not change when the connection closes.
+     * Whether the connection is currently paused via `pause()`.
      */
     readonly isPaused: boolean;
 

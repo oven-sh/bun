@@ -843,13 +843,13 @@ impl AnyRoute {
                 {
                     use bun_sys_jsc::ErrorJsc;
                     let mut buf = paths::path_buffer_pool::get();
-                    let Some(abs_root) = paths::resolve_path::join_abs_string_buf_checked::<
-                        paths::platform::Auto,
-                    >(
-                        paths::fs::FileSystem::instance().top_level_dir(),
-                        &mut buf[..],
-                        &[relative_root],
-                    ) else {
+                    let Some(abs_root) =
+                        paths::resolve_path::join_abs_string_buf_checked::<paths::platform::Auto>(
+                            paths::fs::FileSystem::instance().top_level_dir(),
+                            &mut buf[..],
+                            &[relative_root],
+                        )
+                    else {
                         let err = sys::Error::from_code(sys::E::ENAMETOOLONG, sys::Tag::open)
                             .with_path(relative_root);
                         return Err(global.throw_value(err.to_js(global)?));

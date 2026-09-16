@@ -242,16 +242,20 @@ impl QuicStream {
             self.wrote_to_lsquic.set(true);
             let refused = s.send_headers(&bytes, count, eos) != 0;
             self.headers_refused.set(refused);
-            if !refused {
+            if refused {
+                // A refused terminal block ends the stream at the next write event.
                 if eos {
-                    self.with_state(|st| {
-                        st.fin_sent = 1;
-                        st.write_ended = 1;
-                    });
-                    s.shutdown(1);
-                } else {
+                    self.outbound.with_mut(|o| o.end = PendingEnd::Fin);
                     want_write = true;
                 }
+            } else if eos {
+                self.with_state(|st| {
+                    st.fin_sent = 1;
+                    st.write_ended = 1;
+                });
+                s.shutdown(1);
+            } else {
+                want_write = true;
             }
         }
         if uni {
@@ -998,9 +1002,7 @@ impl QuicStream {
             return Ok(JSValue::js_boolean(true));
         };
         let rv = s.send_headers(&bytes, header_count, eos);
-        if !is_trailing {
-            self.headers_refused.set(rv != 0);
-        }
+        self.headers_refused.set(rv != 0);
         if rv == 0 {
             self.wrote_to_lsquic.set(true);
             self.with_state(|s| s.has_outbound = 1);
@@ -1009,6 +1011,7 @@ impl QuicStream {
                     s.fin_sent = 1;
                     s.write_ended = 1;
                 });
+                self.outbound.with_mut(|o| o.end = PendingEnd::None);
                 s.shutdown(1);
                 if let Some(session) = self.session_ref() {
                     session.schedule_process();
@@ -1018,6 +1021,11 @@ impl QuicStream {
             }
             Ok(JSValue::js_boolean(true))
         } else {
+            // A refused terminal block ends the stream at the next write event.
+            if eos {
+                self.outbound.with_mut(|o| o.end = PendingEnd::Fin);
+                self.kick_write();
+            }
             Ok(JSValue::js_boolean(false))
         }
     }

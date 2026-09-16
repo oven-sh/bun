@@ -383,8 +383,8 @@ describe("a response after a refused header block", () => {
   const H3_INTERNAL_ERROR = 0x102n;
   const refused = { ":status": "200", "x-one": Buffer.alloc(70000, "~").toString() };
 
-  async function roundTrip(respond: (stream: any) => boolean) {
-    const serverSide = Promise.withResolvers<{ sent: boolean; error: any }>();
+  async function roundTrip(respond: (stream: any) => boolean | undefined) {
+    const serverSide = Promise.withResolvers<{ sent: boolean | undefined; error: any }>();
     await using server = await listen(
       async serverSession => {
         serverSession.onstream = (stream: any) => {
@@ -455,6 +455,88 @@ describe("a response after a refused header block", () => {
       errorCode: H3_INTERNAL_ERROR,
     });
     expect({ code: serverError?.code, errorCode: serverError?.errorCode }).toEqual({
+      code: "ERR_QUIC_APPLICATION_ERROR",
+      errorCode: H3_INTERNAL_ERROR,
+    });
+  });
+
+  test("a terminal header block with no body resets the stream with H3_INTERNAL_ERROR", async () => {
+    const { sent, clientError, serverError } = await roundTrip(stream =>
+      stream.sendHeaders(refused, { terminal: true }),
+    );
+    expect(sent).toBe(false);
+    expect({ code: clientError?.code, errorCode: clientError?.errorCode }).toEqual({
+      code: "ERR_QUIC_APPLICATION_ERROR",
+      errorCode: H3_INTERNAL_ERROR,
+    });
+    expect({ code: serverError?.code, errorCode: serverError?.errorCode }).toEqual({
+      code: "ERR_QUIC_APPLICATION_ERROR",
+      errorCode: H3_INTERNAL_ERROR,
+    });
+  });
+
+  test("refused trailers reset the stream with H3_INTERNAL_ERROR", async () => {
+    let trailersSent: boolean | undefined;
+    const { clientError, serverError } = await roundTrip(stream => {
+      stream.onwanttrailers = function (this: any) {
+        trailersSent = this.sendTrailers({ "x-one": refused["x-one"] });
+      };
+      stream.sendHeaders({ ":status": "200" });
+      stream.writer.writeSync(new TextEncoder().encode("body"));
+      stream.writer.endSync();
+      return undefined;
+    });
+    expect(trailersSent).toBe(false);
+    expect({ code: clientError?.code, errorCode: clientError?.errorCode }).toEqual({
+      code: "ERR_QUIC_APPLICATION_ERROR",
+      errorCode: H3_INTERNAL_ERROR,
+    });
+    expect({ code: serverError?.code, errorCode: serverError?.errorCode }).toEqual({
+      code: "ERR_QUIC_APPLICATION_ERROR",
+      errorCode: H3_INTERNAL_ERROR,
+    });
+  });
+
+  // The client queues its request block before lsquic opens the stream, so
+  // sendHeaders() reports true and the refusal is only known at open time.
+  test("a refused request block rejects the client stream's closed promise", async () => {
+    await using server = await listen(
+      async serverSession => {
+        serverSession.onstream = (stream: any) => {
+          stream.closed.catch(() => {});
+        };
+        await serverSession.closed.catch(() => {});
+      },
+      {
+        sni: { "*": { keys: [key], certs: [cert] } },
+        transportParams: { maxIdleTimeout: 1 },
+        onheaders(this: any) {
+          this.sendHeaders({ ":status": "200" }, { terminal: true });
+        },
+      },
+    );
+    const client = await connect(server.address, {
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 1 },
+      onerror() {},
+    });
+    await client.opened;
+    const stream = await client.createBidirectionalStream({
+      headers: {
+        ":method": "GET",
+        ":path": "/",
+        ":scheme": "https",
+        ":authority": "localhost",
+        "x-one": refused["x-one"],
+      },
+    });
+    const clientError = await stream.closed.then(
+      () => undefined,
+      (error: any) => error,
+    );
+    client.close();
+    expect({ code: clientError?.code, errorCode: clientError?.errorCode }).toEqual({
       code: "ERR_QUIC_APPLICATION_ERROR",
       errorCode: H3_INTERNAL_ERROR,
     });

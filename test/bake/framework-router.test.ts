@@ -283,4 +283,28 @@ describe.concurrent("fileSystemRouterTypes[n].root outside the project root", ()
     expect(stderr).toContain(`error: "/${below}/[oops.ts" is not a valid route\n`);
     expect(exitCode).toBe(0);
   });
+
+  // The length bound is for files outside the project root. A file inside it keeps the label relative to it.
+  test.skipIf(isWindows)("a route error label below a long project root", async () => {
+    const maxPathBytes = isMacOS ? 1024 : 4096;
+    using dir = tempDir("fsr-long-root", {});
+    // The project root is a third of the limit, so the file path plus twice the root passes the limit.
+    const longDirCount = Math.ceil((maxPathBytes / 3 - String(dir).length) / 201);
+    const longDirs = Array.from({ length: longDirCount }, () => Buffer.alloc(200, "p").toString());
+    const projectRoot = path.join(String(dir), ...longDirs);
+    const fixture = serveFixture("pages");
+
+    mkdirSync(path.join(projectRoot, "pages", "blog"), { recursive: true });
+    writeFileSync(path.join(projectRoot, "server.ts"), fixture["apps/api/server.ts"]);
+    writeFileSync(path.join(projectRoot, "start.ts"), fixture["apps/api/start.ts"]);
+    for (const [file, contents] of Object.entries(pages("pages"))) {
+      writeFileSync(path.join(projectRoot, file), contents);
+    }
+    writeFileSync(path.join(projectRoot, "pages", "blog", "[oops.ts"), `export default () => new Response("");`);
+
+    const { stdout, stderr, exitCode } = await run(projectRoot, ["start.ts"]);
+    expect(stdout, stderr).toBe("/ 200 index\n/blog/hello-world 200 slug:hello-world\n");
+    expect(stderr).toContain(`error: "pages/blog/[oops.ts" is not a valid route\n`);
+    expect(exitCode).toBe(0);
+  });
 });

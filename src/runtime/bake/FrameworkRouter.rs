@@ -1599,8 +1599,12 @@ impl FrameworkRouter {
                         );
                         let rel_path: &[u8] = &rel_path_buf[0..rel_path_len];
 
-                        // Each segment of `self.root` can become "../": the bound of `DevServer::relative_path`.
-                        let label_fits = abs_path.len() + self.root.len() * 2 < MAX_PATH_BYTES;
+                        // Outside `self.root`, each root segment becomes "../": the bound of `DevServer::relative_path`.
+                        let in_root = abs_path.len() > self.root.len()
+                            && abs_path.starts_with(&self.root)
+                            && paths::is_sep_native(abs_path[self.root.len()]);
+                        let label_fits =
+                            in_root || abs_path.len() + self.root.len() * 2 < MAX_PATH_BYTES;
                         let mut full_rel_path_buf = bun_paths::path_buffer_pool::get();
                         let full_rel_path: &[u8] = if label_fits {
                             let len = paths::resolve_path::relative_normalized_buf::<

@@ -27,6 +27,7 @@
 #include <openssl/rand.h>
 #include <openssl/sha.h>
 #include <wtf/text/MakeString.h>
+#include <wtf/text/StringBuilder.h>
 
 extern "C" void Bun__reportUnhandledError(JSC::JSGlobalObject*, JSC::EncodedJSValue);
 extern "C" JSC::EncodedJSValue Bun__resolveSync(JSC::JSGlobalObject*, JSC::EncodedJSValue specifier, JSC::EncodedJSValue from, bool isESM, bool isUserRequireResolve);
@@ -249,8 +250,19 @@ void JSDurableObjectStub::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_id);
+    visitor.append(thisObject->m_actor);
 }
 DEFINE_VISIT_CHILDREN(JSDurableObjectStub);
+
+JSDurableObjectActor* JSDurableObjectStub::actor(Zig::GlobalObject* globalObject)
+{
+    auto* actor = m_actor.get();
+    if (!actor || actor->m_forgotten) {
+        actor = m_id->ns()->actorFor(globalObject, m_id.get());
+        m_actor.set(globalObject->vm(), this, actor);
+    }
+    return actor;
+}
 
 // Names a stub never forwards: `then`, so that a stub can be returned from an async function;
 // the class's handlers, which are the runtime's to call; and what every object answers itself.
@@ -346,7 +358,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDurableObjectStubFetch, (JSGlobalObject * lexicalGlob
         if (scope.exception()) [[unlikely]]
             return JSValue::encode(JSPromise::rejectedPromiseWithCaughtException(globalObject, scope));
     }
-    RELEASE_AND_RETURN(scope, JSValue::encode(stub->id()->ns()->dispatch(globalObject, stub->id(), DurableObjectEventKind::Fetch, request, server)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(stub->id()->ns()->dispatch(globalObject, stub, DurableObjectEventKind::Fetch, request, server)));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsDurableObjectStubId, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
@@ -366,9 +378,9 @@ JSC_DEFINE_CUSTOM_GETTER(jsDurableObjectStubName, (JSGlobalObject * globalObject
 }
 
 static const HashTableValue stubPrototypeValues[] = {
-    { "fetch"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsDurableObjectStubFetch, 1 } },
-    { "id"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsDurableObjectStubId, 0 } },
-    { "name"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsDurableObjectStubName, 0 } },
+    { "fetch"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsDurableObjectStubFetch, 1 } },
+    { "id"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsDurableObjectStubId, 0 } },
+    { "name"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsDurableObjectStubName, 0 } },
 };
 
 // ─── stub.method ─────────────────────────────────────────────────────────────
@@ -411,9 +423,9 @@ JSC_DEFINE_HOST_FUNCTION(jsDurableObjectRpcCall, (JSGlobalObject * lexicalGlobal
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto* function = uncheckedDowncast<JSDurableObjectRpcFunction>(callFrame->jsCallee());
-    auto* id = function->stub()->id();
+    auto* stub = function->stub();
     ArgList arguments(callFrame);
-    return JSValue::encode(id->ns()->dispatch(globalObject, id, DurableObjectEventKind::Call, function->methodName(), jsUndefined(), &arguments));
+    return JSValue::encode(stub->id()->ns()->dispatch(globalObject, stub, DurableObjectEventKind::Call, function->methodName(), jsUndefined(), &arguments));
 }
 
 // `await stub.property`
@@ -424,8 +436,8 @@ JSC_DEFINE_HOST_FUNCTION(jsDurableObjectRpcThen, (JSGlobalObject * lexicalGlobal
     auto* function = dynamicDowncast<JSDurableObjectRpcFunction>(callFrame->thisValue());
     if (!function) [[unlikely]]
         return WebCore::throwThisTypeError(*globalObject, scope, "DurableObjectStub"_s, "then"_s);
-    auto* id = function->stub()->id();
-    JSPromise* promise = id->ns()->dispatch(globalObject, id, DurableObjectEventKind::Get, function->methodName(), jsUndefined());
+    auto* stub = function->stub();
+    JSPromise* promise = stub->id()->ns()->dispatch(globalObject, stub, DurableObjectEventKind::Get, function->methodName(), jsUndefined());
     RELEASE_AND_RETURN(scope, JSValue::encode(promise->then(globalObject, callFrame->argument(0), callFrame->argument(1))));
 }
 
@@ -689,7 +701,7 @@ static JSValue invokeEvent(Zig::GlobalObject* globalObject, JSDurableObjectActor
         auto callData = JSC::getCallData(method);
         if (callData.type == CallData::Type::None) {
             if (required)
-                throwTypeError(globalObject, scope, makeString("The Durable Object class \""_s, actor->ns()->name(), "\" has no "_s, name, "() handler"_s));
+                throwTypeError(globalObject, scope, makeString("The Durable Object \""_s, actor->ns()->name(), "\" has no "_s, name, "() handler"_s));
             return jsUndefined();
         }
         RELEASE_AND_RETURN(scope, call(globalObject, method, callData, instance, arguments));
@@ -703,7 +715,7 @@ static JSValue invokeEvent(Zig::GlobalObject* globalObject, JSDurableObjectActor
         if (!found || callData.type == CallData::Type::None) {
             String name = asString(event->a())->value(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
-            throwTypeError(globalObject, scope, makeString("The Durable Object class \""_s, actor->ns()->name(), "\" has no method \""_s, name, '"'));
+            throwTypeError(globalObject, scope, makeString("The Durable Object \""_s, actor->ns()->name(), "\" has no method \""_s, name, '"'));
             return {};
         }
         if (directArguments)
@@ -717,7 +729,15 @@ static JSValue invokeEvent(Zig::GlobalObject* globalObject, JSDurableObjectActor
     }
     case DurableObjectEventKind::Get: {
         bool found = false;
-        RELEASE_AND_RETURN(scope, rpcProperty(globalObject, scope, instance, asString(event->a()), found));
+        JSValue value = rpcProperty(globalObject, scope, instance, asString(event->a()), found);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (value.isCallable()) {
+            String name = asString(event->a())->value(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            throwTypeError(globalObject, scope, makeString('"', name, "\" is a method of the Durable Object \""_s, actor->ns()->name(), "\": call it"_s));
+            return {};
+        }
+        return value;
     }
     case DurableObjectEventKind::Fetch: {
         MarkedArgumentBuffer arguments;
@@ -725,6 +745,7 @@ static JSValue invokeEvent(Zig::GlobalObject* globalObject, JSDurableObjectActor
         if (!event->b().isUndefined()) {
             auto* server = JSDurableObjectHandle::create(vm, JSDurableObjectRealm::of(globalObject)->structure(Field::ServerStructure), HandleKind::Server, actor);
             server->setTarget(vm, event->b());
+            event->internalField(static_cast<uint32_t>(JSDurableObjectEvent::Field::C)).set(vm, event, server);
             arguments.append(server);
         }
         return handler("fetch"_s, arguments, true);
@@ -799,8 +820,7 @@ bool JSDurableObjectActor::run(Zig::GlobalObject* globalObject, JSDurableObjectE
         return true;
     }
     if (awaited) {
-        if (event->m_runningIndex != JSDurableObjectEvent::notRunning)
-            awaitWith(globalObject, awaited, event);
+        awaitWith(globalObject, awaited, event);
         return false;
     }
     settle(globalObject, event, result, false);
@@ -831,14 +851,9 @@ void JSDurableObjectActor::settle(Zig::GlobalObject* globalObject, JSDurableObje
     }
     JSPromise* promise = event->promise();
     switch (event->m_kind) {
-    case DurableObjectEventKind::Alarm:
-        endAlarm(globalObject, value, failed);
-        break;
-    case DurableObjectEventKind::Fetch:
-        if (!failed && !value.isUndefined() && !value.inherits<WebCore::JSResponse>()) {
-            failed = true;
-            value = createTypeError(globalObject, "A Durable Object's fetch() must return a Response"_s);
-        }
+    case DurableObjectEventKind::SocketClose:
+        if (event->a().isObject())
+            socketMap(globalObject)->remove(asObject(event->a()));
         [[fallthrough]];
     default:
         if (failed) {
@@ -847,6 +862,22 @@ void JSDurableObjectActor::settle(Zig::GlobalObject* globalObject, JSDurableObje
             else
                 ns()->reportError(globalObject, value, this);
         } else if (promise)
+            promise->resolve(globalObject, vm, value);
+        break;
+    case DurableObjectEventKind::Alarm:
+        endAlarm(globalObject, value, failed);
+        break;
+    case DurableObjectEventKind::Fetch:
+        if (!failed && !value.inherits<WebCore::JSResponse>()) {
+            auto* server = dynamicDowncast<JSDurableObjectHandle>(event->c());
+            if (!value.isUndefined() || !server || !server->m_finished) {
+                failed = true;
+                value = createTypeError(globalObject, "A Durable Object's fetch() must return a Response, or nothing after server.upgrade(request)"_s);
+            }
+        }
+        if (failed)
+            promise->reject(vm, value);
+        else
             promise->resolve(globalObject, vm, value);
         break;
     }
@@ -884,6 +915,7 @@ void JSDurableObjectActor::start(Zig::GlobalObject* globalObject)
             abort(globalObject, error);
         return;
     }
+    graph->setTakesErrorsOfItsContext(true);
     m_graph.set(vm, this, graph);
     if (owner->classValue()) {
         construct(globalObject, JSValue(owner->classValue()));
@@ -989,7 +1021,10 @@ JSValue JSDurableObjectActor::block(Zig::GlobalObject* globalObject, JSValue cal
             return {};
         if (m_generation == generation)
             abort(globalObject, error);
-        return JSPromise::rejectedPromise(globalObject, error);
+        // The calls that were waiting have the error; whether anyone looks at this promise too is up to the object.
+        JSPromise* rejected = JSPromise::create(vm, globalObject->promiseStructure());
+        rejected->rejectAsHandled(vm, error);
+        return rejected;
     }
     if (!awaited) {
         unblock(globalObject, generation);
@@ -1062,7 +1097,7 @@ EncodedJSValue durableObjectReaction(JSGlobalObject* lexicalGlobalObject, CallFr
         if (failed) {
             if (current)
                 actor->abort(globalObject, value);
-            event->promise()->reject(vm, value);
+            event->promise()->rejectAsHandled(vm, value);
         } else {
             actor->unblock(globalObject, event->m_generation);
             event->promise()->resolve(globalObject, vm, value);
@@ -1314,11 +1349,17 @@ void JSDurableObjectActor::abort(Zig::GlobalObject* globalObject, JSValue error)
     }
     for (auto* event : queue)
         events.append(event);
+    if (m_alarmRunning) {
+        m_alarmRetries = std::min<uint8_t>(m_alarmRetries + 1, maxAlarmRetries);
+        ns()->alarmIndex().set(id()->hex()->tryGetValue(), static_cast<int64_t>(nowMs() + 1000.0 * (1 << m_alarmRetries)));
+        ns()->scheduleAlarms();
+    }
     unload(globalObject);
     for (unsigned i = 0; i < events.size(); i++)
         rejectEvent(globalObject, uncheckedDowncast<JSDurableObjectEvent>(events.at(i).asCell()), error);
     closeSockets(globalObject, 1011, "Durable Object reset"_s);
     ns()->forget(this);
+    ns()->actorWasReset();
     (void)vm;
 }
 
@@ -1341,6 +1382,7 @@ void JSDurableObjectActor::unload(Zig::GlobalObject* globalObject)
     m_graph.clear();
     owner->actorBecameBusy(this);
     if (auto* database = m_database.get()) {
+        database->abandonCursors();
         database->rollback();
         // A file is reopened when next needed; a database in memory is the only copy.
         if (!database->isInMemory())
@@ -1620,7 +1662,11 @@ JSC_DEFINE_HOST_FUNCTION(jsDurableObjectServerUpgrade, (JSGlobalObject * lexical
     MarkedArgumentBuffer arguments;
     arguments.append(callFrame->argument(0));
     arguments.append(upgradeOptions);
-    RELEASE_AND_RETURN(scope, JSValue::encode(callMethod(globalObject, handle->target(), "upgrade"_s, arguments)));
+    JSValue upgraded = callMethod(globalObject, handle->target(), "upgrade"_s, arguments);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (upgraded.isTrue())
+        handle->m_finished = true;
+    return JSValue::encode(upgraded);
 }
 
 #define FORWARDED_SERVER_FUNCTION(name)                                                                                         \
@@ -1771,11 +1817,7 @@ JSDurableObjectNamespace::JSDurableObjectNamespace(VM& vm, Structure* structure,
 {
 }
 
-JSDurableObjectNamespace::~JSDurableObjectNamespace()
-{
-    if (m_keepsEventLoopAlive)
-        m_context->unrefEventLoop();
-}
+JSDurableObjectNamespace::~JSDurableObjectNamespace() = default;
 
 void JSDurableObjectNamespace::destroy(JSCell* cell)
 {
@@ -1805,6 +1847,8 @@ void JSDurableObjectNamespace::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_closing);
     Locker locker { thisObject->cellLock() };
     for (auto* actor : thisObject->m_actors.values())
+        visitor.appendUnbarriered(actor);
+    for (auto* actor : thisObject->m_idle)
         visitor.appendUnbarriered(actor);
 }
 DEFINE_VISIT_CHILDREN(JSDurableObjectNamespace);
@@ -1938,11 +1982,13 @@ JSDurableObjectActor* JSDurableObjectNamespace::actorFor(Zig::GlobalObject* glob
     return actor;
 }
 
-JSPromise* JSDurableObjectNamespace::dispatch(Zig::GlobalObject* globalObject, JSDurableObjectId* id, DurableObjectEventKind kind, JSValue a, JSValue b, const ArgList* arguments)
+JSPromise* JSDurableObjectNamespace::dispatch(Zig::GlobalObject* globalObject, JSDurableObjectStub* stub, DurableObjectEventKind kind, JSValue a, JSValue b, const ArgList* arguments)
 {
+    if (m_closed || m_context->isStopped())
+        return JSPromise::rejectedPromise(globalObject, createClosedError(globalObject));
     JSModuleGraph* callerGraph = globalObject->hasModuleGraphs() ? currentModuleGraph(globalObject) : nullptr;
     ModuleGraphContextScope context(m_context.get());
-    return actorFor(globalObject, id)->request(globalObject, kind, a, b, arguments, callerGraph);
+    return stub->actor(globalObject)->request(globalObject, kind, a, b, arguments, callerGraph);
 }
 
 void JSDurableObjectNamespace::reportError(Zig::GlobalObject* globalObject, JSValue error, JSDurableObjectActor* actor)
@@ -1966,11 +2012,20 @@ void JSDurableObjectNamespace::reportError(Zig::GlobalObject* globalObject, JSVa
     }
 }
 
+// An idle object is evicted between one and two idleTimeouts after it was last used: what a call
+// costs is a flag, and the clock is read when the list is swept.
 void JSDurableObjectNamespace::actorBecameIdle(JSDurableObjectActor* actor)
 {
-    actor->m_idleSince = nowMs();
-    m_idle.remove(actor);
-    m_idle.add(actor);
+    if (!actor->m_inIdleList) {
+        actor->m_inIdleList = true;
+        actor->m_usedSinceIdle = false;
+        actor->m_idleSince = nowMs();
+        {
+            Locker locker { cellLock() };
+            m_idle.append(actor);
+        }
+        vm().writeBarrier(this, actor);
+    }
     if (m_closing) {
         m_context->postTask([ns = Strong<JSDurableObjectNamespace>(vm(), this)](WebCore::ScriptExecutionContext& context) {
             auto* self = ns.get();
@@ -1983,16 +2038,27 @@ void JSDurableObjectNamespace::actorBecameIdle(JSDurableObjectActor* actor)
         m_sweepTimer.startOneShot(Seconds::fromMilliseconds(m_idleTimeoutMs));
 }
 
+void JSDurableObjectNamespace::actorWasReset()
+{
+    if (!m_closing)
+        return;
+    m_context->postTask([ns = Strong<JSDurableObjectNamespace>(vm(), this)](WebCore::ScriptExecutionContext& context) {
+        auto* self = ns.get();
+        ModuleGraphContextScope scope(self->context());
+        self->finishClosing(defaultGlobalObject(context.jsGlobalObject()));
+    });
+}
+
 void JSDurableObjectNamespace::actorBecameBusy(JSDurableObjectActor* actor)
 {
-    m_idle.remove(actor);
+    actor->m_usedSinceIdle = true;
 }
 
 void JSDurableObjectNamespace::forget(JSDurableObjectActor* actor)
 {
-    if (actor->state() != JSDurableObjectActor::State::Unloaded || actor->hasKeptState() || actor->isBusy())
+    if (actor->state() != JSDurableObjectActor::State::Unloaded || actor->hasKeptState() || actor->isBusy() || actor->m_forgotten)
         return;
-    m_idle.remove(actor);
+    actor->m_forgotten = true;
     Locker locker { cellLock() };
     m_actors.remove(actor->id()->hex()->tryGetValue());
 }
@@ -2011,16 +2077,34 @@ void JSDurableObjectNamespace::sweep(Zig::GlobalObject* globalObject)
     if (m_closed)
         return;
     double now = nowMs();
-    while (!m_idle.isEmpty()) {
+    for (size_t remaining = m_idle.size(); remaining && !m_idle.isEmpty(); remaining--) {
         JSDurableObjectActor* actor = m_idle.first();
-        double remaining = actor->m_idleSince + m_idleTimeoutMs - now;
-        if (remaining > 0) {
-            m_sweepTimer.startOneShot(Seconds::fromMilliseconds(remaining));
-            return;
+        bool idle = actor->isIdle();
+        if (idle && !actor->m_usedSinceIdle) {
+            double left = actor->m_idleSince + m_idleTimeoutMs - now;
+            if (left > 0) {
+                m_sweepTimer.startOneShot(Seconds::fromMilliseconds(left));
+                return;
+            }
         }
-        m_idle.removeFirst();
-        actor->evict(globalObject);
+        {
+            Locker locker { cellLock() };
+            m_idle.removeFirst();
+            if (idle && actor->m_usedSinceIdle)
+                m_idle.append(actor);
+        }
+        if (!idle)
+            actor->m_inIdleList = false;
+        else if (actor->m_usedSinceIdle) {
+            actor->m_usedSinceIdle = false;
+            actor->m_idleSince = now;
+        } else {
+            actor->m_inIdleList = false;
+            actor->evict(globalObject);
+        }
     }
+    if (!m_idle.isEmpty())
+        m_sweepTimer.startOneShot(Seconds::fromMilliseconds(m_idleTimeoutMs));
 }
 
 void JSDurableObjectNamespace::scheduleAlarms()
@@ -2079,7 +2163,7 @@ void JSDurableObjectNamespace::fireAlarms(Zig::GlobalObject* globalObject)
 
 void JSDurableObjectNamespace::updateKeepAlive()
 {
-    bool keep = !m_closed && (m_loadedCount || m_socketCount || m_alarmTimer.isActive() || !m_actors.isEmpty());
+    bool keep = !m_closed && (m_loadedCount || m_socketCount || m_alarmTimer.isActive());
     if (keep == !!m_keepAlive)
         return;
     if (keep)
@@ -2114,16 +2198,20 @@ void JSDurableObjectNamespace::finishClosing(Zig::GlobalObject* globalObject)
     VM& vm = globalObject->vm();
     if (!m_index)
         return;
+    // What the objects of a namespace whose own context was stopped are waiting for never comes.
+    bool stopped = m_context->isStopped();
     MarkedArgumentBuffer actors;
     for (auto* actor : m_actors.values()) {
-        if (actor->isBusy() || actor->m_blockers)
+        if (!stopped && (actor->isBusy() || actor->m_blockers))
             return;
         actors.append(actor);
     }
     for (unsigned i = 0; i < actors.size(); i++) {
         auto* actor = uncheckedDowncast<JSDurableObjectActor>(actors.at(i).asCell());
         actor->closeSockets(globalObject, 1001, "Durable Object namespace closed"_s);
-        if (actor->state() == JSDurableObjectActor::State::Running) {
+        if (stopped && actor->isBusy())
+            actor->abort(globalObject, createClosedError(globalObject));
+        else if (actor->state() == JSDurableObjectActor::State::Running) {
             actor->flush(globalObject);
             actor->unload(globalObject);
         }
@@ -2132,8 +2220,8 @@ void JSDurableObjectNamespace::finishClosing(Zig::GlobalObject* globalObject)
     {
         Locker locker { cellLock() };
         m_actors.clear();
+        m_idle.clear();
     }
-    m_idle.clear();
     m_index = nullptr;
     m_keepAlive.clear();
     m_closing->resolve(globalObject, vm, jsUndefined());
@@ -2275,6 +2363,26 @@ JSC_DEFINE_HOST_FUNCTION(callDurableObject, (JSGlobalObject * globalObject, Call
     return throwVMTypeError(globalObject, scope, "Class constructor DurableObject cannot be invoked without 'new'"_s);
 }
 
+// encodeURIComponent(name), except that a name of nothing but dots does not come out as "." or "..".
+static String directoryNameFor(const String& name)
+{
+    CString utf8 = name.utf8();
+    bool onlyDots = true;
+    for (char c : utf8.span())
+        onlyDots = onlyDots && c == '.';
+    StringBuilder builder;
+    static constexpr char digits[] = "0123456789ABCDEF";
+    for (char c : utf8.span()) {
+        auto byte = static_cast<uint8_t>(c);
+        bool plain = isASCIIAlphanumeric(byte) || byte == '-' || byte == '_' || byte == '!' || byte == '~' || byte == '*' || byte == '\'' || byte == '(' || byte == ')' || (byte == '.' && !onlyDots);
+        if (plain)
+            builder.append(static_cast<Latin1Character>(byte));
+        else
+            builder.append('%', digits[byte >> 4], digits[byte & 15]);
+    }
+    return builder.toString();
+}
+
 static String absolutePath(Zig::GlobalObject* globalObject, ThrowScope& scope, const String& path)
 {
     if (isAbsolutePath(path))
@@ -2375,7 +2483,7 @@ JSC_DEFINE_HOST_FUNCTION(constructDurableObjectNamespace, (JSGlobalObject * lexi
         if (storage != ":memory:"_s) {
             String root = absolutePath(globalObject, scope, storage);
             RETURN_IF_EXCEPTION(scope, {});
-            options.storageDirectory = makeString(root, PLATFORM_SEP_s, encodeWithURLEscapeSequences(options.name));
+            options.storageDirectory = makeString(root, PLATFORM_SEP_s, directoryNameFor(options.name));
         }
     }
 
@@ -2488,7 +2596,9 @@ void JSDurableObjectRealm::finishCreation(VM& vm, Zig::GlobalObject* globalObjec
     durableObjectConstructor->putDirect(vm, ident(vm, "websocket"_s), handler, PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete);
 
     set(Field::IdStructure, JSDurableObjectId::createStructure(vm, globalObject, createPlainPrototype(vm, globalObject, JSDurableObjectId::info(), idPrototypeValues, "DurableObjectId"_s)));
-    set(Field::StubStructure, JSDurableObjectStub::createStructure(vm, globalObject, createPlainPrototype(vm, globalObject, JSDurableObjectStub::info(), stubPrototypeValues, "DurableObjectStub"_s)));
+    JSObject* stubPrototype = createPlainPrototype(vm, globalObject, JSDurableObjectStub::info(), stubPrototypeValues, "DurableObjectStub"_s);
+    stubPrototype->putDirect(vm, vm.propertyNames->constructor, jsUndefined(), PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly);
+    set(Field::StubStructure, JSDurableObjectStub::createStructure(vm, globalObject, stubPrototype));
 
     JSObject* rpcPrototype = constructEmptyObject(globalObject, globalObject->functionPrototype());
     rpcPrototype->putDirectNativeFunction(vm, globalObject, vm.propertyNames->then, 2, jsDurableObjectRpcThen, ImplementationVisibility::Public, NoIntrinsic, static_cast<unsigned>(PropertyAttribute::DontEnum));

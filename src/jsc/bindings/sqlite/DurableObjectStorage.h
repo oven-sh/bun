@@ -10,6 +10,8 @@ struct sqlite3_stmt;
 
 namespace Bun {
 
+class JSDurableObjectSqlCursor;
+
 // The SQLite database of one Durable Object: `ctx.storage`. Tables whose names start with
 // `_cf_` are the runtime's (the key-value store and the alarm); SQL the object runs through
 // `sql.exec()` cannot name them, cannot control transactions and cannot attach databases.
@@ -97,6 +99,16 @@ public:
         bool m_previous;
     };
     int64_t databaseSize();
+    // Cursors of exec() whose statement has not run to its end. They are read to their end before
+    // anything that an open statement would be in the way of (a commit, a write, deleteAll()), and
+    // given up when the database closes. Not kept alive from here: a cursor takes itself off the
+    // list when it is collected.
+    Vector<JSDurableObjectSqlCursor*> m_liveCursors;
+    void abandonCursors();
+    // Set by the authorizer when the statement being compiled is an ALTER TABLE.
+    bool m_sawAlterTable { false };
+    // Whether something other than the runtime's two tables has a reserved name.
+    bool hasReservedNames();
 
     // Closes the database; with `removeIfEmpty`, a file with nothing in it is deleted.
     void close(bool removeIfEmpty);

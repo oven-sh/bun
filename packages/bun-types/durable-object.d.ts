@@ -34,10 +34,16 @@ declare module "bun" {
      * Object accepted are ignored by it.
      */
     static readonly websocket: WebSocketHandler<unknown>;
+  }
 
-    /** `stub.fetch(request, server?)` */
+  /**
+   * The methods of a {@link DurableObject} class that the runtime calls. All
+   * are optional; `implements Bun.DurableObjectHandlers` checks their shapes.
+   */
+  interface DurableObjectHandlers {
+    /** `stub.fetch(request, server?)`. Return nothing after `server.upgrade(request)`. */
     fetch?(request: Request, server?: DurableObjectServer): Response | undefined | Promise<Response | undefined>;
-    /** Called when the time set with `ctx.storage.setAlarm()` comes. Retried with backoff when it throws. */
+    /** Called when the time set with `ctx.storage.setAlarm()` comes. Called again, with backoff, when it throws. */
     alarm?(info: DurableObjectAlarmInfo): void | Promise<void>;
     webSocketOpen?(ws: ServerWebSocket<any>): void | Promise<void>;
     webSocketMessage?(ws: ServerWebSocket<any>, message: string | Buffer): void | Promise<void>;
@@ -52,13 +58,13 @@ declare module "bun" {
     readonly scheduledTime: number;
   }
 
-  interface DurableObjectNamespaceOptions<Env = unknown> {
+  interface DurableObjectNamespaceOptions<T extends object = object> {
     /**
      * The class of the objects. Every object runs in a context of its own for
      * timers and I/O (see {@link ModuleGraph}); module state is shared, as it
      * is between instances of any class.
      */
-    class?: new (ctx: DurableObjectState, env: Env) => object;
+    class?: new (ctx: DurableObjectState, env: any) => T;
     /**
      * Instead of `class`: a module that exports the class. Every object loads
      * the module into a {@link ModuleGraph} of its own, so module-level state
@@ -81,7 +87,7 @@ declare module "bun" {
      */
     storage?: string;
     /** Passed to every object's constructor. */
-    env?: Env;
+    env?: unknown;
     /**
      * An object with nothing to do is evicted from memory after this many
      * milliseconds; its storage, alarm and WebSockets stay. Default `10_000`.
@@ -102,7 +108,7 @@ declare module "bun" {
    * @experimental
    */
   class DurableObjectNamespace<T extends object = DurableObject> {
-    constructor(options: DurableObjectNamespaceOptions);
+    constructor(options: DurableObjectNamespaceOptions<T>);
     /** The id of the object with this name. The same name is always the same id. */
     idFromName(name: string): DurableObjectId;
     /** A new random id. */
@@ -130,11 +136,17 @@ declare module "bun" {
   }
 
   type DurableObjectReservedMethod =
+    | "id"
+    | "name"
     | "fetch"
+    | "then"
+    | "constructor"
+    | "toJSON"
     | "alarm"
     | "webSocketOpen"
     | "webSocketMessage"
     | "webSocketClose"
+    | "webSocketError"
     | "webSocketDrain"
     | "ctx"
     | "env";

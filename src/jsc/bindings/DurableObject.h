@@ -162,6 +162,8 @@ public:
     static bool getOwnPropertySlot(JSC::JSObject*, JSC::JSGlobalObject*, JSC::PropertyName, JSC::PropertySlot&);
 
     JSDurableObjectId* id() const { return m_id.get(); }
+    // The object's record, once found. It is looked up again when the namespace has let go of it.
+    JSDurableObjectActor* actor(Zig::GlobalObject*);
 
 private:
     JSDurableObjectStub(JSC::VM& vm, JSC::Structure* structure)
@@ -169,6 +171,7 @@ private:
     {
     }
     JSC::WriteBarrier<JSDurableObjectId> m_id;
+    JSC::WriteBarrier<JSDurableObjectActor> m_actor;
 };
 
 class JSDurableObjectRpcFunction final : public JSC::InternalFunction {
@@ -235,7 +238,7 @@ public:
     JSC::JSValue extra() const { return m_extra.get(); }
     void setExtra(JSC::VM& vm, JSC::JSValue value) { m_extra.set(vm, this, value); }
 
-    // Transaction: finished, rolled back. Socket: which slot of the actor's list it is in.
+    // Transaction: finished, rolled back. Server: upgrade() took the request. Socket: which slot of the actor's list it is in.
     bool m_finished { false };
     bool m_rolledBack { false };
     uint32_t m_index { 0 };
@@ -332,7 +335,7 @@ public:
     uint32_t generation() const { return m_generation; }
     bool isIdle() const { return m_state == State::Running && !m_inflight && !m_blockers && m_queue.isEmpty(); }
     bool isBusy() const { return m_state == State::Starting || m_inflight || !m_queue.isEmpty(); }
-    bool hasKeptState() const { return m_database || !m_sockets.isEmpty(); }
+    bool hasKeptState() const { return m_database || !m_sockets.isEmpty() || !m_autoResponseRequest.isNull(); }
 
     // ── Events ──
     // An event nobody waits for.
@@ -363,6 +366,8 @@ public:
     // Commits what the object wrote. False, with the object reset, when that fails.
     bool flush(Zig::GlobalObject*);
     void alarmChanged(Zig::GlobalObject*);
+    // Open sql cursors read the rest of their rows into memory (before a commit or a write).
+    void drainCursors(Zig::GlobalObject*);
 
     // ── WebSockets ──
     void addSocket(JSC::VM&, JSDurableObjectHandle*);
@@ -376,7 +381,12 @@ public:
     bool m_alarmTouched { false };
     uint8_t m_alarmRetries { 0 };
     bool m_commitScheduled { false };
+    // The namespace's idle list: when it was put there, and whether it has been used since.
     double m_idleSince { 0 };
+    bool m_inIdleList { false };
+    bool m_usedSinceIdle { false };
+    // The namespace has let go of this record; a stub that holds it looks the object up again.
+    bool m_forgotten { false };
     // { request, response } answered without waking the object; empty for none.
     String m_autoResponseRequest;
     String m_autoResponseResponse;
@@ -466,12 +476,13 @@ public:
     // Null with an exception thrown.
     JSDurableObjectId* idFromString(Zig::GlobalObject*, JSC::ThrowScope&, JSC::JSString* hex);
     JSDurableObjectActor* actorFor(Zig::GlobalObject*, JSDurableObjectId*);
-    JSC::JSPromise* dispatch(Zig::GlobalObject*, JSDurableObjectId*, DurableObjectEventKind, JSC::JSValue a, JSC::JSValue b, const JSC::ArgList* arguments = nullptr);
+    JSC::JSPromise* dispatch(Zig::GlobalObject*, JSDurableObjectStub*, DurableObjectEventKind, JSC::JSValue a, JSC::JSValue b, const JSC::ArgList* arguments = nullptr);
 
     // An error nobody is waiting for: to `onError`, or as an uncaught exception of the namespace's owner.
     void reportError(Zig::GlobalObject*, JSC::JSValue error, JSDurableObjectActor*);
     void actorBecameIdle(JSDurableObjectActor*);
     void actorBecameBusy(JSDurableObjectActor*);
+    void actorWasReset();
     // An unloaded object with nothing the namespace keeps for it needs no record.
     void forget(JSDurableObjectActor*);
     // One timer for the namespace, set for the earliest entry of the alarm index.
@@ -510,8 +521,8 @@ private:
     std::array<uint8_t, 32> m_key;
     double m_idleTimeoutMs { 10'000 };
     std::unique_ptr<DurableObjectAlarmIndex> m_index;
-    // Loaded objects with nothing to do, least recently active first.
-    ListHashSet<JSDurableObjectActor*> m_idle;
+    // Loaded objects that had nothing to do when they were put here, oldest first. Under cellLock().
+    Deque<JSDurableObjectActor*> m_idle;
     RunLoop::Timer m_alarmTimer;
     RunLoop::Timer m_sweepTimer;
     double m_alarmTimerAt { 0 };

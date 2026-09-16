@@ -41,6 +41,7 @@ static inline int lazyLoadSQLite(WTF::String* = nullptr) { return 0; }
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/PropertyNameArray.h>
 #include <JavaScriptCore/TypedArrayInlines.h>
+#include <wtf/SetForScope.h>
 #include <wtf/text/StringBuilder.h>
 #include <wtf/unicode/UTF8Conversion.h>
 
@@ -174,6 +175,7 @@ int DurableObjectDatabase::authorize(void* userData, int action, const char* fir
     case SQLITE_PRAGMA:
         return pragmaIsAllowed(first) ? SQLITE_OK : SQLITE_DENY;
     case SQLITE_ALTER_TABLE:
+        database->m_sawAlterTable = true;
         return hasReservedPrefix(second) ? SQLITE_DENY : SQLITE_OK;
     case SQLITE_FUNCTION:
     case SQLITE_SELECT:
@@ -188,11 +190,13 @@ int DurableObjectDatabase::authorize(void* userData, int action, const char* fir
 
 bool DurableObjectDatabase::exec(const char* sql)
 {
+    SetForScope unrestricted(m_restricted, false);
     return sqlite3_exec(m_db, sql, nullptr, nullptr, nullptr) == SQLITE_OK;
 }
 
 sqlite3_stmt* DurableObjectDatabase::statement(sqlite3_stmt*& slot, const char* sql)
 {
+    SetForScope unrestricted(m_restricted, false);
     if (!slot)
         sqlite3_prepare_v3(m_db, sql, -1, SQLITE_PREPARE_PERSISTENT, &slot, nullptr);
     return slot;
@@ -259,6 +263,7 @@ void DurableObjectDatabase::close(bool removeIfEmpty)
 {
     if (!m_db)
         return;
+    abandonCursors();
     rollback();
     bool remove = removeIfEmpty && !m_path.isNull() && isEmpty();
     for (sqlite3_stmt** slot : { &m_begin, &m_commit, &m_rollback, &m_kvGet, &m_kvPut, &m_kvDelete, &m_metaGet, &m_metaPut, &m_metaDelete }) {
@@ -269,7 +274,6 @@ void DurableObjectDatabase::close(bool removeIfEmpty)
     for (auto& entry : m_cache)
         sqlite3_finalize(entry.value);
     m_cache.clear();
-    // A cursor that script still holds finalizes its statement when it is collected.
     sqlite3_close_v2(m_db);
     m_db = nullptr;
     if (remove) {
@@ -473,19 +477,24 @@ bool DurableObjectDatabase::deleteAll()
         return false;
     m_alarmDirty = true;
     exec("PRAGMA defer_foreign_keys = ON");
-    for (auto kind : { "trigger"_s, "view"_s, "table"_s }) {
+    // (A virtual table goes before the shadow tables it owns, which go with it.)
+    struct Pass {
+        ASCIILiteral kind;
+        const char* select;
+    };
+    static constexpr const char* userObjects = " AND name NOT LIKE '\\_cf\\_%' ESCAPE '\\' AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\'";
+    for (auto pass : { Pass { "TRIGGER"_s, "type = 'trigger'" }, Pass { "VIEW"_s, "type = 'view'" }, Pass { "TABLE"_s, "type = 'table' AND sql LIKE 'CREATE VIRTUAL%'" }, Pass { "TABLE"_s, "type = 'table'" } }) {
         Vector<String> names;
         sqlite3_stmt* select = nullptr;
-        if (sqlite3_prepare_v2(m_db, "SELECT name FROM sqlite_master WHERE type = ? AND name NOT LIKE '\\_cf\\_%' ESCAPE '\\' AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\'", -1, &select, nullptr) != SQLITE_OK)
+        CString query = makeString("SELECT name FROM sqlite_master WHERE "_s, StringView::fromLatin1(pass.select), StringView::fromLatin1(userObjects)).utf8();
+        if (sqlite3_prepare_v2(m_db, query.data(), -1, &select, nullptr) != SQLITE_OK)
             return false;
-        sqlite3_bind_text(select, 1, kind.characters(), static_cast<int>(kind.length()), SQLITE_STATIC);
         while (sqlite3_step(select) == SQLITE_ROW)
             names.append(columnText(select, 0));
         sqlite3_finalize(select);
         for (auto& name : names) {
-            // (A virtual table's shadow tables go with it, so a later name may already be gone.)
-            String drop = makeString("DROP "_s, kind, " IF EXISTS \""_s, makeStringByReplacingAll(name, "\""_s, "\"\""_s), '"');
-            if (!exec(drop.utf8().data()) && kind != "table"_s)
+            String drop = makeString("DROP "_s, pass.kind, " IF EXISTS \""_s, makeStringByReplacingAll(name, "\""_s, "\"\""_s), '"');
+            if (!exec(drop.utf8().data()))
                 return false;
         }
     }
@@ -497,7 +506,7 @@ bool DurableObjectDatabase::deleteAll()
 
 bool DurableObjectDatabase::isEmpty()
 {
-    for (auto sql : { "SELECT 1 FROM _cf_KV LIMIT 1", "SELECT 1 FROM _cf_METADATA LIMIT 1", "SELECT 1 FROM sqlite_master WHERE name NOT LIKE '\\_cf\\_%' ESCAPE '\\' LIMIT 1" }) {
+    for (auto sql : { "SELECT 1 FROM _cf_KV LIMIT 1", "SELECT 1 FROM _cf_METADATA LIMIT 1", "SELECT 1 FROM sqlite_master WHERE name NOT LIKE '\\_cf\\_%' ESCAPE '\\' AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\' LIMIT 1" }) {
         sqlite3_stmt* select = nullptr;
         if (sqlite3_prepare_v2(m_db, sql, -1, &select, nullptr) != SQLITE_OK)
             return false;
@@ -599,6 +608,17 @@ void DurableObjectDatabase::giveBack(const String& sql, sqlite3_stmt* prepared)
         return;
     }
     m_cache.add(sql, prepared);
+}
+
+bool DurableObjectDatabase::hasReservedNames()
+{
+    SetForScope unrestricted(m_restricted, false);
+    sqlite3_stmt* select = nullptr;
+    if (sqlite3_prepare_v2(m_db, "SELECT 1 FROM sqlite_master WHERE name LIKE '\\_cf\\_%' ESCAPE '\\' AND name NOT IN ('_cf_KV', '_cf_METADATA') LIMIT 1", -1, &select, nullptr) != SQLITE_OK)
+        return true;
+    bool found = sqlite3_step(select) == SQLITE_ROW;
+    sqlite3_finalize(select);
+    return found;
 }
 
 int64_t DurableObjectDatabase::databaseSize()
@@ -792,6 +812,11 @@ bool JSDurableObjectActor::flush(Zig::GlobalObject* globalObject)
     auto* database = m_database.get();
     if (!database || !database->inTransaction() || database->depth())
         return true;
+    if (!database->m_liveCursors.isEmpty()) {
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
+        drainCursors(globalObject);
+        (void)scope.clearExceptionExceptTermination();
+    }
     if (!database->flush()) {
         VM& vm = globalObject->vm();
         JSObject* cause = createStorageError(globalObject, database);
@@ -1245,6 +1270,9 @@ DEFINE_ASYNC_STORAGE_FUNCTIONS(jsDurableObjectTransaction, "DurableObjectTransac
 JSC_DEFINE_HOST_FUNCTION(jsDurableObjectStorageDeleteAll, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     STORAGE_OR_TRANSACTION("DurableObjectStorage"_s, Storage, "deleteAll"_s)
+    access.actor->drainCursors(globalObject);
+    if (scope.exception()) [[unlikely]]
+        return settled(globalObject, scope, {});
     inScope(globalObject, scope, access, [&] {
         if (access.database->deleteAll())
             return true;
@@ -1414,7 +1442,9 @@ JSC_DEFINE_HOST_FUNCTION(jsDurableObjectKvList, (JSGlobalObject * lexicalGlobalO
 // ─── ctx.storage.sql ─────────────────────────────────────────────────────────
 
 // What exec() returns. The statement is stepped as the cursor is read; one that returns no rows
-// has run to completion before exec() returns.
+// has run to its end before exec() returns. A cursor that is still unread when the object's writes
+// are committed (or when another statement writes) reads the rest of its rows into memory first,
+// so an open statement never stands in the way of a commit, a DROP or the file being closed.
 class JSDurableObjectSqlCursor final : public JSDestructibleObject {
 public:
     using Base = JSDestructibleObject;
@@ -1436,87 +1466,200 @@ public:
         auto* cursor = new (NotNull, allocateCell<JSDurableObjectSqlCursor>(vm)) JSDurableObjectSqlCursor(vm, structure);
         cursor->finishCreation(vm);
         cursor->m_actor.set(vm, cursor, actor);
-        cursor->m_generation = actor->generation();
         if (source)
             cursor->m_source.set(vm, cursor, source);
         return cursor;
     }
     static void destroy(JSCell* cell) { static_cast<JSDurableObjectSqlCursor*>(cell)->~JSDurableObjectSqlCursor(); }
-    ~JSDurableObjectSqlCursor()
-    {
-        if (m_statement)
-            sqlite3_finalize(m_statement);
-    }
+    ~JSDurableObjectSqlCursor() { release(false); }
 
     // raw(): the same rows, as arrays. Reads through to the cursor it was made from.
     JSDurableObjectSqlCursor* source() { return m_source ? m_source.get() : this; }
     bool isRaw() const { return !!m_source; }
 
-    // The statement has a row ready (sqlite3_step returned SQLITE_ROW and it was not read yet).
-    bool m_hasRow { false };
-    bool m_done { false };
-    sqlite3_stmt* m_statement { nullptr };
-    String m_sql;
-    uint32_t m_generation { 0 };
-    double m_rowsRead { 0 };
-    double m_rowsWritten { 0 };
-    WriteBarrier<JSDurableObjectActor> m_actor;
-    WriteBarrier<JSDurableObjectSqlCursor> m_source;
-    WriteBarrier<JSArray> m_columnNames;
-    WriteBarrier<Structure> m_rowStructure;
+    void open(DurableObjectDatabase* owner, sqlite3_stmt* statement, const String& cacheKey, int changesBefore)
+    {
+        m_owner = owner;
+        m_statement = statement;
+        m_cacheKey = cacheKey;
+        m_changesBefore = changesBefore;
+        owner->m_liveCursors.append(this);
+    }
 
-    DurableObjectDatabase* database() const
+    // Lets go of the statement: back to the database's cache, or finalized.
+    void release(bool mayCache)
     {
-        auto* actor = m_actor.get();
-        return actor->generation() == m_generation ? actor->databaseIfOpen() : nullptr;
-    }
-    void finish()
-    {
-        m_done = true;
         m_hasRow = false;
-        if (!m_statement)
+        sqlite3_stmt* statement = std::exchange(m_statement, nullptr);
+        DurableObjectDatabase* owner = std::exchange(m_owner, nullptr);
+        if (!statement)
             return;
-        sqlite3_reset(m_statement);
-        sqlite3_clear_bindings(m_statement);
-        auto* owner = database();
-        if (owner && !m_sql.isNull())
-            owner->giveBack(m_sql, m_statement);
-        else
-            sqlite3_finalize(m_statement);
-        m_statement = nullptr;
+        sqlite3_reset(statement);
+        if (owner) {
+            m_rowsWritten = sqlite3_total_changes(owner->handle()) - m_changesBefore;
+            owner->m_liveCursors.removeFirst(this);
+        }
+        if (owner && mayCache && !m_cacheKey.isNull()) {
+            sqlite3_clear_bindings(statement);
+            owner->giveBack(m_cacheKey, statement);
+        } else
+            sqlite3_finalize(statement);
     }
+
+    void close()
+    {
+        release(true);
+        m_buffer.clear();
+        m_done = true;
+    }
+
+    // The object was evicted or reset: the rows that were not read are gone with it.
+    void abandon()
+    {
+        release(false);
+        if (!m_done && !m_buffer)
+            m_stale = true;
+        m_done = true;
+    }
+
     // Makes the next row ready. False at the end, or with an exception thrown.
     bool advance(Zig::GlobalObject* globalObject, ThrowScope& scope)
     {
         if (m_hasRow)
             return true;
-        if (m_done)
-            return false;
-        auto* owner = database();
-        if (!owner) {
-            finish();
-            throwException(globalObject, scope, createDurableObjectResetError(globalObject));
+        if (JSArray* buffer = m_buffer.get()) {
+            if (m_bufferIndex < buffer->length())
+                return m_hasRow = true;
+            m_buffer.clear();
+            m_done = true;
+        }
+        if (m_done) {
+            if (std::exchange(m_stale, false))
+                throwException(globalObject, scope, createDurableObjectResetError(globalObject));
             return false;
         }
         int result;
         {
-            DurableObjectDatabase::UserScope restricted(*owner);
+            DurableObjectDatabase::UserScope restricted(*m_owner);
             result = sqlite3_step(m_statement);
         }
         if (result == SQLITE_ROW) {
-            m_hasRow = true;
             m_rowsRead++;
-            return true;
+            return m_hasRow = true;
         }
+        m_done = true;
         if (result != SQLITE_DONE) {
-            JSObject* error = createStorageError(globalObject, owner);
-            finish();
+            JSObject* error = createStorageError(globalObject, m_owner);
+            release(false);
             throwException(globalObject, scope, error);
             return false;
         }
-        finish();
+        release(true);
         return false;
     }
+
+    // The row that is ready, consumed.
+    JSValue takeRow(Zig::GlobalObject* globalObject, ThrowScope& scope, bool raw)
+    {
+        VM& vm = globalObject->vm();
+        MarkedArgumentBuffer values;
+        if (JSArray* buffer = m_buffer.get()) {
+            JSArray* row = uncheckedDowncast<JSArray>(buffer->getIndexQuickly(m_bufferIndex++));
+            m_hasRow = false;
+            if (raw)
+                return row;
+            for (unsigned i = 0, length = row->length(); i < length; i++)
+                values.append(row->getIndexQuickly(i));
+        } else {
+            int count = sqlite3_column_count(m_statement);
+            for (int i = 0; i < count; i++) {
+                values.append(column(globalObject, scope, i));
+                RETURN_IF_EXCEPTION(scope, {});
+            }
+            m_hasRow = false;
+            if (raw)
+                RELEASE_AND_RETURN(scope, constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), values));
+        }
+        if (Structure* structure = m_rowStructure.get()) {
+            JSObject* row = constructEmptyObject(vm, structure);
+            for (unsigned i = 0; i < values.size(); i++)
+                row->putDirectOffset(vm, i, values.at(i));
+            return row;
+        }
+        // Too many columns for inline storage, two with one name (the later one wins), or a name that is an index.
+        JSObject* row = constructEmptyObject(globalObject);
+        JSArray* names = m_columnNames.get();
+        for (unsigned i = 0; i < values.size(); i++) {
+            auto name = asString(names->getIndexQuickly(i))->toIdentifier(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            row->putDirectMayBeIndex(globalObject, name, values.at(i));
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+        return row;
+    }
+
+    // Reads what is left into memory and lets go of the statement.
+    void drain(Zig::GlobalObject* globalObject, ThrowScope& scope)
+    {
+        if (!m_statement)
+            return;
+        VM& vm = globalObject->vm();
+        MarkedArgumentBuffer rows;
+        for (;;) {
+            bool more = advance(globalObject, scope);
+            RETURN_IF_EXCEPTION(scope, );
+            if (!more)
+                break;
+            rows.append(takeRow(globalObject, scope, true));
+            RETURN_IF_EXCEPTION(scope, );
+        }
+        JSArray* buffer = constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), rows);
+        RETURN_IF_EXCEPTION(scope, );
+        m_buffer.set(vm, this, buffer);
+        m_bufferIndex = 0;
+        m_done = false;
+    }
+
+    void setColumns(Zig::GlobalObject* globalObject, ThrowScope& scope)
+    {
+        VM& vm = globalObject->vm();
+        int count = sqlite3_column_count(m_statement);
+        MarkedArgumentBuffer names;
+        Vector<Identifier> identifiers;
+        bool plain = count && static_cast<unsigned>(count) <= JSFinalObject::maxInlineCapacity;
+        for (int i = 0; i < count; i++) {
+            const char* name = sqlite3_column_name(m_statement, i);
+            String string = name ? String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const unsigned char*>(name), strlen(name) }) : emptyString();
+            auto identifier = Identifier::fromString(vm, string);
+            plain = plain && !identifiers.contains(identifier) && !parseIndex(identifier);
+            identifiers.append(identifier);
+            names.append(jsString(vm, string));
+        }
+        JSArray* array = constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), names);
+        RETURN_IF_EXCEPTION(scope, );
+        m_columnNames.set(vm, this, array);
+        if (!plain)
+            return;
+        Structure* structure = globalObject->structureCache().emptyObjectStructureForPrototype(globalObject, globalObject->objectPrototype(), count);
+        for (int i = 0; i < count; i++) {
+            PropertyOffset offset;
+            structure = Structure::addPropertyTransition(vm, structure, identifiers[i], 0, offset);
+        }
+        m_rowStructure.set(vm, this, structure);
+    }
+
+    bool isOpen() const { return !!m_statement; }
+    double rowsRead() const { return m_rowsRead; }
+    double rowsWritten() const { return m_owner ? sqlite3_total_changes(m_owner->handle()) - m_changesBefore : m_rowsWritten; }
+    JSArray* columnNames() const { return m_columnNames.get(); }
+    JSDurableObjectActor* actor() const { return m_actor.get(); }
+
+private:
+    JSDurableObjectSqlCursor(VM& vm, Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+
     JSValue column(Zig::GlobalObject* globalObject, ThrowScope& scope, int index)
     {
         VM& vm = globalObject->vm();
@@ -1531,7 +1674,6 @@ public:
             size_t length = static_cast<size_t>(sqlite3_column_bytes(m_statement, index));
             auto* bytes = JSUint8Array::createUninitialized(globalObject, globalObject->m_typedArrayUint8.get(globalObject), length);
             RETURN_IF_EXCEPTION(scope, {});
-            // (Read again: allocating may have run a finalizer that stepped another statement, never this one.)
             if (length)
                 memcpy(bytes->typedVector(), sqlite3_column_blob(m_statement, index), length);
             return bytes;
@@ -1540,69 +1682,27 @@ public:
             return jsNull();
         }
     }
-    // The row that is ready, consumed.
-    JSValue takeRow(Zig::GlobalObject* globalObject, ThrowScope& scope, bool raw)
-    {
-        VM& vm = globalObject->vm();
-        int count = sqlite3_column_count(m_statement);
-        MarkedArgumentBuffer values;
-        for (int i = 0; i < count; i++) {
-            values.append(column(globalObject, scope, i));
-            RETURN_IF_EXCEPTION(scope, {});
-        }
-        m_hasRow = false;
-        if (raw)
-            RELEASE_AND_RETURN(scope, constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), values));
-        Structure* structure = m_rowStructure.get();
-        if (structure) {
-            JSObject* row = constructEmptyObject(vm, structure);
-            for (int i = 0; i < count; i++)
-                row->putDirectOffset(vm, i, values.at(i));
-            return row;
-        }
-        // Too many columns for inline storage, or two with one name (the later one wins).
-        JSObject* row = constructEmptyObject(globalObject);
-        JSArray* names = m_columnNames.get();
-        for (int i = 0; i < count; i++) {
-            auto name = Identifier::fromString(vm, asString(names->getIndexQuickly(i))->value(globalObject));
-            RETURN_IF_EXCEPTION(scope, {});
-            row->putDirect(vm, name, values.at(i), 0);
-        }
-        return row;
-    }
-    void setColumns(Zig::GlobalObject* globalObject, ThrowScope& scope)
-    {
-        VM& vm = globalObject->vm();
-        int count = m_statement ? sqlite3_column_count(m_statement) : 0;
-        MarkedArgumentBuffer names;
-        Vector<Identifier> identifiers;
-        bool unique = true;
-        for (int i = 0; i < count; i++) {
-            const char* name = sqlite3_column_name(m_statement, i);
-            String string = name ? String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const unsigned char*>(name), strlen(name) }) : emptyString();
-            auto identifier = Identifier::fromString(vm, string);
-            unique = unique && !identifiers.contains(identifier);
-            identifiers.append(identifier);
-            names.append(jsString(vm, string));
-        }
-        JSArray* array = constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), names);
-        RETURN_IF_EXCEPTION(scope, );
-        m_columnNames.set(vm, this, array);
-        if (!unique || !count || static_cast<unsigned>(count) > JSFinalObject::maxInlineCapacity)
-            return;
-        Structure* structure = globalObject->structureCache().emptyObjectStructureForPrototype(globalObject, globalObject->objectPrototype(), count);
-        for (int i = 0; i < count; i++) {
-            PropertyOffset offset;
-            structure = Structure::addPropertyTransition(vm, structure, identifiers[i], 0, offset);
-        }
-        m_rowStructure.set(vm, this, structure);
-    }
 
-private:
-    JSDurableObjectSqlCursor(VM& vm, Structure* structure)
-        : Base(vm, structure)
-    {
-    }
+    // Set while the statement is open (the cursor is on its owner's list of live cursors).
+    DurableObjectDatabase* m_owner { nullptr };
+    sqlite3_stmt* m_statement { nullptr };
+    // The text exec() was given, when the whole of it is this one statement.
+    String m_cacheKey;
+    // The statement has a row that was not read yet.
+    bool m_hasRow { false };
+    bool m_done { false };
+    // Given up with rows unread: the next read says so, once.
+    bool m_stale { false };
+    int m_changesBefore { 0 };
+    unsigned m_bufferIndex { 0 };
+    double m_rowsRead { 0 };
+    double m_rowsWritten { 0 };
+    WriteBarrier<JSDurableObjectActor> m_actor;
+    WriteBarrier<JSDurableObjectSqlCursor> m_source;
+    WriteBarrier<JSArray> m_columnNames;
+    WriteBarrier<Structure> m_rowStructure;
+    // The rows read ahead by drain(), each an array of column values.
+    WriteBarrier<JSArray> m_buffer;
 };
 
 const ClassInfo JSDurableObjectSqlCursor::s_info = { "SqlStorageCursor"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSDurableObjectSqlCursor) };
@@ -1617,8 +1717,38 @@ void JSDurableObjectSqlCursor::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_source);
     visitor.append(thisObject->m_columnNames);
     visitor.append(thisObject->m_rowStructure);
+    visitor.append(thisObject->m_buffer);
 }
 DEFINE_VISIT_CHILDREN(JSDurableObjectSqlCursor);
+
+void DurableObjectDatabase::abandonCursors()
+{
+    while (!m_liveCursors.isEmpty())
+        m_liveCursors.last()->abandon();
+}
+
+// Every open cursor of `database` reads the rest of its rows into memory.
+static void drainCursors(Zig::GlobalObject* globalObject, ThrowScope& scope, DurableObjectDatabase* database)
+{
+    if (database->m_liveCursors.isEmpty()) [[likely]]
+        return;
+    MarkedArgumentBuffer cursors;
+    for (auto* cursor : database->m_liveCursors)
+        cursors.append(cursor);
+    for (unsigned i = 0; i < cursors.size(); i++) {
+        uncheckedDowncast<JSDurableObjectSqlCursor>(cursors.at(i).asCell())->drain(globalObject, scope);
+        RETURN_IF_EXCEPTION(scope, );
+    }
+}
+
+void JSDurableObjectActor::drainCursors(Zig::GlobalObject* globalObject)
+{
+    auto* database = m_database.get();
+    if (!database || database->m_liveCursors.isEmpty())
+        return;
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    Bun::drainCursors(globalObject, scope, database);
+}
 
 static bool bindParameter(Zig::GlobalObject* globalObject, ThrowScope& scope, sqlite3_stmt* prepared, int index, JSValue value)
 {
@@ -1631,7 +1761,11 @@ static bool bindParameter(Zig::GlobalObject* globalObject, ThrowScope& scope, sq
         return true;
     }
     if (value.isNumber()) {
-        sqlite3_bind_double(prepared, index, value.asNumber());
+        double number = value.asNumber();
+        if (number == std::trunc(number) && std::abs(number) <= static_cast<double>(maxSafeInteger()))
+            sqlite3_bind_int64(prepared, index, static_cast<int64_t>(number));
+        else
+            sqlite3_bind_double(prepared, index, number);
         return true;
     }
     if (value.isBoolean()) {
@@ -1673,6 +1807,8 @@ static bool bindParameter(Zig::GlobalObject* globalObject, ThrowScope& scope, sq
     return false;
 }
 
+// exec(query, ...bindings). With several statements the bindings and the cursor are the last
+// one's; those before it run to their end first, and if any of them fails none of them happened.
 JSC_DEFINE_HOST_FUNCTION(jsDurableObjectSqlExec, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
@@ -1694,18 +1830,43 @@ JSC_DEFINE_HOST_FUNCTION(jsDurableObjectSqlExec, (JSGlobalObject * lexicalGlobal
     DurableObjectDatabase::UserScope restricted(*database);
     int changesBefore = sqlite3_total_changes(database->handle());
 
-    // The bindings are for the last statement, and so is the cursor; those before it run to completion.
+    // A script is all or nothing. So is a statement that renames a table: what it renamed it to is only known afterwards.
+    bool inScope = false;
+    auto openScope = [&] {
+        if (inScope)
+            return true;
+        if (!database->beginScope()) {
+            throwStorageError(globalObject, scope, database);
+            return false;
+        }
+        return inScope = true;
+    };
+    auto closeScope = [&](bool commit) {
+        if (!inScope)
+            return;
+        inScope = false;
+        database->endScope(commit);
+    };
+    auto writes = [&](sqlite3_stmt* prepared) {
+        if (sqlite3_stmt_readonly(prepared))
+            return true;
+        drainCursors(globalObject, scope, database);
+        return !scope.exception();
+    };
+
     sqlite3_stmt* prepared = database->takeCached(query);
-    if (prepared)
-        cursor->m_sql = query;
-    else {
+    String cacheKey = prepared ? query : String();
+    database->m_sawAlterTable = false;
+    if (!prepared) {
         CString utf8 = query.utf8();
         size_t offset = 0;
         bool single = true;
         for (;;) {
             sqlite3_stmt* next = nullptr;
             if (!database->prepareNext(utf8, offset, next)) {
-                throwStorageError(globalObject, scope, database);
+                JSObject* error = createStorageError(globalObject, database);
+                closeScope(false);
+                throwException(globalObject, scope, error);
                 return {};
             }
             if (!next)
@@ -1715,45 +1876,76 @@ JSC_DEFINE_HOST_FUNCTION(jsDurableObjectSqlExec, (JSGlobalObject * lexicalGlobal
                 break;
             }
             single = false;
-            int result;
-            while ((result = sqlite3_step(next)) == SQLITE_ROW) { }
-            if (result != SQLITE_DONE) {
-                JSObject* error = createStorageError(globalObject, database);
-                sqlite3_finalize(next);
-                throwException(globalObject, scope, error);
-                return {};
+            JSObject* error = nullptr;
+            if (sqlite3_bind_parameter_count(next))
+                error = createError(globalObject, "Only the last statement of a query can have parameter bindings"_s);
+            else if (openScope() && writes(next)) {
+                int result;
+                while ((result = sqlite3_step(next)) == SQLITE_ROW) { }
+                if (result != SQLITE_DONE)
+                    error = createStorageError(globalObject, database);
             }
             sqlite3_finalize(next);
+            if (error || scope.exception()) {
+                closeScope(false);
+                if (error)
+                    throwException(globalObject, scope, error);
+                return {};
+            }
         }
         if (!prepared) {
+            closeScope(false);
             throwException(globalObject, scope, createError(globalObject, "SQL query contained no statement"_s));
             return {};
         }
-        if (single)
-            cursor->m_sql = query;
+        if (single && !database->m_sawAlterTable)
+            cacheKey = query;
     }
-    cursor->m_statement = prepared;
+    cursor->open(database, prepared, cacheKey, changesBefore);
+    auto fail = [&] {
+        cursor->release(false);
+        closeScope(false);
+        return EncodedJSValue {};
+    };
 
     int expected = sqlite3_bind_parameter_count(prepared);
-    int given = static_cast<int>(callFrame->argumentCount()) - 1;
-    if (given < 0)
-        given = 0;
+    int given = std::max(0, static_cast<int>(callFrame->argumentCount()) - 1);
     if (expected != given) {
-        cursor->finish();
         throwException(globalObject, scope, createError(globalObject, makeString("Wrong number of parameter bindings for SQL query: expected "_s, expected, ", got "_s, given, '.')));
-        return {};
+        return fail();
     }
     for (int i = 0; i < given; i++) {
-        if (!bindParameter(globalObject, scope, prepared, i + 1, callFrame->uncheckedArgument(static_cast<size_t>(i) + 1))) {
-            cursor->finish();
-            return {};
-        }
+        if (!bindParameter(globalObject, scope, prepared, i + 1, callFrame->uncheckedArgument(static_cast<size_t>(i) + 1)))
+            return fail();
     }
     cursor->setColumns(globalObject, scope);
-    RETURN_IF_EXCEPTION(scope, {});
+    if (scope.exception()) [[unlikely]]
+        return fail();
+    if (!sqlite3_stmt_readonly(prepared)) {
+        // The cursor being opened is on the list too; it has nothing to read yet.
+        database->m_liveCursors.removeFirst(cursor);
+        drainCursors(globalObject, scope, database);
+        database->m_liveCursors.append(cursor);
+        if (scope.exception()) [[unlikely]]
+            return fail();
+    }
+    bool renames = database->m_sawAlterTable;
+    if (renames && !openScope())
+        return fail();
     cursor->advance(globalObject, scope);
+    if (scope.exception()) [[unlikely]]
+        return fail();
+    if (renames && database->hasReservedNames()) {
+        JSObject* error = createError(globalObject, "not authorized: names that start with _cf_ are reserved"_s);
+        error->putDirect(vm, vm.propertyNames->name, jsString(vm, String("SQLiteError"_s)), static_cast<unsigned>(PropertyAttribute::DontEnum));
+        error->putDirect(vm, WebCore::builtinNames(vm).codePublicName(), jsString(vm, String("SQLITE_AUTH"_s)), 0);
+        throwException(globalObject, scope, error);
+        return fail();
+    }
+    closeScope(true);
+    // A scope keeps the commit from being scheduled; it is now.
+    access.actor->beginWrite(globalObject, database);
     RETURN_IF_EXCEPTION(scope, {});
-    cursor->m_rowsWritten = sqlite3_total_changes(database->handle()) - changesBefore;
     return JSValue::encode(cursor);
 }
 
@@ -1832,7 +2024,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDurableObjectSqlCursorOne, (JSGlobalObject * lexicalG
     more = source->advance(globalObject, scope);
     RETURN_IF_EXCEPTION(scope, {});
     if (more) {
-        source->finish();
+        source->close();
         throwException(globalObject, scope, createError(globalObject, "Expected exactly one result from SQL query, but got multiple results."_s));
         return {};
     }
@@ -1848,7 +2040,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDurableObjectSqlCursorRaw, (JSGlobalObject * lexicalG
     RETURN_IF_EXCEPTION(scope, {});
     auto* realm = JSDurableObjectRealm::of(globalObject);
     auto* source = cursor->source();
-    return JSValue::encode(JSDurableObjectSqlCursor::create(vm, realm->structure(JSDurableObjectRealm::Field::RawCursorStructure), source->m_actor.get(), source));
+    return JSValue::encode(JSDurableObjectSqlCursor::create(vm, realm->structure(JSDurableObjectRealm::Field::RawCursorStructure), source->actor(), source));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsDurableObjectSqlCursorIterator, (JSGlobalObject*, CallFrame* callFrame))
@@ -1861,7 +2053,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsDurableObjectSqlCursorColumnNames, (JSGlobalObject * 
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     auto* cursor = thisCursor(globalObject, scope, JSValue::decode(thisValue), "columnNames"_s);
     RETURN_IF_EXCEPTION(scope, {});
-    return JSValue::encode(cursor->source()->m_columnNames.get());
+    return JSValue::encode(cursor->source()->columnNames());
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsDurableObjectSqlCursorRowsRead, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
@@ -1869,7 +2061,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsDurableObjectSqlCursorRowsRead, (JSGlobalObject * glo
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     auto* cursor = thisCursor(globalObject, scope, JSValue::decode(thisValue), "rowsRead"_s);
     RETURN_IF_EXCEPTION(scope, {});
-    return JSValue::encode(jsNumber(cursor->source()->m_rowsRead));
+    return JSValue::encode(jsNumber(cursor->source()->rowsRead()));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsDurableObjectSqlCursorRowsWritten, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
@@ -1877,7 +2069,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsDurableObjectSqlCursorRowsWritten, (JSGlobalObject * 
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     auto* cursor = thisCursor(globalObject, scope, JSValue::decode(thisValue), "rowsWritten"_s);
     RETURN_IF_EXCEPTION(scope, {});
-    return JSValue::encode(jsNumber(cursor->source()->m_rowsWritten));
+    return JSValue::encode(jsNumber(cursor->source()->rowsWritten()));
 }
 
 // ─── Prototypes ──────────────────────────────────────────────────────────────

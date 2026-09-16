@@ -412,6 +412,8 @@ describe("bun", () => {
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       const line = (stdout + stderr).split(/\r?\n/).find(l => l.includes("--no-module-preload")) ?? "";
+      // The cyan flag name proves that colors are on, so the runtime pass wrote this line.
+      expect(line).toContain("\x1b[36m--no-module-preload\x1b[0m");
       expect(line).toContain("don't emit <link rel=modulepreload> for the chunks");
       expect(exitCode).toBe(0);
     });

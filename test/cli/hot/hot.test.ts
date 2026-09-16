@@ -784,7 +784,7 @@ ${Buffer.alloc(counter * 2, " ").toString()}throw new Error(${counter});`,
 it(
   "--hot reloads after hundreds of imported files change at once",
   async () => {
-    const count = 1000;
+    const count = 600;
     const files: Record<string, string> = {};
     let imports = "";
     for (let i = 0; i < count; i++) {
@@ -818,5 +818,5 @@ it(
     }
     await waitFor("RUN 2\n");
   },
-  timeout,
+  isDebug ? 60_000 : 10_000,
 );

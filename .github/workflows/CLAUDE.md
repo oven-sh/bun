@@ -118,16 +118,17 @@ export LLVM_VERSION_MAJOR=23
 
 Four independent jobs that each run one cargo command over the Rust workspace. They share `.github/actions/rust-lint-setup`, a composite action that installs LLVM from apt.llvm.org (configure resolves a clang even though nothing here compiles C++), Bun, optionally a pinned Rust toolchain plus components, runs `bun install`, then `bun scripts/build.ts --configure-only` and the ninja targets a job asks for: `clone-lolhtml clone-rust-argon2` (cargo cannot resolve the workspace until the vendored `lol_html` and `rust-argon2` path dependencies exist) and, for jobs that check `bun_runtime`/`bun_jsc`/`bun_core`, `codegen` (their `include!()`d sources under `build/debug/codegen`).
 
-| Job       | Check name            | Runs                                         | Blocking                       |
-| --------- | --------------------- | -------------------------------------------- | ------------------------------ |
-| `clippy`  | `cargo clippy`        | `bun run rust:clippy`                        | yes                            |
-| `miri`    | `cargo miri test`     | `bun run rust:miri` (`scripts/rust-miri.ts`) | yes                            |
-| `lolhtml` | `lol-html cargo test` | `cargo test` in `vendor/lolhtml`             | yes                            |
-| `mordant` | `mordant`             | `cargo dylint --all --workspace`             | advisory (`continue-on-error`) |
+| Job       | Check name            | Runs                                         | Blocking                     |
+| --------- | --------------------- | -------------------------------------------- | ---------------------------- |
+| `clippy`  | `cargo clippy`        | `bun run rust:clippy`                        | yes                          |
+| `miri`    | `cargo miri test`     | `bun run rust:miri` (`scripts/rust-miri.ts`) | yes                          |
+| `lolhtml` | `lol-html cargo test` | `cargo test` in `vendor/lolhtml`             | yes                          |
+| `mordant` | `mordant`             | `cargo dylint --all --workspace`             | off (`if: false`), see below |
 
 - `clippy`, `miri` and `lolhtml` pin `RUSTUP_TOOLCHAIN` at the workflow level (kept in sync with `channel` in `rust-toolchain.toml`) so rustup does not install that file's cross-target list; the action installs the toolchain with `--profile minimal` plus the components the job names (`clippy`, `miri rust-src`, none).
 - `lolhtml` exists because the vendored lol-html is a fork (oven-sh/lol-html, `bun` branch) whose own test suite is the only thing guarding the fork's invariants. It used to trigger only on `scripts/build/deps/lolhtml.ts`; it now shares the workflow's wider path filter.
-- `mordant` runs the [mordant](https://github.com/scarletindustries/mordant) dylint pack. It sets `RUSTUP_TOOLCHAIN: stable` instead: mordant is built with, and lints us using, the nightly named in its own rust-toolchain file, which dylint fetches on demand, so the outer cargo only needs to exist. Because that nightly is older than ours, the job passes `-A unknown_lints` through `DYLINT_RUSTFLAGS`. Two caches cover the slow parts: `~/.cargo/bin/{cargo-dylint,dylint-link}` keyed on `DYLINT_VERSION`, and `~/.dylint_drivers` + `target/dylint/libraries` keyed on `DYLINT_VERSION` plus the pinned mordant rev read out of `Cargo.toml`. It is skipped on `merge_group`.
+- `mordant` is **currently off (`if: false`)** and `bun run rust:mordant` fails locally for the same reasons: its pinned nightly (2026-05-28) predates the `core::mem::type_info` API `multi_array_list.rs` uses, so it cannot compile the workspace, and dylint-driver 6.0.x passes rustc `--env-set`, which rustc has since removed, so no dylint release runs on a current nightly. To turn it back on: a dylint release without `--env-set`, mordant moved to a nightly that compiles this workspace (2026-09-01 does), its `rev` bumped in `Cargo.toml`, and the job's `if:` restored to `github.event_name != 'merge_group'`.
+- When on, `mordant` runs the [mordant](https://github.com/scarletindustries/mordant) dylint pack as an advisory (`continue-on-error`) job. It sets `RUSTUP_TOOLCHAIN: stable` instead: mordant is built with, and lints us using, the nightly named in its own rust-toolchain file, which dylint fetches on demand, so the outer cargo only needs to exist. Because that nightly is older than ours, the job passes `-A unknown_lints` through `DYLINT_RUSTFLAGS`. Two caches cover the slow parts: `~/.cargo/bin/{cargo-dylint,dylint-link}` keyed on `DYLINT_VERSION`, and `~/.dylint_drivers` + `target/dylint/libraries` keyed on `DYLINT_VERSION` plus the pinned mordant rev read out of `Cargo.toml`. It is skipped on `merge_group`.
 
 ### mordant: pin, baseline, disabled lints
 

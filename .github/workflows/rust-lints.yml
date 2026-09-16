@@ -115,7 +115,11 @@ jobs:
   mordant:
     name: mordant
     runs-on: ubuntu-latest
-    if: github.event_name != 'merge_group'
+    # Off until dylint runs on a current nightly. mordant compiles the workspace with its own pinned
+    # nightly (2026-05-28), which predates the core::mem::type_info API multi_array_list.rs uses, and
+    # dylint-driver 6.0.x passes rustc `--env-set`, which rustc has since removed. Was:
+    # github.event_name != 'merge_group'
+    if: false
     # Advisory while the pack is new: shows up on the PR, does not block it.
     continue-on-error: true
     env:

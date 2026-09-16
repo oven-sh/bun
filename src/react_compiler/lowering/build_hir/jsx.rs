@@ -286,6 +286,19 @@ pub(super) fn lower_jsx_call(
                 continue;
             }
 
+            // An inlined `{...{ key }}` stays in the props. Codegen moves every `key` to args[2].
+            if name == b"key" {
+                builder.record_error(CompilerErrorDetail {
+                    category: ErrorCategory::Todo,
+                    reason: "(BuildHIR::lowerJsxCall) Handle a `key` inside the JSX props object"
+                        .to_string(),
+                    description: None,
+                    loc: convert_loc(key_expr.loc),
+                    suggestions: None,
+                })?;
+                continue;
+            }
+
             let place = lower_expression_to_temporary(builder, value_expr)?;
             props.push(JsxAttribute::Attribute { name, place });
         }

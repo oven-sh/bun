@@ -3018,6 +3018,19 @@ describe("bundler", () => {
             const el = <a key={++r.n} title={[r.n, p.n]} id={r.n} />;
             return <div>{JSON.stringify([el.key, el.props])}</div>;
           }
+          // The parser inlines the object into the props, where this \`key\` stays. Such a function is not compiled.
+          export function KeyInAnInlinedSpread(p) {
+            const r = { n: p.n };
+            const bump = () => ++r.n;
+            const el = <a {...{ key: bump(), title: r.n }} />;
+            return <div>{JSON.stringify([el.key, el.props])}</div>;
+          }
+          export function KeyAndAKeyInAnInlinedSpread(p) {
+            const r = { n: p.n };
+            const bump = () => ++r.n;
+            const el = <a key={bump()} {...{ key: bump(), title: r.n }} />;
+            return <div>{JSON.stringify([el.key, el.props])}</div>;
+          }
         `,
         "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
         "/node_modules/react/index.js": ``,
@@ -3048,6 +3061,8 @@ describe("bundler", () => {
       run: {
         stdout: `
           CallInTheKey=[3,{"title":2,"id":[2]}]
+          KeyAndAKeyInAnInlinedSpread=[4,{"key":3,"title":3}]
+          KeyInAnInlinedSpread=[null,{"key":3,"title":3}]
           KeyIsTheLastAttribute=[10,{"title":10}]
           StatementInAChild=["k10",{"children":[10,10]}]
           StatementInALaterAttribute=["k10",{"title":10}]

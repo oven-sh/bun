@@ -274,11 +274,11 @@ void us_internal_timer_sweep(struct us_loop_t *loop) {
                 s->timeout = 255;
                 us_dispatch_timeout(s);
             }
-            /* A timeout handler may have closed every socket and the owner may
-             * have deinit'd the embedding group in response (release builds —
-             * deinit() asserts iterator==NULL in debug). loop_data->iterator
-             * would have been advanced past `group` by unlink_group(); if so,
-             * `group` is freed storage and we must not touch it again. */
+            /* An owner must not deinit the embedding group from a timeout handler
+             * (see us_socket_group_deinit). Survive one that closed every socket
+             * and did it anyway: loop_data->iterator would have been advanced past
+             * `group` by unlink_group(); if so, `group` is freed storage and we
+             * must not touch it again. */
             if (loop_data->iterator != group) goto outer_continue;
 
             if (group->iterator == s && long_ticks == s->long_timeout) {

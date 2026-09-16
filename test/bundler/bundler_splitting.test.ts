@@ -3488,6 +3488,73 @@ describe("bundler", () => {
     expect(runOut.trim()).toBe(`${(N * (N - 1)) / 2} 0 ${N - 1}`);
   }, 60_000);
 
+  // Every chunk's renamer stays alive until its chunk is printed, so its name
+  // tables must be sized by the chunk's own files. A binding imported from
+  // another chunk costs a reserved name, not a row that reaches its index in
+  // the symbol table of the file that declares it. The tables are reported
+  // by a debug log, which release builds do not have.
+  test.skipIf(!isDebug)("splitting/ChunkRenamerTablesHoldOnlyTheChunksOwnFiles", async () => {
+    const locals = Array.from({ length: 1000 }, (_, i) => "v" + i);
+    using dir = tempDir("splitting-renamer-tables", {
+      "a.js": `import { pick } from "./big.js";\nimport { last } from "./big.cjs";\nconsole.log("a", pick(), last());\n`,
+      "b.js": `import { pick } from "./big.js";\nimport { last } from "./big.cjs";\nconsole.log("b", pick(), last());\n`,
+      // `pick` comes after 1000 other symbols.
+      "big.js": `export function filler() { var ${locals}; }\nexport function pick() { return 1; }\n`,
+      // The `require_big` wrapper that a.js and b.js call is the last symbol of a CommonJS file.
+      "big.cjs": `module.exports = { last: () => 2, filler() { var ${locals}; } };\n`,
+    });
+
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--splitting", "--outdir", "out", "./a.js", "./b.js"],
+      env: { ...bunEnv, BUN_DEBUG_ChunkRenamer: "1" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [buildOut, buildErr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    const tables = [...(buildOut + buildErr).matchAll(/(\d+) files, (\d+) rows, (\d+) name slots/g)].map(m => ({
+      files: Number(m[1]),
+      rows: Number(m[2]),
+      nameSlots: Number(m[3]),
+    }));
+    // a.js and b.js are alone in their chunks. big.js, big.cjs and the runtime share the third.
+    const entryChunks = tables.filter(t => t.files === 1);
+    expect({ chunks: tables.length, entryChunks: entryChunks.length }).toEqual({ chunks: 3, entryChunks: 2 });
+    for (const { rows, nameSlots } of entryChunks) {
+      expect(rows).toBe(1);
+      expect(nameSlots).toBeLessThan(50);
+    }
+    expect(buildExit).toBe(0);
+
+    await using run = Bun.spawn({
+      cmd: [bunExe(), join(String(dir), "out", "a.js")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [runOut, runErr, runExit] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+    expect({ stdout: runOut, stderr: runErr, exitCode: runExit }).toEqual({
+      stdout: "a 1 2\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // shared.js exports the first `x`, which the parser links to the second. A chunk
+  // that imports it finds the bundle-wide name (`x2` here) through that link.
+  itBundled("splitting/CrossChunkNameOfRedeclaredExport", {
+    files: {
+      "/a.js": `import { x as other } from "./shared2.js";\nimport { x } from "./shared.js";\nconsole.log("a", x, other);`,
+      "/b.js": `import { x as other } from "./shared2.js";\nimport { x } from "./shared.js";\nconsole.log("b", x, other);`,
+      "/shared.js": `export var x = (console.log("first"), 1);\nvar x = (console.log("second"), 2);`,
+      "/shared2.js": `export var x = "other";`,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    outdir: "/out",
+    run: { file: "/out/a.js", stdout: "first\nsecond\na 2 other" },
+  });
+
   // Chunks are printed with placeholders where they refer to other chunks and
   // assets; the placeholders are replaced once every output path is known.
   // These pin the two per-chunk decisions of that step: what the written paths

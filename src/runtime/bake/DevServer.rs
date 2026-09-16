@@ -1380,12 +1380,7 @@ pub(crate) fn is_allowed_host_header(
     {
         return true;
     }
-    let ip = if host.first() == Some(&b'[') && host.last() == Some(&b']') {
-        &host[1..host.len() - 1]
-    } else {
-        host
-    };
-    if bun_core::ip_address::is_ip_address(ip) {
+    if bun_core::ip_address::is_ip_address(bun_core::ip_address::strip_ipv6_brackets(host)) {
         return true;
     }
     if let Some(crate::server::server_config::Address::Tcp {

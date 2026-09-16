@@ -126,6 +126,8 @@ struct us_quic_stream_s {
     struct us_quic_hset *hset;
     int headers_delivered;
     int fin_delivered;
+    /* Set by us_quic_flush_from_on_write, cleared by on_write. */
+    int flush_on_write;
     /* ext follows */
 };
 
@@ -253,7 +255,14 @@ static int us_quic_send_one(LIBUS_SOCKET_DESCRIPTOR fd, const struct lsquic_out_
     }
     int r = sendto(fd, buf, len, 0, spec->dest_sa, sa_len(spec->dest_sa));
     if (r < 0) {
-        errno = (WSAGetLastError() == WSAEWOULDBLOCK) ? EAGAIN : EIO;
+        /* Keep the errnos that packets_out tells apart. EAGAIN and ENOBUFS are
+         * backpressure. EMSGSIZE goes to lsquic, which retires the datagram
+         * and feeds DPLPMTUD with it. */
+        int wsa = WSAGetLastError();
+        errno = wsa == WSAEWOULDBLOCK ? EAGAIN
+              : wsa == WSAENOBUFS ? ENOBUFS
+              : wsa == WSAEMSGSIZE ? EMSGSIZE
+              : EIO;
         return -1;
     }
     return 1;
@@ -273,11 +282,49 @@ static int us_quic_send_one(LIBUS_SOCKET_DESCRIPTOR fd, const struct lsquic_out_
 #endif
 }
 
+/* Backpressure: the socket send buffer (EAGAIN/EWOULDBLOCK) or the interface
+ * output queue (ENOBUFS) is full. It clears on its own, so pausing the engine
+ * until on_drain is the right answer. */
+static inline int us_quic_send_would_block(int err) {
+    return err == EAGAIN || err == EWOULDBLOCK || err == ENOBUFS;
+}
+
+#if defined(__linux__)
+static int us_quic_sendmmsg(int fd, struct mmsghdr *mm, unsigned k) {
+    ssize_t injected = 0; int unused = 0;
+    /* The result is a message count, and the caller's loop needs it to advance.
+     * An injected 0 (the "zero" action) is one datagram sent, as in us_quic_send_one. */
+    if (US_FAULT_CHECK(US_FAULT_SENDMSG, fd, injected, unused)) return injected < 0 ? -1 : 1;
+    (void) injected; (void) unused;
+    int r;
+    do { r = sendmmsg(fd, mm, k, 0); } while (r < 0 && errno == EINTR);
+    return r;
+}
+#endif
+
 /* lsquic hands back packets in batches; on Linux push them through one
  * sendmmsg() so a 32-packet flight is a single syscall. macOS's sendmsg_x
  * can't carry per-datagram addresses (which QUIC needs), so it falls back to
  * the per-packet path along with everything else non-Linux. The recv side
- * already goes through bsd_recvmmsg in loop.c. */
+ * already goes through bsd_recvmmsg in loop.c.
+ *
+ *
+ * Three outcomes reach lsquic. A full return. A short return with EAGAIN,
+ * which pauses the engine until on_drain. A short return with EMSGSIZE, which
+ * retires that one datagram through ci_packet_too_large and feeds DPLPMTUD.
+ *
+ * A datagram the kernel refuses for any other reason (EPERM from a firewall
+ * rule, EACCES, ENETUNREACH, ...) is counted as sent. To lsquic that is a
+ * packet lost on the wire: the loss timer retransmits it with backoff, and the
+ * handshake or idle timeout ends a connection that never gets through. Neither
+ * remaining outcome fits:
+ *   - With the errno passed through, lsquic closes the connection that owns
+ *     specs[sent]. On a shared unconnected UDP socket Linux reports a pending
+ *     ICMP error on the next send to *any* destination, so the error isn't
+ *     attributable to that connection.
+ *   - With EAGAIN, lsquic pauses the whole engine until on_drain. The socket
+ *     is still writable, so on_drain fires at once, the send fails the same
+ *     way, and the loop spins while every other peer on the engine waits. */
 static int us_quic_packets_out(void *out_ctx, const struct lsquic_out_spec *specs, unsigned n) {
     (void) out_ctx;
     unsigned sent = 0;
@@ -299,16 +346,7 @@ static int us_quic_packets_out(void *out_ctx, const struct lsquic_out_spec *spec
             mm[k].msg_hdr.msg_iovlen = sp->iovlen;
             k++;
         }
-        int r;
-        {
-            ssize_t injected = 0; int unused = 0;
-            if (US_FAULT_CHECK(US_FAULT_SENDMSG, fd, injected, unused)) {
-                r = (int) injected;
-            } else {
-                do { r = sendmmsg(fd, mm, k, 0); } while (r < 0 && errno == EINTR);
-            }
-            (void) injected; (void) unused;
-        }
+        int r = us_quic_sendmmsg(fd, mm, k);
         /* sendmmsg(2) BUGS: on a short return the error code is lost and the
          * caller is expected to retry starting at the first failed message.
          * udp(7): an unconnected socket surfaces async ICMP from an earlier
@@ -318,36 +356,37 @@ static int us_quic_packets_out(void *out_ctx, const struct lsquic_out_spec *spec
          * here so `sent` advances and the retry's first message either
          * consumes the stale error (returns -1, handled below) or succeeds.
          * The r < 0 path gets one retry for the same reason: the failing
-         * read cleared sk_err, so the retry sends cleanly unless this is
-         * real backpressure. EAGAIN/ENOBUFS (send buffer full) stays a
-         * break — that's the backpressure lsquic's pause is for. */
-        if (r < 0 && !(errno == EAGAIN || errno == EWOULDBLOCK || errno == ENOBUFS)) {
-            do { r = sendmmsg(fd, mm, k, 0); } while (r < 0 && errno == EINTR);
+         * read cleared sk_err, so the retry sends cleanly unless the error
+         * is the datagram's own. EMSGSIZE always is, so it skips the retry. */
+        if (r < 0 && !us_quic_send_would_block(errno) && errno != EMSGSIZE)
+            r = us_quic_sendmmsg(fd, mm, k);
+        if (r < 0) {
+            if (us_quic_send_would_block(errno) || errno == EMSGSIZE) break;
+            r = 1; /* mm[0] is dropped */
         }
-        if (r < 0) break;
         sent += (unsigned) r;
     }
 #else
     for (; sent < n; sent++) {
         us_quic_listen_socket_t *ls = (us_quic_listen_socket_t *) specs[sent].peer_ctx;
         if (!ls->udp) { errno = EBADF; break; }
-        if (us_quic_send_one(us_poll_fd((struct us_poll_t *) ls->udp), &specs[sent]) < 0) {
-            if (errno == EAGAIN || errno == EWOULDBLOCK || errno == ENOBUFS) break;
-            if (us_quic_send_one(us_poll_fd((struct us_poll_t *) ls->udp), &specs[sent]) < 0) break;
+        LIBUS_SOCKET_DESCRIPTOR fd = us_poll_fd((struct us_poll_t *) ls->udp);
+        if (us_quic_send_one(fd, &specs[sent]) < 0) {
+            int stop = us_quic_send_would_block(errno) || errno == EMSGSIZE;
+            /* One retry, as above. If it fails the same way, specs[sent] is dropped. */
+            if (!stop && us_quic_send_one(fd, &specs[sent]) < 0)
+                stop = us_quic_send_would_block(errno) || errno == EMSGSIZE;
+            if (stop) break;
         }
     }
 #endif
 
-    if (sent < n) {
-        /* lsquic only treats EAGAIN/EWOULDBLOCK as backpressure; map any
-         * other send error to EAGAIN so the engine pauses and retries via
-         * on_drain → send_unsent_packets. We can't pass ENETUNREACH /
-         * ECONNREFUSED through to close_conn_on_send_error: on a shared
-         * unconnected UDP socket Linux reports a pending ICMP error on the
-         * next send to *any* destination, so the error isn't attributable to
-         * specs[sent]'s peer. Unreachable addresses are handled at connect
-         * time by the UDP-connect route probe instead. */
-        if (errno != EAGAIN && errno != EWOULDBLOCK) errno = EAGAIN;
+    /* EMSGSIZE goes to lsquic as it is. Everything else that stops the loop is
+     * backpressure, or a UDP socket that is already closed: report EAGAIN, so
+     * the engine pauses and resumes from on_drain → send_unsent_packets (or
+     * from its one-second failsafe when there is no socket left to poll). */
+    if (sent < n && errno != EMSGSIZE) {
+        errno = EAGAIN;
         us_quic_listen_socket_t *ls = (us_quic_listen_socket_t *) specs[sent].peer_ctx;
         if (ls->udp) {
             us_poll_change((struct us_poll_t *) ls->udp, ls->ctx->loop,
@@ -636,27 +675,29 @@ static lsquic_stream_ctx_t *us_quic_on_new_stream(void *if_ctx, lsquic_stream_t 
     return (lsquic_stream_ctx_t *) s;
 }
 
+/* Hands the next header block lsquic has decoded to on_stream_headers.
+ * Returns 1 for a block, 0 for none, -1 if on_stream_headers closed the stream. */
+static int us_quic_deliver_hset(lsquic_stream_t *stream, us_quic_stream_t *s) {
+    struct us_quic_hset *hset = (struct us_quic_hset *) lsquic_stream_get_hset(stream);
+    if (!hset) return 0;
+    us_quic_hset_finalize(hset);
+    us_quic_hset_free(s->hset);
+    s->hset = hset;
+    s->headers_delivered = 1;
+    if (s->ctx->on_stream_headers) s->ctx->on_stream_headers(s);
+    return s->stream ? 1 : -1;
+}
+
 static void us_quic_on_read(lsquic_stream_t *stream, lsquic_stream_ctx_t *h) {
     us_quic_stream_t *s = (us_quic_stream_t *) h;
     us_quic_socket_context_t *ctx = s->ctx;
 
     /* lsquic queues a fresh hset for every HEADERS block (1xx interims,
      * the final response, trailers). lsquic_stream_get_hset returns the
-     * next undelivered one and lsquic_stream_read won't drain DATA past
-     * an unconsumed hset, so re-dispatch on_stream_headers each time
-     * instead of latching after the first. */
-    {
-        struct us_quic_hset *hset = (struct us_quic_hset *) lsquic_stream_get_hset(stream);
-        if (hset) {
-            us_quic_hset_finalize(hset);
-            us_quic_hset_free(s->hset);
-            s->hset = hset;
-            s->headers_delivered = 1;
-            if (ctx->on_stream_headers) ctx->on_stream_headers(s);
-            /* on_stream_headers may have closed us */
-            if (!s->stream) return;
-        }
-    }
+     * next undelivered one and lsquic_stream_read fails while one is
+     * queued, so re-dispatch on_stream_headers each time instead of
+     * latching after the first. */
+    if (us_quic_deliver_hset(stream, s) < 0) return;
 
     ssize_t r;
     while ((r = lsquic_stream_read(stream, ctx->read_buf, US_QUIC_READ_BUF)) > 0) {
@@ -665,6 +706,10 @@ static void us_quic_on_read(lsquic_stream_t *stream, lsquic_stream_ctx_t *h) {
         if (!s->stream) return;
     }
     if (r == 0 && !s->fin_delivered) {
+        /* lsquic returns 0 even if this read decoded one more header block. */
+        int delivered;
+        while ((delivered = us_quic_deliver_hset(stream, s)) > 0) {}
+        if (delivered < 0) return;
         s->fin_delivered = 1;
         lsquic_stream_wantread(stream, 0);
         lsquic_stream_shutdown(stream, 0);
@@ -675,7 +720,13 @@ static void us_quic_on_read(lsquic_stream_t *stream, lsquic_stream_ctx_t *h) {
 static void us_quic_on_write(lsquic_stream_t *stream, lsquic_stream_ctx_t *h) {
     us_quic_stream_t *s = (us_quic_stream_t *) h;
     lsquic_stream_wantwrite(stream, 0);
+    /* Taken before the callback: a block that on_stream_writable sends (the
+     * client's request) is for the next on_write, see the helper. */
+    int flush = s->flush_on_write;
+    s->flush_on_write = 0;
     if (s->ctx->on_stream_writable) s->ctx->on_stream_writable(s);
+    /* Last, so that it also covers what on_stream_writable wrote. */
+    if (flush) lsquic_stream_flush(stream);
 }
 
 static void us_quic_on_close(lsquic_stream_t *stream, lsquic_stream_ctx_t *h) {
@@ -889,8 +940,9 @@ void *us_quic_socket_context_ext(us_quic_socket_context_t *ctx) { return ctx + 1
 struct us_loop_t *us_quic_socket_context_loop(us_quic_socket_context_t *ctx) { return ctx->loop; }
 
 /* RFC 9000 §14: QUIC packets must not be IP-fragmented. _PROBE (vs _DO) sets
- * DF but ignores the kernel's cached path-MTU so lsquic's own DPLPMTUD can
- * send oversized probes without sendmsg returning EMSGSIZE. Set both v4 and
+ * DF but ignores the kernel's cached path-MTU, so lsquic's own DPLPMTUD owns
+ * the probing. The device MTU still bounds the datagram: a probe above it
+ * fails with EMSGSIZE, which packets_out passes to lsquic. Set both v4 and
  * v6 since the dual-stack client socket carries v4-mapped traffic. Mirrors
  * lsquic's reference setup in bin/test_common.c. */
 static void us_quic_set_dontfrag(struct us_udp_socket_t *udp) {
@@ -1084,6 +1136,14 @@ void us_quic_stream_want_write(us_quic_stream_t *s, int want) {
     if (s->stream) lsquic_stream_wantwrite(s->stream, want);
 }
 
+/* lsquic_stream_send_headers only buffers, and a flush is a no-op while lsquic
+ * holds the block back (new connection). on_write runs after lsquic wrote it,
+ * and after a handler that answered at once put its response behind a 1xx. */
+static void us_quic_flush_from_on_write(us_quic_stream_t *s) {
+    s->flush_on_write = 1;
+    lsquic_stream_wantwrite(s->stream, 1);
+}
+
 int us_quic_stream_send_informational(us_quic_stream_t *s, const char *status3) {
     if (!s->stream) return -1;
     char buf[10];
@@ -1092,7 +1152,12 @@ int us_quic_stream_send_informational(us_quic_stream_t *s, const char *status3) 
     struct lsxpack_header xh;
     lsxpack_header_set_offset2(&xh, buf, 0, 7, 7, 3);
     lsquic_http_headers_t lh = { .count = 1, .headers = &xh };
-    return lsquic_stream_send_headers(s->stream, &lh, 0);
+    int r = lsquic_stream_send_headers(s->stream, &lh, 0);
+    if (r == 0) {
+        us_quic_flush_from_on_write(s);
+        s->ctx->pending_write_bytes++;
+    }
+    return r;
 }
 
 int us_quic_stream_send_headers(us_quic_stream_t *s,
@@ -1137,6 +1202,7 @@ int us_quic_stream_send_headers(us_quic_stream_t *s,
     if (buf != stackbuf) us_free(buf);
     if (xh != stackh) us_free(xh);
     if (end_stream && r == 0) lsquic_stream_shutdown(s->stream, 1);
+    if (!end_stream && r == 0) us_quic_flush_from_on_write(s);
     /* Mark the context dirty so drainQuicIfNecessary picks up header-only
      * responses (204/304) that never call us_quic_stream_write. */
     if (r == 0) s->ctx->pending_write_bytes += (unsigned int) total + 1;
@@ -1173,9 +1239,13 @@ void lsquic_stream_maybe_reset(struct lsquic_stream *, uint64_t error_code, int)
  * client is abandoning the upload short — the server's lsquic will
  * CONNECTION_CLOSE on the mismatch (RFC 9114 §4.1.2). RESET_STREAM is
  * the wire-level "I'm cancelling this send" and lets the server treat it
- * as a stream-level cancellation rather than a malformed message. */
+ * as a stream-level cancellation rather than a malformed message.
+ * Sends nothing once lsquic_stream_close/shutdown has run, so call it first. */
 void us_quic_stream_reset(us_quic_stream_t *s) {
-    if (s->stream) lsquic_stream_maybe_reset(s->stream, 0x10C, 1);
+    if (!s->stream) return;
+    /* do_close=0: with no reset due, maybe_reset's own close shuts only the read half. */
+    lsquic_stream_maybe_reset(s->stream, 0x10C, 0);
+    lsquic_stream_close(s->stream);
 }
 
 int us_quic_stream_has_unacked(us_quic_stream_t *s) {

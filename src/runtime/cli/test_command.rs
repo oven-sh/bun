@@ -943,6 +943,11 @@ pub(crate) fn skip_exit_listeners(reporter: &CommandLineReporter) -> bool {
     !(reporter.jest.node_test_used || should_drain_event_loop())
 }
 
+/// `ExitHandler::requested` at the end of a run, which does not wait for the event loop to run dry.
+pub(crate) fn exit_is_requested() -> bool {
+    !should_drain_event_loop()
+}
+
 pub struct CommandLineReporter {
     // `TestRunner<'a>` borrows `TestOptions`/regex from the CLI ctx; the
     // reporter is held in a `Box` local to `TestCommand::exec` which never
@@ -1925,7 +1930,6 @@ impl TestCommand {
                 debugger: core::mem::take(&mut ctx.runtime_options.debugger),
                 log: core::ptr::NonNull::new(ctx.log),
                 env_loader: core::ptr::NonNull::new(&raw mut *env_loader),
-                store_fd: ctx.debug.hot_reload != jsc::virtual_machine::HotReload::None,
                 smol: ctx.runtime_options.smol,
                 is_main_thread: true,
                 ..Default::default()
@@ -2672,6 +2676,7 @@ impl TestCommand {
             vm.exit_handler.exit_code = 1;
         }
         vm.exit_handler.skip_exit_listeners = skip_exit_listeners(&reporter);
+        vm.exit_handler.requested = exit_is_requested();
         // Must precede the GC-root release below: exit listeners are user JS and may touch still-live state.
         {
             let vm_ptr: *mut VirtualMachine = vm;

@@ -24,6 +24,7 @@ pub struct WindowsWatcher {
     pub(crate) base_idx: usize,
     /// A zero byte completion was seen and the resync has not run yet.
     pub(crate) pending_resync: bool,
+    pub(crate) last_resync: Option<std::time::Instant>,
 }
 
 impl Default for WindowsWatcher {
@@ -38,6 +39,7 @@ impl Default for WindowsWatcher {
             buf: PathBuffer::ZEROED,
             base_idx: 0,
             pending_resync: false,
+            last_resync: None,
         }
     }
 }
@@ -375,10 +377,13 @@ impl WindowsWatcher {
 pub(crate) enum Timeout {
     Infinite = w::INFINITE,
     None = 0,
-    /// After an overflow. Inside a burst that overflows the kernel buffer a
-    /// read completes at least every 123 ms, so this never ends one early.
-    Quiet = 250,
+    /// The wait while a resync is throttled: it runs at the end of this cycle.
+    Throttle = RESYNC_INTERVAL_MS,
 }
+
+/// A burst that keeps overflowing the kernel buffer completes a read every
+/// few ms. The resync stats every watched path, so it runs at most this often.
+const RESYNC_INTERVAL_MS: u32 = 1000;
 
 enum Next {
     Events(EventIterator),
@@ -393,22 +398,17 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
     let base_idx = this.platform.base_idx;
 
     let mut event_id: usize = 0;
-    let mut quiet = false;
 
     // first wait has infinite timeout - we're waiting for the next event and don't want to spin
-    // After an overflow every wait is short: the resync runs once the burst ends, not inside it.
     let mut timeout = if this.platform.pending_resync {
-        Timeout::Quiet
+        Timeout::Throttle
     } else {
         Timeout::Infinite
     };
     loop {
         let mut iter = match this.platform.next(timeout)? {
             Next::Events(it) => it,
-            Next::Timeout => {
-                quiet = true;
-                break;
-            }
+            Next::Timeout => break,
             Next::Overflow => {
                 this.platform.pending_resync = true;
                 break;
@@ -417,9 +417,7 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
         // after the first wait, we want to coalesce further events but don't want to wait for them
         // NOTE: using a 1ms timeout would be ideal, but that actually makes the thread wait for at least 10ms more than it should
         // Instead we use a 0ms timeout, which may not do as much coalescing but is more responsive.
-        if !this.platform.pending_resync {
-            timeout = Timeout::None;
-        }
+        timeout = Timeout::None;
         bun_core::scoped_log!(
             watcher,
             "number of watched items: {}",
@@ -449,8 +447,15 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
             //   to implement and maintain.
             // - others that i'm not thinking of
 
-            let n_items = this.watchlist.items_file_path().len();
+            // The JS thread appends to the watchlist under `this.mutex`, and a
+            // growth frees the column this scan reads. Hold the mutex across the
+            // scan and release it around the batch dispatch, which locks itself.
+            let mut guard = this.mutex.lock_guard();
+            let mut n_items = this.watchlist.items_file_path().len();
             for item_idx in 0..n_items {
+                if item_idx >= n_items {
+                    break;
+                }
                 // reshaped for borrowck — `rel` is computed in a scoped
                 // block so the borrows of `this.watchlist` / `this.platform.buf`
                 // are released before we touch `this.watch_events` or hand the
@@ -479,8 +484,12 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
 
                 // Check if we're about to exceed the watch_events array capacity
                 if event_id >= this.watch_events.len() {
+                    drop(guard);
                     // Process current batch of events
                     process_watch_event_batch(this, event_id)?;
+                    guard = this.mutex.lock_guard();
+                    // `on_file_update` may have evicted entries.
+                    n_items = this.watchlist.items_file_path().len();
                     // passing `this: &mut Watcher` above materialises a fresh Unique
                     // borrow over the whole `Watcher`, which under Stacked Borrows pops the
                     // SharedReadOnly tag that `iter.watcher` (a `*const DirWatcher` derived from
@@ -497,6 +506,7 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
                     create_watch_event(&event, item_idx as WatchItemIndex);
                 event_id += 1;
             }
+            drop(guard);
         }
     }
 
@@ -505,8 +515,14 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
         process_watch_event_batch(this, event_id)?;
     }
 
-    if quiet && this.platform.pending_resync {
+    if this.platform.pending_resync
+        && this
+            .platform
+            .last_resync
+            .is_none_or(|t| t.elapsed().as_millis() >= RESYNC_INTERVAL_MS as u128)
+    {
         this.platform.pending_resync = false;
+        this.platform.last_resync = Some(std::time::Instant::now());
         this.resync_after_overflow();
     }
 

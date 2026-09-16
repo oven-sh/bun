@@ -121,6 +121,10 @@ pub struct Watcher {
     /// thread) after the loop exits.
     pub(crate) close_descriptors: bun_core::AtomicCell<bool>,
 
+    /// Wall clock, ns since the epoch, of the last `resync_after_overflow`
+    /// (the start of the watcher before the first one).
+    pub(crate) resync_baseline_ns: i128,
+
     pub(crate) evict_list: [WatchItemIndex; MAX_EVICTION_COUNT],
     pub(crate) evict_list_i: WatchItemIndex,
 
@@ -201,6 +205,7 @@ impl Watcher {
             thread: None,
             running: bun_core::AtomicCell::new(true),
             close_descriptors: bun_core::AtomicCell::new(false),
+            resync_baseline_ns: bun_core::time::nano_timestamp(),
             evict_list: [0; MAX_EVICTION_COUNT],
             evict_list_i: 0,
             #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -231,22 +236,68 @@ impl Watcher {
         (self.on_file_update)(self.ctx, events, changed, &self.watchlist);
     }
 
-    /// The kernel dropped an unknown set of events: report every watched
-    /// path as written, in one batch.
+    /// The kernel dropped an unknown set of events: report every watched path
+    /// whose mtime is newer than the previous resync (or the start) as
+    /// written, in one batch. A path that no longer exists counts as written.
     pub fn resync_after_overflow(&mut self) {
+        use bun_core::time::NS_PER_S;
         let _guard = self.mutex.lock_guard();
         if !self.running.load() {
             return;
         }
+        let now = bun_core::time::nano_timestamp();
+        let baseline = core::mem::replace(&mut self.resync_baseline_ns, now);
         let len = self.watchlist.len().min(NO_WATCH_ITEM as usize);
-        log!("overflow; re-checking all {} watched paths", len);
-        let mut events: Vec<WatchEvent> = (0..len)
-            .map(|index| WatchEvent {
-                op: Op::WRITE,
-                index: index as WatchItemIndex,
-                ..Default::default()
-            })
-            .collect();
+        let mut events: Vec<WatchEvent> = Vec::new();
+        let mut zbuf = bun_paths::path_buffer_pool::get();
+        for (index, path) in self.watchlist.items_file_path()[..len].iter().enumerate() {
+            let path: &[u8] = path.as_ref();
+            if path.len() + 4 >= zbuf.len() {
+                continue;
+            }
+            // libuv's stat has no long path support, so a drive letter path
+            // gets the `\\?\` form, which needs a normalized path behind it.
+            #[cfg(windows)]
+            let long_path = path.len() > 2
+                && bun_paths::is_drive_letter(path[0])
+                && path[1] == b':'
+                && bun_paths::is_sep_any(path[2]);
+            #[cfg(not(windows))]
+            let long_path = false;
+            let zlen = if long_path {
+                use bun_paths::resolve_path::{normalize_buf, platform};
+                zbuf[..4].copy_from_slice(&bun_paths::windows::LONG_PATH_PREFIX_U8);
+                4 + normalize_buf::<platform::Windows>(path, &mut zbuf[4..]).len()
+            } else {
+                zbuf[..path.len()].copy_from_slice(path);
+                path.len()
+            };
+            zbuf[zlen] = 0;
+            // SAFETY: zbuf is NUL-terminated at zlen.
+            let z = ZStr::from_buf(&zbuf[..], zlen);
+            let changed = match sys::stat(z) {
+                Ok(stat) => {
+                    let mtime = sys::stat_mtime(&stat);
+                    mtime.sec as i128 * NS_PER_S as i128 + mtime.nsec as i128 > baseline
+                }
+                Err(err) => err.get_errno() == sys::E::ENOENT,
+            };
+            if changed {
+                events.push(WatchEvent {
+                    op: Op::WRITE,
+                    index: index as WatchItemIndex,
+                    ..Default::default()
+                });
+            }
+        }
+        log!(
+            "overflow; {} of {} watched paths changed since the last resync",
+            events.len(),
+            len
+        );
+        if events.is_empty() {
+            return;
+        }
         WatcherTrace::write_events(&self.watchlist, &events, &[]);
         (self.on_file_update)(self.ctx, &mut events, &[], &self.watchlist);
     }

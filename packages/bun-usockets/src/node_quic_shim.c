@@ -375,19 +375,6 @@ static int nq_packets_out(void *out_ctx, const struct lsquic_out_spec *specs,
     return vt->packets_out(vt->owner, specs, n);
 }
 
-static int nq_log_buf(void *ctx, const char *buf, size_t len) {
-    (void) ctx;
-    fwrite(buf, 1, len, stderr);
-    fputc('\n', stderr);
-    return 0;
-}
-static const struct lsquic_logger_if nq_logger = { nq_log_buf };
-
-void us_nq_enable_logging(const char *level) {
-    lsquic_logger_init(&nq_logger, NULL, LLTS_HHMMSSUS);
-    lsquic_set_log_level(level);
-}
-
 size_t us_nq_vtable_size(void) { return sizeof(struct us_nq_vtable); }
 
 struct us_nq_tp {

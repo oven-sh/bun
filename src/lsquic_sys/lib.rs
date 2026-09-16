@@ -47,9 +47,6 @@ pub const LSCONN_ST_VERNEG_FAILURE: c_int = 10;
 
 pub const N_LSQVER: c_int = 8;
 
-pub const LSQUIC_GLOBAL_CLIENT: c_int = 1;
-pub const LSQUIC_GLOBAL_SERVER: c_int = 2;
-
 /// **Layout must match `struct us_nq_vtable` in node_quic_shim.c exactly.**
 /// The first field of every conn-ctx and stream-ctx the Rust side returns
 /// must be a `*const NqVtable` so the thunks can recover it via
@@ -112,7 +109,6 @@ pub struct NqVtable {
 }
 
 unsafe extern "C" {
-    pub fn lsquic_global_init(flags: c_int) -> c_int;
     pub fn lsquic_engine_destroy(engine: *mut lsquic_engine);
     pub fn lsquic_engine_conn_count(engine: *const lsquic_engine) -> c_uint;
     pub fn lsquic_engine_cid_in_use(
@@ -192,7 +188,6 @@ unsafe extern "C" {
     pub fn lsquic_stream_wantread(s: *mut lsquic_stream, is_want: c_int) -> c_int;
     pub fn lsquic_stream_wantwrite(s: *mut lsquic_stream, is_want: c_int) -> c_int;
 
-    pub fn us_nq_enable_logging(level: *const c_char);
     pub fn us_nq_vtable_size() -> usize;
     pub fn us_nq_settings_size() -> usize;
     pub fn us_nq_settings_init(s: *mut lsquic_engine_settings, is_server: c_int, is_http: c_int);

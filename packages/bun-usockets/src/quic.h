@@ -41,9 +41,9 @@ struct us_quic_header_t {
     int qpack_index;
 };
 
-/* Process-wide lsquic init. Must be called once before the first
- * us_create_quic_socket_context; the C++ layer (uws_h3_create_app) does this
- * via a thread-safe static local so quic.c stays free of pthread/call_once. */
+/* Process-wide lsquic init. Thread-safe and idempotent: every lsquic user
+ * (H3 server, H3 fetch client, node:quic) calls this before it creates an
+ * engine, and only the first call runs lsquic_global_init. */
 void us_quic_global_init(void);
 
 us_quic_socket_context_t *us_create_quic_socket_context(

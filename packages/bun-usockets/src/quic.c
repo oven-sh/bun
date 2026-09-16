@@ -783,15 +783,39 @@ static int us_quic_log_buf(void *ctx, const char *buf, size_t len) {
 static const struct lsquic_logger_if us_quic_logger = { us_quic_log_buf };
 #endif
 
-/* Called once via a thread-safe static local in uws_h3_create_app
- * (libuwsockets_h3.cpp), so quic.c stays free of pthread/call_once. */
-void us_quic_global_init(void) {
+/* lsquic_global_init is not idempotent: each call allocates a fresh
+ * SSL ex_data index for the enc session, so a session created before a
+ * second call can no longer find itself from the BoringSSL callbacks and
+ * its handshake fails. Three users share this process (the H3 server, the
+ * H3 fetch client on the HTTP thread, node:quic on the JS thread), so the
+ * once guard lives here, on the only entry point. */
+static void us_quic_global_init_impl(void) {
     lsquic_global_init(LSQUIC_GLOBAL_SERVER | LSQUIC_GLOBAL_CLIENT);
 #ifdef BUN_DEBUG
     if (getenv("BUN_DEBUG_lsquic")) {
         lsquic_logger_init(&us_quic_logger, NULL, LLTS_HHMMSSUS);
         lsquic_set_log_level("debug");
     }
+#endif
+}
+
+#ifdef _WIN32
+static INIT_ONCE us_quic_global_init_once = INIT_ONCE_STATIC_INIT;
+static BOOL CALLBACK us_quic_global_init_win(PINIT_ONCE o, PVOID p, PVOID *c) {
+    (void)o; (void)p; (void)c;
+    us_quic_global_init_impl();
+    return TRUE;
+}
+#else
+#include <pthread.h>
+static pthread_once_t us_quic_global_init_once = PTHREAD_ONCE_INIT;
+#endif
+
+void us_quic_global_init(void) {
+#ifdef _WIN32
+    InitOnceExecuteOnce(&us_quic_global_init_once, us_quic_global_init_win, NULL, NULL);
+#else
+    pthread_once(&us_quic_global_init_once, us_quic_global_init_impl);
 #endif
 }
 

@@ -1917,6 +1917,63 @@ describe.concurrent("Bun.serve HTTP/3 sends the automatic 100 Continue ahead of 
   });
 });
 
+// lsquic_global_init allocates the SSL ex_data index through which every TLS
+// callback finds its QUIC session. The three lsquic users in one process
+// (Bun.serve, fetch over HTTP/3 on the HTTP thread, node:quic on the JS thread)
+// each used to run it on their own. A second run moved the index, and a session
+// created before it could no longer find itself, so its handshake failed with
+// ERR_QUIC_TRANSPORT_ERROR. These tests create a node:quic session and then
+// start another lsquic user before the handshake completes.
+describe.concurrent("lsquic is initialized once per process", () => {
+  const sessionOptions = (endpoint: QuicEndpoint) => ({
+    endpoint,
+    servername: "localhost",
+    verifyPeer: "manual",
+    transportParams: { maxIdleTimeout: 5 },
+    onerror() {},
+  });
+
+  async function getStatus(client: Awaited<ReturnType<typeof connect>>): Promise<string> {
+    await client.opened;
+    let status = "";
+    const stream = await client.createBidirectionalStream({
+      headers: requestHeaders("/hello"),
+      onheaders(received: Record<string, string>) {
+        status = received[":status"];
+      },
+    });
+    stream.closed.catch(() => {});
+    for await (const _ of stream as AsyncIterable<Uint8Array[]>) {
+    }
+    if (!client.destroyed) client.close().catch(() => {});
+    return status;
+  }
+
+  test("a node:quic handshake survives an HTTP/3 server that starts during it", async () => {
+    await withServer(async port => {
+      await using endpoint = new QuicEndpoint();
+      const client = await connect(`127.0.0.1:${port}`, sessionOptions(endpoint));
+      client.closed.catch(() => {});
+      // connect() resolves in a microtask, so the session exists and no packet
+      // from the server has been processed yet when this server starts.
+      using other = Bun.serve({ port: 0, tls, http3: true, http1: false, fetch: () => new Response("x") });
+      expect(other.port).toBeGreaterThan(0);
+      expect(await getStatus(client)).toBe("200");
+    });
+  });
+
+  test("a node:quic handshake survives a fetch over HTTP/3 that starts during it", async () => {
+    await withServer(async port => {
+      await using endpoint = new QuicEndpoint();
+      const client = await connect(`127.0.0.1:${port}`, sessionOptions(endpoint));
+      client.closed.catch(() => {});
+      const res = fetchH3(port, "/hello");
+      expect(await getStatus(client)).toBe("200");
+      expect(await (await res).text()).toBe("hello over h3");
+    });
+  });
+});
+
 // The HTTP/3 twin of the HTTP/1 cases in websocket-server.test.ts: ws.close()
 // runs close() before it returns, and a request handler that calls it must still
 // run to completion before the nextTick and promise callbacks it queued. The

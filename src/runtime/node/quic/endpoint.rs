@@ -1101,19 +1101,7 @@ impl QuicEndpoint {
         frame: &CallFrame,
         this_value: JSValue,
     ) -> JsResult<*mut Self> {
-        static INIT: std::sync::Once = std::sync::Once::new();
-        INIT.call_once(|| {
-            // SAFETY: pure library init.
-            unsafe {
-                lsquic::lsquic_global_init(
-                    lsquic::LSQUIC_GLOBAL_CLIENT | lsquic::LSQUIC_GLOBAL_SERVER,
-                )
-            };
-            if bun_core::getenv_z(bun_core::zstr!("BUN_DEBUG_lsquic")).is_some() {
-                // SAFETY: static C string.
-                unsafe { lsquic::us_nq_enable_logging(c"debug".as_ptr()) };
-            }
-        });
+        bun_uws_sys::quic::global_init();
         lsquic::debug_assert_layout();
 
         let this = QuicEndpoint {

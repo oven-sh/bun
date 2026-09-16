@@ -41,8 +41,7 @@ typedef void (*uws_h3_listen_handler)(us_quic_listen_socket_t*, void*);
 
 uws_h3_app_t* uws_h3_create_app(struct us_bun_socket_context_options_t options, unsigned int idle_timeout_s)
 {
-    static int once = (us_quic_global_init(), 1);
-    (void)once;
+    us_quic_global_init();
     uWS::SocketContextOptions sco;
     static_assert(sizeof(sco) == sizeof(options));
     memcpy(&sco, &options, sizeof(sco));

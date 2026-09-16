@@ -1,5 +1,8 @@
 //! The JS-independent half of WebGPU: the wgpu instance, id handles, errors, and name tables.
 
+// The proof that `wgpu_core::global::Global` is `Sync` is deeper than the default of 128.
+#![recursion_limit = "256"]
+
 use std::sync::OnceLock;
 
 pub use wgpu_core as wgc;

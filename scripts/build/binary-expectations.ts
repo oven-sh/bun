@@ -393,6 +393,10 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
             "/usr/lib/libSystem.B.dylib",
             "/usr/lib/libc++.1.dylib",
             "/usr/lib/libicucore.A.dylib",
+            // WebGPU's Metal backend (objc2) calls the Objective-C runtime.
+            // libSystem's own libraries already load it into every process.
+            // The frameworks themselves are dlopen()ed (src/webgpu/apple.rs).
+            "/usr/lib/libobjc.A.dylib",
             "/usr/lib/libresolv.9.dylib",
           ],
           exact: true,
@@ -449,9 +453,16 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
             "WSOCK32.dll",
             "api-ms-win-core-synch-l1-2-0.dll",
             "bcryptprimitives.dll",
+            // WebGPU (with dxgi.dll and setupapi.dll below): imports of the
+            // `windows` crates and wgpu's Direct3D 12 backend. A release
+            // build delay-loads all three (flags.ts), so bun starts without
+            // them; d3d12.dll is LoadLibrary()ed and never shows up here.
+            "combase.dll",
             "dbghelp.dll",
+            "dxgi.dll",
             "ntdll.dll",
             "ole32.dll",
+            "setupapi.dll",
           ],
           exact: true,
           allowed: sanitizerLibs,

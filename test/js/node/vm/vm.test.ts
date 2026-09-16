@@ -1364,9 +1364,9 @@ describe("the file: URL origin made from a filename", () => {
     expect(namespaces.map(namespace => namespace.default)).toEqual(["a", "b", "a", "b"]);
   });
 
-  // Every "<" is percent-encoded, the slow path of the URL parser: about 1 ms for this filename in a release
-  // build. Without the cache every compile pays it, and the next ten compiles take ten times the first one.
-  const longFilename = Buffer.alloc(32 * 1024, "<").toString() + ".js";
+  // Every "<" is percent-encoded, the slow path of the URL parser: about 0.4 ms for this filename in a release
+  // build, far more than the rest of a compile.
+  const longFilename = Buffer.alloc(16 * 1024, "<").toString() + ".js";
   const elapsed = (fn: () => void) => {
     const start = performance.now();
     fn();
@@ -1377,24 +1377,55 @@ describe("the file: URL origin made from a filename", () => {
     ["Scripts", (options: object) => new Script("1", options)],
     ["compiled functions", (options: object) => compileFunction("return 1", [], options)],
   ])("is made once for %s that share a filename", (label, compile) => {
-    // The best of three trials, so that one garbage collection inside a measured window does not decide it.
-    let firstCompile = Infinity;
-    let nextTenCompiles = Infinity;
+    // Both windows compile four times. In the first, two filenames take turns, so every compile makes a URL.
+    // In the second, one filename is used again, so no compile does. Without the cache the two take the same
+    // time. The best of three trials, so that a pause inside one window does not decide the result.
+    let alternating = Infinity;
+    let repeated = Infinity;
     for (let trial = 0; trial < 3; trial++) {
-      // A filename no compile has used, so the first compile is the one that makes the URL.
-      const options = { filename: `${label}-${trial}-${longFilename}` };
-      firstCompile = Math.min(
-        firstCompile,
-        elapsed(() => compile(options)),
-      );
-      nextTenCompiles = Math.min(
-        nextTenCompiles,
+      const one = { filename: `${label}-${trial}-one-${longFilename}` };
+      const other = { filename: `${label}-${trial}-other-${longFilename}` };
+      alternating = Math.min(
+        alternating,
         elapsed(() => {
-          for (let i = 0; i < 10; i++) compile(options);
+          for (let i = 0; i < 4; i++) compile(i & 1 ? one : other);
+        }),
+      );
+      compile(one);
+      repeated = Math.min(
+        repeated,
+        elapsed(() => {
+          for (let i = 0; i < 4; i++) compile(one);
         }),
       );
     }
-    expect(nextTenCompiles).toBeLessThan(firstCompile);
+    expect(repeated).toBeLessThan(alternating / 2);
+  });
+
+  // BUN_JSC_useCodeCache=0: the code cache keeps the filename of a Script alive too, through its SourceProvider.
+  test.skipIf(isASAN)("does not keep the string that a filename was sliced from", async () => {
+    const fixture = `
+      const { Script } = require("node:vm");
+      const rss = () => process.memoryUsage.rss() / 1024 / 1024;
+      function compileWithSlicedFilename() {
+        const large = Buffer.alloc(128 * 1024 * 1024, "a").toString("latin1");
+        new Script("1", { filename: large.slice(1000, 1060) });
+      }
+      const before = rss();
+      compileWithSlicedFilename();
+      Bun.gc(true);
+      console.log(JSON.stringify({ keptMB: Math.round(rss() - before) }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: { ...bunEnv, BUN_JSC_useCodeCache: "0" },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    // The string is 128 MB. A Script and its filename are a few hundred bytes.
+    expect(JSON.parse(stdout).keptMB).toBeLessThan(64);
+    expect(exitCode).toBe(0);
   });
 });
 

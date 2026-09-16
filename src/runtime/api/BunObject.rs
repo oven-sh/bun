@@ -1287,8 +1287,6 @@ pub fn bun_resolve_sync_with_strings(
     })
 }
 
-/// For `import.meta.resolve()` of a path or `file:` URL: the path the module loader loads the
-/// file at `path` under, which is its real path. Dead when `path` is not an existing file.
 // HOST_EXPORT(Bun__importMetaResolveRealPath, c)
 pub fn bun_import_meta_resolve_real_path(global: &JSGlobalObject, path: &BunString) -> BunString {
     let path = path.to_utf8();

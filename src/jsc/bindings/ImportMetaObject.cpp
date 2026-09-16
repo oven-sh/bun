@@ -333,10 +333,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
     return result;
 }
 
-// `import.meta.url` inside the module that `url` names. For a file that exists this is the URL of the path the
-// module loader loads it under, which is its real path, like `finalizeResolution` in Node.js. Anything else keeps
-// `url`. Every exit of `import.meta.resolve()` that returns a `file:` URL without asking the resolver goes through
-// here.
+// The URL that the module at `url` loads under, which is its `import.meta.url`, like `finalizeResolution` in Node.js.
 static WTF::String urlOfLoadedModule(Zig::GlobalObject* globalObject, const WTF::URL& url)
 {
     if (url.protocolIsFile()) {

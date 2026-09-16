@@ -1685,10 +1685,7 @@ impl<'a> Resolver<'a> {
         Ok(())
     }
 
-    /// The path the module loader loads the file at `path` under: its real path, or the
-    /// normalized `path` when no symlink is on the way. `None` when `path` is not an existing
-    /// non-directory, and under `--preserve-symlinks`. Unlike `resolve`, this does not try
-    /// extensions or index files, and the file name keeps the spelling of `path`.
+    /// The path the module loader loads the existing file `path` under, for `import.meta.resolve`.
     pub fn real_path_of_file<'b>(
         &mut self,
         path: &[u8],
@@ -1703,8 +1700,7 @@ impl<'a> Resolver<'a> {
             || path.starts_with(b"//")
             || Self::import_path_names_directory(path)
             || strings::contains_char(path, 0)
-            // Path normalization reads `\` as a separator on every platform, so it cannot
-            // name a POSIX file that has one.
+            // Path normalization reads `\` as a separator, also in a POSIX file name.
             || (cfg!(not(windows)) && strings::contains_char(path, b'\\'))
             || ::bun_options_types::standalone_path::is_bun_standalone_file_path(path)
         {
@@ -1720,8 +1716,7 @@ impl<'a> Resolver<'a> {
         abs_buf[abs_len] = 0;
         let abs_path = bun_core::ZStr::from_buf(&abs_buf[..], abs_len);
 
-        // The file system says whether the file exists, not the directory cache: a missing
-        // target must not leave a not-found entry in it, and a cached listing can be stale.
+        // Not the directory cache: a missing file must not leave a not-found entry there.
         let file_kind = kind_of(bun_sys::lstat(abs_path).ok()?);
         if file_kind == FileKind::Directory {
             return None;
@@ -1742,8 +1737,7 @@ impl<'a> Resolver<'a> {
             if target_kind == FileKind::Directory {
                 return None;
             }
-            // The loader takes the target from the lazy stat of the entry, which opens the
-            // target. Opening a pipe can block, so only a regular file goes that way.
+            // The lazy stat of the entry opens the target, and an open of a pipe can block.
             let from_entry = (target_kind == FileKind::File)
                 .then(|| dir?.get_entry(self.generation, name.filename))
                 .flatten()

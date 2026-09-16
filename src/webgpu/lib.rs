@@ -1,7 +1,6 @@
 //! The JS-independent half of WebGPU: the wgpu instance, id handles, errors, and name tables.
 
 use std::sync::OnceLock;
-use std::time::Duration;
 
 pub use wgpu_core as wgc;
 pub use wgpu_types as wgt;
@@ -108,33 +107,12 @@ impl Device {
         self.queue
     }
 
-    /// Blocks until `submission` finishes or `timeout` passes, then fires the ready callbacks.
-    pub fn wait(&self, submission: wgc::SubmissionIndex, timeout: Duration) -> WaitOutcome {
-        let poll = wgt::PollType::Wait {
-            submission_index: Some(submission),
-            timeout: Some(timeout),
-        };
-        match instance().device_poll(self.device, poll) {
-            Ok(_) => WaitOutcome::Finished,
-            Err(wgc::device::WaitIdleError::Timeout) => WaitOutcome::TimedOut,
-            Err(_) => WaitOutcome::Failed,
-        }
+    /// Fires the ready callbacks; `false` if the device is lost. Never a timed `Wait`: gfx-rs/wgpu#9958 aborts on it.
+    pub fn poll(&self) -> bool {
+        instance()
+            .device_poll(self.device, wgt::PollType::Poll)
+            .is_ok()
     }
-
-    /// Fires the callbacks that are ready, without waiting for the GPU.
-    pub fn poll(&self) {
-        let _ = instance().device_poll(self.device, wgt::PollType::Poll);
-    }
-}
-
-/// How [`Device::wait`] ended.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum WaitOutcome {
-    /// The submission is done and the callbacks that were ready have run.
-    Finished,
-    TimedOut,
-    /// The device is lost or the wait itself failed. Waiting again will not help.
-    Failed,
 }
 
 impl Drop for Device {

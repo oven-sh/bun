@@ -39,6 +39,7 @@ pub(crate) struct DeviceState {
     lost_info: JsCell<Option<(&'static str, String)>>,
     /// The buffers that are mapped or have a pending map: `destroy()` has to unmap them.
     mapped_buffers: JsCell<Vec<bun_jsc::Weak<()>>>,
+    pub(crate) waits: super::wait::Waits,
 }
 
 pub(crate) type DeviceRef = Rc<DeviceState>;
@@ -226,6 +227,7 @@ impl GPUDeviceHandle {
             lost: Cell::new(false),
             lost_info: JsCell::new(None),
             mapped_buffers: JsCell::new(Vec::new()),
+            waits: super::wait::Waits::default(),
         });
         let handle = bun_jsc::JsClass::to_js(
             GPUDeviceHandle {

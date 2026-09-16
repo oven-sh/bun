@@ -12,7 +12,7 @@ use bun_webgpu::{GpuError, instance};
 use super::args::{self, BufferSource};
 use super::device::DeviceRef;
 use super::texture::{parse_texel_copy_buffer_layout, parse_texel_copy_texture_info};
-use super::wait::{Slot, Wait, Waiter};
+use super::wait::{self, Waiter};
 use super::{GPUBuffer, GPUCommandBuffer};
 
 #[bun_jsc::JsClass]
@@ -82,18 +82,17 @@ impl GPUQueue {
     ) -> JsResult<JSValue> {
         let promise = JSPromiseStrong::init(global);
         let value = promise.value();
-        let slot = Slot::<()>::new();
-        let submission = {
+        let slot = self.device.waits.slot::<()>();
+        {
             let slot = Arc::clone(&slot);
             instance().queue_on_submitted_work_done(
                 self.device.raw.queue_id(),
                 Box::new(move || slot.fill(())),
-            )
-        };
-        Wait::<WorkDone>::schedule(
+            );
+        }
+        wait::wait::<WorkDone>(
+            &self.device,
             &global.js_thread(),
-            Arc::clone(&self.device.raw),
-            submission,
             slot,
             (promise, Strong::create(this_value, global)),
         );

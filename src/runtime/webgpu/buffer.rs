@@ -14,7 +14,7 @@ use bun_webgpu::{GpuError, error_chain, instance, wgc, wgt};
 
 use super::args::{self, Dict};
 use super::device::DeviceRef;
-use super::wait::{Slot, Wait, Waiter};
+use super::wait::{self, Waiter};
 use super::{detach_array_buffer, pin_array_buffer};
 use crate::generated_classes::js_GPUBuffer as js;
 
@@ -71,10 +71,7 @@ struct MapRequest {
     offset: u64,
     size: u64,
 }
-// SAFETY: plain integers; nothing in it is tied to a thread.
-unsafe impl bun_jsc::job::JsAffine for MapRequest {}
 
-#[derive(bun_jsc::JsAffine)]
 struct MapWaitJs {
     buffer: Strong,
     request: MapRequest,
@@ -375,7 +372,7 @@ impl GPUBuffer {
         request: MapRequest,
     ) -> JsResult<()> {
         debug_assert!(!self.in_flight.get());
-        let slot = Slot::<MapResult>::new();
+        let slot = self.device.waits.slot::<MapResult>();
         let callback = {
             let slot = Arc::clone(&slot);
             Box::new(move |result: Result<(), BufferAccessError>| {
@@ -390,27 +387,20 @@ impl GPUBuffer {
             },
             callback: Some(callback),
         };
-        let submission = match instance().buffer_map_async(
-            self.raw.id(),
-            request.offset,
-            Some(request.size),
-            op,
-        ) {
-            Ok(submission) => submission,
-            Err(err) => {
-                // wgpu-core already ran the callback with this error; the slot is not needed.
-                let (aborted, message) = map_failure(&err);
-                self.map.set(MapState::Unmapped);
-                self.device.untrack_mapped(this_value);
-                self.settle_pending(global, this_value, Err((aborted, &message)))?;
-                return self.device.report(global, GpuError::from_wgpu(&err));
-            }
-        };
+        if let Err(err) =
+            instance().buffer_map_async(self.raw.id(), request.offset, Some(request.size), op)
+        {
+            // wgpu-core already ran the callback with this error; the slot is not needed.
+            let (aborted, message) = map_failure(&err);
+            self.map.set(MapState::Unmapped);
+            self.device.untrack_mapped(this_value);
+            self.settle_pending(global, this_value, Err((aborted, &message)))?;
+            return self.device.report(global, GpuError::from_wgpu(&err));
+        }
         self.in_flight.set(true);
-        Wait::<MapWait>::schedule(
+        wait::wait::<MapWait>(
+            &self.device,
             &global.js_thread(),
-            Arc::clone(&self.device.raw),
-            submission,
             slot,
             MapWaitJs {
                 buffer: Strong::create(this_value, global),
@@ -496,7 +486,8 @@ impl GPUBuffer {
                 list
             }
         };
-        list.push(global, array_buffer)?;
+        // A direct index put and get: `push` and iteration would run a setter or getter script put on `Array.prototype`.
+        list.put_index(global, ranges.len() as u32, array_buffer)?;
         pin_array_buffer(array_buffer);
         self.map.with_mut(|state| {
             if let MapState::Mapped { ranges, .. } = state {
@@ -536,12 +527,12 @@ impl GPUBuffer {
             return Ok(true);
         };
         js::mapped_ranges_set_cached(this_value, global, JSValue::UNDEFINED);
-        let mut iter = list.array_iterator(global)?;
-        let mut index = 0usize;
-        while let Some(array_buffer) = iter.next()? {
-            let range = ranges.get(index).copied();
-            index += 1;
-            if let (true, true, Some((offset, size))) = (write, write_back, range) {
+        for (index, (offset, size)) in ranges.into_iter().enumerate() {
+            let array_buffer = list.get_direct_index(global, index as u32)?;
+            if !array_buffer.is_cell() {
+                continue;
+            }
+            if write && write_back {
                 if let Some(view) = array_buffer.as_array_buffer(global) {
                     if let Ok((ptr, _)) =
                         instance().buffer_get_mapped_range(self.raw.id(), offset, Some(size))

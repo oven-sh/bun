@@ -1043,6 +1043,90 @@ describe.skipIf(!hasAdapter)("with a device", () => {
     await closed;
   });
 
+  test("mapAsync settles before a later onSubmittedWorkDone, also in a pipelined readback loop", async () => {
+    const device = await requestDevice();
+    const module = device.createShaderModule({ code: doubleShader });
+    const pipeline = device.createComputePipeline({ layout: "auto", compute: { module } });
+    const storage = device.createBuffer({ size: 256, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
+    const bindGroup = device.createBindGroup({
+      layout: pipeline.getBindGroupLayout(0),
+      entries: [{ binding: 0, resource: { buffer: storage } }],
+    });
+    const submit = (readback: any) => {
+      const encoder = device.createCommandEncoder();
+      const pass = encoder.beginComputePass();
+      pass.setPipeline(pipeline);
+      pass.setBindGroup(0, bindGroup);
+      pass.dispatchWorkgroups(1);
+      pass.end();
+      encoder.copyBufferToBuffer(storage, 0, readback, 0, 256);
+      device.queue.submit([encoder.finish()]);
+    };
+    const readbacks = [0, 1].map(() =>
+      device.createBuffer({ size: 256, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST }),
+    );
+
+    // The idiom the specification names: once the work is done, an earlier map is done too.
+    const states: string[] = [];
+    for (let i = 0; i < 40; i++) {
+      submit(readbacks[0]);
+      const mapped = readbacks[0].mapAsync(GPUMapMode.READ);
+      await device.queue.onSubmittedWorkDone();
+      states.push(readbacks[0].mapState);
+      await mapped;
+      readbacks[0].unmap();
+    }
+    expect(states).toEqual(Array(40).fill("mapped"));
+
+    // Two frames in flight: frame k is submitted while the map of frame k - 1 is still pending.
+    const pending: (Promise<void> | null)[] = [null, null];
+    let frames = 0;
+    for (let frame = 0; frame < 60; frame++) {
+      const slot = frame % 2;
+      if (pending[slot]) await pending[slot];
+      const readback = readbacks[slot];
+      submit(readback);
+      pending[slot] = readback.mapAsync(GPUMapMode.READ).then(() => {
+        frames += new Uint32Array(readback.getMappedRange()).length === 64 ? 1 : 0;
+        readback.unmap();
+      });
+    }
+    await Promise.all(pending);
+    expect(frames).toBe(60);
+    device.destroy();
+  });
+
+  test("unmap() only detaches its own ArrayBuffers, whatever script puts on Array.prototype", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const adapter = await navigator.gpu.requestAdapter();
+          const device = await adapter.requestDevice();
+          const victim = new ArrayBuffer(8);
+          let calls = 0;
+          Object.defineProperty(Array.prototype, 0, {
+            configurable: true,
+            get() { calls++; return victim; },
+            set() { calls++; },
+          });
+          const buffer = device.createBuffer({ size: 16, usage: GPUBufferUsage.COPY_SRC, mappedAtCreation: true });
+          const range = buffer.getMappedRange();
+          buffer.unmap();
+          delete Array.prototype[0];
+          console.log(JSON.stringify({ calls, victim: victim.byteLength, range: range.byteLength }));
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ calls: 0, victim: 8, range: 0 });
+    expect(exitCode).toBe(0);
+  });
+
   test("a pending mapAsync keeps the process alive", async () => {
     await using proc = Bun.spawn({
       cmd: [

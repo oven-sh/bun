@@ -76,6 +76,15 @@ export const napiThreadsafeFunctionLiveCount = $newRustFunction("napi_body.rs", 
 
 export const bundlerWorkerLiveCount: () => number = $newRustFunction("JSBundler.rs", "jsWorkerLiveCount", 0);
 
+/** `start` and `length` are byte offsets of the directive's string literal in the UTF-8 source. */
+export const scanUseDirective: (
+  source: string,
+) => null | { directive: "client" | "server"; start: number; length: number } = $newRustFunction(
+  "JSBundler.rs",
+  "jsScanUseDirective",
+  1,
+);
+
 export const escapeRegExp = $newRustFunction("escapeRegExp.rs", "jsEscapeRegExp", 1);
 export const escapeRegExpForPackageNameMatching = $newRustFunction(
   "escapeRegExp.rs",

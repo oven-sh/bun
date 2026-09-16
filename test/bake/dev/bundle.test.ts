@@ -412,11 +412,77 @@ devTest("removing 'use client' from a component with a pending resolution failur
     expect(res).toBeInstanceOf(Response);
   },
 });
+// The bundler looks for a use directive before it parses the file. The scan
+// used to compare the first bytes of the source with the quoted directive, so
+// a license banner or a hashbang in front of "use client" hid it, and an
+// expression that starts with the same bytes counted as one.
+// test/bake/use-directive.test.ts has the rules of the scan.
+{
+  const button = `export function Button() { return "button"; }`;
+  const clientComponents = {
+    "plain": `"use client";\n${button}`,
+    "line-comment": `// Copyright (c) Example. MIT license.\n"use client";\n${button}`,
+    "block-comment": `/* eslint-disable */ "use client";\n${button}`,
+    "banner": `/**\n * @license MIT\n */\n\n// @ts-nocheck\n'use client'\n${button}`,
+    "hashbang": `#!/usr/bin/env bun\n"use client";\n${button}`,
+    "trailing-comment": `"use client" // runs in the browser\n${button}`,
+    "before-prefix-operator": `"use client"\n!function () {}();\n${button}`,
+  };
+  const serverModules = {
+    "no-directive": button,
+    "commented-out": `// "use client";\n${button}`,
+    "after-statement": `${button}\n"use client";`,
+    "after-use-strict": `"use strict";\n"use client";\n${button}`,
+    "after-empty-statement": `;"use client";\n${button}`,
+    "parenthesized": `("use client");\n${button}`,
+    "template-literal": `\`use client\`;\n${button}`,
+    "member-access": `"use client".length;\n${button}`,
+    "binary-expression": `"use client" + "";\n${button}`,
+    "continued-on-next-line": `"use client"\n  .length;\n${button}`,
+  };
+  // One route for each module. The server gets a client reference (an object)
+  // in place of each export of a client component.
+  const files: Record<string, string> = {};
+  for (const [name, source] of Object.entries({ ...clientComponents, ...serverModules })) {
+    files[`components/${name}.ts`] = source;
+    files[`routes/${name}.ts`] = `
+      import * as Comp from '../components/${name}';
+      export default function (req, meta) {
+        return new Response(typeof Comp.Button);
+      }
+    `;
+  }
+  const expected = {
+    ...Object.fromEntries(Object.keys(clientComponents).map(name => [name, "object"])),
+    ...Object.fromEntries(Object.keys(serverModules).map(name => [name, "function"])),
+  };
+
+  for (const separateSSRGraph of [false, true]) {
+    devTest(`a use directive can follow a comment or a hashbang (separateSSRGraph: ${separateSSRGraph})`, {
+      framework: {
+        ...minimalFramework,
+        serverComponents: {
+          ...minimalFramework.serverComponents!,
+          separateSSRGraph,
+        },
+      },
+      files,
+      async test(dev) {
+        const actual: Record<string, string> = {};
+        for (const name of Object.keys(expected)) {
+          actual[name] = await dev.fetch("/" + name).text();
+        }
+        expect(actual).toEqual(expected);
+      },
+    });
+  }
+}
 // The bundler has no transform for a module that starts with "use server".
 // Bundling one used to abort the process from a bundler thread (the parser
 // panics on `registerServerReference`), so saving a server-action file took
 // down every route.
-const useServerError = (file: string) => `${file}:1:1: error: "use server" is not supported yet`;
+const useServerError = (file: string, position = "1:1") =>
+  `${file}:${position}: error: "use server" is not supported yet`;
 devTest('saving a "use server" module is a build error', {
   framework: minimalFramework,
   files: {
@@ -486,6 +552,30 @@ devTest('a "use server" module that exists at startup is a build error', {
     }
     // A route that does not import the module still works.
     await dev.fetch("/other").equals("other");
+  },
+});
+// The directive can follow comments. The error points at the directive.
+devTest('a "use server" directive after a license banner is a build error', {
+  framework: minimalFramework,
+  files: {
+    "actions.ts": `
+      /**
+       * @license MIT
+       */
+      /* eslint-disable */ "use server";
+      export async function save() {
+        return "saved";
+      }
+    `,
+    "routes/index.ts": `
+      import { save } from '../actions';
+      export default async function (req, meta) {
+        return new Response('Hello, ' + (await save()) + '!');
+      }
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", { errors: [useServerError("actions.ts", "4:22")] });
   },
 });
 // With a separate SSR graph, a "use server" module with nothing to wrap got

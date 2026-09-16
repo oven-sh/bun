@@ -1189,16 +1189,32 @@ describe("depth cap applies to Map/Set/Array and Error cause chains", () => {
     const capped = inspect(2);
     expect(capped).toContain("error: inner");
     expect(capped).toContain("error: listed");
+    expect(capped).toContain("AggregateError: agg");
     expect(capped).toContain("[Error ...]");
     expect(capped).not.toContain("error: deep one");
     expect(capped).not.toContain("error: deep two");
     expect(capped).not.toContain("error: member");
   });
 
+  it("an AggregateError whose members are past max_depth still prints itself", () => {
+    const inspect = errors =>
+      Bun.inspect(new AggregateError(errors, "agg message"), { depth: 0 }).replace(/^ *\d+ \|.*\n/gm, "");
+
+    const out = inspect([new Error("member x"), new Error("member y")]);
+    expect(out.match(/AggregateError: agg message/g)).toHaveLength(1);
+    expect(out.match(/\[Error \.\.\.\]/g)).toHaveLength(2);
+    expect(out).not.toContain("error: member");
+
+    const empty = inspect([]);
+    expect(empty.match(/AggregateError: agg message/g)).toHaveLength(1);
+    expect(empty).not.toContain("[Error ...]");
+  });
+
   it("nested AggregateError recursion truncates at max_depth", () => {
     let e = new Error("leaf");
     for (let i = 0; i < 10; i++) e = new AggregateError([e], "L" + i);
     const out = Bun.inspect(e, { depth: 2 });
+    expect(out).toContain("AggregateError: L7");
     expect(out).toContain("[Error ...]");
     expect(out).not.toContain("error: leaf");
 

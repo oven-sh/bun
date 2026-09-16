@@ -5396,6 +5396,18 @@ impl VirtualMachine {
             None
         };
         if let Some(errors) = errors {
+            let members_past_cap =
+                formatter.depth.saturating_add(1) > formatter.error_chain_max_depth();
+            if members_past_cap {
+                self.print_error_from_maybe_private_data(
+                    value,
+                    exception_list.as_deref_mut(),
+                    formatter,
+                    writer,
+                    allow_ansi_color,
+                    allow_side_effects,
+                );
+            }
             // Note: `JSValue::for_each` takes a C-ABI fn
             // pointer + erased ctx, so thread the captures through a struct.
             // The C trampoline erases lifetimes via `*mut c_void`; round-trip
@@ -5475,7 +5487,7 @@ impl VirtualMachine {
             {
                 global_ref.clear_exception();
             }
-            if ctx.printed_member {
+            if ctx.printed_member || members_past_cap {
                 return;
             }
             // `errors` is empty or not iterable: print the AggregateError itself.

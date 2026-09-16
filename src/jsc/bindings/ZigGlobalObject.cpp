@@ -140,6 +140,7 @@
 #include "BunMarkdownMeta.h"
 #include "JSSQLStatement.h"
 #include "sqlite/NodeSqlite.h"
+#include "DurableObject.h"
 #include "JSStringDecoder.h"
 #include "ModuleGraph.h"
 #include "JSTextEncoder.h"
@@ -2719,6 +2720,10 @@ void GlobalObject::finishCreation(VM& vm)
     m_moduleGraphFrameStructure.initLater(
         [](const Initializer<Structure>& init) {
             init.set(Bun::createModuleGraphFrameStructure(init.vm, init.owner));
+        });
+    m_durableObjectRealm.initLater(
+        [](const Initializer<JSCell>& init) {
+            init.set(Bun::createDurableObjectRealm(init.vm, uncheckedDowncast<Zig::GlobalObject>(init.owner)));
         });
 
     this->initGeneratedLazyClasses();

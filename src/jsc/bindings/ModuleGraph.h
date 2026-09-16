@@ -59,6 +59,10 @@ public:
     // causes, is the host's: given to the graph, it would come straight back to the same onError.
     bool inOnError() const { return m_inOnError; }
     void setInOnError(bool inOnError) { m_inOnError = inOnError; }
+    // Errors raised while this graph's context is current are this graph's whoever's code threw them:
+    // for a graph that is a context for script the host defined (a Durable Object of a host class).
+    bool takesErrorsOfItsContext() const { return m_takesErrorsOfItsContext; }
+    void setTakesErrorsOfItsContext(bool takes) { m_takesErrorsOfItsContext = takes; }
     // The context that owns what the graph's script opens.
     WebCore::ScriptExecutionContext& context() const { return m_context.get(); }
 
@@ -81,6 +85,7 @@ private:
     JSC::WriteBarrier<JSModuleGraph> m_maker;
     JSC::WriteBarrier<JSC::JSString> m_mainPath;
     bool m_inOnError { false };
+    bool m_takesErrorsOfItsContext { false };
     unsigned m_overlayShape { 0 };
 };
 
@@ -110,6 +115,8 @@ public:
 };
 
 void initJSModuleGraphClassStructure(JSC::LazyClassStructure::Initializer&);
+// new Bun.ModuleGraph({ globals, onError }) for native code, made in the current context. Null with an exception thrown.
+JSModuleGraph* createModuleGraph(Zig::GlobalObject*, JSC::JSObject* globals, JSC::JSObject* onError);
 JSC::Structure* createModuleGraphFrameStructure(JSC::VM&, JSC::JSGlobalObject*);
 
 // ── Which graph ──────────────────────────────────────────────────────────────────────

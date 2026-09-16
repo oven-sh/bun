@@ -55,6 +55,15 @@ public:
     GCClient::IsoSubspace* m_clientSubspaceForBunInspectorConnection { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForJSNextTickQueue { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForJSModuleGraph { nullptr };
+    GCClient::IsoSubspace* m_clientSubspaceForDurableObjectRealm { nullptr };
+    GCClient::IsoSubspace* m_clientSubspaceForDurableObjectId { nullptr };
+    GCClient::IsoSubspace* m_clientSubspaceForDurableObjectStub { nullptr };
+    GCClient::IsoSubspace* m_clientSubspaceForDurableObjectRpcFunction { nullptr };
+    GCClient::IsoSubspace* m_clientSubspaceForDurableObjectHandle { nullptr };
+    GCClient::IsoSubspace* m_clientSubspaceForDurableObjectEvent { nullptr };
+    GCClient::IsoSubspace* m_clientSubspaceForDurableObjectActor { nullptr };
+    GCClient::IsoSubspace* m_clientSubspaceForDurableObjectNamespace { nullptr };
+    GCClient::IsoSubspace* m_clientSubspaceForDurableObjectSqlCursor { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForJSSocketHandlers { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForJSDiffieHellman { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForJSDiffieHellmanGroup { nullptr };

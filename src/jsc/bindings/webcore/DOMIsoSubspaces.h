@@ -56,6 +56,15 @@ public:
     IsoSubspace* m_subspaceForBunInspectorConnection { nullptr };
     IsoSubspace* m_subspaceForJSNextTickQueue { nullptr };
     IsoSubspace* m_subspaceForJSModuleGraph { nullptr };
+    IsoSubspace* m_subspaceForDurableObjectRealm { nullptr };
+    IsoSubspace* m_subspaceForDurableObjectId { nullptr };
+    IsoSubspace* m_subspaceForDurableObjectStub { nullptr };
+    IsoSubspace* m_subspaceForDurableObjectRpcFunction { nullptr };
+    IsoSubspace* m_subspaceForDurableObjectHandle { nullptr };
+    IsoSubspace* m_subspaceForDurableObjectEvent { nullptr };
+    IsoSubspace* m_subspaceForDurableObjectActor { nullptr };
+    IsoSubspace* m_subspaceForDurableObjectNamespace { nullptr };
+    IsoSubspace* m_subspaceForDurableObjectSqlCursor { nullptr };
     IsoSubspace* m_subspaceForJSSocketHandlers { nullptr };
     IsoSubspace* m_subspaceForTTYWrapObject { nullptr };
     IsoSubspace* m_subspaceForNapiHandleScopeImpl { nullptr };

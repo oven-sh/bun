@@ -1,0 +1,151 @@
+---
+title: Durable Objects
+description: Stateful objects with an id, storage of their own and one thread of execution, in one Bun process. Call them by id, give them alarms, connect WebSockets to them.
+---
+
+<Warning>`Bun.DurableObject` is experimental.</Warning>
+
+A Durable Object is an instance of a class that you address by id. Every id has at most one instance. Calls to it are delivered one event at a time, it has a SQLite database of its own, and it is evicted from memory when idle and started again by the next call.
+
+```ts counter.ts icon="/icons/typescript.svg"
+class Counter extends Bun.DurableObject {
+  increment(by = 1) {
+    const next = (this.ctx.storage.kv.get<number>("count") ?? 0) + by;
+    this.ctx.storage.kv.put("count", next);
+    return next;
+  }
+}
+
+const counters = new Bun.DurableObjectNamespace({ class: Counter, storage: "./data" });
+
+const visits = counters.getByName("visits");
+await visits.increment(); // 1
+await visits.increment(5); // 6, also after a restart
+```
+
+The API follows [Cloudflare's Durable Objects](https://developers.cloudflare.com/durable-objects/) where it can: the class shape, `ctx.storage`, stubs, alarms and WebSocket hibernation.
+
+## Namespaces
+
+```ts
+new Bun.DurableObjectNamespace({
+  class: Counter, // or module: "./counter.ts", export: "Counter"
+  storage: "./data", // a directory; omit to keep storage in memory
+  env: { db }, // passed to every constructor
+  idleTimeout: 10_000, // an object idle for this many ms is evicted
+  onError(error, id) {}, // errors nobody is waiting for
+});
+```
+
+| Method                                                | Returns                                        |
+| ----------------------------------------------------- | ---------------------------------------------- |
+| `idFromName(name)` / `newUniqueId()` / `idFromString` | a `DurableObjectId` (`toString()`, `equals()`) |
+| `get(id)` / `getByName(name)`                         | a stub                                         |
+| `close()`                                             | waits for running events, then shuts down      |
+
+With `class`, objects share the module the class was defined in. With `module`, every object loads the module into a [`Bun.ModuleGraph`](/runtime/module-graph) of its own, so module-level state is per object as well; compiled code is shared.
+
+One namespace, in one process, uses a storage directory at a time.
+
+## Calling an object
+
+Every public method of the class is a method of the stub and returns a promise. `await stub.property` reads a getter.
+
+```ts
+const room = rooms.getByName("lobby");
+await room.join(user);
+const response = await room.fetch("http://room/history");
+```
+
+- Arguments and results are passed as they are, not copied.
+- Only what is on the class is reachable: fields the constructor assigned, `ctx` and `env` are not.
+- An error a method throws rejects that call. The object keeps running.
+
+## One event at a time
+
+An event is a call, a `fetch()`, an alarm or a WebSocket message. An object starts the next one only when the current one is waiting on something outside the object, such as a timer, a `fetch()` or another object. Awaiting `ctx.storage` is not such a wait, so this never loses an update:
+
+```ts
+async increment() {
+  const count = (await this.ctx.storage.get<number>("count")) ?? 0;
+  await this.ctx.storage.put("count", count + 1);
+}
+```
+
+`ctx.blockConcurrencyWhile(fn)` starts no other event until `fn`'s promise settles. Use it in the constructor to load state before the first event. An event that was already waiting on I/O when it was called still resumes when that I/O completes.
+
+## Storage
+
+`ctx.storage` is a SQLite database that only this object opens.
+
+```ts
+this.ctx.storage.kv.put("user", { name: "Ada", seen: new Date() }); // anything structuredClone() accepts
+this.ctx.storage.kv.get("user");
+for (const [key, value] of this.ctx.storage.kv.list({ prefix: "msg:" })) {
+}
+
+this.ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY, body TEXT)");
+this.ctx.storage.sql.exec("INSERT INTO messages (body) VALUES (?)", body);
+const recent = this.ctx.storage.sql.exec("SELECT * FROM messages ORDER BY id DESC LIMIT 10").toArray();
+```
+
+- Writes made without an `await` in between are committed together, and nothing the object returns leaves before they are.
+- `transactionSync(fn)` rolls back what `fn` wrote if it throws. A `sql.exec()` of several statements is all or nothing too; its bindings and its cursor are the last statement's.
+- A cursor reads its rows as you iterate. Rows you have not read are gone if the object is evicted first.
+- The promise-returning `get` / `put` / `delete` / `list` of Cloudflare's API are there too. `transaction(async txn => …)` buffers what `txn` writes and applies it, all or nothing, when the closure finishes.
+- `sql.exec()` cannot run `BEGIN` / `COMMIT` / `SAVEPOINT`, attach databases, or touch tables named `_cf_*`.
+- An object that stores nothing leaves no file.
+
+## Alarms
+
+```ts
+class Reminder extends Bun.DurableObject {
+  async schedule(at: Date) {
+    await this.ctx.storage.setAlarm(at);
+  }
+  async alarm(info) {
+    // runs at `at`, also if the object was evicted or the process restarted since
+  }
+}
+```
+
+An object has one alarm. If `alarm()` throws, it is called again with exponential backoff, up to six times. A pending alarm keeps the process running.
+
+## WebSockets
+
+An object accepts WebSockets from a `Bun.serve()` server. They stay connected while the object is evicted; a message starts it again.
+
+```ts
+class ChatRoom extends Bun.DurableObject {
+  fetch(request: Request, server: Bun.DurableObjectServer) {
+    const name = new URL(request.url).searchParams.get("name");
+    if (server.upgrade(request, { data: { name } })) return;
+    return new Response("expected a WebSocket", { status: 426 });
+  }
+  webSocketMessage(ws, message) {
+    for (const peer of this.ctx.getWebSockets()) peer.send(`${ws.data.name}: ${message}`);
+  }
+  webSocketClose(ws, code, reason) {}
+}
+
+const rooms = new Bun.DurableObjectNamespace({ class: ChatRoom });
+
+Bun.serve({
+  fetch: (request, server) => rooms.getByName("lobby").fetch(request, server),
+  websocket: Bun.DurableObject.websocket,
+});
+```
+
+The sockets are ordinary `ServerWebSocket`s: `ws.data`, `ws.subscribe()` and `server.publish()` work. `ctx.setWebSocketAutoResponse({ request: "ping", response: "pong" })` answers keep-alives without starting the object.
+
+## Eviction and reset
+
+An object with nothing to do for `idleTimeout` (at most twice that) is evicted: the instance is dropped and everything it opened is closed, like a terminated worker. That includes timers, sockets and servers. Its storage, alarm and WebSockets stay. Use an alarm, not `setTimeout`, for work that must happen later, and `ctx.waitUntil(promise)` to stay in memory until something finishes, such as a response that is still streaming.
+
+`ctx.abort(reason)` resets an object: calls in progress fail with `ERR_DURABLE_OBJECT_RESET`, uncommitted writes are rolled back, and the next call constructs it again. A `blockConcurrencyWhile()` that rejects does the same.
+
+## Notes
+
+- Objects of one namespace live in one process. There is no routing between processes or machines.
+- Every loaded object has a [`Bun.ModuleGraph`](/runtime/module-graph) of its own for timers and I/O. It is not a sandbox.
+- `WebSocketPair`, `ctx.storage.getCurrentBookmark()` and the other Cloudflare-platform APIs are not provided.

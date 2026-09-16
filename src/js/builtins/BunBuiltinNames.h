@@ -24,16 +24,23 @@ using namespace JSC;
 #define BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(macro) \
     macro($$typeof) \
     macro(AbortSignal) \
+    macro(alarm) \
     macro(Buffer) \
+    macro(ctx) \
     macro(ReadableByteStreamController) \
     macro(ReadableStream) \
     macro(ReadableStreamBYOBReader) \
     macro(ReadableStreamBYOBRequest) \
     macro(ReadableStreamDefaultController) \
     macro(ReadableStreamDefaultReader) \
+    macro(readyState) \
     macro(SQL) \
     macro(TransformStream) \
     macro(TransformStreamDefaultController) \
+    macro(webSocketClose) \
+    macro(webSocketDrain) \
+    macro(webSocketMessage) \
+    macro(webSocketOpen) \
     macro(WritableStream) \
     macro(WritableStreamDefaultController) \
     macro(WritableStreamDefaultWriter) \

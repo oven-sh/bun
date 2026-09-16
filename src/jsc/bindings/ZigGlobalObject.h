@@ -583,6 +583,7 @@ public:
     V(private, LazyClassStructure, m_JSStringDecoderClassStructure)                                          \
     V(private, LazyClassStructure, m_JSModuleGraphClassStructure)                                            \
     V(private, LazyPropertyOfGlobalObject<JSObject>, m_JSFFICStringConstructor)                              \
+    V(public, LazyPropertyOfGlobalObject<JSCell>, m_durableObjectRealm)                                      \
     V(public, LazyClassStructure, m_JSDatabaseSyncClassStructure)                                            \
     V(public, LazyClassStructure, m_JSStatementSyncClassStructure)                                           \
     V(public, LazyClassStructure, m_JSStatementSyncIteratorClassStructure)                                   \

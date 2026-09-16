@@ -266,7 +266,9 @@ JSModuleGraph* moduleGraphRejecting(Zig::GlobalObject* globalObject, JSPromise* 
         if (last && last->value() == promise->result())
             owner = moduleGraphOwningFrames(globalObject, last->stack());
     }
-    JSModuleGraph* graph = graphGivenErrorsOf(owner ? *owner : currentModuleGraph(globalObject));
+    JSModuleGraph* current = currentModuleGraph(globalObject);
+    // Host code (a null owner) running as a graph that takes the errors of its context is that graph's.
+    JSModuleGraph* graph = graphGivenErrorsOf(owner && (*owner || !(current && current->takesErrorsOfItsContext())) ? *owner : current);
     return graph && !graph->inOnError() ? graph : nullptr;
 }
 
@@ -323,7 +325,8 @@ extern "C" bool Bun__ModuleGraph__handleUncaughtException(JSGlobalObject* lexica
     if (!exception)
         return false;
     auto owner = moduleGraphOwningFrames(globalObject, exception->stack());
-    JSModuleGraph* graph = owner ? *owner : currentModuleGraph(globalObject);
+    JSModuleGraph* current = currentModuleGraph(globalObject);
+    JSModuleGraph* graph = owner && (*owner || !(current && current->takesErrorsOfItsContext())) ? *owner : current;
     return deliverToOnError(globalObject, graph, exception->value(), "uncaughtException"_s);
 }
 
@@ -889,6 +892,16 @@ JSC_HOST_CALL_ATTRIBUTES EncodedJSValue JSModuleGraphConstructor::construct(JSGl
     JSModuleLoader* loader = createModuleGraphLoader(globalObject, globals, overlayShape);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(JSModuleGraph::create(vm, globalObject, structure, loader, overlayShape, onError, currentModuleGraph(globalObject)));
+}
+
+JSModuleGraph* createModuleGraph(Zig::GlobalObject* globalObject, JSObject* globals, JSObject* onError)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    unsigned overlayShape = 0;
+    JSModuleLoader* loader = createModuleGraphLoader(globalObject, globals, overlayShape);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    return JSModuleGraph::create(vm, globalObject, globalObject->JSModuleGraphStructure(), loader, overlayShape, onError, currentModuleGraph(globalObject));
 }
 
 void initJSModuleGraphClassStructure(LazyClassStructure::Initializer& init)

@@ -43,8 +43,7 @@ static TranscodeEncoding parseTranscodeEncoding(const WTF::String& encoding)
 }
 
 // Decode the source bytes into well-formed UTF-16 for the pivot paths.
-// Returns false when the decoded string cannot be allocated. That includes
-// every source of 2^30 units or more: a WTF::Vector holds less than 2^31 bytes.
+// Returns false when the decoded string cannot be allocated.
 static bool transcodeDecodeToUtf16(std::span<const uint8_t> input, TranscodeEncoding fromEncoding, bool replaceTrailingOddByte, WTF::Vector<char16_t>& units)
 {
     const auto* data = reinterpret_cast<const char*>(input.data());
@@ -103,25 +102,22 @@ static bool transcodeDecodeToUtf16(std::span<const uint8_t> input, TranscodeEnco
 }
 
 // Encode well-formed UTF-16 into a single-byte encoding: code points above
-// maxCodePoint become '?', matching ICU's substitution behavior. Returns
-// nullptr with an exception pending when the result cannot be allocated.
+// maxCodePoint become '?', matching ICU's substitution behavior.
+// Returns nullptr with an exception pending when the result cannot be allocated.
 static JSC::JSUint8Array* transcodeEncodeNarrow(JSGlobalObject* globalObject, const WTF::Vector<char16_t>& units, char16_t maxCodePoint)
 {
-    // One byte per code point. `units` is well-formed, so a trail surrogate
-    // always follows its lead, and the lead writes the one '?' of the pair.
-    // simdutf::count_utf16le is not used: the substitution path applies this
-    // same test to the same units, so its writes stay inside the result even
-    // when simdutf selects its `unsupported` implementation, which returns 0.
-    size_t codePoints = 0;
+    // One byte per code point: the lead of a surrogate pair writes the '?' of the pair, and its trail writes nothing.
+    constexpr auto writesByte = [](char16_t unit) { return !U16_IS_TRAIL(unit); };
+    size_t length = 0;
     for (const char16_t unit : units)
-        codePoints += !U16_IS_TRAIL(unit);
-    auto* result = WebCore::createUninitializedBuffer(globalObject, codePoints);
+        length += writesByte(unit);
+    auto* result = WebCore::createUninitializedBuffer(globalObject, length);
     if (!result) [[unlikely]]
         return nullptr;
     const std::span<uint8_t> out = result->typedSpan();
 
     // Fast path: a latin1 target with in-range contents converts in bulk.
-    if (maxCodePoint == 0xFF && codePoints == units.size()) {
+    if (maxCodePoint == 0xFF && length == units.size()) {
         auto converted = simdutf::convert_utf16le_to_latin1_with_errors(units.begin(), units.size(), reinterpret_cast<char*>(out.data()));
         if (converted.error == simdutf::error_code::SUCCESS)
             return result;
@@ -130,9 +126,8 @@ static JSC::JSUint8Array* transcodeEncodeNarrow(JSGlobalObject* globalObject, co
     // code points ('?' in ICU) are handled per unit.
     size_t written = 0;
     for (const char16_t unit : units) {
-        if (U16_IS_TRAIL(unit))
-            continue;
-        out[written++] = unit <= maxCodePoint ? static_cast<uint8_t>(unit) : '?';
+        if (writesByte(unit))
+            out[written++] = unit <= maxCodePoint ? static_cast<uint8_t>(unit) : '?';
     }
     ASSERT(written == out.size());
     return result;
@@ -190,11 +185,7 @@ BUN_DEFINE_HOST_FUNCTION(jsBufferTranscode,
 
     int32_t errorCode = 0;
     ASCIILiteral errorName;
-    // Each path measures its output, then converts straight into the Buffer it
-    // returns. An allocation that fails, or that passes the limit of a Buffer or
-    // of a WTF::Vector, throws RangeError: Out of memory. Node differs: its ICU
-    // paths reject a source or target above INT32_MAX as U_ILLEGAL_ARGUMENT_ERROR
-    // (https://github.com/nodejs/node/blob/v26.3.0/src/node_i18n.cc#L158-L163).
+    // An allocation that fails throws RangeError: Out of memory. Node's ICU paths have an INT32_MAX limit and report U_ILLEGAL_ARGUMENT_ERROR: https://github.com/nodejs/node/blob/v26.3.0/src/node_i18n.cc#L158-L163
     JSC::JSUint8Array* result = nullptr;
 
     if (fromEncoding == TranscodeEncoding::Unsupported || toEncoding == TranscodeEncoding::Unsupported) {
@@ -214,10 +205,7 @@ BUN_DEFINE_HOST_FUNCTION(jsBufferTranscode,
         result = WebCore::createUninitializedBuffer(globalObject, expected * 2);
         RETURN_IF_EXCEPTION(scope, {});
         const size_t actual = simdutf::convert_utf8_to_utf16le(data, length, reinterpret_cast<char16_t*>(result->typedVector()));
-        // Valid UTF-8 fills the result exactly. A source in shared memory can
-        // change between the two passes, so any other count is a failure: a
-        // result with unwritten bytes is never returned. That does not bound
-        // the writes themselves, which need a source that cannot change.
+        // A shared source can change between the two passes. This keeps unwritten bytes out of the result; it does not bound the writes.
         if (actual == 0 || actual != expected) {
             errorCode = U_INVALID_CHAR_FOUND_ERRNO;
             errorName = "U_INVALID_CHAR_FOUND"_s;
@@ -236,8 +224,7 @@ BUN_DEFINE_HOST_FUNCTION(jsBufferTranscode,
         result = WebCore::createUninitializedBuffer(globalObject, expected);
         RETURN_IF_EXCEPTION(scope, {});
         const size_t actual = simdutf::convert_utf16le_to_utf8(sourceBuffer.begin(), lengthInChars, reinterpret_cast<char*>(result->typedVector()));
-        // `actual == 0` also fails a source of one byte, which has no units, as Node does:
-        // https://github.com/nodejs/node/blob/v26.3.0/src/node_i18n.cc#L249-L252
+        // Node also fails a source of one byte, which has no units: https://github.com/nodejs/node/blob/v26.3.0/src/node_i18n.cc#L249-L252
         if (actual == 0 || actual != expected) {
             errorCode = U_INVALID_CHAR_FOUND_ERRNO;
             errorName = "U_INVALID_CHAR_FOUND"_s;

@@ -8618,7 +8618,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         let module_path = self.new_expr(
-            E::String::init(if self.options.jsx.development {
+            // Not `jsx.development`: a `@jsxRuntime` pragma in the file changes it.
+            E::String::init(if self.options.features.hot_module_reloading {
                 self.source.path.pretty
             } else {
                 bun_core::todo_panic!("unique_key here")

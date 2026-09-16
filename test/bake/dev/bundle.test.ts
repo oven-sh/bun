@@ -517,6 +517,28 @@ for (const separateSSRGraph of [true, false]) {
     },
   });
 }
+// The module id of a client reference depends on whether the dev server runs
+// the build. The parser used to read the JSX mode for that, which a pragma in
+// the file changes, and the other branch is a TODO that aborts the process.
+devTest('"use client" module with a @jsxRuntime pragma', {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": `
+      import { Comp } from '../client';
+      export default function (req, meta) {
+        return Response.json(Comp);
+      }
+    `,
+    "client.ts": `
+      "use client";
+      // @jsxRuntime react-jsx
+      export const Comp = 1;
+    `,
+  },
+  async test(dev) {
+    expect(await dev.fetch("/").json()).toEqual({ value: 1, file: "client.ts", uid: "Comp" });
+  },
+});
 // A directive is JavaScript syntax. A file that another loader reads is not a
 // server component boundary, whatever its first bytes are. The "use server"
 // text file used to abort the process at the same TODO in the bundler, and the

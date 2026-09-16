@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 
 // Every option here is declared as `string` or `boolean` in bake.d.ts. A value
 // of another type must throw ERR_INVALID_ARG_TYPE from Bun.serve, before any
@@ -154,53 +154,80 @@ describe("a directory that does not fit a path buffer is an error", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.concurrent("FrameworkRouter of bun:internal-for-testing: root", async () => {
+  // Every entry point above shares one resolver, so one entry point pins its limit.
+  test.concurrent("FrameworkRouter of bun:internal-for-testing: root, at and past the limit", async () => {
+    using dir = tempDir("bake-long-dir-limit", {});
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         `
           const { FrameworkRouter } = require("bun:internal-for-testing").frameworkRouterInternals;
-          try {
-            new FrameworkRouter({ root: Buffer.alloc(100_000, "a").toString(), style: "nextjs-pages" });
-            console.log("no error");
-          } catch (e) {
-            console.log(e.message);
-          }
+          const attempt = length => {
+            try {
+              new FrameworkRouter({ root: Buffer.alloc(length, "a").toString(), style: "nextjs-pages" });
+              return "accepted";
+            } catch (e) {
+              return e.message;
+            }
+          };
+          const farPast = attempt(100_000);
+          const limit = Number(/shorter than (\\d+) bytes/.exec(farPast)[1]);
+          // The root is joined to the working directory with one separator.
+          const longest = limit - 1 - Buffer.byteLength(process.cwd()) - 1;
+          console.log(JSON.stringify({ farPast, atLimit: attempt(longest), onePast: attempt(longest + 1) }));
         `,
       ],
       env: bunEnv,
+      cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(withoutLimit(stdout)).toBe("options.root must resolve to a path shorter than N bytes\n");
+    const rejected = "options.root must resolve to a path shorter than N bytes";
     expect(stderr).toBe("");
+    expect(JSON.parse(withoutLimit(stdout))).toEqual({ farPast: rejected, atLimit: "accepted", onePast: rejected });
     expect(exitCode).toBe(0);
   });
 
-  test.concurrent("bun build --app: fileSystemRouterTypes[0].root", async () => {
+  const buildApp = async (rootLength: number) => {
     using dir = tempDir("bake-long-dir-build", {
       ...appFiles,
       "app.ts": `
-        const long = Buffer.alloc(100_000, "a").toString();
+        const long = Buffer.alloc(${rootLength}, "a").toString();
         export default { app: { framework: { fileSystemRouterTypes: [{ ...${fsr}, root: long }] } } };
       `,
     });
     await using proc = Bun.spawn({
       cmd: [bunExe(), "build", "--app", "./app.ts"],
-      // `bun build --app` fails exception validation while it loads any config (#41185).
-      env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "0" },
+      // CI runs production.test.ts the same way: `bun build --app` fails exception validation while it
+      // loads any config (#41185), and its leak check at exit takes about 5 s on an ASAN build.
+      env: {
+        ...bunEnv,
+        BUN_JSC_validateExceptionChecks: "0",
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+      },
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr: withoutLimit(stderr), exitCode };
+  };
 
-    expect(withoutLimit(stderr)).toEndWith(
-      routerRootError + "error: Failed to resolve all imports required by the framework\n",
-    );
+  test.concurrent("bun build --app: fileSystemRouterTypes[0].root", async () => {
+    const { stdout, stderr, exitCode } = await buildApp(100_000);
+    expect(stderr).toEndWith(routerRootError + "error: Failed to resolve all imports required by the framework\n");
+    expect(stdout).toBe("");
     expect(exitCode).toBe(1);
+  });
+
+  // 5,000 bytes fit a path buffer on Windows only. There the root is a directory that does not exist.
+  test.concurrent.skipIf(!isWindows)("bun build --app: a root between 4096 bytes and the limit", async () => {
+    const { stdout, stderr, exitCode } = await buildApp(5_000);
+    expect(stderr).toEndWith("Bundling routes\n");
+    expect(stdout).toBe("done\n");
+    expect(exitCode).toBe(0);
   });
 });

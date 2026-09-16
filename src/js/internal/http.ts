@@ -1,6 +1,6 @@
 const { isIPv4 } = require("internal/net/isIP");
 
-const { setServerCustomOptions, setServerAppFlags, drainMicrotasks } = $cpp(
+const { setServerCustomOptions, setServerAppFlags, setServerMaxHeadersCount, drainMicrotasks } = $cpp(
   "NodeHTTP.cpp",
   "createNodeHTTPInternalBinding",
 ) as {
@@ -20,6 +20,7 @@ const { setServerCustomOptions, setServerAppFlags, drainMicrotasks } = $cpp(
     lenientHttpFlags: number,
     httpAllowHalfOpen: boolean,
   ) => void;
+  setServerMaxHeadersCount: (server: any, maxHeadersCount: number) => void;
   drainMicrotasks: () => void;
 };
 
@@ -131,15 +132,8 @@ function emitEOFIncomingMessageOuter(self) {
   if (self[kHandle] !== undefined && !self[noBodySymbol]) {
     // The lenient (insecureHTTPParser) value bytes must match what the parser
     // accepted on the wire, or a CTL byte in a trailer value would vanish here.
-    let rawTrailers = self[kHandle].takeRequestTrailers(self.socket?.server?.insecureHTTPParser === true);
+    const rawTrailers = self[kHandle].takeRequestTrailers(self.socket?.server?.insecureHTTPParser === true);
     if (rawTrailers !== undefined) {
-      // Apply server.maxHeadersCount to trailers like Node's parserOnHeaders
-      // does (the same maxHeaderPairs limit covers both). The parser hard-caps
-      // at 199 fields; Node's C++ imposes no count limit, only this JS clamp.
-      const maxHeadersCount = self.socket?.server?.maxHeadersCount;
-      if (typeof maxHeadersCount === "number" && maxHeadersCount > 0 && rawTrailers.length > maxHeadersCount * 2) {
-        rawTrailers.length = maxHeadersCount * 2;
-      }
       self._addHeaderLines(rawTrailers, rawTrailers.length);
     }
   }
@@ -538,6 +532,7 @@ export {
   setMaxHTTPHeaderSize,
   setServerAppFlags,
   setServerCustomOptions,
+  setServerMaxHeadersCount,
   tlsSymbol,
   typeSymbol,
   utcDate,

@@ -36,6 +36,7 @@ test.each([
   ["-n-5", "-n-5"],
   ["+n-7", "n-7"],
 ])(":nth-child(%s) creates no allocator heap per selector", (arg, printed) => {
+  // `heaps.total` counts `mi_heap_new()` calls. A thread that starts adds to `theaps`, not to `heaps`.
   const heapsCreatedByRules = (count: number) => {
     const rules = (arg: string, separator: string) =>
       Array.from({ length: count }, (_, i) => `.a${i}:nth-child(${arg}){width:${i + 1}px}`).join(separator);

@@ -430,6 +430,7 @@ it("reload() works with new dirs/files", () => {
 
 it("the constructor and reload() create no allocator heap", () => {
   const { dir } = make(["index.tsx", "posts/[id].tsx"]);
+  // `heaps.total` counts `mi_heap_new()` calls. A thread that starts adds to `theaps`, not to `heaps`.
   const heapsCreatedBy = (fn: () => void) => {
     const before = heapStats().mimalloc.heaps.total;
     for (let i = 0; i < 50; i++) fn();

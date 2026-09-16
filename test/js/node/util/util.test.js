@@ -450,6 +450,29 @@ describe("util", () => {
       expect(util.stripVTControlCharacters("\u2603 abc\u001b")).toBe("\u2603 abc\u001b");
     });
 
+    it("does not call a replaced RegExp.prototype[Symbol.replace]", async () => {
+      const script = `
+        const util = require("node:util");
+        const original = RegExp.prototype[Symbol.replace];
+        let calls = 0;
+        const before = util.stripVTControlCharacters("\\x1b[31mred\\x1b[0m");
+        RegExp.prototype[Symbol.replace] = function (...args) {
+          calls++;
+          return original.apply(this, args);
+        };
+        const after = util.stripVTControlCharacters("\\x1b[31mred\\x1b[0m");
+        RegExp.prototype[Symbol.replace] = original;
+        console.log(JSON.stringify({ before, after, calls }));
+      `;
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+        stdout: JSON.stringify({ before: "red", after: "red", calls: 0 }),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
     it("strips the sequences after a long run of prefix characters", () => {
       // The RegExp before nodejs/node#64319 rescanned the rest of "\x1b;?;?;?..." from every ';'.
       // JavaScriptCore stops a match that backtracks that much and reports no match, which left

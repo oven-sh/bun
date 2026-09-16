@@ -2757,6 +2757,9 @@ function getAnsiRegExp() {
 // For $call: the bound function uncurryThis() returns costs more per call than these do.
 const StringPrototypeIndexOfUnbound = String.prototype.indexOf;
 const StringPrototypeReplaceUnbound = String.prototype.replace;
+const RegExpPrototype = RegExp.prototype;
+const SymbolReplace = Symbol.replace;
+const RegExpPrototypeSymbolReplaceUnbound = RegExpPrototype[SymbolReplace];
 
 function stripVTControlCharacters(str) {
   if (typeof str !== "string") throw $ERR_INVALID_ARG_TYPE("str", "string", str);
@@ -2767,8 +2770,11 @@ function stripVTControlCharacters(str) {
   ) {
     return str;
   }
-  // Not RegExpPrototypeSymbolReplace as in node: JavaScriptCore has no fast path for it.
-  return StringPrototypeReplaceUnbound.$call(str, getAnsiRegExp(), "");
+  // JavaScriptCore has its fast path in String.prototype.replace, which calls regexp[Symbol.replace].
+  if (RegExpPrototype[SymbolReplace] === RegExpPrototypeSymbolReplaceUnbound) {
+    return StringPrototypeReplaceUnbound.$call(str, getAnsiRegExp(), "");
+  }
+  return RegExpPrototypeSymbolReplaceUnbound.$call(getAnsiRegExp(), str, "");
 }
 
 // utils

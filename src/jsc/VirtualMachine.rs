@@ -94,10 +94,6 @@ pub struct InitOptions {
     /// reuses the caller's env loader.
     pub env_loader: Option<NonNull<bun_dotenv::Loader>>,
     pub graph: Option<&'static dyn bun_resolver::StandaloneModuleGraph>,
-    /// Must be applied to
-    /// `transpiler.resolver.store_fd` BEFORE `configure_linker()` reads
-    /// `top_level_dir`, so it threads through `init_runtime_state`.
-    pub store_fd: bool,
     pub smol: bool,
     pub eval_mode: bool,
     pub is_main_thread: bool,
@@ -122,7 +118,6 @@ impl Default for InitOptions {
             log: None,
             env_loader: None,
             graph: None,
-            store_fd: false,
             smol: false,
             eval_mode: false,
             is_main_thread: false,
@@ -3941,7 +3936,6 @@ pub struct Options {
     // BORROW_PARAM (`&'a mut bun_dotenv::Loader`) — caller-owned; the loader
     // outlives the VM, so the inner lifetime is erased to `'static`.
     pub env_loader: Option<NonNull<bun_dotenv::Loader>>,
-    pub store_fd: bool,
     pub smol: bool,
     // LAYERING: real type is `bun_runtime::dns_jsc::Order` (forward
     // dep); stored as its `u8` repr.
@@ -4751,7 +4745,6 @@ impl VirtualMachine {
         vm_ref.let_heap_take_initial_module_graph(graph);
         // Avoid reading from tsconfig.json & package.json when in standalone mode
         vm_ref.transpiler.configure_linker_with_auto_jsx(false);
-        vm_ref.transpiler.resolver.store_fd = false;
         IS_SMOL_MODE.store(opts.smol, core::sync::atomic::Ordering::Relaxed);
         Ok(vm)
     }
@@ -4769,7 +4762,6 @@ impl VirtualMachine {
             graph: opts.graph,
             log: opts.log,
             env_loader: opts.env_loader,
-            store_fd: opts.store_fd,
             smol: opts.smol,
             eval_mode: opts.eval,
             is_main_thread: false,
@@ -4797,7 +4789,6 @@ impl VirtualMachine {
         vm_ref.transpiler.resolver.standalone_module_graph = opts.graph;
         vm_ref.hot_reload = worker.hot_reload();
         vm_ref.initial_script_execution_context_identifier = worker.execution_context_id() as i32;
-        vm_ref.transpiler.resolver.store_fd = opts.store_fd;
         if opts.graph.is_none() {
             vm_ref.transpiler.configure_linker();
         } else {

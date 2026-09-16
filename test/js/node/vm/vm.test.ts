@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isWindows, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import { totalmem } from "node:os";
 import {
   compileFunction,
@@ -1036,6 +1036,83 @@ test("SourceTextModule accepts the cachedData it produced", () => {
   expect(() => new SourceTextModule("export default 2;", { identifier: "m", cachedData })).toThrow(
     expect.objectContaining({ code: "ERR_VM_MODULE_CACHED_DATA_REJECTED" }),
   );
+});
+
+// Several SourceTextModules with one identifier and one source text are several records of the same module. Each reads
+// the bindings of the module it was linked to, whatever that module's text is, including from functions that were
+// already hot when the next record was made.
+test.each([
+  ["the main context", false],
+  ["a new context", true],
+])(
+  "SourceTextModules with the same identifier and source keep their own import bindings in %s",
+  async (_, inNewContext) => {
+    const context = inNewContext ? createContext({}) : undefined;
+    const importerSource = `
+      import { x, shape, bump as bumpDep } from "dep";
+      export function read() { return [x, shape].join(); }
+      export function loop(n) { let r; for (let i = 0; i < n; i++) r = read(); return r; }
+      export function bump() { bumpDep(); }
+    `;
+    const dep1 = `export let x = 0; export const shape = 1; export function bump() { x++; }`;
+    // The same names at other places in the module's environment.
+    const dep2 = `export let w = "w"; export let x = 100; export const shape = 2; export function bump() { x++; }`;
+    const make = async (depSource: string) => {
+      const dep = new SourceTextModule(depSource, { identifier: "dep", context });
+      const importer = new SourceTextModule(importerSource, { identifier: "importer", context });
+      await importer.link(() => dep);
+      await importer.evaluate();
+      return importer.namespace as { read(): string; loop(n: number): string; bump(): void };
+    };
+    const a = await make(dep1);
+    const before = a.loop(20000);
+    const b = await make(dep1);
+    const c = await make(dep2);
+    const d = await make(dep2);
+    const e = await make(dep1);
+    b.bump();
+    c.bump();
+    c.bump();
+    d.bump();
+    d.bump();
+    d.bump();
+    expect([before, ...[a, b, c, d, e].map(m => m.loop(20000))]).toEqual([
+      "0,1",
+      "0,1",
+      "1,1",
+      "102,2",
+      "103,2",
+      "0,1",
+    ]);
+  },
+);
+
+// NodeVMSourceTextModule::createModuleRecord pairs import declarations with requestedModules() by position, but JSC lists
+// a specifier once however many declarations name it: builds with assertions enabled abort on "More attributes nodes
+// than requests" (other builds go on, with the attributes lined up by that position). In a subprocess, since the abort
+// would take the test runner with it.
+test.todoIf(isDebug || isASAN)("SourceTextModule with several import declarations for one specifier", async () => {
+  const script = `
+    const { SourceTextModule } = require("node:vm");
+    (async () => {
+      const dep = new SourceTextModule("export let x = 1; export function bump() { x++; }", { identifier: "dep" });
+      const importer = new SourceTextModule(
+        'import { x } from "dep"; import * as ns from "dep"; export { bump } from "dep"; export const read = () => [x, ns.x].join();',
+        { identifier: "importer" },
+      );
+      await importer.link(() => dep);
+      await importer.evaluate();
+      importer.namespace.bump();
+      console.log(importer.namespace.read(), JSON.stringify(importer.moduleRequests));
+    })();
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr: stderr.trim() }).toEqual({
+    stdout: '2,2 [{"specifier":"dep","attributes":{},"phase":"evaluation"}]',
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
 });
 
 // JSC decodes a code block's function bodies one at a time, the first time each body runs,

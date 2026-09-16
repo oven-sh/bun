@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import url from "node:url";
 
 const pairs = [
@@ -99,4 +100,87 @@ describe("url.domainToUnicode", () => {
       expect(url.domainToASCII(input)).toEqual(expected);
     });
   }
+});
+
+describe("url.domainToUnicode with many xn-- labels", () => {
+  // The conversion runs once per xn-- label. The whole-name ICU conversion
+  // moves the rest of the name for each decoded label, which is quadratic.
+  test("takes linear time in the number of xn-- labels", () => {
+    const labels = 65536;
+    const host = Buffer.alloc(labels * 8, "xn--nxa.").toString() + "com";
+    const start = performance.now();
+    const unicode = url.domainToUnicode(host);
+    const elapsed = performance.now() - start;
+    expect(unicode).toBe(Buffer.alloc(labels * 3, "β.").toString() + "com");
+    expect(elapsed).toBeLessThan(5000);
+  });
+
+  // The per-label conversion must give the same output as the whole-name
+  // conversion that internalBinding("icu").toUnicode still runs.
+  test("matches the whole-name ICU conversion", async () => {
+    const inputs = [
+      "xn--nxa.xn--nxa.xn--nxa.com",
+      "xn--nxa..xn--nxa",
+      "xn--nxa.",
+      ".xn--nxa",
+      "xn--nxa.xn--",
+      "xn--nxa.xn--abc-",
+      "xn--nxa-",
+      "xn--nxa.ab--cd",
+      "xn--nxa.-ab.ab-",
+      "XN--NXA.Com",
+      "xn--zca.xn--zca",
+      "xn--mgbh0fb.xn--nxa",
+      "xn--4dbklr2c8d.xn--4dbrk0ce.museum",
+      "xn--mgba3a4fra.xn--fiqs8s.xn--h2brj9c",
+      "xn--ls8h.xn--nxa",
+      "xn--1ug.xn--nxa",
+      "xn--nxa.xn--1ug",
+      "xn--9ca.xn--nxa",
+      "xn--n3h.xn--nxa",
+      "xn--a.b",
+      "xn--nxa." + "xn--80aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "xn--nxa.xn--nxa.1.2.3.4",
+      "xn--nxa.0x7f.1",
+      "[::1]",
+      "ß.β.xn--nxa",
+      "xn--nxa.xn--abc.xn--nxa",
+      "xn--nxa.xn--fffd.xn--nxa",
+      "xn--nxa.xn--\u0000.xn--nxa",
+      "xn--nxa.xn--%41.xn--nxa",
+      "xn--nxa_.xn--nxa",
+      "xn--nxa.xn--nxa/path",
+      "xn--nxa.xn--nxa?query",
+    ];
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "--expose-internals",
+        "-e",
+        `
+          const url = require("node:url");
+          const { internalBinding } = require("internal/test/binding");
+          const icu = internalBinding("icu");
+          const inputs = JSON.parse(process.argv[1]);
+          const rows = inputs.map(input => {
+            const ascii = url.domainToASCII(input);
+            return [input, url.domainToUnicode(input), ascii === "" ? "" : icu.toUnicode(ascii)];
+          });
+          console.log(JSON.stringify(rows));
+        `,
+        JSON.stringify(inputs),
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    const rows = JSON.parse(stdout);
+    expect(rows).toHaveLength(inputs.length);
+    expect(rows.filter(([, , oracle]) => oracle !== "").length).toBeGreaterThan(15);
+    expect(rows.map(([input, perLabel]) => [input, perLabel])).toEqual(
+      rows.map(([input, , oracle]) => [input, oracle]),
+    );
+  });
 });

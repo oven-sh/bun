@@ -967,3 +967,104 @@ devTest("request rejected with 413 before it is parked does not leave the route 
     await dev.fetch("/about").equals("about");
   },
 });
+// Sends only the headers of an oversized POST and resolves with the raw response. No body is sent, so the close
+// that follows the 413 cannot reach the client as a reset.
+function postOversizedBody(port: number, pathname: string): Promise<string> {
+  const { promise, resolve, reject } = Promise.withResolvers<string>();
+  let response = "";
+  const socket = net.connect(port, "127.0.0.1", () => {
+    socket.write(`POST ${pathname} HTTP/1.1\r\nHost: localhost:${port}\r\nContent-Length: 999999\r\n\r\n`);
+  });
+  socket.setEncoding("utf8");
+  socket.on("data", chunk => (response += chunk));
+  socket.on("close", () => resolve(response));
+  socket.on("error", reject);
+  return promise;
+}
+// The same 413, but it arrives while another bundle runs. The route must not go to the next bundle's queue: that
+// bundle would set it to the bundling state with nothing parked for it, and no bundle ever settles it.
+devTest("request rejected with 413 while another bundle runs does not queue the route", {
+  files: {
+    "bun.app.ts": `
+      const gate = Promise.withResolvers();
+      export default {
+        maxRequestBodySize: 1024,
+        app: {
+          framework: ${JSON.stringify(minimalFramework)},
+          plugins: [
+            {
+              name: "gate",
+              setup(build) {
+                // Holds the bundle of "/" open until the test requests /open-gate.
+                build.onLoad({ filter: /gate\\.ts$/ }, async () => {
+                  console.log("gate entered");
+                  await gate.promise;
+                  return { contents: "export default 'open';", loader: "ts" };
+                });
+              },
+            },
+          ],
+        },
+        routes: {
+          "/open-gate": () => (gate.resolve(), new Response("open")),
+        },
+      };
+    `,
+    "gate.ts": `export default "closed";`,
+    "routes/index.ts": `
+      import gate from "../gate.ts";
+      export default () => new Response("index " + gate);
+    `,
+    "routes/about.ts": `export default () => new Response("about");`,
+    "routes/other.ts": `export default () => new Response("other");`,
+  },
+  async test(dev) {
+    const index = dev.fetch("/");
+    await dev.output.waitForLine(/gate entered/);
+    // The next bundle starts only when a request is parked for it, and it takes every queued route.
+    const other = dev.fetch("/other");
+    expect(await postOversizedBody(dev.port, "/about")).toStartWith("HTTP/1.1 413 ");
+    await dev.fetch("/open-gate").equals("open");
+    await index.equals("index open");
+    await other.equals("other");
+    await dev.fetch("/about").equals("about");
+  },
+});
+// The same 413, but it arrives while the [serve.static] plugins load, which also sends routes to the next bundle.
+devTest("request rejected with 413 while plugins load does not queue the route", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./gate-plugin.ts"]
+    `,
+    "gate-plugin.ts": `
+      export default {
+        name: "gate",
+        // Keeps the plugins pending until the test requests /open-gate.
+        async setup() {
+          await gate.promise;
+        },
+      };
+    `,
+    "bun.app.ts": `
+      globalThis.gate = Promise.withResolvers();
+      export default {
+        maxRequestBodySize: 1024,
+        app: { framework: ${JSON.stringify(minimalFramework)} },
+        routes: {
+          "/open-gate": () => (gate.resolve(), new Response("open")),
+        },
+      };
+    `,
+    "routes/index.ts": `export default () => new Response("index");`,
+    "routes/other.ts": `export default () => new Response("other");`,
+  },
+  async test(dev) {
+    expect(await postOversizedBody(dev.port, "/")).toStartWith("HTTP/1.1 413 ");
+    // The bundle after the plugin load starts only when a request is parked for it, and it takes every queued route.
+    const other = dev.fetch("/other");
+    await dev.fetch("/open-gate").equals("open");
+    await other.equals("other");
+    await dev.fetch("/").equals("index");
+  },
+});

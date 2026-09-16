@@ -25,6 +25,8 @@ pub struct WindowsWatcher {
     /// A zero byte completion was seen and the resync has not run yet.
     pub(crate) pending_resync: bool,
     pub(crate) last_resync: Option<std::time::Instant>,
+    /// The packet of a read into `watcher.buf` has not been dequeued from `iocp` yet.
+    read_pending: bool,
 }
 
 impl Default for WindowsWatcher {
@@ -40,6 +42,7 @@ impl Default for WindowsWatcher {
             base_idx: 0,
             pending_resync: false,
             last_resync: None,
+            read_pending: false,
         }
     }
 }
@@ -297,9 +300,19 @@ impl WindowsWatcher {
         Ok(())
     }
 
+    /// One read at a time: the dequeue of an older packet overwrites a newer read's records.
+    fn arm(&mut self) -> bun_sys::Result<()> {
+        if self.read_pending {
+            return Ok(());
+        }
+        self.watcher.prepare()?;
+        self.read_pending = true;
+        Ok(())
+    }
+
     /// wait until new events are available
     fn next(&mut self, timeout: Timeout) -> bun_sys::Result<Next> {
-        if let Err(err) = self.watcher.prepare() {
+        if let Err(err) = self.arm() {
             bun_core::scoped_log!(watcher, "prepare() returned error");
             return Err(err);
         }
@@ -318,6 +331,10 @@ impl WindowsWatcher {
                     timeout as w::DWORD,
                 )
             };
+            if overlapped == &raw mut self.watcher.overlapped {
+                // The packet of the read is off the port, whether the read succeeded or not.
+                self.read_pending = false;
+            }
             if rc == 0 {
                 let err = w::Win32Error::get();
                 // `WAIT_TIMEOUT` (258) — not yet a named const on `bun_sys::windows::Win32Error`.

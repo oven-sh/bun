@@ -1,6 +1,6 @@
 import { escapeHTML } from "bun" assert { type: "macro" };
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import defaultMacro, {
@@ -579,9 +579,8 @@ describe("a macro that runs beneath require() of an ES module", () => {
   // importer.ts has started to load shared.ts and node:path when the macro's module asks for them, so
   // the macro's load completes them, and importer.ts's own continuation for each runs inside the
   // macro's wait, while JSModuleLoader::innerModuleLoading still iterates importer.ts's requests up
-  // the stack. A debug-only assertion in that loop's bookkeeping does not expect that
-  // (oven-sh/WebKit#363 and oven-sh/WebKit#396 remove it).
-  test.todoIf(isDebug || isASAN)("with modules that the require() already started to load", async () => {
+  // the stack.
+  test("with modules that the require() already started to load", async () => {
     const { lines, stderr, exitCode } = await run({
       "shared.ts": `globalThis.evaluations = (globalThis.evaluations ?? 0) + 1;\nexport const shared = "shared";\n`,
       "m.ts": [
@@ -604,10 +603,10 @@ describe("a macro that runs beneath require() of an ES module", () => {
     expect(exitCode).toBe(0);
   });
 
-  // The macro's entry module loads the macro's file with import(). When the require()'s graph already
-  // holds that file, the import() waits on the file's own fetch or load promise. Only the require()'s
-  // queue can settle that promise, so the macro's wait still spins. 1.3.13 runs both shapes.
-  test.todo("with the macro's file imported earlier by the same module", async () => {
+  // The macro's entry module loads the macro's file with import(). In the tests below the require()'s
+  // graph already holds that file, and what would settle the file's own fetch or load promise is
+  // parked in the require()'s queue. The import() must not wait for that promise.
+  test("with the macro's file imported earlier by the same module", async () => {
     const { lines, stderr, exitCode } = await run({
       "m.ts": macro + `export const helper = "helper";\n`,
       "with-macro.ts": withMacro,
@@ -622,7 +621,30 @@ describe("a macro that runs beneath require() of an ES module", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.todo("with the macro's file imported earlier by an ancestor", async () => {
+  // The macro's import() completes importer.ts's request for m.ts while importer.ts's request for
+  // with-macro.ts is in progress. The failure of the second request must still fail the require().
+  test("a macro that fails, with the macro's file imported earlier by the same module", async () => {
+    const { lines, stderr, exitCode } = await run({
+      "m.ts": [
+        `export function value() {`,
+        `  console.log("macro ran");`,
+        `  throw new Error("macro threw");`,
+        `}`,
+        `export const helper = "helper";`,
+      ].join("\n"),
+      "with-macro.ts": withMacro,
+      "importer.ts": [
+        `import { helper } from "./m.ts";`,
+        `import { inlined } from "./with-macro.ts";`,
+        `export const seen = inlined + "!" + helper;`,
+      ].join("\n"),
+      "index.ts": index,
+    });
+    expect(stderr).toContain("with-macro.ts:2:24");
+    expect({ lines, exitCode }).toEqual({ lines: ["macro ran"], exitCode: 1 });
+  });
+
+  test("with the macro's file imported earlier by an ancestor", async () => {
     const { lines, stderr, exitCode } = await run({
       "m.ts": macro + `export const helper = "helper";\n`,
       "with-macro.ts": withMacro,
@@ -635,6 +657,122 @@ describe("a macro that runs beneath require() of an ES module", () => {
       "index.ts": index,
     });
     expect({ lines, stderr }).toEqual({ lines: ["from-macro!helper"], stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  // Each macro function has its own entry module, so the file is imported once per function. The
+  // second import() finds the file in the list of modules that the realm already loaded.
+  test("with two macros from a file that an ancestor imported earlier", async () => {
+    const { lines, stderr, exitCode } = await run({
+      "m.ts": macro + `export function other() {\n  return "other-macro";\n}\nexport const helper = "helper";\n`,
+      "with-macro.ts": [
+        `import { value, other } from "./m.ts" with { type: "macro" };`,
+        `export const inlined = value() + "+" + other();`,
+      ].join("\n"),
+      "child.ts": `import { inlined } from "./with-macro.ts";\nexport const child = inlined + "!";\n`,
+      "importer.ts": [
+        `import { helper } from "./m.ts";`,
+        `import { child } from "./child.ts";`,
+        `export const seen = child + helper;`,
+      ].join("\n"),
+      "index.ts": index,
+    });
+    expect({ lines, stderr }).toEqual({ lines: ["from-macro+other-macro!helper"], stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  test("with a macro from a builtin module that the same module imported earlier", async () => {
+    const { lines, stderr, exitCode } = await run({
+      "with-macro.ts": [
+        `import { basename } from "node:path" with { type: "macro" };`,
+        `export const inlined = basename("/a/from-macro");`,
+      ].join("\n"),
+      "importer.ts": [
+        `import { sep } from "node:path";`,
+        `import { inlined } from "./with-macro.ts";`,
+        `export const seen = inlined + "!" + typeof sep;`,
+      ].join("\n"),
+      "index.ts": index,
+    });
+    expect({ lines, stderr }).toEqual({ lines: ["from-macro!string"], stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  // A macro's module is transpiled without macro expansion. The require() has already transpiled
+  // m.ts and shared.ts for the program, with their own macro calls inlined, and that source has to
+  // stay the one that the program runs. A second transpile for the macro must not replace it.
+  const two = `export function two() {\n  return { a: 2 };\n}\n`;
+
+  test("with a macro's file that calls a macro itself, imported earlier by the same module", async () => {
+    const { lines, stderr, exitCode } = await run({
+      "two.ts": two,
+      "m.ts": [
+        `import { two } from "./two.ts" with { type: "macro" };`,
+        `export const helper = two();`,
+        `export function value() {`,
+        `  return "from-macro";`,
+        `}`,
+      ].join("\n"),
+      "with-macro.ts": withMacro,
+      "importer.ts": [
+        `import { helper } from "./m.ts";`,
+        `import { inlined } from "./with-macro.ts";`,
+        `export const seen = inlined + "!" + JSON.stringify(helper);`,
+      ].join("\n"),
+      "index.ts": index,
+    });
+    expect({ lines, stderr }).toEqual({ lines: [`from-macro!{"a":2}`], stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  test("with a module that calls a macro, requested earlier, that the macro's module imports", async () => {
+    const { lines, stderr, exitCode } = await run({
+      "two.ts": two,
+      "shared.ts": `import { two } from "./two.ts" with { type: "macro" };\nexport const shared = two();\n`,
+      "m.ts": `import { shared } from "./shared.ts";\nexport function value() {\n  return "from-macro:" + shared.a;\n}\n`,
+      "with-macro.ts": withMacro,
+      "importer.ts": [
+        `import { shared } from "./shared.ts";`,
+        `import { inlined } from "./with-macro.ts";`,
+        `export const seen = inlined + "!" + JSON.stringify(shared);`,
+      ].join("\n"),
+      "index.ts": index,
+    });
+    expect({ lines, stderr }).toEqual({ lines: [`from-macro:2!{"a":2}`], stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  // The second request for shared.ts must not transpile it a second time.
+  test("a module that two siblings import runs its macro once", async () => {
+    const { lines, stderr, exitCode } = await run({
+      "count.ts": `let calls = 0;\nexport function count() {\n  return ++calls;\n}\n`,
+      "shared.ts": `import { count } from "./count.ts" with { type: "macro" };\nexport const calls = count();\n`,
+      "a.ts": `import { calls } from "./shared.ts";\nexport const a = calls;\n`,
+      "b.ts": `import { calls } from "./shared.ts";\nexport const b = calls;\n`,
+      "importer.ts": `import { a } from "./a.ts";\nimport { b } from "./b.ts";\nexport const seen = a + " " + b;\n`,
+      "index.ts": index,
+    });
+    expect({ lines, stderr }).toEqual({ lines: ["1 1"], stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  // A require() in the macro is a graph load of its own. It links when the load promise of shared.ts
+  // is fulfilled, and what fulfills that promise is parked in the outer require()'s queue, so the
+  // require() reports shared.ts as an async module. 1.3.13 runs this.
+  test.todo("a macro that require()s a module that the require() already started to load", async () => {
+    const { lines, stderr, exitCode } = await run({
+      "shared.ts": `export const shared = "shared";\n`,
+      "m.ts": `export function value() {\n  return "from-macro:" + import.meta.require("./shared.ts").shared;\n}\n`,
+      "with-macro.ts": withMacro,
+      "child.ts": `import { inlined } from "./with-macro.ts";\nexport const child = inlined + "!";\n`,
+      "importer.ts": [
+        `import { shared } from "./shared.ts";`,
+        `import { child } from "./child.ts";`,
+        `export const seen = child + shared;`,
+      ].join("\n"),
+      "index.ts": index,
+    });
+    expect({ lines, stderr }).toEqual({ lines: ["from-macro:shared!shared"], stderr: "" });
     expect(exitCode).toBe(0);
   });
 });

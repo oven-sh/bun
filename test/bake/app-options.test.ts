@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 // Every option here is declared as `string` or `boolean` in bake.d.ts. A value
@@ -89,6 +89,22 @@ describe.concurrent("Bun.serve({ app }) with a plugin setup() that returns a pen
         fileSystemRouterTypes: [{ root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts" }],
       };
       export const nextTurn = () => new Promise<void>(resolve => setImmediate(resolve));
+      // The fixtures settle a setup() promise after Bun.serve() returns. A build that runs the
+      // event loop inside the call would keep them in the call for ever, so they stop with this
+      // result instead.
+      export function serve(options) {
+        let returned = false;
+        setImmediate(() => {
+          if (returned) return;
+          console.log(JSON.stringify({ eventLoopRanInsideServe: true }));
+          process.exit(1);
+        });
+        try {
+          return Bun.serve(options);
+        } finally {
+          returned = true;
+        }
+      }
       // Resolves when the dev server holds a request for a route that is not bundled yet.
       export async function requestIsWaiting(server) {
         while (server.pendingRequests === 0) await nextTurn();
@@ -100,6 +116,12 @@ describe.concurrent("Bun.serve({ app }) with a plugin setup() that returns a pen
     `,
   };
 
+  // A test that times out does not dispose its fixture, so a fixture that is left is killed here.
+  const fixtures = new Set<Bun.Subprocess>();
+  afterAll(() => {
+    for (const fixture of fixtures) fixture.kill("SIGKILL");
+  });
+
   async function runFixture(dir: string, fixture: string) {
     await using proc = Bun.spawn({
       cmd: [bunExe(), fixture],
@@ -108,7 +130,9 @@ describe.concurrent("Bun.serve({ app }) with a plugin setup() that returns a pen
       stdout: "pipe",
       stderr: "pipe",
     });
+    fixtures.add(proc);
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    fixtures.delete(proc);
     return { stdout, stderr, exitCode };
   }
 
@@ -142,10 +166,10 @@ describe.concurrent("Bun.serve({ app }) with a plugin setup() that returns a pen
     using dir = tempDir("bake-app-plugin-setup-order", {
       ...appFiles,
       "order-fixture.ts": `
-        import { framework, requestIsWaiting } from "./app.ts";
+        import { framework, requestIsWaiting, serve } from "./app.ts";
         const { promise: gate, resolve: openGate } = Promise.withResolvers<void>();
         const order: string[] = [];
-        const server = Bun.serve({
+        const server = serve({
           port: 0,
           development: true,
           app: {
@@ -203,11 +227,11 @@ describe.concurrent("Bun.serve({ app }) with a plugin setup() that returns a pen
       ...appFiles,
       "rejects-fixture.ts": `
         import { getDevServerDeinitCount } from "bun:internal-for-testing";
-        import { devServerIsGone, framework, requestIsWaiting } from "./app.ts";
+        import { devServerIsGone, framework, requestIsWaiting, serve } from "./app.ts";
         const { promise: gate, reject: closeGate } = Promise.withResolvers<void>();
         let secondSetupRan = false;
         const deinitsBefore = getDevServerDeinitCount();
-        const server = Bun.serve({
+        const server = serve({
           port: 0,
           development: true,
           app: {
@@ -238,14 +262,14 @@ describe.concurrent("Bun.serve({ app }) with a plugin setup() that returns a pen
       `,
     });
     const { stdout, stderr, exitCode } = await runFixture(String(dir), "rejects-fixture.ts");
-    expect(stderr).toContain("Failed to load plugins for Bun.serve");
-    expect(stderr).toContain("plugin setup failed on purpose");
     expect(JSON.parse(stdout)).toEqual({
       secondSetupRan: false,
       whileWaiting: 500,
       afterwards: "Plugin Error",
       pendingRequests: 0,
     });
+    expect(stderr).toContain("Failed to load plugins for Bun.serve");
+    expect(stderr).toContain("plugin setup failed on purpose");
     expect(exitCode).toBe(0);
   });
 
@@ -254,10 +278,10 @@ describe.concurrent("Bun.serve({ app }) with a plugin setup() that returns a pen
       ...appFiles,
       "rejects-stopped-fixture.ts": `
         import { getDevServerDeinitCount } from "bun:internal-for-testing";
-        import { devServerIsGone, framework, requestIsWaiting } from "./app.ts";
+        import { devServerIsGone, framework, requestIsWaiting, serve } from "./app.ts";
         const { promise: gate, reject: closeGate } = Promise.withResolvers<void>();
         const deinitsBefore = getDevServerDeinitCount();
-        const server = Bun.serve({
+        const server = serve({
           port: 0,
           development: true,
           app: { framework, plugins: [{ name: "first", setup: () => gate }] },
@@ -276,8 +300,8 @@ describe.concurrent("Bun.serve({ app }) with a plugin setup() that returns a pen
       `,
     });
     const { stdout, stderr, exitCode } = await runFixture(String(dir), "rejects-stopped-fixture.ts");
-    expect(stderr).toContain("plugin setup failed on purpose");
     expect(JSON.parse(stdout)).toEqual({ whileWaiting: 500 });
+    expect(stderr).toContain("plugin setup failed on purpose");
     expect(exitCode).toBe(0);
   });
 
@@ -286,14 +310,14 @@ describe.concurrent("Bun.serve({ app }) with a plugin setup() that returns a pen
       ...appFiles,
       "dropped-fixture.ts": `
         import { getDevServerDeinitCount } from "bun:internal-for-testing";
-        import { framework, nextTurn } from "./app.ts";
+        import { framework, nextTurn, serve } from "./app.ts";
         const { promise: gate, resolve: openGate } = Promise.withResolvers<void>();
         let secondSetupRan = false;
         const taken = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("taken") });
         const deinitsBefore = getDevServerDeinitCount();
         let code = "listen succeeded";
         try {
-          Bun.serve({
+          serve({
             hostname: "127.0.0.1",
             port: taken.port,
             development: true,
@@ -322,8 +346,8 @@ describe.concurrent("Bun.serve({ app }) with a plugin setup() that returns a pen
       `,
     });
     const { stdout, stderr, exitCode } = await runFixture(String(dir), "dropped-fixture.ts");
-    expect(stderr).toBe("");
     expect(JSON.parse(stdout)).toEqual({ code: "EADDRINUSE", deinits: 1, secondSetupRan: false });
+    expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
 });

@@ -243,11 +243,8 @@ impl QuicStream {
             let refused = s.send_headers(&bytes, count, eos) != 0;
             self.headers_refused.set(refused);
             if refused {
-                // A refused terminal block ends the stream at the next write event.
-                if eos {
-                    self.outbound.with_mut(|o| o.end = PendingEnd::Fin);
-                    want_write = true;
-                }
+                // A refused terminal block fails the stream at the next write event.
+                want_write |= eos;
             } else if eos {
                 self.with_state(|st| {
                     st.fin_sent = 1;
@@ -560,8 +557,8 @@ impl QuicStream {
             (out.data.is_empty(), out.end)
         };
         if empty {
-            if end == PendingEnd::Fin && self.headers_refused.get() {
-                // A FIN without a header block is not a response either.
+            // A write event with no header block cannot produce a response.
+            if self.headers_refused.get() {
                 self.on_write_failed(s);
                 return;
             }
@@ -1021,9 +1018,8 @@ impl QuicStream {
             }
             Ok(JSValue::js_boolean(true))
         } else {
-            // A refused terminal block ends the stream at the next write event.
+            // A refused terminal block fails the stream at the next write event.
             if eos {
-                self.outbound.with_mut(|o| o.end = PendingEnd::Fin);
                 self.kick_write();
             }
             Ok(JSValue::js_boolean(false))

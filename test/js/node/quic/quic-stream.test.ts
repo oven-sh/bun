@@ -546,7 +546,7 @@ describe("a response after a refused header block", () => {
 // A body queued before sendHeaders() also fails the write with EILSEQ. That
 // is not a refusal: the bytes wait for the header block and follow it.
 describe("a body written before the header block", () => {
-  test("is delivered after sendHeaders()", async () => {
+  async function responseTo(respond: (stream: any) => Promise<void>) {
     await using server = await listen(
       async serverSession => {
         serverSession.onstream = (stream: any) => {
@@ -557,12 +557,8 @@ describe("a body written before the header block", () => {
       {
         sni: { "*": { keys: [key], certs: [cert] } },
         transportParams: { maxIdleTimeout: 1 },
-        async onheaders(this: any) {
-          this.writer.writeSync(new TextEncoder().encode("body"));
-          // Let engine passes run while the stream has no header block.
-          for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve));
-          this.sendHeaders({ ":status": "200" });
-          this.writer.endSync();
+        onheaders(this: any) {
+          respond(this).catch(() => {});
         },
       },
     );
@@ -587,8 +583,37 @@ describe("a body written before the header block", () => {
       for (const chunk of batch) body += Buffer.from(chunk).toString();
     }
     client.close();
+    return { status: await gotHeaders.promise, body };
+  }
 
-    expect(await gotHeaders.promise).toBe("200");
+  // Yield so engine passes run between the steps of a response.
+  const tick = async () => {
+    for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve));
+  };
+
+  test("is delivered after sendHeaders()", async () => {
+    const { status, body } = await responseTo(async stream => {
+      stream.writer.writeSync(new TextEncoder().encode("body"));
+      await tick();
+      stream.sendHeaders({ ":status": "200" });
+      stream.writer.endSync();
+    });
+    expect(status).toBe("200");
+    expect(body).toBe("body");
+  });
+
+  test("a retried header block after a refused terminal one keeps the body open", async () => {
+    const { status, body } = await responseTo(async stream => {
+      expect(
+        stream.sendHeaders({ ":status": "200", "x-one": Buffer.alloc(70000, "~").toString() }, { terminal: true }),
+      ).toBe(false);
+      expect(stream.sendHeaders({ ":status": "200" })).toBe(true);
+      stream.writer.writeSync(new TextEncoder().encode("bo"));
+      await tick();
+      stream.writer.writeSync(new TextEncoder().encode("dy"));
+      stream.writer.endSync();
+    });
+    expect(status).toBe("200");
     expect(body).toBe("body");
   });
 });

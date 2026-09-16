@@ -3,9 +3,11 @@ import { bunEnv, bunExe, isMusl, isWindows, nodeExe, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+  candidateBuilds,
   mustGenerateOrderFile,
   orderFileEligible,
   shouldGenerateOrderFile,
+  type BuildLookups,
   type OrderFileContext,
 } from "../../../../scripts/build/ci.ts";
 import type { Config } from "../../../../scripts/build/config.ts";
@@ -284,6 +286,47 @@ describe("deciding whether a build generates its own order file", () => {
 
   it("nothing happens off Buildkite", () => {
     expect(orderFileEligible(cfg(), ctx({ buildkite: false }))).toBe(false);
+  });
+});
+
+describe("finding an earlier build to inherit from", () => {
+  const pipeline = "https://buildkite.com/bun/bun";
+
+  /** Walk back from build #1000 on main. `main` lists the branch's earlier builds; every other number is a PR's. */
+  async function walk({ main, newestPassed }: { main: number[]; newestPassed?: number }) {
+    const requested: string[] = [];
+    const lookups: BuildLookups = {
+      async build(url) {
+        requested.push(url);
+        const number = Number(/\/builds\/(\d+)\.json$/.exec(url)?.[1]);
+        // Anything else is not a build's JSON: Buildkite answers with the HTML page.
+        if (Number.isNaN(number)) return undefined;
+        return { id: `id-${number}`, number, branch_name: main.includes(number) ? "main" : "some-pr" };
+      },
+      // Buildkite repeats the request's query on the Location it answers with.
+      redirect: async () =>
+        newestPassed === undefined ? null : `${pipeline}/builds/${newestPassed}?branch=main&state=passed`,
+    };
+    const found: (number | undefined)[] = [];
+    const from = ctx({ buildUrl: `${pipeline}/builds/1000`, buildNumber: 1000 });
+    for await (const build of candidateBuilds(from, lookups)) found.push(build.number);
+    return { found, requested };
+  }
+
+  it("tries the nearest builds first, whose file matches this link best", async () => {
+    // #700 is further back than the probe reaches. #950 is not offered twice.
+    expect((await walk({ main: [990, 950, 700], newestPassed: 950 })).found).toEqual([990, 950]);
+  });
+
+  it("falls back to the newest passed build when the branch was quiet for longer than the probe reaches", async () => {
+    // Without this nothing is inherited, and a lane that cannot trace its own binary ships unordered.
+    const { found, requested } = await walk({ main: [640], newestPassed: 640 });
+    expect(found).toEqual([640]);
+    expect(requested.at(-1)).toBe(`${pipeline}/builds/640.json`);
+  });
+
+  it("finds nothing when the branch has no passed build either", async () => {
+    expect((await walk({ main: [] })).found).toEqual([]);
   });
 });
 

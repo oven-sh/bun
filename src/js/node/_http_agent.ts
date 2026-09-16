@@ -324,7 +324,7 @@ Agent.prototype.createSocket = function createSocket(req, options, cb) {
 
   const ownerFrame = this[kOwnerFrame];
   const newSocket =
-    ownerFrame?.graph === AsyncContextFrame.current()?.graph
+    AsyncContextFrame.graphOf(ownerFrame) === AsyncContextFrame.currentGraph()
       ? this.createConnection(options, oncreate)
       : AsyncContextFrame.run(ownerFrame, this.createConnection, this, options, oncreate);
   if (newSocket && !newSocket[kWaitForProxyTunnel]) oncreate(null, newSocket);

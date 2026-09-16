@@ -958,7 +958,7 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
   /// under the host, and its leftover script could leave the host waiting for one never opened.
   public runAsOwner<This, Result>(dial: (this: This) => Result, thisValue: This): Result {
     const graphFrame = this.ownerGraphFrame;
-    return graphFrame === undefined && AsyncContextFrame.current()?.graph === undefined
+    return graphFrame === undefined && AsyncContextFrame.currentGraph() === undefined
       ? dial.$call(thisValue)
       : AsyncContextFrame.run(graphFrame, dial, thisValue);
   }

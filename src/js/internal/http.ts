@@ -384,7 +384,7 @@ function utcDate() {
 // one the host put in its place (a proxy agent, say) is built the host's way and is the host's.
 const defaultAgentsOfGraphs = new WeakMap();
 function defaultAgentOfRunningScript(realmAgent) {
-  const graph = require("internal/async_context_frame").current()?.graph;
+  const graph = require("internal/async_context_frame").currentGraph();
   if (graph === undefined) return realmAgent;
   const constructor = realmAgent.constructor;
   if (constructor !== require("node:_http_agent").Agent && constructor !== require("node:https").Agent)

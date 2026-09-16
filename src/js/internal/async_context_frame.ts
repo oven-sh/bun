@@ -8,6 +8,11 @@
 // JSC's async context), so context propagation is always enabled and the
 // "frame" is the raw internal-field value (an even-length [ALS, value, ...]
 // array or undefined) — see the comment at the top of node/async_hooks.ts.
+// The Bun.ModuleGraph a frame chain is inside of, and the frame that entered its context:
+// ModuleGraph.cpp walks the chain (AsyncLocalStorage's frames say nothing about graphs).
+const moduleGraphOfFrame = $newCppFunction("ModuleGraph.cpp", "jsFunctionModuleGraphOfFrame", 1);
+const moduleGraphFrameOfFrame = $newCppFunction("ModuleGraph.cpp", "jsFunctionModuleGraphFrameOfFrame", 1);
+
 const AsyncContextFrame = {
   enabled: true,
   current() {
@@ -19,11 +24,15 @@ const AsyncContextFrame = {
    * without keeping the AsyncLocalStorage stores of whoever happened to create it.
    */
   currentGraphFrame() {
-    let frame = $getInternalField($asyncContext, 0);
-    const graph = frame?.graph;
-    if (graph === undefined) return undefined;
-    while (frame.storage !== graph) frame = frame.prev;
-    return frame;
+    return moduleGraphFrameOfFrame($getInternalField($asyncContext, 0));
+  },
+  /** The Bun.ModuleGraph whose context the running script is inside of, if any. */
+  currentGraph() {
+    return moduleGraphOfFrame($getInternalField($asyncContext, 0));
+  },
+  /** The Bun.ModuleGraph whose context `frame` (a current() or currentGraphFrame() of earlier) is inside of. */
+  graphOf(frame) {
+    return moduleGraphOfFrame(frame);
   },
   /** Install `frame` as the active async-context frame; returns the previous one. */
   exchange(frame) {

@@ -62,7 +62,7 @@ class StatWatcher extends EventEmitter {
 const realmStatWatchers = new Map();
 const graphStatWatchers = new WeakMap<object, Map<string, StatWatcher>>();
 function statWatchersOfCaller(): Map<string, StatWatcher> {
-  const graph = AsyncContextFrame.current()?.graph;
+  const graph = AsyncContextFrame.currentGraph();
   if (graph === undefined) return realmStatWatchers;
   let watchers = graphStatWatchers.get(graph);
   if (!watchers) graphStatWatchers.set(graph, (watchers = new Map()));

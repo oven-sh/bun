@@ -332,15 +332,54 @@ extern "C" bool Bun__ModuleGraph__handleUncaughtException(JSGlobalObject* lexica
 // A graph's context rides the async context (what AsyncLocalStorage uses): entering it pushes
 // a frame shaped like async_hooks.ts's `Frame` whose `storage` is the graph — no
 // AsyncLocalStorage ever matches it, so run()/exit()/enterWith() copy or share it like any
-// other storage's frame and never drop it — and whose `graph`, which every frame pushed on top
-// inherits, is what names the current context.
+// other storage's frame and never drop it. The frames AsyncLocalStorage pushes on top are its
+// own, unchanged: the current context is the first such frame from the head down.
 
-static JSModuleGraph* moduleGraphOfFrame(VM& vm, JSValue asyncContext)
+// The graph whose context the frame chain headed by `asyncContext` is inside of, and the frame
+// that entered it. A frame whose storage is the global object left the context the frames below
+// are in, for the realm's own (createModuleGraphFrame). Only asked once a graph has been made.
+static JSModuleGraph* moduleGraphOfFrame(Zig::GlobalObject* globalObject, JSValue asyncContext, JSObject** enteredWith = nullptr)
 {
-    JSObject* frame = asyncContext.getObject();
-    if (!frame)
-        return nullptr;
-    return dynamicDowncast<JSModuleGraph>(frame->getDirect(vm, WebCore::builtinNames(vm).graphPublicName()));
+    VM& vm = globalObject->vm();
+    auto& names = WebCore::builtinNames(vm);
+    for (JSObject* frame = asyncContext.getObject(); frame;) {
+        JSValue storage = frame->getDirect(vm, names.storagePublicName());
+        if (!storage)
+            return nullptr;
+        if (auto* graph = dynamicDowncast<JSModuleGraph>(storage)) {
+            if (enteredWith)
+                *enteredWith = frame;
+            return graph;
+        }
+        if (storage == globalObject)
+            return nullptr;
+        JSValue previous = frame->getDirect(vm, names.prevPublicName());
+        frame = previous ? previous.getObject() : nullptr;
+    }
+    return nullptr;
+}
+
+// For built-ins that keep something long-lived of whoever made it (an http.Agent, a Bun.SQL, a
+// PerformanceObserver), given the async context they are in: the Bun.ModuleGraph it is inside
+// of, and the frame that entered that graph's context (what they `run()` their later work in,
+// without keeping the AsyncLocalStorage stores of whoever made them).
+JSC_DEFINE_HOST_FUNCTION(jsFunctionModuleGraphOfFrame, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto* global = defaultGlobalObject(globalObject);
+    if (!global->m_moduleGraphs)
+        return JSValue::encode(jsUndefined());
+    JSModuleGraph* graph = moduleGraphOfFrame(global, callFrame->argument(0));
+    return JSValue::encode(graph ? JSValue(graph) : jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionModuleGraphFrameOfFrame, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto* global = defaultGlobalObject(globalObject);
+    if (!global->m_moduleGraphs)
+        return JSValue::encode(jsUndefined());
+    JSObject* enteredWith = nullptr;
+    moduleGraphOfFrame(global, callFrame->argument(0), &enteredWith);
+    return JSValue::encode(enteredWith ? JSValue(enteredWith) : jsUndefined());
 }
 
 // For built-ins that keep something of a graph's in a registry of the realm's (node:perf_hooks'
@@ -352,7 +391,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsFrameOfStoppedModuleGraph, (JSGlobalObject 
 
 JSModuleGraph* currentModuleGraph(Zig::GlobalObject* globalObject)
 {
-    return moduleGraphOfFrame(globalObject->vm(), globalObject->m_asyncContextData.get()->getInternalField(0));
+    return moduleGraphOfFrame(globalObject, globalObject->m_asyncContextData.get()->getInternalField(0));
 }
 
 // VirtualMachine::current_context_or_root (only asked once a graph has been made).
@@ -366,14 +405,13 @@ enum ModuleGraphFrameOffset : PropertyOffset { FrameStorage,
     FrameValue,
     FramePrev,
     FrameMasked,
-    FrameGraph,
     NumberOfFrameProperties };
 
 Structure* createModuleGraphFrameStructure(VM& vm, JSGlobalObject* globalObject)
 {
     auto& names = WebCore::builtinNames(vm);
     Structure* structure = JSFinalObject::createStructure(vm, globalObject, jsNull(), NumberOfFrameProperties);
-    const Identifier properties[] = { names.storagePublicName(), vm.propertyNames->value, names.prevPublicName(), names.maskedPublicName(), names.graphPublicName() };
+    const Identifier properties[] = { names.storagePublicName(), vm.propertyNames->value, names.prevPublicName(), names.maskedPublicName() };
     for (PropertyOffset expected = 0; expected < NumberOfFrameProperties; expected++) {
         PropertyOffset offset;
         structure = Structure::addPropertyTransition(vm, structure, properties[expected], 0, offset);
@@ -388,14 +426,14 @@ static JSObject* createModuleGraphFrame(Zig::GlobalObject* globalObject, JSModul
 {
     VM& vm = globalObject->vm();
     JSObject* frame = constructEmptyObject(vm, globalObject->moduleGraphFrameStructure());
-    // No AsyncLocalStorage is ever this frame's storage: the graph, or the frame itself.
-    frame->putDirectOffset(vm, FrameStorage, graph ? static_cast<JSObject*>(graph) : frame);
+    // No AsyncLocalStorage is ever this frame's storage: the graph, or the global object for the
+    // realm's own context. (Not the frame: AsyncLocalStorage copies frames, and a copy is another object.)
+    frame->putDirectOffset(vm, FrameStorage, graph ? static_cast<JSObject*>(graph) : static_cast<JSObject*>(globalObject));
     frame->putDirectOffset(vm, FrameValue, jsUndefined());
     frame->putDirectOffset(vm, FramePrev, previous);
     // What disable()d AsyncLocalStorages the frame below masks, frames above it mask too.
     JSValue masked = previous.isObject() ? asObject(previous)->getDirect(vm, WebCore::builtinNames(vm).maskedPublicName()) : JSValue();
     frame->putDirectOffset(vm, FrameMasked, masked ? masked : jsUndefined());
-    frame->putDirectOffset(vm, FrameGraph, graph ? JSValue(graph) : jsUndefined());
     return frame;
 }
 
@@ -499,7 +537,7 @@ bool shouldDropCallbackOfStoppedModuleGraph(Zig::GlobalObject* globalObject, JSV
     auto* state = globalObject->m_moduleGraphs.get();
     if (!state)
         return false;
-    JSModuleGraph* graph = moduleGraphOfFrame(globalObject->vm(), asyncContext);
+    JSModuleGraph* graph = moduleGraphOfFrame(globalObject, asyncContext);
     return graph && graph->context().isStopped();
 }
 

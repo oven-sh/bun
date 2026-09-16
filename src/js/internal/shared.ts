@@ -391,7 +391,7 @@ class NodeEntryObserver {
         this.callback.$call(undefined, makeNodeEntryList(entries), this.owner);
       };
       const AsyncContextFrame = require("internal/async_context_frame");
-      if (this.frame === undefined && AsyncContextFrame.current()?.graph === undefined) setImmediate(deliver);
+      if (this.frame === undefined && AsyncContextFrame.currentGraph() === undefined) setImmediate(deliver);
       else AsyncContextFrame.run(this.frame, setImmediate, undefined, deliver);
     }
   }

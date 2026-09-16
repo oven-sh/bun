@@ -367,10 +367,12 @@ pub struct VirtualMachine {
     /// every context question has the root context for an answer.
     pub(crate) graph_contexts:
         bun_collections::ArrayHashMap<crate::ContextId, NonNull<crate::ScriptExecutionContext>>,
-    /// The context the innermost live [`ContextScope`] entered: whose script the native code that
-    /// is running continues. The dead context's, for one entered as gone (its graph has been
-    /// collected; its context may not have been stopped yet: that is queued from the finalizer).
-    pub(crate) innermost_scope: Cell<Option<crate::ContextId>>,
+    /// The context native code has entered ([`enter_context`](Self::enter_context)) and not yet
+    /// left: whose script the native code that is running continues. `None` when nothing is
+    /// entered, which is how script mostly runs. The dead context's, for one entered as gone (its
+    /// graph has been collected; its context may not have been stopped yet: that is queued from
+    /// the finalizer). Not the current context: that is what the async context says.
+    pub(crate) entered_context: Cell<Option<crate::ContextId>>,
     pub test_isolation_enabled: bool,
     /// Counts `bun test --isolate` file swaps. The realm's context keeps its identifier across
     /// them, so a timer or pool job of the realm's remembers the count it was made under: one
@@ -1118,7 +1120,7 @@ impl VirtualMachine {
     /// realm's. The VM's own: everything else is handed a context (`context_of_caller`,
     /// [`ContextScope::context`]).
     fn current_context(&self) -> &crate::ScriptExecutionContext {
-        if self.innermost_scope.get() == Some(self.dead_context.id()) {
+        if self.entered_context.get() == Some(self.dead_context.id()) {
             return &self.dead_context;
         }
         if self.graph_contexts.count() == 0 {
@@ -1147,7 +1149,7 @@ impl VirtualMachine {
     /// what a disposed graph's leftover script calls synchronously (a comparator, a handler of a
     /// synchronous transform): that is still its script running, which no scope entered.
     pub fn calls_nobody(&self) -> bool {
-        self.innermost_scope
+        self.entered_context
             .get()
             .is_some_and(|context| !self.is_context_live(context))
     }
@@ -1212,7 +1214,7 @@ impl VirtualMachine {
             context,
             previous: JSValue::ZERO,
             entered: self.global.cast_const(),
-            previous_scope: self.innermost_scope.replace(Some(context)),
+            previous_entered: self.entered_context.replace(Some(context)),
         };
         if context == self.root_context.id() {
             if self.graph_contexts.count() != 0 && self.script_allowed() {
@@ -1241,7 +1243,7 @@ impl VirtualMachine {
             }
             None => {
                 scope.context = self.dead_context.id();
-                self.innermost_scope.set(Some(scope.context));
+                self.entered_context.set(Some(scope.context));
                 if self.graph_contexts.count() != 0 && self.script_allowed() {
                     scope.previous = Bun__ModuleGraph__enterRootContext(self.global());
                 }
@@ -3172,7 +3174,7 @@ impl VirtualMachine {
             addr_of_mut!((*vm).auto_killer).write(Default::default());
             addr_of_mut!((*vm).root_context).write(crate::ScriptExecutionContext::root());
             addr_of_mut!((*vm).graph_contexts).write(Default::default());
-            addr_of_mut!((*vm).innermost_scope).write(Cell::new(None));
+            addr_of_mut!((*vm).entered_context).write(Cell::new(None));
             addr_of_mut!((*vm).dead_context).write(crate::ScriptExecutionContext::dead(
                 crate::ContextId::from_raw(WebCore__ScriptExecutionContext__generateIdentifier()),
             ));
@@ -7598,7 +7600,7 @@ pub struct ContextScope<'a> {
     previous: JSValue,
     /// The realm `previous` is restored in: the one that was entered. (On the stack, as `previous`.)
     entered: *const JSGlobalObject,
-    previous_scope: Option<crate::ContextId>,
+    previous_entered: Option<crate::ContextId>,
 }
 
 impl<'a> ContextScope<'a> {
@@ -7611,7 +7613,7 @@ impl<'a> ContextScope<'a> {
 
 impl Drop for ContextScope<'_> {
     fn drop(&mut self) {
-        self.vm.innermost_scope.set(self.previous_scope);
+        self.vm.entered_context.set(self.previous_entered);
         if !self.previous.is_empty() {
             // SAFETY: the realm entered above; it is reachable from this frame until here.
             Bun__ModuleGraph__leaveContext(unsafe { &*self.entered }, self.previous);

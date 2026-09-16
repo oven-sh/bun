@@ -62,7 +62,7 @@
 namespace WebCore {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(WebSocket);
 extern "C" int Bun__getTLSRejectUnauthorizedValue();
-extern "C" bool Bun__isNoProxy(const char* hostname, size_t hostname_len, const char* host, size_t host_len);
+extern "C" bool Bun__isNoProxy(const char* hostname, size_t hostname_len, uint16_t port);
 
 static ErrorEvent::Init createErrorEventInit(WebSocket& webSocket, const String& reason, JSC::JSGlobalObject* globalObject)
 {
@@ -555,11 +555,10 @@ __attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url,
 
     // Check NO_PROXY even for explicitly-provided proxies
     if (hasProxy) {
-        auto hostStr = m_url.host().toString();
-        auto hostWithPort = hostName(m_url, is_secure);
-        auto hostUtf8 = hostStr.utf8();
-        auto hostWithPortUtf8 = hostWithPort.utf8();
-        if (Bun__isNoProxy(hostUtf8.data(), hostUtf8.length(), hostWithPortUtf8.data(), hostWithPortUtf8.length())) {
+        auto hostUtf8 = m_url.host().toString().utf8();
+        // The effective port, so a `host:443` entry matches a default-port URL.
+        uint16_t port = m_url.port().value_or(is_secure ? 443 : 80);
+        if (Bun__isNoProxy(hostUtf8.data(), hostUtf8.length(), port)) {
             proxyConfig = std::nullopt;
             hasProxy = false;
         }

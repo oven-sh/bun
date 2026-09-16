@@ -33,11 +33,11 @@ concurrency:
 
 env:
   BUN_VERSION: "1.3.14"
-  LLVM_VERSION_MAJOR: "21"
+  LLVM_VERSION_MAJOR: "23"
   # Pin the toolchain explicitly so rustup ignores rust-toolchain.toml's
   # `targets` list (11 cross triples ≈ 450 MB of prebuilt std we don't need
   # to lint the host). Keep in sync with `channel` in rust-toolchain.toml.
-  RUSTUP_TOOLCHAIN: nightly-2026-07-20
+  RUSTUP_TOOLCHAIN: nightly-2026-09-15
 
 jobs:
   clippy:
@@ -115,7 +115,11 @@ jobs:
   mordant:
     name: mordant
     runs-on: ubuntu-latest
-    if: github.event_name != 'merge_group'
+    # Off until dylint runs on a current nightly. mordant compiles the workspace with its own pinned
+    # nightly (2026-05-28), which predates the core::mem::type_info API multi_array_list.rs uses, and
+    # dylint-driver 6.0.x passes rustc `--env-set`, which rustc has since removed. Was:
+    # github.event_name != 'merge_group'
+    if: false
     # Advisory while the pack is new: shows up on the PR, does not block it.
     continue-on-error: true
     env:

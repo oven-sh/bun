@@ -856,13 +856,14 @@ const verifyBinaryPath = resolve(import.meta.dirname, "verify-binary.ts");
  * expectations are serialized now; the scan runs as a validation of the link.
  */
 /**
- * ASan and debug builds run the static scans but only warn: the expectations
- * describe the binaries that ship, and these builds are for finding bugs with,
- * so a difference from them must not cost the binary. Every other
- * configuration, release builds in CI above all, fails on a finding.
+ * Only CI fails on a finding. Local builds (`cfg.ci` unset) run the static
+ * scans and print the same report as warnings, so a toolchain or distro
+ * difference on a dev machine never costs the binary. In CI, ASan and debug
+ * builds also only warn: the expectations describe the binaries that ship, and
+ * those builds are for finding bugs with.
  */
 export function binaryChecksWarnOnly(cfg: Config): boolean {
-  return cfg.asan || cfg.debug;
+  return !cfg.ci || cfg.asan || cfg.debug;
 }
 
 function emitBinaryVerify(

@@ -30,8 +30,8 @@ describe("Headers", async () => {
   });
 
   it("Header values must be valid", async () => {
-    expect(() => fetch(url, { headers: { "x-test": "\0" } })).toThrow("Header 'x-test' has invalid value: '\0'");
-    expect(() => fetch(url, { headers: { "x-test": "❤️" } })).toThrow("Header 'x-test' has invalid value: '❤️'");
+    expect(() => fetch(url, { headers: { "x-test": "\0" } })).toThrow("Header 'x-test' has invalid value");
+    expect(() => fetch(url, { headers: { "x-test": "❤️" } })).toThrow("Header 'x-test' has invalid value");
   });
 
   it("Header values in the latin-1 range are valid regardless of internal string representation", async () => {
@@ -51,7 +51,7 @@ describe("Headers", async () => {
     expect(() => headers.set("x-parsed", parsed)).not.toThrow();
 
     // chars above 0xFF stay invalid in either representation
-    expect(() => headers.set("x-test", "okĀ")).toThrow("Header 'x-test' has invalid value: 'okĀ'");
+    expect(() => headers.set("x-test", "okĀ")).toThrow("Header 'x-test' has invalid value");
     expect(() => headers.set("x-test", "okĀ".normalize("NFC"))).toThrow();
 
     // round-trips through the wire like the equivalent 8-bit value
@@ -99,8 +99,29 @@ describe("Headers", async () => {
   it("Invalid values for well-known headers name the header, not its index", () => {
     // The HTTPHeaderName fast path must report the header's name (e.g. 'Location'),
     // not its numeric enum value (e.g. '51').
-    expect(() => new Headers({ location: "a\nb" })).toThrow("Header 'Location' has invalid value: 'a\nb'");
-    expect(() => new Headers({ "content-type": "\0" })).toThrow("Header 'Content-Type' has invalid value: '\0'");
+    expect(() => new Headers({ location: "a\nb" })).toThrow("Header 'Location' has invalid value");
+    expect(() => new Headers({ "content-type": "\0" })).toThrow("Header 'Content-Type' has invalid value");
+  });
+
+  it("An invalid header value is not quoted in the error: it is often a credential", () => {
+    const messages = [
+      () => new Headers({ Authorization: "Bearer secret\0token" }),
+      () => new Headers().set("X-Api-Key", "secret-token\0"),
+      () => new Headers().append("authorization", "Bearer secret-token\r\nX-Injected: 1"),
+      () => new Request("http://example.com", { headers: { Cookie: "session=secret\ntoken" } }),
+    ].map(fn => {
+      try {
+        fn();
+      } catch (e) {
+        return e.message;
+      }
+    });
+    expect(messages).toEqual([
+      "Header 'Authorization' has invalid value",
+      "Header 'X-Api-Key' has invalid value",
+      "Header 'Authorization' has invalid value",
+      "Header 'Cookie' has invalid value",
+    ]);
   });
 
   it("repro 1602", async () => {

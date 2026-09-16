@@ -133,9 +133,7 @@ pub type RouteIndex = bun_core::GenericIndex<u32, RouteMarker>;
 /// Native code for `FrameworkFileSystemRouterType`
 pub struct Type {
     pub(crate) abs_root: Box<[u8]>,
-    /// URL path this type is mounted on, already checked by `validate_prefix`.
-    /// `scan` puts its segments in front of every pattern, so `static_routes`,
-    /// `dynamic_routes` and the route tree all hold the full URL.
+    /// URL path of the mount point. `scan` puts its segments in front of every pattern.
     pub(crate) prefix: Box<[u8]>,
     pub(crate) ignore_underscores: bool,
     pub(crate) ignore_dirs: Box<[Box<[u8]>]>,
@@ -175,9 +173,7 @@ impl Type {
         RouteIndex::init(type_index.get() as u32)
     }
 
-    /// Says why `prefix` cannot be a mount point. The dev server compares it
-    /// with the raw request path and `bun build --app` joins it into an output
-    /// file path, so it has to be a fixed URL path that is already normalized.
+    /// Says why `prefix` is not a fixed, normalized URL path that a request can match.
     pub(crate) fn validate_prefix(prefix: &[u8]) -> Result<(), &'static str> {
         if prefix.first() != Some(&b'/') {
             return Err("must start with \"/\"");
@@ -1654,8 +1650,7 @@ impl FrameworkRouter {
                         };
 
                         let mut log = TinyLog::empty();
-                        // `effective_url_hash` and `PatternBuffer` hold a whole
-                        // URL pattern in a buffer sized for one file path.
+                        // `effective_url_hash` and `PatternBuffer` size their buffers for a file path.
                         if t.prefix.len() + rel_path.len() >= MAX_PATH_BYTES {
                             log.fail(
                                 format_args!("The URL of this route is too long"),

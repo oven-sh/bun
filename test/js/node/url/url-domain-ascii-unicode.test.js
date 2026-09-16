@@ -175,12 +175,12 @@ describe("url.domainToUnicode with many xn-- labels", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
     const rows = JSON.parse(stdout);
     expect(rows).toHaveLength(inputs.length);
     expect(rows.filter(([, , oracle]) => oracle !== "").length).toBeGreaterThan(15);
     expect(rows.map(([input, perLabel]) => [input, perLabel])).toEqual(
       rows.map(([input, , oracle]) => [input, oracle]),
     );
+    expect(exitCode).toBe(0);
   });
 });

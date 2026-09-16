@@ -1092,12 +1092,9 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
 
             bool result = true;
             bool sameStructure = o2Structure->id() == o1Structure->id();
-            // Comparing objects runs user getters that can rehash this PropertyTable mid-walk (use-after-free), and
-            // resolving a rope can throw. The walk collects those pairs on gcBuffer and compares them after. It settles
-            // every other pair in place, because gcBuffer mallocs once it outgrows its 8 inline slots.
+            // Objects run user getters that can rehash this PropertyTable mid-walk (use-after-free) and ropes can throw, so only those pairs wait on gcBuffer.
             const size_t pairsStart = gcBuffer.size();
-            // Pairs collected before two unequal primitives are still compared first: an error thrown from an
-            // earlier property wins over a later mismatch, as in node.
+            // Pairs collected before two unequal primitives are still compared first, so an error from an earlier property wins, as in node.
             bool primitivesDiffer = false;
             auto settleOrCollect = [&](JSValue left, JSValue right) {
                 if (primitivesDiffer || left == right) {

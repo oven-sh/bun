@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import { totalmem } from "node:os";
+import { join } from "node:path";
 import {
   compileFunction,
   constants,
@@ -1336,6 +1337,64 @@ describe("Script compiles its source once and links that in every context it run
     for (const context of [createContext({}), createContext({})]) {
       expect(script.runInContext(context)).toBe("at shared.js:103:10");
     }
+  });
+});
+
+describe("the file: URL origin made from a filename", () => {
+  // The last filename made into a URL is kept per VM. The import() tests alternate two filenames, so every
+  // compile finds the URL of the other filename in the cache.
+  const loader = { importModuleDynamically: constants.USE_MAIN_CONTEXT_DEFAULT_LOADER };
+  const dependencies = { "a/dep.mjs": "export default 'a';", "b/dep.mjs": "export default 'b';" };
+
+  test("import() in a Script resolves against the filename of that Script", async () => {
+    using dir = tempDir("vm-script-origin", dependencies);
+    const scripts = ["a", "b", "a", "b"].map(
+      name => new Script("import('./dep.mjs')", { ...loader, filename: join(String(dir), name, "main.js") }),
+    );
+    const namespaces = await Promise.all(scripts.map(script => script.runInThisContext()));
+    expect(namespaces.map(namespace => namespace.default)).toEqual(["a", "b", "a", "b"]);
+  });
+
+  test("import() in a compiled function resolves against the filename of that function", async () => {
+    using dir = tempDir("vm-function-origin", dependencies);
+    const functions = ["a", "b", "a", "b"].map(name =>
+      compileFunction("return import('./dep.mjs')", [], { ...loader, filename: join(String(dir), name, "main.js") }),
+    );
+    const namespaces = await Promise.all(functions.map(fn => fn()));
+    expect(namespaces.map(namespace => namespace.default)).toEqual(["a", "b", "a", "b"]);
+  });
+
+  // Every "<" is percent-encoded, the slow path of the URL parser: about 1 ms for this filename in a release
+  // build. Without the cache every compile pays it, and the next ten compiles take ten times the first one.
+  const longFilename = Buffer.alloc(32 * 1024, "<").toString() + ".js";
+  const elapsed = (fn: () => void) => {
+    const start = performance.now();
+    fn();
+    return performance.now() - start;
+  };
+
+  test.each([
+    ["Scripts", (options: object) => new Script("1", options)],
+    ["compiled functions", (options: object) => compileFunction("return 1", [], options)],
+  ])("is made once for %s that share a filename", (label, compile) => {
+    // The best of three trials, so that one garbage collection inside a measured window does not decide it.
+    let firstCompile = Infinity;
+    let nextTenCompiles = Infinity;
+    for (let trial = 0; trial < 3; trial++) {
+      // A filename no compile has used, so the first compile is the one that makes the URL.
+      const options = { filename: `${label}-${trial}-${longFilename}` };
+      firstCompile = Math.min(
+        firstCompile,
+        elapsed(() => compile(options)),
+      );
+      nextTenCompiles = Math.min(
+        nextTenCompiles,
+        elapsed(() => {
+          for (let i = 0; i < 10; i++) compile(options);
+        }),
+      );
+    }
+    expect(nextTenCompiles).toBeLessThan(firstCompile);
   });
 });
 

@@ -11,8 +11,30 @@ const script = new vm.Script("animal = 'hey'");
 
 vm.createContext(context);
 
+bench("new vm.Script(source)", () => {
+  new vm.Script("animal = 'hey'");
+});
+
+bench("new vm.Script(source, { filename })", () => {
+  new vm.Script("animal = 'hey'", { filename: "hey.js" });
+});
+
+let alternate = 0;
+bench("new vm.Script(source, { filename }), two filenames in turn", () => {
+  new vm.Script("animal = 'hey'", { filename: alternate++ & 1 ? "hey.js" : "hi.js" });
+});
+
+let distinct = 0;
+bench("new vm.Script(source), a new source each call", () => {
+  new vm.Script("count = " + distinct++);
+});
+
 bench("vm.Script.runInContext", () => {
   script.runInContext(context);
+});
+
+bench("vm.Script.runInContext, options object", () => {
+  script.runInContext(context, { displayErrors: true });
 });
 
 bench("vm.Script.runInThisContext", () => {

@@ -743,11 +743,24 @@ static void us_quic_on_reset(lsquic_stream_t *stream, lsquic_stream_ctx_t *h, in
     /* how=0 → peer sent RESET_STREAM (our read half is gone): nothing left
      *         to deliver, close so on_stream_close fires.
      * how=1 → peer sent STOP_SENDING (wants us to abort our write half):
-     *         lsquic already queues RESET_STREAM for our send side; the
-     *         read half stays open so the response/request that arrived
-     *         alongside STOP_SENDING is still delivered. Closing here
-     *         would drop it. */
-    if (h && stream && how == 0) lsquic_stream_close(stream);
+     *         lsquic already queued RESET_STREAM for our send side and
+     *         drop_buffered_data took the stream off the write queue, so
+     *         no on_write follows and the work has to happen here. The
+     *         callback runs after both, see
+     *         patches/lsquic/stop-sending-on-reset-after-reset.patch.
+     *         Client: the read half stays open so the response that
+     *         arrived alongside STOP_SENDING is still delivered. Closing
+     *         here would drop it.
+     *         Server: the response is gone, so the request is cancelled
+     *         (RFC 9114 section 4.1.1). Stop the client's upload with the
+     *         code it sent and close, so on_stream_close fires. */
+    if (!h || !stream) return;
+    us_quic_stream_t *s = (us_quic_stream_t *) h;
+    if (how == 1) {
+        if (s->ctx->is_client) return;
+        lsquic_stream_send_stop_sending(stream, lsquic_stream_get_error_code(stream));
+    }
+    if (how == 0 || how == 1) lsquic_stream_close(stream);
 }
 
 /* ───── public API ───── */

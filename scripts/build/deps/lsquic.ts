@@ -134,6 +134,12 @@ export const lsquic: Dependency = {
     // H3_CLOSED_CRITICAL_STREAM and closes the connection, which kills the
     // requests the graceful stop was draining. Reject only request streams.
     "patches/lsquic/goaway-accept-uni-streams.patch",
+    // lsquic_stream_stop_sending_in called on_reset(how=1) before it queued
+    // RESET_STREAM and cleared the stream's stale sending flags. An on_reset
+    // that closed the stream (Bun.serve cancels the request) sent a FIN in
+    // place of the reset, and the STOP_SENDING it queued for the read half
+    // was cleared. Call on_reset after both.
+    "patches/lsquic/stop-sending-on-reset-after-reset.patch",
   ],
 
   fetchDeps: ["zlib", "lshpack", "lsqpack", "boringssl"],

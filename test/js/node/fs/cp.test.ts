@@ -366,7 +366,7 @@ for (const [name, copy] of impls) {
     // root reads any file, so the copy cannot fail this way. macOS does not
     // copy file by file: it clones the whole tree with one clonefile().
     test.skipIf(!isLinux || process.getuid?.() === 0)(
-      "recursive - a file that cannot be read fails as a copyfile error",
+      "a file that cannot be read fails as a copyfile error",
       async () => {
         await using basename = tempDir("cp", {
           "from/d/secret.txt": "secret",
@@ -374,16 +374,46 @@ for (const [name, copy] of impls) {
         const secret = join(basename, "from", "d", "secret.txt");
         fs.chmodSync(secret, 0o000);
 
-        const e = await copyShouldThrow(join(basename, "from"), join(basename, "result"), { recursive: true });
+        const inTree = await copyShouldThrow(join(basename, "from"), join(basename, "result"), { recursive: true });
+        const alone = await copyShouldThrow(secret, join(basename, "out.txt"));
 
-        // node's walker copies each file with copyFile (verified against
-        // fs.promises.cp in node v26.3.0).
-        expect({ code: e.code, syscall: e.syscall, path: e.path, dest: e.dest }).toEqual({
-          code: "EACCES",
-          syscall: "copyfile",
-          path: secret,
-          dest: join(basename, "result", "d", "secret.txt"),
+        // node copies each file with copyFile (verified against fs.promises.cp
+        // in node v26.3.0).
+        const shape = (e: any) => ({ code: e.code, syscall: e.syscall, path: e.path, dest: e.dest });
+        expect({ inTree: shape(inTree), alone: shape(alone) }).toEqual({
+          inTree: {
+            code: "EACCES",
+            syscall: "copyfile",
+            path: secret,
+            dest: join(basename, "result", "d", "secret.txt"),
+          },
+          alone: { code: "EACCES", syscall: "copyfile", path: secret, dest: join(basename, "out.txt") },
         });
+      },
+    );
+
+    test.skipIf(!isLinux || process.getuid?.() === 0)(
+      "recursive - a file in a directory without search permission fails at lstat",
+      async () => {
+        // readdir only needs read permission, so the directory lists its file.
+        // node stats the entry before it copies it (verified against
+        // fs.promises.cp in node v26.3.0).
+        await using basename = tempDir("cp", {
+          "from/locked/f.txt": "x",
+        });
+        const locked = join(basename, "from", "locked");
+        fs.chmodSync(locked, 0o600);
+        try {
+          const e = await copyShouldThrow(join(basename, "from"), join(basename, "result"), { recursive: true });
+          expect({ code: e.code, syscall: e.syscall, path: e.path, dest: e.dest }).toEqual({
+            code: "EACCES",
+            syscall: "lstat",
+            path: join(locked, "f.txt"),
+            dest: undefined,
+          });
+        } finally {
+          fs.chmodSync(locked, 0o700);
+        }
       },
     );
 
@@ -797,7 +827,9 @@ describe.concurrent("recursive cp takes the JS walker only when the native copy 
     options?: string;
     withSymlink?: boolean;
     destExists?: boolean;
+    depth?: number;
     walker?: boolean;
+    mayFail?: boolean;
     skip: boolean;
   };
   const cases: Case[] = [
@@ -812,23 +844,41 @@ describe.concurrent("recursive cp takes the JS walker only when the native copy 
     // macOS keeps the walker: clonefile() copies a relative link target as
     // written, and node rewrites it against the source tree.
     { label: "tree contains a relative symlink", withSymlink: true, skip: !isLinux },
-    // The copy has to fail where a clone is not possible. Only copyFile does that.
+    // The copy has to fail where a clone is not possible. Only copyFile does
+    // that, so only the route is checked.
     {
       label: "mode: COPYFILE_FICLONE_FORCE",
       options: "{ mode: fs.constants.COPYFILE_FICLONE_FORCE }",
       walker: true,
+      mayFail: true,
       skip: false,
     },
     { label: "filter", options: "{ filter: () => true }", walker: true, skip: false },
+    // The native copy recurses once per directory level on a thread stack.
+    { label: "tree deeper than 64 levels", depth: 70, walker: true, skip: false },
   ];
   const forms = ["cpSync", "cp", "promises.cp"];
-  for (const { label, options = "{}", withSymlink = false, destExists = false, walker = false, skip } of cases) {
+  for (const {
+    label,
+    options = "{}",
+    withSymlink = false,
+    destExists = false,
+    depth = 0,
+    walker = false,
+    mayFail = false,
+    skip,
+  } of cases) {
     test.skipIf(skip)(label, async () => {
       const files: Record<string, string> = {};
       for (let d = 0; d < 4; d++) {
         for (let f = 0; f < 4; f++) files[`from/dir-${d}/file-${f}.txt`] = `${d}-${f}`;
       }
       using dir = tempDir("cp-native-path", files);
+      if (depth) {
+        const levels = Array.from({ length: depth }, () => "n");
+        fs.mkdirSync(join(String(dir), "from", ...levels), { recursive: true });
+        fs.writeFileSync(join(String(dir), "from", ...levels, "deep.txt"), "deep");
+      }
       if (withSymlink) fs.symlinkSync(join("dir-0", "file-0.txt"), join(String(dir), "from", "link"));
       if (destExists) {
         for (const form of forms) fs.mkdirSync(join(String(dir), "to-" + form));
@@ -869,13 +919,12 @@ describe.concurrent("recursive cp takes the JS walker only when the native copy 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toBe("");
       const result = JSON.parse(stdout);
-      if (walker) {
-        // COPYFILE_FICLONE_FORCE fails on a filesystem that cannot clone, so
-        // only the route is checked.
-        expect(forms.map(form => [form, result[form].tookWalker])).toEqual(forms.map(form => [form, true]));
+      if (mayFail) {
+        expect(forms.map(form => [form, result[form].tookWalker])).toEqual(forms.map(form => [form, walker]));
       } else {
+        const copied = depth ? 17 : 16;
         expect(result).toEqual(
-          Object.fromEntries(forms.map(form => [form, { tookWalker: false, copied: 16, error: null }])),
+          Object.fromEntries(forms.map(form => [form, { tookWalker: walker, copied, error: null }])),
         );
       }
       expect(exitCode).toBe(0);

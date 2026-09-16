@@ -272,29 +272,39 @@ const nativeCopiesTrees = process.platform !== "win32";
 // keeps the target as written, and the Windows copy resolves it to the end.
 const nativeResolvesSymlinks = process.platform !== "darwin" && process.platform !== "win32";
 
+// The native copy recurses once per directory level, with a readdir buffer
+// in each frame, on a 4 MB thread stack. The walker has no such limit.
+const kNativeMaxDepth = 64;
+
 // The native recursive copy is only node-equivalent for some trees. node
 // raises ERR_FS_CP_SOCKET / ERR_FS_CP_FIFO_PIPE for special files, and the
 // native copy handles symlinks like node only when `nativeResolvesSymlinks`.
-// Any other entry bails to the ported walker. Scan errors also bail so the
-// walker surfaces them the way node would.
+// Any other entry bails to the ported walker, and so does a tree deeper than
+// `kNativeMaxDepth`. Scan errors also bail so the walker surfaces them the way
+// node would.
 function nativeCanCopyTreeSync(root) {
-  const stack = [root];
-  while (stack.length) {
-    const dir = stack.pop();
-    let entries;
-    try {
-      entries = readdirSync(dir, { withFileTypes: true });
-    } catch {
-      return false;
-    }
-    for (let i = 0; i < entries.length; i++) {
-      const entry = entries[i];
-      if (entry.isDirectory()) {
-        stack.push(join(dir, entry.name));
-      } else if (!entry.isFile() && !(nativeResolvesSymlinks && entry.isSymbolicLink())) {
+  let dirs = [root];
+  for (let depth = 0; dirs.length; depth++) {
+    if (depth > kNativeMaxDepth) return false;
+    const next = [];
+    for (let d = 0; d < dirs.length; d++) {
+      const dir = dirs[d];
+      let entries;
+      try {
+        entries = readdirSync(dir, { withFileTypes: true });
+      } catch {
         return false;
       }
+      for (let i = 0; i < entries.length; i++) {
+        const entry = entries[i];
+        if (entry.isDirectory()) {
+          next.push(join(dir, entry.name));
+        } else if (!entry.isFile() && !(nativeResolvesSymlinks && entry.isSymbolicLink())) {
+          return false;
+        }
+      }
     }
+    dirs = next;
   }
   return true;
 }
@@ -340,9 +350,13 @@ function tryNativeFastPathSync(src, dest, opts) {
   // The single-file native copy is only node-equivalent for regular-file ->
   // regular-file (or missing dest). Symlinks (node resolves relative link
   // targets) and special files (node-specific error codes) must go through
-  // the ported implementation. So must an existing dest without `force`:
-  // node skips it or raises ERR_FS_CP_EEXIST.
-  return { ok: srcStat.isFile() && (!destStat || (opts.force && destStat.isFile())), checked };
+  // the ported implementation. So must an existing dest, except with the
+  // default options: node unlinks it first or skips it or raises
+  // ERR_FS_CP_EEXIST, and the native copy overwrites it in place.
+  return {
+    ok: srcStat.isFile() && (!destStat || (opts.force && !opts.errorOnExist && opts.mode === 0 && destStat.isFile())),
+    checked,
+  };
 }
 
 function cpSyncFn(src, dest, opts, checked?) {
@@ -560,6 +574,7 @@ export default {
   fsEisdirError,
   areIdentical,
   isSrcSubdir,
+  kNativeMaxDepth,
   nativeCopiesTrees,
   nativeHonorsOptions,
   nativeResolvesSymlinks,

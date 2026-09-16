@@ -460,24 +460,23 @@ fn directory_exists_at_os_path(dir: FD, path: &OSPathSliceZ) -> Maybe<bool> {
 /// directory with `chmod(dest, srcStat.mode)`. `None` when the mode `mkdir`
 /// gave it already matches, which only Windows can tell (libuv's `chmod`
 /// there toggles nothing but the read-only attribute).
-fn cp_created_dir_mode(src_dir: FD) -> Maybe<Option<Mode>> {
-    let mode = sys::fstat(src_dir)?.st_mode as Mode;
+fn cp_created_dir_mode(src_dir: FD) -> Option<Mode> {
+    let mode = sys::fstat(src_dir).ok()?.st_mode as Mode;
     if cfg!(windows) && mode & (sys::S::IWUSR as Mode) != 0 {
-        return Ok(None);
+        return None;
     }
-    Ok(Some(mode & 0o7777))
+    Some(mode & 0o7777)
 }
 
-fn chmod_os_path(path: &OSPathSliceZ, mode: Mode) -> Maybe<()> {
+/// Best effort, like the `fchmod` of a copied file: exFAT and some network
+/// mounts refuse `chmod`, and the copy itself is complete.
+fn cp_chmod_created_dir(path: &OSPathSliceZ, mode: Mode) {
     #[cfg(not(windows))]
-    {
-        Syscall::chmod(path, mode).map_err(|err| err.with_path(path.as_bytes()))
-    }
+    let _ = Syscall::chmod(path, mode);
     #[cfg(windows)]
     {
         let mut buf = paths::path_buffer_pool::get();
-        let path = strings::from_wpath(&mut buf[..], path.as_slice());
-        Syscall::chmod(path, mode).map_err(|err| err.with_path(path.as_bytes()))
+        let _ = Syscall::chmod(strings::from_wpath(&mut buf[..], path.as_slice()), mode);
     }
 }
 
@@ -1668,12 +1667,11 @@ mod _async_tasks {
         }
 
         /// Deepest first, the order node's walker sets them in.
-        fn chmod_created_dirs(&self) -> Maybe<ret::Cp> {
+        fn chmod_created_dirs(&self) {
             let dirs = core::mem::take(&mut *self.created_dirs.lock());
             for (dest, mode) in dirs.iter().rev() {
-                chmod_os_path(OSPathSliceZ::from_buf(dest, dest.len() - 1), *mode)?;
+                cp_chmod_created_dir(OSPathSliceZ::from_buf(dest, dest.len() - 1), *mode);
             }
-            Ok(())
         }
 
         /// Called exactly once by the main directory-scan task and once by each
@@ -1700,7 +1698,8 @@ mod _async_tasks {
             if !this_ref.has_result.load(Ordering::Relaxed) {
                 this_ref.has_result.store(true, Ordering::Relaxed);
                 // count reached zero ⇒ this thread now has exclusive access.
-                this_ref.result.set(this_ref.chmod_created_dirs());
+                this_ref.chmod_created_dirs();
+                this_ref.result.set(Ok(()));
             }
 
             // Count reached zero ⇒ exclusive access. `this` carries mutable
@@ -1897,7 +1896,11 @@ mod _async_tasks {
                         }
                     }
                     this.on_copy(src, dest);
-                    this.finish_concurrently(r);
+                    this.finish_concurrently(if IS_SHELL {
+                        r
+                    } else {
+                        r.map_err(|err| nodefs.cp_entry_error(err, src, dest))
+                    });
                     return;
                 }
             }
@@ -1937,7 +1940,11 @@ mod _async_tasks {
                         }
                     }
                     this.on_copy(src, dest);
-                    this.finish_concurrently(r);
+                    this.finish_concurrently(if IS_SHELL {
+                        r
+                    } else {
+                        r.map_err(|err| nodefs.cp_entry_error(err, src, dest))
+                    });
                     return;
                 }
             }
@@ -2002,12 +2009,14 @@ mod _async_tasks {
                     src.as_bytes(),
                 ) {
                     match err.get_errno() {
-                        E::EACCES | E::ENAMETOOLONG | E::EROFS | E::EPERM | E::EINVAL => {
+                        E::ENAMETOOLONG | E::EROFS | E::EINVAL => {
                             // `errno_sys_p`
                             // already boxed `src.as_bytes()` into `err.path`, so just forward.
                             this_ref.finish_concurrently(err);
                             return false;
                         }
+                        // EACCES and EPERM can come from one entry of the tree: the
+                        // per-entry copy below copies the rest and names that entry.
                         // Other errors may be due to clonefile() not being supported
                         // We'll fall back to other implementations
                         _ => {}
@@ -2069,23 +2078,14 @@ mod _async_tasks {
             }
             // The shell's `cp` keeps the mode `mkdir` gave the directory.
             if !IS_SHELL && dest_created.get() {
-                match cp_created_dir_mode(fd) {
-                    Err(err) => {
-                        this_ref.finish_concurrently(Err(
-                            err.with_path(nodefs.os_path_into_sync_error_buf(src))
-                        ));
-                        return false;
-                    }
-                    Ok(Some(mode)) => {
-                        let mut owned = Vec::with_capacity(normdest.len() + 1);
-                        owned.extend_from_slice(&normdest[..]);
-                        owned.push(0);
-                        this_ref
-                            .created_dirs
-                            .lock()
-                            .push((owned.into_boxed_slice(), mode));
-                    }
-                    Ok(None) => {}
+                if let Some(mode) = cp_created_dir_mode(fd) {
+                    let mut owned = Vec::with_capacity(normdest.len() + 1);
+                    owned.extend_from_slice(&normdest[..]);
+                    owned.push(0);
+                    this_ref
+                        .created_dirs
+                        .lock()
+                        .push((owned.into_boxed_slice(), mode));
                 }
             }
 
@@ -7994,8 +7994,10 @@ impl NodeFS {
         Self::os_path_into_buf(&mut self.sync_error_buf, slice)
     }
 
-    /// node's `cp` copies each file of a tree with `copyFile`, which reports
-    /// every failure as `copyfile 'src' -> 'dest'`. A link keeps its syscall.
+    /// node's `cp` stats an entry, then copies a file with `copyFile`, which
+    /// reports every failure as `copyfile 'src' -> 'dest'`. An entry that cannot
+    /// be reached (no search permission on its directory) fails the stat
+    /// first. A link keeps its syscall.
     fn cp_entry_error(
         &mut self,
         err: sys::Error,
@@ -8004,6 +8006,10 @@ impl NodeFS {
     ) -> sys::Error {
         if matches!(err.syscall, sys::Tag::readlink | sys::Tag::symlink) {
             return err;
+        }
+        #[cfg(not(windows))]
+        if let Err(stat_err) = Syscall::lstat(src) {
+            return stat_err.with_path(src.as_bytes());
         }
         let path = self.os_path_into_sync_error_buf(src).into();
         let dest = self.os_path_into_sync_error_buf(dest).into();
@@ -8081,7 +8087,7 @@ impl NodeFS {
                         return Ok(());
                     }
                 }
-                return r;
+                return r.map_err(|err| self.cp_entry_error(err, src, dest));
             }
         }
         #[cfg(not(windows))]
@@ -8110,7 +8116,7 @@ impl NodeFS {
                         return Ok(());
                     }
                 }
-                return r;
+                return r.map_err(|err| self.cp_entry_error(err, src, dest));
             }
         }
 
@@ -8124,7 +8130,7 @@ impl NodeFS {
         }
 
         #[cfg(target_os = "macos")]
-        'try_with_clonefile: {
+        {
             // CLONE_NOFOLLOW: `src` was classified as a directory via lstat, so
             // mirror the O_NOFOLLOW directory open below instead of dereferencing.
             if let Some(err) = Maybe::<ret::Cp>::errno_sys_p(
@@ -8133,14 +8139,11 @@ impl NodeFS {
                 src.as_bytes(),
             ) {
                 match err.get_errno() {
-                    E::ENAMETOOLONG | E::EROFS | E::EINVAL | E::EACCES | E::EPERM => {
-                        if matches!(err.get_errno(), E::EACCES | E::EPERM) && args.flags.force {
-                            break 'try_with_clonefile;
-                        }
-                        // `errno_sys_p` already boxed
-                        // `src.as_bytes()` into the inner `Error::path`, so just propagate.
-                        return err;
-                    }
+                    // `errno_sys_p` already boxed
+                    // `src.as_bytes()` into the inner `Error::path`, so just propagate.
+                    E::ENAMETOOLONG | E::EROFS | E::EINVAL => return err,
+                    // EACCES and EPERM can come from one entry of the tree: the
+                    // per-entry copy below copies the rest and names that entry.
                     // Other errors may be due to clonefile() not being supported
                     // We'll fall back to other implementations
                     _ => {}
@@ -8250,11 +8253,9 @@ impl NodeFS {
         }
 
         if dest_created.get() {
-            let mode = cp_created_dir_mode(fd)
-                .map_err(|err| err.with_path(self.os_path_into_sync_error_buf(&src_buf[..sd])))?;
-            if let Some(mode) = mode {
+            if let Some(mode) = cp_created_dir_mode(fd) {
                 dest_buf[dd] = 0;
-                chmod_os_path(OSPathSliceZ::from_buf(&dest_buf[..], dd), mode)?;
+                cp_chmod_created_dir(OSPathSliceZ::from_buf(&dest_buf[..], dd), mode);
             }
         }
         Ok(())
@@ -8311,7 +8312,7 @@ impl NodeFS {
         // SAFETY: NUL written at `target_buf[link_len]`.
         let link_target = ZStr::from_buf(&target_buf[..], link_len);
         if paths::is_absolute(link_target.as_bytes()) {
-            return Syscall::symlink(link_target, dest);
+            return Self::cp_create_symlink(link_target, dest);
         }
         let mut cwd_buf = bun_paths::path_buffer_pool::get();
         let mut resolved_buf = bun_paths::path_buffer_pool::get();
@@ -8319,7 +8320,7 @@ impl NodeFS {
         let Ok(cwd_len) = sys::getcwd(&mut cwd_buf[..]) else {
             // If we can't resolve cwd, preserve the link target as-is rather
             // than pointing the copied link back at the source path.
-            return Syscall::symlink(link_target, dest);
+            return Self::cp_create_symlink(link_target, dest);
         };
         let cwd = &cwd_buf[..cwd_len];
         let resolved_buf_len = resolved_buf.len();
@@ -8345,7 +8346,14 @@ impl NodeFS {
         }
         resolved_buf[resolved_len] = 0;
         // SAFETY: NUL written at `resolved_buf[resolved_len]`.
-        Syscall::symlink(ZStr::from_buf(&resolved_buf[..], resolved_len), dest)
+        Self::cp_create_symlink(ZStr::from_buf(&resolved_buf[..], resolved_len), dest)
+    }
+
+    /// `fs.symlink` reports the target as `path` and the link as `dest`.
+    #[cfg_attr(any(windows, target_os = "macos"), allow(dead_code))]
+    fn cp_create_symlink(target: &ZStr, dest: &ZStr) -> Maybe<ret::CopyFile> {
+        Syscall::symlink(target, dest)
+            .map_err(|err| err.with_path_dest(target.as_bytes(), dest.as_bytes()))
     }
 
     /// This is `copyFile`, but it copies symlinks as-is

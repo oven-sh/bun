@@ -83,7 +83,13 @@ static std::optional<WTF::String> stripANSI(const std::span<const Char> input)
         return std::nullopt;
 
     // The buffer has the length of the input. A copy of the part that was written keeps no slack.
-    return WTF::String(std::span<const Char> { output.data(), cursor });
+    const std::span<const Char> written { output.data(), cursor };
+    std::span<Char> copy;
+    WTF::String result = String::tryCreateUninitialized(written.size(), copy);
+    // `copy` is empty for a failed allocation (a null String) and for an empty output.
+    if (!copy.empty())
+        memcpySpan(copy, written);
+    return result;
 }
 
 struct BunANSIIterator {

@@ -797,6 +797,34 @@ const dir = String(
       console.log(JSON.stringify({ sameServer, answers }));
       process.exit(0);
     `,
+    "uses-a-fetch-session.mjs": `
+      const session = new Bun.FetchSession();
+      export const fetchThroughItsOwnSession = async url => (await session.fetch(url)).text();
+    `,
+    "fetch-session-of-a-disposed-graph.mjs": `
+      import net from "node:net";
+      // A server that keeps its connections alive, and counts them.
+      const open = new Set();
+      const server = net.createServer(socket => {
+        open.add(socket);
+        socket.on("close", () => open.delete(socket)).on("error", () => {});
+        socket.on("data", () => socket.write("HTTP/1.1 200 OK\\r\\nContent-Length: 2\\r\\n\\r\\nok"));
+      });
+      await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+      const url = "http://127.0.0.1:" + server.address().port + "/";
+      // The host's own session keeps one too: that one stays.
+      const hostsSession = new Bun.FetchSession();
+      await (await hostsSession.fetch(url)).text();
+      const theHosts = open.size;
+      const graph = new Bun.ModuleGraph();
+      const app = await graph.import(import.meta.dir + "/uses-a-fetch-session.mjs");
+      await graph.run(() => app.fetchThroughItsOwnSession(url));
+      const openBeforeDispose = open.size - theHosts;
+      graph.dispose();
+      for (let turns = 0; open.size > theHosts && turns < 500; turns++) await new Promise(resolve => setImmediate(resolve));
+      console.log(JSON.stringify({ openBeforeDispose, openAfter: open.size - theHosts, theHostsStillThere: theHosts }));
+      process.exit(0);
+    `,
     "dials-the-host.mjs": `
       import net from "node:net";
       import http from "node:http";
@@ -804,6 +832,9 @@ const dir = String(
       export const dialLater = port => queueMicrotask(() => {
         net.connect(port, "127.0.0.1").on("error", () => {});
         http.get({ host: "127.0.0.1", port, path: "/" }).on("error", () => {});
+        // (A fetch that was dropped a moment after it started still got as far as connecting, now and then: several.)
+        for (let i = 0; i < 8; i++) fetch("http://127.0.0.1:" + port + "/").catch(() => {});
+        for (let i = 0; i < 8; i++) new Bun.FetchSession().fetch("http://127.0.0.1:" + port + "/", { method: "POST", body: "x" }).catch(() => {});
       });
     `,
     "dials-after-it-was-disposed.mjs": `
@@ -3427,7 +3458,13 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
       exitCode: 0,
     });
   });
-  test("a node:net or node:http dial its leftover script makes does not go out, as a Bun.connect() does not", async () => {
+  test("the connections a Bun.FetchSession it made keeps alive are closed with it", async () => {
+    expect(await runsFixture("fetch-session-of-a-disposed-graph.mjs")).toEqual({
+      stdout: `{"openBeforeDispose":1,"openAfter":0,"theHostsStillThere":1}`,
+      exitCode: 0,
+    });
+  });
+  test("a node:net or node:http dial or a fetch() its leftover script makes does not go out, as a Bun.connect() does not", async () => {
     expect(await runsFixture("dials-after-it-was-disposed.mjs")).toEqual({
       stdout: `{"arrivedFromTheGraph":0}`,
       exitCode: 0,

@@ -156,7 +156,15 @@ pub struct FetchSession {
     this_value: JsCell<JsRef>,
     /// Requests that hold a `SessionHold`.
     in_flight: Cell<u32>,
+    /// Armed in the context whose script made the session: the connections its pool keeps
+    /// alive are that context's, and close with it. (The session itself stays usable.)
+    abort_handle: bun_jsc::AbortHandle,
 }
+
+bun_jsc::impl_abort_handle_owner!(FetchSession, abort_handle, |this, _cause| {
+    // SAFETY: trait contract: `this` is live (the wrapper's `m_ctx`; `finalize` drops the handle).
+    unsafe { &*this }.close_idle_sockets()
+});
 
 /// One request's hold on its session, from the moment `fetch()` reads the
 /// `session` option: the option is a property of `init`, so nothing else keeps
@@ -252,7 +260,13 @@ impl FetchSession {
             used: Cell::new(false),
             this_value: JsCell::new(JsRef::init_weak(this_value)),
             in_flight: Cell::new(0),
+            abort_handle: bun_jsc::AbortHandle::for_owner::<FetchSession>(),
         });
+        // SAFETY: a heap allocation at its final address; its `Drop` (in `finalize`, or when
+        // this constructor fails) disarms the handle.
+        unsafe {
+            bun_jsc::AbortHandle::arm_owner(&raw mut *this, vm.context_of_caller(frame));
+        }
         if options.is_undefined_or_null() {
             return Ok(this);
         }

@@ -390,6 +390,11 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     bound_session: Option<JSValue>,
 ) -> JsResult<JSValue> {
     let context = ctx.bun_vm().context_of_caller(callframe);
+    // What script of a disposed `Bun.ModuleGraph` starts does not start, and reports nothing: no
+    // connection goes out, and the promise stays pending.
+    if context.is_stopped() {
+        return Ok(JSPromise::create(ctx).to_js());
+    }
     jsc::mark_binding();
     let global_this = ctx;
     bun_core::analytics::Features::FETCH.fetch_add(1, core::sync::atomic::Ordering::Relaxed);

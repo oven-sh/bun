@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { mkdirSync } from "fs";
-import { bunEnv, bunExe, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, tempDir, tmpdirSync } from "harness";
 import { join } from "path";
 
 //   --install=<val>                 Configure auto-install behavior. One of "auto" (default, auto-installs when no node_modules), "fallback" (missing packages only), "force" (always).
@@ -190,7 +190,7 @@ describe.concurrent("a failed registry lookup is asked again by the next resolve
     };
   }
 
-  async function run(registry: { url: string }, script: string) {
+  async function run(registry: { url: string }, script: string, env: Record<string, string> = {}) {
     using dir = tempDir("autoinstall-failed-lookup", {
       "bunfig.toml": `[install]\nregistry = "${registry.url}"\n`,
       "index.js": `const registry = ${JSON.stringify(registry.url)};\n${script}`,
@@ -203,12 +203,13 @@ describe.concurrent("a failed registry lookup is asked again by the next resolve
         BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache"),
         // A 5xx or a dropped connection is retried: one lookup is then two requests.
         BUN_CONFIG_HTTP_RETRY_COUNT: "1",
+        ...env,
       },
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { stdout: stdout.trim(), exitCode };
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), stderr, exitCode };
   }
 
   const failures: Record<string, { respond: (deadPort: number) => Response; requestsPerLookup: number; busy?: true }> =
@@ -305,5 +306,37 @@ describe.concurrent("a failed registry lookup is asked again by the next resolve
       [],
     ]);
     expect(exitCode).toBe(0);
+  });
+
+  // A manifest request that failed before its body was parsed never gave its `NetworkTask`
+  // back. The pool has 128 inline slots and allocates after that, so LSAN sees the lookups
+  // after the first 128. Timeout: the leak check at exit takes about 3 s on a debug build,
+  // and a detected leak makes llvm-symbolizer load the DWARF of the whole binary.
+  describe.each(["404", "a dropped connection"] as const)("%s does not leak the network task", name => {
+    test.skipIf(!isASAN)(
+      "LSAN",
+      async () => {
+        using registry = flakyRegistry(failures[name].respond);
+        const { stdout, stderr, exitCode } = await run(
+          registry,
+          `
+            for (let i = 0; i < 160; i++) {
+              try { require("flaky-pkg-" + i); } catch {}
+            }
+            console.log("done");
+          `,
+          {
+            ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+            LSAN_OPTIONS: `use_registers=0:print_suppressions=0:suppressions=${join(import.meta.dirname, "../../leaksan.supp")}`,
+          },
+        );
+        expect({ stdout, stderr, exitCode }).toEqual({
+          stdout: "done",
+          stderr: expect.not.stringContaining("LeakSanitizer: detected memory leaks"),
+          exitCode: 0,
+        });
+      },
+      30_000,
+    );
   });
 });

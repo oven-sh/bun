@@ -1113,6 +1113,111 @@ describe.skipIf(!isWindows).each([
   );
 });
 
+// #42962: on Windows the console Ctrl handler runs on a thread the console
+// creates and only sets a flag. The parent's run loop blocks in uv_run until
+// some I/O completion arrives, so with a quiet child nothing ever wakes it, the
+// flag is never read, and the whole tree (parent, `bun exec`, leaf) outlives
+// the Ctrl+C. The handler must wake the loop itself.
+//
+// A real CTRL_C_EVENT has to reach the parent's console, and the test runner's
+// console is shared with everything else, so a helper detaches from it, allocs
+// a fresh console, spawns the parent on that console, and sends the event
+// there once the leaf is up. The helper reports through a file: AllocConsole
+// rebinds the std handles, so its stdout is not reliable afterwards.
+describe.skipIf(!isWindows).each([
+  { via: "--filter", argv: ["--filter", "*", "dev"] },
+  { via: "run --parallel", argv: ["run", "--parallel", "dev"] },
+])("windows: $via exits on Ctrl+C while the script is idle (#42962)", ({ argv }) => {
+  test.concurrent(
+    "parent exits and the leaf dies",
+    async () => {
+      using dir = tempDir("filter-win-ctrlc", {
+        "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
+        "packages/app/server.js": `
+          require("fs").writeFileSync(process.env.PIDFILE, String(process.pid));
+          setInterval(() => {}, 1000);
+        `,
+        "packages/app/package.json": JSON.stringify({
+          name: "app",
+          scripts: { dev: `"${bunExe()}" server.js` },
+        }),
+        "ctrlc-fixture.js": `
+          const { dlopen, FFIType } = require("bun:ffi");
+          const fs = require("fs");
+          const { setTimeout: sleep } = require("timers/promises");
+          const k32 = dlopen("kernel32.dll", {
+            FreeConsole: { args: [], returns: FFIType.i32 },
+            AllocConsole: { args: [], returns: FFIType.i32 },
+            SetConsoleCtrlHandler: { args: [FFIType.ptr, FFIType.i32], returns: FFIType.i32 },
+            GenerateConsoleCtrlEvent: { args: [FFIType.u32, FFIType.u32], returns: FFIType.i32 },
+          }).symbols;
+          const isAlive = pid => { try { process.kill(pid, 0); return true; } catch { return false; } };
+          const result = { parentExited: false, leafDead: false, error: "" };
+          let parent, leafPid = 0;
+          try {
+            k32.FreeConsole();
+            if (!k32.AllocConsole()) throw new Error("AllocConsole failed");
+            parent = Bun.spawn({
+              cmd: [process.execPath, ...JSON.parse(process.env.PARENT_ARGV)],
+              cwd: process.env.PARENT_CWD,
+              env: process.env,
+              stdin: "ignore",
+              stdout: "ignore",
+              stderr: "ignore",
+            });
+            // Ignore Ctrl+C in this process only. Set after the spawn: the
+            // ignore attribute is inherited by children.
+            process.on("SIGINT", () => {});
+            k32.SetConsoleCtrlHandler(null, 1);
+            const deadline = Date.now() + 15000;
+            while (leafPid === 0 && Date.now() < deadline) {
+              try { leafPid = Number(fs.readFileSync(process.env.PIDFILE, "utf8").trim()) || 0; } catch {}
+              if (leafPid === 0) await sleep(25);
+            }
+            if (leafPid === 0) throw new Error("leaf never wrote pidfile");
+            if (!k32.GenerateConsoleCtrlEvent(0, 0)) throw new Error("GenerateConsoleCtrlEvent failed");
+            result.parentExited = await Promise.race([
+              parent.exited.then(() => true),
+              sleep(10000).then(() => false),
+            ]);
+            const leafDeadline = Date.now() + 10000;
+            while (isAlive(leafPid) && Date.now() < leafDeadline) await sleep(25);
+            result.leafDead = !isAlive(leafPid);
+          } catch (e) {
+            result.error = String(e);
+          } finally {
+            if (parent) { try { parent.kill("SIGKILL"); } catch {} await parent.exited; }
+            if (leafPid && isAlive(leafPid)) { try { process.kill(leafPid, "SIGKILL"); } catch {} }
+            fs.writeFileSync(process.env.RESULTFILE, JSON.stringify(result));
+          }
+        `,
+      });
+
+      const env: Record<string, string | undefined> = {
+        ...bunEnv,
+        PIDFILE: join(String(dir), "leaf.pid"),
+        RESULTFILE: join(String(dir), "result.json"),
+        PARENT_ARGV: JSON.stringify(argv),
+        PARENT_CWD: join(String(dir), "packages", "app"),
+        BUN_FEATURE_FLAG_NO_ORPHANS: undefined,
+        NO_COLOR: "1",
+      };
+      await using helper = Bun.spawn({
+        cmd: [bunExe(), "ctrlc-fixture.js"],
+        env,
+        cwd: String(dir),
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([helper.stderr.text(), helper.exited]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+      expect(await Bun.file(env.RESULTFILE!).json()).toEqual({ parentExited: true, leafDead: true, error: "" });
+    },
+    60000,
+  );
+});
+
 describe("output timing", () => {
   // A script is finished when its process exits: output it already wrote is
   // drained at that point, but a detached child still holding the pipe write

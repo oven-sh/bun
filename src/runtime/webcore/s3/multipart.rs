@@ -1122,6 +1122,11 @@ impl MultiPartUpload {
         if self.ended.get() {
             return Ok(UploadBackpressure::Done); // no backpressure since we are done
         }
+        // Nothing of a context that has stopped will be sent (`process_buffered`), so nothing is
+        // taken either: whoever is writing waits, for the abort that comes with what stopped it.
+        if self.abort_handle.context_stopped() {
+            return Ok(UploadBackpressure::Backpressure);
+        }
         // we may call done inside processBuffered so we ensure that we keep a ref until we are done
         // SAFETY: `self` is live; `root_ptr()` carries the allocation's provenance.
         let _guard = unsafe { RefPtr::init_ref(self.root_ptr()) };

@@ -628,6 +628,28 @@ const dir = String(
       // Not process.exit(): a build still waiting for the plugin's answer would keep this process here.
       console.log("idle");
     `,
+    "streams-to-s3-later.mjs": `
+      export const chunks = { pulled: 0 };
+      // From a microtask, which still runs once the graph has been disposed: a body that is all there
+      // already (64 chunks of 1 MiB, handed over as fast as they are asked for), streamed up.
+      export const later = endpoint => queueMicrotask(() => {
+        const client = new Bun.S3Client({ accessKeyId: "a", secretAccessKey: "b", bucket: "bucket", endpoint });
+        const body = new ReadableStream({ pull(controller) { if (++chunks.pulled === 64) controller.close(); else controller.enqueue(new Uint8Array(1 << 20)); } });
+        client.file("key").write(new Response(body)).catch(() => {});
+      });
+    `,
+    "streams-to-s3-after-it-was-disposed.mjs": `
+      const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("", { status: 500 }) });
+      const graph = new Bun.ModuleGraph();
+      const app = await graph.import(import.meta.dir + "/streams-to-s3-later.mjs");
+      graph.run(() => app.later(server.url.href));
+      graph.dispose();
+      for (let i = 0; i < 20; i++) await new Promise(resolve => setImmediate(resolve));
+      // Nothing is going to be sent, so nothing is taken: the stream is asked for the chunk the upload is offered and
+      // the one it keeps ready behind it, not for all 64.
+      console.log(JSON.stringify({ pulled: app.chunks.pulled }));
+      server.stop(true);
+    `,
     "uses-s3-later.mjs": `
       // From a microtask, which still runs once the graph has been disposed: every kind of S3 request.
       export const later = endpoint => queueMicrotask(() => {
@@ -3494,6 +3516,12 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
   test("nothing its leftover script asks of an S3 bucket is sent: not a delete, not a write", async () => {
     expect(await runsFixture("s3-after-it-was-disposed.mjs")).toEqual({
       stdout: `{"asked":["HEAD /bucket/the-hosts"]}`,
+      exitCode: 0,
+    });
+  });
+  test("a body its leftover script streams to S3 is not read into memory: the upload takes nothing", async () => {
+    expect(await runsFixture("streams-to-s3-after-it-was-disposed.mjs")).toEqual({
+      stdout: `{"pulled":2}`,
       exitCode: 0,
     });
   });

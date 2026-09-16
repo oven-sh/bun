@@ -829,32 +829,31 @@ impl JSGlobalObject {
         self.throw_value(instance)
     }
 
-    /// Queue a native callback as a microtask. Callers supply the C-ABI
-    /// trampoline directly; the wrapper only erases the context pointer type.
-    pub fn queue_microtask_callback<C>(
-        &self,
-        ctx_val: *mut C,
-        function: unsafe extern "C" fn(*mut c_void),
-    ) {
-        crate::mark_binding();
-        JSC__JSGlobalObject__queueMicrotaskCallback(self, ctx_val.cast::<c_void>(), function);
-    }
-
-    /// Queue `task` to run as a microtask; the queue owns the box until then
-    /// and the returned back-reference is valid until [`MicrotaskCallback::run`]
-    /// is entered. If the VM is torn down before the microtask queue drains,
-    /// the box is leaked along with the rest of the queue.
+    /// Queue `task` to run as a microtask. The microtask queue owns the box:
+    /// it is passed to [`MicrotaskCallback::run`] when the microtask fires, or
+    /// dropped unrun if the queue discards it (VM teardown). The returned
+    /// back-reference is valid until either happens.
     pub fn queue_microtask_boxed<T: MicrotaskCallback>(
         &self,
         task: Box<T>,
     ) -> bun_ptr::BackRef<T, bun_ptr::Root> {
         unsafe extern "C" fn run<T: MicrotaskCallback>(ctx: *mut c_void) {
-            // SAFETY: `ctx` is the `Box<T>` leaked below; the microtask queue
-            // invokes each callback exactly once.
+            // SAFETY: `ctx` is the `Box<T>` leaked below; C++ hands it to
+            // exactly one of `run`/`drop`, once.
             T::run(unsafe { bun_core::heap::take(ctx.cast::<T>()) });
         }
+        unsafe extern "C" fn drop<T: MicrotaskCallback>(ctx: *mut c_void) {
+            // SAFETY: as for `run`.
+            core::mem::drop(unsafe { bun_core::heap::take(ctx.cast::<T>()) });
+        }
+        crate::mark_binding();
         let task = bun_core::heap::into_raw(task);
-        self.queue_microtask_callback(task, run::<T>);
+        JSC__JSGlobalObject__queueMicrotaskCallback(
+            self,
+            task.cast::<c_void>(),
+            run::<T>,
+            drop::<T>,
+        );
         // SAFETY: `task` is the live leaked box; see the doc comment for the
         // holder's obligation.
         unsafe { bun_ptr::BackRef::from_root(task) }
@@ -1510,11 +1509,13 @@ unsafe extern "C" {
 
     // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
     // ABI-identical to non-null `*const`); `ctx` is an opaque round-trip pointer
-    // C++ only stores and forwards to `function` (never dereferenced as Rust data).
+    // C++ only stores and forwards to exactly one of `run` / `drop` (never
+    // dereferenced as Rust data).
     safe fn JSC__JSGlobalObject__queueMicrotaskCallback(
         this: &JSGlobalObject,
         ctx: *mut c_void,
-        function: unsafe extern "C" fn(*mut c_void),
+        run: unsafe extern "C" fn(*mut c_void),
+        drop: unsafe extern "C" fn(*mut c_void),
     );
 
     safe fn Bun__Process__emitWarning(

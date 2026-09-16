@@ -721,13 +721,22 @@ impl TranspilerJob {
         let mut package_json: Option<&'static bun_watcher::PackageJSON> = None;
         let hash = Watcher::get_hash(path.text);
 
-        // SAFETY: `import_watcher()` is this VM's `*mut ImportWatcher`, or on a
-        // worker its parent's (BACKREF — when non-null it points at the
-        // process-lifetime watcher leaked in `enable_hot_module_reloading`, so
-        // the `ParentRef` invariant holds for this transpile job's duration).
-        // Leaf pointer-field reads on `*vm`; see the `vm` note above.
-        let import_watcher: Option<bun_ptr::ParentRef<ImportWatcher, bun_ptr::Mut>> =
-            unsafe { bun_ptr::ParentRef::from_nullable_mut((*vm).import_watcher()) };
+        // Inlined `VirtualMachine::import_watcher` to avoid forming
+        // `&VirtualMachine` (see the `vm` note above): this VM's watcher, or on
+        // a worker under `--watch` its parent's.
+        // SAFETY: two raw `(*vm)` field projections, each a pointer that is
+        // written once before this VM can queue a job. BACKREF — when non-null
+        // it points at the process-lifetime watcher leaked in
+        // `enable_hot_module_reloading`, so the `ParentRef` invariant holds for
+        // this transpile job's duration.
+        let import_watcher: Option<bun_ptr::ParentRef<ImportWatcher, bun_ptr::Mut>> = unsafe {
+            let own = (*vm).bun_watcher;
+            bun_ptr::ParentRef::from_nullable_mut(if own.is_null() {
+                (*vm).parent_import_watcher
+            } else {
+                own
+            })
+        };
         if let Some(iw) = import_watcher {
             // Never read through the watchlist's stored fd; see
             // `ImportWatcher::snapshot_package_json`.

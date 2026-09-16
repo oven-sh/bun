@@ -1154,6 +1154,8 @@ impl VirtualMachine {
     /// Null on a worker under `--hot`.
     ///
     /// The pointee is shared between threads; see [`Self::bun_watcher_ptr`].
+    /// `TranspilerJob::run` inlines this body, because a pool thread must not
+    /// form `&VirtualMachine`. Keep the two in step.
     #[inline]
     pub fn import_watcher(&self) -> *mut crate::hot_reloader::ImportWatcher {
         if self.bun_watcher.is_null() {

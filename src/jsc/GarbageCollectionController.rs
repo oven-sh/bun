@@ -1,4 +1,4 @@
-//! Idle GC timer: JSC's own `GCActivityCallback` (via `WTFTimer`) paces eden/full against allocation rate; this adds a 1 s / 30 s idle `collect_async()` so a process that stops allocating still releases memory, and once the heap has been quiet for `BUN_IDLE_GC_SECONDS` (default "10,65,65": first after 10 s of quiet, then one per CodeBlock-aging lease; 0 = off; main thread only) full collections so JSC can age out code that no longer runs, plus a page-out of a standalone executable's embedded module graph. Knobs: `BUN_GC_TIMER_INTERVAL` (ms), `BUN_GC_TIMER_DISABLE`. One per JS thread, not thread-safe.
+//! Idle GC timer: JSC's own `GCActivityCallback` (via `WTFTimer`) paces eden/full against allocation rate; this adds a 1 s / 30 s idle `collect_async()` so a process that stops allocating still releases memory, and once the heap has been quiet for `BUN_IDLE_GC_SECONDS` (default "10,65,65": first after 10 s of quiet, then one per CodeBlock-aging lease; 0 = off; main thread only) full collections so JSC can age out code that no longer runs, each with a forced allocator collect then and at the next tick, plus a page-out of a standalone executable's embedded module graph. Knobs: `BUN_GC_TIMER_INTERVAL` (ms), `BUN_GC_TIMER_DISABLE`. One per JS thread, not thread-safe.
 
 use core::cell::Cell;
 use core::ffi::c_int;
@@ -24,6 +24,8 @@ pub struct GarbageCollectionController {
     /// nominal time (from tick intervals) since the JS heap last grew.
     idle_gc_at_ms: Cell<[u32; 3]>,
     idle_quiet_ms: Cell<u32>,
+    /// Set when an idle full collection is requested; the next fire runs the forced allocator collect again.
+    idle_release_pending: Cell<bool>,
 }
 
 bun_event_loop::impl_timer_owner!(
@@ -42,6 +44,7 @@ impl Default for GarbageCollectionController {
             disabled: Cell::new(false),
             idle_gc_at_ms: Cell::new([0; 3]),
             idle_quiet_ms: Cell::new(0),
+            idle_release_pending: Cell::new(false),
         }
     }
 }
@@ -196,6 +199,9 @@ impl GarbageCollectionController {
         let vm = VirtualMachine::get().jsc_vm();
         if idle_full {
             vm.collect_async_idle();
+            // Only a forced collect returns the large pages mimalloc keeps for the next burst (oven-sh/mimalloc#52).
+            bun_core::Global::mimalloc_cleanup(true);
+            self.idle_release_pending.set(true);
         } else {
             vm.collect_async(false);
         }
@@ -213,6 +219,10 @@ impl GarbageCollectionController {
             .with_mut(|t| t.state = TimerState::FIRED);
         if this.disabled.get() {
             return;
+        }
+        if this.idle_release_pending.replace(false) {
+            // ..and once more for what that collection has freed since.
+            bun_core::Global::mimalloc_cleanup(true);
         }
         // Timer chatter in a parked app churns a few blocks per tick; real work grows the heap by far more.
         const IDLE_GROWTH_SLACK: usize = 2 * 1024 * 1024;

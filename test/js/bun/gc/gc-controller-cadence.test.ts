@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isLinux, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, linuxPageSize, tempDir } from "harness";
 
 // Bun's GarbageCollectionController used to sample `blockBytesAllocated +
 // extraMemorySize` on every event-loop tick and arm a 16 ms one-shot whenever
@@ -194,6 +194,71 @@ describe("idle release", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+// The allocator leaves up to 4 MiB of the 4 MiB pages that a thread used last alone, for a thread that takes its
+// buffers again soon, and before such a page has aged only a forced collect takes it (oven-sh/mimalloc#52). A heap that
+// has been quiet for BUN_IDLE_GC_SECONDS is not coming back soon: the tick after the idle collection gives those pages
+// back. While the process is active they stay, also across a collect that is not forced (JavaScriptCore runs one after
+// each full collection, and Bun.gc(false) is one).
+// Linux only: reads the faults (counted in pages of 4 KiB) and the resident memory of the process from /proc. Not ASAN:
+// malloc is not mimalloc there.
+test.skipIf(!isLinux || isASAN || linuxPageSize() !== 4096)(
+  "the large pages that the allocator keeps for the next burst stay while the process is active and go when it is idle",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { readFileSync } = require("node:fs");
+        const faults = () => {
+          const stat = readFileSync("/proc/self/stat", "utf8");
+          const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+          return Number(fields[7]) + Number(fields[9]);
+        };
+        const rssAnonKiB = () => Number(/RssAnon:\\s+(\\d+)/.exec(readFileSync("/proc/self/status", "utf8"))[1]);
+        const burst = () => {
+          const buffers = [];
+          for (let i = 0; i < 6; i++) buffers.push(new Uint8Array(512 * 1024).fill(1));
+          for (const buffer of buffers) buffer.buffer.transfer(0); // frees it now: no collector in this
+        };
+        const faultsOfABurst = () => { const before = faults(); burst(); return faults() - before; };
+        // The pauses are input: the thread goes idle and the allocator's sweeps decide what stays, then it wakes for a
+        // collect that is not forced, and goes idle again.
+        for (let i = 0; i < 3; i++) { burst(); await Bun.sleep(60); Bun.gc(false); await Bun.sleep(40); }
+        const whileActive = faultsOfABurst();
+        // The heap grows by more than the controller's slack, so the quiet time starts over at its next tick, here
+        // and not when the process started.
+        globalThis.growth = Array.from({ length: 100000 }, (_, i) => ({ i, s: "x" + i }));
+        burst();
+        await Bun.sleep(60);
+        // Quiet from here on. The 3 MiB of the six buffers leave the resident set when an idle collection frees their page.
+        const resident = rssAnonKiB();
+        const deadline = Date.now() + 3000;
+        while (rssAnonKiB() > resident - 2048 && Date.now() < deadline) await Bun.sleep(100);
+        console.log(JSON.stringify({ whileActive, afterIdle: faultsOfABurst() }));
+        `,
+      ],
+      env: {
+        ...bunEnv,
+        BUN_IDLE_GC_SECONDS: "1,1,1",
+        BUN_GC_TIMER_DISABLE: undefined,
+        BUN_GC_TIMER_INTERVAL: "100",
+        // an epoch of the allocator's sweep lasts 10 ms instead of 100: it has decided 60 ms after a burst
+        MIMALLOC_PURGE_HOLES_MIN_INTERVAL: "10",
+      },
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const { whileActive, afterIdle } = JSON.parse(stdout) as { whileActive: number; afterIdle: number };
+    // The six buffers of a burst are 768 pages of 4 KiB: a burst that finds its page there faults a few pages of other
+    // things, one that finds it gone faults all of them in.
+    expect(whileActive, stdout).toBeLessThan(384);
+    expect(afterIdle, stdout).toBeGreaterThan(384);
+    expect(exitCode).toBe(0);
+  },
+);
 
 // Those idle full collections are tagged (GCRequest::isIdle) so JSC may also let idle FTL code — which has no execution
 // counter of its own and pins every baseline CodeBlock it inlined — age out in them, and only in them: a program that

@@ -231,3 +231,42 @@ describe("verifyClient", () => {
     });
   });
 });
+
+describe("headers queued before the handshake", () => {
+  // The HEADERS frame of a stream created before the handshake completes
+  // must leave once lsquic opens the stream, not once the writer is used.
+  test("reach the server without a write to the stream", async () => {
+    const gotHeaders = Promise.withResolvers<string>();
+    await using server = await listen(
+      async serverSession => {
+        serverSession.onstream = (stream: any) => {
+          stream.closed.catch(() => {});
+        };
+        await serverSession.closed.catch(() => {});
+      },
+      {
+        sni: { "*": { keys: [key], certs: [cert] } },
+        transportParams: { maxIdleTimeout: 1 },
+        onheaders(this: any, headers: Record<string, string>) {
+          gotHeaders.resolve(headers[":path"]);
+        },
+      },
+    );
+
+    const client = await connect(server.address, {
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 1 },
+    });
+    const stream = await client.createBidirectionalStream({});
+    stream.closed.catch(() => {});
+    stream.sendHeaders({ ":method": "POST", ":path": "/queued", ":scheme": "https", ":authority": "localhost" });
+
+    const closed = client.closed.then(
+      () => "closed",
+      () => "closed",
+    );
+    expect(await Promise.race([gotHeaders.promise, closed])).toBe("/queued");
+    client.close();
+  });
+});

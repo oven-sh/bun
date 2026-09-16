@@ -232,14 +232,22 @@ impl QuicStream {
         if (urgency, incremental) != DEFAULT_PRIORITY {
             let _ = s.set_http_prio(urgency, incremental);
         }
+        // lsquic_stream_send_headers only buffers the block; the flush in
+        // drain_outbound needs a write event, which nothing else requests
+        // unless the JS side already started the writer.
+        let mut want_write = false;
         for (bytes, count, eos) in self.pending_headers.with_mut(core::mem::take) {
             self.wrote_to_lsquic.set(true);
-            if s.send_headers(&bytes, count, eos) == 0 && eos {
-                self.with_state(|st| {
-                    st.fin_sent = 1;
-                    st.write_ended = 1;
-                });
-                s.shutdown(1);
+            if s.send_headers(&bytes, count, eos) == 0 {
+                if eos {
+                    self.with_state(|st| {
+                        st.fin_sent = 1;
+                        st.write_ended = 1;
+                    });
+                    s.shutdown(1);
+                } else {
+                    want_write = true;
+                }
             }
         }
         if uni {
@@ -257,7 +265,7 @@ impl QuicStream {
         } else {
             s.want_read(true);
         }
-        if self.outbound.get().started {
+        if want_write || self.outbound.get().started {
             s.want_write(true);
         }
     }

@@ -730,10 +730,11 @@ static void throwStorageError(JSGlobalObject* globalObject, ThrowScope& scope, D
     throwException(globalObject, scope, createStorageError(globalObject, database));
 }
 
-DurableObjectDatabase* JSDurableObjectActor::database(Zig::GlobalObject* globalObject, ThrowScope& scope)
+DurableObjectDatabase* JSDurableObjectActor::database(Zig::GlobalObject* globalObject)
 {
     if (m_database)
         return m_database.get();
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     auto* owner = ns();
     String path = owner->storageDirectory().isNull() ? String() : durableObjectDatabasePath(owner->storageDirectory(), id()->hex()->value(globalObject));
     RETURN_IF_EXCEPTION(scope, nullptr);
@@ -756,9 +757,10 @@ void JSDurableObjectActor::closeDatabase()
     m_database = nullptr;
 }
 
-bool JSDurableObjectActor::beginWrite(Zig::GlobalObject* globalObject, ThrowScope& scope, DurableObjectDatabase* database)
+bool JSDurableObjectActor::beginWrite(Zig::GlobalObject* globalObject, DurableObjectDatabase* database)
 {
     if (!database->write()) {
+        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
         throwStorageError(globalObject, scope, database);
         return false;
     }
@@ -828,7 +830,7 @@ static StorageAccess accessStorage(Zig::GlobalObject* globalObject, ThrowScope& 
         }
     }
     auto* actor = handle->actor();
-    auto* database = actor->database(globalObject, scope);
+    auto* database = actor->database(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     return { actor, database };
 }
@@ -881,16 +883,16 @@ static void kvPut(Zig::GlobalObject* globalObject, ThrowScope& scope, const Stor
         throwTypeError(globalObject, scope, "This value cannot be stored: it cannot be cloned"_s);
         return;
     }
-    if (!access.actor->beginWrite(globalObject, scope, access.database))
-        return;
+    access.actor->beginWrite(globalObject, access.database);
+    RETURN_IF_EXCEPTION(scope, );
     if (!access.database->kvPut(key, serialized->wireBytes().span()))
         throwStorageError(globalObject, scope, access.database);
 }
 
 static bool kvDelete(Zig::GlobalObject* globalObject, ThrowScope& scope, const StorageAccess& access, const String& key)
 {
-    if (!access.actor->beginWrite(globalObject, scope, access.database))
-        return false;
+    access.actor->beginWrite(globalObject, access.database);
+    RETURN_IF_EXCEPTION(scope, false);
     bool existed = false;
     if (!access.database->kvDelete(key, existed))
         throwStorageError(globalObject, scope, access.database);
@@ -1008,8 +1010,8 @@ static JSValue storageGet(Zig::GlobalObject* globalObject, ThrowScope& scope, co
 // Runs `body` inside a savepoint: what it wrote stays only if it returns true.
 static bool inScope(Zig::GlobalObject* globalObject, ThrowScope& scope, const StorageAccess& access, const Function<bool()>& body)
 {
-    if (!access.actor->beginWrite(globalObject, scope, access.database))
-        return false;
+    access.actor->beginWrite(globalObject, access.database);
+    RETURN_IF_EXCEPTION(scope, false);
     if (!access.database->beginScope()) {
         throwStorageError(globalObject, scope, access.database);
         return false;
@@ -1023,8 +1025,10 @@ static bool inScope(Zig::GlobalObject* globalObject, ThrowScope& scope, const St
         ok = false;
     }
     // The outermost scope closed: the commit a write inside it could not schedule.
-    if (!access.database->depth() && !scope.exception())
-        access.actor->beginWrite(globalObject, scope, access.database);
+    if (!access.database->depth() && !scope.exception()) {
+        access.actor->beginWrite(globalObject, access.database);
+        RETURN_IF_EXCEPTION(scope, false);
+    }
     return ok;
 }
 
@@ -1141,8 +1145,8 @@ static JSValue storageSetAlarm(Zig::GlobalObject* globalObject, ThrowScope& scop
             return {};
         }
     }
-    if (!access.actor->beginWrite(globalObject, scope, access.database))
-        return {};
+    access.actor->beginWrite(globalObject, access.database);
+    RETURN_IF_EXCEPTION(scope, {});
     int64_t when = static_cast<int64_t>(std::floor(time));
     if (!access.database->setAlarm(when)) {
         throwStorageError(globalObject, scope, access.database);
@@ -1162,8 +1166,8 @@ static JSValue storageSetAlarm(Zig::GlobalObject* globalObject, ThrowScope& scop
 
 static JSValue storageDeleteAlarm(Zig::GlobalObject* globalObject, ThrowScope& scope, const StorageAccess& access)
 {
-    if (!access.actor->beginWrite(globalObject, scope, access.database))
-        return {};
+    access.actor->beginWrite(globalObject, access.database);
+    RETURN_IF_EXCEPTION(scope, {});
     if (!access.database->deleteAlarm()) {
         throwStorageError(globalObject, scope, access.database);
         return {};
@@ -1290,7 +1294,8 @@ JSC_DEFINE_HOST_FUNCTION(jsDurableObjectStorageTransaction, (JSGlobalObject * le
     V::validateFunction(scope, globalObject, closure, "closure"_s);
     if (scope.exception()) [[unlikely]]
         return settled(globalObject, scope, {});
-    if (!access.actor->beginWrite(globalObject, scope, access.database))
+    access.actor->beginWrite(globalObject, access.database);
+    if (scope.exception()) [[unlikely]]
         return settled(globalObject, scope, {});
     if (!access.database->beginScope()) {
         throwStorageError(globalObject, scope, access.database);
@@ -1329,12 +1334,12 @@ void finishDurableObjectTransaction(Zig::GlobalObject* globalObject, JSDurableOb
     if (actor->generation() != continuation->m_generation)
         return;
     VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     if (auto* database = actor->databaseIfOpen(); database && database->depth()) {
         database->endScope(commit && !transaction->m_rolledBack);
         if (!database->depth()) {
-            actor->beginWrite(globalObject, scope, database);
-            (void)scope.tryClearException();
+            actor->beginWrite(globalObject, database);
+            (void)scope.clearExceptionExceptTermination();
         }
     }
     actor->unblock(globalObject, continuation->m_generation);
@@ -1681,8 +1686,8 @@ JSC_DEFINE_HOST_FUNCTION(jsDurableObjectSqlExec, (JSGlobalObject * lexicalGlobal
     String query = asString(queryValue)->value(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     auto* database = access.database;
-    if (!access.actor->beginWrite(globalObject, scope, database))
-        return {};
+    access.actor->beginWrite(globalObject, database);
+    RETURN_IF_EXCEPTION(scope, {});
 
     auto* realm = JSDurableObjectRealm::of(globalObject);
     auto* cursor = JSDurableObjectSqlCursor::create(vm, realm->structure(JSDurableObjectRealm::Field::CursorStructure), access.actor, nullptr);

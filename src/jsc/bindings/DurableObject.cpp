@@ -79,9 +79,10 @@ private:
     JSValue m_previous;
 };
 
-static JSValue callMethod(JSGlobalObject* globalObject, ThrowScope& scope, JSValue target, ASCIILiteral name, const ArgList& arguments)
+static JSValue callMethod(JSGlobalObject* globalObject, JSValue target, ASCIILiteral name, const ArgList& arguments)
 {
     VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue method = target.get(globalObject, ident(vm, name));
     RETURN_IF_EXCEPTION(scope, {});
     auto callData = JSC::getCallData(method);
@@ -99,8 +100,9 @@ static void awaitWith(Zig::GlobalObject* globalObject, JSPromise* promise, JSDur
 }
 
 // `value` as a promise to wait on: itself, or one that follows it when it is some other thenable. Null when it is neither.
-static JSPromise* toAwaitable(Zig::GlobalObject* globalObject, ThrowScope& scope, JSValue value)
+static JSPromise* toAwaitable(Zig::GlobalObject* globalObject, JSValue value)
 {
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     if (auto* promise = dynamicDowncast<JSPromise>(value))
         return promise;
     if (!value.isObject())
@@ -605,11 +607,11 @@ void JSDurableObjectActor::enqueue(Zig::GlobalObject* globalObject, JSDurableObj
         return;
     }
     if (arguments && event->m_kind == DurableObjectEventKind::Call) {
-        auto scope = DECLARE_THROW_SCOPE(vm);
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         JSArray* copy = constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), *arguments);
         if (scope.exception()) [[unlikely]] {
             JSValue error = scope.exception()->value();
-            if (scope.tryClearException())
+            if (scope.clearExceptionExceptTermination())
                 rejectEvent(globalObject, event, error);
             return;
         }
@@ -676,9 +678,10 @@ static JSValue rpcProperty(Zig::GlobalObject* globalObject, ThrowScope& scope, J
     (void)vm;
 }
 
-static JSValue invokeEvent(Zig::GlobalObject* globalObject, ThrowScope& scope, JSDurableObjectActor* actor, JSDurableObjectEvent* event, const ArgList* directArguments)
+static JSValue invokeEvent(Zig::GlobalObject* globalObject, JSDurableObjectActor* actor, JSDurableObjectEvent* event, const ArgList* directArguments)
 {
     VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSObject* instance = actor->instance();
     auto handler = [&](ASCIILiteral name, const ArgList& arguments, bool required) -> JSValue {
         JSValue method = instance->get(globalObject, ident(vm, name));
@@ -763,7 +766,7 @@ static JSValue invokeEvent(Zig::GlobalObject* globalObject, ThrowScope& scope, J
 bool JSDurableObjectActor::run(Zig::GlobalObject* globalObject, JSDurableObjectEvent* event, const ArgList* arguments)
 {
     VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     if (event->m_kind == DurableObjectEventKind::Alarm && !beginAlarm(globalObject, event))
         return true;
     m_inflight++;
@@ -780,18 +783,18 @@ bool JSDurableObjectActor::run(Zig::GlobalObject* globalObject, JSDurableObjectE
     {
         AsyncContextReset reset(globalObject);
         ModuleGraphContextScope context(globalObject, m_graph.get());
-        result = invokeEvent(globalObject, scope, this, event, arguments);
+        result = invokeEvent(globalObject, this, event, arguments);
     }
     if (auto* exception = scope.exception()) [[unlikely]] {
         JSValue error = exception->value();
-        if (scope.tryClearException())
+        if (scope.clearExceptionExceptTermination())
             settle(globalObject, event, error, true);
         return true;
     }
-    JSPromise* awaited = toAwaitable(globalObject, scope, result);
+    JSPromise* awaited = toAwaitable(globalObject, result);
     if (auto* exception = scope.exception()) [[unlikely]] {
         JSValue error = exception->value();
-        if (scope.tryClearException())
+        if (scope.clearExceptionExceptTermination())
             settle(globalObject, event, error, true);
         return true;
     }
@@ -860,7 +863,7 @@ void JSDurableObjectActor::settle(Zig::GlobalObject* globalObject, JSDurableObje
 void JSDurableObjectActor::start(Zig::GlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* owner = ns();
     m_state = State::Starting;
     JSObject* onError = nullptr;
@@ -869,7 +872,7 @@ void JSDurableObjectActor::start(Zig::GlobalObject* globalObject)
         onError = JSBoundFunction::create(vm, globalObject, JSDurableObjectRealm::of(globalObject)->function(Field::OnGraphError), this, ArgList(), 2, jsEmptyString(vm), makeSource("onError"_s, SourceOrigin(), SourceTaintedOrigin::Untainted));
         if (auto* exception = scope.exception()) [[unlikely]] {
             JSValue error = exception->value();
-            if (scope.tryClearException())
+            if (scope.clearExceptionExceptTermination())
                 abort(globalObject, error);
             return;
         }
@@ -877,7 +880,7 @@ void JSDurableObjectActor::start(Zig::GlobalObject* globalObject)
     JSModuleGraph* graph = createModuleGraph(globalObject, owner->globals(), onError);
     if (auto* exception = scope.exception()) [[unlikely]] {
         JSValue error = exception->value();
-        if (scope.tryClearException())
+        if (scope.clearExceptionExceptTermination())
             abort(globalObject, error);
         return;
     }
@@ -889,7 +892,7 @@ void JSDurableObjectActor::start(Zig::GlobalObject* globalObject)
     JSPromise* loaded = graph->import(globalObject, jsString(vm, owner->modulePath()));
     if (auto* exception = scope.exception()) [[unlikely]] {
         JSValue error = exception->value();
-        if (scope.tryClearException())
+        if (scope.clearExceptionExceptTermination())
             abort(globalObject, error);
         return;
     }
@@ -899,7 +902,7 @@ void JSDurableObjectActor::start(Zig::GlobalObject* globalObject)
 void JSDurableObjectActor::importSettled(Zig::GlobalObject* globalObject, JSDurableObjectEvent* continuation, JSValue value, bool failed)
 {
     VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     if (continuation->m_generation != m_generation || m_state != State::Starting)
         return;
     if (failed) {
@@ -909,7 +912,7 @@ void JSDurableObjectActor::importSettled(Zig::GlobalObject* globalObject, JSDura
     JSValue classValue = value.get(globalObject, Identifier::fromString(vm, ns()->exportName()));
     if (auto* exception = scope.exception()) [[unlikely]] {
         JSValue error = exception->value();
-        if (scope.tryClearException())
+        if (scope.clearExceptionExceptTermination())
             abort(globalObject, error);
         return;
     }
@@ -923,7 +926,7 @@ void JSDurableObjectActor::importSettled(Zig::GlobalObject* globalObject, JSDura
 void JSDurableObjectActor::construct(Zig::GlobalObject* globalObject, JSValue classValue)
 {
     VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* realm = JSDurableObjectRealm::of(globalObject);
     uint32_t generation = m_generation;
 
@@ -948,7 +951,7 @@ void JSDurableObjectActor::construct(Zig::GlobalObject* globalObject, JSValue cl
     }
     if (auto* exception = scope.exception()) [[unlikely]] {
         JSValue error = exception->value();
-        if (scope.tryClearException() && m_generation == generation && m_state == State::Starting)
+        if (scope.clearExceptionExceptTermination() && m_generation == generation && m_state == State::Starting)
             abort(globalObject, error);
         return;
     }
@@ -967,7 +970,7 @@ void JSDurableObjectActor::construct(Zig::GlobalObject* globalObject, JSValue cl
 JSValue JSDurableObjectActor::block(Zig::GlobalObject* globalObject, JSValue callback)
 {
     VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     uint32_t generation = m_generation;
     m_blockers++;
     ns()->actorBecameBusy(this);
@@ -979,10 +982,10 @@ JSValue JSDurableObjectActor::block(Zig::GlobalObject* globalObject, JSValue cal
     }
     JSPromise* awaited = nullptr;
     if (!scope.exception())
-        awaited = toAwaitable(globalObject, scope, result);
+        awaited = toAwaitable(globalObject, result);
     if (auto* exception = scope.exception()) [[unlikely]] {
         JSValue error = exception->value();
-        if (!scope.tryClearException())
+        if (!scope.clearExceptionExceptTermination())
             return {};
         if (m_generation == generation)
             abort(globalObject, error);
@@ -1128,7 +1131,7 @@ void JSDurableObjectActor::alarmChanged(Zig::GlobalObject* globalObject)
 bool JSDurableObjectActor::beginAlarm(Zig::GlobalObject* globalObject, JSDurableObjectEvent* event)
 {
     VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* owner = ns();
     String hex = id()->hex()->tryGetValue();
     auto skip = [&](std::optional<int64_t> time) {
@@ -1139,10 +1142,10 @@ bool JSDurableObjectActor::beginAlarm(Zig::GlobalObject* globalObject, JSDurable
         return false;
     };
     // The object's own record says whether an alarm is due; the namespace's index is a hint.
-    auto* database = this->database(globalObject, scope);
+    auto* database = this->database(globalObject);
     if (auto* exception = scope.exception()) [[unlikely]] {
         JSValue error = exception->value();
-        if (scope.tryClearException())
+        if (scope.clearExceptionExceptTermination())
             owner->reportError(globalObject, error, this);
         return skip(std::nullopt);
     }
@@ -1162,7 +1165,7 @@ bool JSDurableObjectActor::beginAlarm(Zig::GlobalObject* globalObject, JSDurable
 void JSDurableObjectActor::endAlarm(Zig::GlobalObject* globalObject, JSValue error, bool failed)
 {
     VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* owner = ns();
     m_alarmRunning = false;
     auto* database = m_database.get();
@@ -1170,9 +1173,9 @@ void JSDurableObjectActor::endAlarm(Zig::GlobalObject* globalObject, JSValue err
     if (!failed || giveUp) {
         m_alarmRetries = 0;
         if (!m_alarmTouched && database) {
-            if (beginWrite(globalObject, scope, database))
+            if (beginWrite(globalObject, database))
                 database->deleteAlarm();
-            (void)scope.tryClearException();
+            (void)scope.clearExceptionExceptTermination();
             flush(globalObject);
         }
     } else {
@@ -1248,7 +1251,7 @@ JSArray* JSDurableObjectActor::socketsWithTag(Zig::GlobalObject* globalObject, c
 void JSDurableObjectActor::closeSockets(Zig::GlobalObject* globalObject, int code, ASCIILiteral reason)
 {
     VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     Vector<JSDurableObjectHandle*> sockets;
     {
         Locker locker { cellLock() };
@@ -1268,8 +1271,8 @@ void JSDurableObjectActor::closeSockets(Zig::GlobalObject* globalObject, int cod
         MarkedArgumentBuffer arguments;
         arguments.append(jsNumber(code));
         arguments.append(jsNontrivialString(vm, reason));
-        callMethod(globalObject, scope, target, "close"_s, arguments);
-        if (!scope.tryClearException())
+        callMethod(globalObject, target, "close"_s, arguments);
+        if (!scope.clearExceptionExceptTermination())
             return;
     }
     ns()->updateKeepAlive();
@@ -1343,8 +1346,11 @@ void JSDurableObjectActor::unload(Zig::GlobalObject* globalObject)
         if (!database->isInMemory())
             closeDatabase();
     }
-    if (graph)
+    if (graph) {
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
         graph->dispose(globalObject);
+        (void)scope.clearExceptionExceptTermination();
+    }
     owner->updateKeepAlive();
 }
 
@@ -1368,7 +1374,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDurableObjectStateWaitUntil, (JSGlobalObject * lexica
         return WebCore::throwThisTypeError(*globalObject, scope, "DurableObjectState"_s, "waitUntil"_s);
     if (!handle->isCurrent() || handle->actor()->state() != JSDurableObjectActor::State::Running)
         return JSValue::encode(jsUndefined());
-    JSPromise* promise = toAwaitable(globalObject, scope, callFrame->argument(0));
+    JSPromise* promise = toAwaitable(globalObject, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, {});
     if (promise) {
         ModuleGraphContextScope context(handle->actor()->ns()->context());
@@ -1614,7 +1620,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDurableObjectServerUpgrade, (JSGlobalObject * lexical
     MarkedArgumentBuffer arguments;
     arguments.append(callFrame->argument(0));
     arguments.append(upgradeOptions);
-    RELEASE_AND_RETURN(scope, JSValue::encode(callMethod(globalObject, scope, handle->target(), "upgrade"_s, arguments)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(callMethod(globalObject, handle->target(), "upgrade"_s, arguments)));
 }
 
 #define FORWARDED_SERVER_FUNCTION(name)                                                                                         \
@@ -1623,7 +1629,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDurableObjectServerUpgrade, (JSGlobalObject * lexical
         static constexpr auto literal = #name##_s;                                                                              \
         THIS_SERVER(literal)                                                                                                    \
         ArgList arguments(callFrame);                                                                                           \
-        RELEASE_AND_RETURN(scope, JSValue::encode(callMethod(globalObject, scope, handle->target(), literal, arguments)));      \
+        RELEASE_AND_RETURN(scope, JSValue::encode(callMethod(globalObject, handle->target(), literal, arguments)));      \
     }
 
 FORWARDED_SERVER_FUNCTION(requestIP)
@@ -1689,7 +1695,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDurableObjectSocketOpen, (JSGlobalObject * lexicalGlo
         MarkedArgumentBuffer arguments;
         arguments.append(jsNumber(1001));
         arguments.append(jsNontrivialString(vm, "Durable Object namespace closed"_s));
-        callMethod(globalObject, scope, ws, "close"_s, arguments);
+        callMethod(globalObject, ws, "close"_s, arguments);
         RETURN_IF_EXCEPTION(scope, {});
         return JSValue::encode(jsUndefined());
     }
@@ -1716,7 +1722,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDurableObjectSocketMessage, (JSGlobalObject * lexical
             socket->m_autoResponseAt = nowMs();
             MarkedArgumentBuffer arguments;
             arguments.append(jsString(vm, actor->m_autoResponseResponse));
-            callMethod(globalObject, scope, ws, "send"_s, arguments);
+            callMethod(globalObject, ws, "send"_s, arguments);
             RETURN_IF_EXCEPTION(scope, {});
             return JSValue::encode(jsUndefined());
         }
@@ -1942,7 +1948,7 @@ JSPromise* JSDurableObjectNamespace::dispatch(Zig::GlobalObject* globalObject, J
 void JSDurableObjectNamespace::reportError(Zig::GlobalObject* globalObject, JSValue error, JSDurableObjectActor* actor)
 {
     VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSObject* onError = m_onError.get();
     if (!onError) {
         Bun__reportUnhandledError(globalObject, JSValue::encode(error));
@@ -1955,7 +1961,7 @@ void JSDurableObjectNamespace::reportError(Zig::GlobalObject* globalObject, JSVa
     call(globalObject, onError, JSC::getCallData(onError), jsUndefined(), arguments);
     if (auto* exception = scope.exception()) [[unlikely]] {
         JSValue thrown = exception->value();
-        if (scope.tryClearException())
+        if (scope.clearExceptionExceptTermination())
             Bun__reportUnhandledError(globalObject, JSValue::encode(thrown));
     }
 }

@@ -355,11 +355,11 @@ public:
 
     // ── Storage ── (DurableObjectStorage.cpp)
     // The open database, opening it first; null with an exception thrown.
-    DurableObjectDatabase* database(Zig::GlobalObject*, JSC::ThrowScope&);
+    DurableObjectDatabase* database(Zig::GlobalObject*);
     DurableObjectDatabase* databaseIfOpen() const { return m_database.get(); }
     void closeDatabase();
     // Before a write: opens the implicit transaction and schedules its commit.
-    bool beginWrite(Zig::GlobalObject*, JSC::ThrowScope&, DurableObjectDatabase*);
+    bool beginWrite(Zig::GlobalObject*, DurableObjectDatabase*);
     // Commits what the object wrote. False, with the object reset, when that fails.
     bool flush(Zig::GlobalObject*);
     void alarmChanged(Zig::GlobalObject*);

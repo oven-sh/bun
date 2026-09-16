@@ -1,6 +1,7 @@
 // Bundle tests are tests concerning bundling bugs that only occur in DevServer.
 import type { Bake } from "bun";
 import { describe, expect } from "bun:test";
+import { existsSync, writeFileSync } from "node:fs";
 import { Dev, devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
 devTest("import identifier doesnt get renamed", {
@@ -605,6 +606,56 @@ describe.each([
       expect((await dev.fetch("/third")).status).toBe(200);
     },
   });
+});
+devTest("a route that a fixed build error left marked answers while its page is bundled again", {
+  framework: clientEntryPointFramework,
+  // Holds the bundle of a save of `routes/second.ts` in flight until the test writes `release`.
+  pluginFile: `
+    import { existsSync, writeFileSync } from "node:fs";
+    export default [
+      {
+        name: "hold the page of /second",
+        setup(build) {
+          build.onLoad({ filter: /routes[\\\\/]second\\.ts$/ }, async args => {
+            if (existsSync("hold")) {
+              writeFileSync("holding", "");
+              while (!existsSync("release")) await Bun.sleep(5);
+            }
+            return { contents: await Bun.file(args.path).text(), loader: "ts" };
+          });
+        },
+      },
+    ];
+  `,
+  files: {
+    ...clientEntryPointFiles,
+    "server.ts": `
+      export function render(req, meta) {
+        return new Response(meta.pageModule.default, { headers: { "content-type": "text/html" } });
+      }
+      export function registerClientReference(value, file, uid) {
+        return { value, file, uid };
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/second").equals("second");
+    await dev.write("client-dep.ts", `console.log("dep v2" +);`, { errors: null });
+    await dev.write("client-dep.ts", clientEntryPointFiles["client-dep.ts"]);
+
+    writeFileSync(dev.join("hold"), "");
+    writeFileSync(dev.join("routes/second.ts"), `export default "second v2";`);
+    const deadline = Date.now() + 30_000;
+    while (!existsSync(dev.join("holding"))) {
+      if (Date.now() > deadline) throw new Error("the save of routes/second.ts did not start a bundle");
+      await Bun.sleep(5);
+    }
+    await dev.fetch("/second").equals("second");
+
+    writeFileSync(dev.join("release"), "");
+    await dev.output.waitForLine(/Reloaded in .*second\.ts/);
+    await dev.fetch("/second").equals("second v2");
+  },
 });
 devTest("deinit with a free-list slot in DirectoryWatchStore.dependencies", {
   files: {

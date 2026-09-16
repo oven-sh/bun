@@ -2064,7 +2064,7 @@ fn ensure_route_is_bundled<Ctx: EnsureRouteCtx>(
                 }
 
                 // `index_failures` can mark a route before its first bundle (`history.pushState`).
-                if dev.route_page_is_stale(route_bundle_index) {
+                if dev.route_page_was_never_bundled(route_bundle_index) {
                     state = route_bundle::State::Unqueued;
                     continue 'sw;
                 }
@@ -5724,8 +5724,8 @@ fn mark_all_route_children(
 }
 
 impl DevServer {
-    /// Whether the page file of a framework route still has to be bundled.
-    fn route_page_is_stale(&self, index: route_bundle::Index) -> bool {
+    /// A stale page is not enough: the bundle in flight can be the one that bundles it again.
+    fn route_page_was_never_bundled(&self, index: route_bundle::Index) -> bool {
         let route_bundle::Data::Framework(fw) = &self.route_bundles[index.get() as usize].data
         else {
             return false;
@@ -5734,9 +5734,8 @@ impl DevServer {
             .route_ptr(fw.route_index)
             .file_page
             .is_some_and(|id| {
-                self.server_graph
-                    .stale_files
-                    .is_set(from_opaque_file_id::<{ bake::Side::Server }>(id).get() as usize)
+                let page = from_opaque_file_id::<{ bake::Side::Server }>(id);
+                self.server_graph.get_file_by_index(page).file_kind() == FileKind::Unknown
             })
     }
 

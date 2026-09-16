@@ -1547,8 +1547,7 @@ pub mod command {
     #[inline(never)]
     fn exec_audit(log: &mut bun_ast::Log) -> CmdResult {
         let ctx = init(Tag::AuditCommand, log)?;
-        super::audit_command::AuditCommand::exec(ctx)?;
-        Ok(())
+        match super::audit_command::AuditCommand::exec(ctx)? {}
     }
 
     #[cold]

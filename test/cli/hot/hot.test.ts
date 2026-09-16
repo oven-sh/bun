@@ -1,3 +1,4 @@
+import type { Subprocess } from "bun";
 import { spawn } from "bun";
 import { beforeEach, expect, it } from "bun:test";
 import { copyFileSync, cpSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "fs";
@@ -819,4 +820,111 @@ it(
     await waitFor("RUN 2\n");
   },
   isDebug ? 60_000 : 10_000,
+);
+
+// Windows delivers file changes through ReadDirectoryChangesW. Between two reads the
+// kernel records changes in a 64 KiB buffer. When that buffer overflows, the next
+// read completes with zero bytes and every change recorded since the last read is
+// lost. The watcher must then treat every watched file as changed once it catches
+// up, or an edit that lands in the overflow is never reloaded.
+//
+// To overflow the buffer, the watcher thread must fall behind a burst of changes.
+// Every record is matched against every watched path, so the project puts 3000
+// modules under a ~2000 byte directory prefix that the burst files share: each
+// record costs the watcher thread 3000 long compares. Eight writers touch files
+// under that prefix. The edit of the entry file lands while the burst runs, and
+// the reload is expected once the writers exit.
+it.skipIf(!isWindows)(
+  "--hot reloads an edit that lands in a ReadDirectoryChangesW buffer overflow",
+  async () => {
+    const segment = Buffer.alloc(199, "d").toString();
+    const deep = Array.from({ length: 10 }, (_, i) => segment + String.fromCharCode(97 + i)).join("/");
+    const groups = 60;
+    const perGroup = 50;
+    const files: Record<string, string> = {};
+    let entryImports = "";
+    for (let g = 0; g < groups; g++) {
+      let groupImports = "";
+      for (let m = 0; m < perGroup; m++) {
+        files[`${deep}/mods/g${g}/m${m}.js`] = `export const v = ${g * perGroup + m};\n`;
+        groupImports += `import "./g${g}/m${m}.js";\n`;
+      }
+      files[`${deep}/mods/g${g}.js`] = groupImports;
+      entryImports += `import "./${deep}/mods/g${g}.js";\n`;
+    }
+    files["index.js"] = entryImports + `console.log("RUN v1");\n`;
+    files["burst.js"] = `
+      import { mkdirSync, writeFileSync, utimesSync } from "node:fs";
+      const dir = process.argv[2];
+      const count = 200;
+      const rounds = 20;
+      mkdirSync(dir, { recursive: true });
+      for (let i = 0; i < count; i++) writeFileSync(dir + "/f" + i + ".txt", "x");
+      console.log("ready");
+      for (let round = 0; round < rounds; round++) {
+        const t = new Date(Date.now() + round * 1000);
+        for (let i = 0; i < count; i++) utimesSync(dir + "/f" + i + ".txt", t, t);
+      }
+    `;
+    using dir = tempDir("hot-rdcw-overflow", files);
+    const entry = join(String(dir), "index.js");
+
+    await using runner = spawn({
+      cmd: [bunExe(), "--hot", "index.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+    const reader = runner.stdout.getReader();
+    const decoder = new TextDecoder();
+    let output = "";
+    const waitFor = async (needle: string) => {
+      while (!output.includes(needle)) {
+        const { value, done } = await reader.read();
+        if (done) throw new Error(`--hot exited, output so far: ${JSON.stringify(output)}`);
+        output += decoder.decode(value, { stream: true });
+      }
+    };
+    await waitFor("RUN v1");
+
+    const writers: Subprocess<"ignore", "pipe", "inherit">[] = [];
+    try {
+      for (let v = 2; v <= 3; v++) {
+        writers.length = 0;
+        for (let k = 0; k < 8; k++) {
+          writers.push(
+            spawn({
+              cmd: [bunExe(), "burst.js", join(String(dir), deep, `burst${k}`)],
+              cwd: String(dir),
+              env: bunEnv,
+              stdout: "pipe",
+              stderr: "inherit",
+              stdin: "ignore",
+            }),
+          );
+        }
+        await Promise.all(
+          writers.map(async (writer, k) => {
+            const writerReader = writer.stdout.getReader();
+            let ready = "";
+            while (!ready.includes("ready")) {
+              const { value, done } = await writerReader.read();
+              if (done) throw new Error(`burst writer ${k} exited`);
+              ready += decoder.decode(value, { stream: true });
+            }
+            writerReader.releaseLock();
+          }),
+        );
+        writeFileSync(entry, entryImports + `console.log("RUN v${v}");\n`);
+        expect(await Promise.all(writers.map(w => w.exited))).toEqual([0, 0, 0, 0, 0, 0, 0, 0]);
+        await waitFor(`RUN v${v}`);
+      }
+    } finally {
+      for (const writer of writers) writer.kill();
+      await Promise.all(writers.map(w => w.exited));
+    }
+  },
+  isDebug ? 240_000 : 60_000,
 );

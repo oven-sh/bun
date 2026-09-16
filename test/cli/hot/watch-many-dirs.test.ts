@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, forEachLine, isASAN, isCI, isLinux, tempDir } from "harness";
-import { mkdirSync, readdirSync, readlinkSync, realpathSync, writeFileSync } from "node:fs";
+import { bunEnv, bunExe, forEachLine, isASAN, isCI, isLinux, isWindows, tempDir } from "harness";
+import { mkdirSync, readdirSync, readlinkSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 describe("--hot with many directories", () => {
@@ -182,6 +182,89 @@ if (globalThis.reloaded++ >= ${maxCount}) process.exit(0);
     },
     60000,
   );
+
+  // The Windows watcher used to issue a new ReadDirectoryChangesW before every
+  // wait, also while the read of a timed out wait was still queued, so every
+  // watcher cycle left one more read queued. The queued reads share one
+  // buffer, and the records of one could be overwritten before the watcher
+  // parsed them: that change was never reported. Windows charges each queued
+  // read to the nonpaged pool quota of the process, about 500 bytes.
+  test.skipIf(!isWindows)("keeps one directory read queued across watcher cycles", async () => {
+    await using dir = tempDir("hot-one-read", {
+      "proj/entry.js": `console.log("ready");`,
+    });
+    const cwd = join(String(dir), "proj");
+    // Outside `cwd`, so that the watcher does not report its own trace writes.
+    const trace = join(String(dir), "trace.jsonl");
+
+    await using proc = spawn({
+      cmd: [bunExe(), "--hot", "entry.js"],
+      cwd,
+      env: { ...bunEnv, BUN_WATCHER_TRACE: trace },
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    // One PowerShell answers both samples: its start is most of this test's time.
+    await using powershell = spawn({
+      cmd: [
+        "powershell",
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        `while ($null -ne [Console]::In.ReadLine()) { [Console]::Out.WriteLine((Get-Process -Id ${proc.pid}).NonpagedSystemMemorySize64) }`,
+      ],
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const samples = forEachLine(powershell.stdout);
+    const nonpagedPoolBytes = async () => {
+      powershell.stdin.write("\n");
+      powershell.stdin.flush();
+      const { value: line, done } = await samples.next();
+      if (done) throw new Error(`powershell exited before it printed a sample (exit ${powershell.exitCode})`);
+      return Number(line);
+    };
+
+    const ready = async () => {
+      for await (const line of forEachLine(proc.stdout)) if (line === "ready") return;
+      throw new Error(`--hot exited before it printed "ready" (exit ${proc.exitCode})`);
+    };
+    await ready();
+
+    // A write of a file that nothing imports is one watcher cycle: the watcher
+    // traces a batch for the directory and reloads nothing.
+    const other = join(cwd, "other.txt");
+    const traceSize = () => statSync(trace, { throwIfNoEntry: false })?.size ?? 0;
+    let writes = 0;
+    const cycle = async (patienceMs: number) => {
+      const size = traceSize();
+      writeFileSync(other, String(writes++));
+      const deadline = performance.now() + patienceMs;
+      while (traceSize() === size) {
+        if (performance.now() > deadline) return false;
+        await new Promise(resolve => setImmediate(resolve));
+      }
+      return true;
+    };
+
+    // A new watcher records nothing until its thread has issued the first
+    // read, so the first writes can go unseen.
+    let armed = false;
+    for (let attempt = 0; attempt < 20 && !armed; attempt++) armed = await cycle(100);
+    if (!armed) throw new Error(`the watcher traced no write of other.txt to ${trace}`);
+
+    const before = await nonpagedPoolBytes();
+    for (let i = 0; i < 200; i++) {
+      if (!(await cycle(2000))) throw new Error(`the watcher did not trace write ${writes} of other.txt`);
+    }
+    const after = await nonpagedPoolBytes();
+
+    // Guard against a vacuous pass: the counter must be live.
+    expect(before).toBeGreaterThan(0);
+    // One read queued per cycle is about 100 KiB.
+    expect(after - before).toBeLessThan(16 * 1024);
+  });
 
   // Editing dep.js raises an inotify event on lib/, which makes the reloader
   // evict dep's watchlist entry; the reload then re-adds it with a fresh heap

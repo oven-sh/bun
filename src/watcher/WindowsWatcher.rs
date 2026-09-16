@@ -22,6 +22,11 @@ pub struct WindowsWatcher {
     pub(crate) watcher: DirWatcher,
     pub(crate) buf: PathBuffer,
     pub(crate) base_idx: usize,
+    /// A zero byte completion was seen and the resync has not run yet.
+    pub(crate) pending_resync: bool,
+    pub(crate) last_resync: Option<std::time::Instant>,
+    /// The packet of a read into `watcher.buf` has not been dequeued from `iocp` yet.
+    read_pending: bool,
 }
 
 impl Default for WindowsWatcher {
@@ -35,6 +40,9 @@ impl Default for WindowsWatcher {
             },
             buf: PathBuffer::ZEROED,
             base_idx: 0,
+            pending_resync: false,
+            last_resync: None,
+            read_pending: false,
         }
     }
 }
@@ -292,9 +300,19 @@ impl WindowsWatcher {
         Ok(())
     }
 
+    /// One read at a time: the dequeue of an older packet overwrites a newer read's records.
+    fn arm(&mut self) -> bun_sys::Result<()> {
+        if self.read_pending {
+            return Ok(());
+        }
+        self.watcher.prepare()?;
+        self.read_pending = true;
+        Ok(())
+    }
+
     /// wait until new events are available
-    fn next(&mut self, timeout: Timeout) -> bun_sys::Result<Option<EventIterator>> {
-        if let Err(err) = self.watcher.prepare() {
+    fn next(&mut self, timeout: Timeout) -> bun_sys::Result<Next> {
+        if let Err(err) = self.arm() {
             bun_core::scoped_log!(watcher, "prepare() returned error");
             return Err(err);
         }
@@ -313,11 +331,15 @@ impl WindowsWatcher {
                     timeout as w::DWORD,
                 )
             };
+            if overlapped == &raw mut self.watcher.overlapped {
+                // The packet of the read is off the port, whether the read succeeded or not.
+                self.read_pending = false;
+            }
             if rc == 0 {
                 let err = w::Win32Error::get();
                 // `WAIT_TIMEOUT` (258) — not yet a named const on `bun_sys::windows::Win32Error`.
                 if err == w::Win32Error::TIMEOUT || err == w::Win32Error(258) {
-                    return Ok(None);
+                    return Ok(Next::Timeout);
                 } else {
                     bun_core::scoped_log!(watcher, "GetQueuedCompletionStatus failed: {}", err.0);
                     return Err(bun_sys::Error::from_win32(err, bun_sys::Tag::watch));
@@ -330,25 +352,16 @@ impl WindowsWatcher {
                     continue;
                 }
                 if nbytes == 0 {
-                    // ReadDirectoryChangesW internal change-buffer overflow — too many
-                    // events arrived between drain and re-arm. This is NOT a shutdown
-                    // signal: stop() closes the dir handle, which surfaces as rc==0 /
-                    // ERROR_OPERATION_ABORTED above, never as rc!=0 && nbytes==0. Per
-                    // MSDN, the function returns zero bytes when its internal buffer
-                    // overflows. Drop the lost events, re-arm, and keep watching so
-                    // --hot picks up the next change. Returning ESHUTDOWN here kills
-                    // the watcher thread and the --hot child silently exits
-                    // (hot.test.ts "should work with sourcemap generation" flake).
+                    // The kernel change buffer overflowed and its records are gone.
+                    // Not a shutdown: stop() closes the dir handle, which surfaces
+                    // as rc==0 / ERROR_OPERATION_ABORTED above.
                     bun_core::scoped_log!(
                         watcher,
-                        "ReadDirectoryChangesW buffer overflow (nbytes==0); re-arming"
+                        "ReadDirectoryChangesW buffer overflow (nbytes==0); resyncing"
                     );
-                    if let Err(err) = self.watcher.prepare() {
-                        return Err(err);
-                    }
-                    continue;
+                    return Ok(Next::Overflow);
                 }
-                return Ok(Some(EventIterator {
+                return Ok(Next::Events(EventIterator {
                     watcher: BackRef::new(&self.watcher),
                     offset: 0,
                     has_next: true,
@@ -381,6 +394,19 @@ impl WindowsWatcher {
 pub(crate) enum Timeout {
     Infinite = w::INFINITE,
     None = 0,
+    /// The wait while a resync is throttled: it runs at the end of this cycle.
+    Throttle = RESYNC_INTERVAL_MS,
+}
+
+/// A burst that keeps overflowing the kernel buffer completes a read every
+/// few ms. The resync stats every watched path, so it runs at most this often.
+const RESYNC_INTERVAL_MS: u32 = 1000;
+
+enum Next {
+    Events(EventIterator),
+    Timeout,
+    /// `ReadDirectoryChangesW` completed with zero bytes.
+    Overflow,
 }
 
 pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
@@ -391,11 +417,19 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
     let mut event_id: usize = 0;
 
     // first wait has infinite timeout - we're waiting for the next event and don't want to spin
-    let mut timeout = Timeout::Infinite;
+    let mut timeout = if this.platform.pending_resync {
+        Timeout::Throttle
+    } else {
+        Timeout::Infinite
+    };
     loop {
         let mut iter = match this.platform.next(timeout)? {
-            Some(it) => it,
-            None => break,
+            Next::Events(it) => it,
+            Next::Timeout => break,
+            Next::Overflow => {
+                this.platform.pending_resync = true;
+                break;
+            }
         };
         // after the first wait, we want to coalesce further events but don't want to wait for them
         // NOTE: using a 1ms timeout would be ideal, but that actually makes the thread wait for at least 10ms more than it should
@@ -430,15 +464,23 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
             //   to implement and maintain.
             // - others that i'm not thinking of
 
-            let n_items = this.watchlist.items_file_path().len();
-            for item_idx in 0..n_items {
+            let mut item_idx = 0;
+            loop {
                 // reshaped for borrowck — `rel` is computed in a scoped
                 // block so the borrows of `this.watchlist` / `this.platform.buf`
                 // are released before we touch `this.watch_events` or hand the
                 // whole `&mut Watcher` to `process_watch_event_batch`.
                 let rel = {
+                    // The JS thread appends under `this.mutex`, and a growth
+                    // frees the column this reads. One item per lock keeps the
+                    // JS thread's own appends flowing during a burst.
+                    let _guard = this.mutex.lock_guard();
+                    let paths = this.watchlist.items_file_path();
+                    if item_idx >= paths.len() {
+                        break;
+                    }
                     let eventpath = &this.platform.buf[..eventpath_len];
-                    let path = &this.watchlist.items_file_path()[item_idx];
+                    let path = &paths[item_idx];
                     let rel = is_parent_or_equal(path.as_ref(), eventpath);
                     bun_core::scoped_log!(
                         watcher,
@@ -452,6 +494,8 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
                     );
                     rel
                 };
+                let index = item_idx;
+                item_idx += 1;
                 // skip unrelated items
                 if rel == ParentEqual::Unrelated {
                     continue;
@@ -474,8 +518,7 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
                     event_id = 0;
                 }
 
-                this.watch_events[event_id] =
-                    create_watch_event(&event, item_idx as WatchItemIndex);
+                this.watch_events[event_id] = create_watch_event(&event, index as WatchItemIndex);
                 event_id += 1;
             }
         }
@@ -484,6 +527,17 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
     // Process any remaining events in the final batch
     if event_id > 0 {
         process_watch_event_batch(this, event_id)?;
+    }
+
+    if this.platform.pending_resync
+        && this
+            .platform
+            .last_resync
+            .is_none_or(|t| t.elapsed().as_millis() >= RESYNC_INTERVAL_MS as u128)
+    {
+        this.platform.pending_resync = false;
+        this.platform.last_resync = Some(std::time::Instant::now());
+        this.resync_after_overflow();
     }
 
     Ok(())

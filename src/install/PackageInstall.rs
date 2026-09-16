@@ -1800,7 +1800,7 @@ impl<'a> PackageInstall<'a> {
                                 }
 
                                 let _ = sys::unlinkat(destination_dir, entry.path);
-                                sys::symlinkat(entry.basename, destination_dir.fd(), entry.path)?;
+                                sys::symlinkat(target, destination_dir.fd(), entry.path)?;
                             }
                         }
                         _ => {}

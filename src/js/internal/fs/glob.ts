@@ -148,11 +148,16 @@ let _minimatch;
 function lazyMinimatch() {
   return (_minimatch ??= require("internal/fs/minimatch"));
 }
+function isMinimatchLoaded() {
+  return _minimatch !== undefined;
+}
+
+const nocase = isWindows || isMacOS;
 
 function createMatcher(pattern, options = kEmptyObject) {
   const opts = {
     __proto__: null,
-    nocase: isWindows || isMacOS,
+    nocase,
     windowsPathsNoEscape: true,
     nonegate: true,
     nocomment: true,
@@ -162,6 +167,110 @@ function createMatcher(pattern, options = kEmptyObject) {
     ...options,
   };
   return new (lazyMinimatch().Minimatch)(pattern, opts);
+}
+
+// "**" compiles to a symbol (minimatch's GLOBSTAR, or kGlobstar). No other compiled segment is one.
+const kGlobstar = Symbol("globstar **");
+function isGlobstar(part) {
+  return typeof part === "symbol";
+}
+
+// The tests that minimatch installs on "*", "*<suffix>", "*.*" and ".*" in place of a RegExp.
+function starTest(name) {
+  return name.length !== 0 && !name.startsWith(".");
+}
+function starSuffixTest(suffix, name) {
+  return !name.startsWith(".") && name.endsWith(suffix);
+}
+function starSuffixTestNocase(lowerCaseSuffix, name) {
+  return !name.startsWith(".") && name.toLowerCase().endsWith(lowerCaseSuffix);
+}
+function starDotStarTest(name) {
+  return !name.startsWith(".") && name.includes(".");
+}
+function dotStarTest(name) {
+  return name !== "." && name !== ".." && name.startsWith(".");
+}
+const kStarPart = { __proto__: null, test: starTest };
+const kStarDotStarPart = { __proto__: null, test: starDotStarTest };
+const kDotStarPart = { __proto__: null, test: dotStarTest };
+
+function isAllStars(segment, from) {
+  for (let i = from; i < segment.length; i++) {
+    if (segment.charCodeAt(i) !== 42 /* * */) return false;
+  }
+  return from < segment.length;
+}
+
+// Returns undefined when minimatch has to compile the segment.
+function compilePlainSegment(segment) {
+  const star = segment.indexOf("*");
+  if (star === -1) {
+    return segment;
+  }
+  if (star === 0) {
+    let suffixStart = 1;
+    while (segment.charCodeAt(suffixStart) === 42 /* * */) suffixStart++;
+    if (suffixStart === segment.length) {
+      return kStarPart;
+    }
+    const suffix = segment.slice(suffixStart);
+    if (!suffix.includes("*")) {
+      // minimatch's starDotExtRE also refuses these in the suffix.
+      if (suffix.includes("+") || suffix.includes("@") || suffix.includes("!")) {
+        return undefined;
+      }
+      return {
+        __proto__: null,
+        test: nocase ? starSuffixTestNocase.bind(null, suffix.toLowerCase()) : starSuffixTest.bind(null, suffix),
+      };
+    }
+    return suffix.charCodeAt(0) === 46 /* . */ && isAllStars(suffix, 1) ? kStarDotStarPart : undefined;
+  }
+  return star === 1 && segment.charCodeAt(0) === 46 /* . */ && isAllStars(segment, 1) ? kDotStarPart : undefined;
+}
+
+// Returns the set and globParts that createMatcher(pattern) has, or undefined when minimatch has to compile it.
+function compilePlainPattern(pattern) {
+  const length = pattern.length;
+  // minimatch ignores an empty pattern and throws on one this long.
+  if (length === 0 || length > 65536) {
+    return undefined;
+  }
+  for (let i = 0; i < length; i++) {
+    switch (pattern.charCodeAt(i)) {
+      case 92: // \ is a path separator (windowsPathsNoEscape)
+      case 123: // { brace expansion
+      case 91: // [ character class
+      case 40: // ( extglob
+      case 63: // ?
+        return undefined;
+      case 58: // : a drive letter
+        if (isWindows) return undefined;
+    }
+  }
+  const globParts = pattern.split("/");
+  const set = [];
+  for (let i = 0; i < globParts.length; i++) {
+    const segment = globParts[i];
+    // minimatch drops or resolves "", "." and ".." segments, and merges a run of "**".
+    if (segment === "" || segment === "." || segment === "..") {
+      return undefined;
+    }
+    if (segment === "**") {
+      if (i !== 0 && globParts[i - 1] === "**") {
+        return undefined;
+      }
+      set.push(kGlobstar);
+      continue;
+    }
+    const part = compilePlainSegment(segment);
+    if (part === undefined) {
+      return undefined;
+    }
+    set.push(part);
+  }
+  return { __proto__: null, set: [set], globParts: [globParts] };
 }
 
 function cloneSet(values) {
@@ -316,7 +425,7 @@ class Pattern {
   isLast(isDirectory) {
     return (
       this.indexes.has(this.last) ||
-      (this.at(-1) === "" && isDirectory && this.indexes.has(this.last - 1) && this.at(-2) === lazyMinimatch().GLOBSTAR)
+      (this.at(-1) === "" && isDirectory && this.indexes.has(this.last - 1) && isGlobstar(this.at(-2)))
     );
   }
   isFirst() {
@@ -339,7 +448,7 @@ class Pattern {
       return false;
     }
     const pattern = this.#pattern[index];
-    if (pattern === lazyMinimatch().GLOBSTAR) {
+    if (isGlobstar(pattern)) {
       return true;
     }
     if (typeof pattern === "string") {
@@ -428,7 +537,7 @@ class Glob {
     this.matchers = [];
     this.#patterns = [];
     for (const pat of patterns) {
-      const matcher = createMatcher(pat);
+      const matcher = compilePlainPattern(pat) ?? createMatcher(pat);
       this.matchers.push(matcher);
       for (let i = 0; i < matcher.set.length; i++) {
         this.#patterns.push(new Pattern(matcher.set[i], matcher.globParts[i], new Set().add(0), new Set()));
@@ -597,7 +706,7 @@ class Glob {
       }
     } else if (
       isLast &&
-      pattern.at(-1) === lazyMinimatch().GLOBSTAR &&
+      isGlobstar(pattern.at(-1)) &&
       (path !== "." || pattern.at(0) === "." || (last === 0 && stat))
     ) {
       // If pattern ends with **, add to results
@@ -646,12 +755,12 @@ class Glob {
         const next = pattern.at(nextIndex);
         const fromSymlink = !this.#followSymlinks && pattern.symlinks.has(index);
 
-        if (current === lazyMinimatch().GLOBSTAR) {
+        if (isGlobstar(current)) {
           const isDot = entry.name[0] === ".";
           const nextMatches = pattern.test(nextIndex, entry.name);
 
           let nextNonGlobIndex = nextIndex;
-          while (pattern.at(nextNonGlobIndex) === lazyMinimatch().GLOBSTAR) {
+          while (isGlobstar(pattern.at(nextNonGlobIndex))) {
             nextNonGlobIndex++;
           }
 
@@ -810,7 +919,7 @@ class Glob {
       }
     } else if (
       isLast &&
-      pattern.at(-1) === lazyMinimatch().GLOBSTAR &&
+      isGlobstar(pattern.at(-1)) &&
       (path !== "." || pattern.at(0) === "." || (last === 0 && stat))
     ) {
       // If pattern ends with **, add to results
@@ -865,12 +974,12 @@ class Glob {
         const next = pattern.at(nextIndex);
         const fromSymlink = !this.#followSymlinks && pattern.symlinks.has(index);
 
-        if (current === lazyMinimatch().GLOBSTAR) {
+        if (isGlobstar(current)) {
           const isDot = entry.name[0] === ".";
           const nextMatches = pattern.test(nextIndex, entry.name);
 
           let nextNonGlobIndex = nextIndex;
-          while (pattern.at(nextNonGlobIndex) === lazyMinimatch().GLOBSTAR) {
+          while (isGlobstar(pattern.at(nextNonGlobIndex))) {
             nextNonGlobIndex++;
           }
 
@@ -1006,4 +1115,12 @@ function globSync(pattern, options) {
   return new Glob(pattern, options).globSync();
 }
 
-export default { glob, globSync, Glob };
+export default {
+  glob,
+  globSync,
+  Glob,
+  // For bun:internal-for-testing.
+  compilePlainPattern,
+  createMatcher,
+  isMinimatchLoaded,
+};

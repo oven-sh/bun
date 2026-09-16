@@ -22,6 +22,8 @@ pub struct WindowsWatcher {
     pub(crate) watcher: DirWatcher,
     pub(crate) buf: PathBuffer,
     pub(crate) base_idx: usize,
+    /// The packet of a read into `watcher.buf` has not been dequeued from `iocp` yet.
+    read_pending: bool,
 }
 
 impl Default for WindowsWatcher {
@@ -35,6 +37,7 @@ impl Default for WindowsWatcher {
             },
             buf: PathBuffer::ZEROED,
             base_idx: 0,
+            read_pending: false,
         }
     }
 }
@@ -292,9 +295,19 @@ impl WindowsWatcher {
         Ok(())
     }
 
+    /// One read at a time: the dequeue of an older packet overwrites a newer read's records.
+    fn arm(&mut self) -> bun_sys::Result<()> {
+        if self.read_pending {
+            return Ok(());
+        }
+        self.watcher.prepare()?;
+        self.read_pending = true;
+        Ok(())
+    }
+
     /// wait until new events are available
     fn next(&mut self, timeout: Timeout) -> bun_sys::Result<Option<EventIterator>> {
-        if let Err(err) = self.watcher.prepare() {
+        if let Err(err) = self.arm() {
             bun_core::scoped_log!(watcher, "prepare() returned error");
             return Err(err);
         }
@@ -313,6 +326,10 @@ impl WindowsWatcher {
                     timeout as w::DWORD,
                 )
             };
+            if overlapped == &raw mut self.watcher.overlapped {
+                // The packet of the read is off the port, whether the read succeeded or not.
+                self.read_pending = false;
+            }
             if rc == 0 {
                 let err = w::Win32Error::get();
                 // `WAIT_TIMEOUT` (258) — not yet a named const on `bun_sys::windows::Win32Error`.
@@ -343,9 +360,7 @@ impl WindowsWatcher {
                         watcher,
                         "ReadDirectoryChangesW buffer overflow (nbytes==0); re-arming"
                     );
-                    if let Err(err) = self.watcher.prepare() {
-                        return Err(err);
-                    }
+                    self.arm()?;
                     continue;
                 }
                 return Ok(Some(EventIterator {

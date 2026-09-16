@@ -433,7 +433,9 @@ it("NODE_COMPILE_CACHE persists across a --watch reload", async () => {
 // NODE_CHANNEL_FD survives in environ across execve; the fd it names must
 // survive too, so the reloaded image re-attaches to a live socket instead
 // of a closed one and the parent keeps receiving 'message' events.
-it.skipIf(isWindows)(
+// Windows has no execve: a watcher manager process spawns the real process
+// and must hand it the inherited fd block, or the channel is lost (#42925).
+it(
   "IPC to the parent survives a --watch reload",
   async () => {
     using dir = tempDir("watch-ipc-reload", {

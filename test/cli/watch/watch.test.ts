@@ -186,58 +186,6 @@ for (;;) spawnThreadsForTesting(1000, fd, 2);
   30000,
 );
 
-// Every fd the watcher opens must carry O_CLOEXEC. A --watch reload is an
-// execve of the same binary, and macOS has no close_range() sweep before it,
-// so an fd without the flag survives into the new image and the watcher opens
-// another one: one leaked directory fd per reload (#42700). Linux hides the
-// leak behind its close_range(CLOSE_RANGE_CLOEXEC) sweep, so the check reads
-// the flag itself from /proc instead of counting fds across reloads.
-it.skipIf(!isLinux)("watcher opens the watched directory and files with O_CLOEXEC", async () => {
-  using dir = tempDir("watch-cloexec", {
-    "dep.ts": `export const x = 1;`,
-    "main.ts": `import { x } from "./dep";\nconsole.log("started", x);\nsetInterval(() => {}, 1e6);\n`,
-  });
-  const cwd = realpathSync(String(dir));
-  const proc = spawn({
-    cwd,
-    cmd: [bunExe(), "--watch", "--no-clear-screen", "main.ts"],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "inherit",
-    stdin: "ignore",
-  });
-  watchee = proc;
-  const out = stdoutWaiter(proc);
-  await out.waitFor("started 1");
-  out.release();
-
-  const O_CLOEXEC = 0o2000000;
-  const watched = new Map<string, number>();
-  // The watcher thread registers the entrypoint, its import, and their
-  // directory after the script starts, so poll until all three are open.
-  while (watched.size < 3) {
-    watched.clear();
-    for (const fd of readdirSync(`/proc/${proc.pid}/fd`)) {
-      let target: string;
-      try {
-        target = readlinkSync(`/proc/${proc.pid}/fd/${fd}`);
-      } catch {
-        continue;
-      }
-      if (target !== cwd && !target.startsWith(cwd + "/")) continue;
-      const fdinfo = readFileSync(`/proc/${proc.pid}/fdinfo/${fd}`, "utf8");
-      const flags = parseInt(/flags:\s*(\d+)/.exec(fdinfo)![1], 8);
-      watched.set(target.slice(cwd.length) || "/", flags & O_CLOEXEC ? O_CLOEXEC : 0);
-    }
-    if (watched.size < 3) await Bun.sleep(10);
-  }
-  expect(Object.fromEntries([...watched].sort())).toEqual({
-    "/": O_CLOEXEC,
-    "/dep.ts": O_CLOEXEC,
-    "/main.ts": O_CLOEXEC,
-  });
-});
-
 // Watcher::start() must propagate a failed thread spawn as an Err through its
 // Result return instead of aborting inside start() with `.expect()`. An
 // LD_PRELOAD shim arms on inotify_init1 (which Watcher::init() calls on Linux
@@ -518,27 +466,35 @@ it.skipIf(isWindows)(
   30000,
 );
 
-// Paths of the files and directories a process holds open. Linux reads
-// /proc, macOS asks lsof (the kernel has no per-process fd listing there).
-function openPaths(pid: number): string[] {
+// The files and directories a process holds open, as (fd, path) pairs. Linux
+// reads /proc, macOS asks lsof (the kernel has no per-process fd listing
+// there). lsof also lists the cwd, the executable and mapped libraries under
+// the fd names "cwd", "txt" and "mem"; a numbered fd is a real descriptor.
+function openFds(pid: number): { fd: string; path: string }[] {
   if (isLinux) {
     const fdDir = `/proc/${pid}/fd`;
     return readdirSync(fdDir).flatMap(fd => {
       // The process is live, so an fd listed a moment ago can be closed by
       // the time it is read. A closed fd is not a held path.
       try {
-        return [readlinkSync(join(fdDir, fd))];
+        return [{ fd, path: readlinkSync(join(fdDir, fd)) }];
       } catch {
         return [];
       }
     });
   }
-  const out = Bun.spawnSync({ cmd: ["lsof", "-Fn", "-p", String(pid)], stdout: "pipe", stderr: "ignore" });
-  return out.stdout
-    .toString()
-    .split("\n")
-    .filter(line => line.startsWith("n/"))
-    .map(line => line.slice(1));
+  const out = Bun.spawnSync({ cmd: ["lsof", "-Ffn", "-p", String(pid)], stdout: "pipe", stderr: "ignore" });
+  const fds: { fd: string; path: string }[] = [];
+  let fd = "";
+  for (const line of out.stdout.toString().split("\n")) {
+    if (line.startsWith("f")) fd = line.slice(1);
+    else if (line.startsWith("n/")) fds.push({ fd, path: line.slice(1) });
+  }
+  return fds;
+}
+
+function openPaths(pid: number): string[] {
+  return openFds(pid).map(e => e.path);
 }
 
 // Watch mode used to make the resolver keep every directory and symlink
@@ -604,3 +560,93 @@ test("ready", () => console.log("ready", x, y));
     },
   );
 }
+
+// A --watch reload is an execve of the same binary. Linux marks every fd
+// close-on-exec with close_range() first, macOS has no such sweep, so an fd
+// the watcher opened without O_CLOEXEC survives into the new image and the
+// watcher opens another one: one leaked directory fd per reload (#42700).
+const watchCloexecFiles = {
+  "dep.ts": `export const x = 1;`,
+  "main.ts": `import { x } from "./dep";\nconsole.log("started", x);\nsetInterval(() => {}, 1e6);\n`,
+};
+
+// The numbered fds of `pid` under `cwd`, keyed by the path relative to it
+// ("/" is the directory itself). The watcher thread registers the entrypoint,
+// its import and their directory after the script starts, so this polls until
+// all three are open.
+async function watchedFds(pid: number, cwd: string): Promise<Map<string, string[]>> {
+  for (;;) {
+    const watched = new Map<string, string[]>();
+    for (const { fd, path } of openFds(pid)) {
+      if (!/^\d+$/.test(fd)) continue;
+      if (path !== cwd && !path.startsWith(cwd + "/")) continue;
+      const rel = path.slice(cwd.length) || "/";
+      watched.set(rel, [...(watched.get(rel) ?? []), fd]);
+    }
+    if (watched.size >= 3) return watched;
+    await Bun.sleep(10);
+  }
+}
+
+// The leak as the issue reports it: the count of fds on the project directory
+// after two reloads must equal the count after the first start.
+it.skipIf(isWindows || (isMacOS && !Bun.which("lsof")))(
+  "--watch reload does not leak the watched directory fd",
+  async () => {
+    using dir = tempDir("watch-cloexec-reload", watchCloexecFiles);
+    const cwd = realpathSync(String(dir));
+    watchee = spawn({
+      cwd,
+      cmd: [bunExe(), "--watch", "--no-clear-screen", "main.ts"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+    const out = stdoutWaiter(watchee);
+    await out.waitFor("started 1");
+    const before = (await watchedFds(watchee.pid, cwd)).get("/")!.length;
+
+    for (let i = 2; i <= 3; i++) {
+      await Bun.write(join(cwd, "dep.ts"), `export const x = ${i};`);
+      await out.waitFor(`started ${i}`);
+    }
+    const after = (await watchedFds(watchee.pid, cwd)).get("/")!.length;
+    out.release();
+
+    expect(before).toBe(1);
+    expect(after).toBe(before);
+  },
+);
+
+// The flag itself. Linux hides the leak behind its close_range() sweep, so
+// this reads O_CLOEXEC from /proc for every fd the watcher holds instead of
+// counting fds across reloads.
+it.skipIf(!isLinux)("watcher opens the watched directory and files with O_CLOEXEC", async () => {
+  using dir = tempDir("watch-cloexec", watchCloexecFiles);
+  const cwd = realpathSync(String(dir));
+  watchee = spawn({
+    cwd,
+    cmd: [bunExe(), "--watch", "--no-clear-screen", "main.ts"],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+  });
+  const out = stdoutWaiter(watchee);
+  await out.waitFor("started 1");
+  const watched = await watchedFds(watchee.pid, cwd);
+  out.release();
+
+  const O_CLOEXEC = 0o2000000;
+  const flagsOf = (fds: string[]) =>
+    fds.map(fd => {
+      const fdinfo = readFileSync(`/proc/${watchee.pid}/fdinfo/${fd}`, "utf8");
+      return parseInt(/flags:\s*(\d+)/.exec(fdinfo)![1], 8) & O_CLOEXEC;
+    });
+  expect(Object.fromEntries([...watched].sort().map(([rel, fds]) => [rel, flagsOf(fds)]))).toEqual({
+    "/": [O_CLOEXEC],
+    "/dep.ts": [O_CLOEXEC],
+    "/main.ts": [O_CLOEXEC],
+  });
+});

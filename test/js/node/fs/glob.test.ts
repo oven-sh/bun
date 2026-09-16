@@ -321,30 +321,33 @@ describe("fs.promises.glob on a tree", () => {
   });
   afterAll(() => fs.promises.rm(cwd, { recursive: true, force: true }));
 
-  it.each(["**", "**/*.txt", "*/*/*.txt", "**/sub/**", "d1*/**/*.txt", "d3/sub/deep/*", "*/missing/*"])(
-    "%j gives what globSync gives",
-    async pattern => {
-      const expected = fs.globSync(pattern, { cwd });
-      expect(await Array.fromAsync(fs.promises.glob(pattern, { cwd }))).toEqual(expected);
-      const dirents = (await Array.fromAsync(fs.promises.glob(pattern, { cwd, withFileTypes: true }))) as fs.Dirent[];
-      expect(dirents.map(dirent => path.relative(cwd, path.join(dirent.parentPath, dirent.name)) || ".")).toEqual(
-        expected,
-      );
+  describe.each(["**", "**/*.txt", "*/*/*.txt", "**/sub/**", "d1*/**/*.txt", "d3/sub/deep/*", "*/missing/*"])(
+    "%j",
+    pattern => {
+      it("gives what globSync gives", async () => {
+        const expected = fs.globSync(pattern, { cwd });
+        expect(await Array.fromAsync(fs.promises.glob(pattern, { cwd }))).toEqual(expected);
+        const dirents = (await Array.fromAsync(fs.promises.glob(pattern, { cwd, withFileTypes: true }))) as fs.Dirent[];
+        expect(dirents.map(dirent => path.relative(cwd, path.join(dirent.parentPath, dirent.name)) || ".")).toEqual(
+          expected,
+        );
+      });
     },
   );
 
   // The walk does not await the readdir that it starts ahead of time. A
   // rejection of that readdir must still reach the consumer, and only the
   // consumer: it is not an unhandled rejection.
-  it.concurrent.each([
+  describe.each([
     ["the root", "*.txt", "true"],
     ["a queued directory", "*/*.txt", 'path.endsWith("d3")'],
-  ])("a readdir of %s that fails to sort rejects the iteration", async (_, pattern, fails) => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
+  ])("a readdir of %s that fails to sort", (_, pattern, fails) => {
+    it.concurrent("rejects the iteration", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
           const fsp = require("node:fs/promises");
           const readdir = fsp.readdir;
           fsp.readdir = async (path, options) =>
@@ -356,14 +359,15 @@ describe("fs.promises.glob on a tree", () => {
             console.log("caught:", error.message);
           }
         `,
-        cwd,
-      ],
-      env: bunEnv,
-      stderr: "pipe",
+          cwd,
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr }).toEqual({ stdout: "caught: cannot sort\n", stderr: "" });
+      expect(exitCode).toBe(0);
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr }).toEqual({ stdout: "caught: cannot sort\n", stderr: "" });
-    expect(exitCode).toBe(0);
   });
 
   it.concurrent("reads the next directories while it matches the current one", async () => {
@@ -385,7 +389,7 @@ describe("fs.promises.glob on a tree", () => {
             }
           };
           const entries = await Array.fromAsync(fsp.glob("**/*.txt", { cwd: process.argv[1] }));
-          console.log(JSON.stringify({ entries: entries.length, readAhead: maxInFlight > 1, bounded: maxInFlight <= 16 }));
+          console.log(JSON.stringify({ entries: entries.length, maxInFlight }));
         `,
         cwd,
       ],
@@ -394,7 +398,8 @@ describe("fs.promises.glob on a tree", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    expect(JSON.parse(stdout)).toEqual({ entries: 61, readAhead: true, bounded: true });
+    // 8 is the read-ahead window. Each directory of this tree has at most one subdirectory, so no more are in flight.
+    expect(JSON.parse(stdout)).toEqual({ entries: 61, maxInFlight: 8 });
     expect(exitCode).toBe(0);
   });
 

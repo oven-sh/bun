@@ -411,6 +411,15 @@ static JSValue createSQLiteError(JSC::JSGlobalObject* globalObject, sqlite3* db)
     return object;
 }
 
+} // namespace WebCore
+namespace Bun {
+JSC::JSValue createSQLiteErrorFor(JSC::JSGlobalObject* globalObject, sqlite3* db)
+{
+    return WebCore::createSQLiteError(globalObject, db);
+}
+}
+namespace WebCore {
+
 class SQLiteBindingsMap {
 public:
     SQLiteBindingsMap() = default;

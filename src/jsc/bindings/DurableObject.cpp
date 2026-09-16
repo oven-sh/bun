@@ -12,6 +12,7 @@
 #include "PathInlines.h"
 #include "ZigGeneratedClasses.h"
 #include "ZigGlobalObject.h"
+#include "ActiveDOMObject.h"
 
 #include <JavaScriptCore/DateInstance.h>
 #include <JavaScriptCore/FunctionPrototype.h>
@@ -22,6 +23,7 @@
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/StrongInlines.h>
 #include <JavaScriptCore/JSWeakMap.h>
+#include <JavaScriptCore/WeakGCMapInlines.h>
 #include <JavaScriptCore/WeakMapImplInlines.h>
 #include <openssl/hmac.h>
 #include <openssl/rand.h>
@@ -179,8 +181,19 @@ void JSDurableObjectId::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_namespace);
     visitor.append(thisObject->m_hex);
     visitor.append(thisObject->m_name);
+    visitor.append(thisObject->m_stub);
 }
 DEFINE_VISIT_CHILDREN(JSDurableObjectId);
+
+JSDurableObjectStub* JSDurableObjectId::stub(Zig::GlobalObject* globalObject)
+{
+    if (auto* stub = m_stub.get())
+        return stub;
+    VM& vm = globalObject->vm();
+    auto* stub = JSDurableObjectStub::create(vm, JSDurableObjectRealm::of(globalObject)->structure(Field::StubStructure), this);
+    m_stub.set(vm, this, stub);
+    return stub;
+}
 
 static JSDurableObjectId* thisId(JSGlobalObject* globalObject, ThrowScope& scope, JSValue thisValue, ASCIILiteral method)
 {
@@ -303,7 +316,8 @@ bool JSDurableObjectStub::getOwnPropertySlot(JSObject* object, JSGlobalObject* g
         return false;
     // id, name, fetch, and what Object.prototype has.
     PropertySlot inherited(stub, PropertySlot::InternalMethodType::VMInquiry, &vm);
-    bool isInherited = asObject(stub->getPrototypeDirect())->getPropertySlot(globalObject, propertyName, inherited);
+    JSValue prototype = stub->getPrototypeDirect();
+    bool isInherited = prototype.isObject() && asObject(prototype)->getPropertySlot(globalObject, propertyName, inherited);
     RETURN_IF_EXCEPTION(scope, false);
     if (isInherited)
         return false;
@@ -676,7 +690,6 @@ void JSDurableObjectActor::pump(Zig::GlobalObject* globalObject)
 // (what the constructor assigned is the object's private state) and not what every object has.
 static JSValue rpcProperty(Zig::GlobalObject* globalObject, ThrowScope& scope, JSObject* instance, JSString* nameString, bool& found)
 {
-    VM& vm = globalObject->vm();
     auto name = nameString->toIdentifier(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     PropertySlot slot(instance, PropertySlot::InternalMethodType::Get);
@@ -687,7 +700,6 @@ static JSValue rpcProperty(Zig::GlobalObject* globalObject, ThrowScope& scope, J
     if (!found)
         return jsUndefined();
     RELEASE_AND_RETURN(scope, slot.getValue(globalObject, name));
-    (void)vm;
 }
 
 static JSValue invokeEvent(Zig::GlobalObject* globalObject, JSDurableObjectActor* actor, JSDurableObjectEvent* event, const ArgList* directArguments)
@@ -851,10 +863,6 @@ void JSDurableObjectActor::settle(Zig::GlobalObject* globalObject, JSDurableObje
     }
     JSPromise* promise = event->promise();
     switch (event->m_kind) {
-    case DurableObjectEventKind::SocketClose:
-        if (event->a().isObject())
-            socketMap(globalObject)->remove(asObject(event->a()));
-        [[fallthrough]];
     default:
         if (failed) {
             if (promise)
@@ -915,7 +923,8 @@ void JSDurableObjectActor::start(Zig::GlobalObject* globalObject)
             abort(globalObject, error);
         return;
     }
-    graph->setTakesErrorsOfItsContext(true);
+    // The class of a `class:` namespace is the host's code; what it throws in an object is the object's.
+    graph->setTakesErrorsOfItsContext(!!owner->classValue());
     m_graph.set(vm, this, graph);
     if (owner->classValue()) {
         construct(globalObject, JSValue(owner->classValue()));
@@ -1037,8 +1046,7 @@ JSValue JSDurableObjectActor::block(Zig::GlobalObject* globalObject, JSValue cal
     }
     if (!m_blockTimer)
         m_blockTimer = makeUnique<RunLoop::Timer>(vm.runLoop(), "DurableObject::blockConcurrencyWhile"_s, [this] { blockTimedOut(); });
-    if (!m_blockTimer->isActive())
-        m_blockTimer->startOneShot(blockConcurrencyTimeout);
+    m_blockTimer->startOneShot(blockConcurrencyTimeout);
     JSPromise* outer = JSPromise::create(vm, globalObject->promiseStructure());
     awaitWith(globalObject, awaited, JSDurableObjectEvent::create(vm, globalObject, DurableObjectEventKind::Block, this, jsUndefined(), jsUndefined(), jsUndefined(), outer));
     return outer;
@@ -1117,11 +1125,7 @@ EncodedJSValue durableObjectReaction(JSGlobalObject* lexicalGlobalObject, CallFr
             actor->ns()->reportError(globalObject, value, actor);
         break;
     case DurableObjectEventKind::Transaction:
-        finishDurableObjectTransaction(globalObject, event, !failed);
-        if (failed)
-            event->promise()->reject(vm, value);
-        else
-            event->promise()->resolve(globalObject, vm, value);
+        finishDurableObjectTransaction(globalObject, event, value, failed);
         break;
     default:
         actor->settle(globalObject, event, value, failed);
@@ -1153,7 +1157,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDurableObjectOnGraphError, (JSGlobalObject * lexicalG
 
 // ── Alarms ──
 
-void JSDurableObjectActor::alarmChanged(Zig::GlobalObject* globalObject)
+void JSDurableObjectActor::alarmChanged()
 {
     auto* database = m_database.get();
     if (!database)
@@ -1161,11 +1165,10 @@ void JSDurableObjectActor::alarmChanged(Zig::GlobalObject* globalObject)
     std::optional<int64_t> time;
     if (!database->alarmTime(time))
         return;
-    String hex = id()->hex()->tryGetValue();
-    ns()->alarmIndex().set(hex, time);
-    ns()->scheduleAlarms();
-    ns()->updateKeepAlive();
-    (void)globalObject;
+    auto* owner = ns();
+    owner->alarmIndex().set(id()->hex()->tryGetValue(), time);
+    owner->scheduleAlarms();
+    owner->updateKeepAlive();
 }
 
 bool JSDurableObjectActor::beginAlarm(Zig::GlobalObject* globalObject, JSDurableObjectEvent* event)
@@ -1173,9 +1176,8 @@ bool JSDurableObjectActor::beginAlarm(Zig::GlobalObject* globalObject, JSDurable
     VM& vm = globalObject->vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* owner = ns();
-    String hex = id()->hex()->tryGetValue();
     auto skip = [&](std::optional<int64_t> time) {
-        owner->alarmIndex().set(hex, time);
+        owner->alarmIndex().set(id()->hex()->tryGetValue(), time);
         owner->scheduleAlarms();
         owner->updateKeepAlive();
         becameIdleOrBusy();
@@ -1192,9 +1194,10 @@ bool JSDurableObjectActor::beginAlarm(Zig::GlobalObject* globalObject, JSDurable
     std::optional<int64_t> due;
     if (!database->alarmTime(due) || !due || static_cast<double>(*due) > nowMs())
         return skip(due);
+    unsigned retries = database->alarmRetries();
     JSObject* info = constructEmptyObject(globalObject);
-    info->putDirect(vm, ident(vm, "isRetry"_s), jsBoolean(m_alarmRetries > 0), 0);
-    info->putDirect(vm, ident(vm, "retryCount"_s), jsNumber(m_alarmRetries), 0);
+    info->putDirect(vm, ident(vm, "isRetry"_s), jsBoolean(retries > 0), 0);
+    info->putDirect(vm, ident(vm, "retryCount"_s), jsNumber(retries), 0);
     info->putDirect(vm, ident(vm, "scheduledTime"_s), jsNumber(static_cast<double>(*due)), 0);
     event->setA(vm, info);
     m_alarmRunning = true;
@@ -1204,31 +1207,60 @@ bool JSDurableObjectActor::beginAlarm(Zig::GlobalObject* globalObject, JSDurable
 
 void JSDurableObjectActor::endAlarm(Zig::GlobalObject* globalObject, JSValue error, bool failed)
 {
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    auto* owner = ns();
     m_alarmRunning = false;
-    auto* database = m_database.get();
-    bool giveUp = failed && m_alarmRetries >= maxAlarmRetries;
-    if (!failed || giveUp) {
-        m_alarmRetries = 0;
-        if (!m_alarmTouched && database) {
+    if (failed) {
+        alarmFailed(globalObject);
+        ns()->reportError(globalObject, error, this);
+        return;
+    }
+    if (!m_alarmTouched) {
+        if (auto* database = m_database.get()) {
+            auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
             if (beginWrite(globalObject, database))
                 database->deleteAlarm();
             (void)scope.clearExceptionExceptTermination();
-            flush(globalObject);
-        }
-    } else {
-        // Tried again with exponential backoff. The stored time is left as it is, so a process
-        // that restarts meanwhile runs the alarm when it starts.
-        m_alarmRetries++;
-        if (!m_alarmTouched) {
-            owner->alarmIndex().set(id()->hex()->tryGetValue(), static_cast<int64_t>(nowMs() + 1000.0 * (1 << m_alarmRetries)));
-            owner->scheduleAlarms();
+            if (!flush(globalObject))
+                return;
         }
     }
-    if (failed)
-        owner->reportError(globalObject, error, this);
+    // Whatever the index was told meanwhile, it says what is stored from here on.
+    alarmChanged();
+}
+
+// Tried again with exponential backoff, six times. The stored time is left as it is; the count
+// is stored next to it, so neither an eviction nor a restart makes the alarm young again.
+void JSDurableObjectActor::alarmFailed(Zig::GlobalObject* globalObject)
+{
+    auto* owner = ns();
+    if (m_alarmTouched) {
+        alarmChanged();
+        return;
+    }
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
+    auto* database = this->database(globalObject);
+    if (scope.exception()) [[unlikely]] {
+        (void)scope.clearExceptionExceptTermination();
+        return;
+    }
+    unsigned retries = database->alarmRetries();
+    bool giveUp = retries >= maxAlarmRetries;
+    if (beginWrite(globalObject, database)) {
+        if (giveUp)
+            database->deleteAlarm();
+        else
+            database->setAlarmRetries(retries + 1);
+    }
+    (void)scope.clearExceptionExceptTermination();
+    if (!database->flush())
+        return;
+    database->m_alarmDirty = false;
+    if (giveUp) {
+        alarmChanged();
+        return;
+    }
+    owner->alarmIndex().set(id()->hex()->tryGetValue(), static_cast<int64_t>(nowMs() + 1000.0 * (1 << (retries + 1))));
+    owner->scheduleAlarms();
+    owner->updateKeepAlive();
 }
 
 // ── WebSockets ──
@@ -1332,13 +1364,11 @@ void JSDurableObjectActor::evict(Zig::GlobalObject* globalObject)
 
 void JSDurableObjectActor::abort(Zig::GlobalObject* globalObject, JSValue error)
 {
-    VM& vm = globalObject->vm();
     if (auto* database = m_database.get()) {
-        bool alarmDirty = database->m_alarmDirty;
+        bool alarmDirty = std::exchange(database->m_alarmDirty, false);
         database->rollback();
-        database->m_alarmDirty = false;
         if (alarmDirty)
-            alarmChanged(globalObject);
+            alarmChanged();
     }
     Vector<JSDurableObjectEvent*> running;
     Deque<JSDurableObjectEvent*> queue;
@@ -1354,18 +1384,48 @@ void JSDurableObjectActor::abort(Zig::GlobalObject* globalObject, JSValue error)
     }
     for (auto* event : queue)
         events.append(event);
-    if (m_alarmRunning) {
-        m_alarmRetries = std::min<uint8_t>(m_alarmRetries + 1, maxAlarmRetries);
-        ns()->alarmIndex().set(id()->hex()->tryGetValue(), static_cast<int64_t>(nowMs() + 1000.0 * (1 << m_alarmRetries)));
-        ns()->scheduleAlarms();
+    bool alarm = m_alarmRunning;
+    bool unheard = false;
+    for (unsigned i = 0; i < events.size(); i++) {
+        auto* event = uncheckedDowncast<JSDurableObjectEvent>(events.at(i).asCell());
+        alarm = alarm || event->m_kind == DurableObjectEventKind::Alarm;
+        unheard = unheard || !event->promise();
     }
     unload(globalObject);
     for (unsigned i = 0; i < events.size(); i++)
         rejectEvent(globalObject, uncheckedDowncast<JSDurableObjectEvent>(events.at(i).asCell()), error);
     closeSockets(globalObject, 1011, "Durable Object reset"_s);
+    if (alarm) {
+        m_alarmTouched = false;
+        alarmFailed(globalObject);
+        if (m_state == State::Unloaded && m_database && !m_database->isInMemory())
+            closeDatabase();
+    }
+    // An alarm or a WebSocket event has nobody to tell but the namespace.
+    if (unheard)
+        ns()->reportError(globalObject, error, this);
     ns()->forget(this);
     ns()->actorWasReset();
-    (void)vm;
+}
+
+// The namespace's own context stopped. No script runs here (see ContextObserver).
+void JSDurableObjectActor::stoppedWithContext()
+{
+    m_state = State::Unloaded;
+    m_generation++;
+    m_inflight = 0;
+    m_blockers = 0;
+    if (m_blockTimer)
+        m_blockTimer->stop();
+    {
+        Locker locker { cellLock() };
+        m_queue.clear();
+        m_running.clear();
+        m_sockets.clear();
+    }
+    m_instance.clear();
+    m_graph.clear();
+    closeDatabase();
 }
 
 void JSDurableObjectActor::unload(Zig::GlobalObject* globalObject)
@@ -1387,7 +1447,7 @@ void JSDurableObjectActor::unload(Zig::GlobalObject* globalObject)
     m_graph.clear();
     owner->actorBecameBusy(this);
     if (auto* database = m_database.get()) {
-        database->abandonCursors();
+        database->abandonOpenStatements();
         database->rollback();
         // A file is reopened when next needed; a database in memory is the only copy.
         if (!database->isInMemory())
@@ -1512,6 +1572,7 @@ static void bindSocket(Zig::GlobalObject* globalObject, JSDurableObjectHandle* s
     VM& vm = globalObject->vm();
     socket->setTarget(vm, ws);
     socket->setExtra(vm, tags);
+    socket->m_finished = true;
     socketMap(globalObject)->add(vm, ws, socket);
     socket->actor()->addSocket(vm, socket);
 }
@@ -1522,7 +1583,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDurableObjectStateAcceptWebSocket, (JSGlobalObject * 
     JSValue ws = callFrame->argument(0);
     if (!ws.inherits<WebCore::JSServerWebSocket>())
         return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "ws"_s, "ServerWebSocket"_s, ws);
-    if (socketOf(globalObject, ws))
+    if (auto* accepted = socketOf(globalObject, ws); accepted && !accepted->m_rolledBack)
         return Bun::ERR::INVALID_STATE(scope, globalObject, "This WebSocket was already accepted by a Durable Object"_s);
     JSValue readyState = ws.get(globalObject, ident(vm, "readyState"_s));
     RETURN_IF_EXCEPTION(scope, {});
@@ -1658,8 +1719,8 @@ JSC_DEFINE_HOST_FUNCTION(jsDurableObjectServerUpgrade, (JSGlobalObject * lexical
     JSArray* tags = validateTags(globalObject, scope, tagsValue);
     RETURN_IF_EXCEPTION(scope, {});
     auto* socket = JSDurableObjectHandle::create(vm, JSDurableObjectRealm::of(globalObject)->structure(Field::SocketStructure), HandleKind::Socket, handle->actor());
-    socket->setTarget(vm, tags);
-    socket->setExtra(vm, data);
+    socket->setTarget(vm, data);
+    socket->setExtra(vm, tags);
     JSObject* upgradeOptions = constructEmptyObject(globalObject);
     upgradeOptions->putDirect(vm, WebCore::builtinNames(vm).dataPublicName(), socket, 0);
     if (!headers.isUndefined())
@@ -1704,6 +1765,10 @@ FORWARDED_SERVER_GETTER(port)
 FORWARDED_SERVER_GETTER(hostname)
 FORWARDED_SERVER_GETTER(development)
 FORWARDED_SERVER_GETTER(id)
+FORWARDED_SERVER_GETTER(address)
+FORWARDED_SERVER_GETTER(protocol)
+FORWARDED_SERVER_GETTER(pendingRequests)
+FORWARDED_SERVER_GETTER(pendingWebSockets)
 
 static const HashTableValue serverPrototypeValues[] = {
     { "upgrade"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsDurableObjectServerUpgrade, 1 } },
@@ -1716,6 +1781,10 @@ static const HashTableValue serverPrototypeValues[] = {
     { "hostname"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsDurableObjectServerGetter_hostname, 0 } },
     { "development"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsDurableObjectServerGetter_development, 0 } },
     { "id"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsDurableObjectServerGetter_id, 0 } },
+    { "address"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsDurableObjectServerGetter_address, 0 } },
+    { "protocol"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsDurableObjectServerGetter_protocol, 0 } },
+    { "pendingRequests"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsDurableObjectServerGetter_pendingRequests, 0 } },
+    { "pendingWebSockets"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsDurableObjectServerGetter_pendingWebSockets, 0 } },
 };
 
 // ─── Bun.serve({ websocket: Bun.DurableObject.websocket }) ───────────────────
@@ -1735,10 +1804,10 @@ JSC_DEFINE_HOST_FUNCTION(jsDurableObjectSocketOpen, (JSGlobalObject * lexicalGlo
     JSValue data = ws.get(globalObject, WebCore::builtinNames(vm).dataPublicName());
     RETURN_IF_EXCEPTION(scope, {});
     auto* socket = dynamicDowncast<JSDurableObjectHandle>(data);
-    if (!socket || socket->kind() != HandleKind::Socket)
+    if (!socket || socket->kind() != HandleKind::Socket || socket->m_finished)
         return JSValue::encode(jsUndefined());
     PutPropertySlot slot(ws);
-    asObject(ws)->methodTable()->put(asObject(ws), globalObject, WebCore::builtinNames(vm).dataPublicName(), socket->extra() ? socket->extra() : jsUndefined(), slot);
+    asObject(ws)->methodTable()->put(asObject(ws), globalObject, WebCore::builtinNames(vm).dataPublicName(), socket->target() ? socket->target() : jsUndefined(), slot);
     RETURN_IF_EXCEPTION(scope, {});
     auto* actor = socket->actor();
     ModuleGraphContextScope context(actor->ns()->context());
@@ -1750,7 +1819,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDurableObjectSocketOpen, (JSGlobalObject * lexicalGlo
         RETURN_IF_EXCEPTION(scope, {});
         return JSValue::encode(jsUndefined());
     }
-    bindSocket(globalObject, socket, asObject(ws), uncheckedDowncast<JSArray>(socket->target()));
+    bindSocket(globalObject, socket, asObject(ws), uncheckedDowncast<JSArray>(socket->extra()));
     actor->post(globalObject, DurableObjectEventKind::SocketOpen, ws, jsUndefined(), jsUndefined());
     return JSValue::encode(jsUndefined());
 }
@@ -1763,7 +1832,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDurableObjectSocketMessage, (JSGlobalObject * lexical
     JSValue ws = callFrame->argument(0);
     JSValue message = callFrame->argument(1);
     auto* socket = socketOf(globalObject, ws);
-    if (!socket)
+    if (!socket || socket->m_rolledBack)
         return JSValue::encode(jsUndefined());
     auto* actor = socket->actor();
     if (!actor->m_autoResponseRequest.isNull() && message.isString()) {
@@ -1788,10 +1857,11 @@ JSC_DEFINE_HOST_FUNCTION(jsDurableObjectSocketClose, (JSGlobalObject * lexicalGl
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     JSValue ws = callFrame->argument(0);
     auto* socket = socketOf(globalObject, ws);
-    if (!socket)
+    if (!socket || socket->m_rolledBack)
         return JSValue::encode(jsUndefined());
     auto* actor = socket->actor();
     ModuleGraphContextScope context(actor->ns()->context());
+    socket->m_rolledBack = true;
     actor->post(globalObject, DurableObjectEventKind::SocketClose, ws, callFrame->argument(1), callFrame->argument(2));
     actor->removeSocket(socket);
     return JSValue::encode(jsUndefined());
@@ -1802,7 +1872,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDurableObjectSocketDrain, (JSGlobalObject * lexicalGl
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     JSValue ws = callFrame->argument(0);
     auto* socket = socketOf(globalObject, ws);
-    if (!socket)
+    if (!socket || socket->m_rolledBack)
         return JSValue::encode(jsUndefined());
     auto* actor = socket->actor();
     ModuleGraphContextScope context(actor->ns()->context());
@@ -1812,17 +1882,65 @@ JSC_DEFINE_HOST_FUNCTION(jsDurableObjectSocketDrain, (JSGlobalObject * lexicalGl
 
 // ─── The namespace ───────────────────────────────────────────────────────────
 
+// Hears when the context the namespace was made in stops (the Bun.ModuleGraph whose script made it
+// was disposed). The root context only stops with the VM.
+class JSDurableObjectNamespace::ContextObserver final : public RefCounted<JSDurableObjectNamespace::ContextObserver>, public WebCore::ActiveDOMObject {
+public:
+    static Ref<ContextObserver> create(WebCore::ScriptExecutionContext& context, JSDurableObjectNamespace* owner)
+    {
+        Ref observer = adoptRef(*new ContextObserver(context, owner));
+        observer->suspendIfNeeded();
+        return observer;
+    }
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+    void stop() final
+    {
+        if (auto* owner = std::exchange(m_owner, nullptr))
+            owner->contextStopped();
+    }
+    void detach() { m_owner = nullptr; }
+
+private:
+    ContextObserver(WebCore::ScriptExecutionContext& context, JSDurableObjectNamespace* owner)
+        : WebCore::ActiveDOMObject(&context)
+        , m_owner(owner)
+    {
+    }
+    JSDurableObjectNamespace* m_owner;
+};
+
 const ClassInfo JSDurableObjectNamespace::s_info = { "DurableObjectNamespace"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSDurableObjectNamespace) };
 
 JSDurableObjectNamespace::JSDurableObjectNamespace(VM& vm, Structure* structure, Ref<WebCore::ScriptExecutionContext>&& context)
     : Base(vm, structure)
     , m_context(WTF::move(context))
+    , m_namedIds(vm)
     , m_alarmTimer(vm.runLoop(), "DurableObjectNamespace::alarm"_s, [this] { alarmTimerFired(); })
     , m_sweepTimer(vm.runLoop(), "DurableObjectNamespace::sweep"_s, [this] { sweepTimerFired(); })
 {
 }
 
-JSDurableObjectNamespace::~JSDurableObjectNamespace() = default;
+JSDurableObjectNamespace::~JSDurableObjectNamespace()
+{
+    if (m_contextObserver)
+        m_contextObserver->detach();
+}
+
+// Nothing of the context runs again, so there is nothing to tell: what the namespace holds outside
+// the heap is let go of, and the objects' graphs were the context's and stopped with it.
+void JSDurableObjectNamespace::contextStopped()
+{
+    m_contextStopped = true;
+    m_alarmTimer.stop();
+    m_sweepTimer.stop();
+    if (std::exchange(m_keepsEventLoopAlive, false))
+        m_context->unrefEventLoop();
+    for (auto* actor : m_actors.values())
+        actor->stoppedWithContext();
+    m_index = nullptr;
+    m_keepAlive.clear();
+}
 
 void JSDurableObjectNamespace::destroy(JSCell* cell)
 {
@@ -1891,6 +2009,8 @@ JSDurableObjectNamespace* JSDurableObjectNamespace::create(Zig::GlobalObject* gl
         ns->m_env.set(vm, ns, options.env);
     CString seed = makeString("bun:DurableObjectNamespace"_s, '\0', ns->m_name).utf8();
     SHA256(reinterpret_cast<const uint8_t*>(seed.data()), seed.length(), ns->m_key.data());
+    if (ns->m_context->isForModuleGraph())
+        ns->m_contextObserver = ContextObserver::create(ns->m_context.get(), ns);
     ns->scheduleAlarms();
     ns->updateKeepAlive();
     return ns;
@@ -1921,14 +2041,18 @@ JSDurableObjectId* JSDurableObjectNamespace::idFromName(Zig::GlobalObject* globa
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto view = name->view(globalObject);
+    String key = name->value(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    CString utf8 = view->utf8();
+    if (auto* known = m_namedIds.get(key))
+        return known;
+    CString utf8 = key.utf8();
     std::array<uint8_t, 32> payload;
     unsigned length = 0;
     HMAC(EVP_sha256(), m_key.data(), m_key.size(), reinterpret_cast<const uint8_t*>(utf8.data()), utf8.length(), payload.data(), &length);
     payload[0] |= 0x80;
-    return JSDurableObjectId::create(vm, JSDurableObjectRealm::of(globalObject)->structure(Field::IdStructure), this, sealId(globalObject, payload), name);
+    auto* id = JSDurableObjectId::create(vm, JSDurableObjectRealm::of(globalObject)->structure(Field::IdStructure), this, sealId(globalObject, payload), name);
+    m_namedIds.set(key.isolatedCopy(), id);
+    return id;
 }
 
 JSDurableObjectId* JSDurableObjectNamespace::newUniqueId(Zig::GlobalObject* globalObject)
@@ -1989,7 +2113,7 @@ JSDurableObjectActor* JSDurableObjectNamespace::actorFor(Zig::GlobalObject* glob
 
 JSPromise* JSDurableObjectNamespace::dispatch(Zig::GlobalObject* globalObject, JSDurableObjectStub* stub, DurableObjectEventKind kind, JSValue a, JSValue b, const ArgList* arguments)
 {
-    if (m_closed || m_context->isStopped())
+    if (isClosed())
         return JSPromise::rejectedPromise(globalObject, createClosedError(globalObject));
     JSModuleGraph* callerGraph = globalObject->hasModuleGraphs() ? currentModuleGraph(globalObject) : nullptr;
     ModuleGraphContextScope context(m_context.get());
@@ -2040,7 +2164,7 @@ void JSDurableObjectNamespace::actorBecameIdle(JSDurableObjectActor* actor)
         return;
     }
     if (!m_sweepTimer.isActive())
-        m_sweepTimer.startOneShot(Seconds::fromMilliseconds(m_idleTimeoutMs));
+        m_sweepTimer.startOneShot(Seconds::fromMilliseconds(std::max(1.0, m_idleTimeoutMs)));
 }
 
 void JSDurableObjectNamespace::actorWasReset()
@@ -2079,7 +2203,7 @@ void JSDurableObjectNamespace::sweepTimerFired()
 
 void JSDurableObjectNamespace::sweep(Zig::GlobalObject* globalObject)
 {
-    if (m_closed)
+    if (isClosed())
         return;
     double now = nowMs();
     for (size_t remaining = m_idle.size(); remaining && !m_idle.isEmpty(); remaining--) {
@@ -2088,7 +2212,7 @@ void JSDurableObjectNamespace::sweep(Zig::GlobalObject* globalObject)
         if (idle && !actor->m_usedSinceIdle) {
             double left = actor->m_idleSince + m_idleTimeoutMs - now;
             if (left > 0) {
-                m_sweepTimer.startOneShot(Seconds::fromMilliseconds(left));
+                m_sweepTimer.startOneShot(Seconds::fromMilliseconds(std::max(1.0, left)));
                 return;
             }
         }
@@ -2109,12 +2233,12 @@ void JSDurableObjectNamespace::sweep(Zig::GlobalObject* globalObject)
         }
     }
     if (!m_idle.isEmpty())
-        m_sweepTimer.startOneShot(Seconds::fromMilliseconds(m_idleTimeoutMs));
+        m_sweepTimer.startOneShot(Seconds::fromMilliseconds(std::max(1.0, m_idleTimeoutMs)));
 }
 
 void JSDurableObjectNamespace::scheduleAlarms()
 {
-    if (m_closed)
+    if (isClosed())
         return;
     auto next = m_index->next();
     if (!next) {
@@ -2122,7 +2246,7 @@ void JSDurableObjectNamespace::scheduleAlarms()
         m_alarmTimerAt = 0;
     } else if (!m_alarmTimer.isActive() || m_alarmTimerAt != static_cast<double>(*next)) {
         m_alarmTimerAt = static_cast<double>(*next);
-        m_alarmTimer.startOneShot(Seconds::fromMilliseconds(std::max(0.0, m_alarmTimerAt - nowMs())));
+        m_alarmTimer.startOneShot(Seconds::fromMilliseconds(std::max(1.0, m_alarmTimerAt - nowMs())));
     }
     // An alarm that is set keeps the process running, as a timer would.
     bool keeps = !!next;
@@ -2147,7 +2271,7 @@ void JSDurableObjectNamespace::alarmTimerFired()
 
 void JSDurableObjectNamespace::fireAlarms(Zig::GlobalObject* globalObject)
 {
-    if (m_closed)
+    if (isClosed())
         return;
     VM& vm = globalObject->vm();
     auto* realm = JSDurableObjectRealm::of(globalObject);
@@ -2157,7 +2281,8 @@ void JSDurableObjectNamespace::fireAlarms(Zig::GlobalObject* globalObject)
             auto* id = JSDurableObjectId::create(vm, realm->structure(Field::IdStructure), this, jsNontrivialString(vm, hex), nullptr);
             actor = actorFor(globalObject, id);
         }
-        // Until the alarm has run (or is found not to be due), keep the timer off this entry.
+        // Until the alarm has run (or is found not to be due), keep the timer off this entry:
+        // endAlarm() and beginAlarm() put back what is stored.
         m_index->set(hex, static_cast<int64_t>(nowMs() + 1000.0 * (1 << (maxAlarmRetries + 1))));
         if (actor->m_alarmRunning)
             continue;
@@ -2168,7 +2293,7 @@ void JSDurableObjectNamespace::fireAlarms(Zig::GlobalObject* globalObject)
 
 void JSDurableObjectNamespace::updateKeepAlive()
 {
-    bool keep = !m_closed && (m_loadedCount || m_socketCount || m_alarmTimer.isActive());
+    bool keep = !isClosed() && (m_loadedCount || m_socketCount || m_alarmTimer.isActive());
     if (keep == !!m_keepAlive)
         return;
     if (keep)
@@ -2187,7 +2312,6 @@ JSPromise* JSDurableObjectNamespace::close(Zig::GlobalObject* globalObject)
     ModuleGraphContextScope context(m_context.get());
     JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
     m_closing.set(vm, this, promise);
-    m_closed = true;
     m_alarmTimer.stop();
     m_sweepTimer.stop();
     if (m_keepsEventLoopAlive) {
@@ -2242,11 +2366,6 @@ static JSDurableObjectNamespace* thisNamespace(JSGlobalObject* globalObject, Thr
     return ns;
 }
 
-static JSDurableObjectStub* createStub(Zig::GlobalObject* globalObject, JSDurableObjectId* id)
-{
-    return JSDurableObjectStub::create(globalObject->vm(), JSDurableObjectRealm::of(globalObject)->structure(Field::StubStructure), id);
-}
-
 JSC_DEFINE_HOST_FUNCTION(jsDurableObjectNamespaceNewUniqueId, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
@@ -2289,7 +2408,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDurableObjectNamespaceGet, (JSGlobalObject * lexicalG
         return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "id"_s, "DurableObjectId"_s, callFrame->argument(0));
     if (id->ns() != ns)
         return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "id"_s, id->hex(), "belongs to a different DurableObjectNamespace"_s);
-    return JSValue::encode(createStub(globalObject, id));
+    return JSValue::encode(id->stub(globalObject));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsDurableObjectNamespaceGetByName, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -2302,7 +2421,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDurableObjectNamespaceGetByName, (JSGlobalObject * le
     RETURN_IF_EXCEPTION(scope, {});
     auto* id = ns->idFromName(globalObject, asString(callFrame->argument(0)));
     RETURN_IF_EXCEPTION(scope, {});
-    return JSValue::encode(createStub(globalObject, id));
+    return JSValue::encode(id->stub(globalObject));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsDurableObjectNamespaceClose, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -2388,17 +2507,6 @@ static String directoryNameFor(const String& name)
     return builder.toString();
 }
 
-static String absolutePath(Zig::GlobalObject* globalObject, ThrowScope& scope, const String& path)
-{
-    if (isAbsolutePath(path))
-        return path;
-    JSValue cwd = JSValue::decode(Bun__Process__getCwd(globalObject));
-    RETURN_IF_EXCEPTION(scope, {});
-    String base = cwd.toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    return pathResolveWTFString(globalObject, makeString(base, PLATFORM_SEP_s, path));
-}
-
 // new Bun.DurableObjectNamespace({ class | module, export?, name?, storage?, env?, idleTimeout?, globals?, onError? })
 JSC_DEFINE_HOST_FUNCTION(constructDurableObjectNamespace, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
@@ -2445,12 +2553,25 @@ JSC_DEFINE_HOST_FUNCTION(constructDurableObjectNamespace, (JSGlobalObject * lexi
         if (!globalsValue.isUndefined()) {
             V::validateObject(scope, globalObject, globalsValue, "options.globals"_s);
             RETURN_IF_EXCEPTION(scope, {});
-            options.globals = asObject(globalsValue);
+            // As they are now: every object of the namespace gets the same names and values.
+            JSObject* given = asObject(globalsValue);
+            PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+            given->methodTable()->getOwnPropertyNames(given, globalObject, names, DontEnumPropertiesMode::Exclude);
+            RETURN_IF_EXCEPTION(scope, {});
+            options.globals = constructEmptyObject(globalObject);
+            for (auto& name : names) {
+                JSValue value = given->get(globalObject, name);
+                RETURN_IF_EXCEPTION(scope, {});
+                options.globals->putDirect(vm, name, value, 0);
+            }
         }
         // Resolved now, against the working directory, like a graph's import() would later.
         JSValue cwd = JSValue::decode(Bun__Process__getCwd(globalObject));
         RETURN_IF_EXCEPTION(scope, {});
-        JSValue resolved = JSValue::decode(Bun__resolveSync(globalObject, JSValue::encode(moduleValue), JSValue::encode(cwd), true, false));
+        String directory = cwd.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        JSValue referrer = jsString(vm, makeString(directory, PLATFORM_SEP_s, "[durable-object]"_s));
+        JSValue resolved = JSValue::decode(Bun__resolveSync(globalObject, JSValue::encode(moduleValue), JSValue::encode(referrer), true, false));
         RETURN_IF_EXCEPTION(scope, {});
         options.modulePath = resolved.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
@@ -2486,7 +2607,7 @@ JSC_DEFINE_HOST_FUNCTION(constructDurableObjectNamespace, (JSGlobalObject * lexi
         if (storage.isEmpty())
             return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "options.storage"_s, storageValue, "must be a directory or \":memory:\""_s);
         if (storage != ":memory:"_s) {
-            String root = absolutePath(globalObject, scope, storage);
+            String root = pathResolveWTFString(globalObject, storage);
             RETURN_IF_EXCEPTION(scope, {});
             options.storageDirectory = makeString(root, PLATFORM_SEP_s, directoryNameFor(options.name));
         }
@@ -2565,15 +2686,6 @@ JSDurableObjectRealm* JSDurableObjectRealm::of(Zig::GlobalObject* globalObject)
     return uncheckedDowncast<JSDurableObjectRealm>(globalObject->m_durableObjectRealm.getInitializedOnMainThread(globalObject));
 }
 
-template<size_t count>
-static JSObject* createPlainPrototype(VM& vm, JSGlobalObject* globalObject, const ClassInfo* info, const HashTableValue (&values)[count], ASCIILiteral tag)
-{
-    JSObject* prototype = constructEmptyObject(globalObject, globalObject->objectPrototype());
-    reifyStaticProperties(vm, info, values, *prototype);
-    prototype->putDirect(vm, vm.propertyNames->toStringTagSymbol, jsNontrivialString(vm, tag), PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly);
-    return prototype;
-}
-
 void JSDurableObjectRealm::finishCreation(VM& vm, Zig::GlobalObject* globalObject)
 {
     Base::finishCreation(vm);
@@ -2581,7 +2693,7 @@ void JSDurableObjectRealm::finishCreation(VM& vm, Zig::GlobalObject* globalObjec
     for (uint32_t i = 0; i < numberOfInternalFields; i++)
         internalField(i).set(vm, this, jsUndefined());
 
-    JSObject* namespacePrototype = createPlainPrototype(vm, globalObject, JSDurableObjectNamespace::info(), namespacePrototypeValues, "DurableObjectNamespace"_s);
+    JSObject* namespacePrototype = createDurableObjectPrototype(vm, globalObject, JSDurableObjectNamespace::info(), namespacePrototypeValues, "DurableObjectNamespace"_s);
     namespacePrototype->putDirect(vm, vm.propertyNames->asyncDisposeSymbol, namespacePrototype->getDirect(vm, ident(vm, "close"_s)), static_cast<unsigned>(PropertyAttribute::DontEnum));
     set(Field::NamespaceStructure, JSDurableObjectNamespace::createStructure(vm, globalObject, namespacePrototype));
     set(Field::NamespaceConstructor, JSDurableObjectClassConstructor::create(vm, globalObject, callDurableObjectNamespace, constructDurableObjectNamespace, "DurableObjectNamespace"_s, 1, namespacePrototype));
@@ -2600,8 +2712,8 @@ void JSDurableObjectRealm::finishCreation(VM& vm, Zig::GlobalObject* globalObjec
     set(Field::SocketMap, JSWeakMap::create(vm, globalObject->weakMapStructure()));
     durableObjectConstructor->putDirect(vm, ident(vm, "websocket"_s), handler, PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete);
 
-    set(Field::IdStructure, JSDurableObjectId::createStructure(vm, globalObject, createPlainPrototype(vm, globalObject, JSDurableObjectId::info(), idPrototypeValues, "DurableObjectId"_s)));
-    JSObject* stubPrototype = createPlainPrototype(vm, globalObject, JSDurableObjectStub::info(), stubPrototypeValues, "DurableObjectStub"_s);
+    set(Field::IdStructure, JSDurableObjectId::createStructure(vm, globalObject, createDurableObjectPrototype(vm, globalObject, JSDurableObjectId::info(), idPrototypeValues, "DurableObjectId"_s)));
+    JSObject* stubPrototype = createDurableObjectPrototype(vm, globalObject, JSDurableObjectStub::info(), stubPrototypeValues, "DurableObjectStub"_s);
     stubPrototype->putDirect(vm, vm.propertyNames->constructor, jsUndefined(), PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly);
     set(Field::StubStructure, JSDurableObjectStub::createStructure(vm, globalObject, stubPrototype));
 
@@ -2609,13 +2721,13 @@ void JSDurableObjectRealm::finishCreation(VM& vm, Zig::GlobalObject* globalObjec
     rpcPrototype->putDirectNativeFunction(vm, globalObject, vm.propertyNames->then, 2, jsDurableObjectRpcThen, ImplementationVisibility::Public, NoIntrinsic, static_cast<unsigned>(PropertyAttribute::DontEnum));
     set(Field::RpcFunctionStructure, JSDurableObjectRpcFunction::createStructure(vm, globalObject, rpcPrototype));
 
-    set(Field::StateStructure, JSDurableObjectHandle::createStructure(vm, globalObject, createPlainPrototype(vm, globalObject, JSDurableObjectHandle::info(), statePrototypeValues, "DurableObjectState"_s)));
+    set(Field::StateStructure, JSDurableObjectHandle::createStructure(vm, globalObject, createDurableObjectPrototype(vm, globalObject, JSDurableObjectHandle::info(), statePrototypeValues, "DurableObjectState"_s)));
     set(Field::StorageStructure, JSDurableObjectHandle::createStructure(vm, globalObject, createDurableObjectStoragePrototype(vm, globalObject)));
     set(Field::SqlStructure, JSDurableObjectHandle::createStructure(vm, globalObject, createDurableObjectSqlPrototype(vm, globalObject)));
     set(Field::KvStructure, JSDurableObjectHandle::createStructure(vm, globalObject, createDurableObjectKvPrototype(vm, globalObject)));
     set(Field::TransactionStructure, JSDurableObjectHandle::createStructure(vm, globalObject, createDurableObjectTransactionPrototype(vm, globalObject)));
     set(Field::SocketStructure, JSDurableObjectHandle::createStructure(vm, globalObject, jsNull()));
-    set(Field::ServerStructure, JSDurableObjectHandle::createStructure(vm, globalObject, createPlainPrototype(vm, globalObject, JSDurableObjectHandle::info(), serverPrototypeValues, "Server"_s)));
+    set(Field::ServerStructure, JSDurableObjectHandle::createStructure(vm, globalObject, createDurableObjectPrototype(vm, globalObject, JSDurableObjectHandle::info(), serverPrototypeValues, "Server"_s)));
     set(Field::CursorStructure, createDurableObjectCursorStructure(vm, globalObject, false));
     set(Field::RawCursorStructure, createDurableObjectCursorStructure(vm, globalObject, true));
     set(Field::ActorStructure, JSDurableObjectActor::createStructure(vm, globalObject));

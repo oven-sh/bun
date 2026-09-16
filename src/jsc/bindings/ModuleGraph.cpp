@@ -267,7 +267,8 @@ JSModuleGraph* moduleGraphRejecting(Zig::GlobalObject* globalObject, JSPromise* 
             owner = moduleGraphOwningFrames(globalObject, last->stack());
     }
     JSModuleGraph* current = currentModuleGraph(globalObject);
-    JSModuleGraph* graph = graphGivenErrorsOf(owner && !(current && current->takesErrorsOfItsContext()) ? *owner : current);
+    // Host code (a null owner) running as a graph that takes the errors of its context is that graph's.
+    JSModuleGraph* graph = graphGivenErrorsOf(owner && (*owner || !(current && current->takesErrorsOfItsContext())) ? *owner : current);
     return graph && !graph->inOnError() ? graph : nullptr;
 }
 
@@ -325,7 +326,7 @@ extern "C" bool Bun__ModuleGraph__handleUncaughtException(JSGlobalObject* lexica
         return false;
     auto owner = moduleGraphOwningFrames(globalObject, exception->stack());
     JSModuleGraph* current = currentModuleGraph(globalObject);
-    JSModuleGraph* graph = owner && !(current && current->takesErrorsOfItsContext()) ? *owner : current;
+    JSModuleGraph* graph = owner && (*owner || !(current && current->takesErrorsOfItsContext())) ? *owner : current;
     return deliverToOnError(globalObject, graph, exception->value(), "uncaughtException"_s);
 }
 

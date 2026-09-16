@@ -7,10 +7,12 @@
 #include <JavaScriptCore/JSDestructibleObject.h>
 #include <JavaScriptCore/JSInternalFieldObjectImpl.h>
 #include <JavaScriptCore/JSPromise.h>
+#include <JavaScriptCore/Lookup.h>
+#include <JavaScriptCore/ObjectConstructor.h>
+#include <JavaScriptCore/WeakGCMap.h>
 #include <JavaScriptCore/WriteBarrier.h>
 #include <wtf/Deque.h>
 #include <wtf/HashMap.h>
-#include <wtf/ListHashSet.h>
 #include <wtf/RunLoop.h>
 
 namespace Zig {
@@ -131,6 +133,8 @@ public:
     JSDurableObjectNamespace* ns() const { return m_namespace.get(); }
     JSC::JSString* hex() const { return m_hex.get(); }
     JSC::JSString* name() const { return m_name.get(); }
+    // The stub get() and getByName() hand out for this id.
+    JSDurableObjectStub* stub(Zig::GlobalObject*);
 
 private:
     JSDurableObjectId(JSC::VM& vm, JSC::Structure* structure)
@@ -140,6 +144,7 @@ private:
     JSC::WriteBarrier<JSDurableObjectNamespace> m_namespace;
     JSC::WriteBarrier<JSC::JSString> m_hex;
     JSC::WriteBarrier<JSC::JSString> m_name;
+    JSC::WriteBarrier<JSDurableObjectStub> m_stub;
 };
 
 // stub.method(...) and `await stub.property`: every name that is not the stub's own is a
@@ -231,16 +236,21 @@ public:
     // Whether the life of the object this was made in is still the current one.
     bool isCurrent() const;
 
-    // Server: the Bun.serve server. Socket: the ServerWebSocket, once it is open.
+    // Server: the Bun.serve server. Socket: the ServerWebSocket, once it is open; until then, the
+    // `data` upgrade() was given. Transaction: the alarm it means to leave (a time, null for none,
+    // undefined when it has not said).
     JSC::JSValue target() const { return m_target.get(); }
     void setTarget(JSC::VM& vm, JSC::JSValue value) { m_target.set(vm, this, value); }
-    // Socket: `data` from upgrade() until the socket is open, then the tags (a JSArray of strings).
+    // Socket: its tags (a JSArray of strings). Transaction: what it wrote (a JSMap of key to
+    // serialized value, or null for a delete).
     JSC::JSValue extra() const { return m_extra.get(); }
     void setExtra(JSC::VM& vm, JSC::JSValue value) { m_extra.set(vm, this, value); }
 
-    // Transaction: finished, rolled back. Server: upgrade() took the request. Socket: which slot of the actor's list it is in.
+    // Transaction: finished. Server: upgrade() took the request. Socket: it is open and on its actor's list.
     bool m_finished { false };
+    // Transaction: rolled back. Socket: closed.
     bool m_rolledBack { false };
+    // Socket: which slot of the actor's list it is in.
     uint32_t m_index { 0 };
     // Socket: when the auto-response last answered it, in ms since the epoch; 0 for never.
     double m_autoResponseAt { 0 };
@@ -355,6 +365,7 @@ public:
     void abort(Zig::GlobalObject*, JSC::JSValue error);
     // The object goes out of memory; its storage, alarm and WebSockets stay.
     void evict(Zig::GlobalObject*);
+    void stoppedWithContext();
 
     // ── Storage ── (DurableObjectStorage.cpp)
     // The open database, opening it first; null with an exception thrown.
@@ -365,9 +376,8 @@ public:
     bool beginWrite(Zig::GlobalObject*, DurableObjectDatabase*);
     // Commits what the object wrote. False, with the object reset, when that fails.
     bool flush(Zig::GlobalObject*);
-    void alarmChanged(Zig::GlobalObject*);
-    // Open sql cursors read the rest of their rows into memory (before a commit or a write).
-    void drainCursors(Zig::GlobalObject*);
+    // The alarm was written and committed: the namespace's index and timer follow.
+    void alarmChanged();
 
     // ── WebSockets ──
     void addSocket(JSC::VM&, JSDurableObjectHandle*);
@@ -379,7 +389,6 @@ public:
     bool m_alarmRunning { false };
     // The alarm handler that is running set or deleted the alarm itself.
     bool m_alarmTouched { false };
-    uint8_t m_alarmRetries { 0 };
     bool m_commitScheduled { false };
     // The namespace's idle list: when it was put there, and whether it has been used since.
     double m_idleSince { 0 };
@@ -403,6 +412,8 @@ private:
     void becameIdleOrBusy();
     bool beginAlarm(Zig::GlobalObject*, JSDurableObjectEvent*);
     void endAlarm(Zig::GlobalObject*, JSC::JSValue error, bool failed);
+    // The alarm's handler did not get to finish: counted, and tried again later.
+    void alarmFailed(Zig::GlobalObject*);
     void rejectEvent(Zig::GlobalObject*, JSDurableObjectEvent*, JSC::JSValue error);
     void importSettled(Zig::GlobalObject*, JSDurableObjectEvent*, JSC::JSValue, bool failed);
     void blockTimedOut();
@@ -468,7 +479,7 @@ public:
     JSC::JSObject* onError() const { return m_onError.get(); }
     const String& storageDirectory() const { return m_storageDirectory; }
     WebCore::ScriptExecutionContext& context() const { return m_context.get(); }
-    bool isClosed() const { return m_closed; }
+    bool isClosed() const { return !!m_closing || m_contextStopped; }
     DurableObjectAlarmIndex& alarmIndex() { return *m_index; }
 
     JSDurableObjectId* idFromName(Zig::GlobalObject*, JSC::JSString* name);
@@ -513,6 +524,8 @@ private:
     JSC::WriteBarrier<JSC::JSPromise> m_closing;
     // Under cellLock(): read by the collector.
     HashMap<String, JSDurableObjectActor*> m_actors;
+    // Name -> id, for as long as something (a stub, the object's record) holds the id.
+    JSC::WeakGCMap<String, JSDurableObjectId> m_namedIds;
 
     String m_name;
     String m_modulePath;
@@ -527,7 +540,11 @@ private:
     RunLoop::Timer m_sweepTimer;
     double m_alarmTimerAt { 0 };
     JSC::Strong<JSDurableObjectNamespace> m_keepAlive;
-    bool m_closed { false };
+    class ContextObserver;
+    RefPtr<ContextObserver> m_contextObserver;
+    // The context the namespace was made in (a Bun.ModuleGraph's) was stopped: everything is over.
+    void contextStopped();
+    bool m_contextStopped { false };
     bool m_keepsEventLoopAlive { false };
 };
 
@@ -546,7 +563,16 @@ JSC::JSObject* createDurableObjectKvPrototype(JSC::VM&, JSC::JSGlobalObject*);
 JSC::JSObject* createDurableObjectTransactionPrototype(JSC::VM&, JSC::JSGlobalObject*);
 JSC::Structure* createDurableObjectCursorStructure(JSC::VM&, JSC::JSGlobalObject*, bool raw);
 JSC_DECLARE_HOST_FUNCTION(jsDurableObjectCommitMicrotask);
-// The continuation of storage.transaction(): ends the scope the handle (event.a()) opened.
-void finishDurableObjectTransaction(Zig::GlobalObject*, JSDurableObjectEvent*, bool commit);
+// The closure of storage.transaction() settled: applies what the transaction (event.a()) wrote and settles its promise.
+void finishDurableObjectTransaction(Zig::GlobalObject*, JSDurableObjectEvent*, JSC::JSValue, bool failed);
+
+template<size_t count>
+JSC::JSObject* createDurableObjectPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, const JSC::ClassInfo* info, const JSC::HashTableValue (&values)[count], ASCIILiteral tag)
+{
+    JSC::JSObject* prototype = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype());
+    JSC::reifyStaticProperties(vm, info, values, *prototype);
+    prototype->putDirect(vm, vm.propertyNames->toStringTagSymbol, JSC::jsNontrivialString(vm, tag), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly);
+    return prototype;
+}
 
 } // namespace Bun

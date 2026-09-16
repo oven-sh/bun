@@ -533,9 +533,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
     }
 
 #if !OS(WINDOWS)
-    // No path of PATH_MAX bytes or more can be opened, and the UTF-8 form has
-    // at least length() bytes. glibc's dlopen() copies a name that has no '/'
-    // to the stack with alloca(), so one longer than the stack segfaults there.
+    // glibc's dlopen() copies a name without a '/' to the stack (alloca), and no path this long can be opened.
     if (filename.length() >= PATH_MAX) [[unlikely]] {
         return throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED, "dlopen failed: File name too long"_s);
     }

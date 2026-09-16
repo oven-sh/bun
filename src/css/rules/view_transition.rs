@@ -29,9 +29,6 @@ impl ViewTransitionRule {
     }
 
     pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        // #[cfg(feature = "sourcemap")]
-        // dest.add_mapping(self.loc);
-
         dest.write_str("@view-transition")?;
         dest.whitespace()?;
         dest.write_char(b'{')?;
@@ -58,12 +55,10 @@ impl ViewTransitionRule {
 }
 
 /// A property within a `@view-transition` rule.
-///
-/// See [ViewTransitionRule](ViewTransitionRule).
 pub enum ViewTransitionProperty {
     /// The `navigation` property.
     Navigation(Navigation),
-    /// The `types` property.
+    /// The `types` property. Script sets the same names, so a CSS module keeps them as written.
     Types(NoneOrCustomIdentList),
     /// An unknown or unsupported property.
     Custom(crate::css_properties::custom::CustomProperty),
@@ -80,8 +75,6 @@ impl ViewTransitionProperty {
             ViewTransitionProperty::Types(types) => {
                 dest.write_str("types")?;
                 dest.delim(b':', false)?;
-                // A view transition type is a name the page shares with script
-                // (`startViewTransition({ types })`), so a CSS module keeps it as written.
                 types.to_css_with_options(dest, false)
             }
             ViewTransitionProperty::Custom(custom) => {
@@ -101,8 +94,7 @@ impl ViewTransitionProperty {
     }
 }
 
-/// A value for the [navigation](https://drafts.csswg.org/css-view-transitions-2/#view-transition-navigation-descriptor)
-/// property in a `@view-transition` rule.
+/// A value for the [navigation](https://drafts.csswg.org/css-view-transitions-2/#view-transition-navigation-descriptor) descriptor.
 #[derive(Clone, Copy, PartialEq, Eq, css::DefineEnumProperty)]
 pub enum Navigation {
     /// There will be no transition.
@@ -128,9 +120,7 @@ const _: () = {
             name: &[u8],
             input: &mut Parser,
         ) -> Result<Self::Declaration> {
-            // A descriptor with an unknown name, a value the grammar rejects, or
-            // trailing tokens falls through to `Custom` and prints as written, as
-            // in `@font-face`. lightningcss drops an unknown name here.
+            // As in `@font-face`, what does not parse is kept as `Custom`. lightningcss drops it.
             let state = input.state();
             crate::match_ignore_ascii_case! { name, {
                 b"navigation" => if let Ok(navigation) = Navigation::parse(input) {

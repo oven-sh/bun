@@ -4079,8 +4079,7 @@ pub(super) fn finalize_bundle(
         }
     }
 
-    // A stylesheet that failed to build gets its server-side entry too, so the
-    // importing route has an edge to it. The failure lives in the client graph.
+    // A failed stylesheet gets a server-side entry too, so its route has an edge to it.
     for index in result.failed_css_imported_on_server.keys() {
         let key = ctx.sources[index.get() as usize]
             .path

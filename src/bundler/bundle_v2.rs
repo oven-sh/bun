@@ -5619,9 +5619,7 @@ pub mod bv2_impl {
                                     (*parts_col.add(record.source_index.get() as usize)).len()
                                 } == 0
                                 {
-                                    // The stylesheet failed to build. Without
-                                    // a source index the HMR conversion would
-                                    // keep the import as a module dependency.
+                                    // Failed: not a CSS root, not a module dependency.
                                     record.path.is_disabled = true;
                                     if target != Target::Browser {
                                         failed_css_imported_on_server
@@ -7600,9 +7598,7 @@ pub mod bv2_impl {
                                 [err.source_index.get() as usize]
                                 .path
                                 .text;
-                            // A stylesheet lives in the client graph, whichever
-                            // target imported it. Its syntax error goes there too,
-                            // so the rebuild of the stylesheet clears it.
+                            // CSS lives in the client graph, whichever target imported it.
                             let is_css_parse_failure = err.step == parse_task::Step::Parse
                                 && this.graph.input_files.items_loader()
                                     [err.source_index.get() as usize]
@@ -8025,7 +8021,6 @@ pub mod bv2_impl {
         pub css_file_list: ArrayHashMap<Index, CssEntryPointMeta>,
         pub html_files: ArrayHashMap<Index, ()>,
         /// Stylesheets that failed to build and that a server file imports.
-        /// They get a stub in the server graph like the ones that built.
         pub failed_css_imported_on_server: ArrayHashMap<Index, ()>,
     }
 

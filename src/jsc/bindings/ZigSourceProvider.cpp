@@ -107,6 +107,8 @@ Ref<SourceProvider> SourceProvider::create(
             Ref<JSC::CachedBytecode> bytecode = JSC::CachedBytecode::create(std::span<uint8_t>(std::exchange(resolvedSource.bytecode_cache, nullptr), resolvedSource.bytecode_cache_size), WTF::move(destructor), {});
             if (resolvedSource.bytecode_cache_persistent)
                 bytecode->setPayloadIsPersistent();
+            if (resolvedSource.bytecode_cache_trusted)
+                bytecode->setPayloadIsTrusted();
             auto provider = adoptRef(*new SourceProvider(
                 globalObject->bunVM(),
                 resolvedSource,

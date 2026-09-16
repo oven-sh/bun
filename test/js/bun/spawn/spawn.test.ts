@@ -643,10 +643,14 @@ it.skipIf(!isLinux)("the waiter thread's SIGCHLD handler does not fail a blockin
     env: { ...bunEnv, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1", BUN_GARBAGE_COLLECTOR_LEVEL: "1" },
     stdin: "ignore",
     stdout: "pipe",
-    stderr: "inherit",
+    stderr: "pipe",
   });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: `{"read":1,"byte":"x"}`, exitCode: 0 });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: `{"read":1,"byte":"x"}`,
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 describe("spawn unref and kill should not hang", () => {

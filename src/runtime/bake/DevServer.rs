@@ -2219,8 +2219,7 @@ enum CheckResult {
     Rebuild,
 }
 
-/// `resp` is the one response that waits for this route. With `None`, a failure the route
-/// reaches always makes the route bundle again, so that `finalize_bundle` reports it.
+/// Without a `resp`, a failure that the route reaches always means `Rebuild`.
 fn check_route_failures(
     dev: &mut DevServer,
     route_bundle_index: route_bundle::Index,
@@ -4814,8 +4813,7 @@ pub(super) fn finalize_bundle(
     answer_deferred_requests(dev, requests, promise)
 }
 
-/// Every file these waiters need is bundled. Marks their routes as loaded, resolves the
-/// promise, and replays the requests.
+/// Marks the routes of these waiters as loaded, resolves the promise, and replays the requests.
 fn answer_deferred_requests(
     dev: &mut DevServer,
     requests: deferred_request::List,
@@ -4958,10 +4956,7 @@ impl DevServer {
                 self.append_route_entry_points_if_not_stale(&mut entry_points, route_bundle_index)
                     .expect("oom");
 
-                // The bundle that just ended can have covered every file of this route, like in
-                // the `Unqueued` arm of `ensure_route_is_bundled`. A failure on record still gates
-                // the route if it reaches it: bundle the route again so that `finalize_bundle`
-                // reports the failure.
+                // No entry point is stale, like in the `Unqueued` arm of `ensure_route_is_bundled`.
                 if entry_points.set.len() == entry_point_count
                     && !self.bundling_failures.is_empty()
                     && matches!(

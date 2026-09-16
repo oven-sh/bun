@@ -722,13 +722,11 @@ impl TranspilerJob {
         let hash = Watcher::get_hash(path.text);
 
         // Inlined `VirtualMachine::import_watcher` to avoid forming
-        // `&VirtualMachine` (see the `vm` note above): this VM's watcher, or on
-        // a worker under `--watch` its parent's.
-        // SAFETY: two raw `(*vm)` field projections, each a pointer that is
-        // written once before this VM can queue a job. BACKREF — when non-null
-        // it points at the process-lifetime watcher leaked in
-        // `enable_hot_module_reloading`, so the `ParentRef` invariant holds for
-        // this transpile job's duration.
+        // `&VirtualMachine` (see the `vm` note above).
+        // SAFETY: two raw `(*vm)` field projections, each written once before
+        // this VM can queue a job. BACKREF — when non-null it points at the
+        // process-lifetime watcher leaked in `enable_hot_module_reloading`, so
+        // the `ParentRef` invariant holds for this transpile job's duration.
         let import_watcher: Option<bun_ptr::ParentRef<ImportWatcher, bun_ptr::Mut>> = unsafe {
             let own = (*vm).bun_watcher;
             bun_ptr::ParentRef::from_nullable_mut(if own.is_null() {

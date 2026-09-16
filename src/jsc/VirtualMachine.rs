@@ -142,13 +142,9 @@ pub struct VirtualMachine {
     pub transpiler: Transpiler<'static>,
     /// The import watcher that reloads this VM (heap `Box`, installed by
     /// [`crate::hot_reloader::HotReloaderCtx::install_bun_watcher`]); null when
-    /// hot reload is disabled, and always null on a worker. Gates the reload
-    /// control flow ([`Self::is_watcher_enabled`]). To register a loaded file,
-    /// use [`Self::import_watcher`], which a worker has too.
+    /// hot reload is disabled and on every worker. See [`Self::import_watcher`].
     pub(crate) bun_watcher: *mut crate::hot_reloader::ImportWatcher,
-    /// On a worker under `--watch`, the parent's [`Self::import_watcher`] when
-    /// the worker was created; null otherwise, `--hot` included. A worker is
-    /// not reloaded on its own, so its `bun_watcher` stays null.
+    /// Set on a worker under `--watch` only. See [`Self::import_watcher`].
     pub(crate) parent_import_watcher: *mut crate::hot_reloader::ImportWatcher,
     pub(crate) console: *mut crate::console_object::ConsoleObject,
     // BORROW_PARAM (`&'a mut bun_ast::Log` per LIFETIMES.tsv) — raw NonNull
@@ -1147,15 +1143,10 @@ impl VirtualMachine {
         self.bun_watcher
     }
 
-    /// The watcher that the files this VM loads are registered with, or null:
-    /// `bun_watcher` on the VM that `--hot` / `--watch` reloads, and on a
-    /// worker under `--watch` the one its parent registers with, so a change
-    /// to a file that only a worker loaded restarts the process as well.
-    /// Null on a worker under `--hot`.
-    ///
-    /// The pointee is shared between threads; see [`Self::bun_watcher_ptr`].
-    /// `TranspilerJob::run` inlines this body, because a pool thread must not
-    /// form `&VirtualMachine`. Keep the two in step.
+    /// Where this VM registers the files it loads, or null: its own
+    /// `bun_watcher`, or on a worker under `--watch` the one its parent
+    /// registers with. Shared between threads; see [`Self::bun_watcher_ptr`].
+    /// `TranspilerJob::run` inlines this body. Keep the two in step.
     #[inline]
     pub fn import_watcher(&self) -> *mut crate::hot_reloader::ImportWatcher {
         if self.bun_watcher.is_null() {

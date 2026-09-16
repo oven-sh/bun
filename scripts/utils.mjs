@@ -777,6 +777,8 @@ export function getGithubToken() {
  * @property {number} [timeout]
  * @property {boolean} [cache]
  * @property {number} [retries]
+ * @property {number} [retryDelay] Milliseconds. The wait before attempt N (N >= 2) is N times this.
+ *   Default: 1000. Tests pass 0.
  * @property {boolean} [json]
  * @property {boolean} [arrayBuffer]
  * @property {string} [filename]
@@ -784,8 +786,8 @@ export function getGithubToken() {
 
 /**
  * @typedef {object} CurlResult
- * @property {number} status
- * @property {string} statusText
+ * @property {number | undefined} status undefined when the last attempt got no response
+ * @property {string | undefined} statusText
  * @property {Error | undefined} error
  * @property {any} body
  */
@@ -804,6 +806,7 @@ export async function curl(url, options = {}) {
   let input = options["body"];
   let headers = options["headers"] || {};
   let retries = options["retries"] || 3;
+  let retryDelay = options["retryDelay"] ?? 1000;
   let json = options["json"];
   let arrayBuffer = options["arrayBuffer"];
   let filename = options["filename"];
@@ -832,8 +835,11 @@ export async function curl(url, options = {}) {
   let error;
   for (let i = 0; i < retries; i++) {
     if (i > 0) {
-      await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1)));
+      await new Promise(resolve => setTimeout(resolve, retryDelay * (i + 1)));
     }
+
+    // The result describes the last attempt only.
+    status = statusText = body = error = undefined;
 
     let response;
     try {

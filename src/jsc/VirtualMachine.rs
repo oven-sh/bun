@@ -94,10 +94,6 @@ pub struct InitOptions {
     /// reuses the caller's env loader.
     pub env_loader: Option<NonNull<bun_dotenv::Loader>>,
     pub graph: Option<&'static dyn bun_resolver::StandaloneModuleGraph>,
-    /// Must be applied to
-    /// `transpiler.resolver.store_fd` BEFORE `configure_linker()` reads
-    /// `top_level_dir`, so it threads through `init_runtime_state`.
-    pub store_fd: bool,
     pub smol: bool,
     pub eval_mode: bool,
     pub is_main_thread: bool,
@@ -122,7 +118,6 @@ impl Default for InitOptions {
             log: None,
             env_loader: None,
             graph: None,
-            store_fd: false,
             smol: false,
             eval_mode: false,
             is_main_thread: false,
@@ -688,7 +683,7 @@ pub struct ExitHandler {
     pub exit_code: u8,
     /// `bun test` sets this at the end of a run unless `node:test` APIs were used: jest and vitest never fire a test file's `process.on('exit')` listeners.
     pub skip_exit_listeners: bool,
-    /// `process.exit()` or a fatal error, as opposed to the event loop running dry.
+    /// `process.exit()`, a fatal error or the end of a `bun test` run, as opposed to the event loop running dry.
     /// See `VirtualMachine::exit_tears_down_napi_envs`.
     pub requested: bool,
 }
@@ -1462,6 +1457,16 @@ impl VirtualMachine {
         vm.heap_size()
     }
 
+    /// `Bun.gc(force)` and `gc()`. Whoever asks for a synchronous collection reads the footprint next: what the collection
+    /// freed goes back to the OS now, not whenever the allocator's purge delay has passed.
+    pub fn garbage_collect_from_js(&self, sync: bool) -> usize {
+        let size = self.garbage_collect(sync);
+        if sync {
+            bun_core::Global::mimalloc_cleanup(true);
+        }
+        size
+    }
+
     #[inline]
     pub fn auto_garbage_collect(&self) {
         if self.aggressive_garbage_collection != GCLevel::None {
@@ -1883,6 +1888,10 @@ impl VirtualMachine {
 
         self.is_shutting_down = true;
 
+        // Node's FreeEnvironment sets `is_stopping` before `RunCleanup`: the
+        // Node-API env teardown below refuses every `NAPI_PREAMBLE` call.
+        self.handle.stop();
+
         if self.exit_tears_down_napi_envs() {
             self.run_cleanup_hooks();
         }
@@ -2302,6 +2311,8 @@ pub struct RuntimeHooks {
         vm: *mut VirtualMachine,
         timer: *mut bun_event_loop::EventLoopTimer::EventLoopTimer,
     ),
+    /// `FakeTimers::min_delay_ms()` of the calling thread's VM. A slot for the same reason as `timer_insert`.
+    pub timer_min_delay_ms: fn() -> u32,
     /// `RareData.defaultClientSslCtx()` — lazy default-trust-store client
     /// `SSL_CTX*`, shared by every `tls: true` outbound connection that didn't
     /// supply explicit options. The storage slot lives in `RareData`
@@ -2543,6 +2554,13 @@ impl VirtualMachine {
         let hooks = runtime_hooks().expect("RuntimeHooks not installed");
         // SAFETY: per fn contract; `vm` is the live per-thread VM.
         unsafe { (hooks.timer_remove)(vm, timer) }
+    }
+
+    /// The shortest delay, in milliseconds, a timer armed now can have: 1 while `jest.useFakeTimers()` runs a timer's callback.
+    #[inline]
+    pub fn timer_min_delay_ms() -> u32 {
+        let hooks = runtime_hooks().expect("RuntimeHooks not installed");
+        (hooks.timer_min_delay_ms)()
     }
 }
 
@@ -3372,7 +3390,6 @@ pub struct Options {
     // BORROW_PARAM (`&'a mut bun_dotenv::Loader`) — caller-owned; the loader
     // outlives the VM, so the inner lifetime is erased to `'static`.
     pub env_loader: Option<NonNull<bun_dotenv::Loader>>,
-    pub store_fd: bool,
     pub smol: bool,
     // LAYERING: real type is `bun_runtime::dns_jsc::Order` (forward
     // dep); stored as its `u8` repr.
@@ -4163,7 +4180,6 @@ impl VirtualMachine {
         vm_ref.let_heap_take_initial_module_graph(graph);
         // Avoid reading from tsconfig.json & package.json when in standalone mode
         vm_ref.transpiler.configure_linker_with_auto_jsx(false);
-        vm_ref.transpiler.resolver.store_fd = false;
         IS_SMOL_MODE.store(opts.smol, core::sync::atomic::Ordering::Relaxed);
         Ok(vm)
     }
@@ -4181,7 +4197,6 @@ impl VirtualMachine {
             graph: opts.graph,
             log: opts.log,
             env_loader: opts.env_loader,
-            store_fd: opts.store_fd,
             smol: opts.smol,
             eval_mode: opts.eval,
             is_main_thread: false,
@@ -4209,7 +4224,6 @@ impl VirtualMachine {
         vm_ref.transpiler.resolver.standalone_module_graph = opts.graph;
         vm_ref.hot_reload = worker.hot_reload();
         vm_ref.initial_script_execution_context_identifier = worker.execution_context_id() as i32;
-        vm_ref.transpiler.resolver.store_fd = opts.store_fd;
         if opts.graph.is_none() {
             vm_ref.transpiler.configure_linker();
         } else {
@@ -6332,13 +6346,17 @@ impl VirtualMachine {
             // SAFETY: `is_error_instance` ⇒ `get_object()` is `Some`.
             let obj = unsafe { &mut *error_instance.get_object().unwrap_unchecked() };
             if let Some(code_value) = obj.get_code_property_vm_inquiry(global_ref) {
-                if code_value.is_string() {
+                // Not `is_string()`: converting a String object runs its `toString` /
+                // `Symbol.toPrimitive`. The property loop below prints one.
+                if code_value.is_string_literal() {
                     match code_value.to_bun_string(global_ref) {
                         Ok(s) if s.is_8bit() => {
                             code_string = Some(s);
                             code_string.as_ref().map(|s| s.latin1())
                         }
                         Ok(_) => None,
+                        // A primitive string only fails to convert when it is a rope
+                        // that cannot be resolved.
                         Err(_) => bun_core::out_of_memory(),
                     }
                 } else {

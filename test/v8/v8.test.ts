@@ -375,6 +375,20 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
     });
   });
 
+  // https://github.com/oven-sh/bun/issues/42195
+  describe("Function script origin", () => {
+    it("reports the file, line, and column of a JS function", async () => {
+      const out = await checkSameOutput("test_v8_function_script_origin");
+      expect(out).toContain("file: module.js");
+    });
+  });
+
+  describe("Value::ToInt32", () => {
+    it("converts values like the JS ToInt32 operation", async () => {
+      await checkSameOutput("test_v8_value_to_int32");
+    });
+  });
+
   describe("Object::DefineOwnProperty", () => {
     it("applies PropertyAttribute flags to the defined property", async () => {
       await checkSameOutput("test_v8_define_own_property");

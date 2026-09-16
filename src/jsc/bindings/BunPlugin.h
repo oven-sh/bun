@@ -8,6 +8,8 @@
 
 BUN_DECLARE_HOST_FUNCTION(jsFunctionBunPlugin);
 BUN_DECLARE_HOST_FUNCTION(jsFunctionBunPluginClear);
+BUN_DECLARE_HOST_FUNCTION(jsFunctionMockModuleFactoryResolve);
+BUN_DECLARE_HOST_FUNCTION(jsFunctionMockModuleFactoryReject);
 
 namespace Zig {
 

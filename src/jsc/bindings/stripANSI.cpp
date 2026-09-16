@@ -8,7 +8,14 @@
 namespace Bun {
 using namespace WTF;
 
-template<typename Char>
+enum class Grammar : bool {
+    // Every sequence a terminal consumes (Bun.stripANSI).
+    VT,
+    // Only what node's ansi-regex matches (node:util stripVTControlCharacters).
+    NodeRegex,
+};
+
+template<Grammar grammar, typename Char>
 static std::optional<WTF::String> stripANSI(const std::span<const Char> input)
 {
     if (input.empty()) {
@@ -56,9 +63,10 @@ static std::optional<WTF::String> stripANSI(const std::span<const Char> input)
             cursor += chunkLen;
         }
 
-        const auto* newPos = ANSI::consumeANSI(escPos, end);
+        const auto* newPos = grammar == Grammar::NodeRegex ? ANSI::consumeNodeANSI(escPos, end) : ANSI::consumeANSI(escPos, end);
         if (newPos == escPos) {
-            // Broad-mask false positive — copy the byte literally.
+            // No sequence starts here (a broad-mask false positive, or an
+            // introducer the grammar does not complete): copy the byte.
             *cursor++ = *escPos;
             start = escPos + 1;
             continue;
@@ -130,7 +138,9 @@ extern "C" bool Bun__ANSI__next(BunANSIIterator* it)
     it->cursor = slice_end - it->input;
     return true;
 }
-JSC_DEFINE_HOST_FUNCTION(jsFunctionBunStripANSI, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+
+template<Grammar grammar>
+static JSC::EncodedJSValue stripANSI(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -151,9 +161,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionBunStripANSI, (JSC::JSGlobalObject * globalOb
 
     std::optional<WTF::String> result;
     if (view->is8Bit()) {
-        result = stripANSI<Latin1Character>(view->span8());
+        result = stripANSI<grammar>(view->span8());
     } else {
-        result = stripANSI<UChar>(view->span16());
+        result = stripANSI<grammar>(view->span16());
     }
 
     if (!result) {
@@ -161,5 +171,15 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionBunStripANSI, (JSC::JSGlobalObject * globalOb
         return JSC::JSValue::encode(jsString);
     }
     return JSC::JSValue::encode(JSC::jsString(vm, *result));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionBunStripANSI, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    return stripANSI<Grammar::VT>(globalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionStripVTControlCharacters, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    return stripANSI<Grammar::NodeRegex>(globalObject, callFrame);
 }
 }

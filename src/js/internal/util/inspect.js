@@ -2740,29 +2740,14 @@ function getStringWidth(str, removeControlChars = true) {
   return internalGetStringWidth(str, kPerCodePointWidthOptions);
 }
 
-// node's ansi matcher (from chalk/ansi-regex): only complete sequences are stripped —
+// Strips what node's ansi RegExp (from chalk/ansi-regex) matches: only complete sequences.
 // Bun.stripANSI also eats bare/invalid ESC/CSI prefixes, which node keeps.
 // https://github.com/nodejs/node/blob/main/lib/internal/util/inspect.js
-let ansi;
-function getAnsiRegExp() {
-  return (ansi ??= new RegExp(
-    "[\\u001B\\u009B][[\\]()#;?]*" +
-      "(?:(?:(?:(?:;[-a-zA-Z\\d\\/\\#&.:=?%@~_]+)*" +
-      "|[a-zA-Z\\d]+(?:;[-a-zA-Z\\d\\/\\#&.:=?%@~_]*)*)?" +
-      "(?:\\u0007|\\u001B\\u005C|\\u009C))" +
-      "|(?:(?:\\d{1,4}(?:;\\d{0,4})*)?" +
-      "[\\dA-PR-TZcf-nq-uy=><~]))",
-    "g",
-  ));
-}
+const stripAnsiRegExpMatches = $newCppFunction("stripANSI.cpp", "jsFunctionStripVTControlCharacters", 1);
 
 function stripVTControlCharacters(str) {
   if (typeof str !== "string") throw $ERR_INVALID_ARG_TYPE("str", "string", str);
-  // All ANSI escape sequences start with ESC (7-bit) or CSI (8-bit).
-  if (StringPrototypeIndexOf(str, "\u001B") === -1 && StringPrototypeIndexOf(str, "\u009B") === -1) {
-    return str;
-  }
-  return RegExpPrototypeSymbolReplace(getAnsiRegExp(), str, "");
+  return stripAnsiRegExpMatches(str);
 }
 
 // utils

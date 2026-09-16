@@ -2,6 +2,7 @@
 
 #include "root.h"
 #include <wtf/SIMDHelpers.h>
+#include <array>
 #include <span>
 #include <unicode/utf16.h>
 
@@ -434,6 +435,172 @@ static const Char* consumeANSI(const Char* start, const Char* end)
         }
     }
     return end;
+}
+
+// ============================================================================
+// Node's ansi-regex, as a linear matcher
+// ============================================================================
+// node:util stripVTControlCharacters() removes exactly what this RegExp matches
+// (lib/internal/util/inspect.js, taken from chalk/ansi-regex):
+//
+//   [\u001B\u009B][[\]()#;?]*
+//   (?:(?:(?:(?:;[-a-zA-Z\d\/\#&.:=?%@~_]+)*|[a-zA-Z\d]+(?:;[-a-zA-Z\d\/\#&.:=?%@~_]*)*)?
+//         (?:\u0007|\u001B\u005C|\u009C))
+//     |(?:(?:\d{1,4}(?:;\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]))
+//
+// That is not the VT grammar consumeANSI() parses: a sequence the pattern does
+// not complete stays in the string. consumeNodeANSI() returns the same match
+// end as a backtracking engine, and does not backtrack. The comments below say
+// why at each place where the engine's backtracking can change the result.
+// test/js/node/util/util.test.js checks it against the RegExp.
+namespace NodeAnsiRegex {
+
+enum : uint8_t {
+    Prefix = 1 << 0, // [[\]()#;?]
+    Param = 1 << 1, // [-a-zA-Z\d\/\#&.:=?%@~_]
+    Alnum = 1 << 2, // [a-zA-Z\d]
+    Digit = 1 << 3, // \d
+    Final = 1 << 4, // [\dA-PR-TZcf-nq-uy=><~]
+};
+
+static constexpr std::array<uint8_t, 128> classTable = [] {
+    std::array<uint8_t, 128> table {};
+    const auto add = [&table](uint8_t flags, const char* chars) {
+        for (; *chars; ++chars)
+            table[static_cast<uint8_t>(*chars)] |= flags;
+    };
+    const auto addRange = [&table](uint8_t flags, char lo, char hi) {
+        for (int c = lo; c <= hi; ++c)
+            table[c] |= flags;
+    };
+    add(Prefix, "[]()#;?");
+    add(Param, "-/#&.:=?%@~_");
+    addRange(Param | Alnum, 'a', 'z');
+    addRange(Param | Alnum, 'A', 'Z');
+    addRange(Param | Alnum | Digit | Final, '0', '9');
+    addRange(Final, 'A', 'P');
+    addRange(Final, 'R', 'T');
+    add(Final, "Zcy=><~");
+    addRange(Final, 'f', 'n');
+    addRange(Final, 'q', 'u');
+    return table;
+}();
+
+template<typename Char>
+ALWAYS_INLINE static bool is(Char c, uint8_t flags)
+{
+    return c < 128 && (classTable[c] & flags);
+}
+
+// The first alternative, a string up to BEL, ESC \ or ST:
+//   (?:(?:;Param+)*|Alnum+(?:;Param*)*)?(?:\u0007|\u001B\u005C|\u009C)
+// Returns the end of its match at `it`, or nullptr. No terminator starts with a
+// byte the optional group accepts, so only the group's longest match can be
+// followed by one.
+template<typename Char>
+static const Char* matchString(const Char* it, const Char* end)
+{
+    // Look for the terminator first: the text after an SGR sequence is then
+    // not walked as a string that has none. CSI only stops the scan. With the
+    // next introducer as the bound, these scans add up to one pass per input.
+    const Char* const terminator = scanForAnyByte<0x07, 0x9c, 0x1b, 0x9b>(it, end);
+    if (!terminator)
+        return nullptr;
+    const Char* matchEnd;
+    if (*terminator == 0x07 || *terminator == 0x9c)
+        matchEnd = terminator + 1;
+    else if (*terminator == 0x1b && end - terminator >= 2 && terminator[1] == '\\')
+        matchEnd = terminator + 2;
+    else
+        return nullptr;
+
+    // The group accepts no terminator byte, so these loops stop at `terminator`.
+    if (*it == ';') {
+        while (*it == ';' && is(it[1], Param)) {
+            it += 2;
+            while (is(*it, Param))
+                ++it;
+        }
+    } else if (is(*it, Alnum)) {
+        do {
+            ++it;
+        } while (is(*it, Alnum));
+        while (*it == ';') {
+            ++it;
+            while (is(*it, Param))
+                ++it;
+        }
+    }
+    return it == terminator ? matchEnd : nullptr;
+}
+
+// The second alternative, parameters and a final byte:
+//   (?:\d{1,4}(?:;\d{0,4})*)?Final
+// Returns the end of its match at `it`, or nullptr.
+template<typename Char>
+static const Char* matchCsi(const Char* it, const Char* end)
+{
+    const auto skipDigits = [end](const Char* from) ALWAYS_INLINE_LAMBDA {
+        const Char* digit = from;
+        while (digit != end && digit - from < 4 && is(*digit, Digit))
+            ++digit;
+        return digit;
+    };
+
+    const Char* params = skipDigits(it);
+    if (params == it)
+        return it != end && is(*it, Final) ? it + 1 : nullptr;
+
+    // Final contains \d. When no final byte follows the parameters, the engine
+    // gives digits back until one of them is the final byte: the match then
+    // ends after the last parameter that has a digit.
+    const Char* lastDigitEnd = params;
+    it = params;
+    while (it != end && *it == ';') {
+        const Char* digitsEnd = skipDigits(it + 1);
+        if (digitsEnd != it + 1)
+            lastDigitEnd = digitsEnd;
+        it = digitsEnd;
+    }
+    if (it != end && is(*it, Final))
+        return it + 1;
+    return lastDigitEnd;
+}
+
+} // namespace NodeAnsiRegex
+
+// Returns the end of the ansi-regex match that begins at `start`, or `start`
+// when there is none.
+template<typename Char>
+static const Char* consumeNodeANSI(const Char* start, const Char* end)
+{
+    using namespace NodeAnsiRegex;
+    if (start == end || (*start != 0x1b && *start != 0x9b))
+        return start;
+
+    const Char* const prefix = start + 1;
+    const Char* it = prefix;
+    while (it != end && is(*it, Prefix))
+        ++it;
+
+    if (const Char* matchEnd = matchString(it, end))
+        return matchEnd;
+    if (const Char* matchEnd = matchCsi(it, end))
+        return matchEnd;
+
+    // The engine now gives prefix bytes back one at a time. Neither
+    // alternative matches at a prefix byte other than ';'. A string that starts
+    // at a ';' and runs into a later prefix ';' ends where the attempt from
+    // that one already failed. What is left is the last ';', when only '#' and
+    // '?' (the prefix bytes that are also Param) follow it in the prefix.
+    const Char* semicolonEnd = it;
+    while (semicolonEnd != prefix && (semicolonEnd[-1] == '#' || semicolonEnd[-1] == '?'))
+        --semicolonEnd;
+    if (semicolonEnd != prefix && semicolonEnd[-1] == ';') {
+        if (const Char* matchEnd = matchString(semicolonEnd - 1, end))
+            return matchEnd;
+    }
+    return start;
 }
 
 // ============================================================================

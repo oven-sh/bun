@@ -413,6 +413,142 @@ describe("util", () => {
       invalidArgType('The "str" argument must be of type string. Received type number (1)'),
     );
   });
+  describe("stripVTControlCharacters", () => {
+    // Node strips what this RegExp matches (lib/internal/util/inspect.js, from chalk/ansi-regex).
+    // Bun has a native matcher for it, and the RegExp is the reference.
+    const ansi = new RegExp(
+      "[\\u001B\\u009B][[\\]()#;?]*" +
+        "(?:(?:(?:(?:;[-a-zA-Z\\d\\/\\#&.:=?%@~_]+)*" +
+        "|[a-zA-Z\\d]+(?:;[-a-zA-Z\\d\\/\\#&.:=?%@~_]*)*)?" +
+        "(?:\\u0007|\\u001B\\u005C|\\u009C))" +
+        "|(?:(?:\\d{1,4}(?:;\\d{0,4})*)?" +
+        "[\\dA-PR-TZcf-nq-uy=><~]))",
+      "g",
+    );
+    const mismatches = inputs =>
+      inputs
+        .map(input => ({ input, expected: input.replace(ansi, ""), actual: util.stripVTControlCharacters(input) }))
+        .filter(({ expected, actual }) => expected !== actual);
+
+    it("strips only the sequences node strips", () => {
+      // Outputs verified against the node v26.3.0 binary.
+      const cases = [
+        ["\u001b[31mred\u001b[0m plain", "red plain"],
+        ["\u009b31mred\u009b0m", "red"],
+        ["\u2603\u001b[1;38;2;255;0;0mred\u001b[0m\u2603", "\u2603red\u2603"],
+        ["a\u001b]0;titleXYZ", "aitleXYZ"],
+        ["a\u001bPdata no end", "adata no end"],
+        ["a\u001bbcd", "a\u001bbcd"],
+        ["abc\u001b", "abc\u001b"],
+        ["abc\u001b[", "abc\u001b["],
+        ["a\u009bxyz", "a\u009bxyz"],
+        ["a\u001b_payload\u001b\\b", "a\u001b_payload\u001b\\b"],
+        ["a\u009d0;t\u009cb", "a\u009d0;t\u009cb"],
+        ["\u0090\u0098\u009c\u009d\u009e\u009f", "\u0090\u0098\u009c\u009d\u009e\u009f"],
+        ["\u009dx\u001b[0my", "\u009dxy"],
+        ["\u001b[1", ""],
+        ["\u001b[12345m", "m"],
+        ["\u001b[12;34;x", ";x"],
+        ["\u001b[1;;x", ";;x"],
+        ["\u001b[;?-\u0007", ""],
+        ["\u001b[;?-", "\u001b[;?-"],
+        ["\u001b;-;\u0007", "\u001b;-;\u0007"],
+        ["\u001b];;a\u0007b", "b"],
+        ["\u001b]8;;https://example.com/?a_b=1&c=2#tit%20le\u001b\\link\u001b]8;;\u001b\\", "link"],
+        ["\u001b]8;;https://example.com/a b\u0007", "ttps://example.com/a b\u0007"],
+        ["\u001b\u001b[0mx", "\u001bx"],
+        ["\u001b[0m", ""],
+        ["", ""],
+      ];
+      expect(cases.map(([input]) => [input, util.stripVTControlCharacters(input)])).toEqual(cases);
+    });
+
+    it("leaves a string with no complete sequence as it is", () => {
+      const plain = Buffer.alloc(1024, "a").toString();
+      expect(util.stripVTControlCharacters(plain)).toBe(plain);
+      expect(util.stripVTControlCharacters("\u2603 abc\u001b")).toBe("\u2603 abc\u001b");
+    });
+
+    it("agrees with the RegExp on every short string of character class representatives", () => {
+      // One character for each set of characters the RegExp does not tell apart.
+      const alphabet = ["\u001b", "\u009b", "[", "?", ";", "1", "m", "a", "-", "=", ">", "\u0007", "\u009c", "\\", " "];
+      const inputs = [];
+      for (const a of alphabet) for (const b of alphabet) for (const c of alphabet) inputs.push("\u001b" + a + b + c);
+      expect(mismatches(inputs)).toEqual([]);
+    });
+
+    it("agrees with the RegExp on every character at every kind of position", () => {
+      // Each template puts the character where one character class decides the match. The range
+      // includes 16-bit characters whose low byte is an ASCII member of a class.
+      const templates = [
+        c => "\u001b" + c + "m",
+        c => "a" + c + "[0m",
+        c => "\u001b]" + c + "\u0007",
+        c => "\u001b]a" + c + "b\u0007",
+        c => "\u001b]a;" + c + "\u0007",
+        c => "\u001b[;" + c + "\u0007",
+        c => "\u001b;-;" + c + "\u0007",
+        c => "\u001b]a" + c,
+        c => "\u001b]a\u001b" + c,
+        c => "\u001b[" + c + "1",
+        c => "\u001b[1;" + c,
+        c => "\u001b[1234" + c,
+        c => "\u001b[1;1234" + c,
+      ];
+      const inputs = [];
+      for (let code = 0; code < 0x200; code++)
+        for (const template of templates) inputs.push(template(String.fromCharCode(code)));
+      expect(mismatches(inputs)).toEqual([]);
+    });
+
+    it("agrees with the RegExp where the RegExp backtracks", () => {
+      // Prefix characters that the string alternative takes back, parameters past the {1,4} and
+      // {0,4} limits, and final bytes that a parameter digit has to stand in for.
+      const prefixes = ["", "[", "]", "[;", "];;", "[;?", "[?;#", "[;#?", ";?;?", "[;(?"];
+      const bodies = [
+        "",
+        "1",
+        "12345",
+        "1;2",
+        "1;;2",
+        "1;2;",
+        "12;34567",
+        "abc",
+        "abc;def",
+        "abc;-x;",
+        ";a",
+        ";a;b",
+        ";-",
+        ";-;",
+      ];
+      const tails = ["", "m", "x", "-", "\u0007", "\u001b\\", "\u009c", "\u001b", ";"];
+      // Long enough for the vectorized scans, with a terminator that only some sequences reach.
+      const before = "0123456789abcdefg";
+      const after = "0123456789;abcdefghijklmnopqrstuvwxyz;-\u0007 \u009b1";
+      const inputs = [];
+      for (const introducer of ["\u001b", "\u009b"])
+        for (const prefix of prefixes)
+          for (const body of bodies)
+            for (const tail of tails) {
+              const sequence = introducer + prefix + body + tail;
+              inputs.push(sequence + "z", "\u2603" + sequence);
+              inputs.push(before + sequence + after, "\u2603" + before + sequence + after);
+            }
+      expect(mismatches(inputs)).toEqual([]);
+    });
+
+    it("strips the sequences after a prefix the RegExp rescans from every ';'", () => {
+      // The RegExp rescans the rest of "\x1b;?;?;?..." from every ';'. JavaScriptCore stops a match
+      // that backtracks that much and reports no match, which left the color codes in the output.
+      // Node returns the output below after several seconds.
+      const prefix = "\u001b" + Buffer.alloc(64 * 1024, ";?").toString();
+      const output = util.stripVTControlCharacters(prefix + "\u001b[31mred\u001b[0m");
+      expect({ keptPrefix: output.startsWith(prefix), rest: output.slice(prefix.length) }).toEqual({
+        keptPrefix: true,
+        rest: "red",
+      });
+    });
+  });
   // Ported from the validateObject block of node's test/parallel/test-validators.js (v26.3.0).
   it("validateObject honors the kValidateObject* flags like Node", () => {
     const { validateObject, kValidateObjectAllowNullable, kValidateObjectAllowArray, kValidateObjectAllowFunction } =

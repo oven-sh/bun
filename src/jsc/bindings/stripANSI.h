@@ -5,5 +5,6 @@
 namespace Bun {
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionBunStripANSI);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionStripVTControlCharacters);
 
 }

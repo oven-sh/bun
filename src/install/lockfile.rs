@@ -861,6 +861,101 @@ impl Lockfile {
         0
     }
 
+    /// The package whose dependency list `dep_id` belongs to.
+    pub(crate) fn declaring_package(&self, dep_id: DependencyID) -> PackageID {
+        self.packages
+            .items_dependencies()
+            .iter()
+            .position(|dependencies| dependencies.contains(dep_id))
+            .map_or(invalid_package_id, |pkg_id| pkg_id as PackageID)
+    }
+
+    /// Resolution of `pkg_id`'s dependency named `name_hash`, skipping `except`; `installed_under` limits it to placed edges.
+    pub(crate) fn resolution_of_dependency_named(
+        &self,
+        pkg_id: PackageID,
+        name_hash: PackageNameHash,
+        except: DependencyID,
+        installed_under: Option<Features>,
+    ) -> PackageID {
+        let Some(dependencies) = self.packages.items_dependencies().get(pkg_id as usize) else {
+            return invalid_package_id;
+        };
+        (dependencies.begin()..dependencies.end())
+            .filter(|&dep_id| {
+                let dep = &self.buffers.dependencies[dep_id as usize];
+                dep_id != except
+                    && dep.name_hash == name_hash
+                    && installed_under.is_none_or(|features| dep.behavior.is_enabled(features))
+            })
+            .map(|dep_id| self.buffers.resolutions[dep_id as usize])
+            .find(|&package_id| package_id != invalid_package_id)
+            .unwrap_or(invalid_package_id)
+    }
+
+    /// Does this install place `package_id` under the root, and is it the only package anything installs under that name? Every dependency on it then dedupes onto the root's copy.
+    pub(crate) fn dedupes_onto_root_dependency(
+        &self,
+        package_id: PackageID,
+        root_features: Features,
+    ) -> bool {
+        if package_id == invalid_package_id {
+            return false;
+        }
+        let dependencies = self.buffers.dependencies.as_slice();
+        let resolutions = self.buffers.resolutions.as_slice();
+        let Some(first) = resolutions
+            .iter()
+            .position(|&resolved| resolved == package_id)
+        else {
+            return false;
+        };
+        let install_name = dependencies[first].name_hash;
+        let root_dependencies = self.packages.items_dependencies()[0];
+        let mut placed_by_root = false;
+        for (dep_id, dep) in dependencies.iter().enumerate() {
+            if resolutions[dep_id] == package_id {
+                if dep.name_hash != install_name {
+                    return false;
+                }
+                placed_by_root |= root_dependencies.contains(dep_id as DependencyID)
+                    && dep.behavior.is_enabled(root_features);
+            } else if dep.name_hash == install_name && resolutions[dep_id] != invalid_package_id {
+                return false;
+            }
+        }
+        placed_by_root && !self.is_dependency_of_self_contained_workspace(package_id)
+    }
+
+    /// A self-contained workspace's subtree is a hoisting barrier (`Tree::process_subtree`), so its copy of a package never dedupes onto the root's.
+    fn is_dependency_of_self_contained_workspace(&self, package_id: PackageID) -> bool {
+        let mut stack = self.self_contained_workspace_ids();
+        if stack.is_empty() {
+            return false;
+        }
+        let dependency_lists = self.packages.items_dependencies();
+        let resolutions = self.buffers.resolutions.as_slice();
+        let mut seen = vec![false; dependency_lists.len()];
+        for &workspace in &stack {
+            seen[workspace as usize] = true;
+        }
+        while let Some(pkg_id) = stack.pop() {
+            let dependencies = dependency_lists[pkg_id as usize];
+            for dep_id in dependencies.begin()..dependencies.end() {
+                let resolved = resolutions[dep_id as usize];
+                if resolved == package_id {
+                    return true;
+                }
+                if (resolved as usize) < seen.len()
+                    && !std::mem::replace(&mut seen[resolved as usize], true)
+                {
+                    stack.push(resolved);
+                }
+            }
+        }
+        false
+    }
+
     /// Does this tree id belong to a workspace (including workspace root)?
     /// TODO(dylan-conway) fix!
     pub(crate) fn is_workspace_tree_id(&self, id: tree::Id) -> bool {

@@ -1542,8 +1542,7 @@ extern "C" bool Bun__isMainThreadVM();
 extern "C" void Bun__onPosixSignal(int signalNumber);
 extern "C" void Bun__onSignalListenerCountChanged(int signalNumber, int listenerCount);
 #if !OS(WINDOWS)
-// Call this after the disposition of a signal changed for its JS listeners. Native code that
-// needs the same signal (the spawn waiter thread needs SIGCHLD) takes the disposition back there.
+// Call it after the disposition of a signal changed for JS listeners. Native users of that signal take it back.
 extern "C" void Bun__onSignalDispositionChanged(int signalNumber);
 #endif
 
@@ -1632,9 +1631,8 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
 
         if (auto signalNumber = signalNameToNumberMap->get(eventName.string())) {
             int listenerCount = eventEmitter.listenerCount(eventName);
-            // Mirror the count for the watcher thread's --watch-kill-signal check, and for the
-            // spawn waiter thread's SIGCHLD handler. Keep this before the disposition changes below:
-            // that handler can replace forwardSignal at any time and must know the listener by then.
+            // Mirror the count for the watcher thread's --watch-kill-signal check.
+            // Keep it before the disposition changes below: the spawn waiter thread's SIGCHLD handler reads it.
             Bun__onSignalListenerCountChanged(signalNumber, listenerCount);
 #if OS(LINUX)
             // SIGKILL and SIGSTOP cannot be handled, and JSC needs its own signal handler to

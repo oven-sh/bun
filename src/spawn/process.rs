@@ -1370,11 +1370,9 @@ pub mod waiter_thread_posix {
 
             #[cfg(any(target_os = "linux", target_os = "android"))]
             {
-                // Before the sigaction: a JS listener change that replaces `wakeup` after it
-                // must see the flag, so that it installs `wakeup` again.
+                // Set before the sigaction: a JS listener change after it must install `wakeup` again.
                 HANDLES_SIGCHLD.store(true, Ordering::SeqCst);
-                // The JS thread and the waiter thread can both be here. With the lock, the
-                // last sigaction has the flags for the last value of `JS_LISTENS_FOR_SIGCHLD`.
+                // Two threads can be here. The lock makes the last sigaction use the last flag value.
                 let _lock = RELOAD_HANDLERS_LOCK.lock();
                 let js_listens = JS_LISTENS_FOR_SIGCHLD.load(Ordering::SeqCst);
                 // SAFETY: sigaction with a valid handler.
@@ -1389,8 +1387,7 @@ pub mod waiter_thread_posix {
                         sa_restorer: None,
                     };
                     if js_listens {
-                        // A JS listener also hears a stopped or a continued child, as it
-                        // does without the waiter thread.
+                        // A JS listener also hears a stopped or continued child, as with pidfd.
                         act.sa_flags &= !libc::SA_NOCLDSTOP;
                     }
                     libc::sigaction(libc::SIGCHLD, &raw const act, core::ptr::null_mut());
@@ -1398,16 +1395,13 @@ pub mod waiter_thread_posix {
             }
         }
 
-        /// `process.on("SIGCHLD")` has a listener, or has none any more (main thread). Call
-        /// this before the SIGCHLD disposition changes for that, so that `wakeup` never
-        /// runs for a listener it does not know.
+        /// Main thread. Call it before the SIGCHLD disposition changes for a JS listener.
         #[cfg(any(target_os = "linux", target_os = "android"))]
         pub fn set_js_listens_for_sigchld(listens: bool) {
             JS_LISTENS_FOR_SIGCHLD.store(listens, Ordering::SeqCst);
         }
 
-        /// The caller has set the SIGCHLD disposition for the first JS listener, or for the
-        /// removal of the last one (main thread). `wakeup` takes SIGCHLD back.
+        /// Main thread. The SIGCHLD disposition changed for a JS listener: `wakeup` takes it back.
         #[cfg(any(target_os = "linux", target_os = "android"))]
         pub fn on_sigchld_disposition_changed() {
             if HANDLES_SIGCHLD.load(Ordering::SeqCst) {
@@ -1455,8 +1449,7 @@ pub mod waiter_thread_posix {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     static HANDLES_SIGCHLD: AtomicBool = AtomicBool::new(false);
 
-    /// `process.on("SIGCHLD")` has a listener. SIGCHLD has one disposition, so
-    /// `wakeup` also does the work of the handler that the listener installed.
+    /// `process.on("SIGCHLD")` has a listener. SIGCHLD has one disposition, so `wakeup` forwards to it.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     static JS_LISTENS_FOR_SIGCHLD: AtomicBool = AtomicBool::new(false);
 
@@ -1465,8 +1458,7 @@ pub mod waiter_thread_posix {
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     unsafe extern "C" {
-        /// `bun_jsc` (PosixSignalHandle.rs): queues the signal for the `process.on(<signal>)`
-        /// listeners. Async-signal-safe.
+        /// `bun_jsc`: queues the signal for the `process.on(<signal>)` listeners. Async-signal-safe.
         safe fn Bun__onPosixSignal(number: c_int);
     }
 

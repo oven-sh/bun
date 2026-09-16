@@ -157,10 +157,7 @@ pub(crate) extern "C" fn Bun__onSignalListenerCountChanged(number: i32, count: i
     }
 }
 
-/// C++ `onDidChangeListeners` calls this after it set the disposition of `number` for the
-/// first `process.on(<signal>)` listener, and after it restored the disposition for the
-/// removal of the last one (main-thread VM only). Native code that needs the same signal
-/// takes the disposition back here.
+/// C++ `onDidChangeListeners` changed the disposition of `number` for JS listeners. Native users of it take it back.
 #[cfg(unix)]
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__onSignalDispositionChanged(number: i32) {

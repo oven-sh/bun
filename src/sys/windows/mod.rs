@@ -1748,10 +1748,8 @@ pub(crate) fn spawn_watcher_child(
     Ok(())
 }
 
-/// Our own `STARTUPINFO.lpReserved2` block (the CRT fd table the parent gave
-/// us: `u32 count`, `u8 crt_flags[count]`, unaligned `HANDLE os_handle[count]`),
-/// re-marked inheritable so the watcher child gets the same fds, fd 3 (IPC)
-/// included. `(0, null)` when absent or malformed (libuv's `uv__stdio_verify`).
+/// Our own `STARTUPINFO.lpReserved2` CRT fd block (`u32 count`, `u8 flags[count]`,
+/// unaligned `HANDLE[count]`), re-marked inheritable for the watcher child.
 fn inherited_crt_fd_block() -> (WORD, *mut u8) {
     const HANDLE_FLAG_INHERIT: DWORD = 0x1;
     const MAX_CRT_FDS: usize = 256;

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isIPv6, tls as tlsCert } from "harness";
 
 // `Bun.connect` to a hostname that fails to resolve must surface the resolver
 // error (code `ENOTFOUND`, `syscall: "getaddrinfo"`, `hostname`), matching
@@ -118,4 +118,98 @@ test("consecutive Bun.connect calls to the same unresolvable hostname all get th
     );
   }
   expect(errors).toEqual([EXPECTED, EXPECTED, EXPECTED]);
+});
+
+// A name that cannot be a host name (a space, a colon, an empty label) is
+// answered ENOTFOUND in-process, without asking the system resolver. Some DNS
+// servers never answer a query for such a label, and the resolver then waits
+// out its own timeout (30s on macOS) before reporting anything.
+test.each(["this is not a hostname", "localhost:80", "a..b"])(
+  "Bun.connect to %p, which is not a hostname, fails with ENOTFOUND without asking the resolver",
+  async hostname => {
+    const error = await Bun.connect({
+      hostname,
+      port: 80,
+      socket: { open() {}, data() {} },
+    }).then(
+      () => "resolved",
+      (e: Error) => pick(e),
+    );
+    expect(error).toEqual({ ...EXPECTED, hostname, message: `getaddrinfo ENOTFOUND ${hostname}` });
+  },
+);
+
+// The listen side binds through a synchronous getaddrinfo, so a name the
+// resolver would sit on blocks the whole thread. The same names are rejected
+// before the call, with the same error the connect side reports.
+test.each(["this is not a hostname", "localhost:80", "a..b"])(
+  "Bun.listen on %p, which is not a hostname, throws ENOTFOUND without asking the resolver",
+  hostname => {
+    let error: any;
+    try {
+      Bun.listen({ hostname, port: 0, socket: { data() {} } }).stop(true);
+    } catch (e) {
+      error = e;
+    }
+    expect(pick(error ?? {})).toEqual({ ...EXPECTED, hostname, message: `getaddrinfo ENOTFOUND ${hostname}` });
+  },
+);
+
+// An answer that is already known when Bun.connect() is called (answered
+// in-process, or a cache hit) is delivered from the event loop, not inline.
+// When the connect is made from the callback that delivers the previous
+// answer, the loop has to be woken for it; otherwise each error waits for the
+// next unrelated wakeup (about a second), and 20 of them exceed the test
+// timeout.
+test("back-to-back Bun.connect calls whose names are rejected in-process do not wait for a loop wakeup", async () => {
+  const codes = [];
+  for (let i = 0; i < 20; i++) {
+    codes.push(
+      await Bun.connect({
+        hostname: `not a hostname ${i}`,
+        port: 80,
+        socket: { open() {}, data() {} },
+      }).then(
+        () => "resolved",
+        (e: Error) => e.code,
+      ),
+    );
+  }
+  expect(codes).toEqual(Array(20).fill("ENOTFOUND"));
+});
+
+// Brackets are how a URL writes an IPv6 literal; only such a literal loses
+// them. Anything else in brackets is a name the resolver gets as written, as in
+// Node, and is rejected in-process without touching the network.
+test("Bun.connect unwraps a bracketed IPv6 literal and nothing else", async () => {
+  const outcome = (hostname: string, port: number, tls?: Bun.TLSOptions) =>
+    new Promise<string | boolean>(resolve => {
+      Bun.connect({
+        hostname,
+        port,
+        tls,
+        socket: {
+          open(socket) {
+            if (!tls) (resolve("connected"), socket.end());
+          },
+          handshake(socket, _success, error) {
+            resolve(error ? error.message : socket.authorized);
+            socket.end();
+          },
+          data() {},
+        },
+      }).catch(e => resolve(e.code + " " + e.hostname));
+    });
+
+  expect(await outcome("[example.invalid]", 80)).toBe("ENOTFOUND [example.invalid]");
+  expect(await outcome("[127.0.0.1]", 80)).toBe("ENOTFOUND [127.0.0.1]");
+  expect(await outcome("[]", 80)).toBe("ENOTFOUND []");
+  if (!isIPv6()) return;
+
+  using plain = Bun.listen({ hostname: "::1", port: 0, socket: { data() {} } });
+  expect(await outcome("[::1]", plain.port)).toBe("connected");
+  // The certificate lists IP:::1. The name it is checked against, and SNI,
+  // are the bare address.
+  using secure = Bun.listen({ hostname: "::1", port: 0, tls: tlsCert, socket: { data() {} } });
+  expect(await outcome("[::1]", secure.port, { ca: tlsCert.cert })).toBe(true);
 });

@@ -83,6 +83,10 @@ const IGNORED_PRAGMAS = new Set([
   // current harness ignores them.
   "xonly",
   "Pass",
+  // The experimental derived-computations validation was removed along with
+  // its parse_fixture_pragmas arm, so these keys are no longer recognized.
+  "validateNoDerivedComputationsInEffectsExp",
+  "validateNoDerivedComputationsInEffects_exp",
 ]);
 
 // Pragmas Bun's `parse_fixture_pragmas` (src/react_compiler/program.rs) reads
@@ -115,8 +119,6 @@ const HANDLED_PRAGMAS = new Set([
   "enableUseKeyedState",
   "validateNoSetStateInEffects",
   "validateNoDerivedComputationsInEffects",
-  "validateNoDerivedComputationsInEffectsExp",
-  "validateNoDerivedComputationsInEffects_exp",
   "validateNoJsxInTryStatements",
   "validateNoJSXInTryStatements",
   "validateStaticComponents",
@@ -204,6 +206,17 @@ function shouldSkip(relPath: string, pragmas: Pragmas): string | null {
 // Grow this from CI; each entry must say why.
 // `__proto__: null`: a fixture named "constructor" exists.
 const TODO: Record<string, string> = Object.assign(Object.create(null), {});
+
+// Fixtures where Bun's memo slot counts differ from upstream's on purpose, with
+// the counts Bun produces. The fixture still has to produce them, so a compiler
+// change that alters one fails the test. Each entry must say why.
+const SLOT_COUNT_DIVERGENCE: Record<string, number[]> = Object.assign(Object.create(null), {
+  // Upstream lowers `x += 5` to a store and then a new read of `x`, and prints
+  // that read as a stray `x;` after the memo block that declares `x`. The read
+  // splits `getX` and the JSX into two memo blocks: `_c(2)`. Bun keeps the value
+  // of the store, so there is no stray read and one block holds both.
+  "hoisting-invalid-tdz-let": [1],
+});
 
 // `minify: { syntax: true }` runs the parser's visit-phase folding and the
 // nested-block statement mangler before the React Compiler sees the function
@@ -444,8 +457,15 @@ describe("react-compiler upstream fixtures", () => {
       // Success fixture.
       expect({ fixture: name, buildError }).toEqual({ fixture: name, buildError: null });
 
-      const want = slotCounts(expected.code ?? "");
+      const want = SLOT_COUNT_DIVERGENCE[name]?.slice() ?? slotCounts(expected.code ?? "");
       const got = slotCounts(output);
+      // A component that `@enableJsxOutlining` outlines has memo slots of its
+      // own. Bun declares an outlined function ahead of the module's other
+      // statements, upstream after the function it came from.
+      if (pragmas.has("enableJsxOutlining")) {
+        want.sort((a, b) => a - b);
+        got.sort((a, b) => a - b);
+      }
 
       const wantRuntime = (expected.code ?? "").includes("react/compiler-runtime");
       const gotRuntime = output.includes("react/compiler-runtime");

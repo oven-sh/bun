@@ -56,11 +56,7 @@ namespace WebCore {
 using ReducedResolutionSeconds = Seconds;
 using DOMHighResTimeStamp = double;
 
-class CachedResource;
 class Document;
-class DocumentLoadTiming;
-class DocumentLoader;
-class NetworkLoadMetrics;
 class PerformanceUserTiming;
 class PerformanceEntry;
 class PerformanceMark;
@@ -82,7 +78,6 @@ public:
 
     DOMHighResTimeStamp now() const;
     DOMHighResTimeStamp timeOrigin() const;
-    // ReducedResolutionSeconds nowInReducedResolutionSeconds() const;
 
     // PerformanceNavigation* navigation();
     PerformanceTiming* timing();
@@ -114,16 +109,10 @@ public:
 
     ScriptExecutionContext* scriptExecutionContext() const final { return ContextDestructionObserver::scriptExecutionContext(); }
 
-    using RefCounted::deref;
-    using RefCounted::ref;
-
-    // void scheduleNavigationObservationTaskIfNeeded();
-
-    // PerformanceNavigationTiming* navigationTiming() { return m_navigationTiming.get(); }
-
-    // EventTargetData* eventTargetData() override;
-    // EventTargetData* eventTargetDataConcurrently() override;
-    // EventTargetData& ensureEventTargetData() override;
+    // ContextDestructionObserver.
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+    USING_CAN_MAKE_WEAKPTR(EventTarget);
 
 private:
     Performance(ScriptExecutionContext*, MonotonicTime timeOrigin);

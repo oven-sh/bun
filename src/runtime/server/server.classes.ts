@@ -1,4 +1,4 @@
-import { define } from "../../codegen/class-definitions";
+import { define } from "../../codegen/class-definitions.ts";
 
 function generate(name) {
   return define({
@@ -165,6 +165,10 @@ export default [
         length: 0,
         passThis: true,
       },
+      pauseReads: {
+        fn: "pauseSocketReads",
+        length: 0,
+      },
       drainRequestBody: {
         fn: "drainRequestBody",
         length: 0,
@@ -180,11 +184,6 @@ export default [
       writeHeadAndEnd: {
         fn: "writeHeadAndEnd",
         length: 8,
-      },
-      dumpRequestBody: {
-        fn: "dumpRequestBody",
-        length: 0,
-        passThis: true,
       },
       resume: {
         fn: "doResume",
@@ -205,9 +204,6 @@ export default [
       hasBody: {
         getter: "getHasBody",
       },
-      ended: {
-        getter: "getEnded",
-      },
       ondata: {
         getter: "getOnData",
         setter: "setOnData",
@@ -225,10 +221,6 @@ export default [
       upgraded: {
         getter: "getUpgraded",
       },
-      // ontimeout: {
-      //   getter: "getOnTimeout",
-      //   setter: "setOnTimeout",
-      // },
       onwritable: {
         getter: "getOnWritable",
         setter: "setOnWritable",
@@ -236,7 +228,7 @@ export default [
       },
     },
     klass: {},
-    finalize: true,
+    refCounted: true,
     noConstructor: true,
     values: ["onAborted", "onWritable", "onData", "pendingWriteBuffer"],
   }),
@@ -371,7 +363,7 @@ export default [
   define({
     name: "HTMLBundle",
     noConstructor: true,
-    finalize: true,
+    refCounted: true,
     proto: {
       index: {
         getter: "getIndex",

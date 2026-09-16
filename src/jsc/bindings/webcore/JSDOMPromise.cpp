@@ -36,11 +36,6 @@ using namespace JSC;
 
 namespace WebCore {
 
-auto DOMPromise::whenSettled(std::function<void()>&& callback) -> IsCallbackRegistered
-{
-    return whenPromiseIsSettled(globalObject(), promise(), WTF::move(callback));
-}
-
 auto DOMPromise::whenPromiseIsSettled(JSDOMGlobalObject* globalObject, JSC::JSObject* promise, Function<void()>&& callback) -> IsCallbackRegistered
 {
     auto& lexicalGlobalObject = *globalObject;
@@ -71,25 +66,6 @@ auto DOMPromise::whenPromiseIsSettled(JSDOMGlobalObject* globalObject, JSC::JSOb
 
     EXCEPTION_ASSERT(!scope.exception() || vm.hasPendingTerminationException());
     return scope.exception() ? IsCallbackRegistered::No : IsCallbackRegistered::Yes;
-}
-
-JSC::JSValue DOMPromise::result() const
-{
-    return promise()->result();
-}
-
-DOMPromise::Status DOMPromise::status() const
-{
-    switch (promise()->status()) {
-    case JSC::JSPromise::Status::Pending:
-        return Status::Pending;
-    case JSC::JSPromise::Status::Fulfilled:
-        return Status::Fulfilled;
-    case JSC::JSPromise::Status::Rejected:
-        return Status::Rejected;
-    };
-    ASSERT_NOT_REACHED();
-    return Status::Rejected;
 }
 
 }

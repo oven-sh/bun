@@ -60,9 +60,7 @@ public:
 };
 
 struct RsaKeyPairJob {
-    static RsaKeyPairJob* create(JSC::JSGlobalObject*, RsaKeyPairJobCtx&&, JSC::JSValue callback);
     static void createAndSchedule(JSC::JSGlobalObject*, RsaKeyPairJobCtx&&, JSC::JSValue callback);
-    void schedule();
 };
 
 } // namespace Bun

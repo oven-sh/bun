@@ -1,4 +1,4 @@
-import { bunEnv, bunExe, isDebug } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 
 const { isWindows } = require("../../node/test/common");
 
@@ -14,11 +14,11 @@ async function toUtf8(out: ReadableStream<Uint8Array>): Promise<string> {
 
 describe("yes is killed", () => {
   // The wall-clock window below includes the child's startup (bunExe() has to
-  // boot before `yes` writes its first byte). On a debug+ASAN build that startup
+  // boot before `yes` writes its first byte). On a debug/ASAN build that startup
   // alone is ~150-250ms, so the release 100ms budget is spent before maxBuffer
   // has anything to measure. Byte-level promptness is asserted by the "caps the
   // buffer" tests below; this is the coarse "didn't wait a full tick" sanity check.
-  const killWindow = isDebug ? 1000 : 100;
+  const killWindow = isDebug || isASAN ? 1000 : 100;
 
   test("Bun.spawn", async () => {
     const timeStart = Date.now();

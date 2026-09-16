@@ -7,8 +7,6 @@
 #include <JavaScriptCore/JSGlobalObjectDebuggable.h>
 #include <JavaScriptCore/JSGlobalObjectDebugger.h>
 #include <JavaScriptCore/Debugger.h>
-#include <JavaScriptCore/HeapIterationScope.h>
-#include <JavaScriptCore/IsoCellSetInlines.h>
 #include <wtf/Condition.h>
 #include <wtf/NeverDestroyed.h>
 #include "ScriptExecutionContext.h"
@@ -23,7 +21,6 @@
 #include "InspectorHTTPServerAgent.h"
 
 extern "C" void Bun__tickWhilePaused(bool*);
-extern "C" void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta);
 
 namespace Bun {
 using namespace JSC;
@@ -127,7 +124,7 @@ public:
         this->status = ConnectionStatus::Connected;
         auto* globalObject = context.jsGlobalObject();
         if (this->unrefOnDisconnect) {
-            Bun__eventLoop__incrementRefConcurrently(static_cast<Zig::GlobalObject*>(globalObject)->bunVM(), 1);
+            Bun__VmHandle__refKeepAlive(WebCore::clientData(JSC::getVM(globalObject))->vmHandle, BunLoopKind::Regular, 1);
         }
         globalObject->setInspectable(true);
         auto& inspector = globalObject->inspectorDebuggable();
@@ -214,7 +211,7 @@ public:
 
             if (connection->unrefOnDisconnect) {
                 connection->unrefOnDisconnect = false;
-                Bun__eventLoop__incrementRefConcurrently(static_cast<Zig::GlobalObject*>(context.jsGlobalObject())->bunVM(), -1);
+                Bun__VmHandle__refKeepAlive(WebCore::clientData(context.vm())->vmHandle, BunLoopKind::Regular, -1);
             }
 
             {
@@ -330,35 +327,6 @@ public:
         wait.condition.notifyAll();
     }
 
-    // Debugger.setBreakpointsActive triggers Debugger::setBreakpointsActivated
-    // → recompileAllJSFunctions → vm.deleteAllCode, which iterates each
-    // ScriptExecutable subspace's clearableCodeSet and calls clearCode. For
-    // ModuleProgramExecutable, clearCode drops m_unlinkedCodeBlock and
-    // m_moduleEnvironmentSymbolTable; the next executeModuleProgram (a
-    // top-level-await resume, or a linked-but-not-yet-evaluated module)
-    // regenerates the unlinked code block under the now-different
-    // CodeGenerationMode::Debugger, whose module-environment / generator-frame
-    // layout no longer matches the live JSModuleEnvironment, and the next
-    // op_put_to_scope writes past it. This is the invariant documented in
-    // UnlinkedModuleProgramCodeBlock.h. Module bodies execute once, so dropping
-    // their unlinked code block cannot recover debug hooks for the body anyway
-    // (inner functions are recompiled independently via
-    // deleteAllUnlinkedCodeBlocks); pre-removing every module executable from
-    // the clearableCodeSet makes deleteAllCodeBlocks skip them and keeps the
-    // original bytecode in place. Registered via whenIdle so it runs ahead of
-    // any deferred deleteAllCode callback regardless of whether the dispatch
-    // happens with a VMEntryScope on the stack (the run-while-paused case).
-    static void protectModuleExecutablesFromClearCode(JSC::VM& vm)
-    {
-        if (auto* spaceAndSet = vm.heap.m_moduleProgramExecutableSpace.get()) {
-            JSC::HeapIterationScope iterationScope(vm.heap);
-            auto& set = spaceAndSet->clearableCodeSet;
-            set.forEachLiveCell([&](JSC::HeapCell* cell, JSC::HeapCell::Kind) {
-                set.remove(cell);
-            });
-        }
-    }
-
     void receiveMessagesOnInspectorThread(ScriptExecutionContext& context, Zig::GlobalObject* globalObject, bool connectIfNeeded)
     {
         // Connect before swapping the queue: doConnect recursively calls this
@@ -377,13 +345,6 @@ public:
         {
             Locker<Lock> locker(jsThreadMessagesLock);
             this->jsThreadMessages.swap(messages);
-        }
-
-        if (!messages.isEmpty()) {
-            auto& vm = globalObject->vm();
-            vm.whenIdle([&vm] {
-                protectModuleExecutablesFromClearCode(vm);
-            });
         }
 
         auto& dispatcher = globalObject->inspectorDebuggable();
@@ -477,7 +438,7 @@ public:
         notifyPausedThread();
 
         if (this->jsThreadMessageScheduledCount++ == 0) {
-            ScriptExecutionContext::postTaskTo(scriptExecutionContextIdentifier, [connection = Ref { *this }](ScriptExecutionContext& context) {
+            ScriptExecutionContext::postTaskTo(scriptExecutionContextIdentifier, BunLoopKind::Regular, [connection = Ref { *this }](ScriptExecutionContext& context) {
                 connection->receiveMessagesOnInspectorThread(context, static_cast<Zig::GlobalObject*>(context.jsGlobalObject()), true);
             });
         }
@@ -493,7 +454,7 @@ public:
         notifyPausedThread();
 
         if (this->jsThreadMessageScheduledCount++ == 0) {
-            ScriptExecutionContext::postTaskTo(scriptExecutionContextIdentifier, [connection = Ref { *this }](ScriptExecutionContext& context) {
+            ScriptExecutionContext::postTaskTo(scriptExecutionContextIdentifier, BunLoopKind::Regular, [connection = Ref { *this }](ScriptExecutionContext& context) {
                 connection->receiveMessagesOnInspectorThread(context, static_cast<Zig::GlobalObject*>(context.jsGlobalObject()), true);
             });
         }
@@ -544,16 +505,11 @@ public:
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<JSBunInspectorConnection, WebCore::UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForBunInspectorConnection.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForBunInspectorConnection = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForBunInspectorConnection.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForBunInspectorConnection = std::forward<decltype(space)>(space); });
+        return WebCore::subspaceForImpl<JSBunInspectorConnection, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForBunInspectorConnection, m_subspaceForBunInspectorConnection));
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info(), JSC::NonArray);
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info(), JSC::NonArray);
     }
 
     BunInspectorConnection* connection()
@@ -690,14 +646,17 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateConnection, (JSGlobalObject * globalObj
     if (!debuggerGlobalObject)
         return JSValue::encode(jsUndefined());
 
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     ScriptExecutionContext* targetContext = ScriptExecutionContext::getScriptExecutionContext(static_cast<ScriptExecutionContextIdentifier>(callFrame->argument(0).toUInt32(globalObject)));
+    RETURN_IF_EXCEPTION(scope, {});
     bool shouldRef = !callFrame->argument(1).toBoolean(globalObject);
     JSFunction* onMessageFn = uncheckedDowncast<JSFunction>(callFrame->argument(2).toObject(globalObject));
+    RETURN_IF_EXCEPTION(scope, {});
 
     if (!targetContext || !onMessageFn)
         return JSValue::encode(jsUndefined());
 
-    auto& vm = JSC::getVM(globalObject);
     auto connection = BunInspectorConnection::create(
         *targetContext,
         targetContext->jsGlobalObject(), shouldRef);
@@ -811,6 +770,7 @@ static bool postNodeInspectorControlMessage(const String& message)
         if (auto* exception = scope.exception()) [[unlikely]] {
             (void)scope.tryClearException();
             Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+            RETURN_IF_EXCEPTION(scope, );
         }
     });
 
@@ -957,7 +917,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_closeNodeInspector, (JSGlobalObject*, CallFr
     return JSValue::encode(jsUndefined());
 }
 
-extern "C" void Bun__startJSDebuggerThread(Zig::GlobalObject* debuggerGlobalObject, ScriptExecutionContextIdentifier scriptId, BunString* portOrPathString, int isAutomatic, bool isUrlServer, bool isNodeInspector)
+extern "C" void Bun__startJSDebuggerThread(Zig::GlobalObject* debuggerGlobalObject, ScriptExecutionContextIdentifier scriptId, const BunString* portOrPathString, int isAutomatic, bool isUrlServer, bool isNodeInspector)
 {
     if (!debuggerScriptExecutionContext)
         debuggerScriptExecutionContext = debuggerGlobalObject->scriptExecutionContext();
@@ -972,6 +932,7 @@ extern "C" void Bun__startJSDebuggerThread(Zig::GlobalObject* debuggerGlobalObje
 
     arguments.append(jsNumber(static_cast<unsigned int>(scriptId)));
     auto* portOrPathJS = Bun::toJS(debuggerGlobalObject, *portOrPathString);
+    RETURN_IF_EXCEPTION(scope, );
     if (!portOrPathJS) [[unlikely]] {
         return;
     }

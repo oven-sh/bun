@@ -257,7 +257,7 @@ impl Entry {
         const HMR_CHUNK_PREFIX: &[u8] = b"self[Symbol.for(\"bun:hmr\")]({\n";
         let runtime_line_count: u32 = match kind {
             ChunkKind::InitialResponse => bake::get_hmr_runtime(Side::Client).line_count,
-            ChunkKind::HmrChunk => HMR_CHUNK_PREFIX.iter().filter(|&&b| b == b'\n').count() as u32,
+            ChunkKind::HmrChunk => bun_core::strings::count_char(HMR_CHUNK_PREFIX, b'\n') as u32,
         };
 
         let mut prev_end_state = SourceMapState {
@@ -541,7 +541,7 @@ impl SourceMapStore {
         }
 
         let expire = Timespec::ms_from_now(
-            TimespecMockMode::AllowMockedTime,
+            TimespecMockMode::ForceRealTime,
             WEAK_REF_EXPIRY_SECONDS * 1000,
         );
         self.weak_refs
@@ -682,14 +682,11 @@ impl SourceMapStore {
             0, // unused
             Default::default(),
         ) {
-            source_map::ParseResult::Fail(fail) => {
-                bun_core::debug_warn!(
-                    "Failed to re-parse source map: {}",
-                    bstr::BStr::new(fail.msg)
-                );
+            Err(fail) => {
+                bun_core::debug_warn!("Failed to re-parse source map: {}", fail.err.message());
                 None
             }
-            source_map::ParseResult::Success(mut psm) => Some(GetResult {
+            Ok(mut psm) => Some(GetResult {
                 mappings: core::mem::take(&mut psm.mappings),
                 file_paths: &entry.paths,
                 entry_files: &entry.files,

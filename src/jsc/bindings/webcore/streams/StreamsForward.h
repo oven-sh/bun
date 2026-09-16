@@ -69,11 +69,11 @@ class JSStreamsRuntime;
 
 // The Bun-native layer cells & classes.
 class JSDirectStreamController;
+class JSDirectStreamSource; // a converted type:"direct" underlying source (JSDirectStreamSource.h)
 class JSBunStandaloneTextSink; // the standalone Text sink (BunStandaloneTextSink.h)
 class JSOneShotDirectSink; // consumeDirectStreamToArrayBuffer's throwaway controller
 class JSReadableStreamIntoArrayOperation; // the array pump's reader/chunks/result state
 class JSNativeStreamSourceAdapter;
-class JSDirectSinkCloseState;
 class JSAsyncIteratorSourceOperation;
 class JSReadStreamIntoSinkOperation;
 class JSTextEncoderStream;
@@ -204,7 +204,7 @@ enum class ReadIntoRequestKind : uint8_t {
 
 // The 3 direct sink flavors carried by ONE JSDirectStreamController.
 enum class DirectSinkKind : uint8_t {
-    ArrayBuffer, // a real Bun.ArrayBufferSink
+    ArrayBuffer, // a byte buffer the reader drains as Uint8Array chunks
     Text, // the rope + pieces accumulator
     Array, // chunks pushed into a JSArray
 };
@@ -238,12 +238,6 @@ enum class ReadableStreamType : uint8_t { Bytes };
 // WebIDL `enum ReadableStreamReaderMode { "byob" }` (getReader(options).mode)
 enum class ReadableStreamReaderMode : uint8_t { Byob };
 
-// Cross-realm transform protocol message `type`: "chunk" | "pull" | "error" | "close".
-enum class CrossRealmMessageType : uint8_t { Chunk,
-    Pull,
-    Error,
-    Close };
-
 } // namespace WebStreams
 } // namespace Bun
 
@@ -252,7 +246,6 @@ enum class CrossRealmMessageType : uint8_t { Chunk,
 namespace WebCore {
 using Bun::WebStreams::BunStreamMode;
 using Bun::WebStreams::ControllerKind;
-using Bun::WebStreams::CrossRealmMessageType;
 using Bun::WebStreams::DirectSinkKind;
 using Bun::WebStreams::ReadableStreamReaderMode;
 using Bun::WebStreams::ReadableStreamState;

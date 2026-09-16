@@ -35,8 +35,10 @@ pub use ConcurrentTask::{Task, TaskTag, Taskable, task_tag};
 // the type/module namespace collision on the PascalCase form.
 pub use DeferredTaskQueue as deferred_task_queue;
 
-pub use MiniEventLoop::PipeReadBuffer;
-pub use any_event_loop::{AnyEventLoop, EventLoopHandle, EventLoopTask, EventLoopTaskPtr};
+pub use any_event_loop::{
+    AnyEventLoop, EventLoopHandle, EventLoopTask, JsPoster, JsPosterVTable, Posted,
+};
+pub use bun_io::PipeReadScratch;
 
 // JS-event-loop arm of `AnyEventLoop` / `EventLoopHandle`. `bun_event_loop` is
 // a lower tier than `bun_jsc`, so it cannot name `jsc::EventLoop` /
@@ -48,7 +50,6 @@ bun_dispatch::link_interface! {
         fn file_polls() -> *mut bun_io::file_poll::Store;
         fn put_file_poll(poll: *mut bun_io::FilePoll, was_ever_registered: bool);
         fn uws_loop() -> *mut bun_uws::Loop;
-        fn pipe_read_buffer() -> *mut [u8];
         fn tick();
         fn auto_tick();
         fn auto_tick_active();
@@ -59,7 +60,8 @@ bun_dispatch::link_interface! {
         fn enter();
         fn exit();
         fn enqueue_task(task: Task);
-        fn enqueue_task_concurrent(task: core::ptr::NonNull<ConcurrentTask::ConcurrentTask>);
+        fn enqueue_task_after_yield(task: Task);
+        fn js_poster() -> any_event_loop::JsPoster;
         fn env() -> *mut bun_dotenv::Loader;
         fn top_level_dir() -> *const [u8];
         fn create_null_delimited_env_map() -> Result<bun_dotenv::NullDelimitedEnvMap, bun_core::AllocError>;

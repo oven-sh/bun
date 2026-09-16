@@ -1,9 +1,9 @@
 use core::ptr;
 use core::ptr::NonNull;
 
-use crate::schema_api as api;
+use crate::exception_list;
 use bun_core::String as BunString;
-use bun_core::ZigStringSlice;
+use bun_core::Utf8Bytes;
 use bun_url::URL as ZigURL;
 
 use crate::SourceProvider;
@@ -29,6 +29,14 @@ pub struct ZigStackTrace {
     pub(crate) referenced_source_provider: Option<NonNull<SourceProvider>>,
 }
 
+impl Drop for ZigStackTrace {
+    fn drop(&mut self) {
+        if let Some(source) = self.referenced_source_provider.take() {
+            SourceProvider::opaque_mut(source.as_ptr()).deref();
+        }
+    }
+}
+
 impl ZigStackTrace {
     pub fn from_frames(frames_slice: &mut [ZigStackFrame]) -> ZigStackTrace {
         ZigStackTrace {
@@ -45,60 +53,38 @@ impl ZigStackTrace {
         }
     }
 
-    pub(crate) fn to_api(
+    /// Owned copy of the frames and source lines, with source URLs remapped
+    /// relative to `root_path` / `origin`.
+    pub(crate) fn snapshot(
         &self,
         root_path: &[u8],
         origin: Option<&ZigURL<'_>>,
-    ) -> Result<api::StackTrace, bun_alloc::AllocError> {
-        let mut stack_trace = api::StackTrace::default();
-        {
-            let mut source_lines_iter = self.source_line_iterator();
-
-            let source_line_len = source_lines_iter.get_length();
-
-            if source_line_len > 0 {
-                let n_lines = usize::try_from((source_lines_iter.i + 1).max(0)).expect("int cast");
-                let mut source_lines: Vec<api::SourceLine> = Vec::with_capacity(n_lines);
-                source_lines_iter = self.source_line_iterator();
-                while let Some(source) = source_lines_iter.next() {
-                    source_lines.push(api::SourceLine { line: source.line });
-                }
-                stack_trace.source_lines = source_lines;
-            }
-        }
-        {
-            let frames = self.frames();
-            if !frames.is_empty() {
-                let mut stack_frames: Vec<api::StackFrame> = Vec::with_capacity(frames.len());
-
-                for frame in frames {
-                    stack_frames.push(frame.to_api(root_path, origin)?);
-                }
-                stack_trace.frames = stack_frames;
+    ) -> exception_list::StackTrace {
+        let mut source_lines = Vec::new();
+        let mut iter = self.source_line_iterator();
+        if iter.get_length() > 0 {
+            while let Some(source) = iter.next() {
+                source_lines.push(exception_list::SourceLine {
+                    line: source.line,
+                    text: Box::from(source.trimmed_text()),
+                });
             }
         }
 
-        Ok(stack_trace)
+        exception_list::StackTrace {
+            source_lines,
+            frames: self
+                .frames()
+                .iter()
+                .map(|frame| frame.snapshot(root_path, origin))
+                .collect(),
+        }
     }
 
     pub fn frames(&self) -> &[ZigStackFrame] {
         // SAFETY: frames_ptr points to a caller-owned buffer of at least frames_len elements
         // (populated by C++ via FFI).
         unsafe { bun_core::ffi::slice(self.frames_ptr, self.frames_len as usize) }
-    }
-
-    pub(crate) fn frames_mutable(&mut self) -> &mut [ZigStackFrame] {
-        // SAFETY: frames_ptr points to a caller-owned buffer of at least frames_len elements.
-        unsafe { bun_core::ffi::slice_mut(self.frames_ptr, self.frames_len as usize) }
-    }
-
-    /// Mutable view of the populated source-line strings (`[0..source_lines_len]`).
-    #[inline]
-    pub(crate) fn source_lines_mut(&mut self) -> &mut [BunString] {
-        // SAFETY: `source_lines_ptr` points to a caller-owned buffer of at least
-        // `source_lines_len` initialized elements (populated by C++ via FFI).
-        // The borrow is tied to `&mut self`.
-        unsafe { bun_core::ffi::slice_mut(self.source_lines_ptr, self.source_lines_len as usize) }
     }
 
     /// Immutable view of the populated source-line numbers (`[0..source_lines_len]`).
@@ -126,9 +112,18 @@ pub(crate) struct SourceLineIterator<'a> {
     pub(crate) i: i32,
 }
 
-pub(crate) struct SourceLine {
+pub(crate) struct SourceLine<'a> {
     pub line: i32,
-    pub text: ZigStringSlice,
+    pub text: Utf8Bytes<'a>,
+}
+
+impl SourceLine<'_> {
+    /// The line as it should be displayed: surrounding newlines and trailing
+    /// indentation removed.
+    pub(crate) fn trimmed_text(&self) -> &[u8] {
+        let text = bun_core::trim(self.text.slice(), b"\n");
+        bun_core::trim_right(text, b"\t ")
+    }
 }
 
 impl<'a> SourceLineIterator<'a> {
@@ -145,7 +140,7 @@ impl<'a> SourceLineIterator<'a> {
         count
     }
 
-    pub(crate) fn until_last(&mut self) -> Option<SourceLine> {
+    pub(crate) fn until_last(&mut self) -> Option<SourceLine<'a>> {
         if self.i < 1 {
             return None;
         }
@@ -153,7 +148,7 @@ impl<'a> SourceLineIterator<'a> {
     }
 
     #[allow(clippy::should_implement_trait)]
-    pub(crate) fn next(&mut self) -> Option<SourceLine> {
+    pub(crate) fn next(&mut self) -> Option<SourceLine<'a>> {
         if self.i < 0 {
             return None;
         }

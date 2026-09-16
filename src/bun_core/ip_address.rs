@@ -65,6 +65,11 @@ pub fn is_ipv6_address(input: &[u8]) -> bool {
     pton(AF_INET6, &buf[..=input.len()], &mut dst)
 }
 
+/// A dotted quad or an IPv6 address and nothing else, the same on every platform. This is `core::net`'s parser and not `ares_inet_pton`, which is `inet_net_pton` underneath: it also takes `10` (as 10.0.0.0), `127.1` (as 127.1.0.0), `0x7f000001`, zero-padded octets, a trailing `/bits`, and stops at a NUL. Use this when the parsed value is compared, not just classified.
+pub fn parse_strict(input: &[u8]) -> Option<IpAddr> {
+    crate::fmt::parse_ascii::<IpAddr>(input)
+}
+
 /// Parses what the platform resolver treats as a numeric host: dotted-quad, IPv6 (an optional `%zone` is stripped, not validated), and the `inet_aton` shorthand `getaddrinfo` accepts but `is_ip_address` rejects (`127.1`, `2130706433`, `0x7f000001`, `0177.0.0.1`).
 pub fn to_ip_address(input: &[u8]) -> Option<IpAddr> {
     let mut buf = [0u8; 512];
@@ -72,7 +77,7 @@ pub fn to_ip_address(input: &[u8]) -> Option<IpAddr> {
         return None;
     }
     // A `%zone` suffix belongs to a numeric v6 host; resolving the zone is the caller's business.
-    let head = input.iter().position(|b| *b == b'%').unwrap_or(input.len());
+    let head = crate::strings::index_of_char_usize(input, b'%').unwrap_or(input.len());
     buf[..head].copy_from_slice(&input[..head]);
     let mut v6 = [0u8; 16];
     if pton(AF_INET6, &buf[..=head], &mut v6) {
@@ -81,4 +86,17 @@ pub fn to_ip_address(input: &[u8]) -> Option<IpAddr> {
     buf[..input.len()].copy_from_slice(input);
     let mut v4 = [0u8; 4];
     sys::aton(&buf[..=input.len()], &mut v4).then(|| IpAddr::V4(Ipv4Addr::from(v4)))
+}
+
+/// A host as URLs and `host:port` strings write it keeps an IPv6 literal's
+/// brackets; resolvers, certificates and SNI name the bare address.
+/// `[::1]` -> `::1` (a `%zone` stays). Anything else in brackets, such as
+/// `[example.com]`, passes through verbatim, as in Node.
+pub fn strip_ipv6_brackets(host: &[u8]) -> &[u8] {
+    if let [b'[', inner @ .., b']'] = host {
+        if to_ip_address(inner).is_some_and(|ip| ip.is_ipv6()) {
+            return inner;
+        }
+    }
+    host
 }

@@ -24,19 +24,18 @@ use bun_io::Loop as AsyncLoop;
 #[cfg(unix)]
 use bun_io::pipe_reader::PosixFlags;
 use bun_io::{BufferedReader, ReadState};
-use bun_ptr::{RefCount, RefPtr, ThreadSafeRefCount};
+use bun_ptr::{RefCount, RefPtr};
 #[cfg(not(windows))]
 use bun_spawn::SpawnResultExt as _;
 use bun_spawn::subprocess::{self, StdioResult};
 use bun_spawn::{
-    self as spawn, Exited, Process, ProcessExit, ProcessExitKind, Rusage, SpawnOptions, Status,
-    Stdio,
+    self as spawn, Exited, Process, ProcessExit, ProcessExitKind, ProcessHandle, Rusage,
+    SpawnOptions, Status, Stdio,
 };
 use bun_sys::{self, Fd, FdExt as _};
 
 use crate::hoisted_install as HoistedInstall;
 use crate::isolated_install as IsolatedInstall;
-use crate::package_manager_real::install_with_manager as InstallWithManager;
 use crate::package_manager_real::package_manager_options::Do;
 
 /// Signal name for a raw signal byte.
@@ -91,12 +90,7 @@ fn do_partial_install_of_security_scanner(
     ctx: CommandContext,
     log_level: crate::package_manager::Options::LogLevel,
     security_scanner_pkg_id: PackageID,
-    original_cwd: &[u8],
 ) -> Result<(), Error> {
-    let (workspace_filters, install_root_dependencies) =
-        InstallWithManager::get_workspace_filters(manager, original_cwd)?;
-    // `defer manager.allocator.free(workspace_filters)` — workspace_filters is now owned, drops at scope exit.
-
     if !manager.options.do_.contains(Do::INSTALL_PACKAGES) {
         return Ok(());
     }
@@ -114,8 +108,8 @@ fn do_partial_install_of_security_scanner(
             HoistedInstall::install_hoisted_packages(
                 manager,
                 ctx,
-                &workspace_filters,
-                install_root_dependencies,
+                &[],
+                true,
                 log_level,
                 packages_to_install,
             )?
@@ -124,8 +118,8 @@ fn do_partial_install_of_security_scanner(
             IsolatedInstall::install_isolated_packages(
                 manager,
                 ctx,
-                install_root_dependencies,
-                &workspace_filters,
+                true,
+                &[],
                 packages_to_install,
             )?
         }
@@ -223,6 +217,7 @@ pub(crate) fn perform_security_scan_after_resolution(
     manager: &mut PackageManager,
     command_ctx: CommandContext,
     original_cwd: &[u8],
+    seeds: &[PackageID],
 ) -> Result<Option<SecurityScanResults>, Error> {
     let Some(security_scanner) = manager.options.security_scanner else {
         return Ok(None);
@@ -232,46 +227,16 @@ pub(crate) fn perform_security_scan_after_resolution(
         return Ok(None);
     }
 
-    // For remove/uninstall, scan all remaining packages after removal
-    // For other commands, scan all if no update requests, otherwise scan update packages
     let scan_all =
         manager.subcommand == bun_install::Subcommand::Remove || manager.update_requests.is_empty();
-    let result = attempt_security_scan(
+    scan_installing_scanner_if_needed(
         manager,
         security_scanner,
         scan_all,
+        seeds,
         command_ctx,
         original_cwd,
-    )?;
-
-    match result {
-        ScanAttemptResult::Success(scan_results) => Ok(Some(scan_results)),
-        ScanAttemptResult::NeedsInstall(pkg_id) => {
-            bun_core::prettyln!("<r><yellow>Attempting to install security scanner from npm...<r>");
-            let log_level = manager.options.log_level;
-            do_partial_install_of_security_scanner(
-                manager,
-                command_ctx,
-                log_level,
-                pkg_id,
-                original_cwd,
-            )?;
-            bun_core::prettyln!("<r><green><b>Security scanner installed successfully.<r>");
-
-            let retry_result = attempt_security_scan_with_retry(
-                manager,
-                security_scanner,
-                scan_all,
-                command_ctx,
-                original_cwd,
-                true,
-            )?;
-            match retry_result {
-                ScanAttemptResult::Success(scan_results) => Ok(Some(scan_results)),
-                ScanAttemptResult::NeedsInstall(_) => Err(crate::Error::SecurityScannerRetryFailed),
-            }
-        }
-    }
+    )
 }
 
 pub fn perform_security_scan_for_all(
@@ -283,25 +248,46 @@ pub fn perform_security_scan_for_all(
         return Ok(None);
     };
 
-    let result = attempt_security_scan(manager, security_scanner, true, command_ctx, original_cwd)?;
+    scan_installing_scanner_if_needed(
+        manager,
+        security_scanner,
+        true,
+        &[],
+        command_ctx,
+        original_cwd,
+    )
+}
+
+fn scan_installing_scanner_if_needed(
+    manager: &mut PackageManager,
+    security_scanner: &[u8],
+    scan_all: bool,
+    seeds: &[PackageID],
+    command_ctx: CommandContext,
+    original_cwd: &[u8],
+) -> Result<Option<SecurityScanResults>, Error> {
+    let result = attempt_security_scan(
+        manager,
+        security_scanner,
+        scan_all,
+        seeds,
+        command_ctx,
+        original_cwd,
+    )?;
+
     match result {
         ScanAttemptResult::Success(scan_results) => Ok(Some(scan_results)),
         ScanAttemptResult::NeedsInstall(pkg_id) => {
             bun_core::prettyln!("<r><yellow>Attempting to install security scanner from npm...<r>");
             let log_level = manager.options.log_level;
-            do_partial_install_of_security_scanner(
-                manager,
-                command_ctx,
-                log_level,
-                pkg_id,
-                original_cwd,
-            )?;
+            do_partial_install_of_security_scanner(manager, command_ctx, log_level, pkg_id)?;
             bun_core::prettyln!("<r><green><b>Security scanner installed successfully.<r>");
 
             let retry_result = attempt_security_scan_with_retry(
                 manager,
                 security_scanner,
-                true,
+                scan_all,
+                seeds,
                 command_ctx,
                 original_cwd,
                 true,
@@ -622,6 +608,46 @@ impl<'a> PackageCollector<'a> {
         Ok(())
     }
 
+    fn collect_seeded_packages(&mut self, seeds: &[PackageID]) -> Result<(), Error> {
+        if seeds.is_empty() {
+            return Ok(());
+        }
+
+        let pkgs = self.manager.lockfile.packages.slice();
+        let pkg_dependencies = pkgs.items_dependencies();
+        let resolutions = self.manager.lockfile.buffers.resolutions.as_slice();
+
+        let mut wanted = bun_collections::DynamicBitSet::init_empty(pkgs.len())?;
+        for &seed in seeds {
+            if (seed as usize) < pkgs.len() {
+                wanted.set(seed as usize);
+            }
+        }
+
+        for (parent_idx, deps) in pkg_dependencies.iter().enumerate() {
+            let parent: PackageID = PackageID::try_from(parent_idx).expect("int cast");
+            for _dep_id in deps.begin()..deps.end() {
+                let dep_id: DependencyID = DependencyID::try_from(_dep_id).expect("int cast");
+                let target = resolutions[dep_id as usize];
+                if target == invalid_package_id || !wanted.is_set(target as usize) {
+                    continue;
+                }
+                if self.dedupe.get_or_put(target)?.found_existing {
+                    continue;
+                }
+
+                self.queue.push_back(QueueItem {
+                    pkg_id: target,
+                    dep_id,
+                    pkg_path: vec![parent, target],
+                    dep_path: vec![dep_id],
+                });
+            }
+        }
+
+        Ok(())
+    }
+
     fn process_queue(&mut self) -> Result<(), Error> {
         let pkgs = self.manager.lockfile.packages.slice();
         let pkg_resolutions = pkgs.items_resolution();
@@ -767,6 +793,7 @@ fn attempt_security_scan(
     manager: &mut PackageManager,
     security_scanner: &[u8],
     scan_all: bool,
+    seeds: &[PackageID],
     command_ctx: CommandContext,
     original_cwd: &[u8],
 ) -> Result<ScanAttemptResult, Error> {
@@ -774,6 +801,7 @@ fn attempt_security_scan(
         manager,
         security_scanner,
         scan_all,
+        seeds,
         command_ctx,
         original_cwd,
         false,
@@ -784,6 +812,7 @@ fn attempt_security_scan_with_retry(
     manager: &mut PackageManager,
     security_scanner: &[u8],
     scan_all: bool,
+    seeds: &[PackageID],
     command_ctx: CommandContext,
     original_cwd: &[u8],
     is_retry: bool,
@@ -823,6 +852,7 @@ fn attempt_security_scan_with_retry(
         collector.collect_all_packages()?;
     } else {
         collector.collect_update_packages()?;
+        collector.collect_seeded_packages(seeds)?;
     }
 
     collector.process_queue()?;
@@ -877,7 +907,6 @@ fn attempt_security_scan_with_retry(
         ipc_reader: BufferedReader::init::<SecurityScanSubprocess>(),
         ipc_data: Vec::new(),
         stderr_data: Vec::new(),
-        has_process_exited: false,
         has_received_ipc: false,
         exit_status: None,
         remaining_fds: 0,
@@ -919,20 +948,13 @@ pub struct SecurityScanSubprocess<'a> {
     event_loop_handle: EventLoopHandle,
     code: Box<[u8]>,
     json_data: Box<[u8]>,
-    /// Intrusive `*mut Process`. `Process` is
-    /// `ThreadSafeRefCounted` and Box-allocated by `to_process`; wrapping in
-    /// `Arc` would be UB (no `ArcInner` header). We hold one ref and `deref()`
-    /// it in `Drop`.
-    process: Option<*mut Process>,
+    process: Option<ProcessHandle>,
     ipc_reader: BufferedReader,
     ipc_data: Vec<u8>,
     stderr_data: Vec<u8>,
-    has_process_exited: bool,
     has_received_ipc: bool,
     exit_status: Option<Status>,
     remaining_fds: i8,
-    /// Intrusive `RefPtr`. `StaticPipeWriter<P>` is
-    /// `RefCounted`; `Rc` would double-count against the embedded refcount.
     json_writer: Option<RefPtr<StaticPipeWriter>>,
 }
 
@@ -949,15 +971,15 @@ impl<'a> subprocess::StaticPipeWriterProcess for SecurityScanSubprocess<'a> {
     const POLL_OWNER_TAG: bun_io::PollTag = bun_io::PollTag::SecurityScanStaticPipeWriter;
     unsafe fn on_close_io(this: *mut Self, kind: subprocess::StdioKind) {
         // SAFETY: `this` is the `parent` backref passed to `StaticPipeWriter::create`;
-        // the subprocess outlives its writer (it `deref`s the writer in `deinit`/Drop).
+        // the subprocess outlives its writer (it owns the writer ref in `json_writer`).
         // `finish_spawn` holds no Rust borrow on `self.json_writer` across `start()`
-        // (it clones the `Rc` first), so this `&mut` is unique for the call.
+        // (it clones the `RefPtr` first), so this `&mut` is unique for the call.
         unsafe { (*this).on_close_io(kind) };
     }
 }
 
 bun_spawn::link_impl_ProcessExit! {
-    SecurityScan for SecurityScanSubprocess => |this| {
+    SecurityScan for SecurityScanSubprocess<'static> => |this| {
         on_process_exit(process, status, rusage) =>
             (*this).on_process_exit(&mut *process, status, rusage),
     }
@@ -965,23 +987,11 @@ bun_spawn::link_impl_ProcessExit! {
 
 impl<'a> Drop for SecurityScanSubprocess<'a> {
     fn drop(&mut self) {
-        if let Some(p) = self.process.take() {
-            // SAFETY: `p` is the live intrusive `*mut Process` returned from
-            // `to_process`; we hold one ref. `detach()` clears the exit handler
-            // so a late callback won't touch a dangling `self`, then `deref()`
-            // drops our ref (may free if last).
-            unsafe {
-                (*p).detach();
-                ThreadSafeRefCount::<Process>::deref(p);
-            }
-        }
-        if let Some(w) = self.json_writer.take() {
-            // `on_close_io` normally takes the field first; guard for the case
-            // where it didn't run. `RefPtr` has no auto-`Drop`, so the ref we
-            // hold must be released with an explicit `deref()`.
-            w.deref();
-        }
-        // code, json_data drop automatically (Box<[u8]>)
+        self.process = None;
+        // Dropping the writer can synchronously close it and re-enter
+        // `on_close_io` through the parent backref; move it out first so that
+        // sees `None`.
+        drop(self.json_writer.take());
     }
 }
 
@@ -991,7 +1001,7 @@ impl<'a> Drop for SecurityScanSubprocess<'a> {
 bun_io::impl_buffered_reader_parent! {
     SecurityScan for SecurityScanSubprocess<'a>;
     has_on_read_chunk = true;
-    on_read_chunk   = |this, chunk, has_more| (*this).on_read_chunk(chunk, has_more);
+    on_read_chunk   = |this, chunk, has_more| (*this).on_read_chunk(&chunk, has_more);
     on_reader_done  = |this| (*this).on_reader_done();
     on_reader_error = |this, err| (*this).on_reader_error(err);
     loop_           = |this| (*this).loop_();
@@ -1122,10 +1132,7 @@ impl<'a> SecurityScanSubprocess<'a> {
         let mut json_fds: [uv::uv_file; 2] = [0; 2];
         // SAFETY: FFI — `json_fds` is a 2-element out-array; flags are valid.
         let pipe_rc = unsafe { uv::uv_pipe(&mut json_fds, 0, uv::UV_NONBLOCK_PIPE as i32) };
-        // Use the translating overlay (`ReturnCodeExt::err_enum_e`) — the inherent
-        // `ReturnCode::err_enum()` returns the raw |uv_code| (e.g. 4071 for
-        // UV_EINVAL on Windows) without mapping to POSIX `bun.sys.E`.
-        if let Some(e) = pipe_rc.err_enum_e() {
+        if let Some(e) = pipe_rc.errno() {
             ipc_output_fds[0].close();
             ipc_output_fds[1].close();
             return Err(bun_errno::from_errno(e as i32).into());
@@ -1152,16 +1159,17 @@ impl<'a> SecurityScanSubprocess<'a> {
 
         let pipe_ptr: *mut uv::Pipe =
             bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<uv::Pipe>()));
-        // errdefer pipe.closeAndDestroy() — guard owns the raw Box ptr; libuv's
-        // close callback frees the heap allocation, so do NOT re-box on the
-        // cleanup path (would double-free). Disarmed only after finish_spawn
-        // succeeds: it must stay armed
-        // across `ipc_reader.start()` inside finish_spawn (the pre-writer error
-        // window) so a registered-but-unowned uv handle is never leaked.
+        // errdefer pipe.closeAndDestroy() until `StaticPipeWriter` takes the
+        // pipe (inside `finish_spawn`); from then on the writer's `Drop` closes
+        // it. libuv's close callback frees the allocation, so do NOT re-box on
+        // the cleanup path.
+        let pipe_taken = core::cell::Cell::new(false);
         let mut pipe = scopeguard::guard(pipe_ptr, |p| {
-            // SAFETY: p is the live Box-allocated uv_pipe_t; close_and_destroy
-            // schedules uv_close + frees the allocation.
-            unsafe { uv::Pipe::close_and_destroy(p) };
+            if !pipe_taken.get() {
+                // SAFETY: p is the live Box-allocated uv_pipe_t; close_and_destroy
+                // schedules uv_close + frees the allocation.
+                unsafe { uv::Pipe::close_and_destroy(p) };
+            }
         });
         // `self.loop_()` already projects to the libuv `uv_loop_t*` on
         // Windows (see the `.uv_loop` projection in `loop_()`); pass through.
@@ -1214,25 +1222,19 @@ impl<'a> SecurityScanSubprocess<'a> {
             .flags
             .insert(bun_io::pipe_reader::WindowsFlags::NONBLOCKING);
 
-        // Hand the pipe to StaticPipeWriter lazily: the closure captures only the
-        // raw `*mut uv::Pipe` (Copy, no Drop) and reconstitutes the Box at the
-        // exact `StaticPipeWriter::create` call site inside `finish_spawn`. If
-        // `finish_spawn` errors before that point (`ipc_reader.start()`), the
-        // closure drops as a no-op and the still-armed cleanup guard performs
-        // `close_and_destroy`. After the writer takes
-        // the pipe, post-create errors leave the writer leaked at refcount >= 1
-        // (RefPtr has no Drop), so the Box is never auto-freed and the guard's
-        // `close_and_destroy` remains the sole cleanup.
-        self.finish_spawn(&mut spawned, ipc_output_fds[0], move || {
+        // Hand the pipe to StaticPipeWriter lazily: the closure reconstitutes
+        // the Box at the exact `StaticPipeWriter::create` call site inside
+        // `finish_spawn`. If `finish_spawn` errors before that point
+        // (`ipc_reader.start()`), the closure drops as a no-op and the
+        // still-armed cleanup guard performs `close_and_destroy`.
+        self.finish_spawn(&mut spawned, ipc_output_fds[0], || {
+            pipe_taken.set(true);
             // SAFETY: `pipe_ptr` is the same allocation produced by
             // heap::alloc above and has not been freed; ownership transfers
             // here exactly once.
             StdioResult::Buffer(unsafe { bun_core::heap::take(pipe_ptr) })
         })?;
 
-        // Success: pipe ownership now lives in StaticPipeWriter; disarm the
-        // close_and_destroy errdefer.
-        scopeguard::ScopeGuard::into_inner(pipe);
         // fd slots are already None.
         scopeguard::ScopeGuard::into_inner(fds);
         Ok(())
@@ -1272,7 +1274,8 @@ impl<'a> SecurityScanSubprocess<'a> {
         // `&mut self` on Windows); take ownership of the result and let the
         // moved-from `*spawned` drop empty (`extra_pipes` already read).
         let event_loop = EventLoopHandle::from_any(&mut self.manager.event_loop);
-        let process: *mut Process = std::mem::take(spawned).to_process(event_loop);
+        let process_handle = std::mem::take(spawned).to_process_handle(event_loop);
+        let process: *mut Process = process_handle.as_ptr();
 
         // Derive the raw backref once and use it for all subsequent field
         // access. `start()`/`watch_or_reap()` below may re-enter
@@ -1285,7 +1288,7 @@ impl<'a> SecurityScanSubprocess<'a> {
         // `&mut self` and outlives `process` (it `deref`s it in `Drop`).
         unsafe {
             (*process).set_exit_handler(ProcessExit::new(ProcessExitKind::SecurityScan, parent));
-            (*parent).process = Some(process);
+            (*parent).process = Some(process_handle);
         }
 
         // Assign the field BEFORE `start()`. `start()` may complete the write synchronously
@@ -1297,7 +1300,7 @@ impl<'a> SecurityScanSubprocess<'a> {
             StaticPipeWriter::create(event_loop, parent.cast(), make_json_stdio(), json_source);
         // Keep a duped ref locally so no borrow on `(*parent).json_writer` is
         // held across `start()` — `on_close_io` may `.take()` the field.
-        let writer_local = writer.dupe_ref();
+        let writer_local = writer.clone();
         // SAFETY: see `parent` note above.
         unsafe { (*parent).json_writer = Some(writer) };
 
@@ -1311,7 +1314,6 @@ impl<'a> SecurityScanSubprocess<'a> {
             if let Some(w) = unsafe { (*parent).json_writer.take() } {
                 // SAFETY: `w` holds the field's ref; sole live access path.
                 unsafe { (*w.as_ptr()).source.detach() };
-                w.deref();
             }
         });
 
@@ -1319,22 +1321,22 @@ impl<'a> SecurityScanSubprocess<'a> {
         // SAFETY: `writer_local` holds a live ref; `start()` mutates the writer
         // in place (raw intrusive object — no Rust aliasing across the RefPtr).
         let start_result = unsafe { (*writer_ptr).start() };
-        // SAFETY: `writer_local` keeps `*writer_ptr` live; we own the `start()` ref.
-        unsafe { RefCount::<StaticPipeWriter>::deref(writer_ptr) };
-        // SAFETY: `writer_local` keeps `*writer_ptr` live.
-        unsafe { (*writer_ptr).started = false };
-        match start_result {
-            Err(e) => {
-                writer_local.deref();
-                Output::err_generic(
-                    "Failed to start security scanner JSON pipe writer: {}",
-                    (e,),
-                );
-                return Err(crate::Error::JSONPipeWriterFailed);
-            }
-            Ok(()) => {}
+        if let Err(e) = start_result {
+            Output::err_generic(
+                "Failed to start security scanner JSON pipe writer: {}",
+                (e,),
+            );
+            return Err(crate::Error::JSONPipeWriterFailed);
         }
-        writer_local.deref();
+        // The writer's lifetime is owned by `json_writer`, not by its own
+        // `started` ref: release the ref `start()` took and clear the flag so
+        // its close path doesn't release it again.
+        // SAFETY: `writer_local` keeps `*writer_ptr` live.
+        unsafe {
+            RefCount::<StaticPipeWriter>::deref(writer_ptr);
+            (*writer_ptr).started = false;
+        }
+        drop(writer_local);
 
         // SAFETY: `process` is live (we hold a ref); reached via the local raw
         // ptr per the single-provenance note. `watch_or_reap` may re-enter
@@ -1353,13 +1355,12 @@ impl<'a> SecurityScanSubprocess<'a> {
             // SAFETY: `writer` holds the field's intrusive ref; sole access path
             // (single-threaded event loop callback).
             unsafe { (*writer.as_ptr()).source.detach() };
-            writer.deref();
             self.remaining_fds -= 1;
         }
     }
 
     pub(crate) fn is_done(&self) -> bool {
-        self.has_process_exited && self.remaining_fds == 0
+        self.exit_status.is_some() && self.remaining_fds == 0
     }
 
     pub(crate) fn loop_(&mut self) -> *mut AsyncLoop {
@@ -1383,7 +1384,6 @@ impl<'a> SecurityScanSubprocess<'a> {
     }
 
     pub(crate) fn on_process_exit(&mut self, _: &mut Process, status: Status, _: &Rusage) {
-        self.has_process_exited = true;
         self.exit_status = Some(status);
 
         if !self.has_received_ipc {
@@ -1433,10 +1433,6 @@ impl<'a> SecurityScanSubprocess<'a> {
                                 spins = 0;
                             }
                             Err(e) => match e.get_errno() {
-                                // macOS `bun_sys::read` is single-shot
-                                // (`read$NOCANCEL`); WaiterThread
-                                // + PTY matrix arms can land signals mid-drain.
-                                bun_sys::E::EINTR => continue,
                                 bun_sys::E::EAGAIN => {
                                     // Bounded spin only — if we don't converge
                                     // to EOF here, fall through to the poll
@@ -1489,15 +1485,13 @@ impl<'a> SecurityScanSubprocess<'a> {
     ) -> Result<ScanAttemptResult, Error> {
         // `defer { ipc_data.deinit(); stderr_data.deinit(); }` — Vec fields drop with self.
 
-        if self.exit_status.is_none() {
+        let Some(status) = self.exit_status.clone() else {
             Output::err_generic(
                 "Security scanner terminated without an exit status. This is a bug in Bun.",
                 (),
             );
             return Err(crate::Error::SecurityScannerProcessFailedWithoutExitStatus);
-        }
-
-        let status = self.exit_status.clone().unwrap();
+        };
 
         if self.ipc_data.is_empty() {
             match &status {

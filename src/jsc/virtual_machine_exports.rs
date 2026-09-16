@@ -1,6 +1,5 @@
 use core::ffi::c_void;
 
-use crate::event_loop::ConcurrentTask;
 use crate::plugin_runner::PluginRunner;
 use crate::{
     CallFrame, JSGlobalObject, JSPromise, JSValue, JsResult, Strong, Task,
@@ -36,12 +35,6 @@ pub fn get_vm() -> *mut VirtualMachine {
     VirtualMachine::get_mut_ptr()
 }
 
-/// Caller must check for termination exception
-// HOST_EXPORT(Bun__drainMicrotasks, c)
-pub fn drain_microtasks() {
-    VirtualMachine::get().event_loop_mut().tick();
-}
-
 // HOST_EXPORT(Bun__readOriginTimer, c)
 pub fn read_origin_timer(vm: &VirtualMachine) -> u64 {
     // Check if performance.now() is overridden (for fake timers)
@@ -53,6 +46,10 @@ pub fn read_origin_timer(vm: &VirtualMachine) -> u64 {
 
 // HOST_EXPORT(Bun__readOriginTimerStart, c)
 pub fn read_origin_timer_start(vm: &VirtualMachine) -> f64 {
+    // Fake timers reset performance.now() to 0, so the origin moves with them.
+    if let Some(overridden) = vm.overridden_time_origin {
+        return overridden;
+    }
     // timespce to milliseconds
     ((vm.origin_timestamp as f64) + crate::virtual_machine::ORIGIN_RELATIVE_EPOCH as f64)
         / 1_000_000.0
@@ -66,49 +63,50 @@ pub fn exit_during_uncaught_exception(this: &mut VirtualMachine) {
 // `Bun__Process__send` lives in `bun_runtime::ipc_host` (its body — via
 // `do_send` — names the `bun_runtime::Listener` type; LAYERING).
 
-// HOST_EXPORT(Bun__isBunMain, c)
-pub fn is_bun_main(global: &JSGlobalObject, str: &BunString) -> bool {
-    // JSGlobalObject::bun_vm contract.
-    str.eql_utf8(global.bun_vm().as_mut().main())
-}
-
-/// This function is called on the main thread
-/// The bunVM() call will assert this
-// HOST_EXPORT(Bun__queueTask, c)
-pub fn queue_task(global: &JSGlobalObject, task: *mut crate::cpp_task::CppTask) {
-    crate::mark_binding!();
-    global
-        .bun_vm()
-        .event_loop_mut()
-        .enqueue_task(Task::init(task));
-}
-
 // HOST_EXPORT(Bun__reportUnhandledError, c)
-pub fn report_unhandled_error(global: &JSGlobalObject, value: JSValue) -> JSValue {
+pub fn report_unhandled_error(global: &JSGlobalObject, value: JSValue) {
     crate::mark_binding!();
 
+    // A TerminationException is not an error to report, and not this frame's to take: it stays pending for
+    // the frames still unwinding above the caller, up to the landing frame (WebCore::reportException alike).
     if !value.is_termination_exception() {
         let _ = global
             .bun_vm()
             .as_mut()
             .uncaught_exception(global, value, false);
     }
-    JSValue::UNDEFINED
 }
 
-/// This function is called on another thread
-/// The main difference: we need to allocate the task & wakeup the thread
-/// We can avoid that if we run it from the main thread.
-// HOST_EXPORT(Bun__queueTaskConcurrently, c)
-pub fn queue_task_concurrently(global: &JSGlobalObject, task: *mut crate::cpp_task::CppTask) {
+/// `ScriptExecutionContext::postTask` — the context addresses the thread's VM
+/// directly because it outlives the `Zig::GlobalObject` it was created with.
+// HOST_EXPORT(Bun__VM__queueTask, c)
+pub fn vm_queue_task(this: &VirtualMachine, task: *mut crate::cpp_task::CppTask) {
     crate::mark_binding!();
-    // SAFETY: bun_vm_concurrently() yields the live VM; `event_loop()` never
-    // returns null for a Bun-owned global. Called off-thread but the loop
-    // wakeup is thread-safe.
-    unsafe {
-        (*(*global.bun_vm_concurrently()).event_loop())
-            .enqueue_task_concurrent(ConcurrentTask::create(Task::init(task)));
-    }
+    this.event_loop_mut().enqueue_task(Task::init(task));
+}
+
+/// [`vm_queue_task`] for a task that must let the loop poll I/O and timers
+/// first (a drain re-posting its own continuation).
+// HOST_EXPORT(Bun__VM__queueTaskAfterYield, c)
+pub fn vm_queue_task_after_yield(this: &VirtualMachine, task: *mut crate::cpp_task::CppTask) {
+    crate::mark_binding!();
+    this.event_loop_mut()
+        .enqueue_task_after_yield(Task::init(task));
+}
+
+/// Off-thread counterpart of [`vm_queue_task`] (`postTaskConcurrently`: the
+/// debugger and signal threads, work no script initiated), so it lands on the
+/// regular loop: see [`crate::VmHandle::post_cpp_task`].
+// HOST_EXPORT(Bun__VmHandle__queueTaskConcurrently, c)
+#[allow(clippy::not_unsafe_ptr_arg_deref)] // the C ABI boundary is the unsafe part
+pub fn vm_handle_queue_task_concurrently(
+    r: *const crate::vm_handle::Shared,
+    task: *mut crate::cpp_task::CppTask,
+) {
+    crate::mark_binding!();
+    // SAFETY: C++ passes the reference its ScriptExecutionContext holds, and
+    // hands over a live heap EventLoopTask.
+    unsafe { crate::VmHandle::borrow_ref(r).post_cpp_task(crate::LoopKind::Regular, task) };
 }
 
 // HOST_EXPORT(Bun__handleRejectedPromise, c)
@@ -209,29 +207,17 @@ pub fn get_tls_reject_unauthorized_value() -> i32 {
 
 // HOST_EXPORT(Bun__isNoProxy, c)
 /// # Safety
-/// `hostname_ptr[..hostname_len]` and `host_ptr[..host_len]` must each be valid
-/// for reads for the duration of the call (or the corresponding len must be 0).
-pub unsafe fn is_no_proxy(
-    hostname_ptr: *const u8,
-    hostname_len: usize,
-    host_ptr: *const u8,
-    host_len: usize,
-) -> bool {
+/// `hostname_ptr[..hostname_len]` must be valid for reads for the duration of
+/// the call (or `hostname_len` must be 0).
+pub unsafe fn is_no_proxy(hostname_ptr: *const u8, hostname_len: usize, port: u16) -> bool {
+    if hostname_len == 0 {
+        return false;
+    }
     // SAFETY: VM singleton is process-lifetime.
     let vm = VirtualMachine::get();
-    let hostname: Option<&[u8]> = if hostname_len > 0 {
-        // SAFETY: caller guarantees `hostname_ptr[..hostname_len]` is valid for reads.
-        Some(unsafe { bun_core::ffi::slice(hostname_ptr, hostname_len) })
-    } else {
-        None
-    };
-    let host: Option<&[u8]> = if host_len > 0 {
-        // SAFETY: caller guarantees `host_ptr[..host_len]` is valid for reads.
-        Some(unsafe { bun_core::ffi::slice(host_ptr, host_len) })
-    } else {
-        None
-    };
-    vm.env_loader().is_no_proxy(hostname, host)
+    // SAFETY: caller guarantees `hostname_ptr[..hostname_len]` is valid for reads.
+    let hostname = unsafe { bun_core::ffi::slice(hostname_ptr, hostname_len) };
+    vm.env_loader().is_no_proxy(hostname, port)
 }
 
 // HOST_EXPORT(Bun__setVerboseFetchValue, c)

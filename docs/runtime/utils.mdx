@@ -27,14 +27,14 @@ An alias for `process.env`.
 
 ## `Bun.main`
 
-An absolute path to the entrypoint of the current program (the file that was executed with `bun run`).
+An absolute path to the entrypoint of the current program (the file you executed with `bun run`).
 
 ```ts script.ts
 Bun.main;
 // /path/to/script.ts
 ```
 
-Use this to determine whether a script is being executed directly, as opposed to being imported by another script.
+Use this to determine whether a script is running directly or another script is importing it.
 
 ```ts
 if (import.meta.path === Bun.main) {
@@ -44,7 +44,7 @@ if (import.meta.path === Bun.main) {
 }
 ```
 
-This is analogous to the [`require.main = module` trick](https://stackoverflow.com/questions/6398196/detect-if-called-through-require-or-directly-by-command-line) in Node.js.
+This check is analogous to the [`require.main = module` trick](https://stackoverflow.com/questions/6398196/detect-if-called-through-require-or-directly-by-command-line) in Node.js.
 
 ## `Bun.sleep()`
 
@@ -124,13 +124,13 @@ const id = randomUUIDv7();
 // => "0192ce11-26d5-7dc3-9305-1426de888c5a"
 ```
 
-A UUID v7 is a 128-bit value that encodes the current timestamp, a random value, and a counter. The timestamp is encoded using the lowest 48 bits, and the random value and counter are encoded using the remaining bits.
+A UUID v7 is a 128-bit value that encodes the current timestamp, a random value, and a counter. The timestamp is encoded using the most significant 48 bits, and the random value and counter are encoded using the remaining bits.
 
-The `timestamp` parameter defaults to the current time in milliseconds. When the clock moves forward, the counter is reseeded to a new pseudo-random integer (the high bit of the 12-bit counter is kept clear so at least 2048 values remain before rollover). If the clock has not advanced past the last emitted timestamp, Bun reuses the last emitted timestamp and increments the counter. If that counter rolls over, Bun bumps the emitted timestamp forward instead of wrapping the counter, so the returned UUIDs stay strictly increasing (RFC 9562 §6.2). The counter is atomic and threadsafe, so calls to `Bun.randomUUIDv7()` from many Workers in the same process at the same timestamp don't produce colliding counter values.
+The `timestamp` parameter defaults to the current time in milliseconds. When the clock moves forward, Bun reseeds the counter to a new pseudo-random integer. Bun leaves the high bit of the 12-bit counter clear when reseeding, so at least 2048 values remain before rollover. If the clock has not advanced past the last emitted timestamp, Bun reuses the last emitted timestamp and increments the counter. If that counter rolls over, Bun bumps the emitted timestamp forward instead of wrapping the counter, so the returned UUIDs stay strictly increasing (RFC 9562 §6.2). The counter is atomic and threadsafe, so calls to `Bun.randomUUIDv7()` from many Workers in the same process at the same timestamp don't produce colliding counter values.
 
-When you pass an explicit `timestamp`, Bun encodes that value verbatim and tracks a separate counter for it, so explicit-timestamp calls do not observe or alter the monotonic state used by the default path. Repeated calls with the same explicit timestamp increment that separate counter (and bump the emitted timestamp on rollover) so they stay sortable; a call with a different explicit timestamp reseeds it.
+When you pass an explicit `timestamp`, Bun encodes that value verbatim and tracks a separate counter for it, so explicit-timestamp calls do not observe or alter the monotonic state used by the default path. Repeated calls with the same explicit timestamp increment that separate counter, and bump the emitted timestamp on rollover, so they stay sortable. A call with a different explicit timestamp reseeds that counter.
 
-The final 8 bytes of the UUID are a cryptographically secure random value. It uses the same random number generator used by `crypto.randomUUID()` (which comes from BoringSSL, which in turn comes from the platform-specific system random number generator usually provided by the underlying hardware).
+The final 8 bytes of the UUID, apart from the two variant bits, are a cryptographically secure random value. `Bun.randomUUIDv7()` uses the same random number generator as `crypto.randomUUID()`. That generator comes from BoringSSL. BoringSSL's randomness in turn comes from the platform-specific system random number generator, which the underlying hardware usually provides.
 
 ```ts
 namespace Bun {
@@ -274,7 +274,7 @@ Bun.deepEquals(a, b); // => true
 Bun.deepEquals(a, b, true); // => false
 ```
 
-In strict mode, the following are considered unequal:
+In strict mode, Bun considers the following unequal:
 
 ```ts
 // undefined values
@@ -305,15 +305,15 @@ Escapes the following characters from an input string:
 - `<` becomes `&lt;`
 - `>` becomes `&gt;`
 
-This function is optimized for large input. On an M1X, it processes 480 MB/s -
+This function is optimized for large input. On an M1 Max, it processes 480 MB/s -
 20 GB/s, depending on how much data is being escaped and whether there is non-ASCII
-text. Non-string types are converted to a string before escaping.
+text. Bun converts non-string types to a string before escaping.
 
 ## `Bun.stringWidth()`
 
 <Note>~6,756x faster `string-width` alternative</Note>
 
-Get the column count of a string as it would be displayed in a terminal.
+Get the column count of a string as a terminal would display it.
 Supports ANSI escape codes, emoji, and wide characters.
 
 Example usage:
@@ -326,7 +326,7 @@ Bun.stringWidth("\u001b[31mhello\u001b[0m", { countAnsiEscapeCodes: true }); // 
 
 Use it to align text in a terminal or to check whether a string contains ANSI escape codes.
 
-The API matches the "string-width" npm package, so existing code can be ported to Bun and vice versa.
+The API matches the "string-width" npm package, so you can port existing code to Bun and vice versa.
 
 [In this benchmark](https://github.com/oven-sh/bun/blob/5147c0ba7379d85d4d1ed0714b84d6544af917eb/bench/snippets/string-width.mjs#L13), `Bun.stringWidth` is ~6,756x faster than the `string-width` npm package for input larger than about 500 characters. Big thanks to [sindresorhus](https://github.com/sindresorhus) for their work on `string-width`.
 
@@ -646,21 +646,21 @@ dec.decode(decompressedSync);
 
 ## `Bun.inspect()`
 
-Serializes an object to a `string` exactly as it would be printed by `console.log`.
+Serializes an object to a `string` exactly as `console.log` would print it.
 
 ```ts
 const obj = { foo: "bar" };
-const str = Bun.inspect(obj);
-// => '{\nfoo: "bar" \n}'
+Bun.inspect(obj);
+// => '{\n  foo: "bar",\n}'
 
 const arr = new Uint8Array([1, 2, 3]);
-const str = Bun.inspect(arr);
+Bun.inspect(arr);
 // => "Uint8Array(3) [ 1, 2, 3 ]"
 ```
 
 ### `Bun.inspect.custom`
 
-The symbol Bun uses to implement `Bun.inspect`. Override it to customize how your objects are printed. It is identical to `util.inspect.custom` in Node.js.
+The symbol Bun uses to implement `Bun.inspect`. Override it to customize how Bun prints your objects. It is identical to `util.inspect.custom` in Node.js.
 
 ```ts
 class Foo {
@@ -783,7 +783,7 @@ await Bun.readableStreamToFormData(stream, multipartFormBoundary);
 
 ## `Bun.resolveSync()`
 
-Resolves a file path or module specifier using Bun's internal [module resolution](/runtime/module-resolution) algorithm. The first argument is the path to resolve, and the second argument is the "root". If no match is found, it throws an `Error`.
+Resolves a file path or module specifier using Bun's internal [module resolution](/runtime/module-resolution) algorithm. The first argument is the path to resolve, and the second argument is the "root". If nothing matches, it throws an `Error`.
 
 ```ts
 Bun.resolveSync("./foo.ts", "/path/to/project");
@@ -979,7 +979,7 @@ const obj = deserialize(buf);
 console.log(obj); // => { foo: "bar" }
 ```
 
-Internally, [`structuredClone`](https://developer.mozilla.org/en-US/docs/Web/API/structuredClone) and [`postMessage`](https://developer.mozilla.org/en-US/docs/Web/API/Window/postMessage) serialize and deserialize the same way. This exposes the underlying [HTML Structured Clone Algorithm](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Structured_clone_algorithm) to JavaScript as a SharedArrayBuffer.
+Internally, [`structuredClone`](https://developer.mozilla.org/en-US/docs/Web/API/structuredClone) and [`postMessage`](https://developer.mozilla.org/en-US/docs/Web/API/Window/postMessage) serialize and deserialize the same way. `serialize` and `deserialize` expose the underlying [HTML Structured Clone Algorithm](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Structured_clone_algorithm) to JavaScript as a SharedArrayBuffer.
 
 ---
 

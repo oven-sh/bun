@@ -592,12 +592,6 @@ impl<'a> ArenaString<'a> {
         }
     }
     #[inline]
-    pub fn with_capacity_in(cap: usize, arena: &'a MimallocArena) -> Self {
-        Self {
-            buf: Vec::with_capacity_in(cap, arena),
-        }
-    }
-    #[inline]
     pub fn from_str_in(s: &str, arena: &'a MimallocArena) -> Self {
         let mut buf = Vec::with_capacity_in(s.len(), arena);
         buf.extend_from_slice(s.as_bytes());

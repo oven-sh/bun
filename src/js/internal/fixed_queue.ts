@@ -126,6 +126,5 @@ class FixedQueue<T> {
 }
 
 export default {
-  FixedCircularBuffer,
   FixedQueue,
 };

@@ -2332,24 +2332,6 @@ impl RunCommand {
             );
         }
 
-        // Stamped before the first look at the entry: under --watch a missing one waits for a save.
-        let watched_entry = if ctx.debug.hot_reload == cli::command::HotReload::Watch
-            && Self::names_a_module(target_name)
-            // Without an extension the name resolves to another file, and nothing would show its return.
-            && !paths::extension(target_name).is_empty()
-        {
-            let mut buf = bun_paths::path_buffer_pool::get();
-            paths::resolve_path::join_abs_string_buf_checked::<paths::resolve_path::platform::Auto>(
-                ctx.args.absolute_working_dir.as_deref().unwrap_or(b""),
-                &mut buf[..],
-                &[target_name],
-            )
-            .map(restart_on_change::Input::new)
-            .filter(|entry| !entry.is_dir())
-        } else {
-            None
-        };
-
         // ── try fast run (file exists & not a dir → boot VM) ────────────────
         if try_fast_run && Self::maybe_open_with_bun_js(ctx, target_name) {
             return Ok(true);
@@ -2697,8 +2679,12 @@ impl RunCommand {
                         "<r><red>error<r><d>:<r> <b>Module not found \"<b>{}<r>\"",
                         bstr::BStr::new(target_name),
                     );
-                    if let Some(entry) = &watched_entry {
-                        restart_on_change::restart_after_change(entry);
+                    if ctx.debug.hot_reload == cli::command::HotReload::Watch {
+                        Self::wait_for_entry_file(
+                            &this_transpiler.resolver,
+                            fs_top_level_dir,
+                            target_name,
+                        );
                     }
                 } else if !paths::extension(target_name).is_empty() {
                     pretty_errorln!(
@@ -2716,6 +2702,36 @@ impl RunCommand {
         }
 
         Ok(false)
+    }
+
+    /// Under --watch, waits until a file that `target` can resolve to exists, then restarts the process.
+    fn wait_for_entry_file(
+        resolver: &bun_resolver::Resolver<'_>,
+        top_level_dir: &[u8],
+        target: &[u8],
+    ) {
+        use bun_core::{FileKind, ZBox};
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let Some(path) = paths::resolve_path::join_abs_string_buf_checked::<
+            paths::resolve_path::platform::Auto,
+        >(top_level_dir, &mut buf[..], &[target]) else {
+            return;
+        };
+        let path = ZBox::from_bytes(path);
+        // A directory runs through its package.json, and nothing on disk shows when that starts to resolve.
+        if restart_on_change::kind_of(path.as_zstr()) == Some(FileKind::Directory) {
+            return;
+        }
+        let mut files: Vec<ZBox> = Vec::new();
+        resolver.for_each_entry_file_candidate(path.as_bytes(), |file| {
+            files.push(ZBox::from_bytes(file))
+        });
+        restart_on_change::restart_when(path.as_bytes(), || {
+            restart_on_change::kind_of(path.as_zstr()) == Some(FileKind::Directory)
+                || files
+                    .iter()
+                    .any(|file| restart_on_change::kind_of(file.as_zstr()) == Some(FileKind::File))
+        });
     }
 
     /// Whether a target that was not found names a module (a path, a JS-like extension), not a script.

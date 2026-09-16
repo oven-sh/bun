@@ -149,7 +149,7 @@ fn report_bunfig_load_failure(
     }
     Output::err(err, "failed to load bunfig", ());
     if let Some(config) = watched {
-        restart_on_change::restart_after_change(&config);
+        restart_on_change::restart_when(config.path(), || config.changed());
     }
     Global::crash();
 }
@@ -246,7 +246,7 @@ pub fn load_config(
     };
 
     let watched = (ctx.debug.hot_reload == HotReload::Watch)
-        .then(|| restart_on_change::Input::new(config_path.as_bytes()));
+        .then(|| restart_on_change::Input::new(config_path));
     if let Err(err) = load_config_path(cmd, auto_loaded, config_path, ctx) {
         report_bunfig_load_failure(ctx.log, err, watched);
     }

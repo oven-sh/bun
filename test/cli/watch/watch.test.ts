@@ -516,21 +516,30 @@ async function saveUntil(seen: Promise<void>, save: () => void) {
 const entrySource = (version: string) => `console.log("run ${version}");\nsetInterval(() => {}, 1 << 30);\n`;
 
 // An editor that saves by rename leaves the entry file away for a moment (#8520).
-it.concurrent("--watch waits for an entry file that is missing when the process restarts", async () => {
-  using dir = tempDir("watch-restart-entry-missing", { "entry.mjs": entrySource("v0") });
-  const entry = join(String(dir), "entry.mjs");
-  const { proc, stdout, stderr } = spawnWatch(["--watch", "entry.mjs"], String(dir));
-  await using _ = proc;
+// The resolver also runs "./entry" and "main.js" from entry.mjs and main.ts.
+describe.each([
+  ["entry.mjs", "entry.mjs"],
+  ["./entry", "entry.mjs"],
+  ["main.js", "main.ts"],
+])("--watch %s", (target, file) => {
+  it.concurrent("waits for an entry file that is missing when the process restarts", async () => {
+    using dir = tempDir("watch-restart-entry-missing", { [file]: entrySource("v0") });
+    const entry = join(String(dir), file);
+    const { proc, stdout, stderr } = spawnWatch(["--watch", target], String(dir));
+    await using _ = proc;
 
-  await stdout.waitFor("run v0");
-  await saveUntil(stderr.waitFor(`Module not found "entry.mjs"`), () => {
-    if (!existsSync(entry)) writeFileSync(entry, entrySource("v0"));
-    renameSync(entry, entry + "~");
+    await stdout.waitFor("run v0");
+    // Windows cannot rename over the file that the first process still has open.
+    let away = 0;
+    await saveUntil(stderr.waitFor(`Module not found "${target}"`), () => {
+      if (!existsSync(entry)) writeFileSync(entry, entrySource("v0"));
+      renameSync(entry, `${entry}~${away++}`);
+    });
+    writeFileSync(entry + "~", entrySource("v1"));
+    renameSync(entry + "~", entry);
+    await stdout.waitFor("run v1");
+    await saveUntil(stdout.waitFor("run v2"), () => writeFileSync(entry, entrySource("v2")));
   });
-  writeFileSync(entry + "~", entrySource("v1"));
-  renameSync(entry + "~", entry);
-  await stdout.waitFor("run v1");
-  await saveUntil(stdout.waitFor("run v2"), () => writeFileSync(entry, entrySource("v2")));
 });
 
 // #22404: the entry file is the output of a build that has not run yet.
@@ -550,7 +559,6 @@ it.concurrent("--watch waits for an entry file that does not exist yet", async (
 // Nothing on disk shows when one of these starts to resolve, so a wait could be one that never ends.
 describe.each([
   ["nope", `error: Script not found "nope"`],
-  ["./entry", `error: Module not found "./entry"`],
   [".", `error: Module not found "."`],
 ])("--watch %s", (target, error) => {
   it.concurrent("still exits when the target does not name a file", async () => {

@@ -1752,7 +1752,6 @@ pub(crate) fn spawn_watcher_child(
 /// unaligned `HANDLE[count]`), re-marked inheritable for the watcher child.
 fn inherited_crt_fd_block() -> (WORD, *mut u8) {
     const HANDLE_FLAG_INHERIT: DWORD = 0x1;
-    const MAX_CRT_FDS: usize = 256;
 
     let mut si = MaybeUninit::<STARTUPINFOW>::uninit();
     kernel32_2::GetStartupInfoW(&mut si);
@@ -1765,7 +1764,7 @@ fn inherited_crt_fd_block() -> (WORD, *mut u8) {
     }
     // SAFETY: `block` is valid for `size >= 4` bytes; the count is unaligned.
     let count = unsafe { block.cast::<u32>().read_unaligned() } as usize;
-    if count > MAX_CRT_FDS || size < size_of::<u32>() + count + count * size_of::<HANDLE>() {
+    if size < size_of::<u32>() + count + count * size_of::<HANDLE>() {
         return (0, ptr::null_mut());
     }
     // SAFETY: the size check above proves the handle array is inside the block.

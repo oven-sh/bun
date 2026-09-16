@@ -3188,9 +3188,19 @@ impl ThreadSafeFunction {
 
     /// `napi_ref_threadsafe_function` — JS thread only (as in Node).
     pub(crate) fn ref_(&mut self) {
-        // Nothing of a context that has stopped holds the loop, whatever the addon asks for.
         if self.abort_handle.context_stopped() {
-            return;
+            // Nothing of a context that has stopped holds the loop. An addon is shared, though:
+            // asked for by script of a live context (not from this function's own call_js, which
+            // runs in the stopped one), the function is that context's from here. It holds the
+            // loop for it, goes with it, and its calls run in it.
+            let caller = VirtualMachine::get().context_of_caller_no_frame();
+            if caller.is_stopped() {
+                return;
+            }
+            self.context = caller.id();
+            // SAFETY: as at creation: a heap allocation that leaves its context on this thread
+            // before it is freed.
+            unsafe { bun_jsc::AbortHandle::arm_owner(std::ptr::from_mut(self), caller) };
         }
         self.poll_ref.ref_(bun_io::js_vm_ctx());
     }

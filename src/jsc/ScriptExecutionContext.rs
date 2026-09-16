@@ -371,8 +371,9 @@ impl AbortHandle {
                 return;
             }
             context.push(this);
+            // (An owner that another context takes over is that context's from here.)
+            (*this).context_stopped.set(context.is_stopped());
             if context.is_stopped() {
-                (*this).context_stopped.set(true);
                 // Script of a disposed graph is still opening things: they go on
                 // the next turn of the loop, not under the caller that is arming.
                 crate::VirtualMachineRef::get()

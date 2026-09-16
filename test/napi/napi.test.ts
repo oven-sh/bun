@@ -1077,7 +1077,14 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     expect(exitCode).toBe(0);
   });
 
-  it("a threadsafe function a disposed Bun.ModuleGraph's script created does not keep the process running", async () => {
+  it.each([
+    ["does not keep the process running", [], ["disposed", "it asked to be held again", "ran dry at once"]],
+    [
+      "is the host's once the host refs it",
+      ["the host takes it over"],
+      ["disposed", "it asked to be held again", "ran dry once the host let go"],
+    ],
+  ])("a threadsafe function a disposed Bun.ModuleGraph's script created %s", async (_what, args, said) => {
     // Nobody ever releases this one, and its call_js refs it again, as addons with more work
     // coming do.
     using dir = tempDir("napi-module-graph-tsfn", {
@@ -1097,11 +1104,23 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
         // The addon's thread's call arrives now that the graph is gone: the ref is accepted and holds nothing.
         while (!addon.completion_statuses().includes("threadsafe_function_ref:0")) await new Promise(resolve => setImmediate(resolve));
         console.log("it asked to be held again");
-        // Nothing of the host's is open: the process ends when nothing of the graph's holds it.
+        // 'beforeExit' is the loop running dry. Nothing else of the host's is open.
+        let letGo = false;
+        process.once("beforeExit", () => console.log(letGo ? "ran dry once the host let go" : "ran dry at once"));
+        if (process.argv[3] === "the host takes it over") {
+          // The addon is everyone's: asked for by the host, the function is the host's from here,
+          // and holds the loop until the host lets go. (The timer holds nothing itself: with the
+          // loop dry it never fires.)
+          addon.ref_that_function();
+          setTimeout(() => {
+            letGo = true;
+            addon.unref_that_function();
+          }, 100).unref();
+        }
       `,
     });
     await using proc = spawn({
-      cmd: [bunExe(), "fixture.mjs", join(__dirname, "napi-app/build/Debug/napitests.node")],
+      cmd: [bunExe(), "fixture.mjs", join(__dirname, "napi-app/build/Debug/napitests.node"), ...args],
       env: bunEnv,
       cwd: String(dir),
       stdout: "pipe",
@@ -1111,13 +1130,11 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    const lines = stdout.split(/\r?\n/);
-    expect({
-      disposed: lines.includes("disposed"),
-      askedToBeHeldAgain: lines.includes("it asked to be held again"),
-      signal: proc.signalCode,
-      exitCode,
-    }).toEqual({ disposed: true, askedToBeHeldAgain: true, signal: null, exitCode: 0 });
+    expect({ said: stdout.trim().split(/\r?\n/), signal: proc.signalCode, exitCode }).toEqual({
+      said,
+      signal: null,
+      exitCode: 0,
+    });
   });
 
   describe("napi_adjust_external_memory", () => {

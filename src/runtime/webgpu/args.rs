@@ -1,9 +1,12 @@
 //! WebIDL argument conversion: `[EnforceRange]` integers, floats, enums, dictionaries, sequences.
 
+use core::any::Any;
 use core::ffi::c_void;
+use std::rc::Rc;
 
 use bun_core::Utf8Bytes;
 use bun_jsc::{JSGlobalObject, JSValue, JsClass, JsError, JsResult};
+use bun_webgpu::OwnedId;
 
 /// 2^53 - 1, the largest value `[EnforceRange] unsigned long long` accepts.
 const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
@@ -123,16 +126,50 @@ pub(crate) fn to_enum<T>(
     }
 }
 
-/// An interface type: `v` has to be a `T` wrapper.
-pub(crate) fn to_class<T: JsClass + 'static>(
-    global: &JSGlobalObject,
-    v: JSValue,
-    what: &str,
-    class_name: &str,
-) -> JsResult<&'static T> {
-    match v.as_class_ref::<T>() {
-        Some(t) => Ok(t),
-        None => Err(global.throw_type_error(format_args!("{what}: expected a {class_name}"))),
+/// A wrapper class whose wgpu-core id the calls of other objects use.
+pub(crate) trait Resource: JsClass + 'static {
+    type Raw: OwnedId + 'static;
+    fn handle(&self) -> &Rc<Self::Raw>;
+}
+
+/// Keeps the ids a call read out of wrappers registered. Script that runs later in the call can collect a wrapper, and its finalizer unregisters the id.
+#[derive(Default)]
+pub(crate) struct Held {
+    /// Inline, so that a call that names one object does not allocate.
+    first: Option<Rc<dyn Any>>,
+    rest: Vec<Rc<dyn Any>>,
+}
+
+impl Held {
+    /// The id of the `T` wrapper `v`, or `None` if `v` is something else.
+    pub(crate) fn try_id<T: Resource>(&mut self, v: JSValue) -> Option<<T::Raw as OwnedId>::Id> {
+        let handle = Rc::clone(v.as_class_ref::<T>()?.handle());
+        let id = handle.id();
+        match self.first {
+            None => self.first = Some(handle),
+            Some(_) => self.rest.push(handle),
+        }
+        Some(id)
+    }
+
+    /// An interface type: `v` has to be a `T` wrapper.
+    pub(crate) fn id<T: Resource>(
+        &mut self,
+        global: &JSGlobalObject,
+        v: JSValue,
+        what: &str,
+        class_name: &str,
+    ) -> JsResult<<T::Raw as OwnedId>::Id> {
+        match self.try_id::<T>(v) {
+            Some(id) => Ok(id),
+            None => Err(global.throw_type_error(format_args!("{what}: expected a {class_name}"))),
+        }
+    }
+
+    /// Takes over what `other` holds.
+    pub(crate) fn absorb(&mut self, other: Held) {
+        self.rest.extend(other.first);
+        self.rest.extend(other.rest);
     }
 }
 
@@ -339,13 +376,15 @@ impl<'a> Dict<'a> {
         to_enum(self.global, v, &self.what(key), enum_name, parse)
     }
 
-    pub(crate) fn require_class<T: JsClass + 'static>(
+    /// A required interface member: the id of the `T` wrapper, which `held` keeps registered.
+    pub(crate) fn require_id<T: Resource>(
         &self,
+        held: &mut Held,
         key: &'static str,
         class_name: &str,
-    ) -> JsResult<&'static T> {
+    ) -> JsResult<<T::Raw as OwnedId>::Id> {
         let v = self.require(key)?;
-        to_class(self.global, v, &self.what(key), class_name)
+        held.id::<T>(self.global, v, &self.what(key), class_name)
     }
 
     /// A nested dictionary member. Missing reads as `None`; `null` is the empty dictionary.

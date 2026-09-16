@@ -32,6 +32,12 @@ pub fn instance() -> &'static Global {
     })
 }
 
+/// A wgpu-core id that is unregistered when the value drops. wgpu-core panics on an id it no longer knows.
+pub trait OwnedId {
+    type Id: Copy;
+    fn id(&self) -> Self::Id;
+}
+
 macro_rules! owned_id {
     ($(#[$meta:meta])* $name:ident, $id:ty, $drop:ident) => {
         $(#[$meta])*
@@ -44,6 +50,14 @@ macro_rules! owned_id {
             }
             #[inline]
             pub fn id(&self) -> $id {
+                self.0
+            }
+        }
+
+        impl OwnedId for $name {
+            type Id = $id;
+            #[inline]
+            fn id(&self) -> $id {
                 self.0
             }
         }

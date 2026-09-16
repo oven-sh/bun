@@ -3,9 +3,9 @@
 use std::rc::Rc;
 
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsCell, JsClass, JsResult};
-use bun_webgpu::{GpuError, instance, wgc, wgt};
+use bun_webgpu::{GpuError, instance, wgt};
 
-use super::args::{self, Dict};
+use super::args::{self, Dict, Held};
 use super::device::DeviceRef;
 use super::texture::{parse_texel_copy_buffer_info, parse_texel_copy_texture_info};
 use super::{GPUBuffer, GPUComputePassEncoder, GPUQuerySet, GPURenderPassEncoder};
@@ -64,9 +64,10 @@ impl GPUCommandEncoder {
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         const WHAT: &str = "copyBufferToBuffer";
-        let source = args::to_class::<GPUBuffer>(global, callframe.argument(0), WHAT, "GPUBuffer")?;
+        let mut held = Held::default();
+        let source = held.id::<GPUBuffer>(global, callframe.argument(0), WHAT, "GPUBuffer")?;
         let (source_offset, destination, destination_offset, size) =
-            if let Some(destination) = callframe.argument(1).as_class_ref::<GPUBuffer>() {
+            if let Some(destination) = held.try_id::<GPUBuffer>(callframe.argument(1)) {
                 (
                     0,
                     destination,
@@ -80,7 +81,7 @@ impl GPUCommandEncoder {
                         callframe.argument(1),
                         "copyBufferToBuffer: sourceOffset",
                     )?,
-                    args::to_class::<GPUBuffer>(global, callframe.argument(2), WHAT, "GPUBuffer")?,
+                    held.id::<GPUBuffer>(global, callframe.argument(2), WHAT, "GPUBuffer")?,
                     args::to_u64(
                         global,
                         callframe.argument(3),
@@ -91,9 +92,9 @@ impl GPUCommandEncoder {
             };
         let result = instance().command_encoder_copy_buffer_to_buffer(
             self.raw.id(),
-            source.id(),
+            source,
             source_offset,
-            destination.id(),
+            destination,
             destination_offset,
             size,
         );
@@ -106,11 +107,13 @@ impl GPUCommandEncoder {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let source = parse_texel_copy_buffer_info(global, callframe.argument(0))?;
+        let mut held = Held::default();
+        let source = parse_texel_copy_buffer_info(global, callframe.argument(0), &mut held)?;
         let destination = parse_texel_copy_texture_info(
             global,
             callframe.argument(1),
             "copyBufferToTexture: destination",
+            &mut held,
         )?;
         let size = args::to_extent3d(
             global,
@@ -132,12 +135,14 @@ impl GPUCommandEncoder {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        let mut held = Held::default();
         let source = parse_texel_copy_texture_info(
             global,
             callframe.argument(0),
             "copyTextureToBuffer: source",
+            &mut held,
         )?;
-        let destination = parse_texel_copy_buffer_info(global, callframe.argument(1))?;
+        let destination = parse_texel_copy_buffer_info(global, callframe.argument(1), &mut held)?;
         let size = args::to_extent3d(
             global,
             callframe.argument(2),
@@ -158,15 +163,18 @@ impl GPUCommandEncoder {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        let mut held = Held::default();
         let source = parse_texel_copy_texture_info(
             global,
             callframe.argument(0),
             "copyTextureToTexture: source",
+            &mut held,
         )?;
         let destination = parse_texel_copy_texture_info(
             global,
             callframe.argument(1),
             "copyTextureToTexture: destination",
+            &mut held,
         )?;
         let size = args::to_extent3d(
             global,
@@ -188,13 +196,13 @@ impl GPUCommandEncoder {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        let mut held = Held::default();
         let buffer =
-            args::to_class::<GPUBuffer>(global, callframe.argument(0), "clearBuffer", "GPUBuffer")?;
+            held.id::<GPUBuffer>(global, callframe.argument(0), "clearBuffer", "GPUBuffer")?;
         let offset =
             args::optional_u64(global, callframe.argument(1), "clearBuffer: offset")?.unwrap_or(0);
         let size = args::optional_u64(global, callframe.argument(2), "clearBuffer: size")?;
-        let result =
-            instance().command_encoder_clear_buffer(self.raw.id(), buffer.id(), offset, size);
+        let result = instance().command_encoder_clear_buffer(self.raw.id(), buffer, offset, size);
         self.device.check_result(global, result)?;
         Ok(JSValue::UNDEFINED)
     }
@@ -205,14 +213,14 @@ impl GPUCommandEncoder {
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         const WHAT: &str = "resolveQuerySet";
+        let mut held = Held::default();
         let query_set =
-            args::to_class::<GPUQuerySet>(global, callframe.argument(0), WHAT, "GPUQuerySet")?;
+            held.id::<GPUQuerySet>(global, callframe.argument(0), WHAT, "GPUQuerySet")?;
         let first_query =
             args::to_u32(global, callframe.argument(1), "resolveQuerySet: firstQuery")?;
         let query_count =
             args::to_u32(global, callframe.argument(2), "resolveQuerySet: queryCount")?;
-        let destination =
-            args::to_class::<GPUBuffer>(global, callframe.argument(3), WHAT, "GPUBuffer")?;
+        let destination = held.id::<GPUBuffer>(global, callframe.argument(3), WHAT, "GPUBuffer")?;
         let destination_offset = args::to_u64(
             global,
             callframe.argument(4),
@@ -220,10 +228,10 @@ impl GPUCommandEncoder {
         )?;
         let result = instance().command_encoder_resolve_query_set(
             self.raw.id(),
-            query_set.id(),
+            query_set,
             first_query,
             query_count,
-            destination.id(),
+            destination,
             destination_offset,
         );
         self.device.check_result(global, result)?;
@@ -273,7 +281,7 @@ impl GPUCommandEncoder {
             label: super::wgpu_label(&label),
         };
         let (id, err) = instance().command_encoder_finish(self.raw.id(), &desc, None);
-        let raw = bun_webgpu::CommandBuffer::new(id);
+        let raw = Rc::new(bun_webgpu::CommandBuffer::new(id));
         if let Some((_, err)) = err {
             self.device.report(global, GpuError::from_wgpu(&err))?;
         }
@@ -287,15 +295,9 @@ impl GPUCommandEncoder {
 
 #[bun_jsc::JsClass]
 pub struct GPUCommandBuffer {
-    raw: bun_webgpu::CommandBuffer,
+    raw: Rc<bun_webgpu::CommandBuffer>,
     label: JsCell<bun_core::String>,
 }
 
 super::gpu_object!(GPUCommandBuffer, label);
-
-impl GPUCommandBuffer {
-    #[inline]
-    pub(crate) fn id(&self) -> wgc::id::CommandBufferId {
-        self.raw.id()
-    }
-}
+super::resource!(GPUCommandBuffer, bun_webgpu::CommandBuffer);

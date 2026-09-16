@@ -2,23 +2,25 @@
 
 use std::borrow::Cow;
 use std::num::NonZeroU64;
+use std::rc::Rc;
 
 use bun_jsc::{JSGlobalObject, JSValue, JsCell, JsClass, JsResult};
 use bun_webgpu::names;
 use bun_webgpu::wgc::binding_model as bm;
 use bun_webgpu::{GpuError, instance, wgc, wgt};
 
-use super::args::{self, Dict};
+use super::args::{self, Dict, Held};
 use super::device::DeviceRef;
 use super::{GPUBuffer, GPUSampler, GPUTexture, GPUTextureView};
 
 #[bun_jsc::JsClass]
 pub struct GPUBindGroupLayout {
-    raw: bun_webgpu::BindGroupLayout,
+    raw: Rc<bun_webgpu::BindGroupLayout>,
     label: JsCell<bun_core::String>,
 }
 
 super::gpu_object!(GPUBindGroupLayout, label);
+super::resource!(GPUBindGroupLayout, bun_webgpu::BindGroupLayout);
 
 fn parse_buffer_binding_type(s: &[u8]) -> Option<wgt::BufferBindingType> {
     match s {
@@ -50,14 +52,9 @@ fn parse_texture_sample_type(s: &[u8]) -> Option<wgt::TextureSampleType> {
 }
 
 impl GPUBindGroupLayout {
-    #[inline]
-    pub(crate) fn id(&self) -> wgc::id::BindGroupLayoutId {
-        self.raw.id()
-    }
-
     pub(crate) fn wrap(global: &JSGlobalObject, raw: bun_webgpu::BindGroupLayout) -> JSValue {
         GPUBindGroupLayout {
-            raw,
+            raw: Rc::new(raw),
             label: JsCell::new(bun_core::String::EMPTY),
         }
         .to_js(global)
@@ -184,7 +181,7 @@ impl GPUBindGroupLayout {
             entries: Cow::Owned(entries),
         };
         let (id, err) = instance().device_create_bind_group_layout(device.id(), &desc, None);
-        let raw = bun_webgpu::BindGroupLayout::new(id);
+        let raw = Rc::new(bun_webgpu::BindGroupLayout::new(id));
         if malformed.is_none() {
             device.check(global, err)?;
         }
@@ -198,18 +195,14 @@ impl GPUBindGroupLayout {
 
 #[bun_jsc::JsClass]
 pub struct GPUPipelineLayout {
-    raw: bun_webgpu::PipelineLayout,
+    raw: Rc<bun_webgpu::PipelineLayout>,
     label: JsCell<bun_core::String>,
 }
 
 super::gpu_object!(GPUPipelineLayout, label);
+super::resource!(GPUPipelineLayout, bun_webgpu::PipelineLayout);
 
 impl GPUPipelineLayout {
-    #[inline]
-    pub(crate) fn id(&self) -> wgc::id::PipelineLayoutId {
-        self.raw.id()
-    }
-
     pub(crate) fn create(
         global: &JSGlobalObject,
         device: &DeviceRef,
@@ -217,18 +210,18 @@ impl GPUPipelineLayout {
     ) -> JsResult<JSValue> {
         let d = Dict::new(global, descriptor, "GPUPipelineLayoutDescriptor")?;
         let label = d.label()?;
+        let mut held = Held::default();
         let mut layouts = Vec::new();
         d.require_each("bindGroupLayouts", |item| {
             if item.is_undefined_or_null() {
                 layouts.push(None);
             } else {
-                let layout = args::to_class::<GPUBindGroupLayout>(
+                layouts.push(Some(held.id::<GPUBindGroupLayout>(
                     global,
                     item,
                     "GPUPipelineLayoutDescriptor.bindGroupLayouts",
                     "GPUBindGroupLayout",
-                )?;
-                layouts.push(Some(layout.id()));
+                )?));
             }
             Ok(())
         })?;
@@ -238,7 +231,8 @@ impl GPUPipelineLayout {
             immediate_size: 0,
         };
         let (id, err) = instance().device_create_pipeline_layout(device.id(), &desc, None);
-        let raw = bun_webgpu::PipelineLayout::new(id);
+        let raw = Rc::new(bun_webgpu::PipelineLayout::new(id));
+        drop(held);
         device.check(global, err)?;
         Ok(GPUPipelineLayout {
             raw,
@@ -250,18 +244,14 @@ impl GPUPipelineLayout {
 
 #[bun_jsc::JsClass]
 pub struct GPUBindGroup {
-    raw: bun_webgpu::BindGroup,
+    raw: Rc<bun_webgpu::BindGroup>,
     label: JsCell<bun_core::String>,
 }
 
 super::gpu_object!(GPUBindGroup, label);
+super::resource!(GPUBindGroup, bun_webgpu::BindGroup);
 
 impl GPUBindGroup {
-    #[inline]
-    pub(crate) fn id(&self) -> wgc::id::BindGroupId {
-        self.raw.id()
-    }
-
     pub(crate) fn create(
         global: &JSGlobalObject,
         device: &DeviceRef,
@@ -269,9 +259,9 @@ impl GPUBindGroup {
     ) -> JsResult<JSValue> {
         let d = Dict::new(global, descriptor, "GPUBindGroupDescriptor")?;
         let label = d.label()?;
-        let layout = d
-            .require_class::<GPUBindGroupLayout>("layout", "GPUBindGroupLayout")?
-            .id();
+        let mut held = Held::default();
+        let layout =
+            d.require_id::<GPUBindGroupLayout>(&mut held, "layout", "GPUBindGroupLayout")?;
         let mut entries: Vec<bm::BindGroupEntry<'static>> = Vec::new();
         // Views made here for `resource: GPUTexture`; the bind group keeps what it needs once it exists.
         let mut implicit_views = Vec::new();
@@ -279,27 +269,26 @@ impl GPUBindGroup {
             let e = Dict::new(global, item, "GPUBindGroupEntry")?;
             let binding = e.require_u32("binding")?;
             let resource = e.require("resource")?;
-            let resource = if let Some(sampler) = resource.as_class_ref::<GPUSampler>() {
-                bm::BindingResource::Sampler(sampler.id())
-            } else if let Some(view) = resource.as_class_ref::<GPUTextureView>() {
-                bm::BindingResource::TextureView(view.id())
-            } else if let Some(texture) = resource.as_class_ref::<GPUTexture>() {
+            let resource = if let Some(sampler) = held.try_id::<GPUSampler>(resource) {
+                bm::BindingResource::Sampler(sampler)
+            } else if let Some(view) = held.try_id::<GPUTextureView>(resource) {
+                bm::BindingResource::TextureView(view)
+            } else if let Some(texture) = held.try_id::<GPUTexture>(resource) {
                 let desc = wgc::resource::TextureViewDescriptor::default();
-                let (id, err) = instance().texture_create_view(texture.id(), &desc, None);
+                let (id, err) = instance().texture_create_view(texture, &desc, None);
                 implicit_views.push(bun_webgpu::TextureView::new(id));
                 device.check(global, err)?;
                 bm::BindingResource::TextureView(id)
-            } else if let Some(buffer) = resource.as_class_ref::<GPUBuffer>() {
+            } else if let Some(buffer) = held.try_id::<GPUBuffer>(resource) {
                 bm::BindingResource::Buffer(bm::BufferBinding {
-                    buffer: buffer.id(),
+                    buffer,
                     offset: 0,
                     size: None,
                 })
             } else {
                 let b = Dict::new(global, resource, "GPUBufferBinding")?;
-                let buffer = b.require_class::<GPUBuffer>("buffer", "GPUBuffer")?;
                 bm::BindingResource::Buffer(bm::BufferBinding {
-                    buffer: buffer.id(),
+                    buffer: b.require_id::<GPUBuffer>(&mut held, "buffer", "GPUBuffer")?,
                     offset: b.u64_or("offset", 0)?,
                     size: b.u64("size")?,
                 })
@@ -313,8 +302,8 @@ impl GPUBindGroup {
             entries: Cow::Owned(entries),
         };
         let (id, err) = instance().device_create_bind_group(device.id(), &desc, None);
-        let raw = bun_webgpu::BindGroup::new(id);
-        drop(implicit_views);
+        let raw = Rc::new(bun_webgpu::BindGroup::new(id));
+        drop((held, implicit_views));
         device.check(global, err)?;
         Ok(GPUBindGroup {
             raw,
@@ -328,11 +317,12 @@ impl GPUBindGroup {
 pub(crate) fn parse_set_bind_group(
     global: &JSGlobalObject,
     callframe: &bun_jsc::CallFrame,
+    held: &mut Held,
 ) -> JsResult<(u32, Option<wgc::id::BindGroupId>, Vec<u32>)> {
     let index = args::to_u32(global, callframe.argument(0), "setBindGroup: index")?;
     let bind_group = match callframe.argument(1) {
         v if v.is_undefined_or_null() => None,
-        v => Some(args::to_class::<GPUBindGroup>(global, v, "setBindGroup", "GPUBindGroup")?.id()),
+        v => Some(held.id::<GPUBindGroup>(global, v, "setBindGroup", "GPUBindGroup")?),
     };
     let offsets_arg = callframe.argument(2);
     let mut offsets = Vec::new();

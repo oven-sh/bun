@@ -9,7 +9,7 @@ use bun_webgpu::names;
 use bun_webgpu::wgc::command as cmd;
 use bun_webgpu::{instance, wgc, wgt};
 
-use super::args::{self, Dict};
+use super::args::{self, Dict, Held};
 use super::bind::parse_set_bind_group;
 use super::compute_pass::parse_timestamp_writes;
 use super::device::DeviceRef;
@@ -61,13 +61,15 @@ macro_rules! render_commands {
                 global: &JSGlobalObject,
                 callframe: &CallFrame,
             ) -> JsResult<JSValue> {
-                let pipeline = args::to_class::<GPURenderPipeline>(
+                let mut held = Held::default();
+                let pipeline = held.id::<GPURenderPipeline>(
                     global,
                     callframe.argument(0),
                     "setPipeline",
                     "GPURenderPipeline",
                 )?;
-                let result = instance().$set_pipeline(self.raw.id(), pipeline.id());
+                let result = instance().$set_pipeline(self.raw.id(), pipeline);
+                self.keep(held);
                 self.device.check_result(global, result)?;
                 Ok(JSValue::UNDEFINED)
             }
@@ -77,8 +79,11 @@ macro_rules! render_commands {
                 global: &JSGlobalObject,
                 callframe: &CallFrame,
             ) -> JsResult<JSValue> {
-                let (index, bind_group, offsets) = parse_set_bind_group(global, callframe)?;
+                let mut held = Held::default();
+                let (index, bind_group, offsets) =
+                    parse_set_bind_group(global, callframe, &mut held)?;
                 let result = instance().$set_bind_group(self.raw.id(), index, bind_group, &offsets);
+                self.keep(held);
                 self.device.check_result(global, result)?;
                 Ok(JSValue::UNDEFINED)
             }
@@ -88,7 +93,8 @@ macro_rules! render_commands {
                 global: &JSGlobalObject,
                 callframe: &CallFrame,
             ) -> JsResult<JSValue> {
-                let buffer = args::to_class::<GPUBuffer>(
+                let mut held = Held::default();
+                let buffer = held.id::<GPUBuffer>(
                     global,
                     callframe.argument(0),
                     "setIndexBuffer",
@@ -108,11 +114,12 @@ macro_rules! render_commands {
                     args::optional_u64(global, callframe.argument(3), "setIndexBuffer: size")?;
                 let result = instance().$set_index_buffer(
                     self.raw.id(),
-                    buffer.id(),
+                    buffer,
                     format,
                     offset,
                     binding_size(size),
                 );
+                self.keep(held);
                 self.device.check_result(global, result)?;
                 Ok(JSValue::UNDEFINED)
             }
@@ -123,12 +130,10 @@ macro_rules! render_commands {
                 callframe: &CallFrame,
             ) -> JsResult<JSValue> {
                 let slot = args::to_u32(global, callframe.argument(0), "setVertexBuffer: slot")?;
+                let mut held = Held::default();
                 let buffer = match callframe.argument(1) {
                     v if v.is_undefined_or_null() => None,
-                    v => Some(
-                        args::to_class::<GPUBuffer>(global, v, "setVertexBuffer", "GPUBuffer")?
-                            .id(),
-                    ),
+                    v => Some(held.id::<GPUBuffer>(global, v, "setVertexBuffer", "GPUBuffer")?),
                 };
                 let offset =
                     args::optional_u64(global, callframe.argument(2), "setVertexBuffer: offset")?
@@ -142,6 +147,7 @@ macro_rules! render_commands {
                     offset,
                     binding_size(size),
                 );
+                self.keep(held);
                 self.device.check_result(global, result)?;
                 Ok(JSValue::UNDEFINED)
             }
@@ -211,7 +217,8 @@ macro_rules! render_commands {
                 global: &JSGlobalObject,
                 callframe: &CallFrame,
             ) -> JsResult<JSValue> {
-                let buffer = args::to_class::<GPUBuffer>(
+                let mut held = Held::default();
+                let buffer = held.id::<GPUBuffer>(
                     global,
                     callframe.argument(0),
                     "drawIndirect",
@@ -222,7 +229,8 @@ macro_rules! render_commands {
                     callframe.argument(1),
                     "drawIndirect: indirectOffset",
                 )?;
-                let result = instance().$draw_indirect(self.raw.id(), buffer.id(), offset);
+                let result = instance().$draw_indirect(self.raw.id(), buffer, offset);
+                self.keep(held);
                 self.device.check_result(global, result)?;
                 Ok(JSValue::UNDEFINED)
             }
@@ -232,7 +240,8 @@ macro_rules! render_commands {
                 global: &JSGlobalObject,
                 callframe: &CallFrame,
             ) -> JsResult<JSValue> {
-                let buffer = args::to_class::<GPUBuffer>(
+                let mut held = Held::default();
+                let buffer = held.id::<GPUBuffer>(
                     global,
                     callframe.argument(0),
                     "drawIndexedIndirect",
@@ -243,7 +252,8 @@ macro_rules! render_commands {
                     callframe.argument(1),
                     "drawIndexedIndirect: indirectOffset",
                 )?;
-                let result = instance().$draw_indexed_indirect(self.raw.id(), buffer.id(), offset);
+                let result = instance().$draw_indexed_indirect(self.raw.id(), buffer, offset);
+                self.keep(held);
                 self.device.check_result(global, result)?;
                 Ok(JSValue::UNDEFINED)
             }
@@ -277,14 +287,15 @@ fn attachment_view(
     device: &DeviceRef,
     value: JSValue,
     what: &str,
+    held: &mut Held,
     implicit: &mut Vec<bun_webgpu::TextureView>,
 ) -> JsResult<wgc::id::TextureViewId> {
-    if let Some(view) = value.as_class_ref::<GPUTextureView>() {
-        return Ok(view.id());
+    if let Some(view) = held.try_id::<GPUTextureView>(value) {
+        return Ok(view);
     }
-    if let Some(texture) = value.as_class_ref::<GPUTexture>() {
+    if let Some(texture) = held.try_id::<GPUTexture>(value) {
         let desc = wgc::resource::TextureViewDescriptor::default();
-        let (id, err) = instance().texture_create_view(texture.id(), &desc, None);
+        let (id, err) = instance().texture_create_view(texture, &desc, None);
         implicit.push(bun_webgpu::TextureView::new(id));
         device.check(global, err)?;
         return Ok(id);
@@ -295,6 +306,9 @@ fn attachment_view(
 }
 
 impl GPURenderPassEncoder {
+    /// Nothing to keep: the pass resolves each id in the call that names it.
+    fn keep(&self, _held: Held) {}
+
     pub(crate) fn begin(
         global: &JSGlobalObject,
         device: &DeviceRef,
@@ -303,6 +317,7 @@ impl GPURenderPassEncoder {
     ) -> JsResult<JSValue> {
         let d = Dict::new(global, descriptor, "GPURenderPassDescriptor")?;
         let label = d.label()?;
+        let mut held = Held::default();
         let mut implicit_views = Vec::new();
 
         let mut color_attachments = Vec::new();
@@ -317,6 +332,7 @@ impl GPURenderPassEncoder {
                 device,
                 a.require("view")?,
                 "GPURenderPassColorAttachment.view",
+                &mut held,
                 &mut implicit_views,
             )?;
             let resolve_target = match a.get("resolveTarget")? {
@@ -325,6 +341,7 @@ impl GPURenderPassEncoder {
                     device,
                     v,
                     "GPURenderPassColorAttachment.resolveTarget",
+                    &mut held,
                     &mut implicit_views,
                 )?),
                 None => None,
@@ -359,6 +376,7 @@ impl GPURenderPassEncoder {
                     device,
                     a.require("view")?,
                     "GPURenderPassDepthStencilAttachment.view",
+                    &mut held,
                     &mut implicit_views,
                 )?;
                 let depth_clear = match a.get("depthClearValue")? {
@@ -401,15 +419,12 @@ impl GPURenderPassEncoder {
         };
 
         let occlusion_query_set = match d.get("occlusionQuerySet")? {
-            Some(v) => Some(
-                args::to_class::<GPUQuerySet>(
-                    global,
-                    v,
-                    "GPURenderPassDescriptor.occlusionQuerySet",
-                    "GPUQuerySet",
-                )?
-                .id(),
-            ),
+            Some(v) => Some(held.id::<GPUQuerySet>(
+                global,
+                v,
+                "GPURenderPassDescriptor.occlusionQuerySet",
+                "GPUQuerySet",
+            )?),
             None => None,
         };
 
@@ -417,13 +432,17 @@ impl GPURenderPassEncoder {
             label: super::wgpu_label(&label),
             color_attachments: Cow::Owned(color_attachments),
             depth_stencil_attachment,
-            timestamp_writes: parse_timestamp_writes(&d, "GPURenderPassTimestampWrites")?,
+            timestamp_writes: parse_timestamp_writes(
+                &d,
+                "GPURenderPassTimestampWrites",
+                &mut held,
+            )?,
             occlusion_query_set,
             multiview_mask: None,
         };
         let (id, err) = instance().command_encoder_begin_render_pass_with_id(encoder, &desc, None);
         let raw = bun_webgpu::RenderPassEncoder::new(id);
-        drop(implicit_views);
+        drop((held, implicit_views));
         device.check(global, err)?;
         Ok(GPURenderPassEncoder {
             device: Rc::clone(device),
@@ -540,21 +559,19 @@ impl GPURenderPassEncoder {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        let mut held = Held::default();
         let mut bundles = Vec::new();
         args::for_each(global, callframe.argument(0), "executeBundles", |item| {
-            bundles.push(
-                args::to_class::<GPURenderBundle>(
-                    global,
-                    item,
-                    "executeBundles",
-                    "GPURenderBundle",
-                )?
-                .raw
-                .id(),
-            );
+            bundles.push(held.id::<GPURenderBundle>(
+                global,
+                item,
+                "executeBundles",
+                "GPURenderBundle",
+            )?);
             Ok(())
         })?;
         let result = instance().render_pass_execute_bundles_with_id(self.raw.id(), &bundles);
+        drop(held);
         self.device.check_result(global, result)?;
         Ok(JSValue::UNDEFINED)
     }
@@ -603,6 +620,8 @@ pub struct GPURenderBundleEncoder {
     device: DeviceRef,
     raw: bun_webgpu::RenderBundleEncoder,
     label: JsCell<bun_core::String>,
+    /// wgpu-core records a bundle's ids as they are and resolves them in `finish()`.
+    held: JsCell<Held>,
 }
 
 super::gpu_object!(GPURenderBundleEncoder, label);
@@ -619,6 +638,10 @@ render_commands!(GPURenderBundleEncoder {
 });
 
 impl GPURenderBundleEncoder {
+    fn keep(&self, held: Held) {
+        self.held.with_mut(|all| all.absorb(held));
+    }
+
     pub(crate) fn create(
         global: &JSGlobalObject,
         device: &DeviceRef,
@@ -677,6 +700,7 @@ impl GPURenderBundleEncoder {
             device: Rc::clone(device),
             raw,
             label: JsCell::new(label),
+            held: JsCell::new(Held::default()),
         }
         .to_js(global))
     }
@@ -726,7 +750,8 @@ impl GPURenderBundleEncoder {
             label: super::wgpu_label(&label),
         };
         let (id, err) = instance().render_bundle_encoder_finish_with_id(self.raw.id(), &desc, None);
-        let raw = bun_webgpu::RenderBundle::new(id);
+        let raw = Rc::new(bun_webgpu::RenderBundle::new(id));
+        drop(self.held.take());
         self.device.check(global, err)?;
         Ok(GPURenderBundle {
             raw,
@@ -738,8 +763,9 @@ impl GPURenderBundleEncoder {
 
 #[bun_jsc::JsClass]
 pub struct GPURenderBundle {
-    raw: bun_webgpu::RenderBundle,
+    raw: Rc<bun_webgpu::RenderBundle>,
     label: JsCell<bun_core::String>,
 }
 
 super::gpu_object!(GPURenderBundle, label);
+super::resource!(GPURenderBundle, bun_webgpu::RenderBundle);

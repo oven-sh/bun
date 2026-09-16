@@ -8,15 +8,15 @@ use bun_webgpu::names;
 use bun_webgpu::wgc::pipeline as pl;
 use bun_webgpu::{GpuError, instance, wgc, wgt};
 
-use super::args::{self, Dict};
+use super::args::{self, Dict, Held};
 use super::device::DeviceRef;
 use super::{GPUBindGroupLayout, GPUPipelineLayout, GPUShaderModule};
 
 /// `layout: GPUPipelineLayout | "auto"`.
-fn parse_layout(d: &Dict<'_>) -> JsResult<Option<wgc::id::PipelineLayoutId>> {
+fn parse_layout(d: &Dict<'_>, held: &mut Held) -> JsResult<Option<wgc::id::PipelineLayoutId>> {
     let value = d.require("layout")?;
-    if let Some(layout) = value.as_class_ref::<GPUPipelineLayout>() {
-        return Ok(Some(layout.id()));
+    if let Some(layout) = held.try_id::<GPUPipelineLayout>(value) {
+        return Ok(Some(layout));
     }
     if value.is_string() && args::to_utf8(d.global, value)?.as_ref() == b"auto" {
         return Ok(None);
@@ -28,10 +28,11 @@ fn parse_layout(d: &Dict<'_>) -> JsResult<Option<wgc::id::PipelineLayoutId>> {
 }
 
 /// `GPUProgrammableStage`.
-fn parse_stage(d: &Dict<'_>) -> JsResult<pl::ProgrammableStageDescriptor<'static>> {
-    let module = d
-        .require_class::<GPUShaderModule>("module", "GPUShaderModule")?
-        .id();
+fn parse_stage(
+    d: &Dict<'_>,
+    held: &mut Held,
+) -> JsResult<pl::ProgrammableStageDescriptor<'static>> {
+    let module = d.require_id::<GPUShaderModule>(held, "module", "GPUShaderModule")?;
     let entry_point = d.string("entryPoint")?.map(Cow::Owned);
     let mut constants = wgc::naga::back::PipelineConstants::default();
     if let Some(record) = d.get("constants")? {
@@ -62,18 +63,14 @@ fn parse_stage(d: &Dict<'_>) -> JsResult<pl::ProgrammableStageDescriptor<'static
 #[bun_jsc::JsClass]
 pub struct GPUComputePipeline {
     device: DeviceRef,
-    raw: bun_webgpu::ComputePipeline,
+    raw: Rc<bun_webgpu::ComputePipeline>,
     label: JsCell<bun_core::String>,
 }
 
 super::gpu_object!(GPUComputePipeline, label);
+super::resource!(GPUComputePipeline, bun_webgpu::ComputePipeline);
 
 impl GPUComputePipeline {
-    #[inline]
-    pub(crate) fn id(&self) -> wgc::id::ComputePipelineId {
-        self.raw.id()
-    }
-
     /// Returns the pipeline and its creation error: sync callers report it, async callers reject.
     pub(crate) fn create(
         global: &JSGlobalObject,
@@ -82,16 +79,21 @@ impl GPUComputePipeline {
     ) -> JsResult<(JSValue, Option<GpuError>)> {
         let d = Dict::new(global, descriptor, "GPUComputePipelineDescriptor")?;
         let label = d.label()?;
+        let mut held = Held::default();
         let desc = pl::ComputePipelineDescriptor {
             label: super::wgpu_label(&label),
-            layout: parse_layout(&d)?,
-            stage: parse_stage(&d.require_dict("compute", "GPUProgrammableStage")?)?,
+            layout: parse_layout(&d, &mut held)?,
+            stage: parse_stage(
+                &d.require_dict("compute", "GPUProgrammableStage")?,
+                &mut held,
+            )?,
             cache: None,
         };
         let (id, err) = instance().device_create_compute_pipeline(device.id(), &desc, None);
+        drop(held);
         let value = GPUComputePipeline {
             device: Rc::clone(device),
-            raw: bun_webgpu::ComputePipeline::new(id),
+            raw: Rc::new(bun_webgpu::ComputePipeline::new(id)),
             label: JsCell::new(label),
         }
         .to_js(global);
@@ -115,11 +117,12 @@ impl GPUComputePipeline {
 #[bun_jsc::JsClass]
 pub struct GPURenderPipeline {
     device: DeviceRef,
-    raw: bun_webgpu::RenderPipeline,
+    raw: Rc<bun_webgpu::RenderPipeline>,
     label: JsCell<bun_core::String>,
 }
 
 super::gpu_object!(GPURenderPipeline, label);
+super::resource!(GPURenderPipeline, bun_webgpu::RenderPipeline);
 
 fn parse_stencil_face(d: Option<Dict<'_>>) -> JsResult<wgt::StencilFaceState> {
     let Some(d) = d else {
@@ -194,11 +197,6 @@ pub(crate) fn parse_depth_stencil(d: &Dict<'_>) -> JsResult<wgt::DepthStencilSta
 }
 
 impl GPURenderPipeline {
-    #[inline]
-    pub(crate) fn id(&self) -> wgc::id::RenderPipelineId {
-        self.raw.id()
-    }
-
     pub(crate) fn create(
         global: &JSGlobalObject,
         device: &DeviceRef,
@@ -206,7 +204,8 @@ impl GPURenderPipeline {
     ) -> JsResult<(JSValue, Option<GpuError>)> {
         let d = Dict::new(global, descriptor, "GPURenderPipelineDescriptor")?;
         let label = d.label()?;
-        let layout = parse_layout(&d)?;
+        let mut held = Held::default();
+        let layout = parse_layout(&d, &mut held)?;
 
         let vertex = d.require_dict("vertex", "GPUVertexState")?;
         let mut buffers = Vec::new();
@@ -243,7 +242,7 @@ impl GPURenderPipeline {
             Ok(())
         })?;
         let vertex = pl::VertexState {
-            stage: parse_stage(&vertex)?,
+            stage: parse_stage(&vertex, &mut held)?,
             buffers: Cow::Owned(buffers),
         };
 
@@ -329,7 +328,7 @@ impl GPURenderPipeline {
                     Ok(())
                 })?;
                 Some(pl::FragmentState {
-                    stage: parse_stage(&f)?,
+                    stage: parse_stage(&f, &mut held)?,
                     targets: Cow::Owned(targets),
                 })
             }
@@ -351,9 +350,10 @@ impl GPURenderPipeline {
             desc.multisample.count = 0;
         }
         let (id, err) = instance().device_create_render_pipeline(device.id(), &desc, None);
+        drop(held);
         let value = GPURenderPipeline {
             device: Rc::clone(device),
-            raw: bun_webgpu::RenderPipeline::new(id),
+            raw: Rc::new(bun_webgpu::RenderPipeline::new(id)),
             label: JsCell::new(label),
         }
         .to_js(global);

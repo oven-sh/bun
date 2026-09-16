@@ -43,7 +43,7 @@ enum MapState {
 #[bun_jsc::JsClass]
 pub struct GPUBuffer {
     device: DeviceRef,
-    raw: bun_webgpu::Buffer,
+    raw: Rc<bun_webgpu::Buffer>,
     label: JsCell<bun_core::String>,
     size: u64,
     usage: u32,
@@ -60,6 +60,7 @@ pub struct GPUBuffer {
 }
 
 super::gpu_object!(GPUBuffer, label);
+super::resource!(GPUBuffer, bun_webgpu::Buffer);
 
 struct MapWait;
 
@@ -156,11 +157,6 @@ impl Waiter for MapWait {
 }
 
 impl GPUBuffer {
-    #[inline]
-    pub(crate) fn id(&self) -> wgc::id::BufferId {
-        self.raw.id()
-    }
-
     pub(crate) fn create(
         global: &JSGlobalObject,
         device: &DeviceRef,
@@ -200,10 +196,14 @@ impl GPUBuffer {
             desc.usage = wgt::BufferUsages::empty();
         }
         let (id, err) = instance().device_create_buffer(device.id(), &desc, None);
-        let raw = bun_webgpu::Buffer::new(id);
+        let raw = Rc::new(bun_webgpu::Buffer::new(id));
         if let (false, Some(err)) = (invalid, err) {
-            if mapped_at_creation && matches!(err, wgc::resource::CreateBufferError::Device(_)) {
-                // Per spec, a failed allocation with mappedAtCreation throws instead of returning a buffer.
+            let out_of_memory = matches!(
+                err,
+                wgc::resource::CreateBufferError::Device(wgc::device::DeviceError::OutOfMemory)
+            );
+            if mapped_at_creation && out_of_memory {
+                // Per spec, a failed allocation with mappedAtCreation throws. A lost device still gets a mapped, invalid buffer.
                 return Err(range_error(
                     global,
                     format_args!(

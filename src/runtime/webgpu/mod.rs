@@ -67,6 +67,20 @@ macro_rules! gpu_object {
 }
 pub(crate) use gpu_object;
 
+/// Implements [`args::Resource`] for a class that keeps its handle in `raw`.
+macro_rules! resource {
+    ($ty:ident, $raw:ty) => {
+        impl $crate::webgpu::args::Resource for $ty {
+            type Raw = $raw;
+            #[inline]
+            fn handle(&self) -> &std::rc::Rc<$raw> {
+                &self.raw
+            }
+        }
+    };
+}
+pub(crate) use resource;
+
 /// `label` as wgpu wants it.
 pub(crate) fn wgpu_label(label: &bun_core::String) -> Option<std::borrow::Cow<'static, str>> {
     if label.is_empty() {

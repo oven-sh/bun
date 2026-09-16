@@ -611,6 +611,17 @@ pub(crate) fn parse_device_descriptor(
                 ))));
             };
             let value = args::to_u64(global, value, limit.name)?;
+            let alignment = limit.class == bun_webgpu::names::LimitClass::Alignment;
+            if alignment && !(value.is_power_of_two() && value <= u64::from(u32::MAX)) {
+                return Ok(Err(DescriptorError::Operation(format!(
+                    "requiredLimits: '{}' has to be a power of 2 below 2^32, got {value}",
+                    limit.name
+                ))));
+            }
+            // A value that is not better than the default leaves the default in place (WebGPU spec).
+            if !limit.is_better(value, (limit.get)(&limits)) {
+                continue;
+            }
             if !(limit.set)(&mut limits, value) {
                 return Ok(Err(DescriptorError::Operation(format!(
                     "requiredLimits: {value} is out of range for '{}'",

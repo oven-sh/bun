@@ -382,20 +382,41 @@ pub fn parse_feature(s: &[u8]) -> Option<wgt::Features> {
         .map(|(_, f)| *f)
 }
 
+/// The WebGPU spec's limit classes.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum LimitClass {
+    /// A higher value is better.
+    Maximum,
+    /// A lower value is better, and only a power of 2 is valid.
+    Alignment,
+}
+
 /// One `GPUSupportedLimits` attribute and the `wgt::Limits` field behind it.
 pub struct Limit {
     pub name: &'static str,
+    pub class: LimitClass,
     pub get: fn(&wgt::Limits) -> u64,
     /// Returns `false` when `value` does not fit the field.
     pub set: fn(&mut wgt::Limits, u64) -> bool,
 }
 
+impl Limit {
+    /// Whether `value` allows more programs than `other`.
+    pub fn is_better(&self, value: u64, other: u64) -> bool {
+        match self.class {
+            LimitClass::Maximum => value > other,
+            LimitClass::Alignment => value < other,
+        }
+    }
+}
+
 macro_rules! limits {
-    ($($name:literal => $field:ident: $ty:ty,)+) => {
+    ($($name:literal => $field:ident: $ty:ty = $class:ident,)+) => {
         /// Every limit the WebGPU spec defines, in spec order.
         pub const LIMITS: &[Limit] = &[$(
             Limit {
                 name: $name,
+                class: LimitClass::$class,
                 get: |l| u64::from(l.$field),
                 set: |l, v| match <$ty>::try_from(v) {
                     Ok(v) => {
@@ -410,37 +431,37 @@ macro_rules! limits {
 }
 
 limits! {
-    "maxTextureDimension1D" => max_texture_dimension_1d: u32,
-    "maxTextureDimension2D" => max_texture_dimension_2d: u32,
-    "maxTextureDimension3D" => max_texture_dimension_3d: u32,
-    "maxTextureArrayLayers" => max_texture_array_layers: u32,
-    "maxBindGroups" => max_bind_groups: u32,
-    "maxBindGroupsPlusVertexBuffers" => max_bind_groups_plus_vertex_buffers: u32,
-    "maxBindingsPerBindGroup" => max_bindings_per_bind_group: u32,
-    "maxDynamicUniformBuffersPerPipelineLayout" => max_dynamic_uniform_buffers_per_pipeline_layout: u32,
-    "maxDynamicStorageBuffersPerPipelineLayout" => max_dynamic_storage_buffers_per_pipeline_layout: u32,
-    "maxSampledTexturesPerShaderStage" => max_sampled_textures_per_shader_stage: u32,
-    "maxSamplersPerShaderStage" => max_samplers_per_shader_stage: u32,
-    "maxStorageBuffersPerShaderStage" => max_storage_buffers_per_shader_stage: u32,
-    "maxStorageTexturesPerShaderStage" => max_storage_textures_per_shader_stage: u32,
-    "maxUniformBuffersPerShaderStage" => max_uniform_buffers_per_shader_stage: u32,
-    "maxUniformBufferBindingSize" => max_uniform_buffer_binding_size: u64,
-    "maxStorageBufferBindingSize" => max_storage_buffer_binding_size: u64,
-    "minUniformBufferOffsetAlignment" => min_uniform_buffer_offset_alignment: u32,
-    "minStorageBufferOffsetAlignment" => min_storage_buffer_offset_alignment: u32,
-    "maxVertexBuffers" => max_vertex_buffers: u32,
-    "maxBufferSize" => max_buffer_size: u64,
-    "maxVertexAttributes" => max_vertex_attributes: u32,
-    "maxVertexBufferArrayStride" => max_vertex_buffer_array_stride: u32,
-    "maxInterStageShaderVariables" => max_inter_stage_shader_variables: u32,
-    "maxColorAttachments" => max_color_attachments: u32,
-    "maxColorAttachmentBytesPerSample" => max_color_attachment_bytes_per_sample: u32,
-    "maxComputeWorkgroupStorageSize" => max_compute_workgroup_storage_size: u32,
-    "maxComputeInvocationsPerWorkgroup" => max_compute_invocations_per_workgroup: u32,
-    "maxComputeWorkgroupSizeX" => max_compute_workgroup_size_x: u32,
-    "maxComputeWorkgroupSizeY" => max_compute_workgroup_size_y: u32,
-    "maxComputeWorkgroupSizeZ" => max_compute_workgroup_size_z: u32,
-    "maxComputeWorkgroupsPerDimension" => max_compute_workgroups_per_dimension: u32,
+    "maxTextureDimension1D" => max_texture_dimension_1d: u32 = Maximum,
+    "maxTextureDimension2D" => max_texture_dimension_2d: u32 = Maximum,
+    "maxTextureDimension3D" => max_texture_dimension_3d: u32 = Maximum,
+    "maxTextureArrayLayers" => max_texture_array_layers: u32 = Maximum,
+    "maxBindGroups" => max_bind_groups: u32 = Maximum,
+    "maxBindGroupsPlusVertexBuffers" => max_bind_groups_plus_vertex_buffers: u32 = Maximum,
+    "maxBindingsPerBindGroup" => max_bindings_per_bind_group: u32 = Maximum,
+    "maxDynamicUniformBuffersPerPipelineLayout" => max_dynamic_uniform_buffers_per_pipeline_layout: u32 = Maximum,
+    "maxDynamicStorageBuffersPerPipelineLayout" => max_dynamic_storage_buffers_per_pipeline_layout: u32 = Maximum,
+    "maxSampledTexturesPerShaderStage" => max_sampled_textures_per_shader_stage: u32 = Maximum,
+    "maxSamplersPerShaderStage" => max_samplers_per_shader_stage: u32 = Maximum,
+    "maxStorageBuffersPerShaderStage" => max_storage_buffers_per_shader_stage: u32 = Maximum,
+    "maxStorageTexturesPerShaderStage" => max_storage_textures_per_shader_stage: u32 = Maximum,
+    "maxUniformBuffersPerShaderStage" => max_uniform_buffers_per_shader_stage: u32 = Maximum,
+    "maxUniformBufferBindingSize" => max_uniform_buffer_binding_size: u64 = Maximum,
+    "maxStorageBufferBindingSize" => max_storage_buffer_binding_size: u64 = Maximum,
+    "minUniformBufferOffsetAlignment" => min_uniform_buffer_offset_alignment: u32 = Alignment,
+    "minStorageBufferOffsetAlignment" => min_storage_buffer_offset_alignment: u32 = Alignment,
+    "maxVertexBuffers" => max_vertex_buffers: u32 = Maximum,
+    "maxBufferSize" => max_buffer_size: u64 = Maximum,
+    "maxVertexAttributes" => max_vertex_attributes: u32 = Maximum,
+    "maxVertexBufferArrayStride" => max_vertex_buffer_array_stride: u32 = Maximum,
+    "maxInterStageShaderVariables" => max_inter_stage_shader_variables: u32 = Maximum,
+    "maxColorAttachments" => max_color_attachments: u32 = Maximum,
+    "maxColorAttachmentBytesPerSample" => max_color_attachment_bytes_per_sample: u32 = Maximum,
+    "maxComputeWorkgroupStorageSize" => max_compute_workgroup_storage_size: u32 = Maximum,
+    "maxComputeInvocationsPerWorkgroup" => max_compute_invocations_per_workgroup: u32 = Maximum,
+    "maxComputeWorkgroupSizeX" => max_compute_workgroup_size_x: u32 = Maximum,
+    "maxComputeWorkgroupSizeY" => max_compute_workgroup_size_y: u32 = Maximum,
+    "maxComputeWorkgroupSizeZ" => max_compute_workgroup_size_z: u32 = Maximum,
+    "maxComputeWorkgroupsPerDimension" => max_compute_workgroups_per_dimension: u32 = Maximum,
 }
 
 pub fn find_limit(name: &[u8]) -> Option<&'static Limit> {

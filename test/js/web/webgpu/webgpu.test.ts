@@ -223,11 +223,16 @@ describe.skipIf(!hasAdapter)("with a device", () => {
     await expect(adapter.requestDevice({ requiredLimits: { maxBindGroups: 1_000_000 } })).rejects.toMatchObject({
       name: "OperationError",
     });
+    // An alignment limit has to be a power of 2.
+    await expect(
+      adapter.requestDevice({ requiredLimits: { minUniformBufferOffsetAlignment: 300 } }),
+    ).rejects.toMatchObject({ name: "OperationError" });
 
+    // A value that is worse than the default leaves the default in place.
     const device = await adapter.requestDevice({
       label: "first",
       defaultQueue: { label: "main queue" },
-      requiredLimits: { maxBindGroups: 4 },
+      requiredLimits: { maxBindGroups: 1, minStorageBufferOffsetAlignment: 1024, maxBufferSize: undefined },
     });
     expect(device).toBeInstanceOf(GPUDevice);
     expect(device).toBeInstanceOf(EventTarget);
@@ -238,6 +243,7 @@ describe.skipIf(!hasAdapter)("with a device", () => {
     expect(device.queue).toBe(device.queue);
     expect(device.queue.label).toBe("main queue");
     expect(device.limits.maxBindGroups).toBe(4);
+    expect(device.limits.minStorageBufferOffsetAlignment).toBe(256);
     expect(device.features.has("core-features-and-limits")).toBe(true);
     expect(device.adapterInfo.description).toBe(adapter.info.description);
 
@@ -981,6 +987,12 @@ describe.skipIf(!hasAdapter)("with a device", () => {
 
     // A lost device stays quiet: no exception and no error event.
     device.createBuffer({ size: 16, usage: 0x8000 });
+    // mappedAtCreation still hands out a mapped buffer. Its ranges are zeroed memory.
+    const late = device.createBuffer({ size: 16, usage: GPUBufferUsage.COPY_SRC, mappedAtCreation: true });
+    expect(late.mapState).toBe("mapped");
+    expect(Array.from(new Uint8Array(late.getMappedRange()))).toEqual(new Array(16).fill(0));
+    late.unmap();
+    expect(late.mapState).toBe("unmapped");
     // The async pipeline calls resolve on it (with an invalid pipeline) and do not reject.
     expect(await device.createComputePipelineAsync({ layout: "auto", compute: { module } })).toBeInstanceOf(
       GPUComputePipeline,
@@ -1011,6 +1023,102 @@ describe.skipIf(!hasAdapter)("with a device", () => {
     expect(Array.from(new Uint32Array(readback.getMappedRange()))).toEqual([9, 8, 7, 6]);
     readback.unmap();
     device.destroy();
+  });
+
+  test("a call keeps the objects it reads alive while script collects garbage in the middle of it", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const adapter = await navigator.gpu.requestAdapter();
+          const device = await adapter.requestDevice();
+          // The objects that the getters and generators below hand out are garbage as soon as the call has read them.
+          function collect() {
+            for (let i = 0; i < 2000; i++) ({ a: [i, {}, "x" + i] });
+            Bun.gc(true);
+          }
+          const compute = "override x: f32 = 1.0; @group(0) @binding(0) var<storage, read_write> data: array<f32>; @compute @workgroup_size(1) fn main() { data[0] = x; }";
+          const draw = "@vertex fn vs() -> @builtin(position) vec4f { return vec4f(0, 0, 0, 1); } @fragment fn fs() -> @location(0) vec4f { return vec4f(1); }";
+          const layout = () => device.createBindGroupLayout({
+            entries: [{ binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } }],
+          });
+          const target = usage => device.createTexture({ size: [4, 4], format: "rgba8unorm", usage });
+          device.pushErrorScope("validation");
+
+          device.createComputePipeline({
+            layout: "auto",
+            compute: {
+              get module() { return device.createShaderModule({ code: compute }); },
+              constants: { get x() { collect(); return 1; } },
+            },
+          });
+          device.createPipelineLayout({
+            bindGroupLayouts: (function* () { yield layout(); collect(); yield layout(); collect(); })(),
+          });
+          device.createBindGroup({
+            get layout() { return layout(); },
+            entries: [{
+              binding: 0,
+              resource: {
+                get buffer() { return device.createBuffer({ size: 16, usage: GPUBufferUsage.STORAGE }); },
+                get offset() { collect(); return 0; },
+              },
+            }],
+          });
+          device.queue.submit((function* () {
+            for (let i = 0; i < 4; i++) { yield device.createCommandEncoder().finish(); collect(); }
+          })());
+
+          // A render bundle encoder resolves what it was given in finish(), not before.
+          const bundleEncoder = device.createRenderBundleEncoder({ colorFormats: ["rgba8unorm"] });
+          (() => {
+            const module = device.createShaderModule({ code: draw });
+            bundleEncoder.setPipeline(device.createRenderPipeline({
+              layout: "auto",
+              vertex: { module },
+              fragment: { module, targets: [{ format: "rgba8unorm" }] },
+            }));
+            bundleEncoder.setVertexBuffer(0, device.createBuffer({ size: 64, usage: GPUBufferUsage.VERTEX }));
+            bundleEncoder.setIndexBuffer(device.createBuffer({ size: 64, usage: GPUBufferUsage.INDEX }), "uint16");
+          })();
+          for (let i = 0; i < 3; i++) { collect(); await 0; }
+          bundleEncoder.draw(3);
+          const bundle = bundleEncoder.finish();
+
+          const encoder = device.createCommandEncoder();
+          encoder.copyBufferToTexture(
+            { get buffer() { return device.createBuffer({ size: 1024, usage: GPUBufferUsage.COPY_SRC }); }, bytesPerRow: 256 },
+            { get texture() { collect(); return target(GPUTextureUsage.COPY_DST); }, get mipLevel() { collect(); return 0; } },
+            [4, 4],
+          );
+          const pass = encoder.beginRenderPass({
+            colorAttachments: [{
+              get view() { return target(GPUTextureUsage.RENDER_ATTACHMENT).createView(); },
+              get clearValue() { collect(); return [0, 0, 0, 1]; },
+              loadOp: "clear",
+              storeOp: "store",
+            }],
+          });
+          pass.executeBundles((function* () {
+            yield bundle;
+            yield device.createRenderBundleEncoder({ colorFormats: ["rgba8unorm"] }).finish();
+            collect();
+          })());
+          pass.end();
+          device.queue.submit([encoder.finish()]);
+          await device.queue.onSubmittedWorkDone();
+          const error = await device.popErrorScope();
+          console.log(error === null ? "ok" : error.message);
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("ok\n");
+    expect(exitCode).toBe(0);
   });
 
   test("works in a Worker, and a Worker can be terminated with GPU work pending", async () => {

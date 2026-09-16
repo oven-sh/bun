@@ -9,7 +9,7 @@ use bun_jsc::{
 };
 use bun_webgpu::{GpuError, instance};
 
-use super::args::{self, BufferSource};
+use super::args::{self, BufferSource, Held};
 use super::device::DeviceRef;
 use super::texture::{parse_texel_copy_buffer_layout, parse_texel_copy_texture_info};
 use super::wait::{self, Waiter};
@@ -60,14 +60,15 @@ impl GPUQueue {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        let mut held = Held::default();
         let mut ids = Vec::new();
         args::for_each(global, callframe.argument(0), "submit", |item| {
-            let cb =
-                args::to_class::<GPUCommandBuffer>(global, item, "submit", "GPUCommandBuffer")?;
-            ids.push(cb.id());
+            ids.push(held.id::<GPUCommandBuffer>(global, item, "submit", "GPUCommandBuffer")?);
             Ok(())
         })?;
-        if let Err((_, err)) = instance().queue_submit(self.device.raw.queue_id(), &ids) {
+        let result = instance().queue_submit(self.device.raw.queue_id(), &ids);
+        drop(held);
+        if let Err((_, err)) = result {
             self.device.report(global, GpuError::from_wgpu(&err))?;
         }
         self.device.deliver_loss(global)?;
@@ -104,8 +105,9 @@ impl GPUQueue {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        let mut held = Held::default();
         let buffer =
-            args::to_class::<GPUBuffer>(global, callframe.argument(0), "writeBuffer", "GPUBuffer")?;
+            held.id::<GPUBuffer>(global, callframe.argument(0), "writeBuffer", "GPUBuffer")?;
         let buffer_offset =
             args::to_u64(global, callframe.argument(1), "writeBuffer: bufferOffset")?;
         let data_offset =
@@ -142,12 +144,8 @@ impl GPUQueue {
         // SAFETY: nothing between `from_js` above and this read runs JS.
         let bytes = unsafe { source.bytes() };
         let bytes = &bytes[start as usize..(start + byte_len) as usize];
-        let result = instance().queue_write_buffer(
-            self.device.raw.queue_id(),
-            buffer.id(),
-            buffer_offset,
-            bytes,
-        );
+        let result =
+            instance().queue_write_buffer(self.device.raw.queue_id(), buffer, buffer_offset, bytes);
         self.device.check_result(global, result)?;
         Ok(JSValue::UNDEFINED)
     }
@@ -157,10 +155,12 @@ impl GPUQueue {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        let mut held = Held::default();
         let destination = parse_texel_copy_texture_info(
             global,
             callframe.argument(0),
             "writeTexture: destination",
+            &mut held,
         )?;
         let layout = parse_texel_copy_buffer_layout(
             global,

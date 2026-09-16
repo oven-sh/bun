@@ -1,13 +1,14 @@
 //! `GPUShaderModule`.
 
 use std::borrow::Cow;
+use std::rc::Rc;
 
 use bun_jsc::{CallFrame, JSGlobalObject, JSPromise, JSValue, JsCell, JsClass, JsResult};
 use bun_webgpu::wgc::naga;
 use bun_webgpu::wgc::pipeline::{
     CreateShaderModuleError, ShaderModuleDescriptor, ShaderModuleSource,
 };
-use bun_webgpu::{instance, wgc, wgt};
+use bun_webgpu::{instance, wgt};
 
 use super::args::Dict;
 use super::device::DeviceRef;
@@ -24,12 +25,13 @@ struct Message {
 
 #[bun_jsc::JsClass]
 pub struct GPUShaderModule {
-    raw: bun_webgpu::ShaderModule,
+    raw: Rc<bun_webgpu::ShaderModule>,
     label: JsCell<bun_core::String>,
     messages: Vec<Message>,
 }
 
 super::gpu_object!(GPUShaderModule, label);
+super::resource!(GPUShaderModule, bun_webgpu::ShaderModule);
 
 fn utf16_len(s: &str) -> u32 {
     s.chars().map(|c| c.len_utf16() as u32).sum()
@@ -86,11 +88,6 @@ fn compilation_messages(err: &CreateShaderModuleError, source: &str) -> Vec<Mess
 }
 
 impl GPUShaderModule {
-    #[inline]
-    pub(crate) fn id(&self) -> wgc::id::ShaderModuleId {
-        self.raw.id()
-    }
-
     pub(crate) fn create(
         global: &JSGlobalObject,
         device: &DeviceRef,
@@ -113,7 +110,7 @@ impl GPUShaderModule {
             ShaderModuleSource::Wgsl(Cow::Borrowed(&code)),
             None,
         );
-        let raw = bun_webgpu::ShaderModule::new(id);
+        let raw = Rc::new(bun_webgpu::ShaderModule::new(id));
         let messages = err
             .as_ref()
             .map_or_else(Vec::new, |e| compilation_messages(e, &code));

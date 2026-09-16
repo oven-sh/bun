@@ -7,7 +7,7 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsCell, JsClass, JsResult, Str
 use bun_webgpu::names;
 use bun_webgpu::{GpuError, instance, wgc, wgt};
 
-use super::args::{self, Dict};
+use super::args::{self, Dict, Held};
 use super::device::DeviceRef;
 
 /// Every `GPUTextureUsage` bit the spec defines.
@@ -16,7 +16,7 @@ const ALL_USAGES: u32 = 0x3F;
 #[bun_jsc::JsClass]
 pub struct GPUTexture {
     device: DeviceRef,
-    raw: bun_webgpu::Texture,
+    raw: Rc<bun_webgpu::Texture>,
     label: JsCell<bun_core::String>,
     size: wgt::Extent3d,
     mip_level_count: u32,
@@ -28,13 +28,9 @@ pub struct GPUTexture {
 }
 
 super::gpu_object!(GPUTexture, label);
+super::resource!(GPUTexture, bun_webgpu::Texture);
 
 impl GPUTexture {
-    #[inline]
-    pub(crate) fn id(&self) -> wgc::id::TextureId {
-        self.raw.id()
-    }
-
     pub(crate) fn create(
         global: &JSGlobalObject,
         device: &DeviceRef,
@@ -95,7 +91,7 @@ impl GPUTexture {
         };
         Ok(GPUTexture {
             device: Rc::clone(device),
-            raw,
+            raw: Rc::new(raw),
             label: JsCell::new(label),
             size,
             mip_level_count,
@@ -158,7 +154,7 @@ impl GPUTexture {
             desc.range.base_mip_level = u32::MAX;
         }
         let (id, err) = instance().texture_create_view(self.raw.id(), &desc, None);
-        let raw = bun_webgpu::TextureView::new(id);
+        let raw = Rc::new(bun_webgpu::TextureView::new(id));
         if !unknown_usage {
             self.device.check(global, err)?;
         }
@@ -230,33 +226,23 @@ impl GPUTexture {
 
 #[bun_jsc::JsClass]
 pub struct GPUTextureView {
-    raw: bun_webgpu::TextureView,
+    raw: Rc<bun_webgpu::TextureView>,
     label: JsCell<bun_core::String>,
 }
 
 super::gpu_object!(GPUTextureView, label);
-
-impl GPUTextureView {
-    #[inline]
-    pub(crate) fn id(&self) -> wgc::id::TextureViewId {
-        self.raw.id()
-    }
-}
+super::resource!(GPUTextureView, bun_webgpu::TextureView);
 
 #[bun_jsc::JsClass]
 pub struct GPUSampler {
-    raw: bun_webgpu::Sampler,
+    raw: Rc<bun_webgpu::Sampler>,
     label: JsCell<bun_core::String>,
 }
 
 super::gpu_object!(GPUSampler, label);
+super::resource!(GPUSampler, bun_webgpu::Sampler);
 
 impl GPUSampler {
-    #[inline]
-    pub(crate) fn id(&self) -> wgc::id::SamplerId {
-        self.raw.id()
-    }
-
     pub(crate) fn create(
         global: &JSGlobalObject,
         device: &DeviceRef,
@@ -309,7 +295,7 @@ impl GPUSampler {
             border_color: None,
         };
         let (id, err) = instance().device_create_sampler(device.id(), &desc, None);
-        let raw = bun_webgpu::Sampler::new(id);
+        let raw = Rc::new(bun_webgpu::Sampler::new(id));
         device.check(global, err)?;
         Ok(GPUSampler {
             raw,
@@ -324,11 +310,11 @@ pub(crate) fn parse_texel_copy_texture_info(
     global: &JSGlobalObject,
     value: JSValue,
     what: &'static str,
+    held: &mut Held,
 ) -> JsResult<wgt::TexelCopyTextureInfo<wgc::id::TextureId>> {
     let d = Dict::new(global, value, "GPUTexelCopyTextureInfo")?;
-    let texture = d.require_class::<GPUTexture>("texture", "GPUTexture")?;
     Ok(wgt::TexelCopyTextureInfo {
-        texture: texture.id(),
+        texture: d.require_id::<GPUTexture>(held, "texture", "GPUTexture")?,
         mip_level: d.u32_or("mipLevel", 0)?,
         origin: match d.get("origin")? {
             Some(v) => args::to_origin3d(global, v, what)?,
@@ -361,12 +347,12 @@ pub(crate) fn parse_texel_copy_buffer_layout(
 pub(crate) fn parse_texel_copy_buffer_info(
     global: &JSGlobalObject,
     value: JSValue,
+    held: &mut Held,
 ) -> JsResult<wgt::TexelCopyBufferInfo<wgc::id::BufferId>> {
     let layout = parse_texel_copy_buffer_layout(global, value, "GPUTexelCopyBufferInfo")?;
     let d = Dict::new(global, value, "GPUTexelCopyBufferInfo")?;
-    let buffer = d.require_class::<super::GPUBuffer>("buffer", "GPUBuffer")?;
     Ok(wgt::TexelCopyBufferInfo {
-        buffer: buffer.id(),
+        buffer: d.require_id::<super::GPUBuffer>(held, "buffer", "GPUBuffer")?,
         layout,
     })
 }

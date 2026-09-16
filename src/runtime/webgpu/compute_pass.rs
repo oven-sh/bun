@@ -6,7 +6,7 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsCell, JsClass, JsResult};
 use bun_webgpu::wgc::command::{ComputePassDescriptor, PassTimestampWrites};
 use bun_webgpu::{instance, wgc};
 
-use super::args::{self, Dict};
+use super::args::{self, Dict, Held};
 use super::bind::parse_set_bind_group;
 use super::device::DeviceRef;
 use super::{GPUBuffer, GPUComputePipeline, GPUQuerySet};
@@ -24,14 +24,13 @@ super::gpu_object!(GPUComputePassEncoder, label);
 pub(crate) fn parse_timestamp_writes(
     d: &Dict<'_>,
     name: &'static str,
+    held: &mut Held,
 ) -> JsResult<Option<PassTimestampWrites>> {
     let Some(t) = d.dict("timestampWrites", name)? else {
         return Ok(None);
     };
     Ok(Some(PassTimestampWrites {
-        query_set: t
-            .require_class::<GPUQuerySet>("querySet", "GPUQuerySet")?
-            .id(),
+        query_set: t.require_id::<GPUQuerySet>(held, "querySet", "GPUQuerySet")?,
         beginning_of_pass_write_index: t.u32("beginningOfPassWriteIndex")?,
         end_of_pass_write_index: t.u32("endOfPassWriteIndex")?,
     }))
@@ -46,11 +45,17 @@ impl GPUComputePassEncoder {
     ) -> JsResult<JSValue> {
         let d = Dict::new(global, descriptor, "GPUComputePassDescriptor")?;
         let label = d.label()?;
+        let mut held = Held::default();
         let desc = ComputePassDescriptor {
             label: super::wgpu_label(&label),
-            timestamp_writes: parse_timestamp_writes(&d, "GPUComputePassTimestampWrites")?,
+            timestamp_writes: parse_timestamp_writes(
+                &d,
+                "GPUComputePassTimestampWrites",
+                &mut held,
+            )?,
         };
         let (id, err) = instance().command_encoder_begin_compute_pass_with_id(encoder, &desc, None);
+        drop(held);
         let raw = bun_webgpu::ComputePassEncoder::new(id);
         device.check(global, err)?;
         Ok(GPUComputePassEncoder {
@@ -66,13 +71,14 @@ impl GPUComputePassEncoder {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let pipeline = args::to_class::<GPUComputePipeline>(
+        let mut held = Held::default();
+        let pipeline = held.id::<GPUComputePipeline>(
             global,
             callframe.argument(0),
             "setPipeline",
             "GPUComputePipeline",
         )?;
-        let result = instance().compute_pass_set_pipeline_with_id(self.raw.id(), pipeline.id());
+        let result = instance().compute_pass_set_pipeline_with_id(self.raw.id(), pipeline);
         self.device.check_result(global, result)?;
         Ok(JSValue::UNDEFINED)
     }
@@ -82,7 +88,8 @@ impl GPUComputePassEncoder {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let (index, bind_group, offsets) = parse_set_bind_group(global, callframe)?;
+        let mut held = Held::default();
+        let (index, bind_group, offsets) = parse_set_bind_group(global, callframe, &mut held)?;
         let result = instance().compute_pass_set_bind_group_with_id(
             self.raw.id(),
             index,
@@ -117,7 +124,8 @@ impl GPUComputePassEncoder {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let buffer = args::to_class::<GPUBuffer>(
+        let mut held = Held::default();
+        let buffer = held.id::<GPUBuffer>(
             global,
             callframe.argument(0),
             "dispatchWorkgroupsIndirect",
@@ -130,7 +138,7 @@ impl GPUComputePassEncoder {
         )?;
         let result = instance().compute_pass_dispatch_workgroups_indirect_with_id(
             self.raw.id(),
-            buffer.id(),
+            buffer,
             offset,
         );
         self.device.check_result(global, result)?;

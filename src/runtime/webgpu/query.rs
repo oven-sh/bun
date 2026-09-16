@@ -1,17 +1,18 @@
 //! `GPUQuerySet`.
 
 use std::cell::Cell;
+use std::rc::Rc;
 
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsCell, JsClass, JsResult, StringJsc as _};
 use bun_webgpu::names::{self, QueryKind};
-use bun_webgpu::{instance, wgc, wgt};
+use bun_webgpu::{instance, wgt};
 
 use super::args::Dict;
 use super::device::DeviceRef;
 
 #[bun_jsc::JsClass]
 pub struct GPUQuerySet {
-    raw: bun_webgpu::QuerySet,
+    raw: Rc<bun_webgpu::QuerySet>,
     label: JsCell<bun_core::String>,
     kind: QueryKind,
     count: u32,
@@ -19,13 +20,9 @@ pub struct GPUQuerySet {
 }
 
 super::gpu_object!(GPUQuerySet, label);
+super::resource!(GPUQuerySet, bun_webgpu::QuerySet);
 
 impl GPUQuerySet {
-    #[inline]
-    pub(crate) fn id(&self) -> wgc::id::QuerySetId {
-        self.raw.id()
-    }
-
     pub(crate) fn create(
         global: &JSGlobalObject,
         device: &DeviceRef,
@@ -41,7 +38,7 @@ impl GPUQuerySet {
             count,
         };
         let (id, err) = instance().device_create_query_set(device.id(), &desc, None);
-        let raw = bun_webgpu::QuerySet::new(id);
+        let raw = Rc::new(bun_webgpu::QuerySet::new(id));
         device.check(global, err)?;
         Ok(GPUQuerySet {
             raw,

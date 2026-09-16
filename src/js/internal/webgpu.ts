@@ -27,7 +27,10 @@ class ReadonlyStringSet {
 
   constructor(key: unknown, names: string[]) {
     checkKey(key);
-    this.#set = new Set(names);
+    // $add and $has do not look at Set.prototype, which script can change.
+    const set = new Set<string>();
+    for (let i = 0; i < names.length; i++) set.$add(names[i]);
+    this.#set = set;
   }
 
   get size() {
@@ -35,7 +38,7 @@ class ReadonlyStringSet {
   }
 
   has(value: string) {
-    return this.#set.has(value);
+    return this.#set.$has(value);
   }
 
   keys() {
@@ -226,7 +229,11 @@ class GPUCompilationInfo {
 
   constructor(key: unknown, messages: CompilationMessage[]) {
     checkKey(key);
-    this.#messages = Object.freeze(messages.map(m => new GPUCompilationMessage(kConstruct, m)));
+    const list = $newArrayWithSize<GPUCompilationMessage>(messages.length);
+    for (let i = 0; i < messages.length; i++) {
+      $putByValDirect(list, i, new GPUCompilationMessage(kConstruct, messages[i]));
+    }
+    this.#messages = Object.freeze(list);
   }
 
   get messages() {

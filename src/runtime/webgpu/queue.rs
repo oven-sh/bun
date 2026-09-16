@@ -57,6 +57,10 @@ impl GPUQueue {
             ids.push(held.id::<GPUCommandBuffer>(global, item, "submit", "GPUCommandBuffer")?);
             Ok(())
         })?;
+        // An exit waits for the GPU to go idle, and a Worker can still be in a render loop.
+        if bun_webgpu::exiting() {
+            return Ok(JSValue::UNDEFINED);
+        }
         let result = instance().queue_submit(self.device.raw.queue_id(), &ids);
         drop(held);
         if let Err((_, err)) = result {

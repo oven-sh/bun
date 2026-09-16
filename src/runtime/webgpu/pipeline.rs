@@ -12,11 +12,22 @@ use super::args::{self, Dict, Held};
 use super::device::DeviceRef;
 use super::{GPUBindGroupLayout, GPUPipelineLayout, GPUShaderModule};
 
-/// A pipeline whose shader needs more stack than a thread can have.
-fn too_large() -> GpuError {
+/// A pipeline that got no compile thread. The thread's stack is sized from the shader source, so a huge source is the likely reason.
+fn no_compile_thread() -> GpuError {
     GpuError::validation(String::from(
-        "the shader source is too large to compile: naga needs a stack proportional to it",
+        "could not create the thread that compiles the pipeline (its stack is sized from the shader source length)",
     ))
+}
+
+/// A module wgpu-core rejects as invalid: a pipeline that names it fails before anything is compiled.
+fn invalid_module(device: wgc::id::DeviceId) -> bun_webgpu::ShaderModule {
+    let desc = pl::ShaderModuleDescriptor {
+        label: None,
+        runtime_checks: wgt::ShaderRuntimeChecks::checked(),
+    };
+    let source = pl::ShaderModuleSource::Wgsl(Cow::Borrowed("not compiled"));
+    let (id, _) = instance().device_create_shader_module(device, &desc, source, None);
+    bun_webgpu::ShaderModule::new(id)
 }
 
 /// `layout: GPUPipelineLayout | "auto"`.
@@ -87,7 +98,7 @@ impl GPUComputePipeline {
         let label = d.label()?;
         let mut held = Held::default();
         let mut source_len = 0;
-        let desc = pl::ComputePipelineDescriptor {
+        let mut desc = pl::ComputePipelineDescriptor {
             label: super::wgpu_label(&label),
             layout: parse_layout(&d, &mut held)?,
             stage: parse_stage(
@@ -102,8 +113,14 @@ impl GPUComputePipeline {
             instance().device_create_compute_pipeline(device_id, &desc, None)
         });
         drop(held);
-        let Some((id, err)) = compiled else {
-            return Ok((JSValue::UNDEFINED, Some(too_large())));
+        let (id, err) = match compiled {
+            Some((id, err)) => (id, err.map(|e| GpuError::from_wgpu(&e))),
+            None => {
+                let module = invalid_module(device_id);
+                desc.stage.module = module.id();
+                let (id, _) = instance().device_create_compute_pipeline(device_id, &desc, None);
+                (id, Some(no_compile_thread()))
+            }
         };
         let value = GPUComputePipeline {
             device: Rc::clone(device),
@@ -111,7 +128,7 @@ impl GPUComputePipeline {
             label: JsCell::new(label),
         }
         .to_js(global);
-        Ok((value, err.map(|e| GpuError::from_wgpu(&e))))
+        Ok((value, err))
     }
 
     pub(crate) fn get_bind_group_layout(
@@ -369,8 +386,15 @@ impl GPURenderPipeline {
             instance().device_create_render_pipeline(device_id, &desc, None)
         });
         drop(held);
-        let Some((id, err)) = compiled else {
-            return Ok((JSValue::UNDEFINED, Some(too_large())));
+        let (id, err) = match compiled {
+            Some((id, err)) => (id, err.map(|e| GpuError::from_wgpu(&e))),
+            None => {
+                let module = invalid_module(device_id);
+                desc.vertex.stage.module = module.id();
+                desc.fragment = None;
+                let (id, _) = instance().device_create_render_pipeline(device_id, &desc, None);
+                (id, Some(no_compile_thread()))
+            }
         };
         let value = GPURenderPipeline {
             device: Rc::clone(device),
@@ -382,7 +406,7 @@ impl GPURenderPipeline {
             Some(mask) => Some(GpuError::validation(format!(
                 "createRenderPipeline: writeMask 0x{mask:x} has bits that are not a GPUColorWrite"
             ))),
-            None => err.map(|e| GpuError::from_wgpu(&e)),
+            None => err,
         };
         Ok((value, err))
     }

@@ -3,7 +3,7 @@
 // The proof that `wgpu_core::global::Global` is `Sync` is deeper than the default of 128.
 #![recursion_limit = "256"]
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Once, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -46,15 +46,23 @@ pub fn compile<R: Send>(source_len: usize, f: impl FnOnce() -> R + Send) -> Opti
     };
     const BASE: usize = 8 * 1024 * 1024;
     let stack = BASE.saturating_add(source_len.saturating_mul(PER_SOURCE_BYTE));
-    std::thread::scope(|scope| {
-        std::thread::Builder::new()
-            .name(String::from("bun-webgpu-compile"))
-            .stack_size(stack)
-            .spawn_scoped(scope, f)
-            .ok()?
-            .join()
-            .ok()
-    })
+    // Counted before the check, so the exit either sees this compile or this sees the exit.
+    COMPILING.fetch_add(1, Ordering::AcqRel);
+    let compiled = if exiting() {
+        None
+    } else {
+        std::thread::scope(|scope| {
+            std::thread::Builder::new()
+                .name(String::from("bun-webgpu-compile"))
+                .stack_size(stack)
+                .spawn_scoped(scope, f)
+                .ok()?
+                .join()
+                .ok()
+        })
+    };
+    COMPILING.fetch_sub(1, Ordering::AcqRel);
+    compiled
 }
 
 /// A wgpu-core id that is unregistered when the value drops. wgpu-core panics on an id it no longer knows.
@@ -133,14 +141,19 @@ owned_id!(
 /// A device that exists, for [`wait_for_idle_at_exit`].
 struct LiveDevice {
     id: id::DeviceId,
-    queue: id::QueueId,
     /// [`release_device`] is waiting for its queue on its own thread.
     releasing: bool,
 }
 
 static DEVICES: Guarded<Vec<LiveDevice>> = Guarded::new(Vec::new());
+static COMPILING: AtomicUsize = AtomicUsize::new(0);
 static IDLE_AT_EXIT: AtomicBool = AtomicBool::new(false);
 static EXITING: AtomicBool = AtomicBool::new(false);
+
+/// The process is on its way out. A Worker can still run script: its new submissions and compiles are dropped, so that the GPU can go idle.
+pub fn exiting() -> bool {
+    EXITING.load(Ordering::Acquire)
+}
 
 /// How long an exit waits for the GPU to go idle. A shader that does not end has to lose.
 const EXIT_WAIT: Duration = Duration::from_secs(10);
@@ -148,7 +161,7 @@ const EXIT_WAIT: Duration = Duration::from_secs(10);
 /// How long an exit waits for a release that is already in progress. That release has its own wait, which cannot be cut short.
 const RELEASE_WAIT: Duration = Duration::from_secs(1);
 
-/// Waits for the GPU to go idle, then releases every device. Runs on its own thread: wgpu-core's locks read thread-local data, which the exiting thread no longer has.
+/// Waits for the GPU and the driver's compiler to go idle. Every id stays registered: a Worker can still run script that uses one. Runs on its own thread: wgpu-core's locks read thread-local data, which the exiting thread no longer has.
 fn drain_devices() {
     let release_deadline = Instant::now() + RELEASE_WAIT;
     while DEVICES.lock().iter().any(|device| device.releasing) {
@@ -159,31 +172,25 @@ fn drain_devices() {
     }
     let deadline = Instant::now() + EXIT_WAIT;
     loop {
-        let busy = DEVICES.lock().iter().any(|device| {
-            !device.releasing
-                && matches!(
-                    instance().device_poll(device.id, wgt::PollType::Poll),
-                    Ok(status) if !status.is_queue_empty()
-                )
-        });
+        let busy = COMPILING.load(Ordering::Acquire) != 0
+            || DEVICES.lock().iter().any(|device| {
+                !device.releasing
+                    && matches!(
+                        instance().device_poll(device.id, wgt::PollType::Poll),
+                        Ok(status) if !status.is_queue_empty()
+                    )
+            });
         if !busy || Instant::now() >= deadline {
             break;
         }
         std::thread::sleep(Duration::from_millis(1));
-    }
-    // Every poller is a no-op from here, so nothing else reaches the ids below.
-    EXITING.store(true, Ordering::Release);
-    for device in core::mem::take(&mut *DEVICES.lock()) {
-        if !device.releasing {
-            instance().queue_drop(device.queue);
-            instance().device_drop(device.id);
-        }
     }
     IDLE_AT_EXIT.store(true, Ordering::Release);
 }
 
 /// `exit()` unloads the GPU driver while its own threads still run or compile a submission, which crashes inside the driver.
 extern "C" fn wait_for_idle_at_exit() {
+    EXITING.store(true, Ordering::Release);
     if DEVICES.lock().is_empty() {
         return;
     }
@@ -223,7 +230,6 @@ impl Device {
         AT_EXIT.call_once(|| bun_core::add_exit_callback(wait_for_idle_at_exit));
         DEVICES.lock().push(LiveDevice {
             id: device,
-            queue,
             releasing: false,
         });
         Self {
@@ -243,9 +249,6 @@ impl Device {
 
     /// Fires the ready callbacks; `false` if the device is lost. Never a timed `Wait`: gfx-rs/wgpu#9958 aborts on it.
     pub fn poll(&self) -> bool {
-        if EXITING.load(Ordering::Acquire) {
-            return false;
-        }
         let _exclusive = self.poll_lock.lock();
         instance()
             .device_poll(self.device, wgt::PollType::Poll)
@@ -262,9 +265,6 @@ impl Device {
 impl Drop for Device {
     fn drop(&mut self) {
         let (device, queue) = (self.device, self.queue);
-        if EXITING.load(Ordering::Acquire) {
-            return;
-        }
         if let Some(live) = DEVICES.lock().iter_mut().find(|live| live.id == device) {
             live.releasing = true;
         }

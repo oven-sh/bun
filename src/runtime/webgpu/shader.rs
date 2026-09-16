@@ -8,15 +8,17 @@ use bun_webgpu::wgc::naga;
 use bun_webgpu::wgc::pipeline::{
     CreateShaderModuleError, ShaderModuleDescriptor, ShaderModuleSource,
 };
-use bun_webgpu::{instance, wgt};
+use bun_webgpu::{GpuError, instance, wgt};
 
 use super::args::Dict;
 use super::device::DeviceRef;
 use super::js_module;
 
-/// Stands in for a source too large to compile: invalid WGSL, so the module is invalid and carries this as its error.
-const TOO_LARGE: &str =
-    "// the shader source is too large to compile\nthe shader source is too large to compile";
+/// Compiled in place of a source that got no compile thread: invalid WGSL, so the module is invalid.
+const NOT_COMPILED: &str = "not compiled";
+
+/// What script is told then. The thread's stack is sized from the source, so a huge source is the likely reason.
+const NO_COMPILE_THREAD: &str = "createShaderModule: could not create the thread that compiles the shader (its stack is sized from the source length)";
 
 /// One `GPUCompilationMessage`. naga reports UTF-8 byte offsets; the spec wants UTF-16 units.
 struct Message {
@@ -123,15 +125,22 @@ impl GPUShaderModule {
                 None,
             )
         });
-        let (id, err) = match compiled {
-            Some(compiled) => compiled,
-            // The compile thread needs a stack proportional to the source: nothing compiles this one.
-            None => instance().device_create_shader_module(
+        let Some((id, err)) = compiled else {
+            // wgpu-core hands out an invalid module only from a failed creation. Its error is about the stand-in, not about `code`.
+            let (id, _) = instance().device_create_shader_module(
                 device_id,
                 &desc,
-                ShaderModuleSource::Wgsl(Cow::Borrowed(TOO_LARGE)),
+                ShaderModuleSource::Wgsl(Cow::Borrowed(NOT_COMPILED)),
                 None,
-            ),
+            );
+            device.report(global, GpuError::validation(NO_COMPILE_THREAD))?;
+            return Ok(GPUShaderModule {
+                raw: Rc::new(bun_webgpu::ShaderModule::new(id)),
+                label: JsCell::new(label),
+                messages: vec![message_at(String::from(NO_COMPILE_THREAD), &code, None)],
+                source_len: code.len(),
+            }
+            .to_js(global));
         };
         let raw = Rc::new(bun_webgpu::ShaderModule::new(id));
         let messages = err

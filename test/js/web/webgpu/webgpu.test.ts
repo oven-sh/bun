@@ -1273,6 +1273,54 @@ describe.skipIf(!hasAdapter)("with a device", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("process.exit() on the main thread while a Worker submits GPU work", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const source = \`
+            const adapter = await navigator.gpu.requestAdapter();
+            const device = await adapter.requestDevice();
+            const module = device.createShaderModule({
+              code: "@group(0) @binding(0) var<storage, read_write> d: array<u32>; @compute @workgroup_size(64) fn main(@builtin(global_invocation_id) i: vec3<u32>) { d[i.x] = d[i.x] * 3u + 1u; }",
+            });
+            const pipeline = device.createComputePipeline({ layout: "auto", compute: { module } });
+            const data = device.createBuffer({ size: 65536 * 4, usage: GPUBufferUsage.STORAGE });
+            const bindGroup = device.createBindGroup({
+              layout: pipeline.getBindGroupLayout(0),
+              entries: [{ binding: 0, resource: { buffer: data } }],
+            });
+            postMessage("ready");
+            for (;;) {
+              const encoder = device.createCommandEncoder();
+              const pass = encoder.beginComputePass();
+              pass.setPipeline(pipeline);
+              pass.setBindGroup(0, bindGroup);
+              pass.dispatchWorkgroups(256);
+              pass.end();
+              device.queue.submit([encoder.finish()]);
+              device.createBuffer({ size: 64, usage: GPUBufferUsage.COPY_DST });
+              await 0;
+            }
+          \`;
+          // The Worker keeps calling into wgpu-core while this thread exits, so the exit must leave
+          // every id registered: wgpu-core panics on an id it no longer knows.
+          const worker = new Worker(URL.createObjectURL(new Blob([source])));
+          await new Promise(resolve => (worker.onmessage = resolve));
+          console.log("exiting");
+          process.exit(7);
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("exiting\n");
+    expect(exitCode).toBe(7);
+  });
+
   test("a device that becomes garbage while its work runs does not block the collector", async () => {
     await using proc = Bun.spawn({
       cmd: [

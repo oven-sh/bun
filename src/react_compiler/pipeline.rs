@@ -553,7 +553,7 @@ fn run_hir_passes(
     if env.config.enable_function_outlining {
         timed!(
             "OutlineFunctions",
-            crate::optimization::outline_functions(hir, env, &fbt_operands)
+            crate::optimization::outline_functions(hir, env, &fbt_operands.values)
         );
     }
 
@@ -652,7 +652,11 @@ fn run_hir_passes(
     );
     timed!(
         "PromoteUsedTemporaries",
-        crate::reactive_scopes::promote_used_temporaries(&mut reactive_fn, env, &fbt_operands)
+        crate::reactive_scopes::promote_used_temporaries(
+            &mut reactive_fn,
+            env,
+            &fbt_operands.inline
+        )
     );
     timed!(
         "ExtractScopeDeclarationsFromDestructuring",

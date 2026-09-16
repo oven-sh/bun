@@ -58,7 +58,7 @@ struct PrunedInfo {
 pub(crate) fn promote_used_temporaries(
     func: &mut ReactiveFunction,
     env: &mut Environment,
-    fbt_operands: &HashSet<IdentifierId>,
+    inline_macro_operands: &HashSet<IdentifierId>,
 ) {
     let mut state = State {
         tags: HashSet::new(),
@@ -83,8 +83,7 @@ pub(crate) fn promote_used_temporaries(
     promote_temporaries_block(&func.body, &mut state, env);
 
     // Phase 3: promote interposed temporaries
-    // Not in upstream: a macro such as fbt rejects a variable in place of one of its operands.
-    let mut consts: HashSet<IdentifierId> = fbt_operands.clone();
+    let mut consts: HashSet<IdentifierId> = HashSet::new();
     let mut globals: HashSet<IdentifierId> = HashSet::new();
     for param in &func.params {
         match param {
@@ -96,7 +95,7 @@ pub(crate) fn promote_used_temporaries(
             }
         }
     }
-    let mut inter_state = InterState::new();
+    let mut inter_state = InterState::new(inline_macro_operands);
     promote_interposed_block(
         &func.body,
         &mut state,
@@ -584,7 +583,7 @@ struct Statements {
 /// the effect of the whole expression that it prints as. A use promotes the temporary if a
 /// statement after its definition conflicts with it. The promoted temporary is then a statement
 /// at its own position.
-struct InterState {
+struct InterState<'a> {
     /// Keyed by declaration, as in codegen: the use of the result of a value block has another
     /// identifier than its definition.
     temporaries: IdMap<DeclarationId, Temporary>,
@@ -593,15 +592,21 @@ struct InterState {
     /// Inside a value block, an instruction with no temporary result prints in place in the
     /// expression of that block. It is a statement only for the uses inside the same block.
     value_block_statements: Option<Statements>,
+    /// A macro such as fbt rejects a variable in place of these operands. They stay inline, and
+    /// the operands inside them get the names.
+    inline_macro_operands: &'a HashSet<IdentifierId>,
+    operands_of_macro_operands: IdMap<DeclarationId, Vec<Place>>,
 }
 
-impl InterState {
-    fn new() -> Self {
+impl<'a> InterState<'a> {
+    fn new(inline_macro_operands: &'a HashSet<IdentifierId>) -> Self {
         InterState {
             temporaries: IdMap::new(),
             position: 0,
             statements: Statements::default(),
             value_block_statements: None,
+            inline_macro_operands,
+            operands_of_macro_operands: IdMap::new(),
         }
     }
 
@@ -663,7 +668,7 @@ impl InterState {
 fn promote_interposed_block(
     block: &ReactiveBlock,
     state: &mut State,
-    inter_state: &mut InterState,
+    inter_state: &mut InterState<'_>,
     consts: &mut HashSet<IdentifierId>,
     globals: &mut HashSet<IdentifierId>,
     env: &mut Environment,
@@ -712,7 +717,7 @@ fn promote_interposed_block(
 fn inline_temporary(
     place: &Place,
     state: &State,
-    inter_state: &InterState,
+    inter_state: &InterState<'_>,
     env: &Environment,
 ) -> Option<Temporary> {
     let identifier = &env.identifiers[place.identifier.0 as usize];
@@ -729,7 +734,7 @@ fn inline_temporary(
 fn promote_interposed_place(
     place: &Place,
     state: &mut State,
-    inter_state: &mut InterState,
+    inter_state: &mut InterState<'_>,
     consts: &HashSet<IdentifierId>,
     env: &mut Environment,
 ) -> Effect {
@@ -737,6 +742,19 @@ fn promote_interposed_place(
         return Effect::None;
     };
     if !inter_state.conflicts(temporary) || consts.contains(&place.identifier) {
+        return temporary.effect;
+    }
+    if inter_state
+        .inline_macro_operands
+        .contains(&place.identifier)
+    {
+        let declaration_id = env.identifiers[place.identifier.0 as usize].declaration_id;
+        if let Some(operands) = inter_state
+            .operands_of_macro_operands
+            .swap_remove(declaration_id)
+        {
+            promote_interposed_operands(operands, state, inter_state, consts, env);
+        }
         return temporary.effect;
     }
     promote_identifier(place.identifier, state, env);
@@ -749,7 +767,7 @@ fn promote_interposed_place(
 fn promote_interposed_operands(
     mut operands: Vec<Place>,
     state: &mut State,
-    inter_state: &mut InterState,
+    inter_state: &mut InterState<'_>,
     consts: &HashSet<IdentifierId>,
     env: &mut Environment,
 ) -> Effect {
@@ -805,7 +823,9 @@ fn instruction_effect(
         | InstructionValue::ComputedDelete { .. }
         | InstructionValue::PostfixUpdate { .. }
         | InstructionValue::PrefixUpdate { .. }
-        | InstructionValue::StoreGlobal { .. } => Effect::Write,
+        | InstructionValue::StoreGlobal { .. }
+        // An array pattern runs an iterator, and an object pattern can run a getter.
+        | InstructionValue::Destructure { .. } => Effect::Write,
         // A declaration writes a variable that nothing before it can read.
         InstructionValue::StoreLocal { lvalue, .. }
         | InstructionValue::StoreContext { lvalue, .. } => {
@@ -813,13 +833,6 @@ fn instruction_effect(
                 Effect::Write
             } else {
                 Effect::None
-            }
-        }
-        InstructionValue::Destructure { lvalue, .. } => {
-            if lvalue.kind == InstructionKind::Reassign {
-                Effect::Write
-            } else {
-                Effect::Read
             }
         }
         InstructionValue::LoadLocal { place, .. } | InstructionValue::LoadContext { place, .. } => {
@@ -877,7 +890,7 @@ fn instruction_effect(
 fn promote_interposed_instruction(
     instr: &ReactiveInstruction,
     state: &mut State,
-    inter_state: &mut InterState,
+    inter_state: &mut InterState<'_>,
     consts: &mut HashSet<IdentifierId>,
     globals: &mut HashSet<IdentifierId>,
     env: &mut Environment,
@@ -943,7 +956,19 @@ fn promote_interposed_instruction(
             .then_some(identifier.declaration_id)
     });
     match temporary {
-        Some(declaration_id) => inter_state.temporary(declaration_id, effect),
+        Some(declaration_id) => {
+            if let (Some(lvalue), ReactiveValue::Instruction(iv)) = (&instr.lvalue, &instr.value)
+                && inter_state
+                    .inline_macro_operands
+                    .contains(&lvalue.identifier)
+            {
+                inter_state.operands_of_macro_operands.insert(
+                    declaration_id,
+                    crate::hir::visitors::each_instruction_value_operand(iv, env),
+                );
+            }
+            inter_state.temporary(declaration_id, effect);
+        }
         // If we've stripped the lvalue or promoted the lvalue, then we will emit this
         // instruction as a statement in codegen.
         _ => inter_state.statement(effect),
@@ -955,7 +980,7 @@ fn promote_interposed_instruction(
 fn promote_interposed_value(
     value: &ReactiveValue,
     state: &mut State,
-    inter_state: &mut InterState,
+    inter_state: &mut InterState<'_>,
     consts: &mut HashSet<IdentifierId>,
     globals: &mut HashSet<IdentifierId>,
     env: &mut Environment,
@@ -1020,7 +1045,7 @@ fn promote_interposed_value(
 fn promote_interposed_terminal_value(
     value: &ReactiveValue,
     state: &mut State,
-    inter_state: &mut InterState,
+    inter_state: &mut InterState<'_>,
     consts: &mut HashSet<IdentifierId>,
     globals: &mut HashSet<IdentifierId>,
     env: &mut Environment,
@@ -1034,7 +1059,7 @@ fn promote_interposed_terminal_value(
 fn promote_interposed_terminal_place(
     place: &Place,
     state: &mut State,
-    inter_state: &mut InterState,
+    inter_state: &mut InterState<'_>,
     consts: &HashSet<IdentifierId>,
     env: &mut Environment,
 ) {
@@ -1045,7 +1070,7 @@ fn promote_interposed_terminal_place(
 fn promote_interposed_terminal(
     stmt: &ReactiveTerminalStatement,
     state: &mut State,
-    inter_state: &mut InterState,
+    inter_state: &mut InterState<'_>,
     consts: &mut HashSet<IdentifierId>,
     globals: &mut HashSet<IdentifierId>,
     env: &mut Environment,

@@ -2821,6 +2821,12 @@ describe("bundler", () => {
               this.v = v;
             }
           }
+          const makeCursor = pos => ({
+            pos,
+            [Symbol.iterator]() {
+              return { next: () => ({ done: false, value: ++this.pos }) };
+            },
+          });
 
           // The operand is not a load, it is an expression over one.
           export function OperandOverALoad(p) {
@@ -2856,6 +2862,15 @@ describe("bundler", () => {
             const v = list(p.flag ? bump() : 0, (() => {
               r.n *= 10;
               return r.n;
+            })());
+            return <div>{JSON.stringify(v)}</div>;
+          }
+          // An array pattern runs the iterator, also in a declaration.
+          export function DestructuringRunsAnIterator(p) {
+            const cursor = makeCursor(p.n);
+            const v = list(cursor.pos, (() => {
+              const [x] = cursor;
+              return x;
             })());
             return <div>{JSON.stringify(v)}</div>;
           }
@@ -2937,6 +2952,7 @@ describe("bundler", () => {
           CaseTestStaysBehindTheDiscriminant=[2,5]
           CommaInTheUpdateOfAFor=[2,1]
           CompoundOperand=[2,2,7,2,3]
+          DestructuringRunsAnIterator=[2,3]
           OperandAheadOfANamedStore=[{"lang":4,"title":3,"id":[3,2],"children":3},3,3]
           OperandOverALoad=[-2,3,"2",[2],{"a":2},2,10]
           OperandThatReadsAnObject=["2,6","2,6",{"n":2},[2,6],true,1]
@@ -2949,38 +2965,96 @@ describe("bundler", () => {
   }
 
   // The fbt transform rejects a variable in place of a nested fbt.param()
-  // call. The first call is still pending when the memo block of the second
-  // element reads \`props.lastname\`.
+  // call, so the call stays inside the fbt() call. The value given to
+  // fbt.param() can be a variable, and it keeps its place ahead of a statement.
   itBundled("react-compiler/MacroOperandStaysInsideTheMacroCall", {
     files: {
       "/entry.jsx": /* jsx */ `
         import fbt from "fbt";
+        const list = (...values) => values;
         const Name = () => null;
-        export function Component(props) {
+
+        // The first call is pending when the memo block of the second element reads \`p.lastname\`.
+        function ParameterAheadOfAMemoBlock(p) {
           return (
             <div>
               {fbt(
                 [
                   "Name: ",
-                  fbt.param("firstname", <Name key={0} name={props.firstname} />),
+                  fbt.param("firstname", <Name key={0} name={p.firstname} />),
                   ", ",
-                  fbt.param("lastname", <Name key={1} name={props.lastname} />),
+                  fbt.param("lastname", <Name key={1} name={p.lastname} />),
                 ],
                 "Name",
               )}
             </div>
           );
         }
+        function ParameterValueAheadOfAStatement(p) {
+          const r = { n: p.n };
+          const text = fbt(["a", fbt.param("n", r.n), fbt.param("m", (() => {
+            r.n = r.n * 10;
+            return r.n;
+          })())], "d");
+          return <div>{text}</div>;
+        }
+        // The arrow is an operand of the macro call. The \`let\` it captures is still a \`let\`.
+        function LetCapturedInsideTheMacroCall(p) {
+          let i = p.n;
+          const read = fbt(() => i, "d");
+          const v = list(i, (() => {
+            i = 5;
+            return i;
+          })());
+          return <div>{[v, read()]}</div>;
+        }
+
+        for (const Form of [ParameterAheadOfAMemoBlock, ParameterValueAheadOfAStatement, LetCapturedInsideTheMacroCall]) {
+          console.log(Form.name + "=" + JSON.stringify(Form({ n: 2, firstname: "A", lastname: "B" }).props.children));
+        }
+      `,
+      "/node_modules/fbt/package.json": `{"name":"fbt","main":"./index.js"}`,
+      "/node_modules/fbt/index.js": /* js */ `
+        const fbt = (parts, description) => parts;
+        fbt.param = (name, value) => [name, value?.props ?? value];
+        export default fbt;
+      `,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+      "/node_modules/react/index.js": ``,
+      "/node_modules/react/jsx-dev-runtime.js": /* js */ `
+        export const jsxDEV = (type, props) => ({ type, props });
+      `,
+      "/node_modules/react/compiler-runtime.js": /* js */ `
+        export function c(size) {
+          return new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+        }
       `,
     },
     reactCompiler: true,
     backend: "cli",
     target: "browser",
-    external: ["fbt", "react", "react/*"],
     onAfterBundle(api) {
-      expect(api.readFile("/out.js")).toMatch(
-        /fbt\(\[\s*"Name: ",\s*fbt\.param\("firstname", \w+\),\s*", ",\s*fbt\.param\("lastname", \w+\)\s*\], "Name"\)/,
-      );
+      // Every fbt() call with an array, with the names of the import and of the temporaries normalized.
+      const calls = api
+        .readFile("/out.js")
+        .match(/\w+\(\[[^\]]*\], "\w+"\)/g)!
+        .map(call =>
+          call
+            .replace(/\s+/g, " ")
+            .replace(/\bfbt\w*/g, "fbt")
+            .replace(/\bt\d+\b/g, "t"),
+        );
+      expect(calls).toEqual([
+        `fbt([ "Name: ", fbt.param("firstname", t), ", ", fbt.param("lastname", t) ], "Name")`,
+        `fbt([ "a", fbt.param("n", t), fbt.param("m", r.n) ], "d")`,
+      ]);
+    },
+    run: {
+      stdout: `
+        ParameterAheadOfAMemoBlock=["Name: ",["firstname",{"name":"A"}],", ",["lastname",{"name":"B"}]]
+        ParameterValueAheadOfAStatement=["a",["n",2],["m",20]]
+        LetCapturedInsideTheMacroCall=[[2,5],5]
+      `,
     },
   });
 });

@@ -106,25 +106,31 @@ _read_scripts_in_package_json() {
 _extract_cwd() {
     local line
     working_dir="${PWD}"
+    cwd_specified=0
     for (( line=0; line < COMP_CWORD; line++ )); do
         if [[ "${COMP_WORDS[line]}" == "--cwd" ]]; then
             if (( line + 2 < COMP_CWORD )) &&
                 [[ "${COMP_WORDS[line+1]}" == "=" && -n "${COMP_WORDS[line+2]}" ]]; then
                 working_dir="${COMP_WORDS[line+2]}"
+                cwd_specified=1
             elif (( line + 1 < COMP_CWORD )) &&
                 [[ -n "${COMP_WORDS[line+1]}" ]]; then
                 working_dir="${COMP_WORDS[line+1]}"
+                cwd_specified=1
             fi
         elif [[ "${COMP_WORDS[line]}" == --cwd=* ]]; then
             working_dir="${COMP_WORDS[line]#--cwd=}"
+            cwd_specified=1
         fi
     done
 
-    working_dir="${working_dir%\"}"
-    working_dir="${working_dir#\"}"
-    working_dir="${working_dir%\'}"
-    working_dir="${working_dir#\'}"
-    working_dir="${working_dir/#\~/$HOME}"
+    if (( cwd_specified )); then
+        working_dir="${working_dir%\"}"
+        working_dir="${working_dir#\"}"
+        working_dir="${working_dir%\'}"
+        working_dir="${working_dir#\'}"
+        working_dir="${working_dir/#\~/$HOME}"
+    fi
 }
 
 _bun_completions_inner() {
@@ -314,15 +320,16 @@ _bun_completions_inner() {
 }
 
 _bun_completions() {
-    local working_dir
+    local working_dir cwd_specified=0
     _extract_cwd
 
     local orig_pwd="${PWD}"
     local switched=0
-    if [[ -n "${working_dir}" && -d "${working_dir}" && "${working_dir}" != "${PWD}" ]]; then
-        if builtin cd "${working_dir}" 2>/dev/null; then
-            switched=1
+    if (( cwd_specified )); then
+        if [[ ! -d "${working_dir}" ]] || ! builtin cd "${working_dir}" 2>/dev/null; then
+            return
         fi
+        switched=1
     fi
 
     _bun_completions_inner
@@ -337,15 +344,16 @@ _bun_completions() {
 }
 
 _bunx_completions() {
-    local working_dir
+    local working_dir cwd_specified=0
     _extract_cwd
 
     local orig_pwd="${PWD}"
     local switched=0
-    if [[ -n "${working_dir}" && -d "${working_dir}" && "${working_dir}" != "${PWD}" ]]; then
-        if builtin cd "${working_dir}" 2>/dev/null; then
-            switched=1
+    if (( cwd_specified )); then
+        if [[ ! -d "${working_dir}" ]] || ! builtin cd "${working_dir}" 2>/dev/null; then
+            return
         fi
+        switched=1
     fi
 
     local cur_word="${COMP_WORDS[${COMP_CWORD}]}"

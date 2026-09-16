@@ -33,30 +33,35 @@ end
 
 function __fish__get_bun_bins
     set -l target_cwd (__fish__bun_extract_cwd)
-    if test -d "$target_cwd"
-        set -l orig_pwd "$PWD"
-        builtin cd "$target_cwd"
-        set -l result (bun getcompletes b 2>/dev/null)
-        builtin cd "$orig_pwd"
-        string split ' ' $result
+    if not test -d "$target_cwd"
+        return
     end
+    set -l orig_pwd "$PWD"
+    builtin cd "$target_cwd"; or return
+    set -l result (bun getcompletes b 2>/dev/null)
+    builtin cd "$orig_pwd"
+    string split ' ' $result
 end
 
 function __fish__get_bun_scripts
     set -l target_cwd (__fish__bun_extract_cwd)
-    if test -d "$target_cwd"
-        set -l orig_pwd "$PWD"
-        builtin cd "$target_cwd"
-        set -lx SHELL bash
-        set -lx MAX_DESCRIPTION_LEN 40
-        set -l result (bun getcompletes z 2>/dev/null)
-        builtin cd "$orig_pwd"
-        string trim (string split '\n' (string split '\t' $result))
+    if not test -d "$target_cwd"
+        return
     end
+    set -l orig_pwd "$PWD"
+    builtin cd "$target_cwd"; or return
+    set -lx SHELL bash
+    set -lx MAX_DESCRIPTION_LEN 40
+    set -l result (bun getcompletes z 2>/dev/null)
+    builtin cd "$orig_pwd"
+    string trim (string split '\n' (string split '\t' $result))
 end
 
 function __fish__get_bun_packages
     set -l target_cwd (__fish__bun_extract_cwd)
+    if not test -d "$target_cwd"
+        return
+    end
     set -l pkg_file "$target_cwd/package.json"
     if not test -f "$pkg_file"; or not test -r "$pkg_file"
         return
@@ -92,13 +97,14 @@ end
 
 function __fish__get_bun_bun_js_files
     set -l target_cwd (__fish__bun_extract_cwd)
-    if test -d "$target_cwd"
-        set -l orig_pwd "$PWD"
-        builtin cd "$target_cwd"
-        set -l result (bun getcompletes j 2>/dev/null)
-        builtin cd "$orig_pwd"
-        string split ' ' $result
+    if not test -d "$target_cwd"
+        return
     end
+    set -l orig_pwd "$PWD"
+    builtin cd "$target_cwd"; or return
+    set -l result (bun getcompletes j 2>/dev/null)
+    builtin cd "$orig_pwd"
+    string split ' ' $result
 end
 
 set -l bun_install_boolean_flags yarn production optional development no-save dry-run force no-cache silent verbose global

@@ -1101,13 +1101,16 @@ _bun_list_bunfig_toml() {
 _bun_run_param_script_completion() {
     local -a scripts_list bins
     local target_cwd="${PWD}"
+    local cwd_specified=0
     local i val
     for (( i=1; i < ${#words[@]}; i++ )); do
         val=""
         if [[ "${words[i]}" == "--cwd" && -n "${words[i+1]}" ]]; then
             val="${words[i+1]}"
+            cwd_specified=1
         elif [[ "${words[i]}" == --cwd=* ]]; then
             val="${words[i]#--cwd=}"
+            cwd_specified=1
         fi
         if [[ -n "${val}" ]]; then
             val="${val%"}"
@@ -1120,12 +1123,20 @@ _bun_run_param_script_completion() {
     done
 
     local orig_pwd="${PWD}"
-    if [[ -d "${target_cwd}" ]]; then
-        builtin cd -q "${target_cwd}" 2>/dev/null
+    local switched=0
+    if (( cwd_specified )); then
+        if [[ ! -d "${target_cwd}" ]] || ! builtin cd -q "${target_cwd}" 2>/dev/null; then
+            return
+        fi
+        switched=1
     fi
+
     scripts_list=(${(f)"$(SHELL=zsh bun getcompletes s 2>/dev/null)"})
     bins=(${(f)"$(SHELL=zsh bun getcompletes b 2>/dev/null)"})
-    builtin cd -q "${orig_pwd}" 2>/dev/null
+
+    if (( switched )); then
+        builtin cd -q "${orig_pwd}" 2>/dev/null
+    fi
 
     _alternative "scripts:scripts:compadd -a scripts_list"
     _alternative "bin:bin:compadd -a bins"
@@ -1145,13 +1156,16 @@ _bun_link_param_package_completion() {
 
 _bun_remove_param_package_completion() {
     local pkg_dir="${PWD}"
+    local cwd_specified=0
     local i val
     for (( i=1; i < ${#words[@]}; i++ )); do
         val=""
         if [[ "${words[i]}" == "--cwd" && -n "${words[i+1]}" ]]; then
             val="${words[i+1]}"
+            cwd_specified=1
         elif [[ "${words[i]}" == --cwd=* ]]; then
             val="${words[i]#--cwd=}"
+            cwd_specified=1
         fi
         if [[ -n "${val}" ]]; then
             val="${val%"}"
@@ -1162,6 +1176,10 @@ _bun_remove_param_package_completion() {
             pkg_dir="${val}"
         fi
     done
+
+    if (( cwd_specified )) && [[ ! -d "${pkg_dir}" ]]; then
+        return
+    fi
 
     local pkg_file="${pkg_dir}/package.json"
     if [[ -f "${pkg_file}" && -r "${pkg_file}" ]]; then

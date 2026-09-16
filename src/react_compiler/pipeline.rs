@@ -652,7 +652,7 @@ fn run_hir_passes(
     );
     timed!(
         "PromoteUsedTemporaries",
-        crate::reactive_scopes::promote_used_temporaries(&mut reactive_fn, env)
+        crate::reactive_scopes::promote_used_temporaries(&mut reactive_fn, env, &fbt_operands)
     );
     timed!(
         "ExtractScopeDeclarationsFromDestructuring",

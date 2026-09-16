@@ -2790,6 +2790,199 @@ describe("bundler", () => {
       },
     });
   }
+
+  // Codegen prints an instruction with an unnamed result inside the statement
+  // that uses it, and every other instruction as a statement where it stands.
+  // So a statement in the middle of an expression (the body of an inlined
+  // IIFE, a memo block, an operand that has a name) runs ahead of the earlier
+  // operands that are still inline. PromoteInterposedTemporaries names those
+  // operands, but it knew only loads, calls and stores, and only statements
+  // with a side effect. It also took a store inside a comma operand for a
+  // statement, and named a later operand ahead of an earlier one for it.
+  for (const target of ["bun", "browser"] as const) {
+    itBundled(`react-compiler/OperandsKeepSourceOrderAroundAStatement-${target}`, {
+      files: {
+        "/entry.ts": /* ts */ `
+          import * as forms from "./forms";
+          const lines: string[] = [];
+          for (const [name, Form] of Object.entries(forms)) {
+            try {
+              lines.push(name + "=" + Form({ n: 2, flag: true, items: [5, 6, 7, 8] }).props.children);
+            } catch (e) {
+              lines.push(name + " threw " + e);
+            }
+          }
+          console.log(lines.join("\\n"));
+        `,
+        "/forms.jsx": /* jsx */ `
+          const list = (...values) => values;
+          class Box {
+            constructor(v) {
+              this.v = v;
+            }
+          }
+
+          // The operand is not a load, it is an expression over one.
+          export function OperandOverALoad(p) {
+            const r = { n: p.n };
+            const v = list(-r.n, r.n + 1, \`\${r.n}\`, [r.n], { a: r.n }, new Box(r.n).v, (() => {
+              r.n = 10;
+              return r.n;
+            })());
+            return <div>{JSON.stringify(v)}</div>;
+          }
+          // A spread, \`in\` and the conversion of an object to a string read the object.
+          export function OperandThatReadsAnObject(p) {
+            const m = [p.n, 6];
+            const r = { n: p.n };
+            const v = list(\`\${m}\`, m + "", { ...r }, [...m], "n" in r, (() => {
+              m.push(7);
+              delete r.n;
+              return 1;
+            })());
+            return <div>{JSON.stringify(v)}</div>;
+          }
+          export function CompoundOperand(p) {
+            const r = { n: p.n };
+            const v = list(p.flag ? r.n : 0, p.flag && r.n, p.items?.[r.n], (0, r.n), (() => {
+              r.n = 3;
+              return r.n;
+            })());
+            return <div>{JSON.stringify(v)}</div>;
+          }
+          export function CallInsideACompoundOperand(p) {
+            const r = { n: p.n };
+            const bump = () => ++r.n;
+            const v = list(p.flag ? bump() : 0, (() => {
+              r.n *= 10;
+              return r.n;
+            })());
+            return <div>{JSON.stringify(v)}</div>;
+          }
+          // Client mode: the memo block of \`[i, p.n]\` reads \`i\`, and the stores before it are inline.
+          export function StoreAheadOfAMemoBlock(p) {
+            const r = { n: p.n };
+            let i = 1;
+            const el = <a title={++r.n && (i += 2)} id={[i, p.n]}>{p.flag ? r.n : (i += 2)}</a>;
+            return <div>{JSON.stringify([el.props, i, r.n])}</div>;
+          }
+          // The name for the stores makes them a statement ahead of \`r.n * 2\`.
+          export function OperandAheadOfANamedStore(p) {
+            const r = { n: p.n };
+            let i = 1;
+            const el = <a lang={r.n * 2} title={++r.n && (i += 2)} id={[i, p.n]}>{p.flag ? r.n : (i += 2)}</a>;
+            return <div>{JSON.stringify([el.props, i, r.n])}</div>;
+          }
+          // Client mode: the template literal has a name, because the memo block of \`new Box\` depends on it.
+          export function StoreAheadOfANamedOperand(p) {
+            const r = { n: p.n };
+            const el = <a title={[list(r.n), ++r.n]}>{new Box(\`\${p.flag ? r.n : 0}\`).v}</a>;
+            return <div>{JSON.stringify([el.props, r.n])}</div>;
+          }
+          // The store in the comma operand prints in place, so no operand needs a name.
+          export function StoreInsideACommaOperand(p) {
+            const r = { n: p.n };
+            const a = list(-r.n, new Box(++r.n).v, (--r.n, 2));
+            return <div>{JSON.stringify([a, r.n])}</div>;
+          }
+          // A name for \`k\` is a declaration inside the update, which codegen rejects.
+          export function CommaInTheUpdateOfAFor(p) {
+            const r = { n: p.n };
+            const v = [];
+            for (let k = 0; k < 2; k += (--r.n, 1)) v.push(r.n);
+            return <div>{JSON.stringify(v)}</div>;
+          }
+          // Lowering evaluates a case test ahead of the discriminant. It prints in place, behind it.
+          export function CaseTestStaysBehindTheDiscriminant(p) {
+            const r = { n: p.n };
+            const bump = o => ++o.n;
+            let v = 0;
+            switch (list((r.n = 4)).length) {
+              case bump(r):
+                v = 1;
+                break;
+              default:
+                v = 2;
+            }
+            return <div>{JSON.stringify([v, r.n])}</div>;
+          }
+        `,
+        "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+        "/node_modules/react/index.js": ``,
+        "/node_modules/react/jsx-runtime.js": /* js */ `
+          export const jsx = (type, props) => ({ type, props });
+          export const jsxs = jsx;
+        `,
+        "/node_modules/react/jsx-dev-runtime.js": /* js */ `
+          export const jsxDEV = (type, props) => ({ type, props });
+        `,
+        "/node_modules/react/compiler-runtime.js": /* js */ `
+          export function c(size) {
+            return new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+          }
+        `,
+      },
+      reactCompiler: true,
+      backend: "cli",
+      target,
+      onAfterBundle(api) {
+        if (target !== "browser") return;
+        // A compiled function starts with its memo cache.
+        const compiled = api.readFile("/out.js").matchAll(/function (\w+)\(p\) \{\s*let \$ = c\(\d+\);/g);
+        expect(Array.from(compiled, match => match[1])).toContain("CommaInTheUpdateOfAFor");
+      },
+      run: {
+        stdout: `
+          CallInsideACompoundOperand=[3,30]
+          CaseTestStaysBehindTheDiscriminant=[2,5]
+          CommaInTheUpdateOfAFor=[2,1]
+          CompoundOperand=[2,2,7,2,3]
+          OperandAheadOfANamedStore=[{"lang":4,"title":3,"id":[3,2],"children":3},3,3]
+          OperandOverALoad=[-2,3,"2",[2],{"a":2},2,10]
+          OperandThatReadsAnObject=["2,6","2,6",{"n":2},[2,6],true,1]
+          StoreAheadOfAMemoBlock=[{"title":3,"id":[3,2],"children":3},3,3]
+          StoreAheadOfANamedOperand=[{"title":[[2],3],"children":"3"},3]
+          StoreInsideACommaOperand=[[-2,3,2],2]
+        `,
+      },
+    });
+  }
+
+  // The fbt transform rejects a variable in place of a nested fbt.param()
+  // call. The first call is still pending when the memo block of the second
+  // element reads \`props.lastname\`.
+  itBundled("react-compiler/MacroOperandStaysInsideTheMacroCall", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import fbt from "fbt";
+        const Name = () => null;
+        export function Component(props) {
+          return (
+            <div>
+              {fbt(
+                [
+                  "Name: ",
+                  fbt.param("firstname", <Name key={0} name={props.firstname} />),
+                  ", ",
+                  fbt.param("lastname", <Name key={1} name={props.lastname} />),
+                ],
+                "Name",
+              )}
+            </div>
+          );
+        }
+      `,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    target: "browser",
+    external: ["fbt", "react", "react/*"],
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toMatch(
+        /fbt\(\[\s*"Name: ",\s*fbt\.param\("firstname", \w+\),\s*", ",\s*fbt\.param\("lastname", \w+\)\s*\], "Name"\)/,
+      );
+    },
+  });
 });
 
 // Three passes kept one copy of their work per basic block or per nesting

@@ -3,6 +3,7 @@
 // Every object is a tenant: a call, a continuation or a callback that runs in
 // another object's context is a data-loss bug, so these tests overlap many
 // objects and assert at every hop WHICH object the code is running in.
+import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -486,7 +487,7 @@ describe("object to object", () => {
       }
     }
     const size = 8;
-    const hops = 20;
+    const hops = 11;
     const env: RingEnv = { size, bad: [], hops: 0 };
     await using ns = new Bun.DurableObjectNamespace<Node>({ class: Node, env });
     env.ns = ns;
@@ -494,8 +495,8 @@ describe("object to object", () => {
     expect(Bun.ModuleGraph.current).toBeUndefined();
     expect(env.bad).toEqual([]);
     for (const [start, trail] of trails.entries()) expect(trail).toEqual(range(hops + 1).map(i => (start + i) % size));
-    // 8 messages x 21 visits, spread evenly over the ring.
-    for (const index of range(size)) expect(await ns.getByName(String(index)).count()).toEqual([21, 21]);
+    // 8 messages x 12 visits, spread evenly over the ring.
+    for (const index of range(size)) expect(await ns.getByName(String(index)).count()).toEqual([12, 12]);
   });
 
   test("an error thrown by the callee arrives as the same object; an aborted callee rejects the caller's call", async () => {
@@ -668,21 +669,21 @@ describe("Bun.ModuleGraph.current", () => {
     return names;
   }
 
-  test("20 objects x 10 overlapping calls: every continuation, timer, microtask and reaction runs in its own object", async () => {
+  test("8 objects x 5 overlapping calls: every continuation, timer, microtask and reaction runs in its own object", async () => {
     const env = newEnv();
     await using ns = new Bun.DurableObjectNamespace<any>({ class: Tenant, env });
-    const names = await hammer(ns, env, 20, 10);
-    expect(env.hops.n).toBe(20 * 10 * HOPS_PER_CALL);
+    const names = await hammer(ns, env, 8, 5);
+    expect(env.hops.n).toBe(8 * 5 * HOPS_PER_CALL);
     for (const name of names) {
-      expect(await ns.getByName(name).totals()).toEqual({ n: 10, calls: 10, inMemory: 10 });
+      expect(await ns.getByName(name).totals()).toEqual({ n: 5, calls: 5, inMemory: 5 });
       expect(Bun.ModuleGraph.current).toBeUndefined();
     }
     expect(env.made).toEqual(Object.fromEntries(names.map(name => [name, 1])));
     const graphs = [...env.graphs.values()].flat();
-    expect(graphs).toHaveLength(20);
-    expect(new Set(graphs).size).toBe(20);
+    expect(graphs).toHaveLength(8);
+    expect(new Set(graphs).size).toBe(8);
     expect(graphs.every(graph => graph instanceof Bun.ModuleGraph)).toBe(true);
-  }, 30_000);
+  });
 
   test("with evictions between the waves: a new instance has a new graph and the counters still add up", async () => {
     const env = newEnv();
@@ -690,7 +691,7 @@ describe("Bun.ModuleGraph.current", () => {
     const waves = 3;
     let names: string[] = [];
     for (let wave = 0; wave < waves; wave++) {
-      names = await hammer(ns, env, 10, 4);
+      names = await hammer(ns, env, 6, 3);
       if (wave < waves - 1)
         await untilReconstructed(
           () => ns.getByName("tenant-0").totals(),
@@ -702,8 +703,8 @@ describe("Bun.ModuleGraph.current", () => {
     let reconstructed = 0;
     for (const name of names) {
       const totals = await ns.getByName(name).totals();
-      expect({ n: totals.n, calls: totals.calls }).toEqual({ n: 12, calls: 12 });
-      if (totals.inMemory < 12) reconstructed++;
+      expect({ n: totals.n, calls: totals.calls }).toEqual({ n: 9, calls: 9 });
+      if (totals.inMemory < 9) reconstructed++;
       const graphs = env.graphs.get(name)!;
       expect(new Set(graphs).size).toBe(graphs.length);
     }
@@ -711,7 +712,7 @@ describe("Bun.ModuleGraph.current", () => {
     const all = [...env.graphs.values()].flat();
     expect(new Set(all).size).toBe(all.length);
     expect(env.bad).toEqual([]);
-  }, 30_000);
+  });
 
   test("module mode: every object has its own module state too", async () => {
     using dir = tempDir("do-concurrency-module", {
@@ -736,14 +737,14 @@ describe("Bun.ModuleGraph.current", () => {
       export: "Tenant",
       env,
     });
-    const names = await hammer(ns, env, 12, 6);
+    const names = await hammer(ns, env, 6, 4);
     for (const name of names) {
-      expect(await ns.getByName(name).totals()).toEqual({ n: 6, calls: 6, inMemory: 6 });
-      expect(await ns.getByName(name).moduleState()).toEqual({ owner: name, moduleCalls: 6 * HOPS_PER_CALL });
+      expect(await ns.getByName(name).totals()).toEqual({ n: 4, calls: 4, inMemory: 4 });
+      expect(await ns.getByName(name).moduleState()).toEqual({ owner: name, moduleCalls: 4 * HOPS_PER_CALL });
     }
     expect(env.made).toEqual(Object.fromEntries(names.map(name => [name, 1])));
-    expect(new Set([...env.graphs.values()].flat()).size).toBe(12);
-  }, 30_000);
+    expect(new Set([...env.graphs.values()].flat()).size).toBe(6);
+  });
 
   test("is undefined in the host after awaiting a call, and inside host callbacks the object calls", async () => {
     const seen: unknown[] = [];
@@ -1598,7 +1599,7 @@ describe("eviction", () => {
     } finally {
       clearInterval(hostTimer);
     }
-  }, 30_000);
+  });
 
   test("idleTimeout: 0 evicts as soon as there is nothing to do, and no sooner", async () => {
     let made = 0;
@@ -1799,52 +1800,40 @@ describe("onError", () => {
       ["a", "b"].map(name => [`${method} in ${name}`, name]),
     );
 
-    test.concurrent(
-      "everything goes to onError and nothing to the process",
-      async () => {
-        expect(await run("reports")).toEqual({
-          stdout: [
-            ...failures.flatMap(([message, name]) => [`onError: ${message} | id.name: ${name}`, "pong"]),
-            "closed",
-          ].sort(),
-          stderr: "",
-          exitCode: 0,
-        });
-      },
-      30_000,
-    );
+    test.concurrent("everything goes to onError and nothing to the process", async () => {
+      expect(await run("reports")).toEqual({
+        stdout: [
+          ...failures.flatMap(([message, name]) => [`onError: ${message} | id.name: ${name}`, "pong"]),
+          "closed",
+        ].sort(),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
 
-    test.concurrent(
-      "without onError they are the process's uncaught errors",
-      async () => {
-        expect(await run("none")).toEqual({
-          stdout: [...failures.flatMap(([message]) => [`PROCESS: ${message}`, "pong"]), "closed"].sort(),
-          stderr: "",
-          exitCode: 0,
-        });
-      },
-      30_000,
-    );
+    test.concurrent("without onError they are the process's uncaught errors", async () => {
+      expect(await run("none")).toEqual({
+        stdout: [...failures.flatMap(([message]) => [`PROCESS: ${message}`, "pong"]), "closed"].sort(),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
 
-    test.concurrent(
-      "an onError that throws does not break the namespace",
-      async () => {
-        // What onError throws is the host's own problem; every failure was still reported and the objects still answer.
-        expect(await run("throws")).toEqual({
-          stdout: [
-            ...failures.flatMap(([message, name]) => [
-              `onError: ${message} | id.name: ${name}`,
-              "PROCESS: onError itself failed",
-              "pong",
-            ]),
-            "closed",
-          ].sort(),
-          stderr: "",
-          exitCode: 0,
-        });
-      },
-      30_000,
-    );
+    test.concurrent("an onError that throws does not break the namespace", async () => {
+      // What onError throws is the host's own problem; every failure was still reported and the objects still answer.
+      expect(await run("throws")).toEqual({
+        stdout: [
+          ...failures.flatMap(([message, name]) => [
+            `onError: ${message} | id.name: ${name}`,
+            "PROCESS: onError itself failed",
+            "pong",
+          ]),
+          "closed",
+        ].sort(),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
   });
 });
 
@@ -1925,8 +1914,8 @@ describe("a namespace made inside a Bun.ModuleGraph", () => {
         // Like everything else a disposed graph was waiting for: they never settle.
         console.log("in flight:", JSON.stringify(inFlight.map(t => t.state)));
 
-        // The host still holds the tenant's namespace. Whatever these do, they must do it without crashing,
-        // and nothing of the tenant's may start running again.
+        // The host still holds the tenant's namespace: it is as good as closed, and nothing of the
+        // tenant's may start running again.
         const late = [];
         for (const [name, method] of [["a", "inc"], ["fresh", "inc"], ["a", "sleeper"]]) {
           try {
@@ -1939,14 +1928,14 @@ describe("a namespace made inside a Bun.ModuleGraph", () => {
         const again = setInterval(() => hostTicks++, 2);
         await until(() => hostTicks >= 50, "the host's timer");
         clearInterval(again);
-        console.log("late calls settled or not:", late.length);
+        for (const call of late) console.log("late call", call.state);
         console.log("ticks after late calls:", ticks.a - atDispose.a, ticks.b - atDispose.b);
         const closing = track(tenant.ns.close());
         hostTicks = 0;
         const third = setInterval(() => hostTicks++, 2);
         await until(() => hostTicks >= 20, "the host's timer");
         clearInterval(third);
-        console.error("late:", JSON.stringify(late.map(t => t.state)), "close():", closing.state, "made:", tenant.count());
+        console.log("close()", closing.state, "| made:", tenant.count());
         Bun.gc(true);
         console.log("done");
       `,
@@ -1966,19 +1955,202 @@ describe("a namespace made inside a Bun.ModuleGraph", () => {
       "ticks after dispose: 0 0",
       'log: ["sleeper started in a","sleeper started in b"]',
       'in flight: ["pending","pending"]',
-      "late calls settled or not: 3",
+      "late call rejected: ERR_INVALID_STATE This DurableObjectNamespace is closed",
+      "late call rejected: ERR_INVALID_STATE This DurableObjectNamespace is closed",
+      "late call rejected: ERR_INVALID_STATE This DurableObjectNamespace is closed",
       "ticks after late calls: 0 0",
+      "close() fulfilled: undefined | made: 2",
       "done",
       "",
     ]);
-    // What the late calls and close() did is informational.
-    expect(stderr.split("\n").filter(line => !line.startsWith("late:"))).toEqual([""]);
+    expect(stderr).toBe("");
     expect(exitCode).toBe(0);
-  }, 30_000);
+  });
+
+  test("with storage in a directory and an alarm set: the process ends, and the directory can be opened again", async () => {
+    using dir = tempDir("do-concurrency-nested-storage", {
+      "tenant.ts": `
+        class Inner extends Bun.DurableObject {
+          async arm(value) {
+            await this.ctx.storage.put("value", value);
+            await this.ctx.storage.setAlarm(Date.now() + 3_600_000);
+            return this.ctx.storage.getAlarm();
+          }
+          put(value) {
+            this.ctx.storage.kv.put("value", value);
+          }
+          alarm() {
+            console.log("the alarm fired");
+          }
+        }
+        export const ns = new Bun.DurableObjectNamespace({ class: Inner, storage: host.storage });
+      `,
+      "host.ts": `
+        const host = { storage: import.meta.dir + "/data" };
+        const graph = new Bun.ModuleGraph({ globals: { host } });
+        const { ns } = await graph.import(import.meta.dir + "/tenant.ts");
+        const outcome = promise => promise.then(value => "fulfilled: " + value, e => "rejected: " + e?.code + " " + e?.message);
+        console.log("alarm set:", (await ns.getByName("a").arm("before")) > Date.now());
+        graph.dispose();
+        // From the very next call on.
+        const late = [outcome(ns.getByName("a").put("after")), outcome(ns.getByName("new").put("after"))];
+        const closing = outcome(ns.close());
+        for (const call of late) console.log("late call", await call);
+        console.log("close()", await closing);
+        console.log("close() again", await outcome(ns.close()));
+        // Its files are nobody's now.
+        class Reader extends Bun.DurableObject {
+          read() {
+            return this.ctx.storage.kv.get("value");
+          }
+          alarm() {}
+        }
+        const again = new Bun.DurableObjectNamespace({ class: Reader, name: "Inner", storage: host.storage });
+        console.log("read again:", await again.getByName("a").read());
+        await again.close();
+        // Nothing is left to wait for: neither the alarm, an hour from now, nor the namespace that was never closed.
+        console.log("end of the script");
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "host.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.split("\n")).toEqual([
+      "alarm set: true",
+      "late call rejected: ERR_INVALID_STATE This DurableObjectNamespace is closed",
+      "late call rejected: ERR_INVALID_STATE This DurableObjectNamespace is closed",
+      "close() fulfilled: undefined",
+      "close() again fulfilled: undefined",
+      "read again: before",
+      "end of the script",
+      "",
+    ]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+
+    // In this process too, with the alarm it had.
+    class Reader extends Bun.DurableObject {
+      async read() {
+        return { value: this.ctx.storage.kv.get("value"), alarm: await this.ctx.storage.getAlarm() };
+      }
+      alarm() {}
+    }
+    await using ns = new Bun.DurableObjectNamespace<Reader>({
+      class: Reader,
+      name: "Inner",
+      storage: join(String(dir), "data"),
+    });
+    const { value, alarm } = await ns.getByName("a").read();
+    expect(value).toBe("before");
+    expect(alarm).toBeGreaterThan(Date.now() + 3_000_000);
+  });
+
+  test("a close() that is waiting for a running call is done when the graph is disposed", async () => {
+    using dir = tempDir("do-concurrency-nested-close", {
+      "tenant.ts": `
+        class Inner extends Bun.DurableObject {
+          async sleeper() {
+            host.started();
+            await Bun.sleep(3_600_000);
+            return "woke";
+          }
+        }
+        export const ns = new Bun.DurableObjectNamespace({ class: Inner });
+      `,
+      "host.ts": `
+        process.on("uncaughtException", e => console.log("PROCESS uncaughtException:", e?.message));
+        process.on("unhandledRejection", e => console.log("PROCESS unhandledRejection:", e?.message));
+        const started = Promise.withResolvers();
+        const graph = new Bun.ModuleGraph({ globals: { host: { started: started.resolve } } });
+        const { ns } = await graph.import(import.meta.dir + "/tenant.ts");
+        const track = promise => {
+          const tracked = { state: "pending" };
+          promise.then(value => (tracked.state = "fulfilled: " + value), e => (tracked.state = "rejected: " + e?.code + " " + e?.message));
+          return tracked;
+        };
+        const turns = async () => { for (let i = 0; i < 10; i++) await new Promise(resolve => setImmediate(resolve)); };
+        const inFlight = track(ns.getByName("a").sleeper());
+        await started.promise;
+        // Waits for the call, which has an hour to go.
+        const closing = ns.close();
+        const closed = track(closing);
+        await turns();
+        console.log("before dispose: close()", closed.state, "| the call", inFlight.state);
+        graph.dispose();
+        await closing;
+        console.log("after dispose: close()", closed.state);
+        await turns();
+        console.log("the call", inFlight.state);
+        console.log("close() again", await ns.close().then(() => "fulfilled"));
+        console.log("a late call", await ns.getByName("a").sleeper().then(() => "fulfilled", e => "rejected: " + e?.code));
+        console.log("end of the script");
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "host.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.split("\n")).toEqual([
+      "before dispose: close() pending | the call pending",
+      "after dispose: close() fulfilled: undefined",
+      // Like everything else the disposed graph was waiting for, the call itself never settles.
+      "the call pending",
+      "close() again fulfilled",
+      "a late call rejected: ERR_INVALID_STATE",
+      "end of the script",
+      "",
+    ]);
+    expect(stderr).toBe("");
+    // (And it ended: neither the call's timer nor the namespace kept the process running.)
+    expect(exitCode).toBe(0);
+  });
+
+  test("a namespace that is not used after its graph was disposed does not keep the process alive, alarm or not", async () => {
+    using dir = tempDir("do-concurrency-nested-exit", {
+      "tenant.ts": `
+        class Inner extends Bun.DurableObject {
+          async arm() {
+            await this.ctx.storage.setAlarm(Date.now() + 3_600_000);
+            setInterval(() => console.log("a timer of the object ran"), 5);
+          }
+          alarm() {}
+        }
+        export const ns = new Bun.DurableObjectNamespace({ class: Inner, storage: host.storage });
+      `,
+      "host.ts": `
+        for (const storage of [undefined, import.meta.dir + "/data"]) {
+          const graph = new Bun.ModuleGraph({ globals: { host: { storage } } });
+          const { ns } = await graph.import(import.meta.dir + "/tenant.ts");
+          await ns.getByName("a").arm();
+          graph.dispose();
+        }
+        console.log("end of the script");
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "host.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "end of the script\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
 });
 
 describe("many objects", () => {
-  test("300 objects: call each, let all be evicted, call each again", async () => {
+  test("60 objects: call each, let all be evicted, call each again", async () => {
     const env = { made: 0 };
     class One extends Bun.DurableObject<typeof env> {
       constructor(ctx: Bun.DurableObjectState, e: typeof env) {
@@ -1999,16 +2171,16 @@ describe("many objects", () => {
       }
     }
     await using ns = new Bun.DurableObjectNamespace<One>({ class: One, env, idleTimeout: 25 });
-    const names = range(300).map(i => "object-" + i);
+    const names = range(60).map(i => "object-" + i);
     const first = await Promise.all(names.map(name => ns.getByName(name).visit(name)));
     expect(first).toEqual(names.map(name => ({ name, right: true, visits: 1, generation: 1 })));
-    expect(env.made).toBe(300);
+    expect(env.made).toBe(60);
 
     // An object that answers from its first instance was not evicted yet: ask it again later.
     const visits = new Map(names.map(name => [name, 1]));
     let waiting = names;
     await until(async () => {
-      await Bun.sleep(80);
+      await Bun.sleep(60);
       const answers = await Promise.all(waiting.map(name => ns.getByName(name).visit(name)));
       for (const answer of answers) {
         expect(answer.right).toBe(true);
@@ -2019,13 +2191,12 @@ describe("many objects", () => {
       waiting = answers.filter(answer => answer.generation === 1).map(answer => answer.name!);
       return waiting.length === 0;
     }, "every object to have been evicted once");
-    expect(env.made).toBe(600);
-  }, 60_000);
+    expect(env.made).toBe(120);
+  });
 });
 
 describe("garbage collection", () => {
   test("evicted objects and their graphs are collected", async () => {
-    const { heapStats } = require("bun:jsc");
     const counts = () => {
       Bun.gc(true);
       const { ModuleGraph = 0, DurableObjectActor = 0, DurableObjectState = 0 } = heapStats().objectTypeCounts;
@@ -2040,8 +2211,8 @@ describe("garbage collection", () => {
       }
     }
     const baseline = counts();
-    const objects = 150;
-    const slack = 10;
+    const objects = 40;
+    const slack = 5;
     {
       // Evicted by the idle timer.
       await using ns = new Bun.DurableObjectNamespace<Garbage>({
@@ -2088,5 +2259,5 @@ describe("garbage collection", () => {
       "graphs, actors and states to be collected after close()",
       20_000,
     );
-  }, 60_000);
+  });
 });

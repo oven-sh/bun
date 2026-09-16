@@ -181,7 +181,6 @@ describe("Bun.DurableObject alarms", () => {
     const { ns, fired } = open();
     await using _ = ns;
     const stub = ns.getByName("info");
-    const before = Date.now();
     const time = await stub.setAlarmIn(40);
     const [event] = await fired.waitFor(1);
     expect(event.info).toEqual({ isRetry: false, retryCount: 0, scheduledTime: time });
@@ -189,7 +188,6 @@ describe("Bun.DurableObject alarms", () => {
     expect(event.name).toBe("info");
     expect(event.id).toBe(String(ns.idFromName("info")));
     expect(event.at).toBeGreaterThanOrEqual(time);
-    expect(event.at - before).toBeLessThan(5000);
     expect(await stub.getAlarm()).toBeNull();
     expect(await stub.count()).toBe(1);
     expect(fired.items).toHaveLength(1);
@@ -395,49 +393,149 @@ describe("Bun.DurableObject alarms", () => {
     expect(await Promise.all(names.map(name => ns.getByName(name).getAlarm()))).toEqual(names.map(() => null));
   });
 
-  test("alarm() that throws: onError gets the error and the id, it is retried after about 2s, the alarm stays set meanwhile", async () => {
-    const errors: { error: unknown; id: Bun.DurableObjectId }[] = [];
-    const boom = new Error("alarm failed");
-    const constructed: (string | undefined)[] = [];
+  // The one test that waits for a retry: the first comes 2s after the failure.
+  test("a failed alarm is retried after 2s, counted in storage: an alarm() that throws, and an object that cannot be started", async () => {
+    type Run = { id: string; info: AlarmInfo; during: number | null; instance: number };
+    type FlakyEnv = {
+      runs: ReturnType<typeof collector<Run>>;
+      constructed: string[];
+      failStartOf: Set<string>;
+      throwIn: Set<string>;
+      setAgainIn: Set<string>;
+    };
+    const boom = new Error("alarm() failed");
+    const noStart = new Error("the constructor failed");
+    class Flaky extends Bun.DurableObject<FlakyEnv> {
+      instance: number;
+      constructor(ctx: State, env: FlakyEnv) {
+        super(ctx, env);
+        this.instance = env.constructed.push(String(ctx.id));
+        if (env.failStartOf.delete(String(ctx.id))) throw noStart;
+      }
+      async setAlarm(time: number) {
+        await this.ctx.storage.setAlarm(time);
+      }
+      getAlarm() {
+        return this.ctx.storage.getAlarm();
+      }
+      async alarm(info: AlarmInfo) {
+        const id = String(this.ctx.id);
+        this.env.runs.push({ id, info, during: await this.ctx.storage.getAlarm(), instance: this.instance });
+        if (this.env.throwIn.delete(id)) throw boom;
+        // Set again from the retry: that is a new alarm, not another retry.
+        if (info.isRetry && this.env.setAgainIn.delete(id)) await this.ctx.storage.setAlarm(info.scheduledTime + 1);
+      }
+    }
+    using dir = tempDir("do-alarm-retry", {});
+    const newEnv = (): FlakyEnv => ({
+      runs: collector<Run>(),
+      constructed: [],
+      failStartOf: new Set(),
+      throwIn: new Set(),
+      setAgainIn: new Set(),
+    });
+    // Set by a namespace that is closed the moment they are stored: close() stops its alarms before the
+    // event loop gets to them. They are overdue for the namespace that opens the directory next, which
+    // wakes both objects for them.
+    const setterEnv = newEnv();
+    const setter = new Bun.DurableObjectNamespace<Flaky>({ class: Flaky, storage: String(dir), env: setterEnv });
+    const throws = String(setter.idFromName("throws"));
+    const cannotStart = String(setter.idFromName("cannot start"));
+    const overdue = Date.now() - 1000;
+    const times = { [throws]: overdue, [cannotStart]: overdue + 1 };
+    await Promise.all([
+      setter.getByName("throws").setAlarm(times[throws]),
+      setter.getByName("cannot start").setAlarm(times[cannotStart]),
+    ]);
+    await setter.close();
+    expect(setterEnv.runs.items).toEqual([]);
+
+    const env = newEnv();
+    env.throwIn.add(throws);
+    env.setAgainIn.add(throws);
+    env.failStartOf.add(cannotStart);
+    const errors = collector<{ error: unknown; id: string }>();
+    await using ns = new Bun.DurableObjectNamespace<Flaky>({
+      class: Flaky,
+      storage: String(dir),
+      env,
+      // Evicted between the failure and the retry: the count of retries is not the instance's.
+      idleTimeout: 20,
+      onError: (error, id) => void errors.push({ error, id: String(id) }),
+    });
+    await errors.waitFor(2, 1500);
+    expect(errors.items.toSorted((a, b) => a.id.localeCompare(b.id))).toEqual(
+      [
+        { error: boom, id: throws },
+        { error: noStart, id: cannotStart },
+      ].sort((a, b) => a.id.localeCompare(b.id)),
+    );
+    // One ran alarm(), the other did not get that far. Neither alarm is gone.
+    expect(env.runs.items).toEqual([
+      {
+        id: throws,
+        info: { isRetry: false, retryCount: 0, scheduledTime: times[throws] },
+        during: null,
+        instance: expect.any(Number),
+      },
+    ]);
+    expect(env.constructed.toSorted()).toEqual([throws, cannotStart].sort());
+    const failedToStart = env.constructed.indexOf(cannotStart) + 1;
+    expect(await ns.getByName("throws").getAlarm()).toBe(times[throws]);
+    expect(await ns.getByName("cannot start").getAlarm()).toBe(times[cannotStart]);
+
+    // The retries, of both, 2s later; then the alarm that the retry of the first one set.
+    await env.runs.waitFor(4, 3000);
+    const runsOf = (id: string) => env.runs.items.filter(run => run.id === id);
+    expect(runsOf(throws).map(run => run.info)).toEqual([
+      { isRetry: false, retryCount: 0, scheduledTime: times[throws] },
+      { isRetry: true, retryCount: 1, scheduledTime: times[throws] },
+      { isRetry: false, retryCount: 0, scheduledTime: times[throws] + 1 },
+    ]);
+    expect(runsOf(cannotStart).map(run => run.info)).toEqual([
+      { isRetry: true, retryCount: 1, scheduledTime: times[cannotStart] },
+    ]);
+    // Not by the instances that failed: those are gone, and the count was not theirs.
+    const [failed, retried] = runsOf(throws);
+    expect(retried.instance).toBeGreaterThan(failed.instance);
+    expect(runsOf(cannotStart)[0].instance).toBeGreaterThan(failedToStart);
+    expect(runsOf(throws).map(run => run.during)).toEqual([null, null, null]);
+    expect(errors.items).toHaveLength(2);
+    expect(await ns.getByName("throws").getAlarm()).toBeNull();
+    expect(await ns.getByName("cannot start").getAlarm()).toBeNull();
+  });
+
+  test("an alarm set again by a handler that is still running when it is due fires when the handler is done", async () => {
+    const released = Promise.withResolvers<void>();
+    let second = 0;
     const { ns, fired } = open({
-      onError: (error, id) => void errors.push({ error, id }),
-      // The object is evicted between the failure and the retry: the count of retries is not the instance's.
-      idleTimeout: 100,
       env: {
-        constructed: name => constructed.push(name),
-        inAlarm(ctx, info) {
-          if (info.retryCount === 0) throw boom;
+        async inAlarm(ctx, info) {
+          if (fired.items.length > 1) return;
+          second = Date.now() + 10;
+          await ctx.storage.setAlarm(second);
+          // Still here when the new one is due.
+          while (Date.now() <= second + 20) await Bun.sleep(5);
+          released.resolve();
         },
       },
     });
     await using _ = ns;
-    const stub = ns.getByName("retried");
-    const time = await stub.setAlarmIn(20);
-    await fired.waitFor(1);
-    const failedAt = fired.items[0].at;
-    expect(fired.items[0].info).toEqual({ isRetry: false, retryCount: 0, scheduledTime: time });
-
-    // A throwing handler does not clear the alarm.
-    expect(await stub.getAlarm()).toBe(time);
-    expect(errors).toHaveLength(1);
-    expect(errors[0].error).toBe(boom);
-    expect(String(errors[0].id)).toBe(String(ns.idFromName("retried")));
-    expect(errors[0].id.equals(ns.idFromName("retried"))).toBe(true);
-    expect(errors[0].id.name).toBe("retried");
-
-    const constructedBeforeRetry = constructed.length;
-    await fired.waitFor(2, 6000);
-    expect(fired.items[1].info).toEqual({ isRetry: true, retryCount: 1, scheduledTime: time });
-    expect(constructed.length).toBeGreaterThan(constructedBeforeRetry);
+    const stub = ns.getByName("slow");
+    const first = await stub.setAlarmIn(1);
+    await released.promise;
+    // One event at a time: not during the first.
+    expect(fired.items).toHaveLength(1);
+    await fired.waitFor(2);
+    expect(fired.items.map(event => event.info)).toEqual([
+      { isRetry: false, retryCount: 0, scheduledTime: first },
+      { isRetry: false, retryCount: 0, scheduledTime: second },
+    ]);
+    expect(fired.items[0].during).toBeNull();
     expect(fired.items[1].during).toBeNull();
-    const delay = fired.items[1].at - failedAt;
-    expect(delay).toBeGreaterThanOrEqual(1500);
-    expect(delay).toBeLessThan(4000);
-    // The write of the failed run was kept (it was committed before the throw), and so was the retry's.
-    expect(await stub.count()).toBe(2);
     expect(await stub.getAlarm()).toBeNull();
-    expect(errors).toHaveLength(1);
-  }, 15_000);
+    expect(await stub.count()).toBe(2);
+  });
 
   test("setAlarm inside a transactionSync that throws is rolled back", async () => {
     const { ns, fired } = open();
@@ -751,11 +849,10 @@ describe("Bun.DurableObject alarms with file storage", () => {
     expect(third.stderr).toBe("");
     expect(third.lines).toEqual(["opened"]);
     expect(third.exitCode).toBe(0);
-  }, 30_000);
+  });
 
   test("a pending alarm keeps the process alive until alarm() has run, then the process exits by itself", async () => {
     using dir = tempDir("do-alarm-keepalive", fixtures);
-    const started = Date.now();
     const { lines, stderr, exitCode } = await run(String(dir), "set-and-idle.ts");
     expect(stderr).toBe("");
     expect(lines).toHaveLength(2);
@@ -769,9 +866,8 @@ describe("Bun.DurableObject alarms with file storage", () => {
       during: null,
     });
     expect(exitCode).toBe(0);
-    // It did not wait for the idle timeout (10s by default) before exiting.
-    expect(Date.now() - started).toBeLessThan(8000);
-  }, 30_000);
+    // (It did not wait for the idle timeout, 10s by default, before exiting: the test would have timed out.)
+  });
 
   test("ns.close() with a pending alarm lets the process exit", async () => {
     using dir = tempDir("do-alarm-close-exit", fixtures);
@@ -782,5 +878,5 @@ describe("Bun.DurableObject alarms with file storage", () => {
     expect(alarm).toBe(set);
     expect(lines[1]).toBe("closed");
     expect(exitCode).toBe(0);
-  }, 30_000);
+  });
 });

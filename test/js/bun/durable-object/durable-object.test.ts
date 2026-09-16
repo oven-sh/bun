@@ -1,9 +1,10 @@
 // Bun.DurableObject / Bun.DurableObjectNamespace — the API surface: namespace options, ids, stubs,
 // RPC, fetch, class mode vs module mode, close(). Storage, alarms, WebSockets, eviction and the
 // event queue have test files of their own next to this one.
+import * as bunModule from "bun";
 import { DurableObject as ImportedDurableObject, DurableObjectNamespace as ImportedDurableObjectNamespace } from "bun";
 import { describe, expect, test } from "bun:test";
-import { tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { createHash, createHmac } from "node:crypto";
 import { join } from "path";
 
@@ -137,9 +138,8 @@ describe("exports", () => {
     expect(Bun.DurableObjectNamespace.name).toBe("DurableObjectNamespace");
     expect(ImportedDurableObject).toBe(Bun.DurableObject);
     expect(ImportedDurableObjectNamespace).toBe(Bun.DurableObjectNamespace);
-    const dynamic = await import("bun");
-    expect(dynamic.DurableObject).toBe(Bun.DurableObject);
-    expect(dynamic.DurableObjectNamespace).toBe(Bun.DurableObjectNamespace);
+    expect(bunModule.DurableObject).toBe(Bun.DurableObject);
+    expect(bunModule.DurableObjectNamespace).toBe(Bun.DurableObjectNamespace);
     expect(typeof Bun.DurableObject.websocket).toBe("object");
     expect(Object.getPrototypeOf(Counter)).toBe(Base);
     expect(Object.getPrototypeOf(Base)).toBe(Bun.DurableObject);
@@ -661,6 +661,35 @@ describe("stubs", () => {
     expect(await stub.add(1, 1)).toBe(2);
   });
 
+  test("a method read like a getter rejects with a TypeError that says to call it", async () => {
+    await using ns = counters({ name: "counters of the test" });
+    const stub = ns.getByName("a");
+    const before = Counter.constructed;
+    // Forgetting the parentheses must not look like a value.
+    for (const name of ["add", "addAsync", "inherited", "self"]) {
+      const expected = `TypeError [undefined]: "${name}" is a method of the Durable Object "counters of the test": call it`;
+      expect(await rejection((async () => await stub[name])())).toBe(expected);
+      expect(await rejection(stub[name].then((value: unknown) => value))).toBe(expected);
+      expect(await rejection(Promise.resolve(stub[name]))).toBe(expected);
+      expect(await rejection(Promise.all([stub[name]]))).toBe(expected);
+    }
+    // The object was started to find out, and is none the worse for it.
+    expect(Counter.constructed).toBe(before + 1);
+    expect(await stub.add(1, 2)).toBe(3);
+    expect(await stub.label).toBe("label of a");
+    // A getter that gives a function is a method as far as a stub can tell.
+    class HasFunctionGetter extends Bun.DurableObject {
+      get handler() {
+        return () => "the getter's function";
+      }
+    }
+    await using other = new Namespace({ class: HasFunctionGetter });
+    expect(await other.getByName("a").handler()).toBe("the getter's function");
+    expect(await rejection((async () => await other.getByName("a").handler)())).toBe(
+      'TypeError [undefined]: "handler" is a method of the Durable Object "HasFunctionGetter": call it',
+    );
+  });
+
   test("stub.then is undefined, so a stub can be returned from an async function", async () => {
     await using ns = counters();
     const stub = ns.getByName("a");
@@ -785,9 +814,7 @@ describe("stubs", () => {
     expect(await rejection(stub.label())).toBe(
       'TypeError [undefined]: The Durable Object "Counter" has no method "label"',
     );
-    expect(await rejection(stub[""]())).toBe(
-      'TypeError [undefined]: The Durable Object "Counter" has no method ""',
-    );
+    expect(await rejection(stub[""]())).toBe('TypeError [undefined]: The Durable Object "Counter" has no method ""');
     expect(await stub.add(1, 2)).toBe(3);
   });
 
@@ -863,6 +890,39 @@ describe("stubs", () => {
     expect(await ns.get(ns.idFromString(String(unique.id))).increment()).toBe(2);
   });
 
+  test("the same id gives the same stub, and the same name the same id, while they are in use", async () => {
+    await using ns = counters();
+    const stub = ns.getByName("same");
+    const id = stub.id;
+    expect(ns.getByName("same")).toBe(stub);
+    expect(ns.get(id)).toBe(stub);
+    expect(ns.idFromName("same")).toBe(id);
+    expect(ns.get(ns.idFromName("same"))).toBe(stub);
+    expect(ns.getByName("same").id).toBe(id);
+    // So is what is read from a stub.
+    expect(stub.add).toBe(stub.add);
+    expect(stub.id).toBe(stub.id);
+    // Another name, another namespace: others.
+    expect(ns.getByName("other")).not.toBe(stub);
+    expect(ns.idFromName("other")).not.toBe(id);
+    await using second = counters();
+    expect(second.getByName("same")).not.toBe(stub);
+    expect(second.idFromName("same")).not.toBe(id);
+    expect(String(second.idFromName("same"))).toBe(String(id));
+    // An id that was not made from a name has a stub of its own too.
+    const unique = ns.newUniqueId();
+    expect(ns.get(unique)).toBe(ns.get(unique));
+    expect(ns.get(unique).id).toBe(unique);
+    // An id read back from its string is another id object, without the name; it is the same object all the same.
+    const fromString = ns.idFromString(String(id));
+    expect(fromString).not.toBe(id);
+    expect(fromString.equals(id)).toBe(true);
+    expect(fromString.name).toBeUndefined();
+    expect(await stub.increment()).toBe(1);
+    expect(await ns.get(fromString).increment()).toBe(2);
+    expect(await ns.getByName("same").increment()).toBe(3);
+  });
+
   test("ctx.id is the id the object was addressed by", async () => {
     await using ns = counters();
     const stub = ns.getByName("a");
@@ -922,6 +982,14 @@ class Fetcher extends Bun.DurableObject {
         return { status: 200 } as any;
       case "/null":
         return null as any;
+      case "/undefined":
+        return undefined;
+      case "/nothing":
+        return;
+      case "/upgrade-refused":
+        // Not a WebSocket request: the server says no, and nothing was upgraded.
+        this.upgrades.push((server as Bun.DurableObjectServer).upgrade(request));
+        return;
       case "/throw":
         throw new Error("fetch threw");
       case "/sync-response":
@@ -940,6 +1008,10 @@ class Fetcher extends Bun.DurableObject {
   }
   last() {
     return this.lastRequest;
+  }
+  upgrades: boolean[] = [];
+  upgradeResults() {
+    return this.upgrades;
   }
 }
 
@@ -1024,13 +1096,48 @@ describe("fetch", () => {
   test("a fetch() that does not return a Response rejects with a TypeError", async () => {
     await using ns = new Namespace({ class: Fetcher });
     const stub = ns.getByName("a");
-    for (const path of ["/string", "/object", "/null"]) {
-      expect(await rejection(stub.fetch(`http://do${path}`))).toBe(
-        "TypeError [undefined]: A Durable Object's fetch() must return a Response, or nothing after server.upgrade(request)",
-      );
+    // Nothing is only an answer after server.upgrade(request) said true.
+    for (const path of ["/string", "/object", "/null", "/undefined", "/nothing"]) {
+      const result = stub.fetch(`http://do${path}`);
+      expect(result).toBeInstanceOf(Promise);
+      expect({ path, rejection: await rejection(result) }).toEqual({
+        path,
+        rejection:
+          "TypeError [undefined]: A Durable Object's fetch() must return a Response, or nothing after server.upgrade(request)",
+      });
     }
     expect(await rejection(stub.fetch("http://do/throw"))).toBe("Error [undefined]: fetch threw");
     expect((await stub.fetch("http://do/ok")).status).toBe(200);
+  });
+
+  test("a fetch() that returns nothing after server.upgrade(request) said no rejects as well", async () => {
+    await using ns = new Namespace({ class: Fetcher });
+    const stub = ns.getByName("a");
+    const rejections: string[] = [];
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      websocket: Bun.DurableObject.websocket,
+      // What the host's handler gets back from the stub, turned into a response the test can read.
+      fetch: (request, server) =>
+        stub.fetch(request, server).then(
+          response => response ?? new Response("upgraded", { status: 200 }),
+          error => {
+            rejections.push(described(error));
+            return new Response(described(error), { status: 502 });
+          },
+        ),
+    });
+    // An ordinary GET, not a WebSocket handshake: there is nothing to upgrade.
+    const response = await fetch(`http://127.0.0.1:${server.port}/upgrade-refused`);
+    expect(await response.text()).toBe(
+      "TypeError [undefined]: A Durable Object's fetch() must return a Response, or nothing after server.upgrade(request)",
+    );
+    expect(response.status).toBe(502);
+    expect(await stub.upgradeResults()).toEqual([false]);
+    expect(rejections).toHaveLength(1);
+    // The object and the server go on.
+    expect(await (await fetch(`http://127.0.0.1:${server.port}/sync-response`)).text()).toBe("sync");
   });
 
   test("a class without fetch() rejects", async () => {
@@ -1050,15 +1157,16 @@ describe("fetch", () => {
     const stub = ns.getByName("a");
     using server = Bun.serve({
       port: 0,
+      hostname: "127.0.0.1",
       async fetch(request, server) {
         const url = new URL(request.url);
         if (url.pathname === "/two") return (await stub.fetch(request, server))!;
         return (await stub.fetch(request.url, { method: request.method, headers: request.headers }, server))!;
       },
     });
-    const two = await (await fetch(new URL("/two", server.url), { headers: { "x-test": "2" } })).json();
+    const two = await (await fetch(`http://127.0.0.1:${server.port}/two`, { headers: { "x-test": "2" } })).json();
     expect(two).toMatchObject({ isRequest: true, header: "2", server: "object", argumentCount: 2 });
-    const three = await (await fetch(new URL("/three", server.url), { headers: { "x-test": "3" } })).json();
+    const three = await (await fetch(`http://127.0.0.1:${server.port}/three`, { headers: { "x-test": "3" } })).json();
     expect(three).toMatchObject({ isRequest: true, header: "3", server: "object", argumentCount: 2 });
   });
 });
@@ -1267,6 +1375,105 @@ describe("class mode and module mode", () => {
     expect(await rejection(without.getByName("a").read())).toStartWith("ReferenceError [undefined]:");
   });
 
+  test("globals are what they were when the namespace was made", async () => {
+    using dir = tempDir("durable-object-module", { "globals.ts": globalsSource });
+    const shared = { by: "reference" };
+    const calls: string[] = [];
+    const globals: Record<string, unknown> = {
+      INJECTED: "at construction",
+      SHARED_OBJECT: shared,
+      hostFunction: (name: string) => (calls.push("first " + name), "first"),
+    };
+    await using ns = new Namespace({ module: join(String(dir), "globals.ts"), globals });
+    // Before any object was loaded: changed, added and removed.
+    globals.INJECTED = "changed afterwards";
+    globals.NOT_INJECTED = "added afterwards";
+    globals.hostFunction = (name: string) => (calls.push("second " + name), "second");
+    delete globals.SHARED_OBJECT;
+    expect(await ns.getByName("a").read()).toEqual({ injected: "at construction", shared, missing: "undefined" });
+    expect((await ns.getByName("a").read()).shared).toBe(shared);
+    expect(await ns.getByName("a").call()).toBe("first");
+    // And between one object and the next.
+    globals.INJECTED = "changed again";
+    expect(await ns.getByName("b").read()).toEqual({ injected: "at construction", shared, missing: "undefined" });
+    expect(await ns.getByName("b").call()).toBe("first");
+    expect(calls).toEqual(["first a", "first b"]);
+    // The values are not copies: what the host does to one, the objects see.
+    (shared as any).changed = true;
+    expect((await ns.getByName("b").read()).shared).toEqual({ by: "reference", changed: true });
+    // A getter is read once, at construction.
+    let reads = 0;
+    await using withGetter = new Namespace({
+      module: join(String(dir), "globals.ts"),
+      globals: {
+        get INJECTED() {
+          return "read " + ++reads;
+        },
+        SHARED_OBJECT: null,
+        hostFunction: () => {},
+      },
+    });
+    expect(reads).toBe(1);
+    expect((await withGetter.getByName("a").read()).injected).toBe("read 1");
+    expect((await withGetter.getByName("b").read()).injected).toBe("read 1");
+    expect(reads).toBe(1);
+  });
+
+  test("a relative module specifier is resolved from the working directory", async () => {
+    using dir = tempDir("durable-object-relative", {
+      "objects/greeter.ts": `
+        export class Greeter extends Bun.DurableObject {
+          hello() {
+            return "hello from " + import.meta.path.slice(process.cwd().length);
+          }
+        }
+      `,
+      "host/nested/main.ts": `
+        const open = module => new Bun.DurableObjectNamespace({ module, export: "Greeter" });
+        // "./" is the working directory, wherever the script that says it is.
+        for (const specifier of ["./objects/greeter.ts", "./objects/../objects/greeter.ts", "../" + process.argv[2] + "/objects/greeter.ts"]) {
+          const ns = open(specifier);
+          console.log(await ns.getByName("a").hello());
+          await ns.close();
+        }
+        for (const specifier of ["./greeter.ts", "./host/nested/greeter.ts", "../objects/greeter.ts"]) {
+          try {
+            open(specifier);
+            console.log("opened", specifier);
+          } catch (error) {
+            console.log(error.code, specifier);
+          }
+        }
+        // Still the working directory after it changed.
+        process.chdir("objects");
+        const ns = open("./greeter.ts");
+        console.log(await ns.getByName("a").hello());
+        await ns.close();
+      `,
+    });
+    const cwd = String(dir);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join("host", "nested", "main.ts"), cwd.split(/[\\/]/).at(-1)!],
+      cwd,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.replaceAll("\\", "/").split("\n")).toEqual([
+      "hello from /objects/greeter.ts",
+      "hello from /objects/greeter.ts",
+      "hello from /objects/greeter.ts",
+      "ERR_MODULE_NOT_FOUND ./greeter.ts",
+      "ERR_MODULE_NOT_FOUND ./host/nested/greeter.ts",
+      "ERR_MODULE_NOT_FOUND ../objects/greeter.ts",
+      "hello from /greeter.ts",
+      "",
+    ]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
   test("env is passed by reference, in both modes", async () => {
     using dir = tempDir("durable-object-module", { "counter.ts": moduleSource });
     const env = { tag: "the env", list: [] as unknown[] };
@@ -1347,9 +1554,7 @@ describe("a class that does not extend Bun.DurableObject", () => {
     expect(stub.ctx).toBe(undefined);
     expect(stub.env).toBe(undefined);
     expect(await stub.calls).toBe(undefined);
-    expect(await rejection(stub.nope())).toBe(
-      'TypeError [undefined]: The Durable Object "Plain" has no method "nope"',
-    );
+    expect(await rejection(stub.nope())).toBe('TypeError [undefined]: The Durable Object "Plain" has no method "nope"');
     expect(String(ns.idFromName("x"))).toMatch(HEX64);
   });
 

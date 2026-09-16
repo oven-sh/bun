@@ -1,4 +1,5 @@
 // `ctx.storage` of Bun.DurableObject: kv, sql, transactions, persistence.
+import { Database, SQLiteError } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { existsSync, readdirSync } from "node:fs";
@@ -33,13 +34,16 @@ function run<T>(stub: Stub, fn: (ctx: Ctx, env: Env) => T | Promise<T>): Promise
   return stub.run(fn) as Promise<T>;
 }
 
-/** Waits until the object behind `stub` was evicted: the next call constructs a new instance. */
+/**
+ * Waits until the object behind `stub` was evicted: the next call constructs a new instance.
+ * (An idle object is evicted between `idleTimeout` and twice that after it was last used.)
+ */
 async function evict(stub: Stub, env: Env, idleTimeout: number) {
   const before = env.made;
   const deadline = Date.now() + 20_000;
   while (env.made === before) {
     if (Date.now() > deadline) throw new Error("The object was not evicted");
-    await Bun.sleep(idleTimeout * 2);
+    await Bun.sleep(idleTimeout * 2 + 5);
     await run(stub, () => {});
   }
 }
@@ -54,6 +58,7 @@ function caught(fn: () => unknown): any {
 }
 
 const reset = { code: "ERR_DURABLE_OBJECT_RESET" };
+const cannotBeCloned = { name: "DataCloneError", message: "The object can not be cloned." };
 
 function userSchema(ctx: Ctx) {
   return ctx.storage.sql
@@ -176,8 +181,8 @@ describe("kv", () => {
         await expect(result).rejects.toMatchObject(invalidType);
       }
       await expect(storage.put("key", undefined)).rejects.toMatchObject({ code: "ERR_INVALID_ARG_VALUE" });
-      await expect(storage.put("key", () => {})).rejects.toThrow();
-      await expect(storage.put({ fine: 1, bad: () => {} })).rejects.toThrow();
+      await expect(storage.put("key", () => {})).rejects.toMatchObject(cannotBeCloned);
+      await expect(storage.put({ fine: 1, bad: () => {} })).rejects.toMatchObject(cannotBeCloned);
       // put() of entries is all or nothing.
       expect([...(await storage.list())]).toEqual([]);
     });
@@ -300,8 +305,8 @@ describe("kv", () => {
         new WeakMap(),
       ];
       for (const value of values) {
-        expect(() => kv.put("key", value)).toThrow();
-        expect(() => kv.put("other", value)).toThrow();
+        expect(caught(() => kv.put("key", value))).toMatchObject(cannotBeCloned);
+        expect(caught(() => kv.put("other", value))).toMatchObject(cannotBeCloned);
       }
       expect(kv.get("key")).toBe("before");
       expect(kv.get("other")).toBeUndefined();
@@ -358,6 +363,47 @@ describe("kv", () => {
       await expect(storage.put({ a: 1, [over]: 2 })).rejects.toMatchObject({ code: "ERR_INVALID_ARG_VALUE" });
       await expect(storage.delete(["a", over])).rejects.toMatchObject({ code: "ERR_INVALID_ARG_VALUE" });
       expect((await storage.list()).size).toBe(0);
+    });
+  });
+
+  test("keys must be well-formed Unicode", async () => {
+    const { ns, stub } = open();
+    await using _ = ns;
+    await run(stub, async ({ storage }) => {
+      const { kv } = storage;
+      // Two lone surrogates would be stored as the same replacement character.
+      const illFormed = ["\uD800", "\uDC00", "a\uD83D", "\uDE00a", "\uDC00\uD800", "a\uD800b"];
+      const notWellFormed = (what: string) => ({
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_VALUE",
+        message: expect.stringContaining(`${what} must be well-formed Unicode.`),
+      });
+      for (const key of illFormed) {
+        expect(key.isWellFormed()).toBe(false);
+        expect(caught(() => kv.get(key))).toMatchObject(notWellFormed("The argument 'key'"));
+        expect(caught(() => kv.put(key, 1))).toMatchObject(notWellFormed("The argument 'key'"));
+        expect(caught(() => kv.delete(key))).toMatchObject(notWellFormed("The argument 'key'"));
+        for (const option of ["start", "startAfter", "end", "prefix"])
+          expect(caught(() => kv.list({ [option]: key }))).toMatchObject(
+            notWellFormed(`The property 'options.${option}'`),
+          );
+        await expect(storage.get(key)).rejects.toMatchObject(notWellFormed("The argument 'key'"));
+        await expect(storage.get(["fine", key])).rejects.toMatchObject(notWellFormed("The argument 'key'"));
+        await expect(storage.put(key, 1)).rejects.toMatchObject(notWellFormed("The argument 'key'"));
+        await expect(storage.put({ fine: 1, [key]: 2 })).rejects.toMatchObject({ code: "ERR_INVALID_ARG_VALUE" });
+        await expect(storage.delete(key)).rejects.toMatchObject(notWellFormed("The argument 'key'"));
+        await expect(storage.delete(["fine", key])).rejects.toMatchObject(notWellFormed("The argument 'key'"));
+        await expect(storage.list({ prefix: key })).rejects.toMatchObject(
+          notWellFormed("The property 'options.prefix'"),
+        );
+        await expect(storage.transaction(txn => txn.put(key, 1))).rejects.toMatchObject(
+          notWellFormed("The argument 'key'"),
+        );
+      }
+      expect([...kv.list()]).toEqual([]);
+      // A pair is one code point, and fine.
+      kv.put("\uD83D\uDE00", "pair");
+      expect([...kv.list()]).toEqual([["\u{1F600}", "pair"]]);
     });
   });
 
@@ -610,14 +656,46 @@ describe("list options", () => {
       expect(listed(ctx)).toEqual(expected);
       expect(listed(ctx, { reverse: true })).toEqual(expected.toReversed());
       expect([...(await ctx.storage.list()).keys()]).toEqual(expected);
-      expect([...(await ctx.storage.get(stored)).keys()]).toEqual(expected);
-      expect([...(await ctx.storage.get([astral, bmp])).keys()]).toEqual([bmp, astral]);
 
       expect(listed(ctx, { start: bmp })).toEqual([bmp, bmp + "a", astral, astral + "a", "\u{1F600}"]);
       expect(listed(ctx, { startAfter: bmp + "a" })).toEqual([astral, astral + "a", "\u{1F600}"]);
       expect(listed(ctx, { end: astral })).toEqual(expected.slice(0, expected.indexOf(astral)));
       expect(listed(ctx, { start: astral, end: bmp })).toEqual([]);
       expect(listed(ctx, { start: bmp, end: astral })).toEqual([bmp, bmp + "a"]);
+    });
+  });
+
+  test("get() of several keys returns them in the order list() does", async () => {
+    const { ns, stub } = open();
+    await using _ = ns;
+    await run(stub, async ({ storage }) => {
+      const bmp = "\uFFFF";
+      const astral = "\u{10000}";
+      const stored = [astral, "z", bmp, "\u{1F600}", "\uE000", "a", astral + "a", bmp + "a"];
+      for (const key of stored) storage.kv.put(key, key);
+      const expected = ["a", "z", "\uE000", bmp, bmp + "a", astral, astral + "a", "\u{1F600}"];
+      expect([...(await storage.list()).keys()]).toEqual(expected);
+      expect([...(await storage.get(stored)).keys()]).toEqual(expected);
+      expect([...(await storage.get([astral, bmp])).keys()]).toEqual([bmp, astral]);
+      // And a transaction's, of what is committed and of what it wrote itself.
+      await storage.transaction(async txn => {
+        expect([...(await txn.get(stored)).keys()]).toEqual(expected);
+        expect([...(await txn.list()).keys()]).toEqual(expected);
+        await txn.put("\uFF5E", 1);
+        await txn.put("\u{10FFFF}", 1);
+        await txn.delete("z");
+        const merged = ["a", "\uE000", "\uFF5E", bmp, bmp + "a", astral, astral + "a", "\u{1F600}", "\u{10FFFF}"];
+        expect([...(await txn.list()).keys()]).toEqual(merged);
+        expect([...(await txn.list({ reverse: true })).keys()]).toEqual(merged.toReversed());
+        expect([...(await txn.list({ start: bmp, end: "\u{1F600}" })).keys()]).toEqual([
+          bmp,
+          bmp + "a",
+          astral,
+          astral + "a",
+        ]);
+        expect([...(await txn.list({ startAfter: "\uFF5E", limit: 3 })).keys()]).toEqual([bmp, bmp + "a", astral]);
+        txn.rollback();
+      });
     });
   });
 });
@@ -658,6 +736,33 @@ describe("sql.exec", () => {
       sql.exec("INSERT INTO later VALUES (1)");
     });
     expect(await run(stub, ({ storage: { sql } }) => sql.exec("SELECT a FROM later").toArray())).toEqual([{ a: 1 }]);
+  });
+
+  // CREATE INDEX (like DROP INDEX, ANALYZE, ...) makes SQLite compile every other statement of the
+  // connection again when it is next run, the runtime's own BEGIN and COMMIT among them.
+  test("an event that writes first thing with exec(), after an event that created an index", async () => {
+    const { ns, stub } = open();
+    await using _ = ns;
+    await run(stub, ({ storage: { sql } }) => {
+      sql.exec("CREATE TABLE IF NOT EXISTS t (a)");
+      sql.exec("CREATE INDEX IF NOT EXISTS t_a ON t (a)");
+    });
+    for (let i = 0; i < 3; i++) {
+      expect(await run(stub, ({ storage: { sql } }) => sql.exec("INSERT INTO t VALUES (?)", i).rowsWritten)).toBe(1);
+    }
+    await run(stub, ({ storage: { sql } }) => sql.exec("DROP INDEX t_a"));
+    await run(stub, ({ storage }) => storage.transactionSync(() => storage.sql.exec("INSERT INTO t VALUES (3)")));
+    await run(stub, ({ storage }) => storage.sql.exec("CREATE INDEX t_a ON t (a); INSERT INTO t VALUES (4)"));
+    await run(stub, ({ storage }) => storage.sql.exec("INSERT INTO t VALUES (5); INSERT INTO t VALUES (6)"));
+    expect(await run(stub, ({ storage: { sql } }) => sql.exec("SELECT a FROM t ORDER BY a").raw().toArray())).toEqual([
+      [0],
+      [1],
+      [2],
+      [3],
+      [4],
+      [5],
+      [6],
+    ]);
   });
 
   test("bindings of every type", async () => {
@@ -764,10 +869,31 @@ describe("sql.exec", () => {
     await using _ = ns;
     await run(stub, ({ storage: { sql } }) => {
       sql.exec("CREATE TABLE t (a, b)");
+      const onlyTheLast = {
+        name: "Error",
+        message: "Only the last statement of a query can have parameter bindings",
+      };
       // Not run with NULL for every parameter.
-      expect(() => sql.exec("INSERT INTO t VALUES (?, ?); SELECT * FROM t", 1, 2)).toThrow();
-      expect(() => sql.exec("INSERT INTO t VALUES (?, ?); SELECT * FROM t")).toThrow();
+      expect(caught(() => sql.exec("INSERT INTO t VALUES (?, ?); SELECT * FROM t", 1, 2))).toMatchObject(onlyTheLast);
+      expect(caught(() => sql.exec("INSERT INTO t VALUES (?, ?); SELECT * FROM t"))).toMatchObject(onlyTheLast);
+      expect(caught(() => sql.exec("SELECT ?; SELECT ?", 1))).toMatchObject(onlyTheLast);
+      // What the statements before it did is undone, and those after it never ran.
+      expect(
+        caught(() =>
+          sql.exec("INSERT INTO t VALUES (1, 2); INSERT INTO t VALUES (?, 4); INSERT INTO t VALUES (5, 6)", 3),
+        ),
+      ).toMatchObject(onlyTheLast);
+      expect(caught(() => sql.exec("CREATE TABLE made (a); INSERT INTO made VALUES (?); SELECT 1", 1))).toMatchObject(
+        onlyTheLast,
+      );
       expect(sql.exec("SELECT count(*) AS n FROM t").one().n).toBe(0);
+      expect(sql.exec("SELECT name FROM sqlite_master WHERE name = 'made'").toArray()).toEqual([]);
+      // The last one's are counted like any statement's.
+      expect(() => sql.exec("INSERT INTO t VALUES (1, 2); SELECT * FROM t WHERE a = ?")).toThrow(
+        "Wrong number of parameter bindings for SQL query: expected 1, got 0.",
+      );
+      expect(sql.exec("SELECT count(*) AS n FROM t").one().n).toBe(0);
+      expect(sql.exec("INSERT INTO t VALUES (1, 2); SELECT b FROM t WHERE a = ?", 1).one()).toEqual({ b: 2 });
     });
   });
 
@@ -1109,8 +1235,14 @@ describe("sql.exec", () => {
         "/* only a comment */",
         "-- one\n/* two */ ; -- three",
       ]) {
-        expect(() => sql.exec(query)).toThrow();
-        expect(() => sql.exec(query, 1)).toThrow();
+        expect(caught(() => sql.exec(query))).toMatchObject({
+          name: "Error",
+          message: "SQL query contained no statement",
+        });
+        expect(caught(() => sql.exec(query, 1))).toMatchObject({
+          name: "Error",
+          message: "SQL query contained no statement",
+        });
       }
       expect(sql.exec("SELECT 1 AS ok").one()).toEqual({ ok: 1 });
     });
@@ -1120,25 +1252,52 @@ describe("sql.exec", () => {
     const { ns, stub } = open();
     await using _ = ns;
     await run(stub, ({ storage: { sql, kv } }) => {
-      const syntax = caught(() => sql.exec("SELEC 1"));
+      // The shape of bun:sqlite's errors.
+      const syntax = caught(() => sql.exec("SELECT * FORM t"));
       expect(syntax).toBeInstanceOf(Error);
+      expect(syntax).toBeInstanceOf(SQLiteError);
       expect(syntax.name).toBe("SQLiteError");
-      expect(syntax.message).toContain("syntax error");
+      expect(syntax.message).toBe('near "FORM": syntax error');
       expect(syntax.code).toBe("SQLITE_ERROR");
-      expect(typeof syntax.errno).toBe("number");
+      expect(syntax.errno).toBe(1);
+      expect(syntax.byteOffset).toBe(9);
+      expect(Object.keys(syntax).sort()).toEqual(["byteOffset", "code", "errno"]);
       expect(caught(() => sql.exec("SELECT * FROM nowhere"))).toMatchObject({
         name: "SQLiteError",
         message: "no such table: nowhere",
+        code: "SQLITE_ERROR",
+        errno: 1,
+        byteOffset: -1,
       });
-      expect(caught(() => sql.exec("SELECT 1; SELECT FROM"))).toMatchObject({ name: "SQLiteError" });
-      expect(caught(() => sql.exec("SELECT 'unterminated"))).toMatchObject({ name: "SQLiteError" });
+      expect(caught(() => sql.exec("SELECT 1; SELECT FROM"))).toMatchObject({
+        name: "SQLiteError",
+        message: 'near "FROM": syntax error',
+        code: "SQLITE_ERROR",
+      });
+      expect(caught(() => sql.exec("SELECT 'unterminated"))).toMatchObject({
+        name: "SQLiteError",
+        message: expect.stringContaining("unrecognized token"),
+        code: "SQLITE_ERROR",
+        byteOffset: 7,
+      });
+      // What is not allowed is refused by SQLite's authorizer.
+      expect(caught(() => sql.exec("PRAGMA journal_mode = DELETE"))).toMatchObject({
+        name: "SQLiteError",
+        message: "not authorized",
+        code: "SQLITE_AUTH",
+        errno: 23,
+        byteOffset: -1,
+      });
 
       sql.exec("CREATE TABLE u (id INTEGER PRIMARY KEY, v TEXT UNIQUE NOT NULL)");
       sql.exec("INSERT INTO u VALUES (1, 'a')");
       const unique = caught(() => sql.exec("INSERT INTO u VALUES (2, 'a')"));
+      expect(unique).toBeInstanceOf(SQLiteError);
       expect(unique.name).toBe("SQLiteError");
       expect(unique.code).toBe("SQLITE_CONSTRAINT_UNIQUE");
-      expect(unique.message).toContain("UNIQUE constraint failed");
+      expect(unique.errno).toBe(2067);
+      expect(unique.byteOffset).toBe(-1);
+      expect(unique.message).toBe("UNIQUE constraint failed: u.v");
       expect(caught(() => sql.exec("INSERT INTO u VALUES (1, 'b')")).code).toBe("SQLITE_CONSTRAINT_PRIMARYKEY");
       expect(caught(() => sql.exec("INSERT INTO u VALUES (3, NULL)")).code).toBe("SQLITE_CONSTRAINT_NOTNULL");
       // An error while stepping to a later row.
@@ -1186,7 +1345,10 @@ describe("sql.exec", () => {
       expect(changed.one()).toEqual({ a: 0, b: "new" });
       // A failed exec of a cached statement leaves it usable.
       expect(() => sql.exec("SELECT a FROM t WHERE a = ?")).toThrow("Wrong number");
-      expect(() => sql.exec("SELECT a FROM t WHERE a = ?", {} as any)).toThrow();
+      expect(caught(() => sql.exec("SELECT a FROM t WHERE a = ?", {} as any))).toMatchObject({
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_TYPE",
+      });
       expect(sql.exec("SELECT a FROM t WHERE a = ?", 7).one()).toEqual({ a: 7 });
     });
     // And from later events.
@@ -1218,12 +1380,11 @@ describe("sql.exec", () => {
       expect(sql.exec(query, 3).toArray()).toEqual([{ a: 3 }]);
       expect(sql.exec(query, 0).raw().toArray()).toEqual([[1], [2], [3]]);
 
-      // A cursor sees rows written while it is open, or not; either way it ends and nothing breaks.
+      // A cursor that is open when a statement writes has the rows as they were before it.
       const open = sql.exec("SELECT a FROM t ORDER BY a");
       expect(open.next().value).toEqual({ a: 1 });
       sql.exec("INSERT INTO t VALUES (4)");
-      const rest = open.toArray().map(row => row.a);
-      expect(rest.slice(0, 2)).toEqual([2, 3]);
+      expect(open.toArray()).toEqual([{ a: 2 }, { a: 3 }]);
       expect(sql.exec("SELECT count(*) AS n FROM t").one().n).toBe(4);
     });
   });
@@ -1282,6 +1443,223 @@ describe("sql.exec", () => {
       expect(userSchema(ctx)).toEqual([]);
     });
     expect(env.abandoned).toBeDefined();
+  });
+
+  test("a cursor reads its rows when it is asked for them, after an await too", async () => {
+    const { ns, stub } = open();
+    await using _ = ns;
+    const held = await run(stub, async ({ storage }) => {
+      const { sql } = storage;
+      sql.exec("CREATE TABLE t (a INTEGER)");
+      sql.exec("INSERT INTO t VALUES (1), (2), (3), (4), (5), (6)");
+      const cursor = sql.exec("SELECT a FROM t ORDER BY a");
+      const raw = cursor.raw();
+      expect(cursor.next().value).toEqual({ a: 1 });
+      expect(cursor.next().value).toEqual({ a: 2 });
+      expect(cursor.rowsRead).toBe(2);
+      // The writes before it are committed meanwhile; the cursor is not read to its end for that.
+      await storage.sync();
+      await Bun.sleep(1);
+      expect(cursor.rowsRead).toBe(2);
+      expect(raw.next().value).toEqual([3]);
+      expect(cursor.rowsRead).toBe(3);
+      // Writes through the key-value store do not end it either.
+      storage.kv.put("key", 1);
+      await storage.put("other", 2);
+      expect(cursor.rowsRead).toBe(3);
+      expect(cursor.next().value).toEqual({ a: 4 });
+      expect(cursor.rowsRead).toBe(4);
+      return cursor;
+    });
+    // In a later event, and from outside the object, for as long as the instance is there.
+    await run(stub, ({ storage }) => {
+      expect(storage.kv.get("key")).toBe(1);
+      expect(held.rowsRead).toBe(4);
+      expect(held.next().value).toEqual({ a: 5 });
+    });
+    expect(held.rowsRead).toBe(5);
+    expect(held.toArray()).toEqual([{ a: 6 }]);
+    expect(held.rowsRead).toBe(6);
+    expect(held.next()).toEqual({ done: true, value: undefined });
+  });
+
+  test("a cursor that is being read while statements write has the rows as they were", async () => {
+    const { ns, stub } = open();
+    await using _ = ns;
+    await run(stub, async ({ storage }) => {
+      const { sql } = storage;
+      sql.exec("CREATE TABLE t (a INTEGER)");
+      sql.exec("INSERT INTO t VALUES (1), (2), (3)");
+      // The loop everybody writes. It ends.
+      const seen: number[] = [];
+      for (const row of sql.exec<{ a: number }>("SELECT a FROM t ORDER BY a")) {
+        seen.push(row.a);
+        sql.exec("INSERT INTO t VALUES (?)", row.a + 10);
+      }
+      expect(seen).toEqual([1, 2, 3]);
+      expect(sql.exec("SELECT a FROM t ORDER BY a").raw().toArray().flat()).toEqual([1, 2, 3, 11, 12, 13]);
+
+      // Every kind of write, and several cursors at different places.
+      const atStart = sql.exec("SELECT a FROM t ORDER BY a");
+      const partly = sql.exec("SELECT a FROM t ORDER BY a");
+      const raw = sql.exec("SELECT a FROM t ORDER BY a DESC").raw();
+      const finished = sql.exec("SELECT a FROM t WHERE a > 100");
+      expect(partly.next().value).toEqual({ a: 1 });
+      expect(partly.next().value).toEqual({ a: 2 });
+      expect(raw.next().value).toEqual([13]);
+      expect(finished.toArray()).toEqual([]);
+      expect(partly.rowsRead).toBe(2);
+      sql.exec("UPDATE t SET a = a * 100 WHERE a < 10");
+      // What they had not read was read for them then.
+      expect(partly.rowsRead).toBe(6);
+      expect(atStart.rowsRead).toBe(6);
+      sql.exec("DELETE FROM t WHERE a = 11");
+      sql.exec("ALTER TABLE t ADD COLUMN b");
+      sql.exec("DROP TABLE t");
+      expect(atStart.toArray()).toEqual([{ a: 1 }, { a: 2 }, { a: 3 }, { a: 11 }, { a: 12 }, { a: 13 }]);
+      expect(partly.next().value).toEqual({ a: 3 });
+      expect(partly.columnNames).toEqual(["a"]);
+      expect(partly.toArray()).toEqual([{ a: 11 }, { a: 12 }, { a: 13 }]);
+      expect(partly.rowsRead).toBe(6);
+      expect(raw.toArray()).toEqual([[12], [11], [3], [2], [1]]);
+      expect(finished.next()).toEqual({ done: true, value: undefined });
+      expect(() => sql.exec("SELECT a FROM t")).toThrow("no such table: t");
+
+      // A statement that does not write leaves the others reading.
+      sql.exec("CREATE TABLE u (a INTEGER); INSERT INTO u VALUES (1), (2), (3)");
+      const reading = sql.exec("SELECT a FROM u ORDER BY a");
+      expect(reading.next().value).toEqual({ a: 1 });
+      expect(sql.exec("SELECT count(*) AS n FROM u").one().n).toBe(3);
+      expect(sql.exec("PRAGMA table_info(u)").toArray().length).toBe(1);
+      expect(reading.rowsRead).toBe(1);
+      // Nor does a statement that writes but cannot be compiled: it never got as far as running.
+      expect(() => sql.exec("INSERT INTO missing VALUES (1)")).toThrow("no such table: missing");
+      expect(reading.rowsRead).toBe(1);
+      // One that fails while it runs has made them read every row first, all the same.
+      expect(() => sql.exec("INSERT INTO u VALUES (4), (abs(-9223372036854775807 - 1))")).toThrow("integer overflow");
+      expect(reading.rowsRead).toBe(3);
+      expect(sql.exec("SELECT count(*) AS n FROM u").one().n).toBe(3);
+      expect(reading.toArray()).toEqual([{ a: 2 }, { a: 3 }]);
+      expect(reading.rowsRead).toBe(3);
+      // transactionSync() and kv writes are not statements of exec().
+      const through = sql.exec("SELECT a FROM u ORDER BY a");
+      storage.transactionSync(() => storage.kv.put("key", 1));
+      expect(through.rowsRead).toBe(1);
+      storage.transactionSync(() => sql.exec("INSERT INTO u VALUES (5)"));
+      expect(through.rowsRead).toBe(3);
+      expect(through.toArray()).toEqual([{ a: 1 }, { a: 2 }, { a: 3 }]);
+    });
+  });
+
+  test("a statement that writes has run to its end when exec() returns", async () => {
+    const { ns, stub, env } = open({ idleTimeout: 20 });
+    await using _ = ns;
+    const returning = await run(stub, ({ storage: { sql } }) => {
+      sql.exec("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)");
+      const inserted = sql.exec<{ id: number; name: string }>(
+        "INSERT INTO t (name) VALUES ('a'), ('b'), ('c') RETURNING id, name",
+      );
+      // Nothing of it was read yet.
+      expect(inserted.rowsWritten).toBe(3);
+      expect(inserted.columnNames).toEqual(["id", "name"]);
+      expect(sql.exec("SELECT count(*) AS n FROM t").one().n).toBe(3);
+      // What it returned does not change with what is written later.
+      sql.exec("UPDATE t SET name = upper(name)");
+      sql.exec("DELETE FROM t WHERE id = 2");
+      expect(inserted.next().value).toEqual({ id: 1, name: "a" });
+      expect(inserted.rowsWritten).toBe(3);
+
+      const updated = sql.exec("UPDATE t SET name = name || '!' WHERE id = ? RETURNING name", 3);
+      expect(updated.rowsWritten).toBe(1);
+      expect(updated.one()).toEqual({ name: "C!" });
+      const deleted = sql.exec("DELETE FROM t WHERE id > 100 RETURNING id");
+      expect(deleted.rowsWritten).toBe(0);
+      expect(deleted.columnNames).toEqual(["id"]);
+      expect(deleted.toArray()).toEqual([]);
+      const raw = sql.exec("INSERT INTO t (name) VALUES ('d') RETURNING *").raw();
+      expect(raw.toArray()).toEqual([[4, "d"]]);
+      // Without RETURNING there is nothing to read, and no column.
+      const plain = sql.exec("INSERT INTO t (name) VALUES ('e')");
+      expect(plain.rowsWritten).toBe(1);
+      expect(plain.columnNames).toEqual([]);
+      expect(plain.next()).toEqual({ done: true, value: undefined });
+      // As the last of several statements.
+      const last = sql.exec(
+        "INSERT INTO t (name) VALUES ('f'); INSERT INTO t (name) VALUES ('g'), ('h') RETURNING name",
+      );
+      expect(last.rowsWritten).toBe(3);
+      expect(last.toArray()).toEqual([{ name: "g" }, { name: "h" }]);
+      return inserted;
+    });
+    // The rows are the cursor's own: they are there when the object is not.
+    await evict(stub, env, 20);
+    expect(returning.rowsWritten).toBe(3);
+    expect(returning.toArray()).toEqual([
+      { id: 2, name: "b" },
+      { id: 3, name: "c" },
+    ]);
+    expect(returning.next()).toEqual({ done: true, value: undefined });
+  });
+
+  test("a cursor that had rows to read when its object went throws once, and is at its end", async () => {
+    const { ns, stub, env } = open({ idleTimeout: 20 });
+    await using _ = ns;
+    const cursors = await run(stub, ({ storage: { sql } }) => {
+      sql.exec("CREATE TABLE t (a INTEGER); INSERT INTO t VALUES (1), (2), (3)");
+      // Taken into memory because of the INSERT after it.
+      const inMemory = sql.exec("SELECT a FROM t ORDER BY a");
+      sql.exec("INSERT INTO t VALUES (4)");
+      const unread = sql.exec("SELECT a FROM t ORDER BY a");
+      const partly = sql.exec("SELECT a FROM t ORDER BY a");
+      partly.next();
+      const forRaw = sql.exec("SELECT a FROM t ORDER BY a");
+      const raw = forRaw.raw();
+      const finished = sql.exec("SELECT a FROM t ORDER BY a");
+      expect(finished.toArray().length).toBe(4);
+      const lastRowRead = sql.exec("SELECT a FROM t ORDER BY a LIMIT 1");
+      lastRowRead.next();
+      const empty = sql.exec("SELECT a FROM t WHERE a > 4");
+      return { unread, partly, forRaw, raw, finished, lastRowRead, empty, inMemory };
+    });
+    await evict(stub, env, 20);
+    const { unread, partly, forRaw, raw, finished, lastRowRead, empty, inMemory } = cursors;
+    const end = { done: true, value: undefined };
+
+    for (const cursor of [unread, partly]) {
+      expect(caught(() => cursor.next())).toMatchObject({ name: "Error", ...reset });
+      expect(cursor.next()).toEqual(end);
+      expect(cursor.toArray()).toEqual([]);
+      expect([...cursor]).toEqual([]);
+      expect(caught(() => cursor.one())).toMatchObject({
+        message: "Expected exactly one result from SQL query, but got no results.",
+      });
+      expect(cursor.columnNames).toEqual(["a"]);
+      expect(cursor.rowsWritten).toBe(0);
+    }
+    expect(partly.rowsRead).toBe(1);
+    // raw() reads the cursor it was made from: they throw once between them. toArray() and one() do too.
+    expect(caught(() => raw.toArray())).toMatchObject(reset);
+    expect(raw.toArray()).toEqual([]);
+    expect(forRaw.next()).toEqual(end);
+    expect(forRaw.raw().next()).toEqual(end);
+    // These had nothing more to ask the database for.
+    expect(finished.next()).toEqual(end);
+    expect(finished.toArray()).toEqual([]);
+    expect(empty.next()).toEqual(end);
+    expect(inMemory.toArray()).toEqual([{ a: 1 }, { a: 2 }, { a: 3 }]);
+    expect(inMemory.next()).toEqual(end);
+    // This one had read its last row but was not told that it was the last.
+    expect(caught(() => lastRowRead.one())).toMatchObject(reset);
+    expect(lastRowRead.next()).toEqual(end);
+
+    // The new instance is not concerned.
+    expect(await run(stub, ({ storage: { sql } }) => sql.exec("SELECT a FROM t ORDER BY a").raw().toArray())).toEqual([
+      [1],
+      [2],
+      [3],
+      [4],
+    ]);
+    expect(unread.next()).toEqual(end);
   });
 
   test("databaseSize grows", async () => {
@@ -1387,7 +1765,10 @@ describe("what sql.exec() may not do", () => {
       denied(sql, `ATTACH DATABASE '${file}' AS other`);
       denied(sql, "DETACH DATABASE main");
       denied(sql, "DETACH other");
-      expect(() => sql.exec(`VACUUM INTO '${file}'`)).toThrow();
+      expect(caught(() => sql.exec(`VACUUM INTO '${file}'`))).toMatchObject({
+        name: "SQLiteError",
+        code: "SQLITE_ERROR",
+      });
       expect(existsSync(file)).toBe(false);
     });
   });
@@ -1468,11 +1849,51 @@ describe("what sql.exec() may not do", () => {
     const { ns, stub } = open();
     await using _ = ns;
     await run(stub, ctx => {
-      const { sql } = ctx.storage;
+      const { storage } = ctx;
+      const { sql } = storage;
       sql.exec("CREATE TABLE t (a)");
-      denied(sql, "ALTER TABLE t RENAME TO _cf_t");
-      denied(sql, "ALTER TABLE t RENAME TO _CF_t");
-      expect(userSchema(ctx)).toEqual(["table:t"]);
+      sql.exec("CREATE INDEX t_a ON t (a)");
+      sql.exec("INSERT INTO t VALUES (1)");
+      // SQLite only says what the new name is after it has renamed, so the statement is undone.
+      for (const name of ["_cf_t", "_CF_t", "_Cf_", '"_cf_quoted"', "[_cf_bracketed]", "`_cf_ticked`"]) {
+        const query = `ALTER TABLE t RENAME TO ${name}`;
+        denied(sql, query);
+        const error = caught(() => sql.exec(query));
+        expect(error).toBeInstanceOf(SQLiteError);
+        expect({ query, code: error.code, errno: error.errno }).toEqual({ query, code: "SQLITE_AUTH", errno: 23 });
+        expect(userSchema(ctx)).toEqual(["table:t", "index:t_a"]);
+      }
+      // As one of several statements, with those before it.
+      denied(sql, "INSERT INTO t VALUES (2); ALTER TABLE t RENAME TO _cf_t");
+      denied(sql, "ALTER TABLE t RENAME TO _cf_t; SELECT 1");
+      denied(sql, "ALTER TABLE t RENAME TO _cf_t; INSERT INTO _cf_t VALUES (3)");
+      denied(sql, "ALTER TABLE t RENAME TO _cf_t; ALTER TABLE _cf_t RENAME TO again");
+      denied(sql, "ALTER TABLE t RENAME TO fine; ALTER TABLE fine RENAME TO _cf_t");
+      storage.transactionSync(() => denied(sql, "ALTER TABLE t RENAME TO _cf_t"));
+      expect(userSchema(ctx)).toEqual(["table:t", "index:t_a"]);
+      expect(sql.exec("SELECT a FROM t").toArray()).toEqual([{ a: 1 }]);
+      // Other renames are fine, to names that only contain the prefix too.
+      sql.exec("ALTER TABLE t RENAME TO x_cf_t");
+      expect(userSchema(ctx)).toEqual(["index:t_a", "table:x_cf_t"]);
+      expect(sql.exec("SELECT a FROM x_cf_t").toArray()).toEqual([{ a: 1 }]);
+    });
+    // Nothing of it was left open.
+    await run(stub, ctx => {
+      expect(userSchema(ctx)).toEqual(["index:t_a", "table:x_cf_t"]);
+      expect(ctx.storage.sql.exec("SELECT count(*) AS n FROM x_cf_t").one().n).toBe(1);
+    });
+  });
+
+  test("the error of a refused rename looks like the others", async () => {
+    const { ns, stub } = open();
+    await using _ = ns;
+    await run(stub, ({ storage: { sql } }) => {
+      sql.exec("CREATE TABLE t (a)");
+      const error = caught(() => sql.exec("ALTER TABLE t RENAME TO _cf_t"));
+      expect(error.name).toBe("SQLiteError");
+      expect(error.message).toBe("not authorized: names that start with _cf_ are reserved");
+      expect(Object.keys(error).sort()).toEqual(["byteOffset", "code", "errno"]);
+      expect(error.byteOffset).toBe(-1);
     });
   });
 
@@ -1586,6 +2007,21 @@ describe("what sql.exec() may not do", () => {
     await run(stub, ({ storage: { sql, kv } }) => {
       expect(kv.get("key")).toBe("value");
       expect(sql.exec("SELECT name FROM t").toArray()).toEqual([{ name: "row" }]);
+    });
+  });
+
+  // Only tables, indexes, views and triggers have names that are reserved.
+  test("a column that is named like the runtime's tables is a column like any other", async () => {
+    const { ns, stub } = open();
+    await using _ = ns;
+    await run(stub, ({ storage: { sql } }) => {
+      sql.exec("CREATE TABLE t (_cf_a INTEGER, b TEXT)");
+      sql.exec("INSERT INTO t (_cf_a, b) VALUES (1, 'x')");
+      expect(sql.exec("SELECT * FROM t").toArray()).toEqual([{ _cf_a: 1, b: "x" }]);
+      expect(sql.exec("SELECT _cf_a FROM t WHERE _cf_a = 1").one()).toEqual({ _cf_a: 1 });
+      sql.exec("UPDATE t SET _cf_a = 2");
+      sql.exec("ALTER TABLE t RENAME COLUMN b TO _cf_b");
+      expect(sql.exec("SELECT _cf_a, _cf_b FROM t").toArray()).toEqual([{ _cf_a: 2, _cf_b: "x" }]);
     });
   });
 
@@ -1755,65 +2191,339 @@ describe("transactionSync", () => {
   });
 });
 
+// storage.transaction(): what is written through `txn` waits in memory and is applied, all of it or
+// none of it, when the closure's promise fulfills.
 describe("transaction", () => {
-  test("commits when the closure's promise fulfills", async () => {
+  test("applies what was written through txn when the closure's promise fulfills", async () => {
     const { ns, stub } = open();
     await using _ = ns;
     await run(stub, async ({ storage }) => {
       await storage.put({ a: 1, b: 2, c: 3 });
-      storage.sql.exec("CREATE TABLE t (a)");
       const marker = { returned: true };
       const pending = storage.transaction(async txn => {
+        expect(Object.prototype.toString.call(txn)).toBe("[object DurableObjectTransaction]");
+        // Reads are of what is stored, with what the transaction wrote on top of it.
         expect(await txn.get("a")).toBe(1);
+        expect(await txn.get("missing")).toBeUndefined();
         expect([...(await txn.get(["c", "a", "missing"]))]).toEqual([
           ["a", 1],
           ["c", 3],
         ]);
-        await txn.put("a", 10);
-        await txn.put({ d: 4, e: 5 });
+        expect(await txn.put("a", 10)).toBeUndefined();
+        expect(await txn.put({ d: 4, e: 5, skipped: undefined })).toBeUndefined();
+        expect(await txn.get("a")).toBe(10);
+        expect(await txn.get("d")).toBe(4);
         expect(await txn.delete("b")).toBe(true);
-        expect(await txn.delete(["c", "missing"])).toBe(1);
+        expect(await txn.get("b")).toBeUndefined();
+        expect([...(await txn.get(["a", "b", "c", "d", "skipped"]))]).toEqual([
+          ["a", 10],
+          ["c", 3],
+          ["d", 4],
+        ]);
         expect([...(await txn.list())]).toEqual([
           ["a", 10],
+          ["c", 3],
           ["d", 4],
           ["e", 5],
         ]);
-        expect([...(await txn.list({ reverse: true, limit: 1 }))]).toEqual([["e", 5]]);
-        storage.sql.exec("INSERT INTO t VALUES (1)");
+        // Nothing of it is stored yet, also after a real await.
+        const stored = () => [...storage.kv.list()];
+        const before = [
+          ["a", 1],
+          ["b", 2],
+          ["c", 3],
+        ];
+        expect(stored()).toEqual(before);
         await Bun.sleep(1);
-        storage.kv.put("through kv", true);
+        expect(stored()).toEqual(before);
+        expect([...(await storage.list())]).toEqual(before);
+        expect(await txn.get("a")).toBe(10);
         return marker;
       });
       expect(pending).toBeInstanceOf(Promise);
       expect(await pending).toBe(marker);
-      // A closure that is not async.
-      expect(await storage.transaction(txn => (txn.put("sync closure", 1), "plain"))).toBe("plain");
-    });
-    await run(stub, async ({ storage }) => {
       expect([...(await storage.list())]).toEqual([
         ["a", 10],
+        ["c", 3],
         ["d", 4],
         ["e", 5],
-        ["sync closure", 1],
-        ["through kv", true],
       ]);
-      expect(storage.sql.exec("SELECT a FROM t").toArray()).toEqual([{ a: 1 }]);
+      // A closure that is not async, one that returns a thenable, one that writes nothing.
+      expect(await storage.transaction(txn => (txn.put("sync closure", 1), "plain"))).toBe("plain");
+      expect(
+        await storage.transaction(txn => {
+          txn.put("thenable", 1);
+          return { then: (resolve: (value: string) => void) => resolve("from a thenable") } as any;
+        }),
+      ).toBe("from a thenable");
+      expect(await storage.transaction(() => {})).toBeUndefined();
     });
+    // And committed like any write.
+    expect(await run(stub, async ({ storage }) => [...(await storage.list())])).toEqual([
+      ["a", 10],
+      ["c", 3],
+      ["d", 4],
+      ["e", 5],
+      ["sync closure", 1],
+      ["thenable", 1],
+    ]);
   });
 
-  test("rolls back the key-value store and SQL together when it rejects", async () => {
+  test("takes a function", async () => {
     const { ns, stub } = open();
     await using _ = ns;
     await run(stub, async ({ storage }) => {
-      await storage.put("kept", "before");
-      storage.sql.exec("CREATE TABLE t (a)");
+      for (const closure of [undefined, null, 5, "fn", {}, Promise.resolve()] as any[]) {
+        const result = storage.transaction(closure);
+        expect(result).toBeInstanceOf(Promise);
+        await expect(result).rejects.toMatchObject({
+          name: "TypeError",
+          code: "ERR_INVALID_ARG_TYPE",
+          message: expect.stringContaining('The "closure" argument must be of type function.'),
+        });
+      }
+      await storage.transaction(async txn => {
+        const { put, get, rollback } = txn;
+        await expect(put("key", 1)).rejects.toMatchObject({ name: "TypeError", code: "ERR_INVALID_THIS" });
+        await expect(get("key")).rejects.toMatchObject({ name: "TypeError", code: "ERR_INVALID_THIS" });
+        expect(caught(() => rollback())).toMatchObject({ name: "TypeError", code: "ERR_INVALID_THIS" });
+        await expect(txn.get.call(storage, "key")).rejects.toMatchObject({ code: "ERR_INVALID_THIS" });
+      });
+    });
+  });
+
+  test("values are copied, and checked, when they are put", async () => {
+    const { ns, stub } = open();
+    await using _ = ns;
+    await run(stub, async ({ storage }) => {
+      await storage.transaction(async txn => {
+        const value = { list: [1, 2], when: new Date(5), nested: new Map([["k", new Set([1])]]) };
+        await txn.put("value", value);
+        value.list.push(3);
+        value.nested.clear();
+        const first = await txn.get<typeof value>("value");
+        expect(first).toEqual({ list: [1, 2], when: new Date(5), nested: new Map([["k", new Set([1])]]) });
+        expect(first).not.toBe(value);
+        first!.list.length = 0;
+        expect((await txn.get<typeof value>("value"))!.list).toEqual([1, 2]);
+        expect((await txn.list<typeof value>()).get("value")!.list).toEqual([1, 2]);
+
+        // What cannot be stored is refused there and then, and the transaction goes on without it.
+        await expect(txn.put("function", () => {})).rejects.toMatchObject(cannotBeCloned);
+        await expect(txn.put("symbol", Symbol("s"))).rejects.toMatchObject(cannotBeCloned);
+        await expect(txn.put({ fine: 1, bad: { fn() {} } })).rejects.toMatchObject(cannotBeCloned);
+        await expect(txn.put("undefined", undefined)).rejects.toMatchObject({
+          code: "ERR_INVALID_ARG_VALUE",
+          message: expect.stringContaining("The argument 'value' cannot be undefined."),
+        });
+        await expect((txn.put as any)("no value")).rejects.toMatchObject({ code: "ERR_INVALID_ARG_VALUE" });
+        // So are keys.
+        await expect(txn.put(1 as any, 1)).rejects.toMatchObject({ code: "ERR_INVALID_ARG_TYPE" });
+        await expect(txn.put("k".repeat(2049), 1)).rejects.toMatchObject({ code: "ERR_INVALID_ARG_VALUE" });
+        await expect(txn.put({ fine: 1, ["k".repeat(2049)]: 2 })).rejects.toMatchObject({
+          code: "ERR_INVALID_ARG_VALUE",
+        });
+        await expect(txn.get(1 as any)).rejects.toMatchObject({ code: "ERR_INVALID_ARG_TYPE" });
+        await expect(txn.get(["a", 2] as any)).rejects.toMatchObject({ code: "ERR_INVALID_ARG_TYPE" });
+        await expect(txn.delete({} as any)).rejects.toMatchObject({ code: "ERR_INVALID_ARG_TYPE" });
+        await expect(txn.delete("k".repeat(2049))).rejects.toMatchObject({ code: "ERR_INVALID_ARG_VALUE" });
+        await expect(txn.list({ limit: 0 })).rejects.toMatchObject({ code: "ERR_INVALID_ARG_VALUE" });
+        await expect(txn.list({ start: "a", startAfter: "b" })).rejects.toMatchObject({
+          code: "ERR_INVALID_ARG_VALUE",
+        });
+        await expect(txn.list("prefix" as any)).rejects.toMatchObject({ code: "ERR_INVALID_ARG_TYPE" });
+        // put() of entries is all or nothing.
+        expect([...(await txn.list()).keys()]).toEqual(["value"]);
+      });
+      expect([...(await storage.list())]).toEqual([
+        ["value", { list: [1, 2], when: new Date(5), nested: new Map([["k", new Set([1])]]) }],
+      ]);
+    });
+  });
+
+  test("delete() says whether the key was there", async () => {
+    const { ns, stub } = open();
+    await using _ = ns;
+    await run(stub, async ({ storage }) => {
+      await storage.put({ a: 1, b: 2, c: 3, d: 4, e: 5 });
+      await storage.transaction(async txn => {
+        // Stored.
+        expect(await txn.delete("a")).toBe(true);
+        // Not any more.
+        expect(await txn.delete("a")).toBe(false);
+        expect(await txn.delete("never")).toBe(false);
+        // Put by the transaction, over nothing and over something.
+        await txn.put("new", 1);
+        await txn.put("b", 20);
+        expect(await txn.delete("new")).toBe(true);
+        expect(await txn.delete("new")).toBe(false);
+        expect(await txn.delete("b")).toBe(true);
+        expect(await txn.delete("b")).toBe(false);
+        // Deleted, put again, deleted again.
+        await txn.put("a", 100);
+        expect(await txn.delete("a")).toBe(true);
+        // Several keys: how many of them were there, each counted once.
+        await txn.put("again", 1);
+        expect(await txn.delete(["c", "again", "never", "a", "c"])).toBe(2);
+        expect(await txn.delete([])).toBe(0);
+        expect(await txn.delete(["never"])).toBe(0);
+        expect([...(await txn.list())]).toEqual([
+          ["d", 4],
+          ["e", 5],
+        ]);
+        // The store itself still has them all.
+        expect([...storage.kv.list()].length).toBe(5);
+      });
+      expect([...(await storage.list())]).toEqual([
+        ["d", 4],
+        ["e", 5],
+      ]);
+      // Deleting what is not there leaves nothing behind.
+      await storage.transaction(async txn => void (await txn.delete(["d", "x", "y"])));
+      expect([...(await storage.list())]).toEqual([["e", 5]]);
+    });
+  });
+
+  test("list() merges what it wrote into what is stored, with every option", async () => {
+    const { ns, stub } = open();
+    await using _ = ns;
+    await run(stub, async ({ storage }) => {
+      const stored: Record<string, string> = {};
+      for (const key of ["a", "b", "b1", "b2", "c", "d", "p/1", "p/3", "p/5", "z"]) stored[key] = "stored";
+      await storage.put(stored);
+      await storage.transaction(async txn => {
+        const written: Record<string, string | null> = {
+          // New keys before, between and after the stored ones.
+          "0": "new",
+          b0: "new",
+          b3: "new",
+          "p/2": "new",
+          "p/4": "new",
+          "p/6": "new",
+          zz: "new",
+          // Stored keys, overwritten and deleted.
+          b1: "changed",
+          "p/3": "changed",
+          a: null,
+          b2: null,
+          "p/5": null,
+          z: null,
+          // Put and deleted again, deleted and put again.
+          gone: null,
+          c: "back",
+        };
+        await txn.put("gone", "for now");
+        await txn.delete("c");
+        for (const [key, value] of Object.entries(written)) {
+          if (value === null) await txn.delete(key);
+          else await txn.put(key, value);
+        }
+        const model = new Map(Object.entries(stored));
+        for (const [key, value] of Object.entries(written)) {
+          if (value === null) model.delete(key);
+          else model.set(key, value);
+        }
+        const expected = (options: Bun.DurableObjectListOptions) => {
+          let entries = [...model].sort(([a], [b]) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
+          const { start, startAfter, end, prefix, reverse, limit } = options;
+          if (start !== undefined) entries = entries.filter(([key]) => key >= start);
+          if (startAfter !== undefined) entries = entries.filter(([key]) => key > startAfter);
+          if (end !== undefined) entries = entries.filter(([key]) => key < end);
+          if (prefix !== undefined) entries = entries.filter(([key]) => key.startsWith(prefix));
+          if (reverse) entries.reverse();
+          if (limit !== undefined) entries = entries.slice(0, limit);
+          return entries;
+        };
+        const cases: Bun.DurableObjectListOptions[] = [
+          {},
+          { reverse: true },
+          { reverse: false },
+          { limit: 1 },
+          { limit: 3 },
+          { limit: 1000 },
+          { limit: 3, reverse: true },
+          { start: "b" },
+          { start: "b1" },
+          { start: "b2" },
+          { start: "gone" },
+          { start: "zzz" },
+          { startAfter: "b" },
+          { startAfter: "b0" },
+          { startAfter: "b2" },
+          { startAfter: "zz" },
+          { end: "b" },
+          { end: "b3" },
+          { end: "b2" },
+          { end: "" },
+          { end: "0" },
+          { start: "b", end: "c" },
+          { start: "b0", end: "b3" },
+          { startAfter: "b0", end: "b3" },
+          { start: "c", end: "b" },
+          { prefix: "b" },
+          { prefix: "b", reverse: true },
+          { prefix: "b", limit: 2 },
+          { prefix: "b", limit: 2, reverse: true },
+          { prefix: "p/" },
+          { prefix: "p/", start: "p/3" },
+          { prefix: "p/", startAfter: "p/3" },
+          { prefix: "p/", end: "p/4" },
+          { prefix: "p/", start: "p/2", end: "p/6", reverse: true, limit: 2 },
+          { prefix: "gone" },
+          { prefix: "z" },
+          { prefix: "zz" },
+          { prefix: "nothing" },
+          { prefix: "" },
+          { start: "a", limit: 2 },
+          { startAfter: "0", limit: 2 },
+          { start: "b", end: "p/4", reverse: true },
+          { start: "b", end: "p/4", reverse: true, limit: 4 },
+        ];
+        for (const options of cases) {
+          const listed = await txn.list<string>(options);
+          expect(listed).toBeInstanceOf(Map);
+          expect({ options, listed: [...listed] }).toEqual({ options, listed: expected(options) });
+        }
+        expect(expected({}).map(([key]) => key)).toEqual([
+          "0",
+          "b",
+          "b0",
+          "b1",
+          "b3",
+          "c",
+          "d",
+          "p/1",
+          "p/2",
+          "p/3",
+          "p/4",
+          "p/6",
+          "zz",
+        ]);
+        // The store's own list() is of what is stored.
+        expect([...(await storage.list()).keys()]).toEqual(Object.keys(stored));
+        expect([...storage.kv.list({ prefix: "p/" })].map(([key]) => key)).toEqual(["p/1", "p/3", "p/5"]);
+      });
+      expect([...(await storage.list({ prefix: "p/" }))]).toEqual([
+        ["p/1", "stored"],
+        ["p/2", "new"],
+        ["p/3", "changed"],
+        ["p/4", "new"],
+        ["p/6", "new"],
+      ]);
+    });
+  });
+
+  test("applies nothing when the closure's promise rejects", async () => {
+    const { ns, stub } = open();
+    await using _ = ns;
+    await run(stub, async ({ storage }) => {
+      await storage.put({ kept: "before", deleted: "before" });
       const failure = new Error("undo");
       const rejected = storage.transaction(async txn => {
         await txn.put("kept", "inside");
         await txn.put("added", 1);
-        storage.kv.put("through kv", 1);
-        storage.sql.exec("INSERT INTO t VALUES (1)");
-        storage.sql.exec("CREATE TABLE made (a)");
+        await txn.delete("deleted");
+        await txn.setAlarm(Date.now() + 3_600_000);
         await Bun.sleep(1);
         await txn.put("after a real await", 1);
         throw failure;
@@ -1824,9 +2534,11 @@ describe("transaction", () => {
           error => error,
         ),
       ).toBe(failure);
-      expect([...(await storage.list())]).toEqual([["kept", "before"]]);
-      expect(storage.sql.exec("SELECT a FROM t").toArray()).toEqual([]);
-      expect(userSchema({ storage } as Ctx)).toEqual(["table:t"]);
+      expect([...(await storage.list())]).toEqual([
+        ["deleted", "before"],
+        ["kept", "before"],
+      ]);
+      expect(await storage.getAlarm()).toBeNull();
 
       // A closure that throws before it returns a promise.
       const thrown = new Error("thrown");
@@ -1841,40 +2553,65 @@ describe("transaction", () => {
           error => error,
         ),
       ).toBe(thrown);
+      // A rejection with something that is not an error.
+      expect(
+        await storage.transaction(txn => (txn.put("added", 3), Promise.reject("a string"))).catch(e => [e]),
+      ).toEqual(["a string"]);
       expect(await storage.get("added")).toBeUndefined();
       await storage.put("after", 1);
     });
     expect(await run(stub, async ({ storage }) => [...(await storage.list())])).toEqual([
       ["after", 1],
+      ["deleted", "before"],
       ["kept", "before"],
     ]);
   });
 
-  test("rollback() discards what it wrote", async () => {
+  test("rollback() applies nothing, and the promise still fulfills", async () => {
     const { ns, stub } = open();
     await using _ = ns;
     await run(stub, async ({ storage }) => {
       await storage.put("kept", "before");
-      storage.sql.exec("CREATE TABLE t (a)");
       const result = await storage.transaction(async txn => {
         await txn.put("kept", "inside");
         await txn.put("added", 1);
-        storage.sql.exec("INSERT INTO t VALUES (1)");
         expect(txn.rollback()).toBeUndefined();
+        await Bun.sleep(1);
         return "rolled back";
       });
       expect(result).toBe("rolled back");
       expect([...(await storage.list())]).toEqual([["kept", "before"]]);
-      expect(storage.sql.exec("SELECT a FROM t").toArray()).toEqual([]);
 
-      // Nothing can be done with it after rollback().
+      // Nothing can be done with it after rollback(), the closure still running.
+      const rolledBack = {
+        name: "Error",
+        code: "ERR_INVALID_STATE",
+        message: expect.stringContaining("This transaction was rolled back"),
+      };
       await storage.transaction(async txn => {
+        await txn.put("late", 0);
         txn.rollback();
-        await expect(txn.put("late", 1)).rejects.toMatchObject({ code: "ERR_INVALID_STATE" });
-        await expect(txn.get("kept")).rejects.toMatchObject({ code: "ERR_INVALID_STATE" });
-        expect(caught(() => txn.rollback())).toMatchObject({ code: "ERR_INVALID_STATE" });
+        await expect(txn.put("late", 1)).rejects.toMatchObject(rolledBack);
+        await expect(txn.put({ late: 1 })).rejects.toMatchObject(rolledBack);
+        await expect(txn.get("kept")).rejects.toMatchObject(rolledBack);
+        await expect(txn.get(["kept"])).rejects.toMatchObject(rolledBack);
+        await expect(txn.list()).rejects.toMatchObject(rolledBack);
+        await expect(txn.delete("kept")).rejects.toMatchObject(rolledBack);
+        await expect(txn.getAlarm()).rejects.toMatchObject(rolledBack);
+        await expect(txn.setAlarm(Date.now() + 1000)).rejects.toMatchObject(rolledBack);
+        await expect(txn.deleteAlarm()).rejects.toMatchObject(rolledBack);
+        expect(caught(() => txn.rollback())).toMatchObject(rolledBack);
       });
       expect(await storage.get("late")).toBeUndefined();
+      // A rollback() and a rejection.
+      const failure = new Error("both");
+      await expect(
+        storage.transaction(async txn => {
+          await txn.put("late", 2);
+          txn.rollback();
+          throw failure;
+        }),
+      ).rejects.toBe(failure);
     });
     expect(await run(stub, async ({ storage }) => [...(await storage.list())])).toEqual([["kept", "before"]]);
   });
@@ -1885,6 +2622,8 @@ describe("transaction", () => {
     await run(stub, async ({ storage }) => {
       let committed!: Bun.DurableObjectTransaction;
       let failed!: Bun.DurableObjectTransaction;
+      let rolledBack!: Bun.DurableObjectTransaction;
+      let threw!: Bun.DurableObjectTransaction;
       await storage.transaction(async txn => {
         committed = txn;
         await txn.put("key", 1);
@@ -1895,14 +2634,30 @@ describe("transaction", () => {
           throw new Error("failed");
         })
         .catch(() => {});
-      for (const txn of [committed, failed]) {
-        const finished = { code: "ERR_INVALID_STATE" };
+      await storage.transaction(async txn => {
+        rolledBack = txn;
+        txn.rollback();
+      });
+      await storage
+        .transaction(txn => {
+          threw = txn;
+          throw new Error("threw");
+        })
+        .catch(() => {});
+      for (const txn of [committed, failed, rolledBack, threw]) {
+        const finished = {
+          name: "Error",
+          code: "ERR_INVALID_STATE",
+          message: expect.stringContaining("This transaction has already finished"),
+        };
         await expect(txn.get("key")).rejects.toMatchObject(finished);
         await expect(txn.get(["key"])).rejects.toMatchObject(finished);
         await expect(txn.put("key", 2)).rejects.toMatchObject(finished);
         await expect(txn.put({ key: 2 })).rejects.toMatchObject(finished);
         await expect(txn.delete("key")).rejects.toMatchObject(finished);
+        await expect(txn.delete(["key"])).rejects.toMatchObject(finished);
         await expect(txn.list()).rejects.toMatchObject(finished);
+        await expect(txn.list({ prefix: "k" })).rejects.toMatchObject(finished);
         await expect(txn.getAlarm()).rejects.toMatchObject(finished);
         await expect(txn.setAlarm(Date.now() + 1000)).rejects.toMatchObject(finished);
         await expect(txn.deleteAlarm()).rejects.toMatchObject(finished);
@@ -1910,16 +2665,163 @@ describe("transaction", () => {
       }
       expect(await storage.get("key")).toBe(1);
       expect(await storage.getAlarm()).toBeNull();
+
+      // It has finished when the closure's promise settled, not when transaction()'s was looked at.
+      let leaked!: Bun.DurableObjectTransaction;
+      const pending = storage.transaction(async txn => void (leaked = txn));
+      await pending;
+      await expect(leaked.put("key", 3)).rejects.toMatchObject({ code: "ERR_INVALID_STATE" });
+      expect(await storage.get("key")).toBe(1);
     });
   });
 
-  test("nests, with itself and with transactionSync()", async () => {
+  test("the alarm is part of it", async () => {
+    const { ns, stub } = open();
+    await using _ = ns;
+    await run(stub, async ({ storage }) => {
+      const time = Date.now() + 3_600_000;
+      const later = time + 1000;
+      await storage
+        .transaction(async txn => {
+          expect(await txn.setAlarm(time)).toBeUndefined();
+          expect(await txn.getAlarm()).toBe(time);
+          // Not set yet.
+          expect(await storage.getAlarm()).toBeNull();
+          await txn.setAlarm(new Date(later));
+          expect(await txn.getAlarm()).toBe(later);
+          throw new Error("undo");
+        })
+        .catch(() => {});
+      expect(await storage.getAlarm()).toBeNull();
+
+      await storage.transaction(async txn => {
+        await txn.setAlarm(new Date(time));
+      });
+      expect(await storage.getAlarm()).toBe(time);
+
+      await storage.transaction(async txn => {
+        expect(await txn.deleteAlarm()).toBeUndefined();
+        expect(await txn.getAlarm()).toBeNull();
+        expect(await storage.getAlarm()).toBe(time);
+        txn.rollback();
+      });
+      expect(await storage.getAlarm()).toBe(time);
+
+      // Deleted and set again, set and deleted again: the last one is what happens.
+      await storage.transaction(async txn => {
+        await txn.deleteAlarm();
+        await txn.setAlarm(later);
+      });
+      expect(await storage.getAlarm()).toBe(later);
+      await storage.transaction(async txn => {
+        await txn.setAlarm(time);
+        await txn.deleteAlarm();
+        expect(await txn.getAlarm()).toBeNull();
+      });
+      expect(await storage.getAlarm()).toBeNull();
+      // A transaction that did not touch the alarm leaves the one set meanwhile alone.
+      await storage.transaction(async txn => {
+        await txn.put("key", 1);
+        await storage.setAlarm(time);
+      });
+      expect(await storage.getAlarm()).toBe(time);
+
+      for (const invalid of ["soon", undefined, null, {}, NaN] as any[])
+        await expect(storage.transaction(txn => txn.setAlarm(invalid))).rejects.toMatchObject({ name: "TypeError" });
+      expect(await storage.getAlarm()).toBe(time);
+      await storage.deleteAlarm();
+    });
+  });
+
+  // (In a process of its own: this took the process down once.)
+  test("getAlarm() of one that has not set the alarm is the stored alarm", async () => {
+    const script = `
+      class Alarmed extends Bun.DurableObject {
+        async read() {
+          const { storage } = this.ctx;
+          const seen = [];
+          await storage.transaction(async txn => {
+            seen.push(await txn.getAlarm());
+            await txn.put("key", 1);
+            seen.push(await txn.getAlarm());
+          });
+          await storage.setAlarm(1_900_000_000_000);
+          await storage.transaction(async txn => {
+            seen.push(await txn.getAlarm());
+            await storage.setAlarm(1_900_000_001_000);
+            seen.push(await txn.getAlarm());
+            await txn.deleteAlarm();
+            seen.push(await txn.getAlarm(), await storage.getAlarm());
+            txn.rollback();
+          });
+          await storage.deleteAlarm();
+          await storage.transaction(async txn => void seen.push(await txn.getAlarm()));
+          return seen;
+        }
+        alarm() {}
+      }
+      const ns = new Bun.DurableObjectNamespace({ class: Alarmed });
+      console.log(JSON.stringify(await ns.getByName("object").read()));
+      await ns.close();
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr: stderr.slice(0, 500) }).toEqual({
+      stdout: JSON.stringify([null, null, 1_900_000_000_000, 1_900_000_001_000, null, 1_900_000_001_000, null]),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test("an alarm set in one fires once it was applied", async () => {
+    const fired: Bun.DurableObjectAlarmInfo[] = [];
+    const { promise: alarmed, resolve } = Promise.withResolvers<void>();
+    class Alarmed extends Bun.DurableObject {
+      set(time: number, fail: boolean) {
+        return this.ctx.storage.transaction(async txn => {
+          await txn.setAlarm(time);
+          if (fail) throw new Error("undo");
+        });
+      }
+      alarm(info: Bun.DurableObjectAlarmInfo) {
+        fired.push(info);
+        resolve();
+      }
+    }
+    class NoHandler extends Bun.DurableObject {
+      set() {
+        return this.ctx.storage.transaction(txn => txn.setAlarm(Date.now() + 1));
+      }
+    }
+    const ns = new Bun.DurableObjectNamespace({ class: Alarmed });
+    const without = new Bun.DurableObjectNamespace({ class: NoHandler });
+    await using _ = ns;
+    await using __ = without;
+    const stub = ns.getByName("object");
+    // Both are due at once. The one of the transaction that failed would be the first to fire.
+    const discarded = Date.now() - 1000;
+    const applied = Date.now() - 1;
+    await expect(stub.set(discarded, true)).rejects.toThrow("undo");
+    await stub.set(applied, false);
+    await alarmed;
+    // Only the one that was applied.
+    expect(fired).toEqual([{ isRetry: false, retryCount: 0, scheduledTime: applied }]);
+    await expect(without.getByName("object").set()).rejects.toMatchObject({
+      name: "TypeError",
+      message: "This Durable Object class has no alarm() handler, which setAlarm() needs",
+    });
+  });
+
+  test("nested ones are separate: each is applied when its own closure is done", async () => {
     const { ns, stub } = open();
     await using _ = ns;
     await run(stub, async ({ storage }) => {
       await storage.transaction(async outer => {
         await outer.put("outer", 1);
+        await outer.put("both", "outer");
         await storage.transaction(async inner => {
+          // It does not see what the outer one has not applied yet.
+          expect(await inner.get("outer")).toBeUndefined();
           await inner.put("inner, rolled back", 1);
           inner.rollback();
         });
@@ -1931,8 +2833,18 @@ describe("transaction", () => {
           })
           .catch(() => {});
         await storage.transaction(async inner => {
-          await inner.put("inner, kept", 1);
+          await inner.put("inner, applied", 1);
+          await inner.put("both", "inner");
         });
+        // The inner one is stored already, and the outer one reads it under what it wrote itself.
+        expect(storage.kv.get("inner, applied")).toBe(1);
+        expect(storage.kv.get("both")).toBe("inner");
+        expect(storage.kv.get("outer")).toBeUndefined();
+        expect([...(await outer.list())]).toEqual([
+          ["both", "outer"],
+          ["inner, applied", 1],
+          ["outer", 1],
+        ]);
         expect(() =>
           storage.transactionSync(() => {
             storage.kv.put("sync, failed", 1);
@@ -1940,10 +2852,15 @@ describe("transaction", () => {
           }),
         ).toThrow("sync");
         storage.transactionSync(() => storage.kv.put("sync, kept", 1));
-        expect([...(await outer.list()).keys()]).toEqual(["inner, kept", "outer", "sync, kept"]);
+        expect([...(await outer.list()).keys()]).toEqual(["both", "inner, applied", "outer", "sync, kept"]);
       });
+      // The last one to be applied wins.
+      expect(await storage.get("both")).toBe("outer");
+
+      // An outer one that fails does not take the inner ones with it.
       await storage
         .transaction(async outer => {
+          await outer.put("outer, failed", 1);
           await storage.transaction(async inner => {
             await inner.put("inner of a failed outer", 1);
           });
@@ -1951,97 +2868,205 @@ describe("transaction", () => {
           throw new Error("outer");
         })
         .catch(() => {});
+      // Two at once: the first is still open when the second has been applied.
+      const secondApplied = Promise.withResolvers<void>();
+      const first = storage.transaction(async first => {
+        await first.put("first", 1);
+        await secondApplied.promise;
+        expect(await first.get("second")).toBe(2);
+        await first.put("second", "first's");
+      });
+      await storage.transaction(async second => {
+        await second.put("second", 2);
+        expect(await second.get("first")).toBeUndefined();
+      });
+      expect(storage.kv.get("second")).toBe(2);
+      expect(storage.kv.get("first")).toBeUndefined();
+      secondApplied.resolve();
+      await first;
     });
-    expect(await run(stub, async ({ storage }) => [...(await storage.list()).keys()])).toEqual([
-      "inner, kept",
-      "outer",
-      "sync, kept",
+    expect(await run(stub, async ({ storage }) => [...(await storage.list())])).toEqual([
+      ["both", "outer"],
+      ["first", 1],
+      ["inner of a failed outer", 1],
+      ["inner, applied", 1],
+      ["outer", 1],
+      ["second", "first's"],
+      ["sync of a failed outer", 1],
+      ["sync, kept", 1],
     ]);
   });
 
-  test("the alarm is part of it", async () => {
+  test("what the closure writes without txn is written like anywhere else", async () => {
     const { ns, stub } = open();
     await using _ = ns;
     await run(stub, async ({ storage }) => {
-      const time = Date.now() + 3_600_000;
+      storage.sql.exec("CREATE TABLE t (a)");
       await storage
         .transaction(async txn => {
-          await txn.setAlarm(time);
-          expect(await txn.getAlarm()).toBe(time);
+          await txn.put("through txn", 1);
+          storage.kv.put("through kv", 1);
+          await storage.put("through storage", 1);
+          storage.sql.exec("INSERT INTO t VALUES (1)");
+          storage.sql.exec("CREATE TABLE made (a)");
+          await Bun.sleep(1);
+          storage.kv.put("through kv, later", 1);
+          // The transaction reads them, as it reads everything that is stored.
+          expect(await txn.get("through kv")).toBe(1);
           throw new Error("undo");
         })
         .catch(() => {});
-      expect(await storage.getAlarm()).toBeNull();
       await storage.transaction(async txn => {
-        await txn.setAlarm(new Date(time));
-      });
-      expect(await storage.getAlarm()).toBe(time);
-      await storage.transaction(async txn => {
-        await txn.deleteAlarm();
+        await txn.put("through txn", 2);
+        storage.kv.put("rolled back: through kv", 1);
+        storage.sql.exec("INSERT INTO t VALUES (2)");
         txn.rollback();
       });
-      expect(await storage.getAlarm()).toBe(time);
-      await storage.deleteAlarm();
+      // What is written directly to a key the transaction wrote is overwritten when it is applied.
+      await storage.transaction(async txn => {
+        await txn.put("both", "txn");
+        await txn.delete("through storage");
+        storage.kv.put("both", "kv");
+        storage.kv.put("through storage", 2);
+        expect(await txn.get("both")).toBe("txn");
+      });
+    });
+    await run(stub, async ({ storage }) => {
+      expect([...(await storage.list())]).toEqual([
+        ["both", "txn"],
+        ["rolled back: through kv", 1],
+        ["through kv", 1],
+        ["through kv, later", 1],
+      ]);
+      expect(storage.sql.exec("SELECT a FROM t ORDER BY a").toArray()).toEqual([{ a: 1 }, { a: 2 }]);
+      expect(userSchema({ storage } as Ctx)).toEqual(["table:made", "table:t"]);
     });
   });
 
-  test("other events wait until it has finished", async () => {
+  test("other events are not held back, and what they write is read by it", async () => {
     const { ns, stub } = open();
     await using _ = ns;
     const order: string[] = [];
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    await run(stub, ({ storage }) => storage.kv.put("theirs", "before"));
     const first = run(stub, async ({ storage }) => {
-      await storage.transaction(async txn => {
-        await txn.put("value", "uncommitted");
+      const result = await storage.transaction(async txn => {
+        await txn.put("mine", "uncommitted");
+        await txn.put("both", "transaction");
+        expect(await txn.get("theirs")).toBe("before");
         order.push("transaction: wrote");
-        await Bun.sleep(40);
-        await txn.put("value", "committed");
-        order.push("transaction: done");
+        entered.resolve();
+        await release.promise;
+        order.push("transaction: resumed");
+        // What the other events stored meanwhile.
+        const seen = { theirs: await txn.get("theirs"), both: await txn.get("both"), all: [...(await txn.list())] };
+        await txn.put("mine", "committed");
+        return seen;
       });
       order.push("first: done");
+      return result;
     });
-    const second = run(stub, ({ storage }) => {
-      order.push("second: started");
-      return storage.kv.get("value");
+    await entered.promise;
+    const second = await run(stub, ({ storage }) => {
+      order.push("second: ran");
+      storage.kv.put("theirs", "second");
+      storage.kv.put("both", "second");
+      return { mine: storage.kv.get("mine"), both: storage.kv.get("both") };
     });
-    const third = run(stub, ({ storage }) => {
-      order.push("third: started");
-      return storage.kv.get("value");
+    const third = await run(stub, async ({ storage }) => {
+      order.push("third: ran");
+      await storage.put("third", 3);
+      return [...(await storage.list())];
     });
-    expect(await second).toBe("committed");
-    expect(await third).toBe("committed");
-    await first;
-    expect(order.slice(0, 2)).toEqual(["transaction: wrote", "transaction: done"]);
-    expect(order.indexOf("second: started")).toBeGreaterThan(order.indexOf("transaction: done"));
-    expect(order.indexOf("third: started")).toBeGreaterThan(order.indexOf("second: started"));
-
-    // Without a transaction the same await lets the next event in, which sees what was written so far.
-    let release!: () => void;
-    const gate = new Promise<void>(resolve => (release = resolve));
-    const sleeper = run(stub, async ({ storage }) => {
-      storage.kv.put("value", "first half");
-      await gate;
-      storage.kv.put("value", "second half");
+    // Neither saw anything of the transaction.
+    expect(second).toEqual({ mine: undefined, both: "second" });
+    expect(third).toEqual([
+      ["both", "second"],
+      ["theirs", "second"],
+      ["third", 3],
+    ]);
+    release.resolve();
+    expect(await first).toEqual({
+      theirs: "second",
+      both: "transaction",
+      all: [
+        ["both", "transaction"],
+        ["mine", "uncommitted"],
+        ["theirs", "second"],
+        ["third", 3],
+      ],
     });
-    expect(await run(stub, ({ storage }) => storage.kv.get("value"))).toBe("first half");
-    release();
-    await sleeper;
-    expect(await run(stub, ({ storage }) => storage.kv.get("value"))).toBe("second half");
+    expect(order).toEqual(["transaction: wrote", "second: ran", "third: ran", "transaction: resumed", "first: done"]);
+    // For the keys both wrote, the transaction was the last to write.
+    expect(await run(stub, async ({ storage }) => [...(await storage.list())])).toEqual([
+      ["both", "transaction"],
+      ["mine", "committed"],
+      ["theirs", "second"],
+      ["third", 3],
+    ]);
   });
 
-  test("a transaction that fails lets the waiting events see the state before it", async () => {
+  test("one that fails leaves what other events wrote meanwhile", async () => {
     const { ns, stub } = open();
     await using _ = ns;
     await run(stub, ({ storage }) => storage.kv.put("value", "before"));
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
     const first = run(stub, ({ storage }) =>
       storage.transaction(async txn => {
         await txn.put("value", "inside");
-        await Bun.sleep(20);
+        await txn.put("only inside", 1);
+        entered.resolve();
+        await release.promise;
         throw new Error("undo");
       }),
     );
-    const second = run(stub, ({ storage }) => storage.kv.get("value"));
+    await entered.promise;
+    expect(await run(stub, ({ storage }) => storage.kv.get("value"))).toBe("before");
+    await run(stub, ({ storage }) => storage.kv.put("value", "meanwhile"));
+    release.resolve();
     await expect(first).rejects.toThrow("undo");
-    expect(await second).toBe("before");
+    expect(await run(stub, async ({ storage }) => [...(await storage.list())])).toEqual([["value", "meanwhile"]]);
+  });
+
+  test("one that is open when the object is reset is never applied", async () => {
+    const { ns, stub, env } = open();
+    await using _ = ns;
+    await run(stub, ({ storage }) => storage.kv.put("value", "before"));
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    let transaction!: Bun.DurableObjectTransaction;
+    let outcome: Promise<unknown>;
+    const first = run(stub, ({ storage }) => {
+      outcome = storage
+        .transaction(async txn => {
+          transaction = txn;
+          await txn.put("value", "inside");
+          entered.resolve();
+          await release.promise;
+          return "fulfilled";
+        })
+        .then(
+          value => ({ value }),
+          error => ({ error }),
+        );
+      return outcome;
+    }).then(
+      () => "fulfilled",
+      error => error,
+    );
+    await entered.promise;
+    await expect(run(stub, ctx => ctx.abort("reset"))).rejects.toMatchObject(reset);
+    // The call that was waiting for it failed with the reset.
+    expect(await first).toMatchObject({ message: "reset", ...reset });
+    // The closure of the instance that is gone goes on, to no effect.
+    await expect(transaction.get("value")).rejects.toMatchObject(reset);
+    await expect(transaction.put("value", "late")).rejects.toMatchObject(reset);
+    release.resolve();
+    expect(await outcome!).toMatchObject({ error: reset });
+    expect(await run(stub, ({ storage }) => storage.kv.get("value"))).toBe("before");
+    expect(env.made).toBe(2);
   });
 });
 
@@ -2109,7 +3134,7 @@ describe("when writes are committed", () => {
     ]);
   });
 
-  test("an open transaction is rolled back by abort()", async () => {
+  test("an open transaction is discarded by abort()", async () => {
     const { ns, stub } = open();
     await using _ = ns;
     await expect(
@@ -2232,7 +3257,6 @@ describe("deleteAll", () => {
   test("removes keys, tables, indexes, views, triggers and the alarm", async () => {
     const { ns, stub } = open();
     await using _ = ns;
-    let fts = false;
     await run(stub, async ctx => {
       const { storage } = ctx;
       const { sql } = storage;
@@ -2248,12 +3272,14 @@ describe("deleteAll", () => {
         INSERT INTO parent VALUES (1, 'p');
         INSERT INTO child (parent) VALUES (1), (1);
       `);
-      try {
-        sql.exec("CREATE VIRTUAL TABLE documents USING fts5(body)");
-        sql.exec("INSERT INTO documents VALUES ('hello world')");
-        fts = true;
-      } catch {}
-      expect(userSchema(ctx).length).toBeGreaterThanOrEqual(7);
+      // A virtual table, which owns tables of its own. (FTS5 is part of the SQLite that Bun builds.)
+      sql.exec("CREATE VIRTUAL TABLE documents USING fts5(body)");
+      sql.exec("INSERT INTO documents VALUES ('hello world')");
+      expect(sql.exec("SELECT rowid FROM documents WHERE documents MATCH 'hello'").toArray()).toEqual([{ rowid: 1 }]);
+      sql.exec("ANALYZE");
+      expect(userSchema(ctx)).toContain("table:documents_data");
+      expect(userSchema(ctx)).toContain("table:sqlite_stat1");
+      expect(sql.exec("SELECT seq FROM sqlite_sequence WHERE name = 'child'").one()).toEqual({ seq: 2 });
 
       const pending = storage.deleteAll();
       expect(pending).toBeInstanceOf(Promise);
@@ -2271,7 +3297,10 @@ describe("deleteAll", () => {
       storage.kv.put("a", "again");
       storage.sql.exec("CREATE TABLE parent (id INTEGER PRIMARY KEY, other TEXT)");
       storage.sql.exec("INSERT INTO parent VALUES (1, 'new')");
-      if (fts) storage.sql.exec("CREATE VIRTUAL TABLE documents USING fts5(body)");
+      storage.sql.exec("CREATE VIRTUAL TABLE documents USING fts5(body)");
+      // AUTOINCREMENT counts from the start again.
+      storage.sql.exec("CREATE TABLE child (id INTEGER PRIMARY KEY AUTOINCREMENT, v TEXT)");
+      expect(storage.sql.exec("INSERT INTO child (v) VALUES ('x') RETURNING id").one()).toEqual({ id: 1 });
       await storage.setAlarm(Date.now() + 3_600_000);
     });
     await run(stub, async ({ storage }) => {
@@ -2281,9 +3310,8 @@ describe("deleteAll", () => {
       await storage.deleteAll();
       await storage.deleteAll();
       expect((await storage.list()).size).toBe(0);
+      expect(userSchema({ storage } as Ctx).filter(entry => !entry.startsWith("table:sqlite_"))).toEqual([]);
     });
-    // FTS5 is part of the SQLite that Bun builds.
-    expect(fts).toBe(true);
   });
 
   test("is undone by abort() in the same run and by a failing transactionSync()", async () => {
@@ -2325,6 +3353,8 @@ describe("deleteAll", () => {
       expect(env.abandoned.next().value).toEqual({ a: 1 });
       await ctx.storage.deleteAll();
       expect(userSchema(ctx)).toEqual([]);
+      // The cursor took the rows it had not read yet with it.
+      expect(env.abandoned.toArray()).toEqual([{ a: 2 }, { a: 3 }]);
     });
     expect(await run(stub, userSchema)).toEqual([]);
   });
@@ -2361,7 +3391,6 @@ describe("storage in a directory", () => {
     await ns.close();
     expect(databaseFiles(String(dir))).toEqual(expected);
     // They are SQLite databases.
-    const { Database } = await import("bun:sqlite");
     const database = new Database(join(String(dir), objectFile(stub.id, name)), { readonly: true });
     try {
       expect(database.query("SELECT key FROM _cf_KV").all()).toEqual([{ key: "key" }]);
@@ -2378,21 +3407,60 @@ describe("storage in a directory", () => {
     );
   });
 
-  test("the namespace's directory is encodeURIComponent(name)", async () => {
+  test("the namespace's directory is encodeURIComponent(name), or nearly", async () => {
     using dir = tempDir("durable-object-layout-name", {});
-    const names = ["a/b", "a%2Fb", "plus+and%percent", "q?#&=", "!'()*~", "\u{1F600}"];
+    // As encodeURIComponent() has them, but for "*", which Windows does not allow in a file name,
+    // and for a name that is nothing but dots, which would be the directory itself or its parent.
+    const names = new Map([
+      ["a/b", "a%2Fb"],
+      ["a%2Fb", "a%252Fb"],
+      ["a\\b", "a%5Cb"],
+      ["plus+and%percent", "plus%2Band%25percent"],
+      ["q?#&=", "q%3F%23%26%3D"],
+      ["!'()*~", "!'()%2A~"],
+      ["**", "%2A%2A"],
+      ["\u{1F600}", "%F0%9F%98%80"],
+      [" ", "%20"],
+      [".", "%2E"],
+      ["..", "%2E%2E"],
+      ["...", "%2E%2E%2E"],
+      [".hidden", ".hidden"],
+      ["a..b", "a..b"],
+      ["../up", "..%2Fup"],
+    ]);
+    for (const [name, directory] of names) {
+      if (!/^\.+$/.test(name)) expect(encodeURIComponent(name).replaceAll("*", "%2A")).toBe(directory);
+    }
     const namespaces: ReturnType<typeof open>[] = [];
     try {
       // Different names never share a directory, so all of them can be open at once.
-      for (const name of names) namespaces.push(open({ storage: String(dir), name }));
+      for (const name of names.keys()) namespaces.push(open({ storage: String(dir), name }));
       for (const [index, { stub }] of namespaces.entries())
-        await run(stub, ctx => ctx.storage.kv.put("name", names[index]));
+        await run(stub, ctx => ctx.storage.kv.put("name", [...names.keys()][index]));
       for (const [index, { stub }] of namespaces.entries())
-        expect(await run(stub, ctx => ctx.storage.kv.get("name"))).toBe(names[index]);
+        expect(await run(stub, ctx => ctx.storage.kv.get("name"))).toBe([...names.keys()][index]);
     } finally {
       for (const { ns } of namespaces) await ns.close();
     }
-    expect(readdirSync(String(dir)).sort()).toEqual(names.map(name => encodeURIComponent(name)).sort());
+    expect(readdirSync(String(dir)).sort()).toEqual([...names.values()].sort());
+    // Nothing was made outside of the directory.
+    expect(readdirSync(join(String(dir), "..")).filter(file => file === "up")).toEqual([]);
+  });
+
+  test("a name that is not well-formed Unicode is refused, with storage in a directory or without", async () => {
+    using dir = tempDir("durable-object-layout-ill-formed", {});
+    for (const name of ["\uD800", "a\uDC00b", "\uDC00\uD800"]) {
+      // (encodeURIComponent() has nothing for it either.)
+      expect(caught(() => encodeURIComponent(name))).toBeInstanceOf(URIError);
+      for (const storage of [String(dir), undefined, ":memory:"]) {
+        expect(caught(() => open({ storage, name }))).toMatchObject({
+          name: "TypeError",
+          code: "ERR_INVALID_ARG_VALUE",
+          message: expect.stringContaining("must be well-formed Unicode"),
+        });
+      }
+    }
+    expect(readdirSync(String(dir))).toEqual([]);
   });
 
   test("survives eviction", async () => {
@@ -2537,30 +3605,46 @@ describe("storage in a directory", () => {
     expect(await spawn()).toEqual({ stdout: "opened from the first process", exitCode: 0 });
   });
 
-  test("a cursor that was not read to its end does not keep the database of an evicted object locked", async () => {
+  test("a cursor that was not read to its end does not keep the database of an evicted object open", async () => {
     using dir = tempDir("durable-object-cursor-lock", {});
     const { ns, stub, env } = open({ storage: String(dir), idleTimeout: 20 });
     const held = await run(stub, ({ storage: { sql } }) => {
       sql.exec("CREATE TABLE t (a); INSERT INTO t VALUES (1), (2), (3)");
-      const cursor = sql.exec("SELECT a FROM t");
+      const cursor = sql.exec("SELECT a FROM t ORDER BY a");
       cursor.next();
       return cursor;
     });
     let heldToo: Bun.DurableObjectSqlCursor<any>;
     try {
+      // While the instance is there the cursor reads on, and its statement is no obstacle to a commit.
+      await run(stub, ctx => ctx.storage.kv.put("key", 1));
+      expect(held.next().value).toEqual({ a: 2 });
       await evict(stub, env, 20);
-      expect(await run(stub, ctx => ctx.storage.sql.exec("SELECT count(*) AS n FROM t").one().n)).toBe(3);
-      heldToo = await run(stub, ctx => ctx.storage.sql.exec("SELECT a FROM t"));
+      // The new instance opened the file again, and writes to it.
+      await run(stub, ({ storage: { sql } }) => {
+        expect(sql.exec("SELECT count(*) AS n FROM t").one().n).toBe(3);
+        sql.exec("INSERT INTO t VALUES (4)");
+        sql.exec("CREATE TABLE other (a); DROP TABLE other");
+      });
+      heldToo = await run(stub, ctx => {
+        const cursor = ctx.storage.sql.exec("SELECT a FROM t ORDER BY a");
+        cursor.next();
+        return cursor;
+      });
     } finally {
       await ns.close();
     }
     // Nor after the namespace closed.
     const again = open({ storage: String(dir) });
-    expect(await run(again.stub, ctx => ctx.storage.sql.exec("SELECT count(*) AS n FROM t").one().n)).toBe(3);
+    expect(await run(again.stub, ctx => ctx.storage.sql.exec("SELECT count(*) AS n FROM t").one().n)).toBe(4);
+    await run(again.stub, ctx => ctx.storage.sql.exec("DROP TABLE t"));
     await again.ns.close();
-    // What they had not read yet went into memory when the object's writes were committed.
-    expect(held.toArray()).toEqual([{ a: 2 }, { a: 3 }]);
-    expect(heldToo.toArray()).toEqual([{ a: 1 }, { a: 2 }, { a: 3 }]);
+    // The rows they had not read went with the instance they were of.
+    for (const cursor of [held, heldToo]) {
+      expect(caught(() => cursor.next())).toMatchObject(reset);
+      expect(cursor.next()).toEqual({ done: true, value: undefined });
+      expect(cursor.toArray()).toEqual([]);
+    }
   });
 
   test("cursors that are collected after their database was closed", async () => {
@@ -2568,28 +3652,28 @@ describe("storage in a directory", () => {
     for (const storage of [String(dir), undefined]) {
       const { ns, stub, env } = open({ storage, idleTimeout: 20 });
       let cursors: Bun.DurableObjectSqlCursor<any>[] = [];
+      const reading = (cursor: Bun.DurableObjectSqlCursor<any>) => (cursor.next(), cursor);
       await run(stub, ({ storage: { sql } }) => {
         sql.exec("CREATE TABLE IF NOT EXISTS t (a); INSERT INTO t VALUES (1), (2), (3)");
-        for (let i = 0; i < 50; i++) cursors.push(sql.exec("SELECT a FROM t WHERE a > ?", i % 3));
-        for (let i = 0; i < 50; i++) cursors.push(sql.exec("SELECT a FROM t"));
-        // Of a database in a file, none is left reading (see the test before this one).
-        if (storage) for (const cursor of cursors) cursor.toArray();
+        for (let i = 0; i < 30; i++) cursors.push(reading(sql.exec("SELECT a FROM t WHERE a > ?", i % 2)));
+        for (let i = 0; i < 30; i++) cursors.push(reading(sql.exec("SELECT a FROM t")));
       });
       await evict(stub, env, 20);
       // Some are collected while the namespace is open, some after it closed, some are used after.
-      cursors.length = 60;
+      cursors.length = 40;
       Bun.gc(true);
       await run(stub, ({ storage: { sql } }) => {
-        for (let i = 0; i < 20; i++) cursors.push(sql.exec("SELECT a FROM t"));
-        if (storage) for (const cursor of cursors) cursor.toArray();
+        for (let i = 0; i < 20; i++) cursors.push(reading(sql.exec("SELECT a FROM t")));
         expect(sql.exec("SELECT count(*) AS n FROM t").one().n).toBe(3);
       });
       await ns.close();
-      cursors.length = 40;
+      cursors.length = 50;
       Bun.gc(true);
+      // All of them had rows to read; none of them has any now.
       for (const cursor of cursors) {
-        if (storage) expect(cursor.toArray()).toEqual([]);
-        else expect(cursor.toArray().length).toBeLessThanOrEqual(3);
+        expect(caught(() => cursor.toArray())).toMatchObject(reset);
+        expect(cursor.toArray()).toEqual([]);
+        expect(cursor.columnNames).toEqual(["a"]);
       }
       cursors = [];
       Bun.gc(true);
@@ -2699,6 +3783,23 @@ describe("storage in a directory", () => {
     await ns.close();
     expect(databaseFiles(String(dir))).toEqual(["Store/namespace.sqlite"]);
   });
+
+  test("an object's file with nothing but SQLite's own tables in it is removed", async () => {
+    using dir = tempDir("durable-object-sqlite-tables", {});
+    const { ns, stub } = open({ storage: String(dir) });
+    await run(stub, ctx => {
+      const { sql } = ctx.storage;
+      sql.exec("CREATE TABLE t (id INTEGER PRIMARY KEY AUTOINCREMENT, v TEXT); CREATE INDEX t_v ON t (v)");
+      sql.exec("INSERT INTO t (v) VALUES ('x'), ('y')");
+      sql.exec("ANALYZE");
+      sql.exec("DROP TABLE t");
+      // What SQLite keeps for itself stays behind.
+      expect(userSchema(ctx)).toEqual(["table:sqlite_sequence", "table:sqlite_stat1"]);
+    });
+    expect(databaseFiles(String(dir))).toEqual([objectFile(stub.id), "Store/namespace.sqlite"].sort());
+    await ns.close();
+    expect(databaseFiles(String(dir))).toEqual(["Store/namespace.sqlite"]);
+  });
 });
 
 describe("references to the storage of an instance that is gone", () => {
@@ -2716,8 +3817,11 @@ describe("references to the storage of an instance that is gone", () => {
   const collect = async (ctx: Ctx): Promise<References> => {
     const { storage } = ctx;
     storage.kv.put("key", "value");
-    storage.sql.exec("CREATE TABLE IF NOT EXISTS t (a)");
-    storage.sql.exec("INSERT INTO t VALUES (1), (2), (3)");
+    // (Once: a statement that writes would have the cursors of the time before take their rows into memory.)
+    if (!storage.sql.exec("SELECT 1 FROM sqlite_master WHERE name = 't'").toArray().length) {
+      storage.sql.exec("CREATE TABLE t (a)");
+      storage.sql.exec("INSERT INTO t VALUES (1), (2), (3)");
+    }
     const cursor = storage.sql.exec("SELECT a FROM t ORDER BY a");
     cursor.next();
     const finished = storage.sql.exec("SELECT a FROM t ORDER BY a");
@@ -2764,19 +3868,26 @@ describe("references to the storage of an instance that is gone", () => {
       expect(result).toBeInstanceOf(Promise);
       await expect(result).rejects.toMatchObject(reset);
     }
-    // A cursor that was left unread has the rest of its rows with it; the database is not asked again.
+    // A cursor that had rows left to read says so once, and is at its end after that.
     if (!references.cursorsFailed) {
       references.cursorsFailed = true;
-      expect(cursor.toArray().length).toBeGreaterThanOrEqual(1);
-      expect(raw.toArray().length).toBeGreaterThanOrEqual(3);
+      expect(caught(() => cursor.next())).toMatchObject(reset);
+      expect(caught(() => raw.toArray())).toMatchObject(reset);
     }
     expect(cursor.next()).toEqual({ done: true, value: undefined });
+    expect(cursor.toArray()).toEqual([]);
     expect(raw.toArray()).toEqual([]);
+    expect(raw.next()).toEqual({ done: true, value: undefined });
+    expect(cursor.columnNames).toEqual(["a"]);
     // A cursor that had reached its end has nothing more to ask the database for.
     expect(finished.next()).toEqual({ done: true, value: undefined });
     expect(finished.columnNames).toEqual(["a"]);
-    // The transaction had finished before.
-    await expect(transaction.get("key")).rejects.toThrow();
+    expect(finished.rowsRead).toBe(3);
+    // The transaction had finished before, but that its instance is gone is what it says first.
+    await expect(transaction.get("key")).rejects.toMatchObject(reset);
+    await expect(transaction.put("key", 1)).rejects.toMatchObject(reset);
+    await expect(transaction.list()).rejects.toMatchObject(reset);
+    expect(caught(() => transaction.rollback())).toMatchObject(reset);
     // Anything else of ctx too.
     expect(caught(() => ctx.getWebSockets())).toMatchObject(reset);
   };
@@ -2823,7 +3934,7 @@ describe("references to the storage of an instance that is gone", () => {
       await run(stub, ctx => {
         expect(ctx).not.toBe(references.ctx);
         expect(ctx.storage.kv.get("key")).toBe("value");
-        expect(ctx.storage.sql.exec("SELECT count(*) AS n FROM t").one().n).toBe(6);
+        expect(ctx.storage.sql.exec("SELECT count(*) AS n FROM t").one().n).toBe(3);
       });
       expect(env.made).toBe(2);
       await expectAllReset(references);

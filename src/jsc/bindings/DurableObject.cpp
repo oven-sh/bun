@@ -1019,6 +1019,7 @@ void JSDurableObjectActor::construct(Zig::GlobalObject* globalObject, JSValue cl
         return;
     m_instance.set(vm, this, instance);
     m_state = State::Running;
+    m_initializing = m_blockers > 0;
     ns()->m_loadedCount++;
     ns()->updateKeepAlive();
     if (!m_blockers)
@@ -1047,7 +1048,7 @@ JSValue JSDurableObjectActor::block(Zig::GlobalObject* globalObject, JSValue cal
         if (!scope.clearExceptionExceptTermination())
             return {};
         if (m_generation == generation)
-            abort(globalObject, error, m_state == State::Starting ? KeepSockets : CloseSockets);
+            abort(globalObject, error, m_state == State::Starting || m_initializing ? KeepSockets : CloseSockets);
         // The calls that were waiting have the error; whether anyone looks at this promise too is up to the object.
         JSPromise* rejected = JSPromise::create(vm, globalObject->promiseStructure());
         rejected->rejectAsHandled(vm, error);
@@ -1090,6 +1091,7 @@ void JSDurableObjectActor::unblock(Zig::GlobalObject* globalObject, uint32_t gen
         return;
     if (--m_blockers)
         return;
+    m_initializing = false;
     if (m_blockTimer)
         m_blockTimer->stop();
     if (m_state != State::Running)
@@ -1127,7 +1129,7 @@ EncodedJSValue durableObjectReaction(JSGlobalObject* lexicalGlobalObject, CallFr
     case DurableObjectEventKind::Block:
         if (failed) {
             if (current)
-                actor->abort(globalObject, value, actor->state() == JSDurableObjectActor::State::Starting ? JSDurableObjectActor::KeepSockets : JSDurableObjectActor::CloseSockets);
+                actor->abort(globalObject, value, actor->state() == JSDurableObjectActor::State::Starting || actor->m_initializing ? JSDurableObjectActor::KeepSockets : JSDurableObjectActor::CloseSockets);
             event->promise()->rejectAsHandled(vm, value);
         } else {
             actor->unblock(globalObject, event->m_generation);
@@ -1445,6 +1447,7 @@ void JSDurableObjectActor::stoppedWithContext()
 
 void JSDurableObjectActor::unload(Zig::GlobalObject* globalObject)
 {
+    m_initializing = false;
     auto* owner = ns();
     if (m_state == State::Running)
         owner->m_loadedCount--;

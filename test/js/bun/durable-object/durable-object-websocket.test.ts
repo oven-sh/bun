@@ -24,7 +24,7 @@ type Closed = { code: number; reason: string; wasClean: boolean };
 
 /** A WebSocket client that collects what it receives. */
 function connect(server: Server<any>, path: string) {
-  const ws = new WebSocket(`ws://localhost:${server.port}${path}`);
+  const ws = new WebSocket(`ws://127.0.0.1:${server.port}${path}`);
   ws.binaryType = "arraybuffer";
   const messages: (string | ArrayBuffer)[] = [];
   let waiters: (() => void)[] = [];
@@ -93,6 +93,7 @@ function connect(server: Server<any>, path: string) {
 function serve(ns: Bun.DurableObjectNamespace<any>) {
   return Bun.serve({
     port: 0,
+    hostname: "127.0.0.1",
     fetch: (req, server) => ns.getByName(new URL(req.url).pathname.split("/")[1] || "lobby").fetch(req, server),
     error: (error: any) => new Response(`${error?.code}: ${error?.message}`, { status: 500 }),
     websocket: Bun.DurableObject.websocket,
@@ -102,11 +103,11 @@ function serve(ns: Bun.DurableObjectNamespace<any>) {
 /** What the server answers to a WebSocket handshake, read from a plain TCP connection. */
 function rawHandshake(port: number, path: string): Promise<string> {
   return new Promise((resolve, reject) => {
-    const socket = tcpConnect(port, "localhost");
+    const socket = tcpConnect(port, "127.0.0.1");
     let received = "";
     socket.on("connect", () => {
       socket.write(
-        `GET ${path} HTTP/1.1\r\nHost: localhost:${port}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n` +
+        `GET ${path} HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n` +
           `Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n`,
       );
     });
@@ -130,12 +131,27 @@ type RoomEnv = {
   /** Counts up while an instance is loaded (its interval is closed with its graph). */
   ticks?: { n: number };
   sockets?: Map<string, ServerWebSocket<any>>;
+  /** Thrown by the next constructor, once. */
+  failNextStart?: Error;
+  /** What the next constructor's ctx.blockConcurrencyWhile() rejects with, once. */
+  failNextBlock?: Error;
 };
 
 class Room extends Bun.DurableObject<RoomEnv> {
   constructor(ctx: State, env: RoomEnv) {
     super(ctx, env);
     env.made.push(ctx.id.name!);
+    const failure = env.failNextStart;
+    env.failNextStart = undefined;
+    if (failure) throw failure;
+    const blockFailure = env.failNextBlock;
+    env.failNextBlock = undefined;
+    // Ignoring the promise, as constructors do.
+    if (blockFailure)
+      ctx.blockConcurrencyWhile(async () => {
+        await Bun.sleep(1);
+        throw blockFailure;
+      });
     if (env.ticks) setInterval(() => env.ticks!.n++, 1);
   }
   get room() {
@@ -169,6 +185,10 @@ class Room extends Bun.DurableObject<RoomEnv> {
           id: server?.id ?? null,
           subscribers: server?.subscriberCount("news") ?? null,
           timeout: server ? String(server.timeout(req, 30)) : null,
+          address: server?.address ?? null,
+          protocol: server?.protocol ?? null,
+          pendingRequests: server?.pendingRequests ?? null,
+          pendingWebSockets: server?.pendingWebSockets ?? null,
         });
       case "publish":
         return Response.json({ sent: server!.publish("news", "server says " + url.searchParams.get("text")) });
@@ -589,7 +609,21 @@ describe("Bun.DurableObject WebSockets", () => {
       id: server.id,
       subscribers: 0,
       timeout: "undefined",
+      address: server.address,
+      protocol: "http",
+      // This request.
+      pendingRequests: 1,
+      pendingWebSockets: 0,
     });
+    expect(server.address).toEqual({ address: "127.0.0.1", family: "IPv4", port: server.port });
+    // With a socket open.
+    const alice = connect(server, "/lobby/ws?who=alice");
+    await alice.opened;
+    expect(await (await fetch(`${server.url}lobby/server`)).json()).toMatchObject({
+      pendingRequests: 1,
+      pendingWebSockets: 1,
+    });
+    await alice.close();
   });
 
   test("fetch() through the stub without a server: `server` is undefined", async () => {
@@ -608,6 +642,10 @@ describe("Bun.DurableObject WebSockets", () => {
       id: null,
       subscribers: null,
       timeout: null,
+      address: null,
+      protocol: null,
+      pendingRequests: null,
+      pendingWebSockets: null,
     };
     expect(await (await stub.fetch(new Request("http://do/lobby/server")))!.json()).toEqual(withoutServer);
     expect(await (await stub.fetch("http://do/lobby/server"))!.json()).toEqual(withoutServer);
@@ -708,6 +746,71 @@ describe("Bun.DurableObject WebSockets", () => {
       2,
     ]);
     expect(await ns.getByName("lobby").who()).toEqual([]);
+  });
+
+  test("an object that cannot be started for a message: onError gets what the constructor, or its blockConcurrencyWhile(), threw, and the sockets stay for the next message", async () => {
+    const ticks = { n: 0 };
+    const { ns, env, made, notes, errors } = open({ idleTimeout: 20, env: { ticks } });
+    await using _ = ns;
+    using server = serve(ns);
+    const alice = connect(server, "/lobby/ws?who=alice");
+    const bob = connect(server, "/lobby/ws?who=bob");
+    const elsewhere = connect(server, "/garden/ws?who=carol");
+    await Promise.all([alice.opened, bob.opened, elsewhere.opened]);
+    await Promise.all([alice.waitFor(1), bob.waitFor(1), elsewhere.waitFor(1)]);
+    await evicted(ticks);
+    const instances = made.length;
+    const failure = new Error("the constructor failed");
+    env.failNextStart = failure;
+    alice.send("say is anybody there");
+    // Nobody is waiting for a message's handler: the namespace is told.
+    await until(() => errors.length > 0, "onError");
+    expect(errors).toHaveLength(1);
+    expect(errors[0].error).toBe(failure);
+    expect(String(errors[0].id)).toBe(String(ns.idFromName("lobby")));
+    expect(errors[0].id.name).toBe("lobby");
+    expect(made).toEqual([...made.slice(0, instances), "lobby"]);
+    // The message is gone and no handler ran, but nobody is disconnected: the next message starts the object.
+    expect(alice.messages).toHaveLength(1);
+    expect(bob.messages).toHaveLength(1);
+    expect(notes.filter(note => note[0] === "close")).toEqual([]);
+    expect(await bob.roundTrip("hello")).toBe("echo hello");
+    expect(alice.closedWith).toBeUndefined();
+    expect(bob.closedWith).toBeUndefined();
+    expect(made).toEqual([...made.slice(0, instances), "lobby", "lobby"]);
+    // Another object's are not.
+    expect(await elsewhere.roundTrip("hello")).toBe("echo hello");
+    expect(elsewhere.closedWith).toBeUndefined();
+    // The next start is a start like any other.
+    expect((await ns.getByName("lobby").who()).sort()).toEqual(["alice", "bob"]);
+    const again = connect(server, "/lobby/ws?who=dave");
+    await again.opened;
+    expect((await again.waitFor(1))[0]).toBe("welcome dave to lobby (3 here)");
+    expect(errors).toHaveLength(1);
+
+    // The same when the constructor's blockConcurrencyWhile() is what fails, some time after the constructor returned.
+    await evicted(ticks);
+    const before = made.length;
+    const received = { alice: alice.messages.length, bob: bob.messages.length, dave: again.messages.length };
+    const blockFailure = new Error("could not load");
+    env.failNextBlock = blockFailure;
+    bob.send("say lost with the instance that could not load");
+    await until(() => errors.length > 1, "onError for the failed blockConcurrencyWhile()");
+    expect(errors).toHaveLength(2);
+    expect(errors[1].error).toBe(blockFailure);
+    expect(String(errors[1].id)).toBe(String(ns.idFromName("lobby")));
+    expect(made).toEqual([...made.slice(0, before), "lobby"]);
+    expect(await alice.roundTrip("still here")).toBe("echo still here");
+    expect(made).toEqual([...made.slice(0, before), "lobby", "lobby"]);
+    expect([alice.closedWith, bob.closedWith, again.closedWith]).toEqual([undefined, undefined, undefined]);
+    expect((await ns.getByName("lobby").who()).sort()).toEqual(["alice", "bob", "dave"]);
+    // Nobody got the message that was lost, and no webSocketClose() ran.
+    expect({ alice: alice.messages.length - 1, bob: bob.messages.length, dave: again.messages.length }).toEqual(
+      received,
+    );
+    expect(notes.filter(note => note[0] === "close")).toEqual([]);
+    expect(errors).toHaveLength(2);
+    await Promise.all([again.close(), elsewhere.close(), alice.close(), bob.close()]);
   });
 
   test("an alarm wakes an evicted object, which sends to its hibernated sockets", async () => {
@@ -960,7 +1063,7 @@ describe("Bun.DurableObject WebSockets", () => {
       {},
       "socket",
       1,
-      new WebSocket(`ws://localhost:${server.port}/nowhere/plain`),
+      new WebSocket(`ws://127.0.0.1:${server.port}/nowhere/plain`),
     ]) {
       expect(await stub.tryAccept(value)).toMatchObject({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE" });
       if (value instanceof WebSocket) value.close();
@@ -981,8 +1084,14 @@ describe("Bun.DurableObject WebSockets", () => {
     await alice.close();
     await until(() => notes.some(note => note[0] === "close"), "webSocketClose");
     expect(ws.readyState).toBe(3);
-    expect(await ns.getByName("other").tryAccept(ws)).toMatchObject({ name: "Error", code: "ERR_INVALID_STATE" });
+    // A socket that has closed is nobody's to accept, and what the lobby knew about it is still there to read.
+    const notOpen = { name: "Error", code: "ERR_INVALID_STATE", message: expect.stringContaining("not open") };
+    expect(await ns.getByName("other").tryAccept(ws)).toMatchObject(notOpen);
+    expect(await stub.tryAccept(ws)).toMatchObject(notOpen);
     expect(await ns.getByName("other").who()).toEqual([]);
+    expect(await stub.who()).toEqual([]);
+    expect(await stub.tryGetTags(ws)).toEqual(["alice"]);
+    expect(await ns.getByName("other").tryGetTags(ws)).toEqual({ name: "TypeError", code: "ERR_INVALID_ARG_VALUE" });
   });
 
   test("ctx.acceptWebSocket(): a socket the host upgraded itself becomes the object's", async () => {
@@ -993,6 +1102,7 @@ describe("Bun.DurableObject WebSockets", () => {
     // A server whose own sockets and Durable Objects' sockets live side by side.
     using server = Bun.serve({
       port: 0,
+      hostname: "127.0.0.1",
       fetch(req, server) {
         const url = new URL(req.url);
         if (server.upgrade(req, { data: { who: url.searchParams.get("who"), count: 0, room: url.pathname.slice(1) } }))
@@ -1134,6 +1244,7 @@ describe("Bun.DurableObject WebSockets", () => {
     const failures: any[] = [];
     using server = Bun.serve({
       port: 0,
+      hostname: "127.0.0.1",
       async fetch(req, server) {
         try {
           return (await ns.getByName("lobby").fetch(req, server as any))!;

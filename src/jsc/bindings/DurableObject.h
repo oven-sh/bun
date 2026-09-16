@@ -400,6 +400,8 @@ public:
     bool m_usedSinceIdle { false };
     // The namespace has let go of this record; a stub that holds it looks the object up again.
     bool m_forgotten { false };
+    // From the constructor until what it blocked on has settled: the object is still being started.
+    bool m_initializing { false };
     // { request, response } answered without waking the object; empty for none.
     String m_autoResponseRequest;
     String m_autoResponseResponse;

@@ -5618,6 +5618,10 @@ pub mod bv2_impl {
                                     (*parts_col.add(record.source_index.get() as usize)).len()
                                 } == 0
                                 {
+                                    // The stylesheet failed to build. Without
+                                    // a source index the HMR conversion would
+                                    // keep the import as a module dependency.
+                                    record.path.is_disabled = true;
                                     record.source_index = Index::INVALID;
                                     continue;
                                 }

@@ -991,8 +991,7 @@ pub(crate) mod serialize {
             }
             PseudoClass::State { state } => {
                 dest.write_str(b":state(")?;
-                // The state name is defined by script (`ElementInternals.states`),
-                // never by CSS, so CSS modules must not hash it (same as `::part()`).
+                // Script defines the name, so CSS modules do not hash it (like `::part()`).
                 state.to_css_with_options(dest, false)?;
                 return dest.write_str(b")");
             }
@@ -1282,8 +1281,7 @@ pub(crate) mod serialize {
             PseudoElement::GrammarError => dest.write_str(b"::grammar-error")?,
             PseudoElement::HighlightFunction { name } => {
                 dest.write_str(b"::highlight(")?;
-                // The highlight name is registered by script (`CSS.highlights`),
-                // never by CSS, so CSS modules must not hash it (same as `::part()`).
+                // Script defines the name, so CSS modules do not hash it (like `::part()`).
                 name.to_css_with_options(dest, false)?;
                 dest.write_char(b')')?;
             }

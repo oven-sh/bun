@@ -69,10 +69,7 @@ impl FontFeatureValuesRule {
     }
 }
 
-/// The name of a `@font-feature-values` sub-rule.
-///
-/// font-feature-value-type = <@stylistic> | <@historical-forms> | <@styleset> | <@character-variant>
-///   | <@swash> | <@ornaments> | <@annotation>
+/// The name of a `@font-feature-values` sub-rule, e.g. `@styleset`.
 #[derive(Clone, Copy, PartialEq, Eq, css::DefineEnumProperty)]
 pub enum FontFeatureSubruleType {
     /// @stylistic = @stylistic { <declaration-list> }
@@ -91,8 +88,7 @@ pub enum FontFeatureSubruleType {
     Annotation,
 }
 
-/// A named feature value inside a `@font-feature-values` sub-rule,
-/// e.g. `nice-style: 12` in `@styleset { nice-style: 12 }`.
+/// A feature value inside a sub-rule, e.g. `nice-style: 12`.
 pub struct FontFeatureValue {
     /// The feature value name.
     pub(crate) name: Ident,
@@ -100,13 +96,11 @@ pub struct FontFeatureValue {
     pub(crate) indices: ArrayList<CSSInteger>,
 }
 
-/// A sub-rule of `@font-feature-values`.
-/// https://drafts.csswg.org/css-fonts/#font-feature-values-syntax
+/// A sub-rule of `@font-feature-values`, e.g. `@styleset { ... }`.
 pub struct FontFeatureSubrule {
     /// The name of the sub-rule.
     pub(crate) name: FontFeatureSubruleType,
-    /// The feature values declared in the sub-rule, in source order.
-    /// A later declaration with the same name replaces the earlier value.
+    /// The feature values, in source order. Names are unique.
     pub(crate) declarations: ArrayList<FontFeatureValue>,
     /// The location of the rule in the source file.
     pub(crate) loc: Location,

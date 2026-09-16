@@ -7,7 +7,6 @@ pub struct PositionTryRule {
     /// The name of the position try fallback.
     pub name: DashedIdent,
     /// Declarations in the `@position-try` rule.
-    // Lifetime erased to `'static` per the rules/mod.rs `CssRule<R>` note.
     pub(crate) declarations: DeclarationBlock<'static>,
     /// The location of the rule in the source file.
     pub(crate) loc: Location,

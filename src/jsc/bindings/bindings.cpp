@@ -1217,7 +1217,17 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
 
             const size_t pairsEnd = gcBuffer.size();
             for (size_t i = pairsStart; i < pairsEnd; i += 2) {
-                auto eql = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, gcBuffer.at(i), gcBuffer.at(i + 1), gcBuffer, stack, scope, true);
+                JSValue left = gcBuffer.at(i);
+                JSValue right = gcBuffer.at(i + 1);
+
+                // Equal ropes settle without a new frame, which could be the one that does not fit the stack.
+                if (left.isString() && right.isString()) {
+                    bool same = asString(left)->equal(globalObject, asString(right));
+                    RETURN_IF_EXCEPTION(scope, false);
+                    if (same) continue;
+                }
+
+                auto eql = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, left, right, gcBuffer, stack, scope, true);
                 RETURN_IF_EXCEPTION(scope, false);
                 if (!eql) {
                     return false;

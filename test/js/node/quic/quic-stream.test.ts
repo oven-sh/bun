@@ -396,11 +396,13 @@ describe("a response after a refused header block", () => {
         sni: { "*": { keys: [key], certs: [cert] } },
         transportParams: { maxIdleTimeout: 1 },
         onheaders(this: any) {
-          Promise.resolve(respond(this)).then(sent =>
-            this.closed.then(
-              () => serverSide.resolve({ sent, error: undefined }),
-              (error: any) => serverSide.resolve({ sent, error }),
-            ),
+          new Promise<boolean | undefined>(resolve => resolve(respond(this))).then(
+            sent =>
+              this.closed.then(
+                () => serverSide.resolve({ sent, error: undefined }),
+                (error: any) => serverSide.resolve({ sent, error }),
+              ),
+            error => serverSide.resolve({ sent: undefined, error }),
           );
         },
       },

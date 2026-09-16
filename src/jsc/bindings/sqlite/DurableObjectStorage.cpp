@@ -547,23 +547,44 @@ bool DurableObjectDatabase::deleteAlarm()
     return sqlite3_step(del) == SQLITE_DONE;
 }
 
-sqlite3_stmt* DurableObjectDatabase::prepareNext(const CString& sql, size_t& offset)
+bool DurableObjectDatabase::prepareNext(const CString& sql, size_t& offset, sqlite3_stmt*& prepared)
 {
-    while (offset < sql.length()) {
-        sqlite3_stmt* prepared = nullptr;
+    prepared = nullptr;
+    while (offset < sql.length() && !prepared) {
         const char* head = sql.data() + offset;
         const char* tail = nullptr;
         if (sqlite3_prepare_v3(m_db, head, static_cast<int>(sql.length() - offset), 0, &prepared, &tail) != SQLITE_OK)
-            return nullptr;
-        if (!tail || tail == head) {
-            offset = sql.length();
-            return prepared;
-        }
-        offset = static_cast<size_t>(tail - sql.data());
-        if (prepared)
-            return prepared;
+            return false;
+        offset = !tail || tail == head ? sql.length() : static_cast<size_t>(tail - sql.data());
     }
-    return nullptr;
+    return true;
+}
+
+// Whether nothing but white space, semicolons and comments is left of `sql` from `offset`.
+static bool restIsBlank(const CString& sql, size_t offset)
+{
+    const char* p = sql.data() + offset;
+    const char* end = sql.data() + sql.length();
+    while (p < end) {
+        if (isASCIIWhitespace(*p) || *p == ';') {
+            p++;
+            continue;
+        }
+        if (p + 1 < end && p[0] == '-' && p[1] == '-') {
+            while (p < end && *p != '\n')
+                p++;
+            continue;
+        }
+        if (p + 1 < end && p[0] == '/' && p[1] == '*') {
+            p += 2;
+            while (p + 1 < end && !(p[0] == '*' && p[1] == '/'))
+                p++;
+            p = std::min(p + 2, end);
+            continue;
+        }
+        return false;
+    }
+    return true;
 }
 
 sqlite3_stmt* DurableObjectDatabase::takeCached(const String& sql)
@@ -1677,30 +1698,27 @@ JSC_DEFINE_HOST_FUNCTION(jsDurableObjectSqlExec, (JSGlobalObject * lexicalGlobal
         size_t offset = 0;
         bool single = true;
         for (;;) {
-            sqlite3_stmt* next = database->prepareNext(utf8, offset);
-            if (!next) {
-                if (database->lastErrorCode() != SQLITE_OK && sqlite3_errcode(database->handle()) != SQLITE_OK && sqlite3_errcode(database->handle()) != SQLITE_DONE && sqlite3_errcode(database->handle()) != SQLITE_ROW) {
-                    if (prepared)
-                        sqlite3_finalize(prepared);
-                    throwStorageError(globalObject, scope, database);
-                    return {};
-                }
+            sqlite3_stmt* next = nullptr;
+            if (!database->prepareNext(utf8, offset, next)) {
+                throwStorageError(globalObject, scope, database);
+                return {};
+            }
+            if (!next)
+                break;
+            if (restIsBlank(utf8, offset)) {
+                prepared = next;
                 break;
             }
-            if (prepared) {
-                single = false;
-                int result;
-                while ((result = sqlite3_step(prepared)) == SQLITE_ROW) { }
-                if (result != SQLITE_DONE) {
-                    JSObject* error = createStorageError(globalObject, database);
-                    sqlite3_finalize(prepared);
-                    sqlite3_finalize(next);
-                    throwException(globalObject, scope, error);
-                    return {};
-                }
-                sqlite3_finalize(prepared);
+            single = false;
+            int result;
+            while ((result = sqlite3_step(next)) == SQLITE_ROW) { }
+            if (result != SQLITE_DONE) {
+                JSObject* error = createStorageError(globalObject, database);
+                sqlite3_finalize(next);
+                throwException(globalObject, scope, error);
+                return {};
             }
-            prepared = next;
+            sqlite3_finalize(next);
         }
         if (!prepared) {
             throwException(globalObject, scope, createError(globalObject, "SQL query contained no statement"_s));

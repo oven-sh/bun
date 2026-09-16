@@ -72,7 +72,6 @@ using namespace JSC;
     macro(dirname) \
     macro(domain) \
     macro(drain) \
-    macro(durableObjectSocket) \
     macro(encoding) \
     macro(end) \
     macro(errno) \

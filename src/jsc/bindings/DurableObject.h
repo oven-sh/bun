@@ -84,6 +84,7 @@ public:
         CommitMicrotask,
         OnGraphError,
         WebSocketHandler,
+        SocketMap,
         Count,
     };
     static_assert(static_cast<uint32_t>(Field::Count) <= numberOfInternalFields);

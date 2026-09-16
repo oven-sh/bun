@@ -76,8 +76,8 @@ public:
 
     // ── sql.exec() ──
     // The next statement of `sql` at `offset`, compiled under the restrictions above. `offset` is
-    // moved past it. Null at the end of `sql`, or on failure (lastErrorCode() is then not SQLITE_OK).
-    sqlite3_stmt* prepareNext(const CString& sql, size_t& offset);
+    // moved past it. `prepared` is null at the end of `sql`. False on failure.
+    bool prepareNext(const CString& sql, size_t& offset, sqlite3_stmt*& prepared);
     // A compiled copy of a whole one-statement `sql`, kept for the next exec() of the same text.
     sqlite3_stmt* takeCached(const String& sql);
     void giveBack(const String& sql, sqlite3_stmt*);

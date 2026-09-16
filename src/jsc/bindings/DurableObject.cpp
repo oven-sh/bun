@@ -21,6 +21,8 @@
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/StrongInlines.h>
+#include <JavaScriptCore/JSWeakMap.h>
+#include <JavaScriptCore/WeakMapImplInlines.h>
 #include <openssl/hmac.h>
 #include <openssl/rand.h>
 #include <openssl/sha.h>
@@ -501,6 +503,12 @@ JSDurableObjectEvent* JSDurableObjectEvent::create(VM& vm, Zig::GlobalObject* gl
 JSDurableObjectActor* JSDurableObjectEvent::actor() const
 {
     return uncheckedDowncast<JSDurableObjectActor>(internalField(static_cast<uint32_t>(Field::Actor)).get().asCell());
+}
+
+
+static JSWeakMap* socketMap(Zig::GlobalObject* globalObject)
+{
+    return uncheckedDowncast<JSWeakMap>(JSDurableObjectRealm::of(globalObject)->object(Field::SocketMap));
 }
 
 // ─── One object ──────────────────────────────────────────────────────────────
@@ -1252,12 +1260,11 @@ void JSDurableObjectActor::closeSockets(Zig::GlobalObject* globalObject, int cod
     MarkedArgumentBuffer targets;
     for (auto* socket : sockets)
         targets.append(socket->target());
-    auto& names = WebCore::builtinNames(vm);
     for (unsigned i = 0; i < targets.size(); i++) {
         JSValue target = targets.at(i);
         if (!target.isObject())
             continue;
-        asObject(target)->putDirect(vm, names.durableObjectSocketPrivateName(), jsUndefined(), 0);
+        socketMap(globalObject)->remove(asObject(target));
         MarkedArgumentBuffer arguments;
         arguments.append(jsNumber(code));
         arguments.append(jsNontrivialString(vm, reason));
@@ -1438,19 +1445,21 @@ static JSArray* validateTags(Zig::GlobalObject* globalObject, ThrowScope& scope,
     RELEASE_AND_RETURN(scope, constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), tags));
 }
 
-static JSDurableObjectHandle* socketOf(VM& vm, JSValue ws)
+// The record that ties `ws` to the Durable Object that accepted it, if one did.
+static JSDurableObjectHandle* socketOf(Zig::GlobalObject* globalObject, JSValue ws)
 {
     if (!ws.isObject())
         return nullptr;
-    JSValue bound = asObject(ws)->getDirect(vm, WebCore::builtinNames(vm).durableObjectSocketPrivateName());
+    JSValue bound = socketMap(globalObject)->get(asObject(ws));
     return bound ? dynamicDowncast<JSDurableObjectHandle>(bound) : nullptr;
 }
 
-static void bindSocket(VM& vm, JSDurableObjectHandle* socket, JSObject* ws, JSArray* tags)
+static void bindSocket(Zig::GlobalObject* globalObject, JSDurableObjectHandle* socket, JSObject* ws, JSArray* tags)
 {
+    VM& vm = globalObject->vm();
     socket->setTarget(vm, ws);
     socket->setExtra(vm, tags);
-    ws->putDirect(vm, WebCore::builtinNames(vm).durableObjectSocketPrivateName(), socket, 0);
+    socketMap(globalObject)->add(vm, ws, socket);
     socket->actor()->addSocket(vm, socket);
 }
 
@@ -1460,7 +1469,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDurableObjectStateAcceptWebSocket, (JSGlobalObject * 
     JSValue ws = callFrame->argument(0);
     if (!ws.inherits<WebCore::JSServerWebSocket>())
         return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "ws"_s, "ServerWebSocket"_s, ws);
-    if (socketOf(vm, ws))
+    if (socketOf(globalObject, ws))
         return Bun::ERR::INVALID_STATE(scope, globalObject, "This WebSocket was already accepted by a Durable Object"_s);
     JSValue readyState = ws.get(globalObject, ident(vm, "readyState"_s));
     RETURN_IF_EXCEPTION(scope, {});
@@ -1469,7 +1478,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDurableObjectStateAcceptWebSocket, (JSGlobalObject * 
     JSArray* tags = validateTags(globalObject, scope, callFrame->argument(1));
     RETURN_IF_EXCEPTION(scope, {});
     auto* socket = JSDurableObjectHandle::create(vm, JSDurableObjectRealm::of(globalObject)->structure(Field::SocketStructure), HandleKind::Socket, actor);
-    bindSocket(vm, socket, asObject(ws), tags);
+    bindSocket(globalObject, socket, asObject(ws), tags);
     return JSValue::encode(jsUndefined());
 }
 
@@ -1489,7 +1498,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDurableObjectStateGetWebSockets, (JSGlobalObject * le
 JSC_DEFINE_HOST_FUNCTION(jsDurableObjectStateGetTags, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     THIS_STATE("getTags"_s)
-    auto* socket = socketOf(vm, callFrame->argument(0));
+    auto* socket = socketOf(globalObject, callFrame->argument(0));
     if (!socket || socket->actor() != actor)
         return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "ws"_s, callFrame->argument(0), "is not a WebSocket this Durable Object accepted"_s);
     MarkedArgumentBuffer tags;
@@ -1543,7 +1552,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDurableObjectStateGetWebSocketAutoResponse, (JSGlobal
 JSC_DEFINE_HOST_FUNCTION(jsDurableObjectStateGetWebSocketAutoResponseTimestamp, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     THIS_STATE("getWebSocketAutoResponseTimestamp"_s)
-    auto* socket = socketOf(vm, callFrame->argument(0));
+    auto* socket = socketOf(globalObject, callFrame->argument(0));
     if (!socket || socket->actor() != actor || !socket->m_autoResponseAt)
         return JSValue::encode(jsNull());
     return JSValue::encode(DateInstance::create(vm, globalObject->dateStructure(), socket->m_autoResponseAt));
@@ -1684,7 +1693,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDurableObjectSocketOpen, (JSGlobalObject * lexicalGlo
         RETURN_IF_EXCEPTION(scope, {});
         return JSValue::encode(jsUndefined());
     }
-    bindSocket(vm, socket, asObject(ws), uncheckedDowncast<JSArray>(socket->target()));
+    bindSocket(globalObject, socket, asObject(ws), uncheckedDowncast<JSArray>(socket->target()));
     actor->post(globalObject, DurableObjectEventKind::SocketOpen, ws, jsUndefined(), jsUndefined());
     return JSValue::encode(jsUndefined());
 }
@@ -1696,7 +1705,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDurableObjectSocketMessage, (JSGlobalObject * lexical
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue ws = callFrame->argument(0);
     JSValue message = callFrame->argument(1);
-    auto* socket = socketOf(vm, ws);
+    auto* socket = socketOf(globalObject, ws);
     if (!socket)
         return JSValue::encode(jsUndefined());
     auto* actor = socket->actor();
@@ -1720,14 +1729,12 @@ JSC_DEFINE_HOST_FUNCTION(jsDurableObjectSocketMessage, (JSGlobalObject * lexical
 JSC_DEFINE_HOST_FUNCTION(jsDurableObjectSocketClose, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    VM& vm = globalObject->vm();
     JSValue ws = callFrame->argument(0);
-    auto* socket = socketOf(vm, ws);
+    auto* socket = socketOf(globalObject, ws);
     if (!socket)
         return JSValue::encode(jsUndefined());
     auto* actor = socket->actor();
     ModuleGraphContextScope context(actor->ns()->context());
-    asObject(ws)->putDirect(vm, WebCore::builtinNames(vm).durableObjectSocketPrivateName(), jsUndefined(), 0);
     actor->post(globalObject, DurableObjectEventKind::SocketClose, ws, callFrame->argument(1), callFrame->argument(2));
     actor->removeSocket(socket);
     return JSValue::encode(jsUndefined());
@@ -1736,9 +1743,8 @@ JSC_DEFINE_HOST_FUNCTION(jsDurableObjectSocketClose, (JSGlobalObject * lexicalGl
 JSC_DEFINE_HOST_FUNCTION(jsDurableObjectSocketDrain, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    VM& vm = globalObject->vm();
     JSValue ws = callFrame->argument(0);
-    auto* socket = socketOf(vm, ws);
+    auto* socket = socketOf(globalObject, ws);
     if (!socket)
         return JSValue::encode(jsUndefined());
     auto* actor = socket->actor();
@@ -2472,6 +2478,7 @@ void JSDurableObjectRealm::finishCreation(VM& vm, Zig::GlobalObject* globalObjec
     handler->putDirectNativeFunction(vm, globalObject, ident(vm, "close"_s), 3, jsDurableObjectSocketClose, ImplementationVisibility::Public, NoIntrinsic, 0);
     handler->putDirectNativeFunction(vm, globalObject, ident(vm, "drain"_s), 1, jsDurableObjectSocketDrain, ImplementationVisibility::Public, NoIntrinsic, 0);
     set(Field::WebSocketHandler, handler);
+    set(Field::SocketMap, JSWeakMap::create(vm, globalObject->weakMapStructure()));
     durableObjectConstructor->putDirect(vm, ident(vm, "websocket"_s), handler, PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete);
 
     set(Field::IdStructure, JSDurableObjectId::createStructure(vm, globalObject, createPlainPrototype(vm, globalObject, JSDurableObjectId::info(), idPrototypeValues, "DurableObjectId"_s)));

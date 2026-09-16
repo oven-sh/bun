@@ -842,9 +842,11 @@ describe.concurrent("mimalloc heaps", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("a Worker that called Bun.color leaves no heap behind when it exits", async () => {
-    using dir = tempDir("color-worker-heap", {
-      "color-worker-heap-fixture.js": `
+  test(
+    "a Worker that called Bun.color leaves no heap behind when it exits",
+    async () => {
+      using dir = tempDir("color-worker-heap", {
+        "color-worker-heap-fixture.js": `
         const { Worker, isMainThread } = require("node:worker_threads");
         if (!isMainThread) {
           for (const input of ["red", "#ff8800", "hsl(120, 50%, 50%)", "\\\\72 ed"]) Bun.color(input, "css");
@@ -860,21 +862,25 @@ describe.concurrent("mimalloc heaps", () => {
           // Whatever the process sets up lazily for its first Worker is part of the baseline.
           await runWorker();
           const before = liveHeaps();
-          const workers = 3;
-          for (let i = 0; i < workers; i++) await runWorker();
-          console.log(JSON.stringify({ workers, leaked: liveHeaps() - before }));
+          // A heap left behind shows up once per Worker, so one more Worker is enough.
+          await runWorker();
+          console.log(JSON.stringify({ leaked: liveHeaps() - before }));
         }
       `,
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "color-worker-heap-fixture.js"],
-      env: bunEnv,
-      cwd: String(dir),
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(JSON.parse(stdout)).toEqual({ workers: 3, leaked: 0 });
-    expect(exitCode).toBe(0);
-  });
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "color-worker-heap-fixture.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({ leaked: 0 });
+      expect(exitCode).toBe(0);
+      // Two Worker VMs start one after the other. On a loaded debug ASAN machine each took
+      // 1.2 to 1.9 s, which put the test at the 5 s default. Release builds keep the default.
+    },
+    isDebug || isASAN ? 30_000 : undefined,
+  );
 });

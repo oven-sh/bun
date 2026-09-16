@@ -1420,14 +1420,13 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         ));
     }
 
-    if !url.protocol.is_empty() {
-        if !(url.is_http() || url.is_https() || url.is_s3()) {
-            let err = global_this.to_type_error(
-                jsc::ErrorCode::INVALID_ARG_VALUE,
-                format_args!("protocol must be http:, https: or s3:"),
-            );
-            return Ok(JSPromise::rejected_promise(global_this, err).to_js());
-        }
+    // `file:`, `blob:` and `data:` returned above. An empty protocol is a scheme this cannot dial.
+    if !(url.is_http() || url.is_https() || url.is_s3()) {
+        let err = global_this.to_type_error(
+            jsc::ErrorCode::INVALID_ARG_VALUE,
+            format_args!("protocol must be http:, https: or s3:"),
+        );
+        return Ok(JSPromise::rejected_promise(global_this, err).to_js());
     }
 
     // WHATWG Fetch step 36 forbids a body for GET/HEAD; Bun additionally

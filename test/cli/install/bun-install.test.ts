@@ -1010,6 +1010,26 @@ describe.concurrent("bun-install", () => {
       });
     });
 
+    it("does not hand the credentials to the host behind a backslash", async () => {
+      // `new URL("http://u:p@first\\x@second/pkg.tgz")` reads the host as `first` and the
+      // credentials as `u:p`, because a `\` ends the authority of an http URL. npm reads it the
+      // same way. Neither host may receive the credentials the other was given.
+      const firstReceived: Received[] = [];
+      const secondReceived: Received[] = [];
+      await using first = serveTarball(firstReceived, null);
+      await using second = serveTarball(secondReceived, null);
+
+      const result = await install(
+        String.raw`http://u:p@127.0.0.1:${first.port}\x@127.0.0.1:${second.port}${tarballPath}`,
+      );
+
+      expect({ firstReceived, secondReceived, exitCode: result.exitCode }).toEqual({
+        firstReceived: [],
+        secondReceived: [],
+        exitCode: 1,
+      });
+    });
+
     it("keeps the credentials across a redirect within the host", async () => {
       const received: Received[] = [];
       await using server = serveTarball(received, basic("carol:s3cret"));

@@ -183,6 +183,15 @@ pub use whatwg::{
     file_url_from_string, href_from_string, join, origin_from_slice, path_from_file_url,
 };
 
+/// Where the authority ends, which is where the search for the `@` of the userinfo stops.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum AuthorityEnd {
+    /// `/`, `?`, `#`, and a `\` in a special scheme. For a string that something else reads too.
+    LikeNewURL,
+    /// `/`, `?` or `#`, so a `\` stays userinfo. Only for a string this parser alone reads.
+    SlashQueryOrHash,
+}
+
 // URL is a pure view struct — every field is a slice into `href` (or a
 // literal default).
 #[derive(Clone)]
@@ -203,6 +212,8 @@ pub struct URL<'a> {
     pub(crate) search_params: Option<QueryStringMap>,
     pub username: &'a [u8],
     pub(crate) port_was_automatically_set: bool,
+    /// The rule `parse` used, so `href_without_userinfo` cuts the same bytes.
+    pub(crate) authority_end: AuthorityEnd,
 }
 
 impl<'a> Default for URL<'a> {
@@ -222,6 +233,7 @@ impl<'a> Default for URL<'a> {
             search_params: None,
             username: b"",
             port_was_automatically_set: false,
+            authority_end: AuthorityEnd::LikeNewURL,
         }
     }
 }
@@ -312,6 +324,7 @@ impl<'a> URL<'a> {
             search_params: self.search_params,
             username: d(self.username),
             port_was_automatically_set: self.port_was_automatically_set,
+            authority_end: self.authority_end,
         }
     }
 
@@ -423,15 +436,15 @@ impl<'a> URL<'a> {
 
     /// The schemes WHATWG calls special: a `\` ends the authority of these, as a `/` does.
     fn has_special_scheme(&self) -> bool {
-        [&b"http"[..], b"https", b"ws", b"wss", b"ftp", b"file"]
-            .into_iter()
-            .any(|scheme| strings::eql_case_insensitive_ascii(self.protocol, scheme, true))
+        strings::eql_any_case_insensitive_ascii(
+            self.protocol,
+            &[b"http", b"https", b"ws", b"wss", b"ftp", b"file"],
+        )
     }
 
-    /// The `@` that ends the userinfo in `after_scheme`, the text after `scheme://`: the last
-    /// `@` of the authority, which ends where `new URL()` ends it.
-    fn userinfo_end(&self, after_scheme: &[u8]) -> Option<usize> {
-        let backslash_ends_it = self.has_special_scheme();
+    /// The last `@` of the authority of `after_scheme`, the text after `scheme://`.
+    pub fn userinfo_end(&self, after_scheme: &[u8], end: AuthorityEnd) -> Option<usize> {
+        let backslash_ends_it = end == AuthorityEnd::LikeNewURL && self.has_special_scheme();
         let mut last_at = None;
         // One pass over the authority, which is short.
         for (i, &byte) in after_scheme.iter().enumerate() {
@@ -509,7 +522,7 @@ impl<'a> URL<'a> {
             return Cow::Borrowed(self.href);
         };
         let rest = &self.href[authority..];
-        let Some(at) = self.userinfo_end(rest) else {
+        let Some(at) = self.userinfo_end(rest, self.authority_end) else {
             return Cow::Borrowed(self.href);
         };
         let mut out = Vec::with_capacity(self.href.len() - at - 1);
@@ -668,12 +681,23 @@ impl<'a> URL<'a> {
         }
     }
 
+    /// Reads the authority as `new URL()` reads it. See [`URL::parse_single_reader`] for the other rule.
     pub fn parse(base: &'a [u8]) -> URL<'a> {
+        Self::parse_with(base, AuthorityEnd::LikeNewURL)
+    }
+
+    /// `parse` for a string this parser alone reads, where a `\` before the `@` is userinfo.
+    pub fn parse_single_reader(base: &'a [u8]) -> URL<'a> {
+        Self::parse_with(base, AuthorityEnd::SlashQueryOrHash)
+    }
+
+    fn parse_with(base: &'a [u8], authority_end: AuthorityEnd) -> URL<'a> {
         if base.is_empty() {
             return URL::default();
         }
         let mut url = URL {
             href: base,
+            authority_end,
             ..Default::default()
         };
         let mut offset: u32 = 0;
@@ -703,7 +727,7 @@ impl<'a> URL<'a> {
                     // what precedes the last `@` of the authority.
                     if offset > 0 {
                         let rest = &base[offset as usize..];
-                        if let Some(at) = url.userinfo_end(rest) {
+                        if let Some(at) = url.userinfo_end(rest, authority_end) {
                             let userinfo = &rest[..at];
                             (url.username, url.password) =
                                 strings::split_once_char(userinfo, b':').unwrap_or((userinfo, b""));
@@ -808,8 +832,7 @@ impl<'a> URL<'a> {
         }
         for i in 0..str.len() {
             match str[i] {
-                // RFC 3986 §3.1: the scheme ends at the first `:`, and holds only these bytes.
-                // `new URL()` reads it the same way, so neither can find a host the other misses.
+                // RFC 3986 §3.1, and `new URL()`: the scheme ends at the first `:`.
                 b':' => {
                     if i + 3 <= str.len() && str[i + 1] == b'/' && str[i + 2] == b'/' {
                         self.protocol = &str[0..i];

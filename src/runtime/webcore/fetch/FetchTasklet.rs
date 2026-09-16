@@ -2002,7 +2002,7 @@ impl FetchTasklet {
         let proxy: Option<ZigURL> = proxy_settings.as_deref().and_then(|s| {
             let href: *const [u8] = s.resolve(&url)?;
             // SAFETY: see block comment above.
-            Some(ZigURL::parse(unsafe { &*href }))
+            Some(ZigURL::parse_single_reader(unsafe { &*href }))
         });
 
         // The callback keeps a request on HTTP/1.1. Under `rejectUnauthorized:

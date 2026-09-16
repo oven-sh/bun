@@ -2950,6 +2950,23 @@ describe("http_proxy/NO_PROXY re-evaluated per redirect hop", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("a domain login in http_proxy reaches the proxy as written", async () => {
+    // `http://DOMAIN\user:pass@host:port` is how a Windows domain account is spelled in a proxy
+    // variable, and curl reads the `\` as an ordinary userinfo byte. Only this parser reads the
+    // variable, and it names the host that is dialed, so there is no second reading to agree with.
+    const { stdout, stderr, exitCode, proxyLog, proxyAuth } = await runFetch(
+      { http_proxy: String.raw`http://DOMAIN\user:pass@127.0.0.1:${proxy.port}` },
+      `http://127.0.0.1:${originA.port}/final`,
+    );
+    expect({ stdout, proxyLog, proxyAuth }).toEqual({
+      stdout: "FINAL-PROXY",
+      proxyLog: [`GET http://127.0.0.1:${originA.port}/final HTTP/1.1`],
+      proxyAuth: [`Basic ${btoa(String.raw`DOMAIN\user:pass`)}`],
+    });
+    if (exitCode !== 0) console.error("stderr:", stderr);
+    expect(exitCode).toBe(0);
+  });
+
   test("http->https redirect drops http_proxy when https_proxy is unset", async () => {
     // ProxySettings::resolve() picks by scheme: hop 2 (https) must not inherit
     // the http_proxy hop 1 used.

@@ -770,39 +770,45 @@ class ListenConnection {
     const { promise, resolve, reject } = Promise.withResolvers<ListenHandle>();
     let live: ListenHandle | null = null;
 
-    createPooledConnectionHandle(
-      createPostgresConnection,
-      { ...adapter.connectionInfo, idleTimeout: 0, maxLifetime: 0 },
-      (err, conn) => {
-        this.#handshake = null;
-        if (err) return reject(wrapPostgresError(err));
-        if (adapter.closed) {
-          conn.close();
-          return reject(adapter.connectionClosedError());
-        }
-        live = this.#conn = conn;
-        this.#backoffMs = RECONNECT_MIN_MS;
-        conn.onnotification = this.#onNotification;
-        conn.ref();
-        resolve(conn);
-        this.#clearSweep();
-        this.#sweep();
-      },
-      err => {
-        if (live === null) {
-          this.#handshake = null;
-          return reject(wrapPostgresError(err ?? adapter.connectionClosedError()));
-        }
-        if (this.#conn !== live) return;
-        this.#conn = null;
-        for (const entry of this.#channels.values()) entry.ready = null;
-        this.#scheduleSweep();
-      },
-    ).then(handle => {
-      if (handle === null || live !== null) return;
-      if (adapter.closed) handle.close();
-      else this.#handshake = handle;
-    });
+    adapter
+      .runAsOwner(
+        () =>
+          createPooledConnectionHandle(
+            createPostgresConnection,
+            { ...adapter.connectionInfo, idleTimeout: 0, maxLifetime: 0 },
+            (err, conn) => {
+              this.#handshake = null;
+              if (err) return reject(wrapPostgresError(err));
+              if (adapter.closed) {
+                conn.close();
+                return reject(adapter.connectionClosedError());
+              }
+              live = this.#conn = conn;
+              this.#backoffMs = RECONNECT_MIN_MS;
+              conn.onnotification = this.#onNotification;
+              conn.ref();
+              resolve(conn);
+              this.#clearSweep();
+              this.#sweep();
+            },
+            err => {
+              if (live === null) {
+                this.#handshake = null;
+                return reject(wrapPostgresError(err ?? adapter.connectionClosedError()));
+              }
+              if (this.#conn !== live) return;
+              this.#conn = null;
+              for (const entry of this.#channels.values()) entry.ready = null;
+              this.#scheduleSweep();
+            },
+          ),
+        undefined,
+      )
+      .then(handle => {
+        if (handle === null || live !== null) return;
+        if (adapter.closed) handle.close();
+        else this.#handshake = handle;
+      });
 
     return promise;
   }

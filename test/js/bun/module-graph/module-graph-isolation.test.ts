@@ -706,6 +706,49 @@ const dir = String(
       // Not process.exit(): an upload that still held the event loop would keep this process here.
       console.log("idle");
     `,
+    "uses-redis-later.mjs": `
+      export const heard = [];
+      export const state = { client: null };
+      // A client that has not dialed yet.
+      export const make = url => new Bun.RedisClient(url);
+      // From a microtask, which still runs once the graph has been disposed.
+      export const commandLater = client => queueMicrotask(() => client.incr("hits").then(() => heard.push("resolved"), () => heard.push("rejected")));
+      export const connect = async url => {
+        state.client = new Bun.RedisClient(url);
+        await state.client.connect();
+      };
+    `,
+    "redis-after-it-was-disposed.mjs": `
+      // Speaks enough RESP3 to accept a client. Not what keeps this process running.
+      let arrived = 0;
+      const sockets = new Set();
+      const server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: {
+          open(socket) { arrived++; sockets.add(socket); },
+          close(socket) { sockets.delete(socket); },
+          data(socket, data) { if (/HELLO/i.test(String(data))) socket.write("%2\\r\\n$6\\r\\nserver\\r\\n$5\\r\\nredis\\r\\n$5\\r\\nproto\\r\\n:3\\r\\n"); },
+        },
+      });
+      server.unref();
+      const url = "redis://127.0.0.1:" + server.port;
+      const graph = new Bun.ModuleGraph();
+      const app = await graph.import(import.meta.dir + "/uses-redis-later.mjs");
+      if (process.argv[2] === "a command on a client that never dialed") {
+        const client = graph.run(() => app.make(url));
+        graph.run(() => app.commandLater(client));
+        graph.dispose();
+      } else {
+        // The server drops the connection, the client waits to dial again, and the graph is disposed of while it waits.
+        await graph.run(() => app.connect(url));
+        for (const socket of sockets) socket.end();
+        while (app.state.client.connected) await new Promise(resolve => setImmediate(resolve));
+        graph.dispose();
+      }
+      // Not process.exit(): a client that still held the event loop would keep this process here.
+      process.once("beforeExit", () => console.log(JSON.stringify({ arrived, heard: app.heard })));
+    `,
     "subscribes-to-redis.mjs": `
       export let subscribed = false;
       export const subscribe = url => new Bun.RedisClient(url).subscribe("channel", () => {}).then(() => { subscribed = true; });
@@ -2718,6 +2761,30 @@ describe("ModuleGraph isolation: what is the host's, or the realm's, survives a 
     }
   });
 
+  test("a Bun.SQL of the host's: a listen() a disposed graph's leftover script makes on it dials as the host", async () => {
+    // (Otherwise nothing is dialed, and the host's own listen() on the instance waits behind that for good.)
+    const sql = new Bun.SQL(`postgres://tag%3Alisten-of-the-host@127.0.0.1:${hostTcp.port}/db?sslmode=disable`, {
+      max: 1,
+      connectionTimeout: 60,
+    });
+    try {
+      using made = await newGraph();
+      made.graph.run(() =>
+        made.app.call(() => queueMicrotask(() => void sql.listen("channel", () => {}).catch(() => {}))),
+      );
+      made.graph.dispose();
+      await until(() => connected.has("tcp:listen-of-the-host"));
+      expect(connected.has("tcp:listen-of-the-host")).toBe(true);
+    } finally {
+      sql.close({ timeout: 0 }).catch(() => {});
+      await Bun.connect({
+        hostname: "127.0.0.1",
+        port: hostTcp.port,
+        socket: { open: socket => void socket.write("drop:listen-of-the-host\n"), data() {} },
+      });
+    }
+  });
+
   test("node:http2's cached `date` header: the second still turns over after the graph that rendered it first is gone", async () => {
     const dateOf = (port: number) =>
       new Promise<string>((resolve, reject) => {
@@ -3532,6 +3599,18 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
       exitCode: 0,
     });
   });
+  test.each([
+    ["a command on a client that never dialed", 0],
+    ["a client that was waiting to dial again", 1],
+  ])(
+    "a Bun.RedisClient its leftover script uses does not dial and does not keep the process running: %s",
+    async (how, arrived) => {
+      expect(await runsFixture("redis-after-it-was-disposed.mjs", how)).toEqual({
+        stdout: JSON.stringify({ arrived, heard: [] }),
+        exitCode: 0,
+      });
+    },
+  );
   test("the connections a Bun.FetchSession it made keeps alive are closed with it", async () => {
     expect(await runsFixture("fetch-session-of-a-disposed-graph.mjs")).toEqual({
       stdout: `{"openBeforeDispose":1,"openAfter":0,"theHostsStillThere":1}`,

@@ -952,11 +952,6 @@ impl JSValkeyClient {
         let promise_ptr = JSPromise::create(global_object);
         let promise = promise_ptr.to_js();
         Js::connection_promise_set_cached(this_value, global_object, promise);
-        // What script of a disposed `Bun.ModuleGraph` starts does not start: nothing is dialed,
-        // nothing keeps the loop alive, and the promise stays pending.
-        if self.context_stopped() {
-            return Ok(promise);
-        }
 
         // If was manually closed, reset that flag
         self.client_mut().flags.is_manually_closed = false;
@@ -1167,8 +1162,8 @@ impl JSValkeyClient {
         }
 
         // No reconnecting on a VM that is exiting: its stop phase would only
-        // have to close the new socket again. Nor for a context that has stopped.
-        if self.vm().is_shutting_down() || self.context_stopped() {
+        // have to close the new socket again.
+        if self.vm().is_shutting_down() {
             bun_core::hint::cold();
             return Ok(());
         }
@@ -1452,6 +1447,14 @@ impl JSValkeyClient {
 
         let _guard = self.ref_guard();
 
+        // What script of a disposed `Bun.ModuleGraph` starts does not start: nothing is dialed.
+        // It ends as a dial refused outright does, a turn later: `on_close` sees the stopped
+        // context, releases what waits for the connection and lets go of the loop.
+        if self.context_stopped() {
+            self.close_without_socket_next_tick();
+            return Ok(());
+        }
+
         let is_tls = self.client.get().tls != valkey::TLS::None;
         let vm = self.client.get().vm.as_mut();
         let loop_ = vm.uws_loop();
@@ -1566,11 +1569,6 @@ impl JSValkeyClient {
             return;
         }
         bun_core::hint::cold();
-        // (Of a context that has stopped: the command waits behind a dial that is never made.)
-        if self.context_stopped() {
-            return;
-        }
-
         match self.connect() {
             // The command is queued as for a dial in flight; the deferred
             // close then rejects it or a retry sends it, like a refused dial.
@@ -2011,6 +2009,8 @@ impl ValkeyDeferredClose {
                 // No socket ref to give back: `connect()` forgets it only once
                 // it has a socket, and this task exists because it never did.
                 this.client_mut().status = valkey::Status::Disconnected;
+                // (A socket's close event arrives inside the client's context; so does this one.)
+                let _context = this.vm().enter_context(this.context);
                 let closed = this.client_mut().on_close();
                 this.update_poll_ref();
                 crate::dispatch::fold(closed);

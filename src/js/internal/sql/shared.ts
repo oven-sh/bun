@@ -656,14 +656,7 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
       this.connectStartedAt = Date.now();
       this.connectAttempts = 0;
     }
-    // The pool's connections are its owner's: the Bun.ModuleGraph the SQL instance was made in
-    // (a redial starts from a close event, which has no async context), or no graph's when the
-    // host made it, even if a graph's query is what makes it dial: that graph's dispose() would
-    // otherwise close the host's connections under its queries.
-    const graphFrame = this.adapter.ownerGraphFrame;
-    await (graphFrame === undefined && AsyncContextFrame.current()?.graph === undefined
-      ? this.startConnection()
-      : AsyncContextFrame.run(graphFrame, this.startConnection, this));
+    await this.adapter.runAsOwner(this.startConnection, this);
     if (this.onFinish !== null) {
       // the pool was force-closed while the native handle was being created;
       // close it now so onClose fires and onFinish settles
@@ -960,6 +953,18 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
   /// The Bun.ModuleGraph context frame the SQL instance was created inside of, if any:
   /// every connection of the pool is opened in it, so it belongs to that graph.
   public readonly ownerGraphFrame: unknown;
+
+  /// Calls `dial` as the SQL instance's owner, whoever is calling: a connection is its owner's,
+  /// the Bun.ModuleGraph the instance was made in (a redial starts from a close event, which has
+  /// no async context), or no graph's when the host made it, even if a graph's query or listen()
+  /// is what makes it dial. That graph's dispose() would otherwise close the host's connection
+  /// under the host, and its leftover script could leave the host waiting for one never opened.
+  public runAsOwner<This, Result>(dial: (this: This) => Result, thisValue: This): Result {
+    const graphFrame = this.ownerGraphFrame;
+    return graphFrame === undefined && AsyncContextFrame.current()?.graph === undefined
+      ? dial.$call(thisValue)
+      : AsyncContextFrame.run(graphFrame, dial, thisValue);
+  }
 
   constructor(connectionInfo: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions) {
     this.connectionInfo = connectionInfo;

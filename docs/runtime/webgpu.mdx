@@ -86,6 +86,8 @@ console.log(adapter?.info.description); // the name the driver reports for the G
 console.log([...(adapter?.features ?? [])]); // the optional features you can request
 ```
 
+Code that installs another implementation only when `navigator.gpu` is missing (for example the [`webgpu`](https://www.npmjs.com/package/webgpu) package) now uses Bun's. `navigator.gpu` is a configurable getter and the `GPU*` globals are writable, so `Object.defineProperty(navigator, "gpu", { value: otherGpu })` still replaces Bun's implementation.
+
 ---
 
 ## Rendering without a canvas

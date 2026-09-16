@@ -1376,9 +1376,7 @@ pub mod waiter_thread_posix {
                     let act = libc::sigaction {
                         sa_sigaction: wakeup as *const () as usize,
                         sa_mask: current_mask,
-                        // SA_RESTART: the kernel prefers to run this on the thread that spawned
-                        // the child. Foreign code there (FFI, a native addon, the sanitizer
-                        // runtime) does not always retry a blocking syscall on EINTR.
+                        // SA_RESTART: FFI, addon and sanitizer code does not always retry EINTR.
                         sa_flags: libc::SA_NOCLDSTOP | libc::SA_RESTART,
                         sa_restorer: None,
                     };

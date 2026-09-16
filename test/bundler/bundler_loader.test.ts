@@ -407,9 +407,12 @@ describe("bundler", async () => {
     },
   });
 
-  const moon = await Bun.file(
-    fileURLToPath(import.meta.resolve("../js/bun/util/text-loader-fixture-text-file.backslashes.txt")),
-  ).text();
+  // (a Windows checkout may have given the fixture CRLF line endings; the harness compares LF-normalized output)
+  const moon = (
+    await Bun.file(
+      fileURLToPath(import.meta.resolve("../js/bun/util/text-loader-fixture-text-file.backslashes.txt")),
+    ).text()
+  ).replaceAll("\r\n", "\n");
 
   // https://github.com/oven-sh/bun/issues/3449
   itBundled("bun/loader-text-file-#3449", {
@@ -487,6 +490,26 @@ describe("bundler", async () => {
       },
     });
   }
+
+  // `import addon from "./addon.node"` prints as `__require("./addon-[hash].node")`
+  // in ESM output, so the chunk has to define the runtime helper.
+  itBundled("bun/loader-napi-esm-runtime-require", {
+    target: "bun",
+    format: "esm",
+    outdir: "/out",
+    files: {
+      "/entry.ts": /* js */ `
+        import addon from "./addon.node";
+        export default addon;
+      `,
+      "/addon.node": "not a real addon",
+    },
+    onAfterBundle(api) {
+      const js = api.readFile("/out/entry.js");
+      expect(js).toContain("var __require = import.meta.require;");
+      expect(js).toMatch(/__require\("\.\/addon-[a-z0-9]+\.node"\)/);
+    },
+  });
 
   describe("handles empty files", () => {
     for (const target of ["bun", "node", "browser"] as const) {

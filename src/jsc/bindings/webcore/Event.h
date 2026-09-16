@@ -121,8 +121,6 @@ protected:
     Event(EventInterface, const AtomString& type, CanBubble, IsCancelable, IsComposed, MonotonicTime timestamp, IsTrusted isTrusted = IsTrusted::Yes);
     Event(EventInterface, const AtomString& type, const EventInit&, IsTrusted);
 
-    virtual void receivedTarget() {}
-
 private:
     explicit Event(EventInterface, MonotonicTime createTime, const AtomString& type, IsTrusted, CanBubble, IsCancelable, IsComposed);
 

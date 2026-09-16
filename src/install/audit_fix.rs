@@ -17,8 +17,8 @@ use crate::package_manager_real::enqueue_dependency_with_main;
 use crate::package_manager_real::populate_manifest_cache::{self, Packages};
 use crate::update_transitive::{pretty_update_row, row_glyphs};
 use crate::{
-    Dependency, DependencyID, DependencyVersionTag, ManifestLoad, PackageID, PackageManager,
-    PackageNameHash, ResolutionTag, dependency, invalid_package_id,
+    Dependency, DependencyID, DependencyVersionTag, PackageID, PackageManager, PackageNameHash,
+    ResolutionTag, dependency, invalid_package_id,
 };
 
 mod json;
@@ -649,7 +649,6 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
             scope,
             &inst.name,
             Some(&mut expired),
-            ManifestLoad::LoadFromMemoryFallbackToDisk,
             min_age.is_some(),
         ) else {
             for &a in &inst.advisories {

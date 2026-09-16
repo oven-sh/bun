@@ -13,7 +13,6 @@
 #include "NodeValidator.h"
 #include "JSBuffer.h"
 #include "CryptoUtil.h"
-#include "BunString.h"
 #include <openssl/bn.h>
 #include <openssl/ecdsa.h>
 #include <openssl/rsa.h>
@@ -95,7 +94,7 @@ JSVerify* JSVerify::create(JSC::VM& vm, JSC::Structure* structure, JSC::JSGlobal
 
 JSC::Structure* JSVerify::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
 {
-    return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
 }
 
 template<typename CellType, JSC::SubspaceAccess mode>
@@ -103,12 +102,7 @@ JSC::GCClient::IsoSubspace* JSVerify::subspaceFor(JSC::VM& vm)
 {
     if constexpr (mode == JSC::SubspaceAccess::Concurrently)
         return nullptr;
-    return WebCore::subspaceForImpl<JSVerify, WebCore::UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForJSVerify.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSVerify = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForJSVerify.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForJSVerify = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSVerify, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForJSVerify, m_subspaceForJSVerify));
 }
 
 // JSVerifyPrototype implementation
@@ -121,8 +115,8 @@ JSVerifyPrototype::JSVerifyPrototype(JSC::VM& vm, JSC::Structure* structure)
 void JSVerifyPrototype::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSVerify::info(), JSVerifyPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::reifyStaticPropertyTable(vm, JSVerify::info(), JSVerifyPrototypeTableValues, *this);
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 JSVerifyPrototype* JSVerifyPrototype::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
@@ -134,7 +128,7 @@ JSVerifyPrototype* JSVerifyPrototype::create(JSC::VM& vm, JSC::JSGlobalObject* g
 
 JSC::Structure* JSVerifyPrototype::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
 {
-    return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
 }
 
 // JSVerifyConstructor implementation
@@ -159,7 +153,7 @@ JSVerifyConstructor* JSVerifyConstructor::create(JSC::VM& vm, JSC::Structure* st
 
 JSC::Structure* JSVerifyConstructor::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
 {
-    return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
 }
 
 // Function stubs for implementation later
@@ -474,41 +468,6 @@ void setupJSVerifyClassStructure(LazyClassStructure::Initializer& init)
     init.setPrototype(prototype);
     init.setStructure(structure);
     init.setConstructor(constructor);
-}
-
-std::optional<ncrypto::EVPKeyPointer> keyFromPublicString(JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, const WTF::StringView& keyView)
-{
-    ncrypto::EVPKeyPointer::PublicKeyEncodingConfig publicConfig;
-    publicConfig.format = ncrypto::EVPKeyPointer::PKFormatType::PEM;
-
-    UTF8View keyUtf8(keyView);
-    auto keySpan = keyUtf8.span();
-
-    ncrypto::Buffer<const unsigned char> ncryptoBuf {
-        .data = reinterpret_cast<const unsigned char*>(keySpan.data()),
-        .len = keySpan.size(),
-    };
-
-    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
-
-    auto publicRes = ncrypto::EVPKeyPointer::TryParsePublicKey(publicConfig, ncryptoBuf);
-    if (publicRes) {
-        ncrypto::EVPKeyPointer keyPtr(WTF::move(publicRes.value));
-        return keyPtr;
-    }
-
-    if (publicRes.error.value() == ncrypto::EVPKeyPointer::PKParseError::NOT_RECOGNIZED) {
-        ncrypto::EVPKeyPointer::PrivateKeyEncodingConfig privateConfig;
-        privateConfig.format = ncrypto::EVPKeyPointer::PKFormatType::PEM;
-        auto privateRes = ncrypto::EVPKeyPointer::TryParsePrivateKey(privateConfig, ncryptoBuf);
-        if (privateRes) {
-            ncrypto::EVPKeyPointer keyPtr(WTF::move(privateRes.value));
-            return keyPtr;
-        }
-    }
-
-    throwCryptoError(lexicalGlobalObject, scope, publicRes.openssl_error.value_or(0), "Failed to read public key"_s);
-    return std::nullopt;
 }
 
 } // namespace Bun

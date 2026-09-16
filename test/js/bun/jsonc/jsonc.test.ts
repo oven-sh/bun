@@ -34,6 +34,19 @@ test("Bun.JSONC.parse handles a comment after a scalar on the same line", () => 
   expect(Bun.JSONC.parse(jsonc)).toEqual({ a: 1, b: true, c: null, d: -2.5 });
 });
 
+test("Bun.JSONC.parse nested empty object is spreadable after adding a property", () => {
+  // The JSON rows builder sized the object with inline capacity 0 for an
+  // empty {}, so spreading it tripped JSC's hasInlineStorage() debug assert
+  // once a property was added.
+  const o = Bun.JSONC.parse('{"a": {}}').a;
+  o.x = 1;
+  expect({ ...o }).toEqual({ x: 1 });
+
+  const t = Bun.TOML.parse("[a]\n").a;
+  t.y = 2;
+  expect({ ...t }).toEqual({ y: 2 });
+});
+
 test("Bun.JSONC.parse handles trailing commas", () => {
   const jsonc = `{
     "name": "test",

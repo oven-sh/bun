@@ -47,7 +47,7 @@ impl Angle {
         }
 
         let location = input.current_source_location();
-        let token = input.next()?.clone();
+        let token = *input.next()?;
         match &token {
             Token::Dimension(dim) => {
                 let value = dim.num.value;

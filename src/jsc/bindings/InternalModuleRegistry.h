@@ -23,12 +23,6 @@ public:
 
     DECLARE_EXPORT_INFO;
 
-    static size_t allocationSize(Checked<size_t> inlineCapacity)
-    {
-        ASSERT_UNUSED(inlineCapacity, inlineCapacity == 0U);
-        return sizeof(InternalModuleRegistry);
-    }
-
     enum Field : uint8_t {
 #include "InternalModuleRegistry+enum.h"
     };
@@ -41,12 +35,7 @@ public:
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<InternalModuleRegistry, WebCore::UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForInternalModuleRegistry.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForInternalModuleRegistry = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForInternalModuleRegistry.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForInternalModuleRegistry = std::forward<decltype(space)>(space); });
+        return WebCore::subspaceForImpl<InternalModuleRegistry, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForInternalModuleRegistry, m_subspaceForInternalModuleRegistry));
     }
 
     static InternalModuleRegistry* create(VM& vm, Structure* structure);
@@ -62,5 +51,8 @@ private:
     JSValue createInternalModuleById(JSGlobalObject* globalObject, VM& vm, Field id);
     void finishCreation(VM&);
 };
+
+JSC_DECLARE_HOST_FUNCTION(jsInternalModulesLoadedFromBytecode);
+JSC_DECLARE_HOST_FUNCTION(jsInternalModuleBytecode);
 
 } // namespace Bun

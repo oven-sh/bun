@@ -4,7 +4,7 @@ use core::mem;
 use bun_collections::{ArrayHashMap, ArrayIdentityContext, MultiArrayList, StringSet, index_sort};
 use bun_core::strings;
 use bun_core::{Global, Output};
-use bun_paths::{self as path, AutoAbsPath, MAX_PATH_BYTES, PathBuffer, resolve_path};
+use bun_paths::{self as path, AutoAbsPath, MAX_PATH_BYTES, resolve_path};
 use bun_resolver::fs::FileSystem;
 use bun_semver::semver_query::Wildcard;
 use bun_semver::version::VersionInt;
@@ -465,7 +465,7 @@ impl Package<u64> {
         // `cloner` already owns `&mut` to `pm`, `old`, `new`, and
         // `package_id_mapping`; route everything through its disjoint fields.
         // `old`/`new`/`mapping` are reborrowed for the whole body (disjoint
-        // from `cloner.clone_queue` / `.trees_count` / `.old_preinstall_state`);
+        // from `cloner.clone_queue` / `.old_preinstall_state`);
         // `manager` is accessed via `cloner.manager` at each use so the borrow
         // doesn't span the `cloner.*` accesses below.
         let old = &mut *cloner.old;
@@ -552,8 +552,7 @@ impl Package<u64> {
         // `package_index` / `string_bytes` only — none of which the dependency
         // pass mutates — so the reorder is observationally identical.
         let pkg_value = Package {
-            name: builder
-                .append_with_hash::<String>(self.name.slice(old_string_buf), self.name_hash),
+            name: builder.append::<String>(self.name.slice(old_string_buf)),
             bin: self.bin.clone_with_buffers(
                 old_string_buf,
                 old_extern_string_buf,
@@ -594,8 +593,6 @@ impl Package<u64> {
             cloner.manager.preinstall_state[new_package.meta.id as usize] =
                 cloner.old_preinstall_state[self.meta.id as usize];
         }
-
-        cloner.trees_count += (old_resolutions.len() > 0) as u32;
 
         let resolutions: &mut [PackageID] =
             &mut new.buffers.resolutions[prev_len as usize..end as usize];
@@ -703,7 +700,6 @@ impl Package<u64> {
         string_builder.count(manifest.str(&package_version_ptr.tarball_url));
 
         string_builder.allocate()?;
-        // defer string_builder.clamp(); — handled at end of scope
         let extern_strings_list = &mut lockfile.buffers.extern_strings;
         let dependencies_list = &mut lockfile.buffers.dependencies;
         let resolutions_list = &mut lockfile.buffers.resolutions;
@@ -717,8 +713,8 @@ impl Package<u64> {
 
         // -- Cloning
         {
-            let package_name: ExternalString = string_builder
-                .append_with_hash::<ExternalString>(manifest.name(), manifest.pkg.name.hash);
+            let package_name: ExternalString =
+                string_builder.append::<ExternalString>(manifest.name());
             package.name_hash = package_name.hash;
             package.name = package_name.value;
             package.resolution =
@@ -775,14 +771,10 @@ impl Package<u64> {
                         }
                     }
 
-                    let name: ExternalString = string_builder.append_with_hash::<ExternalString>(
-                        key.slice(&manifest.string_buf),
-                        key.hash,
-                    );
-                    let dep_version = string_builder.append_with_hash::<String>(
-                        version_string_.slice(&manifest.string_buf),
-                        version_string_.hash,
-                    );
+                    let name: ExternalString =
+                        string_builder.append::<ExternalString>(key.slice(&manifest.string_buf));
+                    let dep_version = string_builder
+                        .append::<String>(version_string_.slice(&manifest.string_buf));
                     // `string_builder` holds the `&mut string_bytes` borrow; read
                     // through it instead of `lockfile.buffers.string_bytes`.
                     let sliced = dep_version.sliced(string_builder.string_bytes.as_slice());
@@ -921,6 +913,9 @@ pub struct DiffSummary {
     pub(crate) removed_trusted_dependencies: TrustedDependenciesSet,
 
     pub(crate) patched_dependencies_changed: bool,
+    /// A workspace's `version` changed. No edge changed with it (those count as updates), but the
+    /// lockfile records the version, so it is rewritten.
+    pub(crate) workspace_versions_changed: bool,
 
     pub(crate) pruned_workspaces: Vec<PackageNameHash>,
 }
@@ -941,6 +936,7 @@ impl DiffSummary {
             || self.added_trusted_dependencies.count() > 0
             || self.removed_trusted_dependencies.count() > 0
             || self.patched_dependencies_changed
+            || self.workspace_versions_changed
     }
 
     #[inline]
@@ -1347,6 +1343,30 @@ impl Diff {
             false
         };
 
+        if is_root {
+            // Compared as bun.lock prints them (`Version::eql` ignores build metadata, and an
+            // empty pre-release or build is not printed), so one rewrite settles the file.
+            let from_buf = from_lockfile.buffers.string_bytes.as_slice();
+            let to_buf = to_lockfile.buffers.string_bytes.as_slice();
+            summary.workspace_versions_changed = from_lockfile.workspace_versions.count()
+                != to_lockfile.workspace_versions.count()
+                || to_lockfile
+                    .workspace_versions
+                    .iter()
+                    .any(|(name_hash, to)| {
+                        from_lockfile
+                            .workspace_versions
+                            .get(name_hash)
+                            .is_none_or(|from| {
+                                from.major != to.major
+                                    || from.minor != to.minor
+                                    || from.patch != to.patch
+                                    || from.tag.pre.slice(from_buf) != to.tag.pre.slice(to_buf)
+                                    || from.tag.build.slice(from_buf) != to.tag.build.slice(to_buf)
+                            })
+                    });
+        }
+
         let mut missing_workspaces: Vec<PackageID> = Vec::new();
         let mut survivors: Vec<(String, DependencySlice)> = Vec::new();
         for (i, from_dep) in from_deps.iter().enumerate() {
@@ -1416,7 +1436,6 @@ impl Diff {
                 }
                 continue;
             }
-            // defer to_i += 1; — applied at end of iteration body
             let cur_to_i = to_i;
             to_i += 1;
 
@@ -1458,7 +1477,6 @@ impl Diff {
                         };
 
                         let mut package_json_path: AutoAbsPath = AutoAbsPath::init_top_level_dir();
-                        // defer package_json_path.deinit(); — Drop handles it
 
                         let _ = package_json_path.append(
                             workspace_path.slice(to_lockfile.buffers.string_bytes.as_slice()),
@@ -1845,7 +1863,7 @@ impl Package<u64> {
         match dependency_version.tag {
             dependency::version::Tag::Folder => {
                 let folder = *dependency_version.folder();
-                let mut folder_buf = PathBuffer::uninit();
+                let mut folder_buf = bun_paths::path_buffer_pool::get();
                 let Some(joined) = resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
                     FileSystem::instance().top_level_dir(),
                     &mut folder_buf.0,
@@ -1877,43 +1895,40 @@ impl Package<u64> {
                     .append::<String>(if relative.is_empty() { b"." } else { relative });
             }
             dependency::version::Tag::Npm => {
-                if let Some(workspace_version) = workspace_version {
-                    let satisfies =
-                        dependency_version
-                            .npm()
-                            .version
-                            .satisfies(workspace_version, buf, buf);
-                    if pm.options.link_workspace_packages && satisfies {
-                        // `String::sliced` takes `&'a self`; bind the unwrapped
-                        // value so the borrow outlives the parse call.
-                        let wp = workspace_path.unwrap();
-                        let path = wp.sliced(buf);
-                        if let Some(mut dep) = dependency::parse_with_tag(
-                            external_alias.value,
-                            Some(external_alias.hash),
-                            path.slice,
-                            dependency::version::Tag::Workspace,
-                            &path,
-                            Some(&mut *log),
-                            Some(&mut *pm),
-                        ) {
-                            // Whole-struct move so `Drop` frees the old npm
-                            // chain; keep the existing `literal`.
-                            dep.literal = dependency_version.literal;
-                            dependency_version = dep;
-                        }
-                    } else {
-                        // It doesn't satisfy, but a workspace shares the same name. Override the workspace with the other dependency
-                        for dep in &mut package_dependencies[0..dependencies_count as usize] {
-                            if dep.name_hash == name_hash && dep.behavior.is_workspace() {
-                                *dep = Dependency {
-                                    behavior: group.behavior,
-                                    name: external_alias.value,
-                                    name_hash: external_alias.hash,
-                                    version: dependency_version,
-                                };
-                                return Ok(None);
-                            }
+                if let Some(workspace_path) = lockfile::linked_workspace_path(
+                    pm.options.link_workspace_packages,
+                    workspace_paths,
+                    workspace_versions,
+                    name_hash,
+                    &dependency_version.npm().version,
+                    buf,
+                ) {
+                    let path = workspace_path.sliced(buf);
+                    if let Some(mut dep) = dependency::parse_with_tag(
+                        external_alias.value,
+                        Some(external_alias.hash),
+                        path.slice,
+                        dependency::version::Tag::Workspace,
+                        &path,
+                        Some(&mut *log),
+                        Some(&mut *pm),
+                    ) {
+                        // Whole-struct move so `Drop` frees the old npm
+                        // chain; keep the existing `literal`.
+                        dep.literal = dependency_version.literal;
+                        dependency_version = dep;
+                    }
+                } else if workspace_version.is_some() {
+                    // It doesn't satisfy, but a workspace shares the same name. Override the workspace with the other dependency
+                    for dep in &mut package_dependencies[0..dependencies_count as usize] {
+                        if dep.name_hash == name_hash && dep.behavior.is_workspace() {
+                            *dep = Dependency {
+                                behavior: group.behavior,
+                                name: external_alias.value,
+                                name_hash: external_alias.hash,
+                                version: dependency_version,
+                            };
+                            return Ok(None);
                         }
                     }
                 }
@@ -1967,7 +1982,7 @@ impl Package<u64> {
                             b"*"
                         } else {
                             'brk: {
-                                let mut buf2 = PathBuffer::uninit();
+                                let mut buf2 = bun_paths::path_buffer_pool::get();
                                 let rel =
                                     resolve_path::relative_platform::<path::platform::Auto, false>(
                                         FileSystem::instance().top_level_dir(),
@@ -2215,11 +2230,13 @@ impl Package<u64> {
             }
         }
 
-        if let Some(patched_deps) = json.as_property(b"patchedDependencies") {
-            if let Some(rows) = JsonObjectStringRows::new(&patched_deps.expr, &bump) {
-                for (_, value, _) in rows {
-                    if let Some(value) = value {
-                        string_builder.count(value);
+        if FEATURES.patched_dependencies {
+            if let Some(patched_deps) = json.as_property(b"patchedDependencies") {
+                if let Some(rows) = JsonObjectStringRows::new(&patched_deps.expr, &bump) {
+                    for (_, value, _) in rows {
+                        if let Some(value) = value {
+                            string_builder.count(value);
+                        }
                     }
                 }
             }
@@ -2289,7 +2306,6 @@ impl Package<u64> {
         };
 
         let mut workspace_names = workspace_map::WorkspaceMap::init();
-        // defer workspace_names.deinit(); — Drop handles it
 
         // pnpm/yarn synthesise an implicit `"*"` optional peer for entries
         // that appear in `peerDependenciesMeta` but not in
@@ -2301,7 +2317,6 @@ impl Package<u64> {
             &[u8],
             bun_collections::identity_context::U64,
         > = ArrayHashMap::default();
-        // defer optional_peer_dependencies.deinit(); — Drop handles it
 
         if FEATURES.peer_dependencies {
             if let Some(peer_dependencies_meta) = json.as_property(b"peerDependenciesMeta") {
@@ -2411,6 +2426,48 @@ impl Package<u64> {
                                     Some(&mut string_builder),
                                     missing_workspace,
                                 )?;
+                            }
+                            // "workspaces": { "selfContained": ["apps/desktop"] } — workspaces
+                            // (by path or name) whose node_modules must be complete and
+                            // physical; see docs/pm/workspaces.mdx.
+                            if let Some(q) = dependencies_q.expr.as_property(b"selfContained") {
+                                if !q.expr.is_array() {
+                                    let _ = log.add_error_fmt(
+                                        source,
+                                        q.expr.loc,
+                                        format_args!(
+                                            "\"workspaces.selfContained\" expects an array of workspace paths or names"
+                                        ),
+                                    );
+                                    return Err(crate::Error::InvalidPackageJSON);
+                                }
+                                let mut owned: Vec<Vec<u8>> = Vec::new();
+                                if let Some(mut items) = q.expr.as_array() {
+                                    while let Some(item) = items.next() {
+                                        let Some(s) = item.as_string(&bump) else {
+                                            let _ = log.add_error_fmt(
+                                                source,
+                                                item.loc,
+                                                format_args!(
+                                                    "\"workspaces.selfContained\" entries must be strings (workspace paths or names)"
+                                                ),
+                                            );
+                                            return Err(crate::Error::InvalidPackageJSON);
+                                        };
+                                        owned.push(s.to_vec());
+                                    }
+                                }
+                                let list: Vec<&[u8]> = owned.iter().map(|v| v.as_slice()).collect();
+                                for unmatched in workspace_names.mark_self_contained(&list) {
+                                    log.add_warning_fmt(
+                                        Some(source),
+                                        q.expr.loc,
+                                        format_args!(
+                                            "\"workspaces.selfContained\": \"{}\" does not match any workspace path or name",
+                                            bstr::BStr::new(unmatched)
+                                        ),
+                                    );
+                                }
                             }
 
                             break 'brk;
@@ -2578,28 +2635,30 @@ impl Package<u64> {
             self.resolution = Resolution::<u64>::init(TaggedValue::Root);
         }
 
-        if let Some(patched_deps) = json.as_property(b"patchedDependencies") {
-            if let Some(rows) = JsonObjectStringRows::new(&patched_deps.expr, &bump) {
-                lockfile
-                    .patched_dependencies
-                    .ensure_total_capacity(rows.len())
-                    .expect("unreachable");
-                for (key, value, _) in rows {
-                    let Some(value) = value else {
-                        continue;
-                    };
-                    let keyhash = semver::string::Builder::string_hash(key);
-                    let patch_path = string_builder.append::<String>(value);
+        if FEATURES.patched_dependencies {
+            if let Some(patched_deps) = json.as_property(b"patchedDependencies") {
+                if let Some(rows) = JsonObjectStringRows::new(&patched_deps.expr, &bump) {
                     lockfile
                         .patched_dependencies
-                        .put(
-                            keyhash,
-                            PatchedDep {
-                                path: patch_path,
-                                ..Default::default()
-                            },
-                        )
+                        .ensure_total_capacity(rows.len())
                         .expect("unreachable");
+                    for (key, value, _) in rows {
+                        let Some(value) = value else {
+                            continue;
+                        };
+                        let keyhash = semver::string::Builder::string_hash(key);
+                        let patch_path = string_builder.append::<String>(value);
+                        lockfile
+                            .patched_dependencies
+                            .put(
+                                keyhash,
+                                PatchedDep {
+                                    path: patch_path,
+                                    ..Default::default()
+                                },
+                            )
+                            .expect("unreachable");
+                    }
                 }
             }
         }
@@ -2711,7 +2770,6 @@ impl Package<u64> {
         }
 
         let mut bundled_deps = StringSet::init();
-        // defer bundled_deps.deinit(); — Drop handles it
         let mut bundle_all_deps = false;
         if !resolver.is_void() && resolver.check_bundled_dependencies() {
             if let Some(bundled_deps_expr) = json
@@ -2745,7 +2803,6 @@ impl Package<u64> {
                     (),
                     ArrayIdentityContext,
                 > = ArrayHashMap::default();
-                // defer seen_workspace_names.deinit(allocator); — Drop handles it
                 for (entry, path_) in workspace_names
                     .values()
                     .iter()
@@ -2759,7 +2816,7 @@ impl Package<u64> {
                         // this path does alot of extra work to format the error message
                         // but this is ok because the install is going to fail anyways, so this
                         // has zero effect on the happy path.
-                        let mut cwd_buf = PathBuffer::uninit();
+                        let mut cwd_buf = bun_paths::path_buffer_pool::get();
                         // `bun_sys::getcwd` returns the byte length — slice
                         // the buffer ourselves.
                         let cwd_len = bun_sys::getcwd(&mut cwd_buf.0[..])?;
@@ -2852,6 +2909,24 @@ impl Package<u64> {
                     }
 
                     let external_name = string_builder.append::<ExternalString>(&entry.name);
+                    // a property of the manifest, recorded whether or not the dependency
+                    // edge below turns out to be new
+                    if entry.hoisting_limits {
+                        lockfile
+                            .self_contained_workspaces
+                            .put(external_name.hash, ())?;
+                    }
+                    if let Some(v) = &entry.unsupported_hoisting_limits {
+                        log.add_warning_fmt(
+                            Some(source),
+                            bun_ast::Loc::EMPTY,
+                            format_args!(
+                                "workspace \"{}\": installConfig.hoistingLimits \"{}\" is not supported (only \"workspaces\" and \"none\" are); ignoring",
+                                bstr::BStr::new(&entry.name),
+                                bstr::BStr::new(v),
+                            ),
+                        );
+                    }
 
                     let workspace_version = 'brk: {
                         if let Some(version_string) = &entry.version {
@@ -3227,7 +3302,6 @@ pub mod serializer {
         if migrate_from_v2 {
             type OldPackageV2 = Package<u32>;
             let mut list_for_migrating_from_v2 = <List<u32>>::default();
-            // defer list_for_migrating_from_v2.deinit(allocator); — Drop handles it
 
             list_for_migrating_from_v2.ensure_total_capacity(list_len as usize)?;
             // SAFETY: capacity reserved above; `load_fields` writes every column.

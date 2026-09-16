@@ -39,12 +39,12 @@ public:
 
     // These are used by "spyOn"
     // This is useful for iterating through every non-GC'd spyOn
-    JSC::Strong<JSC::Unknown> activeSpies;
+    JSC::WriteBarrier<JSC::Unknown> activeSpies;
 
     // Every JSMockFunction::create appends to this list
     // This is useful for iterating through every non-GC'd mock function
     // This list includes activeSpies
-    JSC::Strong<JSC::Unknown> activeMocks;
+    JSC::WriteBarrier<JSC::Unknown> activeMocks;
 
     // Called by GlobalObject::visitChildren
     template<typename Visitor>

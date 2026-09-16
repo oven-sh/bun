@@ -29,6 +29,7 @@ import net from "net";
 import { join } from "path";
 import { Readable } from "stream";
 import { gzipSync } from "zlib";
+import { deadPort } from "../../bun/http/proxy-stress-helpers";
 
 const tmp_dir = tmpdirSync();
 const fetchFixture3 = join(import.meta.dir, "fetch-leak-test-fixture-3.js");
@@ -1790,6 +1791,165 @@ it("fetch() file:// works", async () => {
   expect(fileResponseText).toEqual(bunFileText);
   gc(true);
 });
+it("fetch() file:// rejects a host that is not this machine", async () => {
+  const path = Bun.fileURLToPath(new URL("fixture.html", import.meta.url));
+  const expected = await Bun.file(path).text();
+  const pathname = new URL(import.meta.url).pathname.replace(/[^/]*$/, "fixture.html");
+  const outcome = (url: string) =>
+    fetch(url).then(
+      r => r.text(),
+      e => `${e.name} ${e.code}: ${e.message}`,
+    );
+  expect(await outcome(`file://${pathname}`)).toBe(expected);
+  expect(await outcome(`file://localhost${pathname}`)).toBe(expected);
+  expect(await outcome(`file://LOCALHOST${pathname}`)).toBe(expected);
+  const rejected =
+    `TypeError ERR_INVALID_FILE_URL_HOST: File URL host must be "localhost" or empty` +
+    (isWindows ? ": fetch() does not read UNC paths" : ` on ${process.platform}`);
+  expect(await outcome(`file://any.host${pathname}`)).toBe(rejected);
+  expect(await outcome(`file://127.0.0.1${pathname}`)).toBe(rejected);
+  // fileURLToPath's other rule: an encoded separator would become a real one.
+  const encoded =
+    "TypeError ERR_INVALID_FILE_URL_PATH: File URL path must not include encoded " +
+    (isWindows ? "\\ or / characters" : "/ characters");
+  expect(await outcome(`file://${pathname.replace(/\/([^/]*)$/, "%2F$1")}`)).toBe(encoded);
+  expect(await outcome(`file://${pathname.replace(/\/([^/]*)$/, "/sub/..%2f$1")}`)).toBe(encoded);
+});
+
+it("proxy: true is rejected, since it names no proxy", async () => {
+  expect(await fetch("http://example.invalid/", { proxy: true } as any).catch(e => e.code)).toBe(
+    "ERR_INVALID_ARG_TYPE",
+  );
+  expect(() => new Bun.FetchSession({ proxy: true } as any)).toThrow(
+    'The "proxy" argument must be a string, a URL, an object with a "url", or false. Received type boolean (true)',
+  );
+});
+
+it("URL userinfo is sent as Basic credentials unless an Authorization header is given", async () => {
+  const seen: Record<string, string | null> = {};
+  using server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      seen[new URL(req.url).pathname] = req.headers.get("authorization");
+      return new Response(req.url);
+    },
+  });
+  const base = `localhost:${server.port}`;
+  const urls = await Promise.all(
+    [
+      fetch(`http://user:p%40ss@${base}/a`),
+      fetch(`http://user@${base}/b`),
+      fetch(new Request(`http://user:pass@${base}/c`)),
+      fetch(`http://user:pass@${base}/d`, { headers: { authorization: "Bearer explicit" } }),
+      fetch(`http://${base}/e`),
+    ].map(p => p.then(r => r.text())),
+  );
+  // The request line and Host never carry the userinfo.
+  expect(urls).toEqual(["a", "b", "c", "d", "e"].map(p => `http://${base}/${p}`));
+  expect(seen).toEqual({
+    "/a": `Basic ${btoa("user:p@ss")}`,
+    "/b": `Basic ${btoa("user:")}`,
+    "/c": `Basic ${btoa("user:pass")}`,
+    "/d": "Bearer explicit",
+    "/e": null,
+  });
+});
+
+it("URL userinfo does not displace the Content-Type a body brings", async () => {
+  using server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      const form = await req.formData();
+      return Response.json({ authorization: req.headers.get("authorization"), field: form.get("field") });
+    },
+  });
+  const body = new FormData();
+  body.set("field", "value");
+  const response = await fetch(`http://user:pass@localhost:${server.port}/`, { method: "POST", body });
+  expect(await response.json()).toEqual({ authorization: `Basic ${btoa("user:pass")}`, field: "value" });
+});
+
+it("URL credentials are not forwarded on a cross-origin redirect", async () => {
+  const seen: (string | null)[] = [];
+  using target = Bun.serve({
+    port: 0,
+    fetch(req) {
+      seen.push(req.headers.get("authorization"));
+      return new Response("target");
+    },
+  });
+  using origin = Bun.serve({
+    port: 0,
+    fetch(req) {
+      seen.push(req.headers.get("authorization"));
+      return Response.redirect(`http://localhost:${target.port}/`, 302);
+    },
+  });
+  expect(await (await fetch(`http://user:pass@localhost:${origin.port}/`)).text()).toBe("target");
+  expect(seen).toEqual([`Basic ${btoa("user:pass")}`, null]);
+});
+
+it("URL credentials survive a same-origin redirect whose Location leaves them out", async () => {
+  const seen: [string, string | null][] = [];
+  using server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      const { pathname } = new URL(req.url);
+      seen.push([pathname, req.headers.get("authorization")]);
+      return pathname === "/a" ? Response.redirect(`http://localhost:${server.port}/b`, 302) : new Response("b");
+    },
+  });
+  expect(await (await fetch(`http://user:pass@localhost:${server.port}/a`)).text()).toBe("b");
+  const basic = `Basic ${btoa("user:pass")}`;
+  expect(seen).toEqual([
+    ["/a", basic],
+    ["/b", basic],
+  ]);
+});
+
+it("connection failures reject with an errno-style code that the message starts with", async () => {
+  using dead = await deadPort();
+  const refused = await fetch(`http://127.0.0.1:${dead.port}/`).catch(e => e);
+  expect({ name: refused.name, code: refused.code, message: refused.message }).toEqual({
+    name: "TypeError",
+    code: "ECONNREFUSED",
+    message: "ECONNREFUSED: Unable to connect. Is the computer able to access the url?",
+  });
+
+  // A name with several addresses, none of which accepts: the path Windows reports differently.
+  const viaName = await fetch(`http://localhost:${dead.port}/`).catch(e => e);
+  expect(viaName.code).toBe("ECONNREFUSED");
+  // The URL an error names does not carry the URL's credentials.
+  const withUserinfo = await fetch(`http://user:secret@127.0.0.1:${dead.port}/x`).catch(e => e);
+  expect(withUserinfo.path).toBe(`http://127.0.0.1:${dead.port}/x`);
+
+  const resetter = net.createServer(socket => socket.once("data", () => socket.destroy()));
+  resetter.listen(0, "127.0.0.1");
+  await once(resetter, "listening");
+  try {
+    const reset = await fetch(`http://127.0.0.1:${(resetter.address() as net.AddressInfo).port}/`, {
+      method: "POST",
+      body: "not retried",
+    }).catch(e => e);
+    expect({ name: reset.name, code: reset.code, message: reset.message }).toEqual({
+      name: "TypeError",
+      code: "ECONNRESET",
+      message:
+        "ECONNRESET: The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()",
+    });
+  } finally {
+    resetter.close();
+  }
+
+  using looping = Bun.serve({ port: 0, fetch: req => Response.redirect(req.url, 302) });
+  const tooMany = await fetch(looping.url, { maxRedirects: 2 }).catch(e => e);
+  expect({ code: tooMany.code, message: tooMany.message }).toEqual({
+    code: "TooManyRedirects",
+    message:
+      "TooManyRedirects: The response redirected too many times. For more information, pass `verbose: true` in the second argument to fetch()",
+  });
+});
+
 it("cloned response headers are independent before accessing", () => {
   const response = new Response("hello", {
     headers: {
@@ -2923,6 +3083,38 @@ it("rejects a response with an unparseable Content-Length instead of treating it
   expect(await ok.text()).toBe("hello");
 });
 
+it("never sends the URL fragment in the request-target", async () => {
+  // The request-target is `new URL(s).pathname + search`. A fragment is never
+  // sent, even one that contains a `?`.
+  const targets: string[] = [];
+  await using server = net.createServer(socket => {
+    socket.once("data", data => {
+      targets.push(data.toString("utf8").split("\r\n")[0]);
+      socket.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
+    });
+  });
+  await once(server.listen(0, "localhost"), "listening");
+  const { port } = server.address() as AddressInfo;
+
+  const tails = [
+    "/p#frag?x=1",
+    "/p#/route?id=7",
+    "/#?",
+    "/cb#access_token=abc&scope=x?y",
+    "/p?q=1#frag?x=2",
+    "/p#plain",
+    "/a//b?q=1#/c?d",
+  ];
+  const expected: string[] = [];
+  for (const tail of tails) {
+    const href = `http://localhost:${port}${tail}`;
+    const url = new URL(href);
+    expected.push(`GET ${url.pathname}${url.search} HTTP/1.1`);
+    await (await fetch(href)).text();
+  }
+  expect(targets).toEqual(expected);
+});
+
 it("combines duplicate response headers per the Fetch spec", async () => {
   // WHATWG Fetch requires repeated header fields to be combined with ", " when
   // read via Headers.get(), except Set-Cookie which is stored as separate
@@ -2968,8 +3160,7 @@ it("combines duplicate response headers per the Fetch spec", async () => {
 
 it("drops a custom Host header when following a cross-origin redirect", async () => {
   // A per-request Host override must not survive a change of origin: the
-  // follow-up request's Host header (and the TLS SNI / certificate identity
-  // derived from the same field) has to be re-computed from the redirect
+  // follow-up request's Host header has to be re-computed from the redirect
   // target's URL, not carried over from the previous origin.
   await using target = Bun.serve({
     port: 0,
@@ -3496,9 +3687,9 @@ it("the idle timer is an absolute deadline for the response header block (not re
       );
 
     // /h: DRIP_N bytes * DRIP_MS = ~20s of drip before the response would
-    // complete; the 5s idle deadline (uSockets 4s-tick sweep, so ~5-9s) must
-    // fire first. A build that re-arms on every partial header read resolves
-    // 200 after the full drip instead.
+    // complete; the 5s idle deadline (armed padded on uSockets' 4s-tick
+    // sweep, so it fires at ~8-12s) must fire first. A build that re-arms on
+    // every partial header read resolves 200 after the full drip instead.
     // /b: headers arrive in one write, then the 3-byte body trickles at
     // DRIP_MS/byte (~8s). Each body chunk re-arms the idle timer, so this
     // resolves despite taking longer than IDLE_MS overall.
@@ -3513,6 +3704,47 @@ it("the idle timer is an absolute deadline for the response header block (not re
     await new Promise<void>(r => server.close(() => r()));
   }
 }, 60_000);
+
+// https://github.com/oven-sh/bun/issues/39952
+it("a numeric `timeout` does not abort in-flight requests on the 4s sweep tick", async () => {
+  // Regression: a `timeout` of 4000ms or less was armed as a single tick of
+  // uSockets' 4s sweep timer, whose phase is unrelated to the request, so the
+  // next sweep aborted whichever request was in flight, no matter how long it
+  // had been running. Keep at least one request in flight for longer than one
+  // full sweep period: none may abort, because each request idles only
+  // ~SLEEP_MS against a 1000ms budget.
+  const SLEEP_MS = 600;
+  const WINDOW_MS = 5_500; // one full 4s sweep period at any phase, plus slop
+  await using server = Bun.serve({
+    port: 0,
+    idleTimeout: 0,
+    async fetch() {
+      await Bun.sleep(SLEEP_MS);
+      return new Response("ok");
+    },
+  });
+  const errors: string[] = [];
+  const start = Date.now();
+  const worker = async (offsetMs: number) => {
+    // Stagger the start so the workers' request waves interleave: workers
+    // launched together stay phase-locked, and their inter-request gaps
+    // could all line up with the sweep tick.
+    await Bun.sleep(offsetMs);
+    while (Date.now() - start < WINDOW_MS && errors.length === 0) {
+      const t0 = Date.now();
+      try {
+        const res = await fetch(server.url, { timeout: 1000 });
+        await res.text();
+      } catch (e) {
+        errors.push(`${(e as Error).name} after ${Date.now() - t0}ms on the request started at t=${t0 - start}ms`);
+      }
+    }
+  };
+  // Three staggered workers so a sweep tick always lands on an in-flight
+  // request in the unfixed build.
+  await Promise.all([worker(0), worker(SLEEP_MS / 3), worker((2 * SLEEP_MS) / 3)]);
+  expect(errors).toEqual([]);
+}, 20_000);
 
 it.skipIf(isWindows)("sends the exact Content-Length for a file body of 100 GB", async () => {
   using dir = tempDir("fetch-large-file-body", { "large.bin": "" });

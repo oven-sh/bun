@@ -243,6 +243,7 @@ JSValue GeneratePrimeJob::result(JSGlobalObject* globalObject, JSC::ThrowScope& 
         }
 
         JSValue result = JSBigInt::parseInt(globalObject, vm, primeHex.span(), 16, JSBigInt::ErrorParseMode::IgnoreExceptions, JSBigInt::ParseIntSign::Unsigned);
+        RETURN_IF_EXCEPTION(scope, {});
         if (result.isEmpty()) {
             ERR::CRYPTO_OPERATION_FAILED(scope, globalObject, "could not generate prime"_s);
             return {};
@@ -472,7 +473,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGeneratePrimeSync, (JSC::JSGlobalObject * lexicalGlob
     if (!prime.generate({ .bits = size, .safe = safe, .add = add, .rem = rem }, whileScriptAllowed(lexicalGlobalObject))) [[unlikely]]
         return ERR::CRYPTO_OPERATION_FAILED(scope, lexicalGlobalObject, "could not generate prime"_s);
 
-    return JSValue::encode(GeneratePrimeJob::result(lexicalGlobalObject, scope, prime, bigint));
+    RELEASE_AND_RETURN(scope, JSValue::encode(GeneratePrimeJob::result(lexicalGlobalObject, scope, prime, bigint)));
 }
 
 } // namespace Bun

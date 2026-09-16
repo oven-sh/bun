@@ -1767,6 +1767,178 @@ describe.skipIf(!isWindows)("Bun.connect named-pipe client Handlers lifecycle", 
       signalCode: null,
     });
   });
+
+  // libuv reports a missing pipe from the connect callback, not from
+  // uv_pipe_connect itself. On that path the pipe was never handed to the
+  // writer, so closing the writer reported no close, and the native context
+  // (which holds a ref on the TCPSocket/TLSSocket, and for TLS the SSL_CTX)
+  // stayed alive once per failed attempt.
+  it.concurrent.each([
+    ["plain", "", 0],
+    ["tls", "tls: true,", 1],
+  ])(
+    "a connect that fails asynchronously (%s) releases the native context",
+    async (_name, tlsOption, sslCtxPerAttempt) => {
+      const attempts = 8;
+      const pipePrefix = "\\\\.\\pipe\\bun-test-missing-" + Math.random().toString(36).slice(2) + "-";
+      const src = /* js */ `
+        const { namedPipeInternals, sslCtxLiveCount } = require("bun:internal-for-testing");
+        const contextsBefore = namedPipeInternals.liveCount();
+        const sslCtxBefore = sslCtxLiveCount();
+
+        let connectErrors = 0;
+        let closes = 0;
+        let firstAttempt = null;
+        const outcomes = new Set();
+
+        for (let i = 0; i < ${attempts}; i++) {
+          try {
+            await Bun.connect({
+              unix: ${JSON.stringify(pipePrefix)} + i,
+              ${tlsOption}
+              socket: {
+                data() {},
+                open() {},
+                close() { closes++; },
+                error() {},
+                connectError(_socket, err) {
+                  connectErrors++;
+                  outcomes.add("connectError:" + err.code);
+                  // This attempt's context is still alive while it reports the failure.
+                  firstAttempt ??= {
+                    contexts: namedPipeInternals.liveCount() - contextsBefore,
+                    sslCtx: sslCtxLiveCount() - sslCtxBefore,
+                  };
+                },
+              },
+            });
+            outcomes.add("resolved");
+          } catch (err) {
+            outcomes.add("rejected:" + err.code);
+          }
+        }
+
+        // Finalizing the wrappers must not touch a socket its context already released.
+        Bun.gc(true);
+        // A context frees itself from a task it queues when its last ref drops.
+        for (let i = 0; i < 100 && namedPipeInternals.liveCount() > contextsBefore; i++) {
+          await new Promise(resolve => setImmediate(resolve));
+        }
+
+        console.log(JSON.stringify({
+          connectErrors,
+          closes,
+          outcomes: [...outcomes].sort(),
+          firstAttempt,
+          leaked: {
+            contexts: namedPipeInternals.liveCount() - contextsBefore,
+            sslCtx: sslCtxLiveCount() - sslCtxBefore,
+          },
+        }));
+      `;
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", src],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      // If the child died before reporting, the diff shows its raw output.
+      const result = stdout.startsWith("{") ? JSON.parse(stdout) : stdout;
+      expect({ result, stderr, exitCode }).toEqual({
+        result: {
+          connectErrors: attempts,
+          closes: 0,
+          outcomes: ["connectError:ENOENT", "rejected:ENOENT"],
+          firstAttempt: { contexts: 1, sslCtx: sslCtxPerAttempt },
+          leaked: { contexts: 0, sslCtx: 0 },
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
+});
+
+// A socket over a Windows named pipe frees its native context from a task
+// that is queued when the socket closes. A handler can close the socket and
+// then spin the event loop before it returns (`expect().resolves` blocks on
+// the promise and runs queued tasks), so the context is gone by the time the
+// libuv read callback that invoked the handler gets control back. The
+// callback must keep the context alive until it is done with it.
+describe.concurrent.skipIf(!isWindows)("named-pipe socket closed and event loop spun inside a read callback", () => {
+  // `trigger` is the server handler that tears the socket down: "end" runs
+  // from the EOF read callback, "data" from the data read callback.
+  function fixture(trigger: "end" | "data") {
+    return /* js */ `
+      import { expect } from "bun:test";
+
+      const pipe = "\\\\\\\\.\\\\pipe\\\\bun-test-${trigger}-teardown-" + Math.random().toString(36).slice(2);
+      const serverOpened = Promise.withResolvers();
+      const serverClosed = Promise.withResolvers();
+      const clientClosed = Promise.withResolvers();
+
+      function closeAndSpinEventLoop(socket) {
+        socket.end();
+        // Blocks until the promise settles. Every queued task, including the
+        // one that frees the native context of this socket, runs before this returns.
+        expect(new Promise(resolve => setImmediate(resolve))).resolves.toBeUndefined();
+      }
+
+      using server = Bun.listen({
+        unix: pipe,
+        socket: {
+          open() { serverOpened.resolve(); },
+          data(socket) { ${trigger === "data" ? "closeAndSpinEventLoop(socket);" : ""} },
+          end(socket) { ${trigger === "end" ? "closeAndSpinEventLoop(socket);" : ""} },
+          close() { serverClosed.resolve(); },
+          error() {},
+        },
+      });
+
+      const client = await Bun.connect({
+        unix: pipe,
+        socket: {
+          open() {},
+          data() {},
+          close() { clientClosed.resolve(); },
+          error() {},
+        },
+      });
+      await serverOpened.promise;
+
+      ${trigger === "data" ? 'client.write("x");' : "client.end();"}
+
+      await serverClosed.promise;
+      await clientClosed.promise;
+      console.log("OK");
+    `;
+  }
+
+  it.each(["end", "data"] as const)("%s handler", async trigger => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture(trigger)],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 15_000,
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({
+      stdout: stdout.trim(),
+      stderr: stderr.trim(),
+      exitCode,
+      signalCode: proc.signalCode ?? null,
+    }).toMatchObject({
+      stdout: "OK",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
 });
 
 it("reload() backs out cleanly when a handler getter closes the socket mid-reload", async () => {
@@ -4087,17 +4259,109 @@ describe("allowHalfOpen socket whose peer resets behind pending writes", () => {
   });
 });
 
-// A paused socket polls for nothing. epoll reports the reset anyway (EPOLLERR cannot be
-// masked); kqueue only reports it through the read knote that epoll_kqueue.c keeps
-// registered while reads are off. Before that, the pause left a one-shot writable event
-// behind and nothing else: a reset that landed after it was consumed was never reported,
-// and the socket stayed paused for good. The greeting round trip below guarantees the
-// one-shot has been consumed before the reset is sent. The node:net and node:tls shapes
-// of this scenario are in test/js/node/tls/node-tls-server.test.ts.
+// A paused socket must not wake the event loop for data it is not going to read. epoll and
+// AFD do not report data without readable interest; kqueue keeps a read knote registered on a
+// non-reading socket so the peer's FIN/RST still arrive, and that knote used to fire once per
+// incoming segment. The paused socket lives in a child so nothing else turns its loop: it
+// samples the usockets loop iteration counter, we send SEGMENTS one-byte writes from here,
+// then it samples again. A loop that wakes per segment reports ~SEGMENTS iterations; one that
+// does not reports the handful caused by our two control lines.
+it("a paused socket does not wake the event loop for every segment its peer sends", async () => {
+  const SEGMENTS = 200;
+  await using child = spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const { getEventLoopStats } = require("bun:internal-for-testing");
+      let socket;
+      const server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: {
+          open(s) {
+            socket = s;
+            s.pause();
+            process.stdout.write("port " + server.port + "\\n");
+          },
+          data() {
+            process.stdout.write("data while paused\\n");
+          },
+          close() {},
+          drain() {},
+        },
+      });
+      process.stdout.write("port " + server.port + "\\n");
+      let before;
+      for await (const line of console) {
+        if (line === "start") {
+          before = getEventLoopStats().iteration;
+          process.stdout.write("started\\n");
+        } else if (line === "stop") {
+          process.stdout.write("iterations " + (getEventLoopStats().iteration - before) + "\\n");
+          server.stop(true);
+          process.exit(0);
+        }
+      }
+      `,
+    ],
+    env: bunEnv,
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const reader = child.stdout.getReader();
+  let buffered = "";
+  async function line() {
+    while (!buffered.includes("\n")) {
+      const { value, done } = await reader.read();
+      if (done) return buffered;
+      buffered += new TextDecoder().decode(value);
+    }
+    const i = buffered.indexOf("\n");
+    const out = buffered.slice(0, i);
+    buffered = buffered.slice(i + 1);
+    return out;
+  }
+  const port = Number((await line()).split(" ")[1]);
+  const peer = await Bun.connect({
+    hostname: "127.0.0.1",
+    port,
+    socket: { data() {}, open() {}, close() {}, drain() {} },
+  });
+  expect(await line()).toBe(`port ${port}`); // open() ran: the socket is paused
+  child.stdin.write("start\n");
+  await child.stdin.flush();
+  expect(await line()).toBe("started");
+  for (let i = 0; i < SEGMENTS; i++) {
+    peer.write("x");
+    peer.flush();
+    // Separate segments need separate event-loop turns on our side; this paces the sender,
+    // it is not waiting for a condition in the child.
+    await new Promise<void>(resolve => setTimeout(resolve, 1));
+  }
+  child.stdin.write("stop\n");
+  await child.stdin.flush();
+  const result = await line();
+  peer.end();
+  expect(result).toMatch(/^iterations \d+$/);
+  // Two stdin lines and process bookkeeping account for a few turns; per-segment wakeups
+  // would put this near SEGMENTS.
+  expect(Number(result.split(" ")[1])).toBeLessThan(SEGMENTS / 4);
+  expect(await child.exited).toBe(0);
+});
+
+// A paused socket polls for nothing, but a peer reset still reaches it (epoll reports EPOLLERR
+// regardless of interest; kqueue keeps a read knote registered while reads are off, see
+// epoll_kqueue.c). The reset is the end of the connection, so the pause no longer protects
+// anything: the data queued ahead of the reset is delivered, then the socket closes with read
+// ECONNRESET. Closing without reading discarded that data (a streamed body cut short although
+// every byte arrived, #39846). Windows discards the receive queue on a reset itself. The
+// node:net and node:tls shapes are in test/js/node/tls/node-tls-server.test.ts.
 describe.concurrent.each(["tcp", "tls"] as const)("%s socket paused when its peer resets the connection", transport => {
-  it("closes with read ECONNRESET while still paused and delivers none of the unread data", async () => {
+  it("delivers the data queued ahead of the reset, then closes with read ECONNRESET, while still paused", async () => {
     const closedWith = Promise.withResolvers<Error | undefined>();
-    let dataCalls = 0;
+    let received = "";
     const pauseAndGreet = (socket: Socket) => {
       socket.pause();
       socket.write("greeting");
@@ -4115,8 +4379,8 @@ describe.concurrent.each(["tcp", "tls"] as const)("%s socket paused when its pee
           if (success) pauseAndGreet(socket);
           else closedWith.reject(authorizationError ?? new Error("server handshake failed"));
         },
-        data() {
-          dataCalls++;
+        data(_socket, chunk) {
+          received += chunk.toString();
         },
         close(_socket, error) {
           closedWith.resolve(error);
@@ -4138,21 +4402,65 @@ describe.concurrent.each(["tcp", "tls"] as const)("%s socket paused when its pee
     });
     const peer = await greeted.promise;
     peer.write("queued behind the pause");
+    peer.flush();
     peer.terminate();
 
     const error = (await closedWith.promise) as NodeJS.ErrnoException | undefined;
     expect({
+      received: isWindows ? "" : received,
       reported: error instanceof Error,
       syscall: error?.syscall,
-      dataCalls,
       code: error?.code,
     }).toEqual({
+      received: isWindows ? "" : "queued behind the pause",
       reported: true,
       syscall: "read",
-      dataCalls: 0,
       code: "ECONNRESET",
     });
   });
+});
+
+// A paused socket with a backpressured write of its own must also close on the reset: an owner
+// that resumes only after 'drain' (node:http's flood guard) would otherwise wait forever.
+it("a paused socket with a backpressured write still closes when its peer resets", async () => {
+  const closedWith = Promise.withResolvers<Error | undefined>();
+  let backpressured!: () => void;
+  const isBackpressured = new Promise<void>(resolve => (backpressured = resolve));
+  const big = Buffer.alloc(4 * 1024 * 1024, "x");
+  using server = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: {
+      open(socket) {
+        socket.pause();
+        // The peer never reads, so this fills both kernel buffers and is refused part-way.
+        while (socket.write(big) === big.length) {}
+        backpressured();
+      },
+      drain(socket) {
+        while (socket.write(big) === big.length) {}
+      },
+      data() {},
+      close(_socket, error) {
+        closedWith.resolve(error);
+      },
+    },
+  });
+  const peer = await Bun.connect({
+    hostname: "127.0.0.1",
+    port: server.port,
+    socket: {
+      open(socket) {
+        socket.pause();
+      },
+      data() {},
+      close() {},
+    },
+  });
+  await isBackpressured;
+  peer.terminate();
+  const error = (await closedWith.promise) as NodeJS.ErrnoException | undefined;
+  expect(error?.code).toBe("ECONNRESET");
 });
 
 // A close that the event loop initiated passes the read error to close(). usockets
@@ -4353,4 +4661,48 @@ describe.concurrent("a socket closed by data() while its peer's reset is being d
     expect({ stdout, stderr }).toEqual({ stdout: "ECONNREFUSED\n", stderr: "" });
     expect(exitCode).toBe(0);
   });
+});
+
+it("concurrent end() on two allowHalfOpen TLS peers closes both sockets", async () => {
+  // Each end() sends close_notify and defers its fd close for the peer's
+  // reply. The reply arrives without a FIN, so the ZERO_RETURN path has to
+  // complete the deferred close instead of keeping the socket half-open.
+  const serverOpen = Promise.withResolvers<Socket>();
+  const serverClosed = Promise.withResolvers<void>();
+  const clientClosed = Promise.withResolvers<void>();
+  const serverShake = Promise.withResolvers<void>();
+  const clientShake = Promise.withResolvers<void>();
+
+  using server = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    allowHalfOpen: true,
+    tls: { key: tls.key, cert: tls.cert },
+    socket: {
+      open: s => serverOpen.resolve(s),
+      handshake: () => serverShake.resolve(),
+      data() {},
+      close: () => serverClosed.resolve(),
+    },
+  });
+  const client = await Bun.connect({
+    hostname: "127.0.0.1",
+    port: server.port,
+    allowHalfOpen: true,
+    tls: { ca: tls.cert },
+    socket: {
+      handshake: () => clientShake.resolve(),
+      data() {},
+      close: () => clientClosed.resolve(),
+    },
+  });
+
+  const serverSock = await serverOpen.promise;
+  await Promise.all([serverShake.promise, clientShake.promise]);
+
+  // Both sides end before either reads the peer's close_notify.
+  client.end();
+  serverSock.end();
+
+  await Promise.all([serverClosed.promise, clientClosed.promise]);
 });

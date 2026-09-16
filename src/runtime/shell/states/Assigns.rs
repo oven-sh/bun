@@ -72,7 +72,7 @@ impl Assigns {
                         continue;
                     }
                     let atom: *const ast::Atom = &raw const assigns[idx as usize].value;
-                    let child = Expansion::init(interp, shell, atom, this);
+                    let child = Expansion::init(interp, shell, atom, this, true);
                     return Expansion::start(interp, child);
                 }
                 AssignsState::Done => {
@@ -139,8 +139,7 @@ impl Assigns {
         Yield::Next(this)
     }
 
-    pub(crate) fn deinit(interp: &Interpreter, this: NodeId) {
+    pub(crate) fn deinit(_interp: &Interpreter, this: NodeId) {
         log!("Assigns {} deinit", this);
-        interp.as_assigns_mut(this).base.end_scope();
     }
 }

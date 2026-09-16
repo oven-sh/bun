@@ -29,6 +29,9 @@ pub enum MachoError {
     MissingRequiredSegment,
     #[error("OutOfMemory")]
     OutOfMemory,
+    /// A shifted `__LINKEDIT` load command offset no longer fits the u32 Mach-O stores.
+    #[error("executable would exceed 4 GiB (Mach-O load commands store 32-bit file offsets)")]
+    ExecutableTooLarge,
 }
 bun_core::oom_from_alloc!(MachoError);
 
@@ -511,18 +514,19 @@ impl MachoFile {
         Ok(())
     }
 
-    pub fn build_and_sign(&self, writer: &mut impl std::io::Write) -> crate::Result<()> {
+    // Returns the byte count written; callers writing over an existing file must truncate to it.
+    pub fn build_and_sign(&self, writer: &mut impl std::io::Write) -> crate::Result<usize> {
         if self.header.cputype == macho::CPU_TYPE_ARM64
             && feature_flag::BUN_NO_CODESIGN_MACHO_BINARY.get() != Some(true)
         {
             let mut data: Vec<u8> = Vec::new();
             self.build(&mut data)?;
             let mut signer = MachoSigner::init(&data)?;
-            signer.sign(writer)?;
+            signer.sign(writer)
         } else {
             self.build(writer)?;
+            Ok(self.data.len())
         }
-        Ok(())
     }
 }
 
@@ -534,7 +538,7 @@ struct Shifter {
 }
 
 impl Shifter {
-    fn do_(value: u64, amount: u64, range_min: u64, range_max: u64) -> Result<u64, MachoError> {
+    fn do_(value: u64, amount: u64, range_min: u64, range_max: u64) -> Result<u32, MachoError> {
         if value == 0 {
             return Ok(0);
         }
@@ -545,23 +549,21 @@ impl Shifter {
             return Err(MachoError::OffsetOutOfRange);
         }
 
-        // Check for overflow
-        if value > u64::MAX - amount {
-            return Err(MachoError::OffsetOverflow);
-        }
-
-        Ok(value + amount)
+        // The shifted offset goes back into a u32 load command field.
+        value
+            .checked_add(amount)
+            .and_then(|shifted| u32::try_from(shifted).ok())
+            .ok_or(MachoError::ExecutableTooLarge)
     }
 
     #[inline]
     fn shift_one(&self, field: &mut u32) -> Result<(), MachoError> {
-        *field = u32::try_from(Self::do_(
+        *field = Self::do_(
             *field as u64,
             self.amount,
             self.start,
-            self.linkedit_fileoff + self.linkedit_filesize,
-        )?)
-        .unwrap();
+            self.linkedit_fileoff.saturating_add(self.linkedit_filesize),
+        )?;
         Ok(())
     }
 }
@@ -674,7 +676,7 @@ impl MachoSigner {
         super_blob_header_size + blob_index_size + code_dir_length
     }
 
-    fn sign(&mut self, writer: &mut impl std::io::Write) -> crate::Result<()> {
+    fn sign(&mut self, writer: &mut impl std::io::Write) -> crate::Result<usize> {
         const PAGE_SIZE: usize = MachoSigner::SIGNATURE_PAGE_SIZE;
         const HASH_SIZE: usize = MachoSigner::SIGNATURE_HASH_SIZE;
 
@@ -774,17 +776,12 @@ impl MachoSigner {
 
         if end - off > 0 {
             let remaining_len = end - off;
-            let mut last_page = [0u8; PAGE_SIZE];
-            // SAFETY: range [off..end] is within the original len.
-            unsafe {
-                core::ptr::copy_nonoverlapping(
-                    self.data.as_ptr().add(off),
-                    last_page.as_mut_ptr(),
-                    remaining_len,
-                );
-            }
+            // The last partial page is hashed unpadded, as codesign does.
             let mut digest = [0u8; HASH_SIZE];
-            sha256_hash(&last_page, &mut digest);
+            // SAFETY: range [off..end] is within the original len (sig_off).
+            let page =
+                unsafe { core::slice::from_raw_parts(self.data.as_ptr().add(off), remaining_len) };
+            sha256_hash(page, &mut digest);
             self.data.extend_from_slice(&digest);
         }
 
@@ -805,7 +802,7 @@ impl MachoSigner {
 
         // Write final binary
         writer.write_all(&self.data)?;
-        Ok(())
+        Ok(self.data.len())
     }
 }
 

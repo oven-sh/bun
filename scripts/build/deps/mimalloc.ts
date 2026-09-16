@@ -12,7 +12,7 @@
 
 import type { Dependency, DirectBuild } from "../source.ts";
 
-const MIMALLOC_COMMIT = "6a14aee24315e503fa295a1fa90fe8b24ad91774";
+const MIMALLOC_COMMIT = "eab09015a5850ae18fc43ccfaa5bbe8272992314";
 
 export const mimalloc: Dependency = {
   name: "mimalloc",
@@ -35,7 +35,7 @@ export const mimalloc: Dependency = {
     //            alloc-override.c emits _expand/_msize/free which duplicate
     //            against libucrt(d) at link time. The C deps that would
     //            otherwise sit on the uCRT heap are pointed at mimalloc one
-    //            by one instead (ICU and libuv in bun_bin's
+    //            by one instead (ICU and libuv in bun_runtime::bin_entry's
     //            use_mimalloc_in_dependencies, BoringSSL via the hooks in
     //            boringssl.ts, c-ares via ares_library_init_mem).
     const override = cfg.linux && !cfg.asan;
@@ -54,6 +54,12 @@ export const mimalloc: Dependency = {
       // tears down locks/TLS while other static destructors may still call
       // free(). MI_SKIP_COLLECT_ON_EXIT only skips the heap walk inside it.
       MI_NO_PROCESS_DETACH: 1,
+
+      // mi_free finds a block's page through the page map. Without this, page
+      // meta data sits at 256 MiB boundaries, every arena must start on one, and
+      // mi_manage_os_memory_ex refuses JSC's structure heap once its reservation
+      // is 256 MiB or less (JSC halves it under `ulimit -v`): abort on startup.
+      MI_FREE_USE_PAGEMAP: 1,
 
       ...(cfg.release && { MI_BUILD_RELEASE: true }),
     };

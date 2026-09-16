@@ -8,6 +8,7 @@
 #include "BunClientData.h"
 #include "ErrorCode+List.h"
 #include "CryptoKeyType.h"
+#include <wtf/text/StringBuilder.h>
 
 #define RELEASE_RETURN_IF_EXCEPTION(scope__, value__)                                                              \
     do {                                                                                                           \
@@ -23,6 +24,37 @@
 
 namespace Bun {
 
+// For a message that embeds text from JS: past `String::MaxLength` it records the overflow where a default `StringBuilder` calls `CRASH()`.
+class MessageBuilder final : public WTF::StringBuilder {
+public:
+    MessageBuilder()
+        : WTF::StringBuilder(WTF::OverflowPolicy::RecordOverflow)
+    {
+    }
+
+    // The message, or a null string when it did not fit.
+    WTF::String tryToString()
+    {
+        if (hasOverflowed()) [[unlikely]]
+            return {};
+        return WTF::StringBuilder::toString();
+    }
+
+    // Throws `RangeError: Out of memory` and returns a null string when the message did not fit.
+    WTF::String finish(JSC::JSGlobalObject*, JSC::ThrowScope&);
+
+private:
+    // These assert `!hasOverflowed()`. Use `tryToString` or `finish`.
+    using WTF::StringBuilder::capacity;
+    using WTF::StringBuilder::length;
+    using WTF::StringBuilder::toAtomString;
+    using WTF::StringBuilder::toString;
+    using WTF::StringBuilder::toStringPreserveCapacity;
+};
+
+// For a message built with `tryMakeString`: a null `message` did not fit, and is thrown as `RangeError: Out of memory`.
+void throwTypeErrorOrOutOfMemory(JSC::JSGlobalObject*, JSC::ThrowScope&, const WTF::String& message);
+
 class ErrorCodeCache : public JSC::JSInternalFieldObjectImpl<NODE_ERROR_COUNT> {
 public:
     using Base = JSInternalFieldObjectImpl<NODE_ERROR_COUNT>;
@@ -30,23 +62,12 @@ public:
 
     DECLARE_EXPORT_INFO;
 
-    static size_t allocationSize(Checked<size_t> inlineCapacity)
-    {
-        ASSERT_UNUSED(inlineCapacity, inlineCapacity == 0U);
-        return sizeof(ErrorCodeCache);
-    }
-
     template<typename, SubspaceAccess mode>
     static GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<ErrorCodeCache, WebCore::UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForErrorCodeCache.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForErrorCodeCache = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForErrorCodeCache.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForErrorCodeCache = std::forward<decltype(space)>(space); });
+        return WebCore::subspaceForImpl<ErrorCodeCache, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForErrorCodeCache, m_subspaceForErrorCodeCache));
     }
 
     static ErrorCodeCache* create(VM& vm, Structure* structure);
@@ -61,22 +82,29 @@ private:
 };
 
 JSC::EncodedJSValue throwError(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, ErrorCode code, const WTF::String& message);
+JSC::EncodedJSValue throwError(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, ErrorCode code, MessageBuilder& message);
 JSC::JSObject* createError(Zig::GlobalObject* globalObject, ErrorCode code, const WTF::String& message);
 JSC::JSObject* createError(JSC::JSGlobalObject* globalObject, ErrorCode code, const WTF::String& message);
+// A message that overflowed becomes `RangeError: Out of memory`. `throwError(..., MessageBuilder&)` throws the same.
+JSC::JSObject* createError(JSC::JSGlobalObject* globalObject, ErrorCode code, MessageBuilder& message);
 JSC::JSObject* createError(Zig::GlobalObject* globalObject, ErrorCode code, JSC::JSValue message);
 JSC::JSObject* createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode code, JSValue message, JSValue options);
-JSObject* createInvalidThisError(JSGlobalObject* globalObject, JSValue thisValue, const ASCIILiteral typeName);
+// Throws ERR_INVALID_THIS describing `thisValue` ("…but received an instance of X"); if describing
+// the receiver itself throws (a `constructor`/`name` getter), that exception is left instead.
+void throwInvalidThisError(JSGlobalObject* globalObject, JSC::ThrowScope&, JSValue thisValue, const ASCIILiteral typeName);
+// throwInvalidThisError(callFrame->thisValue()) and returns the empty value; one call at each generated host-function's invalid-this branch.
+JSC::EncodedJSValue throwInvalidThisCallError(JSGlobalObject* globalObject, JSC::CallFrame* callFrame, const ASCIILiteral typeName);
 JSObject* createInvalidThisError(JSGlobalObject* globalObject, const String& message);
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionMakeErrorWithCode);
 
 // Appends Node's `determineSpecificType()` rendering of a value ("type number (5)",
 // "an instance of Foo", ...) — the "Received ..." part of ERR_INVALID_ARG_TYPE messages.
-void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::StringBuilder& builder, JSC::JSValue value);
+void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, MessageBuilder& builder, JSC::JSValue value);
 
 // Appends the value the way Node's `%s` error-message substitution renders it: primitives
 // stringified, everything else through util.inspect. `quotesLikeInspect` quotes strings.
-void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, WTF::StringBuilder& builder, JSC::JSValue arg, bool quotesLikeInspect);
+void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, MessageBuilder& builder, JSC::JSValue arg, bool quotesLikeInspect);
 
 enum Bound {
     LOWER,
@@ -110,6 +138,7 @@ JSC::EncodedJSValue UNKNOWN_ENCODING(JSC::ThrowScope& throwScope, JSC::JSGlobalO
 JSC::EncodedJSValue UNKNOWN_ENCODING(JSC::ThrowScope&, JSC::JSGlobalObject*, JSValue encodingValue);
 JSC::EncodedJSValue INVALID_STATE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& statemsg);
 JSC::EncodedJSValue STRING_TOO_LONG(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject);
+JSC::EncodedJSValue MEMORY_ALLOCATION_FAILED(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject);
 JSC::EncodedJSValue BUFFER_OUT_OF_BOUNDS(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, ASCIILiteral name);
 JSC::EncodedJSValue UNKNOWN_SIGNAL(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSValue signal);
 JSC::EncodedJSValue MISSING_ARGS(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, WTF::ASCIILiteral message);

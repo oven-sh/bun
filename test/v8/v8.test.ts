@@ -5,6 +5,7 @@ import {
   bunEnv,
   bunExe,
   canBuildNodeAddons,
+  expectRssDeltaBelow,
   isASAN,
   isBroken,
   isMusl,
@@ -273,6 +274,12 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
     it("creates objects with internal fields", async () => {
       await checkSameOutput("test_v8_object_template");
     });
+    it("frees the internal fields of collected instances", async () => {
+      await expectRssDeltaBelow(
+        ["--smol", join(directories.bunRelease, "main.js"), "test_v8_internal_field_object_leak", "[]", "null"],
+        { release: 40, debug: 55 },
+      );
+    });
   });
 
   describe("FunctionTemplate", () => {
@@ -365,6 +372,20 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
   describe("Integer", () => {
     it("can create and read back int32 values", async () => {
       await checkSameOutput("test_v8_integer");
+    });
+  });
+
+  // https://github.com/oven-sh/bun/issues/42195
+  describe("Function script origin", () => {
+    it("reports the file, line, and column of a JS function", async () => {
+      const out = await checkSameOutput("test_v8_function_script_origin");
+      expect(out).toContain("file: module.js");
+    });
+  });
+
+  describe("Value::ToInt32", () => {
+    it("converts values like the JS ToInt32 operation", async () => {
+      await checkSameOutput("test_v8_value_to_int32");
     });
   });
 
@@ -469,6 +490,10 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
       // Regression test for dd-trace's profiler, which calls Start() for the
       // next cycle before Stop() of the current one (see @datadog/pprof).
       await checkSameOutput("test_v8_cpu_profiler_overlapping_sessions");
+    });
+    it("StartProfiling/StopProfiling key sessions by title and GetTitle returns it", async () => {
+      // google's pprof addon uses the title-keyed overloads (#19678).
+      await checkSameOutput("test_v8_cpu_profiler_title_api");
     });
   });
 

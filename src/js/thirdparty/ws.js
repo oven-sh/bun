@@ -138,6 +138,11 @@ function normalizeData(data, opts) {
   return data;
 }
 
+// npm ws emits ping and pong payloads as a Buffer. Only an ArrayBuffer can be wrapped synchronously.
+function controlPayload(binaryType, data) {
+  return binaryType === "arraybuffer" ? Buffer.from(data) : data;
+}
+
 // https://github.com/oven-sh/bun/issues/11866
 let WebSocket;
 
@@ -441,7 +446,7 @@ class BunWebSocket extends EventEmitter {
         this.#ws.addEventListener(
           "ping",
           ({ data }) => {
-            this.emit("ping", data);
+            this.emit("ping", controlPayload(this.#binaryType, data));
           },
           once,
         );
@@ -449,7 +454,7 @@ class BunWebSocket extends EventEmitter {
         this.#ws.addEventListener(
           "pong",
           ({ data }) => {
-            this.emit("pong", data);
+            this.emit("pong", controlPayload(this.#binaryType, data));
           },
           once,
         );
@@ -538,7 +543,7 @@ class BunWebSocket extends EventEmitter {
   }
 
   set binaryType(value) {
-    if (value === "nodebuffer" || value === "arraybuffer") {
+    if (value === "nodebuffer" || value === "arraybuffer" || value === "blob") {
       this.#ws.binaryType = this.#binaryType = value;
       this.#fragments = false;
     } else if (value === "fragments") {
@@ -714,9 +719,7 @@ class BunWebSocket extends EventEmitter {
     }
 
     this.#paused = true;
-
-    // deviation: we dont support pause()
-    emitWarning("pause()", "ws.WebSocket.pause() is not implemented in bun");
+    this.#ws.pause();
   }
 
   resume() {
@@ -727,9 +730,7 @@ class BunWebSocket extends EventEmitter {
     }
 
     this.#paused = false;
-
-    // deviation: we dont support resume()
-    emitWarning("resume()", "ws.WebSocket.resume() is not implemented in bun");
+    this.#ws.resume();
   }
 }
 Object.defineProperty(BunWebSocket, "name", { value: "WebSocket" });
@@ -932,8 +933,13 @@ function wsEmitClose(server) {
   server.emit("close");
 }
 
-function abortHandshake(response, code, message, headers = {}) {
-  message = message || lazyHttp().STATUS_CODES[code];
+function socketOnError() {
+  this.destroy();
+}
+
+function abortHandshake(socket, code, message, headers) {
+  const { STATUS_CODES } = lazyHttp();
+  message = message || STATUS_CODES[code];
   headers = {
     Connection: "close",
     "Content-Type": "text/html",
@@ -941,19 +947,38 @@ function abortHandshake(response, code, message, headers = {}) {
     ...headers,
   };
 
-  response.writeHead(code, headers);
-  response.write(message);
-  response.end();
+  // handleUpgrade() was called from a 'request' listener: answer through its ServerResponse.
+  const response = socket._httpMessage;
+  if (response) {
+    response.writeHead(code, headers);
+    response.write(message);
+    response.end();
+    return;
+  }
+
+  // Another WebSocketServer on the same http.Server has already taken this connection.
+  if (socket[kBunInternals]?.upgraded) return;
+
+  socket.once("finish", socket.destroy);
+
+  socket.end(
+    `HTTP/1.1 ${code} ${STATUS_CODES[code]}\r\n` +
+      Object.keys(headers)
+        .map(h => `${h}: ${headers[h]}`)
+        .join("\r\n") +
+      "\r\n\r\n" +
+      message,
+  );
 }
 
-function abortHandshakeOrEmitwsClientError(server, req, response, socket, code, message) {
+function abortHandshakeOrEmitwsClientError(server, req, socket, code, message, headers) {
   if (server.listenerCount("wsClientError")) {
     const err = new Error(message);
     Error.captureStackTrace(err, abortHandshakeOrEmitwsClientError);
 
     server.emit("wsClientError", err, socket, req);
   } else {
-    abortHandshake(response, code, message);
+    abortHandshake(socket, code, message, headers);
   }
 }
 
@@ -969,24 +994,20 @@ class BunWebSocketMocked extends EventEmitter {
   #protocol;
   #extensions;
   #bufferedAmount = 0;
-  #binaryType = "arraybuffer";
+  // The default of the ServerWebSocket. The setter keeps both sides in sync.
+  #binaryType = "nodebuffer";
 
   #onclose;
   #onerror;
   #onmessage;
   #onopen;
 
-  constructor(url, protocol, extensions, binaryType) {
+  constructor(url, protocol, extensions) {
     super();
     this.#ws = null;
     this.#state = ReadyState_CONNECTING;
     this.#url = url;
     this.#bufferedAmount = 0;
-    binaryType = binaryType || "arraybuffer";
-    if (binaryType !== "nodebuffer" && binaryType !== "blob" && binaryType !== "arraybuffer") {
-      throw new TypeError("binaryType must be either 'blob', 'arraybuffer' or 'nodebuffer'");
-    }
-    this.#binaryType = binaryType;
     this.#protocol = protocol;
     this.#extensions = extensions;
 
@@ -1009,12 +1030,12 @@ class BunWebSocketMocked extends EventEmitter {
 
   #ping(ws, data) {
     this.#ws = ws;
-    this.emit("ping", data);
+    this.emit("ping", controlPayload(this.#binaryType, data));
   }
 
   #pong(ws, data) {
     this.#ws = ws;
-    this.emit("pong", data);
+    this.emit("pong", controlPayload(this.#binaryType, data));
   }
 
   #message(ws, message) {
@@ -1031,15 +1052,8 @@ class BunWebSocketMocked extends EventEmitter {
         message = Buffer.from(message);
       }
     } else {
-      //Buffer
+      // The ServerWebSocket already built the Buffer, ArrayBuffer or Blob that binaryType selects.
       isBinary = true;
-      if (this.#binaryType !== "nodebuffer") {
-        if (this.#binaryType === "arraybuffer") {
-          message = new Uint8Array(message);
-        } else if (this.#binaryType === "blob") {
-          message = new Blob([message]);
-        }
-      }
     }
 
     this.emit("message", message, isBinary);
@@ -1195,6 +1209,9 @@ class BunWebSocketMocked extends EventEmitter {
       throw new TypeError("binaryType must be either 'blob', 'arraybuffer' or 'nodebuffer'");
     }
     this.#binaryType = type;
+    // #ws is null before open and after close. The ServerWebSocket builds the selected type itself.
+    const ws = this.#ws;
+    if (ws) ws.binaryType = type;
   }
 
   get readyState() {
@@ -1516,11 +1533,20 @@ class WebSocketServer extends EventEmitter {
    * @private
    */
   completeUpgrade(extensions, key, protocols, request, socket, head, cb) {
-    const response = socket._httpMessage;
-    const server = socket.server[kBunInternals];
+    // Destroy the socket if the client has already sent a FIN packet.
+    if (!socket.readable || !socket.writable) return socket.destroy();
+
     const req = socket[kBunInternals];
 
-    if (this._state > RUNNING) return abortHandshake(response, 503);
+    if (req?.upgraded) {
+      throw new Error(
+        "server.handleUpgrade() was called more than once with the same socket, possibly due to a misconfiguration",
+      );
+    }
+
+    if (this._state > RUNNING) return abortHandshake(socket, 503);
+
+    const server = socket.server[kBunInternals];
 
     let protocol = "";
     if (protocols.size) {
@@ -1531,7 +1557,7 @@ class WebSocketServer extends EventEmitter {
         ? this.options.handleProtocols(protocols, request)
         : protocols.values().next().value;
     }
-    const ws = new BunWebSocketMocked(request.url, protocol, extensions, "nodebuffer");
+    const ws = new BunWebSocketMocked(request.url, protocol, extensions);
 
     const headers = ["HTTP/1.1 101 Switching Protocols", "Upgrade: websocket", "Connection: Upgrade"];
     this.emit("headers", headers, request);
@@ -1555,7 +1581,7 @@ class WebSocketServer extends EventEmitter {
       }
       cb(ws, request);
     } else {
-      abortHandshake(response, 500);
+      abortHandshake(socket, 500);
     }
   }
   /**
@@ -1569,41 +1595,43 @@ class WebSocketServer extends EventEmitter {
    * @public
    */
   handleUpgrade(req, socket, head, cb) {
-    // socket is actually fake so we use internal http_res
-    const response = socket._httpMessage || socket[kBunInternals];
-
-    // socket.on("error", socketOnError);
+    // Every WebSocketServer on the http.Server sees this socket. Keep one copy.
+    socket.removeListener("error", socketOnError);
+    // Stays attached after the upgrade: node:http removed its own listener at the handoff.
+    socket.on("error", socketOnError);
 
     const key = req.headers["sec-websocket-key"];
     const version = +req.headers["sec-websocket-version"];
 
     if (req.method !== "GET") {
       const message = "Invalid HTTP method";
-      abortHandshakeOrEmitwsClientError(this, req, response, socket, 405, message);
+      abortHandshakeOrEmitwsClientError(this, req, socket, 405, message);
       return;
     }
 
     const upgrade = req.headers.upgrade;
     if (upgrade === undefined || upgrade.toLowerCase() !== "websocket") {
       const message = "Invalid Upgrade header";
-      abortHandshakeOrEmitwsClientError(this, req, response, socket, 400, message);
+      abortHandshakeOrEmitwsClientError(this, req, socket, 400, message);
       return;
     }
 
     if (!key || !wsKeyRegex.test(key)) {
       const message = "Missing or invalid Sec-WebSocket-Key header";
-      abortHandshakeOrEmitwsClientError(this, req, response, socket, 400, message);
+      abortHandshakeOrEmitwsClientError(this, req, socket, 400, message);
       return;
     }
 
     if (version !== 8 && version !== 13) {
       const message = "Missing or invalid Sec-WebSocket-Version header";
-      abortHandshakeOrEmitwsClientError(this, req, response, socket, 400, message);
+      abortHandshakeOrEmitwsClientError(this, req, socket, 400, message, {
+        "Sec-WebSocket-Version": "13, 8",
+      });
       return;
     }
 
     if (!this.shouldHandle(req)) {
-      abortHandshake(response, 400);
+      abortHandshake(socket, 400);
       return;
     }
 
@@ -1615,7 +1643,7 @@ class WebSocketServer extends EventEmitter {
         protocols = subprotocolParse(secWebSocketProtocol);
       } catch {
         const message = "Invalid Sec-WebSocket-Protocol header";
-        abortHandshakeOrEmitwsClientError(this, req, response, socket, 400, message);
+        abortHandshakeOrEmitwsClientError(this, req, socket, 400, message);
         return;
       }
     }
@@ -1637,7 +1665,7 @@ class WebSocketServer extends EventEmitter {
       if (this.options.verifyClient.length === 2) {
         this.options.verifyClient(info, (verified, code, message, headers) => {
           if (!verified) {
-            return abortHandshake(response, code || 401, message, headers);
+            return abortHandshake(socket, code || 401, message, headers);
           }
 
           this.completeUpgrade(extensions, key, protocols, req, socket, head, cb);
@@ -1645,7 +1673,7 @@ class WebSocketServer extends EventEmitter {
         return;
       }
 
-      if (!this.options.verifyClient(info)) return abortHandshake(response, 401);
+      if (!this.options.verifyClient(info)) return abortHandshake(socket, 401);
     }
 
     this.completeUpgrade(extensions, key, protocols, req, socket, head, cb);

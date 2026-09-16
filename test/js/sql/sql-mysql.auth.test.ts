@@ -7,6 +7,7 @@ import {
   MYSQL_FAST_AUTH_SUCCESS,
   MYSQL_MOCK_AUTH_DATA_PART_1,
   MYSQL_MOCK_AUTH_DATA_PART_2,
+  mysqlAckSessionSetup,
   mysqlAuthMoreData,
   mysqlHandshakeV10,
   mysqlOkPacket,
@@ -131,6 +132,9 @@ test.each(["split", "coalesced"] as const)(
             }
             return;
           }
+          // The session-setup COM_QUERY (SET time_zone) belongs to connection
+          // establishment; ack it and keep it out of `commands`.
+          if (mysqlAckSessionSetup(socket, payload)) return;
           commands.push(payload[0]);
           if (payload[0] === COM_QUERY) {
             socket.write(mysqlTextResultSet(1, [{ name: "v", type: MYSQL_TYPE_VAR_STRING }], [["REAL-ROW"]]));
@@ -186,6 +190,8 @@ test("caching_sha2_password scramble hashes the double-SHA256 before the nonce",
           // Accept the auth so the query below completes and `await using sql` can
           // tear down over the normal COM_QUIT path; the scramble is the subject.
           socket.write(mysqlOkPacket(seq + 1));
+        } else if (mysqlAckSessionSetup(socket, payload)) {
+          // session setup acked
         } else if (payload[0] === COM_QUERY) {
           socket.write(mysqlTextResultSet(1, [{ name: "v", type: MYSQL_TYPE_VAR_STRING }], [["REAL-ROW"]]));
         } else {

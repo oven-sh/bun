@@ -13,6 +13,7 @@ import {
   tempDir,
   tempDirWithFiles,
 } from "harness";
+import { mkfifo } from "mkfifo";
 import { parseEnv } from "node:util";
 import path from "path";
 
@@ -737,6 +738,231 @@ describe.concurrent("--env-file", () => {
   test("should ignore a file that doesn't exist", async () => {
     const res = await runEnvFile(["--env-file=.env.nonexisting"]);
     expect(res.stdout).toBe("");
+  });
+});
+
+// A `.env` entry that is a directory, a FIFO, or a unix socket is not an env
+// file. The loader skips it without a message and without blocking, and still
+// loads the sibling `.env.local`.
+describe.concurrent(".env that is not a regular file", () => {
+  const files = {
+    "package.json": JSON.stringify({ name: "dotenv-not-a-file" }),
+    ".env.local": "BUNTEST_LOCAL=1\n",
+    "index.ts": "console.log(process.env.BUNTEST_LOCAL);",
+  };
+
+  async function run(cwd: string, ...args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd,
+      env: { ...bunEnv, NODE_ENV: undefined },
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), stderr, exitCode };
+  }
+
+  test("directory", async () => {
+    using dir = tempDir("dotenv-dir", { ...files, ".env/keep": "" });
+
+    const install = await run(String(dir), "install");
+    expect(install.stderr).not.toContain("error loading .env file");
+    expect(install.exitCode).toBe(0);
+
+    const script = await run(String(dir), "index.ts");
+    expect(script.stderr).toBe("");
+    expect(script.stdout).toBe("1");
+    expect(script.exitCode).toBe(0);
+  });
+
+  // The resolver's directory listing drops a FIFO entry, so the loader only
+  // sees one through a symlink. Without O_NONBLOCK the open blocks until a
+  // writer appears.
+  test.skipIf(isWindows)("FIFO behind a symlink", async () => {
+    using dir = tempDir("dotenv-fifo", files);
+    mkfifo(path.join(String(dir), "fifo"));
+    fs.symlinkSync("fifo", path.join(String(dir), ".env"));
+
+    const install = await run(String(dir), "install");
+    expect(install.stderr).not.toContain("error loading .env file");
+    expect(install.exitCode).toBe(0);
+
+    const script = await run(String(dir), "index.ts");
+    expect(script.stderr).toBe("");
+    expect(script.stdout).toBe("1");
+    expect(script.exitCode).toBe(0);
+  });
+
+  test.skipIf(isWindows)("unix socket behind a symlink", async () => {
+    using dir = tempDir("dotenv-sock", files);
+    using listener = Bun.listen({
+      unix: path.join(String(dir), "sock"),
+      socket: { data() {} },
+    });
+    fs.symlinkSync("sock", path.join(String(dir), ".env"));
+
+    const install = await run(String(dir), "install");
+    expect(install.stderr).not.toContain("ENXIO");
+    expect(install.exitCode).toBe(0);
+
+    const script = await run(String(dir), "index.ts");
+    expect(script.stderr).toBe("");
+    expect(script.stdout).toBe("1");
+    expect(script.exitCode).toBe(0);
+  });
+});
+
+// An explicit `--env-file` is read whatever kind of file it is, as in Node.
+// `--env-file=<(cmd)` and `--env-file=/dev/stdin` pass secrets without a file
+// on disk. The default `.env` discovery above still skips such files.
+describe.concurrent("--env-file that is not a regular file", () => {
+  const files = {
+    "package.json": JSON.stringify({ name: "dotenv-arg-not-a-file" }),
+    ".env": "BUNTEST_DOTENV=1\n",
+    ".env.a": "BUNTEST_A=1\n",
+    "index.ts":
+      "console.log(Object.entries(process.env).flatMap(([k, v]) => k.startsWith('BUNTEST_') ? [`${k}=${v}`] : []).sort().join(','));",
+  };
+
+  async function run(cwd: string, cmd: string[], env: Record<string, string | undefined> = {}) {
+    await using proc = Bun.spawn({
+      cmd,
+      cwd,
+      env: { ...bunEnv, NODE_ENV: undefined, ...env },
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), stderr, exitCode };
+  }
+
+  // `sh` makes a real pipe. `Bun.spawn({ stdin: "pipe" })` is a socket pair,
+  // which `/dev/stdin` cannot reopen on Linux.
+  test.skipIf(isWindows)("a pipe through /dev/stdin", async () => {
+    using dir = tempDir("dotenv-arg-stdin", files);
+
+    const script = await run(String(dir), [
+      "sh",
+      "-c",
+      'echo BUNTEST_PIPE=1 | "$0" --env-file=/dev/stdin index.ts',
+      bunExe(),
+    ]);
+    expect(script.stderr).toBe("");
+    expect(script.stdout).toBe("BUNTEST_PIPE=1");
+    expect(script.exitCode).toBe(0);
+  });
+
+  test.skipIf(isWindows)("a pipe in a comma list, and the process env still wins", async () => {
+    using dir = tempDir("dotenv-arg-stdin-list", files);
+
+    const script = await run(
+      String(dir),
+      [
+        "sh",
+        "-c",
+        'printf "BUNTEST_PIPE=1\\nBUNTEST_PROCESS=1\\n" | "$0" --env-file=.env.a,/dev/stdin index.ts',
+        bunExe(),
+      ],
+      { BUNTEST_PROCESS: "P" },
+    );
+    expect(script.stderr).toBe("");
+    expect(script.stdout).toBe("BUNTEST_A=1,BUNTEST_PIPE=1,BUNTEST_PROCESS=P");
+    expect(script.exitCode).toBe(0);
+  });
+
+  test.skipIf(isWindows)("process substitution", async () => {
+    using dir = tempDir("dotenv-arg-procsub", files);
+
+    const script = await run(String(dir), ["bash", "-c", '"$0" --env-file=<(echo BUNTEST_SUBST=1) index.ts', bunExe()]);
+    expect(script.stderr).toBe("");
+    expect(script.stdout).toBe("BUNTEST_SUBST=1");
+    expect(script.exitCode).toBe(0);
+  });
+
+  // The writer blocks in open(2) until bun opens the FIFO for reading, and bun
+  // blocks in open(2) until a writer arrives. Either order works, as with `cat`.
+  test.skipIf(isWindows)("a FIFO", async () => {
+    using dir = tempDir("dotenv-arg-fifo", files);
+    mkfifo(path.join(String(dir), "fifo"));
+    await using writer = Bun.spawn({
+      cmd: ["sh", "-c", "echo BUNTEST_FIFO=1 > fifo"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+
+    const script = await run(String(dir), [bunExe(), "--env-file=fifo", "index.ts"]);
+    expect(script.stderr).toBe("");
+    expect(script.stdout).toBe("BUNTEST_FIFO=1");
+    expect(script.exitCode).toBe(0);
+    expect(await writer.exited).toBe(0);
+  });
+
+  // A pipe can be read once, so a worker must not open the `--env-file` entries
+  // again. It gets the values from the parent's env map, like `process.env` in
+  // a Node worker. A key added to the file after startup proves it did not read
+  // the file, and `.env` stays unloaded.
+  test("a worker inherits the values without opening the files again", async () => {
+    using dir = tempDir("dotenv-arg-worker", {
+      ...files,
+      "index.ts": `
+        await Bun.write(new URL("./.env.a", import.meta.url), "BUNTEST_A=1\\nBUNTEST_AFTER_START=1\\n");
+        const worker = new Worker(new URL("./worker.ts", import.meta.url));
+        worker.onmessage = ({ data }) => {
+          console.log(data);
+          worker.terminate();
+        };
+      `,
+      "worker.ts": `
+        postMessage(Object.entries(process.env).flatMap(([k, v]) => k.startsWith("BUNTEST_") ? [k + "=" + v] : []).sort().join(","));
+      `,
+    });
+
+    const script = await run(String(dir), [bunExe(), "--env-file=.env.a", "index.ts"]);
+    expect(script.stderr).toBe("");
+    expect(script.stdout).toBe("BUNTEST_A=1");
+    expect(script.exitCode).toBe(0);
+  });
+
+  // A compiled executable replaces the worker's env options with the standalone
+  // graph's flags after the worker copied them from the parent. The worker must
+  // still leave `.env` alone when `--env-file` came from BUN_OPTIONS.
+  test("a worker in a compiled executable", async () => {
+    const buntestVars = `Object.entries(process.env).flatMap(([k, v]) => k.startsWith("BUNTEST_") ? [k + "=" + v] : []).sort().join(",")`;
+    using dir = tempDir("dotenv-arg-compile-worker", {
+      ...files,
+      "index.js": `
+        const worker = new Worker(new URL("./worker.js", import.meta.url));
+        worker.onmessage = ({ data }) => {
+          console.log("worker " + data);
+          worker.terminate();
+        };
+        console.log("main " + ${buntestVars});
+      `,
+      "worker.js": `postMessage(${buntestVars});`,
+    });
+
+    const build = await run(String(dir), [
+      bunExe(),
+      "build",
+      "--compile",
+      "./index.js",
+      "./worker.js",
+      "--outfile",
+      "app",
+    ]);
+    expect(build.stderr).not.toContain("error:");
+    expect(build.exitCode).toBe(0);
+
+    const exe = path.join(String(dir), isWindows ? "app.exe" : "app");
+    const app = await run(String(dir), [exe], { BUN_OPTIONS: "--env-file=.env.a" });
+    expect(app.stdout).toBe("main BUNTEST_A=1\nworker BUNTEST_A=1");
+    expect(app.exitCode).toBe(0);
   });
 });
 

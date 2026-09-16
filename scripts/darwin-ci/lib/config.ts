@@ -17,7 +17,7 @@ export const config = {
   },
 } as const;
 
-export const toolchain = ["bun", "node", "cmake", "ninja", "ccache", "cargo", "go", "clang-21"];
+export const toolchain = ["bun", "node", "cmake", "ninja", "ccache", "cargo", "go", "clang-23"];
 
 // Keep in step with darwinReleaseTier in scripts/agent.mjs.
 export function releaseTier(release: number): "beta" | "latest" | "previous" | "oldest" {

@@ -174,6 +174,49 @@ it("process.env defineProperty matches assignment semantics", () => {
   expect(process.env[""]).toBeUndefined();
 });
 
+it("a write to an object that inherits from process.env changes nothing about the process", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const offset = () => new Date("2024-07-15T12:00:00Z").getTimezoneOffset();
+        const before = offset();
+        const child = Object.create(process.env);
+        child.TZ = "Asia/Kolkata";
+        child.NODE_TLS_REJECT_UNAUTHORIZED = 0;
+        child.SOME_NUMBER = 5;
+        console.log(JSON.stringify({
+          offsetUnchanged: offset() === before,
+          parentTZ: process.env.TZ,
+          parentReject: process.env.NODE_TLS_REJECT_UNAUTHORIZED ?? null,
+          parentNumber: process.env.SOME_NUMBER ?? null,
+          // The values land on the child as given, not coerced to strings.
+          child: [Object.hasOwn(child, "TZ"), child.TZ, child.NODE_TLS_REJECT_UNAUTHORIZED, child.SOME_NUMBER],
+          // Certificate verification is still on for the process.
+          reject: require("node:tls").rootCertificates.length > 0 && process.env.NODE_TLS_REJECT_UNAUTHORIZED !== "0",
+        }));
+      `,
+    ],
+    env: { ...bunEnv, TZ: "UTC", NODE_TLS_REJECT_UNAUTHORIZED: undefined },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ out: JSON.parse(stdout.trim() || "null"), stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
+    out: {
+      offsetUnchanged: true,
+      parentTZ: "UTC",
+      parentReject: null,
+      parentNumber: null,
+      child: [true, "Asia/Kolkata", 0, 5],
+      reject: true,
+    },
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 it("process.env.TZ writes inside a worker do not change the main thread's timezone", async () => {
   // Node does not intercept TZ in workers (only RealEnvStore::Set calls
   // DateTimeConfigurationChangeNotification, and every worker env is a

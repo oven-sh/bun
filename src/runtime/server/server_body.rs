@@ -835,6 +835,33 @@ impl AnyRoute {
                     FrameworkRouter::Style::from_js(style_js.unwrap(), global)?;
                 // Style impls Drop; `?` drops it on the error path.
 
+                // The dev server silently skips a router type whose root is
+                // missing, because a framework package may list optional
+                // roots. A user-written `{ dir, style }` mount names exactly
+                // one directory, so a root that cannot be opened is an error
+                // here, like `{ dir }` without `style`.
+                {
+                    let mut buf = paths::path_buffer_pool::get();
+                    let abs_root = paths::resolve_path::join_abs_string_buf::<
+                        paths::platform::Auto,
+                    >(
+                        paths::fs::FileSystem::instance().top_level_dir(),
+                        &mut buf[..],
+                        &[relative_root],
+                    );
+                    match sys::open_a(
+                        abs_root,
+                        sys::O::DIRECTORY | sys::O::CLOEXEC | sys::O::RDONLY,
+                        0,
+                    ) {
+                        Ok(fd) => drop(sys::File::from_fd(fd)),
+                        Err(err) => {
+                            use bun_sys_jsc::ErrorJsc;
+                            return Err(global.throw_value(err.to_js(global)?));
+                        }
+                    }
+                }
+
                 // trim the /*
                 // NOTE: `FileSystemRouterType` fields are `Cow<'static,[u8]>`.
                 // Rather

@@ -529,6 +529,28 @@ describe("Bun.serve() directory routes", () => {
     ).toThrow(expect.objectContaining({ code: "ENOENT" }));
   });
 
+  it("throws if the directory of a { dir, style } mount does not exist", () => {
+    using dir = tempDir("serve-dir-style-enoent", {});
+    expect(() =>
+      serve({
+        port: 0,
+        development: true,
+        routes: { "/*": { dir: join(String(dir), "does-not-exist"), style: "nextjs-pages" } },
+      }),
+    ).toThrow(expect.objectContaining({ code: "ENOENT" }));
+  });
+
+  it("throws if the directory of a { dir, style } mount is a file", () => {
+    using dir = tempDir("serve-dir-style-enotdir", { pages: "not a directory" });
+    expect(() =>
+      serve({
+        port: 0,
+        development: true,
+        routes: { "/*": { dir: join(String(dir), "pages"), style: "nextjs-pages" } },
+      }),
+    ).toThrow(expect.objectContaining({ code: "ENOTDIR" }));
+  });
+
   it("serves correctly with more unique paths than stat-cache slots", async () => {
     const N = 300; // > STAT_CACHE_SLOTS (256)
     const files: Record<string, string> = {};

@@ -1571,9 +1571,8 @@ describe("node https server", async () => {
   const systemNode = nodeExe();
   const pfxDefaultCARuntimes: Array<[string, string]> = [["Bun", bunExe()]];
   if (systemNode) pfxDefaultCARuntimes.push(["Node", systemNode]);
-  it.each(pfxDefaultCARuntimes)(
-    "PFX CAs remain additive to default CAs across HTTPS server lifecycles in %s",
-    async (runtime, executable) => {
+  describe.each(pfxDefaultCARuntimes)("PFX CA handling across HTTPS server lifecycles in %s", (runtime, executable) => {
+    it("keeps embedded CAs additive to default CAs", async () => {
       const fixtures = path.join(import.meta.dir, "../test/fixtures/keys");
       await using proc = Bun.spawn({
         cmd: [executable, path.join(import.meta.dir, "node-http-set-secure-context-pfx.node.mjs")],
@@ -1599,8 +1598,8 @@ describe("node https server", async () => {
         exitCode: 0,
         failureDetail: "",
       });
-    },
-  );
+    });
+  });
   it("is marked encrypted (#5867)", async () => {
     const { server, url, done } = await createServer(async (req, res) => {
       expect(req.connection.encrypted).toBe(true);

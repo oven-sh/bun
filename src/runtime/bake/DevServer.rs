@@ -4371,9 +4371,7 @@ pub(super) fn finalize_bundle(
         }
     }
     {
-        // The client bundle lists the client components the route's server
-        // files import. A changed import edge can change that set without
-        // re-bundling any client component, so the bundle is dropped too.
+        // An edge change can alter which client components the route reaches.
         let had_adjusted_edges = dev.incremental_result.had_adjusted_edges;
         let mut it = framework_route_bits.iterator::<true, true>();
         while let Some(bundled_route_index) = it.next() {

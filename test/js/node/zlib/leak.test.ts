@@ -23,14 +23,34 @@ const cases = [
   ["zstdCompressSync", "zstdDecompressSync"],
 ] as const;
 
-// The smallest leak to catch is one 50,000-byte input or output for each call.
-// The bound is a fifth of that. A run with no leak measures 3,100 at most.
-const maxBytesPerCall = 10_000;
+// Resident memory sees every leak, but a run with no leak already measures up
+// to 3,100 bytes for each call. The native leaks here are far above that: one
+// codec state is 320 KB or more, and one input or output is 50,000 bytes. The
+// bound is a fifth of that buffer.
+const maxResidentBytesPerCall = 10_000;
+// A smaller leak is a leak of JS objects, and the JS heap is exact. A run with
+// no leak measures 2 bytes for each call at most. One retained closure
+// measures 25, and one retained stream 17,000.
+const maxHeapBytesPerCall = 256;
 // ASAN builds are slower, so they make fewer calls. They can: mimalloc needs
 // about 400 zstd calls to settle, and an ASAN build does not use mimalloc.
 const callsPerRound = isASAN ? (isDebug ? 15 : 25) : 50;
 const rounds = 20;
 const warmupRounds = 2;
+
+// `samples` has one value for each round, taken after the full GC that ends
+// it. The growth for each round is the median slope over every pair of samples
+// (Theil-Sen). A few stray samples cannot move it, and they do happen: with no
+// leak, a sample of the resident memory can sit 0.5 MB above the ones around it.
+function growthPerCall(samples: number[]): number {
+  expect(samples).toHaveLength(rounds);
+  const measured = samples.slice(warmupRounds);
+  const slopes: number[] = [];
+  for (let i = 0; i < measured.length; i++) {
+    for (let j = i + 1; j < measured.length; j++) slopes.push((measured[j] - measured[i]) / (j - i));
+  }
+  return slopes.sort((a, b) => a - b)[slopes.length >> 1] / callsPerRound;
+}
 
 describe("zlib compression does not leak memory", () => {
   test.concurrent.each(cases)(
@@ -57,7 +77,7 @@ describe("zlib compression does not leak memory", () => {
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toBe("");
-      const { samples, leakedHandles, ...report } = JSON.parse(stdout) as { samples: number[]; leakedHandles: number };
+      const { resident, heap, ...report } = JSON.parse(stdout) as { resident: number[]; heap: number[] };
       expect(report).toEqual({
         method,
         calls: rounds * callsPerRound,
@@ -65,33 +85,14 @@ describe("zlib compression does not leak memory", () => {
         // decompress to the input.
         mismatches: 0,
         roundTrip: true,
-        // The count of native handles sees the three streams that the fixture
-        // holds open.
-        openHandles: 3,
       });
-      // A leak is one native handle for each call, so one for each hundred
-      // calls is not a leak. The count is not always 0: now and then an async
-      // method still counts the handle of its last call, and never more than
-      // that one. In a heap snapshot nothing that a root reaches points at it,
-      // and one event loop turn later it is gone.
-      expect(leakedHandles).toBeLessThan((rounds * callsPerRound) / 100);
-      expect(samples).toHaveLength(rounds);
-
-      // `samples` is the resident memory after the full GC that ends each round.
-      // The growth per round is the median slope over every pair of samples
-      // (Theil-Sen). A few stray samples cannot move it, and they do happen:
-      // with no leak, a sample can sit 0.5 MB above the ones around it.
-      const measured = samples.slice(warmupRounds);
-      const slopes: number[] = [];
-      for (let i = 0; i < measured.length; i++) {
-        for (let j = i + 1; j < measured.length; j++) slopes.push((measured[j] - measured[i]) / (j - i));
-      }
-      const bytesPerRound = slopes.sort((a, b) => a - b)[slopes.length >> 1];
-      expect(bytesPerRound / callsPerRound).toBeLessThan(maxBytesPerCall);
+      expect(growthPerCall(heap)).toBeLessThan(maxHeapBytesPerCall);
+      expect(growthPerCall(resident)).toBeLessThan(maxResidentBytesPerCall);
       expect(exitCode).toBe(0);
     },
-    // On a debug build the slowest method takes up to 12 s, and up to 38 s when
-    // the test runner turns on the exception check validation.
-    60_000,
+    // Only a debug build needs more than the default: its slowest method takes
+    // up to 12 s, and up to 38 s with the exception check validation that the
+    // test runner turns on. No CI lane runs one, so each keeps its own timeout.
+    isDebug ? 60_000 : undefined,
   );
 });

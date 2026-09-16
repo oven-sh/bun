@@ -1,11 +1,12 @@
 // Fixture for leak.test.ts.
 //
 // Calls one node:zlib one-shot compress method in rounds. Each round ends with
-// a full GC and one sample of the resident memory. Prints one JSON line with
-// what the calls returned and the samples. The test decides what is a leak.
+// a full GC and one sample of the resident memory and of the JS heap. Prints
+// one JSON line with what the calls returned and the samples. The test decides
+// what is a leak.
 //
 // argv: <method> <inverse> <rounds> <callsPerRound>
-import { heapStats } from "bun:jsc";
+import { heapSize } from "bun:jsc";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { promisify } from "node:util";
@@ -37,30 +38,26 @@ const compress = (method.endsWith("Sync") ? zlib[method] : promisify(zlib[method
 // error changes from one read to the next. smaps_rollup walks the page tables,
 // so it is exact. `Anonymous` leaves out the pages of the bun binary, which the
 // kernel can evict at any time.
-function residentBytes(): number {
-  if (process.platform === "linux") {
-    const rollup = readFileSync("/proc/self/smaps_rollup", "utf8");
-    return Number(/^Anonymous:\s+(\d+) kB$/m.exec(rollup)![1]) * 1024;
-  }
-  return process.memoryUsage.rss();
+function anonymousBytes(): number {
+  const rollup = readFileSync("/proc/self/smaps_rollup", "utf8");
+  return Number(/^Anonymous:\s+(\d+) kB$/m.exec(rollup)![1]) * 1024;
 }
 
-// Every node:zlib stream owns one of these native handles
-// (src/runtime/api/zlib.classes.ts). heapStats() counts live cells by class.
-function nativeHandles(): number {
-  const counts = heapStats().objectTypeCounts;
-  return (counts.NativeZlib ?? 0) + (counts.NativeBrotli ?? 0) + (counts.NativeZstd ?? 0);
+// Kernels before 4.14 and some sandboxes have no smaps_rollup. One source
+// serves the whole run, because the two do not count the same pages.
+let residentBytes: () => number = process.memoryUsage.rss;
+if (process.platform === "linux") {
+  try {
+    anonymousBytes();
+    residentBytes = anonymousBytes;
+  } catch {}
 }
-
-// Three open streams, one for each class, show that the count sees a live handle.
-const idleHandles = nativeHandles();
-const open = [zlib.createDeflate(), zlib.createBrotliCompress(), zlib.createZstdCompress()];
-const openHandles = nativeHandles() - idleHandles;
 
 const reference = await compress(input, options);
 const roundTrip = zlib[inverse](reference).equals(input);
 
-const samples: number[] = [];
+const resident: number[] = [];
+const heap: number[] = [];
 let calls = 0;
 let mismatches = 0;
 for (let round = 0; round < rounds; round++) {
@@ -70,10 +67,8 @@ for (let round = 0; round < rounds; round++) {
     if (!output.equals(reference)) mismatches++;
   }
   Bun.gc(true);
-  samples.push(residentBytes());
+  resident.push(residentBytes());
+  heap.push(heapSize());
 }
 
-const leakedHandles = nativeHandles() - idleHandles - open.length;
-for (const stream of open) stream.close();
-
-console.log(JSON.stringify({ method, calls, mismatches, roundTrip, openHandles, leakedHandles, samples }));
+console.log(JSON.stringify({ method, calls, mismatches, roundTrip, resident, heap }));

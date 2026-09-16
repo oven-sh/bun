@@ -2134,40 +2134,34 @@ describe("Bun.serve HTTP/3 response that the client stopped while its request is
   }
 
   test("aborts the request when the response writes again", async () => {
-    const chunk = Buffer.alloc(16 * 1024, "e");
-    const stopAfterWrites = 8;
-    // A bound for a build that never aborts: the source gives up.
-    const maxWrites = stopAfterWrites + 2000;
-    let writes = 0;
+    const started = Promise.withResolvers<void>();
     const ended = Promise.withResolvers<string>();
     await using server = Bun.serve({
       port: 0,
       tls,
       http3: true,
       fetch(req) {
-        req.signal.addEventListener("abort", () => ended.resolve("aborted"));
         return new Response(
           new ReadableStream({
             type: "direct",
             // Writes on every turn and never waits for the sink to drain,
-            // like an event stream that a timer drives.
+            // like an event stream that a timer drives. Only the abort stops
+            // it. The deadline is for a build that never aborts.
             async pull(controller) {
-              while (writes < maxWrites && !req.signal.aborted) {
-                controller.write(chunk);
-                writes++;
+              const giveUpAt = performance.now() + 3000;
+              for (let writes = 0; !req.signal.aborted && performance.now() < giveUpAt; writes++) {
+                controller.write("event\n");
+                if (writes === 8) started.resolve();
                 await taskHop();
               }
-              ended.resolve("the source wrote every chunk");
-              if (!req.signal.aborted) await controller.end();
+              ended.resolve(req.signal.aborted ? "aborted" : "never aborted");
             },
           }),
         );
       },
     });
 
-    await using _ = await stoppedRequest(server.port, async () => {
-      while (writes < stopAfterWrites) await taskHop();
-    });
+    await using _ = await stoppedRequest(server.port, () => started.promise);
 
     expect(await ended.promise).toBe("aborted");
   });
@@ -2176,7 +2170,8 @@ describe("Bun.serve HTTP/3 response that the client stopped while its request is
   // write reaches lsquic. What fails is the request for a writable callback:
   // lsquic refuses it once its RESET_STREAM is out. When the write comes in
   // the flight that carried the STOP_SENDING, the RESET_STREAM is not out yet,
-  // and the callback's own write gets the -1.
+  // and the callback's own write gets the -1. The response writes once, so a
+  // build that misses either case gets no second chance and never aborts.
   test.each([
     { when: "a later flight", turnsBetween: 2 },
     { when: "the same flight", turnsBetween: 0 },
@@ -2186,7 +2181,7 @@ describe("Bun.serve HTTP/3 response that the client stopped while its request is
       const queued = Promise.withResolvers<void>();
       const sawHeaders = Promise.withResolvers<void>();
       const writeAgain = Promise.withResolvers<void>();
-      const ended = Promise.withResolvers<string>();
+      const aborted = Promise.withResolvers<string>();
       await using server = Bun.serve({
         port: 0,
         tls,
@@ -2198,6 +2193,7 @@ describe("Bun.serve HTTP/3 response that the client stopped while its request is
           },
         },
         fetch(req) {
+          req.signal.addEventListener("abort", () => aborted.resolve("aborted"));
           return new Response(
             new ReadableStream({
               type: "direct",
@@ -2207,15 +2203,9 @@ describe("Bun.serve HTTP/3 response that the client stopped while its request is
                 controller.flush();
                 queued.resolve();
                 await writeAgain.promise;
-                let writes = 0;
-                // A bound for a build that never aborts.
-                while (writes < 300 && !req.signal.aborted) {
-                  controller.write("tail");
-                  controller.flush();
-                  writes++;
-                  await taskHop();
-                }
-                ended.resolve(req.signal.aborted ? `aborted after ${writes} write` : "never aborted");
+                controller.write("tail");
+                controller.flush();
+                await aborted.promise;
               },
             }),
           );
@@ -2231,7 +2221,7 @@ describe("Bun.serve HTTP/3 response that the client stopped while its request is
       const second = await stopped.client.createBidirectionalStream({ headers: requestHeaders("/write-again") });
       for await (const _ of second as AsyncIterable<Uint8Array[]>);
 
-      expect(await ended.promise).toBe("aborted after 1 write");
+      expect(await aborted.promise).toBe("aborted");
     },
   );
 
@@ -2284,11 +2274,11 @@ describe("Bun.serve HTTP/3 response that the client stopped while its request is
     });
     for await (const _ of second as AsyncIterable<Uint8Array[]>);
 
-    let upload = "still open";
-    const closed = () => (upload = "closed");
-    stopped.stream.closed.then(closed, closed);
-    // A bound for a build that keeps the stream.
-    for (let i = 0; i < 500 && upload === "still open"; i++) await taskHop();
+    // A build that keeps the stream never settles this.
+    const upload = await stopped.stream.closed.then(
+      () => "closed",
+      () => "closed",
+    );
     expect({ status, upload, pendingRequests: server.pendingRequests }).toEqual({
       status: "200",
       upload: "closed",

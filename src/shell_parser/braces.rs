@@ -477,9 +477,7 @@ pub mod ast {
         pub(crate) variants: OwnedSlice<Group>,
     }
 
-    /// A `Box<[T]>` held as a raw pointer: `expand_nested` writes `bubble_up`
-    /// backrefs into the elements while it recurses through the parent that
-    /// owns them, which a `Box` reached through that parent does not allow.
+    /// Owned `Box<[T]>`. Raw: `expand_nested` writes `bubble_up` into elements it reaches through `&parent`.
     pub struct OwnedSlice<T>(*mut [T]);
 
     impl<T> OwnedSlice<T> {
@@ -1324,8 +1322,7 @@ mod tests {
         );
     }
 
-    // Under Miri this also checks that the nested AST frees what it owns: the
-    // long atoms are heap-backed `SmolStr`s.
+    // The long atoms are heap-backed `SmolStr`s: Miri reports them if the nested AST leaks.
     #[test]
     fn expand_nested_groups() {
         assert_eq!(

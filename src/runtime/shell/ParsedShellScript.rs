@@ -204,10 +204,6 @@ fn create_parsed_shell_script_impl(
     callframe: &CallFrame,
     marked_argument_buffer: &mut MarkedArgumentBuffer,
 ) -> JsResult<JSValue> {
-    // Box<ShellArgs> drops automatically on every early `return`/`?` below,
-    // so no scopeguard is needed.
-    let mut shargs: Box<ShellArgs> = ShellArgs::init();
-
     let arguments = callframe.arguments();
     if arguments.len() < 2 {
         return Err(global.throw_not_enough_arguments("Bun.$", 2, arguments.len()));
@@ -232,6 +228,11 @@ fn create_parsed_shell_script_impl(
         &mut script,
         marked_argument_buffer,
     )?;
+
+    // Box<ShellArgs> drops automatically on every early `return` below, so no
+    // scopeguard is needed.
+    let (arena, arena_bytes) = global.bun_vm().as_mut().rare_data().take_shell_arena();
+    let mut shargs: Box<ShellArgs> = ShellArgs::init(arena, arena_bytes);
 
     // Reshaped for borrowck — `out_parser`/`out_lex_result` borrow
     // `shargs.__arena`, so they're scoped to a block that ends before

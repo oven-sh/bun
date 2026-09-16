@@ -402,7 +402,14 @@ class ProxyConfig {
     }
     const { hostname, port, protocol, username, password } = parsedURL;
 
-    this.href = proxyUrl;
+    // `href` ends up in ERR_PROXY_TUNNEL messages, so it must not carry the credentials.
+    if (username || password) {
+      parsedURL.username = "";
+      parsedURL.password = "";
+      this.href = parsedURL.href;
+    } else {
+      this.href = proxyUrl;
+    }
     this.protocol = protocol;
 
     if (username || password) {

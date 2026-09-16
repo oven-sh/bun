@@ -1997,7 +1997,9 @@ describe("Bun.serve HTTP/3 response headers past the lsquic limits", () => {
   const script = `
     import { join } from "node:path";
 
-    const { overBlockLimit: headers, underBlockLimit, overValueLimit } = ${JSON.stringify({ overBlockLimit, underBlockLimit, overValueLimit })};
+    // The response shapes use the value limit. That refusal comes from the
+    // server's own check, whatever size of block lsquic takes.
+    const { overValueLimit: headers, overBlockLimit, underBlockLimit } = ${JSON.stringify({ overBlockLimit, underBlockLimit, overValueLimit })};
     const file = join(import.meta.dir, "file.txt");
     await Bun.write(file, "from a file");
     const taskHop = () => new Promise(resolve => setImmediate(resolve));
@@ -2009,6 +2011,7 @@ describe("Bun.serve HTTP/3 response headers past the lsquic limits", () => {
       routes: {
         "/static": new Response("static", { headers }),
         "/ok": () => new Response("ok"),
+        "/over-block-limit": () => new Response("block", { headers: overBlockLimit }),
         "/under-block-limit": () => new Response("digits", { headers: underBlockLimit }),
       },
       async fetch(req) {
@@ -2050,9 +2053,6 @@ describe("Bun.serve HTTP/3 response headers past the lsquic limits", () => {
             );
           case "/file":
             return new Response(Bun.file(file), { headers });
-          // Two fields only, but lsxpack_header cannot hold the length of one.
-          case "/one-value":
-            return new Response("one value", { headers: overValueLimit });
         }
         return new Response("not found", { status: 404 });
       },
@@ -2069,19 +2069,20 @@ describe("Bun.serve HTTP/3 response headers past the lsquic limits", () => {
 
   test("every response shape ends the stream with RESET_STREAM(H3_INTERNAL_ERROR), and the connection stays usable", async () => {
     await withCustomServer(script, async (port, _send, waitForStderr) => {
-      const failing = [
-        "/string",
-        "/string-later",
-        "/empty",
-        "/stream",
-        "/direct-stream",
-        "/file",
-        "/static",
-        "/one-value",
-      ];
+      const failing = ["/string", "/string-later", "/empty", "/stream", "/direct-stream", "/file", "/static"];
       // All on one connection, so "/ok" at the end shows that it survived.
       const outcomes = await unlessServerExits(waitForStderr, h3StreamOutcomes(port, [...failing, "/ok"]));
       expect(outcomes).toEqual([...failing.map(() => "reset 258"), "200 ok"]);
+    });
+  });
+
+  // lsquic refused this block, the server took the refusal for backpressure,
+  // and the stream stayed open while the event loop spun.
+  test("a header block over 64 KB does not leave the stream open", async () => {
+    await withCustomServer(script, async (port, _send, waitForStderr) => {
+      const outcomes = await unlessServerExits(waitForStderr, h3StreamOutcomes(port, ["/over-block-limit", "/ok"]));
+      // "200 block" is the outcome with a lsquic that takes a block of this size.
+      expect(outcomes).toEqual([expect.stringMatching(/^(reset 258|200 block)$/), "200 ok"]);
     });
   });
 

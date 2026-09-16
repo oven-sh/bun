@@ -53,11 +53,7 @@ impl PBKDF2 {
             )
         };
 
-        if rc <= 0 {
-            return false;
-        }
-
-        true
+        rc > 0
     }
 
     /// The second element is the validated callback on the `Async` flavor and

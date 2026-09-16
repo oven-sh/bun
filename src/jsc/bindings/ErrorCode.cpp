@@ -1290,7 +1290,7 @@ JSC::EncodedJSValue INVALID_STATE(JSC::ThrowScope& throwScope, JSC::JSGlobalObje
 
 JSC::EncodedJSValue STRING_TOO_LONG(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject)
 {
-    auto message = makeString("Cannot create a string longer than "_s, WTF::String ::MaxLength, " characters"_s);
+    auto message = makeString("Cannot create a string longer than "_s, WTF::String::MaxLength, " characters"_s);
     throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_STRING_TOO_LONG, message));
     throwScope.release();
     return {};

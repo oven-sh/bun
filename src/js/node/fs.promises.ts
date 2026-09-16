@@ -206,31 +206,11 @@ async function opendir(dir: string, options) {
   return promise;
 }
 
-// A FileHandle opened by script of a Bun.ModuleGraph: the graph's context owns the descriptor and
-// closes it when the graph is disposed (see own_fd). From then on the handle reads as closed.
-const ownFd = $newRustFunction("node_fs_binding.rs", "ownFd", 1);
-const isOwnedFdOpen = $newRustFunction("node_fs_binding.rs", "isOwnedFdOpen", 1);
-const releaseOwnedFd = $newRustFunction("node_fs_binding.rs", "releaseOwnedFd", 2);
-const callInOwner = $newRustFunction("node_fs_binding.rs", "callInOwner", 2);
-const kRawFd = Symbol("kRawFd");
-const kFdOwner = Symbol("kFdOwner");
-type CollectedFileHandle = { fd: number; path: string | undefined; owner: number };
-
 // Node.js closes a FileHandle's fd in its native finalizer and raises
 // ERR_INVALID_STATE (DEP0137 end-of-life) when collected without close().
 // Mirror that with a FinalizationRegistry so dropped handles don't leak fds.
-let fileHandleRegistry: FinalizationRegistry<CollectedFileHandle> | undefined;
-function registerFileHandle(handle, fd: number, path: string | undefined) {
-  const owner = (handle[kFdOwner] = ownFd(fd));
-  (fileHandleRegistry ??= new FinalizationRegistry(onFileHandleCollected)).register(
-    handle,
-    { fd, path, owner },
-    handle,
-  );
-}
-function onFileHandleCollected(held: CollectedFileHandle) {
-  // Its graph was disposed: closed already, and a disposed graph is told nothing.
-  if (!releaseOwnedFd(held.fd, held.owner)) return;
+let fileHandleRegistry: FinalizationRegistry<{ fd: number; path: string | undefined }> | undefined;
+function onFileHandleCollected(held: { fd: number; path: string | undefined }) {
   try {
     fs.closeSync(held.fd);
   } catch {}
@@ -241,11 +221,8 @@ function onFileHandleCollected(held: CollectedFileHandle) {
       `objects explicitly. File descriptor: ${held.fd}${suffix}`,
   );
   err.code = "ERR_INVALID_STATE";
-  // Reported where the handle was opened: to a Bun.ModuleGraph's onError, if its script opened it.
-  callInOwner(held.owner, () => {
-    process.nextTick(() => {
-      throw err;
-    });
+  process.nextTick(() => {
+    throw err;
   });
 }
 
@@ -439,8 +416,6 @@ function asyncWrap(fn: any, name: string) {
     writev,
     close,
   } = exports;
-  /** close(fd), unless the Bun.ModuleGraph context that owned it has stopped and closed it. */
-  const closeOwned = (fd: number, owner: number) => (releaseOwnedFd(fd, owner) ? close(fd) : Promise.$resolve());
   let isArrayBufferView;
 
   // Partially taken from https://github.com/nodejs/node/blob/c25878d370/lib/internal/fs/promises.js#L148
@@ -453,16 +428,9 @@ function asyncWrap(fn: any, name: string) {
       this[kRefs] = 1;
       this[kClosePromise] = null;
       this[kFlag] = flag;
-      if (this[kFd] !== -1) registerFileHandle(this, fd, path);
-    }
-
-    get [kFd]() {
-      const owner = this[kFdOwner];
-      if (owner && !isOwnedFdOpen(owner)) this[kRawFd] = -1;
-      return this[kRawFd];
-    }
-    set [kFd](fd) {
-      this[kRawFd] = fd;
+      if (this[kFd] !== -1) {
+        (fileHandleRegistry ??= new FinalizationRegistry(onFileHandleCollected)).register(this, { fd, path }, this);
+      }
     }
 
     getAsyncId() {
@@ -474,8 +442,7 @@ function asyncWrap(fn: any, name: string) {
     }
 
     [kCloseResolve];
-    [kRawFd];
-    [kFdOwner];
+    [kFd];
     [kFlag];
     [kClosePromise];
     [kRefs];
@@ -750,7 +717,7 @@ function asyncWrap(fn: any, name: string) {
 
       if (--this[kRefs] === 0) {
         this[kFd] = -1;
-        this[kClosePromise] = PromisePrototypeFinally.$call(closeOwned(fd, this[kFdOwner]), () => {
+        this[kClosePromise] = PromisePrototypeFinally.$call(close(fd), () => {
           this[kClosePromise] = undefined;
         });
       } else {
@@ -1526,7 +1493,7 @@ function asyncWrap(fn: any, name: string) {
       const fd = this[kFd];
       this[kFd] = -1;
       fileHandleRegistry?.unregister(this);
-      if (releaseOwnedFd(fd, this[kFdOwner])) (nodeFsForIter ??= require("node:fs")).closeSync(fd);
+      (nodeFsForIter ??= require("node:fs")).closeSync(fd);
       this.emit("close");
     }
 
@@ -1539,7 +1506,6 @@ function asyncWrap(fn: any, name: string) {
       const flag = this[kFlag];
       this[kFd] = -1;
       fileHandleRegistry?.unregister(this);
-      releaseOwnedFd(fd, this[kFdOwner]);
       return {
         data: { fd, flag },
         deserializeInfo: "internal/fs/promises:FileHandle",
@@ -1553,7 +1519,13 @@ function asyncWrap(fn: any, name: string) {
     [kDeserialize]({ fd, flag }) {
       this[kFd] = fd;
       this[kFlag] = flag;
-      if (fd !== -1) registerFileHandle(this, fd, undefined);
+      if (fd !== -1) {
+        (fileHandleRegistry ??= new FinalizationRegistry(onFileHandleCollected)).register(
+          this,
+          { fd, path: undefined },
+          this,
+        );
+      }
     }
 
     [kRef]() {
@@ -1568,10 +1540,7 @@ function asyncWrap(fn: any, name: string) {
         // in flight).
         const fd = this[kFd];
         this[kFd] = -1;
-        (fd !== -1 ? closeOwned(fd, this[kFdOwner]) : Promise.$resolve()).$then(
-          this[kCloseResolve],
-          this[kCloseReject],
-        );
+        (fd !== -1 ? close(fd) : Promise.$resolve()).$then(this[kCloseResolve], this[kCloseReject]);
       }
     }
   }

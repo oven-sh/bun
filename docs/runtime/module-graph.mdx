@@ -34,7 +34,7 @@ A graph has a context of its own for timers and I/O. Everything its code opens b
 - child processes, including `Bun.$`
 - workers
 - database connections
-- files opened through `node:fs` streams, `FileHandle`s, `Bun.file().writer()`, `bun:sqlite` and `node:sqlite`
+- files opened through `Bun.file().writer()`, `bun:sqlite` and `node:sqlite`
 - graphs its code makes
 
 The context follows the code asynchronously, like `AsyncLocalStorage`: through `await`, timers, socket handlers and event listeners.
@@ -48,13 +48,13 @@ The context follows the code asynchronously, like `AsyncLocalStorage`: through `
 
 Microtasks and `process.nextTick` callbacks the graph had already queued still run, once. Whatever that code starts does not start: a connection is not dialed, a UDP socket is not bound, nobody can connect to a server it listens with. Its promise stays pending rather than rejecting, so code that retries on failure stops there.
 
-The host's references to the graph's objects are dead too. Do not use a graph's socket, worker, child process, stream or `Response` after `dispose()`. An operation on one may fail or may never complete: `await worker.terminate()`, `server.close(callback)` or waiting for a child's `'exit'` can wait for ever. From a file the graph had open, the host gets `EBADF` or "Database has closed". What was buffered and not yet written is dropped.
+The host's references to the graph's objects are dead too. Do not use a graph's socket, worker, child process, stream or `Response` after `dispose()`. An operation on one may fail or may never complete: `await worker.terminate()`, `server.close(callback)` or waiting for a child's `'exit'` can wait for ever. From a database the graph had open, the host gets "Database has closed". What was buffered and not yet written is dropped.
 
 `dispose()` releases what a graph holds. It is not a sandbox:
 
 - A process that leftover code starts with `Bun.spawn` or `child_process.spawn()` is started and then killed, so a very short command can finish first.
 - Synchronous calls such as `Bun.spawnSync` and `fs.writeFileSync` run to completion.
-- A raw descriptor from `fs.openSync()` is only a number and stays open, as it does when a worker is terminated.
+- A file descriptor that script holds is the script's to manage: one from `fs.openSync()`, and the one inside a `FileHandle` or a `node:fs` stream. `dispose()` does not close it, as terminating a worker does not. Code that opens one closes it before its graph is disposed.
 
 Native addons are shared, but their asynchronous work is the graph's too. A Node-API async work item or thread-safe function completes in the context of the graph whose code created it. After `dispose()` the addon's completion callback still runs, so it can free what it allocated. It cannot call into JavaScript: `napi_call_function` and the like return `napi_cannot_run_js`, as they do in a worker that is terminating. A promise it settles for the disposed graph stays pending. A promise it settles for the host or for another graph is settled.
 

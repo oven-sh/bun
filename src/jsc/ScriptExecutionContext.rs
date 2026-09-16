@@ -12,7 +12,6 @@ use core::ptr;
 
 use crate::virtual_machine::SweepResult;
 use crate::{AbortSignal, AbortSignalRef, JSValue, JsCell};
-use bun_sys::FdExt as _;
 
 pub use bun_event_loop::ContextId;
 
@@ -57,10 +56,6 @@ pub struct ScriptExecutionContext {
     /// A graph's context: its `WebCore::ScriptExecutionContext`, which owns this
     /// one and the ActiveDOMObjects (workers, WebSockets) the graph's script made.
     dom_context: core::cell::Cell<*mut core::ffi::c_void>,
-    /// Descriptors only this context's script can close, and will not once it has stopped: the
-    /// one a node:fs stream opened for itself. Its script is told nothing, so the stream never
-    /// reaches the `close` of its own `_destroy`.
-    owned_fds: JsCell<Vec<bun_sys::Fd>>,
     /// The timers script of a graph's context set that have not been freed
     /// (`TimerObjectInternals` / `AbortSignal` `Timeout`), so stopping it
     /// cancels exactly those. A VM's own contexts walk the timer heap.
@@ -86,7 +81,6 @@ impl Default for ScriptExecutionContext {
             socket_groups: JsCell::new(None),
             stop_again_queued: JsCell::new(false),
             dom_context: core::cell::Cell::new(ptr::null_mut()),
-            owned_fds: JsCell::new(Vec::new()),
             timers: JsCell::new(Default::default()),
         }
     }
@@ -162,32 +156,7 @@ impl ScriptExecutionContext {
         self.stop_again_queued.set(false);
         let result = self.stop_handles(reason);
         self.close_sockets();
-        crate::VirtualMachineRef::get()
-            .close_fds_after_jobs(self.id(), self.owned_fds.replace(Vec::new()));
         result
-    }
-
-    /// `fd` is closed when this context stops, unless [`disown_fd`](Self::disown_fd) came first.
-    /// One that has already stopped closes it now.
-    pub fn own_fd(&self, fd: bun_sys::Fd) {
-        if self.is_stopped() {
-            fd.close();
-            return;
-        }
-        self.owned_fds.with_mut(|fds| fds.push(fd));
-    }
-
-    pub(crate) fn owns_fd(&self, fd: bun_sys::Fd) -> bool {
-        self.owned_fds.get().contains(&fd)
-    }
-
-    /// Its script is about to close `fd` itself (the number may be another file's right after).
-    pub fn disown_fd(&self, fd: bun_sys::Fd) {
-        self.owned_fds.with_mut(|fds| {
-            if let Some(index) = fds.iter().position(|owned| *owned == fd) {
-                fds.swap_remove(index);
-            }
-        });
     }
 
     /// Close every client socket of a graph's context (its script is told nothing).

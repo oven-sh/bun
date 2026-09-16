@@ -184,6 +184,11 @@ impl<const SSL: bool> Response<SSL> {
         c::uws_res_uncork(Self::ssl_flag(), self.as_raw())
     }
 
+    /// Sends what the cork buffer holds for this socket. The socket stays corked.
+    pub fn send_corked(&mut self) {
+        c::uws_res_send_corked(Self::ssl_flag(), self.as_raw())
+    }
+
     pub(crate) fn pause(&mut self) {
         c::uws_res_pause(Self::ssl_flag(), self.as_raw())
     }
@@ -1175,6 +1180,7 @@ pub mod c {
             is_ipv6: &mut bool,
         ) -> usize;
         pub(crate) safe fn uws_res_uncork(ssl: i32, res: &mut uws_res);
+        pub(crate) safe fn uws_res_send_corked(ssl: i32, res: &mut uws_res);
         pub(crate) fn uws_res_end(
             ssl: i32,
             res: *mut uws_res,

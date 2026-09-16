@@ -1,4 +1,5 @@
 // Bundle tests are tests concerning bundling bugs that only occur in DevServer.
+import type { Bake } from "bun";
 import { expect } from "bun:test";
 import { Dev, devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
@@ -412,114 +413,184 @@ devTest("removing 'use client' from a component with a pending resolution failur
     expect(res).toBeInstanceOf(Response);
   },
 });
-// No route imports the client entry point of the framework. The script of
-// every route of the router type starts at it.
-const clientEntryPointApp = {
-  framework: {
-    ...minimalFramework,
-    fileSystemRouterTypes: [
-      {
-        ...minimalFramework.fileSystemRouterTypes![0],
-        clientEntryPoint: "./client.ts",
-      },
-    ],
-  },
-  files: {
-    "client.ts": `
-      import { dep } from "./client-dep";
-      console.log("client v1, " + dep);
-    `,
-    "client-dep.ts": `
-      export const dep = "dep v1";
-    `,
-    "client.css": `
-      body {
-        color: red;
-      }
-    `,
-    "routes/index.ts": `
-      export default function (req, meta) {
-        const styles = meta.styles.map(href => '<link rel="stylesheet" href="' + href + '">').join("");
-        const scripts = meta.modules.map(src => '<script type="module" src="' + src + '"></script>').join("");
-        return new Response("<!DOCTYPE html><html><head>" + styles + "</head><body>" + scripts + "</body></html>", {
-          headers: { "content-type": "text/html" },
-        });
-      }
-    `,
+// No route imports the client entry point of a router type. The script of
+// every route of that router type starts at it.
+const clientEntryPointFramework: Bake.Framework = {
+  fileSystemRouterTypes: [
+    {
+      root: "routes",
+      style: "nextjs-pages",
+      serverEntryPoint: "./server.ts",
+      clientEntryPoint: "./client.ts",
+    },
+    {
+      root: "other-routes",
+      style: "nextjs-pages",
+      serverEntryPoint: "./other-server.ts",
+      clientEntryPoint: "./other-client.ts",
+    },
+  ],
+  serverComponents: {
+    separateSSRGraph: false,
+    serverRuntimeImportSource: "./server.ts",
+    serverRegisterClientReferenceExport: "registerClientReference",
   },
 };
-async function loadClientEntryPointPage(dev: Dev) {
-  const html = await dev.fetch("/").text();
-  const script = html.match(/<script type="module" src="([^"]+)">/)![1];
-  const code = await dev.fetch(script).text();
-  return {
-    script,
-    styles: html.match(/<link rel="stylesheet"/g)?.length ?? 0,
-    versions: [...new Set(code.match(/\b(client|dep) v\d+/g))].sort(),
-  };
+const clientEntryPointFiles = {
+  "server.ts": `
+    export function render(req, meta) {
+      const styles = meta.styles.map(href => '<link rel="stylesheet" href="' + href + '">').join("");
+      const scripts = meta.modules.map(src => '<script type="module" src="' + src + '"></script>').join("");
+      return new Response("<!DOCTYPE html><html><head>" + styles + "</head><body>" + scripts + "</body></html>", {
+        headers: { "content-type": "text/html" },
+      });
+    }
+    export function registerClientReference(value, file, uid) {
+      return { value, file, uid };
+    }
+  `,
+  "other-server.ts": `
+    export * from "./server";
+  `,
+  "client.ts": `
+    import "./client-dep";
+    console.log("client v1");
+  `,
+  "client-dep.ts": `
+    console.log("dep v1");
+    import.meta.hot.accept();
+  `,
+  "client.css": `
+    body {
+      color: red;
+    }
+  `,
+  "other-client.ts": `
+    console.log("other v1");
+  `,
+  "routes/index.ts": `export default "index";`,
+  "routes/second.ts": `export default "second";`,
+  "other-routes/other.ts": `export default "other";`,
+};
+async function loadClientEntryPointPages(dev: Dev) {
+  const pages: Record<string, { script: string; styles: number; versions: string[] }> = {};
+  for (const url of ["/", "/second", "/other"]) {
+    const html = await dev.fetch(url).text();
+    const script = html.match(/<script type="module" src="([^"]+)">/)![1];
+    const code = await dev.fetch(script).text();
+    pages[url] = {
+      script,
+      styles: html.match(/<link rel="stylesheet"/g)?.length ?? 0,
+      versions: [...new Set(code.match(/\b(client|dep|other) v\d+/g))].sort(),
+    };
+  }
+  return pages;
 }
 devTest("saving a file under the framework client entry point updates the next page load", {
-  ...clientEntryPointApp,
+  framework: clientEntryPointFramework,
+  files: clientEntryPointFiles,
   async test(dev) {
-    const first = await loadClientEntryPointPage(dev);
-    expect(first).toEqual({ script: expect.any(String), styles: 0, versions: ["client v1", "dep v1"] });
+    const first = await loadClientEntryPointPages(dev);
+    expect(first).toEqual({
+      "/": { script: expect.any(String), styles: 0, versions: ["client v1", "dep v1"] },
+      "/second": { script: expect.any(String), styles: 0, versions: ["client v1", "dep v1"] },
+      "/other": { script: expect.any(String), styles: 0, versions: ["other v1"] },
+    });
 
-    await dev.write(
-      "client-dep.ts",
-      `
-        export const dep = "dep v2";
-      `,
-    );
-    const second = await loadClientEntryPointPage(dev);
-    expect(second).toEqual({ script: expect.any(String), styles: 0, versions: ["client v1", "dep v2"] });
-    expect(second.script).not.toBe(first.script);
-
-    // Nothing accepts the update, so a connected page reloads.
     {
       await using c = await dev.client("/");
-      await c.expectMessage("client v1, dep v2");
+      await c.expectMessage("dep v1", "client v1");
+
+      // `client-dep.ts` accepts the update, so the connected page does not reload.
+      await dev.write(
+        "client-dep.ts",
+        `
+          console.log("dep v2");
+          import.meta.hot.accept();
+        `,
+      );
+      await c.expectMessage("dep v2");
+      const second = await loadClientEntryPointPages(dev);
+      expect(second).toEqual({
+        "/": { script: expect.any(String), styles: 0, versions: ["client v1", "dep v2"] },
+        "/second": { script: expect.any(String), styles: 0, versions: ["client v1", "dep v2"] },
+        "/other": first["/other"],
+      });
+      expect(second["/"].script).not.toBe(first["/"].script);
+      expect(second["/second"].script).not.toBe(first["/second"].script);
+
+      // Nothing accepts an update of `client.ts`, so the connected page reloads.
       await c.expectReload(async () => {
         await dev.write(
           "client.ts",
           `
-            import { dep } from "./client-dep";
-            console.log("client v2, " + dep);
+            import "./client-dep";
+            console.log("client v2");
           `,
         );
       });
-      await c.expectMessage("client v2, dep v2");
+      await c.expectMessage("dep v2", "client v2");
     }
 
     await dev.write(
       "client.ts",
       `
-        import { dep } from "./client-dep";
+        import "./client-dep";
         import "./client.css";
-        console.log("client v3, " + dep);
+        console.log("client v3");
       `,
     );
-    const third = await loadClientEntryPointPage(dev);
-    expect(third).toEqual({ script: expect.any(String), styles: 1, versions: ["client v3", "dep v2"] });
+    expect(await loadClientEntryPointPages(dev)).toEqual({
+      "/": { script: expect.any(String), styles: 1, versions: ["client v3", "dep v2"] },
+      "/second": { script: expect.any(String), styles: 1, versions: ["client v3", "dep v2"] },
+      "/other": first["/other"],
+    });
   },
 });
 devTest("a build error under the framework client entry point shows on the next page load", {
-  ...clientEntryPointApp,
+  framework: clientEntryPointFramework,
+  files: clientEntryPointFiles,
   async test(dev) {
     expect((await dev.fetch("/")).status).toBe(200);
 
-    await dev.write("client-dep.ts", `export const dep = ;`, { errors: null });
+    await dev.write("client-dep.ts", `console.log("dep v2" +);`, { errors: null });
     expect((await dev.fetch("/")).status).toBe(500);
 
-    await dev.write(
-      "client-dep.ts",
-      `
-        export const dep = "dep v2";
-      `,
-    );
-    const recovered = await loadClientEntryPointPage(dev);
-    expect(recovered).toEqual({ script: expect.any(String), styles: 0, versions: ["client v1", "dep v2"] });
+    await dev.write("client-dep.ts", `console.log("dep v2");`);
+    expect((await loadClientEntryPointPages(dev))["/"]).toEqual({
+      script: expect.any(String),
+      styles: 0,
+      versions: ["client v1", "dep v2"],
+    });
   },
 });
+// A page tells the dev server the route that `history.pushState` took it to.
+// That gives the route a bundle entry before anything requests the route.
+for (const [entryPoint, file, broken] of [
+  ["client", "client-dep.ts", `console.log("dep v2" +);`],
+  ["server", "server.ts", clientEntryPointFiles["server.ts"] + "export const broken = ;"],
+] as const) {
+  devTest(`a route loads when its first request follows a fixed build error under the ${entryPoint} entry point`, {
+    framework: clientEntryPointFramework,
+    files: clientEntryPointFiles,
+    async test(dev) {
+      expect((await dev.fetch("/")).status).toBe(200);
+
+      const { promise: routeIsKnown, resolve } = Promise.withResolvers<void>();
+      dev.on("hmr", function onMessage(data: Uint8Array) {
+        if (data[0] !== "n".charCodeAt(0)) return;
+        dev.off("hmr", onMessage);
+        resolve();
+      });
+      dev.socket!.send("n/second");
+      await routeIsKnown;
+
+      await dev.write(file, broken, { errors: null });
+      await dev.write(file, clientEntryPointFiles[file]);
+      expect((await dev.fetch("/second")).status).toBe(200);
+    },
+  });
+}
 devTest("deinit with a free-list slot in DirectoryWatchStore.dependencies", {
   files: {
     "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),

@@ -3402,8 +3402,8 @@ impl DevServer {
             for i in 0..self.incremental_result.framework_routes_affected.len() {
                 let entry = self.incremental_result.framework_routes_affected[i];
                 if let Some(index) = self.router.route_ptr(entry.route_index()).bundle {
-                    self.route_bundle_ptr(index).server_state =
-                        route_bundle::State::PossibleBundlingFailures;
+                    self.route_bundle_ptr(index)
+                        .mark_possible_bundling_failures();
                 }
                 if entry.should_recurse_when_visiting() {
                     self.mark_all_route_children_failed(entry.route_index());
@@ -3412,14 +3412,14 @@ impl DevServer {
 
             for i in 0..self.incremental_result.html_routes_soft_affected.len() {
                 let index = self.incremental_result.html_routes_soft_affected[i];
-                self.route_bundle_ptr(index).server_state =
-                    route_bundle::State::PossibleBundlingFailures;
+                self.route_bundle_ptr(index)
+                    .mark_possible_bundling_failures();
             }
 
             for i in 0..self.incremental_result.html_routes_hard_affected.len() {
                 let index = self.incremental_result.html_routes_hard_affected[i];
-                self.route_bundle_ptr(index).server_state =
-                    route_bundle::State::PossibleBundlingFailures;
+                self.route_bundle_ptr(index)
+                    .mark_possible_bundling_failures();
             }
 
             if !self
@@ -3429,8 +3429,7 @@ impl DevServer {
             {
                 for i in 0..self.route_bundles.len() {
                     if self.loads_affected_framework_client_entry(&self.route_bundles[i]) {
-                        self.route_bundles[i].server_state =
-                            route_bundle::State::PossibleBundlingFailures;
+                        self.route_bundles[i].mark_possible_bundling_failures();
                     }
                 }
             }
@@ -5742,8 +5741,8 @@ impl DevServer {
             let bundle = route.bundle;
             let next_sibling = route.next_sibling;
             if let Some(index) = bundle {
-                self.route_bundle_ptr(index).server_state =
-                    route_bundle::State::PossibleBundlingFailures;
+                self.route_bundle_ptr(index)
+                    .mark_possible_bundling_failures();
             }
             self.mark_all_route_children_failed(child_index);
             next = next_sibling;

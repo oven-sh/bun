@@ -231,10 +231,6 @@ describe("HTTP/3 header blocks that follow another header block", () => {
         sni: { "*": { keys: [key], certs: [cert] } },
         transportParams: { maxIdleTimeout: 1 },
         onheaders(this: any, headers: Record<string, string>) {
-          if (headers[":path"] === "/warm") {
-            this.sendHeaders({ ":status": "200" }, { terminal: true });
-            return;
-          }
           this.sendInformationalHeaders({ ":status": "100" });
           this.sendInformationalHeaders({ ":status": "103", link: "</style.css>; rel=preload" });
           if (headers[":path"] === "/no-body") {
@@ -248,10 +244,6 @@ describe("HTTP/3 header blocks that follow another header block", () => {
       },
     );
     const client = await connectTo(server);
-    // lsquic holds one unsent header block per stream, and it holds the first
-    // block of a new connection: the server can send three only on a used one.
-    await responseEvents(client, "/warm");
-
     const events = { noBody: await responseEvents(client, "/no-body"), body: await responseEvents(client, "/body") };
     client.close();
     expect(events).toEqual({
@@ -281,8 +273,6 @@ describe("HTTP/3 header blocks that follow another header block", () => {
       },
     );
     const client = await connectTo(server);
-    await responseEvents(client, "/warm");
-
     // The server queues the trailers event in the lsquic callback that reads
     // the request, ahead of the packet that carries its response.
     const response = await responseEvents(client, "/trailers", { "x-checksum": "abc123" });

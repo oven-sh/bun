@@ -760,10 +760,6 @@ describe("interim responses ahead of the final response", () => {
         sni: { "*": { keys: [createPrivateKey(tls.key)], certs: [Buffer.from(tls.cert)] } },
         transportParams: { maxIdleTimeout: 5 },
         onheaders(this: any, received: Record<string, string>) {
-          if (received[":path"] === "/warm") {
-            this.sendHeaders({ ":status": "200" }, { terminal: true });
-            return;
-          }
           this.sendInformationalHeaders({ ":status": "100" });
           this.sendInformationalHeaders({ ":status": "103", link: "</style.css>; rel=preload" });
           if (received[":path"] === "/no-body") {
@@ -783,12 +779,7 @@ describe("interim responses ahead of the final response", () => {
   ])("100 and 103, then the final response of %s", async (path, expected) => {
     const origin = await listenOrigin();
     try {
-      const url = `https://127.0.0.1:${origin.address.port}`;
-      // lsquic holds one unsent header block per stream, and it holds the first
-      // block of a new connection: the server can send three only on a used one.
-      expect((await fetch(url + "/warm", h3)).status).toBe(200);
-
-      const res = await fetch(url + path, h3);
+      const res = await fetch(`https://127.0.0.1:${origin.address.port}${path}`, h3);
       expect({ status: res.status, final: res.headers.get("x-final"), body: await res.text() }).toEqual(expected);
     } finally {
       // Not close(): it waits for the session that fetch() keeps in its pool.

@@ -278,6 +278,8 @@ void complete_for_cancel(napi_env env, napi_status status, void *data) {
 //   call_back_from_threadsafe_function(callback): `call_js` calls `callback`
 //   promise_the_next_async_work_settles(): a promise that the `complete` of the
 //     next settle_that_promise_from_async_work() resolves, whoever queues that
+//   threadsafe_function_that_refs_itself(): its `call_js` refs it again ("more
+//     work is coming"), and nobody ever releases it
 //   completion_statuses(): "<which>:<napi_status>" for each completion so far
 static std::vector<std::string> completion_statuses_so_far;
 static napi_deferred deferred_the_next_async_work_settles = nullptr;
@@ -369,6 +371,41 @@ static napi_value resolve_from_async_work(const Napi::CallbackInfo &info) {
                execute_nothing, complete_by_resolving, data, &data->work));
   NODE_API_CALL(env, napi_queue_async_work(env, data->work));
   return promise;
+}
+
+struct SelfReffingFunction {
+  napi_threadsafe_function tsfn = nullptr;
+};
+
+static void call_js_by_reffing(napi_env env, napi_value callback, void *context,
+                               void *opaque) {
+  auto *data = reinterpret_cast<SelfReffingFunction *>(context);
+  if (env == nullptr)
+    return;
+  completion_statuses_so_far.push_back(
+      "threadsafe_function_ref:" +
+      std::to_string(napi_ref_threadsafe_function(env, data->tsfn)));
+}
+
+static void finalize_self_reffing_function(napi_env env, void *data,
+                                           void *hint) {
+  delete reinterpret_cast<SelfReffingFunction *>(data);
+}
+
+static napi_value
+threadsafe_function_that_refs_itself(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  auto *data = new SelfReffingFunction();
+  NODE_API_CALL(
+      env, napi_create_threadsafe_function(
+               env, nullptr, nullptr,
+               Napi::String::New(env, "threadsafe_function_that_refs_itself"),
+               0, 1, data, finalize_self_reffing_function, data,
+               call_js_by_reffing, &data->tsfn));
+  std::thread([tsfn = data->tsfn]() {
+    napi_call_threadsafe_function(tsfn, nullptr, napi_tsfn_blocking);
+  }).detach();
+  return ok(env);
 }
 
 static napi_value
@@ -821,6 +858,7 @@ void register_async_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, call_back_from_threadsafe_function);
   REGISTER_FUNCTION(env, exports, promise_the_next_async_work_settles);
   REGISTER_FUNCTION(env, exports, settle_that_promise_from_async_work);
+  REGISTER_FUNCTION(env, exports, threadsafe_function_that_refs_itself);
   REGISTER_FUNCTION(env, exports, completion_statuses);
   REGISTER_FUNCTION(env, exports, create_orphaned_threadsafe_functions);
   REGISTER_FUNCTION(env, exports, use_orphaned_threadsafe_functions);

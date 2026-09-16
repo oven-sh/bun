@@ -3188,6 +3188,10 @@ impl ThreadSafeFunction {
 
     /// `napi_ref_threadsafe_function` — JS thread only (as in Node).
     pub(crate) fn ref_(&mut self) {
+        // Nothing of a context that has stopped holds the loop, whatever the addon asks for.
+        if self.abort_handle.context_stopped() {
+            return;
+        }
         self.poll_ref.ref_(bun_io::js_vm_ctx());
     }
 

@@ -1078,20 +1078,25 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
   });
 
   it("a threadsafe function a disposed Bun.ModuleGraph's script created does not keep the process running", async () => {
-    // The addon releases this one from its call_js, after calling the script's callback: which
-    // a disposed graph's is refused, so this addon returns early and never releases it.
+    // Nobody ever releases this one, and its call_js refs it again, as addons with more work
+    // coming do.
     using dir = tempDir("napi-module-graph-tsfn", {
       "tenant.mjs": `
         import { createRequire } from "node:module";
         const addon = createRequire(import.meta.url)(addonPath);
-        export const start = () => void addon.create_promise_with_threadsafe_function(() => {});
+        export const start = () => addon.threadsafe_function_that_refs_itself();
       `,
       "fixture.mjs": `
+        import { createRequire } from "node:module";
+        const addon = createRequire(import.meta.url)(process.argv[2]);
         const graph = new Bun.ModuleGraph({ globals: { addonPath: process.argv[2] } });
         const app = await graph.import(import.meta.dir + "/tenant.mjs");
         graph.run(() => app.start());
         graph.dispose();
         console.log("disposed");
+        // The addon's thread's call arrives now that the graph is gone: the ref is accepted and holds nothing.
+        while (!addon.completion_statuses().includes("threadsafe_function_ref:0")) await new Promise(resolve => setImmediate(resolve));
+        console.log("it asked to be held again");
         // Nothing of the host's is open: the process ends when nothing of the graph's holds it.
       `,
     });
@@ -1106,11 +1111,13 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    expect({ disposed: stdout.split(/\r?\n/).includes("disposed"), signal: proc.signalCode, exitCode }).toEqual({
-      disposed: true,
-      signal: null,
-      exitCode: 0,
-    });
+    const lines = stdout.split(/\r?\n/);
+    expect({
+      disposed: lines.includes("disposed"),
+      askedToBeHeldAgain: lines.includes("it asked to be held again"),
+      signal: proc.signalCode,
+      exitCode,
+    }).toEqual({ disposed: true, askedToBeHeldAgain: true, signal: null, exitCode: 0 });
   });
 
   describe("napi_adjust_external_memory", () => {

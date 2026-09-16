@@ -157,16 +157,19 @@ describe.skipIf(!isDebug)("a builtin whose Vector fails to allocate throws inste
 // The Vector of split holds 4 bytes per piece, so 2^29 pieces cannot fit in
 // 2^31 bytes. It grows by 1.5x from 256 entries, and the growth step at the
 // 372,712,672nd piece is the one that asks for more than that. The child peaks
-// near 4 GB, so the test skips on small machines. (Inside a container
-// os.totalmem() reports the host's RAM; process.constrainedMemory() reports the
-// cgroup limit there.) A release build takes about 3 seconds on a fast machine,
-// which is too close to the default 5 second limit, so this one test carries
-// its own ceiling. A release ASAN build takes 14 seconds and a debug build
-// takes minutes, so they skip it. `repeat` is fast in a release build and
-// allocates the 512 MiB once, where `Buffer.alloc(n, fill).toString()`
-// allocates it twice.
+// at 3.7 GB, so the test has the 10 GiB gate of the other tests that need about
+// 4 GB (error-message-string-length-limit.test.ts). A 16 GiB CI machine reports
+// a little less than 16 GiB and passes that gate; the 8 GiB Linux agents skip
+// the test, because this directory runs in the parallel batch. (Inside a
+// container os.totalmem() reports the host's RAM; process.constrainedMemory()
+// reports the cgroup limit there.) A release build takes about 3 seconds on a
+// fast machine, which is too close to the default 5 second limit, so this one
+// test carries its own ceiling. A release ASAN build takes 14 seconds and a
+// debug build takes minutes, so they skip it. `repeat` is fast in a release
+// build and allocates the 512 MiB once, where
+// `Buffer.alloc(n, fill).toString()` allocates it twice.
 const memory = Math.min(totalmem(), process.constrainedMemory() || Infinity);
-test.skipIf(isDebug || isASAN || memory < 16 * GiB)(
+test.skipIf(isDebug || isASAN || memory < 10 * GiB)(
   "String.prototype.split with more pieces than a Vector holds throws instead of aborting the process",
   async () => {
     const script = `${attempt(`",".repeat(2 ** 29).split(",")`, `"a,b".split(",")`)}

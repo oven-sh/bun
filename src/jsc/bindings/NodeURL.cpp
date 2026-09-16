@@ -119,7 +119,7 @@ static String icuParsedHostToUnicode(const String& host)
         domain.convertTo16Bit();
     const auto span = domain.span16();
 
-    StringBuilder result;
+    StringBuilder result { OverflowPolicy::RecordOverflow };
     result.reserveCapacity(span.size());
     size_t labelStart = 0;
     while (true) {

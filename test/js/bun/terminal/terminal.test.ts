@@ -870,6 +870,49 @@ describe("Bun.Terminal", () => {
       const childSrc = /* js */ `
         const N = 4;
         let collected = 0;
+        // For every live object of a class: what refers to it, and the shortest chain from a GC root.
+        function retainers(className) {
+          const snap = require("bun:jsc").generateHeapSnapshotForDebugging();
+          const classOf = new Map();
+          for (let i = 0; i < snap.nodes.length; i += 7) classOf.set(snap.nodes[i], snap.nodeClassNames[snap.nodes[i + 2]]);
+          const incoming = new Map();
+          for (let i = 0; i < snap.edges.length; i += 4) {
+            const type = snap.edgeTypes[snap.edges[i + 2]];
+            const data = snap.edges[i + 3];
+            const name = type === "Index" ? "[" + data + "]" : type === "Internal" ? "<internal>" : String(snap.edgeNames[data]);
+            if (!incoming.has(snap.edges[i + 1])) incoming.set(snap.edges[i + 1], []);
+            incoming.get(snap.edges[i + 1]).push([snap.edges[i], name]);
+          }
+          const stride = snap.roots.length % 3 === 0 ? 3 : 2;
+          const roots = new Map();
+          for (let i = 0; i < snap.roots.length; i += stride) roots.set(snap.roots[i], String(snap.labels?.[snap.roots[i + 1]] ?? snap.roots[i + 1]));
+          const found = [];
+          for (const [id, name] of classOf) {
+            if (name !== className) continue;
+            const referrers = (incoming.get(id) ?? []).map(([from, edge]) => classOf.get(from) + "." + edge);
+            const seen = new Set([id]);
+            let frontier = [[id, className]];
+            let chain = null;
+            for (let depth = 0; depth < 14 && frontier.length && !chain; depth++) {
+              const next = [];
+              for (const [node, path] of frontier) {
+                if (roots.has(node)) {
+                  chain = "root(" + roots.get(node) + ") " + path;
+                  break;
+                }
+                for (const [from, edge] of incoming.get(node) ?? []) {
+                  if (seen.has(from)) continue;
+                  seen.add(from);
+                  next.push([from, classOf.get(from) + " ." + edge + " -> " + path]);
+                }
+              }
+              frontier = next;
+            }
+            found.push({ referrers, chain });
+          }
+          return found;
+        }
+
         // Which terminals are still held, and what write() did to each: printed when one is not collected.
         const held = new Set();
         const writes = [];
@@ -920,7 +963,7 @@ describe("Bun.Terminal", () => {
           Bun.gc(true);
           await new Promise(r => setImmediate(r));
         }
-        if (collected < N) console.error(JSON.stringify({ held: [...held], writes }));
+        if (collected < N) console.error(JSON.stringify({ held: [...held], writes, retainers: retainers("Terminal") }));
         console.log(JSON.stringify({ exits, collected }));
       `;
 

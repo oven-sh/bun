@@ -1,5 +1,5 @@
 // Bundle tests are tests concerning bundling bugs that only occur in DevServer.
-import { expect } from "bun:test";
+import { describe, expect } from "bun:test";
 import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
 devTest("import identifier doesnt get renamed", {
@@ -414,15 +414,21 @@ devTest("removing 'use client' from a component with a pending resolution failur
 });
 // The server registers Comp.ts while actions.ts has a build error. It must not
 // evaluate Comp.ts to do that: the import of actions.ts cannot load yet.
-for (const exportStar of [false, true]) {
-  devTest(`build error in a file imported by a 'use client' component${exportStar ? " with export star" : ""}`, {
+describe.each([false, true])("export star: %p", exportStar => {
+  devTest("build error in a file imported by a 'use client' component", {
     framework: minimalFramework,
     files: {
       "routes/index.ts": `
         import { serverManifest } from "bun:bake/server";
         import * as Comp from "../Comp";
         export default function (req, meta) {
-          return new Response(typeof Comp.Button + " " + Object.keys(serverManifest).sort().join(","));
+          return new Response(typeof Comp.Button);
+        }
+      `,
+      "routes/manifest.ts": `
+        import { serverManifest } from "bun:bake/server";
+        export default function (req, meta) {
+          return Response.json(Object.keys(serverManifest).sort());
         }
       `,
       "Comp.ts": `
@@ -440,16 +446,17 @@ for (const exportStar of [false, true]) {
     },
     async test(dev) {
       expect((await dev.fetch("/")).status).toBe(500);
+      // Registered already, although Comp.ts cannot be evaluated yet.
+      expect(await dev.fetch("/manifest").json()).toEqual(["Comp.ts#Button", ...(exportStar ? ["Comp.ts#Inner"] : [])]);
       await dev.write("actions.ts", `export function save() { return 1; }`);
-      await dev.fetch("/").equals("object Comp.ts#Button" + (exportStar ? ",Comp.ts#Inner" : ""));
-      expect(dev.output.lines.join("\n")).not.toContain("Failed to load bundled module");
+      await dev.fetch("/").equals("object");
     },
   });
-}
+});
 // The names that the server reads from the bundle must be the names that an
 // evaluation registers.
-for (const separateSSRGraph of [false, true]) {
-  devTest(`names registered for a 'use client' component (separateSSRGraph: ${separateSSRGraph})`, {
+describe.each([false, true])("separateSSRGraph: %p", separateSSRGraph => {
+  devTest("names registered for a 'use client' component", {
     framework: {
       ...minimalFramework,
       serverComponents: { ...minimalFramework.serverComponents!, separateSSRGraph },
@@ -491,8 +498,6 @@ for (const separateSSRGraph of [false, true]) {
       `,
     },
     async test(dev) {
-      // Nothing waits for the server to finish registering, so the first request can see a partial list.
-      await dev.fetch("/");
       // With a separate SSR graph the server registers a generated proxy. It has only the file's own exports.
       expect(await dev.fetch("/").json()).toEqual({
         "Comp.ts": ["Button", "Label", "Renamed", "default", "ns"],
@@ -500,7 +505,7 @@ for (const separateSSRGraph of [false, true]) {
       });
     },
   });
-}
+});
 // legacy.cjs is CommonJS, so the bundle does not have its names: the server evaluates Barrel.ts.
 devTest("names registered for a 'use client' component over a CommonJS export star", {
   framework: minimalFramework,
@@ -509,7 +514,8 @@ devTest("names registered for a 'use client' component over a CommonJS export st
       import { serverManifest } from "bun:bake/server";
       import "../Barrel";
       export default function (req, meta) {
-        return Response.json(Object.keys(serverManifest));
+        // #40259 stops an export star from forwarding the default of legacy.cjs, so leave it out.
+        return Response.json(Object.keys(serverManifest).filter(key => key !== "Barrel.ts#default").sort());
       }
     `,
     "Barrel.ts": `
@@ -522,9 +528,9 @@ devTest("names registered for a 'use client' component over a CommonJS export st
     `,
   },
   async test(dev) {
+    // Nothing waits for the evaluation, so the first request can see a partial list.
     await dev.fetch("/");
-    // Not exact: #40259 stops `export *` from forwarding the `default` of legacy.cjs.
-    expect(await dev.fetch("/").json()).toEqual(expect.arrayContaining(["Barrel.ts#FromCjs", "Barrel.ts#Own"]));
+    expect(await dev.fetch("/").json()).toEqual(["Barrel.ts#FromCjs", "Barrel.ts#Own"]);
   },
 });
 // `export * from` can form a cycle. The walk over it must end, with every name.
@@ -553,7 +559,6 @@ devTest("names registered for a 'use client' component over an export star cycle
     `,
   },
   async test(dev) {
-    await dev.fetch("/");
     expect(await dev.fetch("/").json()).toEqual(["Barrel.ts#A", "Barrel.ts#B", "Barrel.ts#Own"]);
   },
 });

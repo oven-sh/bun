@@ -1,7 +1,7 @@
 import { sleep } from "bun";
 import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, tls } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, tls } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import net from "node:net";
 import { Readable } from "node:stream";
@@ -834,7 +834,9 @@ describe("a pull() that outlives its own end() does not hold the request", () =>
   describe("end() parked on transport backpressure", () => {
     const payload = Buffer.alloc(32 * 1024 * 1024, "x");
 
-    test.each([
+    // Windows takes the first write of a response whole, whatever its size
+    // (250 MB to a client that is not reading), so one tryEnd() never parks.
+    test.skipIf(isWindows).each([
       ["in the first tick of pull()", false],
       ["from a later task", true],
     ] as const)("%s", async (_when, fromLaterTask) => {

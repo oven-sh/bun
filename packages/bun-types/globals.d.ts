@@ -1952,7 +1952,10 @@ interface BunFetchRequestInitTLS extends Bun.TLSOptions {
    *
    * @param hostname - The hostname of the server
    * @param cert - The certificate of the server
-   * @returns An error if the server is unauthorized, otherwise undefined
+   * @returns An error if the server is unauthorized, otherwise undefined. Any
+   * other truthy value also fails the request, and a `Promise` is one: the
+   * function cannot be `async`. A falsy value, `false` included, approves
+   * the certificate.
    */
   checkServerIdentity?: NonNullable<import("node:tls").ConnectionOptions["checkServerIdentity"]>;
 }

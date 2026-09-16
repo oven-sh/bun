@@ -929,6 +929,11 @@ devTest("request rejected with 413 before it is parked does not leave the route 
         return new Response('about');
       }
     `,
+    "routes/other.ts": `
+      export default function (req, meta) {
+        return new Response('other');
+      }
+    `,
     "bun.app.ts": `
       export default {
         maxRequestBodySize: 1024,
@@ -945,13 +950,18 @@ devTest("request rejected with 413 before it is parked does not leave the route 
       socket.on("data", chunk => {
         data += chunk;
         if (data.includes("\r\n")) {
-          socket.destroy();
           resolve(data.split("\r\n")[0]);
+          socket.destroy();
         }
       });
       socket.on("error", reject);
+      socket.on("close", () => reject(new Error("socket closed before a status line: " + JSON.stringify(data))));
     });
     expect(statusLine).toBe("HTTP/1.1 413 Request Entity Too Large");
+
+    // Without the fix, the 413 starts a bundle for /about that nothing waits for. A request for another route
+    // cannot be answered until that bundle ends, so after it the stray bundle is over and /about is stuck.
+    await dev.fetch("/other").equals("other");
 
     await dev.fetch("/about").equals("about");
     await dev.fetch("/about").equals("about");

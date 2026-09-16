@@ -849,8 +849,9 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // it's a stock lld, just newer, so non-LTO objects and nested cmake
   // deps link the same as before.
   //
-  // Tracked in workarounds.ts ("rust-lld-for-crosslang-lto") so this
-  // branch self-obsoletes once clang's LLVM catches up to rustc's.
+  // Dormant whenever clang's LLVM major is level with rustc's (as at the
+  // LLVM 23 bump); it fires again when the pinned nightly moves to the next
+  // LLVM ahead of clang.
   let ld = toolchain.ld;
   // Shared with the darwin-cross ld64 swap below: for darwin targets
   // findRustLld() resolves rustc's `gcc-ld/ld64.lld` (the Mach-O flavor of
@@ -1147,12 +1148,12 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
       osxSysroot = resolveMacosSdkPath(partial.macosSdk, cacheDir, cwd);
       if (toolchain.ld64Lld === undefined) {
         throw new BuildError("Cross-compiling for macOS requires ld64.lld (lld's Mach-O port)", {
-          hint: "Install lld for the same LLVM version as clang: apt install lld-21 (or equivalent).",
+          hint: "Install lld for the same LLVM version as clang: apt install lld-23 (or equivalent).",
         });
       }
       if (toolchain.llvmStrip === undefined) {
         throw new BuildError("Cross-compiling for macOS requires llvm-strip (GNU strip can't read Mach-O)", {
-          hint: "Install llvm for the same version as clang: apt install llvm-21 (or equivalent).",
+          hint: "Install llvm for the same version as clang: apt install llvm-23 (or equivalent).",
         });
       }
       if (toolchain.clangResourceDir === undefined) {
@@ -1162,7 +1163,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
       }
       if (toolchain.dsymutil === undefined) {
         throw new BuildError("Cross-compiling for macOS requires LLVM dsymutil", {
-          hint: "Install llvm for the same version as clang: apt install llvm-21 (or equivalent).",
+          hint: "Install llvm for the same version as clang: apt install llvm-23 (or equivalent).",
         });
       }
       // The Mach-O flavor of whichever lld the rest of the config picked.

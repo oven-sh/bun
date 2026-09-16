@@ -1,6 +1,9 @@
 import { gunzipSync, gzipSync, type Server } from "bun";
+import { fetchH3Internals } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir, tls } from "harness";
+import { createPrivateKey } from "node:crypto";
+import { listen } from "node:quic";
 
 // In-process server with `http1: false` so the build under test binds UDP only.
 // A fetch that silently fell back to HTTP/1.1 would get ECONNREFUSED, which
@@ -8,6 +11,7 @@ import { bunEnv, bunExe, tempDir, tls } from "harness";
 let server: Server;
 let base: string;
 const big = Buffer.alloc(256 * 1024, "abcdefghijklmnop");
+const { liveCounts } = fetchH3Internals;
 
 beforeAll(async () => {
   server = Bun.serve({
@@ -334,6 +338,23 @@ describe("fetch protocol: http3", () => {
     }
   });
 
+  test("a FetchSession has its own connection, and close() closes it once idle", async () => {
+    using one = new Bun.FetchSession();
+    using other = new Bun.FetchSession();
+    const text = (session: Bun.FetchSession) => fetch(`${base}/hello`, { ...h3, session }).then(r => r.text());
+    const before = liveCounts().sessions;
+    expect(await text(one)).toBe("hello over h3");
+    expect(await text(one)).toBe("hello over h3");
+    expect(liveCounts().sessions).toBe(before + 1);
+    expect(await text(other)).toBe("hello over h3");
+    expect(liveCounts().sessions).toBe(before + 2);
+    one.close();
+    while (liveCounts().sessions !== before + 1) await new Promise(resolve => setImmediate(resolve));
+    // `other` still has its connection.
+    expect(await text(other)).toBe("hello over h3");
+    expect(liveCounts().sessions).toBe(before + 1);
+  });
+
   test("50 concurrent requests", async () => {
     const n = 50;
     const results = await Promise.all(
@@ -588,6 +609,38 @@ describe("fetch protocol: http3", () => {
     expect(assembled.endsWith("[end]")).toBe(true);
   });
 
+  // The first chunk waits until the handler runs, so the request headers have
+  // to leave on their own. A client that holds them until it has body bytes
+  // never reaches the handler, and the test times out. The two requests cover
+  // a new connection and a reused one.
+  test("bidi: the request headers leave before the first body chunk exists", async () => {
+    let handlerRuns = Promise.withResolvers<void>();
+    using origin = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      http1: false,
+      async fetch(req) {
+        handlerRuns.resolve();
+        return new Response("got:" + (await req.text()));
+      },
+    });
+    const bodies: string[] = [];
+    for (const chunk of ["first-connection", "same-connection"]) {
+      handlerRuns = Promise.withResolvers<void>();
+      const body = new ReadableStream({
+        async pull(ctrl) {
+          await handlerRuns.promise;
+          ctrl.enqueue(chunk);
+          ctrl.close();
+        },
+      });
+      const res = await fetch(`https://127.0.0.1:${origin.port}/`, { ...h3, method: "POST", body });
+      bodies.push(await res.text());
+    }
+    expect(bodies).toEqual(["got:first-connection", "got:same-connection"]);
+  });
+
   test("bidi: type:direct on both sides", async () => {
     const piece = Buffer.alloc(4096, "D");
     const body = new ReadableStream({
@@ -738,6 +791,50 @@ describe("aborted upload", () => {
       expect(await held.text()).toBe("first;last;");
     } finally {
       holdRelease.resolve();
+    }
+  });
+});
+
+// A response can carry any number of 1xx header blocks ahead of the final one
+// (RFC 9114 section 4.1). Bun.serve sends one at most, so a node:quic server is
+// the origin here. It writes every block in one call, so they reach the client
+// in one STREAM frame.
+describe("interim responses ahead of the final response", () => {
+  const encoder = new TextEncoder();
+  const listenOrigin = () =>
+    listen(
+      async (session: any) => {
+        session.onstream = (stream: any) => stream.closed.catch(() => {});
+        await session.closed.catch(() => {});
+      },
+      {
+        sni: { "*": { keys: [createPrivateKey(tls.key)], certs: [Buffer.from(tls.cert)] } },
+        transportParams: { maxIdleTimeout: 5 },
+        onheaders(this: any, received: Record<string, string>) {
+          this.sendInformationalHeaders({ ":status": "100" });
+          this.sendInformationalHeaders({ ":status": "103", link: "</style.css>; rel=preload" });
+          if (received[":path"] === "/no-body") {
+            this.sendHeaders({ ":status": "204", "x-final": "yes" }, { terminal: true });
+            return;
+          }
+          this.sendHeaders({ ":status": "200", "x-final": "yes" });
+          this.writer.writeSync(encoder.encode("hello"));
+          this.writer.endSync();
+        },
+      },
+    );
+
+  test.each([
+    ["/no-body", { status: 204, final: "yes", body: "" }],
+    ["/body", { status: 200, final: "yes", body: "hello" }],
+  ])("100 and 103, then the final response of %s", async (path, expected) => {
+    const origin = await listenOrigin();
+    try {
+      const res = await fetch(`https://127.0.0.1:${origin.address.port}${path}`, h3);
+      expect({ status: res.status, final: res.headers.get("x-final"), body: await res.text() }).toEqual(expected);
+    } finally {
+      // Not close(): it waits for the session that fetch() keeps in its pool.
+      await origin.destroy();
     }
   });
 });

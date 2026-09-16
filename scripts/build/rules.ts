@@ -52,6 +52,6 @@ export function registerAllRules(n: Ninja, cfg: Config): void {
   // rust_build
   registerRustRules(n, cfg);
 
-  // shim_dylib (darwin+asan only)
+  // host_tool_cc (darwin cross), shim_crt_decompress (musl + rust-lld)
   registerShimRules(n, cfg);
 }

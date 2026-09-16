@@ -323,7 +323,11 @@ impl Loader {
     }
 
     pub fn get_http_proxy_for(&self, url: &URL<'_>) -> Option<URL<'_>> {
-        self.get_http_proxy(url.is_http(), Some(url.hostname), Some(url.host))
+        let proxy = URL::parse(self.proxy_env_for_scheme(url.is_http())?);
+        if self.is_no_proxy(url.hostname, url.get_port_auto()) {
+            return None;
+        }
+        Some(proxy)
     }
 
     pub fn has_http_proxy(&self) -> bool {
@@ -331,118 +335,60 @@ impl Loader {
             || self.has(b"HTTP_PROXY")
             || self.has(b"https_proxy")
             || self.has(b"HTTPS_PROXY")
+            || self.all_proxy().is_some()
     }
 
-    /// Get proxy URL for HTTP/HTTPS requests, respecting NO_PROXY.
-    /// `hostname` is the host without port (e.g., "localhost")
-    /// `host` is the host with port if present (e.g., "localhost:3000")
-    pub fn get_http_proxy(
-        &self,
-        is_http: bool,
-        hostname: Option<&[u8]>,
-        host: Option<&[u8]>,
-    ) -> Option<URL<'_>> {
-        // TODO: When Web Worker support is added, make sure to intern these strings
-        let mut http_proxy: Option<URL<'_>> = None;
+    /// `http_proxy` / `HTTP_PROXY` (or the `https` pair), falling back to
+    /// `all_proxy` / `ALL_PROXY`.
+    pub fn proxy_env_for_scheme(&self, is_http: bool) -> Option<&[u8]> {
+        self.scheme_proxy(is_http).or_else(|| self.all_proxy())
+    }
 
-        let proxy = if is_http {
+    /// `[proxy_env_for_scheme(true), proxy_env_for_scheme(false)]`.
+    pub fn proxy_env_for_both_schemes(&self) -> [Option<&[u8]>; 2] {
+        let (http, https) = (self.scheme_proxy(true), self.scheme_proxy(false));
+        if http.is_some() && https.is_some() {
+            return [http, https];
+        }
+        let all = self.all_proxy();
+        [http.or(all), https.or(all)]
+    }
+
+    fn scheme_proxy(&self, is_http: bool) -> Option<&[u8]> {
+        let specific = if is_http {
             self.get_lower_then_upper(b"http_proxy", b"HTTP_PROXY")
         } else {
             self.get_lower_then_upper(b"https_proxy", b"HTTPS_PROXY")
         };
-        if let Some(p) = proxy {
-            if !Self::is_emptyish(p) {
-                http_proxy = Some(URL::parse(p));
-            }
-        }
-
-        if http_proxy.is_some() && hostname.is_some() {
-            if self.is_no_proxy(hostname, host) {
-                return None;
-            }
-        }
-        http_proxy
+        specific.filter(|p| !Self::is_emptyish(p))
     }
 
-    /// Returns true if the given hostname/host should bypass the proxy
-    /// according to the NO_PROXY / no_proxy environment variable.
-    pub fn is_no_proxy(&self, hostname: Option<&[u8]>, host: Option<&[u8]>) -> bool {
-        // NO_PROXY filter
-        // See the syntax at https://about.gitlab.com/blog/2021/01/27/we-need-to-talk-no-proxy/
-        let Some(hn) = hostname else { return false };
+    /// The proxy for every target scheme. It commonly names a SOCKS proxy,
+    /// which the HTTP client cannot speak, so a value with some other scheme
+    /// than `http:` / `https:` is left alone. A value with no scheme is an
+    /// HTTP proxy, as for curl and for `HTTP_PROXY`: going direct instead would
+    /// silently bypass the proxy, where a wrong guess fails loudly.
+    fn all_proxy(&self) -> Option<&[u8]> {
+        let value = self
+            .get_lower_then_upper(b"all_proxy", b"ALL_PROXY")
+            .filter(|p| !Self::is_emptyish(p))?;
+        let url = URL::parse(value);
+        (url.protocol.is_empty() || url.has_http_like_protocol()).then_some(value)
+    }
 
-        let Some(no_proxy_text) = self.get_lower_then_upper(b"no_proxy", b"NO_PROXY") else {
-            return false;
-        };
-        if Self::is_emptyish(no_proxy_text) {
-            return false;
-        }
+    /// `no_proxy`, else `NO_PROXY`: one list, the lowercase name first, as curl,
+    /// node and undici read it.
+    pub fn no_proxy_list(&self) -> &[u8] {
+        let read = |name: &[u8]| self.get(name).filter(|v| !Self::is_emptyish(v));
+        read(b"no_proxy")
+            .or_else(|| read(b"NO_PROXY"))
+            .unwrap_or(b"")
+    }
 
-        for no_proxy_item in strings::split(no_proxy_text, b",") {
-            let mut no_proxy_entry = strings::trim(no_proxy_item, &strings::WHITESPACE_CHARS);
-            if no_proxy_entry.is_empty() {
-                continue;
-            }
-            if no_proxy_entry == b"*" {
-                return true;
-            }
-            // strips .
-            if strings::starts_with_char(no_proxy_entry, b'.') {
-                no_proxy_entry = &no_proxy_entry[1..];
-                if no_proxy_entry.is_empty() {
-                    continue;
-                }
-            }
-
-            // Determine if entry contains a port or is an IPv6 address
-            // IPv6 addresses contain multiple colons (e.g., "::1", "2001:db8::1")
-            // Bracketed IPv6 with port: "[::1]:8080"
-            // Host with port: "localhost:8080" (single colon)
-            let colon_count = strings::count_char(no_proxy_entry, b':');
-            let is_bracketed_ipv6 = strings::starts_with_char(no_proxy_entry, b'[');
-            let has_port = 'blk: {
-                if is_bracketed_ipv6 {
-                    // Bracketed IPv6: check for "]:port" pattern
-                    if strings::index_of(no_proxy_entry, b"]:").is_some() {
-                        break 'blk true;
-                    }
-                    break 'blk false;
-                } else if colon_count == 1 {
-                    // Single colon means host:port (not IPv6)
-                    break 'blk true;
-                }
-                // Multiple colons without brackets = bare IPv6 literal (no port)
-                break 'blk false;
-            };
-
-            if has_port {
-                // Entry has a port, do exact match against host:port
-                if let Some(h) = host {
-                    if strings::eql_case_insensitive_ascii(h, no_proxy_entry, true) {
-                        return true;
-                    }
-                }
-            } else {
-                // Entry is hostname/IPv6 only, match exact or dot-boundary suffix (case-insensitive)
-                let entry_len = no_proxy_entry.len();
-                if hn.len() == entry_len {
-                    if strings::eql_case_insensitive_ascii(hn, no_proxy_entry, true) {
-                        return true;
-                    }
-                } else if hn.len() > entry_len
-                    && hn[hn.len() - entry_len - 1] == b'.'
-                    && strings::eql_case_insensitive_ascii(
-                        &hn[hn.len() - entry_len..],
-                        no_proxy_entry,
-                        true,
-                    )
-                {
-                    return true;
-                }
-            }
-        }
-
-        false
+    /// Returns true if `hostname` on `port` should bypass the proxy according
+    /// to the no_proxy / NO_PROXY environment variable.
+    pub fn is_no_proxy(&self, hostname: &[u8], port: u16) -> bool {
+        crate::no_proxy::matches(self.no_proxy_list(), hostname, port)
     }
 
     pub fn load_ccache_path(&mut self, fs: &bun_paths::fs::FileSystem) {

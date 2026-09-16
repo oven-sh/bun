@@ -350,18 +350,19 @@ test("a short console label of each encoding converts as before", async () => {
   });
 });
 
-// A user or group name that bun looks up went to getpwnam_r / getgrnam_r through `utf8()` as well. A passwd or group entry has to
-// fit in the 8192 byte buffer that the lookup fills, so a longer name cannot match, and it no longer reaches the
-// lookup. Where nss-systemd is configured, a name of 4 MiB aborted the process inside the lookup
-// (`Assertion '_nn_ <= ALLOCA_MAX' failed`), long before the 2**30 characters that `utf8()` asserts on.
+// A user or group name went to a C API through `utf8()` as well. A passwd or group entry fits in the 8192 byte
+// buffer that the lookup fills, and its name has no NUL, so no other name can match, and such a name no longer
+// reaches the lookup. Where nss-systemd is configured, a name of 4 MiB aborted the process inside the lookup
+// (`Assertion '_nn_ <= ALLOCA_MAX' failed`), long before the 2**30 characters that `utf8()` asserts on. A C
+// API stops at a NUL, so "daemon\0suffix" named the user and the group "daemon", which every POSIX system has.
 test.skipIf(isWindows)(
-  "a user or group name too long for a passwd or group entry is an unknown credential",
+  "a user or group name that cannot be in a passwd or group entry is an unknown credential",
   async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
-        `
+        String.raw`
         const cases = {
           "setuid": name => process.setuid(name),
           "seteuid": name => process.seteuid(name),
@@ -370,13 +371,16 @@ test.skipIf(isWindows)(
           "setgroups": name => process.setgroups([name]),
           "initgroups extraGroup": name => process.initgroups(0, name),
         };
-        for (const length of [8192, 4 * 1024 * 1024]) {
-          for (const [key, run] of Object.entries(cases)) {
-            try {
-              console.log(key + ": returned " + run("q".repeat(length)));
-            } catch (e) {
-              console.log(key + ": " + e.code + ": " + e.message.replace(/q+$/, match => "q x " + match.length));
-            }
+        const names = { "8192 characters": "q".repeat(8192), "4 MiB": "q".repeat(4 * 1024 * 1024), "NUL": "daemon\0suffix" };
+        // A string user goes to initgroups(3) as it is, so only the NUL applies to it.
+        const rows = Object.keys(names).flatMap(kind => Object.keys(cases).map(key => [kind, key, cases[key]]));
+        rows.push(["NUL", "initgroups user", name => process.initgroups(name, 0)]);
+        for (const [kind, key, run] of rows) {
+          try {
+            console.log(kind + ", " + key + ": returned " + run(names[kind]));
+          } catch (e) {
+            const message = e.message.replace(/q+$/, match => "q x " + match.length).replace("\0", "\\0");
+            console.log(kind + ", " + key + ": " + e.code + ": " + message);
           }
         }
       `,
@@ -386,16 +390,21 @@ test.skipIf(isWindows)(
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    const expected = (length: number) => [
-      `setuid: ERR_UNKNOWN_CREDENTIAL: User identifier does not exist: q x ${length}`,
-      `seteuid: ERR_UNKNOWN_CREDENTIAL: User identifier does not exist: q x ${length}`,
-      `setgid: ERR_UNKNOWN_CREDENTIAL: Group identifier does not exist: q x ${length}`,
-      `setegid: ERR_UNKNOWN_CREDENTIAL: Group identifier does not exist: q x ${length}`,
-      `setgroups: ERR_UNKNOWN_CREDENTIAL: Group identifier does not exist: q x ${length}`,
-      `initgroups extraGroup: ERR_UNKNOWN_CREDENTIAL: Group identifier does not exist: q x ${length}`,
+    const expected = (kind: string, name: string) => [
+      `${kind}, setuid: ERR_UNKNOWN_CREDENTIAL: User identifier does not exist: ${name}`,
+      `${kind}, seteuid: ERR_UNKNOWN_CREDENTIAL: User identifier does not exist: ${name}`,
+      `${kind}, setgid: ERR_UNKNOWN_CREDENTIAL: Group identifier does not exist: ${name}`,
+      `${kind}, setegid: ERR_UNKNOWN_CREDENTIAL: Group identifier does not exist: ${name}`,
+      `${kind}, setgroups: ERR_UNKNOWN_CREDENTIAL: Group identifier does not exist: ${name}`,
+      `${kind}, initgroups extraGroup: ERR_UNKNOWN_CREDENTIAL: Group identifier does not exist: ${name}`,
     ];
     expect({ stdout: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
-      stdout: [...expected(8192), ...expected(4 * 1024 * 1024)],
+      stdout: [
+        ...expected("8192 characters", "q x 8192"),
+        ...expected("4 MiB", `q x ${4 * 1024 * 1024}`),
+        ...expected("NUL", String.raw`daemon\0suffix`),
+        String.raw`NUL, initgroups user: ERR_UNKNOWN_CREDENTIAL: User identifier does not exist: daemon\0suffix`,
+      ],
       stderr: "",
       exitCode: 0,
     });

@@ -3379,8 +3379,8 @@ static JSValue maybe_uid_by_name(JSC::ThrowScope& throwScope, JSGlobalObject* gl
     struct passwd* pp = nullptr;
     char buf[8192];
 
-    // An entry has to fit in `buf`, name included, so a longer name cannot match. nss-systemd aborts the process on one of 4 MiB.
-    if (str.length() < sizeof(buf)) {
+    // An entry fits in `buf`, name included, and its name has no NUL, so no other name can match. nss-systemd aborts the process on a name of 4 MiB.
+    if (str.length() < sizeof(buf) && !str.contains(static_cast<char16_t>(0))) {
         auto utf8 = str.utf8();
         if (getpwnam_r(utf8.data(), &pwd, buf, sizeof(buf), &pp) == 0 && pp != nullptr) {
             return jsNumber(pp->pw_uid);
@@ -3402,8 +3402,8 @@ static JSValue maybe_gid_by_name(JSC::ThrowScope& throwScope, JSGlobalObject* gl
     struct group* pp = nullptr;
     char buf[8192];
 
-    // A name that does not fit in `buf` cannot match: see maybe_uid_by_name.
-    if (str.length() < sizeof(buf)) {
+    // A name that cannot be in an entry cannot match: see maybe_uid_by_name.
+    if (str.length() < sizeof(buf) && !str.contains(static_cast<char16_t>(0))) {
         auto utf8 = str.utf8();
         if (getgrnam_r(utf8.data(), &pwd, buf, sizeof(buf), &pp) == 0 && pp != nullptr) {
             return jsNumber(pp->gr_gid);
@@ -3586,6 +3586,11 @@ JSC_DEFINE_HOST_FUNCTION(Process_functioninitgroups, (JSGlobalObject * globalObj
     if (user.isString()) {
         auto str = user.getString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
+        // initgroups(3) would stop at a NUL and act on the user that the prefix names.
+        if (str.contains(static_cast<char16_t>(0))) [[unlikely]] {
+            throwUnknownCredential(scope, globalObject, "User identifier does not exist: "_s, str);
+            return {};
+        }
         userNameUTF8 = Bun::tryUTF8(globalObject, scope, str);
         RETURN_IF_EXCEPTION(scope, {});
         userName = userNameUTF8.data();

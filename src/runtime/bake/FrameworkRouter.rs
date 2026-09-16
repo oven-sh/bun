@@ -30,8 +30,7 @@ pub type OpaqueFileId = bun_core::GenericIndex<u32, OpaqueFileIdMarker>;
 pub type OpaqueFileIdOptional = Option<OpaqueFileId>;
 
 pub struct FrameworkRouter {
-    /// Absolute path to the project root. It only labels files in route
-    /// errors. A `Type::abs_root` may be outside it.
+    /// Absolute project root. It only labels files in errors. A `Type::abs_root` may be outside it.
     pub(crate) root: Box<[u8]>,
     pub(crate) types: Box<[Type]>,
     pub(crate) routes: Vec<Route>,
@@ -1585,8 +1584,7 @@ impl FrameworkRouter {
                         let t = &self.types[t_index.get() as usize];
                         let abs_path = fs_ref.abs(&[file.dir, file.base()]);
 
-                        // The route pattern is the path below this type's root,
-                        // which may be outside `self.root`.
+                        // Pattern path: relative to this type's root, which may be outside `self.root`.
                         let mut rel_path_buf = bun_paths::path_buffer_pool::get();
                         let rel_path_len = 1 + paths::resolve_path::relative_normalized_buf::<
                             paths::platform::Auto,
@@ -1601,26 +1599,24 @@ impl FrameworkRouter {
                         );
                         let rel_path: &[u8] = &rel_path_buf[0..rel_path_len];
 
-                        // Errors label the file relative to the project root. Every segment of
-                        // `self.root` can become "../", so this has the bound of
-                        // `DevServer::relative_path`. Past it, `rel_path` is the label.
+                        // Each segment of `self.root` can become "../": the bound of `DevServer::relative_path`.
+                        let label_fits = abs_path.len() + self.root.len() * 2 < MAX_PATH_BYTES;
                         let mut full_rel_path_buf = bun_paths::path_buffer_pool::get();
-                        let full_rel_path: &[u8] =
-                            if abs_path.len() + self.root.len() * 2 >= MAX_PATH_BYTES {
-                                rel_path
-                            } else {
-                                let len = paths::resolve_path::relative_normalized_buf::<
-                                    paths::platform::Auto,
-                                    true,
-                                >(
-                                    &mut full_rel_path_buf[..], &self.root, abs_path
-                                )
-                                .len();
-                                paths::resolve_path::platform_to_posix_in_place(
-                                    &mut full_rel_path_buf[0..len],
-                                );
-                                &full_rel_path_buf[0..len]
-                            };
+                        let full_rel_path: &[u8] = if label_fits {
+                            let len = paths::resolve_path::relative_normalized_buf::<
+                                paths::platform::Auto,
+                                true,
+                            >(
+                                &mut full_rel_path_buf[..], &self.root, abs_path
+                            )
+                            .len();
+                            paths::resolve_path::platform_to_posix_in_place(
+                                &mut full_rel_path_buf[0..len],
+                            );
+                            &full_rel_path_buf[0..len]
+                        } else {
+                            rel_path
+                        };
 
                         let mut log = TinyLog::empty();
                         // The arena is reset at the end of every arm via

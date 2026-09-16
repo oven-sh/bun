@@ -421,6 +421,30 @@ impl<'a> URL<'a> {
         strings::eql_case_insensitive_ascii(self.protocol, b"http", true)
     }
 
+    /// The schemes WHATWG calls special: a `\` ends the authority of these, as a `/` does.
+    fn has_special_scheme(&self) -> bool {
+        [&b"http"[..], b"https", b"ws", b"wss", b"ftp", b"file"]
+            .into_iter()
+            .any(|scheme| strings::eql_case_insensitive_ascii(self.protocol, scheme, true))
+    }
+
+    /// The `@` that ends the userinfo in `after_scheme`, the text after `scheme://`: the last
+    /// `@` of the authority, which ends where `new URL()` ends it.
+    fn userinfo_end(&self, after_scheme: &[u8]) -> Option<usize> {
+        let backslash_ends_it = self.has_special_scheme();
+        let mut last_at = None;
+        // One pass over the authority, which is short.
+        for (i, &byte) in after_scheme.iter().enumerate() {
+            match byte {
+                b'@' => last_at = Some(i),
+                b'/' | b'?' | b'#' => break,
+                b'\\' if backslash_ends_it => break,
+                _ => {}
+            }
+        }
+        last_at
+    }
+
     pub fn display_hostname(&self) -> &[u8] {
         if !self.hostname.is_empty() {
             self.hostname
@@ -481,13 +505,11 @@ impl<'a> URL<'a> {
         if self.username.is_empty() && self.password.is_empty() {
             return Cow::Borrowed(self.href);
         }
-        // The userinfo ends at the last `@` of the authority, as `parse` reads it.
         let Some(authority) = strings::index_of(self.href, b"://").map(|i| i + 3) else {
             return Cow::Borrowed(self.href);
         };
         let rest = &self.href[authority..];
-        let end = strings::index_of_any(rest, b"/?#").unwrap_or(rest.len());
-        let Some(at) = strings::last_index_of_char(&rest[..end], b'@') else {
+        let Some(at) = self.userinfo_end(rest) else {
             return Cow::Borrowed(self.href);
         };
         let mut out = Vec::with_capacity(self.href.len() - at - 1);
@@ -681,17 +703,7 @@ impl<'a> URL<'a> {
                     // what precedes the last `@` of the authority.
                     if offset > 0 {
                         let rest = &base[offset as usize..];
-                        // One pass over the authority, which is short: the last
-                        // `@` before the first `/`, `?` or `#` ends the userinfo.
-                        let mut last_at = None;
-                        for (i, &byte) in rest.iter().enumerate() {
-                            match byte {
-                                b'@' => last_at = Some(i),
-                                b'/' | b'?' | b'#' => break,
-                                _ => {}
-                            }
-                        }
-                        if let Some(at) = last_at {
+                        if let Some(at) = url.userinfo_end(rest) {
                             let userinfo = &rest[..at];
                             (url.username, url.password) =
                                 strings::split_once_char(userinfo, b':').unwrap_or((userinfo, b""));
@@ -796,16 +808,17 @@ impl<'a> URL<'a> {
         }
         for i in 0..str.len() {
             match str[i] {
-                b'/' | b'?' | b'%' => {
-                    return None;
-                }
+                // RFC 3986 §3.1: the scheme ends at the first `:`, and holds only these bytes.
+                // `new URL()` reads it the same way, so neither can find a host the other misses.
                 b':' => {
                     if i + 3 <= str.len() && str[i + 1] == b'/' && str[i + 2] == b'/' {
                         self.protocol = &str[0..i];
                         return Some(u32::try_from(i + 3).expect("int cast"));
                     }
+                    return None;
                 }
-                _ => {}
+                b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'+' | b'-' | b'.' => {}
+                _ => return None,
             }
         }
 

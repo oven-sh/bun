@@ -2467,6 +2467,46 @@ describe("proxy resolution", () => {
       ["http://example.test/#a@b", "", "", "example.test", ""],
       ["http://example.test:8080/user@other.test:9090", "", "", "example.test", "8080"],
       ["http://user:pass@example.test/path@other.test", "user", "pass", "example.test", ""],
+      // A `\` ends the authority of http, https, ws, wss, ftp and file, as it does for `new URL()`,
+      // so an `@` after it is not userinfo. `hostname` runs on to the next `/`: no name that resolves.
+      [
+        String.raw`http://user:pass@example.test\x@other.test/`,
+        "user",
+        "pass",
+        String.raw`example.test\x@other.test`,
+        "",
+      ],
+      [String.raw`http://a:b@c\@d/`, "a", "b", String.raw`c\@d`, ""],
+      [String.raw`http://example.test\@other.test/`, "", "", String.raw`example.test\@other.test`, ""],
+      [
+        String.raw`HTTPS://user:pass@example.test\@other.test/`,
+        "user",
+        "pass",
+        String.raw`example.test\@other.test`,
+        "",
+      ],
+      [String.raw`ws://user:pass@example.test\@other.test/`, "user", "pass", String.raw`example.test\@other.test`, ""],
+      [String.raw`wss://user:pass@example.test\@other.test/`, "user", "pass", String.raw`example.test\@other.test`, ""],
+      [String.raw`ftp://user:pass@example.test\@other.test/`, "user", "pass", String.raw`example.test\@other.test`, ""],
+      [String.raw`file://example.test\@other.test/`, "", "", String.raw`example.test\@other.test`, ""],
+      [String.raw`http://example.test\\@other.test/`, "", "", String.raw`example.test\\@other.test`, ""],
+      [`http://example.test\t\\@other.test/`, "", "", `example.test\t\\@other.test`, ""],
+      [String.raw`http://example.test\@[::1]:8080/`, "", "", String.raw`example.test\@[`, ":1]:8080"],
+      [String.raw`http://u:p@[::1]:80\@other.test:8080/sub`, "u", "p", "[::1]", String.raw`80\@other.test:8080`],
+      // In any other scheme a `\` is part of the userinfo, again as for `new URL()`.
+      [
+        String.raw`socks5://user:pass@example.test\x@other.test/`,
+        "user",
+        String.raw`pass@example.test\x`,
+        "other.test",
+        "",
+      ],
+      // The scheme ends at the first `:` and holds only the bytes RFC 3986 allows, so the `://` of
+      // a later one starts no authority. `new URL()` reads `other.test` as the host of these two,
+      // and the name this reads is one no user can have written down.
+      ["http:other.test://example.test/", "", "", "http", "other.test:"],
+      [String.raw`http:\other.test://example.test/`, "", "", "http", String.raw`\other.test:`],
+      ["git+ssh://user@example.test/repo.git", "user", "", "example.test", ""],
       // IPv6 hosts keep their brackets in `hostname`
       ["http://[::1]:3000/", "", "", "[::1]", "3000"],
       ["http://user:pass@[::1]:3000/", "user", "pass", "[::1]", "3000"],

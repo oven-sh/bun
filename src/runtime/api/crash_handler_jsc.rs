@@ -219,8 +219,9 @@ pub(crate) mod js_bindings {
     fn js_get_feature_data(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         let obj = JSValue::create_empty_object(global, 5);
         let list = analytics::PACKED_FEATURES_LIST;
+        // Not `static_`: a feature can be named like a common string ("s3").
         let array = JSValue::create_array_from_iter(global, list.iter(), |feature| {
-            BunString::static_(feature).to_js(global)
+            BunString::clone_latin1(feature.as_ref()).into_js(global)
         })?;
         obj.put(global, "features", array);
         obj.put(

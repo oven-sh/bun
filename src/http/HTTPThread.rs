@@ -103,11 +103,16 @@ pub struct HttpThread {
     pub(crate) queued_writes: Vec<WriteMessage>,
     pub(crate) queued_receive_resumes: Vec<u32>,
     pub(crate) queued_cert_check_resumes: Vec<CertCheckResumeMessage>,
+    /// `PoolOptions::id`s whose idle connections to close. Rare:
+    /// `has_queued_pool_closes` lets a tick skip the lock.
+    pub(crate) queued_pool_closes: Vec<u64>,
+    pub(crate) has_queued_pool_closes: AtomicBool,
 
     pub(crate) queued_shutdowns_lock: Mutex,
     pub(crate) queued_writes_lock: Mutex,
     pub(crate) queued_receive_resumes_lock: Mutex,
     pub(crate) queued_cert_check_resumes_lock: Mutex,
+    pub(crate) queued_pool_closes_lock: Mutex,
 
     /// Refs released on the next loop tick rather than inside the socket
     /// callback that gave them up.
@@ -168,10 +173,13 @@ impl HttpThread {
             queued_writes: Vec::new(),
             queued_receive_resumes: Vec::new(),
             queued_cert_check_resumes: Vec::new(),
+            queued_pool_closes: Vec::new(),
+            has_queued_pool_closes: AtomicBool::new(false),
             queued_shutdowns_lock: Mutex::new(),
             queued_writes_lock: Mutex::new(),
             queued_receive_resumes_lock: Mutex::new(),
             queued_cert_check_resumes_lock: Mutex::new(),
+            queued_pool_closes_lock: Mutex::new(),
             queued_threadlocal_proxy_derefs: Vec::new(),
             dead_ssl_contexts: Vec::new(),
             has_awoken: AtomicBool::new(false),
@@ -717,6 +725,28 @@ impl HttpThread {
         }
     }
 
+    fn drain_queued_pool_closes(&mut self) {
+        // Read before writing so an idle tick leaves the cache line shared. The
+        // flag is a hint: the queue is published by its lock, and the producer
+        // wakes the loop after raising the flag.
+        while self.has_queued_pool_closes.load(Ordering::Relaxed)
+            && self.has_queued_pool_closes.swap(false, Ordering::Acquire)
+        {
+            let queued = {
+                let _guard = self.queued_pool_closes_lock.lock_guard();
+                core::mem::take(&mut self.queued_pool_closes)
+            };
+            for pool_id in queued {
+                self.http_context.close_idle_sockets(pool_id);
+                self.https_context.close_idle_sockets(pool_id);
+                for entry in custom_ssl_context_map().values_mut() {
+                    entry.ctx_mut().close_idle_sockets(pool_id);
+                }
+                h3::ClientContext::close_idle_sessions(pool_id);
+            }
+        }
+    }
+
     fn drain_queued_receive_resumes(&mut self) {
         loop {
             let queued = {
@@ -774,6 +804,7 @@ impl HttpThread {
         // turn removes the abort-tracker entry first, so the resume becomes a
         // no-op and the request is never transmitted after a same-tick abort.
         self.drain_queued_cert_check_resumes();
+        self.drain_queued_pool_closes();
         h3::PendingConnect::drain_resolved();
 
         self.queued_threadlocal_proxy_derefs.clear();
@@ -898,6 +929,16 @@ impl HttpThread {
                 async_http_id: http.async_http_id,
             });
         }
+        self.wakeup();
+    }
+
+    /// Close the idle keep-alive connections of fetch session `pool_id`.
+    pub fn schedule_pool_close(&mut self, pool_id: u64) {
+        {
+            let _guard = self.queued_pool_closes_lock.lock_guard();
+            self.queued_pool_closes.push(pool_id);
+        }
+        self.has_queued_pool_closes.store(true, Ordering::Release);
         self.wakeup();
     }
 
@@ -1329,6 +1370,11 @@ static SHUTDOWN_DONE: (bun_threading::Guarded<bool>, bun_threading::Condvar) = (
     bun_threading::Guarded::new(false),
     bun_threading::Condvar::new(),
 );
+
+/// Whether [`init`] has run; [`crate::http_thread`] panics before that.
+pub fn is_initialized() -> bool {
+    crate::HTTP_THREAD_INIT.load(Ordering::Acquire)
+}
 
 /// Called from `bun_jsc::VirtualMachine::global_exit()` on the JS thread,
 /// before `~VM`. Asks the HTTP daemon thread to reclaim every in-flight

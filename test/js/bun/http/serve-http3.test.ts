@@ -1540,6 +1540,36 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
         await server.stop();
       });
     });
+
+    // The stream close is the only notification left when the pump promise
+    // never settles, so this case cannot be handled in its resolve reaction.
+    // The end comes from a later microtask: an end inside the first pull()
+    // leaves the response already finished when the stream is attached, which
+    // takes a different path.
+    test("a direct stream whose pull() never settles after it ended the response", async () => {
+      await using server = Bun.serve({
+        port: 0,
+        tls,
+        http3: true,
+        http1: false,
+        fetch: () =>
+          new Response(
+            new ReadableStream({
+              type: "direct",
+              async pull(controller) {
+                controller.write("streamed");
+                await Promise.resolve();
+                controller.end();
+                await new Promise<never>(() => {});
+              },
+            }),
+          ),
+      });
+
+      const text = await fetchH3(server.port, "/").then(res => res.text());
+      expect({ text, pendingRequests: server.pendingRequests }).toEqual({ text: "streamed", pendingRequests: 0 });
+      await server.stop();
+    });
   });
 
   // C: req.signal fires when the client resets the H3 stream mid-request.

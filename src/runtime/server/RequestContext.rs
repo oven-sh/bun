@@ -1465,6 +1465,15 @@ where
         let pinned = RequestContextRef::pin(this);
         let this = pinned.ctx();
         debug_assert!(this.resp.get().is_some());
+        debug_assert!(this.server.get().is_some());
+        let server = this.server();
+        let vm = server.vm();
+        // Entered before the MUX arm below, the abort listeners, and (dropped
+        // last) the drains below and in the release of `_ref`. Both arms can
+        // reject a parked request-body read and drain microtasks, which runs
+        // JS: the held count is what keeps a nested `enter()`/`exit()` from
+        // running a checkpoint in the middle of this frame.
+        let _entered = vm.enter_event_loop_scope_without_checkpoint();
         // An HTTP/2 or HTTP/3 stream is destroyed once both sides finish,
         // so this also fires after a successful end(). HTTP/1 sockets persist
         // for keep-alive, so the equivalent never happens there. Only the sink
@@ -1478,12 +1487,12 @@ where
                 if let Some(wrapper) = this.sink_mut() {
                     wrapper.sink.res = None;
                 }
+                // Releases the base ref itself, so no `_ref` adoption here.
                 this.end_already_responded_stream();
                 return;
             }
         }
         debug_assert!(!this.flags.aborted());
-        debug_assert!(this.server.get().is_some());
         // mark request as aborted
         this.flags.set_aborted(true);
         let abort = this.additional_on_abort.replace(None);
@@ -1494,12 +1503,7 @@ where
 
         this.detach_response();
         let any_js_calls = core::cell::Cell::new(false);
-        let server = this.server();
-        let vm = server.vm();
         let global_this = server.global_this();
-        // Entered for the abort listeners below, and (dropped last) for the
-        // drains below and in the release of `_ref`.
-        let _entered = vm.enter_event_loop_scope_without_checkpoint();
         let _ref = RequestContextRef::adopt(this.as_ctx_ptr());
         // This is a task in the event loop.
         // If we called into JavaScript, we must drain the microtask queue.

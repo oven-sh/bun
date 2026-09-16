@@ -1177,8 +1177,10 @@ pub struct HTTPServerWritable<const SSL: bool> {
     /// freed the socket (`us_internal_free_closed_sockets`) or recycled it
     /// onto the next keep-alive request. `handle_resolve_stream` /
     /// `handle_reject_stream` consult this instead of reading the response's
-    /// state. HTTP/1 only; see `end_already_responded_stream` for why
-    /// `Http3Response::markDone()` makes the H3 `resp` still safe to use.
+    /// state, and only on HTTP/1: an H2/H3 `resp` is still alive here, because
+    /// `Http{2,3}Response::markDone()` leave `onAborted` armed. When the
+    /// transport frees such a stream it calls `on_abort`, which ends the
+    /// request through `end_already_responded_stream()`.
     pub(crate) ended_response: bool,
 
     pub(crate) on_first_write: Option<fn(Option<*mut c_void>)>,

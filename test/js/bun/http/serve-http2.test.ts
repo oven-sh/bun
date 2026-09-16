@@ -896,4 +896,40 @@ describe("Bun.serve http2 in-process", () => {
     // A request that never ends keeps a graceful stop pending.
     await server.stop();
   });
+
+  // The stream close is the only notification left when the pump promise never
+  // settles, so this case cannot be handled in its resolve reaction. The end
+  // has to come from a later microtask: an end inside the first pull() leaves
+  // the response already finished when the stream is attached, which takes a
+  // different path. HTTP/1 has the same shape and still leaks there, because
+  // its socket is not freed per request.
+  test("a direct stream whose pull() never settles after it ended the response", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      http2: true,
+      fetch: () =>
+        new Response(
+          new ReadableStream({
+            type: "direct",
+            async pull(controller) {
+              controller.write("streamed");
+              await Promise.resolve();
+              controller.end();
+              await new Promise<never>(() => {});
+            },
+          }),
+        ),
+    });
+
+    const session = await connectH2(server.port, false);
+    const bodies: string[] = [];
+    for (let i = 0; i < 3; i++) bodies.push((await request(session, { ":path": "/" })).body.toString());
+
+    expect({ bodies, pendingRequests: server.pendingRequests }).toEqual({
+      bodies: ["streamed", "streamed", "streamed"],
+      pendingRequests: 0,
+    });
+    await new Promise<void>(r => session.close(() => r()));
+    await server.stop();
+  });
 });

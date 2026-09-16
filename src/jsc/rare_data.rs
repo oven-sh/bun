@@ -681,9 +681,8 @@ impl RareData {
         }
     }
 
-    /// Reused mimalloc heap for a short synchronous parse. By value, like
-    /// [`Self::take_h2_padded_frame_buffer`]. Per VM, not per thread: mimalloc keeps a heap
-    /// whose thread exits, and `VirtualMachine::destroy` frees this one on the Worker's thread.
+    /// Per VM, not a thread-local: mimalloc keeps a heap whose thread exits, and
+    /// `VirtualMachine::destroy` frees this one on the Worker's own thread.
     pub fn take_scratch_arena(&mut self) -> bun_alloc::Arena {
         self.scratch_arena.take().unwrap_or_default()
     }

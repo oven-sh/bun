@@ -5,7 +5,9 @@
 //   https://github.com/nodejs/node/blob/50c35fea9e64d50ab3bb5f359e8523de89d6c798/lib/internal/fs/glob.js
 // plus "fs: fix glob early return skipping sibling entries" (v26.8.0):
 //   https://github.com/nodejs/node/commit/0ea2c86b5b70fdab268597e8c51040c703ee1328
-// The seen cache diverges from upstream, see oven-sh/bun#42876.
+// The seen cache is keyed by (pattern, segment index) per path, not by the
+// pattern tail as upstream (oven-sh/bun#42876): patterns that end the same way
+// do not block each other, and the results set removes the duplicates.
 // backed by a vendored copy of minimatch (Node's deps/minimatch/index.js, ISC license):
 //   https://github.com/nodejs/node/blob/50c35fea9e64d50ab3bb5f359e8523de89d6c798/deps/minimatch/index.js
 // embedded verbatim below lazyMinimatch(); the vendored block is third-party
@@ -281,7 +283,7 @@ class Cache {
     this.#readdirCache.set(path, val);
     return val;
   }
-  // Returns the indexes of `pattern` that are new for `path`, or null.
+  // Returns the indexes of `pattern` that were not recorded for `path`, or null.
   add(path, pattern) {
     let cache = this.#cache.get(path);
     if (!cache) {
@@ -309,15 +311,15 @@ class Cache {
 
 class Pattern {
   #pattern;
-  #globStrings;
+  #id;
   indexes;
   symlinks;
   realpaths;
   last;
 
-  constructor(pattern, globStrings, indexes, symlinks, realpaths = new Set()) {
+  constructor(pattern, id, indexes, symlinks, realpaths = new Set()) {
     this.#pattern = pattern;
-    this.#globStrings = globStrings;
+    this.#id = id;
     this.indexes = indexes;
     this.symlinks = symlinks;
     this.realpaths = realpaths;
@@ -343,10 +345,10 @@ class Pattern {
     return this.#pattern.at(index);
   }
   child(indexes, symlinks = new Set(), realpaths = this.realpaths) {
-    return new Pattern(this.#pattern, this.#globStrings, indexes, symlinks, realpaths);
+    return new Pattern(this.#pattern, this.#id, indexes, symlinks, realpaths);
   }
   sameAs(other) {
-    if (this.#pattern !== other.#pattern || this.indexes.size !== other.indexes.size) {
+    if (this.#id !== other.#id || this.indexes.size !== other.indexes.size) {
       return false;
     }
     for (const index of this.indexes) {
@@ -374,14 +376,7 @@ class Pattern {
   }
 
   cacheKey(index) {
-    let key = "";
-    for (let i = index; i < this.#globStrings.length; i++) {
-      key += this.#globStrings[i];
-      if (i !== this.#globStrings.length - 1) {
-        key += "/";
-      }
-    }
-    return key;
+    return `${this.#id}:${index}`;
   }
 }
 
@@ -449,11 +444,17 @@ class Glob {
     }
     this.matchers = [];
     this.#patterns = [];
+    const expansions = new Set();
     for (const pat of patterns) {
       const matcher = createMatcher(pat);
       this.matchers.push(matcher);
       for (let i = 0; i < matcher.set.length; i++) {
-        this.#patterns.push(new Pattern(matcher.set[i], matcher.globParts[i], new Set().add(0), new Set()));
+        const expansion = matcher.globParts[i].join("/");
+        if (expansions.has(expansion)) {
+          continue;
+        }
+        expansions.add(expansion);
+        this.#patterns.push(new Pattern(matcher.set[i], this.#patterns.length, new Set().add(0), new Set()));
       }
     }
   }
@@ -596,50 +597,42 @@ class Glob {
     }
     return pattern.child(unseen, pattern.symlinks, pattern.realpaths);
   }
-  // Moves a pattern that starts with a root, "." or ".." to that path.
-  #redirectFirst(pattern) {
-    if (!pattern.isFirst()) {
-      return false;
-    }
-    const first = pattern.at(0);
-    let target;
-    if (isWindows && typeof first === "string" && first.endsWith(":")) {
-      // Absolute path, go to root
-      target = `${first}\\`;
-    } else if (first === "") {
-      // Absolute path, go to root
-      target = "/";
-    } else if (first === "..") {
-      // Start with .., go to parent
-      target = "../";
-    } else if (first === ".") {
-      // Start with ., proceed
-      target = ".";
-    } else {
-      return false;
-    }
-    // A pattern that is only this segment matches nothing.
-    if (pattern.last > 0) {
-      this.#addSubpattern(target, pattern.child(new Set().add(1)));
-    }
-    return true;
-  }
   #addSubpatterns(path, pattern) {
-    const fullpath = resolve(this.#root, path);
-    if (this.#isExcluded(fullpath)) {
-      return;
-    }
-    if (this.#redirectFirst(pattern)) {
-      return;
-    }
     pattern = this.#unseenPattern(path, pattern);
     if (pattern === null) {
       return;
     }
+    const fullpath = resolve(this.#root, path);
     const stat = this.#cache.statSync(fullpath);
     const last = pattern.last;
     const isDirectory = this.#isDirectorySync(fullpath, stat, pattern);
     const isLast = pattern.isLast(isDirectory);
+    const isFirst = pattern.isFirst();
+
+    if (this.#isExcluded(fullpath)) {
+      return;
+    }
+    if (isFirst && isWindows && typeof pattern.at(0) === "string" && pattern.at(0).endsWith(":")) {
+      // Absolute path, go to root
+      this.#addSubpattern(`${pattern.at(0)}\\`, pattern.child(new Set().add(1)));
+      return;
+    }
+    if (isFirst && pattern.at(0) === "") {
+      // Absolute path, go to root
+      this.#addSubpattern("/", pattern.child(new Set().add(1)));
+      return;
+    }
+    if (isFirst && pattern.at(0) === "..") {
+      // Start with .., go to parent
+      this.#addSubpattern("../", pattern.child(new Set().add(1)));
+      return;
+    }
+    if (isFirst && pattern.at(0) === ".") {
+      // Start with ., proceed
+      this.#addSubpattern(".", pattern.child(new Set().add(1)));
+      return;
+    }
+
     if (isLast && typeof pattern.at(-1) === "string") {
       // Add result if it exists
       const p = pattern.at(-1);
@@ -755,9 +748,14 @@ class Glob {
                 this.#queueSubpattern(parent, pattern.child(new Set().add(nextIndex + 1)));
               }
             } else {
-              // Not recorded in the seen cache: a literal ".." walk has the same key.
-              this.#results.add(path);
-              this.#results.add(parent);
+              if (!this.#cache.seen(path, pattern, nextIndex)) {
+                this.#cache.add(path, pattern.child(new Set().add(nextIndex)));
+                this.#results.add(path);
+              }
+              if (!this.#cache.seen(path, pattern, nextIndex) || !this.#cache.seen(parent, pattern, nextIndex)) {
+                this.#cache.add(parent, pattern.child(new Set().add(nextIndex)));
+                this.#results.add(parent);
+              }
             }
           }
         }
@@ -806,21 +804,41 @@ class Glob {
     }
   }
   async *#iterateSubpatterns(path, pattern) {
-    const fullpath = resolve(this.#root, path);
-    if (this.#isExcluded(fullpath)) {
-      return;
-    }
-    if (this.#redirectFirst(pattern)) {
-      return;
-    }
     pattern = this.#unseenPattern(path, pattern);
     if (pattern === null) {
       return;
     }
+    const fullpath = resolve(this.#root, path);
     const stat = await this.#cache.stat(fullpath);
     const last = pattern.last;
     const isDirectory = await this.#isDirectory(fullpath, stat, pattern);
     const isLast = pattern.isLast(isDirectory);
+    const isFirst = pattern.isFirst();
+
+    if (this.#isExcluded(fullpath)) {
+      return;
+    }
+    if (isFirst && isWindows && typeof pattern.at(0) === "string" && pattern.at(0).endsWith(":")) {
+      // Absolute path, go to root
+      this.#addSubpattern(`${pattern.at(0)}\\`, pattern.child(new Set().add(1)));
+      return;
+    }
+    if (isFirst && pattern.at(0) === "") {
+      // Absolute path, go to root
+      this.#addSubpattern("/", pattern.child(new Set().add(1)));
+      return;
+    }
+    if (isFirst && pattern.at(0) === "..") {
+      // Start with .., go to parent
+      this.#addSubpattern("../", pattern.child(new Set().add(1)));
+      return;
+    }
+    if (isFirst && pattern.at(0) === ".") {
+      // Start with ., proceed
+      this.#addSubpattern(".", pattern.child(new Set().add(1)));
+      return;
+    }
+
     if (isLast && typeof pattern.at(-1) === "string") {
       // Add result if it exists
       const p = pattern.at(-1);
@@ -950,11 +968,21 @@ class Glob {
                 this.#queueSubpattern(parent, pattern.child(new Set().add(nextIndex + 1)));
               }
             } else {
-              if (!this.#results.has(path) && this.#results.add(path)) {
-                yield this.#withFileTypes ? this.#cache.statSync(fullpath) : path;
+              if (!this.#cache.seen(path, pattern, nextIndex)) {
+                this.#cache.add(path, pattern.child(new Set().add(nextIndex)));
+                if (!this.#results.has(path)) {
+                  if (this.#results.add(path)) {
+                    yield this.#withFileTypes ? this.#cache.statSync(fullpath) : path;
+                  }
+                }
               }
-              if (!this.#results.has(parent) && this.#results.add(parent)) {
-                yield this.#withFileTypes ? this.#cache.statSync(join(this.#root, parent)) : parent;
+              if (!this.#cache.seen(path, pattern, nextIndex) || !this.#cache.seen(parent, pattern, nextIndex)) {
+                this.#cache.add(parent, pattern.child(new Set().add(nextIndex)));
+                if (!this.#results.has(parent)) {
+                  if (this.#results.add(parent)) {
+                    yield this.#withFileTypes ? this.#cache.statSync(join(this.#root, parent)) : parent;
+                  }
+                }
               }
             }
           }

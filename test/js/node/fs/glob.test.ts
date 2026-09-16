@@ -402,6 +402,14 @@ describe("a pattern array or brace group returns the union of its patterns", () 
       pattern: ["..", "../"],
       expected: ["../"],
     },
+    {
+      // "./**/." matches every directory and "**/." matches none, but the
+      // tails of the two patterns are the same.
+      name: "patterns that share a tail and differ in a leading './'",
+      tree: { a: { b: { c: {} } } },
+      pattern: ["**/.", "./**/."],
+      expected: ["a", "a/b", "a/b/c"],
+    },
   ];
 
   describe.each(cases)("$name", ({ tree, pattern, expected }) => {

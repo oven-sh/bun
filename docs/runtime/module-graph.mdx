@@ -54,6 +54,7 @@ The host's references to the graph's objects are dead too. Do not use a graph's 
 
 - A process that leftover code starts with `Bun.spawn` or `child_process.spawn()` is started and then killed, so a very short command can finish first.
 - Synchronous calls such as `Bun.spawnSync` and `fs.writeFileSync` run to completion.
+- `node:quic` is not covered yet: an endpoint a graph's code opens stays open after `dispose()`, and its handlers keep running. Code that opens one closes it before its graph is disposed.
 - A file descriptor that script holds is the script's to manage: one from `fs.openSync()`, and the one inside a `FileHandle` or a `node:fs` stream. `dispose()` does not close it, as terminating a worker does not. Code that opens one closes it before its graph is disposed.
 
 Native addons are shared, but their asynchronous work is the graph's too. A Node-API async work item or thread-safe function completes in the context of the graph whose code created it. After `dispose()` the addon's completion callback still runs, so it can free what it allocated. It cannot call into JavaScript: `napi_call_function` and the like return `napi_cannot_run_js`, as they do in a worker that is terminating. A promise it settles for the disposed graph stays pending. A promise it settles for the host or for another graph is settled.

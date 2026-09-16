@@ -5,8 +5,7 @@
 //   https://github.com/nodejs/node/blob/50c35fea9e64d50ab3bb5f359e8523de89d6c798/lib/internal/fs/glob.js
 // plus "fs: fix glob early return skipping sibling entries" (v26.8.0):
 //   https://github.com/nodejs/node/commit/0ea2c86b5b70fdab268597e8c51040c703ee1328
-// The seen cache diverges from upstream (oven-sh/bun#42876): a pattern array
-// returns the union of the single-pattern results.
+// The seen cache diverges from upstream, see oven-sh/bun#42876.
 // backed by a vendored copy of minimatch (Node's deps/minimatch/index.js, ISC license):
 //   https://github.com/nodejs/node/blob/50c35fea9e64d50ab3bb5f359e8523de89d6c798/deps/minimatch/index.js
 // embedded verbatim below lazyMinimatch(); the vendored block is third-party
@@ -282,8 +281,7 @@ class Cache {
     this.#readdirCache.set(path, val);
     return val;
   }
-  // Records the indexes of `pattern` for `path`. Returns the ones that were
-  // new, or null when none was.
+  // Returns the indexes of `pattern` that are new for `path`, or null.
   add(path, pattern) {
     let cache = this.#cache.get(path);
     if (!cache) {
@@ -598,8 +596,7 @@ class Glob {
     }
     return pattern.child(unseen, pattern.symlinks, pattern.realpaths);
   }
-  // Moves a pattern that starts with a root, "." or ".." to that path, before
-  // the seen cache records index 0 under the key of another pattern's tail.
+  // Moves a pattern that starts with a root, "." or ".." to that path.
   #redirectFirst(pattern) {
     if (!pattern.isFirst()) {
       return false;

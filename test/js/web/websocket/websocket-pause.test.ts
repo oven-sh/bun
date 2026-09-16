@@ -420,8 +420,15 @@ describe("WebSocket.isPaused with no connection", () => {
 
   async function start(server: ReturnType<typeof upgradeServer>, { path, startState }: Case): Promise<WebSocket> {
     const ws = new WebSocket(`ws://localhost:${server.port}${path}`);
+    // The cases that start CONNECTING end with an error event by design.
     ws.onerror = () => {};
-    if (startState === WebSocket.OPEN) await open(ws);
+    if (startState === WebSocket.OPEN) {
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      ws.onopen = () => resolve();
+      ws.onclose = ({ code, reason }) => reject(new Error(`closed before open: ${code} ${reason}`));
+      await promise;
+      ws.onclose = null;
+    }
     expect(ws.readyState).toBe(startState);
     return ws;
   }

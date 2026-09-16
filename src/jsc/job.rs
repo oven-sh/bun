@@ -247,6 +247,8 @@ pub struct JobHeader {
     /// The context whose script scheduled the job: once it stops, the
     /// completion is released without running.
     context: crate::ContextId,
+    /// `VirtualMachine::test_isolation_generation` when scheduled.
+    generation: u32,
 }
 
 /// A VM's live [cancellable](JobContext::CANCELLABLE) jobs (JS thread only;
@@ -360,6 +362,7 @@ impl<C: JobContext> Job<C> {
                 prev: core::ptr::null_mut(),
                 next: core::ptr::null_mut(),
                 context: cx.context().id(),
+                generation: cx.vm().test_isolation_generation,
             },
             ticket: Some(cx.vm().ticket()),
             task: WorkPoolTask {
@@ -472,9 +475,19 @@ impl<C: JobContext> Drop for Completion<C> {
 /// `ptr` is a `Job<C>` posted by its `Completion` (for some `C`).
 pub unsafe fn complete_erased(ptr: *mut (), global: &JSGlobalObject) -> JsResult<()> {
     let header = ptr.cast::<JobHeader>();
-    // The completion continues the script that scheduled the job.
+    let vm = global.bun_vm();
+    // One scheduled by a file `bun test --isolate` has since retired: the swap was that file's
+    // exit, and a `then` that calls back directly (node:crypto's callback forms) would run its
+    // script under the next file.
     // SAFETY: `Job<C>` is `#[repr(C)]` with the header first.
-    let context = global.bun_vm().context_of(unsafe { (*header).context });
+    if unsafe { (*header).generation } != vm.test_isolation_generation {
+        // SAFETY: as below; released exactly once, here.
+        unsafe { ((*header).release_unrun)(header) };
+        return Ok(());
+    }
+    // The completion continues the script that scheduled the job.
+    // SAFETY: as above.
+    let context = vm.context_of(unsafe { (*header).context });
     // SAFETY: as above.
     unsafe { ((*header).complete)(header, &global.js_thread(context)) }
 }

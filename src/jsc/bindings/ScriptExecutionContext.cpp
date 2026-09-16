@@ -76,7 +76,7 @@ ScriptExecutionContext::ScriptExecutionContext(ScriptExecutionContext& parent)
 }
 
 extern "C" void Bun__VM__queueTask(void* bunVM, EventLoopTask*);
-extern "C" void* Bun__ScriptExecutionContext__create(void* bunVM, ScriptExecutionContext*);
+extern "C" void* Bun__ScriptExecutionContext__create(void* bunVM, ScriptExecutionContext*, ScriptExecutionContextIdentifier);
 extern "C" void Bun__ScriptExecutionContext__stop(void* bunVM, void* bunContext);
 extern "C" void Bun__ScriptExecutionContext__release(void* bunVM, void* bunContext);
 
@@ -88,7 +88,7 @@ void ScriptExecutionContext::setModuleGraph(JSC::JSObject* moduleGraph)
 Ref<ScriptExecutionContext> ScriptExecutionContext::createForModuleGraph(ScriptExecutionContext& parent)
 {
     auto context = adoptRef(*new ScriptExecutionContext(parent));
-    context->m_bunContext = Bun__ScriptExecutionContext__create(context->m_bunVM, context.ptr());
+    context->m_bunContext = Bun__ScriptExecutionContext__create(context->m_bunVM, context.ptr(), context->identifier());
     return context;
 }
 
@@ -198,7 +198,7 @@ ScriptExecutionContext::~ScriptExecutionContext()
 {
     checkConsistency();
 
-    if (m_bunContext) {
+    if (isForModuleGraph()) {
         // Possibly a GC finalizer: the Rust half closes what it still owns from the event loop.
         removeFromContextsMap();
         Bun__ScriptExecutionContext__release(m_bunVM, m_bunContext);
@@ -404,6 +404,22 @@ void ScriptExecutionContext::checkConsistency() const
 ScriptExecutionContextIdentifier ScriptExecutionContext::generateIdentifier()
 {
     return ++lastUniqueIdentifier;
+}
+
+// An identifier no context has or will have: `VirtualMachine::dead_context`'s.
+extern "C" ScriptExecutionContextIdentifier WebCore__ScriptExecutionContext__generateIdentifier()
+{
+    return ScriptExecutionContext::generateIdentifier();
+}
+
+// The global's context and its VM's root context are the two halves of one context: the Rust
+// half learns the identifier here. Called for each global a VM makes (`bun test --isolate` makes
+// one per file, which inherits the identifier).
+extern "C" ScriptExecutionContextIdentifier Zig__GlobalObject__bindRootContext(Zig::GlobalObject* globalObject, void* rootContext)
+{
+    auto* context = globalObject->scriptExecutionContext();
+    context->bindBunContext(rootContext);
+    return context->identifier();
 }
 
 void ScriptExecutionContext::regenerateIdentifier()

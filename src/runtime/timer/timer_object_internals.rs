@@ -35,6 +35,8 @@ pub struct TimerObjectInternals {
     pub(crate) flags: Cell<Flags>,
     /// The context whose script created the timer.
     pub(crate) context: bun_jsc::ContextId,
+    /// `VirtualMachine::test_isolation_generation` when it did.
+    pub(crate) generation: u32,
 }
 
 impl TimerObjectInternals {
@@ -57,6 +59,7 @@ impl Default for TimerObjectInternals {
             this_value: JsCell::new(JsRef::empty()),
             flags: Cell::new(Flags::default()),
             context: bun_jsc::ContextId::default(),
+            generation: 0,
         }
     }
 }
@@ -301,6 +304,7 @@ impl TimerObjectInternals {
             },
             interval: Cell::new(interval),
             context: cx.context().id(),
+            generation: cx.vm().test_isolation_generation,
             this_value: JsCell::new(JsRef::empty()),
         };
         // `self` is at its final address (embedded in its heap-allocated parent).
@@ -381,7 +385,7 @@ impl TimerObjectInternals {
             // SAFETY: `vm` is the live per-thread VM (hook contract).
             || unsafe { (*vm).script_execution_status() } != ScriptExecutionStatus::Running
             // SAFETY: as above.
-            || !unsafe { (*vm).is_context_live(s.context) }
+            || unsafe { (*vm).has_outlived_its_script(s.context, s.generation) }
             // unref'd setImmediate callbacks should only run if there are things
             // keeping the event loop alive other than setImmediates
             || (!s.flags.get().is_keeping_event_loop_alive()
@@ -500,7 +504,7 @@ impl TimerObjectInternals {
             // SAFETY: `vm` is the live per-thread VM (hook contract).
             || unsafe { (*vm).script_execution_status() } != ScriptExecutionStatus::Running
             // SAFETY: `vm` live per hook contract.
-            || !unsafe { (*vm).is_context_live(s.context) };
+            || unsafe { (*vm).has_outlived_its_script(s.context, s.generation) };
 
         s.set_event_loop_timer_state(EventLoopTimerState::FIRED);
 

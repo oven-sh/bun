@@ -363,7 +363,6 @@ pub struct VirtualMachine {
     /// What native code continues on behalf of a context that is gone runs in: always stopped,
     /// so what it arms is closed at once.
     pub(crate) dead_context: crate::ScriptExecutionContext,
-    pub(crate) context_ids: crate::script_execution_context::ContextIdAllocator,
     /// The contexts made for `Bun.ModuleGraph`s, by id, stopped or not. Empty:
     /// every context question has the root context for an answer.
     pub(crate) graph_contexts:
@@ -373,6 +372,10 @@ pub struct VirtualMachine {
     /// collected; its context may not have been stopped yet: that is queued from the finalizer).
     pub(crate) innermost_scope: Cell<Option<crate::ContextId>>,
     pub test_isolation_enabled: bool,
+    /// Counts `bun test --isolate` file swaps. The realm's context keeps its identifier across
+    /// them, so a timer or pool job of the realm's remembers the count it was made under: one
+    /// made under an earlier count is the finished file's, and is dropped.
+    pub test_isolation_generation: u32,
     pub test_isolation_state: TestIsolationState,
 }
 
@@ -418,6 +421,14 @@ unsafe extern "C" {
     safe fn Bun__currentGraphContext(
         global: &JSGlobalObject,
     ) -> *const crate::ScriptExecutionContext;
+    safe fn WebCore__ScriptExecutionContext__generateIdentifier() -> u32;
+    /// Binds the global's `WebCore::ScriptExecutionContext` to `root_context`, its Rust half,
+    /// and says which identifier it has.
+    #[allow(improper_ctypes)]
+    safe fn Zig__GlobalObject__bindRootContext(
+        global: &JSGlobalObject,
+        root_context: &crate::ScriptExecutionContext,
+    ) -> u32;
     /// ModuleGraph.cpp: make the graph of this `WebCore::ScriptExecutionContext` current;
     /// returns the async context to restore.
     /// (Empty: there was nothing to do.)
@@ -1073,7 +1084,7 @@ impl VirtualMachine {
     /// [`ContextScope`] it entered ([`ContextScope::context`]).
     #[inline]
     pub fn context_of_caller(&self, _frame: &crate::CallFrame) -> &crate::ScriptExecutionContext {
-        self.current_context_or_root()
+        self.current_context()
     }
 
     /// [`context_of_caller`](Self::context_of_caller) where script is calling but no `CallFrame`
@@ -1082,7 +1093,7 @@ impl VirtualMachine {
     /// of its own completions, which entered the context it was scheduled in).
     #[inline]
     pub fn context_of_caller_no_frame(&self) -> &crate::ScriptExecutionContext {
-        self.current_context_or_root()
+        self.current_context()
     }
 
     /// `context` when it is a `Bun.ModuleGraph`'s (stopped or not), for an owner that only a graph's
@@ -1106,15 +1117,16 @@ impl VirtualMachine {
     /// With no script on the stack and no context entered it is nobody's in particular, so the
     /// realm's. The VM's own: everything else is handed a context (`context_of_caller`,
     /// [`ContextScope::context`]).
-    fn current_context_or_root(&self) -> &crate::ScriptExecutionContext {
+    fn current_context(&self) -> &crate::ScriptExecutionContext {
         if self.innermost_scope.get() == Some(self.dead_context.id()) {
             return &self.dead_context;
         }
         if self.graph_contexts.count() == 0 {
             return &self.root_context;
         }
-        // SAFETY: a graph's context outlives every async context frame that names it.
-        unsafe { Bun__currentGraphContext(self.global()).as_ref() }.unwrap_or(&self.root_context)
+        // SAFETY: a graph's context outlives every async context frame that names it, and the
+        // realm's own is `root_context` (`bind_root_context`).
+        unsafe { &*Bun__currentGraphContext(self.global()) }
     }
 
     /// The native code that is running continues the script of a `Bun.ModuleGraph` that was
@@ -1124,7 +1136,7 @@ impl VirtualMachine {
     pub fn reports_to_nobody(&self) -> bool {
         // (Asked from every native settle: from the event loop with no context entered the async
         // context names no graph, and the answer is no.)
-        let context = self.current_context_or_root();
+        let context = self.current_context();
         context.id() != self.root_context.id() && context.is_stopped()
     }
 
@@ -1166,6 +1178,15 @@ impl VirtualMachine {
         self.graph_contexts
             .get(&id)
             .map(|context| unsafe { context.as_ref() })
+    }
+
+    /// Whether a timer or pool job made for `context` under `generation` (the
+    /// [`test_isolation_generation`](Self::test_isolation_generation) of then) has outlived the
+    /// script it would continue: its context has stopped, or `bun test --isolate` has moved on to
+    /// another file since.
+    #[inline]
+    pub fn has_outlived_its_script(&self, context: crate::ContextId, generation: u32) -> bool {
+        generation != self.test_isolation_generation || !self.is_context_live(context)
     }
 
     /// Whether the context `id` names has not stopped.
@@ -1321,21 +1342,20 @@ impl VirtualMachine {
         result
     }
 
+    /// The realm's context is one context with the global's `WebCore::ScriptExecutionContext`: link
+    /// the two and take its identifier. For every global the VM makes.
+    fn bind_root_context(&self) {
+        let id = Zig__GlobalObject__bindRootContext(self.global(), &self.root_context);
+        self.root_context.bind(crate::ContextId::from_raw(id));
+    }
+
     /// `WebCore::ScriptExecutionContext` for a `Bun.ModuleGraph`: the
     /// context that owns what the graph's script opens.
     pub fn create_graph_context(
         &mut self,
         dom_context: *mut c_void,
+        id: crate::ContextId,
     ) -> NonNull<crate::ScriptExecutionContext> {
-        let id = loop {
-            let id = self.context_ids.next();
-            if id != self.root_context.id()
-                && id != self.dead_context.id()
-                && !self.graph_contexts.contains(&id)
-            {
-                break id;
-            }
-        };
         let context = NonNull::from(Box::leak(Box::new(
             crate::ScriptExecutionContext::for_graph(id, dom_context),
         )));
@@ -3150,14 +3170,11 @@ impl VirtualMachine {
             addr_of_mut!((*vm).macros).write(Default::default());
             addr_of_mut!((*vm).macro_entry_points).write(Default::default());
             addr_of_mut!((*vm).auto_killer).write(Default::default());
-            addr_of_mut!((*vm).context_ids).write(Default::default());
-            addr_of_mut!((*vm).root_context).write(crate::ScriptExecutionContext::root(
-                (*vm).context_ids.next(),
-            ));
+            addr_of_mut!((*vm).root_context).write(crate::ScriptExecutionContext::root());
             addr_of_mut!((*vm).graph_contexts).write(Default::default());
             addr_of_mut!((*vm).innermost_scope).write(Cell::new(None));
             addr_of_mut!((*vm).dead_context).write(crate::ScriptExecutionContext::dead(
-                (*vm).context_ids.next(),
+                crate::ContextId::from_raw(WebCore__ScriptExecutionContext__generateIdentifier()),
             ));
             addr_of_mut!((*vm).commonjs_custom_extensions).write(Default::default());
             addr_of_mut!((*vm).entry_point).write(Default::default());
@@ -3236,6 +3253,7 @@ impl VirtualMachine {
         // `*mut VM` directly (no `&VM` reborrow), preserving mutable provenance.
         let jsc_vm = unsafe {
             (*vm).global = global;
+            (*vm).bind_root_context();
             (*vm).regular_event_loop.global = NonNull::new(global);
             let jsc_vm = (*global).vm_ptr();
             (*vm).jsc_vm = jsc_vm;
@@ -5695,8 +5713,7 @@ impl VirtualMachine {
         // What the outgoing file's close handlers and last microtasks opened
         // since the caller's sweep.
         let _ = self.stop_context_handles(crate::StopReason::Disposed);
-        let next_context = self.context_ids.next();
-        self.root_context.renew(next_context);
+        self.test_isolation_generation = self.test_isolation_generation.wrapping_add(1);
 
         // The outgoing file's JS timers would otherwise release their pins only
         // when they fire — a module-scope `setTimeout(cb, 3_600_000)` keeps a
@@ -5749,6 +5766,7 @@ impl VirtualMachine {
             self.console.cast(),
         );
         self.global = new_global;
+        self.bind_root_context();
         VMHolder::set_cached_global_object(Some(new_global));
         self.regular_event_loop.global = NonNull::new(new_global);
         self.macro_event_loop.global = NonNull::new(new_global);

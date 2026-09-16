@@ -92,15 +92,15 @@ impl ScriptExecutionContext {
         *self.id.get()
     }
 
-    pub(crate) fn root(id: ContextId) -> Self {
-        let context = Self::default();
-        context.id.set(id);
-        context
+    /// `VirtualMachine::root_context`: the Rust half of the context of the VM's global object.
+    /// It has that context's identifier, which it learns when the global is made
+    /// ([`bind`](Self::bind)).
+    pub(crate) fn root() -> Self {
+        Self::default()
     }
 
-    /// The root context starts over under a new identity (`bun test --isolate`:
-    /// the next file), once what the previous identity owned has been stopped.
-    pub(crate) fn renew(&self, id: ContextId) {
+    /// The identifier of the `WebCore::ScriptExecutionContext` this is the Rust half of.
+    pub(crate) fn bind(&self, id: ContextId) {
         self.id.set(id);
     }
 
@@ -484,19 +484,6 @@ macro_rules! impl_abort_handle_owner {
     };
 }
 
-/// Hands out [`ContextId`]s for one VM.
-#[derive(Default)]
-pub(crate) struct ContextIdAllocator {
-    last: u32,
-}
-
-impl ContextIdAllocator {
-    pub(crate) fn next(&mut self) -> ContextId {
-        self.last = self.last.wrapping_add(1);
-        ContextId::from_raw(self.last)
-    }
-}
-
 // `WebCore::ScriptExecutionContext` owns the context of a `Bun.ModuleGraph`.
 
 /// # Safety
@@ -505,9 +492,10 @@ impl ContextIdAllocator {
 unsafe extern "C" fn Bun__ScriptExecutionContext__create(
     vm: *mut crate::VirtualMachineRef,
     dom_context: *mut core::ffi::c_void,
+    identifier: u32,
 ) -> *mut ScriptExecutionContext {
     // SAFETY: fn contract.
-    unsafe { (*vm).create_graph_context(dom_context) }.as_ptr()
+    unsafe { (*vm).create_graph_context(dom_context, ContextId::from_raw(identifier)) }.as_ptr()
 }
 
 /// # Safety

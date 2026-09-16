@@ -284,6 +284,8 @@ pub struct Timeout {
     /// The context whose script armed the timeout; it does not fire once that
     /// context is gone (`bun test --isolate`: a prior file's).
     pub(crate) context: crate::ContextId,
+    /// `VirtualMachine::test_isolation_generation` when it did.
+    generation: u32,
 }
 
 bun_event_loop::impl_timer_owner!(Timeout; from_timer_ptr => event_loop_timer);
@@ -312,6 +314,7 @@ impl Timeout {
             signal: signal_,
             flags: TimerFlags::default(),
             context: context.id(),
+            generation: VirtualMachine::get().test_isolation_generation,
         }));
         if let Some(context) = graph_context {
             context.track_timer(this.cast(), crate::ContextTimer::AbortSignal);
@@ -391,7 +394,7 @@ impl Timeout {
             // file's global; firing now would run them against the new global.
             // (The file swap's `cancel_all_timeout_objects` normally discards
             // such timers before they can come due.)
-            if !(*vm).is_context_live((*this).context) {
+            if (*vm).has_outlived_its_script((*this).context, (*this).generation) {
                 Self::discard(this);
                 return;
             }

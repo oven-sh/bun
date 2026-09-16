@@ -1909,11 +1909,8 @@ enum BundleQueueType {
 /// What `EnsureRouteCtx::on_defer` did with the request.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Deferral {
-    /// The request waits in the bundle's list, or on its promise.
     Parked,
-    /// The response was written before the request could be parked, for
-    /// example a 413 for a body over `maxRequestBodySize`. No bundle waits on
-    /// it, so the route state must not change.
+    /// The response was already written (413, 400). Nothing waits for a bundle.
     Answered,
 }
 
@@ -2038,10 +2035,7 @@ fn ensure_route_is_bundled<Ctx: EnsureRouteCtx>(
                     }
                 }
 
-                // A request that was answered before it could be parked has
-                // nothing that waits for the bundle, and `finalize_bundle`
-                // settles a route only through its waiters. Leave the route
-                // `Unqueued` so that the next request starts the bundle.
+                // `finalize_bundle` settles a route only through its waiters.
                 if ctx.on_defer(BundleQueueType::NextBundle)? == Deferral::Answered {
                     return Ok(());
                 }

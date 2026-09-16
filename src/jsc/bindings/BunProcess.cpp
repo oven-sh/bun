@@ -1544,11 +1544,8 @@ extern "C" void Bun__installWatchModeSignalHandler(int signalNumber)
     installForwardSignalHandler(signalNumber);
 }
 #else
-// Windows has no signals to install a handler for. While a signal is watched,
-// the console control handler claims its event (CTRL_C_EVENT is SIGINT,
-// CTRL_BREAK_EVENT is SIGBREAK, CTRL_CLOSE_EVENT is SIGHUP) and a console
-// resize raises SIGWINCH; both report through Bun__onPosixSignal, so from
-// there on a signal takes the same path on every platform.
+// Windows has no signal handlers: the console control handler
+// (windows_signal.rs) reports watched events through Bun__onPosixSignal.
 extern "C" void Bun__watchWindowsSignal(int signalNumber);
 extern "C" void Bun__unwatchWindowsSignal(int signalNumber);
 #endif

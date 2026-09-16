@@ -517,18 +517,12 @@ describe("Bun.Terminal subprocess integration", () => {
     expect(exitCode).toBe(0);
   });
 
-  // Regression test for a Windows-only use-after-free: cancelling a stdin
-  // stream while a cooked-mode console read was parked used to free the
-  // reader's buffer immediately (finish() shrink / Drop). A line read
-  // blocks a helper thread in ReadConsoleW and the console cannot abandon
-  // it; stopping types a wake key so it returns later. A read that fills
-  // the reader's buffer from that thread would still write through the
-  // stale pointer, corrupting whatever mimalloc handed the freed 8 KiB
-  // block to next (a plausible mechanism for production reports of full-GC
-  // crashes on clobbered ArrayBuffers). The helper thread reads into the
-  // line op's own buffer. The child adopts the
-  // previously-freed size class with ArrayBuffer probes and reports any
-  // mutation.
+  // Cancelling a stdin stream while a cooked-mode line read is parked in
+  // ReadConsoleW must not free the buffer that read writes to. A line read
+  // blocks a helper thread and the console cannot abandon it; stopping types
+  // a wake key so it returns later, into the line op's own buffer. Right
+  // after the cancel the child fills the 8 KiB size class with ArrayBuffer
+  // probes and reports any mutation.
   test.skipIf(!isWindows)("cancelling a parked console stdin read does not corrupt the heap", async () => {
     using dir = tempDir("conpty-stdin-read-cancel", {
       "child-fixture.ts": `
@@ -541,8 +535,7 @@ describe("Bun.Terminal subprocess integration", () => {
         console.log("CHILD-READY");
         await warmup;
         // Arm the read under test; no more input arrives, so the helper
-        // thread parks in ReadConsoleW holding the read buffer (pre-fix:
-        // the reader's spare capacity; post-fix: the line op's buffer).
+        // thread parks in ReadConsoleW holding the line op's buffer.
         reader.read().catch(() => {});
         // The park itself is unobservable from JS; there is no condition to
         // await. With the machinery proven warm above, a short delay makes
@@ -551,7 +544,7 @@ describe("Bun.Terminal subprocess integration", () => {
         // run is vacuous rather than wrong.
         await Bun.sleep(150);
         await reader.cancel();
-        // Immediately adopt the 8 KiB block the buggy teardown just freed;
+        // Immediately adopt any 8 KiB block the cancel just freed;
         // mimalloc serves freshly freed blocks of a size class first.
         const probes: Uint8Array[] = [];
         for (let i = 0; i < 32; i++) {

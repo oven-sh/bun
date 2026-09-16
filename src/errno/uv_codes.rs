@@ -93,7 +93,7 @@ pub const UV_EUNATCH: c_int = -4023;
 pub const UV_ENOEXEC: c_int = -4022;
 pub const UV_ERRNO_MAX: c_int = -4096;
 
-/// Map a negative `UV_E*` libuv error code to the stable `bun.sys.E` /
+/// Map a negative `UV_E*` libuv error code to the stable
 /// `bun_errno::E` discriminant (e.g. `UV_ENOENT (-4058)` → `2`).
 ///
 /// The integer discriminants are ABI-stable POSIX values plus a fixed
@@ -195,7 +195,7 @@ pub const fn uv_err_to_e_discriminant(code: c_int) -> Option<u16> {
     })
 }
 
-/// Reverse of [`uv_err_to_e_discriminant`]: map a `bun.sys.E` / `bun_errno::E`
+/// Reverse of [`uv_err_to_e_discriminant`]: map a `bun_errno::E`
 /// discriminant to the negative `UV_E*` code node reports in `err.errno` on
 /// Windows (`2` → `UV_ENOENT (-4058)`). Same keep-in-sync note as the forward
 /// table above; the arms are its rows flipped. Unmapped discriminants return

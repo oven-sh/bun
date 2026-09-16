@@ -1,4 +1,4 @@
-# `bun_io::windows`
+# Windows I/O (`bun_io::windows`)
 
 Pipes, the console and plain files on Windows, driven by the loop's completion
 port (`packages/bun-usockets/src/eventing/iocp.c`, `bun_uws_sys::iocp`). The
@@ -32,22 +32,11 @@ losing anything, where cancelling an N-byte read can; and a pending N-byte read
 is charged against the writer's `WriteQuotaAvailable`, which has made
 Cygwin/MSYS writers believe the pipe is full.
 
-A request is answered in two steps: the thread reports that the pipe is
-readable, and takes the bytes only when the loop asks again. Input therefore
-leaves the pipe only after the loop thread has run with it waiting, as with a
-readiness poll. While the loop is blocked (a synchronous spawn whose child
-inherits the handle), it stays for the child. libuv does the same: its pool
-thread only ever does the zero-byte read.
-
-While the owner handles a chunk, the thread takes the next one only if it was
-already in the pipe when that chunk was read, and skips the first step for it.
-Reading the next chunk during the owner's callback is where the throughput of a
-bulk stream comes from (waiting ahead without taking gains nothing). What
-arrives later goes through both steps, so `pause()` from a `data` handler
-leaves it for a child that inherits the handle, as on POSIX.
-
-A chunk that was taken ahead and not yet asked for when the pipe is closed is
-dropped with it.
+The doc comment of `SyncReader` describes how the loop and that thread take
+turns. Input leaves the pipe only after the loop thread has run with it
+waiting, as with a readiness poll: while the loop is blocked (a synchronous
+spawn whose child inherits the handle), it stays for the child. libuv does the
+same: its pool thread only ever does the zero-byte read.
 
 ## Follow-ups
 

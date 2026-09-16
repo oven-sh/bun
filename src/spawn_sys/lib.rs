@@ -1,4 +1,4 @@
-//! `bun_spawn_sys` — raw OS process-spawn layer split out of `bun_spawn`.
+//! `bun_spawn_sys` — the raw OS process-spawn layer under `bun_spawn`.
 //!
 //! This crate owns everything that talks directly to the kernel to create a
 //! child process and read its exit status, with **no** event-loop
@@ -15,11 +15,9 @@
 //!
 //! Dependencies are deliberately leaf-only: `libc`, `bun_sys`, `bun_core`,
 //! `bun_windows_sys` and `bun_analytics`. There is **no**
-//! `bun_event_loop`/`bun_io`/`bun_io`/`bun_threading` dependency — `Process`,
+//! `bun_event_loop`/`bun_io`/`bun_threading` dependency — `Process`,
 //! `Poller`, `WaiterThread`, and the `sync` runner stay in `bun_spawn` and
 //! depend on this crate.
-//!
-//! See `docs/SPAWN_SYS_PROPOSAL.md` for the full crate-graph rationale.
 
 use core::ffi::c_char;
 
@@ -35,7 +33,6 @@ pub use error::{Error, Result};
 pub mod posix_spawn;
 
 /// `spawn_process_posix` + option/result structs + `Rusage`.
-/// Split out of `src/spawn/process.rs`.
 #[path = "spawn_process.rs"]
 pub mod spawn_process;
 

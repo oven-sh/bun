@@ -685,11 +685,10 @@ describe("accepted socket event-loop hold matches Node (per-connection KeepAlive
   it("half-open accepted sockets after peer FIN do not busy-poll the event loop (Windows AFD DISCONNECT)", async () => {
     // A write-only connection handler whose peer sends data+FIN leaves the
     // accepted socket half-open with bytes buffered (Node's flowing=null
-    // accept state). On Windows, poll_cb mapped UV_DISCONNECT to READABLE
-    // unconditionally, recv() re-found the same EOF, the half-open EOF path
-    // re-armed WRITABLE+DISCONNECT, and AFD kept reporting DISCONNECT - so
-    // on_end fired once per loop turn per half-open socket. 40 such sockets
-    // made a 2000-setImmediate spin take seconds instead of tens of ms.
+    // accept state). On Windows AFD keeps reporting DISCONNECT for such a
+    // socket; reporting it as READABLE each time makes recv() find the same
+    // EOF and on_end fire once per loop turn per half-open socket. 40 such
+    // sockets make a 2000-setImmediate spin take seconds instead of tens of ms.
     expect(
       await run(`
         const net = require("net");
@@ -727,11 +726,8 @@ describe("accepted socket event-loop hold matches Node (per-connection KeepAlive
   });
 });
 
-// The Windows named-pipe listener never stripped libuv's own loop ref from its
-// uv_pipe_t (uv_listen marks the handle active+ref'd), so server.unref()
-// dropped the Listener's KeepAlive but the uv handle still pinned
-// uv_loop_alive and the process never exited. TCP and unix-socket listeners go
-// through usockets, whose polls do not keep the loop alive.
+// server.unref() on a Windows named-pipe listener must drop everything that
+// keeps the loop alive, as it does for TCP and unix-socket listeners.
 it("server.unref() on a pipe/unix-socket listener lets the process exit", async () => {
   // The child exits without close() (natural exit is the observable), so the
   // unix socket file must live in a tempDir the parent disposes.

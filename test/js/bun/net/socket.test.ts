@@ -4299,10 +4299,10 @@ describe.concurrent("connect() failure promise settlement", () => {
 describe("allowHalfOpen socket whose peer resets behind pending writes", () => {
   // The full victim matrix (Bun.listen/Bun.serve/node:http(s)/fetch, plain and
   // TLS) runs as test/js/bun/test/parallel/test-net-half-open-peer-reset-*.mjs;
-  // this covers the shared usockets core in bun:test form. Unfixed, epoll
-  // re-delivered end on every writable rearm, kqueue spun the writable
-  // dispatch forever, and the libuv backend stranded (the FIN consumed the
-  // only AFD event the reset could ride).
+  // this covers the shared usockets core in bun:test form. The hazards per
+  // backend: epoll re-delivers end on every writable rearm, kqueue spins the
+  // writable dispatch, and on Windows the FIN consumes the only AFD event the
+  // reset could ride.
   it("delivers end exactly once and closes after the reset", async () => {
     const issued = Promise.withResolvers<void>();
     const ended = Promise.withResolvers<void>();

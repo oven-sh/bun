@@ -24,7 +24,6 @@
 #if defined(LIBUS_USE_EPOLL) || defined(LIBUS_USE_KQUEUE)
 
 void Bun__internal_dispatch_ready_poll(void* loop, void* poll);
-// void Bun__internal_dispatch_ready_poll(void* loop, void* poll) {}
 
 #ifndef WIN32
 /* Cannot include this one on Windows */
@@ -76,7 +75,6 @@ void us_poll_free(struct us_poll_t *p, struct us_loop_t *loop) {
     us_free(p);
 }
 
-/* Todo: why have us_poll_create AND us_poll_init!? libuv legacy! */
 void us_poll_init(struct us_poll_t *p, LIBUS_SOCKET_DESCRIPTOR fd, int poll_type) {
     p->state.fd = fd;
     p->state.poll_type = poll_type;
@@ -406,7 +404,7 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
  * Re-poll non-blocking and dispatch again before running pre/post callbacks, so a
  * single tick covers all pending I/O instead of one 1024-event slice per roundtrip.
  * Conditioned on saturation and capped at 48 iterations — matches libuv's uv__io_poll
- * (src/unix/linux.c:1387,1590 and kqueue.c:253,451). */
+ * (src/unix/linux.c, src/unix/kqueue.c). */
 static void us_internal_drain_ready_polls(struct us_loop_t *loop) {
     int drain_count = 48;
     while (UNLIKELY(loop->num_ready_polls == LIBUS_MAX_READY_POLLS) && --drain_count != 0 && loop->num_polls > 0) {
@@ -506,7 +504,7 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
 
     /* The scavenger sweeps our heaps while we are in the kernel. Must come after
      * Bun__JSC_onBeforeWait, which allocates: nothing may touch our heaps until the matching
-     * _end. mimalloc paces the sweep itself, so this costs a compare-and-swap per tick.
+     * _end. mimalloc paces the sweep itself.
      * With no scavenger to hand off to, fall back to sweeping inline -- but only on a tick that
      * really parks, and rate-limited, because doing it between ticks is what we are avoiding. */
     const int handed_off = mi_on_thread_idle_start();

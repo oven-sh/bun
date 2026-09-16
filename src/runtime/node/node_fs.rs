@@ -184,8 +184,7 @@ pub use super::node_fs_stat_watcher as StatWatcher;
 pub use super::node_fs_watcher as Watcher;
 
 /// `Binding` is the JSC-class instance that owns the per-thread `NodeFS`
-/// (`super::node_fs_binding::Binding`). Re-exported so the async `create()`
-/// entry points keep their `&mut Binding` signature.
+/// (`super::node_fs_binding::Binding`).
 pub use super::node_fs_binding::Binding;
 
 /// `jsc.JSPromise.Strong` — re-exported under its Rust crate name:
@@ -290,11 +289,6 @@ fn encoding_to_node(e: Encoding) -> bun_core::NodeEncoding {
     }
 }
 
-/// uv-shaped stat struct. `Stats::init` (from
-/// `super::stat`) takes its sibling `PosixStat` by reference, so route through
-/// that definition rather than `bun_sys::PosixStat` to keep the parameter
-/// type exact. Both are `#[repr(C)]` mirrors of `uv_stat_t`; once
-/// `super::stat` swaps to `pub use bun_sys::PosixStat` this alias collapses.
 use super::stat::PosixStat;
 
 /// Node `fs.rm` mapping helper — maps an error-set *name* string back to a
@@ -5155,13 +5149,10 @@ impl NodeFS {
                 return Ok(encode_path_result(bytes, args.encoding));
             }
 
-            let errno = sys::last_errno();
-            Err(sys::Error {
-                errno: errno as _,
-                syscall: sys::Tag::mkdtemp,
-                path: prefix_buf[..len + 6].into(),
-                ..Default::default()
-            })
+            Err(
+                sys::Error::from_code_int(sys::last_errno(), sys::Tag::mkdtemp)
+                    .with_path(&prefix_buf[..len + 6]),
+            )
         }
     }
 
@@ -5326,7 +5317,7 @@ impl NodeFS {
     fn pwritev_inner(&mut self, args: &args::Writev) -> Maybe<ret::Write> {
         let mut position = args.position.unwrap() as i64;
         // `PlatformIoVec`
-        // and `PlatformIoVecConst` are layout-identical (`{ *void, usize }`); the
+        // and `PlatformIoVecConst` are layout-identical; the
         // kernel never writes through `iov_base` for pwritev(2).
         // SAFETY: layout-compatible reinterpretation, asserted in `bun_sys`.
         let vecs: &[sys::PlatformIoVecConst] = unsafe {
@@ -5369,7 +5360,7 @@ impl NodeFS {
     fn writev_inner(&mut self, args: &args::Writev) -> Maybe<ret::Write> {
         // The mutable iovec slice doubles as `iovec_const` for writev(2); the kernel
         // never writes through `iov_base`. `PlatformIoVec` and
-        // `PlatformIoVecConst` are layout-identical (`{ *void, usize }`), so
+        // `PlatformIoVecConst` are layout-identical, so
         // pass the slice through `Syscall::writev` as-is.
         // libuv `uv__fs_write_all`: loop IOV_MAX-sized batches until every
         // buffer is written; an error after the first batch returns the
@@ -7166,6 +7157,7 @@ impl NodeFS {
 
         #[cfg(windows)]
         {
+            // SAFETY: FFI; `src` is a NUL-terminated wide path.
             let attributes = unsafe { sys::c::GetFileAttributesW(src.as_ptr()) };
             if attributes == sys::c::INVALID_FILE_ATTRIBUTES {
                 return Err(sys::Error {
@@ -7899,6 +7891,7 @@ impl NodeFS {
             let stat_ = match reuse_stat {
                 Some(a) => a,
                 None => {
+                    // SAFETY: FFI; `src` is a NUL-terminated wide path.
                     let a = unsafe { sys::c::GetFileAttributesW(src.as_ptr()) };
                     if a == sys::c::INVALID_FILE_ATTRIBUTES {
                         return Err(sys::Error::from_win32(
@@ -7911,6 +7904,7 @@ impl NodeFS {
                 }
             };
             if stat_ & sys::c::FILE_ATTRIBUTE_REPARSE_POINT == 0 {
+                // SAFETY: FFI; `src` and `dest` are NUL-terminated wide paths.
                 if unsafe {
                     sys::c::CopyFileW(
                         src.as_ptr(),
@@ -7925,6 +7919,7 @@ impl NodeFS {
                             &sys::Dir::cwd(),
                             paths::dirname_w(dest.as_slice()),
                         );
+                        // SAFETY: as above.
                         if unsafe {
                             sys::c::CopyFileW(
                                 src.as_ptr(),
@@ -7952,6 +7947,7 @@ impl NodeFS {
                 };
                 let _close = scopeguard::guard(handle, |fd| fd.close());
                 let mut wbuf = paths::os_path_buffer_pool::get();
+                // SAFETY: FFI; `wbuf` is writable for `wbuf.len()` units.
                 let len = unsafe {
                     windows::GetFinalPathNameByHandleW(
                         handle.native(),

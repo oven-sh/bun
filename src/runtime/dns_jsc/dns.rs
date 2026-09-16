@@ -923,8 +923,8 @@ pub mod get_addr_info_request {
                 hints.as_ref(),
                 &raw mut addrinfo,
             );
-            // SAFETY: FFI; all pointers valid for the call duration
             #[cfg(not(windows))]
+            // SAFETY: FFI; all pointers valid for the call duration
             let err = unsafe {
                 libc::getaddrinfo(
                     host.as_ptr().cast::<c_char>(),
@@ -988,8 +988,8 @@ pub mod get_addr_info_request {
 
     /// `GetAddrInfoW` (it resolves Unicode host names, which `getaddrinfo`
     /// would read in the ANSI code page), returning the `UV_EAI_*` code libuv's
-    /// `uv__getaddrinfo_translate_error` gives for its result: those numbers are
-    /// the `errno` JS sees.
+    /// `uv__getaddrinfo_translate_error` gives for its result, which is what
+    /// `c_ares::Error::init_eai` reads on Windows.
     #[cfg(windows)]
     fn windows_get_addr_info(
         host: &[u8],
@@ -2464,8 +2464,6 @@ pub mod internal {
     fn after_result(req: *mut Request, info: *mut AddrInfo, err: c_int) {
         let results: Option<Box<[ResultEntry]>> = if !info.is_null() {
             let res = process_results(info);
-            // ws2_32!getaddrinfo-allocated on Windows — free via the matching
-            // ws2_32!freeaddrinfo.
             // SAFETY: `info` is non-null (checked above) and owned by getaddrinfo.
             unsafe { bun_dns::freeaddrinfo(info.cast()) };
             Some(res)
@@ -2513,6 +2511,8 @@ pub mod internal {
         };
 
         #[cfg(windows)]
+        // SAFETY: FFI getaddrinfo; `req.key.host` is the owned NUL-terminated host
+        // set at construction, `wsa_hints`/`addrinfo` are stack locals.
         unsafe {
             use bun_sys::windows::ws2_32 as wsa;
             bun_uws_sys::iocp::us_internal_winsock_ensure();
@@ -4564,10 +4564,8 @@ impl Resolver {
 
         let _guard = self.ref_guard();
 
-        // A poll that failed or hung up reports no direction. c-ares learns
-        // what happened from the socket itself, so it gets both (what Node's
-        // cares_wrap does); with neither it would only run its timeouts and
-        // keep a socket nothing polls any more.
+        // A poll that failed or hung up reports no direction; give c-ares both, like Node:
+        // https://github.com/nodejs/node/blob/8a41d9b636be86350cd32847c3f89d327c4f6ff7/src/cares_wrap.cc#L93
         let failed =
             poll.flags.contains(Async::PollFlag::Eof) || poll.flags.contains(Async::PollFlag::Hup);
         let readable = poll.is_readable() || failed;
@@ -4631,20 +4629,14 @@ impl Resolver {
         let poll = unsafe { &mut **poll_entry.value_ptr };
 
         // c-ares reports the full desired (readable, writable) set for this
-        // fd; sync the poll's registration to match. FilePoll now supports
-        // both directions on one poll (epoll: combined mask via CTL_MOD;
-        // kqueue: two filters on the same ident, both EV_DELETEd on
-        // unregister).
+        // fd; sync the poll's registration to match.
         let have_readable = poll.flags.contains(Async::PollFlag::PollReadable);
         let have_writable = poll.flags.contains(Async::PollFlag::PollWritable);
 
         if (have_readable && !readable) || (have_writable && !writable) {
-            // Dropping a direction. FilePoll has no per-direction
-            // unregister (epoll CTL_DEL removes both; a targeted kqueue
-            // EV_DELETE would need a new API), and leaving the unwanted
-            // direction armed would busy-loop on level-triggered writable
-            // once the socket connects. Full resync is the simplest
-            // correct path and c-ares DNS fds are short-lived.
+            // Dropping a direction. FilePoll has no per-direction unregister,
+            // and a stale writable registration busy-loops once the socket
+            // connects, so resync.
             let _ = poll.unregister(loop_, false);
             if readable {
                 let _ = poll.register(loop_, Async::PollKind::Readable, false);
@@ -4653,10 +4645,7 @@ impl Resolver {
                 let _ = poll.register(loop_, Async::PollKind::Writable, false);
             }
         } else {
-            // Only adding directions (or no change). register() issues a
-            // single CTL_MOD on epoll that preserves the other direction;
-            // on kqueue EV_ADD creates a separate (ident, filter) knote
-            // without disturbing the existing one.
+            // Only adding directions (or no change).
             if readable && !have_readable {
                 let _ = poll.register(loop_, Async::PollKind::Readable, false);
             }

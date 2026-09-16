@@ -1276,11 +1276,8 @@ class ChildProcess extends EventEmitter {
       default:
         if (io === "socket-fd") {
           if (!NetModule) NetModule = require("node:net");
-          // #spawn mapped "pipe" at i>=3 to "socket-fd", so the parent-end
-          // fd in handle.stdio[i] is UnownedFd: we own it and the socket
-          // net.connect({fd}) makes closes it when it closes. On Windows the
-          // number is the HANDLE of a pipe end Bun.spawn made and nothing has
-          // opened yet, which fdIsSpawnedPipe tells the socket.
+          // handle.stdio[i] is ours to close (UnownedFd, see spawn()); the socket closes it.
+          // On Windows it is the HANDLE of a pipe end Bun.spawn made.
           const fd = handle && handle.stdio[i];
           if (fd == null) return null;
           return NetModule.connect(process.platform === "win32" ? { fd, fdIsSpawnedPipe: true } : { fd });
@@ -1361,16 +1358,14 @@ class ChildProcess extends EventEmitter {
 
     const stdio = options.stdio || ["pipe", "pipe", "pipe"];
     const bunStdio = getBunStdioFromOptions(stdio);
-    // Extra "pipe" slots (i >= 3) are wrapped in a net.Socket by
-    // #getBunSpawnIo, which hands the fd to the socket (it closes it on
-    // socket close). Use Bun.spawn's "socket-fd" so the parent end is stored
-    // as UnownedFd from the start and Subprocess.finalize_streams never
-    // double-closes it. Async path only: spawnSync never wraps extra fds in
-    // net.Socket (no .stdio on Bun.spawnSync's result yet) and must keep
-    // them OwnedFd so finalize_streams still closes them. The child's end of
-    // a pipe at i >= 3 is overlapped on Windows whichever of the two was asked for.
+    // #getBunSpawnIo wraps extra "pipe" slots (i >= 3) in a net.Socket that closes
+    // the fd, so use "socket-fd": the parent end is UnownedFd and
+    // Subprocess.finalize_streams does not close it again. Async path only:
+    // spawnSync never wraps extra fds and must keep them OwnedFd so
+    // finalize_streams closes them.
     for (let i = 3; i < bunStdio.length; i++) {
       const option = bunStdio[i];
+      // The child's end of a pipe at i >= 3 is overlapped on Windows whichever of the two was asked for.
       if (option === "pipe" || option === "overlapped") bunStdio[i] = "socket-fd";
     }
     // This side of an "overlapped" pipe is a pipe like any other.

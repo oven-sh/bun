@@ -160,14 +160,8 @@ impl IOReader {
         core::mem::size_of::<IOReader>() + s.readers.capacity() * core::mem::size_of::<ChildPtr>()
     }
 
-    /// `bun_io::EventLoopHandle` is an opaque `*mut c_void` that the io-layer
-    /// `FilePollVTable` round-trips back to the runtime. We pass the address of
-    /// the stored `bun_event_loop::EventLoopHandle` so the (runtime-registered)
-    /// vtable can recover it.
     #[inline]
     fn io_evtloop(&self) -> bun_io::EventLoopHandle {
-        // SAFETY: `bun_io::EventLoopHandle` stores `*mut c_void` purely for
-        // type-erasure; vtable consumers treat the pointee as read-only
         self.state().evtloop.as_event_loop_ctx()
     }
 

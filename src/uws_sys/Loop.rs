@@ -267,7 +267,7 @@ impl Loop {
         unsafe { c::us_quic_loop_flush_if_pending(self) };
     }
 
-    /// `None` if epoll/kqueue cannot be created (EMFILE).
+    /// `None` if the loop's kernel objects cannot be created (e.g. EMFILE).
     pub fn create<H: LoopHandler>() -> Option<NonNull<Loop>> {
         // SAFETY: us_create_loop allocates and returns a new loop; null hint is valid
         let p = unsafe {
@@ -292,9 +292,10 @@ impl Loop {
         unsafe { c::us_loop_run_bun_tick(self, &raw const timespec, NOW_NS_UNKNOWN) };
     }
 
-    /// `now_ns` is the CLOCK_MONOTONIC reading the caller took to pick `timespec` (see
+    /// `now_ns` is the monotonic-clock reading the caller took to pick `timespec` (see
     /// `timer::All::get_timeout`), reused by the tick's idle-sweep rate limit rather
-    /// than read again. `NOW_NS_UNKNOWN` if the caller has none to share.
+    /// than read again; on Windows `timespec` also counts from it when the wait
+    /// timer is armed. `NOW_NS_UNKNOWN` if the caller has none to share.
     pub fn tick_with_timeout(&mut self, timespec: Option<&Timespec>, now_ns: u64) {
         // SAFETY: self is a valid loop pointer
         unsafe {
@@ -352,7 +353,7 @@ mod c {
     // `Loop` is a sized `#[repr(C)]` mirror of the
     // C struct (NOT an opaque ZST with `UnsafeCell`), so the safe-fn-with-`&mut`
     // pattern does not apply: `&mut Loop` at the FFI boundary would emit LLVM
-    // `noalias` over real fields, and the reentrant callees (`us_loop_run`,
+    // `noalias` over real fields, and the reentrant callees (`us_loop_run_bun_tick`,
     // `us_loop_close_all_groups`, …) dispatch Rust callbacks that touch the same
     // loop via `Loop::get()`. Keep all loop-taking decls as raw `*mut Loop`.
     unsafe extern "C" {
@@ -379,13 +380,10 @@ mod c {
         pub(super) fn uws_loop_date_header_timer_update(loop_: *mut Loop);
     }
 }
-// Re-exported raw externs for cross-thread callers (e.g. bun_http's
-// `HTTPThread::wakeup`, bun_io's `WindowsWaker`) that hold only a `*mut Loop`
-// and MUST NOT form a `&mut Loop` via `Loop::wakeup`/`Loop::run` — see the
-// noalias warning on `mod c` above. `us_loop_run` is included because the
-// event-loop thread parks inside it while worker threads call
-// `us_wakeup_loop` concurrently; routing either through a `&mut self`
-// receiver would create two live `&mut Loop` to the same singleton (UB).
+// Raw externs for cross-thread callers (e.g. bun_http's `HTTPThread::wakeup`)
+// that hold only a `*mut Loop` and must not form a `&mut Loop` via
+// `Loop::wakeup` while the loop's own thread holds one: see the noalias note
+// on `mod c`.
 pub use c::{us_loop_run, us_wakeup_loop};
 
 unsafe extern "C" {

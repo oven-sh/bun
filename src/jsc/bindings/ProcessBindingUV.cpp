@@ -10,12 +10,9 @@
 
 // clang-format off
 
-// The numeric values are libuv's (src/jsc/bindings/libuv/uv/errno.h): on POSIX
-// every UV__E* equals -E* of the host, and on Windows libuv defines its own
-// synthetic codes (e.g. UV__ENOENT == -4058), which is what node reports in
-// err.errno. Negating the compiling host's <errno.h> values silently produces
-// CRT-style codes on Windows (-2 for ENOENT) that match neither node nor the
-// errors bun's fs emits there.
+// The numeric values are libuv's (src/jsc/bindings/libuv/uv/errno.h): -E* of
+// the host on POSIX, libuv's own codes on Windows (UV__ENOENT == -4058), which
+// is what node reports in err.errno.
 #include <uv/errno.h>
 
 #define BUN_UV_ERRNO_MAP(macro) \

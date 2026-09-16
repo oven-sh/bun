@@ -151,9 +151,9 @@ process.exit(0);
 // error), and the pipe HANDLE isn't JS-accessible, so there's no way to
 // trigger a real read error from JS — hence the hook.
 //
-// Without the fix, the leaked poll keep-alive refs (Posix) / pipe handles
-// (Windows) prevent the event loop from exiting after the loop completes, so
-// the fixture hangs and the spawn timeout kills it.
+// A leaked poll keep-alive ref (Posix) or pipe handle (Windows) prevents the
+// event loop from exiting after the loop completes, so the fixture hangs and
+// the spawn timeout kills it.
 test("PipeReader is freed when a subprocess stdout read fails (injected)", async () => {
   using dir = tempDir("spawn-pipe-read-error-leak-inject", {
     "fixture.js": `
@@ -183,10 +183,9 @@ for (let i = 0; i < 10; i++) {
 }
 Bun.gc(true);
 console.log(JSON.stringify({ injected }));
-// No explicit process.exit(): if the fix works, the event loop exits on its
-// own once the script finishes. Without the fix, the leaked keep-alive refs
-// (Posix) / open pipe handles (Windows) keep it alive and the parent's
-// spawn timeout fires.
+// No explicit process.exit(): the event loop exits on its own once the script
+// finishes. A leaked keep-alive ref (Posix) or open pipe handle (Windows)
+// keeps it alive and the parent's spawn timeout fires.
 `,
   });
 

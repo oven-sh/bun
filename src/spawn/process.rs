@@ -32,10 +32,7 @@ pub use posix_spawn::WaitPidResult;
 /// The fd / memfd helpers of `bun_sys` that spawning uses, under the path
 /// `bun_runtime::api::bun_spawn::stdio` and `Terminal` import them from.
 pub mod spawn_sys {
-    // POSIX-only — memfd / FD_CLOEXEC have no Windows equivalent
-    // (`can_use_memfd` is always-false there and `set_close_on_exec` is a
-    // no-op since Win32 handles default to non-inheritable). Gated so the
-    // re-export resolves without `bun_sys` having to ship Windows stubs.
+    // POSIX-only: memfd and FD_CLOEXEC have no Windows equivalent.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub use bun_sys::{MemfdFlags, MemfdFlags as MemfdFlag, memfd_create};
     #[cfg(unix)]
@@ -126,8 +123,6 @@ pub struct Process {
 }
 
 impl Drop for Process {
-    /// The allocation itself is freed by the `heap::take` in `destructor`
-    /// above; this `Drop` body covers the `poller.deinit()` call.
     fn drop(&mut self) {
         self.poller.deinit();
         #[cfg(windows)]
@@ -241,7 +236,7 @@ impl Process {
     /// the destructor `Box::from_raw`-drops the allocation, and a `&mut self`
     /// argument carries a Stacked-Borrows protector for the call's full
     /// duration — freeing while it's live is UB even though we never touch
-    /// `self` afterwards. Same rationale as [`Process::has_exited`] (:215).
+    /// `self` afterwards.
     ///
     /// # Safety
     /// `this` must point at a live `Process` with refcount ≥ 1.
@@ -322,10 +317,7 @@ impl Process {
         }
     }
 
-    // has_exited / has_killed / signal_code live in the always-on impl above.
-
     pub fn on_exit(&mut self, status: Status, rusage: &Rusage) {
-        // ProcessExitHandler is Copy (owner ptr + &'static vtable), so mirror
         let exit_handler = self.exit_handler;
         self.status = status.clone();
         if self.has_exited() {
@@ -392,7 +384,7 @@ impl Process {
     /// `this` carries the +1 ref taken when the waiter-thread task was queued.
     /// `RefPtr::from_raw` releases it on return — which may free `this` — so
     /// this takes `*mut Self`, not `&mut self` (a `&mut` argument's
-    /// Stacked-Borrows protector outliving the allocation is UB; see :215).
+    /// Stacked-Borrows protector outliving the allocation is UB).
     #[cfg(unix)]
     pub(crate) unsafe fn on_wait_pid_from_waiter_thread(
         this: *mut Self,
@@ -646,8 +638,6 @@ impl Process {
         #[cfg(unix)]
         {
             let mut stranded_watch_ref = false;
-            // Route the `Fd` arm through the centralized `fd_poll_mut()`
-            // accessor instead of open-coding `(*poll.as_ptr()).deinit()`.
             if let Some(poll) = self.poller.fd_poll_mut() {
                 stranded_watch_ref = poll.is_registered();
                 poll.deinit();
@@ -722,10 +712,7 @@ impl Process {
             // before `watch_or_reap()` installs the poller; the first
             // `recv_non_block` returns EAGAIN (yes hasn't written yet) so the
             // maxBuffer overflow fires from the event-loop poll
-            // tick *after* the Fd poller is armed. Do not widen this match to
-            // mask spawn-maxbuf.test.ts — the async-path hang there has a
-            // different root cause (poller is already Fd when `on_max_buffer`
-            // fires, so this arm is unreachable on that path).
+            // tick *after* the Fd poller is armed.
             match &self.poller {
                 Poller::WaiterThread(_) | Poller::Fd(_) => {
                     // All by-value `pid_t`/`c_int`; the kernel validates pid/
@@ -912,8 +899,6 @@ impl PollerPosix {
     /// `Drop` impl would double-free the hive slot on those reassignments.
     /// Called only from `Process` drop.
     pub(crate) fn deinit(&mut self) {
-        // Route the `Fd` arm through the centralized `fd_poll_mut()` accessor
-        // instead of open-coding the `NonNull` deref here.
         if let Some(poll) = self.fd_poll_mut() {
             poll.deinit();
         } else if let PollerPosix::WaiterThread(w) = self {
@@ -1609,9 +1594,8 @@ pub mod waiter_thread_posix {
     }
 }
 
-/// Windows stub mirroring the unix `WaiterThreadPosix as WaiterThread` re-export.
-/// An uninhabited type with associated fns so callers can use
-/// `WaiterThread::should_use_waiter_thread()` uniformly on both platforms.
+/// Windows stand-in for the unix `WaiterThread`, so callers can call
+/// `WaiterThread::set_should_use_waiter_thread()` on every platform.
 #[cfg(not(unix))]
 pub enum WaiterThread {}
 
@@ -1748,11 +1732,8 @@ mod spawn_process_body {
 
     pub mod sync {
         use super::*;
-        // `Options.windows` is `WindowsOptions` on Windows; surface it under the
-        // `…::process::sync` path. A `pub use super::…`
-        // re-export trips E0365 here because the `use super::*` glob has already
-        // bound the name privately and rustc treats the explicit re-export as
-        // re-exporting that private binding; a type alias sidesteps the conflict.
+        // A type alias, not `pub use`: the `use super::*` glob already binds the
+        // name privately (E0365).
         #[cfg(windows)]
         pub type WindowsOptions = bun_spawn_sys::WindowsOptions;
 

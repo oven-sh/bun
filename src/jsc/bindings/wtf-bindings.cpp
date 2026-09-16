@@ -232,8 +232,8 @@ extern "C" int Bun__ttySetMode(int fd, int mode, void* rawState, int drain)
     UNUSED_PARAM(drain);
     BunTTYState state;
     memcpy(&state, rawState, sizeof(state));
-    // The mode belongs to the console, which another stream or uv_tty_reset_mode
-    // can have changed since `state` recorded it.
+    // No early-out on state.mode: the mode belongs to the console, which another
+    // stream or uv_tty_reset_mode can have changed since `state` recorded it.
     int rc = Bun__Windows__setConsoleMode(reinterpret_cast<void*>(_get_osfhandle(fd)), mode);
     if (rc == 0) {
         state.mode = mode;

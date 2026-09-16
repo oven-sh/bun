@@ -38,7 +38,7 @@ async function runInTerminal(
   // Settles once `marker` has been printed, or at EOF so a dead child cannot hang the caller.
   const waitFor = (marker: string) => {
     const waiter = Promise.withResolvers<void>();
-    if (output.includes(marker)) waiter.resolve();
+    if (Bun.stripANSI(output).includes(marker)) waiter.resolve();
     else waiters.push({ marker, resolve: waiter.resolve });
     return Promise.race([waiter.promise, eof.promise]);
   };
@@ -54,7 +54,11 @@ async function runInTerminal(
       data(_t, chunk: Uint8Array) {
         output += decoder.decode(chunk, { stream: true });
         if (output.includes(readyMarker)) ready.resolve();
-        for (const waiter of waiters) if (output.includes(waiter.marker)) waiter.resolve();
+        if (waiters.length) {
+          // A cursor sequence can land inside a marker on a frame boundary.
+          const shown = Bun.stripANSI(output);
+          for (const waiter of waiters) if (shown.includes(waiter.marker)) waiter.resolve();
+        }
         if (opts.done(output)) finished.resolve();
       },
       exit() {

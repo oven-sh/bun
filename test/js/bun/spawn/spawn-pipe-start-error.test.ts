@@ -2,24 +2,12 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isDebug, isLinux, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 
-// On Windows, when the initial uv_read_start on a subprocess stdout/stderr
-// pipe fails (observed from libuv as UV_EINVAL after a bad FileAccessInformation
-// query on the pipe handle), SubprocessPipeReader::start() returned the Err
-// straight from start_with_current_pipe(). The caller in the spawn bindings
-// then threw and returned without tearing down either pipe: stdout still had
-// the extra ref from the top of start(), and stderr had never been start()ed
-// at all (refcount 1, process backref set, live uv.Pipe source).
-//
-// When the killed child's exit callback later fired, on_process_exit resumed
-// reads on both pipes; the EOF that arrived on the unstarted stderr reached
-// on_reader_done, whose trailing deref assumes the matching start() ref exists,
-// so it dereferenced a freed PipeReader. Debug builds hit the RefCount
-// MAGIC_VALID assert; release builds wrote through freed memory, which in
-// practice manifested as a process stuck idle with no error and no exit.
-//
-// The fix routes the reader's start() error through on_reader_error
-// (matching what POSIX already does for register_poll failure), so the pipe is
-// torn down and detached from the Subprocess before the exit callback runs.
+// On Windows the reader returns a failed start() instead of reporting it. When
+// that happens on a child's stdout pipe, the pipe is torn down through
+// on_reader_error (as POSIX does for a failed register_poll) and detached from
+// the Subprocess before the exit callback runs, and the spawn goes on to the
+// stderr pipe. Otherwise on_process_exit resumes a PipeReader that was never
+// started.
 //
 // Triggering a real read-start failure on a freshly-spawned stdio pipe is
 // not possible from JS, so this uses a debug-only fault-injection env var.
@@ -38,8 +26,7 @@ try {
   await p.exited;
   process.stderr.write("OK\\n");
 } catch (e) {
-  // Before the fix the spawn threw here; printing lets the assertion below
-  // name the exact error code when the post-throw crash is the real failure.
+  // Printing lets the assertion below name the error code of a spawn that threw.
   process.stderr.write("THREW " + (e?.code ?? e?.message) + "\\n");
 }
 `;
@@ -57,8 +44,7 @@ try {
     });
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-    // Without the fix stderr is "THREW EINVAL" followed by the RefCount
-    // MAGIC_VALID debug panic, and exitCode is the debug crash handler's.
+    // A spawn that threw the injected error prints "THREW EINVAL" instead.
     expect(stderr.trim()).toBe("OK");
     expect(exitCode).toBe(0);
   },

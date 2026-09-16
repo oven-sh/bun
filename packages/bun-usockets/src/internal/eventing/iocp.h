@@ -40,12 +40,12 @@ struct us_internal_afd_poll;
 struct us_internal_afd_helper;
 struct us_internal_acceptor;
 
-/* Same leading fields, in the same order, as the epoll/kqueue us_loop_t: the
- * Rust mirror in src/uws_sys/Loop.rs and the shared C code use them by name. */
 /* Packets taken per GetQueuedCompletionStatusEx call. The call's cost grows
  * with the size of the array it is given, also when the port is empty. */
 #define US_IOCP_MAX_ENTRIES 128
 
+/* Same leading fields, in the same order, as the epoll/kqueue us_loop_t: the
+ * Rust mirror in src/uws_sys/Loop.rs and the shared C code use them by name. */
 struct us_loop_t {
     alignas(LIBUS_EXT_ALIGNMENT) struct us_internal_loop_data_t data;
 
@@ -132,8 +132,7 @@ void us_iocp_op_submitted(struct us_loop_t *loop);
 
 /* Deliver `op` once when `handle` becomes signalled (process exit, event,
  * console input...). us_iocp_wait_stop returns nonzero if the wait was removed
- * before it fired, in which case `complete` will not run. `entry->Internal` is
- * 0 on delivery. */
+ * before it fired, in which case `complete` will not run. */
 struct us_iocp_wait;
 struct us_iocp_wait *us_iocp_wait_create(struct us_loop_t *loop);
 int us_iocp_wait_start(struct us_iocp_wait *wait, HANDLE handle, struct us_iocp_op *op);

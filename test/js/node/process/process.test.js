@@ -92,7 +92,7 @@ it("process", () => {
 // The title is read from the console when none was set. The console's can be longer than the
 // buffer it is read into.
 it.skipIf(!isWindows).each([8190, 8191, 8192, 20000])(
-  "process.title of a %d-unit console title is what fit of it",
+  "process.title reads a console title of %d UTF-16 units, truncated to 8191",
   async units => {
     await using proc = Bun.spawn({
       cmd: [

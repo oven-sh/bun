@@ -437,7 +437,6 @@ describe("spawn stdin ReadableStream", () => {
   // When the child dies mid-write the sink's close path must tear down the
   // ReadableStream feeding it (for an async iterable, return the generator),
   // or the still-running pull keeps the parent's event loop alive forever.
-  // On Windows the libuv write-error path skipped that close notification.
   // https://github.com/oven-sh/bun/issues/33020
   async function expectParentExitsAfterChildDies(useIterator: boolean) {
     await using proc = Bun.spawn({

@@ -2252,10 +2252,7 @@ fn open_null_device() -> bun_sys::Result<Fd> {
     }
 }
 
-/// Note: takes a pre-cached `mode` from `event_loop.stdout().data
-/// .file.mode`; `EventLoopHandle` is still a shim, so we `fstat` the (already
-/// dup'd) fd here instead. On `fstat` failure we conservatively return `false`
-/// (non-pollable → synchronous write path).
+/// `false` when `fstat` fails (non-pollable → synchronous write path).
 #[cfg(not(windows))]
 fn is_pollable(fd: Fd) -> bool {
     let mode = match bun_sys::fstat(fd) {

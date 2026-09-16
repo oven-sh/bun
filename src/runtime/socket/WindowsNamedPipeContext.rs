@@ -43,11 +43,11 @@ pub struct WindowsNamedPipeContext {
 }
 
 /// Reached from `on_close` → `Self::deref` while `WindowsNamedPipe::on_close`
-/// still holds a live `&mut (*this).named_pipe` and uses it after we return, so
-/// project raw fields only — same constraint as the `on_*` handlers below.
+/// still holds `&(*this).named_pipe`, so project raw fields only, as the `on_*`
+/// handlers below do.
 fn schedule_deinit(this: *mut WindowsNamedPipeContext) {
     // SAFETY: called from `deref()` at count zero; `this` is live until the task fires.
-    // `task_event`/`vm`/`task` are disjoint from the caller's `&mut named_pipe`, and
+    // `task_event`/`vm` are disjoint from the caller's `&named_pipe`, and
     // `vm` is `&'static` (JSC_BORROW) so `enqueue_task`'s `&mut` goes through a raw cast.
     unsafe {
         debug_assert!((*this).task_event != EventState::Deinit);
@@ -66,7 +66,7 @@ pub enum EventState {
 
 /// Intrusive-refcounted self-pointers into the wrapped JS socket (a *different*
 /// allocation from this context, so `ThisPtr`'s `Deref` is sound on them).
-/// `Copy` so matching by value avoids `&self.socket` aliasing `&mut self.named_pipe`.
+/// `Copy`, so the handlers read it by value through a raw place.
 #[derive(Copy, Clone)]
 pub enum SocketType {
     Tls(bun_ptr::ThisPtr<TLSSocket>),
@@ -74,14 +74,8 @@ pub enum SocketType {
     None,
 }
 
-/// Build a `uws::NewSocketHandler` from the wrapped named pipe.
-///
-/// Takes a raw `*mut WindowsNamedPipe` (NOT `&mut`) because every caller is a
-/// `NamedPipeHandlers` callback invoked *from* `WindowsNamedPipe::on_*`, which
-/// already holds a live `&mut WindowsNamedPipe` to the same field and touches
-/// it again after the callback returns. Forming a second `&mut` here would
-/// retag the field and invalidate the caller's reference (Stacked Borrows).
-/// The handler only needs the raw address to stuff into `InternalSocket::Pipe`.
+/// Build a `uws::NewSocketHandler` from the wrapped named pipe;
+/// `InternalSocket::Pipe` stores the raw address.
 #[inline]
 fn socket_from_named_pipe<const SSL: bool>(
     pipe: *mut WindowsNamedPipe,
@@ -91,16 +85,8 @@ fn socket_from_named_pipe<const SSL: bool>(
     }
 }
 
-/// Dispatch a `SocketType` value to a single body written generically over
-/// `NewSocket<SSL>`. Binds the inner `ThisPtr<NewSocket<{true|false}>>` as `$s`
-/// and a per-arm `const $ssl: bool` so the body can call
-/// `NewSocket::on_x($s, socket_from_named_pipe::<$ssl>(..), ..)` once instead
-/// of hand-duplicating the `Tls`/`Tcp` arms. `SocketType::None` is a no-op.
-///
-/// Takes the `SocketType` by *value* (Copy) — not `*mut Self` — so callers
-/// that must snapshot before mutating (`on_close`) or branch and re-match
-/// (`on_error`) pass their saved copy; see the Stacked-Borrows note on the
-/// `on_*` block below.
+/// Run `$body` for the `Tls` or `Tcp` arm of a `SocketType` value, with `$s`
+/// the socket and `$ssl` its `SSL` const. `SocketType::None` is a no-op.
 macro_rules! match_socket {
     ($scrutinee:expr, |$s:ident: NewSocket<$ssl:ident>| $body:expr) => {
         // This context is the named-pipe sockets' trampoline: what a handler
@@ -123,19 +109,9 @@ macro_rules! match_socket {
 
 // ── NamedPipeHandlers callbacks ──────────────────────────────────────────────
 //
-// All eight `on_*` handlers below take `this: *mut Self` (NOT `&mut self`).
-// They are invoked from `WindowsNamedPipe::on_*` via `(self.handlers.on_x)(ctx, ..)`
-// where the caller already holds a live `&mut WindowsNamedPipe` — i.e. a
-// `&mut (*this).named_pipe` — and *uses it again after the handler returns*
-// (e.g. `self.incoming.clear()`, `self.close()`, `self.release_resources()`).
-//
-// Forming `&mut *this` (or `&mut (*this).named_pipe`) here would retag from the
-// allocation-root provenance and pop the caller's Unique tag off the borrow
-// stack → Stacked Borrows UB / LLVM `noalias` violation when control returns.
-//
-// Instead each handler projects only the disjoint fields it needs (`socket`,
-// `is_open`, `global_this`) via raw-pointer place expressions, and passes
-// `addr_of_mut!((*this).named_pipe)` as a raw pointer without retagging.
+// The `on_*` handlers take `this: *mut Self`: `WindowsNamedPipe::on_*` calls
+// them through its `&self`, a live `&(*this).named_pipe`, so none may form
+// `&mut Self`. Each reads and writes the fields it needs through raw places.
 /// Fails the pending connect and releases `create()`'s sole ref, unless
 /// `disarm()` runs first.
 struct FailAndRelease(Option<*mut WindowsNamedPipeContext>);
@@ -162,7 +138,7 @@ impl WindowsNamedPipeContext {
     fn on_open(this: *mut Self) {
         // SAFETY: `this` is the live ctx ptr registered in `create()`; `is_open`,
         // `socket` and the `named_pipe` field *address* are all reachable without
-        // forming a reference that overlaps the caller's `&mut named_pipe`.
+        // forming a reference that overlaps the caller's `&named_pipe`.
         let (socket, pipe) = unsafe {
             (*this).is_open = true;
             ((*this).socket, ptr::addr_of_mut!((*this).named_pipe))
@@ -243,7 +219,7 @@ impl WindowsNamedPipeContext {
         if is_open {
             match_socket!(socket, |s: NewSocket<SSL>| {
                 // SAFETY: `this` is live; `global_this` is disjoint from the caller's
-                // `&mut named_pipe` and the borrow ends before `handle_error` runs JS.
+                // `&named_pipe` and the borrow ends before `handle_error` runs JS.
                 let js_err = err.to_js(unsafe { &(*this).global_this });
                 s.handle_error(js_err)
             });
@@ -349,18 +325,13 @@ impl WindowsNamedPipeContext {
         .cast();
 
         // Non-capturing closures coerce to `fn(*mut c_void, …)`; each casts the
-        // erased ctx ptr back to `*mut Self` and forwards it RAW — the callee
-        // must not form `&mut Self` (see the doc-comment on the `on_*` block
-        // above for the Stacked-Borrows constraint vs the caller's
-        // `&mut WindowsNamedPipe`).
+        // erased ctx ptr back to `*mut Self` and forwards it raw (see the note
+        // above the `on_*` handlers).
         let handlers = NamedPipeHandlers {
             ctx: this.cast::<c_void>(),
             // SAFETY: `p` is the `ctx` set above (`this.cast()`); the
             // WindowsNamedPipe never invokes a handler after `on_close`
             // schedules deinit, so the allocation is live for the call.
-            // `rc_ref` projects `ref_count` via raw place — `(*p).ref_()` would
-            // autoref `&Self` over the whole struct, but `WindowsNamedPipe::r#ref`
-            // holds `&mut (*this).named_pipe` across this callback.
             ref_ctx: |p| unsafe { <Self as bun_ptr::AnyRefCounted>::rc_ref(p.cast::<Self>()) },
             // SAFETY: `p` is the `ctx` set above (`this.cast()`); the allocation is live for the call (see `ref_ctx`).
             deref_ctx: |p| unsafe { Self::deref(p.cast::<Self>()) },

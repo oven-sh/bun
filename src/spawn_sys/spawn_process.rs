@@ -1,6 +1,6 @@
 //! Raw `spawn_process_posix` + option/result types (`spawn_process_windows`
-//! is in `windows/`) — split out of `bun_spawn::process` so the fd/action
-//! plumbing has no event-loop dependency. `Process`/`Poller`/`WaiterThread`/`sync` stay in `bun_spawn`.
+//! is in `windows/`): the fd/action plumbing, with no event-loop dependency.
+//! `Process`/`Poller`/`WaiterThread`/`sync` are in `bun_spawn`.
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use core::ffi::CStr;
@@ -427,7 +427,6 @@ pub enum Stdio {
     SocketFd,
     Ipc,
     Pipe(Fd),
-    // TODO: remove this entry, it doesn't seem to be used
     Dup2(Dup2),
 }
 
@@ -471,7 +470,7 @@ impl Default for SpawnResult {
 
 /// Entry in `extra_pipes` for a stdio slot at index >= 3.
 pub enum ExtraPipe {
-    /// We created this fd (e.g. socketpair for `"pipe"`); `finalizeStreams`
+    /// We created this fd (e.g. socketpair for `"pipe"`); `finalize_streams`
     /// closes it. Downgraded to `UnownedFd` once `.stdio` is read (the caller
     /// then owns the raw number and is responsible for closing it).
     OwnedFd(Fd),
@@ -946,7 +945,7 @@ pub unsafe fn spawn_process_posix(
                 actions.dup2(*fd, fileno)?;
                 // The fd was supplied by the caller (a number in the stdio array) and is
                 // not owned by us. Record it so `stdio[N]` returns the caller's fd, but
-                // mark it unowned so finalizeStreams leaves it open.
+                // mark it unowned so `finalize_streams` leaves it open.
                 extra_fds.push(ExtraPipe::UnownedFd(*fd));
             }
         }

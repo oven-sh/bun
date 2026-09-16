@@ -136,7 +136,6 @@ public:
         LoopData *loopData = (LoopData *) us_loop_ext((us_loop_t *) this);
         
         loopData->~LoopData();
-        /* uSockets will track whether this loop is owned by us or a borrowed alien loop */
         us_loop_free((us_loop_t *) this);
 
         /* Reset lazyLoop */

@@ -16,9 +16,6 @@ use bun_sys::FdExt as _;
 use bun_sys::{self, SignalCode};
 use enumset::{EnumSet, EnumSetType};
 
-// Process / spawn machinery lives in this crate (api/bun/process.rs), not in an
-// external `bun_spawn` crate. The `bun_spawn` workspace crate only carries the
-// platform-thin `Stdio`/`Status` shims used by `bun.spawnSync` callers.
 use crate::api::bun::Terminal;
 use crate::api::bun_process::{ExtraPipe, Process, Rusage, Status};
 use crate::ipc as IPC;
@@ -68,7 +65,7 @@ pub mod js {
     );
 }
 
-/// Platform-dependent stdio result type.
+/// The parent's end of a stdio pipe.
 pub use bun_spawn::subprocess::StdioResult;
 
 type StdioPipeItem = ExtraPipe;

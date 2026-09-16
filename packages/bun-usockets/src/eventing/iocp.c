@@ -331,6 +331,7 @@ static int slow_poll_submit(struct us_internal_afd_poll *poll);
 static void us_internal_resume_list_add(struct us_loop_t *loop);
 static void us_internal_resume_list_remove(struct us_loop_t *loop);
 static void acceptors_cancel(struct us_loop_t *loop);
+static void acceptors_retry_starved(struct us_loop_t *loop);
 
 /* 0, or -1 with the Winsock error set when the kernel refused the poll (no packet follows). */
 static int afd_poll_submit(struct us_internal_afd_poll *poll) {
@@ -405,6 +406,13 @@ static struct us_internal_afd_poll *afd_poll_create(struct us_loop_t *loop, void
         WSASetLastError(WSAENOTSOCK);
         return NULL;
     }
+#if defined(LIBUS_SOCKET_FAULT_INJECTION) && LIBUS_SOCKET_FAULT_INJECTION
+    ssize_t injected = 0;
+    int unused = 0;
+    if (US_FAULT_CHECK(US_FAULT_POLL_SLOW, socket, injected, unused)) {
+        poll->base_socket = INVALID_SOCKET;
+    }
+#endif
     if (poll->base_socket == INVALID_SOCKET) {
         poll->slow = 1;
     } else {
@@ -632,6 +640,11 @@ static DWORD WINAPI slow_poll_thread(LPVOID param) {
 }
 
 static int slow_poll_submit(struct us_internal_afd_poll *poll) {
+    /* select() reports nothing but readable and writable, and fails at once
+     * when given no socket at all. A change of interest submits again. */
+    if (!(poll->interest & (LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE))) {
+        return 0;
+    }
     /* Retried from the next completion. */
     if (poll->slow_requests >= 2) {
         return 0;
@@ -891,11 +904,11 @@ static void us_internal_resume_list_remove(struct us_loop_t *loop) {
 static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
     while (loop->current_ready_poll < loop->num_ready_polls) {
         OVERLAPPED_ENTRY entry = loop->ready_polls[loop->current_ready_poll++];
-        /* A packet without an OVERLAPPED only ends the wait. */
+        /* A packet without an OVERLAPPED only ends the wait: the wait timer fired, or
+         * the system resumed. A relative timer does not count the time suspended, so
+         * after a resume the armed one is later than the deadline it was armed for. */
         if (!entry.lpOverlapped) {
-            if (entry.lpCompletionKey == HRTIMER_COMPLETION_KEY) {
-                loop->hrtimer_deadline_ns = 0;
-            }
+            loop->hrtimer_deadline_ns = 0;
             continue;
         }
         InterlockedDecrement((volatile LONG *) &loop->pending_ops);
@@ -1031,6 +1044,7 @@ void us_loop_run(struct us_loop_t *loop) {
     while (loop->num_polls) {
         loop->data.tick_depth++;
         us_internal_loop_pre(loop);
+        acceptors_retry_starved(loop);
 
         us_internal_dispatch_ready_polls(loop);
         long long timeout_ns = us_internal_clamp_to_sweep(loop, -1);
@@ -1057,6 +1071,7 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec *timeout
     loop->data.tick_depth++;
 
     us_internal_loop_pre(loop);
+    acceptors_retry_starved(loop);
 
     /* Only a tick entered from a completion callback has anything left here. */
     us_internal_dispatch_ready_polls(loop);
@@ -1080,8 +1095,12 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec *timeout
     if (had_wakeups != 0) {
         timeout_ns = 0;
     }
+    if (timeout_ns != 0 && loop->data.jsc_vm)
+        Bun__JSC_onBeforeWait(loop->data.jsc_vm);
+
     /* What follows prepares to park the thread. A tick that finds packets
-     * waiting does not park, however long it would have been willing to. */
+     * waiting does not park, however long it would have been willing to.
+     * After the finalizers above, which stop polls: the flush frees them. */
     int found_packets = 0;
     if (timeout_ns != 0) {
         afd_flush_updates(loop);
@@ -1089,10 +1108,8 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec *timeout
         found_packets = loop->num_ready_polls != 0;
     }
     const int will_idle_inside_event_loop = timeout_ns != 0 && !found_packets;
-    if (will_idle_inside_event_loop && loop->data.jsc_vm)
-        Bun__JSC_onBeforeWait(loop->data.jsc_vm);
 
-    /* After the finalizers above, which stop polls, and before the hand-off below: this frees. */
+    /* Before the hand-off below: this frees. */
     if (!found_packets)
         us_internal_before_wait(loop, timeout_ns);
 
@@ -1174,10 +1191,9 @@ void us_loop_free(struct us_loop_t *loop) {
     us_free(loop);
 }
 
-/* Poll */
+/* Accepting */
 
-/* ── Accepting ───────────────────────────────────────────────────────────────
- * A listening socket is not polled for readiness. accept() on a non-blocking
+/* A listening socket is not polled for readiness. accept() on a non-blocking
  * socket is a readiness check followed by a wait for the connection, and when
  * several acceptors share the socket (cluster workers, the loops of two
  * threads) another one can take the connection in between, which leaves this
@@ -1216,6 +1232,9 @@ struct us_internal_acceptor {
      * one. Each AcceptEx then carries an event with its low bit set, which
      * queues nothing to that port, and a wait on the event delivers it here. */
     unsigned char by_event;
+    /* Neither AcceptEx nor a poll could be started. Every tick tries again,
+     * and the sweep timer it holds keeps ticks coming. */
+    unsigned char starved;
     /* Depth of accept_slot_complete frames dispatching to the owner: a
      * callback can run the loop again, and close the listener from there. */
     unsigned int dispatching;
@@ -1225,10 +1244,23 @@ struct us_internal_acceptor {
     struct us_internal_accept_slot slots[US_ACCEPTS_PER_LISTENER];
 };
 
+static void acceptor_set_starved(struct us_internal_acceptor *a, int starved) {
+    if (a->starved == starved) {
+        return;
+    }
+    a->starved = (unsigned char) starved;
+    if (starved) {
+        us_internal_enable_sweep_timer(a->loop);
+    } else {
+        us_internal_disable_sweep_timer(a->loop);
+    }
+}
+
 static void acceptor_maybe_free(struct us_internal_acceptor *a) {
     if (a->owner || a->in_flight || a->dispatching) {
         return;
     }
+    acceptor_set_starved(a, 0);
     for (int i = 0; i < US_ACCEPTS_PER_LISTENER; i++) {
         struct us_internal_accept_slot *slot = &a->slots[i];
         if (slot->socket != INVALID_SOCKET) {
@@ -1302,6 +1334,7 @@ static void accept_slot_arm(struct us_internal_accept_slot *slot) {
                 afd_poll_stop(a->owner->afd);
                 a->owner->afd = NULL;
             }
+            acceptor_set_starved(a, 0);
             return;
         }
         if (WSAGetLastError() != WSAECONNRESET) {
@@ -1310,6 +1343,21 @@ static void accept_slot_arm(struct us_internal_accept_slot *slot) {
     }
     if (!a->owner->afd) {
         a->owner->afd = afd_poll_create(a->loop, a->owner, a->listener, LIBUS_SOCKET_READABLE);
+    }
+    acceptor_set_starved(a, a->owner->afd == NULL);
+}
+
+static void acceptors_retry_starved(struct us_loop_t *loop) {
+    for (struct us_internal_acceptor *a = loop->acceptors; a; a = a->next) {
+        if (!a->starved || !a->owner) {
+            continue;
+        }
+        for (int i = 0; i < US_ACCEPTS_PER_LISTENER; i++) {
+            struct us_internal_accept_slot *slot = &a->slots[i];
+            if (!slot->in_flight && !slot->accepted) {
+                accept_slot_arm(slot);
+            }
+        }
     }
 }
 
@@ -1345,7 +1393,7 @@ static void accept_slot_complete(struct us_loop_t *loop, struct us_iocp_op *op, 
     us_internal_dispatch_ready_poll(a->owner, 0, 0, LIBUS_SOCKET_READABLE);
     a->dispatching--;
     if (slot->accepted) {
-        /* The listener was closed before it took the connection. */
+        /* Not taken: the listener was closed first, or us_internal_accept was made to fail. */
         slot->accepted = 0;
         closesocket(slot->socket);
         slot->socket = INVALID_SOCKET;
@@ -1373,6 +1421,7 @@ static void acceptors_cancel(struct us_loop_t *loop) {
 
 static void acceptor_stop(struct us_internal_acceptor *a) {
     a->owner = NULL;
+    acceptor_set_starved(a, 0);
     acceptor_cancel(a);
     acceptor_maybe_free(a);
 }
@@ -1446,6 +1495,15 @@ static struct us_internal_acceptor *acceptor_create(struct us_loop_t *loop, stru
 }
 
 int us_internal_poll_start_accepting(struct us_poll_t *p, struct us_loop_t *loop, int foreign) {
+#if defined(LIBUS_SOCKET_FAULT_INJECTION) && LIBUS_SOCKET_FAULT_INJECTION
+    /* A listener's poll registration. */
+    ssize_t injected = 0;
+    int unused = 0;
+    if (US_FAULT_CHECK(US_FAULT_POLL_START, p->fd, injected, unused)) {
+        errno = (int) -injected;
+        return (int) injected;
+    }
+#endif
     if (nt_ensure()) {
         p->acceptor = acceptor_create(loop, p, foreign);
         if (p->acceptor) {
@@ -1498,11 +1556,17 @@ LIBUS_SOCKET_DESCRIPTOR us_internal_accept(struct us_poll_t *p, struct bsd_addr_
 
         /* The kernel can take the next connection while this one is handled. */
         accept_slot_arm(slot);
-        a->loop->accept_rearmed = 1;
+        /* With another connection queued, that AcceptEx is over already and its
+         * packet is on the port. */
+        if (slot->in_flight && (NTSTATUS) slot->op.overlapped.Internal != STATUS_PENDING) {
+            a->loop->accept_rearmed = 1;
+        }
         return accepted;
     }
     return LIBUS_SOCKET_ERROR;
 }
+
+/* Poll */
 
 struct us_poll_t *us_create_poll(struct us_loop_t *loop, int fallthrough, unsigned int ext_size) {
     if (!fallthrough) {

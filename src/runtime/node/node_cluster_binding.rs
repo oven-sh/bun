@@ -387,9 +387,12 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
             }
         }
         if fd == bun_uws::LIBUS_SOCKET_DESCRIPTOR::MAX {
-            return Ok(JSValue::js_number_from_int32(
-                bun_errno::Bun__translateWin32ErrorToUV(err as u32),
-            ));
+            // JS reads 0 as success; a failure that left no code is UNKNOWN.
+            let code = match bun_errno::Bun__translateWin32ErrorToUV(err as u32) {
+                0 => bun_errno::uv_codes::UV_UNKNOWN,
+                code => code,
+            };
+            return Ok(JSValue::js_number_from_int32(code));
         }
 
         let obj = JSValue::create_empty_object(global, 2);

@@ -3,6 +3,12 @@
 //! console's size for SIGWINCH. Each is reported through `Bun__onPosixSignal`,
 //! so from the signal ring onwards a signal takes the path it takes on POSIX.
 //! SIGTERM and SIGQUIT can be listened for and are never raised.
+//!
+//! The console reports a resize only to whoever is reading its input in raw
+//! mode. For everyone else the main thread compares the size when its loop has
+//! woken for something. A wake-up that comes too soon after a comparison has
+//! its own made when the interval is over, so what changed before a wake-up is
+//! always compared; an idle process is not woken for it.
 
 use core::ffi::{c_int, c_void};
 use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, Ordering};
@@ -187,11 +193,7 @@ fn unwatch_console_size() {
     bun_io::windows::tty::set_resize_listener(None);
 }
 
-/// The console reports a resize only to whoever is reading its input in raw
-/// mode. For everyone else the main thread compares the size when its loop has
-/// woken for something. A wake-up that comes too soon after a comparison has
-/// its own made when the interval is over, so what changed before a wake-up is
-/// always compared; an idle process is not woken for it.
+/// The main thread's comparison after its loop has woken (see the module docs).
 pub(crate) fn check_console_size_after_wake() {
     if !CONSOLE_SIZE_WATCHED.load(Ordering::Relaxed) {
         return;
@@ -201,7 +203,8 @@ pub(crate) fn check_console_size_after_wake() {
     if since >= CONSOLE_SIZE_INTERVAL_MS {
         CONSOLE_SIZE_CHECKED_MS.store(now, Ordering::Relaxed);
         raise_if_console_resized();
-    } else if !CONSOLE_SIZE_CHECK_DEFERRED.swap(true, Ordering::AcqRel)
+    } else if !CONSOLE_SIZE_CHECK_DEFERRED.load(Ordering::Relaxed)
+        && !CONSOLE_SIZE_CHECK_DEFERRED.swap(true, Ordering::AcqRel)
         && !compare_in(CONSOLE_SIZE_INTERVAL_MS - since)
     {
         CONSOLE_SIZE_CHECK_DEFERRED.store(false, Ordering::Release);

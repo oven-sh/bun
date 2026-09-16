@@ -335,8 +335,8 @@ impl FSWatcher {
     /// Recover `&FSWatcher` from the `*mut c_void` userdata stashed in `init`.
     ///
     /// Centralises the set-once `Option<*mut c_void> → &FSWatcher` deref so the
-    /// three watcher-backend callbacks (`on_path_update_*`, `on_update_end`)
-    /// stay safe at the call site. R-2: deref as shared — all `FSWatcher`
+    /// two watcher-backend callbacks (`on_path_update`, `on_update_end`)
+    /// stay safe at the call site. Deref as shared: all `FSWatcher`
     /// mutation goes through `Cell`/`JsCell`.
     #[inline]
     fn from_ctx<'a>(ctx: Option<*mut c_void>) -> &'a FSWatcher {

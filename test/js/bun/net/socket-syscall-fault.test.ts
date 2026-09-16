@@ -125,13 +125,10 @@ test.concurrent(
 );
 
 // us_poll_start_rc is FIONBIO + an AFD poll on Windows and EPOLL_CTL_ADD /
-// kevent on posix. On Windows the return value was ignored, so an ioctlsocket
-// FIONBIO failure left a never-initialized uv_poll_t that uv_unref/uv_poll_start
-// then operated on (assertion failure at libuv win/poll.c:508 in debug,
-// undefined behaviour in release). The fd is always fresh from the kernel at
-// that point, so the failure path is unreachable without injection; each case
-// runs in a subprocess so a crash surfaces as a non-zero exit rather than
-// taking the test runner down.
+// kevent on posix; its failure must reach the caller. The fd is always fresh
+// from the kernel at that point, so the failure path is unreachable without
+// injection; each case runs in a subprocess so a crash surfaces as a non-zero
+// exit rather than taking the test runner down.
 describe.skipIf(!fault.available())("poll_start failure is reported, not a crash", () => {
   // WSAENOTSOCK is what ioctlsocket(FIONBIO) on a bad handle yields. ENOMEM is
   // one of the documented EPOLL_CTL_ADD failure modes.
@@ -271,6 +268,59 @@ test.concurrent.skipIf(!fault.available() || !isLinux)(
       stderr: "",
       exitCode: 0,
     });
+  },
+);
+
+// A socket whose Winsock provider chain does not end at AFD (a non-IFS layered
+// service provider) is polled with select() on a helper thread. select() reports
+// only readable and writable, so a paused socket whose write side was shut down
+// has nothing to wait for.
+test.skipIf(!fault.available() || !isWindows)(
+  "a paused socket polled with the select() fallback can end its write side and still read the reply",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { socketFaultInjection: fault } = require("bun:internal-for-testing");
+        const net = require("node:net");
+        fault.set({ syscall: "poll_slow", action: "errno", errno: "EINVAL", repeat: -1 });
+        const replied = Promise.withResolvers();
+        const server = net.createServer({ allowHalfOpen: true }, conn => {
+          conn.on("error", e => console.log("server error", e.code));
+          conn.resume();
+          conn.once("end", () => conn.end("reply", () => replied.resolve()));
+        });
+        server.listen(0, "127.0.0.1", () => {
+          const client = net.connect({ port: server.address().port, host: "127.0.0.1", allowHalfOpen: true }, () => {
+            client.pause();
+            client.end("request");
+          });
+          const chunks = [];
+          client.on("error", e => console.log("client error", e.code));
+          client.on("close", hadError => {
+            console.log(JSON.stringify({ chunks, hadError }));
+            fault.clear();
+            server.close();
+          });
+          replied.promise.then(() => {
+            client.on("data", chunk => chunks.push(String(chunk)));
+            client.resume();
+          });
+        });
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr: stderr.trim() }).toEqual({
+      stdout: JSON.stringify({ chunks: ["reply"], hadError: false }),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
   },
 );
 

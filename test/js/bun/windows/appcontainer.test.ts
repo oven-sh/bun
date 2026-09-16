@@ -340,8 +340,7 @@ main().then(
       expect(r.spawnPiped).toBe(true);
       expect(r.realpath).toEqual({ sync: "EPERM", native: "OK" });
       // Namespace denial vs name collision both surface as ERROR_ACCESS_DENIED;
-      // PipeServer::listen maps that to EADDRINUSE. Tighten to EACCES once
-      // it tells the two apart.
+      // PipeServer::listen maps that to EADDRINUSE.
       expect(["EACCES", "EADDRINUSE"]).toContain(r.pipeNonLocal);
       expect(r.pipeLocal).toBe("LISTENED");
       expect(r.forkIpc).toBe("OK");

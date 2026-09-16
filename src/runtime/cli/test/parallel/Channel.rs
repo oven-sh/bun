@@ -166,13 +166,6 @@ impl<Owner: ChannelOwner> Channel<Owner> {
     /// socketpair end. Windows: an end of the pipe spawn made for fd 3;
     /// `inherited` says it is the worker's (this process did not create it),
     /// which decides how a pipe may be driven there. Takes `fd` either way.
-    // callers (`runner.rs`, `Worker.rs`) only hold `&VirtualMachine`;
-    // the upstream `rare_data()` / `test_parallel_ipc_group()` accessors require
-    // `&mut`. Take a raw `*const` and cast
-    // away const locally — single-threaded init path. A `&VirtualMachine`
-    // parameter would trip `invalid_reference_casting` on the `&T → &mut T`
-    // promotion; the raw-pointer route sidesteps that lint while keeping both
-    // call sites (which pass `&`/`&mut` and coerce) unchanged.
     /// `this` is the channel's address derived from the owner's `&mut`.
     pub(crate) fn adopt(
         this: *mut Self,

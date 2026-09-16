@@ -877,9 +877,9 @@ pub(crate) trait PathOrFdExt {
         Self: Sized;
 }
 
-/// `normal` as a wide path in `buf`, in the form a Win32 call takes it past
-/// `MAX_PATH` when it (or, for a relative path, it and the current directory)
-/// is that long.
+/// `normal` as a NUL-terminated wide path in `buf`: `\\?\`-prefixed when it,
+/// together with the current directory if it is relative, reaches `MAX_PATH`
+/// (`bun_sys::windows::fs::kernel32_path`).
 #[cfg(windows)]
 fn kernel32_path_past_max_path<'a>(
     buf: &'a mut PathBuffer,
@@ -888,12 +888,11 @@ fn kernel32_path_past_max_path<'a>(
     // SAFETY: reinterpreting PathBuffer ([u8; N]) as [u16] — 2-byte alignment
     // is runtime-asserted inside `bytes_as_slice_mut`.
     let buf_u16 = unsafe { bun_core::bytes_as_slice_mut::<u16>(&mut buf[..]) };
-    let len = strings::to_kernel32_path(buf_u16, normal).len();
-    let len = match bun_sys::windows::fs::lengthen_path_in_place(buf_u16, len) {
+    let len = match bun_sys::windows::fs::kernel32_path(buf_u16, normal) {
         Ok(len) => len,
         Err(bun_sys::windows::Win32Error::FILENAME_EXCED_RANGE) => return Err(NameTooLong),
         // `GetFullPathNameW` rejected the path; the call it goes to does too.
-        Err(_) => len,
+        Err(_) => strings::to_kernel32_path(buf_u16, normal).len(),
     };
     Ok(WStr::from_buf(buf_u16, len))
 }

@@ -27,7 +27,7 @@ pub const NOFOLLOW: i32 = 0;
 pub const NONBLOCK: i32 = 0;
 pub const SYMLINK: i32 = 0;
 
-// `bun.O.*` — POSIX-shaped flag values Bun normalises to internally.
+// POSIX-shaped flag values Bun normalises to internally.
 //
 // Linux-style octal constants, not MSVC `libc::O_*` (CREAT=0x100, EXCL=0x400,
 // APPEND=0x8). `crate::O` on Windows uses the same values for the flags it
@@ -72,7 +72,7 @@ pub fn from_bun_o(c_flags: i32) -> i32 {
         flags |= NONBLOCK;
     }
     // `open` rejects SYNC and DSYNC together (EINVAL).
-    // `bun.O.SYNC` (0o4010000) is a superset of `DSYNC` (0o10000), so check
+    // `SYNC` (0o4010000) is a superset of `DSYNC` (0o10000), so check
     // SYNC first to emit only `SYNC` when both bits are present.
     // NOTE: `& != 0` is an any-overlap check;
     // a DSYNC-only input also takes this branch.

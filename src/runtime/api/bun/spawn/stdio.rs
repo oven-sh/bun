@@ -417,8 +417,6 @@ impl Stdio {
             }
             return Ok(());
         } else if value.is_number() {
-            // `bun.FD.fromUV(this.toInt32())` inlined here since the
-            // upstream `bun_jsc::JSValue` doesn't expose a wrapper.
             let fd = Fd::from_crt(value.to_int32());
             let file_fd = fd.crt();
             if file_fd < 0 {

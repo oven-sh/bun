@@ -541,8 +541,8 @@ pub enum SystemErrno {
 /// Type-dispatch shim for `SystemErrno::init`.
 /// Covers every concrete type the codebase actually passes — `i64`
 /// (POSIX-shaped shared call sites), `u32`/`DWORD` (a Win32/WSA code carried
-/// as an integer), and `c_int` (`Bun__errnoName`, which may receive a libuv
-/// code). A typed `Win32Error` uses `Win32ErrorExt` instead.
+/// as an integer), and `c_int` (`Bun__errnoName`, which may receive a negative
+/// `UV_E*` number). A typed `Win32Error` uses `Win32ErrorExt` instead.
 pub trait SystemErrnoInit {
     fn into_system_errno(self) -> Option<SystemErrno>;
 }
@@ -769,7 +769,7 @@ pub extern "C" fn Bun__translateWin32ErrorToUV(code: u32) -> c_int {
     uv::e_discriminant_to_uv(errno as u16).unwrap_or(uv::UV_UNKNOWN)
 }
 
-/// A negative libuv return code → `E`; a code libuv does not define is `UNKNOWN`.
+/// A negative `UV_E*` number → `E`; an unlisted number is `UNKNOWN`.
 pub fn translate_uv_error_to_e(code: c_int) -> E {
     uv::uv_err_to_e_discriminant(code)
         .and_then(E::try_from_raw)
@@ -803,10 +803,7 @@ pub mod uv_e {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// `windows` — Win32Error / NTSTATUS / kernel32 surface moved DOWN from
-// `bun_sys::windows` (cycle-break per PORTING.md §Dep-cycle fixes). Only the
-// subset referenced by `SystemErrno::init` / `last_error` is mirrored; the full
-// 1100-variant table stays in `bun_sys::windows` and re-exports this newtype.
+// `windows` — `Win32Error` / `NTSTATUS` mappings that need `SystemErrno`.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod windows {
     use super::{E, SystemErrno};

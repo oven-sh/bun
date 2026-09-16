@@ -957,7 +957,7 @@ unsafe fn ensure_debugger(vm: *mut VirtualMachine, block_until_connected: bool) 
 /// `eventLoop().autoTick()`. Needs
 /// `timer::All` for the poll-timeout calculation, hence dispatched here.
 ///
-/// PERF: the one fn-ptr indirection is dwarfed by the kqueue/epoll syscall it
+/// PERF: the one fn-ptr indirection is dwarfed by the loop's wait syscall it
 /// gates.
 ///
 /// # Safety
@@ -1014,7 +1014,7 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
         // No high-tier state (unit test) — fall back to a non-blocking I/O
         // poll. The uws loop must always be polled
         // (`tick_with_timeout`/`tick_without_idle`); `EventLoop::tick()` would only
-        // drain JS tasks and never touch kqueue/epoll.
+        // drain JS tasks and never poll for I/O.
         // SAFETY: `loop_` is the live per-thread uws loop.
         unsafe { (*loop_).tick_without_idle() };
         // Still run the post-poll hooks.
@@ -1063,7 +1063,7 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
             // `timer::All::get_timeout` forms short-lived `&mut` only around
             // heap ops that cannot re-enter JS, releasing the borrow before
             // invoking `fire()`.
-            // `get_timeout` reads CLOCK_MONOTONIC to compare against the timer heap; hand that
+            // `get_timeout` reads the monotonic clock to compare against the timer heap; hand that
             // same reading to the tick for the park hook's idle-sweep rate limit. It is lazy,
             // and so is the hook: NOW_NS_UNKNOWN means it took none.
             let mut now: Option<bun_core::Timespec> = None;
@@ -1181,7 +1181,7 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
             // Before `get_timeout` — see the matching call in `auto_tick`.
             // SAFETY: `el` is the live per-thread event loop.
             unsafe { (*el).process_gc_timer() };
-            // `get_timeout` reads CLOCK_MONOTONIC to compare against the timer heap; hand that
+            // `get_timeout` reads the monotonic clock to compare against the timer heap; hand that
             // same reading to the tick for the park hook's idle-sweep rate limit. It is lazy,
             // and so is the hook: NOW_NS_UNKNOWN means it took none.
             let mut now: Option<bun_core::Timespec> = None;

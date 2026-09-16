@@ -23,8 +23,19 @@ impl<const BIG: bool> StatType<BIG> {
         Self { value: *stat_ }
     }
 
+    /// Node on Windows casts the seconds and nanoseconds of a stat time to
+    /// `unsigned long`, 32 bits there (`SET_FIELD_WITH_TIME_STAT` in
+    /// node_file-inl.h), so a time outside 1970..2106 wraps: a file dated 1960
+    /// reads as 2096. `Stats` and `BigIntStats` report the same numbers as Node;
+    /// programs compare them with what Node stored or reported.
     #[inline]
     fn timespec_parts(ts: StatTimespec) -> (i64, i64) {
+        #[cfg(windows)]
+        return (
+            ((ts.sec as i32) as u32) as i64,
+            ((ts.nsec as i32) as u32) as i64,
+        );
+        #[cfg(not(windows))]
         (ts.sec, ts.nsec)
     }
 

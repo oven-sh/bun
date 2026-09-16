@@ -15,7 +15,8 @@ const NS_PER_MS: f64 = bun_core::time::NS_PER_MS as f64;
 // > If the value can not be converted to a number, or is NaN, Infinity, or -Infinity, an Error will be thrown.
 //
 // A `Date` or a string goes to libuv as the number it converts to, and there a
-// NaN is `UV_FS_UTIME_OMIT` and an infinity is `UV_FS_UTIME_NOW`.
+// NaN is `UV_FS_UTIME_OMIT` and an infinity is `UV_FS_UTIME_NOW`:
+// https://github.com/libuv/libuv/blob/v1.52.1/include/uv.h#L1601-L1602
 pub fn from_js(global_object: &JSGlobalObject, value: JSValue) -> JsResult<Option<TimeLike>> {
     // Number is most common case
     if value.is_number() {
@@ -52,7 +53,8 @@ pub fn from_js(global_object: &JSGlobalObject, value: JSValue) -> JsResult<Optio
 }
 
 /// The time Node on Windows stores: libuv's `TIME_T_TO_FILETIME` evaluates the
-/// FILETIME, `seconds * 1e7 + <ticks from 1601 to 1970>`, as a double.
+/// FILETIME, `seconds * 1e7 + <ticks from 1601 to 1970>`, as a double:
+/// https://github.com/libuv/libuv/blob/v1.52.1/src/win/fs.c#L138-L143
 #[cfg(windows)]
 fn from_seconds(seconds: f64) -> TimeLike {
     const TICKS_PER_S: i64 = 10_000_000;

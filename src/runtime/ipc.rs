@@ -1055,7 +1055,9 @@ impl SendQueue {
         self.socket_is_open() && !self.pending_close.get() && !self.close_after_flush.get()
     }
 
-    /// Whether what the peer sends is still decoded and delivered.
+    /// Whether more is read from the peer. What one read already brought in
+    /// is delivered to its end, as Node does: `disconnect()` from a message
+    /// handler stops the reads that follow, not the messages in hand.
     #[inline]
     fn accepts_input(&self) -> bool {
         self.socket_is_open() && !self.input_stopped.get()
@@ -1461,7 +1463,7 @@ impl SendQueue {
                 debug_assert!(!self.write_in_progress.get());
                 self.write_in_progress.set(true);
                 self.write(fd);
-                // the write is queued. this._onWriteComplete() will be called when the write completes.
+                // the write is queued. `on_write_complete` will be called when the write completes.
                 self.update_ref(global);
             }
         }
@@ -1623,8 +1625,8 @@ impl SendQueue {
         }
     }
 
-    /// starts a write request. on posix, this always calls _onWriteComplete immediately. on windows, it
-    /// calls _onWriteComplete later, when the pipe has taken the bytes.
+    /// starts a write request. on posix, this always calls `on_write_complete` immediately. on windows, it
+    /// calls `on_write_complete` later, when the pipe has taken the bytes.
     ///
     /// The outbound bytes are read from `queue[0]` *inside* this method.
     fn write(&self, fd: Option<Fd>) {
@@ -1789,8 +1791,7 @@ impl SendQueue {
         let _scope = global_this.bun_vm().enter_event_loop_scope();
         for event in events.drain(..) {
             match event {
-                FrameEvent::Data(range) if this.accepts_input() => on_data2(this, &chunk[range]),
-                FrameEvent::Data(_) => {}
+                FrameEvent::Data(range) => on_data2(this, &chunk[range]),
                 // As an fd received over a POSIX channel: the `NODE_HANDLE`
                 // message that follows in the same frame takes it.
                 FrameEvent::Socket(fd) => {
@@ -1888,7 +1889,7 @@ fn import_windows_socket_payload(
         return Ok(None);
     }
     let mut err: c_int = 0;
-    // SAFETY: `info` is a live buffer of export_size() bytes holding the
+    // SAFETY: `info` is a live buffer of export_size() bytes.
     let sock = unsafe {
         bun_uws::socket_transfer::bsd_socket_import(info.as_mut_ptr().cast::<c_void>(), &mut err)
     };
@@ -1976,25 +1977,6 @@ enum IPCCommand {
     Nack,
 }
 
-/// A message nobody will be given: close the descriptor that came with it.
-#[cfg_attr(not(windows), allow(unused_variables))]
-fn discard_ipc_message(
-    send_queue: &SendQueue,
-    message: &DecodedIPCMessage,
-    global_this: &JSGlobalObject,
-) -> JsResult<()> {
-    #[cfg(windows)]
-    if let DecodedIPCMessage::Data(data) | DecodedIPCMessage::Internal(data) = message
-        && data.is_object()
-    {
-        take_windows_socket_payload(send_queue, global_this, *data)?;
-    }
-    if let Some(fd) = send_queue.incoming_fd.take() {
-        let _ = fd.close_allowing_standard_io(None);
-    }
-    Ok(())
-}
-
 /// One decoded message's delivery. A JS exception raised while inspecting or delivering it is this message's
 /// failure; the on-data callers fold it (reported as uncaught) and go on to the next message.
 fn handle_ipc_message(
@@ -2002,10 +1984,6 @@ fn handle_ipc_message(
     message: DecodedIPCMessage,
     global_this: &JSGlobalObject,
 ) -> JsResult<()> {
-    // An earlier message of the same chunk ended the conversation.
-    if !send_queue.accepts_input() {
-        return discard_ipc_message(send_queue, &message, global_this);
-    }
     #[cfg(debug_assertions)]
     {
         // The `Formatter` runs its deinit in `Drop`.
@@ -2048,14 +2026,6 @@ fn handle_ipc_message(
                 }
             }
         }
-    }
-
-    // disconnect() ran and the close waits for a handle's ack: that ack is the
-    // only thing still wanted from the peer.
-    if send_queue.close_after_flush.get()
-        && !matches!(internal_command, Some(IPCCommand::Ack | IPCCommand::Nack))
-    {
-        return discard_ipc_message(send_queue, &message, global_this);
     }
 
     if let Some(icmd) = internal_command {
@@ -2367,6 +2337,10 @@ pub mod IPCHandlers {
 
         pub fn on_data(send_queue: &SendQueue, _: Socket, all_data: &[u8]) {
             if !send_queue.accepts_input() {
+                // A descriptor that came with the bytes has nobody to take it.
+                if let Some(fd) = send_queue.incoming_fd.take() {
+                    let _ = fd.close_allowing_standard_io(None);
+                }
                 return;
             }
             let global_this = send_queue.get_global_this();
@@ -2377,8 +2351,7 @@ pub mod IPCHandlers {
         }
 
         pub fn on_fd(send_queue: &SendQueue, _: Socket, fd: c_int) {
-            // SCM_RIGHTS is POSIX-only; on Windows this arm is unreachable but
-            // still type-checked, and `FD.fromNative` takes `*anyopaque` there.
+            // SCM_RIGHTS is POSIX-only.
             #[cfg(windows)]
             {
                 let _ = (send_queue, fd);

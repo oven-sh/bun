@@ -1,9 +1,8 @@
 // Bun.spawnSync lazily creates an isolated uSockets event loop per VM
 // (epoll_create1/kqueue on POSIX, an IOCP on Windows). When that syscall
-// fails under resource exhaustion, us_create_loop used to dereference the
-// NULL/invalid result and crash the whole process. The one spawnSync call must
-// throw a catchable error instead, and once resources are freed a retry must
-// work.
+// fails under resource exhaustion, us_create_loop must report the failure
+// instead of dereferencing the invalid result: the one spawnSync call throws
+// a catchable error, and once resources are freed a retry works.
 //
 // The Windows variant (CreateIoCompletionPort failing under
 // handle/non-paged-pool exhaustion) routes through the same NULL propagation

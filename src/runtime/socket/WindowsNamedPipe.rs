@@ -377,11 +377,6 @@ impl WindowsNamedPipe {
     fn internal_write(&self, encoded_data: &[u8]) {
         self.reset_timeout();
 
-        // Possible scenarios:
-        // Scenario 1: will not write if is not connected yet but will enqueue the data
-        // Scenario 2: will not write if a exception is thrown (will be handled by onError)
-        // Scenario 3: will be queued in memory and will be flushed later
-        // Scenario 4: no write/end function exists (will be handled by onError)
         self.call_write_or_end(Some(encoded_data), true);
     }
 

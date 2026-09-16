@@ -763,12 +763,10 @@ impl Terminal {
                 // detached: JoinHandle dropped without join → thread runs to completion.
             }
             Err(_) => {
-                // CreateThread failed — the process is in a bad state. Close the
-                // reader so onReaderDone fires (releasing the reader ref) instead
-                // of hanging on an EOF that will never come. Leak hpcon: calling
-                // ClosePseudoConsole here would deadlock, because the pipe HANDLE
-                // stays open until the loop has collected the cancelled read.
-                // Conhost sees broken-pipe once it has.
+                // CreateThread failed. Close the reader so onReaderDone fires
+                // instead of waiting for an EOF that never comes. Leak hpcon:
+                // ClosePseudoConsole would block on the pipe the cancelled read
+                // still holds open.
                 let flags = self.flags.get();
                 if flags.contains(Flags::READER_STARTED) && !flags.contains(Flags::READER_DONE) {
                     self.reader.with_mut(|r| r.close());
@@ -1167,17 +1165,14 @@ static PIPE_SERIAL: AtomicU32 = AtomicU32::new(0);
 #[cfg(windows)]
 fn create_pty_windows(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
     // Track ownership explicitly: handles are nulled out as they are closed or
-    // transferred so the errdefer cleanup never double-closes.
+    // transferred so `cleanup!()` never double-closes.
     let mut out_server: Option<windows::HANDLE> = None;
     let mut out_client: Option<windows::HANDLE> = None;
     let mut in_server: Option<windows::HANDLE> = None;
     let mut in_client: Option<windows::HANDLE> = None;
     let mut hpcon: Option<windows::HPCON> = None;
 
-    // errdefer block: scopeguard captures &mut to all of the above.
-    // Cleanup is inlined at each early-return point (a single drop-time
-    // closure reading the Option cells would require interior mutability);
-    // it must run on every `return Err`.
+    // Must run on every `return Err`.
     macro_rules! cleanup {
         () => {
             // SAFETY: every Some(h) is a valid open Win32 handle still owned by

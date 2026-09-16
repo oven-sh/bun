@@ -799,7 +799,7 @@ impl All {
         }
     }
 
-    /// Called from `EventLoop::auto_tick` to compute the epoll/kqueue timeout.
+    /// Called from `EventLoop::auto_tick` to compute the loop's wait timeout.
     /// Returns `true` if `spec` was written. `now_out` receives the monotonic reading this
     /// took, if any, for the caller to share with the tick (see `NOW_NS_UNKNOWN`).
     ///

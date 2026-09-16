@@ -199,6 +199,7 @@ impl Drop for SpawnSyncEventLoop {
     fn drop(&mut self) {
         // Destroy the event loop before the uws loop.
         __bun_spawn_sync_destroy_event_loop(self.event_loop);
+        // A pipe or console still open on the loop keeps its pointer and completes through it.
         #[cfg(windows)]
         bun_io::windows::close_all_for_loop(self.uws_loop.as_ptr());
         // SAFETY: uws_loop was returned by `us_create_loop` in `init` and not yet freed.

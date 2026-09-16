@@ -9,18 +9,12 @@ use crate::{EventLoopHandle, FilePollKind, FilePollRef, Owner, PollTag};
 // `loop_` signature.
 pub type Loop = bun_uws_sys::Loop;
 
-/// `bun_io::poll_tag::BUFFERED_READER` — every `FilePoll` allocated by this
-/// module stores a `*mut BufferedReader` (erased) as its owner; the per-tag
-/// dispatch in `bun_runtime::dispatch::__bun_run_file_poll` recovers the type
-/// from this constant. T2 cannot name `bun_io`, so the value is mirrored.
 use crate::max_buf::MaxBuf;
 use crate::pipes::{Chunk, FileType, PollOrFd, ReadState};
 #[cfg(windows)]
 use crate::source::Source;
 #[cfg(windows)]
 use crate::windows::ReadEvent;
-
-// All logging in this module goes through `bun.sys.syslog` (the `SYS` scope).
 
 // ──────────────────────────────────────────────────────────────────────────
 // BufferedReaderVTable
@@ -568,7 +562,6 @@ impl PosixBufferedReader {
         self.has_pending_read()
     }
 
-    // Exists for consistently with Windows.
     pub fn has_pending_read(&self) -> bool {
         // `is_watching()` (registered && !needs-rearm) rather than
         // `is_registered()`: a one-shot poll that has fired but not been
@@ -1169,8 +1162,8 @@ impl WindowsBufferedReader {
     }
 
     /// # Safety
-    /// `this` is live; raw for parity with the POSIX entry so the
-    /// (maybe-freeing) error dispatch runs under no receiver protector.
+    /// `this` is live. `on_reader_error` may free it, so it runs with no
+    /// borrow of `*this` held.
     pub unsafe fn on_error(this: *mut Self, err: sys::Error) {
         // SAFETY: caller contract; `finish`'s receiver borrow ends when it
         // returns, and the (Copy) vtable is copied out before the dispatch.
@@ -1447,11 +1440,11 @@ impl WindowsBufferedReader {
         }
     }
 
+    /// Windows reads complete through the loop, never synchronously; this unpauses the reader.
+    ///
     /// # Safety
-    /// `this` is the live reader. Raw for signature parity with the POSIX
-    /// entry (callers dispatch through a `*mut`); the body only unpauses.
+    /// `this` is the live reader.
     pub unsafe fn read(this: *mut Self) {
-        // Nothing on Windows can be read without waiting for its completion.
         // SAFETY: caller contract; borrow scoped to the call.
         unsafe { (*this).unpause() };
     }

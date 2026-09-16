@@ -391,7 +391,7 @@ struct us_listen_socket_t *us_socket_group_listen(struct us_socket_group_t *grou
 
     struct us_poll_t *p = us_create_poll(group->loop, 0, sizeof(struct us_listen_socket_t));
     us_poll_init(p, listen_socket_fd, POLL_TYPE_SEMI_SOCKET);
-    if (us_internal_poll_start_accepting(p, group->loop, 0) != 0) {
+    if (us_internal_poll_start_accepting(p, group->loop, /*foreign*/ 0) != 0) {
         /* EPOLL_CTL_ADD failed (e.g. ENOSPC at fs.epoll.max_user_watches).
          * Report via both the out-param and thread-local errno: Bun.listen
          * reads *error, Bun.serve reads errno. */
@@ -430,7 +430,7 @@ struct us_listen_socket_t *us_socket_group_listen_fd(struct us_socket_group_t *g
 
     struct us_poll_t *p = us_create_poll(group->loop, 0, sizeof(struct us_listen_socket_t));
     us_poll_init(p, fd, POLL_TYPE_SEMI_SOCKET);
-    if (us_internal_poll_start_accepting(p, group->loop, 1) != 0) {
+    if (us_internal_poll_start_accepting(p, group->loop, /*foreign*/ 1) != 0) {
         int saved_errno = LIBUS_ERR;
         us_poll_free(p, group->loop);
         *error = saved_errno;
@@ -457,7 +457,7 @@ struct us_listen_socket_t *us_socket_group_listen_unix(struct us_socket_group_t 
 
     struct us_poll_t *p = us_create_poll(group->loop, 0, sizeof(struct us_listen_socket_t));
     us_poll_init(p, listen_socket_fd, POLL_TYPE_SEMI_SOCKET);
-    if (us_internal_poll_start_accepting(p, group->loop, 0) != 0) {
+    if (us_internal_poll_start_accepting(p, group->loop, /*foreign*/ 0) != 0) {
         int saved_errno = errno;
         bsd_close_socket(listen_socket_fd);
         us_poll_free(p, group->loop);

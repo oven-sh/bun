@@ -271,7 +271,7 @@ fn write_long_path(path: *const u16, full: &mut [u16]) -> Win32Result<(usize, us
 /// For a wide path that goes to a Win32 call without a [`WPath`]: puts the
 /// NUL-terminated `buf[..len]` into the form Win32 takes past `MAX_PATH` when
 /// it needs that, and returns its length.
-pub fn lengthen_path_in_place(buf: &mut [u16], len: usize) -> Win32Result<usize> {
+fn lengthen_path_in_place(buf: &mut [u16], len: usize) -> Win32Result<usize> {
     if !exceeds_max_path(&buf[..len]) {
         return Ok(len);
     }
@@ -283,6 +283,14 @@ pub fn lengthen_path_in_place(buf: &mut [u16], len: usize) -> Win32Result<usize>
     buf[..len].copy_from_slice(&full[start..start + len]);
     buf[len] = 0;
     Ok(len)
+}
+
+/// `path` as the NUL-terminated wide string a kernel32 call takes, in `buf`:
+/// the form Win32 takes past `MAX_PATH` when it needs that. Returns its length.
+/// Every path that reaches a Win32 call outside a [`WPath`] goes through here.
+pub fn kernel32_path(buf: &mut [u16], path: &[u8]) -> Win32Result<usize> {
+    let len = bun_paths::string_paths::to_kernel32_path(buf, path).len();
+    lengthen_path_in_place(buf, len)
 }
 
 /// A NUL-terminated UTF-16 path for a Win32 call.

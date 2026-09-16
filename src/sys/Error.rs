@@ -112,7 +112,7 @@ impl Error {
     }
 
     /// `self.errno` is an `E`/`SystemErrno` discriminant on every platform (not
-    /// a Win32 or libuv code); one the enum does not declare is `EUNKNOWN`.
+    /// a Win32 code or a `UV_E*` number); one the enum does not declare is `EUNKNOWN`.
     #[inline]
     pub fn get_errno(&self) -> E {
         E::from_raw(self.errno)

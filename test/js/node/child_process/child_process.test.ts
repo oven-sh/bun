@@ -1126,13 +1126,12 @@ it.skipIf(isWindows)("extra stdio pipes are not double-closed on GC", async () =
 });
 
 // Windows: the extra "pipe" slots are HANDLE values that child_process wraps
-// in net.Sockets (net.connect({fd})); each socket closes its handle. The
-// Subprocess used to keep its own uv_pipe_t on the same HANDLE and close the
-// value again when it was GC'd. Windows reuses a closed handle value at once,
-// so that second close destroyed whatever owned the value by then (here the
-// files opened right after the sockets closed, in the crash reports a worker
-// thread's handle). test/js/bun/spawn/spawn.test.ts pins the exact handle
-// value down; this checks the child_process wiring on top of it.
+// in net.Sockets (net.connect({fd})); each socket closes its handle, so the
+// Subprocess must not close the value again at GC. Windows reuses a closed
+// handle value at once, and a second close destroys whatever owns the value by
+// then (here the files opened right after the sockets closed).
+// test/js/bun/spawn/spawn.test.ts pins the exact handle value down; this
+// checks the child_process wiring on top of it.
 it.if(isWindows)("extra stdio 'pipe' sockets deliver data and GC of the ChildProcess closes nothing else", async () => {
   const fixture = /* js */ `
     const { spawn } = require("node:child_process");
@@ -1381,11 +1380,8 @@ describe.skipIf(!isPosix)("stdout pipe backpressure", () => {
   });
 });
 
-// child.stdout.pause() must stop the native reader so the kernel pipe fills
-// and the child blocks on write. Previously, once the stream had flowed even
-// once the native FileReader kept the poll armed (or uv_read_start active on
-// Windows) regardless of JS state, so the child wrote its entire output into
-// the parent's heap and 'data' kept firing after #handleOnExit resumed it.
+// child.stdout.pause() must stop the native reader, also after the stream has
+// flowed, so the kernel pipe fills and the child blocks on write.
 it("child.stdout.pause() after flowing stops native reads and blocks the child", async () => {
   // 20 MB: well above any kernel socket buffer, small enough to drain fast
   // once resumed on ASAN.

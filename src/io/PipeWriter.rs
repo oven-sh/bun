@@ -1255,7 +1255,7 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
     }
 
     /// Laundered-receiver variant of [`parent_on_error`](Self::parent_on_error):
-    /// takes the R-2 `*mut Self` so the field read completes before dispatch
+    /// takes `*mut Self` so the field read completes before dispatch
     /// and no Rust borrow of `*this` is live across the (re-entrant)
     /// `Parent::on_error` call.
     #[inline(always)]
@@ -1355,7 +1355,7 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
     /// `this` is the writer that submitted the write, kept alive by the
     /// parent ref taken in `write`.
     unsafe fn on_write_result(this: *mut Self, result: sys::Result<usize>) {
-        // PORT_NOTES_PLAN R-2: `Parent::on_write` (e.g. `FileSink::on_write`)
+        // `Parent::on_write` (e.g. `FileSink::on_write`)
         // re-enters JS via promise resolution and may call back into this
         // writer through a fresh `&mut Self` derived from the parent's
         // intrusive `writer` field, writing `self.is_done`. Launder so
@@ -1693,7 +1693,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         self.parent
     }
 
-    /// Laundered-receiver dispatch: takes the R-2 `*mut Self` so the field
+    /// Laundered-receiver dispatch: takes `*mut Self` so the field
     /// read completes before dispatch and no Rust borrow of `*this` is live
     /// across the (re-entrant) `Parent::on_error` call.
     #[inline(always)]
@@ -1827,7 +1827,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
     /// `this` is the writer that submitted the write, kept alive by the
     /// parent ref taken in `process_send`.
     unsafe fn on_write_result(this: *mut Self, result: sys::Result<usize>) {
-        // PORT_NOTES_PLAN R-2: `Parent::on_write` (e.g. `FileSink::on_write`)
+        // `Parent::on_write` (e.g. `FileSink::on_write`)
         // re-enters JS via promise resolution and may call back into this
         // writer through a fresh `&mut Self` derived from the parent's
         // intrusive `writer` field (`writer.with_mut(|w| w.end())` or
@@ -1910,7 +1910,6 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         // process pending outgoing data if any
         Self::r(this).process_send();
 
-        // TODO: should we report writable?
         if Parent::HAS_ON_WRITABLE {
             // SAFETY: parent BACKREF valid.
             unsafe { Parent::on_writable(Self::r(this).parent()) };
@@ -1928,7 +1927,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
 
     /// Hand `current_payload` to the source.
     fn send_current_payload(&mut self) {
-        // PORT_NOTES_PLAN R-2: the error arm calls `Parent::on_error`, which
+        // The error arm calls `Parent::on_error`, which
         // re-enters JS and may reach this writer through a fresh `&mut Self`.
         let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
         let Some(source) = Self::r(this).source.as_mut() else {

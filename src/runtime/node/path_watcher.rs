@@ -3,10 +3,7 @@
 //! This is deliberately independent of `bun.Watcher` (the bundler/--watch/--hot
 //! watcher). `bun.Watcher` is shaped around a module graph — its WatchItem carries
 //! `options.Loader`, `*PackageJSON`, a filesystem handle, and on Windows is pinned
-//! to `top_level_dir`. None of that applies to `fs.watch()`, and routing `fs.watch()`
-//! through it required a 1k-line shim (the old version of this file) full of
-//! lock-ordering workarounds, a WorkPool directory crawler, and a bolted-on FSEvents
-//! side-channel.
+//! to `top_level_dir`. None of that applies to `fs.watch()`.
 //!
 //! Every platform has the same shape:
 //!
@@ -91,8 +88,7 @@ static DEFAULT_MANAGER_MUTEX: Mutex = Mutex::new();
 pub(crate) struct PathWatcherManager {
     /// Guards `watchers` and all per-platform dispatch maps. The reader thread holds
     /// this while dispatching, so `detach()` on the JS thread cannot free a PathWatcher
-    /// mid-emit. A single lock here replaces the three interacting mutexes of the old
-    /// design.
+    /// mid-emit.
     mutex: Mutex,
 
     /// Dedup map: dedup key → PathWatcher. The key is the resolved path with a one-byte
@@ -1256,8 +1252,7 @@ use bun_watcher::inotify_watcher::Event as InotifyEvent;
 /// FSEventsWatcher's opaque ctx — `fs_events.rs` calls back via `onFSEvent` below,
 /// and we fan out to the JS handlers.
 ///
-/// Unlike the old design, FSEvents is used for both files and directories (same as
-/// libuv), so `fs.watch()` no longer spins up a second kqueue thread.
+/// FSEvents is used for both files and directories (same as libuv).
 #[cfg(target_os = "macos")]
 #[derive(Default)]
 pub struct Darwin {

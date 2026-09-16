@@ -41,11 +41,7 @@ pub const DEFAULT_READ_SIZE: usize = 64 * 1024;
 /// `WriteFile` takes a `DWORD`; larger buffers go out in several calls.
 const MAX_WRITE_CHUNK: usize = 0x7fff_f000;
 
-/// How long opening somebody else's pipe waits for the helper thread that asks
-/// the kernel whether the HANDLE is synchronous. The query only stalls behind
-/// another process's blocking I/O on the same file object, which a
-/// synchronous file object alone allows, so running out of time means
-/// "synchronous".
+/// How long [`probe_mode`] waits for its query once the helper thread has started it.
 const MODE_PROBE_DEADLINE_MS: u32 = 100;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -527,12 +523,13 @@ fn probe_mode(handle: HANDLE) -> Result<Mode, E> {
                         )
                     };
                     if ok == 0 {
-                        // A zero-byte read of a message-mode end fails with
-                        // MORE_DATA whenever a message is waiting.
                         result = RESULT_FAILED;
                     } else if state & win::PIPE_NOWAIT != 0 {
                         result = RESULT_NOWAIT;
                     } else if state & win::PIPE_READMODE_MESSAGE != 0 {
+                        // A zero-byte read of a message-mode end fails with
+                        // MORE_DATA whenever a message is waiting, so waiting
+                        // that way cannot work.
                         result = RESULT_FAILED;
                     }
                 } else if err == Win32Error::INVALID_PARAMETER {
@@ -594,6 +591,9 @@ fn probe_mode(handle: HANDLE) -> Result<Mode, E> {
             RESULT_NOT_A_PIPE => Err(E::ENOTSOCK),
             RESULT_NOWAIT => Err(E::EACCES),
             RESULT_FAILED => Err(E::EBADF),
+            // `RESULT_SYNC`, or `STARTED` past the deadline: the query only
+            // stalls behind another process's blocking I/O on the file object,
+            // which a synchronous file object alone allows.
             _ => Ok(Mode::Sync),
         };
     }
@@ -986,8 +986,6 @@ impl Inner {
         }
     }
 
-    /// # Safety
-    /// `this` and its idle `op` are live; `this` is not closing.
     /// One overlapped `ReadFile` of `len` bytes into `op.buf` on an `Event`
     /// HANDLE. `Ok(true)`: it is pending and its completion arrives as a
     /// packet. `Ok(false)`: it is over already and `op.posted` says how.
@@ -1044,11 +1042,6 @@ impl Inner {
         }
     }
 
-    /// The zero-byte wait of an `Event` HANDLE completed: read what is there.
-    /// Returns as [`event_read`](Self::event_read).
-    ///
-    /// # Safety
-    /// As `event_read`.
     /// The reader thread found data for `op` and took none of it: ask for the
     /// bytes. Runs on the loop thread, so a loop that is blocked (in a
     /// synchronous spawn that shares the HANDLE, say) leaves them in the pipe.
@@ -1071,6 +1064,11 @@ impl Inner {
         }
     }
 
+    /// The zero-byte wait of an `Event` HANDLE completed: read what is there.
+    /// Returns as [`event_read`](Self::event_read).
+    ///
+    /// # Safety
+    /// As `event_read`.
     unsafe fn event_fetch(this: *mut Inner, op: *mut ReadOp) -> Result<bool, Win32Error> {
         // SAFETY: caller contract.
         unsafe {
@@ -1096,6 +1094,8 @@ impl Inner {
         }
     }
 
+    /// # Safety
+    /// `this` and its idle `op` are live; `this` is not closing.
     unsafe fn submit_read(this: *mut Inner, op: *mut ReadOp) -> Result<(), Win32Error> {
         // SAFETY: caller contract. The buffer and OVERLAPPED handed to the
         // kernel live in `op`, which is freed only from its own completion.
@@ -1791,7 +1791,8 @@ impl Drop for SyncShared {
 /// the pipe already when that chunk was read, and holds it until the loop asks.
 /// What arrives later goes through the two steps, so an owner that stops
 /// reading from its callback leaves it to whoever reads the HANDLE next.
-/// `disarm` stops anything more being taken.
+/// `disarm` stops anything more being taken. A chunk taken ahead and not asked
+/// for by the time the pipe is closed is dropped.
 struct SyncReader {
     shared: Arc<SyncShared>,
     /// For `CancelSynchronousIo`.
@@ -2356,8 +2357,8 @@ impl Drop for ConnectRequest {
         self.state.abandoned.store(true, Ordering::Release);
         // A helper thread may sit in `WaitNamedPipeW` for the rest of
         // `CONNECT_BUSY_WAIT_MS` before it sees that; the loop does not wait.
-        // SAFETY: while the attempt holds the loop, its packet is outstanding
-        // and the loop is not freed.
+        // SAFETY: the attempt holds the loop only until its packet is
+        // dequeued, and the request's owner drops it before its loop goes.
         unsafe { self.state.release_loop(self.loop_) };
     }
 }

@@ -994,10 +994,15 @@ fn copy_by_path(
     };
     let mut dest_wbuf = bun_paths::w_path_buffer_pool::get();
     let mut source_wbuf = bun_paths::w_path_buffer_pool::get();
-    let dest_w =
-        bun_paths::string_paths::to_kernel32_path(&mut dest_wbuf[..], dest_path.as_bytes());
-    let source_w =
-        bun_paths::string_paths::to_kernel32_path(&mut source_wbuf[..], source_path.as_bytes());
+    if let Err(err) = w::fs::kernel32_path(&mut dest_wbuf[..], dest_path.as_bytes()) {
+        let err = bun_sys::Error::from_win32(err, bun_sys::Tag::copyfile);
+        return CopyByPath::Failed(error_with_pathlike(err, &destination.pathlike));
+    }
+    if let Err(err) = w::fs::kernel32_path(&mut source_wbuf[..], source_path.as_bytes()) {
+        let err = bun_sys::Error::from_win32(err, bun_sys::Tag::copyfile);
+        return CopyByPath::Failed(error_with_pathlike(err, &source.pathlike));
+    }
+    let (dest_w, source_w) = (&dest_wbuf[..], &source_wbuf[..]);
 
     loop {
         // SAFETY: both paths are NUL-terminated.
@@ -1133,7 +1138,7 @@ fn read_write_loop_capped(
 // exactly what it owns; the `RefPtr<Store>`s release just their Store refcounts on
 // drop. No explicit `Drop` impl is needed.
 
-// Kept local until bun_sys exports these; values match crate::node::fs.
+// Same values as in `node_fs.rs`.
 const PREALLOCATE_SUPPORTED: bool = cfg!(any(target_os = "linux", target_os = "android"));
 const PREALLOCATE_LENGTH: SizeType = 2048 * 1024;
 

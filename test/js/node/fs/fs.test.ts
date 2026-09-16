@@ -1637,7 +1637,7 @@ describe("mkdtemp empty prefix", () => {
 });
 
 describe("mkdtemp prefix length", () => {
-  it("a prefix that is far too long and not valid UTF-8 fails with an ordinary error", async () => {
+  it("a 40000-byte prefix that is not valid UTF-8 fails with an errno code from mkdtempSync and promises.mkdtemp", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -5158,6 +5158,19 @@ it("existsSync with invalid path doesn't throw", () => {
 });
 
 describe("utimesSync", () => {
+  // Node on Windows reports the seconds of a file time as a 32-bit unsigned value.
+  it("a time past 2106 reads back as Node reports it", () => {
+    using dir = tempDir("utimes-past-2106", { "file.txt": "x" });
+    const file = join(String(dir), "file.txt");
+    const seconds = 2 ** 32 + 5;
+    fs.utimesSync(file, seconds, seconds);
+    const expected = isWindows ? 5000 : seconds * 1000;
+    expect({
+      mtimeMs: fs.statSync(file).mtimeMs,
+      mtimeNs: fs.statSync(file, { bigint: true }).mtimeNs,
+    }).toEqual({ mtimeMs: expected, mtimeNs: BigInt(expected) * 1000000n });
+  });
+
   it("works", () => {
     const tmp = join(tmpdir(), "utimesSync-test-file-" + Math.random().toString(36).slice(2));
     writeFileSync(tmp, "test");
@@ -5260,7 +5273,8 @@ describe("utimesSync", () => {
     expect(finalStats.atime).toEqual(prevAccessTime);
   });
 
-  it("sets pre-epoch times from negative fractional string timestamps", () => {
+  // Windows wraps pre-epoch times through u32, matching Node (see Stat.rs)
+  it.skipIf(isWindows)("sets pre-epoch times from negative fractional string timestamps", () => {
     const tmp = join(tmpdir(), "utimesSync-test-file-" + Math.random().toString(36).slice(2));
     writeFileSync(tmp, "test");
 
@@ -5680,7 +5694,9 @@ it("new Stats", () => {
   expect(Math.abs(withBigInt.birthtime.getTime() - withoutBigInt.birthtime.getTime())).toBeLessThanOrEqual(1);
 });
 
-it("BigIntStats *Ns fields are negative for pre-epoch timestamps", () => {
+// On Windows, Node.js deliberately reinterprets stat times via `unsigned long` (see
+// libuv Y2038 note), so pre-epoch semantics there are not "negative ns".
+it.skipIf(isWindows)("BigIntStats *Ns fields are negative for pre-epoch timestamps", () => {
   using dir = tempDir("bigintstats-pre-epoch", { "f.txt": "x" });
   const f = join(String(dir), "f.txt");
 
@@ -5738,7 +5754,11 @@ it("BigIntStats *Ns does not clamp for post-2262 timestamps", () => {
   }
 });
 
-it("stat, lstat and fstat round-trip times after 2038, after 2106 and before 1970", () => {
+// What stat reports for a file time of `ms`, a whole number of seconds. Node on Windows casts the
+// seconds to `unsigned long`, which is 32 bits there (node_file-inl.h), so they wrap outside 1970..2106.
+const reportedMs = (ms: number) => (isWindows ? ((((ms / 1000) % 2 ** 32) + 2 ** 32) % 2 ** 32) * 1000 : ms);
+
+it("stat, lstat and fstat report times after 2038, after 2106 and before 1970 as Node does", () => {
   using dir = tempDir("stat-time-range", { "f.txt": "x" });
   const f = join(String(dir), "f.txt");
   const fd = openSync(f, "r+");
@@ -5749,7 +5769,7 @@ it("stat, lstat and fstat round-trip times after 2038, after 2106 and before 197
       [new Date("2106-02-07T06:28:16Z"), new Date("2200-01-01T00:00:00Z")],
       [new Date("1965-03-04T05:06:07Z"), new Date("1930-01-01T00:00:00Z")],
     ]) {
-      const expected = { atime: atime.getTime(), mtime: mtime.getTime() };
+      const expected = { atime: reportedMs(atime.getTime()), mtime: reportedMs(mtime.getTime()) };
       const times = (st: Stats) => ({ atime: st.atime.getTime(), mtime: st.mtime.getTime() });
       for (const set of [
         () => fs.utimesSync(f, atime, mtime),
@@ -5863,7 +5883,7 @@ it.skipIf(!isWindows)("utimes, lutimes and futimes fail with EINVAL for a time a
       [new Date(-11644473592000), -11644473592000],
     ] as const) {
       for (const [, set] of setters(time)) {
-        expect({ time, ...attempt(set) }).toEqual({ time, atimeMs: ms, mtimeMs: ms });
+        expect({ time, ...attempt(set) }).toEqual({ time, atimeMs: reportedMs(ms), mtimeMs: reportedMs(ms) });
       }
     }
   } finally {
@@ -6748,6 +6768,42 @@ describe('kernel32 long path conversion does not mangle "../../path" into "path"
 
 // Without the LongPathsEnabled registry policy, Win32 only accepts a path this long in its
 // \\?\-prefixed absolute form, so a relative one has to be resolved against the cwd first.
+// To the kernel `C:name` is the stream `name` of a file `C`; to Win32 it is `name` in the current
+// directory of drive C.
+it.skipIf(!isWindows).each(["zz.txt", "zz"])(
+  "a drive-relative path names a file in that drive's directory (%s)",
+  async name => {
+    using dir = tempDir("fs-drive-relative", {});
+    const drive = String(dir).slice(0, 2);
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+      const fs = require("fs");
+      const file = ${JSON.stringify(drive + name)};
+      fs.writeFileSync(file, "x");
+      console.log(JSON.stringify({
+        read: fs.readFileSync(file, "utf8"),
+        exists: fs.existsSync(file),
+        entries: fs.readdirSync("."),
+      }));
+      `,
+      ],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr }).toEqual({
+      stdout: JSON.stringify({ read: "x", exists: true, entries: [name] }),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  },
+);
+
 describe.skipIf(!isWindows)("relative paths past MAX_PATH", () => {
   // [description, number of 20-character components]
   const lengths: [string, number][] = [
@@ -6816,6 +6872,21 @@ describe.skipIf(!isWindows)("relative paths past MAX_PATH", () => {
       stdout: JSON.stringify({ exists: true, entries: ["f.txt", "renamed.txt"] }),
       stderr: "",
     });
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent.each(lengths)("Bun.write from one file to another (%s)", async (_, components) => {
+    const { stdout, stderr, exitCode } = await run(
+      components,
+      `
+        const file = path.join(rel, "f.txt");
+        fs.writeFileSync(file, "x");
+        Bun.write(Bun.file(path.join(rel, "copy.txt")), Bun.file(file)).then(written => {
+          console.log(JSON.stringify({ written, copy: fs.readFileSync(path.join(rel, "copy.txt"), "utf8") }));
+        });
+      `,
+    );
+    expect({ stdout, stderr }).toEqual({ stdout: JSON.stringify({ written: 1, copy: "x" }), stderr: "" });
     expect(exitCode).toBe(0);
   });
 

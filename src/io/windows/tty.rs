@@ -205,9 +205,9 @@ pub fn reset_console_mode() {
     unsafe { win::CloseHandle(console) };
 }
 
-/// [`set_console_mode`] for C++, in libuv's terms: `mode` is a `uv_tty_mode_t`
-/// (0 normal, 1 raw, 2 "IO", 3 raw with VT input) and the result is 0 or a
-/// negative `UV_E*`.
+/// [`set_console_mode`] for `wtf-bindings.cpp`. `mode` is 0 normal, 1 raw,
+/// 2 "IO" (not supported) or 3 raw with VT input, the numbers of libuv's
+/// `uv_tty_mode_t`; the result is 0 or a negative `UV_E*` number.
 #[unsafe(no_mangle)]
 extern "C" fn Bun__Windows__setConsoleMode(
     input: HANDLE,
@@ -1012,6 +1012,8 @@ impl RawOp {
             if matches!(&result, Ok(read) if read.resized) {
                 let listener = ON_RESIZE.load(Ordering::Acquire);
                 if !listener.is_null() {
+                    // SAFETY: non-null `ON_RESIZE` is a `fn()` stored by
+                    // `set_resize_listener`.
                     core::mem::transmute::<*mut (), fn()>(listener)();
                 }
             }

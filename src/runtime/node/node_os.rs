@@ -44,7 +44,7 @@ mod _impl {
     use bun_sys::windows;
     use std::io::Write as _;
 
-    /// Win32 declarations only this file uses, and the C++ exports
+    /// Win32 declarations for `node:os`, and the C++ exports
     /// (`OsBinding.cpp`) behind `os.cpus()` / `os.networkInterfaces()`.
     #[cfg(windows)]
     #[allow(non_snake_case, non_camel_case_types, clippy::upper_case_acronyms)]
@@ -160,8 +160,9 @@ mod _impl {
         }
 
         unsafe extern "C" {
-            /// Both return 0 or a negative `UV_E*` number; on success the array
-            /// is released with the matching free function.
+            // `Bun__Os__cpuInfo` and `Bun__Os__interfaceAddresses` return 0 or a
+            // negative `UV_E*` number; on success the array is released with the
+            // matching free function.
             pub(super) fn Bun__Os__cpuInfo(
                 cpu_infos: *mut *mut CpuInfo,
                 count: *mut c_int,

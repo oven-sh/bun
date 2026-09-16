@@ -1216,9 +1216,8 @@ impl VirtualMachine {
         unsafe { &mut *self.uws_loop() }
     }
 
-    /// Safe `&mut uws::Loop` accessor for `event_loop_handle`. `None` only before `ensure_waker()` runs. Consolidates the open-coded raw deref of
-    /// `self.event_loop_handle.unwrap()` at the `EventLoop::tick*` /
-    /// `update_counts` call sites into one SAFETY block.
+    /// `event_loop_handle` as `&mut uws::Loop`; `None` only before
+    /// `ensure_waker()` runs.
     ///
     /// Same single-JS-thread soundness contract as [`Self::uws_loop_mut`] —
     /// the loop is a separate heap allocation (uws-owned),
@@ -2015,9 +2014,9 @@ impl VirtualMachine {
             (hooks.stop_cron_for_vm_teardown)(unsafe { &mut *this });
             // Drop every TimeoutObject/ImmediateObject's heap node, JS pin and
             // +1 while runtime state and the JSC heap are alive. The heap itself
-            // stays up: JSC's own RunLoop timers
-            // — GC activity callbacks, sweeper, deferred work — are WTFTimers on
-            // this heap and keep being scheduled until ~VM returns.
+            // stays up: JSC's own RunLoop timers (GC activity callbacks, sweeper,
+            // deferred work) are WTFTimers on this heap and keep being scheduled
+            // until ~VM returns.
             // SAFETY: fn contract.
             unsafe { (hooks.cancel_all_timers)(this) };
             // And unlink every other kind of EventLoopTimer (socket timeouts,

@@ -210,7 +210,10 @@ extern "C" int Bun__Os__cpuInfo(BunCpuInfo** cpuInfos, int* count)
         DWORD brandSize = sizeof(brand);
         error = RegQueryValueExW(processorKey, L"ProcessorNameString", nullptr, nullptr, reinterpret_cast<BYTE*>(brand), &brandSize);
         RegCloseKey(processorKey);
-        if (error != ERROR_SUCCESS)
+        // Without the value the model is empty.
+        if (error == ERROR_FILE_NOT_FOUND)
+            brandSize = 0;
+        else if (error != ERROR_SUCCESS)
             goto fail;
 
         BunCpuInfo& info = infos[i];
@@ -312,7 +315,9 @@ extern "C" int Bun__Os__interfaceAddresses(BunInterfaceAddress** addresses, int*
 
         for (auto* unicast = adapter->FirstUnicastAddress; unicast; unicast = unicast->Next) {
             const sockaddr* socketAddress = unicast->Address.lpSockaddr;
-            ULONG prefixLength = unicast->OnLinkPrefixLength;
+            // An illegal length is reported as 255; the mask has room for the bits of the address.
+            const ULONG addressBits = socketAddress->sa_family == AF_INET6 ? 128 : 32;
+            const ULONG prefixLength = std::min<ULONG>(unicast->OnLinkPrefixLength, addressBits);
 
             memset(address, 0, sizeof(*address));
             address->name = name;

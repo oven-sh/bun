@@ -810,7 +810,7 @@ pub fn dirname(path: &[u8]) -> Option<&[u8]> {
 
 // ─── Fd + fd module (from bun_sys::fd) ────────────────────────────────────
 // TYPE_ONLY: bun_core needs only the handle wrapper + stdin/out/err/cwd ctors.
-// Full method set (close, make_crt_owned, …) stays in bun_sys which re-exports
+// Full method set (close, make_crt_owned_for_syscall, …) stays in bun_sys which re-exports
 // `pub use bun_core::Fd as FD;` and adds inherent impls there.
 
 // Backing int: c_int on posix, u64 on Windows.

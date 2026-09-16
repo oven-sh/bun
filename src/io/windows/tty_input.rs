@@ -725,7 +725,7 @@ mod tests {
             &mut out,
             &mut result,
         );
-        assert_eq!(out, b"ab");
+        assert_eq!(out, b"a\x1db");
         assert_eq!(
             result,
             RawInputResult {

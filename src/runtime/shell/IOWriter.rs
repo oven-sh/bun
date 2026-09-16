@@ -316,14 +316,8 @@ impl IOWriter {
         cost
     }
 
-    /// `bun_io::EventLoopHandle` is an opaque `*mut c_void` that the io-layer
-    /// `FilePollVTable` round-trips back to the runtime. We pass the address of
-    /// the stored `bun_event_loop::EventLoopHandle` so the (runtime-registered)
-    /// vtable can recover it.
     #[inline]
     fn io_evtloop(&self) -> bun_io::EventLoopHandle {
-        // SAFETY: `bun_io::EventLoopHandle` stores `*mut c_void` purely for
-        // type-erasure; vtable consumers treat the pointee as read-only
         self.state().evtloop.as_event_loop_ctx()
     }
 
@@ -738,14 +732,8 @@ impl IOWriter {
 
     // ── enqueue ─────────────────────────────────────────────────────────
 
-    /// A writer that already reported a fatal error must not accept new
-    /// chunks: `PosixBufferedWriter::_on_error` closes the handle after
-    /// `on_error` returns, so a chunk queued from inside the completion
-    /// callbacks (or any later one) would wait on a poll that is being torn
-    /// down, and a later `write()` would run with `handle == Closed` (the
-    /// pollable path asserts `handle == Poll`). Broken pipes are the EPIPE
-    /// flavor of the same thing. Report the error to the child instead of
-    /// queueing the chunk.
+    /// A writer that reported a fatal error (or a broken pipe) rejects new
+    /// chunks with that error.
     fn handle_dead_writer(&self, ptr: ChildPtr) -> Option<Yield> {
         let s = self.state();
         if s.flags.broken_pipe {
@@ -835,11 +823,13 @@ impl IOWriter {
         &self,
         child: ChildPtr,
         bytelist: Option<*mut Vec<u8>>,
-        buf: Vec<u8>,
+        mut buf: Vec<u8>,
     ) -> Yield {
         if let Some(y) = self.complete_unqueued(child, buf.len()) {
             return y;
         }
+        // A reader hands over its whole buffer for what may be a short line.
+        buf.shrink_to_fit();
         self.push(child, bytelist, buf)
     }
 

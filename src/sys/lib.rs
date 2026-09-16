@@ -2330,11 +2330,7 @@ mod posix_impl {
                     SUPPORTS_STATX_ON_LINUX.store(false, Ordering::Relaxed);
                     return statx_fallback(fd, path, flags);
                 }
-                return Err(Error {
-                    errno: raw_errno as _,
-                    syscall,
-                    ..Default::default()
-                });
+                return Err(Error::from_code_int(raw_errno, syscall));
             }
 
             // SAFETY: rc == 0 ⇒ kernel populated the buffer.
@@ -3535,8 +3531,7 @@ mod windows_impl {
         let adjusted_len = buf.len().min(MAX_COUNT) as w::DWORD;
         // Stdin callers route through this function (via
         // `File::stdin().read_to_end_into` / `output_sink().read`), so the
-        // BROKEN_PIPE/HANDLE_EOF → 0 (EOF) mapping and the OPERATION_ABORTED
-        // retry live here.
+        // OPERATION_ABORTED retry lives here.
         loop {
             let mut amount_read: w::DWORD = 0;
             // SAFETY: FFI; buf valid for `adjusted_len`.
@@ -3722,6 +3717,7 @@ mod windows_impl {
         // DuplicateHandle on the underlying HANDLE.
         let process = w::kernel32::GetCurrentProcess();
         let mut target: w::HANDLE = core::ptr::null_mut();
+        // SAFETY: FFI; `target` is a live local.
         let out = unsafe {
             w::kernel32::DuplicateHandle(
                 process,
@@ -3747,6 +3743,7 @@ mod windows_impl {
     pub fn getcwd(buf: &mut [u8]) -> Maybe<usize> {
         // GetCurrentDirectoryW + WTF16→UTF8.
         let mut wbuf = bun_paths::w_path_buffer_pool::get();
+        // SAFETY: FFI; `wbuf` is valid for `wbuf.len()` units.
         let len =
             unsafe { w::kernel32::GetCurrentDirectoryW(wbuf.len() as u32, wbuf.as_mut_ptr()) };
         if len == 0 {
@@ -3803,8 +3800,6 @@ mod windows_impl {
         renameat(from_dir, from, to_dir, to)
     }
     pub fn unlinkat_with_flags(dir: Fd, path: &ZStr, flags: i32) -> Maybe<()> {
-        // Convert to NT path and call `DeleteFileBun`;
-        // `remove_dir = flags & AT_REMOVEDIR != 0`.
         let mut wbuf = bun_paths::w_path_buffer_pool::get();
         let wpath = bun_paths::string_paths::to_nt_path(&mut wbuf, path.as_bytes());
         super::windows::DeleteFileBun(
@@ -4001,8 +3996,7 @@ mod windows_impl {
             return Err(Error::new(E::ENAMETOOLONG, Tag::access).with_path(path.as_bytes()));
         }
         let mut wbuf = bun_paths::w_path_buffer_pool::get();
-        let len = bun_paths::string_paths::to_kernel32_path(&mut wbuf, path.as_bytes()).len();
-        if let Err(e) = w::fs::lengthen_path_in_place(&mut wbuf[..], len) {
+        if let Err(e) = w::fs::kernel32_path(&mut wbuf[..], path.as_bytes()) {
             return Err(Error::from_win32(e, Tag::access).with_path(path.as_bytes()));
         }
         // SAFETY: `wbuf` holds a NUL-terminated wide path.
@@ -4061,6 +4055,7 @@ mod windows_impl {
     pub fn get_file_size(fd: Fd) -> Maybe<u64> {
         // GetFileSizeEx.
         let mut size: i64 = 0;
+        // SAFETY: FFI; `size` is a live local.
         let ok = unsafe { w::kernel32::GetFileSizeEx(fd.native() as w::HANDLE, &mut size) };
         if ok == 0 {
             return Err(Error::from_win32(w::Win32Error::get(), Tag::fstat).with_fd(fd));
@@ -4072,6 +4067,7 @@ mod windows_impl {
     pub fn lseek(fd: Fd, offset: i64, whence: i32) -> Maybe<i64> {
         // SetFilePointerEx.
         let mut new: i64 = 0;
+        // SAFETY: FFI; `new` is a live local.
         let ok = unsafe {
             w::SetFilePointerEx(fd.native() as w::HANDLE, offset, &mut new, whence as u32)
         };
@@ -4097,6 +4093,7 @@ mod windows_impl {
         // as the drive root, not the drive's saved cwd.
         let mut wbuf = bun_paths::w_path_buffer_pool::get();
         let wpath = bun_paths::string_paths::to_w_dir_path(&mut wbuf, path.as_bytes());
+        // SAFETY: FFI; `wpath` is NUL-terminated.
         if unsafe { w::SetCurrentDirectoryW(wpath.as_ptr()) } == 0 {
             return Err(
                 Error::from_win32(w::Win32Error::get(), Tag::chdir).with_path(path.as_bytes())
@@ -4202,8 +4199,8 @@ fn read_fill_vec(
 // `iovec_const` (= `struct iovec` with the writev contract that `base` is
 // not written through). On Windows it has the layout of
 // `PlatformIoVec`; that arm is below.
-// Layout matches `libc::iovec` (`{ *void, usize }`) so a `&[PlatformIoVecConst]`
-// can be passed straight to `pwritev(2)`.
+// On POSIX the layout matches `libc::iovec` (`{ *void, usize }`) so a
+// `&[PlatformIoVecConst]` can be passed straight to `pwritev(2)`.
 // ──────────────────────────────────────────────────────────────────────────
 #[cfg(unix)]
 #[repr(C)]
@@ -4212,7 +4209,7 @@ pub struct PlatformIoVecConst {
     pub(crate) base: *const u8,
     pub len: usize,
 }
-// SAFETY: `{ *const u8, usize }` — `(null, 0)` is a valid empty iovec (S021).
+// SAFETY: `{ *const u8, usize }` — `(null, 0)` is a valid empty iovec.
 #[cfg(unix)]
 unsafe impl bun_core::ffi::Zeroable for PlatformIoVecConst {}
 #[cfg(unix)]
@@ -4355,7 +4352,7 @@ pub struct PlatformIoVecConst {
     pub len: windows::ULONG,
     pub(crate) base: *const u8,
 }
-// SAFETY: `{ ULONG, *const u8 }` — `(0, null)` is a valid empty buffer (S021).
+// SAFETY: `{ ULONG, *const u8 }` — `(0, null)` is a valid empty buffer.
 #[cfg(windows)]
 unsafe impl bun_core::ffi::Zeroable for PlatformIoVecConst {}
 #[cfg(windows)]
@@ -6243,8 +6240,7 @@ pub fn normalize_path_windows_opts<'a>(
         return Ok(unsafe { WStr::from_raw(norm.as_ptr(), len) });
     }
 
-    // Strip a leading drive letter (`C:`) on the relative part; the bypass
-    // below still copies the original `path` verbatim.
+    // A drive-relative path (`C:name`) is taken as relative to `dir_fd`.
     let rel = if path.len() >= 2
         && bun_paths::resolve_path::is_drive_letter_t::<u16>(path[0])
         && path[1] == b':' as u16
@@ -6262,8 +6258,10 @@ pub fn normalize_path_windows_opts<'a>(
 
     // A single name other than `.` and `..` can be passed straight through to
     // `NtCreateFile` against `RootDirectory`. Win32 output does that for
-    // dotless names only (see `NormalizePathWindowsOpts`).
-    if is_single_name && (opts.add_nt_prefix || !facts.has_dot) {
+    // dotless names only (see `NormalizePathWindowsOpts`). Not with a drive
+    // letter in front: to the kernel `C:name` is the stream `name` of a file `C`.
+    let has_drive = rel.len() != path.len();
+    if is_single_name && !has_drive && (opts.add_nt_prefix || !facts.has_dot) {
         if path.len() >= buf.len() {
             return Err(too_long());
         }
@@ -6845,10 +6843,10 @@ pub struct WindowsFileAttributes {
 pub fn get_file_attributes(path: &ZStr) -> Option<WindowsFileAttributes> {
     use bun_windows_sys::externs as w;
     let mut wbuf = bun_paths::w_path_buffer_pool::get();
-    let wpath = bun_paths::string_paths::to_kernel32_path(&mut wbuf.0[..], path.as_bytes());
+    windows::fs::kernel32_path(&mut wbuf.0[..], path.as_bytes()).ok()?;
     // Win32 API does file path normalization, so we do not need the valid path assertion here.
-    // SAFETY: `wpath` is NUL-terminated UTF-16 produced by `to_kernel32_path`.
-    let dword = unsafe { w::GetFileAttributesW(wpath.as_ptr()) };
+    // SAFETY: `wbuf` holds the NUL-terminated UTF-16 path written above.
+    let dword = unsafe { w::GetFileAttributesW(wbuf.0.as_ptr()) };
     if dword == windows::INVALID_FILE_ATTRIBUTES {
         return None;
     }
@@ -7922,7 +7920,7 @@ pub mod net {
     }
     #[cfg(windows)]
     mod sock {
-        // Same nominal types as `bun_sys::posix::sockaddr*` (see comment there)
+        // Same nominal types as `bun_sys::posix::sockaddr*`
         // so `Address::init_posix` accepts pointers callers cast through that
         // path. AF_* values come from ws2def.h.
         pub(super) use bun_windows_sys::ws2_32::{

@@ -4413,9 +4413,7 @@ pub(crate) fn write_file_internal(
     }
 
     // If you're doing Bun.write(), try to go fast by writing short input on the main thread.
-    // This is a heuristic, but it's a good one.
-    //
-    // except if you're on Windows. Windows I/O is slower. Let's not even try.
+    // This is a heuristic, but it's a good one. Not on Windows.
     #[cfg(not(windows))]
     {
         let mut needs_async = false;

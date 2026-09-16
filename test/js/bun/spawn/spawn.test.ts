@@ -456,9 +456,7 @@ for (let [gcTick, label] of [
         // Child reads a single byte and exits; the parent queues 16MB on stdin
         // (comfortably larger than kern.ipc.maxsockbuf on macOS and the 64KB
         // named-pipe buffer on Windows) so end() is still draining when the
-        // read end closes. On Windows libuv previously surfaced that as code
-        // "EOF" because uv__process_pipe_write_req used the read-side error
-        // translator.
+        // read end closes. That is EPIPE on Windows too, not EOF.
         await using proc = spawn({
           cmd: [bunExe(), "-e", `const b = Buffer.alloc(1); require("fs").readSync(0, b); process.exit(0);`],
           env: bunEnv,
@@ -1308,13 +1306,11 @@ describe("close handling", () => {
 
     it.if(isWindows)("'pipe' at index >= 3: the handle .stdio exposes is not closed again at GC", async () => {
       // On Windows .stdio[3] is a HANDLE value. net.connect({fd}) adopts it
-      // and closes it with the socket. The getter used to expose the handle
-      // of its own uv_pipe_t and close that handle again when the Subprocess
-      // was GC'd. Windows reuses a closed handle value at once, so the second
-      // close destroyed whatever owned the value by then (a worker thread's
-      // handle, in the crash reports). Here the new owner is an event we put
-      // into the value on purpose: it stays signaled unless something closes
-      // it out from under us.
+      // and closes it with the socket, so the Subprocess must not close it
+      // again at GC: Windows reuses a closed handle value at once, and a
+      // second close destroys whatever owns the value by then. Here the new
+      // owner is an event we put into the value on purpose: it stays signaled
+      // unless something closes it out from under us.
       const fixture = /* js */ `
         import { dlopen } from "bun:ffi";
         import { connect } from "node:net";
@@ -1613,10 +1609,9 @@ it.skipIf(isWindows)("leaves a Bun.file(fd) stdout open when stdin stream setup 
 });
 
 // Bun.file(fd).stream() (like the shell's stdio and cwd handles) works on a
-// dup() of the descriptor. On Windows that duplicate used to be created
-// inheritable, and bInheritHandles=TRUE with no handle list copies it, so a
-// child started while one was open kept the file open after the
-// parent closed it. POSIX dup() uses F_DUPFD_CLOEXEC; the Windows side must match.
+// dup() of the descriptor. A child started while a duplicate is open must not
+// get a copy of it: the copy keeps the file open after the parent closes it.
+// POSIX dup() uses F_DUPFD_CLOEXEC; the Windows side must match.
 it.if(isWindows)("handles duplicated for Bun.file(fd).stream() are not inherited by children", async () => {
   const N = 64;
   // Bigger than the stream's high-water mark, so each reader parks on its
@@ -1681,8 +1676,7 @@ it.if(isWindows)("handles duplicated for Bun.file(fd).stream() are not inherited
       reportedHandleCount(control),
       reportedHandleCount(withDuplicates),
     ]);
-    // An inheritable dup() hands every one of the N duplicates to the child,
-    // so the difference used to be exactly N.
+    // A child that gets the duplicates starts with N more handles than the control.
     expect(withDuplicatesCount - controlCount).toBeLessThan(N / 2);
   } finally {
     await Promise.all(readers.map(reader => reader.cancel()));

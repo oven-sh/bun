@@ -12,12 +12,10 @@
 //
 // We can't reliably synthesise CTRL_CLOSE_EVENT in CI (it requires the user
 // or UI automation to actually close a console window), so this test
-// verifies the fix at the layer that changed: process.kill(pid, name)
-// resolves `name` through the same signalNameToNumberMap that
-// process.on(name, fn) uses to decide whether to watch the console.
-// Before the fix it threw ERR_UNKNOWN_SIGNAL for SIGHUP/SIGBREAK on Windows;
-// after the fix the names resolve and kill() returns ENOSYS, which matches
-// Node.js.
+// checks the name lookup: process.kill(pid, name) resolves `name` through the
+// same signalNameToNumberMap that process.on(name, fn) uses to decide whether
+// to watch the console. For SIGHUP/SIGBREAK the name resolves and kill() fails
+// with ENOSYS, as in Node.js.
 
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";

@@ -54,6 +54,11 @@ enum us_fault_syscall {
      * US_FAULT_ERRNO applies, and the errno value is ignored — the simulated
      * failure is a thrown JS out-of-memory error, not an errno. */
     US_FAULT_SESSION_BUFFER,
+    /* Not a syscall: makes afd_poll_create (Windows) poll the socket with the
+     * select() fallback, as for one whose provider chain does not end at AFD
+     * (a non-IFS layered service provider). Only US_FAULT_ERRNO applies, and
+     * the errno value is ignored. */
+    US_FAULT_POLL_SLOW,
     US_FAULT_COUNT
 };
 

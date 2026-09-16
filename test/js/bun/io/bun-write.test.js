@@ -908,7 +908,7 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
   }, 25000);
 
   if (isWindows && !IS_UV_FS_COPYFILE_DISABLED) {
-    it("Bun.write() without uv_fs_copyfile", async () => {
+    it("Bun.write() without CopyFileW", async () => {
       const { exited } = Bun.spawn({
         cmd: [bunExe(), "test", import.meta.path],
         env: {

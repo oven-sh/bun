@@ -1,7 +1,6 @@
 import { spawn } from "bun";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, gcTick, isWindows } from "harness";
-import { createServer } from "node:net";
 import path from "path";
 
 describe.each(["advanced", "json"])("ipc mode %s", mode => {
@@ -379,50 +378,6 @@ describe("a channel this side is done with", () => {
     expect(exitCode).toBe(0);
   });
 
-  it("disconnect() that waits for a handle's ack delivers nothing but that ack", async () => {
-    const received: unknown[] = [];
-    const disconnected = Promise.withResolvers<void>();
-    const server = createServer();
-    try {
-      await new Promise<void>((resolve, reject) => {
-        server.once("error", reject);
-        server.listen(0, "127.0.0.1", resolve);
-      });
-      await using child = spawn({
-        cmd: [
-          bunExe(),
-          "-e",
-          rawChannelChild(`
-            go.then(() => {
-              channel.write(
-                Buffer.concat([frame('"late"'), frame('{"cmd":"NODE_HANDLE_ACK"}'), frame('"later"')]),
-                () => process.exit(0),
-              );
-            });
-          `),
-        ],
-        env: bunEnv,
-        stdio: ["pipe", "inherit", "inherit"],
-        serialization: "json",
-        ipc: message => void received.push(message),
-        onDisconnect: () => disconnected.resolve(),
-      });
-      child.send({ hello: "handle" }, server);
-      // The handle is not acknowledged yet, so the channel stays open for the ack.
-      child.disconnect();
-      expect(child.connected).toBe(false);
-      child.stdin.write("go\n");
-      child.stdin.flush();
-      const [exitCode] = await Promise.all([child.exited, disconnected.promise]);
-      expect(received).toEqual([]);
-      expect(exitCode).toBe(0);
-    } finally {
-      server.close();
-    }
-  });
-
-  // The framing is the Windows channel's; elsewhere a message is a line and the
-  // tests above for undecodable lines cover it.
   it.skipIf(!isWindows)("a frame that breaks the framing ends delivery, also behind a send in flight", async () => {
     const received: unknown[] = [];
     const disconnected = Promise.withResolvers<void>();

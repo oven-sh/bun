@@ -90,8 +90,6 @@ pub mod testing_apis {
 // (acronym splitter treats `AP|Is` as two words); alias so both resolve.
 pub use testing_apis as testing_ap_is;
 
-/// `bun_sys` does not yet export
-/// an isPollable helper, so re-derive it locally from `S_IFMT`.
 #[cfg(unix)]
 fn is_pollable(mode: sys::Mode) -> bool {
     let fmt = mode & (libc::S_IFMT as sys::Mode);
@@ -552,16 +550,12 @@ impl FileSink {
     #[cfg(windows)]
     fn open_input(&self, options: &Options) -> sys::Result<Fd> {
         match &options.input_path {
-            // Whatever a standard handle is, the writer's source leaves it
-            // open: a pipe or a console takes a duplicate, a file is not
-            // closed (`Fd::close` skips it). Given the handle itself, a pipe
-            // knows which standard stream it is and what it learned about it
-            // the first time (`Pipe::open_foreign`).
+            // A standard handle is passed as is: the writer's source leaves it open, and
+            // `Pipe::open_foreign` caches what it learned by which standard stream it is.
             PathOrFileDescriptor::Fd(fd) if fd.stdio_tag().is_some() => Ok(*fd),
             PathOrFileDescriptor::Fd(fd) => sys::dup(*fd),
-            // `sys::open` applies Win32's name rules (`NUL`, `CON`, a trailing
-            // dot or space), as every other way of opening a `Bun.file` does;
-            // `sys::openat` hands the name to NT as written.
+            // `sys::open`, not `sys::openat`: Win32's name rules (`NUL`, `CON`, a trailing
+            // dot or space) apply, as for every other way of opening a `Bun.file`.
             PathOrFileDescriptor::Path(path) => {
                 let path = path.slice();
                 let mut buf = bun_paths::path_buffer_pool::get();
@@ -620,8 +614,8 @@ impl FileSink {
         }
 
         // Writes to the process's own stdout and stderr are synchronous on
-        // Windows whatever they are connected to (Node documents pipes and
-        // files that way; a console write is inline as well).
+        // Windows whatever they are connected to. Node documents files and pipes that way:
+        // https://nodejs.org/api/process.html#a-note-on-process-io
         #[cfg(windows)]
         if let PathOrFileDescriptor::Fd(fd) = &options.input_path
             && matches!(

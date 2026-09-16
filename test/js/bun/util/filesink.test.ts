@@ -1091,7 +1091,9 @@ describe("FileSink on a pipe stays alive until end() has drained the buffer", ()
   // The unref'd child does not hold the loop. The bytes still owed to its
   // stdin must. The child starts to read only once end() has been called, so
   // the first write has filled the pipe by then. It inherits stdout, so its
-  // count arrives on the parent's stdout after it has read everything.
+  // count arrives on the parent's stdout after it has read everything. It is
+  // detached so that it outlives the parent: on Windows a child that is not is
+  // killed when the parent exits, which can be before it has printed.
   it.concurrent("Bun.spawn stdin pipe with an unref'd child", async () => {
     const flag = join(tmpdirSync(), "ended");
     // Polls for the flag with a deadline so that it cannot outlive a parent
@@ -1115,7 +1117,7 @@ describe("FileSink on a pipe stays alive until end() has drained the buffer", ()
         `
           const child = Bun.spawn(
             [process.execPath, "-e", ${JSON.stringify(reader)}, ${JSON.stringify(flag)}],
-            { stdin: "pipe", stdout: "inherit", stderr: "inherit" },
+            { stdin: "pipe", stdout: "inherit", stderr: "inherit", detached: true },
           );
           try {
             child.stdin.write(Buffer.alloc(${size}, 65));

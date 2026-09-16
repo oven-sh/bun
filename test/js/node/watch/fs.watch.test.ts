@@ -1412,18 +1412,16 @@ describe("closed FSWatcher is collectable", () => {
   }
 });
 
-// On Windows, if fs.watch() fails after getOrPut() inserts into the internal path->watcher
-// map (e.g. uv_fs_event_start fails on a dangling junction, an ACL-protected dir, or a
-// directory deleted mid-watch), an errdefer that was silently broken by a !*T -> Maybe(*T)
-// refactor left the entry in place with a dangling key and an uninitialized value. The next
-// fs.watch() on the same path collided with the poisoned entry, returned the garbage value
-// as a *PathWatcher, and segfaulted at 0xFFFFFFFFFFFFFFFF calling .handlers.put() on it.
+// An fs.watch() that fails after its path went into the path->watcher map (starting the
+// watch fails on a dangling junction, an ACL-protected dir, or a directory deleted
+// mid-watch) must take the entry out again, or the next fs.watch() on the same path finds
+// an entry whose watcher is gone.
 //
 // https://github.com/oven-sh/bun/issues/26254
 // https://github.com/oven-sh/bun/issues/20203
 // https://github.com/oven-sh/bun/issues/19635
 //
-// Must run in a subprocess: on an unpatched build this segfaults the whole runtime.
+// In a subprocess so a crash is a test failure.
 test.skipIf(!isWindows)("retrying a failed fs.watch does not crash (windows)", async () => {
   using dir = tempDir("fswatch-retry-failed", { "index.js": "" });
   const base = String(dir);
@@ -1440,16 +1438,13 @@ test.skipIf(!isWindows)("retrying a failed fs.watch does not crash (windows)", a
     symlinkSync(target, link, "junction"); // junctions need no admin rights on Windows
     rmdirSync(target);                     // junction now dangles
 
-    // Call 1: readlink(link) SUCCEEDS (returns the vanished target path into
-    // a stack-local buffer), then uv_fs_event_start(target) fails ENOENT.
-    // On unpatched builds: map entry left with dangling key + uninit value.
+    // Call 1: readlink(link) succeeds (it returns the vanished target path),
+    // then starting the watch on the target fails with ENOENT.
     try { watch(link); throw new Error("expected first watch to fail"); }
     catch (e) { if (e.code !== "ENOENT") throw e; }
 
-    // Call 2: identical stack frame layout -> identical outbuf address ->
-    // identical key slice -> getOrPut returns found_existing=true ->
-    // returns uninitialized value as a *PathWatcher -> segfault on unpatched builds.
-    // Correct behaviour: throw ENOENT again.
+    // Call 2: the same key. It must not find an entry left by call 1; it
+    // throws ENOENT again.
     try { watch(link); throw new Error("expected second watch to fail"); }
     catch (e) { if (e.code !== "ENOENT") throw e; }
 
@@ -1470,11 +1465,10 @@ test.skipIf(!isWindows)("retrying a failed fs.watch does not crash (windows)", a
 
   expect(stderr).toBe("");
   expect(stdout.trim()).toBe("OK");
-  expect(exitCode).toBe(0); // unpatched: exitCode is 3 (Windows segfault)
+  expect(exitCode).toBe(0);
 });
 
-// libuv signals a ReadDirectoryChangesW buffer overflow (events were lost) by
-// invoking the fs_event callback with a NULL filename; node surfaces it as a
+// Node reports a ReadDirectoryChangesW buffer overflow (events were lost) as a
 // 'change' event with a null filename, for every encoding, so callers can rescan.
 test.skipIf(!isWindows)(
   "fs.watch delivers a null-filename 'change' event when ReadDirectoryChangesW overflows (windows)",
@@ -1656,15 +1650,10 @@ test.skipIf(!isMacOS)("fs.watch(dir) on macOS does not leak the resolved FSEvent
   expect(stdout).toContain("RSS growth:");
 });
 
-// On Windows, fs.watch() registered every watcher into a single process-global
-// PathWatcherManager bound to the first caller's VM/uv_loop. A Worker thread
-// calling fs.watch() reused that manager: it mutated the watcher map and drove
-// the main thread's uv_loop from a foreign thread (debug builds tripped a
-// debug_assert and aborted; release builds raced). The manager has its
-// own reader thread and a mutex over the watcher map; any thread can use it.
+// The process-wide PathWatcherManager has its own reader thread and a mutex
+// over the watcher map, so fs.watch() works from any thread.
 //
-// Must run in a subprocess: on an unpatched debug build the Worker's
-// fs.watch() call aborts the whole runtime.
+// In a subprocess so a debug_assert abort is a test failure.
 test.skipIf(!isWindows)(
   "fs.watch works from both the main thread and a Worker (windows)",
   async () => {
@@ -1677,7 +1666,6 @@ test.skipIf(!isWindows)(
         import { parentPort } from "node:worker_threads";
 
         const dir = path.join(import.meta.dir, "worker-watched");
-        // Before the fix this call registered into the main thread's manager.
         const watcher = fs.watch(dir, () => {
           clearInterval(interval);
           watcher.close();
@@ -1711,8 +1699,8 @@ test.skipIf(!isWindows)(
           });
         }
 
-        // 1. The main thread registers the first watcher, creating the watcher
-        //    manager bound to the main VM.
+        // 1. The main thread registers the first watcher, creating the
+        //    process-wide watcher manager.
         await watchForOneChange(mainDir);
 
         // 2. A Worker registers its own watcher and must observe a change.
@@ -1743,7 +1731,7 @@ test.skipIf(!isWindows)(
 
     expect(stderr).toBe("");
     expect(stdout.trim()).toBe("OK");
-    expect(exitCode).toBe(0); // unpatched debug builds abort in the Worker's fs.watch()
+    expect(exitCode).toBe(0);
   },
   30000,
 );
@@ -1906,14 +1894,8 @@ test("fs.watch wrapper reference survives GC across event, abort and close paths
 }, 30_000);
 
 // Closes a watcher on a file symlink whose readlink() result is relative, i.e.
-// a bare file name. libuv's uv__split_path() used to _wcsdup() that name from
-// the CRT heap while everything else it owned came from uv__malloc(), i.e.
-// from mimalloc (uv_replace_allocator in main), so closing the watcher handed
-// a CRT pointer to mi_free. Debug builds reported it on stderr every time
-// ("mimalloc: error: mi_free: invalid pointer"); release builds segfaulted in
-// about half of all processes, depending on where ASLR put the CRT heap
-// relative to mimalloc's page map, hence several children.
-// Fixed in oven-sh/libuv#14.
+// a bare file name. Several children, because whether a bad free crashes
+// depends on ASLR.
 test.skipIf(!isWindows)("closing a watcher on a symlink with a relative target does not crash (windows)", async () => {
   using dir = tempDir("fswatch-relative-symlink", { "target.txt": "hello" });
   const base = String(dir);

@@ -252,8 +252,7 @@ impl Listener {
                         .strong_data
                         .set(Strong::create(default_data, global));
                 }
-                // TODO: server_name is not supported on named pipes, I belive its , lets wait for
-                // someone to ask for it
+                // TODO: server_name is not supported on named pipes.
 
                 match WindowsNamedPipeListeningContext::listen(
                     global,

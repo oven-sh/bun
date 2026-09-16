@@ -171,8 +171,6 @@ impl Worker {
         }
         // `adopt` closes the fd when it fails.
         if let Some(ipc_fd) = unadopted[2].take() {
-            // coord.vm backref valid for worker lifetime; adopt() mutates the
-            // loop's socket context via interior mutability on the C side.
             if !Channel::adopt(&raw mut this.ipc, coord.vm, ipc_fd, false) {
                 return Err(crate::Error::ChannelAdoptFailed);
             }

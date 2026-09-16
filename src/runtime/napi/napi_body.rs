@@ -2565,7 +2565,8 @@ pub(crate) struct ThreadSafeFunction {
     abort_handle: bun_jsc::AbortHandle,
     /// Script of a live context other than its maker's has asked it to hold the loop. An addon
     /// is shared by the process, and whose such a function is cannot be told from who touched
-    /// it last: from here its hold is the process's, which no context's stop lets go of.
+    /// it last: until the addon lets go (`unref`) its hold is the process's, which no context's
+    /// stop lets go of.
     held_for_the_process: bool,
 
     /// Dropped on the JS thread by `env_teardown`; `None` afterwards.
@@ -3209,6 +3210,17 @@ impl ThreadSafeFunction {
 
     /// `napi_unref_threadsafe_function` — JS thread only (as in Node).
     pub(crate) fn unref(&mut self) {
+        if self.held_for_the_process {
+            // The hold the process had is over: whose the next one is, the next ref says. Until
+            // then the function goes with its maker again, if that is still there.
+            self.held_for_the_process = false;
+            let maker = VirtualMachine::get().context_of(self.context);
+            if !maker.is_stopped() {
+                // SAFETY: as at creation: a heap allocation that leaves its context on this
+                // thread before it is freed.
+                unsafe { bun_jsc::AbortHandle::arm_owner(std::ptr::from_mut(self), maker) };
+            }
+        }
         self.poll_ref.unref(bun_io::js_vm_ctx());
     }
 

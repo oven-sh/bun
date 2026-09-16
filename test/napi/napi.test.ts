@@ -1097,6 +1097,11 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       ["disposed", "it asked to be held again", "ran dry at once"],
     ],
     [
+      "that the host reffed and let go of goes with the graph again, whose later ref dispose() lets go of",
+      ["that the host had let go of and the graph reffed again"],
+      ["disposed", "ran dry at once"],
+    ],
+    [
       "and one the host made, which the graph reffed, holds the loop for the host still",
       ["that the host made and the graph reffed"],
       ["disposed", "ran dry once the host let go"],
@@ -1110,7 +1115,9 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
         const addon = createRequire(import.meta.url)(addonPath);
         export const start = () => addon.threadsafe_function_that_refs_itself();
         // (From a microtask, which still runs once the graph has been disposed.)
-        export const startLater = () => queueMicrotask(() => addon.threadsafe_function_that_refs_itself(false));
+        export const startLater = () => queueMicrotask(startLater.unscheduled);
+        // (One nobody calls.)
+        startLater.unscheduled = () => addon.threadsafe_function_that_refs_itself(false);
         export const refTheLastOne = () => addon.ref_that_function();
       `,
       "fixture.mjs": `
@@ -1125,6 +1132,12 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
           // (The leftover microtask has run by now, and what closes its function has not.)
           await Promise.resolve();
           addon.ref_that_function();
+        } else if (when === "that the host had let go of and the graph reffed again") {
+          graph.run(() => app.startLater.unscheduled());
+          addon.ref_that_function();
+          addon.unref_that_function();
+          graph.run(() => app.refTheLastOne());
+          graph.dispose();
         } else if (when === "that the host made and the graph reffed") {
           addon.threadsafe_function_that_refs_itself(false);
           graph.run(() => app.refTheLastOne());
@@ -1151,7 +1164,7 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
         let letGo = false;
         process.once("beforeExit", () => console.log(letGo ? "ran dry once the host let go" : "ran dry at once"));
         if (when === "after the graph was disposed") addon.ref_that_function();
-        if (when && when !== "and the host had reffed and let go of it") {
+        if (when && !when.includes("let go of")) {
           // It holds the loop until the host lets go. (The timer holds nothing itself: with the
           // loop dry it never fires.)
           setTimeout(() => {

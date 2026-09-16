@@ -636,7 +636,7 @@ describe.concurrent("fetch() receive backpressure — streaming consumer shapes"
         name: "TypeError",
         code: "ECONNRESET",
         message:
-          "The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()",
+          "ECONNRESET: The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()",
         partial: true,
         foreign: 0,
       });

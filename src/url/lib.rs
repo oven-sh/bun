@@ -475,6 +475,27 @@ impl<'a> URL<'a> {
         buf.into_boxed_slice()
     }
 
+    /// `href` with `user:password@` cut out of its authority.
+    pub fn href_without_userinfo(&self) -> std::borrow::Cow<'a, [u8]> {
+        use std::borrow::Cow;
+        if self.username.is_empty() && self.password.is_empty() {
+            return Cow::Borrowed(self.href);
+        }
+        // The userinfo ends at the last `@` of the authority, as `parse` reads it.
+        let Some(authority) = strings::index_of(self.href, b"://").map(|i| i + 3) else {
+            return Cow::Borrowed(self.href);
+        };
+        let rest = &self.href[authority..];
+        let end = strings::index_of_any(rest, b"/?#").unwrap_or(rest.len());
+        let Some(at) = strings::last_index_of_char(&rest[..end], b'@') else {
+            return Cow::Borrowed(self.href);
+        };
+        let mut out = Vec::with_capacity(self.href.len() - at - 1);
+        out.extend_from_slice(&self.href[..authority]);
+        out.extend_from_slice(&rest[at + 1..]);
+        Cow::Owned(out)
+    }
+
     pub fn has_http_like_protocol(&self) -> bool {
         self.is_http() || self.is_https()
     }
@@ -655,21 +676,26 @@ impl<'a> URL<'a> {
                 let is_relative_path = !is_protocol_relative && base[0] == b'/';
 
                 if !is_relative_path {
-                    // if there's no protocol or @, it's ambiguous whether the colon is a port or a username.
+                    // Without a protocol it's ambiguous whether a colon is a port or a username,
+                    // see https://github.com/oven-sh/bun/issues/1390. With one, the userinfo is
+                    // what precedes the last `@` of the authority.
                     if offset > 0 {
-                        // see https://github.com/oven-sh/bun/issues/1390
-                        let first_at =
-                            strings::index_of_char(&base[offset as usize..], b'@').unwrap_or(0);
-                        let first_colon =
-                            strings::index_of_char(&base[offset as usize..], b':').unwrap_or(0);
-
-                        if first_at > first_colon
-                            && first_at
-                                < strings::index_of_char(&base[offset as usize..], b'/')
-                                    .unwrap_or(u32::MAX)
-                        {
-                            offset += url.parse_username(&base[offset as usize..]).unwrap_or(0);
-                            offset += url.parse_password(&base[offset as usize..]).unwrap_or(0);
+                        let rest = &base[offset as usize..];
+                        // One pass over the authority, which is short: the last
+                        // `@` before the first `/`, `?` or `#` ends the userinfo.
+                        let mut last_at = None;
+                        for (i, &byte) in rest.iter().enumerate() {
+                            match byte {
+                                b'@' => last_at = Some(i),
+                                b'/' | b'?' | b'#' => break,
+                                _ => {}
+                            }
+                        }
+                        if let Some(at) = last_at {
+                            let userinfo = &rest[..at];
+                            (url.username, url.password) =
+                                strings::split_once_char(userinfo, b':').unwrap_or((userinfo, b""));
+                            offset += u32::try_from(at + 1).expect("int cast");
                         }
                     }
 
@@ -786,30 +812,6 @@ impl<'a> URL<'a> {
         None
     }
 
-    pub(crate) fn parse_username(&mut self, str: &'a [u8]) -> Option<u32> {
-        // reset it
-        self.username = b"";
-
-        if str.len() < b"@".len() {
-            return None;
-        }
-        for i in 0..str.len() {
-            match str[i] {
-                b':' | b'@' => {
-                    // we found a username, everything before this point in the slice is a username
-                    self.username = &str[0..i];
-                    return Some(u32::try_from(i + 1).expect("int cast"));
-                }
-                // if we reach a slash or "?", there's no username
-                b'?' | b'/' => {
-                    return None;
-                }
-                _ => {}
-            }
-        }
-        None
-    }
-
     pub(crate) fn parse_password(&mut self, str: &'a [u8]) -> Option<u32> {
         // reset it
         self.password = b"";
@@ -920,6 +922,8 @@ impl<'a> URL<'a> {
         Some(i)
     }
 }
+
+pub use bun_core::ip_address::strip_ipv6_brackets;
 
 // ══════════════════════════════════════════════════════════════════════════
 // QueryStringMap & friends

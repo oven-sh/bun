@@ -675,6 +675,38 @@ describe.each([
   });
 });
 
+// Without a cwd Bun looks next to its own executable, where the entry never was.
+it.concurrent.skipIf(isWindows)("--watch still exits when its start directory is gone", async () => {
+  using dir = tempDir("watch-start-dir-gone", {
+    "launch.mjs": `
+      import { mkdirSync, rmdirSync } from "node:fs";
+      mkdirSync("gone");
+      process.chdir("gone");
+      rmdirSync("../gone");
+      // The timeout only bounds a start that waits: it has to exit on its own.
+      const { exitCode, signalCode, stderr } = Bun.spawnSync({
+        cmd: [process.execPath, "--watch", "entry.mjs"],
+        stderr: "pipe",
+        timeout: 3000,
+      });
+      console.log(JSON.stringify({ exitCode, signalCode: signalCode ?? null, stderr: stderr.toString().trim() }));
+    `,
+  });
+  await using proc = spawn({
+    cmd: [bunExe(), "launch.mjs"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect({ result: JSON.parse(stdout), exitCode }).toEqual({
+    result: { exitCode: 1, signalCode: null, stderr: `error: Module not found "entry.mjs"` },
+    exitCode: 0,
+  });
+});
+
 const preloadBunfig = `preload = ["./pre.mjs"]\n`;
 const preloadFixture = {
   "bunfig.toml": preloadBunfig,

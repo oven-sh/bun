@@ -2718,6 +2718,10 @@ impl RunCommand {
     ) {
         use bun_core::{FileKind, ZBox};
         let mut buf = bun_paths::path_buffer_pool::get();
+        // With the start directory gone, `top_level_dir` is a fallback where the entry never was.
+        if !paths::is_absolute(target) && bun_core::getcwd(&mut buf).is_err() {
+            return;
+        }
         let Some(path) = paths::resolve_path::join_abs_string_buf_checked::<
             paths::resolve_path::platform::Auto,
         >(top_level_dir, &mut buf[..], &[target]) else {

@@ -3379,8 +3379,7 @@ static JSValue maybe_uid_by_name(JSC::ThrowScope& throwScope, JSGlobalObject* gl
     struct passwd* pp = nullptr;
     char buf[8192];
 
-    // The entry, name included, has to fit in `buf`, so a longer name cannot match. It must not reach the lookup
-    // either: nss-systemd asserts on a name of 4 MiB, and `utf8()` asserts on one of 2^30 characters.
+    // An entry has to fit in `buf`, name included, so a longer name cannot match. nss-systemd aborts the process on one of 4 MiB.
     if (str.length() < sizeof(buf)) {
         auto utf8 = str.utf8();
         if (getpwnam_r(utf8.data(), &pwd, buf, sizeof(buf), &pp) == 0 && pp != nullptr) {

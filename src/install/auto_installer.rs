@@ -415,9 +415,7 @@ impl hooks::AutoInstaller for PackageManager {
             None::<&mut PackageManager>,
         )?;
 
-        // `known_npm_aliases` is read with the lockfile's strings, and `parsed`
-        // holds offsets into the resolver's buffer. Record a parse of a copy of
-        // the literal that lives in the lockfile.
+        // `known_npm_aliases` is sliced with the lockfile's strings, so the alias is parsed there.
         if let Some(alias_hash) = name_hash
             && parsed.tag == dependency::Tag::Npm
             && parsed.npm().is_alias

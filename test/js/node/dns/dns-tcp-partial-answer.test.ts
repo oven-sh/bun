@@ -42,23 +42,32 @@ async function listenCutShort() {
       udp.send(reply, rinfo.port, rinfo.address);
     });
 
-    // TCP: read the query first so the close is a FIN and not a reset, then
-    // send 20 bytes of a frame whose length prefix claims 300 and close.
+    // TCP: read the whole query first, because a close with unread data is a
+    // reset and not a FIN. Then send 20 bytes of a frame whose length prefix
+    // claims 300, and end the connection.
+    const sockets = new Set<net.Socket>();
     const server = {
       port,
       tcpConnections: 0,
       [Symbol.dispose]() {
         udp.close();
         tcp.close();
+        for (const socket of sockets) socket.destroy();
       },
     };
     tcp.on("connection", socket => {
       server.tcpConnections++;
+      sockets.add(socket);
+      socket.on("close", () => sockets.delete(socket));
       socket.on("error", () => {});
-      socket.once("data", () => {
+      let query = Buffer.alloc(0);
+      socket.on("data", chunk => {
+        if (socket.writableEnded) return;
+        query = Buffer.concat([query, chunk]);
+        if (query.length < 2 || query.length < 2 + query.readUInt16BE(0)) return;
         const partial = Buffer.alloc(22);
         partial.writeUInt16BE(300, 0);
-        socket.write(partial, () => socket.destroy());
+        socket.end(partial);
       });
     });
     return server;

@@ -590,6 +590,38 @@ describe("fetch protocol: http3", () => {
     expect(assembled.endsWith("[end]")).toBe(true);
   });
 
+  // The first chunk waits until the handler runs, so the request headers have
+  // to leave on their own. A client that holds them until it has body bytes
+  // never reaches the handler, and the test times out. The two requests cover
+  // a new connection and a reused one.
+  test("bidi: the request headers leave before the first body chunk exists", async () => {
+    let handlerRuns = Promise.withResolvers<void>();
+    using origin = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      http1: false,
+      async fetch(req) {
+        handlerRuns.resolve();
+        return new Response("got:" + (await req.text()));
+      },
+    });
+    const bodies: string[] = [];
+    for (const chunk of ["first-connection", "same-connection"]) {
+      handlerRuns = Promise.withResolvers<void>();
+      const body = new ReadableStream({
+        async pull(ctrl) {
+          await handlerRuns.promise;
+          ctrl.enqueue(chunk);
+          ctrl.close();
+        },
+      });
+      const res = await fetch(`https://127.0.0.1:${origin.port}/`, { ...h3, method: "POST", body });
+      bodies.push(await res.text());
+    }
+    expect(bodies).toEqual(["got:first-connection", "got:same-connection"]);
+  });
+
   test("bidi: type:direct on both sides", async () => {
     const piece = Buffer.alloc(4096, "D");
     const body = new ReadableStream({

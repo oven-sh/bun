@@ -472,6 +472,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDurableObjectRpcThen, (JSGlobalObject * lexicalGlobal
         return WebCore::throwThisTypeError(*globalObject, scope, "DurableObjectStub"_s, "then"_s);
     auto* stub = function->stub();
     JSPromise* promise = stub->id()->ns()->dispatch(globalObject, stub, DurableObjectEventKind::Get, function->methodName(), jsUndefined());
+    RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, JSValue::encode(promise->then(globalObject, callFrame->argument(0), callFrame->argument(1))));
 }
 
@@ -931,7 +932,7 @@ void JSDurableObjectActor::start(Zig::GlobalObject* globalObject)
         if (auto* exception = scope.exception()) [[unlikely]] {
             JSValue error = exception->value();
             if (scope.clearExceptionExceptTermination())
-                abort(globalObject, error);
+                abort(globalObject, error, KeepSockets);
             return;
         }
     }
@@ -939,7 +940,7 @@ void JSDurableObjectActor::start(Zig::GlobalObject* globalObject)
     if (auto* exception = scope.exception()) [[unlikely]] {
         JSValue error = exception->value();
         if (scope.clearExceptionExceptTermination())
-            abort(globalObject, error);
+            abort(globalObject, error, KeepSockets);
         return;
     }
     // The class of a `class:` namespace is the host's code; what it throws in an object is the object's.
@@ -953,7 +954,7 @@ void JSDurableObjectActor::start(Zig::GlobalObject* globalObject)
     if (auto* exception = scope.exception()) [[unlikely]] {
         JSValue error = exception->value();
         if (scope.clearExceptionExceptTermination())
-            abort(globalObject, error);
+            abort(globalObject, error, KeepSockets);
         return;
     }
     awaitWith(globalObject, loaded, JSDurableObjectEvent::create(vm, globalObject, DurableObjectEventKind::Import, this, jsUndefined(), jsUndefined(), jsUndefined(), nullptr));
@@ -966,18 +967,18 @@ void JSDurableObjectActor::importSettled(Zig::GlobalObject* globalObject, JSDura
     if (continuation->m_generation != m_generation || m_state != State::Starting)
         return;
     if (failed) {
-        abort(globalObject, value);
+        abort(globalObject, value, KeepSockets);
         return;
     }
     JSValue classValue = value.get(globalObject, Identifier::fromString(vm, ns()->exportName()));
     if (auto* exception = scope.exception()) [[unlikely]] {
         JSValue error = exception->value();
         if (scope.clearExceptionExceptTermination())
-            abort(globalObject, error);
+            abort(globalObject, error, KeepSockets);
         return;
     }
     if (!classValue.isConstructor()) {
-        abort(globalObject, createTypeError(globalObject, makeString("The Durable Object module "_s, ns()->modulePath(), " has no exported class \""_s, ns()->exportName(), '"')));
+        abort(globalObject, createTypeError(globalObject, makeString("The Durable Object module "_s, ns()->modulePath(), " has no exported class \""_s, ns()->exportName(), '"')), KeepSockets);
         return;
     }
     construct(globalObject, classValue);
@@ -1011,7 +1012,7 @@ void JSDurableObjectActor::construct(Zig::GlobalObject* globalObject, JSValue cl
     if (auto* exception = scope.exception()) [[unlikely]] {
         JSValue error = exception->value();
         if (scope.clearExceptionExceptTermination() && m_generation == generation && m_state == State::Starting)
-            abort(globalObject, error);
+            abort(globalObject, error, KeepSockets);
         return;
     }
     if (m_generation != generation || m_state != State::Starting)
@@ -1046,7 +1047,7 @@ JSValue JSDurableObjectActor::block(Zig::GlobalObject* globalObject, JSValue cal
         if (!scope.clearExceptionExceptTermination())
             return {};
         if (m_generation == generation)
-            abort(globalObject, error);
+            abort(globalObject, error, m_state == State::Starting ? KeepSockets : CloseSockets);
         // The calls that were waiting have the error; whether anyone looks at this promise too is up to the object.
         JSPromise* rejected = JSPromise::create(vm, globalObject->promiseStructure());
         rejected->rejectAsHandled(vm, error);
@@ -1126,7 +1127,7 @@ EncodedJSValue durableObjectReaction(JSGlobalObject* lexicalGlobalObject, CallFr
     case DurableObjectEventKind::Block:
         if (failed) {
             if (current)
-                actor->abort(globalObject, value);
+                actor->abort(globalObject, value, actor->state() == JSDurableObjectActor::State::Starting ? JSDurableObjectActor::KeepSockets : JSDurableObjectActor::CloseSockets);
             event->promise()->rejectAsHandled(vm, value);
         } else {
             actor->unblock(globalObject, event->m_generation);
@@ -1319,9 +1320,12 @@ JSArray* JSDurableObjectActor::socketsWithTag(Zig::GlobalObject* globalObject, c
     for (auto* socket : m_sockets) {
         if (!tag.isNull()) {
             bool tagged = false;
-            auto* tags = uncheckedDowncast<JSArray>(socket->extra().asCell());
-            for (unsigned i = 0, length = tags->length(); i < length && !tagged; i++)
-                tagged = asString(tags->getIndexQuickly(i))->tryGetValue() == tag;
+            if (auto* tags = dynamicDowncast<JSArray>(socket->extra())) {
+                for (unsigned i = 0, length = tags->length(); i < length && !tagged; i++) {
+                    auto* string = dynamicDowncast<JSString>(tags->getIndexQuickly(i));
+                    tagged = string && string->tryGetValue() == tag;
+                }
+            }
             if (!tagged)
                 continue;
         }
@@ -1372,7 +1376,7 @@ void JSDurableObjectActor::evict(Zig::GlobalObject* globalObject)
     ns()->forget(this);
 }
 
-void JSDurableObjectActor::abort(Zig::GlobalObject* globalObject, JSValue error)
+void JSDurableObjectActor::abort(Zig::GlobalObject* globalObject, JSValue error, AbortSockets sockets)
 {
     if (auto* database = m_database.get()) {
         bool alarmDirty = std::exchange(database->m_alarmDirty, false);
@@ -1404,7 +1408,8 @@ void JSDurableObjectActor::abort(Zig::GlobalObject* globalObject, JSValue error)
     unload(globalObject);
     for (unsigned i = 0; i < events.size(); i++)
         rejectEvent(globalObject, uncheckedDowncast<JSDurableObjectEvent>(events.at(i).asCell()), error);
-    closeSockets(globalObject, 1011, "Durable Object reset"_s);
+    if (sockets == CloseSockets)
+        closeSockets(globalObject, 1011, "Durable Object reset"_s);
     if (alarm) {
         m_alarmTouched = false;
         alarmFailed(globalObject);
@@ -1827,7 +1832,10 @@ JSC_DEFINE_HOST_FUNCTION(jsDurableObjectSocketOpen, (JSGlobalObject * lexicalGlo
         RETURN_IF_EXCEPTION(scope, {});
         return JSValue::encode(jsUndefined());
     }
-    bindSocket(globalObject, socket, asObject(ws), uncheckedDowncast<JSArray>(socket->extra()));
+    auto* tags = dynamicDowncast<JSArray>(socket->extra());
+    if (!tags)
+        return JSValue::encode(jsUndefined());
+    bindSocket(globalObject, socket, asObject(ws), tags);
     actor->post(globalObject, DurableObjectEventKind::SocketOpen, ws, jsUndefined(), jsUndefined());
     return JSValue::encode(jsUndefined());
 }
@@ -1948,6 +1956,11 @@ void JSDurableObjectNamespace::contextStopped()
     for (auto* actor : m_actors.values())
         actor->stoppedWithContext();
     m_index = nullptr;
+    // A close() that was waiting for the objects has nothing left to wait for.
+    if (auto* closing = m_closing.get()) {
+        auto* globalObject = defaultGlobalObject(m_context->jsGlobalObject());
+        closing->resolve(globalObject, globalObject->vm(), jsUndefined());
+    }
     m_keepAlive.clear();
 }
 
@@ -2303,6 +2316,12 @@ void JSDurableObjectNamespace::updateKeepAlive()
 JSPromise* JSDurableObjectNamespace::close(Zig::GlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
+    // The context it was made in is gone, and what it held with it: there is nothing to wait for.
+    if (m_contextStopped || m_context->isStopped()) {
+        if (!m_contextStopped)
+            contextStopped();
+        return JSPromise::resolvedPromise(globalObject, jsUndefined());
+    }
     if (m_closing)
         return m_closing.get();
     ModuleGraphContextScope context(m_context.get());
@@ -2426,7 +2445,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDurableObjectNamespaceClose, (JSGlobalObject * lexica
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     auto* ns = thisNamespace(globalObject, scope, callFrame->thisValue(), "close"_s);
     RETURN_IF_EXCEPTION(scope, {});
-    return JSValue::encode(ns->close(globalObject));
+    RELEASE_AND_RETURN(scope, JSValue::encode(ns->close(globalObject)));
 }
 
 static const HashTableValue namespacePrototypeValues[] = {

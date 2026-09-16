@@ -162,6 +162,10 @@ int DurableObjectDatabase::authorize(void* userData, int action, const char* fir
     case SQLITE_ALTER_TABLE:
         database->m_sawAlterTable = true;
         return hasReservedPrefix(second) ? SQLITE_DENY : SQLITE_OK;
+    case SQLITE_READ:
+    case SQLITE_UPDATE:
+        // (`second` is a column: only tables, indexes, triggers and views have reserved names.)
+        return hasReservedPrefix(first) ? SQLITE_DENY : SQLITE_OK;
     case SQLITE_FUNCTION:
     case SQLITE_SELECT:
     case SQLITE_RECURSIVE:
@@ -1438,9 +1442,14 @@ static JSMap* writesOf(JSDurableObjectHandle* transaction)
 // What the transaction wrote for `key`: the serialized value, null for a delete, empty for nothing.
 static JSValue writtenIn(Zig::GlobalObject* globalObject, JSDurableObjectHandle* transaction, const StorageKey& key)
 {
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     JSMap* writes = writesOf(transaction);
     JSString* name = jsString(globalObject->vm(), key.string);
-    return writes->has(globalObject, name) ? writes->get(globalObject, name) : JSValue();
+    bool written = writes->has(globalObject, name);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!written)
+        return {};
+    RELEASE_AND_RETURN(scope, writes->get(globalObject, name));
 }
 
 static JSValue transactionGet(Zig::GlobalObject* globalObject, ThrowScope& scope, JSDurableObjectHandle* transaction, const StorageAccess& access, const StorageKey& key)
@@ -1524,7 +1533,8 @@ JSC_DEFINE_HOST_FUNCTION(jsDurableObjectTransactionList, (JSGlobalObject * lexic
     int64_t limit = std::exchange(options.limit, -1);
     JSMap* writes = writesOf(transaction);
     kvList(globalObject, scope, access, options, [&](JSString* key, JSValue value) {
-        if (writes->has(globalObject, key))
+        bool overwritten = writes->has(globalObject, key);
+        if (scope.exception() || overwritten)
             return;
         values.append(value);
         String string = key->tryGetValue();
@@ -1600,6 +1610,8 @@ JSC_DEFINE_HOST_FUNCTION(jsDurableObjectTransactionDelete, (JSGlobalObject * lex
     unsigned count = 0;
     for (auto& key : keys) {
         JSValue written = writtenIn(globalObject, transaction, key);
+        if (scope.exception()) [[unlikely]]
+            return settled(globalObject, scope, {});
         bool existed;
         if (written)
             existed = !written.isNull();

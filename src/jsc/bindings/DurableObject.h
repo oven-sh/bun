@@ -361,7 +361,12 @@ public:
     void waitUntil(Zig::GlobalObject*, JSC::JSPromise*);
     // The object is reset: what it was doing fails with `error`, what it had not committed is
     // rolled back and its WebSockets are closed. The next event starts it afresh.
-    void abort(Zig::GlobalObject*, JSC::JSValue error);
+    // (An object that could not be started keeps its WebSockets: the next message tries again.)
+    enum AbortSockets : uint8_t {
+        CloseSockets,
+        KeepSockets,
+    };
+    void abort(Zig::GlobalObject*, JSC::JSValue error, AbortSockets = CloseSockets);
     // The object goes out of memory; its storage, alarm and WebSockets stay.
     void evict(Zig::GlobalObject*);
     void stoppedWithContext();
@@ -478,7 +483,7 @@ public:
     JSC::JSObject* onError() const { return m_onError.get(); }
     const String& storageDirectory() const { return m_storageDirectory; }
     WebCore::ScriptExecutionContext& context() const { return m_context.get(); }
-    bool isClosed() const { return !!m_closing || m_contextStopped; }
+    bool isClosed() const { return !!m_closing || m_contextStopped || m_context->isStopped(); }
     DurableObjectAlarmIndex& alarmIndex() { return *m_index; }
 
     JSDurableObjectId* idFromName(Zig::GlobalObject*, JSC::JSString* name);

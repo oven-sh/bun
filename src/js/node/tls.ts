@@ -397,6 +397,10 @@ function check(hostParts, pattern, wildcards) {
 
   const { 0: prefix, 1: suffix } = patternSubdomainParts;
 
+  // Node lets "*" match an empty label. domainToASCII turns "。example.com"
+  // into ".example.com", which is not a name below "*.example.com".
+  if (hostSubdomain === "") return false;
+
   if (prefix.length + suffix.length > hostSubdomain.length) return false;
 
   if (!StringPrototypeStartsWith.$call(hostSubdomain, prefix)) return false;

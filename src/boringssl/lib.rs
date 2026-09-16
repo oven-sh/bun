@@ -400,6 +400,12 @@ fn match_hostname(pattern: &[u8], hostname: &[u8], opts: MatchOpts) -> bool {
         &hostname[..end]
     };
 
+    // A label has at least one byte, as in OpenSSL `wildcard_match`. Node lets
+    // `*` match the empty label of ".example.com", which is what
+    // `domainToASCII` makes of "。example.com".
+    if host_first.is_empty() {
+        return false;
+    }
     if prefix.len() + suffix.len() > host_first.len() {
         return false;
     }
@@ -673,6 +679,19 @@ impl core::fmt::Display for NameBytes<'_> {
     }
 }
 
+/// The host as typed, which is how Node.js prints it. Bytes that are not
+/// UTF-8 take the certificate-name escaping.
+struct HostName<'a>(&'a [u8]);
+
+impl core::fmt::Display for HostName<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match core::str::from_utf8(self.0) {
+            Ok(host) => f.write_str(host),
+            Err(_) => NameBytes(self.0).fmt(f),
+        }
+    }
+}
+
 /// Node's `subjectaltname` rendering of an IP entry: dotted IPv4, or IPv6 as
 /// uncompressed lowercase-hex groups (`0:0:0:0:0:0:0:1`).
 struct AltNameIp<'a>(&'a [u8]);
@@ -762,7 +781,7 @@ pub fn write_server_identity_mismatch_reason(
 ) -> core::fmt::Result {
     const NO_DNS: &str = "Cert does not contain a DNS name";
     let hostname = unfqdn(hostname);
-    let host = NameBytes(hostname);
+    let host = HostName(hostname);
     let host_is_ip = bun_core::ip_address::is_ip_address(hostname);
 
     let Some(x509) = ssl_ptr.peer_leaf_certificate() else {

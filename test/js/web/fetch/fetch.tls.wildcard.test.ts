@@ -357,7 +357,8 @@ describe.concurrent("TLS wildcard hostname verification", () => {
       tls: { ca: wildcardExampleComTls.cert, serverName },
       socket: {
         handshake(s, success) {
-          resolve({ success, authorized: s.authorized, code: s.getAuthorizationError()?.code });
+          const error = s.getAuthorizationError();
+          resolve({ success, authorized: s.authorized, code: error?.code, message: error?.message });
         },
         data() {},
         error(_s, err) {
@@ -372,7 +373,14 @@ describe.concurrent("TLS wildcard hostname verification", () => {
       },
     });
     try {
-      expect(await promise).toEqual({ success: false, authorized: false, code: "ERR_TLS_CERT_ALTNAME_INVALID" });
+      expect(await promise).toEqual({
+        success: false,
+        authorized: false,
+        code: "ERR_TLS_CERT_ALTNAME_INVALID",
+        message:
+          "Hostname/IP does not match certificate's altnames: " +
+          `Host: ${serverName}. is not in the cert's altnames: DNS:*.example.com`,
+      });
     } finally {
       socket.end();
     }
@@ -512,6 +520,12 @@ describe("TLS certificate name matching: fetch() / checkServerIdentity / checkHo
     ["exact.test\u3002", true, undefined],
     ["b\u00fccher.wild.test", true, undefined],
     ["\uff46oo.partial.test", true, undefined],
+    // Node's check() lets "*" match the empty first label of ".wild.test", and
+    // domainToASCII turns "\u3002wild.test" into that host. Both Bun matchers
+    // reject an empty label. checkHost reads a leading "." as OpenSSL's
+    // subdomain form.
+    [".wild.test", false, "*.wild.test"],
+    ["\u3002wild.test", false, undefined],
   ];
 
   describe.concurrent("checkServerIdentity == fetch", () => {
@@ -530,7 +544,8 @@ describe("TLS certificate name matching: fetch() / checkServerIdentity / checkHo
 
   // tls.checkServerIdentity matches DNS names on url.domainToASCII(host) and
   // reports the host as typed. IP hosts skip domainToASCII, which returns ""
-  // for "::1". Every expected value was taken from Node.js v26.8.2.
+  // for "::1". Every expected value was taken from Node.js v26.8.2, except the
+  // two hosts with an empty first label: Node lets "*" match it, Bun does not.
   describe("checkServerIdentity matches on domainToASCII(host)", () => {
     const wildcardSan = { subjectaltname: "DNS:*.example.com", subject: {} };
     const notInAltnames = (host: string) => `Host: ${host}. is not in the cert's altnames: DNS:*.example.com`;
@@ -539,6 +554,8 @@ describe("TLS certificate name matching: fetch() / checkServerIdentity / checkHo
       ["foo\uff0ebar.example.com", wildcardSan, notInAltnames("foo\uff0ebar.example.com")],
       ["foo\uff61bar.example.com", wildcardSan, notInAltnames("foo\uff61bar.example.com")],
       ["a b.example.com", wildcardSan, notInAltnames("a b.example.com")],
+      [".example.com", wildcardSan, notInAltnames(".example.com")],
+      ["\u3002example.com", wildcardSan, notInAltnames("\u3002example.com")],
       [
         "foo\u3002bar.example.com",
         { subject: { CN: "*.example.com" } },

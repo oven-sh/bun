@@ -1959,29 +1959,22 @@ else console.log("fetch=" + (await other));
 process.exit(0);
 `;
 
-  async function runClient(port: number, other: "serve" | "fetch"): Promise<string> {
-    using dir = tempDir("h3-init-once", { "client.mjs": clientFixture });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "client.mjs"],
-      cwd: String(dir),
-      env: { ...bunEnv, PORT: String(port), OTHER: other },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { stdout, stderr: stderr.replace(/^.*ExperimentalWarning.*\n.*\n/, ""), exitCode };
-  }
-
-  test("a node:quic handshake survives an HTTP/3 server that starts during it", async () => {
+  test.each([
+    ["an HTTP/3 server", "serve", "status=200\n"],
+    ["a fetch over HTTP/3", "fetch", "status=200\nfetch=hello over h3\n"],
+  ])("a node:quic handshake survives %s that starts during it", async (_, other, stdout) => {
     await withServer(async port => {
-      expect(await runClient(port, "serve")).toEqual({ stdout: "status=200\n", stderr: "", exitCode: 0 });
-    });
-  });
-
-  test("a node:quic handshake survives a fetch over HTTP/3 that starts during it", async () => {
-    await withServer(async port => {
-      expect(await runClient(port, "fetch")).toEqual({
-        stdout: "status=200\nfetch=hello over h3\n",
+      using dir = tempDir("h3-init-once", { "client.mjs": clientFixture });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "client.mjs"],
+        cwd: String(dir),
+        env: { ...bunEnv, PORT: String(port), OTHER: other },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: out, stderr: err.replace(/^.*ExperimentalWarning.*\n.*\n/, ""), exitCode }).toEqual({
+        stdout,
         stderr: "",
         exitCode: 0,
       });

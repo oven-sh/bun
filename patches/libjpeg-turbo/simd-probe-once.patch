@@ -1,0 +1,59 @@
+Probe the CPU's SIMD support once per process instead of once per object.
+
+libjpeg-turbo 3.1.90 moved the SIMD dispatcher's answer from a thread-local
+into each compress and decompress object ("Overhaul SIMD dispatchers",
+https://github.com/libjpeg-turbo/libjpeg-turbo/commit/ced602ad2f), because
+thread-local storage can fail on Windows
+(https://github.com/libjpeg-turbo/libjpeg-turbo/issues/834). Before the
+thread-local it was a plain global, which was a data race
+(https://github.com/libjpeg-turbo/libjpeg-turbo/issues/87).
+
+Since 3.1.90 every object calls jpeg_simd_cpu_support(). On x86-64 that is
+three CPUID instructions and one XGETBV, and under a hypervisor each CPUID is a
+VM exit of about 2 us. 3.1.4 and earlier asked once for each thread. Bun makes
+a new object for every JPEG decode and encode.
+
+This patch keeps the answer in a process-wide static. It uses no thread-local
+storage, and the atomic builtins leave no data race. They are clang and GCC
+builtins, which is why this is a local patch. The per-object fields and the
+JSIMD_FORCE* / JSIMD_NOHUFFENC environment overrides stay as they are. Only
+the raw CPU answer is shared.
+
+--- a/simd/jsimd.c
++++ b/simd/jsimd.c
+@@ -48,6 +48,26 @@
+ #endif
+ 
+ 
++/*
++ * Bun: jpeg_simd_cpu_support() runs CPUID three times on x86, and CPUID is a
++ * VM exit under a hypervisor (about 2 us each).  Every new compress or
++ * decompress object used to call it.  The answer cannot change, so probe once
++ * per process.  JSIMD_UNDEFINED is never a probe result.
++ */
++LOCAL(unsigned int)
++simd_cpu_support_once(void)
++{
++  static unsigned int cached = JSIMD_UNDEFINED;
++  unsigned int simd_support = __atomic_load_n(&cached, __ATOMIC_SEQ_CST);
++
++  if (simd_support == JSIMD_UNDEFINED) {
++    simd_support = jpeg_simd_cpu_support();
++    __atomic_store_n(&cached, simd_support, __ATOMIC_SEQ_CST);
++  }
++  return simd_support;
++}
++
++
+ /*
+  * Check what SIMD accelerations are supported.
+  */
+@@ -67,7 +87,7 @@ init_simd(j_common_ptr cinfo)
+   if (simd_support != JSIMD_UNDEFINED)
+     return;
+ 
+-  simd_support = jpeg_simd_cpu_support();
++  simd_support = simd_cpu_support_once();
+ 
+ #ifndef NO_GETENV
+   /* Force different settings through environment variables */

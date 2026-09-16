@@ -1883,6 +1883,51 @@ export function libcPathForDlopen() {
   }
 }
 
+/**
+ * `arch_prctl(ARCH_SET_CPUID, 0)` makes CPUID raise SIGSEGV on the calling thread. It needs Linux
+ * x64 and a CPU with the `cpuid_fault` flag.
+ */
+export function canFaultOnCpuid(): boolean {
+  return (
+    isLinux && process.arch === "x64" && /^flags\s*:.*\bcpuid_fault\b/m.test(fs.readFileSync("/proc/cpuinfo", "utf8"))
+  );
+}
+
+/**
+ * Runs a child process that must not execute CPUID after a warm-up. `script` is module source that
+ * defines `op(cpuidFaults)`. The child calls `op(false)` once, turns on CPUID faulting, calls
+ * `op(true)` 20 times, turns it off, and prints "ok". A CPUID in between kills the child with SIGSEGV.
+ *
+ * The fault applies to the calling thread and to each thread that starts while it is on. A thread
+ * that exists before that never faults, so work for another thread belongs under `cpuidFaults`.
+ * Skip the test unless `canFaultOnCpuid()`. `args` follow the libc path, so the first one is
+ * `process.argv[2]`.
+ */
+export async function runWithCpuidFaultAfterWarmup(script: string, args: string[] = []) {
+  const source = `
+    import { dlopen } from "bun:ffi";
+    const { symbols: { syscall } } = dlopen(process.argv[1], {
+      syscall: { args: ["i64", "i32", "u64"], returns: "i64" },
+    });
+    const SYS_arch_prctl = 158n, ARCH_SET_CPUID = 0x1012;
+    ${script}
+    await op(false);
+    if (syscall(SYS_arch_prctl, ARCH_SET_CPUID, 0n) !== 0n) throw new Error("ARCH_SET_CPUID failed");
+    for (let i = 0; i < 20; i++) await op(true);
+    syscall(SYS_arch_prctl, ARCH_SET_CPUID, 1n);
+    console.log("ok");
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", source, libcPathForDlopen(), ...args],
+    // JSC runs CPUID as a serializing instruction each time it installs JIT code.
+    env: { ...bunEnv, BUN_JSC_useBaselineJIT: "0" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
 export function cwdScope(cwd: string) {
   const original = process.cwd();
   process.chdir(cwd);

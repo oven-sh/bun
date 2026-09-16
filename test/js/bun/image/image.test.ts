@@ -1,6 +1,6 @@
 import { S3Client } from "bun";
 import { afterAll, describe, expect, test } from "bun:test";
-import { isMacOS, isWindows, tempDir } from "harness";
+import { canFaultOnCpuid, isMacOS, isWindows, runWithCpuidFaultAfterWarmup, tempDir } from "harness";
 import zlib from "node:zlib";
 import { join } from "path";
 
@@ -1281,6 +1281,34 @@ describe("Bun.Image", () => {
       expect(buf[0]).toBe(0xff);
       expect(buf[1]).toBe(0xd8);
     });
+  });
+});
+
+// On x64, libjpeg-turbo picks its SSE2 or AVX2 kernels from CPUID at run time. It used to ask for
+// every compress and decompress object: three CPUID each, and CPUID is a VM exit under a hypervisor
+// (about 2 us each). The child makes CPUID raise SIGSEGV after the first re-encode, so an object
+// that still probes the CPU kills it.
+describe("JPEG codec setup", () => {
+  test.skipIf(!canFaultOnCpuid())("asks CPUID once, not for each JPEG object", async () => {
+    const { stdout, stderr, exitCode } = await runWithCpuidFaultAfterWarmup(
+      `
+        const png = Buffer.from(process.argv[2], "base64");
+        const jpeg = await new Response(new Bun.Image(png).jpeg()).bytes();
+        function check(out) {
+          if (out[0] !== 0xff || out[1] !== 0xd8) throw new Error("not a JPEG");
+        }
+        async function op(cpuidFaults) {
+          // new Response(image) decodes and encodes on this thread.
+          check(await new Response(new Bun.Image(jpeg).jpeg()).bytes());
+          // bytes() uses the work pool. The warm-up leaves the pool without threads, so its
+          // threads start while CPUID faults, and they fault too.
+          if (cpuidFaults) check(await new Bun.Image(jpeg).jpeg().bytes());
+        }
+      `,
+      [Buffer.from(gradientPng).toString("base64")],
+    );
+    expect({ stdout, stderr: stderr.slice(0, 2000) }).toEqual({ stdout: "ok\n", stderr: "" });
+    expect(exitCode).toBe(0);
   });
 });
 

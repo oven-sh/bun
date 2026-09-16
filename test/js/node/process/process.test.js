@@ -1611,11 +1611,41 @@ describe.concurrent(() => {
     );
   });
 
+  // A macro runs while the crash handler records the file that the parser visits.
+  it("dlopen works in a macro", async () => {
+    using dir = tempDir("dlopen-macro", {
+      "macro.ts": `export function load() {
+  try {
+    process.dlopen({ exports: {} }, "not-found.node");
+  } catch (e) {
+    return e.code;
+  }
+  return "loaded";
+}
+`,
+      "index.ts": `import { load } from "./macro.ts" with { type: "macro" };
+console.log(load());
+`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    // A debug build also logs "[macro] call load" to stdout.
+    expect(stdout).toContain("ERR_DLOPEN_FAILED\n");
+    expect(exitCode).toBe(0);
+  });
+
   // Serial: if process.dlopen keeps the module on the global object, a concurrent process.dlopen replaces it and hides that.
   describe.serial("a failed dlopen does not keep module or module.exports alive", () => {
     // Each filename fails at a different return in process.dlopen.
     const cases = [
-      ["missing file", () => join(tmpdirSync(), "not-found.node"), { code: "ERR_DLOPEN_FAILED" }],
+      ["missing file", dir => join(dir, "not-found.node"), { code: "ERR_DLOPEN_FAILED" }],
       [
         "library without napi_register_module_v1",
         () => (isWindows ? join(process.env.SystemRoot, "System32", "kernel32.dll") : libcPathForDlopen()),
@@ -1625,7 +1655,7 @@ describe.concurrent(() => {
       ["invalid file: URL", () => "file://[", { message: "invalid file: URL passed to dlopen" }],
       [
         "better_sqlite3.node",
-        () => join(tmpdirSync(), "better_sqlite3.node"),
+        dir => join(dir, "better_sqlite3.node"),
         {
           code: "ERR_DLOPEN_FAILED",
           message: expect.stringContaining("'better-sqlite3' is not yet supported in Bun."),
@@ -1654,7 +1684,8 @@ describe.concurrent(() => {
     }
 
     it.each(cases)("%s", async (_, filename, expected) => {
-      const { error, refs } = failedDlopen(filename());
+      using dir = tempDir("dlopen-failed", {});
+      const { error, refs } = failedDlopen(filename(String(dir)));
       expect(error).toMatchObject(expected);
 
       // Nothing in JS refers to the module now, so a full collection frees it unless process.dlopen kept a reference.

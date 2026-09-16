@@ -3651,32 +3651,26 @@ mod draft {
         );
     }
 
-    /// Sets the thread's action to `Dlopen(action)`, or clears it when `action` is null. Returns the path of the
-    /// `Dlopen` action it replaces, or null, so that a nested process.dlopen() can put the outer one back.
+    /// Sets the thread's action to `Dlopen(path)`. `CrashHandler__endDlOpenAction` puts back the action it replaces:
+    /// process.dlopen() runs under another action in a macro, and under its own when an addon's init calls it again.
     ///
     /// # Safety
-    /// `action` must be null or a valid NUL-terminated C string that stays valid until the action is replaced.
+    /// `path` must be a valid NUL-terminated C string that outlives the returned guard.
     #[unsafe(no_mangle)]
-    unsafe extern "C" fn CrashHandler__setDlOpenAction(action: *const c_char) -> *const c_char {
-        let previous = match CURRENT_ACTION.with(|c| c.get()) {
-            Some(Action::Dlopen(path)) => path.as_ptr().cast::<c_char>(),
-            other => {
-                // Only a `Dlopen` action can be cleared or replaced here.
-                debug_assert!(other.is_none() && !action.is_null());
-                core::ptr::null()
-            }
-        };
-        let next = if action.is_null() {
-            None
-        } else {
-            // SAFETY: action is a valid NUL-terminated C string until the action is replaced
-            let s = unsafe { bun_core::ffi::cstr(action) }.to_bytes();
-            // SAFETY: noreturn-on-crash usage; the C string outlives the action via caller contract
-            let s: &'static [u8] = unsafe { bun_collections::detach_lifetime(s) };
-            Some(Action::Dlopen(s))
-        };
-        CURRENT_ACTION.with(|c| c.set(next));
-        previous
+    unsafe extern "C" fn CrashHandler__beginDlOpenAction(path: *const c_char) -> *mut ActionGuard {
+        // SAFETY: path is a valid NUL-terminated C string (caller contract)
+        let s = unsafe { bun_core::ffi::cstr(path) }.to_bytes();
+        // SAFETY: noreturn-on-crash usage; the C string outlives the action via caller contract
+        let s: &'static [u8] = unsafe { bun_collections::detach_lifetime(s) };
+        bun_core::heap::into_raw(Box::new(scoped_action(Action::Dlopen(s))))
+    }
+
+    /// # Safety
+    /// `guard` must come from `CrashHandler__beginDlOpenAction`, on this thread, and must not be used again.
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn CrashHandler__endDlOpenAction(guard: *mut ActionGuard) {
+        // SAFETY: guard is a live Box from CrashHandler__beginDlOpenAction (caller contract)
+        unsafe { bun_core::heap::destroy(guard) };
     }
 
     pub fn fix_dead_code_elimination() {

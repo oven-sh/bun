@@ -159,7 +159,10 @@ void executePendingV8Module(Zig::GlobalObject* globalObject, node_module* mod, J
     } else {
         auto* error = JSC::createError(globalObject, WTF::makeString("The module '"_s, keyStr, "' has no declared entry point."_s));
         JSC::throwException(globalObject, scope, error);
+        return;
     }
+
+    RETURN_IF_EXCEPTION(scope, void());
 }
 
 } // namespace node

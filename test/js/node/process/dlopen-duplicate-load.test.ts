@@ -1,5 +1,6 @@
 import { spawnSync } from "bun";
 import { beforeAll, describe, expect, test } from "bun:test";
+import { copyFileSync } from "fs";
 import { bunEnv, bunExe, canBuildNodeAddons, isWindows, tempDirWithFiles } from "harness";
 import { join } from "path";
 
@@ -9,24 +10,27 @@ import { join } from "path";
 //   "symbol 'napi_register_module_v1' not found" because static constructors
 //   only run once, so the module registration wasn't replayed
 // - non-object exports: null/undefined/primitive exports used to segfault
-// - nested calls: a dlopen made while the filename converts to a string used
-//   to take the registration of the outer call
+// - nested calls: a dlopen made while the filename converts to a string, or
+//   from an init function, used to take the registration of the outer call
 // - static constructor order: the init function used to run inside dlopen(),
 //   before the static constructors that follow the module registration
 
 describe.skipIf(!canBuildNodeAddons())("process.dlopen native addon", () => {
   let addonPath: string;
+  // The same addon at a second path. The loader treats it as another library.
+  let addonCopyPath: string;
 
   beforeAll(() => {
     const addonSource = `
 #include <node.h>
 #include <node_api.h>
-#include <cstdlib>
 
 namespace demo {
 
 using v8::Boolean;
 using v8::Context;
+using v8::Exception;
+using v8::Function;
 using v8::FunctionCallbackInfo;
 using v8::Isolate;
 using v8::Local;
@@ -42,15 +46,29 @@ void Hello(const FunctionCallbackInfo<Value>& args) {
   args.GetReturnValue().Set(String::NewFromUtf8(isolate, "world").ToLocalChecked());
 }
 
+static Local<Value> GetOption(Isolate* isolate, Local<Context> context, Local<Value> module, const char* name) {
+  return module.As<Object>()->Get(context, String::NewFromUtf8(isolate, name).ToLocalChecked()).ToLocalChecked();
+}
+
+// The tests steer the init function with properties of the module object:
+// duringInit (a function to call), fatalInInit and throwInInit (true).
 void Initialize(Local<Object> exports,
                 Local<Value> module,
                 Local<Context> context,
                 void* priv) {
-  if (std::getenv("DLOPEN_TEST_FATAL_IN_INIT") != nullptr) {
+  Isolate* isolate = Isolate::GetCurrent();
+  Local<Value> duringInit = GetOption(isolate, context, module, "duringInit");
+  if (duringInit->IsFunction() && duringInit.As<Function>()->Call(context, module, 0, nullptr).IsEmpty()) {
+    return;
+  }
+  if (GetOption(isolate, context, module, "fatalInInit")->IsTrue()) {
     napi_fatal_error("Initialize", NAPI_AUTO_LENGTH, "fatal error in init", NAPI_AUTO_LENGTH);
   }
+  if (GetOption(isolate, context, module, "throwInInit")->IsTrue()) {
+    isolate->ThrowException(Exception::Error(String::NewFromUtf8(isolate, "thrown by init").ToLocalChecked()));
+    return;
+  }
   NODE_SET_METHOD(exports, "hello", Hello);
-  Isolate* isolate = Isolate::GetCurrent();
   exports->Set(context,
                String::NewFromUtf8(isolate, "lateStaticConstructed").ToLocalChecked(),
                Boolean::New(isolate, late_static_constructed)).Check();
@@ -118,6 +136,8 @@ static LateStatic late_static;
     }
 
     addonPath = join(dir, "build", "Release", "addon.node");
+    addonCopyPath = join(dir, "build", "Release", "addon-copy.node");
+    copyFileSync(addonPath, addonCopyPath);
   }, 180_000);
 
   // Each test spawns an isolated child (dlopen state is process-global), so
@@ -211,30 +231,103 @@ static LateStatic late_static;
       expect(exitCode).toBe(0);
     });
 
+    // The exception check validator of a debug build aborts if the throw is not checked on the way out.
+    test("an exception thrown by it reaches the caller", async () => {
+      const testScript = `
+      try {
+        process.dlopen({ exports: {}, throwInInit: true }, ${JSON.stringify(addonPath)});
+        console.log("no exception");
+      } catch (e) {
+        console.log("caught: " + e.message);
+      }
+    `;
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", testScript],
+        env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      expect(stdout).toBe("caught: thrown by init\n");
+      expect(exitCode).toBe(0);
+    });
+
     // The crash handler records which addon is loading only on POSIX.
-    test.skipIf(isWindows)(
-      "a crash in it names the addon",
-      async () => {
-        await using proc = Bun.spawn({
-          cmd: [
-            bunExe(),
-            "-e",
-            `process.dlopen({ exports: {} }, ${JSON.stringify(addonPath)}); console.log("loaded");`,
-          ],
-          env: { ...bunEnv, DLOPEN_TEST_FATAL_IN_INIT: "1", BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT: "1" },
-          stdout: "pipe",
-          stderr: "pipe",
-        });
+    describe.skipIf(isWindows)("a crash in it names the addon whose init function crashed", () => {
+      test.each([
+        ["in a plain load", "addon", `process.dlopen({ exports: {}, fatalInInit: true }, addon);`],
+        [
+          "in the outer load, after a nested load",
+          "addon",
+          `process.dlopen({ exports: {}, fatalInInit: true, duringInit() { process.dlopen({ exports: {} }, addonCopy); } }, addon);`,
+        ],
+        [
+          "in a nested load",
+          "addonCopy",
+          `process.dlopen({ exports: {}, duringInit() { process.dlopen({ exports: {}, fatalInInit: true }, addonCopy); } }, addon);`,
+        ],
+      ])(
+        "%s",
+        async (_, crashed, load) => {
+          const testScript = `
+          const addon = ${JSON.stringify(addonPath)};
+          const addonCopy = ${JSON.stringify(addonCopyPath)};
+          ${load}
+          console.log("loaded");
+        `;
 
-        const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), "-e", testScript],
+            env: { ...bunEnv, BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT: "1" },
+            stdout: "pipe",
+            stderr: "pipe",
+          });
 
-        expect(stderr).toContain("NAPI FATAL ERROR: Initialize fatal error in init");
-        expect(stderr).toContain(`Crashed while loading native module: ${addonPath}`);
-        expect(stdout).not.toContain("loaded");
-        // A debug build symbolizes the whole stack before it exits.
-      },
-      10_000,
-    );
+          const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+          expect(stderr).toContain("NAPI FATAL ERROR: Initialize fatal error in init");
+          expect(stderr).toContain(
+            `Crashed while loading native module: ${crashed === "addon" ? addonPath : addonCopyPath}\n`,
+          );
+          expect(stdout).not.toContain("loaded");
+          // A debug build symbolizes the whole stack before it exits.
+        },
+        10_000,
+      );
+    });
+  });
+
+  describe.concurrent("process.dlopen nested in the init function", () => {
+    test.each([
+      ["another addon", "addonCopy"],
+      ["the same addon", "addon"],
+    ])("both modules get their exports when the init function loads %s", async (_, nested) => {
+      const testScript = `
+      const addon = ${JSON.stringify(addonPath)};
+      const addonCopy = ${JSON.stringify(addonCopyPath)};
+      const inner = { exports: {} };
+      const outer = { exports: {}, duringInit() { process.dlopen(inner, ${nested}); } };
+      process.dlopen(outer, addon);
+      console.log(JSON.stringify({ outer: typeof outer.exports.hello, inner: typeof inner.exports.hello }));
+    `;
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", testScript],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({ outer: "function", inner: "function" });
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe.concurrent("process.dlopen nested in the filename's toString()", () => {

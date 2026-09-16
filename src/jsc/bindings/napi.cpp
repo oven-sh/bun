@@ -742,14 +742,11 @@ extern "C" napi_status napi_get_named_property(napi_env env, napi_value object,
 }
 
 extern "C" size_t Bun__napi_module_register_count;
-void Napi::executePendingNapiModule(Zig::GlobalObject* globalObject, JSC::JSObject* object)
+void Napi::executePendingNapiModule(Zig::GlobalObject* globalObject, const napi_module& mod, void* dlopenHandle, JSC::JSObject* object)
 {
     JSC::VM& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    ASSERT(globalObject->m_pendingNapiModule);
-
-    auto& mod = *globalObject->m_pendingNapiModule;
     if (!mod.nm_register_func) {
         JSValue errorInstance = createError(globalObject, makeString("Module has no declared entry point."_s));
         JSC::throwException(globalObject, scope, errorInstance);
@@ -788,15 +785,13 @@ void Napi::executePendingNapiModule(Zig::GlobalObject* globalObject, JSC::JSObje
         return;
     }
 
-    auto* meta = new Bun::NapiModuleMeta(globalObject->m_pendingNapiModuleDlopenHandle);
+    auto* meta = new Bun::NapiModuleMeta(dlopenHandle);
 
     // TODO: think about the finalizer here
     Bun::NapiExternal* napi_external = Bun::NapiExternal::create(vm, globalObject->NapiExternalStructure(), meta, nullptr, nullptr, env.ptr());
 
     bool success = resultValue.getObject()->putDirect(vm, WebCore::builtinNames(vm).napiDlopenHandlePrivateName(), napi_external, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
     ASSERT(success);
-
-    globalObject->m_pendingNapiModuleDlopenHandle = nullptr;
 
     // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/src/node_api.cc#L734-L742
     // https://github.com/oven-sh/bun/issues/1288

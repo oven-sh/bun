@@ -1508,6 +1508,39 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     expect(exitCode).toBe(0);
   });
 
+  it("runs the init function of the outer module when module.exports loads another addon", async () => {
+    // The second read of module.exports is the one that process.dlopen makes for the init function.
+    const script = `
+      const build = ${JSON.stringify(join(__dirname, "napi-app", "build", "Debug"))};
+      const exports = {};
+      let reads = 0;
+      const outer = {
+        get exports() {
+          if (++reads === 2) process.dlopen({ exports: {} }, build + "/reentrant_register_addon.node");
+          return exports;
+        },
+      };
+      process.dlopen(outer, build + "/constructor_order_addon.node");
+    `;
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.split(/\r?\n/).filter(Boolean)).toEqual([
+      "call_register",
+      "init_static",
+      "register_cb_a",
+      "register_cb_b",
+      "register_cb_reentrant x 64",
+      "register_cb",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
   it("behaves as expected when performing operations with an exception pending", async () => {
     await checkSameOutput("test_deferred_exceptions", []);
   });

@@ -15,6 +15,7 @@ import {
 } from "harness";
 import { ChildProcess, exec, execFile, execFileSync, execSync, fork, spawn, spawnSync } from "node:child_process";
 import { getEventListeners, once, setMaxListeners } from "node:events";
+import os from "node:os";
 import { promisify } from "node:util";
 import path from "path";
 const debug = process.env.DEBUG ? console.log : () => {};
@@ -617,14 +618,18 @@ describe("spawn()", () => {
 
         const [cb1Err, errEvErr] = await Promise.all([cb1.promise, errEv.promise]);
 
+        // Node names the syscall "write" even though the stdio pipe is a
+        // socketpair underneath.
         expect({
           cb1: cb1Err?.code,
           errEv: errEvErr?.code,
+          syscall: errEvErr?.syscall,
           destroyed: child.stdin!.destroyed,
           writable: child.stdin!.writable,
         }).toEqual({
           cb1: "EPIPE",
           errEv: "EPIPE",
+          syscall: "write",
           destroyed: true,
           writable: false,
         });
@@ -639,6 +644,32 @@ describe("spawn()", () => {
       }
     },
   );
+
+  it.skipIf(isWindows)("stdin write to a child that exits before draining it fails with EPIPE", async () => {
+    // The child exits with most of the 16 MiB (more than any socket buffer
+    // holds) unread. Whether the kernel fails the next send or the exit handler
+    // settles the pending write first, the stream reports EPIPE from "write".
+    const child = spawn(bunExe(), ["-e", `require("fs").readSync(0, Buffer.alloc(1)); process.exit(0);`], {
+      env: bunEnv,
+      stdio: ["pipe", "ignore", "ignore"],
+    });
+    const closed = new Promise<void>((resolve, reject) => {
+      child.on("error", reject);
+      child.on("close", () => resolve());
+    });
+    // A stream emits "error" before "close", so a close without an error rejects.
+    const stdinError = new Promise<any>((resolve, reject) => {
+      child.stdin!.on("error", resolve);
+      child.stdin!.on("close", () => reject(new Error("stdin closed without an error")));
+    });
+    child.stdin!.end(Buffer.alloc(16 * 1024 * 1024, 0x61));
+    const [err] = await Promise.all([stdinError, closed]);
+    expect({ code: err.code, syscall: err.syscall, errno: err.errno }).toEqual({
+      code: "EPIPE",
+      syscall: "write",
+      errno: -os.constants.errno.EPIPE,
+    });
+  });
 });
 
 describe("execFile()", () => {
@@ -728,6 +759,34 @@ describe("execFileSync()", () => {
       env: process.env,
     });
     expect(result.trim()).toBe("data: hello world!");
+  });
+
+  // chcp.com is a PE executable with a .com extension and no .exe sibling.
+  // child_process always passes an env object, so the lookup runs in Bun's
+  // which, not libuv's, and it has to accept the extension as spelled. A PE
+  // named by path runs whatever its extension, as CreateProcessW only reads
+  // the file header.
+  it.if(isWindows)("runs a .com executable by absolute path or bare name", () => {
+    const chcp = path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "chcp.com");
+    expect(chcp).toContain("\\");
+    using dir = tempDir("child-process-com", {});
+    const custom = path.join(String(dir), "chcp-copy.bin");
+    fs.copyFileSync(chcp, custom);
+    const run = (file: string) => execFileSync(file, [], { encoding: "utf8" }).trim();
+    // The label is localized ("Active code page", "Aktive Codepage", ...).
+    // Only the number is stable.
+    const codePage = expect.stringMatching(/\d+$/);
+    expect({
+      absolute: run(chcp),
+      bare: run("chcp"),
+      spelled: run("chcp.com"),
+      custom_extension: run(custom),
+    }).toEqual({
+      absolute: codePage,
+      bare: codePage,
+      spelled: codePage,
+      custom_extension: codePage,
+    });
   });
 });
 

@@ -28,20 +28,6 @@ pub struct ZigStackFrame {
 }
 
 impl ZigStackFrame {
-    /// Explicit deref of owned strings.
-    ///
-    /// Intentionally NOT `Drop`: this `#[repr(C)]` extern struct lives both in
-    /// C++-populated buffers (`ZigStackTrace.frames_ptr`) and in the Rust-owned
-    /// `Holder.frames: [ZigStackFrame; 32]` array. `Holder::deinit()` calls
-    /// `ZigException::deinit()` → `frame.deinit()` to release the strings, but
-    /// the array elements are then later dropped by Rust when `Holder` itself
-    /// drops. A `Drop` impl would deref the same `WTF::StringImpl` a second
-    /// time (UAF). Explicit `deinit` only.
-    pub(crate) fn deinit(&mut self) {
-        self.function_name.deref();
-        self.source_url.deref();
-    }
-
     pub(crate) fn snapshot(
         &self,
         root_path: &[u8],
@@ -92,9 +78,9 @@ impl ZigStackFrame {
         bun_paths::resolve_path::relative(dir, source_url)
     }
 
-    pub fn name_formatter(&self, enable_color: bool) -> NameFormatter {
+    pub fn name_formatter(&self, enable_color: bool) -> NameFormatter<'_> {
         NameFormatter {
-            function_name: self.function_name,
+            function_name: &self.function_name,
             code_type: self.code_type,
             enable_color,
             is_async: self.is_async,
@@ -102,14 +88,14 @@ impl ZigStackFrame {
     }
 
     pub(crate) fn source_url_formatter<'a>(
-        &self,
+        &'a self,
         root_path: &'a [u8],
         origin: Option<&'a ZigURL<'a>>,
         line_column: LineColumn,
         enable_color: bool,
     ) -> SourceURLFormatter<'a> {
         SourceURLFormatter {
-            source_url: self.source_url,
+            source_url: &self.source_url,
             line_column,
             origin,
             root_path,
@@ -128,7 +114,7 @@ pub(crate) enum LineColumn {
 }
 
 pub struct SourceURLFormatter<'a> {
-    pub(crate) source_url: BunString,
+    pub(crate) source_url: &'a BunString,
     pub(crate) position: ZigStackFramePosition,
     pub(crate) enable_color: bool,
     pub(crate) origin: Option<&'a ZigURL<'a>>,
@@ -147,7 +133,6 @@ impl<'a> fmt::Display for SourceURLFormatter<'a> {
 
         let source_slice_ = self.source_url.to_utf8();
         let mut source_slice: &[u8] = source_slice_.slice();
-        // `defer source_slice_.deinit()` — handled by Drop on Utf8Slice.
 
         if !self.remapped {
             if let Some(origin) = self.origin {
@@ -237,16 +222,16 @@ impl<'a> fmt::Display for SourceURLFormatter<'a> {
     }
 }
 
-pub struct NameFormatter {
-    pub(crate) function_name: BunString,
+pub struct NameFormatter<'a> {
+    pub(crate) function_name: &'a BunString,
     pub(crate) code_type: ZigStackFrameCode,
     pub(crate) enable_color: bool,
     pub(crate) is_async: bool,
 }
 
-impl fmt::Display for NameFormatter {
+impl fmt::Display for NameFormatter<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let name = &self.function_name;
+        let name = self.function_name;
 
         match self.code_type {
             ZigStackFrameCode::EVAL => {

@@ -875,17 +875,17 @@ pub mod semver_string {
         pub fn count(&mut self, slice_: &[u8]) {
             self.count_with_hash(
                 slice_,
-                if slice_.len() >= String::MAX_INLINE_LEN {
-                    Self::string_hash(slice_)
-                } else {
+                if String::can_inline(slice_) {
                     u64::MAX
+                } else {
+                    Self::string_hash(slice_)
                 },
             )
         }
 
         #[inline]
         pub(crate) fn count_with_hash(&mut self, slice_: &[u8], hash: u64) {
-            if slice_.len() <= String::MAX_INLINE_LEN {
+            if String::can_inline(slice_) {
                 return;
             }
 
@@ -915,43 +915,9 @@ pub mod semver_string {
             self.append_with_hash::<T>(slice_, Self::string_hash(slice_))
         }
 
-        pub fn append_utf8_without_pool<T: BuilderStringType>(
-            &mut self,
-            slice_: &[u8],
-            hash: u64,
-        ) -> T {
-            if slice_.len() <= String::MAX_INLINE_LEN {
-                if strings::is_all_ascii(slice_) {
-                    return T::from_init(self.allocated_slice(), slice_, hash);
-                }
-            }
-
-            debug_assert!(self.len <= self.cap); // didn't count everything
-            debug_assert!(self.ptr.is_some()); // must call allocate first
-
-            // reshaped for borrowck — compute final slice range, then borrow once.
-            let start = self.len;
-            let end = self.cap;
-            {
-                let dst = &mut self.ptr.as_mut().unwrap()[start..end];
-                dst[..slice_.len()].copy_from_slice(slice_);
-            }
-            self.len += slice_.len();
-
-            debug_assert!(self.len <= self.cap);
-
-            let allocated = &self.ptr.as_ref().unwrap()[0..self.cap];
-            let final_slice = &allocated[start..start + slice_.len()];
-            T::from_init(allocated, final_slice, hash)
-        }
-
         // SlicedString is not supported due to inline strings.
-        pub(crate) fn append_without_pool<T: BuilderStringType>(
-            &mut self,
-            slice_: &[u8],
-            hash: u64,
-        ) -> T {
-            if slice_.len() <= String::MAX_INLINE_LEN {
+        pub fn append_without_pool<T: BuilderStringType>(&mut self, slice_: &[u8], hash: u64) -> T {
+            if String::can_inline(slice_) {
                 return T::from_init(self.allocated_slice(), slice_, hash);
             }
             debug_assert!(self.len <= self.cap); // didn't count everything
@@ -978,7 +944,7 @@ pub mod semver_string {
             slice_: &[u8],
             hash: u64,
         ) -> T {
-            if slice_.len() <= String::MAX_INLINE_LEN {
+            if String::can_inline(slice_) {
                 return T::from_init(self.allocated_slice(), slice_, hash);
             }
 
@@ -1017,4 +983,27 @@ pub mod semver_string {
         core::mem::size_of::<String>() == core::mem::size_of::<Pointer>(),
         "String types must be the same size",
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::semver_string::{Builder, String};
+
+    #[test]
+    fn builder_allocates_eight_byte_non_ascii_strings() {
+        // 8 bytes with the high bit set on the last byte cannot be inlined
+        // (that bit marks an out-of-line pointer), so the builder must count
+        // and copy it like any longer string.
+        let s: &[u8] = b"abcdef\xc3\xa9";
+        assert_eq!(s.len(), 8);
+        assert!(!String::can_inline(s));
+
+        let mut builder = Builder::default();
+        builder.count(s);
+        assert_eq!(builder.cap, 8);
+        builder.allocate().unwrap();
+        let out: String = builder.append::<String>(s);
+        assert_eq!(builder.len, 8);
+        assert_eq!(out.slice(builder.allocated_slice()), s);
+    }
 }

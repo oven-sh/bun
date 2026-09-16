@@ -1649,7 +1649,13 @@ pub enum Error {
     ECANCELLED = ARES_ECANCELLED,
     ESERVICE = ARES_ESERVICE,
     ENOSERVER = ARES_ENOSERVER,
+    /// getaddrinfo(3) `EAI_AGAIN`. Not a c-ares status: [`Error::get`] never
+    /// produces it, and its errno comes from [`Error::errno`].
+    EAI_AGAIN = ARES_ENOSERVER + 1,
 }
+
+/// libuv's `UV_EAI_AGAIN`, the `errno` Node reports for getaddrinfo `EAI_AGAIN`.
+const UV_EAI_AGAIN: i32 = -3001;
 
 impl Error {
     // Deferred / toDeferred / toJSWithSyscall / toJSWithSyscallAndHostname
@@ -1666,7 +1672,7 @@ impl Error {
             // TODO: revisit this
             return match rc {
                 0 => None,
-                libuv::UV_EAI_AGAIN => Some(Error::ETIMEOUT),
+                libuv::UV_EAI_AGAIN => Some(Error::EAI_AGAIN),
                 libuv::UV_EAI_ADDRFAMILY => Some(Error::EBADFAMILY),
                 libuv::UV_EAI_BADFLAGS => Some(Error::EBADFLAGS),
                 libuv::UV_EAI_BADHINTS => Some(Error::EBADHINTS),
@@ -1715,7 +1721,7 @@ impl Error {
             }
             match eai {
                 EAI::ADDRFAMILY => Some(Error::EBADFAMILY),
-                EAI::AGAIN => Some(Error::ETIMEOUT), // transient; matches libuv
+                EAI::AGAIN => Some(Error::EAI_AGAIN),
                 EAI::BADFLAGS => Some(Error::EBADFLAGS), // Invalid hints
                 EAI::FAIL => Some(Error::EBADRESP),
                 EAI::FAMILY => Some(Error::EBADFAMILY),
@@ -1725,6 +1731,37 @@ impl Error {
                 // Any EAI code not mapped above is reported as "not implemented".
                 _ => Some(Error::ENOTIMP),
             }
+        }
+    }
+
+    /// This platform's raw getaddrinfo(3) status for the `EAI_*` code named `name`.
+    pub fn eai_raw_by_name(name: &[u8]) -> Option<i32> {
+        #[cfg(windows)]
+        {
+            use bun_libuv_sys as libuv;
+            match name {
+                b"EAI_AGAIN" => Some(libuv::UV_EAI_AGAIN),
+                b"EAI_FAIL" => Some(libuv::UV_EAI_FAIL),
+                b"EAI_NONAME" => Some(libuv::UV_EAI_NONAME),
+                _ => None,
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            match name {
+                b"EAI_AGAIN" => Some(EAI::AGAIN.0),
+                b"EAI_FAIL" => Some(EAI::FAIL.0),
+                b"EAI_NONAME" => Some(EAI::NONAME.0),
+                _ => None,
+            }
+        }
+    }
+
+    /// The JS-visible `errno` for this status.
+    pub fn errno(self) -> i32 {
+        match self {
+            Error::EAI_AGAIN => UV_EAI_AGAIN,
+            _ => self as i32,
         }
     }
 
@@ -1756,6 +1793,7 @@ impl Error {
             Error::ECANCELLED => "DNS_ECANCELLED",
             Error::ESERVICE => "DNS_ESERVICE",
             Error::ENOSERVER => "DNS_ENOSERVER",
+            Error::EAI_AGAIN => "DNS_EAI_AGAIN",
         }
     }
 
@@ -1787,6 +1825,7 @@ impl Error {
             Error::ECANCELLED => "DNS query cancelled",
             Error::ESERVICE => "Service not available",
             Error::ENOSERVER => "No DNS servers were configured",
+            Error::EAI_AGAIN => "Temporary failure in name resolution",
         }
     }
 
@@ -1807,7 +1846,8 @@ impl Error {
             "c-ares status {rc} out of range",
         );
         // SAFETY: `n` is in `1..=ARES_ENOSERVER`; `Error` is `#[repr(i32)]` with
-        // contiguous discriminants `1..=ARES_ENOSERVER`.
+        // contiguous discriminants `1..=ARES_ENOSERVER + 1`, so every value in
+        // the asserted range is a valid discriminant.
         Some(unsafe { core::mem::transmute::<i32, Error>(n as i32) })
     }
 }

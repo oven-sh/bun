@@ -1,6 +1,5 @@
 use crate::node::{BlobOrStringOrBuffer as JSArgument, FileBlobs};
 use bun_collections::VecExt as _;
-use bun_core::OwnedString;
 use bun_jsc::{
     self as jsc, CallFrame, ErrorCode, JSGlobalObject, JSPromise, JSPropertyIterator, JSValue,
     JsRef, JsResult,
@@ -10,8 +9,6 @@ use super::js_valkey::{JSValkeyClient, SubscriptionCtx};
 use super::protocol_jsc as protocol;
 use super::valkey;
 use super::valkey_command_body::{Args as CommandArgs, Command, Meta as CommandMeta};
-
-type Slice = bun_jsc::ZigStringSlice;
 
 /// Reinterpret an ASCII byte-string literal as `&str` for the
 /// `throw_invalid_argument_type` family (which take `&'static str`).
@@ -447,7 +444,7 @@ impl JSValkeyClient {
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        let command = OwnedString::new(frame.argument(0).to_bun_string(global)?);
+        let command = frame.argument(0).to_bun_string(global)?;
 
         let args_array = frame.argument(1);
         if !args_array.is_object() || !args_array.is_array() {
@@ -467,7 +464,7 @@ impl JSValkeyClient {
             args.push(v);
         }
 
-        let cmd_str = command.to_utf8_without_ref();
+        let cmd_str = command.to_utf8();
         let mut cmd = Command {
             command: cmd_str.slice(),
             args: CommandArgs::Args(&args),
@@ -1020,13 +1017,13 @@ impl JSValkeyClient {
     ) -> JsResult<JSValue> {
         require_not_subscriber(this, b"hincrby")?;
 
-        let key = OwnedString::new(frame.argument(0).to_bun_string(global)?);
-        let field = OwnedString::new(frame.argument(1).to_bun_string(global)?);
-        let value = OwnedString::new(frame.argument(2).to_bun_string(global)?);
+        let key = frame.argument(0).to_bun_string(global)?;
+        let field = frame.argument(1).to_bun_string(global)?;
+        let value = frame.argument(2).to_bun_string(global)?;
 
-        let key_slice = key.to_utf8_without_ref();
-        let field_slice = field.to_utf8_without_ref();
-        let value_slice = value.to_utf8_without_ref();
+        let key_slice = key.to_utf8();
+        let field_slice = field.to_utf8();
+        let value_slice = value.to_utf8();
 
         send_cmd(
             this,
@@ -1048,13 +1045,13 @@ impl JSValkeyClient {
     ) -> JsResult<JSValue> {
         require_not_subscriber(this, b"hincrbyfloat")?;
 
-        let key = OwnedString::new(frame.argument(0).to_bun_string(global)?);
-        let field = OwnedString::new(frame.argument(1).to_bun_string(global)?);
-        let value = OwnedString::new(frame.argument(2).to_bun_string(global)?);
+        let key = frame.argument(0).to_bun_string(global)?;
+        let field = frame.argument(1).to_bun_string(global)?;
+        let value = frame.argument(2).to_bun_string(global)?;
 
-        let key_slice = key.to_utf8_without_ref();
-        let field_slice = field.to_utf8_without_ref();
-        let value_slice = value.to_utf8_without_ref();
+        let key_slice = key.to_utf8();
+        let field_slice = field.to_utf8();
+        let value_slice = value.to_utf8();
 
         send_cmd(
             this,
@@ -1075,11 +1072,12 @@ impl JSValkeyClient {
     ) -> JsResult<JSValue> {
         require_not_subscriber(this, command)?;
 
-        let key = OwnedString::new(frame.argument(0).to_bun_string(global)?);
+        let key = frame.argument(0).to_bun_string(global)?;
 
         let second_arg = frame.argument(1);
 
-        let mut args: Vec<Slice> = Vec::new();
+        let object_iter;
+        let mut args: Vec<bun_core::Utf8Bytes<'_>> = Vec::new();
 
         args.push(key.to_utf8());
 
@@ -1089,7 +1087,7 @@ impl JSValkeyClient {
                 return Err(global.throw_invalid_argument_type(bname(command), "fields", "object"));
             };
 
-            let mut object_iter = JSPropertyIterator::init(
+            object_iter = JSPropertyIterator::init(
                 global,
                 obj,
                 jsc::PropertyIteratorOptions {
@@ -1100,15 +1098,10 @@ impl JSValkeyClient {
 
             args.ensure_total_capacity(1 + object_iter.len * 2);
 
-            while let Some(field_name) = object_iter.next()? {
-                let field_slice = field_name.to_utf8();
-                args.push(field_slice);
+            while let Some((field_name, value)) = object_iter.next()? {
+                args.push(field_name.to_utf8());
 
-                let value_str = object_iter.value.to_bun_string(global)?;
-                args.push(value_str.to_utf8());
-                // `to_utf8()` already bumped
-                // (or copied) the ref the slice needs, so release ours now.
-                value_str.deref();
+                args.push(value.to_utf8(global)?);
             }
         } else if second_arg.is_array() {
             // Pattern 3: Array - hmset(key, [field, value, ...])
@@ -1122,18 +1115,14 @@ impl JSValkeyClient {
             args.ensure_total_capacity(1 + iter.len as usize);
 
             while let Some(field_js) = iter.next()? {
-                let field_str = field_js.to_bun_string(global)?;
-                args.push(field_str.to_utf8());
-                field_str.deref();
+                args.push(field_js.to_utf8(global)?);
 
                 let Some(value_js) = iter.next()? else {
                     return Err(global.throw(format_args!(
                         "Array must have an even number of elements (field-value pairs)"
                     )));
                 };
-                let value_str = value_js.to_bun_string(global)?;
-                args.push(value_str.to_utf8());
-                value_str.deref();
+                args.push(value_js.to_utf8(global)?);
             }
         } else {
             // Pattern 2: Variadic - hset(key, field, value, ...)
@@ -1155,9 +1144,7 @@ impl JSValkeyClient {
 
             let mut i: u32 = 1;
             while i < args_count {
-                let arg_str = frame.argument(i as usize).to_bun_string(global)?;
-                args.push(arg_str.to_utf8());
-                arg_str.deref();
+                args.push(frame.argument(i as usize).to_utf8(global)?);
                 i += 1;
             }
         }
@@ -1837,7 +1824,7 @@ impl JSValkeyClient {
         // `upsert_receive_handler`'s exit guard re-enters `on_writable` /
         // `update_poll_ref` before `send()` is reached; hold a ref so `*this`
         // stays live across those calls.
-        let _guard = this.ref_scope();
+        let _guard = this.ref_guard();
 
         let [channel_or_many, handler_callback] = frame.arguments_as_array::<2>();
         let mut redis_channels: Vec<JSArgument> = Vec::with_capacity(1);
@@ -1950,7 +1937,7 @@ impl JSValkeyClient {
     ) -> JsResult<JSValue> {
         // Hold a ref so `*this` stays live across the handler-map updates and
         // the `send()` below.
-        let _guard = this.ref_scope();
+        let _guard = this.ref_guard();
 
         // Check if we're in subscription mode
         require_subscriber(this, b"unsubscribe")?;

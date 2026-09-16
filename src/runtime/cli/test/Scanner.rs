@@ -85,7 +85,7 @@ impl<'a> Scanner<'a> {
             options: &transpiler.options,
             fs: transpiler.fs,
             test_files: results,
-            open_dir_buf: PathBuffer::uninit(),
+            open_dir_buf: PathBuffer::ZEROED,
             has_iterated: false,
             search_count: 0,
             current_dir: None,
@@ -126,7 +126,7 @@ impl<'a> Scanner<'a> {
     }
 
     pub(crate) fn scan(&mut self, path_literal: &[u8]) -> Result<(), ScanError> {
-        let mut scan_dir_buf = PathBuffer::uninit();
+        let mut scan_dir_buf = bun_paths::path_buffer_pool::get();
         let parts: [&[u8]; 2] = [self.top_level_dir(), path_literal];
         let Some(path) = Self::abs_buf_projected(self.top_level_dir(), &parts, &mut scan_dir_buf)
         else {

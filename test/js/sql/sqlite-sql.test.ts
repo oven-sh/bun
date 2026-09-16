@@ -2430,6 +2430,22 @@ describe("BLOB Edge Cases and Binary Data", () => {
     expect(Buffer.from(result[0].data)).toHaveLength(0);
   });
 
+  test("binds a detached TypedArray as a zero-length BLOB, not NULL", async () => {
+    await sql`CREATE TABLE detached_blob_test (id INTEGER, data BLOB NOT NULL)`;
+
+    const detached = new Uint8Array([1, 2, 3]);
+    detached.buffer.transfer();
+    await sql`INSERT INTO detached_blob_test VALUES (1, ${new Uint8Array(0)})`;
+    await sql`INSERT INTO detached_blob_test VALUES (2, ${detached})`;
+
+    expect(
+      await sql`SELECT id, typeof(data) AS type, length(data) AS length FROM detached_blob_test ORDER BY id`,
+    ).toEqual([
+      { id: 1, type: "blob", length: 0 },
+      { id: 2, type: "blob", length: 0 },
+    ]);
+  });
+
   test("handles large BLOBs", async () => {
     await sql`CREATE TABLE large_blob (id INTEGER, data BLOB)`;
 

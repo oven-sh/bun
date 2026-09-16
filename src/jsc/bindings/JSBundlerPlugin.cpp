@@ -65,7 +65,7 @@ void BundlerPlugin::NamespaceList::append(JSC::VM& vm, JSC::RegExp* filter, Stri
     auto* nsGroup = group(namespaceString, index);
 
     if (nsGroup == nullptr) {
-        namespaces.append(namespaceString);
+        namespaces.append(namespaceString.isolatedCopy());
         groups.append(Vector<FilterRegExp> {});
         nsGroup = &groups.last();
         index = namespaces.size() - 1;
@@ -258,7 +258,7 @@ void BundlerPlugin::NativePluginList::append(JSC::VM& vm, JSC::RegExp* filter, S
         auto* nsGroup = group(namespaceString, index);
 
         if (nsGroup == nullptr) {
-            namespaces.append(namespaceString);
+            namespaces.append(namespaceString.isolatedCopy());
             groups.append(Vector<FilterRegExp> {});
             nsGroup = &groups.last();
             index = namespaces.size() - 1;

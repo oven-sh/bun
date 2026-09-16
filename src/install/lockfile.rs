@@ -12,7 +12,7 @@ use bun_collections::{
 };
 use bun_core::fmt::PathSep;
 use bun_core::{Global, Output};
-use bun_paths::{MAX_PATH_BYTES, PathBuffer, SEP, SEP_STR, platform, resolve_path};
+use bun_paths::{MAX_PATH_BYTES, SEP, SEP_STR, platform, resolve_path};
 // `bun_install` sits above `bun_resolver` in the crate graph (no cycle), so use
 // the real resolver `FileSystem` directly — same as `PackageManager.rs`.
 use crate::bun_json as JSON;
@@ -180,11 +180,7 @@ pub struct Lockfile {
     pub(crate) scripts: Scripts,
     pub(crate) workspace_paths: NameHashMap,
     pub workspace_versions: VersionHashMap,
-    /// Workspaces (by name hash) that must get a self-contained node_modules: those
-    /// listed in the root manifest's `workspaces.selfContained` and those declaring
-    /// `installConfig.hoistingLimits = "workspaces"`. Mirrored from the manifests on
-    /// every install and persisted per workspace in bun.lock (`"hoistingLimits"`), so a
-    /// tree rebuilt from the lockfile is hoisted the same way.
+    /// Name hashes of the self-contained workspaces, from the manifests. Not saved.
     pub self_contained_workspaces: ArrayHashMap<PackageNameHash, (), ArrayIdentityContextU64>,
 
     /// Optional because `trustedDependencies` in package.json might be an
@@ -695,6 +691,9 @@ impl Lockfile {
         self.catalogs = CatalogMap::default();
         self.patched_dependencies = PatchedDependenciesMap::default();
 
+        let link_workspace_packages = pm
+            .as_deref()
+            .is_none_or(|pm| pm.options.link_workspace_packages);
         let load_result = match Serializer::load(self, &mut stream, log, pm) {
             Ok(r) => r,
             Err(e) => {
@@ -710,6 +709,8 @@ impl Lockfile {
         if cfg!(debug_assertions) {
             self.verify_data().expect("lockfile data is corrupt");
         }
+
+        self.tag_workspace_links(link_workspace_packages);
 
         LoadResult::Ok(LoadResultOk {
             lockfile: self,
@@ -823,7 +824,7 @@ impl Lockfile {
     /// root manifest's `workspaces.selfContained` (by path or name) or declaring
     /// `"installConfig": { "hoistingLimits": "workspaces" }` in their own manifest.
     /// Both are recorded in `self_contained_workspaces` while the workspaces are
-    /// parsed (and persisted per workspace in bun.lock).
+    /// parsed.
     pub(crate) fn self_contained_workspace_ids(&self) -> Vec<PackageID> {
         if self.self_contained_workspaces.count() == 0 {
             return Vec::new();
@@ -1042,7 +1043,6 @@ impl Lockfile {
             log,
             old_preinstall_state,
             manager: &mut *manager,
-            trees_count: 1,
         };
 
         // try clone_queue.ensureUnusedCapacity(root.dependencies.len);
@@ -1272,7 +1272,6 @@ pub struct Cloner<'a> {
     pub lockfile: &'a mut Lockfile,
     pub(crate) old: &'a mut Lockfile,
     pub(crate) mapping: &'a mut [PackageID],
-    pub(crate) trees_count: u32,
     pub(crate) log: &'a mut bun_ast::Log,
     pub(crate) old_preinstall_state: Vec<Install::PreinstallState>,
     pub(crate) manager: &'a mut PackageManager,
@@ -1367,13 +1366,19 @@ impl Lockfile {
     ) -> Result<bool, tree::SubtreeError> {
         let slice = self.packages.slice();
 
+        // Only the install applies the barrier, so the saved tree does not depend on it.
+        let self_contained = if METHOD == tree::BuilderMethod::Filter {
+            self.self_contained_workspace_ids()
+        } else {
+            Vec::new()
+        };
+
         // `tree::Builder` stores `lockfile: ParentRef<Lockfile>` so
         // the `&mut buffers.resolutions` split-borrow below can coexist with
         // the read-only lockfile view inside the builder (see Tree.rs note).
         // `ParentRef::new` captures `SharedReadOnly` provenance from `&*self`,
         // which is exactly what `Builder` needs (it only ever `Deref`s); the
         // `Builder` does not outlive this `&mut self` borrow.
-        let self_contained = self.self_contained_workspace_ids();
         let lockfile_ref = bun_ptr::ParentRef::<Lockfile>::new(&*self);
         let mut builder = tree::Builder::<METHOD> {
             self_contained,
@@ -1600,8 +1605,8 @@ impl<'a> Printer<'a> {
         // We truncate longer than allowed paths. We should probably throw an error instead.
         let path = &input_lockfile_path[..input_lockfile_path.len().min(MAX_PATH_BYTES)];
 
-        let mut lockfile_path_buf1 = PathBuffer::uninit();
-        let mut lockfile_path_buf2 = PathBuffer::uninit();
+        let mut lockfile_path_buf1 = bun_paths::path_buffer_pool::get();
+        let mut lockfile_path_buf2 = bun_paths::path_buffer_pool::get();
 
         let mut lockfile_path: &ZStr = ZStr::EMPTY;
         // Track which buffer backs `lockfile_path` so the chdir NUL-terminate
@@ -2025,6 +2030,28 @@ impl Default for Lockfile {
     }
 }
 
+/// The workspace an npm range on `name_hash`'s package links to instead of the registry: the
+/// workspace of that name, when the range satisfies its version or is a `*` range (which links even
+/// a workspace without a version, https://github.com/oven-sh/bun/pull/10899#issuecomment-2099609419).
+pub(crate) fn linked_workspace_path(
+    link_workspace_packages: bool,
+    workspace_paths: &NameHashMap,
+    workspace_versions: &VersionHashMap,
+    name_hash: PackageNameHash,
+    range: &Semver::query::Group,
+    buf: &[u8],
+) -> Option<SemverString> {
+    if !link_workspace_packages {
+        return None;
+    }
+    let path = *workspace_paths.get(&name_hash)?;
+    if range.is_star() {
+        return Some(path);
+    }
+    let version = *workspace_versions.get(&name_hash)?;
+    range.satisfies(version, buf, buf).then_some(path)
+}
+
 impl Lockfile {
     pub(crate) fn init_empty_value() -> Self {
         Lockfile {
@@ -2059,6 +2086,59 @@ impl Lockfile {
     #[inline]
     pub(crate) fn mark_loaded_packages(&mut self) {
         self.loaded_package_count = self.packages.len() as PackageID;
+    }
+
+    /// Loaders (bun.lock, bun.lockb, migrated foreign lockfiles) rebuild a dependency from its
+    /// literal, so every loader finishes with this to give edges resolved to a workspace package the
+    /// shape `Package::parse` gives them: a `workspace:` edge's value becomes the workspace's path,
+    /// and an npm range becomes a workspace edge when `linked_workspace_path`, asked with the
+    /// workspaces this lockfile records, links it. Ranges bound to a workspace any other way (a peer
+    /// that took a sibling's version, an override) stay ranges, as they do in a reparse.
+    pub(crate) fn tag_workspace_links(&mut self, link_workspace_packages: bool) {
+        let pkg_resolutions = self.packages.items_resolution();
+        let buf = self.buffers.string_bytes.as_slice();
+        for (dep, &pkg_id) in self
+            .buffers
+            .dependencies
+            .iter_mut()
+            .zip(self.buffers.resolutions.iter())
+        {
+            if pkg_id as usize >= pkg_resolutions.len() {
+                continue;
+            }
+            let res = &pkg_resolutions[pkg_id as usize];
+            if res.tag != ResolutionTag::Workspace {
+                continue;
+            }
+            let linked = match dep.version.tag {
+                dependency::Tag::Workspace => true,
+                dependency::Tag::Npm => {
+                    let npm = dep.version.npm();
+                    linked_workspace_path(
+                        link_workspace_packages,
+                        &self.workspace_paths,
+                        &self.workspace_versions,
+                        Semver::string::Builder::string_hash(npm.name.slice(buf)),
+                        &npm.version,
+                        buf,
+                    )
+                    .is_some()
+                }
+                _ => false,
+            };
+            if !linked {
+                continue;
+            }
+            // Whole-struct move so `Drop` frees the old npm chain; keep the existing `literal`.
+            let literal = dep.version.literal;
+            dep.version = DependencyVersion {
+                tag: dependency::Tag::Workspace,
+                literal,
+                value: dependency::Value {
+                    workspace: *res.workspace(),
+                },
+            };
+        }
     }
 
     /// Record that package `id` was appended via an exact-version dependency
@@ -2553,12 +2633,9 @@ impl<'a> StringBuilder<'a> {
         Ok(())
     }
 
-    #[inline]
+    /// Keys the pool by the hash of `slice`, as `count` does, so it never writes uncounted bytes.
     pub(crate) fn append<T: StringBuilderType>(&mut self, slice: &[u8]) -> T {
-        self.append_with_hash::<T>(slice, SemverStringBuilder::string_hash(slice))
-    }
-
-    pub(crate) fn append_with_hash<T: StringBuilderType>(&mut self, slice: &[u8], hash: u64) -> T {
+        let hash = SemverStringBuilder::string_hash(slice);
         if SemverString::can_inline(slice) {
             return T::from_init(self.string_bytes.as_slice(), slice, hash);
         }
@@ -2746,7 +2823,7 @@ impl Lockfile {
 
         let mut sort_buf: Vec<PathToId> = Vec::with_capacity(l_len + r_len);
 
-        let mut path_buf = PathBuffer::uninit();
+        let mut path_buf = bun_paths::path_buffer_pool::get();
         let mut depth_buf: tree::DepthBuf = tree::depth_buf_uninit();
 
         // Track owned tree-path allocations so they outlive the sort and are freed at scope end.
@@ -2976,30 +3053,6 @@ impl Lockfile {
             string_builder.count(SCRIPTS_END);
         }
 
-        // Self-contained workspaces change the hoisted layout without changing any
-        // resolution; include them (sorted, only when present) so bun.lockb's
-        // frozen-lockfile check notices. Text lockfiles compare the tree itself.
-        const SELF_CONTAINED_BEGIN: &[u8] = b"\n-- BEGIN SELF-CONTAINED WORKSPACES --\n";
-        let mut self_contained_names: Vec<&[u8]> = Vec::new();
-        if self.self_contained_workspaces.count() > 0 {
-            for i in 0..packages_len {
-                if resolutions[i].tag == crate::resolution::Tag::Workspace
-                    && self
-                        .self_contained_workspaces
-                        .contains(&self.packages.items_name_hash()[i])
-                {
-                    self_contained_names.push(names[i].slice(bytes));
-                }
-            }
-            self_contained_names.sort_unstable();
-            if !self_contained_names.is_empty() {
-                string_builder.count(SELF_CONTAINED_BEGIN);
-                for n in &self_contained_names {
-                    string_builder.fmt_count(format_args!("{}\n", bstr::BStr::new(n)));
-                }
-            }
-        }
-
         {
             let alphabetizer = package::Alphabetizer::<u64> {
                 names: names.into(),
@@ -3036,13 +3089,6 @@ impl Lockfile {
                 }
             }
             let _ = string_builder.append(SCRIPTS_END);
-        }
-
-        if !self_contained_names.is_empty() {
-            let _ = string_builder.append(SELF_CONTAINED_BEGIN);
-            for n in &self_contained_names {
-                let _ = string_builder.fmt(format_args!("{}\n", bstr::BStr::new(n)));
-            }
         }
 
         let _ = string_builder.append(HASH_SUFFIX);

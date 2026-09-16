@@ -53,8 +53,8 @@ extern "C" {
 void* WebWorker__create(
     WorkerMessagingProxy*,
     void* parentVM,
-    BunString name,
-    BunString url,
+    const BunString* name,
+    const BunString* url,
     BunString* errorMessage,
     uint32_t parentContextId,
     uint32_t contextId,
@@ -143,11 +143,13 @@ ExceptionOr<void> WorkerMessagingProxy::startWorkerGlobalScope(const String& scr
     // The thread holds a ref on the proxy until releaseWorkerThread().
     ref();
     BunString errorMessage = BunStringEmpty;
+    BunString name = Bun::toString(m_options.name);
+    BunString url = Bun::toString(scriptURL);
     m_workerThread = WebWorker__create(
         this,
         WebCore::clientData(m_scriptExecutionContext->vm())->bunVM,
-        Bun::toString(m_options.name),
-        Bun::toString(scriptURL),
+        &name,
+        &url,
         &errorMessage,
         m_loaderContextIdentifier,
         m_workerContextIdentifier,
@@ -167,7 +169,7 @@ ExceptionOr<void> WorkerMessagingProxy::startWorkerGlobalScope(const String& scr
     if (!m_workerThread) {
         m_state.store(State::Closed);
         deref();
-        return Exception { TypeError, errorMessage.toWTFString(BunString::ZeroCopy) };
+        return Exception { TypeError, errorMessage.transferToWTFString() };
     }
     return {};
 }
@@ -291,6 +293,8 @@ static constexpr size_t drainBatchLimit = 1024;
 template<typename Dispatch>
 static bool drainInbox(WorkerMessagingProxy::MessageInbox& inbox, Zig::GlobalObject& globalObject, ScriptExecutionContext& context, DrainBudget budget, Dispatch&& dispatch)
 {
+    auto& vm = globalObject.vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     size_t remaining = budget == DrainBudget::UntilEmpty ? std::numeric_limits<size_t>::max() : drainBatchLimit;
 
     while (true) {
@@ -320,9 +324,18 @@ static bool drainInbox(WorkerMessagingProxy::MessageInbox& inbox, Zig::GlobalObj
                 return false;
             auto message = batch.takeFirst();
             auto ports = MessagePort::entanglePorts(context, WTF::move(message.transferredPorts));
+            // message port post message steps (7.3): if deserializing throws, catch it and fire messageerror.
             auto event = MessageEvent::create(globalObject, message.message.releaseNonNull(), nullptr, WTF::move(ports));
-            dispatch(event.event);
-            if (globalObject.drainMicrotasks())
+            if (scope.exception()) [[unlikely]] {
+                if (vm.hasPendingTerminationException())
+                    return false;
+                scope.clearException();
+                dispatch(MessageEvent::create(eventNames().messageerrorEvent, MessageEvent::Init { {}, jsNull() }, MessageEvent::IsTrusted::Yes));
+            } else
+                dispatch(event->event);
+            bool terminating = globalObject.drainMicrotasks();
+            RETURN_IF_EXCEPTION(scope, false);
+            if (terminating)
                 return false; // termination pending
         }
     }
@@ -365,26 +378,34 @@ void WorkerMessagingProxy::drainMessagesToWorkerObject(ScriptExecutionContext& c
 
 // ---- WorkerObjectProxy / WorkerReportingProxy (worker thread) -----------------------------------
 
-void WorkerMessagingProxy::workerGlobalScopeStarted(Zig::GlobalObject& workerGlobalObject)
+void WorkerMessagingProxy::workerThreadStarted()
 {
-    auto& context = *workerGlobalObject.scriptExecutionContext();
-    ASSERT(context.identifier() == m_workerContextIdentifier);
-
-    // Pending -> Running under the lock postTaskToWorkerGlobalScope() takes, and before 'online' is
-    // posted: a parent-side 'online' handler may immediately post a task and must find Running.
-    Deque<Function<void(ScriptExecutionContext&)>> pendingTasks;
+    // Stays Pending: what an 'online' handler posts is queued until workerGlobalScopeStarted().
     {
         Locker lock { m_pendingTasksLock };
-        m_state.store(State::Running);
-        pendingTasks = std::exchange(m_pendingTasks, {});
+        if (m_state.load() != State::Pending)
+            return;
     }
-
     ScriptExecutionContext::postTaskTo(m_loaderContextIdentifier, m_loaderLoopKind, [protectedThis = Ref { *this }](ScriptExecutionContext&) {
         RefPtr workerObject = protectedThis->m_workerObject;
         if (!workerObject || !workerObject->hasEventListeners(eventNames().openEvent))
             return;
         workerObject->dispatchEvent(Event::create(eventNames().openEvent, Event::CanBubble::No, Event::IsCancelable::No));
     });
+}
+
+void WorkerMessagingProxy::workerGlobalScopeStarted(Zig::GlobalObject& workerGlobalObject)
+{
+    auto& context = *workerGlobalObject.scriptExecutionContext();
+    ASSERT(context.identifier() == m_workerContextIdentifier);
+
+    // Pending -> Running under the lock postTaskToWorkerGlobalScope() takes: no task is lost.
+    Deque<Function<void(ScriptExecutionContext&)>> pendingTasks;
+    {
+        Locker lock { m_pendingTasksLock };
+        m_state.store(State::Running);
+        pendingTasks = std::exchange(m_pendingTasks, {});
+    }
 
     // Tasks and messages that arrived while Pending. If the entry module installed a 'message'
     // listener they run now; otherwise on the next tick, so a listener added right after startup

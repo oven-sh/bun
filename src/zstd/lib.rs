@@ -34,6 +34,9 @@ pub mod c {
     // ZSTD_EndDirective
     pub const ZSTD_e_continue: ZSTD_EndDirective = 0;
 
+    // ZSTD_cParameter
+    pub const ZSTD_c_compressionLevel: ZSTD_cParameter = 100;
+
     pub const ZSTD_reset_session_and_parameters: ZSTD_ResetDirective = 3;
 
     // ZSTD_ErrorCode (zstd_errors.h) — only the public stable subset.
@@ -366,7 +369,6 @@ struct ZstdReaderArrayList<'a> {
     // `list_allocator` / `allocator` params deleted — global mimalloc.
     pub(crate) zstd: *mut c::ZSTD_DStream,
     pub(crate) state: State,
-    pub(crate) total_out: usize,
     pub(crate) total_in: usize,
     /// Decompression-bomb guard: `read_all` errors instead of growing the
     /// output past this many bytes. Defaults to unbounded.
@@ -400,7 +402,6 @@ impl<'a> ZstdReaderArrayList<'a> {
             list_ptr: list,
             zstd,
             state: State::Uninitialized,
-            total_out: 0,
             total_in: 0,
             max_output_size: usize::MAX,
         }))
@@ -479,7 +480,6 @@ impl<'a> ZstdReaderArrayList<'a> {
             // into the spare capacity starting at the previous len.
             unsafe { bun_core::vec::commit_spare(self.list_ptr, bytes_written) };
             self.total_in += bytes_read;
-            self.total_out += bytes_written;
 
             if rc == 0 {
                 // Frame is complete
@@ -580,10 +580,13 @@ impl StreamingDecoder {
         }
 
         let mut total_in = 0usize;
+        // zstd may hold decoded bytes it could not fit into the last output
+        // window. Call it again with no input until it leaves the window short.
+        let mut output_full = false;
         while matches!(self.state, State::Uninitialized | State::Inflating) {
             let next_in = &input[total_in..];
 
-            if next_in.is_empty() {
+            if next_in.is_empty() && !output_full {
                 if is_done {
                     if self.state == State::Inflating {
                         self.state = State::Error;
@@ -631,6 +634,7 @@ impl StreamingDecoder {
 
             let bytes_written = out_buf.pos;
             let bytes_read = in_buf.pos;
+            output_full = bytes_written == out_buf.size;
             // SAFETY: zstd wrote exactly `bytes_written` initialized bytes into
             // the spare capacity starting at the previous len.
             unsafe { bun_core::vec::commit_spare(out, bytes_written) };
@@ -654,7 +658,7 @@ impl StreamingDecoder {
             self.state = State::Inflating;
 
             if bytes_read == next_in.len() {
-                if bytes_written > 0 {
+                if output_full {
                     continue;
                 }
                 if is_done {

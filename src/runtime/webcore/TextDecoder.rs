@@ -1,13 +1,14 @@
 use crate::webcore::EncodingLabel;
 use crate::webcore::jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_core::AllocError;
-use bun_core::{OwnedString, strings};
+use bun_core::strings;
 use bun_jsc::HostReturn as _;
 use core::cell::{Cell, RefCell};
 
+use bun_core::EncodedSlice;
+use jsc::EncodedSliceJsc as _;
 use jsc::StringJsc as _;
-use jsc::ZigStringJsc as _;
-use jsc::zig_string::ZigString;
+use jsc::bun_string_jsc;
 
 use strings::{u16_is_lead, u16_is_trail};
 const UNICODE_REPLACEMENT_U16: u16 = strings::UNICODE_REPLACEMENT as u16;
@@ -96,7 +97,7 @@ impl TextDecoder {
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_encoding(&self, global_this: &JSGlobalObject) -> JSValue {
-        ZigString::init(EncodingLabel::get_label(self.encoding)).to_js(global_this)
+        self.encoding.to_js(global_this)
     }
 
     #[inline(always)]
@@ -342,7 +343,7 @@ impl TextDecoder {
         match self.encoding {
             EncodingLabel::LATIN1 => {
                 if strings::is_all_ascii(buffer_slice) {
-                    return Ok(ZigString::init(buffer_slice).to_js(global_this));
+                    return Ok(EncodedSlice::latin1(buffer_slice).to_js(global_this));
                 }
 
                 // It's unintuitive that we encode Latin1 as UTF16 even though the engine natively supports Latin1 strings...
@@ -355,19 +356,9 @@ impl TextDecoder {
                 let buf =
                     unsafe { core::slice::from_raw_parts_mut(units.as_mut_ptr(), out_length) };
                 let out = strings::copy_cp1252_into_utf16(buf, buffer_slice);
-                // SAFETY: the copy above initialized all `out_length` units (one per input byte).
-                unsafe { units.set_len(out_length) };
-                // The boxed slice is a tight allocation (no excess capacity).
-                let bytes = units.into_boxed_slice();
-                // SAFETY: `bytes` was allocated by the global allocator; `into_raw`
-                // transfers ownership of the buffer to JSC's external-string finalizer.
-                Ok(unsafe {
-                    jsc::zig_string::to_external_u16(
-                        bun_core::heap::into_raw(bytes).cast::<u16>(),
-                        out.written as usize,
-                        global_this,
-                    )
-                })
+                // SAFETY: the copy above initialized `out.written` (≤ `out_length`) units.
+                unsafe { units.set_len(out.written as usize) };
+                bun_string_jsc::owned_utf16_into_js(global_this, units)
             }
             EncodingLabel::Utf8 => {
                 // Prepend the partial UTF-8 sequence carried over from the
@@ -427,7 +418,10 @@ impl TextDecoder {
                         }
 
                         debug_assert!(matches!(err, strings::ToUTF16Error::OutOfMemory));
-                        return Err(global_this.throw_out_of_memory());
+                        return Err(bun_string_jsc::throw_utf16_transcode_failure(
+                            global_this,
+                            input,
+                        ));
                     }
                 };
 
@@ -449,29 +443,13 @@ impl TextDecoder {
                             });
                         }
                     }
-                    let len = decoded.len();
-                    // `to_external_u16` returns `jsEmptyString` and never
-                    // calls `free_global_string` for `len == 0`, so a
-                    // zero-length decode (e.g. a buffered partial sequence
-                    // with `stream: true`, or all-replaced bytes when
-                    // `fatal: false`) would strand the `Vec`'s reserved
-                    // backing store. Drop it here and return the canonical
-                    // empty string instead.
-                    if len == 0 {
-                        drop(decoded);
-                        return Ok(ZigString::EMPTY.to_js(global_this));
-                    }
-                    // PERF: Vec::leak may retain excess capacity — profile if it shows up on a hot path.
-                    let ptr = decoded.leak().as_mut_ptr();
-                    // SAFETY: `ptr` was leaked from a global-allocator `Vec<u16>`;
-                    // ownership transfers to JSC's external-string finalizer.
-                    return Ok(unsafe { jsc::zig_string::to_external_u16(ptr, len, global_this) });
+                    return bun_string_jsc::owned_utf16_into_js(global_this, decoded);
                 }
 
-                // All-ASCII input needed no conversion. `ZigString::init(..).to_js`
+                // All-ASCII input needed no conversion. `EncodedSlice::latin1(..).to_js`
                 // copies, so `input` may borrow the caller's buffer or `joined_owned`.
                 // Experiment: using mimalloc directly is slightly slower
-                Ok(ZigString::init(input).to_js(global_this))
+                Ok(EncodedSlice::latin1(input).to_js(global_this))
             }
 
             enc @ (EncodingLabel::Utf16Le | EncodingLabel::Utf16Be) => {
@@ -526,19 +504,7 @@ impl TextDecoder {
                     }
                 }
 
-                if decoded.is_empty() {
-                    drop(decoded);
-                    return Ok(ZigString::EMPTY.to_js(global_this));
-                }
-
-                // Transfer ownership of the backing allocation to JSC; freed via
-                // free_global_string -> mi_free when the string is collected.
-                let len = decoded.len();
-                // PERF: Vec::leak may retain excess capacity — profile if it shows up on a hot path.
-                let ptr = decoded.leak().as_mut_ptr();
-                // SAFETY: `ptr` was leaked from a global-allocator `Vec<u16>`;
-                // ownership transfers to JSC's external-string finalizer.
-                Ok(unsafe { jsc::zig_string::to_external_u16(ptr, len, global_this) })
+                bun_string_jsc::owned_utf16_into_js(global_this, decoded)
             }
 
             // Every other encoding goes through encoding_rs.
@@ -578,19 +544,11 @@ impl TextDecoder {
                             .throw());
                     }
                     Err(strings::ToUTF16Error::OutOfMemory) => {
-                        return Err(global_this.throw_out_of_memory());
+                        return Err(global_this.throw_memory_allocation_failed());
                     }
                 };
 
-                if decoded.is_empty() {
-                    return Ok(ZigString::EMPTY.to_js(global_this));
-                }
-
-                let len = decoded.len();
-                let ptr = decoded.leak().as_mut_ptr();
-                // SAFETY: `ptr` was leaked from a global-allocator `Vec<u16>`;
-                // ownership transfers to JSC's external-string finalizer.
-                Ok(unsafe { jsc::zig_string::to_external_u16(ptr, len, global_this) })
+                bun_string_jsc::owned_utf16_into_js(global_this, decoded)
             }
         }
     }
@@ -607,8 +565,7 @@ impl TextDecoder {
         let mut decoder = TextDecoder::default();
 
         if encoding_value.is_string() {
-            let str = encoding_value.to_slice(global_this)?;
-            // `str` drops at scope exit (matches `defer str.deinit()`).
+            let str = encoding_value.to_utf8(global_this)?;
 
             match EncodingLabel::which(str.slice()) {
                 // https://encoding.spec.whatwg.org/#dom-textdecoder: "If
@@ -633,10 +590,7 @@ impl TextDecoder {
             // WebIDL DOMString coercion: any other label value is stringified
             // and then looked up, so `1` or `{}` reports the same
             // ERR_ENCODING_NOT_SUPPORTED an unknown string label does.
-            // `bun_core::String` is `#[derive(Copy)]` with NO `Drop` impl, so the +1
-            // ref `from_js` returns has to be wrapped to deref on scope exit.
-            let converted =
-                OwnedString::new(bun_core::String::from_js(encoding_value, global_this)?);
+            let converted = bun_core::String::from_js(encoding_value, global_this)?;
             let str = converted.to_utf8();
 
             // Same rule as the string branch above: "If encoding is failure or
@@ -673,13 +627,7 @@ impl TextDecoder {
             }
 
             if let Some(ignore_bom) = options_value.get(global_this, b"ignoreBOM")? {
-                if ignore_bom.is_boolean() {
-                    decoder.ignore_bom = ignore_bom.as_boolean();
-                } else {
-                    return Err(global_this.throw_invalid_arguments(format_args!(
-                        "TextDecoder(options) ignoreBOM is invalid. Expected boolean value",
-                    )));
-                }
+                decoder.ignore_bom = ignore_bom.to_boolean();
             }
         }
 
@@ -708,7 +656,7 @@ pub extern "C" fn TextDecoder__createForStream(
     fatal: bool,
     ignore_bom: bool,
     out_utf8_fast_path: *mut bool,
-    out_encoding_label: *mut bun_core::String,
+    out_encoding: *mut EncodingLabel,
 ) -> *mut TextDecoder {
     // SAFETY: both out-params are stack locals on the caller's frame.
     unsafe { *out_utf8_fast_path = false };
@@ -716,7 +664,7 @@ pub extern "C" fn TextDecoder__createForStream(
         EncodingLabel::Utf8
     } else {
         let converted = match bun_core::String::from_js(label, global) {
-            Ok(s) => OwnedString::new(s),
+            Ok(s) => s,
             Err(_) => return core::ptr::null_mut(),
         };
         let str = converted.to_utf8();
@@ -736,8 +684,8 @@ pub extern "C" fn TextDecoder__createForStream(
             }
         }
     };
-    // SAFETY: as above; the label borrows a 'static byte slice (no refcount).
-    unsafe { *out_encoding_label = bun_core::String::static_(encoding.get_label()) };
+    // SAFETY: as above.
+    unsafe { out_encoding.write(encoding) };
     if matches!(encoding, EncodingLabel::Utf8) && !fatal {
         // SAFETY: as above.
         unsafe { *out_utf8_fast_path = true };
@@ -749,6 +697,15 @@ pub extern "C" fn TextDecoder__createForStream(
         encoding,
         ..TextDecoder::default()
     }))
+}
+
+/// `TextDecoderStream.prototype.encoding`.
+#[unsafe(no_mangle)]
+pub extern "C" fn TextDecoder__encodingToJS(
+    global: &JSGlobalObject,
+    encoding: EncodingLabel,
+) -> JSValue {
+    encoding.to_js(global)
 }
 
 #[unsafe(no_mangle)]

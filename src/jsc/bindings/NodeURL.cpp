@@ -269,16 +269,19 @@ JSC::JSValue createNodeURLBinding(Zig::GlobalObject* globalObject)
         (unsigned)0,
         domainToAsciiFunction,
         false);
+    RETURN_IF_EXCEPTION(scope, {});
     binding->putByIndexInline(
         globalObject,
         (unsigned)1,
         domainToUnicodeFunction,
         false);
+    RETURN_IF_EXCEPTION(scope, {});
     binding->putByIndexInline(
         globalObject,
         (unsigned)2,
         idnaToASCIIFunction,
         false);
+    RETURN_IF_EXCEPTION(scope, {});
     return binding;
 }
 

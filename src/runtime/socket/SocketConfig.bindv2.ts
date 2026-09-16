@@ -1,5 +1,5 @@
-import * as b from "bindgenv2";
-import { SSLConfig } from "./SSLConfig.bindv2";
+import * as b from "../../codegen/bindgenv2/lib.ts";
+import { SSLConfig } from "./SSLConfig.bindv2.ts";
 
 export const BinaryType = b.enumeration("SocketConfigBinaryType", [
   ["arraybuffer", "ArrayBuffer"],
@@ -77,6 +77,11 @@ export const SocketConfig = b.dictionary(
       type: b.bool,
       default: false,
       internalName: "ipv6_only",
+    },
+    pauseOnConnect: {
+      type: b.bool.loose,
+      default: false,
+      internalName: "pause_on_connect",
     },
     unix: {
       type: b.String.nullable.loose,

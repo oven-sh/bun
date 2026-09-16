@@ -16,7 +16,9 @@ use bun_io::{FilePollFlag, PosixFlags};
 use bun_core::ZStr;
 #[cfg(unix)]
 use bun_spawn::SpawnResultExt as _;
-use bun_spawn::{Process, ProcessExit, ProcessExitKind, Rusage, SpawnOptions, Status};
+use bun_spawn::{
+    Process, ProcessExit, ProcessExitKind, ProcessHandle, Rusage, SpawnOptions, Status,
+};
 #[cfg(unix)]
 use bun_sys::Fd;
 // `BufferedReaderParent::loop_` is typed `*mut bun_uws::Loop` (the
@@ -254,10 +256,8 @@ pub struct LifecycleScriptSubprocess<'a> {
     pub(crate) current_script_index: u8,
 
     pub(crate) remaining_fds: i8,
-    /// `Process` is intrusively ref-counted (`bun_ptr::ThreadSafeRefCount`),
-    /// so it lives behind a raw pointer and is dropped via `process.close(); process.deref()`
-    /// in `reset_polls`. Null = none.
-    pub(crate) process: *mut Process,
+    /// `None` between scripts (`reset_polls`).
+    pub(crate) process: Option<ProcessHandle>,
     pub(crate) stdout: OutputReader,
     pub(crate) stderr: OutputReader,
     pub(crate) has_called_process_exit: bool,
@@ -386,7 +386,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             bstr::BStr::new(self.script_name()),
             bstr::BStr::new(&self.package_name),
             err.errno,
-            <&'static str>::from(err.get_errno()),
+            bstr::BStr::new(err.name()),
         );
         Output::flush();
         self.maybe_finished();
@@ -397,13 +397,10 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             return;
         }
 
-        let process = self.process;
-        if process.is_null() {
+        let Some(process) = &self.process else {
             return;
-        }
-        // SAFETY: `process` is the live intrusive-refcounted `*mut Process` set in
-        // `spawn_next_script`; we hold a strong ref until `reset_polls`.
-        let status = unsafe { (*process).status.clone() };
+        };
+        let status = process.status.clone();
         self.handle_exit(status);
     }
 
@@ -755,13 +752,11 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             }
 
             let event_loop = bun_event_loop::EventLoopHandle::from_any(&mut (*manager).event_loop);
-            // `to_process` returns an intrusively-refcounted `*mut Process` (heap::alloc,
-            // refcount = 1); the strong ref transfers to `(*this).process` and is released
-            // in `reset_polls` via `process.deref()`.
-            let process: *mut Process = spawned.to_process(event_loop);
-
-            debug_assert!((*this).process.is_null(), "forgot to call `reset_polls`");
-            (*this).process = process;
+            debug_assert!((*this).process.is_none(), "forgot to call `reset_polls`");
+            let process: *mut Process = (*this)
+                .process
+                .insert(spawned.to_process_handle(event_loop))
+                .as_ptr();
             // SAFETY: `this` is the allocation-rooted `LifecycleScriptSubprocess`;
             // we hold no live `&mut Self` here, so the synchronous `on_exit`
             // dispatch below may reenter `on_process_exit` through it without
@@ -1021,7 +1016,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
     /// This function may free the *LifecycleScriptSubprocess
     pub(crate) fn on_process_exit(&mut self, proc: *mut Process, _: Status, _: &Rusage) {
-        if self.process != proc {
+        if self.process.as_ref().map(ProcessHandle::as_ptr) != Some(proc) {
             bun_core::debug_warn!(
                 "<d>[LifecycleScriptSubprocess]<r> onProcessExit called with wrong process"
             );
@@ -1034,15 +1029,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     pub(crate) fn reset_polls(&mut self) {
         debug_assert!(self.remaining_fds == 0);
 
-        let process = core::mem::replace(&mut self.process, core::ptr::null_mut());
-        if !process.is_null() {
-            // SAFETY: `process` is the live intrusive-refcounted pointer set in
-            // `spawn_next_script`; we held the only strong ref. `deref()` may free.
-            unsafe {
-                (*process).close();
-                Process::deref(process);
-            }
-        }
+        self.process = None;
 
         self.stdout.deinit();
         self.stderr.deinit();
@@ -1112,7 +1099,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             // defaults:
             current_script_index: 0,
             remaining_fds: 0,
-            process: core::ptr::null_mut(),
+            process: None,
             stdout: OutputReader::init::<Self>(),
             stderr: OutputReader::init::<Self>(),
             has_called_process_exit: false,

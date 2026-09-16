@@ -103,57 +103,18 @@ jobs:
             }
 
             const keyFor = g => `${g.path}:${crypto.createHash('sha256').update(g.text).digest('hex').slice(0, 12)}`;
-            const presentKeys = new Set(groups.map(keyFor));
 
-            // Fetch existing comment-cop review threads (for dedup + auto-resolve).
-            const threads = [];
-            {
-              const q = `
-                query($owner: String!, $repo: String!, $pr: Int!, $after: String) {
-                  repository(owner: $owner, name: $repo) {
-                    pullRequest(number: $pr) {
-                      reviewThreads(first: 100, after: $after) {
-                        pageInfo { hasNextPage endCursor }
-                        nodes { id isResolved comments(first: 1) { nodes { body } } }
-                      }
-                    }
-                  }
-                }`;
-              let after = null;
-              for (;;) {
-                const res = await github.graphql(q, { owner, repo, pr: pull_number, after });
-                const page = res.repository.pullRequest.reviewThreads;
-                for (const t of page.nodes) threads.push(t);
-                if (!page.pageInfo.hasNextPage) break;
-                after = page.pageInfo.endCursor;
-              }
-            }
-
+            // Keys already flagged on this PR, read from its review comments. REST
+            // only: GITHUB_TOKEN's GraphQL quota is shared by every workflow run in
+            // the repo and is routinely exhausted; the REST quota is separate, and
+            // posting below needs it anyway.
+            const reviewComments = await github.paginate(github.rest.pulls.listReviewComments, {
+              owner, repo, pull_number, per_page: 100,
+            });
             const seenKeys = new Set();
-            const toResolve = [];
-            for (const t of threads) {
-              const body = t.comments.nodes[0]?.body || '';
-              const m = /<!-- comment-cop:([^>\s]+) -->/.exec(body);
-              if (!m) continue;
-              const key = m[1];
-              seenKeys.add(key);
-              if (!t.isResolved && !presentKeys.has(key)) toResolve.push(t.id);
-            }
-
-            // Auto-resolve threads whose flagged block is gone from the current diff.
-            if (toResolve.length > 0) {
-              const mut = `
-                mutation($id: ID!) {
-                  resolveReviewThread(input: { threadId: $id }) { thread { id } }
-                }`;
-              for (const id of toResolve) {
-                try {
-                  await github.graphql(mut, { id });
-                } catch (e) {
-                  core.warning(`resolveReviewThread failed for ${id}: ${e.message}`);
-                }
-              }
-              core.info(`Resolved ${toResolve.length} stale comment-cop thread(s).`);
+            for (const c of reviewComments) {
+              const m = /<!-- comment-cop:([^>\s]+) -->/.exec(c.body || '');
+              if (m) seenKeys.add(m[1]);
             }
 
             // Post new line comments for groups not already flagged.

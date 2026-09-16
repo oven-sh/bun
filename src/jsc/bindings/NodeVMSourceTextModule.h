@@ -37,7 +37,6 @@ public:
     bool hasTopLevelAwait() const { return m_hasTopLevelAwait; }
 
     const SourceCode& sourceCode() const { return m_sourceCode; }
-    ModuleProgramExecutable* cachedExecutable() const { return m_cachedExecutable.get(); }
 
     DECLARE_EXPORT_INFO;
     DECLARE_VISIT_CHILDREN;
@@ -45,7 +44,6 @@ public:
 private:
     WriteBarrier<JSModuleRecord> m_moduleRecord;
     WriteBarrier<JSArray> m_moduleRequestsArray;
-    WriteBarrier<ModuleProgramExecutable> m_cachedExecutable;
     WriteBarrier<JSUint8Array> m_cachedBytecodeBuffer;
     WriteBarrier<Unknown> m_initializeImportMeta;
     RefPtr<CachedBytecode> m_bytecode;

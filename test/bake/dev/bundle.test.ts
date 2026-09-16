@@ -476,6 +476,47 @@ for (const { separateSSRGraph, body } of [
     },
   });
 }
+// Only the browser graph reaches this "use server" module. With separateSSRGraph
+// the bundler used to put the module, server code included, into the client
+// bundle. Without it the process aborted at the bundler's TODO.
+for (const separateSSRGraph of [true, false]) {
+  devTest(`"use server" module imported by client code is a build error (separateSSRGraph: ${separateSSRGraph})`, {
+    framework: {
+      ...minimalFramework,
+      fileSystemRouterTypes: [
+        {
+          ...minimalFramework.fileSystemRouterTypes![0],
+          clientEntryPoint: "./client.ts",
+        },
+      ],
+      serverComponents: {
+        ...minimalFramework.serverComponents!,
+        separateSSRGraph,
+      },
+    },
+    files: {
+      "routes/index.ts": `
+        export default function (req, meta) {
+          return new Response('index');
+        }
+      `,
+      "client.ts": `
+        import { save } from './action';
+        console.log(typeof save);
+      `,
+      "action.ts": `
+        "use server";
+        export async function save() { return "server only"; }
+      `,
+    },
+    async test(dev) {
+      expect((await dev.fetch("/")).status).toBe(500);
+      await using _ = await dev.client("/", {
+        errors: [`action.ts:1:1: error: "use server" is not supported yet`],
+      });
+    },
+  });
+}
 // A directive is JavaScript syntax. A file that another loader reads is not a
 // server component boundary, whatever its first bytes are. The "use server"
 // text file used to abort the process at the same TODO in the bundler, and the

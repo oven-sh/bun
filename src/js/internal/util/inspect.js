@@ -2740,14 +2740,36 @@ function getStringWidth(str, removeControlChars = true) {
   return internalGetStringWidth(str, kPerCodePointWidthOptions);
 }
 
-// Strips what node's ansi RegExp (from chalk/ansi-regex) matches: only complete sequences.
+// node's ansi matcher (from chalk/ansi-regex): only complete sequences are stripped —
 // Bun.stripANSI also eats bare/invalid ESC/CSI prefixes, which node keeps.
-// https://github.com/nodejs/node/blob/main/lib/internal/util/inspect.js
-const stripAnsiRegExpMatches = $newCppFunction("stripANSI.cpp", "jsFunctionStripVTControlCharacters", 1);
+// https://github.com/nodejs/node/blob/5b316e5402cd7c1bce0afc33cba66fda5f62157c/lib/internal/util/inspect.js#L284-L293
+let ansi;
+function getAnsiRegExp() {
+  return (ansi ??= new RegExp(
+    "(?:\\u001B\\][\\s\\S]*?(?:\\u0007|\\u001B\\u005C|\\u009C))" +
+      "|[\\u001B\\u009B][[\\]()#;?]*" +
+      "(?:\\d{1,4}(?:[;:]\\d{0,4})*)?" +
+      "[\\dA-PR-TZcf-nq-uy=><~]",
+    "g",
+  ));
+}
+
+// For $call. A call through the bound function that uncurryThis() returns costs more than the work it wraps here.
+const StringPrototypeIndexOfUnbound = String.prototype.indexOf;
+const StringPrototypeReplaceUnbound = String.prototype.replace;
 
 function stripVTControlCharacters(str) {
   if (typeof str !== "string") throw $ERR_INVALID_ARG_TYPE("str", "string", str);
-  return stripAnsiRegExpMatches(str);
+  // All ANSI escape sequences start with ESC (7-bit) or CSI (8-bit).
+  if (
+    StringPrototypeIndexOfUnbound.$call(str, "\u001B") === -1 &&
+    StringPrototypeIndexOfUnbound.$call(str, "\u009B") === -1
+  ) {
+    return str;
+  }
+  // node calls RegExp.prototype[Symbol.replace]. In JavaScriptCore only String.prototype.replace
+  // has the fast path for an untouched RegExp, and the result is the same.
+  return StringPrototypeReplaceUnbound.$call(str, getAnsiRegExp(), "");
 }
 
 // utils

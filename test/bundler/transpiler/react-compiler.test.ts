@@ -3057,6 +3057,295 @@ describe("bundler", () => {
       `,
     },
   });
+
+  // `r.n++` is lowered to a load, an add and a store, and its value was the
+  // load. Nothing read the store, so it printed as a statement. In a callback
+  // the load printed again after it, so `const id = ref.current++` gave the
+  // new value (facebook/react#35205). The load and the store both printed the
+  // object and the key: `get().n++` was `get().n = get().n + 1`, and
+  // `m[i++] += 10` was `m[i++] = m[i++] + 10`. For a string or a BigInt, `+ 1`
+  // is not `++`. A member update and a compound assignment to a member now
+  // print as written, in place.
+  //
+  // A callback runs twice. In client mode every component has to take a memo
+  // cache: without the fix some of these forms are right only because the
+  // compiler gives up on the component.
+  for (const target of ["bun", "browser"] as const) {
+    itBundled(`react-compiler/MemberUpdatePrintsAsWritten-${target}`, {
+      files: {
+        "/entry.ts": /* ts */ `
+          import * as forms from "./forms";
+          import { caches } from "react/compiler-runtime";
+          const results: Record<string, unknown> = {};
+          const withoutCache: string[] = [];
+          for (const [name, Form] of Object.entries(forms)) {
+            const before = caches();
+            try {
+              const children = Form({ n: 2, flag: true, items: [5, 6, 7, 8] }).props.children;
+              results[name] = typeof children === "function" ? [children(), children()] : JSON.parse(children);
+            } catch (e) {
+              results[name] = "threw " + e;
+            }
+            if (caches() === before) withoutCache.push(name);
+          }
+          console.log(JSON.stringify({ results, withoutCache }));
+        `,
+        "/forms.jsx": /* jsx */ `
+          import { useMemo, useRef } from "react";
+
+          const list = (...values) => values;
+          class Made {
+            constructor(order) {
+              order.push("new");
+            }
+          }
+          const call = order => order.push("call");
+          const counter = value => ({
+            value,
+            gets: 0,
+            sets: 0,
+            get n() {
+              this.gets++;
+              return this.value;
+            },
+            set n(value) {
+              this.sets++;
+              this.value = value;
+            },
+          });
+
+          export function EarlierSum(p) {
+            const r = { n: p.n };
+            const a = [r.n + 1, r.n++];
+            return <div>{JSON.stringify([a, r.n])}</div>;
+          }
+          export function EarlierSumThenDecrement(p) {
+            const r = { n: p.n };
+            const a = [r.n + 1, r.n--];
+            return <div>{JSON.stringify([a, r.n])}</div>;
+          }
+          export function ComputedKey(p) {
+            const r = { n: p.n };
+            const k = "n";
+            const a = [r[k] * 2, r[k]++, r[k]];
+            return <div>{JSON.stringify(a)}</div>;
+          }
+          export function Arguments(p) {
+            const r = { n: p.n };
+            const a = list(r.n + 1, r.n++, r.n * 2, r.n++);
+            return <div>{JSON.stringify([a, r.n])}</div>;
+          }
+          export function AfterACompoundAssignment(p) {
+            const o = { n: p.n };
+            const a = list(o.n + 1, (o.n += 2), o.n * 2, o.n++);
+            return <div>{JSON.stringify([a, o.n])}</div>;
+          }
+          export function EarlierNewAndCall(p) {
+            const r = { n: p.n };
+            const order = [];
+            const a = list(new Made(order) instanceof Made, call(order), r.n++);
+            return <div>{JSON.stringify([a, order])}</div>;
+          }
+          export function EarlierLiterals(p) {
+            const r = { n: p.n };
+            const a = [\`k\${r.n}\`, -r.n, { a: r.n + 1 }, [r.n], r.n++, \`k\${r.n}\`];
+            return <div>{JSON.stringify(a)}</div>;
+          }
+          export function EarlierTernaryLogicalOptionalComma(p) {
+            const r = { n: p.n };
+            const a = list(p.flag ? r.n : 0, p.flag && r.n, p.items?.[r.n], (0, r.n + 1), r.n++);
+            return <div>{JSON.stringify(a)}</div>;
+          }
+          export function ValueOfAKeyedStore(p) {
+            const r = { n: p.n };
+            const o = {};
+            o["k" + r.n] = r.n++;
+            return <div>{JSON.stringify([o, r.n])}</div>;
+          }
+          export function JsxAttribute(p) {
+            const r = { n: p.n };
+            const el = <a title={"k" + r.n} id={r.n++} />;
+            return <div>{JSON.stringify([el.props, r.n])}</div>;
+          }
+          export function InLoop(p) {
+            const r = { n: p.n };
+            const out = [];
+            for (const x of [1, 2]) out.push(list(r.n + x, r.n++));
+            return <div>{JSON.stringify(out)}</div>;
+          }
+          export function InTernaryBranch(p) {
+            const r = { n: p.n };
+            const a = p.flag ? list(r.n + 1, r.n++, r.n) : list(r.n--);
+            return <div>{JSON.stringify(a)}</div>;
+          }
+          export function InLogical(p) {
+            const r = { n: p.n };
+            const a = p.flag && r.n++ && list(r.n, r.n++ || 0, r.n);
+            return <div>{JSON.stringify(a)}</div>;
+          }
+          export function WhileTest() {
+            const r = { n: 0 };
+            let turns = 0;
+            while (r.n++ < 3) turns++;
+            return <div>{JSON.stringify([turns, r.n])}</div>;
+          }
+          export function InCallback() {
+            const ref = useRef(0);
+            const next = () => {
+              const id = ref.current++;
+              const key = \`k\${ref.current++}\`;
+              return [id, key, ref.current + 1, ref.current--, ref.current];
+            };
+            return <div>{next}</div>;
+          }
+          export function InImmediatelyInvokedFunction(p) {
+            const r = { n: p.n };
+            const row = (() => {
+              const first = r.n++;
+              return [first, r.n, r.n--, r.n];
+            })();
+            return <div>{JSON.stringify(row)}</div>;
+          }
+          export function InUseMemoCallback(p) {
+            const row = useMemo(() => {
+              const r = { n: p.n };
+              const first = r.n++;
+              return [first, r.n, r.n--, r.n];
+            }, [p.n]);
+            return <div>{JSON.stringify(row)}</div>;
+          }
+          export function TargetRunsOnce(p) {
+            const o = { n: p.n };
+            const log = [];
+            const get = () => (log.push("get"), o);
+            const key = () => (log.push("key"), "n");
+            get().n++;
+            const a = [o.n, get().n++, ++o[key()], o[key()]--, --get()[key()]];
+            return <div>{JSON.stringify([a, o.n, log])}</div>;
+          }
+          export function Accessor(p) {
+            const o = counter(p.n);
+            const a = [o.n++, ++o.n, o.n--];
+            o.n++;
+            return <div>{JSON.stringify([a, o.value, o.gets, o.sets])}</div>;
+          }
+          export function StringAndBigInt(p) {
+            const o = { s: "5", b: BigInt(p.n) };
+            const a = [o.s++, o.s, ++o.s, String(o.b++), String(--o.b)];
+            return <div>{JSON.stringify(a)}</div>;
+          }
+          export function Statements(p) {
+            const r = { n: p.n, m: [1, 2] };
+            r.n++;
+            ++r.n;
+            r.n--;
+            r.m[1]++;
+            for (let i = 0; i < 2; r.n++) r.m[i++]--;
+            return <div>{JSON.stringify([r.n, r.m])}</div>;
+          }
+          export function CompoundAssignmentTargetRunsOnce(p) {
+            const o = { n: p.n };
+            const i = { n: 0 };
+            const m = [5, 6, 7];
+            const log = [];
+            const get = () => (log.push("get"), o);
+            const key = () => (log.push("key"), "n");
+            get().n += 5;
+            o[key()] *= 2;
+            m[i.n++] += 10;
+            const a = [(get()[key()] -= 1), (m[i.n++] **= 2), o.n, i.n];
+            return <div>{JSON.stringify([a, m, log])}</div>;
+          }
+          export function CompoundAssignmentInCallback() {
+            const next = useRef(0);
+            const counts = useRef([0, 0, 0]);
+            const hit = () => {
+              counts.current[next.current++ % 3] += 10;
+              return [...counts.current, next.current];
+            };
+            return <div>{hit}</div>;
+          }
+          // The inlined function runs ahead of the statement, so the load of \`o.n\` gets a name.
+          export function CompoundAssignmentWithANamedLoad(p) {
+            const o = { n: p.n };
+            const v = (o.n += (() => {
+              o.n = 100;
+              return 1;
+            })());
+            return <div>{JSON.stringify([v, o.n])}</div>;
+          }
+          // A later operand that has its own memo block does not move the update.
+          export function LaterOperandIsMemoized(p) {
+            const r = { n: p.n };
+            const a = list(r.n, r.n++, [p.items], r.n);
+            return <div>{JSON.stringify(a)}</div>;
+          }
+        `,
+        "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+        "/node_modules/react/index.js": /* js */ `
+          export const useRef = current => ({ current });
+          export const useMemo = compute => compute();
+        `,
+        "/node_modules/react/jsx-runtime.js": /* js */ `
+          export const jsx = (type, props) => ({ type, props });
+          export const jsxs = jsx;
+        `,
+        "/node_modules/react/jsx-dev-runtime.js": /* js */ `
+          export const jsxDEV = (type, props) => ({ type, props });
+        `,
+        "/node_modules/react/compiler-runtime.js": /* js */ `
+          let count = 0;
+          export const caches = () => count;
+          export function c(size) {
+            count++;
+            return new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+          }
+        `,
+      },
+      reactCompiler: true,
+      backend: "cli",
+      target,
+      run: {
+        validate({ stdout }) {
+          const { results, withoutCache } = JSON.parse(stdout);
+          expect(results).toEqual({
+            EarlierSum: [[3, 2], 3],
+            EarlierSumThenDecrement: [[3, 2], 1],
+            ComputedKey: [4, 2, 3],
+            Arguments: [[3, 2, 6, 3], 4],
+            AfterACompoundAssignment: [[3, 4, 8, 4], 5],
+            // prettier-ignore
+            EarlierNewAndCall: [[true, 2, 2], ["new", "call"]],
+            EarlierLiterals: ["k2", -2, { a: 3 }, [2], 2, "k3"],
+            EarlierTernaryLogicalOptionalComma: [2, 2, 7, 3, 2],
+            ValueOfAKeyedStore: [{ k2: 2 }, 3],
+            JsxAttribute: [{ title: "k2", id: 2 }, 3],
+            // prettier-ignore
+            InLoop: [[3, 2], [5, 3]],
+            InTernaryBranch: [3, 2, 3],
+            InLogical: [3, 3, 4],
+            WhileTest: [3, 4],
+            // prettier-ignore
+            InCallback: [[0, "k1", 3, 2, 1], [1, "k2", 4, 3, 2]],
+            InImmediatelyInvokedFunction: [2, 3, 3, 2],
+            InUseMemoCallback: [2, 3, 3, 2],
+            TargetRunsOnce: [[3, 3, 5, 5, 3], 3, ["get", "get", "key", "key", "get", "key"]],
+            Accessor: [[2, 4, 4], 4, 4, 4],
+            StringAndBigInt: [5, 6, 7, "2", "2"],
+            Statements: [5, [0, 2]],
+            // prettier-ignore
+            CompoundAssignmentTargetRunsOnce: [[13, 36, 13, 2], [15, 36, 7], ["get", "key", "get", "key"]],
+            // prettier-ignore
+            CompoundAssignmentInCallback: [[10, 0, 0, 1], [10, 10, 0, 2]],
+            CompoundAssignmentWithANamedLoad: [3, 3],
+            LaterOperandIsMemoized: [2, 2, [[5, 6, 7, 8]], 3],
+          });
+          // The ssr output has no memo cache at all.
+          expect(withoutCache).toEqual(target === "browser" ? [] : Object.keys(results));
+        },
+      },
+    });
+  }
 });
 
 // Three passes kept one copy of their work per basic block or per nesting

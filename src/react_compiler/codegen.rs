@@ -38,9 +38,9 @@ use crate::hir::reactive::{
 use crate::hir::{
     ArrayElement, ArrayPattern, BlockId, DeclarationId, FunctionExpressionType, HirVec,
     IdentifierId, IdentifierName, InstructionKind, InstructionValue, JsxAttribute, JsxTag,
-    LogicalOperator, NonLocalKind, ObjectPattern, ObjectPropertyKey, ObjectPropertyOrSpread,
-    ObjectPropertyType, ParamPattern, Pattern, Place, PlaceOrSpread, PrimitiveValue,
-    PropertyLiteral, ScopeId,
+    LogicalOperator, MemberUpdate, NonLocalKind, ObjectPattern, ObjectPropertyKey,
+    ObjectPropertyOrSpread, ObjectPropertyType, ParamPattern, Pattern, Place, PlaceOrSpread,
+    PrimitiveValue, PropertyLiteral, ScopeId,
 };
 use crate::reactive_scopes::visitors::{ReactiveFunctionVisitor, visit_reactive_function};
 use crate::reactive_scopes::{
@@ -1971,18 +1971,12 @@ fn codegen_base_instruction_value(
             object,
             property,
             value,
+            update,
             ..
         } => {
             let obj = codegen_place_to_expression(cx, object)?;
-            let val = codegen_place_to_expression(cx, value)?;
-            Ok(Expr::init(
-                E::Binary {
-                    op: OpCode::BinAssign,
-                    left: property_access_expr(obj, property, loc, None),
-                    right: val,
-                },
-                loc,
-            ))
+            let target = property_access_expr(obj, property, loc, None);
+            codegen_member_store(cx, target, value, *update, loc)
         }
         InstructionValue::PropertyDelete {
             object, property, ..
@@ -2017,27 +2011,21 @@ fn codegen_base_instruction_value(
             object,
             property,
             value,
+            update,
             ..
         } => {
             let obj = codegen_place_to_expression(cx, object)?;
             let prop = codegen_place_to_expression(cx, property)?;
-            let val = codegen_place_to_expression(cx, value)?;
-            Ok(Expr::init(
-                E::Binary {
-                    op: OpCode::BinAssign,
-                    left: Expr::init(
-                        E::Index {
-                            target: obj,
-                            index: prop,
-                            optional_chain: None,
-                            is_import_property_use: false,
-                        },
-                        loc,
-                    ),
-                    right: val,
+            let target = Expr::init(
+                E::Index {
+                    target: obj,
+                    index: prop,
+                    optional_chain: None,
+                    is_import_property_use: false,
                 },
                 loc,
-            ))
+            );
+            codegen_member_store(cx, target, value, *update, loc)
         }
         InstructionValue::ComputedDelete {
             object, property, ..
@@ -3186,6 +3174,80 @@ fn convert_update_operator(op: crate::hir::UpdateOperator, prefix: bool) -> OpCo
         (U::Decrement, true) => OpCode::UnPreDec,
         (U::Decrement, false) => OpCode::UnPostDec,
     }
+}
+
+/// `target = value`, or the source expression of the store. Not in upstream: see `MemberUpdate`.
+fn codegen_member_store(
+    cx: &mut Context,
+    target: Expr,
+    value: &Place,
+    update: Option<MemberUpdate>,
+    loc: Loc,
+) -> Result<Expr, CompilerError> {
+    if let Some(MemberUpdate::UpdateExpression { operation, prefix }) = update {
+        return Ok(Expr::init(
+            E::Unary {
+                op: convert_update_operator(operation, prefix),
+                value: target,
+                flags: E::UnaryFlags::empty(),
+            },
+            loc,
+        ));
+    }
+    let val = codegen_place_to_expression(cx, value)?;
+    if let Some(MemberUpdate::AssignmentExpression { operator }) = update
+        && let ExprData::EBinary(binary) = val.data
+        && binary.op == convert_binary_operator(operator)
+        // `target op= right` loads `target` where it prints. A load that has a name ran ahead of
+        // a statement in `right`, so only a load that is still inline may move into `target`.
+        && matches!(binary.left.data, ExprData::EDot(_) | ExprData::EIndex(_))
+        && let Some(op) = convert_compound_assignment_operator(operator)
+    {
+        return Ok(Expr::init(
+            E::Binary {
+                op,
+                left: target,
+                right: binary.right,
+            },
+            loc,
+        ));
+    }
+    Ok(Expr::init(
+        E::Binary {
+            op: OpCode::BinAssign,
+            left: target,
+            right: val,
+        },
+        loc,
+    ))
+}
+
+fn convert_compound_assignment_operator(op: crate::hir::BinaryOperator) -> Option<OpCode> {
+    use crate::hir::BinaryOperator as B;
+    Some(match op {
+        B::ShiftLeft => OpCode::BinShlAssign,
+        B::ShiftRight => OpCode::BinShrAssign,
+        B::UnsignedShiftRight => OpCode::BinUShrAssign,
+        B::Add => OpCode::BinAddAssign,
+        B::Subtract => OpCode::BinSubAssign,
+        B::Multiply => OpCode::BinMulAssign,
+        B::Divide => OpCode::BinDivAssign,
+        B::Modulo => OpCode::BinRemAssign,
+        B::Exponent => OpCode::BinPowAssign,
+        B::BitwiseOr => OpCode::BinBitwiseOrAssign,
+        B::BitwiseXor => OpCode::BinBitwiseXorAssign,
+        B::BitwiseAnd => OpCode::BinBitwiseAndAssign,
+        B::Equal
+        | B::NotEqual
+        | B::StrictEqual
+        | B::StrictNotEqual
+        | B::LessThan
+        | B::LessEqual
+        | B::GreaterThan
+        | B::GreaterEqual
+        | B::In
+        | B::InstanceOf => return None,
+    })
 }
 
 // =============================================================================

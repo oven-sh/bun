@@ -1797,11 +1797,11 @@ extern "C" bool WebSocket__rejectUnauthorized(WebCore::WebSocket* webSocket)
     return webSocket->rejectUnauthorized();
 }
 
-// The Rust half of the context of the script that made the WebSocket (null: the realm's own).
+// The Rust half of the context of the script that made the WebSocket; null for the realm's own
+// context, which has none. Called from connect(), which has the context.
 extern "C" void* WebSocket__bunContext(WebCore::WebSocket* webSocket)
 {
-    auto* context = webSocket->scriptExecutionContext();
-    return context ? context->bunContext() : nullptr;
+    return webSocket->scriptExecutionContext()->bunContext();
 }
 
 // The native client keeps this object (and its wrapper) alive across work it has queued that will

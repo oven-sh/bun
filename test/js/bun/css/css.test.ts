@@ -5702,6 +5702,18 @@ describe("css tests", () => {
     minify_test("::foo(bar) { color: yellow }", "::foo(bar){color:#ff0}");
     minify_test("::foo(*) { color: yellow }", "::foo(*){color:#ff0}");
 
+    minify_test("my-el:state(checked) { color: red }", "my-el:state(checked){color:red}");
+    minify_test("my-el:STATE(checked) { color: red }", "my-el:state(checked){color:red}");
+    minify_test(".foo::highlight(search) { background: yellow }", ".foo::highlight(search){background:#ff0}");
+    minify_test(".foo::target-text { background: yellow }", ".foo::target-text{background:#ff0}");
+    minify_test(".foo::search-text { background: yellow }", ".foo::search-text{background:#ff0}");
+    minify_test(".foo::spelling-error { color: red }", ".foo::spelling-error{color:red}");
+    minify_test(".foo::grammar-error { color: green }", ".foo::grammar-error{color:green}");
+    minify_test(
+      ".foo::Spelling-Error, .foo::GRAMMAR-ERROR { color: red }",
+      ".foo::spelling-error,.foo::grammar-error{color:red}",
+    );
+
     minify_test(":is(.foo) { color: yellow }", ".foo{color:#ff0}");
     minify_test(":is(#foo) { color: yellow }", "#foo{color:#ff0}");
     minify_test("a:is(.foo) { color: yellow }", "a.foo{color:#ff0}");
@@ -7691,6 +7703,45 @@ describe("css tests", () => {
     minify_test("@font-palette-values --x{override-colors:-1 red}", "@font-palette-values --x{override-colors:-1 red}");
     // Fuzzer-minimized input: unterminated block with an overflowing index.
     minify_test("@font-palette-values --{base-palette:99999", "@font-palette-values --{base-palette:99999}");
+  });
+
+  describe("font-feature-values", () => {
+    minify_test(
+      "@font-feature-values Font One { @styleset { nice-style: 12 } }",
+      "@font-feature-values Font One{@styleset{nice-style:12}}",
+    );
+    minify_test(
+      '@font-feature-values Font One, "Font Two" { @swash { swishy: 1 } @styleset { a: 1 2 } @swash { b: 2 } }',
+      "@font-feature-values Font One,Font Two{@swash{swishy:1;b:2}@styleset{a:1 2}}",
+    );
+    minify_test(
+      "@font-feature-values Font One { @STYLESET { x: 1 } }",
+      "@font-feature-values Font One{@styleset{x:1}}",
+    );
+    minify_test("@font-feature-values Font One {}", "@font-feature-values Font One{}");
+    minify_test(
+      `@font-feature-values "Fancy Font Name" {
+        @styleset { cursive: 1; swoopy: 7 16; }
+        @character-variant { ampersand: 1; capital-q: 2; }
+      }`,
+      "@font-feature-values Fancy Font Name{@styleset{cursive:1;swoopy:7 16}@character-variant{ampersand:1;capital-q:2}}",
+    );
+    minify_test(
+      "@font-feature-values foo { @swash { pretty: 0; pretty: 1; cool: 2; } }",
+      "@font-feature-values foo{@swash{pretty:1;cool:2}}",
+    );
+    minify_test(
+      "@font-feature-values foo { @swash { pretty: 1; } @swash { cool: 2; } }",
+      "@font-feature-values foo{@swash{pretty:1;cool:2}}",
+    );
+  });
+
+  describe("position-try", () => {
+    minify_test(
+      "@position-try --flip { top: anchor(bottom); inset-area: bottom }",
+      "@position-try --flip{top:anchor(bottom);inset-area:bottom}",
+    );
+    minify_test("@position-try --x { margin: 0 0 0 0 }", "@position-try --x{margin:0}");
   });
 
   describe("grid-template-areas", () => {

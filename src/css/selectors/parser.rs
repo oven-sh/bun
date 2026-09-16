@@ -991,6 +991,12 @@ pub enum PseudoClass {
     /// The [:autofill](https://html.spec.whatwg.org/multipage/semantics-other.html#selector-autofill) pseudo class.
     Autofill(css::VendorPrefix),
 
+    /// The [:state()](https://html.spec.whatwg.org/multipage/custom-elements.html#custom-state-pseudo-class) pseudo class for custom element states.
+    State {
+        /// The custom state identifier.
+        state: CustomIdent,
+    },
+
     // CSS modules
     /// The CSS modules :local() pseudo class.
     Local {
@@ -1222,7 +1228,7 @@ impl<'a> SelectorParser<'a> {
         // `::View-Transition-Group(..)` fall through to `CustomFunction`,
         // so look up `name` verbatim with no case folding.
         //
-        // PERF: 8 entries with near-unique lengths (3/6/10/19/19/21/26/30) —
+        // PERF: 9 entries with near-unique lengths (3/6/9/10/19/19/21/26/30) —
         // a length-gated `match` rejects the overwhelmingly-common miss path
         // (unknown `::-webkit-foo(...)` etc.) on a single `usize` compare,
         // versus a hash lookup's hash + table load + slice compare. Only
@@ -1239,6 +1245,11 @@ impl<'a> SelectorParser<'a> {
             6 if name == b"picker" => {
                 return Ok(PseudoElement::PickerFunction {
                     identifier: Ident::parse(input)?,
+                });
+            }
+            9 if name == b"highlight" => {
+                return Ok(PseudoElement::HighlightFunction {
+                    name: CustomIdent::parse(input)?,
                 });
             }
             10 if name == b"cue-region" => {
@@ -1362,6 +1373,9 @@ impl<'a> SelectorParser<'a> {
             },
             b"dir" => PseudoClass::Dir {
                 direction: Direction::parse(parser)?,
+            },
+            b"state" => PseudoClass::State {
+                state: CustomIdent::parse(parser)?,
             },
             b"local" if self.options.css_modules.is_some() => PseudoClass::Local {
                 selector: Box::new(Selector::parse(self, parser)?),
@@ -1565,6 +1579,10 @@ fn lookup_pseudo_element(name: &[u8]) -> Option<PseudoElement> {
         b"details-content" => PE::DetailsContent,
         b"picker-icon" => PE::PickerIcon,
         b"checkmark" => PE::Checkmark,
+        b"target-text" => PE::TargetText,
+        b"search-text" => PE::SearchText,
+        b"spelling-error" => PE::SpellingError,
+        b"grammar-error" => PE::GrammarError,
         _ => return None,
     } })
 }
@@ -2988,6 +3006,19 @@ pub enum PseudoElement {
         /// The identifier argument, e.g. `select` in `::picker(select)`.
         identifier: Ident,
     },
+    /// The [::target-text](https://drafts.csswg.org/css-pseudo-4/#selectordef-target-text) pseudo element.
+    TargetText,
+    /// The [::search-text](https://drafts.csswg.org/css-pseudo-4/#selectordef-search-text) pseudo element.
+    SearchText,
+    /// The [::spelling-error](https://drafts.csswg.org/css-pseudo-4/#selectordef-spelling-error) pseudo element.
+    SpellingError,
+    /// The [::grammar-error](https://drafts.csswg.org/css-pseudo-4/#selectordef-grammar-error) pseudo element.
+    GrammarError,
+    /// The [::highlight()](https://drafts.csswg.org/css-highlight-api/#custom-highlight-pseudo) functional pseudo element.
+    HighlightFunction {
+        /// A custom highlight name.
+        name: CustomIdent,
+    },
     /// An unknown pseudo element.
     Custom {
         /// The name of the pseudo element.
@@ -3123,6 +3154,11 @@ impl fmt::Display for PseudoElement {
             Self::PickerIcon => "picker_icon",
             Self::Checkmark => "checkmark",
             Self::PickerFunction { .. } => "picker_function",
+            Self::TargetText => "target_text",
+            Self::SearchText => "search_text",
+            Self::SpellingError => "spelling_error",
+            Self::GrammarError => "grammar_error",
+            Self::HighlightFunction { .. } => "highlight_function",
             Self::Custom { .. } => "custom",
             Self::CustomFunction { .. } => "custom_function",
         })

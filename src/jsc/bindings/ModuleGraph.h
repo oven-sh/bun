@@ -110,6 +110,8 @@ public:
 };
 
 void initJSModuleGraphClassStructure(JSC::LazyClassStructure::Initializer&);
+// new Bun.ModuleGraph({ globals, onError }) for native code, made in the current context. Null with an exception thrown.
+JSModuleGraph* createModuleGraph(Zig::GlobalObject*, JSC::JSObject* globals, JSC::JSObject* onError);
 JSC::Structure* createModuleGraphFrameStructure(JSC::VM&, JSC::JSGlobalObject*);
 
 // ── Which graph ──────────────────────────────────────────────────────────────────────

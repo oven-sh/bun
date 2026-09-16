@@ -25,6 +25,7 @@
 #include <JavaScriptCore/JSObjectInlines.h>
 #include "headers.h"
 #include "BunObject.h"
+#include "DurableObject.h"
 #include "webcore/streams/BunStreamConsumers.h"
 #include "WebCoreJSBuiltins.h"
 #include <JavaScriptCore/JSObject.h>
@@ -99,6 +100,8 @@ static JSValue BunObject_lazyPropCb_wrap_ArrayBufferSink(VM& vm, JSObject* bunOb
 static JSValue constructCookieObject(VM& vm, JSObject* bunObject);
 static JSValue constructCookieMapObject(VM& vm, JSObject* bunObject);
 static JSValue constructModuleGraphObject(VM& vm, JSObject* bunObject);
+static JSValue constructDurableObjectClass(VM& vm, JSObject* bunObject);
+static JSValue constructDurableObjectNamespaceClass(VM& vm, JSObject* bunObject);
 static JSValue constructSecretsObject(VM& vm, JSObject* bunObject);
 static JSValue constructWebViewObject(VM& vm, JSObject* bunObject);
 
@@ -921,6 +924,8 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     Cookie                                         constructCookieObject                                               DontDelete|ReadOnly|PropertyCallback
     CookieMap                                      constructCookieMapObject                                            DontDelete|ReadOnly|PropertyCallback
     CryptoHasher                                   BunObject_lazyPropCb_wrap_CryptoHasher                              DontDelete|PropertyCallback
+    DurableObject                                  constructDurableObjectClass                                         DontDelete|ReadOnly|PropertyCallback
+    DurableObjectNamespace                         constructDurableObjectNamespaceClass                                DontDelete|ReadOnly|PropertyCallback
     FFI                                            BunObject_lazyPropCb_wrap_FFI                                       DontDelete|PropertyCallback
     FetchSession                                   BunObject_lazyPropCb_wrap_FetchSession                              DontDelete|PropertyCallback
     FileSystemRouter                               BunObject_lazyPropCb_wrap_FileSystemRouter                          DontDelete|PropertyCallback
@@ -1125,6 +1130,16 @@ static JSValue constructCookieMapObject(VM& vm, JSObject* bunObject)
 {
     auto* zigGlobalObject = uncheckedDowncast<Zig::GlobalObject>(bunObject->globalObject());
     return WebCore::JSCookieMap::getConstructor(vm, zigGlobalObject);
+}
+
+static JSValue constructDurableObjectClass(VM& vm, JSObject* bunObject)
+{
+    return Bun::durableObjectConstructor(uncheckedDowncast<Zig::GlobalObject>(bunObject->globalObject()));
+}
+
+static JSValue constructDurableObjectNamespaceClass(VM& vm, JSObject* bunObject)
+{
+    return Bun::durableObjectNamespaceConstructor(uncheckedDowncast<Zig::GlobalObject>(bunObject->globalObject()));
 }
 
 static JSValue constructModuleGraphObject(VM& vm, JSObject* bunObject)

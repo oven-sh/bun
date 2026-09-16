@@ -891,6 +891,16 @@ JSC_HOST_CALL_ATTRIBUTES EncodedJSValue JSModuleGraphConstructor::construct(JSGl
     return JSValue::encode(JSModuleGraph::create(vm, globalObject, structure, loader, overlayShape, onError, currentModuleGraph(globalObject)));
 }
 
+JSModuleGraph* createModuleGraph(Zig::GlobalObject* globalObject, JSObject* globals, JSObject* onError)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    unsigned overlayShape = 0;
+    JSModuleLoader* loader = createModuleGraphLoader(globalObject, globals, overlayShape);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    return JSModuleGraph::create(vm, globalObject, globalObject->JSModuleGraphStructure(), loader, overlayShape, onError, currentModuleGraph(globalObject));
+}
+
 void initJSModuleGraphClassStructure(LazyClassStructure::Initializer& init)
 {
     auto* prototype = JSModuleGraphPrototype::create(init.vm, init.global, JSModuleGraphPrototype::createStructure(init.vm, init.global, init.global->objectPrototype()));

@@ -62,6 +62,8 @@ const errors: ErrorCodeMapping = [
   ["ERR_DIR_CLOSED", Error],
   ["ERR_DLOPEN_DISABLED", Error],
   ["ERR_DLOPEN_FAILED", Error],
+  ["ERR_DURABLE_OBJECT_RESET", Error],
+  ["ERR_DURABLE_OBJECT_STORAGE_IN_USE", Error],
   ["ERR_DNS_SET_SERVERS_FAILED", Error],
   ["ERR_ENCODING_INVALID_ENCODED_DATA", TypeError],
   ["ERR_ENCODING_NOT_SUPPORTED", RangeError],

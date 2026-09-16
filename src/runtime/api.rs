@@ -39,6 +39,8 @@ pub mod crash_handler_jsc;
 pub mod cron;
 #[path = "api/cron_parser.rs"]
 pub mod cron_parser;
+#[path = "api/durable_object.rs"]
+pub mod durable_object;
 #[path = "api/csrf_jsc.rs"]
 pub mod csrf_jsc;
 #[path = "api/filesystem_router.rs"]

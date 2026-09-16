@@ -301,6 +301,54 @@ for (const [name, copy] of impls) {
       });
     });
 
+    for (const withLinks of [false, true]) {
+      test.skipIf(isWindows)(
+        `recursive - the default copy and the walker give the same tree${withLinks ? " (with symlinks)" : ""}`,
+        async () => {
+          // A `filter` always takes the node-ported walker. The default options
+          // take the native copy where it applies.
+          await using basename = tempDir("cp", {
+            "from/a.txt": "a",
+            "from/empty.txt": "",
+            "from/bin/run.sh": "#!/bin/sh\n",
+            "from/nested/deep/er/f.txt": "f",
+            "from/private/secret.txt": "s",
+          });
+          const from = join(basename, "from");
+          fs.mkdirSync(join(from, "empty-dir"));
+          fs.chmodSync(join(from, "bin", "run.sh"), 0o755);
+          fs.chmodSync(join(from, "private", "secret.txt"), 0o600);
+          fs.chmodSync(join(from, "private"), 0o700);
+          fs.chmodSync(join(from, "nested", "deep"), 0o750);
+          if (withLinks) {
+            fs.symlinkSync("a.txt", join(from, "rel-link"));
+            fs.symlinkSync(join("nested", "deep") + "/", join(from, "dir-link"));
+            fs.symlinkSync(join(from, "a.txt"), join(from, "abs-link"));
+            fs.symlinkSync("missing", join(from, "nested", "dangling"));
+          }
+
+          function snapshot(root: string) {
+            const tree: Record<string, unknown> = { ".": fs.statSync(root).mode & 0o7777 };
+            for (const name of (fs.readdirSync(root, { recursive: true }) as string[]).sort()) {
+              const stat = fs.lstatSync(join(root, name));
+              const mode = stat.mode & 0o7777;
+              if (stat.isSymbolicLink()) tree[name] = { link: fs.readlinkSync(join(root, name)) };
+              else if (stat.isDirectory()) tree[name] = { dir: mode };
+              else tree[name] = { file: mode, content: fs.readFileSync(join(root, name), "utf8") };
+            }
+            return tree;
+          }
+
+          await copy(from, join(basename, "default"), { recursive: true });
+          await copy(from, join(basename, "walker"), { recursive: true, filter: () => true });
+
+          const walker = snapshot(join(basename, "walker"));
+          expect(walker["private"]).toEqual({ dir: 0o700 });
+          expect(snapshot(join(basename, "default"))).toEqual(walker);
+        },
+      );
+    }
+
     test.skipIf(isWindows)("recursive - an existing empty destination keeps its mode", async () => {
       // node only sets the mode of a directory it creates (verified against
       // fs.promises.cp in node v26.3.0).
@@ -735,6 +783,66 @@ describe.skipIf(isWindows).each(["cp", "cpSync"] as const)(
     });
   },
 );
+
+// An empty destination has to fail the way node's walker fails it: mkdir("")
+// -> ENOENT, with nothing created. (node's cpSync alone reports whatever
+// std::filesystem::create_directories("") says in its C++ copy, EINVAL on Linux
+// and ESRCH on Windows; given a filter it walks in JS and reports ENOENT/mkdir
+// like its async forms do everywhere.)
+// On macOS a directory source takes the native recursive copy, which rebuilds
+// its destination from a stack buffer; an empty operand used to be returned
+// without ever being copied into that buffer, so the tree was copied to
+// whatever bytes the buffer happened to hold. The copies run in a child so ""
+// resolves against a throwaway cwd, and the listing afterwards proves the cwd
+// is untouched.
+test("empty destination is rejected with ENOENT and creates nothing", async () => {
+  using dir = tempDir("cp-empty-dest", {
+    "d/f": "f",
+    "d/sub/g": "g",
+    "file": "file",
+  });
+  const script = `
+    const fs = require("fs");
+    const shape = e => ({ code: e.code, syscall: e.syscall });
+    const forms = {
+      cpSync: (src, opts) => { try { fs.cpSync(src, "", opts); } catch (e) { return shape(e); } },
+      "promises.cp": (src, opts) => fs.promises.cp(src, "", opts).then(() => undefined, shape),
+      cp: (src, opts) => new Promise(resolve => fs.cp(src, "", opts, e => resolve(e ? shape(e) : undefined))),
+    };
+    (async () => {
+      const results = {};
+      for (const src of ["d", "file"]) {
+        for (const name in forms) {
+          results[name + "(" + src + ")"] = (await forms[name](src, { recursive: true })) ?? "resolved";
+        }
+      }
+      console.log(JSON.stringify({ results, cwd: fs.readdirSync(".", { recursive: true }) }));
+    })();
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const { results, cwd } = JSON.parse(stdout);
+  // Single-file copies report whichever syscall hit "" on that platform (mkdir
+  // of its parent on Linux, copyfile on Windows), so only the code is pinned
+  // for them.
+  expect({ ...results, cwd: cwd.map((entry: string) => entry.replaceAll("\\", "/")).sort() }).toEqual({
+    "cpSync(d)": { code: "ENOENT", syscall: "mkdir" },
+    "promises.cp(d)": { code: "ENOENT", syscall: "mkdir" },
+    "cp(d)": { code: "ENOENT", syscall: "mkdir" },
+    "cpSync(file)": { code: "ENOENT", syscall: expect.any(String) },
+    "promises.cp(file)": { code: "ENOENT", syscall: expect.any(String) },
+    "cp(file)": { code: "ENOENT", syscall: expect.any(String) },
+    cwd: ["d", "d/f", "d/sub", "d/sub/g", "file"],
+  });
+  expect(exitCode).toBe(0);
+});
 
 // fs.promises.cp recursive: when one SingleTask copy fails while siblings are
 // still in flight on the thread pool, the parent AsyncCpTask must not be

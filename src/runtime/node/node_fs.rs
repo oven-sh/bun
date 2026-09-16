@@ -456,10 +456,7 @@ fn directory_exists_at_os_path(dir: FD, path: &OSPathSliceZ) -> Maybe<bool> {
     }
 }
 
-/// The mode `fs.cp` gives a directory it created: node ends every such
-/// directory with `chmod(dest, srcStat.mode)`. `None` when the mode `mkdir`
-/// gave it already matches, which only Windows can tell (libuv's `chmod`
-/// there toggles nothing but the read-only attribute).
+/// The source directory's mode, for a directory `fs.cp` created. `None`: Windows `chmod` only sets read-only.
 fn cp_created_dir_mode(src_dir: FD) -> Option<Mode> {
     let mode = sys::fstat(src_dir).ok()?.st_mode as Mode;
     if cfg!(windows) && mode & (sys::S::IWUSR as Mode) != 0 {
@@ -468,8 +465,7 @@ fn cp_created_dir_mode(src_dir: FD) -> Option<Mode> {
     Some(mode & 0o7777)
 }
 
-/// Best effort, like the `fchmod` of a copied file: exFAT and some network
-/// mounts refuse `chmod`, and the copy itself is complete.
+/// Best effort, like the `fchmod` of a copied file: exFAT and some network mounts refuse `chmod`.
 fn cp_chmod_created_dir(path: &OSPathSliceZ, mode: Mode) {
     #[cfg(not(windows))]
     let _ = Syscall::chmod(path, mode);
@@ -1407,10 +1403,7 @@ mod _async_tasks {
         /// enqueued once the count reaches zero, so subtasks still running on the
         /// thread pool never dereference a freed parent.
         pub(crate) subtask_count: AtomicUsize,
-        /// Directories this copy created, as NUL-terminated `dest` paths in the
-        /// order the scan met them, with the mode node gives each one. A mode
-        /// without `w` or `x` would fail the subtasks still copying into the
-        /// directory, so the last `on_subtask_done` applies them all.
+        /// NUL-terminated `dest` and mode of each directory created; set last, so a mode without `w` fails no subtask.
         created_dirs: bun_threading::Guarded<Vec<(Box<[OSPathChar]>, Mode)>>,
         /// BACKREF — `Some` iff `IS_SHELL`. The shell `ShellCpTask` owns and
         /// outlives this task; `ParentRef` gives a safe `&ShellCpTask` projection
@@ -2015,8 +2008,6 @@ mod _async_tasks {
                             this_ref.finish_concurrently(err);
                             return false;
                         }
-                        // EACCES and EPERM can come from one entry of the tree: the
-                        // per-entry copy below copies the rest and names that entry.
                         // Other errors may be due to clonefile() not being supported
                         // We'll fall back to other implementations
                         _ => {}
@@ -7994,10 +7985,7 @@ impl NodeFS {
         Self::os_path_into_buf(&mut self.sync_error_buf, slice)
     }
 
-    /// node's `cp` stats an entry, then copies a file with `copyFile`, which
-    /// reports every failure as `copyfile 'src' -> 'dest'`. An entry that cannot
-    /// be reached (no search permission on its directory) fails the stat
-    /// first. A link keeps its syscall.
+    /// The error node's `cp` reports for an entry: the `lstat` failure if it cannot be reached, else `copyfile`.
     fn cp_entry_error(
         &mut self,
         err: sys::Error,
@@ -8139,11 +8127,11 @@ impl NodeFS {
                 src.as_bytes(),
             ) {
                 match err.get_errno() {
-                    // `errno_sys_p` already boxed
-                    // `src.as_bytes()` into the inner `Error::path`, so just propagate.
-                    E::ENAMETOOLONG | E::EROFS | E::EINVAL => return err,
-                    // EACCES and EPERM can come from one entry of the tree: the
-                    // per-entry copy below copies the rest and names that entry.
+                    E::ENAMETOOLONG | E::EROFS | E::EINVAL => {
+                        // `errno_sys_p` already boxed
+                        // `src.as_bytes()` into the inner `Error::path`, so just propagate.
+                        return err;
+                    }
                     // Other errors may be due to clonefile() not being supported
                     // We'll fall back to other implementations
                     _ => {}
@@ -9140,8 +9128,7 @@ pub(crate) trait MkdirCtx {
 }
 impl MkdirCtx for () {}
 
-/// Whether a recursive mkdir created the directory `fs.cp` asked for, or
-/// found it there. node only sets the mode of a directory it created.
+/// Whether a recursive mkdir created the directory it was asked for: node only sets the mode of those.
 struct CpDestDirCreated {
     len: usize,
     created: core::cell::Cell<bool>,

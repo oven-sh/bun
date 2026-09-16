@@ -248,11 +248,7 @@ function checkParentPathsSync(src, srcStat, dest) {
   return checkParentPathsSync(src, srcStat, destParent);
 }
 
-// The native copy has no filter, dereference, timestamp or verbatim link
-// support, and it ignores `mode`. COPYFILE_FICLONE_FORCE is the only mode bit
-// that changes the result: the copy must fail where a clone is not possible.
-// `force` and `errorOnExist` only matter for an entry that exists at the
-// destination, so tryNativeFastPath decides those from what is there.
+// The native copy ignores `mode`, and only COPYFILE_FICLONE_FORCE changes the result (it must fail without a clone).
 function nativeHonorsOptions(opts) {
   return (
     !opts.filter &&
@@ -263,25 +259,16 @@ function nativeHonorsOptions(opts) {
   );
 }
 
-// The native recursive copy on Windows fails on paths longer than MAX_PATH.
-// The walker copies them.
+// The native tree copy on Windows fails on paths longer than MAX_PATH.
 const nativeCopiesTrees = process.platform !== "win32";
 
-// node rewrites a relative symlink target against the source tree. The native
-// copy does the same where it recreates the link itself. clonefile() on macOS
-// keeps the target as written, and the Windows copy resolves it to the end.
+// Elsewhere the native copy rewrites a relative link target against the source tree, like node.
 const nativeResolvesSymlinks = process.platform !== "darwin" && process.platform !== "win32";
 
-// The native copy recurses once per directory level, with a readdir buffer
-// in each frame, on a 4 MB thread stack. The walker has no such limit.
+// The native copy recurses once per directory level on a 4 MB thread stack.
 const kNativeMaxDepth = 64;
 
-// The native recursive copy is only node-equivalent for some trees. node
-// raises ERR_FS_CP_SOCKET / ERR_FS_CP_FIFO_PIPE for special files, and the
-// native copy handles symlinks like node only when `nativeResolvesSymlinks`.
-// Any other entry bails to the ported walker, and so does a tree deeper than
-// `kNativeMaxDepth`. Scan errors also bail so the walker surfaces them the way
-// node would.
+// False for a tree the walker has to copy: special files (node's ERR_FS_CP_* errors), scan errors, too deep.
 function nativeCanCopyTreeSync(root) {
   let dirs = [root];
   for (let depth = 0; dirs.length; depth++) {
@@ -333,30 +320,18 @@ function tryNativeFastPathSync(src, dest, opts) {
     });
   }
   if (srcStat.isDirectory()) {
-    // The native path is one clonefile() per tree on macOS, and far fewer
-    // calls per entry than the walker elsewhere. Only take it when the result
-    // is indistinguishable from node's walker: dest must be missing or empty
-    // (no merge semantics) and the scan must find nothing the native copy
-    // treats differently. node rejects an existing dest directory, empty or
-    // not, when `errorOnExist` is set without `force`.
-    return {
-      ok:
-        nativeCopiesTrees &&
-        (!destStat || (!(opts.errorOnExist && !opts.force) && isEmptyDirSync(dest))) &&
-        nativeCanCopyTreeSync(src),
-      checked,
-    };
+    // node rejects an existing dest directory, even an empty one, for `errorOnExist` without `force`.
+    const nothingToMerge = !destStat || (!(opts.errorOnExist && !opts.force) && isEmptyDirSync(dest));
+    return { ok: nativeCopiesTrees && nothingToMerge && nativeCanCopyTreeSync(src), checked };
   }
   // The single-file native copy is only node-equivalent for regular-file ->
   // regular-file (or missing dest). Symlinks (node resolves relative link
   // targets) and special files (node-specific error codes) must go through
-  // the ported implementation. So must an existing dest, except with the
-  // default options: node unlinks it first or skips it or raises
-  // ERR_FS_CP_EEXIST, and the native copy overwrites it in place.
-  return {
-    ok: srcStat.isFile() && (!destStat || (opts.force && !opts.errorOnExist && opts.mode === 0 && destStat.isFile())),
-    checked,
-  };
+  // the ported implementation.
+  if (!srcStat.isFile()) return { ok: false, checked };
+  // node unlinks an existing dest first and the native copy overwrites it in place: default options only, as before.
+  const overwrites = opts.force && !opts.errorOnExist && opts.mode === 0;
+  return { ok: !destStat || (overwrites && destStat.isFile()), checked };
 }
 
 function cpSyncFn(src, dest, opts, checked?) {

@@ -122,15 +122,9 @@ async function checkParentPaths(src, srcStat, dest) {
   return checkParentPaths(src, srcStat, destParent);
 }
 
-// The native recursive copy is only node-equivalent for some trees. node
-// raises ERR_FS_CP_SOCKET / ERR_FS_CP_FIFO_PIPE for special files, and the
-// native copy handles symlinks like node only when `nativeResolvesSymlinks`.
-// Any other entry bails to the ported walker, and so does a tree deeper than
-// `kNativeMaxDepth`. Scan errors also bail so the walker surfaces them the way
-// node would. The scan reads one level of the tree at a time,
-// `kScanConcurrency` directories in parallel. Awaiting one readdir per
-// directory takes about four times as long on a large tree.
 const kScanConcurrency = 64;
+
+// False for a tree the walker has to copy: special files (node's ERR_FS_CP_* errors), scan errors, too deep.
 async function nativeCanCopyTree(root) {
   let dirs = [root];
   for (let depth = 0; dirs.length; depth++) {
@@ -188,31 +182,18 @@ async function tryNativeFastPath(src, dest, opts) {
     });
   }
   if (srcStat.isDirectory()) {
-    // The native path copies the files in parallel on the thread pool (on
-    // macOS, one clonefile() per tree). The walker awaits several thread pool
-    // round trips per entry, one entry at a time. Only take the native path
-    // when the result is indistinguishable from node's walker: dest must be
-    // missing or empty (no merge semantics) and the scan must find nothing
-    // the native copy treats differently. node rejects an existing dest
-    // directory, empty or not, when `errorOnExist` is set without `force`.
-    return {
-      ok:
-        nativeCopiesTrees &&
-        (!destStat || (!(opts.errorOnExist && !opts.force) && (await isEmptyDir(dest)))) &&
-        (await nativeCanCopyTree(src)),
-      checked,
-    };
+    // node rejects an existing dest directory, even an empty one, for `errorOnExist` without `force`.
+    const nothingToMerge = !destStat || (!(opts.errorOnExist && !opts.force) && (await isEmptyDir(dest)));
+    return { ok: nativeCopiesTrees && nothingToMerge && (await nativeCanCopyTree(src)), checked };
   }
   // The single-file native copy is only node-equivalent for regular-file ->
   // regular-file (or missing dest). Symlinks (node resolves relative link
   // targets) and special files (node-specific error codes) must go through
-  // the ported implementation. So must an existing dest, except with the
-  // default options: node unlinks it first or skips it or raises
-  // ERR_FS_CP_EEXIST, and the native copy overwrites it in place.
-  return {
-    ok: srcStat.isFile() && (!destStat || (opts.force && !opts.errorOnExist && opts.mode === 0 && destStat.isFile())),
-    checked,
-  };
+  // the ported implementation.
+  if (!srcStat.isFile()) return { ok: false, checked };
+  // node unlinks an existing dest first and the native copy overwrites it in place: default options only, as before.
+  const overwrites = opts.force && !opts.errorOnExist && opts.mode === 0;
+  return { ok: !destStat || (overwrites && destStat.isFile()), checked };
 }
 
 async function cpFn(src, dest, opts, checked?) {

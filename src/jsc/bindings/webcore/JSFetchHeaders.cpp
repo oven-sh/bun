@@ -133,8 +133,8 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSFetchHeadersDOMConstru
     auto init = std::optional<Converter<IDLUnion<IDLSequence<IDLSequence<IDLDOMString>>, IDLRecord<IDLDOMString, IDLDOMString>>>::ReturnType>();
 
     if (argument0.value() && !argument0.value().isUndefined()) {
-        if (auto* existingJsFetchHeaders = dynamicDowncast<JSFetchHeaders>(argument0.value())) {
-            auto newHeaders = FetchHeaders::create(existingJsFetchHeaders->wrapped());
+        if (auto* existingHeaders = JSFetchHeaders::toWrappedAsInit(argument0.value())) {
+            auto newHeaders = FetchHeaders::create(*existingHeaders);
             auto jsValue = toJSNewlyCreated<IDLInterface<FetchHeaders>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTF::move(newHeaders));
             if constexpr (IsExceptionOr<decltype(jsValue)>)
                 RETURN_IF_EXCEPTION(throwScope, {});
@@ -697,4 +697,37 @@ FetchHeaders* JSFetchHeaders::toWrapped(JSC::VM& vm, JSC::JSValue value)
         return &wrapper->wrapped();
     return nullptr;
 }
+
+FetchHeaders* JSFetchHeaders::toWrappedAsInit(JSC::JSValue value)
+{
+    auto* wrapper = dynamicDowncast<JSFetchHeaders>(value);
+    if (!wrapper)
+        return nullptr;
+
+    // The [[Get]] of Symbol.iterator, with no call into user code. Every
+    // `new Response(body, { headers })` runs this, and PropertySlot::VMInquiry measured twice as slow.
+    // An object that can answer from outside its Structure (a Proxy, for example) ends the walk,
+    // and the generic conversion does the real [[Get]].
+    auto& vm = wrapper->vm();
+    for (JSObject* object = wrapper;;) {
+        if (TypeInfo::overridesGetOwnPropertySlot(object->inlineTypeFlags()) || TypeInfo::hasStaticPropertyTable(object->inlineTypeFlags()) || object->structure()->typeInfo().overridesGetPrototype())
+            return nullptr;
+        if (JSValue method = object->getDirect(vm, vm.propertyNames->iteratorSymbol)) {
+            // An accessor is a GetterSetter cell here, so it fails the cast.
+            auto* function = dynamicDowncast<JSFunction>(method);
+            if (!function || !function->isHostFunction() || function->nativeFunction() != TaggedNativeFunction(jsFetchHeadersPrototypeFunction_entries))
+                return nullptr;
+            return &wrapper->wrapped();
+        }
+        JSValue prototype = object->getPrototypeDirect();
+        if (!prototype.isObject())
+            return nullptr;
+        object = asObject(prototype);
+    }
+}
+}
+
+extern "C" WebCore::FetchHeaders* WebCore__FetchHeaders__castAsInit(JSC::EncodedJSValue value)
+{
+    return WebCore::JSFetchHeaders::toWrappedAsInit(JSC::JSValue::decode(value));
 }

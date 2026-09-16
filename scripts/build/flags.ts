@@ -341,6 +341,18 @@ export const globalFlags: Flag[] = [
     when: c => c.asan,
     desc: "AddressSanitizer (also forwarded to deps for ABI consistency)",
   },
+  {
+    // clang's default, `runtime`, gives every function with an instrumented
+    // local a second prologue that moves the frame to ASAN's heap-backed fake
+    // stack when `detect_stack_use_after_return` is on. JSC's conservative GC
+    // scan cannot see a frame there, so `__asan_default_options`
+    // (src/runtime/bin_entry/mod.rs) turns the option off and that prologue
+    // never runs. `never` does not emit it. rust.ts passes the LLVM option
+    // behind this flag to rustc, which has no flag of its own for it.
+    flag: "-fsanitize-address-use-after-return=never",
+    when: c => c.asan,
+    desc: "ASAN: compile out the fake-stack (stack-use-after-return) instrumentation",
+  },
 
   // ─── C++ language behavior ───
   {
@@ -1719,7 +1731,7 @@ export const fileOverrides: FileOverride[] = [
     // disabling the other or clang errors.
     extraFlags: ["-fno-lto", "-fno-whole-program-vtables"],
     when: c => c.linux && c.lto && c.abi === "gnu",
-    desc: "Disable LTO: LLD 21 emits glibc versioned symbols (exp@GLIBC_2.17) into .lto_discard which fails to parse '@'",
+    desc: "Disable LTO: LLD (first seen with 21; not re-checked on 23) emits glibc versioned symbols (exp@GLIBC_2.17) into .lto_discard which fails to parse '@'",
   },
   {
     file: "src/jsc/bindings/windows/rescle.cpp",

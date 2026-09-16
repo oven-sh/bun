@@ -398,7 +398,8 @@ describe("fs.promises.glob on a tree", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    // 8 is the read-ahead window. Each directory of this tree has at most one subdirectory, so no more are in flight.
+    // 8 is the read-ahead window. Below the root a directory has at most one subdirectory, and the walk starts that
+    // one read after the read it awaited has settled, so the count never goes above the window.
     expect(JSON.parse(stdout)).toEqual({ entries: 61, maxInFlight: 8 });
     expect(exitCode).toBe(0);
   });

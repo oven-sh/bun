@@ -317,13 +317,15 @@ pub(crate) fn compile_outlined_fn(
     let (reactive_fn, unique_identifiers) = run_hir_passes(&mut hir, &mut env, context)?;
 
     let mut cg = Codegen::new(host, arena);
-    let codegen_result =
+    let mut codegen_result =
         codegen::codegen_function(&reactive_fn, &mut env, &mut cg, context, unique_identifiers)?;
 
     if env.has_errors() {
         return Err(env.take_errors());
     }
 
+    // The `Ref` that the use site in the component printed.
+    codegen_result.id = codegen_fn.id;
     Ok(codegen_result)
 }
 
@@ -551,7 +553,7 @@ fn run_hir_passes(
     if env.config.enable_function_outlining {
         timed!(
             "OutlineFunctions",
-            crate::optimization::outline_functions(hir, env, &fbt_operands)
+            crate::optimization::outline_functions(hir, env, &fbt_operands.values)
         );
     }
 
@@ -650,7 +652,11 @@ fn run_hir_passes(
     );
     timed!(
         "PromoteUsedTemporaries",
-        crate::reactive_scopes::promote_used_temporaries(&mut reactive_fn, env)
+        crate::reactive_scopes::promote_used_temporaries(
+            &mut reactive_fn,
+            env,
+            &fbt_operands.inline
+        )
     );
     timed!(
         "ExtractScopeDeclarationsFromDestructuring",

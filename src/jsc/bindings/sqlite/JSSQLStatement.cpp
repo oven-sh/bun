@@ -887,6 +887,7 @@ static inline bool rebindValue(JSC::JSGlobalObject* lexicalGlobalObject, sqlite3
     // for a later parameter can free the backing store first (detaching an
     // ArrayBuffer, or triggering a GC that collects an otherwise-unrooted
     // string).
+    // The *64 variants take a 64-bit length: the int ones read >= 2^31 as negative ("NUL-terminated").
     if (value.isUndefinedOrNull()) {
         CHECK_BIND(sqlite3_bind_null(stmt, i));
     } else if (value.isBoolean()) {
@@ -915,13 +916,13 @@ static inline bool rebindValue(JSC::JSGlobalObject* lexicalGlobalObject, sqlite3
             return false;
         }
 
-        if (roped->is8Bit() && roped->containsOnlyASCII()) {
-            CHECK_BIND(sqlite3_bind_text(stmt, i, reinterpret_cast<const char*>(roped->span8().data()), roped->length(), SQLITE_TRANSIENT));
-        } else if (!roped->is8Bit()) {
-            CHECK_BIND(sqlite3_bind_text16(stmt, i, roped->span16().data(), roped->length() * 2, SQLITE_TRANSIENT));
+        if (!roped->is8Bit()) {
+            CHECK_BIND(sqlite3_bind_text64(stmt, i, reinterpret_cast<const char*>(roped->span16().data()), static_cast<sqlite3_uint64>(roped->length()) * sizeof(char16_t), SQLITE_TRANSIENT, SQLITE_UTF16));
         } else {
-            auto utf8 = roped->utf8();
-            CHECK_BIND(sqlite3_bind_text(stmt, i, utf8.data(), utf8.length(), SQLITE_TRANSIENT));
+            // UTF8View borrows an 8-bit ASCII string, so SQLITE_TRANSIENT makes the only copy of it.
+            auto utf8 = Bun::UTF8View::tryCreate(lexicalGlobalObject, scope, roped);
+            RETURN_IF_EXCEPTION(scope, false);
+            CHECK_BIND(sqlite3_bind_text64(stmt, i, utf8->span().data(), utf8->span().size(), SQLITE_TRANSIENT, SQLITE_UTF8));
         }
 
     } else if (value.isHeapBigInt()) [[unlikely]] {
@@ -943,7 +944,9 @@ static inline bool rebindValue(JSC::JSGlobalObject* lexicalGlobalObject, sqlite3
         }
 
     } else if (JSC::JSArrayBufferView* buffer = dynamicDowncast<JSC::JSArrayBufferView>(value)) {
-        CHECK_BIND(sqlite3_bind_blob(stmt, i, buffer->vector(), buffer->byteLength(), SQLITE_TRANSIENT));
+        auto span = buffer->span();
+        // A detached view has a null data(), which would bind NULL. "" binds a zero-length BLOB instead (as in NodeSqlite.cpp).
+        CHECK_BIND(sqlite3_bind_blob64(stmt, i, span.data() ? static_cast<const void*>(span.data()) : "", span.size(), SQLITE_TRANSIENT));
     } else {
         throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "Binding expected string, TypedArray, boolean, number, bigint or null"_s));
         return false;
@@ -1199,22 +1202,30 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSetCustomSQLite, (JSC::JSGlobalObject * l
     }
 
 #if LAZY_LOAD_SQLITE
-    if (sqlite3_handle) {
-        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "SQLite already loaded\nThis function can only be called before SQLite has been loaded and exactly once. SQLite auto-loads when the first time you open a Database."_s));
-        return {};
-    }
-
-    // Use a static CString to keep the string alive for the lifetime of the process
-    static CString sqlite3_lib_path_storage;
-    sqlite3_lib_path_storage = sqliteStrValue.toWTFString(lexicalGlobalObject).utf8();
+    auto requestedPath = sqliteStrValue.toWTFString(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    sqlite3_lib_path = sqlite3_lib_path_storage.data();
-
-    if (lazyLoadSQLite() == -1) {
-        sqlite3_handle = nullptr;
-        WTF::String msg = WTF::String::fromUTF8(dlerror());
-        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, msg));
-        return {};
+    static CString sqlite3_lib_path_storage;
+    static String selectedSQLitePath;
+    auto requestedPathUTF8 = requestedPath.utf8();
+    RETURN_IF_EXCEPTION(scope, {});
+    {
+        WTF::Locker locker { sqlite3_handle_lock };
+        if (sqlite3_handle) {
+            if (selectedSQLitePath.isNull() || selectedSQLitePath != requestedPath) {
+                throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "SQLite already loaded\nA custom SQLite path can only be selected before SQLite is loaded. Repeating a path is allowed only when that path selected the loaded library."_s));
+                return {};
+            }
+        } else {
+            // Keep the selected path alive for the process-global SQLite handle.
+            sqlite3_lib_path_storage = requestedPathUTF8;
+            sqlite3_lib_path = sqlite3_lib_path_storage.data();
+            WTF::String msg;
+            if (lazyLoadSQLiteUnlocked(&msg) == -1) {
+                throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, msg));
+                return {};
+            }
+            selectedSQLitePath = requestedPath;
+        }
     }
 #endif
 
@@ -1265,8 +1276,8 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementDeserialize, (JSC::JSGlobalObject * lexic
     }
 
 #if LAZY_LOAD_SQLITE
-    if (lazyLoadSQLite() < 0) [[unlikely]] {
-        WTF::String msg = WTF::String::fromUTF8(dlerror());
+    WTF::String msg;
+    if (lazyLoadSQLite(&msg) < 0) [[unlikely]] {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, msg));
         return {};
     }
@@ -1487,11 +1498,13 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteFunction, (JSC::JSGlobalObject * l
         return {};
     }
 
-    Bun::UTF8View utf8 = Bun::UTF8View(jsSqlString->view(lexicalGlobalObject));
+    auto sqlString = jsSqlString->view(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto utf8 = Bun::UTF8View::tryCreate(lexicalGlobalObject, scope, sqlString);
     RETURN_IF_EXCEPTION(scope, {});
 
-    const char* sqlStringHead = utf8.span().data();
-    const char* end = utf8.span().data() + utf8.span().size();
+    const char* sqlStringHead = utf8->span().data();
+    const char* end = utf8->span().data() + utf8->span().size();
 
     bool didSetBindings = false;
     bool didExecuteAny = false;
@@ -1678,7 +1691,8 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementPrepareStatementFunction, (JSC::JSGlobalO
     }
     auto sqlString = jsSqlString->view(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    Bun::UTF8View utf8 = Bun::UTF8View(sqlString);
+    auto utf8 = Bun::UTF8View::tryCreate(lexicalGlobalObject, scope, sqlString);
+    RETURN_IF_EXCEPTION(scope, {});
 
     unsigned int flags = DEFAULT_SQLITE_PREPARE_FLAGS;
     if (prepareFlagsValue.isNumber()) {
@@ -1698,7 +1712,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementPrepareStatementFunction, (JSC::JSGlobalO
     int64_t currentMemoryUsage = sqlite_malloc_amount;
 
     int rc = SQLITE_OK;
-    rc = sqlite3_prepare_v3(db, reinterpret_cast<const char*>(utf8.span().data()), utf8.span().size(), flags, &statement, nullptr);
+    rc = sqlite3_prepare_v3(db, reinterpret_cast<const char*>(utf8->span().data()), utf8->span().size(), flags, &statement, nullptr);
 
     if (rc != SQLITE_OK) {
         throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, db));
@@ -1763,8 +1777,8 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementOpenStatementFunction, (JSC::JSGlobalObje
     }
 
 #if LAZY_LOAD_SQLITE
-    if (lazyLoadSQLite() < 0) [[unlikely]] {
-        WTF::String msg = WTF::String::fromUTF8(dlerror());
+    WTF::String msg;
+    if (lazyLoadSQLite(&msg) < 0) [[unlikely]] {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, msg));
         return {};
     }

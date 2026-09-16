@@ -50,9 +50,13 @@ void us_socket_group_deinit(struct us_socket_group_t *group) {
      * low-prio count must be zero or some socket/listener/DNS request still
      * holds s->group / c->group / ls->accept_group into us — that's a UAF the
      * caller must close_all() away first. iterator != NULL means we're inside
-     * a dispatch on this very group; the on_close that triggers deinit is fine
-     * (unlink_socket already advanced iterator), but a re-entrant deinit from
-     * inside on_timeout/on_data would tear the floor out from under the sweep. */
+     * a dispatch on this very group. Never deinit from inside a dispatch of one
+     * of the group's own sockets, on_close included: the lists survive that
+     * one (unlink_socket already advanced iterator), but close_raw and
+     * us_internal_ssl_on_close read s->group->loop again when the handler
+     * returns (us_internal_ssl_detach), and a deinit from inside
+     * on_timeout/on_data would tear the floor out from under the sweep. Defer
+     * it until the dispatch has unwound. */
     US_ASSERT(group->head_sockets == NULL);
     US_ASSERT(group->head_connecting_sockets == NULL);
     US_ASSERT(group->head_listen_sockets == NULL);
@@ -783,6 +787,12 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
                     break;
                 }
                 default: {
+                    /* The probe only says the socket is not connected
+                     * (WSAENOTCONN); SO_ERROR has why the connect failed. */
+                    int so_error = us_socket_get_error(s);
+                    if (so_error > 0) {
+                        error = so_error;
+                    }
                     break;
                 }
             }

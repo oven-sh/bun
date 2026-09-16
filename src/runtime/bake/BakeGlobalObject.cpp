@@ -218,6 +218,7 @@ const JSC::GlobalObjectMethodTable& GlobalObject::globalObjectMethodTable()
         INHERIT_HOOK_METHOD(shouldInterruptScript),
         INHERIT_HOOK_METHOD(javaScriptRuntimeFlags),
         INHERIT_HOOK_METHOD(shouldInterruptScriptBeforeTimeout),
+        INHERIT_HOOK_METHOD(moduleTypeIsAllowed),
         bakeModuleLoaderImportModule,
         bakeModuleLoaderResolve,
         bakeModuleLoaderFetch,

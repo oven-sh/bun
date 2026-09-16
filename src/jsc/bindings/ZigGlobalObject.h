@@ -374,6 +374,8 @@ public:
         Bun__HTTPRequestContextDebugTLS__onResolveStream,
         jsFunctionOnLoadObjectResultResolve,
         jsFunctionOnLoadObjectResultReject,
+        jsFunctionMockModuleFactoryResolve,
+        jsFunctionMockModuleFactoryReject,
         Bun__TestScope__Describe2__bunTestThen,
         Bun__TestScope__Describe2__bunTestCatch,
         Bun__HTMLRewriter__onHandlerResolve,
@@ -487,7 +489,9 @@ public:
                                                                                                              \
     /* TODO: these should use LazyProperty */                                                                \
                                                                                                              \
-    V(public, LazyPropertyOfGlobalObject<JSCell>, m_moduleResolveFilenameFunction)                           \
+    V(public, LazyPropertyOfGlobalObject<JSFunction>, m_moduleResolveFilenameFunction)                       \
+    /* The user-assigned Module._resolveFilename value; require() throws if it is not callable. */           \
+    V(public, WriteBarrier<JSC::Unknown>, m_moduleResolveFilenameOverride)                                   \
     V(public, LazyPropertyOfGlobalObject<JSCell>, m_moduleRunMainFunction)                                   \
     V(public, LazyPropertyOfGlobalObject<JSFunction>, m_modulePrototypeUnderscoreCompileFunction)            \
     V(public, LazyPropertyOfGlobalObject<JSFunction>, m_commonJSRequireESMFromHijackedExtensionFunction)     \
@@ -905,6 +909,9 @@ inline Zig::GlobalObject* defaultGlobalObject()
 {
     return ___private___::getDefaultGlobalObject();
 }
+
+// The Structure a LazyClassStructure constructor allocates with for this newTarget. nullptr on exception.
+JSC::Structure* structureForNewTarget(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue newTarget, JSC::LazyClassStructure Zig::GlobalObject::* classStructure);
 
 inline void* bunVM(JSC::JSGlobalObject* lexicalGlobalObject)
 {

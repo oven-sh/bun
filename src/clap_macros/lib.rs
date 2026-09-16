@@ -272,11 +272,6 @@ fn byte_str_b(s: &[u8]) -> LitByteStr {
 /// in rodata. The ANSI form is *not* baked in — it is rare (only `bun --help` on
 /// a colour TTY) and would otherwise roughly triple the help-string rodata, so
 /// `bun_clap::pretty_help_desc` derives it from `Help::msg` on demand instead.
-///
-/// The runtime pass deletes a `<...>` that is not a colour tag, so
-/// `<link rel=modulepreload>` in a description would vanish from `--help`. It
-/// is an `Err` here (a compile error at the param spec): literal angle
-/// brackets are written `\\<` and `\\>`.
 fn pretty_rewrite(fmt: &[u8], is_enabled: bool) -> Result<Vec<u8>, String> {
     use bun_output_tags::{RESET, color_for_bytes};
     let mut out: Vec<u8> = Vec::with_capacity(fmt.len() * 2);

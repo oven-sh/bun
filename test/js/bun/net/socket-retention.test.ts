@@ -4,7 +4,8 @@
 // socket is active so callbacks can always recover the wrapper, weak once the
 // socket is closed so GC can reclaim it. This test exercises both directions.
 
-import { heapStats } from "bun:jsc";
+// @ts-ignore: generateHeapSnapshotForDebugging is not in bun-types
+import { generateHeapSnapshotForDebugging, heapStats } from "bun:jsc";
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tls as tlsCert } from "harness";
 
@@ -124,12 +125,53 @@ test("active TCP socket wrapper survives GC until closed", async () => {
   expect(count).toBeLessThanOrEqual(3);
 });
 
-// Windows has a pre-existing TLSSocket lingerer in the upgradeTLS path
-// (see the `isWindows ? 3 : 2` slack in socket.test.ts "should not leak
-// memory"); on Windows 11 aarch64 the residual count is higher and varies,
-// making a tight GC bound unreliable there. The Strong-release path this
-// guards is platform-independent, so Linux/macOS coverage suffices.
-test.skipIf(isWindows)("upgradeTLS raw + tls wrappers are both collectable after close", async () => {
+// The wrappers a native Strong holds right now, by class. A Strong is taken
+// and released synchronously, so these counts are exact and need no GC.
+function protectedCounts(): { TLSSocket: number; TCPSocket: number } {
+  const { TLSSocket = 0, TCPSocket = 0 } = heapStats().protectedObjectTypeCounts;
+  return { TLSSocket, TCPSocket };
+}
+
+// Live cells of `className` that a GC root reaches: native wrappers, and the
+// rest (the prototype has the same class name and wraps nothing).
+//
+// heapStats().objectTypeCounts cannot answer this. JSC scans the machine stack
+// conservatively, so a stale word in a native frame that is still on the stack
+// keeps a cell alive until something writes over that word. JSC's debugging
+// heap snapshot can: it runs a full GC and records every root and every edge
+// that GC marks through, except the conservative scan. A cell that only a
+// stack word keeps alive is in the snapshot, but no recorded root reaches it.
+function rootedCells(className: string): { wrappers: number; others: number } {
+  const { nodes, nodeClassNames, edges, roots } = generateHeapSnapshotForDebugging();
+  // nodes: <id, size, classNameIndex, flags, labelIndex, cellAddress, wrappedAddress>
+  // edges: <fromId, toId, typeIndex, data>
+  // roots: <id, reasonIndex, reachabilityReasonIndex>
+  const edgesFrom = new Map<number, number[]>();
+  for (let i = 0; i < edges.length; i += 4) {
+    const to = edgesFrom.get(edges[i]);
+    if (to) to.push(edges[i + 1]);
+    else edgesFrom.set(edges[i], [edges[i + 1]]);
+  }
+  const reached = new Set<number>();
+  const pending: number[] = [];
+  for (let i = 0; i < roots.length; i += 3) pending.push(roots[i]);
+  while (pending.length > 0) {
+    const id = pending.pop()!;
+    if (reached.has(id)) continue;
+    reached.add(id);
+    for (const to of edgesFrom.get(id) ?? []) pending.push(to);
+  }
+  const classIndex = nodeClassNames.indexOf(className);
+  const counts = { wrappers: 0, others: 0 };
+  for (let i = 0; i < nodes.length; i += 7) {
+    if (nodes[i + 2] !== classIndex || !reached.has(nodes[i])) continue;
+    if (nodes[i + 6] === "0x0") counts.others++;
+    else counts.wrappers++;
+  }
+  return counts;
+}
+
+test("upgradeTLS raw + tls wrappers are both collectable after close", async () => {
   // upgradeTLS produces two TLSSocket wrappers (the raw passthrough and the
   // TLS socket) sharing one underlying connection. When the connection closes,
   // the raw socket is cleaned up via WrappedHandler.onClose which must release
@@ -143,7 +185,8 @@ test.skipIf(isWindows)("upgradeTLS raw + tls wrappers are both collectable after
     },
   });
 
-  const baseline = heapStats().objectTypeCounts.TLSSocket || 0;
+  const baseline = protectedCounts().TLSSocket;
+  const upgrades: { TLSSocket: number; TCPSocket: number }[] = [];
 
   for (let i = 0; i < 5; i++) {
     const { promise: done, resolve } = Promise.withResolvers<void>();
@@ -158,6 +201,7 @@ test.skipIf(isWindows)("upgradeTLS raw + tls wrappers are both collectable after
           error() {},
         },
       });
+      const before = protectedCounts();
       const [raw, tls] = socket.upgradeTLS({
         tls: { ...tlsCert, ca: tlsCert.cert },
         socket: {
@@ -176,18 +220,33 @@ test.skipIf(isWindows)("upgradeTLS raw + tls wrappers are both collectable after
           },
         },
       });
+      const after = protectedCounts();
+      upgrades.push({
+        TLSSocket: after.TLSSocket - before.TLSSocket,
+        TCPSocket: after.TCPSocket - before.TCPSocket,
+      });
       void raw;
       void tls;
     })();
     await done;
   }
 
-  // All upgradeTLS-created wrappers should be collectable now. We created
-  // 5 × 2 = 10 TLSSocket wrappers; if the Strong release on close is missed,
-  // they all pin and the count stays ≥ baseline + 10.
-  const count = await gcUntilCountAtMost("TLSSocket", baseline + 2);
-  expect(count).toBeLessThanOrEqual(baseline + 2);
-});
+  // The upgrade moves the Strong from the open TCP wrapper to the two TLS
+  // wrappers that replace it.
+  expect(upgrades).toEqual(Array(5).fill({ TLSSocket: 2, TCPSocket: -1 }));
+
+  // The last close handler resolved `done` from inside the close dispatch, and
+  // that dispatch releases the tls wrapper on its way out. Let it return.
+  await new Promise<void>(resolve => setImmediate(resolve));
+
+  // We created 5 × 2 = 10 TLSSocket wrappers. If the Strong release on close is
+  // missed, they stay protected.
+  expect(protectedCounts().TLSSocket).toBe(baseline);
+  // No other root reaches one either, so all of them are collectable.
+  // `others` is the prototype: the walk does find rooted cells of this class.
+  expect(rootedCells("TLSSocket")).toEqual({ wrappers: 0, others: 1 });
+  // The heap snapshot takes a few seconds in a debug build.
+}, 30_000);
 
 test("tls.connect over a Duplex roots the origin and listener thunks through the wrapper, not as Strong handles", async () => {
   // UpgradedDuplex keeps the origin stream and its four native listener

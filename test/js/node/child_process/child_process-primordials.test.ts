@@ -77,3 +77,32 @@ test("spawnSync, spawn, and fork pass argv through with patched Array.prototype.
     exitCode: 0,
   });
 });
+
+// The argv copy must not swallow what Node reports: a non-iterable execArgv is a TypeError, not an empty list.
+test("fork() throws for a non-iterable execArgv", async () => {
+  using dir = tempDir("child-process-fork-execargv", {
+    "child.js": "process.exit(0)",
+    "fixture.js": `
+      const { fork } = require("child_process");
+      let result;
+      try {
+        const child = fork("child.js", [], { execArgv: { inspect: true } });
+        child.on("close", () => console.log(JSON.stringify({ result: "spawned" })));
+      } catch (err) {
+        console.log(JSON.stringify({ result: "threw", name: err.name }));
+      }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({ result: "threw", name: "TypeError" }) + "\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});

@@ -127,3 +127,65 @@ test.concurrent("fs streams keep their file descriptor when Promise.prototype.th
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });
+
+test.concurrent(
+  "a FileHandle write stream with flush: true closes when Promise.prototype.then is patched",
+  async () => {
+    using dir = tempDir("fs-filehandle-flush-then", {
+      "fixture.js": `
+      const fs = require("fs");
+      (async () => {
+        const fh = await fs.promises.open("out.txt", "w");
+        const orig = Promise.prototype.then;
+        // A replacement that never calls its handlers.
+        Promise.prototype.then = function () {
+          return 42;
+        };
+        const w = fh.createWriteStream({ flush: true });
+        w.on("close", () => {
+          Promise.prototype.then = orig;
+          console.log(JSON.stringify({ closed: true, content: fs.readFileSync("out.txt", "utf8") }));
+        });
+        w.end("data");
+      })();
+    `,
+    });
+    const { stdout, stderr, exitCode } = await runFixture(String(dir), "fixture.js");
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ closed: true, content: "data" }) + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+);
+
+// fs.rm and fs.cp call whatever fs.promises.rm / fs.promises.cp currently are, so a
+// test double that returns a plain thenable must keep working.
+test.concurrent("fs.rm and fs.cp accept a thenable from a replaced fs.promises.rm / cp", async () => {
+  using dir = tempDir("fs-live-callee-thenable", {
+    "fixture.js": `
+      const fs = require("fs");
+      const fsp = require("fs/promises");
+      const calls = [];
+      const thenable = name => ({
+        then(onFulfilled) {
+          calls.push(name);
+          onFulfilled();
+        },
+      });
+      fsp.rm = () => thenable("rm");
+      fsp.cp = () => thenable("cp");
+      fs.rm("a.txt", rmErr => {
+        fs.cp("a.txt", "b.txt", cpErr => {
+          console.log(JSON.stringify({ rmErr: rmErr ?? null, cpErr: cpErr ?? null, calls }));
+        });
+      });
+    `,
+  });
+  const { stdout, stderr, exitCode } = await runFixture(String(dir), "fixture.js");
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({ rmErr: null, cpErr: null, calls: ["rm", "cp"] }) + "\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});

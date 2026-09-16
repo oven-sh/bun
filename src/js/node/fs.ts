@@ -46,6 +46,12 @@ function ensureCallback(callback) {
 //
 // function () { callback(null); }
 //
+// For a callee that user code can replace (fs.promises.rm, Array.fromAsync): the result may be a plain thenable.
+function thenMaybeNative(result, onFulfilled, onRejected) {
+  if ($isPromise(result)) result.$then(onFulfilled, onRejected);
+  else result.then(onFulfilled, onRejected);
+}
+
 function nullcallback(callback) {
   return FunctionPrototypeBind.$call(callback, undefined, null);
 }
@@ -92,7 +98,7 @@ var access = function access(path, mode, callback) {
 
     callback = ensureCallback(callback);
     // route through promises.rm for the JS-side ERR_FS_EISDIR validation
-    require("node:fs/promises").rm(path, options).$then(nullcallback(callback), callback);
+    thenMaybeNative(require("node:fs/promises").rm(path, options), nullcallback(callback), callback);
   },
   rmdir = function rmdir(path, options, callback) {
     if ($isCallable(options)) {
@@ -102,7 +108,8 @@ var access = function access(path, mode, callback) {
     callback = ensureCallback(callback);
 
     // Node 26 removed `recursive` (DEP0147), but packages still pass it. Keep it working through `rm`.
-    (options?.recursive ? require("node:fs/promises").rm(path, options) : fs.rmdir(path, options)).$then(
+    thenMaybeNative(
+      options?.recursive ? require("node:fs/promises").rm(path, options) : fs.rmdir(path, options),
       nullcallback(callback),
       callback,
     );
@@ -1002,7 +1009,7 @@ function cp(src, dest, options, callback) {
   dest = getValidatedFsPath(dest, "dest");
   callback = guardCallback(callback);
 
-  require("node:fs/promises").cp(src, dest, options).$then(callOnceWithNull.bind(null, callback), callback);
+  thenMaybeNative(require("node:fs/promises").cp(src, dest, options), callOnceWithNull.bind(null, callback), callback);
 }
 
 function _toUnixTimestamp(time: any, name = "time") {
@@ -1261,7 +1268,8 @@ function glob(pattern: string | string[], options, callback) {
   // the callback surfaces as an uncaught exception instead of rejecting the
   // internal promise chain (and is never routed back into `callback` as an
   // error), matching Node.js.
-  Array.fromAsync(lazyGlob().glob(pattern, options ?? kEmptyObject)).$then(
+  thenMaybeNative(
+    Array.fromAsync(lazyGlob().glob(pattern, options ?? kEmptyObject)),
     nextTickWithNullThen.bind(null, callback),
     nextTickWith.bind(null, callback),
   );

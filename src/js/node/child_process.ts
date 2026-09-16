@@ -794,7 +794,8 @@ function fork(modulePath, args = [], options) {
     }
   }
 
-  const forkArgs = ArrayPrototypeSlice.$call(execArgv);
+  // A non-array execArgv keeps the spread: a non-iterable value must still throw, like Node.
+  const forkArgs = $isJSArray(execArgv) ? ArrayPrototypeSlice.$call(execArgv) : [...execArgv];
   ArrayPrototypePush.$call(forkArgs, modulePath);
   for (let i = 0; i < args.length; i++) {
     ArrayPrototypePush.$call(forkArgs, args[i]);

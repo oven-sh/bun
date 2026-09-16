@@ -45,7 +45,7 @@ const kFs = Symbol("kFs");
 const {
   read: fileHandlePrototypeRead,
   write: fileHandlePrototypeWrite,
-  fsync: fileHandlePrototypeFsync,
+  sync: fileHandlePrototypeSync,
   writev: fileHandlePrototypeWritev,
 } = FileHandle.prototype;
 
@@ -73,7 +73,7 @@ const fileHandleStreamFs = (fh: FileHandle) => ({
         },
   writev: fh.writev === fileHandlePrototypeWritev ? writev : undefined,
   fsync:
-    fh.sync === fileHandlePrototypeFsync
+    fh.sync === fileHandlePrototypeSync
       ? fsync
       : function (fd, cb) {
           return fh.sync().then(() => cb(), cb);

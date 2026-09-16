@@ -705,6 +705,14 @@ struct AbortHandler;
 static SHOULD_ABORT: AtomicBool = AtomicBool::new(false);
 // Atomic because it is set from a signal handler.
 
+/// The uws loop the run loop blocks in. The console Ctrl handler runs on a
+/// thread the console creates, and on Windows nothing interrupts
+/// `uv_run(UV_RUN_ONCE)` the way a signal interrupts `epoll_wait`, so the
+/// handler has to wake the loop itself or the abort flag is never seen.
+#[cfg(windows)]
+static ABORT_WAKE_LOOP: std::sync::atomic::AtomicPtr<bun_uws::Loop> =
+    std::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+
 impl AbortHandler {
     #[cfg(unix)]
     extern "C" fn posix_signal_handler(
@@ -723,12 +731,21 @@ impl AbortHandler {
     ) -> bun_sys::windows::BOOL {
         if dw_ctrl_type == bun_sys::windows::CTRL_C_EVENT {
             SHOULD_ABORT.store(true, Ordering::SeqCst);
+            let loop_ = ABORT_WAKE_LOOP.load(Ordering::SeqCst);
+            if !loop_.is_null() {
+                // SAFETY: the loop is the thread-lifetime uws singleton stored by
+                // `install()`. `us_wakeup_loop` -> `uv_async_send` is documented
+                // thread-safe; no `&mut Loop` is formed here (see `WindowsWaker::wake`).
+                unsafe { bun_uws::us_wakeup_loop(loop_) };
+            }
             return bun_sys::windows::TRUE;
         }
         bun_sys::windows::FALSE
     }
 
-    fn install() {
+    fn install(event_loop: *mut MiniEventLoop) {
+        #[cfg(unix)]
+        let _ = event_loop;
         #[cfg(unix)]
         {
             // SAFETY: libc::sigaction is #[repr(C)] POD; all-zero is a valid value (fields overwritten below).
@@ -743,6 +760,8 @@ impl AbortHandler {
         }
         #[cfg(not(unix))]
         {
+            // SAFETY: event_loop is the live thread-local MiniEventLoop singleton.
+            ABORT_WAKE_LOOP.store(unsafe { (*event_loop).loop_ptr() }, Ordering::SeqCst);
             let res = bun_sys::c::SetConsoleCtrlHandler(
                 Some(Self::windows_ctrl_handler),
                 bun_sys::windows::TRUE,
@@ -1100,7 +1119,7 @@ pub(crate) fn run_scripts_with_filter(
         }
     }
 
-    AbortHandler::install();
+    AbortHandler::install(event_loop);
 
     while !state.is_done() {
         if SHOULD_ABORT.load(Ordering::SeqCst) && !state.aborted {

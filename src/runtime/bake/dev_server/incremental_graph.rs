@@ -365,6 +365,14 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             .map(|i| FileIndex::init(i as u32))
     }
 
+    /// Stale alone is not enough: the bundle in flight can be the one that bundles the file again.
+    pub(crate) fn needs_first_bundle(&self, index: FileIndex<SIDE>) -> bool {
+        self.get_file_by_index(index).file_kind() == FileKind::Unknown
+            && self
+                .stale_files
+                .is_set_allow_out_of_bound(index.get() as usize, false)
+    }
+
     /// `None` for an html file that is not the file of a route.
     pub(crate) fn html_route_bundle_index(
         &self,

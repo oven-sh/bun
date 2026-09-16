@@ -607,6 +607,23 @@ describe.each([
     },
   });
 });
+devTest("a marked route whose page another page imports still gets its layout bundled", {
+  framework: clientEntryPointFramework,
+  files: {
+    ...clientEntryPointFiles,
+    "routes/index.ts": `export { default } from "./admin/index";`,
+    "routes/admin/_layout.ts": `export default "admin layout";`,
+    "routes/admin/index.ts": `export default "admin";`,
+  },
+  async test(dev) {
+    expect((await dev.fetch("/")).status).toBe(200);
+    await navigateWithPushState(dev, "/admin");
+
+    await dev.write("client-dep.ts", `console.log("dep v2" +);`, { errors: null });
+    await dev.write("client-dep.ts", clientEntryPointFiles["client-dep.ts"]);
+    expect((await dev.fetch("/admin")).status).toBe(200);
+  },
+});
 devTest("a route that a fixed build error left marked answers while its page is bundled again", {
   framework: clientEntryPointFramework,
   // Holds the bundle of a save of `routes/second.ts` in flight until the test writes `release`.

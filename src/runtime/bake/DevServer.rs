@@ -2064,7 +2064,7 @@ fn ensure_route_is_bundled<Ctx: EnsureRouteCtx>(
                 }
 
                 // `index_failures` can mark a route before its first bundle (`history.pushState`).
-                if dev.route_page_was_never_bundled(route_bundle_index) {
+                if dev.route_needs_first_bundle(route_bundle_index) {
                     state = route_bundle::State::Unqueued;
                     continue 'sw;
                 }
@@ -5724,19 +5724,37 @@ fn mark_all_route_children(
 }
 
 impl DevServer {
-    /// A stale page is not enough: the bundle in flight can be the one that bundles it again.
-    fn route_page_was_never_bundled(&self, index: route_bundle::Index) -> bool {
+    /// Whether the first bundle of a framework route still has a file to bundle.
+    fn route_needs_first_bundle(&self, index: route_bundle::Index) -> bool {
         let route_bundle::Data::Framework(fw) = &self.route_bundles[index.get() as usize].data
         else {
             return false;
         };
-        self.router
-            .route_ptr(fw.route_index)
-            .file_page
-            .is_some_and(|id| {
-                let page = from_opaque_file_id::<{ bake::Side::Server }>(id);
-                self.server_graph.get_file_by_index(page).file_kind() == FileKind::Unknown
-            })
+        let needs_first_bundle = |id: OpaqueFileId| {
+            self.server_graph
+                .needs_first_bundle(from_opaque_file_id::<{ bake::Side::Server }>(id))
+        };
+        let mut route = self.router.route_ptr(fw.route_index);
+        let router_type = self.router.type_ptr_const(route.r#type);
+        let client_entry_needs_first_bundle = router_type.client_file.is_some_and(|id| {
+            self.client_graph
+                .needs_first_bundle(from_opaque_file_id::<{ bake::Side::Client }>(id))
+        });
+        if client_entry_needs_first_bundle
+            || needs_first_bundle(router_type.server_file)
+            || route.file_page.is_some_and(needs_first_bundle)
+        {
+            return true;
+        }
+        loop {
+            if route.file_layout.is_some_and(needs_first_bundle) {
+                return true;
+            }
+            let Some(parent) = route.parent else {
+                return false;
+            };
+            route = self.router.route_ptr(parent);
+        }
     }
 
     /// Whether a trace reached the client entry point of the router type of `route_bundle`.

@@ -25,6 +25,24 @@ describe("Bun.secrets argument validation", () => {
       expect(thrown.message).toBe("Expected service, name, and value to be strings without null bytes");
     }
   });
+
+  // macOS and Linux ignore `persist`, so set() validates it before it reaches a backend.
+  test("set() rejects a persist value other than 'local' or 'enterprise'", () => {
+    for (const persist of ["session", "LOCAL", "", 2, null, true, {}]) {
+      let thrown: any;
+      try {
+        // @ts-expect-error - testing invalid input
+        Bun.secrets.set({ service: "bun-test-persist-invalid", name: "test", value: "v", persist });
+      } catch (error) {
+        thrown = error;
+      }
+      expect({ persist, code: thrown?.code, message: thrown?.message }).toEqual({
+        persist,
+        code: "ERR_INVALID_ARG_VALUE",
+        message: "The property 'options.persist' must be one of: `local`, `enterprise`",
+      });
+    }
+  });
 });
 
 describe.todoIf(isCI && !isWindows)("Bun.secrets error codes", () => {

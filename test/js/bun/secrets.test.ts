@@ -135,11 +135,11 @@ test.todoIf(isCI && !isWindows)("Bun.secrets API", async () => {
   await Bun.secrets.delete({ service: testService, name: testUser });
 });
 
-// Entries are per-user, per-machine (CRED_PERSIST_LOCAL_MACHINE), matching the
-// macOS keychain backend. CRED_PERSIST_ENTERPRISE would roam with a domain profile.
-test.skipIf(!isWindows)("Bun.secrets.set() stores a machine-local Credential Manager entry", async () => {
+// `persist` selects CREDENTIALW.Persist. Without it, set() writes CRED_PERSIST_ENTERPRISE.
+test.skipIf(!isWindows)("Bun.secrets.set() persist option selects the Credential Manager Persist value", async () => {
   const CRED_TYPE_GENERIC = 1;
   const CRED_PERSIST_LOCAL_MACHINE = 2;
+  const CRED_PERSIST_ENTERPRISE = 3;
   // CREDENTIALW field offsets on 64-bit Windows.
   const offsetofType = 4;
   const offsetofCredentialBlobSize = 32;
@@ -152,26 +152,40 @@ test.skipIf(!isWindows)("Bun.secrets.set() stores a machine-local Credential Man
 
   const service = "bun-test-persist-" + Date.now();
   const name = "test-name-" + Math.random();
-  const value = "per-machine-value";
-  try {
-    await Bun.secrets.set({ service, name, value });
+  const targetName = Buffer.from(`${service}/${name}\0`, "utf16le");
 
-    const targetName = Buffer.from(`${service}/${name}\0`, "utf16le");
+  function readCredential() {
     const out = new BigUint64Array(1);
     expect(advapi32.symbols.CredReadW(targetName, CRED_TYPE_GENERIC, 0, out)).not.toBe(0);
     const cred = Number(out[0]);
     try {
-      expect({
+      return {
         Type: read.u32(cred, offsetofType),
         CredentialBlobSize: read.u32(cred, offsetofCredentialBlobSize),
         Persist: read.u32(cred, offsetofPersist),
-      }).toEqual({
-        Type: CRED_TYPE_GENERIC,
-        CredentialBlobSize: Buffer.byteLength(value),
-        Persist: CRED_PERSIST_LOCAL_MACHINE,
-      });
+      };
     } finally {
       advapi32.symbols.CredFree(cred);
+    }
+  }
+
+  try {
+    // Every set() replaces the whole entry, so each case also converts the entry the previous case wrote.
+    const cases = [
+      { options: {}, value: "default", Persist: CRED_PERSIST_ENTERPRISE },
+      { options: { persist: "local" }, value: "local-machine", Persist: CRED_PERSIST_LOCAL_MACHINE },
+      { options: { persist: "enterprise" }, value: "enterprise-again", Persist: CRED_PERSIST_ENTERPRISE },
+    ] as const;
+
+    for (const { options, value, Persist } of cases) {
+      await Bun.secrets.set({ service, name, value, ...options });
+      expect({ options, ...readCredential() }).toEqual({
+        options,
+        Type: CRED_TYPE_GENERIC,
+        CredentialBlobSize: Buffer.byteLength(value),
+        Persist,
+      });
+      expect(await Bun.secrets.get({ service, name })).toBe(value);
     }
   } finally {
     advapi32.close();

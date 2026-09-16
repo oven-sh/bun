@@ -695,8 +695,9 @@ JSC_DEFINE_CUSTOM_GETTER(getterChildren, (JSC::JSGlobalObject * globalObject, JS
             children.append(child);
             last = child;
             n += 1;
-        next: {
-        }
+        next:
+            {
+            }
         }
 
         // Construct the array

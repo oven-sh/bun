@@ -185,10 +185,13 @@ impl Type {
         if prefix.len() >= MAX_PATH_BYTES {
             return Err("is too long");
         }
+        // A client sends `" < > ^ \` { }` percent-encoded, so they never match.
         if !prefix.iter().all(u8::is_ascii_graphic)
-            || strings::index_of_any(prefix, b"?#\\:*").is_some()
+            || strings::index_of_any(prefix, b"?#\\:*\"<>^`{}").is_some()
         {
-            return Err("can only contain printable ASCII characters, and none of ? # \\ : *");
+            return Err(
+                "can only contain printable ASCII characters, and none of ? # \\ : * \" < > ^ ` { }",
+            );
         }
         if strings::tokenize(prefix, b"/").any(|segment| segment == b"." || segment == b"..") {
             return Err("cannot contain a \".\" or \"..\" segment");
@@ -1162,18 +1165,17 @@ impl FrameworkRouter {
 
         let file_id = ctx.get_file_id_for_router(file_path, new_route_index, file_kind)?;
 
-        let new_route = self.route_ptr_mut(new_route_index);
-        if let Some(existing) = *new_route.file_ptr(file_kind) {
+        if let Some(existing) = *self.route_ptr_mut(new_route_index).file_ptr(file_kind) {
             if existing == file_id {
                 return Ok(()); // exact match already exists. Hot-reloading code hits this
             }
             *out_colliding_file_id = existing;
             return Err(InsertError::RouteCollision);
         }
-        *new_route.file_ptr(file_kind) = Some(file_id);
 
         if file_kind == FileKind::Page {
-            match pattern {
+            // A different route can still serve the same URLs (see `dynamic_routes`).
+            let aliased_route = match pattern {
                 InsertPattern::Static(p) => {
                     let key: &[u8] = if p.route_path().is_empty() {
                         b"/"
@@ -1182,19 +1184,32 @@ impl FrameworkRouter {
                     };
                     let gop = self.static_routes.get_or_put(key)?;
                     if gop.found_existing {
-                        panic!("TODO: propagate aliased route error");
+                        Some(*gop.value_ptr)
+                    } else {
+                        *gop.value_ptr = new_route_index;
+                        None
                     }
-                    *gop.value_ptr = new_route_index;
                 }
                 InsertPattern::Dynamic(p) => {
                     let gop = self.dynamic_routes.get_or_put(p)?;
                     if gop.found_existing {
-                        panic!("TODO: propagate aliased route error");
+                        Some(*gop.value_ptr)
+                    } else {
+                        *gop.value_ptr = new_route_index;
+                        None
                     }
-                    *gop.value_ptr = new_route_index;
                 }
+            };
+            if let Some(aliased_route) = aliased_route {
+                *out_colliding_file_id = self
+                    .route_ptr(aliased_route)
+                    .file_page
+                    .expect("routes in the url maps have a page");
+                return Err(InsertError::RouteCollision);
             }
         }
+
+        *self.route_ptr_mut(new_route_index).file_ptr(file_kind) = Some(file_id);
         Ok(())
     }
 }

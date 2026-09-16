@@ -62,6 +62,16 @@ const MAX_CLOSE_REASON: usize = MAX_CONTROL_PAYLOAD - 2;
 /// Outgoing control frame prefix: 2-byte header + 4-byte masking key.
 const CONTROL_HEADER_SIZE: usize = 6;
 
+/// Seconds a socket may outlive its close event, normalised like the opening-handshake timeout.
+#[inline]
+fn close_timeout_seconds() -> core::ffi::c_uint {
+    bun_http::normalize_idle_timeout_seconds(
+        bun_core::env_var::BUN_CONFIG_WS_CLOSE_TIMEOUT
+            .get()
+            .unwrap_or(30),
+    )
+}
+
 #[derive(bun_ptr::CellRefCounted)]
 pub struct WebSocket<const SSL: bool> {
     pub(crate) ref_count: Cell<u32>,
@@ -562,6 +572,10 @@ impl<const SSL: bool> WebSocket<SSL> {
         };
 
         let terminated = loop {
+            // The close is dispatched (a handler can do it mid-buffer): a later Close gets no echo.
+            if self.cpp_websocket().is_none() {
+                break true;
+            }
             log!("onData ({})", <&'static str>::from(cursor.state));
 
             let step = match cursor.state {
@@ -1170,6 +1184,11 @@ impl<const SSL: bool> WebSocket<SSL> {
         if !SSL && self.tunnel().is_none() {
             self.tcp.get().shutdown_read();
             self.tcp.get().shutdown();
+        }
+        // TLS and tunnels wait for the server's TCP close (RFC 6455 §7.1.1); this bounds the wait.
+        match self.tunnel() {
+            Some(tunnel) => tunnel.set_timeout(close_timeout_seconds()),
+            None => self.tcp.get().set_timeout(close_timeout_seconds()),
         }
     }
 

@@ -432,6 +432,11 @@ void us_nq_settings_init(struct lsquic_engine_settings *s, int is_server,
      * grant while that stream has unsent data (lsquic_qdh_arm_if_unsent). */
     s->es_qpack_enc_max_size = 0;
     s->es_qpack_enc_max_blocked = 0;
+    /* One decoded header block at a time, so lsquic parses nothing past a
+     * block that the stream has not claimed. A client's default is 2: one
+     * lsquic_stream_read then decodes the final response behind a claimed 1xx
+     * and returns its DATA, and the body reaches JS ahead of `onheaders`. */
+    s->es_max_header_sets = 1;
 }
 
 #define NQ_SET(field, ctype) \

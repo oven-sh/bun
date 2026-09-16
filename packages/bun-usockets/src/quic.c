@@ -673,27 +673,29 @@ static lsquic_stream_ctx_t *us_quic_on_new_stream(void *if_ctx, lsquic_stream_t 
     return (lsquic_stream_ctx_t *) s;
 }
 
+/* Hands the next header block lsquic has decoded to on_stream_headers.
+ * Returns 1 for a block, 0 for none, -1 if on_stream_headers closed the stream. */
+static int us_quic_deliver_hset(lsquic_stream_t *stream, us_quic_stream_t *s) {
+    struct us_quic_hset *hset = (struct us_quic_hset *) lsquic_stream_get_hset(stream);
+    if (!hset) return 0;
+    us_quic_hset_finalize(hset);
+    us_quic_hset_free(s->hset);
+    s->hset = hset;
+    s->headers_delivered = 1;
+    if (s->ctx->on_stream_headers) s->ctx->on_stream_headers(s);
+    return s->stream ? 1 : -1;
+}
+
 static void us_quic_on_read(lsquic_stream_t *stream, lsquic_stream_ctx_t *h) {
     us_quic_stream_t *s = (us_quic_stream_t *) h;
     us_quic_socket_context_t *ctx = s->ctx;
 
     /* lsquic queues a fresh hset for every HEADERS block (1xx interims,
      * the final response, trailers). lsquic_stream_get_hset returns the
-     * next undelivered one and lsquic_stream_read won't drain DATA past
-     * an unconsumed hset, so re-dispatch on_stream_headers each time
-     * instead of latching after the first. */
-    {
-        struct us_quic_hset *hset = (struct us_quic_hset *) lsquic_stream_get_hset(stream);
-        if (hset) {
-            us_quic_hset_finalize(hset);
-            us_quic_hset_free(s->hset);
-            s->hset = hset;
-            s->headers_delivered = 1;
-            if (ctx->on_stream_headers) ctx->on_stream_headers(s);
-            /* on_stream_headers may have closed us */
-            if (!s->stream) return;
-        }
-    }
+     * next undelivered one and lsquic_stream_read fails while one is
+     * queued, so re-dispatch on_stream_headers each time instead of
+     * latching after the first. */
+    if (us_quic_deliver_hset(stream, s) < 0) return;
 
     ssize_t r;
     while ((r = lsquic_stream_read(stream, ctx->read_buf, US_QUIC_READ_BUF)) > 0) {
@@ -702,6 +704,13 @@ static void us_quic_on_read(lsquic_stream_t *stream, lsquic_stream_ctx_t *h) {
         if (!s->stream) return;
     }
     if (r == 0 && !s->fin_delivered) {
+        /* The read that reaches the end of the stream returns 0 even when it
+         * decoded a header block on its way there: a final response with no
+         * body right behind a 1xx, or trailers. Nothing reads this stream
+         * after the FIN below, so that block has to come out first. */
+        int delivered;
+        while ((delivered = us_quic_deliver_hset(stream, s)) > 0) {}
+        if (delivered < 0) return;
         s->fin_delivered = 1;
         lsquic_stream_wantread(stream, 0);
         lsquic_stream_shutdown(stream, 0);

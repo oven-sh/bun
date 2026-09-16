@@ -1,6 +1,8 @@
 import { gunzipSync, gzipSync, type Server } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir, tls } from "harness";
+import { createPrivateKey } from "node:crypto";
+import { listen } from "node:quic";
 
 // In-process server with `http1: false` so the build under test binds UDP only.
 // A fetch that silently fell back to HTTP/1.1 would get ECONNREFUSED, which
@@ -738,6 +740,59 @@ describe("aborted upload", () => {
       expect(await held.text()).toBe("first;last;");
     } finally {
       holdRelease.resolve();
+    }
+  });
+});
+
+// A response can carry any number of 1xx header blocks ahead of the final one
+// (RFC 9114 section 4.1). Bun.serve sends one at most, so a node:quic server is
+// the origin here. It writes every block in one call, so they reach the client
+// in one STREAM frame.
+describe("interim responses ahead of the final response", () => {
+  const encoder = new TextEncoder();
+  const listenOrigin = () =>
+    listen(
+      async (session: any) => {
+        session.onstream = (stream: any) => stream.closed.catch(() => {});
+        await session.closed.catch(() => {});
+      },
+      {
+        sni: { "*": { keys: [createPrivateKey(tls.key)], certs: [Buffer.from(tls.cert)] } },
+        transportParams: { maxIdleTimeout: 5 },
+        onheaders(this: any, received: Record<string, string>) {
+          if (received[":path"] === "/warm") {
+            this.sendHeaders({ ":status": "200" }, { terminal: true });
+            return;
+          }
+          this.sendInformationalHeaders({ ":status": "100" });
+          this.sendInformationalHeaders({ ":status": "103", link: "</style.css>; rel=preload" });
+          if (received[":path"] === "/no-body") {
+            this.sendHeaders({ ":status": "204", "x-final": "yes" }, { terminal: true });
+            return;
+          }
+          this.sendHeaders({ ":status": "200", "x-final": "yes" });
+          this.writer.writeSync(encoder.encode("hello"));
+          this.writer.endSync();
+        },
+      },
+    );
+
+  test.each([
+    ["/no-body", { status: 204, final: "yes", body: "" }],
+    ["/body", { status: 200, final: "yes", body: "hello" }],
+  ])("100 and 103, then the final response of %s", async (path, expected) => {
+    const origin = await listenOrigin();
+    try {
+      const url = `https://127.0.0.1:${origin.address.port}`;
+      // lsquic holds one unsent header block per stream, and it holds the first
+      // block of a new connection: the server can send three only on a used one.
+      expect((await fetch(url + "/warm", h3)).status).toBe(200);
+
+      const res = await fetch(url + path, h3);
+      expect({ status: res.status, final: res.headers.get("x-final"), body: await res.text() }).toEqual(expected);
+    } finally {
+      // Not close(): it waits for the session that fetch() keeps in its pool.
+      await origin.destroy();
     }
   });
 });

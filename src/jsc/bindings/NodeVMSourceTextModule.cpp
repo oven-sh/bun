@@ -187,6 +187,7 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
     m_moduleRequests.clear();
 
     const auto& requests = moduleRecord->requestedModules();
+    const auto& attributesLists = analyzer.requestedModuleAttributesLists();
 
     if (requests.isEmpty()) {
         RELEASE_AND_RETURN(scope, constructEmptyArray(globalObject, nullptr, 0));
@@ -200,27 +201,6 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
     const Identifier& attributesIdentifier = builtinNames.attributesPublicName();
     const Identifier& hostDefinedImportTypeIdentifier = builtinNames.hostDefinedImportTypePublicName();
 
-    WTF::Vector<ImportAttributesListNode*, 8> attributesNodes;
-    attributesNodes.reserveInitialCapacity(requests.size());
-
-    for (StatementNode* statement = node->statements()->firstStatement(); statement; statement = statement->next()) {
-        // Assumption: module declarations occur here in the same order they occur in `requestedModules`.
-        if (statement->isModuleDeclarationNode()) {
-            ModuleDeclarationNode* moduleDeclaration = static_cast<ModuleDeclarationNode*>(statement);
-            if (moduleDeclaration->isImportDeclarationNode()) {
-                ImportDeclarationNode* importDeclaration = static_cast<ImportDeclarationNode*>(moduleDeclaration);
-                ASSERT_WITH_MESSAGE(attributesNodes.size() < requests.size(), "More attributes nodes than requests");
-                ASSERT_WITH_MESSAGE(importDeclaration->moduleName()->moduleName().string().string() == requests.at(attributesNodes.size()).m_specifier.string(), "Module name mismatch");
-                attributesNodes.append(importDeclaration->attributesList());
-            } else if (moduleDeclaration->hasAttributesList()) {
-                // Necessary to make the indices of `attributesNodes` and `requests` match up
-                attributesNodes.append(nullptr);
-            }
-        }
-    }
-
-    ASSERT_WITH_MESSAGE(attributesNodes.size() >= requests.size(), "Attributes node count doesn't match request count (%zu < %zu)", attributesNodes.size(), requests.size());
-
     for (unsigned i = 0; i < requests.size(); ++i) {
         const auto& request = requests[i];
 
@@ -229,50 +209,21 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
         JSObject* requestObject = constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
         requestObject->putDirect(vm, specifierIdentifier, specifierValue);
 
-        WTF::String attributesTypeString = "unknown"_str;
-
         WTF::HashMap<WTF::String, WTF::String> attributeMap;
         JSObject* attributesObject = constructEmptyObject(globalObject);
 
-        if (request.m_attributes) {
-            JSValue attributesType {};
-            switch (request.m_attributes->type()) {
-                using AttributeType = decltype(request.m_attributes->type());
-                using enum AttributeType;
-            case None:
-                attributesTypeString = "none"_str;
-                attributesType = JSC::jsString(vm, attributesTypeString);
-                break;
-            case JavaScript:
-                attributesTypeString = "javascript"_str;
-                attributesType = JSC::jsString(vm, attributesTypeString);
-                break;
-            case WebAssembly:
-                attributesTypeString = "webassembly"_str;
-                attributesType = JSC::jsString(vm, attributesTypeString);
-                break;
-            case JSON:
-                attributesTypeString = "json"_str;
-                attributesType = JSC::jsString(vm, attributesTypeString);
-                break;
-            default:
-                attributesType = JSC::jsNumber(static_cast<uint8_t>(request.m_attributes->type()));
-                break;
-            }
-
-            attributeMap.set("type"_s, WTF::move(attributesTypeString));
-            attributesObject->putDirect(vm, JSC::Identifier::fromString(vm, "type"_s), attributesType);
-
-            if (const String& hostDefinedImportType = request.m_attributes->hostDefinedImportType(); !hostDefinedImportType.isEmpty()) {
-                attributesObject->putDirect(vm, hostDefinedImportTypeIdentifier, JSC::jsString(vm, hostDefinedImportType));
-                attributeMap.set("hostDefinedImportType"_s, hostDefinedImportType);
+        if (ImportAttributesListNode* attributesList = attributesLists[i]) {
+            for (auto [key, value] : attributesList->attributes()) {
+                attributeMap.set(key->string(), value->string());
+                attributesObject->putDirectMayBeIndex(globalObject, *key, JSC::jsString(vm, value->string()));
+                RETURN_IF_EXCEPTION(scope, {});
             }
         }
 
-        if (ImportAttributesListNode* attributesNode = attributesNodes.at(i)) {
-            for (auto [key, value] : attributesNode->attributes()) {
-                attributeMap.set(key->string(), value->string());
-                attributesObject->putDirect(vm, *key, JSC::jsString(vm, value->string()));
+        if (request.m_attributes) {
+            if (const String& hostDefinedImportType = request.m_attributes->hostDefinedImportType(); !hostDefinedImportType.isEmpty()) {
+                attributesObject->putDirect(vm, hostDefinedImportTypeIdentifier, JSC::jsString(vm, hostDefinedImportType));
+                attributeMap.set("hostDefinedImportType"_s, hostDefinedImportType);
             }
         }
 

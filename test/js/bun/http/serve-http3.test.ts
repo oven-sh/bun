@@ -129,6 +129,15 @@ const server = serve({
     if (url.pathname === "/big") {
       return new Response(big, { headers: { "content-type": "application/octet-stream" } });
     }
+    if (url.pathname === "/big-headers") {
+      const n = Number(url.searchParams.get("n"));
+      const size = Number(url.searchParams.get("size"));
+      // "~" is 13 bits in the QPACK Huffman table, so the values stay literals.
+      const value = Buffer.alloc(size, "~").toString();
+      const headers = {};
+      for (let i = 0; i < n; i++) headers["x-big-" + i] = value;
+      return new Response("ok", { headers });
+    }
     if (url.pathname === "/status") {
       return new Response(null, { status: 204 });
     }
@@ -544,6 +553,21 @@ describe("Bun.serve HTTP/3 adversarial", () => {
       const seen = (await res.json()) as Record<string, string>;
       expect(seen["x-huge"]?.length).toBe(7000);
       for (let i = 0; i < 50; i++) expect(seen[`x-h${i}`]).toBe(small);
+    });
+  });
+
+  test("response with more than 64 KB of headers is sent", async () => {
+    // 100 x 700 bytes is about 70 KB after QPACK encoding. lsquic encoded the
+    // header block into a 64 KB buffer and dropped anything larger, so the
+    // response never went out and the client waited until its idle timeout.
+    await withServer(async port => {
+      const n = 100;
+      const size = 700;
+      const res = await fetchH3(port, `/big-headers?n=${n}&size=${size}`);
+      expect(res.status).toBe(200);
+      const lengths = Array.from({ length: n }, (_, i) => res.headers.get(`x-big-${i}`)?.length);
+      expect(lengths).toEqual(Array(n).fill(size));
+      expect(await res.text()).toBe("ok");
     });
   });
 

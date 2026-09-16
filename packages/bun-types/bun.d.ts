@@ -579,6 +579,19 @@ declare module "bun" {
 
   interface DirectUnderlyingSource<R = any> {
     cancel?: UnderlyingSourceCancelCallback;
+    /**
+     * Write the stream's data with `controller.write()` (await it for
+     * backpressure) and finish with `controller.close()`.
+     *
+     * A destination that takes the whole body (`Bun.serve`, `Bun.write`,
+     * `.text()`, ...) calls `pull()` once. If it returns a promise, the stream
+     * stays open while it is pending, ends when it resolves, and errors if it
+     * rejects. If it returns synchronously without closing, the stream stays
+     * open until `controller.close()` is called.
+     *
+     * A reader (`getReader()`, `for await`, `pipeTo()`) calls `pull()` again
+     * for a later read, once the previous call has settled.
+     */
     pull: (controller: ReadableStreamDirectController) => void | PromiseLike<void>;
     type: "direct";
   }
@@ -2134,7 +2147,7 @@ declare module "bun" {
    */
   function write(
     destination: BunFile | S3File | PathLike,
-    input: Blob | NodeJS.TypedArray | ArrayBufferLike | string | BlobPart[] | Archive,
+    input: Blob | NodeJS.TypedArray | ArrayBufferLike | string | BlobPart[] | Archive | ReadableStream,
     options?: {
       /**
        * If writing to a PathLike, set the permissions of the file.
@@ -2152,19 +2165,20 @@ declare module "bun" {
   ): Promise<number>;
 
   /**
-   * Persist a {@link Response} body to disk.
+   * Persist a {@link Response} or {@link Request} body to disk. The body is
+   * streamed into the file as it arrives.
    *
    * @param destination The file to write to. If the file doesn't exist, it is
    * created; if it does, it is overwritten. If `input` is smaller than
    * `destination`, `destination` is truncated.
-   * @param input The `Response` whose body is written
+   * @param input The `Response` or `Request` whose body is written
    * @param options Options for the write
    *
    * @returns A promise that resolves with the number of bytes written.
    */
   function write(
     destination: BunFile,
-    input: Response,
+    input: Response | Request,
     options?: {
       /**
        * If `true`, create the parent directory if it doesn't exist.
@@ -2178,17 +2192,18 @@ declare module "bun" {
   ): Promise<number>;
 
   /**
-   * Persist a {@link Response} body to disk.
+   * Persist a {@link Response} or {@link Request} body to disk. The body is
+   * streamed into the file as it arrives.
    *
    * @param destinationPath The file path to write to. If the file doesn't
    * exist, it is created; if it does, it is overwritten. If `input` is
    * smaller than the existing file, the file is truncated.
-   * @param input The `Response` whose body is written
+   * @param input The `Response` or `Request` whose body is written
    * @returns A promise that resolves with the number of bytes written.
    */
   function write(
     destinationPath: PathLike,
-    input: Response,
+    input: Response | Request,
     options?: {
       /**
        * If `true`, create the parent directory if it doesn't exist.
@@ -2740,7 +2755,7 @@ declare module "bun" {
      * @param options - The options to use for the write.
      */
     write(
-      data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer | Request | Response | BunFile,
+      data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer | Request | Response | BunFile | ReadableStream,
       options?: { highWaterMark?: number },
     ): Promise<number>;
 
@@ -3173,6 +3188,45 @@ declare module "bun" {
     splitting?: boolean;
 
     /**
+     * With `splitting` and `target: "bun"`, every `require()` of a bundled ES
+     * module is a chunk boundary too. The call stays synchronous: it is
+     * emitted as `import.meta.require("./chunk-…js")` and the chunk is
+     * evaluated when the call runs, so a `require()` inside a function that
+     * never runs costs nothing at startup. Set to `false` to keep such
+     * modules inlined in the calling chunk. No effect for other targets.
+     *
+     * @default true
+     */
+    splitRequire?: boolean;
+
+    /**
+     * With `splitting`, chunks that are always loaded together are folded
+     * into one (for example, code shared by an entry point and a module it
+     * `import()`s lives in the entry point's chunk). This option additionally
+     * folds chunks whose combined source size is below this many bytes and
+     * whose modules have no top-level side effects into a chunk loaded by a
+     * superset of their importers, so fewer modules are loaded at runtime.
+     * Nothing lazy becomes eager and no side effect runs earlier; the chunk
+     * that absorbs a folded chunk exports the symbols other chunks import
+     * from it. Requires `splitting: true`. CLI: `--min-chunk-size`. For browser
+     * builds, where every chunk is a request, 16384 is a good value.
+     *
+     * @default 0 (disabled)
+     */
+    minChunkSize?: number;
+
+    /**
+     * With `splitting` and `target: "browser"`, HTML entrypoints get a
+     * `<link rel="modulepreload">` for every chunk their script statically
+     * imports, and each `import()` first adds one for every chunk its target
+     * statically imports, so a chunk's dependencies download in parallel
+     * instead of one import depth per round trip. CLI: `--no-module-preload`.
+     *
+     * @default true
+     */
+    modulePreload?: boolean;
+
+    /**
      * List of entrypoints, usually file paths
      */
     entrypoints: string[];
@@ -3206,13 +3260,21 @@ declare module "bun" {
        * **Experimental**
        */
       | "iife";
+    /**
+     * Output file name templates. Tokens: `[dir]`, `[name]`, `[ext]`,
+     * `[target]`, and `[hash]` (8 characters of the content hash, more when
+     * two outputs would otherwise share a name) or `[hash9]`…`[hash13]` for a
+     * wider minimum.
+     *
+     * @default { entry: "[dir]/[name].[ext]", chunk: "./chunk-[hash].[ext]", asset: "./[name]-[hash].[ext]" }
+     */
     naming?:
       | string
       | {
           chunk?: string;
           entry?: string;
           asset?: string;
-        }; // | string;
+        };
     root?: string; // project root
     plugins?: BunPlugin[];
     // manifest?: boolean; // whether to return manifest
@@ -3316,6 +3378,19 @@ declare module "bun" {
     emitDCEAnnotations?: boolean;
 
     /**
+     * Give bundled module namespace objects (`import * as ns`, `export * as ns`)
+     * a setter per export, so assigning `ns.foo = value` is silently accepted
+     * (reads still return the module's binding) instead of throwing like a
+     * real module namespace object. When `false`, namespace objects are
+     * getter-only.
+     *
+     * @deprecated This exists for backwards compatibility and will be removed
+     * (behaving as `false`) in a future release.
+     * @default true
+     */
+    deprecatedNamespaceObjectSetters?: boolean;
+
+    /**
      * Whether to enable tree-shaking (removal of unreferenced top-level
      * declarations and unused exports). Defaults to `true`. Set to `false` to
      * keep dead code in the output for debugging or test fixtures.
@@ -3349,6 +3424,29 @@ declare module "bun" {
      * @default false
      */
     bytecode?: boolean;
+
+    /**
+     * How many levels of nested functions to compile to bytecode ahead of time.
+     * `0` compiles only each module's top-level code; nested functions past the
+     * limit are compiled from source when first called. Lower values make the
+     * bytecode smaller at the cost of some startup work.
+     *
+     * Must be a non-negative integer. Only used when `bytecode: true`.
+     * @default undefined (all nested functions)
+     */
+    bytecodeDepth?: number;
+
+    /**
+     * Build-time optimizations for `bytecode` builds.
+     */
+    optimize?: {
+      /**
+       * Run JavaScriptCore's build-time optimization passes over the generated
+       * bytecode. Only used when `bytecode: true`.
+       * @default true
+       */
+      bytecode?: boolean;
+    };
 
     /**
      * Add a banner to the bundled code such as "use client";
@@ -3647,6 +3745,17 @@ declare module "bun" {
      * @default false
      */
     autoloadPackageJson?: boolean;
+    /**
+     * The JIT policy the executable starts with (see {@link Bun.unsafe.setJITPolicy}).
+     * `1` is the normal policy. A value `> 1` multiplies JavaScriptCore's tier-up
+     * thresholds so code that only runs during startup stays in the interpreter
+     * longer; the app should call `Bun.unsafe.setJITPolicy(1)` once it is interactive.
+     *
+     * Equivalent CLI flag: `--compile-jit-policy <n>`
+     *
+     * @default 1
+     */
+    jitPolicy?: number;
     windows?: {
       hideConsole?: boolean;
       icon?: string;
@@ -4263,6 +4372,15 @@ declare module "bun" {
           kind: ImportKind;
           /** Original import specifier before resolution (if different from path) */
           original?: string;
+          /**
+           * With `splitting`, an `import()` (or, for `target: "bun"`, a
+           * `require()` of an ES module) of a bundled file loads another
+           * output file: `path` then points at that output instead of an
+           * input, and `external` is `true`. `entryPoint` is the input file
+           * that output was built from. It is a key of `inputs` and equals
+           * that output's `outputs[...].entryPoint`.
+           */
+          entryPoint?: string;
           /** Whether this import is external to the bundle */
           external?: boolean;
           /** Import attributes, for example `{ type: "json" }` */
@@ -5011,6 +5129,26 @@ declare module "bun" {
     terminate(): void;
 
     /**
+     * Stops reading from the underlying socket, so the peer sees TCP
+     * backpressure instead of the client buffering in memory. Messages
+     * already received may still be dispatched. A pause before the
+     * connection opens takes effect once it does.
+     * @returns `true` if the socket was paused (or will be on open), `false` if there is no socket to pause
+     */
+    pause(): boolean;
+
+    /**
+     * Resumes reading from the underlying socket after `pause()`.
+     * @returns `true` if the socket was resumed (or will be on open), `false` if there is no socket to resume
+     */
+    resume(): boolean;
+
+    /**
+     * Whether the connection is currently paused via `pause()`.
+     */
+    readonly isPaused: boolean;
+
+    /**
      * Registers an event handler of a specific event type on the WebSocket.
      * @param type A case-sensitive string representing the event type to listen for
      * @param listener The function to be called when the event occurs
@@ -5307,16 +5445,30 @@ declare module "bun" {
     function mimallocDump(): void;
 
     /**
-     * Accurate per-process memory footprint in bytes.
+     * Scale JavaScriptCore's JIT tier-up thresholds for the current thread's VM.
      *
-     * Unlike `process.memoryUsage.rss()`, this excludes pages already
-     * returned to the OS that the kernel keeps mapped lazily (Darwin's
-     * `MADV_FREE_REUSABLE`), so leak tests are platform-comparable.
+     * `1` is the normal JIT policy. A value `> 1` makes the JIT that many times more
+     * reluctant to compile, e.g. during a burst of run-once startup code; it stays in
+     * effect until the next call. `bun build --compile` executables can start with a
+     * scale baked in (`compile.jitPolicy` / `--compile-jit-policy`) and call
+     * `setJITPolicy(1)` once interactive.
      *
-     * Backed by `task_info(TASK_VM_INFO).phys_footprint` on Darwin, `Pss:`
-     * from `/proc/self/smaps_rollup` on Linux, and `PrivateUsage` on Windows.
-     * Returns `undefined` on platforms with no accurate accessor; callers
-     * should fall back: `Bun.unsafe.memoryFootprint() ?? process.memoryUsage.rss()`.
+     * @param scale a finite number `>= 1`
+     * @throws {TypeError} if `scale` is not a number
+     * @throws {RangeError} if `scale` is not finite or `< 1`
+     */
+    function setJITPolicy(scale: number): void;
+
+    /**
+     * Per-process memory footprint in bytes: the memory that only this
+     * process keeps the machine from reusing.
+     *
+     * Backed by `task_info(TASK_VM_INFO).phys_footprint` on macOS (the same
+     * number `process.memoryUsage.rss()` reports there), `Pss:` from
+     * `/proc/self/smaps_rollup` on Linux (shared pages are split between the
+     * processes that map them), and `PrivateUsage` on Windows (this process's
+     * commit charge). Returns `undefined` on platforms with no such accessor;
+     * callers should fall back: `Bun.unsafe.memoryFootprint() ?? process.memoryUsage.rss()`.
      */
     function memoryFootprint(): number | undefined;
   }
@@ -8621,6 +8773,122 @@ declare module "bun" {
   // ): number;
 
   /**
+   * The proxy a `fetch()` uses.
+   *
+   * - A URL string, a `URL`, or `{ url, headers, respectNoProxy }` selects that proxy.
+   * - `false` connects directly, even when `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` are set.
+   * - `undefined` uses the proxy environment variables.
+   */
+  type FetchProxyOption =
+    | string
+    | URL
+    | false
+    | {
+        /**
+         * The proxy URL, as a string or a `URL`.
+         */
+        url: string | URL;
+        /**
+         * Custom headers to send to the proxy server.
+         * These headers are sent in the CONNECT request (for HTTPS targets)
+         * or in the proxy request (for HTTP targets).
+         */
+        headers?: HeadersInit | undefined;
+        /**
+         * Whether hosts listed in `NO_PROXY` / `no_proxy` bypass this proxy.
+         * Set to `false` to send every request through the proxy.
+         *
+         * @default true
+         */
+        respectNoProxy?: boolean | undefined;
+      };
+
+  interface FetchSessionInit {
+    /**
+     * TLS options for the connections of this session. A request that passes
+     * its own `tls` uses that instead, as a whole.
+     *
+     * A `checkServerIdentity` given here runs once per connection, and the
+     * connection is then shared by the requests of this session.
+     */
+    tls?: BunFetchRequestInitTLS | undefined;
+    /**
+     * The proxy for the requests of this session.
+     */
+    proxy?: FetchProxyOption | undefined;
+    /**
+     * Connection reuse. `false` closes every connection after its response.
+     * The limits do not apply to HTTP/3 connections.
+     *
+     * @default true
+     */
+    keepAlive?:
+      | boolean
+      | {
+          /**
+           * Seconds an idle connection stays in the pool before it is closed.
+           * The socket timer is coarse: it moves in 4 second steps up to four
+           * minutes, and in whole minutes beyond that.
+           *
+           * @default 300
+           */
+          idleTimeout?: number | undefined;
+          /**
+           * Most idle connections this session keeps per kind of connection
+           * (plain, TLS, each distinct `tls` configuration, Unix socket). When
+           * one more is released, the longest-idle one is closed.
+           */
+          maxIdleSockets?: number | undefined;
+        }
+      | undefined;
+    /**
+     * Send the requests of this session over a Unix socket.
+     */
+    unix?: string | undefined;
+  }
+
+  /**
+   * Connection settings shared by the `fetch()` calls that name it, and the
+   * keep-alive connection pool they share. Connections are never shared between
+   * two sessions, or between a session and plain `fetch()`.
+   *
+   * @example
+   * ```ts
+   * const session = new Bun.FetchSession({
+   *   proxy: { url: "http://proxy.internal:8080", respectNoProxy: false },
+   *   tls: { ca: await Bun.file("corp-ca.pem").text() },
+   * });
+   *
+   * const response = await session.fetch("https://example.com");
+   * // the same request, as an option of the global fetch():
+   * await fetch("https://example.com", { session });
+   * ```
+   */
+  class FetchSession {
+    constructor(init?: FetchSessionInit);
+    /**
+     * `fetch()` with this session. The function is bound: hand it to anything
+     * that takes a `fetch`. A `session` in `init` does not replace this one.
+     *
+     * It has no `preconnect`, so where an option is typed `typeof fetch`
+     * (which in Bun includes `fetch.preconnect`), pass
+     * `session.fetch as typeof fetch`.
+     *
+     * @example
+     * ```ts
+     * const client = new SomeClient({ fetch: session.fetch });
+     * ```
+     */
+    readonly fetch: (input: string | URL | Request, init?: BunFetchRequestInit) => Promise<Response>;
+    /**
+     * Close the idle connections in this session's pool. Requests in flight
+     * finish, and the session stays usable.
+     */
+    close(): void;
+    [Symbol.dispose](): void;
+  }
+
+  /**
    * Resolve routes against a directory of files using Next.js-style (`pages`
    * directory) conventions.
    */
@@ -9295,8 +9563,9 @@ declare module "bun" {
        * constructor returns; `await view.navigate(otherUrl)` or any other
        * operation waits for it to complete first.
        *
-       * Equivalent to calling `view.navigate(url)` immediately after
-       * construction.
+       * Starts the same navigation `view.navigate(url)` would, but its
+       * promise stays internal: a failure never surfaces as a rejection.
+       * Set {@link WebView.onNavigationFailed} to observe it.
        */
       url?: string;
       /** Capture page-side `console.*` calls. See {@link ConsoleCapture}. */
@@ -9617,6 +9886,11 @@ declare module "bun" {
     /**
      * Close the view and release its WebContent process. After close,
      * all methods throw. Idempotent.
+     *
+     * Pending operations reject with `Error("WebView closed")`. The
+     * rejections are marked as handled: a promise you hold still rejects
+     * catchably, but a pending operation nothing holds never triggers
+     * `unhandledRejection`.
      */
     close(): void;
 

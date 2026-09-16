@@ -3,7 +3,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 use bun_ast::{Loc, Log};
 use bun_core::FeatureFlags;
-use bun_core::{MutableString, ZigStringSlice};
+use bun_core::MutableString;
 use bun_threading::IntrusiveWorkTask as _;
 use bun_threading::thread_pool::{self, Batch, Task};
 use bun_url::{PercentEncoding, URL};
@@ -24,9 +24,9 @@ bun_core::declare_scope!(AsyncHTTP, visible);
 
 // Lifetime `'a` covers every borrowed input the caller hands in: `url`,
 // `http_proxy`, `request_header_buf`, the borrowed `HTTPRequestBody::Bytes`
-// payload, and `client.{header_buf,hostname,if_modified_since}`. Intrusive
-// fields (`real`, `next`) are raw pointers and thus lifetime-erased; the
-// HTTP-thread copy uses the same `'a` as the JS-thread original it mirrors.
+// payload, and `client.{header_buf,unix_socket_path,if_modified_since}`.
+// Intrusive fields (`real`, `next`) are raw pointers and thus lifetime-erased;
+// the HTTP-thread copy uses the same `'a` as the JS-thread original it mirrors.
 pub struct AsyncHTTP<'a> {
     pub response: Option<picohttp::Response<'static>>,
     pub request_headers: headers::EntryList,
@@ -106,25 +106,26 @@ fn http_thread_timer_read() -> u64 {
     crate::http_thread().timer.elapsed().as_nanos() as u64
 }
 
-/// Build the `Proxy-Authorization: Basic <b64(user:pass)>` header value.
-/// Returns `None` (and logs) if percent-decoding fails.
-pub(crate) fn build_proxy_authorization(proxy: &URL<'_>) -> Option<Vec<u8>> {
-    if proxy.username.is_empty() && proxy.password.is_empty() {
+/// The `Basic <b64(user:pass)>` credentials for a URL's userinfo, as sent in
+/// `Authorization` / `Proxy-Authorization`. `None` when the URL has no
+/// userinfo, or (logged) when it does not percent-decode.
+pub fn basic_authorization(url: &URL<'_>) -> Option<Vec<u8>> {
+    if url.username.is_empty() && url.password.is_empty() {
         return None;
     }
 
-    let username = match PercentEncoding::decode_alloc(proxy.username) {
+    let username = match PercentEncoding::decode_alloc(url.username) {
         Ok(u) => u,
         Err(err) => {
-            bun_core::scoped_log!(AsyncHTTP, "failed to decode proxy username: {:?}", err);
+            bun_core::scoped_log!(AsyncHTTP, "failed to decode URL username: {:?}", err);
             return None;
         }
     };
 
-    let password = match PercentEncoding::decode_alloc(proxy.password) {
+    let password = match PercentEncoding::decode_alloc(url.password) {
         Ok(p) => p,
         Err(err) => {
-            bun_core::scoped_log!(AsyncHTTP, "failed to decode proxy password: {:?}", err);
+            bun_core::scoped_log!(AsyncHTTP, "failed to decode URL password: {:?}", err);
             return None;
         }
     };
@@ -149,7 +150,6 @@ fn make_client<'a>(
     url: URL<'a>,
     header_entries: headers::EntryList,
     header_buf: &'a [u8],
-    hostname: Option<&'a [u8]>,
     signals: Signals,
     async_http_id: u32,
     http_proxy: Option<URL<'a>>,
@@ -190,11 +190,11 @@ fn make_client<'a>(
         pending_h2: None,
         signals,
         async_http_id,
-        hostname,
-        unix_socket_path: ZigStringSlice::EMPTY,
+        unix_socket_path: b"",
         compress: None,
         compressed_request_body: Vec::new(),
         compressed_body_len: 0,
+        pool: crate::PoolOptions::default(),
     }
 }
 
@@ -243,9 +243,8 @@ pub struct Options<'a> {
     pub http_proxy: Option<URL<'a>>,
     pub proxy_settings: Option<Box<crate::ProxySettings>>,
     pub proxy_headers: Option<Headers>,
-    pub hostname: Option<&'a [u8]>,
     pub signals: Option<Signals>,
-    pub unix_socket_path: Option<ZigStringSlice>,
+    pub unix_socket_path: Option<&'a [u8]>,
     pub disable_timeout: Option<bool>,
     /// Per-request idle timeout override in seconds; see
     /// `HTTPClient::idle_timeout_seconds`.
@@ -257,6 +256,8 @@ pub struct Options<'a> {
     pub reject_unauthorized: Option<bool>,
     pub tls_props: Option<SSLConfigSharedPtr>,
     pub compress: Option<crate::compress_body::CompressOption>,
+    pub pool: crate::PoolOptions,
+    pub bypass_pool: bool,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -315,9 +316,6 @@ impl<'a> AsyncHTTP<'a> {
 
     pub fn clear_data(&mut self) {
         self.response = None;
-        // Note: `ZigStringSlice` Drop releases WTF/owned variants;
-        // assigning EMPTY runs Drop on the old value.
-        self.client.unix_socket_path = ZigStringSlice::EMPTY;
     }
 }
 
@@ -435,7 +433,6 @@ impl<'a> AsyncHTTP<'a> {
             // and `client.header_entries`; `MultiArrayList` owns its allocation, so clone here.
             headers.clone().expect("OOM"),
             headers_buf,
-            options.hostname,
             signals,
             async_http_id,
             options.http_proxy,
@@ -463,7 +460,6 @@ impl<'a> AsyncHTTP<'a> {
             signals,
         };
         if let Some(val) = options.unix_socket_path {
-            debug_assert!(this.client.unix_socket_path.slice().is_empty());
             this.client.unix_socket_path = val;
         }
         if let Some(val) = options.disable_timeout {
@@ -493,6 +489,10 @@ impl<'a> AsyncHTTP<'a> {
         }
         this.client.compress = options.compress;
         this.client.proxy_settings = options.proxy_settings;
+        this.client.pool = options.pool;
+        if options.bypass_pool {
+            this.client.flags.pool_bypass = crate::PoolBypass::NotThisHop;
+        }
 
         // `client.proxy_authorization` stays `None` on the JS-thread original;
         // `on_start` derives it on the HTTP-thread clone so redirects can
@@ -503,11 +503,10 @@ impl<'a> AsyncHTTP<'a> {
     /// Construct an `AsyncHTTP` for a synchronous request driven via
     /// [`send_sync`].
     ///
-    /// Borrowed inputs (`url`, `headers_buf`, `request_body`, `http_proxy`,
-    /// `hostname`) are tied to lifetime `'a` and must outlive the returned
-    /// value — in practice they live on the calling stack frame and the
-    /// request is driven to completion via `send_sync` before that frame
-    /// returns.
+    /// Borrowed inputs (`url`, `headers_buf`, `request_body`, `http_proxy`)
+    /// are tied to lifetime `'a` and must outlive the returned value — in
+    /// practice they live on the calling stack frame and the request is driven
+    /// to completion via `send_sync` before that frame returns.
     pub fn init_sync(
         method: Method,
         url: URL<'a>,
@@ -515,7 +514,6 @@ impl<'a> AsyncHTTP<'a> {
         headers_buf: &'a [u8],
         request_body: &'a [u8],
         http_proxy: Option<URL<'a>>,
-        hostname: Option<&'a [u8]>,
         redirect_type: FetchRedirect,
     ) -> AsyncHTTP<'a> {
         Self::init(
@@ -528,7 +526,6 @@ impl<'a> AsyncHTTP<'a> {
             redirect_type,
             Options {
                 http_proxy,
-                hostname,
                 ..Options::default()
             },
         )
@@ -713,11 +710,11 @@ impl<'a> AsyncHTTP<'a> {
                 // (`start_queued_task`), so any owned field that was already
                 // populated at that point — `request_headers`,
                 // `client.header_entries`, `client.proxy_headers`,
-                // `client.proxy_settings`, `client.tls_props`,
-                // `client.unix_socket_path` — is *shared* with the original
-                // and must NOT be dropped here; the original drops them when
-                // its `Box<AsyncHTTP>` is reclaimed. Only the state the clone
-                // built up itself during request processing is torn down.
+                // `client.proxy_settings`, `client.tls_props` — is *shared*
+                // with the original and must NOT be dropped here; the original
+                // drops them when its `Box<AsyncHTTP>` is reclaimed. Only the
+                // state the clone built up itself during request processing is
+                // torn down.
                 {
                     // `handle_response_metadata` rewrites per-hop request state in
                     // place: `client.url`/`connected_url` become self-borrows into
@@ -751,19 +748,9 @@ impl<'a> AsyncHTTP<'a> {
                     drop(core::mem::take(&mut client.prev_redirect));
                     drop(core::mem::take(&mut client.compressed_request_body));
                     drop(core::mem::take(&mut client.proxy_authorization));
-                    if let Some(tunnel) = client.proxy_tunnel.take() {
-                        // SAFETY: tunnel was created by ProxyTunnel::start
-                        // (heap::alloc) and is refcounted; detach the socket
-                        // (the first half of the old `detach_and_deref`)
-                        // before releasing the clone's strong ref below.
-                        (*tunnel.as_ptr()).detach_socket();
-                        tunnel.deref();
-                    }
+                    client.close_proxy_tunnel(false);
                     debug_assert!(client.h2.is_none());
-                    if let Some(ctx) = client.custom_ssl_ctx.take() {
-                        // Release the strong ref the clone took in set_custom_ssl_ctx.
-                        ctx.deref();
-                    }
+                    drop(core::mem::take(&mut client.custom_ssl_ctx));
                     // `state` was `Default` at `ptr::read` time and was
                     // populated by the clone (`on_start` → `client.start`); it
                     // owns the decompressor / compressed_body buffers.
@@ -846,7 +833,7 @@ impl<'a> AsyncHTTP<'a> {
         // original's copy stays `None`.
         debug_assert!(self.client.proxy_authorization.is_none());
         if let Some(proxy) = &self.client.http_proxy {
-            self.client.proxy_authorization = build_proxy_authorization(proxy);
+            self.client.proxy_authorization = basic_authorization(proxy);
         }
 
         self.elapsed = http_thread_timer_read();

@@ -127,6 +127,15 @@ bool extractCachedData(JSValue cachedDataValue, WTF::Vector<uint8_t>& outCachedD
     return false;
 }
 
+Ref<JSC::CachedBytecode> createOwnedCachedBytecode(std::span<const uint8_t> bytes)
+{
+    // UnlinkedFunctionExecutable's Decoder constructor (CachedTypes.cpp) keeps the Decoder and a
+    // payload offset, and decodes the body on the function's first call, borrowed payload or not.
+    auto payload = WTF::MallocSpan<uint8_t, JSC::VMMalloc>::malloc(bytes.size());
+    WTF::memcpySpan(payload.mutableSpan(), bytes);
+    return JSC::CachedBytecode::create(WTF::move(payload), {});
+}
+
 JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, const ArgList& args, const SourceOrigin& sourceOrigin, CompileFunctionOptions&& options, JSC::SourceTaintedOrigin sourceTaintOrigin, JSC::JSScope* scope)
 {
     ASSERT(scope);
@@ -152,6 +161,7 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
     if (!args.isEmpty() && args.at(0).isString()) {
         ParserError error;
         String code = args.at(0).toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(throwScope, nullptr);
 
         SourceCode sourceCode(
             JSC::StringSourceProvider::create(code, sourceOrigin, options.filename, sourceTaintOrigin, position, SourceProviderSourceType::Program),
@@ -188,6 +198,7 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
                 // Node always attaches the arrow header to compile-time SyntaxErrors
                 // (node_contextify.cc DecorateErrorStack), independent of displayErrors.
                 decorateParseErrorStack(globalObject, vm, exception, code, options.filename, error, options.lineOffset);
+                RETURN_IF_EXCEPTION(throwScope, nullptr);
                 throwException(globalObject, throwScope, exception);
                 return nullptr;
             }
@@ -217,7 +228,7 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
     TriState bytecodeAccepted = TriState::Indeterminate;
 
     if (!options.cachedData.isEmpty()) {
-        cachedBytecode = CachedBytecode::create(std::span(options.cachedData), nullptr, {});
+        cachedBytecode = createOwnedCachedBytecode(options.cachedData.span());
         SourceCodeKey key(sourceCode, {}, JSC::SourceCodeType::ProgramType, lexicallyScopedFeatures, JSC::JSParserScriptMode::Classic, JSC::DerivedContextType::None, JSC::EvalContextType::None, false, {}, std::nullopt);
         unlinkedProgramCodeBlock = JSC::decodeCodeBlock<UnlinkedProgramCodeBlock>(vm, key, *cachedBytecode);
         if (unlinkedProgramCodeBlock == nullptr) {
@@ -258,7 +269,7 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
 
     if (bytecodeAccepted == TriState::Indeterminate) {
         if (options.produceCachedData) {
-            RefPtr<JSC::CachedBytecode> producedBytecode = getBytecode(globalObject, programExecutable, sourceCode);
+            RefPtr<JSC::CachedBytecode> producedBytecode = getBytecode(globalObject, JSC::SourceCodeType::ProgramType, sourceCode);
             if (producedBytecode) {
                 JSC::JSUint8Array* buffer = WebCore::createBuffer(globalObject, producedBytecode->span());
                 RETURN_IF_EXCEPTION(throwScope, nullptr);
@@ -410,7 +421,8 @@ String stringifyAnonymousFunction(JSGlobalObject* globalObject, const ArgList& a
     } else {
         // Process parameters and body
         unsigned parameterCount = args.size() - 1;
-        StringBuilder paramString;
+        // The params come from JS. Past `String::MaxLength` a default `StringBuilder` calls `CRASH()`.
+        StringBuilder paramString { OverflowPolicy::RecordOverflow };
 
         for (unsigned i = 0; i < parameterCount; ++i) {
             auto param = args.at(i).toWTFString(globalObject);
@@ -421,6 +433,11 @@ String stringifyAnonymousFunction(JSGlobalObject* globalObject, const ArgList& a
             }
 
             paramString.append(param);
+        }
+
+        if (paramString.hasOverflowed()) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return {};
         }
 
         auto body = args.at(parameterCount).toWTFString(globalObject);
@@ -438,33 +455,28 @@ String stringifyAnonymousFunction(JSGlobalObject* globalObject, const ArgList& a
     return program;
 }
 
-RefPtr<JSC::CachedBytecode> getBytecode(JSGlobalObject* globalObject, JSC::ProgramExecutable* executable, const JSC::SourceCode& source)
+// cachedData is a function of the source alone: every nested function is generated now (not whichever ones this
+// process happens to have run), with the default code-generation mode (no debugger/profiler opcodes), independently of
+// what the VM's CodeCache holds.
+RefPtr<JSC::CachedBytecode> getBytecode(JSGlobalObject* globalObject, JSC::SourceCodeType type, const JSC::SourceCode& source)
 {
     VM& vm = JSC::getVM(globalObject);
-    JSC::CodeCache* cache = vm.codeCache();
     JSC::ParserError parserError;
-    JSC::UnlinkedProgramCodeBlock* unlinked = cache->getUnlinkedProgramCodeBlock(vm, executable, source, {}, parserError);
-    if (!unlinked || parserError.isValid()) {
-        return nullptr;
-    }
-    JSC::LexicallyScopedFeatures lexicallyScopedFeatures = globalObject->globalScopeExtension() ? TaintedByWithScopeLexicallyScopedFeature : NoLexicallyScopedFeatures;
     JSC::BytecodeCacheError bytecodeCacheError;
     FileSystem::FileHandle fileHandle;
-    return JSC::serializeBytecode(vm, unlinked, source, JSC::SourceCodeType::ProgramType, lexicallyScopedFeatures, JSParserScriptMode::Classic, fileHandle, bytecodeCacheError, {});
-}
-
-RefPtr<JSC::CachedBytecode> getBytecode(JSGlobalObject* globalObject, JSC::ModuleProgramExecutable* executable, const JSC::SourceCode& source)
-{
-    VM& vm = JSC::getVM(globalObject);
-    JSC::CodeCache* cache = vm.codeCache();
-    JSC::ParserError parserError;
-    JSC::UnlinkedModuleProgramCodeBlock* unlinked = cache->getUnlinkedModuleProgramCodeBlock(vm, executable, source, {}, parserError);
-    if (!unlinked || parserError.isValid()) {
-        return nullptr;
+    if (type == JSC::SourceCodeType::ModuleType) {
+        // What JSC itself keys module code with: always strict, never tainted by a global scope extension.
+        JSC::LexicallyScopedFeatures lexicallyScopedFeatures = StrictModeLexicallyScopedFeature;
+        JSC::UnlinkedModuleProgramCodeBlock* unlinked = JSC::recursivelyGenerateUnlinkedCodeBlockForModuleProgram(vm, source, lexicallyScopedFeatures, JSParserScriptMode::Module, {}, parserError, EvalContextType::None);
+        if (!unlinked || parserError.isValid())
+            return nullptr;
+        return JSC::serializeBytecode(vm, unlinked, source, JSC::SourceCodeType::ModuleType, lexicallyScopedFeatures, JSParserScriptMode::Module, fileHandle, bytecodeCacheError, {});
     }
+    ASSERT(type == JSC::SourceCodeType::ProgramType);
     JSC::LexicallyScopedFeatures lexicallyScopedFeatures = globalObject->globalScopeExtension() ? TaintedByWithScopeLexicallyScopedFeature : NoLexicallyScopedFeatures;
-    JSC::BytecodeCacheError bytecodeCacheError;
-    FileSystem::FileHandle fileHandle;
+    JSC::UnlinkedProgramCodeBlock* unlinked = JSC::recursivelyGenerateUnlinkedCodeBlockForProgram(vm, source, lexicallyScopedFeatures, JSParserScriptMode::Classic, {}, parserError, EvalContextType::None);
+    if (!unlinked || parserError.isValid())
+        return nullptr;
     return JSC::serializeBytecode(vm, unlinked, source, JSC::SourceCodeType::ProgramType, lexicallyScopedFeatures, JSParserScriptMode::Classic, fileHandle, bytecodeCacheError, {});
 }
 
@@ -473,11 +485,7 @@ JSC::EncodedJSValue createCachedData(JSGlobalObject* globalObject, const JSC::So
     VM& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSC::ProgramExecutable* executable = JSC::ProgramExecutable::create(globalObject, source);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    RefPtr<JSC::CachedBytecode> bytecode = getBytecode(globalObject, executable, source);
-    RETURN_IF_EXCEPTION(scope, {});
+    RefPtr<JSC::CachedBytecode> bytecode = getBytecode(globalObject, JSC::SourceCodeType::ProgramType, source);
 
     if (!bytecode) [[unlikely]] {
         return throwVMError(globalObject, scope, "createCachedData failed"_s);
@@ -528,10 +536,13 @@ static void writeArrowHeaderStack(VM& vm, ErrorInstance* errorInstance, const St
         for (unsigned i = 1; i < caretColumn1Based; i++)
             caretLine.append(i <= sourceLineText.length() && sourceLineText[i - 1] == '\t' ? '\t' : ' ');
         caretLine.append('^');
-        prepend = makeString(url, ':', reportedLine, '\n', sourceLineText, '\n', caretLine.toString(), "\n\n"_s, stack);
+        prepend = tryMakeString(url, ':', reportedLine, '\n', sourceLineText, '\n', caretLine.toString(), "\n\n"_s, stack);
     } else {
-        prepend = makeString(url, ':', reportedLine, '\n', stack);
+        prepend = tryMakeString(url, ':', reportedLine, '\n', stack);
     }
+    // The URL and the stack come from JS. Past `String::MaxLength` `makeString` calls `CRASH()`. The error keeps its stack, without the header.
+    if (prepend.isNull()) [[unlikely]]
+        return;
     const auto& decoratedName = WebCore::builtinNames(vm).vmErrorDecoratedPrivateName();
     errorInstance->putDirect(vm, vm.propertyNames->stack, jsString(vm, prepend), JSC::PropertyAttribute::DontEnum | 0);
     errorInstance->putDirect(vm, decoratedName, jsBoolean(true), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly);
@@ -965,6 +976,7 @@ const JSC::GlobalObjectMethodTable& NodeVMGlobalObject::globalObjectMethodTable(
         &shouldInterruptScript,
         &javaScriptRuntimeFlags,
         nullptr, // shouldInterruptScriptBeforeTimeout,
+        nullptr, // moduleTypeIsAllowed
         &moduleLoaderImportModule,
         nullptr, // moduleLoaderResolve
         nullptr, // moduleLoaderFetch
@@ -990,7 +1002,9 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmWasmDisallowed, (JSC::JSGlobalObject * globalOb
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    scope.throwException(globalObject, JSC::createJSWebAssemblyCompileError(globalObject, vm, "Wasm code generation disallowed by embedder"_s));
+    JSObject* error = JSC::createJSWebAssemblyCompileError(globalObject, vm, "Wasm code generation disallowed by embedder"_s);
+    RETURN_IF_EXCEPTION(scope, {});
+    scope.throwException(globalObject, error);
     return {};
 }
 
@@ -1007,7 +1021,9 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmWasmCompileDisallowed, (JSC::JSGlobalObject * g
 
 void NodeVMGlobalObject::finishCreation(JSC::VM& vm)
 {
+    auto scope = DECLARE_THROW_SCOPE(vm);
     Base::finishCreation(vm);
+    RETURN_IF_EXCEPTION(scope, );
 
     // microtaskMode: "afterEvaluate" — give this context its own microtask
     // queue, like Node's contextify own_microtask_queue. Microtasks enqueued
@@ -1040,7 +1056,6 @@ void NodeVMGlobalObject::finishCreation(JSC::VM& vm)
         // CompileError, while introspection (Module.imports/exports/
         // customSections) and instantiating an already-compiled module stay
         // available.
-        auto scope = DECLARE_THROW_SCOPE(vm);
         JSValue webAssembly = get(this, Identifier::fromString(vm, "WebAssembly"_s));
         RETURN_IF_EXCEPTION(scope, );
         if (webAssembly.isObject()) {
@@ -1084,6 +1099,7 @@ void NodeVMGlobalObject::finishCreation(JSC::VM& vm)
     // but it should not be visible in node:vm contexts.
     JSC::DeletePropertySlot slot;
     JSC::JSObject::deleteProperty(this, this, vm.propertyNames->Loader, slot);
+    RETURN_IF_EXCEPTION(scope, );
 
     vm.ensureTerminationException();
 
@@ -1256,7 +1272,9 @@ bool NodeVMGlobalObject::getOwnPropertySlot(JSObject* cell, JSGlobalObject* glob
 
             // If there is a `get` trap, we don't need to our special handling
             if (getHandler) {
-                if (contextifiedObject->methodTable()->getOwnPropertySlot(contextifiedObject, globalObject, propertyName, slot)) {
+                bool result = contextifiedObject->methodTable()->getOwnPropertySlot(contextifiedObject, globalObject, propertyName, slot);
+                RETURN_IF_EXCEPTION(scope, false);
+                if (result) {
                     return true;
                 }
                 goto try_from_global;
@@ -1365,6 +1383,7 @@ bool NodeVMGlobalObject::defineOwnProperty(JSObject* cell, JSGlobalObject* globa
 
     PropertySlot slot(globalObject, PropertySlot::InternalMethodType::GetOwnProperty, nullptr);
     bool isDeclaredOnGlobalProxy = globalObject->JSC::JSGlobalObject::getOwnPropertySlot(globalObject, globalObject, propertyName, slot);
+    RETURN_IF_EXCEPTION(scope, false);
 
     // If the property is set on the global as neither writable nor
     // configurable, don't change it on the global or sandbox.
@@ -1376,7 +1395,7 @@ bool NodeVMGlobalObject::defineOwnProperty(JSObject* cell, JSGlobalObject* globa
     // observe the [[DefineOwnProperty]] exactly once, like V8's contextify
     // PropertyDefinerCallback.
     if (descriptor.isAccessorDescriptor()) {
-        RELEASE_AND_RETURN(scope, contextifiedObject->methodTable()->defineOwnProperty(contextifiedObject, contextifiedObject->globalObject(), propertyName, descriptor, shouldThrow));
+        RELEASE_AND_RETURN(scope, contextifiedObject->methodTable()->defineOwnProperty(contextifiedObject, globalObject, propertyName, descriptor, shouldThrow));
     }
 
     // The lookup above may have filled `slot` as cacheable (e.g. a lazy global
@@ -1389,10 +1408,10 @@ bool NodeVMGlobalObject::defineOwnProperty(JSObject* cell, JSGlobalObject* globa
     RETURN_IF_EXCEPTION(scope, false);
 
     if (isDeclaredOnSandbox && !isDeclaredOnGlobalProxy) {
-        RELEASE_AND_RETURN(scope, contextifiedObject->methodTable()->defineOwnProperty(contextifiedObject, contextifiedObject->globalObject(), propertyName, descriptor, shouldThrow));
+        RELEASE_AND_RETURN(scope, contextifiedObject->methodTable()->defineOwnProperty(contextifiedObject, globalObject, propertyName, descriptor, shouldThrow));
     }
 
-    auto did = contextifiedObject->methodTable()->defineOwnProperty(contextifiedObject, contextifiedObject->globalObject(), propertyName, descriptor, shouldThrow);
+    auto did = contextifiedObject->methodTable()->defineOwnProperty(contextifiedObject, globalObject, propertyName, descriptor, shouldThrow);
     RETURN_IF_EXCEPTION(scope, false);
     if (!did) return false;
 
@@ -1623,12 +1642,13 @@ bool NodeVMGlobalObject::deleteProperty(JSCell* cell, JSGlobalObject* globalObje
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* sandbox = thisObject->m_sandbox.get();
-    if (!sandbox->deleteProperty(sandbox, globalObject, propertyName, slot)) {
+    bool deleted = sandbox->deleteProperty(sandbox, globalObject, propertyName, slot);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!deleted) {
         return false;
     }
 
-    RETURN_IF_EXCEPTION(scope, false);
-    return Base::deleteProperty(cell, globalObject, propertyName, slot);
+    RELEASE_AND_RETURN(scope, Base::deleteProperty(cell, globalObject, propertyName, slot));
 }
 
 static JSPromise* moduleLoaderImportModuleInner(NodeVMGlobalObject* globalObject, JSC::JSModuleLoader* moduleLoader, JSC::JSString* moduleName, RefPtr<JSC::ScriptFetchParameters> parameters, const JSC::SourceOrigin& sourceOrigin)
@@ -1652,7 +1672,12 @@ static JSPromise* moduleLoaderImportModuleInner(NodeVMGlobalObject* globalObject
     RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(vm, scope));
 
     scope.release();
-    promise->reject(vm, createError(globalObject, makeString("Could not import the module '"_s, moduleNameString.data, "'."_s)));
+    // The specifier comes from JS. Past `String::MaxLength`, `makeString` calls `CRASH()` and `tryMakeString` returns null.
+    auto message = tryMakeString("Could not import the module '"_s, moduleNameString.data, "'."_s);
+    if (!message) [[unlikely]]
+        promise->reject(vm, createOutOfMemoryError(globalObject));
+    else
+        promise->reject(vm, createError(globalObject, message));
     return promise;
 }
 
@@ -1720,29 +1745,14 @@ JSC::JSValue createNodeVMBinding(Zig::GlobalObject* globalObject)
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "isModuleNamespaceObject"_s)),
         JSC::JSFunction::create(vm, globalObject, 0, "isModuleNamespaceObject"_s, vmIsModuleNamespaceObject, ImplementationVisibility::Public), 1);
     obj->putDirect(
-        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "kUnlinked"_s)),
-        JSC::jsNumber(static_cast<unsigned>(NodeVMSourceTextModule::Status::Unlinked)), 0);
-    obj->putDirect(
-        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "kLinking"_s)),
-        JSC::jsNumber(static_cast<unsigned>(NodeVMSourceTextModule::Status::Linking)), 0);
-    obj->putDirect(
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "kLinked"_s)),
         JSC::jsNumber(static_cast<unsigned>(NodeVMSourceTextModule::Status::Linked)), 0);
-    obj->putDirect(
-        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "kEvaluating"_s)),
-        JSC::jsNumber(static_cast<unsigned>(NodeVMSourceTextModule::Status::Evaluating)), 0);
     obj->putDirect(
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "kEvaluated"_s)),
         JSC::jsNumber(static_cast<unsigned>(NodeVMSourceTextModule::Status::Evaluated)), 0);
     obj->putDirect(
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "kErrored"_s)),
         JSC::jsNumber(static_cast<unsigned>(NodeVMSourceTextModule::Status::Errored)), 0);
-    obj->putDirect(
-        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "kSourceText"_s)),
-        JSC::jsNumber(static_cast<unsigned>(NodeVMModule::Type::SourceText)), 0);
-    obj->putDirect(
-        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "kSynthetic"_s)),
-        JSC::jsNumber(static_cast<unsigned>(NodeVMModule::Type::Synthetic)), 0);
     obj->putDirect(
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "DONT_CONTEXTIFY"_s)),
         globalObject->m_nodeVMDontContextify.get(globalObject), 0);

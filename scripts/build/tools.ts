@@ -18,7 +18,7 @@ import { BuildError } from "./error.ts";
 // ───────────────────────────────────────────────────────────────────────────
 
 /**
- * Parse a version like "21.1.8" out of arbitrary text (tool --version output).
+ * Parse a version like "23.1.1" out of arbitrary text (tool --version output).
  * Returns the first X.Y.Z found, or undefined.
  */
 function parseVersion(text: string): string | undefined {
@@ -80,11 +80,15 @@ export function satisfiesRange(version: string, range: string | undefined): bool
 // ───────────────────────────────────────────────────────────────────────────
 
 export interface ToolSpec {
-  /** Names to try, in order. On Windows `.exe` is appended automatically. */
+  /** Names to try, in order. On Windows `windowsExt` is appended automatically. */
   names: string[];
+  /** The file extension on Windows. Default `.exe`. npm is `npm.cmd`. */
+  windowsExt?: string;
   /** Extra search paths beyond $PATH. Tried FIRST (more specific). */
   paths?: string[];
-  /** Version constraint, e.g. `">=21.1.0 <22.0.0"`. */
+  /** Search only `paths`, never $PATH. */
+  pathsOnly?: boolean;
+  /** Version constraint, e.g. `">=23.1.0 <24.0.0"`. */
   version?: string;
   /** How to get the version. `"--version"` (default) or `"version"` (go/zig style). */
   versionArg?: string;
@@ -130,6 +134,16 @@ export function findBun(os: OS): string {
     names: ["bun"],
     required: true,
     hint: "Codegen requires bun (for `bun install`, `bun build`, and scripts using Bun APIs). Install: curl -fsSL https://bun.sh/install | bash",
+  })!.path;
+}
+
+/** Find npm for `--package-manager=npm`. npm ships with Node.js. */
+export function findNpm(): string {
+  return findTool({
+    names: ["npm"],
+    windowsExt: ".cmd",
+    required: true,
+    hint: "--package-manager=npm installs with npm. Install Node.js, which includes npm.",
   })!.path;
 }
 
@@ -210,8 +224,10 @@ export function clangTargetArch(clang: string): Arch | undefined {
  * Returns the absolute path or undefined (if not required).
  */
 export function findTool(spec: ToolSpec): FoundTool | undefined {
-  const exeSuffix = process.platform === "win32" ? ".exe" : "";
-  const searchPaths = [...(spec.paths ?? []), ...(process.env.PATH ?? "").split(delimiter).filter(p => p.length > 0)];
+  const exeSuffix = process.platform === "win32" ? (spec.windowsExt ?? ".exe") : "";
+  const searchPaths = spec.pathsOnly
+    ? [...(spec.paths ?? [])]
+    : [...(spec.paths ?? []), ...(process.env.PATH ?? "").split(delimiter).filter(p => p.length > 0)];
   const versionArg = spec.versionArg ?? "--version";
   const rejections: Rejection[] = [];
 
@@ -262,12 +278,28 @@ export function findTool(spec: ToolSpec): FoundTool | undefined {
 
 /**
  * LLVM version constraint. Any version in the same major.minor range is
- * accepted (e.g. Alpine 3.23 ships 21.1.2 while we target 21.1.8).
+ * accepted (e.g. apt.llvm.org serves 23.1.2 snapshots while we target 23.1.1).
  */
-export const LLVM_VERSION = "21.1.8";
-const LLVM_MAJOR = "21";
+export const LLVM_VERSION = "23.1.1";
+const LLVM_MAJOR = "23";
 const LLVM_MINOR = "1";
 const LLVM_VERSION_RANGE = `>=${LLVM_MAJOR}.${LLVM_MINOR}.0 <${LLVM_MAJOR}.${LLVM_MINOR}.99`;
+
+/**
+ * Explicit toolchain directories, for building Bun with a self-built LLVM /
+ * Rust (the oven-sh/rust toolchain build trains its PGO profiles this way).
+ * When set they are the ONLY place the corresponding tools are taken from,
+ * and the LLVM version pin above is not enforced — the directory is the pin.
+ *
+ *   BUN_TOOLCHAIN_LLVM   dir containing bin/clang, bin/ld.lld, bin/llvm-ar, …
+ *   BUN_TOOLCHAIN_RUST   rustc sysroot dir containing bin/rustc (and bin/cargo)
+ *   BUN_TOOLCHAIN_CARGO  cargo binary, if not <BUN_TOOLCHAIN_RUST>/bin/cargo
+ */
+export const toolchainOverride = {
+  llvm: process.env.BUN_TOOLCHAIN_LLVM,
+  rust: process.env.BUN_TOOLCHAIN_RUST,
+  cargo: process.env.BUN_TOOLCHAIN_CARGO,
+};
 
 /**
  * Known LLVM install locations per platform. Call ONCE from
@@ -276,6 +308,7 @@ const LLVM_VERSION_RANGE = `>=${LLVM_MAJOR}.${LLVM_MINOR}.0 <${LLVM_MAJOR}.${LLV
  * configure time.
  */
 function llvmSearchPaths(os: OS, arch: Arch): string[] {
+  if (toolchainOverride.llvm !== undefined) return [join(toolchainOverride.llvm, "bin")];
   const paths: string[] = [];
 
   if (os === "darwin") {
@@ -316,7 +349,7 @@ function llvmSearchPaths(os: OS, arch: Arch): string[] {
 }
 
 /**
- * Version-suffixed command names (e.g. clang-21, clang-21.1).
+ * Version-suffixed command names (e.g. clang-23, clang-23.1).
  * Unix distros often only ship these suffixed versions.
  */
 function llvmNameVariants(name: string): string[] {
@@ -352,7 +385,8 @@ function findLlvmTool(
     required: opts.required,
     hint: llvmInstallHint(os),
   };
-  if (opts.checkVersion) spec.version = LLVM_VERSION_RANGE;
+  if (opts.checkVersion) spec.version = toolchainOverride.llvm !== undefined ? "ignore" : LLVM_VERSION_RANGE;
+  if (toolchainOverride.llvm !== undefined) spec.pathsOnly = true;
   return findTool(spec);
 }
 
@@ -392,11 +426,12 @@ export function resolveLlvmToolchain(
   | "ld64Lld"
   | "rustLld"
   | "rustLlvmVersion"
-  | "rustSysroot"
-  | "rustHostTriple"
   | "strip"
   | "llvmStrip"
   | "nm"
+  | "readobj"
+  | "objdump"
+  | "cxxfilt"
   | "dsymutil"
   | "ccache"
   | "rc"
@@ -516,6 +551,11 @@ export function resolveLlvmToolchain(
   // so it is only ever missing from a partial LLVM install; then the checks
   // are skipped rather than the build refused.
   const nm = findLlvmTool("llvm-nm", paths, os, { checkVersion: false, required: false })?.path;
+  // The post-link binary checks (verify-binary.ts) read the executable with
+  // these; a partial install skips the checks rather than the build.
+  const readobj = findLlvmTool("llvm-readobj", paths, os, { checkVersion: false, required: false })?.path;
+  const objdump = findLlvmTool("llvm-objdump", paths, os, { checkVersion: false, required: false })?.path;
+  const cxxfilt = findLlvmTool("llvm-cxxfilt", paths, os, { checkVersion: false, required: false })?.path;
 
   // dsymutil: required on darwin; optional elsewhere (needed only when
   // cross-compiling a darwin release from a non-darwin host).
@@ -552,7 +592,7 @@ export function resolveLlvmToolchain(
 
   // rust-lld: optional alternative linker for cross-language LTO when
   // rustc's bundled LLVM is newer than clang's. See findRustLld().
-  const { rustLld, rustLlvmVersion, rustSysroot, rustHostTriple } = findRustLld(os);
+  const { rustLld, rustLlvmVersion } = findRustLld(os);
 
   // ccache: optional. If found, used as compiler launcher.
   const ccache = findTool({ names: ["ccache"], required: false })?.path;
@@ -579,11 +619,12 @@ export function resolveLlvmToolchain(
     ld64Lld,
     rustLld,
     rustLlvmVersion,
-    rustSysroot,
-    rustHostTriple,
     strip,
     llvmStrip,
     nm,
+    readobj,
+    objdump,
+    cxxfilt,
     dsymutil,
     ccache,
     rc,
@@ -638,15 +679,14 @@ export interface CargoToolchain {
 export function findRustLld(os: OS): {
   rustLld: string | undefined;
   rustLlvmVersion: string | undefined;
-  /** `rustc --print sysroot` — needed for bundled `llvm-nm` even when rust-lld itself isn't used. */
-  rustSysroot: string | undefined;
-  /** `host:` line from `rustc -vV` — the rustlib subdirectory name. */
-  rustHostTriple: string | undefined;
 } {
-  const none = { rustLld: undefined, rustLlvmVersion: undefined, rustSysroot: undefined, rustHostTriple: undefined };
+  const none = { rustLld: undefined, rustLlvmVersion: undefined };
   // Look up rustc the same way findCargo does cargo: $CARGO_HOME/bin first.
   const cargoHome = process.env.CARGO_HOME ?? join(homedir(), ".cargo");
-  const rustc = findTool({ names: ["rustc"], paths: [join(cargoHome, "bin")], required: false })?.path;
+  const rustc =
+    toolchainOverride.rust !== undefined
+      ? join(toolchainOverride.rust, "bin", os === "windows" ? "rustc.exe" : "rustc")
+      : findTool({ names: ["rustc"], paths: [join(cargoHome, "bin")], required: false })?.path;
   if (rustc === undefined) return none;
 
   // The link-only CI mode runs `findRustLld()` on an agent that downloads
@@ -654,8 +694,8 @@ export function findRustLld(os: OS): {
   // installed there yet. `rustc --print sysroot` (a rustup proxy invocation)
   // would auto-install — but the download blows past a short spawnSync timeout
   // and the silent failure leaves `rustLld` undefined, which falls back to the
-  // system lld. With cross-language LTO that means lld 21 reading rust-emitted
-  // LLVM 22 bitcode → `Invalid record`. Pre-flight a `rustup toolchain
+  // system lld. With cross-language LTO that means an older lld reading newer
+  // rust-emitted bitcode → `Invalid record`. Pre-flight a `rustup toolchain
   // install` so the proxy resolves instantly: idempotent (~0.5s, it re-checks
   // the channel manifest) when already installed, downloads on a stale agent.
   // `-q` also hides the download progress, so say how long it took whenever
@@ -669,7 +709,19 @@ export function findRustLld(os: OS): {
     const started = performance.now();
     spawnSync(
       rustup,
-      ["-q", "toolchain", "install", channel, "--no-self-update", "--profile", "minimal", "--component", "rust-src"],
+      [
+        "-q",
+        "toolchain",
+        "install",
+        channel,
+        "--no-self-update",
+        "--profile",
+        "minimal",
+        "--component",
+        "rust-src",
+        "--component",
+        "llvm-tools",
+      ],
       {
         encoding: "utf8",
         timeout: 300_000,
@@ -691,7 +743,7 @@ export function findRustLld(os: OS): {
   // ensured. Without it the proxy, running in the repo root, applies
   // rust-toolchain.toml in full: besides selecting the channel it installs
   // every entry of its `components` and `targets` lists that is missing
-  // (rustfmt, clippy, miri, llvm-tools and the std of 11 targets — ~2.4 GB),
+  // (rustfmt, clippy, miri and the std of 11 targets — ~2.4 GB),
   // with its output piped into nowhere here. The build itself installs what
   // it needs (rust-src above, the target's std in the rust_build_cross rule),
   // and the toml still applies to anyone running cargo directly. Generous
@@ -714,7 +766,7 @@ export function findRustLld(os: OS): {
 
   const rustHostTriple = vv.match(/^host:\s*(\S+)/m)?.[1];
   const rustLlvmVersion = vv.match(/^LLVM version:\s*(\d+\.\d+\.\d+)/m)?.[1];
-  if (rustHostTriple === undefined) return { ...none, rustSysroot: sysroot, rustLlvmVersion };
+  if (rustHostTriple === undefined) return { ...none, rustLlvmVersion };
 
   const bin = join(sysroot, "lib", "rustlib", rustHostTriple, "bin");
   const candidate =
@@ -724,7 +776,7 @@ export function findRustLld(os: OS): {
         ? join(bin, "gcc-ld", "ld64.lld")
         : join(bin, "gcc-ld", "ld.lld");
   const rustLld = isExecutable(candidate) ? candidate : undefined;
-  return { rustLld, rustLlvmVersion, rustSysroot: sysroot, rustHostTriple };
+  return { rustLld, rustLlvmVersion };
 }
 
 /**
@@ -735,6 +787,7 @@ export function findRustLld(os: OS): {
  * same file; keeping the parse local avoids an import cycle.
  */
 function readRustToolchainChannel(): string | undefined {
+  if (toolchainOverride.rust !== undefined) return undefined; // not a rustup toolchain
   // tools.ts lives at `scripts/build/`; the toolchain file is two levels up.
   const path = join(import.meta.dirname, "..", "..", "rust-toolchain.toml");
   if (!existsSync(path)) return undefined;
@@ -757,16 +810,12 @@ export function findCargo(hostOs: OS): CargoToolchain | undefined {
 
   // Search $CARGO_HOME/bin BEFORE $PATH. Some systems have an outdated
   // distro cargo in /usr/bin that shadows rustup's — we want rustup's.
-  const cargo = findTool({
-    names: ["cargo"],
-    paths: [join(cargoHome, "bin")],
-    required: false,
-  })?.path;
+  const cargo =
+    toolchainOverride.cargo ??
+    (toolchainOverride.rust !== undefined
+      ? join(toolchainOverride.rust, "bin", hostOs === "windows" ? "cargo.exe" : "cargo")
+      : findTool({ names: ["cargo"], paths: [join(cargoHome, "bin")], required: false })?.path);
   if (cargo === undefined) return undefined;
-
-  // Suppress unused warning for hostOs — kept in signature for future
-  // host-specific path resolution (e.g. %PROGRAMFILES% probing on win32).
-  void hostOs;
 
   return { cargo, cargoHome, rustupHome };
 }

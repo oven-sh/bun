@@ -4,7 +4,16 @@ pub use crate::posix::S;
 
 #[repr(u16)]
 #[derive(
-    Copy, Clone, Eq, PartialEq, Hash, Debug, strum::IntoStaticStr, strum::EnumString, enum_map::Enum,
+    Copy,
+    Clone,
+    Eq,
+    PartialEq,
+    Hash,
+    Debug,
+    strum::IntoStaticStr,
+    strum::EnumString,
+    strum::FromRepr,
+    enum_map::Enum,
 )]
 pub enum SystemErrno {
     SUCCESS = 0,
@@ -144,10 +153,12 @@ pub enum SystemErrno {
     ENOTRECOVERABLE = 131,
     ERFKILL = 132,
     EHWPOISON = 133,
+    /// Not a kernel errno: the `from_raw` result for an undeclared code.
+    EUNKNOWN = 134,
 }
 
 impl SystemErrno {
-    pub const MAX: u16 = 134;
+    pub const MAX: u16 = 135;
 
     /// On Linux `EOPNOTSUPP` and `ENOTSUP` share value 95; the enum defines
     /// only `ENOTSUP`. Provide this alias so cross-platform call sites
@@ -187,8 +198,7 @@ impl GetErrno for usize {
         } else {
             0
         };
-        // SAFETY: int is in [0, 4096); E is #[repr] over the kernel errno range
-        unsafe { core::mem::transmute::<u16, E>(int as u16) }
+        E::from_raw(int as u16)
     }
 }
 

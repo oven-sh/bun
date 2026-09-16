@@ -26,6 +26,7 @@
 namespace uWS {
 template<bool> struct HttpResponse;
 struct HttpRequest;
+struct Http2Context;
 
 struct HttpFlags {
     bool isParsingHttp: 1 = false;
@@ -49,6 +50,7 @@ struct alignas(16) HttpContextData {
     template <bool> friend struct HttpContext;
     template <bool> friend struct HttpResponse;
     template <bool> friend struct TemplatedApp;
+    friend struct Http2Context;
 private:
     std::vector<MoveOnlyFunction<void(HttpResponse<SSL> *, int)>> filterHandlers;
     using OnSocketDataCallback = void (*)(void* userData, int is_ssl, struct us_socket_t *rawSocket, const char *data, int length, bool last);
@@ -86,6 +88,16 @@ private:
     OnClientErrorCallback onClientError = nullptr;
 
     uint64_t maxHeaderSize = 0; // 0 means no limit
+
+    /* HTTP/2: set by Http2Context::attach(). A connection that negotiated h2
+     * (ALPN) or opened with the prior-knowledge preface is handed over via
+     * onHttp2, which destructs our ext, adopts the socket and feeds it the
+     * bytes already read. */
+    Http2Context *http2Context = nullptr;
+    us_socket_t *(*onHttp2)(void *http2Context, us_socket_t *s, char *data, int length, unsigned prefaceConsumed) = nullptr;
+    /* With HTTP/2 attached: whether HTTP/1.x is still served (ALPN fallback
+     * and non-preface cleartext). */
+    bool allowHttp1 = true;
 
     // TODO: SNI
     void clearRoutes() {

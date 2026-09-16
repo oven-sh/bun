@@ -11,7 +11,6 @@
 #include <JavaScriptCore/JSString.h>
 #include <JavaScriptCore/JSStringInlines.h>
 #include <JavaScriptCore/DateInstance.h>
-#include <JavaScriptCore/DateInstanceCache.h>
 #include <JavaScriptCore/JSCast.h>
 #include <JavaScriptCore/HeapIterationScope.h>
 #include <JavaScriptCore/MarkedSpaceInlines.h>
@@ -38,8 +37,7 @@ using namespace JSC;
 extern "C" size_t Bun__getEnvCount(JSGlobalObject* globalObject, void** list_ptr);
 extern "C" size_t Bun__getEnvKey(void* list, size_t index, unsigned char** out);
 
-extern "C" bool Bun__getEnvValue(JSGlobalObject* globalObject, const ZigString* name, ZigString* value);
-extern "C" BunString Bun__getEnvValueBunString(JSGlobalObject* globalObject, const BunString* name);
+extern "C" bool Bun__getEnvValue(JSGlobalObject* globalObject, const EncodedSlice* name, EncodedSlice* value);
 extern "C" void Bun__setEnvValue(JSGlobalObject* globalObject, const BunString* name, const BunString* value);
 extern "C" bool Bun__Node__ProcessPendingDeprecation;
 
@@ -49,16 +47,9 @@ using namespace WebCore;
 
 void invalidateLiveDateInstanceCaches(JSC::VM& vm)
 {
-    // HeapIterationScope stops every allocator (walks all BlockDirectories); only
-    // forEachLiveCell is subspace-local. Acceptable for rare TZ writes — V8's O(1)
-    // alternative is a tz-generation counter on DateInstanceData.
     JSC::HeapIterationScope iterationScope(vm.heap);
     vm.heap.dateInstanceSpace.forEachLiveCell([](JSC::HeapCell* cell, JSC::HeapCell::Kind) -> IterationStatus {
-        auto* date = static_cast<JSC::DateInstance*>(static_cast<JSC::JSCell*>(cell));
-        // m_data is private, but its offset is exported for the JIT.
-        auto& dataSlot = *reinterpret_cast<RefPtr<JSC::DateInstanceData>*>(reinterpret_cast<uint8_t*>(date) + JSC::DateInstance::offsetOfData());
-        if (dataSlot)
-            dataSlot->m_gregorianDateTimeCachedForMS = PNaN;
+        static_cast<JSC::DateInstance*>(static_cast<JSC::JSCell*>(cell))->invalidateCachedLocalGregorianDateTime();
         return IterationStatus::Continue;
     });
 }
@@ -106,6 +97,46 @@ static JSC::JSString* coerceEnvValue(JSGlobalObject* globalObject, JSC::ThrowSco
     return string;
 }
 
+// The proxy env vars are written back to the native env map, which is what
+// fetch()'s proxy resolution reads.
+// `name` is an atom (a property key's uid), and so is what a common string
+// holds: matching one is a pointer comparison.
+static bool isProxyEnvVarName(VM& vm, const StringImpl* name)
+{
+    // "NO_PROXY" .. "HTTPS_PROXY"
+    if (!name || name->length() < 8 || name->length() > 11)
+        return false;
+    auto& strings = Bun::commonStrings(vm);
+    auto is = [name](JSC::JSString* candidate) { return candidate->tryGetValueImpl() == name; };
+    return is(strings.envALL_PROXYString()) || is(strings.envAllProxyString()) || is(strings.envHTTPS_PROXYString()) || is(strings.envHttpsProxyString()) || is(strings.envHTTP_PROXYString()) || is(strings.envHttpProxyString()) || is(strings.envNO_PROXYString()) || is(strings.envNoProxyString());
+}
+
+// For a name that is not a property key in hand: Windows upper-cases the key on the way here.
+static bool isProxyEnvVarName(VM& vm, const String& name)
+{
+    if (name.length() < 8 || name.length() > 11)
+        return false;
+    return isProxyEnvVarName(vm, JSC::Identifier::fromString(vm, name).impl());
+}
+
+// Drop `name` from the native env map.
+static void removeNativeEnvValue(JSGlobalObject* globalObject, const String& name)
+{
+    BunString key = Bun::toString(name);
+    BunString dead = { .tag = BunStringTag::Dead };
+    Bun__setEnvValue(globalObject, &key, &dead);
+}
+
+static void setNativeEnvValue(JSGlobalObject* globalObject, const String& name, JSC::JSString* value)
+{
+    auto view = value->view(globalObject);
+    if (view->isNull())
+        return;
+    BunString key = Bun::toString(name);
+    BunString val = Bun::toStringView(view);
+    Bun__setEnvValue(globalObject, &key, &val);
+}
+
 static void applyTZFromString(JSGlobalObject*, const String&);
 static void applyTLSRejectFromString(JSGlobalObject*, const String&);
 static void applyVerboseFetchFromString(JSGlobalObject*, const String&);
@@ -135,6 +166,21 @@ bool JSEnvironmentVariableMap::put(JSCell* cell, JSGlobalObject* globalObject, P
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    // A write to an object that merely inherits from process.env is that
+    // object's: an ordinary set, with the value as given, that changes nothing
+    // about the process. The accessors process.env keeps for TZ and
+    // NODE_TLS_REJECT_UNAUTHORIZED act on the process, so past those the value
+    // is defined on the receiver directly.
+    if (slot.thisValue() != cell) [[unlikely]] {
+        unsigned attributes = 0;
+        bool isProcessAccessor = !parseIndex(propertyName)
+            && isValidOffset(cell->structure()->get(vm, propertyName, attributes))
+            && (attributes & PropertyAttribute::CustomAccessor);
+        if (isProcessAccessor)
+            RELEASE_AND_RETURN(scope, JSObject::definePropertyOnReceiver(globalObject, propertyName, value, slot));
+        RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, value, slot));
+    }
+
     auto* uid = propertyName.uid();
     if (uid && uid->isSymbol()) {
         throwTypeError(globalObject, scope, "Cannot convert a symbol to a string"_s);
@@ -159,6 +205,13 @@ bool JSEnvironmentVariableMap::put(JSCell* cell, JSGlobalObject* globalObject, P
     }
     if (uid && WTF::equal(uid, "NODE_TLS_REJECT_UNAUTHORIZED"_s)) [[unlikely]] {
         applyTLSRejectEnvValue(globalObject, string);
+        RETURN_IF_EXCEPTION(scope, false);
+        static_cast<JSEnvironmentVariableMap*>(cell)->putDirect(vm, propertyName, string, 0);
+        return true;
+    }
+    // fetch() reads the proxy variables from the native env map.
+    if (isProxyEnvVarName(vm, uid)) [[unlikely]] {
+        setNativeEnvValue(globalObject, String(uid), string);
         RETURN_IF_EXCEPTION(scope, false);
         static_cast<JSEnvironmentVariableMap*>(cell)->putDirect(vm, propertyName, string, 0);
         return true;
@@ -213,8 +266,8 @@ JSC_DEFINE_CUSTOM_GETTER(jsGetterEnvironmentVariable, (JSGlobalObject * globalOb
     if (!thisObject) [[unlikely]]
         return JSValue::encode(jsUndefined());
 
-    ZigString name = toZigString(propertyName.publicName());
-    ZigString value = { nullptr, 0 };
+    EncodedSlice name = toEncodedSlice(propertyName.publicName());
+    EncodedSlice value = { nullptr, 0 };
 
     if (name.len == 0) [[unlikely]]
         return JSValue::encode(jsUndefined());
@@ -228,62 +281,6 @@ JSC_DEFINE_CUSTOM_GETTER(jsGetterEnvironmentVariable, (JSGlobalObject * globalOb
     return JSValue::encode(result);
 }
 
-// Proxy-related env vars (HTTP_PROXY, HTTPS_PROXY, NO_PROXY and lowercase
-// variants) are read by fetch()'s native proxy resolution via
-// env_loader.getHttpProxyFor(). Writes from JS must sync back to the native env
-// map so runtime changes take effect. Unlike the generic getter, this does
-// NOT cache on the JS object — the native env map is the single source of truth
-// so set-then-get stays consistent and the CustomAccessor isn't clobbered.
-JSC_DEFINE_CUSTOM_GETTER(jsGetterProxyEnvironmentVariable, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* thisObject = dynamicDowncast<JSObject>(JSValue::decode(thisValue));
-    if (!thisObject) [[unlikely]]
-        return JSValue::encode(jsUndefined());
-
-    BunString name = Bun::toStringView(propertyName.publicName());
-    BunString value = Bun__getEnvValueBunString(globalObject, &name);
-    if (value.tag == BunStringTag::Dead) {
-        return JSValue::encode(jsUndefined());
-    }
-    RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, value.toWTFString())));
-}
-
-JSC_DEFINE_CUSTOM_SETTER(jsSetterProxyEnvironmentVariable, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, PropertyName propertyName))
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSC::JSObject* object = JSValue::decode(thisValue).getObject();
-    if (!object)
-        return false;
-
-    auto* string = JSValue::decode(value).toString(globalObject);
-    RETURN_IF_EXCEPTION(scope, false);
-    if (!string) [[unlikely]]
-        return false;
-
-    auto view = string->view(globalObject);
-    RETURN_IF_EXCEPTION(scope, false);
-
-    BunString name = Bun::toStringView(propertyName.publicName());
-    BunString val = Bun::toStringView(view);
-    Bun__setEnvValue(globalObject, &name, &val);
-
-    // Proxy-var accessors are installed DontEnum when absent from the OS env
-    // at startup; clear it on write so `{...process.env}` picks the var up.
-    unsigned attributes;
-    JSValue existing = object->getDirect(vm, propertyName, attributes);
-    if (existing && (attributes & JSC::PropertyAttribute::DontEnum)) {
-        // putDirectCustomAccessor asserts NewProperty, so delete first.
-        object->deleteProperty(globalObject, propertyName);
-        RETURN_IF_EXCEPTION(scope, false);
-        object->putDirectCustomAccessor(vm, propertyName, existing,
-            attributes & ~JSC::PropertyAttribute::DontEnum);
-    }
-    return true;
-}
-
 JSC_DEFINE_CUSTOM_GETTER(jsTimeZoneEnvironmentVariableGetter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
 {
     VM& vm = globalObject->vm();
@@ -295,8 +292,8 @@ JSC_DEFINE_CUSTOM_GETTER(jsTimeZoneEnvironmentVariableGetter, (JSGlobalObject * 
 
     auto* clientData = WebCore::clientData(vm);
 
-    ZigString name = toZigString(propertyName.publicName());
-    ZigString value = { nullptr, 0 };
+    EncodedSlice name = toEncodedSlice(propertyName.publicName());
+    EncodedSlice value = { nullptr, 0 };
 
     auto hasExistingValue = thisObject->getIfPropertyExists(globalObject, clientData->builtinNames().dataPrivateName());
     RETURN_IF_EXCEPTION(scope, {});
@@ -346,6 +343,8 @@ bool JSEnvironmentVariableMap::deleteProperty(JSCell* cell, JSGlobalObject* glob
         RETURN_IF_EXCEPTION(scope, false);
     } else if (uid && WTF::equal(uid, "NODE_TLS_REJECT_UNAUTHORIZED"_s)) {
         applyTLSRejectFromString(globalObject, String());
+    } else if (isProxyEnvVarName(vm, uid)) {
+        removeNativeEnvValue(globalObject, String(uid));
     }
 
     RELEASE_AND_RETURN(scope, Base::deleteProperty(cell, globalObject, propertyName, slot));
@@ -389,8 +388,8 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodeTLSRejectUnauthorizedGetter, (JSGlobalObject * gl
         return JSValue::encode(result);
     }
 
-    ZigString name = toZigString(propertyName.publicName());
-    ZigString value = { nullptr, 0 };
+    EncodedSlice name = toEncodedSlice(propertyName.publicName());
+    EncodedSlice value = { nullptr, 0 };
 
     if (!Bun__getEnvValue(globalObject, &name, &value) || value.len == 0) {
         return JSValue::encode(jsUndefined());
@@ -437,8 +436,8 @@ JSC_DEFINE_CUSTOM_GETTER(jsBunConfigVerboseFetchGetter, (JSGlobalObject * global
         return JSValue::encode(result);
     }
 
-    ZigString name = toZigString(propertyName.publicName());
-    ZigString value = { nullptr, 0 };
+    EncodedSlice name = toEncodedSlice(propertyName.publicName());
+    EncodedSlice value = { nullptr, 0 };
 
     if (!Bun__getEnvValue(globalObject, &name, &value) || value.len == 0) {
         return JSValue::encode(jsUndefined());
@@ -534,10 +533,15 @@ JSC_DEFINE_HOST_FUNCTION(jsEditWindowsEnvVar, (JSGlobalObject * global, JSC::Cal
         BunString k = Bun::toString(string1);
         BunString v = Bun::toString(string2);
         Bun__Process__editWindowsEnvVar(&k, &v);
+        // fetch() reads the proxy variables from the native env map.
+        if (isProxyEnvVarName(global->vm(), string1))
+            Bun__setEnvValue(global, &k, &v);
     } else {
         BunString k = Bun::toString(string1);
         BunString v = { .tag = BunStringTag::Dead };
         Bun__Process__editWindowsEnvVar(&k, &v);
+        if (isProxyEnvVarName(global->vm(), string1))
+            Bun__setEnvValue(global, &k, &v);
     }
     RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
 }
@@ -669,18 +673,6 @@ bool JSSharedEnvMap::getOwnPropertySlot(JSObject* object, JSGlobalObject* global
     return true;
 }
 
-// Proxy env vars written back to the Zig env map so fetch()'s getHttpProxyFor()
-// sees runtime changes; shared by applySharedEnvSideEffects and
-// createEnvironmentVariablesMap.
-static constexpr ASCIILiteral kProxyEnvVarNames[] = {
-    "HTTP_PROXY"_s,
-    "http_proxy"_s,
-    "HTTPS_PROXY"_s,
-    "https_proxy"_s,
-    "NO_PROXY"_s,
-    "no_proxy"_s,
-};
-
 // Node does not intercept TZ in workers (only RealEnvStore::Set notifies, and worker env
 // is a MapKVStore). WTF::setTimeZoneOverride is process-global, so a worker write would
 // flip the main thread's timezone while only invalidating the worker VM's Date caches.
@@ -739,14 +731,10 @@ static void applySharedEnvSideEffects(JSGlobalObject* globalObject, const String
         return;
     }
     // Proxy vars: fetch()'s getHttpProxyFor() reads the Zig env map, so sync.
-    const auto& proxyVarNames = kProxyEnvVarNames;
-    for (auto proxyName : proxyVarNames) {
-        if (key == proxyName) {
-            BunString name = Bun::toString(key);
-            BunString val = Bun::toString(stringValue);
-            Bun__setEnvValue(globalObject, &name, &val);
-            return;
-        }
+    if (isProxyEnvVarName(JSC::getVM(globalObject), key)) {
+        BunString name = Bun::toString(key);
+        BunString val = Bun::toString(stringValue);
+        Bun__setEnvValue(globalObject, &name, &val);
     }
 }
 
@@ -806,6 +794,8 @@ bool JSSharedEnvMap::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, 
         resetDateCachesAfterTimeZoneChange(JSC::getVM(globalObject));
     } else if (normalizedKey == "NODE_TLS_REJECT_UNAUTHORIZED"_s) {
         applyTLSRejectFromString(globalObject, String());
+    } else if (isProxyEnvVarName(JSC::getVM(globalObject), normalizedKey)) {
+        removeNativeEnvValue(globalObject, normalizedKey);
     }
 
     syncWindowsEnv(store, key, nullptr);
@@ -994,7 +984,7 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
     // method table, and its internal setup (Bun.inspect.custom symbol, toJSON) would hit
     // the exotic put's symbol-key TypeError. Keep a plain object; semantics live in traps.
     JSC::JSObject* object = nullptr;
-    if (count < 63) {
+    if (count > 0 && count < 63) {
         object = constructEmptyObject(globalObject, globalObject->objectPrototype(), count);
     } else {
         object = constructEmptyObject(globalObject, globalObject->objectPrototype());
@@ -1014,32 +1004,7 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
     bool hasNodeTLSRejectUnauthorized = false;
     bool hasBunConfigVerboseFetch = false;
 
-    // Proxy-related env vars need write-back to the native env map so that
-    // fetch()'s getHttpProxyFor() observes runtime changes.
-    const auto& proxyVarNames = kProxyEnvVarNames;
-    constexpr size_t proxyVarCount = std::size(proxyVarNames);
-    bool hasProxyVar[proxyVarCount] = {};
-
-    auto isProxyVar = [&](const String& name) -> std::optional<size_t> {
-        for (size_t j = 0; j < proxyVarCount; j++) {
-            if (name == proxyVarNames[j]) return j;
-        }
-#if OS(WINDOWS)
-        // Windows env var names are case-insensitive, so the OS env block can
-        // carry any casing (`Http_Proxy`, `HTTP_proxy`, ...). Without this
-        // fallback the per-key loop falls through, the bottom loop then adds
-        // the canonical accessor with `DontEnum` (because hasProxyVar[*] stayed
-        // false), and `{...process.env}` (which most spawn env merges do) drops
-        // the var even though `process.env.HTTP_PROXY` reads it fine.
-        for (size_t j = 0; j < proxyVarCount; j++) {
-            if (equalIgnoringASCIICase(name, proxyVarNames[j])) return j;
-        }
-#endif
-        return std::nullopt;
-    };
-
     auto* cached_getter_setter = JSC::CustomGetterSetter::create(vm, jsGetterEnvironmentVariable, nullptr);
-    auto* proxy_getter_setter = JSC::CustomGetterSetter::create(vm, jsGetterProxyEnvironmentVariable, jsSetterProxyEnvironmentVariable);
 
     for (size_t i = 0; i < count; i++) {
         unsigned char* chars;
@@ -1061,10 +1026,6 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
             hasBunConfigVerboseFetch = true;
             continue;
         }
-        if (auto idx = isProxyVar(name)) {
-            hasProxyVar[*idx] = true;
-            continue;
-        }
         ASSERT(len > 0);
 #if OS(WINDOWS)
         String idName = name.convertToASCIIUppercase();
@@ -1077,8 +1038,8 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
         // This causes strange issues when the environment variable name is an integer.
         if (chars[0] >= '0' && chars[0] <= '9') [[unlikely]] {
             if (auto index = parseIndex(identifier)) {
-                ZigString valueString = { nullptr, 0 };
-                ZigString nameStr = toZigString(name);
+                EncodedSlice valueString = { nullptr, 0 };
+                EncodedSlice nameStr = toEncodedSlice(name);
                 if (Bun__getEnvValue(globalObject, &nameStr, &valueString)) {
                     JSValue value = jsString(vm, Zig::toStringCopy(valueString));
                     RETURN_IF_EXCEPTION(scope, {});
@@ -1119,20 +1080,6 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
     object->putDirectCustomAccessor(
         vm,
         Identifier::fromString(vm, BUN_CONFIG_VERBOSE_FETCH), JSC::CustomGetterSetter::create(vm, jsBunConfigVerboseFetchGetter, jsBunConfigVerboseFetchSetter), BUN_CONFIG_VERBOSE_FETCH_Attrs);
-
-    for (size_t j = 0; j < proxyVarCount; j++) {
-        // Known limitation: `delete process.env.NO_PROXY` removes the accessor without
-        // reaching the setter. Use `= ""` to unset. TZ delete is handled in deleteProperty.
-        unsigned attrs = JSC::PropertyAttribute::CustomAccessor | 0;
-        if (!hasProxyVar[j]) {
-            attrs |= JSC::PropertyAttribute::DontEnum;
-        }
-        object->putDirectCustomAccessor(
-            vm,
-            Identifier::fromString(vm, proxyVarNames[j]),
-            proxy_getter_setter,
-            attrs);
-    }
 
 #if OS(WINDOWS)
     auto editWindowsEnvVar = JSC::JSFunction::create(vm, globalObject, 0, String("editWindowsEnvVar"_s), jsEditWindowsEnvVar, ImplementationVisibility::Public);

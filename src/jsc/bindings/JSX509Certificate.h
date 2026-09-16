@@ -78,7 +78,6 @@ public:
 
     // Certificate data access methods
     static JSValue getKeyUsage(ncrypto::X509View view, JSGlobalObject*);
-    EVP_PKEY* getPublicKey(JSGlobalObject* globalObject);
     JSValue getKeyUsage(JSGlobalObject* globalObject) { return JSX509Certificate::getKeyUsage(view(), globalObject); }
 
     static size_t estimatedSize(JSC::JSCell* cell, JSC::VM& vm);

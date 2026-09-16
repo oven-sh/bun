@@ -2,11 +2,9 @@ use core::fmt;
 use core::fmt::Write as _;
 use std::io::Write as _;
 
+use bun_core::EncodedSlice;
+use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::{ArrayBuffer, CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult};
-// JSC-side ZigString carries `to_js` (the `bun_core::ZigString` repr-twin
-// lives in `bun_jsc::zig_string`); used for ASCII→JS conversions only.
-use bun_jsc::ZigStringJsc as _;
-use bun_jsc::zig_string::ZigString as JscZigString;
 use bun_jsc::{JSPromise, JSPromiseStrong};
 
 use crate::node::StringOrBuffer;
@@ -192,13 +190,13 @@ impl AlgorithmValue {
 }
 
 fn algorithm_from_string(s: &bun_core::String) -> Option<Algorithm> {
-    if s.eql_comptime(b"argon2i") {
+    if s.eq_ascii(b"argon2i") {
         Some(Algorithm::Argon2i)
-    } else if s.eql_comptime(b"argon2d") {
+    } else if s.eq_ascii(b"argon2d") {
         Some(Algorithm::Argon2d)
-    } else if s.eql_comptime(b"argon2id") {
+    } else if s.eq_ascii(b"argon2id") {
         Some(Algorithm::Argon2id)
-    } else if s.eql_comptime(b"bcrypt") {
+    } else if s.eq_ascii(b"bcrypt") {
         Some(Algorithm::Bcrypt)
     } else {
         None
@@ -492,7 +490,8 @@ impl PasswordOp for HashOp {
         PasswordObject::hash(password, self.algorithm)
     }
     fn to_js(value: Box<[u8]>, g: &JSGlobalObject) -> JSValue {
-        JscZigString::init(&value).to_js(g)
+        // PHC / bcrypt output is ASCII.
+        EncodedSlice::latin1(&value).to_js(g)
         // `value` drops here.
     }
 }
@@ -535,7 +534,7 @@ fn password_error_instance(err: &HashError, verb: &str, g: &JSGlobalObject) -> J
         "Password {verb} failed with error \"{}\"",
         err.name()
     ));
-    instance.put(g, b"code", JscZigString::init(&error_code).to_js(g));
+    instance.put(g, b"code", EncodedSlice::latin1(&error_code).to_js(g));
     instance
 }
 

@@ -323,7 +323,11 @@ impl Loader {
     }
 
     pub fn get_http_proxy_for(&self, url: &URL<'_>) -> Option<URL<'_>> {
-        self.get_http_proxy(url.is_http(), Some(url.hostname), Some(url.host))
+        let proxy = URL::parse(self.proxy_env_for_scheme(url.is_http())?);
+        if self.is_no_proxy(url.hostname, url.get_port_auto()) {
+            return None;
+        }
+        Some(proxy)
     }
 
     pub fn has_http_proxy(&self) -> bool {
@@ -331,118 +335,60 @@ impl Loader {
             || self.has(b"HTTP_PROXY")
             || self.has(b"https_proxy")
             || self.has(b"HTTPS_PROXY")
+            || self.all_proxy().is_some()
     }
 
-    /// Get proxy URL for HTTP/HTTPS requests, respecting NO_PROXY.
-    /// `hostname` is the host without port (e.g., "localhost")
-    /// `host` is the host with port if present (e.g., "localhost:3000")
-    pub fn get_http_proxy(
-        &self,
-        is_http: bool,
-        hostname: Option<&[u8]>,
-        host: Option<&[u8]>,
-    ) -> Option<URL<'_>> {
-        // TODO: When Web Worker support is added, make sure to intern these strings
-        let mut http_proxy: Option<URL<'_>> = None;
+    /// `http_proxy` / `HTTP_PROXY` (or the `https` pair), falling back to
+    /// `all_proxy` / `ALL_PROXY`.
+    pub fn proxy_env_for_scheme(&self, is_http: bool) -> Option<&[u8]> {
+        self.scheme_proxy(is_http).or_else(|| self.all_proxy())
+    }
 
-        let proxy = if is_http {
+    /// `[proxy_env_for_scheme(true), proxy_env_for_scheme(false)]`.
+    pub fn proxy_env_for_both_schemes(&self) -> [Option<&[u8]>; 2] {
+        let (http, https) = (self.scheme_proxy(true), self.scheme_proxy(false));
+        if http.is_some() && https.is_some() {
+            return [http, https];
+        }
+        let all = self.all_proxy();
+        [http.or(all), https.or(all)]
+    }
+
+    fn scheme_proxy(&self, is_http: bool) -> Option<&[u8]> {
+        let specific = if is_http {
             self.get_lower_then_upper(b"http_proxy", b"HTTP_PROXY")
         } else {
             self.get_lower_then_upper(b"https_proxy", b"HTTPS_PROXY")
         };
-        if let Some(p) = proxy {
-            if !Self::is_emptyish(p) {
-                http_proxy = Some(URL::parse(p));
-            }
-        }
-
-        if http_proxy.is_some() && hostname.is_some() {
-            if self.is_no_proxy(hostname, host) {
-                return None;
-            }
-        }
-        http_proxy
+        specific.filter(|p| !Self::is_emptyish(p))
     }
 
-    /// Returns true if the given hostname/host should bypass the proxy
-    /// according to the NO_PROXY / no_proxy environment variable.
-    pub fn is_no_proxy(&self, hostname: Option<&[u8]>, host: Option<&[u8]>) -> bool {
-        // NO_PROXY filter
-        // See the syntax at https://about.gitlab.com/blog/2021/01/27/we-need-to-talk-no-proxy/
-        let Some(hn) = hostname else { return false };
+    /// The proxy for every target scheme. It commonly names a SOCKS proxy,
+    /// which the HTTP client cannot speak, so a value with some other scheme
+    /// than `http:` / `https:` is left alone. A value with no scheme is an
+    /// HTTP proxy, as for curl and for `HTTP_PROXY`: going direct instead would
+    /// silently bypass the proxy, where a wrong guess fails loudly.
+    fn all_proxy(&self) -> Option<&[u8]> {
+        let value = self
+            .get_lower_then_upper(b"all_proxy", b"ALL_PROXY")
+            .filter(|p| !Self::is_emptyish(p))?;
+        let url = URL::parse(value);
+        (url.protocol.is_empty() || url.has_http_like_protocol()).then_some(value)
+    }
 
-        let Some(no_proxy_text) = self.get_lower_then_upper(b"no_proxy", b"NO_PROXY") else {
-            return false;
-        };
-        if Self::is_emptyish(no_proxy_text) {
-            return false;
-        }
+    /// `no_proxy`, else `NO_PROXY`: one list, the lowercase name first, as curl,
+    /// node and undici read it.
+    pub fn no_proxy_list(&self) -> &[u8] {
+        let read = |name: &[u8]| self.get(name).filter(|v| !Self::is_emptyish(v));
+        read(b"no_proxy")
+            .or_else(|| read(b"NO_PROXY"))
+            .unwrap_or(b"")
+    }
 
-        for no_proxy_item in strings::split(no_proxy_text, b",") {
-            let mut no_proxy_entry = strings::trim(no_proxy_item, &strings::WHITESPACE_CHARS);
-            if no_proxy_entry.is_empty() {
-                continue;
-            }
-            if no_proxy_entry == b"*" {
-                return true;
-            }
-            // strips .
-            if strings::starts_with_char(no_proxy_entry, b'.') {
-                no_proxy_entry = &no_proxy_entry[1..];
-                if no_proxy_entry.is_empty() {
-                    continue;
-                }
-            }
-
-            // Determine if entry contains a port or is an IPv6 address
-            // IPv6 addresses contain multiple colons (e.g., "::1", "2001:db8::1")
-            // Bracketed IPv6 with port: "[::1]:8080"
-            // Host with port: "localhost:8080" (single colon)
-            let colon_count = strings::count_char(no_proxy_entry, b':');
-            let is_bracketed_ipv6 = strings::starts_with_char(no_proxy_entry, b'[');
-            let has_port = 'blk: {
-                if is_bracketed_ipv6 {
-                    // Bracketed IPv6: check for "]:port" pattern
-                    if strings::index_of(no_proxy_entry, b"]:").is_some() {
-                        break 'blk true;
-                    }
-                    break 'blk false;
-                } else if colon_count == 1 {
-                    // Single colon means host:port (not IPv6)
-                    break 'blk true;
-                }
-                // Multiple colons without brackets = bare IPv6 literal (no port)
-                break 'blk false;
-            };
-
-            if has_port {
-                // Entry has a port, do exact match against host:port
-                if let Some(h) = host {
-                    if strings::eql_case_insensitive_ascii(h, no_proxy_entry, true) {
-                        return true;
-                    }
-                }
-            } else {
-                // Entry is hostname/IPv6 only, match exact or dot-boundary suffix (case-insensitive)
-                let entry_len = no_proxy_entry.len();
-                if hn.len() == entry_len {
-                    if strings::eql_case_insensitive_ascii(hn, no_proxy_entry, true) {
-                        return true;
-                    }
-                } else if hn.len() > entry_len
-                    && hn[hn.len() - entry_len - 1] == b'.'
-                    && strings::eql_case_insensitive_ascii(
-                        &hn[hn.len() - entry_len..],
-                        no_proxy_entry,
-                        true,
-                    )
-                {
-                    return true;
-                }
-            }
-        }
-
-        false
+    /// Returns true if `hostname` on `port` should bypass the proxy according
+    /// to the no_proxy / NO_PROXY environment variable.
+    pub fn is_no_proxy(&self, hostname: &[u8], port: u16) -> bool {
+        crate::no_proxy::matches(self.no_proxy_list(), hostname, port)
     }
 
     pub fn load_ccache_path(&mut self, fs: &bun_paths::fs::FileSystem) {
@@ -456,7 +402,7 @@ impl Loader {
     fn load_ccache_path_impl(&mut self, fs: &bun_paths::fs::FileSystem) -> Result<(), AllocError> {
         // if they have ccache installed, put it in env variable `CMAKE_CXX_COMPILER_LAUNCHER` so
         // cmake can use it to hopefully speed things up
-        let mut buf = PathBuffer::uninit();
+        let mut buf = bun_paths::path_buffer_pool::get();
         let path = match self.get(b"PATH") {
             Some(p) => p,
             None => return Ok(()),
@@ -496,7 +442,7 @@ impl Loader {
         fs: &bun_paths::fs::FileSystem,
         override_node: &[u8],
     ) -> crate::Result<bool> {
-        let mut buf = PathBuffer::uninit();
+        let mut buf = bun_paths::path_buffer_pool::get();
 
         let node_path_to_use: Box<[u8]> = if !override_node.is_empty() {
             Box::from(override_node)
@@ -595,6 +541,19 @@ impl Loader {
         }
     }
 
+    /// A `Worker`'s loader: the map, with the explicit entries marked loaded so a pipe is not read twice.
+    pub fn clone_for_worker(&self) -> Result<Loader, AllocError> {
+        Ok(Loader {
+            map: self.map.clone_with_allocator()?,
+            default_files_loaded: EnumSet::empty(),
+            custom_files_loaded: self.custom_files_loaded.clone()?,
+            quiet: false,
+            did_load_process: false,
+            reject_unauthorized: Cell::new(None),
+            aws_credentials: None,
+        })
+    }
+
     pub fn load_process(&mut self) -> Result<(), AllocError> {
         if self.did_load_process {
             return Ok(());
@@ -639,6 +598,7 @@ impl Loader {
     ) -> crate::Result<()> {
         // `suffix` is a runtime arg (avoids unstable adt_const_params; cold path).
         let start = bun_core::time::nano_timestamp();
+        let loaded_before = self.loaded_count();
 
         // Create a reusable buffer for parsing multiple files.
         let mut value_buffer: Vec<u8> = Vec::new();
@@ -658,10 +618,14 @@ impl Loader {
             }
         }
 
-        if !self.quiet {
+        if !self.quiet && self.loaded_count() > loaded_before {
             self.print_loaded(start);
         }
         Ok(())
+    }
+
+    fn loaded_count(&self) -> usize {
+        self.default_files_loaded.len() + self.custom_files_loaded.count()
     }
 
     fn load_explicit_files(
@@ -752,7 +716,7 @@ impl Loader {
     }
 
     pub(crate) fn print_loaded(&self, start: i128) {
-        let count: usize = self.default_files_loaded.len() + self.custom_files_loaded.count();
+        let count = self.loaded_count();
 
         if count == 0 {
             return;
@@ -798,35 +762,35 @@ impl Loader {
 
         // `bun_sys` is errno-based; the match arms below group the recoverable
         // errnos. Any errno not listed propagates.
-        let file =
-            match bun_sys::File::openat(dir, base, bun_sys::O::RDONLY | bun_sys::O::CLOEXEC, 0) {
-                Ok(file) => file,
-                Err(err) => {
-                    use bun_sys::E;
-                    match err.get_errno() {
-                        E::EISDIR | E::ENOENT => {
-                            // prevent retrying
-                            self.default_files_loaded.insert(env_file);
-                            return Ok(());
-                        }
-                        E::EBUSY | E::EACCES => {
-                            if !self.quiet {
-                                bun_core::pretty_errorln!(
-                                    "<r><red>{}<r> error loading {} file",
-                                    bstr::BStr::new(err.name()),
-                                    bstr::BStr::new(base)
-                                );
-                            }
-                            // prevent retrying
-                            self.default_files_loaded.insert(env_file);
-                            return Ok(());
-                        }
-                        _ => return Err(err.into()),
+        let file = match bun_sys::File::openat(dir, base, DEFAULT_ENV_FILE_OPEN_FLAGS, 0) {
+            Ok(file) => file,
+            Err(err) => {
+                use bun_sys::E;
+                match err.get_errno() {
+                    // A unix socket: ENXIO on Linux, EOPNOTSUPP on macOS and FreeBSD.
+                    E::EISDIR | E::ENOENT | E::ENXIO | E::EOPNOTSUPP => {
+                        // prevent retrying
+                        self.default_files_loaded.insert(env_file);
+                        return Ok(());
                     }
+                    E::EBUSY | E::EACCES => {
+                        if !self.quiet {
+                            bun_core::pretty_errorln!(
+                                "<r><red>{}<r> error loading {} file",
+                                bstr::BStr::new(err.name()),
+                                bstr::BStr::new(base)
+                            );
+                        }
+                        // prevent retrying
+                        self.default_files_loaded.insert(env_file);
+                        return Ok(());
+                    }
+                    _ => return Err(err.into()),
                 }
-            };
+            }
+        };
 
-        match read_env_file_contents(&file)? {
+        match read_env_file_contents(&file, EnvFileSource::Default)? {
             ReadEnvFile::Empty => {}
             ReadEnvFile::ReadErr(err) => {
                 if !self.quiet {
@@ -855,7 +819,13 @@ impl Loader {
             return Ok(());
         }
 
-        let file = match bun_sys::open_file(file_path, bun_sys::OpenFlags::READ_ONLY) {
+        // No `O_NONBLOCK`: an explicit FIFO waits for its writer, as in Node.
+        let file = match bun_sys::File::openat(
+            bun_sys::Fd::cwd(),
+            file_path,
+            bun_sys::O::RDONLY | bun_sys::O::CLOEXEC,
+            0,
+        ) {
             Ok(f) => f,
             Err(_) => {
                 // prevent retrying
@@ -864,7 +834,7 @@ impl Loader {
             }
         };
 
-        match read_env_file_contents(&file)? {
+        match read_env_file_contents(&file, EnvFileSource::Explicit)? {
             ReadEnvFile::Empty => {}
             ReadEnvFile::ReadErr(err) => {
                 if !self.quiet {
@@ -885,13 +855,26 @@ impl Loader {
     }
 }
 
-/// Shared post-open tail of `load_env_file` / `load_env_file_dynamic`:
-/// `File::read_to_end` (fstat-presized) with the recoverable-errno filter.
-/// The two callers differ in their open path, open-error handling, and the
-/// memo slot they write — those stay in the callers. Only the shared read
-/// tail is factored here.
+/// `O_NONBLOCK`: a blocking `open` of a FIFO named `.env` waits for a writer.
+#[cfg(unix)]
+const DEFAULT_ENV_FILE_OPEN_FLAGS: i32 =
+    bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NONBLOCK;
+/// No `O_NONBLOCK`: an overlapped Windows handle cannot be read synchronously.
+#[cfg(not(unix))]
+const DEFAULT_ENV_FILE_OPEN_FLAGS: i32 = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC;
+
+/// Decides what happens to an env file that is not a regular file.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum EnvFileSource {
+    /// A `.env*` name from the cwd listing: skipped.
+    Default,
+    /// An `--env-file` argument: read whatever its kind, as in Node.
+    Explicit,
+}
+
+/// Shared post-open tail of `load_env_file` / `load_env_file_dynamic`.
 enum ReadEnvFile {
-    /// Zero-length — caller marks the slot and returns.
+    /// Zero-length, or a default entry that is not a regular file. The caller marks the slot.
     Empty,
     /// Recoverable read errno (ENOMEM/EPIPE/EACCES/EISDIR) — caller prints
     /// (unless `quiet`), marks the slot, and returns.
@@ -900,8 +883,24 @@ enum ReadEnvFile {
     Bytes(Vec<u8>),
 }
 
-fn read_env_file_contents(file: &bun_sys::File) -> crate::Result<ReadEnvFile> {
-    match file.read_to_end() {
+fn read_env_file_contents(
+    file: &bun_sys::File,
+    source: EnvFileSource,
+) -> crate::Result<ReadEnvFile> {
+    let stat = file.stat()?;
+    let result = if bun_sys::is_regular_file(stat.st_mode as _) {
+        if stat.st_size == 0 {
+            return Ok(ReadEnvFile::Empty);
+        }
+        file.read_to_end()
+    } else if source == EnvFileSource::Explicit {
+        // A pipe or device is not seekable, so `read(2)` until EOF, not `pread`.
+        let mut buf = Vec::new();
+        file.read_to_end_into(&mut buf).map(|_| buf)
+    } else {
+        return Ok(ReadEnvFile::Empty);
+    };
+    match result {
         Ok(buf) if buf.is_empty() => Ok(ReadEnvFile::Empty),
         Ok(buf) => Ok(ReadEnvFile::Bytes(buf)),
         Err(err) => {
@@ -1318,25 +1317,6 @@ impl Map {
         })
     }
 
-    /// Returns a wrapper around the env map that does not duplicate the memory of
-    /// the keys and values, but instead points into the memory of the bun env map.
-    // `bun_sys::EnvMap` is `HashMap<String, String>`, which copies and is
-    // UTF-8-lossy; the lossy round-trip is accepted here.
-    #[allow(clippy::disallowed_methods)] // lossy round-trip documented above
-    pub fn std_env_map(&mut self) -> Result<StdEnvMapWrapper, AllocError> {
-        let mut env_map = bun_sys::EnvMap::default();
-        let mut it = self.map.iterator();
-        while let Some(entry) = it.next() {
-            env_map.insert(
-                String::from_utf8_lossy(entry.key_ptr).into_owned(),
-                String::from_utf8_lossy(&entry.value_ptr.value).into_owned(),
-            );
-        }
-        Ok(StdEnvMapWrapper {
-            unsafe_map: env_map,
-        })
-    }
-
     /// Build a heap-allocated Windows environment block suitable for
     /// `CreateProcessW`'s `lpEnvironment` with `CREATE_UNICODE_ENVIRONMENT`.
     ///
@@ -1507,16 +1487,6 @@ impl NullDelimitedEnvMap {
         self._storage.iter().map(|s| {
             core::ffi::CStr::from_bytes_until_nul(s).expect("entries are built NUL-terminated")
         })
-    }
-}
-
-pub struct StdEnvMapWrapper {
-    pub(crate) unsafe_map: bun_sys::EnvMap,
-}
-
-impl StdEnvMapWrapper {
-    pub fn get(&self) -> &bun_sys::EnvMap {
-        &self.unsafe_map
     }
 }
 

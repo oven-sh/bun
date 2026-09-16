@@ -280,16 +280,13 @@ fn bun_random_uuid_v5(global: &JSGlobalObject, callframe: &CallFrame) -> JsResul
     let name_value = arguments.ptr[0];
     let namespace_value = arguments.ptr[1];
 
-    // `bun_core::ZigStringSlice` is a borrow-or-own UTF-8 slice.
-    let name: bun_core::ZigStringSlice = 'brk: {
+    let name_buffer;
+    let name: bun_core::Utf8Bytes = 'brk: {
         if name_value.is_string() {
-            let name_str = name_value.to_bun_string(global)?;
-            let result = name_str.to_utf8();
-
-            break 'brk result;
+            break 'brk name_value.to_utf8(global)?;
         } else if let Some(array_buffer) = name_value.as_array_buffer(global) {
-            let bytes: &[u8] = array_buffer.byte_slice();
-            break 'brk bun_core::ZigStringSlice::from_utf8_never_free(bytes);
+            name_buffer = array_buffer;
+            break 'brk bun_core::Utf8Bytes::Borrowed(name_buffer.byte_slice());
         } else {
             return Err(global
                 .err(
@@ -299,7 +296,6 @@ fn bun_random_uuid_v5(global: &JSGlobalObject, callframe: &CallFrame) -> JsResul
                 .throw());
         }
     };
-    // `defer name.deinit()` — Utf8Slice's Drop handles cleanup.
 
     let namespace: [u8; 16] = 'brk: {
         if namespace_value.is_string() {

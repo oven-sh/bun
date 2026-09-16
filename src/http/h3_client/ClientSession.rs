@@ -26,7 +26,6 @@ pub struct ClientSession {
     /// `quic.Socket` ext slot while connected (1, transferred from the registry
     /// add via `connect`), and one per entry in `pending`. `PendingConnect` holds
     /// an extra ref while DNS is in flight.
-    // Intrusive refcount — see `bun_ptr::IntrusiveRc<ClientSession>`.
     ref_count: Cell<u32>,
     /// Null while DNS is in flight; set once `us_quic_connect_addr` returns.
     // FFI handle that becomes dangling after onConnClose; raw is intentional.
@@ -34,6 +33,8 @@ pub struct ClientSession {
     pub(crate) hostname: Vec<u8>,
     pub(crate) port: u16,
     pub(crate) reject_unauthorized: bool,
+    /// The fetch session whose requests may share this connection.
+    pub(crate) pool_id: u64,
     pub(crate) handshake_done: bool,
     pub(crate) closed: bool,
     pub(crate) registry_index: u32,
@@ -51,6 +52,7 @@ impl ClientSession {
         hostname: Vec<u8>,
         port: u16,
         reject_unauthorized: bool,
+        pool_id: u64,
     ) -> *mut ClientSession {
         bun_core::heap::into_raw(Box::new(ClientSession {
             ref_count: Cell::new(1),
@@ -58,6 +60,7 @@ impl ClientSession {
             hostname,
             port,
             reject_unauthorized,
+            pool_id,
             handshake_done: false,
             closed: false,
             registry_index: u32::MAX,
@@ -65,9 +68,16 @@ impl ClientSession {
         }))
     }
 
-    pub(crate) fn matches(&self, hostname: &[u8], port: u16, reject_unauthorized: bool) -> bool {
+    pub(crate) fn matches(
+        &self,
+        hostname: &[u8],
+        port: u16,
+        reject_unauthorized: bool,
+        pool_id: u64,
+    ) -> bool {
         !self.closed
             && self.port == port
+            && self.pool_id == pool_id
             && self.reject_unauthorized == reject_unauthorized
             && strings::eql_long(&self.hostname, hostname, true)
     }
@@ -83,6 +93,19 @@ impl ClientSession {
     fn qsocket_mut<'s>(&self) -> Option<&'s mut quic::Socket> {
         // Route through the shared [`quic_socket_mut`] accessor; see INVARIANT.
         self.qsocket.map(|qs| quic_socket_mut(qs.as_ptr()))
+    }
+
+    /// `on_conn_close` runs from a later engine tick, so the registry is not
+    /// touched from here.
+    pub(crate) fn close_if_idle(&mut self, pool_id: u64) {
+        if self.pool_id != pool_id || self.closed || !self.pending.is_empty() {
+            return;
+        }
+        if let Some(qs) = self.qsocket_mut() {
+            // No later request may pick a connection that is going away.
+            self.closed = true;
+            qs.close();
+        }
     }
 
     pub(crate) fn has_headroom(&self) -> bool {
@@ -173,6 +196,11 @@ impl ClientSession {
     /// receiver; the release still goes through the pending entry's own
     /// backref rather than the receiver, like every other holder's does.
     pub(super) fn detach(&mut self, stream: *mut Stream) {
+        self.detach_with(stream, false);
+    }
+
+    /// `abort` kills the lsquic stream even when the request body is done (the response is not).
+    fn detach_with(&mut self, stream: *mut Stream, abort: bool) {
         let st = stream_mut(stream);
         let session = st.session.as_ptr();
         debug_assert!(core::ptr::eq(session, self));
@@ -188,7 +216,7 @@ impl ClientSession {
             // content-length violation; RESET_STREAM(H3_REQUEST_CANCELLED)
             // is the correct "I'm abandoning this send half" so lsquic reaps
             // the stream instead of leaking it on the pooled session.
-            if !request_body_done {
+            if abort || !request_body_done {
                 qs.reset();
             }
         }
@@ -207,8 +235,7 @@ impl ClientSession {
     pub(crate) fn fail(&mut self, stream: *mut Stream, err: crate::Error) {
         // Capture the client ptr before detach() invalidates `stream`.
         let client = stream_mut(stream).client;
-        stream_mut(stream).abort();
-        self.detach(stream);
+        self.detach_with(stream, true);
         if let Some(cl) = client {
             // detach() nulled cl.h3 but the HTTPClient itself is alive.
             client_mut(cl).fail_from_h2(err);
@@ -253,8 +280,7 @@ impl ClientSession {
             port,
             bstr::BStr::new(err.name()),
         );
-        st.abort();
-        self.detach(stream);
+        self.detach_with(stream, true);
         // Formed only after detach() so its Unique tag is not invalidated by
         // detach()'s aliasing write to `client.h3`.
         let client = client_mut(client_ptr);

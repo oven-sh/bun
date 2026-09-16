@@ -21,6 +21,7 @@
 #include "config.h"
 #include "JSFetchHeaders.h"
 
+#include "ErrorCode.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
 #include "IDLTypes.h"
@@ -122,6 +123,65 @@ size_t JSFetchHeaders::estimatedSize(JSC::JSCell* cell, JSC::VM& vm)
     return Base::estimatedSize(cell, vm) + wrapped.memoryCost();
 }
 
+// Only a primitive entry is echoed. "Received an instance of X" reads `constructor.name`,
+// and the conversion runs no user code that Web IDL does not ask for.
+static void throwEntryIsNotPair(JSGlobalObject& lexicalGlobalObject, ThrowScope& scope, ASCIILiteral name, size_t index, JSValue entry)
+{
+    auto entryName = makeString(name, '[', index, ']');
+    if (!entry.isObject()) {
+        Bun::ERR::INVALID_ARG_INSTANCE(scope, &lexicalGlobalObject, entryName, "Array"_s, entry);
+        return;
+    }
+    auto kind = StringView(name).contains('.') ? "property"_s : "argument"_s;
+    Bun::throwError(&lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, makeString("The \""_s, entryName, "\" "_s, kind, " must be an instance of Array"_s));
+}
+
+template<typename IDLStringType>
+FetchHeaders::Init convertHeadersInit(JSGlobalObject& lexicalGlobalObject, JSValue value, ASCIILiteral name)
+{
+    auto& vm = JSC::getVM(&lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* object = value.getObject();
+    if (!object) {
+        Bun::ERR::INVALID_ARG_INSTANCE(scope, &lexicalGlobalObject, name, "Headers, Array, or Object"_s, value);
+        return {};
+    }
+
+    auto method = JSC::iteratorMethod(&lexicalGlobalObject, object);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (method.isUndefined())
+        RELEASE_AND_RETURN(scope, (Converter<IDLRecord<IDLStringType, IDLStringType>>::convert(lexicalGlobalObject, value)));
+
+    Vector<Vector<String>> pairs;
+    forEachInIterable(lexicalGlobalObject, object, method, [&pairs, name](JSC::VM& vm, JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue nextValue) {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+
+        Vector<String> pair;
+        if (JSC::getIterationMode(nextValue) == JSC::IterationMode::FastArray) {
+            // A fast array is iterable, so it needs no check. The sequence converter walks it
+            // with no Symbol.iterator lookup, which is 13% of `new Headers()` for 8 pairs.
+            pair = Converter<IDLSequence<IDLStringType>>::convert(lexicalGlobalObject, nextValue);
+        } else {
+            auto* entry = nextValue.getObject();
+            auto entryMethod = entry ? JSC::iteratorMethod(&lexicalGlobalObject, entry) : jsUndefined();
+            RETURN_IF_EXCEPTION(scope, );
+            if (entryMethod.isUndefined()) {
+                throwEntryIsNotPair(lexicalGlobalObject, scope, name, pairs.size(), nextValue);
+                return;
+            }
+            pair = Converter<IDLSequence<IDLStringType>>::convert(lexicalGlobalObject, entry, entryMethod);
+        }
+        RETURN_IF_EXCEPTION(scope, );
+        pairs.append(WTF::move(pair));
+    });
+    RETURN_IF_EXCEPTION(scope, {});
+    return pairs;
+}
+
+template FetchHeaders::Init convertHeadersInit<IDLDOMString>(JSGlobalObject&, JSValue, ASCIILiteral);
+template FetchHeaders::Init convertHeadersInit<IDLByteString>(JSGlobalObject&, JSValue, ASCIILiteral);
+
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSFetchHeadersDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -130,7 +190,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSFetchHeadersDOMConstru
     ASSERT(castedThis);
     EnsureStillAliveScope argument0 = callFrame->argument(0);
 
-    auto init = std::optional<Converter<IDLUnion<IDLSequence<IDLSequence<IDLDOMString>>, IDLRecord<IDLDOMString, IDLDOMString>>>::ReturnType>();
+    std::optional<FetchHeaders::Init> init;
 
     if (argument0.value() && !argument0.value().isUndefined()) {
         if (auto* existingJsFetchHeaders = dynamicDowncast<JSFetchHeaders>(argument0.value())) {
@@ -142,7 +202,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSFetchHeadersDOMConstru
             RETURN_IF_EXCEPTION(throwScope, {});
             return JSValue::encode(jsValue);
         }
-        init = std::optional<Converter<IDLUnion<IDLSequence<IDLSequence<IDLDOMString>>, IDLRecord<IDLDOMString, IDLDOMString>>>::ReturnType>(convert<IDLUnion<IDLSequence<IDLSequence<IDLDOMString>>, IDLRecord<IDLDOMString, IDLDOMString>>>(*lexicalGlobalObject, argument0.value()));
+        init = convertHeadersInit<IDLDOMString>(*lexicalGlobalObject, argument0.value(), "init"_s);
     }
 
     RETURN_IF_EXCEPTION(throwScope, {});

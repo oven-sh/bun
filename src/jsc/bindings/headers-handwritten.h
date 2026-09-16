@@ -66,6 +66,12 @@ enum class UWSResponseKind : int32_t {
     H2 = 2,
     H3 = 3,
 };
+
+/// Mirrors `HeadersInitName` in src/jsc/FetchHeaders.rs.
+enum class HeadersInitName : uint8_t {
+    Headers = 0,
+    ProxyHeaders = 1,
+};
 #endif
 
 typedef struct BunString {

@@ -333,6 +333,12 @@ describe("Bun.FetchSession", () => {
     expect(construct({ proxy: { url: "http://p", respectNoProxy: 1 } })).toThrow(
       'The "respectNoProxy" property must be of type boolean',
     );
+    expect(construct({ proxy: { url: "http://p", headers: 1 } })).toThrow(
+      'The "proxy.headers" property must be an instance of Headers, Array, or Object. Received type number (1)',
+    );
+    expect(construct({ proxy: { url: "http://p", headers: ["a"] } })).toThrow(
+      `The "proxy.headers[0]" property must be an instance of Array. Received type string ('a')`,
+    );
     expect(construct({ unix: "/tmp/x.sock", proxy: "http://p" })).toThrow(
       "FetchSession: cannot use a proxy with a unix socket",
     );

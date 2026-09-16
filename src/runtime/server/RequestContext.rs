@@ -1483,7 +1483,10 @@ where
             // SAFETY: FFI handle
             if resp.has_responded() {
                 // The sink outlives this call when a frame up the stack still
-                // uses the context; its copy of `resp` is freed with the stream.
+                // holds the context (`discard_stream_after_abort`), and its
+                // copy of `resp` dies with the stream. Its `finalize()` reads
+                // `res` unless the sink is done, so drop the handle the way
+                // the sink's own `abort()` does and it never holds a freed one.
                 if let Some(wrapper) = this.sink_mut() {
                     wrapper.sink.res = None;
                 }

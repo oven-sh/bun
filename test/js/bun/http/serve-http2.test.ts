@@ -932,4 +932,43 @@ describe("Bun.serve http2 in-process", () => {
     await new Promise<void>(r => session.close(() => r()));
     await server.stop();
   });
+
+  // stop(true) inside pull() closes the socket at once, so the stream teardown
+  // reports while the response is still being attached. The request then ends
+  // from inside that attach, and the sink it leaves behind is cleaned up by the
+  // caller. A late write on the controller must still fail cleanly.
+  test("stop(true) inside pull() after the response ended", async () => {
+    let lateWriteFailed = false;
+    await using server = Bun.serve({
+      port: 0,
+      http2: true,
+      fetch: () =>
+        new Response(
+          new ReadableStream({
+            type: "direct",
+            async pull(controller) {
+              controller.write("streamed");
+              controller.end();
+              server.stop(true);
+              try {
+                controller.write("late");
+                await controller.flush();
+              } catch {
+                lateWriteFailed = true;
+              }
+            },
+          }),
+        ),
+    });
+
+    const session = await connectH2(server.port, false);
+    // The abrupt stop races the response, so the client may or may not see it.
+    await request(session, { ":path": "/" }).catch(() => {});
+    session.destroy();
+
+    expect({ lateWriteFailed, pendingRequests: server.pendingRequests }).toEqual({
+      lateWriteFailed: true,
+      pendingRequests: 0,
+    });
+  });
 });

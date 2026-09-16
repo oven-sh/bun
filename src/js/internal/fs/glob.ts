@@ -5,9 +5,8 @@
 //   https://github.com/nodejs/node/blob/50c35fea9e64d50ab3bb5f359e8523de89d6c798/lib/internal/fs/glob.js
 // plus "fs: fix glob early return skipping sibling entries" (v26.8.0):
 //   https://github.com/nodejs/node/commit/0ea2c86b5b70fdab268597e8c51040c703ee1328
-// The seen cache diverges from upstream on purpose (oven-sh/bun#42876): a
-// pattern array or brace group returns the union of the single-pattern
-// results, where upstream drops paths whose cache keys collide.
+// The seen cache diverges from upstream (oven-sh/bun#42876): a pattern array
+// returns the union of the single-pattern results.
 // backed by a vendored copy of minimatch (Node's deps/minimatch/index.js, ISC license):
 //   https://github.com/nodejs/node/blob/50c35fea9e64d50ab3bb5f359e8523de89d6c798/deps/minimatch/index.js
 // embedded verbatim below lazyMinimatch(); the vendored block is third-party
@@ -283,10 +282,8 @@ class Cache {
     this.#readdirCache.set(path, val);
     return val;
   }
-  // Marks every index of `pattern` as walked for `path` and returns the
-  // indexes that were not marked before, or null when all of them were.
-  // Upstream skips the whole pattern when any one index was seen, which
-  // marks the others without ever walking them.
+  // Records the indexes of `pattern` for `path`. Returns the ones that were
+  // new, or null when none was.
   add(path, pattern) {
     let cache = this.#cache.get(path);
     if (!cache) {
@@ -576,9 +573,7 @@ class Glob {
       this.#subpatterns.get(path).push(pattern);
     }
   }
-  // Queues `pattern` at `path` unless an equal pattern is queued there already.
-  // The "**/.." branch calls this once per directory entry and for every
-  // pattern of the current step, so the same continuation arrives many times.
+  // Queues `pattern` at `path` once per step.
   #queueSubpattern(path, pattern) {
     const queued = this.#subpatterns.get(path);
     if (queued === undefined) {
@@ -592,8 +587,7 @@ class Glob {
     }
     queued.push(pattern);
   }
-  // Drops the indexes of `pattern` that `path` was already walked with.
-  // Returns null when none is left.
+  // Drops the indexes that `path` was already walked with. Null when none is left.
   #unseenPattern(path, pattern) {
     const unseen = this.#cache.add(path, pattern);
     if (unseen === null) {
@@ -604,10 +598,8 @@ class Glob {
     }
     return pattern.child(unseen, pattern.symlinks, pattern.realpaths);
   }
-  // Moves a pattern that starts with a root, "." or ".." to that path. This
-  // runs before the seen cache records the pattern: its index 0 has the same
-  // key as the last index of a pattern that ends the same way, and that one
-  // still has to walk from ".".
+  // Moves a pattern that starts with a root, "." or ".." to that path, before
+  // the seen cache records index 0 under the key of another pattern's tail.
   #redirectFirst(pattern) {
     if (!pattern.isFirst()) {
       return false;
@@ -629,9 +621,7 @@ class Glob {
     } else {
       return false;
     }
-    // A pattern that is only this segment matches nothing. Its index 1 is
-    // past the end and has the key of a trailing "" segment, so queuing it
-    // would block "../" or "./" at the same path.
+    // A pattern that is only this segment matches nothing.
     if (pattern.last > 0) {
       this.#addSubpattern(target, pattern.child(new Set().add(1)));
     }
@@ -694,8 +684,7 @@ class Glob {
 
     for (let i = 0; i < children.length; i++) {
       const entry = children[i];
-      // The stat and readdir caches share this Dirent. A literal "." or ".."
-      // is walked under the pattern's name and the Dirent keeps its own.
+      // The Dirent is shared with the readdir cache and keeps its own name.
       const name = typeof firstPattern === "string" ? firstPattern : entry.name;
       const entryPath = join(path, name);
       const entryFullpath = join(fullpath, name);
@@ -769,9 +758,7 @@ class Glob {
                 this.#queueSubpattern(parent, pattern.child(new Set().add(nextIndex + 1)));
               }
             } else {
-              // Not recorded in the seen cache: the key of a trailing ".."
-              // is the same as the key of a literal ".." walked from `path`
-              // or `parent`, and that walk has a different result.
+              // Not recorded in the seen cache: a literal ".." walk has the same key.
               this.#results.add(path);
               this.#results.add(parent);
             }

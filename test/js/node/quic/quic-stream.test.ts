@@ -375,13 +375,15 @@ describe("headers queued before the handshake", () => {
   });
 });
 
-describe("a body write after a refused header block", () => {
-  // lsquic refuses a header block with a value over 65535 bytes, so
-  // sendHeaders() returns false and the body write that follows fails with
-  // EILSEQ. That failure never clears with a write event: the stream must be
-  // reset with H3_INTERNAL_ERROR, not retried on every engine tick.
-  test("resets the stream with H3_INTERNAL_ERROR instead of retrying forever", async () => {
-    const H3_INTERNAL_ERROR = 0x102n;
+// lsquic refuses a header block with a value over 65535 bytes, so
+// sendHeaders() returns false. A body write or a FIN that follows fails
+// (EILSEQ, no header block): the stream must be reset with H3_INTERNAL_ERROR,
+// not retried on every engine tick and not sent as a headerless response.
+describe("a response after a refused header block", () => {
+  const H3_INTERNAL_ERROR = 0x102n;
+  const refused = { ":status": "200", "x-one": Buffer.alloc(70000, "~").toString() };
+
+  async function roundTrip(respond: (stream: any) => boolean) {
     const serverSide = Promise.withResolvers<{ sent: boolean; error: any }>();
     await using server = await listen(
       async serverSession => {
@@ -394,9 +396,7 @@ describe("a body write after a refused header block", () => {
         sni: { "*": { keys: [key], certs: [cert] } },
         transportParams: { maxIdleTimeout: 1 },
         onheaders(this: any) {
-          const sent = this.sendHeaders({ ":status": "200", "x-one": Buffer.alloc(70000, "~").toString() });
-          this.writer.writeSync(new TextEncoder().encode("body"));
-          this.writer.endSync();
+          const sent = respond(this);
           this.closed.then(
             () => serverSide.resolve({ sent, error: undefined }),
             (error: any) => serverSide.resolve({ sent, error }),
@@ -422,7 +422,16 @@ describe("a body write after a refused header block", () => {
     );
     const { sent, error: serverError } = await serverSide.promise;
     client.close();
+    return { sent, clientError, serverError };
+  }
 
+  test("a body write resets the stream with H3_INTERNAL_ERROR instead of retrying forever", async () => {
+    const { sent, clientError, serverError } = await roundTrip(stream => {
+      const sent = stream.sendHeaders(refused);
+      stream.writer.writeSync(new TextEncoder().encode("body"));
+      stream.writer.endSync();
+      return sent;
+    });
     expect(sent).toBe(false);
     expect({ code: clientError?.code, errorCode: clientError?.errorCode }).toEqual({
       code: "ERR_QUIC_APPLICATION_ERROR",
@@ -432,5 +441,72 @@ describe("a body write after a refused header block", () => {
       code: "ERR_QUIC_APPLICATION_ERROR",
       errorCode: H3_INTERNAL_ERROR,
     });
+  });
+
+  test("an empty body resets the stream with H3_INTERNAL_ERROR instead of a bare FIN", async () => {
+    const { sent, clientError, serverError } = await roundTrip(stream => {
+      const sent = stream.sendHeaders(refused);
+      stream.writer.endSync();
+      return sent;
+    });
+    expect(sent).toBe(false);
+    expect({ code: clientError?.code, errorCode: clientError?.errorCode }).toEqual({
+      code: "ERR_QUIC_APPLICATION_ERROR",
+      errorCode: H3_INTERNAL_ERROR,
+    });
+    expect({ code: serverError?.code, errorCode: serverError?.errorCode }).toEqual({
+      code: "ERR_QUIC_APPLICATION_ERROR",
+      errorCode: H3_INTERNAL_ERROR,
+    });
+  });
+});
+
+// A body queued before sendHeaders() also fails the write with EILSEQ. That
+// is not a refusal: the bytes wait for the header block and follow it.
+describe("a body written before the header block", () => {
+  test("is delivered after sendHeaders()", async () => {
+    await using server = await listen(
+      async serverSession => {
+        serverSession.onstream = (stream: any) => {
+          stream.closed.catch(() => {});
+        };
+        await serverSession.closed.catch(() => {});
+      },
+      {
+        sni: { "*": { keys: [key], certs: [cert] } },
+        transportParams: { maxIdleTimeout: 1 },
+        async onheaders(this: any) {
+          this.writer.writeSync(new TextEncoder().encode("body"));
+          // Let engine passes run while the stream has no header block.
+          for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve));
+          this.sendHeaders({ ":status": "200" });
+          this.writer.endSync();
+        },
+      },
+    );
+
+    const client = await connect(server.address, {
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 1 },
+      onerror() {},
+    });
+    await client.opened;
+    const gotHeaders = Promise.withResolvers<string>();
+    const stream = await client.createBidirectionalStream({
+      headers: { ":method": "GET", ":path": "/", ":scheme": "https", ":authority": "localhost" },
+      onheaders(headers: Record<string, string>) {
+        gotHeaders.resolve(headers[":status"]);
+      },
+    });
+
+    let body = "";
+    for await (const batch of stream) {
+      for (const chunk of batch) body += Buffer.from(chunk).toString();
+    }
+    client.close();
+
+    expect(await gotHeaders.promise).toBe("200");
+    expect(body).toBe("body");
   });
 });

@@ -51,15 +51,15 @@ mod _impl {
     #[cfg(windows)]
     #[allow(non_snake_case, clippy::upper_case_acronyms)]
     mod win32 {
+        pub(super) use bun_sys::windows::kernel32::{GetEnvironmentVariableW, GetTickCount64};
         use bun_sys::windows::ws2_32::{sockaddr_in, sockaddr_in6};
-        use bun_sys::windows::{BOOL, DWORD, HANDLE};
-        use core::ffi::{c_char, c_int, c_void};
+        use bun_sys::windows::{BOOL, DWORD, HANDLE, RtlGetVersion};
+        pub(super) use bun_sys::windows::{
+            HKEY_LOCAL_MACHINE, OSVERSIONINFOW, OpenProcessToken, RegGetValueW,
+        };
+        use core::ffi::{c_char, c_int};
 
         pub(super) const TOKEN_READ: DWORD = 0x0002_0008;
-        /// `(HKEY)(ULONG_PTR)((LONG)0x80000002)`: a predefined handle (the
-        /// `LONG` sign-extends), not a pointer.
-        pub(super) const HKEY_LOCAL_MACHINE: *mut c_void =
-            0x8000_0002_u32 as i32 as isize as *mut c_void;
         pub(super) const RRF_RT_REG_SZ: DWORD = 0x0000_0002;
 
         #[repr(C)]
@@ -75,24 +75,8 @@ mod _impl {
             pub(super) ullAvailExtendedVirtual: u64,
         }
 
-        #[repr(C)]
-        pub(super) struct OSVERSIONINFOW {
-            pub(super) dwOSVersionInfoSize: DWORD,
-            pub(super) dwMajorVersion: DWORD,
-            pub(super) dwMinorVersion: DWORD,
-            pub(super) dwBuildNumber: DWORD,
-            pub(super) dwPlatformId: DWORD,
-            pub(super) szCSDVersion: [u16; 128],
-        }
-
         #[link(name = "kernel32")]
         unsafe extern "system" {
-            pub(super) fn GetEnvironmentVariableW(
-                name: *const u16,
-                buffer: *mut u16,
-                size: DWORD,
-            ) -> DWORD;
-            pub(super) safe fn GetTickCount64() -> u64;
             pub(super) fn GlobalMemoryStatusEx(buffer: *mut MEMORYSTATUSEX) -> BOOL;
         }
         #[link(name = "userenv")]
@@ -103,28 +87,6 @@ mod _impl {
                 size: *mut DWORD,
             ) -> BOOL;
         }
-        #[link(name = "advapi32")]
-        unsafe extern "system" {
-            pub(super) fn OpenProcessToken(
-                process: HANDLE,
-                access: DWORD,
-                token: *mut HANDLE,
-            ) -> BOOL;
-            pub(super) fn RegGetValueW(
-                key: *mut c_void,
-                sub_key: *const u16,
-                value: *const u16,
-                flags: DWORD,
-                value_type: *mut DWORD,
-                data: *mut c_void,
-                data_size: *mut DWORD,
-            ) -> i32;
-        }
-        #[link(name = "ntdll")]
-        unsafe extern "system" {
-            pub(super) fn RtlGetVersion(info: *mut OSVERSIONINFOW) -> i32;
-        }
-
         /// `BunCpuInfo` (`OsBinding.h`). Times are milliseconds.
         #[repr(C)]
         pub(super) struct CpuInfo {
@@ -206,8 +168,7 @@ mod _impl {
                 dwPlatformId: 0,
                 szCSDVersion: [0; 128],
             };
-            // SAFETY: `info` is a valid out-pointer with its size field set.
-            unsafe { RtlGetVersion(&mut info) };
+            RtlGetVersion(&mut info);
             info
         }
     }

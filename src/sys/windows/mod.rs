@@ -22,10 +22,9 @@ pub use bun_windows_sys::kernel32::GetLastError;
 pub use bun_windows_sys::ntdll;
 pub use bun_windows_sys::ws2_32;
 
-/// Re-exports the tier-0 `bun_windows_sys::kernel32`
-/// surface and layers the additional externs higher-tier crates reach for
-/// (`ReadDirectoryChangesW`, IOCP, SRW locks, `CreateProcessW`, …). Declared
-/// locally so adding an extern doesn't require touching `bun_windows_sys`.
+/// Re-exports the tier-0 `bun_windows_sys::kernel32` surface and declares the
+/// kernel32 externs only this crate's dependents name
+/// (`ReadDirectoryChangesW`, IOCP, SRW locks, …).
 pub mod kernel32 {
     use super::{
         BOOL, CONDITION_VARIABLE, DWORD, FileNotifyChangeFilter, HANDLE, LPCWSTR, LPOVERLAPPED,
@@ -38,8 +37,6 @@ pub mod kernel32 {
 
     #[link(name = "kernel32")]
     unsafe extern "system" {
-        // safe: by-value DWORD write to the TEB; cannot fault.
-        pub safe fn SetLastError(dwErrCode: DWORD);
         // ── IOCP / async directory watching ──
         // safe: all args are by-value opaques (`HANDLE`/`ULONG_PTR`/`DWORD`);
         // a bad handle yields NULL + GetLastError, no UB.
@@ -67,10 +64,6 @@ pub mod kernel32 {
             lpCompletionRoutine: LPOVERLAPPED_COMPLETION_ROUTINE,
         ) -> BOOL;
 
-        // safe: by-value `HANDLE` + `DWORD`; a bad handle yields
-        // `WAIT_FAILED` + GetLastError, no UB.
-        pub safe fn WaitForSingleObject(hHandle: HANDLE, dwMilliseconds: DWORD) -> DWORD;
-
         // ── file moves ──
         pub fn MoveFileExW(
             lpExistingFileName: LPCWSTR,
@@ -86,24 +79,15 @@ pub mod kernel32 {
             dwMilliseconds: DWORD,
             Flags: ULONG,
         ) -> BOOL;
-
-        /// No preconditions; reads the calling thread's ID.
-        pub safe fn GetCurrentThreadId() -> DWORD;
     }
 }
 
 pub use bun_windows_sys::BOOL;
 pub use bun_windows_sys::BOOLEAN;
 pub use bun_windows_sys::CHAR;
-pub use bun_windows_sys::DWORD;
-pub use bun_windows_sys::LPVOID;
-pub use bun_windows_sys::MAX_PATH;
-pub use bun_windows_sys::PATH_MAX_WIDE;
-pub use bun_windows_sys::WORD;
-/// `PVOID` (winnt.h) — alias of `LPVOID`. Keep the alias so existing
-/// callers (`bun_shim_impl`) don't need rewriting.
-pub type PVOID = LPVOID;
 pub use bun_windows_sys::COORD;
+pub use bun_windows_sys::DWORD;
+pub use bun_windows_sys::ENABLE_VIRTUAL_TERMINAL_PROCESSING;
 pub use bun_windows_sys::FALSE;
 pub use bun_windows_sys::FILE_BEGIN;
 pub use bun_windows_sys::FILE_CURRENT;
@@ -115,20 +99,22 @@ pub use bun_windows_sys::LPCSTR;
 pub use bun_windows_sys::LPCVOID;
 pub use bun_windows_sys::LPCWSTR;
 pub use bun_windows_sys::LPSTR;
+pub use bun_windows_sys::LPVOID;
 pub use bun_windows_sys::LPWSTR;
+pub use bun_windows_sys::MAX_PATH;
 pub use bun_windows_sys::NT_ERROR;
 pub use bun_windows_sys::NT_SUCCESS;
 pub use bun_windows_sys::NTSTATUS;
+pub use bun_windows_sys::PATH_MAX_WIDE;
 pub use bun_windows_sys::PWSTR;
 pub use bun_windows_sys::TRUE;
 pub use bun_windows_sys::UINT;
 pub use bun_windows_sys::ULONG;
 pub use bun_windows_sys::UNICODE_STRING;
 pub use bun_windows_sys::WCHAR;
+pub use bun_windows_sys::WORD;
 /// `STARTF_USESTDHANDLES` (winbase.h).
 pub use bun_windows_sys::externs::STARTF_USESTDHANDLES;
-/// `ENABLE_VIRTUAL_TERMINAL_PROCESSING` (consoleapi.h).
-pub const ENABLE_VIRTUAL_TERMINAL_PROCESSING: DWORD = 0x0004;
 pub const MOVEFILE_COPY_ALLOWED: DWORD = 0x2;
 pub const MOVEFILE_REPLACE_EXISTING: DWORD = 0x1;
 pub const MOVEFILE_WRITE_THROUGH: DWORD = 0x8;
@@ -173,7 +159,9 @@ pub use bun_windows_sys::{
     PIPE_TYPE_BYTE, PIPE_WAIT, SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE,
     SYMBOLIC_LINK_FLAG_DIRECTORY,
 };
-pub use bun_windows_sys::{FILE_READ_ATTRIBUTES, FILE_READ_DATA, FILE_READ_EA, FILE_TRAVERSE};
+pub use bun_windows_sys::{
+    FILE_GENERIC_READ, FILE_READ_ATTRIBUTES, FILE_READ_DATA, FILE_READ_EA, FILE_TRAVERSE,
+};
 // Stdio handle helpers (live in `bun_core::windows_sys` so the no-dep core can
 // resolve PEB stdio at startup; re-export here for the `sys::windows::*` path).
 pub use bun_core::windows_sys::{
@@ -193,7 +181,7 @@ pub const fn from_sys_time(nt_time: i64) -> i128 {
     (nt_time as i128 - EPOCH_DIFFERENCE_100NS as i128) * 100
 }
 
-pub const INVALID_FILE_ATTRIBUTES: u32 = u32::MAX;
+pub use bun_windows_sys::INVALID_FILE_ATTRIBUTES;
 
 pub const NT_OBJECT_PREFIX: [u16; 4] = [b'\\' as u16, b'?' as u16, b'?' as u16, b'\\' as u16];
 pub(crate) const LONG_PATH_PREFIX: [u16; 4] =
@@ -213,11 +201,9 @@ pub use bun_windows_sys::HMODULE;
 // `bun_crash_handler`, `bun_threading`, `bun_install`.
 // ──────────────────────────────────────────────────────────────────────────
 
+pub use bun_windows_sys::HRESULT;
+pub use bun_windows_sys::INFINITE;
 pub use bun_windows_sys::ULONG_PTR;
-/// `HRESULT` — 32-bit signed result code.
-pub type HRESULT = i32;
-/// `WaitForSingleObject` infinite timeout sentinel.
-pub const INFINITE: DWORD = 0xFFFF_FFFF;
 
 // ── SRWLOCK / CONDITION_VARIABLE (`bun_threading` windows arm) ────────────
 // Win32 defines both as `struct { PVOID Ptr; }`; static-init is all-zero
@@ -261,8 +247,8 @@ pub const fn HRESULT_CODE(hr: HRESULT) -> HRESULT {
     hr & 0xFFFF
 }
 
-// `NtCreateFile` access masks / create-options not yet in `bun_windows_sys`.
-pub const FILE_LIST_DIRECTORY: ULONG = 0x0001;
+pub use bun_windows_sys::FILE_LIST_DIRECTORY;
+/// `NtCreateFile` CreateOptions.
 pub const FILE_OPEN_FOR_BACKUP_INTENT: ULONG = 0x0000_4000;
 
 // `ReadDirectoryChangesW` action codes (`winnt.h`).
@@ -342,15 +328,8 @@ pub use bun_windows_sys::externs::FILE_FLAG_BACKUP_SEMANTICS;
 pub use bun_windows_sys::externs::GetFileInformationByHandle;
 pub use bun_windows_sys::externs::OPEN_EXISTING;
 
-unsafe extern "system" {
-    // safe: `HANDLE` is a by-value opaque; bad handle → FILE_TYPE_UNKNOWN +
-    // GetLastError, no UB.
-    #[link_name = "GetFileType"]
-    safe fn GetFileType_raw(hFile: HANDLE) -> DWORD;
-}
-
 pub fn GetFileType(hFile: HANDLE) -> DWORD {
-    let rc = GetFileType_raw(hFile);
+    let rc = externs::GetFileType(hFile);
     // `syslog!` self-gates on `env::IS_DEBUG` (see lib.rs); no extra feature
     // flag needed (there is no `debug_logs` feature in bun_sys).
     bun_sys::syslog!("GetFileType({}) = {}", Fd::from_system(hFile), rc);
@@ -358,11 +337,8 @@ pub fn GetFileType(hFile: HANDLE) -> DWORD {
 }
 
 /// https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfiletype#return-value
-pub(crate) const FILE_TYPE_UNKNOWN: DWORD = 0x0000;
-pub(crate) const FILE_TYPE_DISK: DWORD = 0x0001;
-pub const FILE_TYPE_CHAR: DWORD = 0x0002;
-pub const FILE_TYPE_PIPE: DWORD = 0x0003;
-pub(crate) const FILE_TYPE_REMOTE: DWORD = 0x8000;
+pub use bun_windows_sys::{FILE_TYPE_CHAR, FILE_TYPE_PIPE};
+pub(crate) use bun_windows_sys::{FILE_TYPE_DISK, FILE_TYPE_REMOTE, FILE_TYPE_UNKNOWN};
 
 pub use SetCurrentDirectoryW as SetCurrentDirectory;
 /// Each process has a single current directory made up of two parts:
@@ -378,6 +354,10 @@ pub use bun_windows_sys::externs::SetCurrentDirectoryW;
 pub use bun_windows_sys::externs::RtlNtStatusToDosError;
 
 pub use bun_windows_sys::externs::SaferiIsExecutableFileType;
+pub use bun_windows_sys::externs::{
+    CSTR_EQUAL, FILE_FLAG_FIRST_PIPE_INSTANCE, GUID, HKEY, HKEY_LOCAL_MACHINE, OSVERSIONINFOW,
+    OpenProcessToken, RegGetValueW, RtlGetVersion, WAIT_OBJECT_0,
+};
 
 /// Codes from <https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-erref/18d8fbe8-a967-4f1c-ae50-99ca8e491d2d>.
 /// Canonical newtype lives in `bun_windows_sys` (tier-0); re-exported here so
@@ -526,16 +506,7 @@ pub use bun_windows_sys::externs::GetHostNameW;
 /// https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-gettemppathw
 pub use bun_windows_sys::externs::GetTempPathW;
 
-/// `GetCurrentProcessId` (processthreadsapi.h) — current PID. Safe wrapper:
-/// the underlying call has no preconditions and never fails.
-#[inline]
-pub fn GetCurrentProcessId() -> DWORD {
-    unsafe extern "system" {
-        // No preconditions; reads thread-local kernel state.
-        safe fn GetCurrentProcessId() -> DWORD;
-    }
-    GetCurrentProcessId()
-}
+pub use bun_windows_sys::GetCurrentProcessId;
 
 pub use bun_windows_sys::{PEB, RTL_USER_PROCESS_PARAMETERS, TEB, teb};
 
@@ -931,12 +902,10 @@ pub fn get_module_name_w(module: HMODULE, buf: &mut [u16]) -> Option<&[u16]> {
 
 pub use bun_windows_sys::externs::GetThreadDescription;
 
-pub const ENABLE_ECHO_INPUT: DWORD = 0x004;
-pub const ENABLE_LINE_INPUT: DWORD = 0x002;
-pub const ENABLE_PROCESSED_INPUT: DWORD = 0x001;
-pub const ENABLE_VIRTUAL_TERMINAL_INPUT: DWORD = 0x200;
-pub const ENABLE_WRAP_AT_EOL_OUTPUT: DWORD = 0x0002;
-pub const ENABLE_PROCESSED_OUTPUT: DWORD = 0x0001;
+pub use bun_windows_sys::{
+    ENABLE_ECHO_INPUT, ENABLE_LINE_INPUT, ENABLE_PROCESSED_INPUT, ENABLE_PROCESSED_OUTPUT,
+    ENABLE_VIRTUAL_TERMINAL_INPUT, ENABLE_WRAP_AT_EOL_OUTPUT,
+};
 
 pub use bun_windows_sys::externs::GetConsoleCP;
 pub use bun_windows_sys::externs::GetConsoleOutputCP;
@@ -957,9 +926,10 @@ impl Default for DeleteFileOptions {
     }
 }
 
-const FILE_DISPOSITION_DELETE: ULONG = 0x00000001;
-const FILE_DISPOSITION_POSIX_SEMANTICS: ULONG = 0x00000002;
-const FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE: ULONG = 0x00000010;
+use bun_windows_sys::{
+    FILE_DISPOSITION_DELETE, FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE,
+    FILE_DISPOSITION_POSIX_SEMANTICS,
+};
 
 // Copy-paste of the standard library function except without unreachable.
 pub fn DeleteFileBun(sub_path_w: &[u16], options: DeleteFileOptions) -> bun_sys::Result<()> {
@@ -1184,27 +1154,12 @@ pub struct EXCEPTION_POINTERS {
 /// `OnceLock<String>` so the per-call allocation goes away after the first
 /// call.
 pub fn detect_runtime_version() -> &'static str {
-    #[repr(C)]
-    struct OSVERSIONINFOW {
-        dwOSVersionInfoSize: u32,
-        dwMajorVersion: u32,
-        dwMinorVersion: u32,
-        dwBuildNumber: u32,
-        dwPlatformId: u32,
-        szCSDVersion: [u16; 128],
-    }
-    unsafe extern "system" {
-        // safe: out-param is `&mut OSVERSIONINFOW` (non-null, valid for write);
-        // ntdll only writes the struct and returns NTSTATUS — no preconditions.
-        safe fn RtlGetVersion(info: &mut OSVERSIONINFOW) -> i32;
-    }
+    use bun_windows_sys::{OSVERSIONINFOW, RtlGetVersion};
     static CACHE: std::sync::OnceLock<std::string::String> = std::sync::OnceLock::new();
-    // SAFETY: `#[repr(C)]` POD — five u32 + a `[u16; 128]` array.
-    unsafe impl bun_core::ffi::Zeroable for OSVERSIONINFOW {}
     CACHE.get_or_init(|| {
         let mut info: OSVERSIONINFOW = bun_core::ffi::zeroed();
         info.dwOSVersionInfoSize = core::mem::size_of::<OSVERSIONINFOW>() as u32;
-        if RtlGetVersion(&mut info) != 0 {
+        if RtlGetVersion(&mut info) != NTSTATUS::SUCCESS {
             return std::string::String::from("unknown");
         }
         std::format!("{}.{}", info.dwMajorVersion, info.dwBuildNumber)
@@ -1217,8 +1172,8 @@ pub use bun_windows_sys::externs::UpdateProcThreadAttribute;
 
 pub use bun_windows_sys::externs::IsProcessInJob;
 
-pub(crate) const EXTENDED_STARTUPINFO_PRESENT: DWORD = 0x80000;
-pub(crate) const PROC_THREAD_ATTRIBUTE_JOB_LIST: DWORD = 0x2000D;
+pub use bun_windows_sys::CREATE_UNICODE_ENVIRONMENT;
+pub(crate) use bun_windows_sys::{EXTENDED_STARTUPINFO_PRESENT, PROC_THREAD_ATTRIBUTE_JOB_LIST};
 
 /// Handle to a Windows pseudoconsole (ConPTY).
 pub use bun_windows_sys::externs::HPCON;
@@ -1229,10 +1184,11 @@ pub use bun_windows_sys::externs::ResizePseudoConsole;
 
 pub use bun_windows_sys::externs::ClosePseudoConsole;
 
-pub const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: DWORD = 0x2000;
-pub(crate) const JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION: DWORD = 0x400;
-pub(crate) const JOB_OBJECT_LIMIT_BREAKAWAY_OK: DWORD = 0x800;
-pub(crate) const JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK: DWORD = 0x00001000;
+pub use bun_windows_sys::JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+pub(crate) use bun_windows_sys::{
+    JOB_OBJECT_LIMIT_BREAKAWAY_OK, JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION,
+    JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK,
+};
 
 /// `LimitFlags` for a kill-on-close Job whose members are added by
 /// inheritance (`--no-orphans`, the parallel-test coordinator). Omits
@@ -1450,8 +1406,8 @@ pub fn update_stdio_mode_flags(
 ) -> Result<DWORD, SystemErrno> {
     let fd = i.fd();
     let mut original_mode: DWORD = 0;
-    if kernel32_2::GetConsoleMode(fd.native(), &mut original_mode) == 0
-        || kernel32_2::SetConsoleMode(fd.native(), (original_mode | opts.set) & !opts.unset) == 0
+    if externs::GetConsoleMode(fd.native(), &mut original_mode) == 0
+        || externs::SetConsoleMode(fd.native(), (original_mode | opts.set) & !opts.unset) == 0
     {
         return Err(last_system_errno());
     }
@@ -1480,7 +1436,7 @@ impl Drop for StdinModeGuard {
     #[inline]
     fn drop(&mut self) {
         if let Some(mode) = self.original {
-            let _ = kernel32_2::SetConsoleMode(bun_sys::Stdio::StdIn.fd().native(), mode);
+            let _ = externs::SetConsoleMode(bun_sys::Stdio::StdIn.fd().native(), mode);
         }
     }
 }
@@ -1498,18 +1454,13 @@ pub fn is_watcher_child() -> bool {
     let mut buf: [u16; 1] = [0];
     // SAFETY: buf valid for 1 element
     unsafe {
-        kernel32_2::GetEnvironmentVariableW(WATCHER_CHILD_ENV_Z.as_ptr(), buf.as_mut_ptr(), 1) > 0
+        externs::GetEnvironmentVariableW(WATCHER_CHILD_ENV_Z.as_ptr(), buf.as_mut_ptr(), 1) > 0
     }
 }
 
 pub fn become_watcher_manager() -> ! {
     // this process will be the parent of the child process that actually runs the script
     let mut procinfo: PROCESS_INFORMATION = bun_core::ffi::zeroed();
-    unsafe extern "C" {
-        // safe: no args; C++ shim mutates process-global stdio inheritance
-        // flags — no preconditions.
-        safe fn windows_enable_stdio_inheritance();
-    }
     windows_enable_stdio_inheritance();
     // SAFETY: null args allowed
     let job = unsafe { externs::CreateJobObjectW(ptr::null_mut(), ptr::null()) };
@@ -1558,8 +1509,6 @@ pub fn become_watcher_manager() -> ! {
             }
             bun_core::Output::panic(format_args!("Failed to spawn process: {}\n", err));
         }
-        // `kernel32::WaitForSingleObject` is the local `safe fn` re-decl
-        // (by-value `HANDLE`/`DWORD` only); check `WAIT_FAILED` inline.
         if kernel32::WaitForSingleObject(procinfo.hProcess, win32::INFINITE) == externs::WAIT_FAILED
         {
             let err = Win32Error::get();
@@ -1569,17 +1518,17 @@ pub fn become_watcher_manager() -> ! {
             ));
         }
         let mut exit_code: DWORD = 0;
-        if kernel32_2::GetExitCodeProcess(procinfo.hProcess, &mut exit_code) == 0 {
+        if externs::GetExitCodeProcess(procinfo.hProcess, &mut exit_code) == 0 {
             // Capture before NtClose — closing the handle may overwrite the
             // thread's last-error.
             let err = Win32Error::get();
-            let _ = kernel32_2::NtClose(procinfo.hProcess);
+            let _ = ntdll::NtClose(procinfo.hProcess);
             bun_core::Output::panic(format_args!(
                 "Failed to get exit code of child process: {:?}\n",
                 err
             ));
         }
-        let _ = kernel32_2::NtClose(procinfo.hProcess);
+        let _ = ntdll::NtClose(procinfo.hProcess);
 
         // magic exit code to indicate that the child process should be re-spawned
         if exit_code == WATCHER_RELOAD_EXIT {
@@ -1613,7 +1562,7 @@ pub(crate) fn spawn_watcher_child(
         externs::UpdateProcThreadAttribute(
             p.as_mut_ptr(),
             0,
-            PROC_THREAD_ATTRIBUTE_JOB_LIST as usize,
+            PROC_THREAD_ATTRIBUTE_JOB_LIST,
             core::ptr::from_mut(&mut job_local).cast::<c_void>(),
             size_of::<HANDLE>(),
             ptr::null_mut(),
@@ -1624,8 +1573,6 @@ pub(crate) fn spawn_watcher_child(
         return Err(bun_errno::SystemErrno::EIO);
     }
 
-    // The win32 layer exposes these as DWORD constants — assemble the raw mask.
-    const CREATE_UNICODE_ENVIRONMENT: DWORD = 0x00000400;
     let flags: DWORD = CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT;
 
     let image_path = exe_path_w();
@@ -1720,9 +1667,9 @@ pub(crate) fn spawn_watcher_child(
         return Err(bun_errno::SystemErrno::EIO);
     }
     let mut is_in_job: BOOL = 0;
-    let _ = kernel32_2::IsProcessInJob(procinfo.hProcess, job, &mut is_in_job);
+    let _ = externs::IsProcessInJob(procinfo.hProcess, job, &mut is_in_job);
     debug_assert!(is_in_job != 0);
-    let _ = kernel32_2::NtClose(procinfo.hThread);
+    let _ = ntdll::NtClose(procinfo.hThread);
     Ok(())
 }
 
@@ -1741,10 +1688,13 @@ pub(crate) extern "C" fn Bun__LoadLibraryBunString(str_: &bun_core::String) -> *
         kernel32::SetLastError(DWORD::from(Win32Error::FILENAME_EXCED_RANGE.int()));
         return ptr::null_mut();
     }
-    const LOAD_WITH_ALTERED_SEARCH_PATH: DWORD = 0x00000008;
     // SAFETY: buf NUL-terminated by `encode_into_utf16_buf_z`.
     unsafe {
-        kernel32::LoadLibraryExW(buf.as_ptr(), ptr::null_mut(), LOAD_WITH_ALTERED_SEARCH_PATH)
+        kernel32::LoadLibraryExW(
+            buf.as_ptr(),
+            ptr::null_mut(),
+            win32::LOAD_WITH_ALTERED_SEARCH_PATH,
+        )
     }
 }
 
@@ -1922,30 +1872,6 @@ mod kernel32_2 {
         /// No preconditions; allocates and returns the env block (or null).
         pub(super) safe fn GetEnvironmentStringsW() -> LPWSTR;
         pub(super) fn FreeEnvironmentStringsW(penv: LPWSTR) -> BOOL;
-        pub(super) fn GetEnvironmentVariableW(
-            lpName: LPCWSTR,
-            lpBuffer: *mut WCHAR,
-            nSize: DWORD,
-        ) -> DWORD;
-        // safe: by-value `HANDLE`/`DWORD` only; bad handle → BOOL 0 +
-        // GetLastError, never UB. Out-param is `&mut DWORD` (non-null, valid
-        // for write). Local `safe fn` re-decls so in-crate callers drop the
-        // per-site `unsafe { }`; the `bun_windows_sys::externs` raw decls stay
-        // re-exported for out-of-crate callers.
-        pub(super) safe fn GetConsoleMode(hConsoleHandle: HANDLE, lpMode: &mut DWORD) -> BOOL;
-        pub(super) safe fn SetConsoleMode(hConsoleHandle: HANDLE, dwMode: DWORD) -> BOOL;
-        pub(super) safe fn GetExitCodeProcess(hProcess: HANDLE, lpExitCode: &mut DWORD) -> BOOL;
-        // safe: by-value `HANDLE`×2; out-param is `&mut BOOL` (non-null, valid
-        // for write). Bad handle → BOOL 0 + GetLastError, never UB.
-        pub(super) safe fn IsProcessInJob(
-            hProcess: HANDLE,
-            hJob: HANDLE,
-            result: &mut BOOL,
-        ) -> BOOL;
-        // safe: by-value `HANDLE` only; bad/stale handle →
-        // `STATUS_INVALID_HANDLE`, never UB (mirrors POSIX `close(fd)` →
-        // `EBADF`, which is `safe fn` in `safe_libc`).
-        pub(super) safe fn NtClose(Handle: HANDLE) -> NTSTATUS;
     }
 }
 
@@ -1979,7 +1905,7 @@ pub fn GetEnvironmentVariableW(
     nSize: DWORD,
 ) -> Result<DWORD, GetEnvironmentVariableError> {
     // SAFETY: caller provides valid buffer
-    let rc = unsafe { kernel32_2::GetEnvironmentVariableW(lpName, lpBuffer, nSize) };
+    let rc = unsafe { externs::GetEnvironmentVariableW(lpName, lpBuffer, nSize) };
 
     if rc == 0 {
         match Win32Error::get() {
@@ -2014,7 +1940,7 @@ pub fn getenv_w(name: &[u16]) -> Option<Vec<u16>> {
     loop {
         // SAFETY: name and buf are valid for the call's duration.
         let n = unsafe {
-            kernel32_2::GetEnvironmentVariableW(name.as_ptr(), buf.as_mut_ptr(), buf.len() as DWORD)
+            externs::GetEnvironmentVariableW(name.as_ptr(), buf.as_mut_ptr(), buf.len() as DWORD)
         };
         if n == 0 {
             return None;

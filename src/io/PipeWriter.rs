@@ -269,13 +269,15 @@ pub trait BufferedWriterParent {
     /// # Safety
     /// `this` must point to a live `Self`.
     unsafe fn event_loop(this: *mut Self) -> EventLoopHandle;
-    /// On Windows a write in flight borrows `get_buffer`'s bytes until its
-    /// completion is dequeued, so the writer holds a parent ref across it.
+    /// A write in flight borrows `get_buffer`'s bytes until its completion is
+    /// dequeued, so the writer holds a parent ref across it.
     /// # Safety
     /// `this` must point to a live `Self`.
+    #[cfg(windows)]
     unsafe fn ref_(this: *mut Self);
     /// # Safety
     /// `this` must point to a live `Self`.
+    #[cfg(windows)]
     unsafe fn deref(this: *mut Self);
 }
 
@@ -2301,6 +2303,7 @@ macro_rules! impl_buffered_writer_parent {
                 #[allow(unused_unsafe)]
                 unsafe { $el }
             }
+            #[cfg(windows)]
             #[inline]
             unsafe fn ref_(this: *mut Self) {
                 // SAFETY: see on_write. Intrusive refcount bump.
@@ -2308,6 +2311,7 @@ macro_rules! impl_buffered_writer_parent {
                 #[allow(unused_unsafe)]
                 unsafe { $ref_ };
             }
+            #[cfg(windows)]
             #[inline]
             unsafe fn deref(this: *mut Self) {
                 // SAFETY: see on_write. May free `this`.

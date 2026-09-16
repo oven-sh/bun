@@ -3,8 +3,8 @@
 //! `bun_core` is tier-0 and may not depend on `bun_sys` (cycle). Shared Win32
 //! POD typedefs/structs, kernel32 externs, and the TEB→PEB chain are
 //! re-exported from the tier-0 leaf `bun_windows_sys` (which has zero `bun_*`
-//! deps, so no cycle); only the `bun_core`-specific console consts and the
-//! `Zeroable` impls live here. All declarations are zero-cost FFI
+//! deps, so no cycle); only the standard-handle ids, the `GetStdHandle`
+//! wrapper and the `Zeroable` impls live here. All declarations are zero-cost FFI
 //! (`extern "system"` = `__stdcall`, which on x64 is the same as `extern "C"`).
 #![cfg(windows)]
 #![allow(non_camel_case_types, non_snake_case, non_upper_case_globals)]
@@ -18,10 +18,9 @@ pub const STD_INPUT_HANDLE: DWORD = (-10i32) as DWORD;
 pub const STD_OUTPUT_HANDLE: DWORD = (-11i32) as DWORD;
 pub const STD_ERROR_HANDLE: DWORD = (-12i32) as DWORD;
 
-// Console mode flags (consoleapi.h).
-pub(crate) const ENABLE_PROCESSED_OUTPUT: DWORD = 0x0001;
-pub(crate) const ENABLE_WRAP_AT_EOL_OUTPUT: DWORD = 0x0002;
-pub(crate) const ENABLE_VIRTUAL_TERMINAL_PROCESSING: DWORD = 0x0004;
+pub(crate) use bun_windows_sys::{
+    ENABLE_PROCESSED_OUTPUT, ENABLE_VIRTUAL_TERMINAL_PROCESSING, ENABLE_WRAP_AT_EOL_OUTPUT,
+};
 
 /// Wrapper that returns `None` on `INVALID_HANDLE_VALUE` or a null handle.
 #[inline]

@@ -143,14 +143,7 @@ pub(crate) extern "C" fn shim_main() -> ! {
 #[cfg(windows)]
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
-    // Declared locally as `safe fn` (the `bun_windows_sys::ntdll` re-export
-    // is not yet `safe`-qualified): no memory-safety preconditions — by-value
-    // `u32`, diverges. Matches `ExitProcess`, already `safe fn` upstream.
-    #[link(name = "ntdll")]
-    unsafe extern "system" {
-        safe fn RtlExitUserProcess(ExitStatus: u32) -> !;
-    }
-    RtlExitUserProcess(255)
+    bun_windows_sys::ntdll::RtlExitUserProcess(255)
 }
 
 // Non-Windows: the build system only ever builds this crate for
@@ -271,19 +264,12 @@ pub mod bun_core {
 
 /// `bun_sys::windows` stand-in. Re-exports the leaf `bun_windows_sys` surface
 /// (which now owns CreateProcessW, STARTUPINFOW / PROCESS_INFORMATION, the
-/// TEB→PEB→ProcessParameters chain, and `teb()`/`peb()`); only the shim-local
-/// `PVOID` alias and console-mode flag remain here.
+/// TEB→PEB→ProcessParameters chain, and `teb()`/`peb()`).
 #[cfg(windows)]
 pub mod compat {
-    use core::ffi::c_void;
-
     pub use bun_windows_sys::*;
     // Distinct sub-module so `w::ntdll::NtClose` etc. resolve.
     pub use bun_windows_sys::ntdll;
-
-    // ── aliases / consts not yet in bun_windows_sys ──
-    pub(crate) type PVOID = *mut c_void;
-    pub(crate) const ENABLE_VIRTUAL_TERMINAL_PROCESSING: DWORD = 0x0004;
 
     // ── kernel32 surface (bun_sys::windows::kernel32 layers extras on top
     //    of bun_windows_sys::kernel32; mirror just what the shim calls) ──

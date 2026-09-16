@@ -2729,6 +2729,8 @@ pub mod ffi {
     unsafe impl Zeroable for bun_windows_sys::externs::OVERLAPPED {}
     #[cfg(windows)]
     unsafe impl Zeroable for bun_windows_sys::externs::PROCESS_INFORMATION {}
+    #[cfg(windows)]
+    unsafe impl Zeroable for bun_windows_sys::externs::OSVERSIONINFOW {}
 
     /// Conjure a value of a zero-sized type without `unsafe` at the call site.
     ///

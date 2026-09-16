@@ -486,7 +486,7 @@ struct RestoreFilePointer {
 impl RestoreFilePointer {
     fn new(fd: Fd) -> Self {
         const FILE_POSITION_INFORMATION: win32::FILE_INFORMATION_CLASS =
-            win32::FILE_INFORMATION_CLASS(14);
+            win32::FILE_INFORMATION_CLASS::FilePositionInformation;
         let handle = fd.native();
         let mut saved = None;
         if fd.kind() == crate::FdKind::Crt {
@@ -721,8 +721,7 @@ fn fstat_handle(handle: HANDLE) -> Win32Result<Stat> {
 
 fn is_console(handle: HANDLE) -> bool {
     let mut mode: u32 = 0;
-    // SAFETY: `mode` is a valid out-pointer; any handle value is acceptable.
-    unsafe { win32::GetConsoleMode(handle, &mut mode) != 0 }
+    win32::GetConsoleMode(handle, &mut mode) != 0
 }
 
 fn stat_path(path: &[u8], do_lstat: bool) -> Win32Result<Stat> {

@@ -125,7 +125,15 @@ impl Flags {
     /// The write end of a pipe between two commands, which on POSIX is a
     /// socketpair end.
     pub(crate) fn pipe() -> Flags {
-        Flags::classified(true, false, true)
+        Flags {
+            #[cfg(not(windows))]
+            pollable: true,
+            #[cfg(not(windows))]
+            nonblock: false,
+            #[cfg(not(windows))]
+            is_socket: true,
+            broken_pipe: false,
+        }
     }
 }
 

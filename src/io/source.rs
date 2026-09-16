@@ -142,7 +142,7 @@ impl Source {
     }
 }
 
-const FILE_TYPE_UNKNOWN: u32 = 0;
+use bun_windows_sys::FILE_TYPE_UNKNOWN;
 
 /// `process.stdin.setRawMode`. Raw mode asks the console to produce VT input
 /// sequences itself where it can, which is also what makes sequences such as

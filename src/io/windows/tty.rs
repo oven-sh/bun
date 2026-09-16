@@ -110,13 +110,10 @@ fn mode_flags(mode: Mode) -> (u32, u32) {
 /// # Safety
 /// `input` is a console input handle.
 unsafe fn apply_flags(input: HANDLE, wanted: u32, fallback: u32) -> Result<(), Win32Error> {
-    // SAFETY: plain Win32 calls on the caller's console handle.
-    unsafe {
-        if win::SetConsoleMode(input, wanted) != 0
-            || (fallback != wanted && win::SetConsoleMode(input, fallback) != 0)
-        {
-            return Ok(());
-        }
+    if win::SetConsoleMode(input, wanted) != 0
+        || (fallback != wanted && win::SetConsoleMode(input, fallback) != 0)
+    {
+        return Ok(());
     }
     Err(win::last_error())
 }
@@ -128,8 +125,7 @@ pub fn set_console_mode(input: HANDLE, mode: Mode) -> sys::Result<()> {
     let (wanted, fallback) = mode_flags(mode);
     let _lock = LINE_LOCK.lock_guard();
     let mut previous: u32 = 0;
-    // SAFETY: `previous` is a live local.
-    if unsafe { win::GetConsoleMode(input, &raw mut previous) } == 0 {
+    if win::GetConsoleMode(input, &mut previous) == 0 {
         return Err(fail(win::last_error()));
     }
     // A screen buffer has a mode too, with other bits.
@@ -305,8 +301,7 @@ pub(super) fn is_wake_key(key: &bun_windows_sys::KEY_EVENT_RECORD) -> bool {
 /// Whether `handle` is a console (input or screen buffer).
 pub fn is_console(handle: HANDLE) -> bool {
     let mut mode: u32 = 0;
-    // SAFETY: `mode` is a live local.
-    unsafe { win::GetConsoleMode(handle, &raw mut mode) != 0 }
+    win::GetConsoleMode(handle, &mut mode) != 0
 }
 
 /// The owner's handle to a console. Dropping it closes without telling anyone.

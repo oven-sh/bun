@@ -228,8 +228,8 @@ impl Inner {
         // freed only from its own completion.
         unsafe {
             let loop_ = (*this).link.loop_;
-            (*slot).op.overlapped.internal = 0;
-            (*slot).op.overlapped.internal_high = 0;
+            (*slot).op.overlapped.Internal = 0;
+            (*slot).op.overlapped.InternalHigh = 0;
             // `None`: the kernel queues the packet. `Some`: the call said how
             // the wait ended and nothing is queued.
             let ended: Option<Win32Error> = 'ended: {
@@ -244,7 +244,7 @@ impl Inner {
                     break 'ended None;
                 }
                 match win::last_error() {
-                    win::IO_PENDING => None,
+                    Win32Error::IO_PENDING => None,
                     // A client got in between the instance's creation and this call.
                     Win32Error::PIPE_CONNECTED => Some(Win32Error::SUCCESS),
                     err => Some(err),

@@ -412,18 +412,7 @@ impl Write for StderrWriter {
             // per-fd lock, which can self-deadlock when the VEH crash handler
             // fires on a thread that faulted *inside* CRT stdio. WriteFile is
             // lock-free at the kernel32 layer.
-            // `WriteFile` is declared locally because `bun_windows_sys::
-            // kernel32` does not (yet) export it (cf. src/sys/lib.rs).
-            #[link(name = "kernel32")]
-            unsafe extern "system" {
-                fn WriteFile(
-                    hFile: bun_sys::windows::HANDLE,
-                    lpBuffer: *const u8,
-                    nNumberOfBytesToWrite: u32,
-                    lpNumberOfBytesWritten: *mut u32,
-                    lpOverlapped: *mut core::ffi::c_void,
-                ) -> i32;
-            }
+            use bun_sys::windows::kernel32::WriteFile;
             let h = bun_sys::windows::kernel32::GetStdHandle(bun_sys::windows::STD_ERROR_HANDLE);
             let mut written: u32 = 0;
             // SAFETY: `h` is the cached stderr HANDLE (or INVALID_HANDLE_VALUE,
@@ -1911,17 +1900,13 @@ mod draft {
             let handle =
                 bun_core::WINDOWS_SEGFAULT_HANDLE.swap(core::ptr::null_mut(), Ordering::Relaxed);
             if !handle.is_null() {
-                // SAFETY: handle was returned by AddVectoredExceptionHandler and
-                // not yet removed (atomically claimed via the swap above).
-                let rc =
-                    unsafe { bun_sys::windows::kernel32::RemoveVectoredExceptionHandler(handle) };
+                // `handle` was returned by AddVectoredExceptionHandler and not
+                // yet removed (atomically claimed via the swap above).
+                let rc = bun_sys::windows::kernel32::RemoveVectoredExceptionHandler(handle);
                 debug_assert!(rc != 0);
             }
-            // SAFETY: no memory-safety preconditions; clears the top-level
-            // filter back to the OS default.
-            unsafe {
-                bun_sys::windows::kernel32::SetUnhandledExceptionFilter(None);
-            }
+            // Clears the top-level filter back to the OS default.
+            bun_sys::windows::kernel32::SetUnhandledExceptionFilter(None);
             return;
         }
 

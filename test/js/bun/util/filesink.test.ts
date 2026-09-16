@@ -478,9 +478,17 @@ it.skipIf(!isWindows)(
         const root = process.cwd();
         const source = path.join(root, "source.txt");
         fs.writeFileSync(source, "x");
+        const longer = path.join(root, "longer.txt");
+        fs.writeFileSync(longer, "xyz");
         const apis = {
           write: name => Bun.write(Bun.file(name), "x"),
           copy: name => Bun.write(Bun.file(name), Bun.file(source)),
+          copySlice: name => Bun.write(Bun.file(name), Bun.file(longer).slice(0, 1)),
+          empty: async name => {
+            await Bun.write(Bun.file(name), "xy");
+            await Bun.write(Bun.file(name), "");
+            await Bun.write(Bun.file(name), "x");
+          },
           writePath: name => Bun.write(name, "x"),
           writeStream: name => Bun.write(name, new Response(new Blob(["x"]).stream())),
           writer: async name => {
@@ -544,10 +552,10 @@ it.skipIf(!isWindows)(
     type Result = { ok: boolean; created: string[]; readBack: ReadBack | null };
     const results = JSON.parse(stdout) as Record<
       string,
-      Record<"write" | "copy" | "writePath" | "writeStream" | "writer", Result>
+      Record<"write" | "copy" | "copySlice" | "empty" | "writePath" | "writeStream" | "writer", Result>
     >;
     const keys = names.flatMap(name => [name, "absolute " + name]);
-    for (const api of ["copy", "writePath", "writeStream", "writer"] as const) {
+    for (const api of ["copy", "copySlice", "empty", "writePath", "writeStream", "writer"] as const) {
       expect(Object.fromEntries(keys.map(key => [key, { api, ...results[key][api] }]))).toEqual(
         Object.fromEntries(keys.map(key => [key, { api, ...results[key].write }])),
       );

@@ -480,7 +480,7 @@ fn probe_mode(handle: HANDLE) -> Result<Mode, E> {
                 &raw mut iosb,
                 (&raw mut mode_info).cast(),
                 size_of::<u32>() as u32,
-                win::FILE_INFORMATION_CLASS(win::FILE_MODE_INFORMATION),
+                win::FILE_INFORMATION_CLASS::FileModeInformation,
             )
         };
         let mut result = if status != win::NTSTATUS::SUCCESS {
@@ -992,11 +992,11 @@ impl Inner {
             let loop_ = (*this).link.loop_;
             (*op).lane.ensure(loop_)?;
             (*op).posted = None;
-            (*op).op.overlapped.internal = 0;
-            (*op).op.overlapped.internal_high = 0;
+            (*op).op.overlapped.Internal = 0;
+            (*op).op.overlapped.InternalHigh = 0;
             // Low bit set: the completion queues no packet on whatever port
             // the file object may be associated with.
-            (*op).op.overlapped.event = ((*op).lane.event as usize | 1) as HANDLE;
+            (*op).op.overlapped.hEvent = ((*op).lane.event as usize | 1) as HANDLE;
             let ok = win::ReadFile(
                 (*this).handle,
                 (*op).buf.as_mut_ptr(),
@@ -1004,7 +1004,7 @@ impl Inner {
                 ptr::null_mut(),
                 (&raw mut (*op).op).cast(),
             );
-            if ok == 0 && win::last_error() == win::IO_PENDING {
+            if ok == 0 && win::last_error() == Win32Error::IO_PENDING {
                 if iocp::us_iocp_wait_start((*op).lane.wait, (*op).lane.event, &raw mut (*op).op)
                     != 0
                 {
@@ -1102,14 +1102,14 @@ impl Inner {
             (*op).max_len = len;
             (*op).outcome = Outcome::None;
             (*op).posted = None;
-            (*op).op.overlapped.internal = 0;
-            (*op).op.overlapped.internal_high = 0;
-            (*op).op.overlapped.offset = 0;
-            (*op).op.overlapped.offset_high = 0;
+            (*op).op.overlapped.Internal = 0;
+            (*op).op.overlapped.InternalHigh = 0;
+            (*op).op.overlapped.Offset = 0;
+            (*op).op.overlapped.OffsetHigh = 0;
 
             match (*this).mode {
                 Mode::Owned => {
-                    (*op).op.overlapped.event = ptr::null_mut();
+                    (*op).op.overlapped.hEvent = ptr::null_mut();
                     let ok = win::ReadFile(
                         (*this).handle,
                         (*op).buf.as_mut_ptr(),
@@ -1117,7 +1117,7 @@ impl Inner {
                         ptr::null_mut(),
                         (&raw mut (*op).op).cast(),
                     );
-                    if ok != 0 || win::last_error() == win::IO_PENDING {
+                    if ok != 0 || win::last_error() == Win32Error::IO_PENDING {
                         // A read that finished at once still queues its packet.
                         super::op_submitted(loop_);
                     } else {
@@ -1304,16 +1304,16 @@ impl Inner {
             let chunk = remaining.min(MAX_WRITE_CHUNK) as u32;
             (*op).chunk = chunk;
             (*op).posted = None;
-            (*op).op.overlapped.internal = 0;
-            (*op).op.overlapped.internal_high = 0;
-            (*op).op.overlapped.offset = 0;
-            (*op).op.overlapped.offset_high = 0;
+            (*op).op.overlapped.Internal = 0;
+            (*op).op.overlapped.InternalHigh = 0;
+            (*op).op.overlapped.Offset = 0;
+            (*op).op.overlapped.OffsetHigh = 0;
             let data = (*op).data.add((*op).done);
 
             // Every arm returns `None` once a packet is on its way.
             let finished: (Win32Error, usize) = match (*this).mode {
                 Mode::Owned => {
-                    (*op).op.overlapped.event = ptr::null_mut();
+                    (*op).op.overlapped.hEvent = ptr::null_mut();
                     let ok = win::WriteFile(
                         (*this).handle,
                         data,
@@ -1321,7 +1321,7 @@ impl Inner {
                         ptr::null_mut(),
                         (&raw mut (*op).op).cast(),
                     );
-                    if ok != 0 || win::last_error() == win::IO_PENDING {
+                    if ok != 0 || win::last_error() == Win32Error::IO_PENDING {
                         super::op_submitted(loop_);
                         return None;
                     }
@@ -1331,7 +1331,7 @@ impl Inner {
                     Err(err) => (err, 0),
                     Ok(()) => {
                         let event = (*this).write_lane.event;
-                        (*op).op.overlapped.event = (event as usize | 1) as HANDLE;
+                        (*op).op.overlapped.hEvent = (event as usize | 1) as HANDLE;
                         let ok = win::WriteFile(
                             (*this).handle,
                             data,
@@ -1339,7 +1339,7 @@ impl Inner {
                             ptr::null_mut(),
                             (&raw mut (*op).op).cast(),
                         );
-                        if ok == 0 && win::last_error() == win::IO_PENDING {
+                        if ok == 0 && win::last_error() == Win32Error::IO_PENDING {
                             if iocp::us_iocp_wait_start(
                                 (*this).write_lane.wait,
                                 event,
@@ -1430,7 +1430,7 @@ impl Inner {
                         (&raw mut overlapped).cast(),
                     );
                     if ok == 0 {
-                        if win::last_error() != win::IO_PENDING {
+                        if win::last_error() != Win32Error::IO_PENDING {
                             return Err(write_error(win::last_error()));
                         }
                         bun_sys::windows::kernel32::WaitForSingleObject(
@@ -1741,7 +1741,7 @@ impl ReadOp {
             (*this).posted = None;
             // A message-mode pipe reports the part of a message that fit as
             // MORE_DATA; the bytes are as good as any.
-            if err == Win32Error::SUCCESS || err == win::MORE_DATA {
+            if err == Win32Error::SUCCESS || err == Win32Error::MORE_DATA {
                 debug_assert!(bytes <= (*this).buf.capacity());
                 (*this).buf.set_len(bytes.min((*this).buf.capacity()));
                 return Outcome::Data;
@@ -2059,7 +2059,7 @@ impl SyncShared {
             {
                 let err = win::last_error();
                 // The part of a message that fit: `ReadOp::outcome` takes it as data.
-                if err != win::MORE_DATA {
+                if err != Win32Error::MORE_DATA {
                     return Some(Taken::failed(err));
                 }
             }

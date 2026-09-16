@@ -5,6 +5,11 @@ use core::ptr;
 
 use bun_sys::{E, Error, Tag};
 
+use bun_windows_sys::{
+    CREATE_NEW, CreateDirectoryW, FILE_ATTRIBUTE_NORMAL, GUID, HKEY, HKEY_LOCAL_MACHINE,
+    RegGetValueW,
+};
+
 use super::win32::{self, BOOL, DWORD, HANDLE, INVALID_HANDLE_VALUE};
 
 pub const SIGINT: c_int = 2;
@@ -38,8 +43,7 @@ pub fn kill(process: HANDLE, signum: c_int) -> Result<(), Error> {
             // ERROR_ACCESS_DENIED.
             if err == win32::ERROR_ACCESS_DENIED {
                 let mut status: DWORD = 0;
-                // SAFETY: `status` is a valid out-pointer.
-                if unsafe { win32::GetExitCodeProcess(process, &mut status) } != 0
+                if win32::GetExitCodeProcess(process, &mut status) != 0
                     && status != win32::STILL_ACTIVE
                 {
                     return Err(Error::from_code(E::ESRCH, Tag::kill));
@@ -55,8 +59,7 @@ pub fn kill(process: HANDLE, signum: c_int) -> Result<(), Error> {
         }
         0 => {
             let mut status: DWORD = 0;
-            // SAFETY: `status` is a valid out-pointer.
-            if unsafe { win32::GetExitCodeProcess(process, &mut status) } == 0 {
+            if win32::GetExitCodeProcess(process, &mut status) == 0 {
                 return Err(win32::last_error(Tag::kill));
             }
             if status != win32::STILL_ACTIVE {
@@ -99,12 +102,8 @@ pub fn kill_pid(pid: c_int, signum: c_int) -> Result<(), Error> {
     result
 }
 
-type HKEY = *mut c_void;
-const HKEY_LOCAL_MACHINE: HKEY = 0x8000_0002_u32 as i32 as isize as HKEY;
 const KEY_QUERY_VALUE: DWORD = 0x0001;
 const RRF_RT_ANY: DWORD = 0x0000_FFFF;
-const CREATE_NEW: DWORD = 1;
-const FILE_ATTRIBUTE_NORMAL: DWORD = 0x80;
 const FILE_DISPOSITION_INFO_CLASS: c_int = 4;
 const MINIDUMP_WITH_FULL_MEMORY: DWORD = 0x0000_0002;
 const MINIDUMP_IGNORE_INACCESSIBLE_MEMORY: DWORD = 0x0002_0000;
@@ -112,19 +111,11 @@ const MINIDUMP_WITH_AVX_XSTATE_CONTEXT: DWORD = 0x0020_0000;
 /// Makes Wine include ELF modules in a dump.
 const SYMOPT_WINE_WITH_NATIVE_MODULES: DWORD = 0x4000_0000;
 
-#[repr(C)]
-struct GUID {
-    data1: u32,
-    data2: u16,
-    data3: u16,
-    data4: [u8; 8],
-}
-
 const FOLDERID_LOCAL_APP_DATA: GUID = GUID {
-    data1: 0xf1b3_2785,
-    data2: 0x6fba,
-    data3: 0x4fcf,
-    data4: [0x9d, 0x55, 0x7b, 0x8e, 0x7f, 0x15, 0x70, 0x91],
+    Data1: 0xf1b3_2785,
+    Data2: 0x6fba,
+    Data3: 0x4fcf,
+    Data4: [0x9d, 0x55, 0x7b, 0x8e, 0x7f, 0x15, 0x70, 0x91],
 };
 
 unsafe extern "system" {
@@ -134,15 +125,6 @@ unsafe extern "system" {
         ulOptions: DWORD,
         samDesired: DWORD,
         phkResult: *mut HKEY,
-    ) -> i32;
-    fn RegGetValueW(
-        hkey: HKEY,
-        lpSubKey: *const u16,
-        lpValue: *const u16,
-        dwFlags: DWORD,
-        pdwType: *mut DWORD,
-        pvData: *mut c_void,
-        pcbData: *mut DWORD,
     ) -> i32;
     fn RegCloseKey(hKey: HKEY) -> i32;
     fn SHGetKnownFolderPath(
@@ -158,7 +140,6 @@ unsafe extern "system" {
         lpBaseName: *mut u16,
         nSize: DWORD,
     ) -> DWORD;
-    fn CreateDirectoryW(lpPathName: *const u16, lpSecurityAttributes: *mut c_void) -> BOOL;
     fn SetFileInformationByHandle(
         hFile: HANDLE,
         FileInformationClass: c_int,

@@ -483,18 +483,7 @@ pub mod windows_stdio {
     // MOVE_DOWN: bun_sys::windows → crate::windows_sys (T0 leaf shim).
     use crate::windows_sys as w;
     use crate::windows_sys::kernel32 as c;
-
-    // `HANDLE` is an opaque kernel handle (kernel32 validates and returns 0 on
-    // a non-console handle); `&mut DWORD` is ABI-identical to `LPDWORD` (thin
-    // non-null pointer). The reference type encodes the only pointer-validity
-    // precondition, so `safe fn` discharges the link-time proof. (`c::Get/Set
-    // ConsoleMode` from `bun_windows_sys` still take `*mut DWORD`; redeclared
-    // locally so the startup/restore paths below are plain calls.)
-    #[link(name = "kernel32")]
-    unsafe extern "system" {
-        safe fn GetConsoleMode(hConsoleHandle: w::HANDLE, lpMode: &mut w::DWORD) -> w::BOOL;
-        safe fn SetConsoleMode(hConsoleHandle: w::HANDLE, dwMode: w::DWORD) -> w::BOOL;
-    }
+    use crate::windows_sys::kernel32::{GetConsoleMode, SetConsoleMode};
 
     /// At program start, we snapshot the console modes of standard in, out, and err
     /// so that we can restore them at program exit if they change. Restoration is

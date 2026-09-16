@@ -93,50 +93,201 @@ pub const UV_EUNATCH: c_int = -4023;
 pub const UV_ENOEXEC: c_int = -4022;
 pub const UV_ERRNO_MAX: c_int = -4096;
 
-/// `(UV_E*, E discriminant)` for every `UV_E*` that folds to a plain `E`.
-#[cfg(windows)]
-macro_rules! __uv_to_e {
-    (@rows $([$id:tt, $e:tt, $uv:tt, $display:tt])+) => {
-        static UV_TO_E: &[(c_int, u16)] = &[
-            $( ($uv, crate::SystemErrno::$e as u16), )+
-            (UV_EOF, crate::SystemErrno::EOF as u16),
-            (UV_UNKNOWN, crate::SystemErrno::EUNKNOWN as u16),
-        ];
-    };
-}
-#[cfg(windows)]
-crate::__uv_e_rows!(@each __uv_to_e);
-
-/// `E::UV_EAI_*` discriminants are `(-UV_EAI_*) as u16`: the magnitude is the discriminant.
-#[cfg(windows)]
+/// Map a negative `UV_E*` libuv error code to the stable
+/// `bun_errno::E` discriminant (e.g. `UV_ENOENT (-4058)` → `2`).
+///
+/// The integer discriminants are ABI-stable POSIX values plus a fixed
+/// Bun-assigned tail (`UNKNOWN=134`..`FTYPE=137`). Unmapped codes return
+/// `None`.
+///
+/// Keep in sync with `E` (windows_errno.rs).
 #[inline]
-const fn is_eai_magnitude(n: c_int) -> bool {
-    matches!(n, 3000..=3011 | 3013 | 3014)
+pub const fn uv_err_to_e_discriminant(code: c_int) -> Option<u16> {
+    Some(match code {
+        UV_EPERM => 1,            // E::PERM
+        UV_ENOENT => 2,           // E::NOENT
+        UV_ESRCH => 3,            // E::SRCH
+        UV_EINTR => 4,            // E::INTR
+        UV_EIO => 5,              // E::IO
+        UV_ENXIO => 6,            // E::NXIO
+        UV_E2BIG => 7,            // E::_2BIG
+        UV_ENOEXEC => 8,          // E::NOEXEC
+        UV_EBADF => 9,            // E::BADF
+        UV_EAGAIN => 11,          // E::AGAIN
+        UV_ENOMEM => 12,          // E::NOMEM
+        UV_EACCES => 13,          // E::ACCES
+        UV_EFAULT => 14,          // E::FAULT
+        UV_EBUSY => 16,           // E::BUSY
+        UV_EEXIST => 17,          // E::EXIST
+        UV_EXDEV => 18,           // E::XDEV
+        UV_ENODEV => 19,          // E::NODEV
+        UV_ENOTDIR => 20,         // E::NOTDIR
+        UV_EISDIR => 21,          // E::ISDIR
+        UV_EINVAL => 22,          // E::INVAL
+        UV_ENFILE => 23,          // E::NFILE
+        UV_EMFILE => 24,          // E::MFILE
+        UV_ENOTTY => 25,          // E::NOTTY
+        UV_EFTYPE => 137,         // E::FTYPE
+        UV_ETXTBSY => 26,         // E::TXTBSY
+        UV_EFBIG => 27,           // E::FBIG
+        UV_ENOSPC => 28,          // E::NOSPC
+        UV_ESPIPE => 29,          // E::SPIPE
+        UV_EROFS => 30,           // E::ROFS
+        UV_EMLINK => 31,          // E::MLINK
+        UV_EPIPE => 32,           // E::PIPE
+        UV_ERANGE => 34,          // E::RANGE
+        UV_ENAMETOOLONG => 36,    // E::NAMETOOLONG
+        UV_ENOSYS => 38,          // E::NOSYS
+        UV_ENOTEMPTY => 39,       // E::NOTEMPTY
+        UV_ELOOP => 40,           // E::LOOP
+        UV_EUNATCH => 49,         // E::UNATCH
+        UV_ENODATA => 61,         // E::NODATA
+        UV_ENONET => 64,          // E::NONET
+        UV_EPROTO => 71,          // E::PROTO
+        UV_EOVERFLOW => 75,       // E::OVERFLOW
+        UV_EILSEQ => 84,          // E::ILSEQ
+        UV_ENOTSOCK => 88,        // E::NOTSOCK
+        UV_EDESTADDRREQ => 89,    // E::DESTADDRREQ
+        UV_EMSGSIZE => 90,        // E::MSGSIZE
+        UV_EPROTOTYPE => 91,      // E::PROTOTYPE
+        UV_ENOPROTOOPT => 92,     // E::NOPROTOOPT
+        UV_EPROTONOSUPPORT => 93, // E::PROTONOSUPPORT
+        UV_ESOCKTNOSUPPORT => 94, // E::SOCKTNOSUPPORT
+        UV_ENOTSUP => 95,         // E::NOTSUP
+        UV_EAFNOSUPPORT => 97,    // E::AFNOSUPPORT
+        UV_EADDRINUSE => 98,      // E::ADDRINUSE
+        UV_EADDRNOTAVAIL => 99,   // E::ADDRNOTAVAIL
+        UV_ENETDOWN => 100,       // E::NETDOWN
+        UV_ENETUNREACH => 101,    // E::NETUNREACH
+        UV_ECONNABORTED => 103,   // E::CONNABORTED
+        UV_ECONNRESET => 104,     // E::CONNRESET
+        UV_ENOBUFS => 105,        // E::NOBUFS
+        UV_EISCONN => 106,        // E::ISCONN
+        UV_ENOTCONN => 107,       // E::NOTCONN
+        UV_ESHUTDOWN => 108,      // E::SHUTDOWN
+        UV_ETIMEDOUT => 110,      // E::TIMEDOUT
+        UV_ECONNREFUSED => 111,   // E::CONNREFUSED
+        UV_EHOSTDOWN => 112,      // E::HOSTDOWN
+        UV_EHOSTUNREACH => 113,   // E::HOSTUNREACH
+        UV_EALREADY => 114,       // E::ALREADY
+        UV_EREMOTEIO => 121,      // E::REMOTEIO
+        UV_ECANCELED => 125,      // E::CANCELED
+        UV_ECHARSET => 135,       // E::CHARSET
+        UV_EOF => 136,            // E::EOF
+        UV_UNKNOWN => 134,        // E::UNKNOWN
+        // EAI_* codes — `bun_errno::E::UV_EAI_*` discriminants are defined as
+        // `(-UV_EAI_*) as u16`, i.e. the raw magnitude is the discriminant.
+        UV_EAI_ADDRFAMILY => (-UV_EAI_ADDRFAMILY) as u16,
+        UV_EAI_AGAIN => (-UV_EAI_AGAIN) as u16,
+        UV_EAI_BADFLAGS => (-UV_EAI_BADFLAGS) as u16,
+        UV_EAI_BADHINTS => (-UV_EAI_BADHINTS) as u16,
+        UV_EAI_CANCELED => (-UV_EAI_CANCELED) as u16,
+        UV_EAI_FAIL => (-UV_EAI_FAIL) as u16,
+        UV_EAI_FAMILY => (-UV_EAI_FAMILY) as u16,
+        UV_EAI_MEMORY => (-UV_EAI_MEMORY) as u16,
+        UV_EAI_NODATA => (-UV_EAI_NODATA) as u16,
+        UV_EAI_NONAME => (-UV_EAI_NONAME) as u16,
+        UV_EAI_OVERFLOW => (-UV_EAI_OVERFLOW) as u16,
+        UV_EAI_PROTOCOL => (-UV_EAI_PROTOCOL) as u16,
+        UV_EAI_SERVICE => (-UV_EAI_SERVICE) as u16,
+        UV_EAI_SOCKTYPE => (-UV_EAI_SOCKTYPE) as u16,
+        _ => return None,
+    })
 }
 
-/// A negative `UV_E*` number → the `E` discriminant (`UV_ENOENT (-4058)` → `2`).
-/// `None` for a number the table does not list.
-#[cfg(windows)]
+/// Reverse of [`uv_err_to_e_discriminant`]: map a `bun_errno::E`
+/// discriminant to the negative `UV_E*` code node reports in `err.errno` on
+/// Windows (`2` → `UV_ENOENT (-4058)`). Same keep-in-sync note as the forward
+/// table above; the arms are its rows flipped. Unmapped discriminants return
+/// `None`.
 #[inline]
-pub fn uv_err_to_e_discriminant(code: c_int) -> Option<u16> {
-    let magnitude = code.wrapping_neg();
-    if is_eai_magnitude(magnitude) {
-        return Some(magnitude as u16);
-    }
-    UV_TO_E.iter().find(|row| row.0 == code).map(|row| row.1)
-}
-
-/// An `E` discriminant → the negative `UV_E*` number Node reports in
-/// `err.errno` on Windows (`2` → `UV_ENOENT (-4058)`). `None` for a
-/// discriminant the table does not list.
-#[cfg(windows)]
-#[inline]
-pub fn e_discriminant_to_uv(discriminant: u16) -> Option<c_int> {
-    if is_eai_magnitude(c_int::from(discriminant)) {
-        return Some(-c_int::from(discriminant));
-    }
-    UV_TO_E
-        .iter()
-        .find(|row| row.1 == discriminant)
-        .map(|row| row.0)
+pub const fn e_discriminant_to_uv(discriminant: u16) -> Option<c_int> {
+    Some(match discriminant {
+        1 => UV_EPERM,            // E::PERM
+        2 => UV_ENOENT,           // E::NOENT
+        3 => UV_ESRCH,            // E::SRCH
+        4 => UV_EINTR,            // E::INTR
+        5 => UV_EIO,              // E::IO
+        6 => UV_ENXIO,            // E::NXIO
+        7 => UV_E2BIG,            // E::_2BIG
+        8 => UV_ENOEXEC,          // E::NOEXEC
+        9 => UV_EBADF,            // E::BADF
+        11 => UV_EAGAIN,          // E::AGAIN
+        12 => UV_ENOMEM,          // E::NOMEM
+        13 => UV_EACCES,          // E::ACCES
+        14 => UV_EFAULT,          // E::FAULT
+        16 => UV_EBUSY,           // E::BUSY
+        17 => UV_EEXIST,          // E::EXIST
+        18 => UV_EXDEV,           // E::XDEV
+        19 => UV_ENODEV,          // E::NODEV
+        20 => UV_ENOTDIR,         // E::NOTDIR
+        21 => UV_EISDIR,          // E::ISDIR
+        22 => UV_EINVAL,          // E::INVAL
+        23 => UV_ENFILE,          // E::NFILE
+        24 => UV_EMFILE,          // E::MFILE
+        25 => UV_ENOTTY,          // E::NOTTY
+        137 => UV_EFTYPE,         // E::FTYPE
+        26 => UV_ETXTBSY,         // E::TXTBSY
+        27 => UV_EFBIG,           // E::FBIG
+        28 => UV_ENOSPC,          // E::NOSPC
+        29 => UV_ESPIPE,          // E::SPIPE
+        30 => UV_EROFS,           // E::ROFS
+        31 => UV_EMLINK,          // E::MLINK
+        32 => UV_EPIPE,           // E::PIPE
+        34 => UV_ERANGE,          // E::RANGE
+        36 => UV_ENAMETOOLONG,    // E::NAMETOOLONG
+        38 => UV_ENOSYS,          // E::NOSYS
+        39 => UV_ENOTEMPTY,       // E::NOTEMPTY
+        40 => UV_ELOOP,           // E::LOOP
+        49 => UV_EUNATCH,         // E::UNATCH
+        61 => UV_ENODATA,         // E::NODATA
+        64 => UV_ENONET,          // E::NONET
+        71 => UV_EPROTO,          // E::PROTO
+        75 => UV_EOVERFLOW,       // E::OVERFLOW
+        84 => UV_EILSEQ,          // E::ILSEQ
+        88 => UV_ENOTSOCK,        // E::NOTSOCK
+        89 => UV_EDESTADDRREQ,    // E::DESTADDRREQ
+        90 => UV_EMSGSIZE,        // E::MSGSIZE
+        91 => UV_EPROTOTYPE,      // E::PROTOTYPE
+        92 => UV_ENOPROTOOPT,     // E::NOPROTOOPT
+        93 => UV_EPROTONOSUPPORT, // E::PROTONOSUPPORT
+        94 => UV_ESOCKTNOSUPPORT, // E::SOCKTNOSUPPORT
+        95 => UV_ENOTSUP,         // E::NOTSUP
+        97 => UV_EAFNOSUPPORT,    // E::AFNOSUPPORT
+        98 => UV_EADDRINUSE,      // E::ADDRINUSE
+        99 => UV_EADDRNOTAVAIL,   // E::ADDRNOTAVAIL
+        100 => UV_ENETDOWN,       // E::NETDOWN
+        101 => UV_ENETUNREACH,    // E::NETUNREACH
+        103 => UV_ECONNABORTED,   // E::CONNABORTED
+        104 => UV_ECONNRESET,     // E::CONNRESET
+        105 => UV_ENOBUFS,        // E::NOBUFS
+        106 => UV_EISCONN,        // E::ISCONN
+        107 => UV_ENOTCONN,       // E::NOTCONN
+        108 => UV_ESHUTDOWN,      // E::SHUTDOWN
+        110 => UV_ETIMEDOUT,      // E::TIMEDOUT
+        111 => UV_ECONNREFUSED,   // E::CONNREFUSED
+        112 => UV_EHOSTDOWN,      // E::HOSTDOWN
+        113 => UV_EHOSTUNREACH,   // E::HOSTUNREACH
+        114 => UV_EALREADY,       // E::ALREADY
+        121 => UV_EREMOTEIO,      // E::REMOTEIO
+        125 => UV_ECANCELED,      // E::CANCELED
+        135 => UV_ECHARSET,       // E::CHARSET
+        136 => UV_EOF,            // E::EOF
+        134 => UV_UNKNOWN,        // E::UNKNOWN
+        d if d == (-UV_EAI_ADDRFAMILY) as u16 => UV_EAI_ADDRFAMILY,
+        d if d == (-UV_EAI_AGAIN) as u16 => UV_EAI_AGAIN,
+        d if d == (-UV_EAI_BADFLAGS) as u16 => UV_EAI_BADFLAGS,
+        d if d == (-UV_EAI_BADHINTS) as u16 => UV_EAI_BADHINTS,
+        d if d == (-UV_EAI_CANCELED) as u16 => UV_EAI_CANCELED,
+        d if d == (-UV_EAI_FAIL) as u16 => UV_EAI_FAIL,
+        d if d == (-UV_EAI_FAMILY) as u16 => UV_EAI_FAMILY,
+        d if d == (-UV_EAI_MEMORY) as u16 => UV_EAI_MEMORY,
+        d if d == (-UV_EAI_NODATA) as u16 => UV_EAI_NODATA,
+        d if d == (-UV_EAI_NONAME) as u16 => UV_EAI_NONAME,
+        d if d == (-UV_EAI_OVERFLOW) as u16 => UV_EAI_OVERFLOW,
+        d if d == (-UV_EAI_PROTOCOL) as u16 => UV_EAI_PROTOCOL,
+        d if d == (-UV_EAI_SERVICE) as u16 => UV_EAI_SERVICE,
+        d if d == (-UV_EAI_SOCKTYPE) as u16 => UV_EAI_SOCKTYPE,
+        _ => return None,
+    })
 }

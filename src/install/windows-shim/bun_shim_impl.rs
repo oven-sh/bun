@@ -62,9 +62,7 @@ use crate::bun_core;
 use crate::compat as w;
 #[cfg(not(feature = "shim_standalone"))]
 use bun_sys::windows as w;
-use w::{
-    BOOL, DWORD, HANDLE, IO_STATUS_BLOCK, LARGE_INTEGER, NTSTATUS, PVOID, ULONG, UNICODE_STRING,
-};
+use w::{BOOL, DWORD, FILE_GENERIC_READ, HANDLE, IO_STATUS_BLOCK, NTSTATUS, UNICODE_STRING};
 
 use super::_bin_linking_shim::Flags;
 
@@ -77,104 +75,21 @@ const IS_STANDALONE: bool = cfg!(feature = "shim_standalone");
 #[cfg(not(feature = "shim_standalone"))]
 bun_output::declare_scope!(bun_shim_impl, hidden);
 
-/// A copy of all ntdll declarations this program uses
+/// The ntdll functions this program uses.
 mod nt {
     use super::*;
 
-    pub(super) type Status = NTSTATUS;
-
-    /// https://learn.microsoft.com/en-us/windows/win32/api/winternl/nf-winternl-ntcreatefile
-    pub(super) use w::ntdll::NtCreateFile;
-
-    // SAFETY: ntdll syscalls; signatures match WDK headers. Declared locally as
-    // `safe fn` (vs. re-exporting the `unsafe fn` from `w::ntdll`) because
-    // neither has memory-safety preconditions: all arguments are by-value,
-    // `HANDLE` is an opaque kernel token validated kernel-side (bad handle →
-    // `STATUS_INVALID_HANDLE`, not UB), and `RtlExitUserProcess` diverges
-    // (matches `ExitProcess`, already `safe fn` in `bun_windows_sys`). This
-    // freestanding `no_std` shim owns every handle it closes; no
-    // `OwnedHandle`-style I/O-safety invariant exists to violate.
-    #[link(name = "ntdll")]
-    unsafe extern "system" {
-        /// undocumented
-        pub(super) safe fn RtlExitUserProcess(ExitStatus: u32) -> !;
-
-        /// https://learn.microsoft.com/en-us/windows/win32/api/winternl/nf-winternl-ntclose
-        pub(super) safe fn NtClose(Handle: HANDLE) -> Status;
-    }
-
-    // Declared locally (not in `bun_sys::windows::ntdll`) so the standalone PE
-    // build, whose `w` alias is `crate::compat`, needs no extra re-export.
-    // SAFETY: ntdll syscalls; signatures match WDK headers. Kept `unsafe fn`
-    // (not `safe fn`) because both write through caller-supplied out-pointers
-    // (`IoStatusBlock`, `Buffer`) — validity is a genuine caller precondition.
-    unsafe extern "system" {
-        /// https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/nf-ntifs-ntreadfile
-        #[link_name = "NtReadFile"]
-        pub(super) fn NtReadFile(
-            FileHandle: HANDLE, // [in]
-            // `Option<*mut c_void>` is not pointer-sized (raw pointers can
-            // already be null → no niche → 16-byte tagged enum, passed
-            // by-reference under Win64 ABI). Use a plain HANDLE and pass
-            // null_mut() for "no event".
-            Event: HANDLE,                       // [in, optional]
-            ApcRoutine: *mut c_void,             // [in, optional]
-            ApcContext: PVOID,                   // [in, optional]
-            IoStatusBlock: *mut IO_STATUS_BLOCK, // [out]
-            Buffer: PVOID,                       // [out]
-            Length: ULONG,                       // [in]
-            ByteOffset: *const LARGE_INTEGER,    // [in, optional]
-            Key: *const ULONG,                   // [in, optional]
-        ) -> Status;
-
-        /// https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/nf-ntifs-ntwritefile
-        #[link_name = "NtWriteFile"]
-        pub(super) fn NtWriteFile(
-            FileHandle: HANDLE,                  // [in]
-            Event: HANDLE, // [in, optional] (see NtReadFile note re: Option<HANDLE>)
-            ApcRoutine: *mut c_void, // [in, optional]
-            ApcContext: PVOID, // [in, optional]
-            IoStatusBlock: *mut IO_STATUS_BLOCK, // [out]
-            Buffer: *const u8, // [in]
-            Length: ULONG, // [in]
-            ByteOffset: *const LARGE_INTEGER, // [in, optional]
-            Key: *const ULONG, // [in, optional]
-        ) -> Status;
-    }
+    pub(super) use w::ntdll::{NtClose, NtCreateFile, NtReadFile, NtWriteFile, RtlExitUserProcess};
 }
 
-/// A copy of all kernel32 declarations this program uses
+/// The kernel32 functions this program uses.
 mod k32 {
     use super::*;
 
-    pub(super) use w::kernel32::CreateProcessW;
-    /// https://learn.microsoft.com/en-us/windows/win32/api/errhandlingapi/nf-errhandlingapi-getlasterror
-    pub(super) use w::kernel32::GetLastError;
-    /// https://learn.microsoft.com/en-us/windows/console/setconsolectrlhandler
-    pub(super) use w::kernel32::SetConsoleCtrlHandler;
-
-    // SAFETY: kernel32 externs; signatures match SDK. Declared locally as
-    // `safe fn` (vs. re-exporting `unsafe fn` from `w::kernel32`) because
-    // none has a memory-safety precondition the type system can't encode:
-    // `HANDLE` is opaque and validated kernel-side (bad handle → `WAIT_FAILED`
-    // / `FALSE` + `GetLastError`, not UB); by-value scalars are trivially
-    // sound; the two `LPDWORD` out-params are taken as `&mut DWORD` (ABI-
-    // identical to `*mut DWORD`, but Rust guarantees non-null/aligned/valid-
-    // for-write so the kernel write cannot fault).
-    #[link(name = "kernel32")]
-    unsafe extern "system" {
-        /// https://learn.microsoft.com/en-us/windows/win32/api/synchapi/nf-synchapi-waitforsingleobject
-        pub(super) safe fn WaitForSingleObject(hHandle: HANDLE, dwMilliseconds: DWORD) -> DWORD;
-
-        /// https://learn.microsoft.com/en-us/windows/console/setconsolemode
-        pub(super) safe fn SetConsoleMode(hConsoleHandle: HANDLE, dwMode: DWORD) -> BOOL;
-
-        /// https://learn.microsoft.com/en-us/windows/console/getconsolemode
-        pub(super) safe fn GetConsoleMode(hConsoleHandle: HANDLE, lpMode: &mut DWORD) -> BOOL;
-
-        /// https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getexitcodeprocess
-        pub(super) safe fn GetExitCodeProcess(hProcess: HANDLE, lpExitCode: &mut DWORD) -> BOOL;
-    }
+    pub(super) use w::kernel32::{
+        CreateProcessW, GetConsoleMode, GetExitCodeProcess, GetLastError, SetConsoleCtrlHandler,
+        SetConsoleMode, WaitForSingleObject,
+    };
 }
 
 macro_rules! debug {
@@ -207,12 +122,6 @@ unsafe fn unicode_string_to_u16<'a>(str: &'a UNICODE_STRING) -> &'a [u16] {
     // SAFETY: discharged by caller per fn-level # Safety.
     unsafe { bun_core::ffi::slice(str.Buffer, (str.Length / 2) as usize) }
 }
-
-const FILE_GENERIC_READ: u32 = w::STANDARD_RIGHTS_READ
-    | w::FILE_READ_DATA
-    | w::FILE_READ_ATTRIBUTES
-    | w::FILE_READ_EA
-    | w::SYNCHRONIZE;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum FailReason {
@@ -349,7 +258,7 @@ pub(crate) fn write_to_handle(handle: HANDLE, data: &[u8]) -> usize {
             core::ptr::null_mut(),
             core::ptr::null_mut(),
             &mut io,
-            data.as_ptr(),
+            data.as_ptr().cast::<c_void>(),
             u32::try_from(data.len()).expect("int cast"),
             core::ptr::null(),
             core::ptr::null(),
@@ -1278,16 +1187,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
         // Gated on `Launch` so `ReadWithoutLaunch` does not irreversibly mutate the
         // parent process's stdio state.
         bun_core::output::source::stdio::restore();
-        // Declared locally as `safe fn` (the `bun_sys::windows` re-export
-        // forwards `bun_windows_sys::externs::windows_enable_stdio_inheritance`,
-        // which is not yet `safe`-qualified): zero args, zero memory-safety
-        // preconditions — the C++ shim only flips `HANDLE_FLAG_INHERIT` on the
-        // three process-lifetime standard handles. Matches the local `safe fn`
-        // redecl already used in `bun_sys::windows::become_watcher_manager`.
-        unsafe extern "C" {
-            safe fn windows_enable_stdio_inheritance();
-        }
-        windows_enable_stdio_inheritance();
+        w::windows_enable_stdio_inheritance();
     }
 
     // I attempted to use lower level methods for this, but it really seems
@@ -1387,7 +1287,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                     if IS_STANDALONE {
                         0
                     } else {
-                        0x0000_0400 /* CREATE_UNICODE_ENVIRONMENT */
+                        w::CREATE_UNICODE_ENVIRONMENT
                     },
                     if IS_STANDALONE {
                         core::ptr::null_mut()

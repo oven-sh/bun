@@ -152,7 +152,8 @@ pub mod parent_death_watchdog {
     /// us via `CreateProcessAsUser`), skip the parent watch best-effort; the
     /// Job Object half already covers descendants.
     unsafe fn arm_parent_watch() {
-        const ERROR_INVALID_PARAMETER: u32 = 87;
+        const ERROR_INVALID_PARAMETER: u32 =
+            bun_windows_sys::Win32Error::INVALID_PARAMETER.0 as u32;
         let ppid = getppid();
         if ppid == 0 {
             return;

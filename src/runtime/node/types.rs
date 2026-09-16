@@ -2,13 +2,11 @@ use bun_paths::strings;
 use core::ffi::c_int;
 
 use crate::jsc::{self, CallFrame, JSGlobalObject, JSValue, JsResult};
-#[cfg(windows)]
-use bun_core::WStr;
-use bun_core::ZStr;
 use bun_core::{self, Utf8Bytes, Utf8WithString, fmt as bun_fmt};
+use bun_core::{WStr, ZStr};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{StringJsc as _, Utf8WithStringJsc as _};
-use bun_paths::{MAX_PATH_BYTES, OSPathBuffer, OSPathSliceZ, PathBuffer};
+use bun_paths::{MAX_PATH_BYTES, OSPathBuffer, OSPathSliceZ, PathBuffer, WPathBuffer};
 use bun_sys::{self, Fd, Mode, O};
 
 use crate::node::util::validators;
@@ -825,6 +823,9 @@ pub trait PathLikeExt {
     fn slice_z_as_written<'a>(&'a self, buf: &'a mut PathBuffer) -> &'a ZStr
     where
         Self: Sized;
+    fn slice_w<'a>(&'a self, buf: &'a mut WPathBuffer) -> Result<&'a WStr, NameTooLong>
+    where
+        Self: Sized;
     fn os_path<'a>(&'a self, buf: &'a mut OSPathBuffer) -> Result<&'a OSPathSliceZ, NameTooLong>
     where
         Self: Sized;
@@ -1026,14 +1027,19 @@ impl PathLikeExt for PathLike<'_> {
     }
 
     #[inline]
+    fn slice_w<'a>(&'a self, buf: &'a mut WPathBuffer) -> Result<&'a WStr, NameTooLong> {
+        let sliced = self.slice();
+        if !strings::fits_in_wide_path_buffer(sliced) {
+            return Err(NameTooLong);
+        }
+        Ok(strings::paths::to_w_path(buf, sliced))
+    }
+
+    #[inline]
     fn os_path<'a>(&'a self, buf: &'a mut OSPathBuffer) -> Result<&'a OSPathSliceZ, NameTooLong> {
         #[cfg(windows)]
         {
-            let sliced = self.slice();
-            if !strings::fits_in_wide_path_buffer(sliced) {
-                return Err(NameTooLong);
-            }
-            return Ok(strings::paths::to_w_path(buf, sliced));
+            return self.slice_w(buf);
         }
         #[cfg(not(windows))]
         {

@@ -4,25 +4,15 @@
 
 use core::ffi::{c_int, c_void};
 
+pub use bun_windows_sys::{HANDLE, OVERLAPPED};
+
 use crate::Loop;
-
-pub type HANDLE = *mut c_void;
-
-/// `OVERLAPPED`.
-#[repr(C)]
-pub struct Overlapped {
-    pub internal: usize,
-    pub internal_high: usize,
-    pub offset: u32,
-    pub offset_high: u32,
-    pub event: HANDLE,
-}
 
 /// `OVERLAPPED_ENTRY`: one dequeued completion packet.
 #[repr(C)]
 pub struct OverlappedEntry {
     pub completion_key: usize,
-    pub overlapped: *mut Overlapped,
+    pub overlapped: *mut OVERLAPPED,
     pub internal: usize,
     pub bytes_transferred: u32,
 }
@@ -38,11 +28,11 @@ pub type CompleteFn = unsafe extern "C" fn(*mut Loop, *mut Op, *mut OverlappedEn
 /// flight: cancelling the I/O or closing the handle only asks for the
 /// completion, it does not wait for it.
 ///
-/// For overlapped I/O the NTSTATUS is `overlapped.internal` and the byte count
-/// is `overlapped.internal_high`.
+/// For overlapped I/O the NTSTATUS is `overlapped.Internal` and the byte count
+/// is `overlapped.InternalHigh`.
 #[repr(C)]
 pub struct Op {
-    pub overlapped: Overlapped,
+    pub overlapped: OVERLAPPED,
     pub complete: CompleteFn,
     /// The loop's, while the op is on its way through `us_iocp_op_ready`.
     next_ready: *mut Op,
@@ -51,12 +41,12 @@ pub struct Op {
 impl Op {
     pub const fn new(complete: CompleteFn) -> Self {
         Self {
-            overlapped: Overlapped {
-                internal: 0,
-                internal_high: 0,
-                offset: 0,
-                offset_high: 0,
-                event: core::ptr::null_mut(),
+            overlapped: OVERLAPPED {
+                Internal: 0,
+                InternalHigh: 0,
+                Offset: 0,
+                OffsetHigh: 0,
+                hEvent: core::ptr::null_mut(),
             },
             complete,
             next_ready: core::ptr::null_mut(),
@@ -66,13 +56,13 @@ impl Op {
     /// The NTSTATUS of a completed overlapped operation.
     #[inline]
     pub fn status(&self) -> i32 {
-        self.overlapped.internal as i32
+        self.overlapped.Internal as i32
     }
 
     /// The byte count of a completed overlapped operation.
     #[inline]
     pub fn bytes_transferred(&self) -> usize {
-        self.overlapped.internal_high
+        self.overlapped.InternalHigh
     }
 }
 

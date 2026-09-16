@@ -366,7 +366,8 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
                 &mut err,
             )
         };
-        const WSAEADDRINUSE: core::ffi::c_int = 10048;
+        const WSAEADDRINUSE: core::ffi::c_int =
+            bun_sys::windows::Win32Error::WSAEADDRINUSE.0 as core::ffi::c_int;
         if fd == bun_uws::LIBUS_SOCKET_DESCRIPTOR::MAX && err != WSAEADDRINUSE {
             if let Some(v4) = fallback_host {
                 let mut err2: core::ffi::c_int = 0;

@@ -5589,9 +5589,8 @@ pub fn dlopen(filename: &ZStr, flags: i32) -> Option<*mut c_void> {
         // search so dependent DLLs resolve next to the loaded module.
         // MSDN documents that flag as undefined for relative paths, so only
         // set it when absolute; bare names keep the standard search order.
-        const LOAD_WITH_ALTERED_SEARCH_PATH: u32 = 0x0000_0008;
         let dw_flags = if bun_paths::is_absolute_windows(filename.as_bytes()) {
-            LOAD_WITH_ALTERED_SEARCH_PATH
+            bun_windows_sys::LOAD_WITH_ALTERED_SEARCH_PATH
         } else {
             0
         };

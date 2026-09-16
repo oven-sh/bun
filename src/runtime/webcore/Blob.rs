@@ -3461,6 +3461,7 @@ impl FormDataContext<'_> {
                             let mut rf_args = crate::node::fs::args::ReadFile::default();
                             rf_args.encoding = crate::node::types::Encoding::Buffer;
                             rf_args.path = file.pathlike.clone();
+                            rf_args.as_written = true;
                             rf_args.offset = blob.offset.get();
                             rf_args.max_size = Some(blob.size.get());
                             let res = node_fs.read_file(&rf_args, crate::node::fs::Flavor::Sync);
@@ -3936,6 +3937,7 @@ fn write_file_with_empty_source_to_destination(
                     path: file.pathlike.clone(),
                     len: 0,
                     flags: bun_sys::O::CREAT,
+                    as_written: true,
                 },
                 node::fs::Flavor::Sync,
             );

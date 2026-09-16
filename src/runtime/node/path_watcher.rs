@@ -1663,7 +1663,8 @@ fn resolve<'a>(
 mod windows_impl {
     use super::*;
     use bun_sys::windows as w;
-    use bun_sys::windows::{BOOL, DWORD, HANDLE, OVERLAPPED};
+    use bun_sys::windows::kernel32::{CompareStringOrdinal, GetShortPathNameW};
+    use bun_sys::windows::{BOOL, CSTR_EQUAL, DWORD, HANDLE, OVERLAPPED};
 
     /// The largest buffer `ReadDirectoryChangesW` accepts for a directory on a
     /// network share.
@@ -1688,7 +1689,6 @@ mod windows_impl {
 
     #[link(name = "kernel32")]
     unsafe extern "system" {
-        fn GetShortPathNameW(long_path: *const u16, short_path: *mut u16, len: DWORD) -> DWORD;
         fn GetLongPathNameW(short_path: *const u16, long_path: *mut u16, len: DWORD) -> DWORD;
         fn GetFileInformationByHandleEx(
             file: HANDLE,
@@ -1696,15 +1696,7 @@ mod windows_impl {
             info: *mut c_void,
             size: DWORD,
         ) -> BOOL;
-        fn CompareStringOrdinal(
-            a: *const u16,
-            a_len: i32,
-            b: *const u16,
-            b_len: i32,
-            ignore_case: BOOL,
-        ) -> i32;
     }
-    const CSTR_EQUAL: i32 = 2;
 
     /// One directory handle and its `ReadDirectoryChangesW` request.
     ///

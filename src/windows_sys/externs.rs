@@ -470,6 +470,10 @@ impl FILE_INFORMATION_CLASS {
     pub const FileDirectoryInformation: Self = Self(1);
     pub const FileBasicInformation: Self = Self(4);
     pub const FileDispositionInformation: Self = Self(13);
+    #[cfg(windows)]
+    pub const FilePositionInformation: Self = Self(14);
+    #[cfg(windows)]
+    pub const FileModeInformation: Self = Self(16);
     pub const FileAllInformation: Self = Self(18);
     pub const FileEndOfFileInformation: Self = Self(20);
     pub const FileIdFullDirectoryInformation: Self = Self(38);
@@ -833,7 +837,8 @@ pub mod ntdll {
             Length: ULONG,
             FsInformationClass: FS_INFORMATION_CLASS,
         ) -> NTSTATUS;
-        pub fn NtClose(Handle: HANDLE) -> NTSTATUS;
+        /// A bad handle is `STATUS_INVALID_HANDLE`.
+        pub safe fn NtClose(Handle: HANDLE) -> NTSTATUS;
 
         // ── futex (`WaitOnAddress`) — used by `bun_threading::Futex` ──
         // Linked from ntdll instead of `API-MS-Win-Core-Synch-l1-2-0.dll`
@@ -851,7 +856,7 @@ pub mod ntdll {
         /// `RtlExitUserProcess` (ntdll). The Win32 `ExitProcess` forwards to
         /// this; the freestanding `bun_shim_impl` calls it directly to avoid
         /// linking kernel32 in the standalone PE.
-        pub fn RtlExitUserProcess(ExitStatus: u32) -> !;
+        pub safe fn RtlExitUserProcess(ExitStatus: u32) -> !;
 
         /// `NtQueryInformationProcess` (`winternl.h`). With
         /// `ProcessBasicInformation` (0), fills a [`PROCESS_BASIC_INFORMATION`].
@@ -970,7 +975,8 @@ pub mod kernel32 {
             lpOverlapped: *mut c_void,
         ) -> BOOL;
         pub fn LoadLibraryExW(lpLibFileName: LPCWSTR, hFile: HANDLE, dwFlags: DWORD) -> HMODULE;
-        pub fn GetExitCodeProcess(hProcess: HANDLE, lpExitCode: *mut DWORD) -> BOOL;
+        /// A bad handle fails with `ERROR_INVALID_HANDLE`.
+        pub safe fn GetExitCodeProcess(hProcess: HANDLE, lpExitCode: &mut DWORD) -> BOOL;
         /// `FlushFileBuffers` — fsync(2)-equivalent for HANDLE-backed files.
         pub fn FlushFileBuffers(hFile: HANDLE) -> BOOL;
         /// `CreateProcessW` (`processthreadsapi.h`).
@@ -1002,23 +1008,26 @@ pub mod kernel32 {
             lpConsoleScreenBufferInfo: *mut CONSOLE_SCREEN_BUFFER_INFO,
         ) -> BOOL;
         /// `FillConsoleOutputAttribute` (`wincon.h`).
-        pub fn FillConsoleOutputAttribute(
+        pub safe fn FillConsoleOutputAttribute(
             hConsoleOutput: HANDLE,
             wAttribute: WORD,
             nLength: DWORD,
             dwWriteCoord: COORD,
-            lpNumberOfAttrsWritten: *mut DWORD,
+            lpNumberOfAttrsWritten: &mut DWORD,
         ) -> BOOL;
         /// `FillConsoleOutputCharacterW` (`wincon.h`).
-        pub fn FillConsoleOutputCharacterW(
+        pub safe fn FillConsoleOutputCharacterW(
             hConsoleOutput: HANDLE,
             cCharacter: WCHAR,
             nLength: DWORD,
             dwWriteCoord: COORD,
-            lpNumberOfCharsWritten: *mut DWORD,
+            lpNumberOfCharsWritten: &mut DWORD,
         ) -> BOOL;
         /// `SetConsoleCursorPosition` (`wincon.h`).
-        pub fn SetConsoleCursorPosition(hConsoleOutput: HANDLE, dwCursorPosition: COORD) -> BOOL;
+        pub safe fn SetConsoleCursorPosition(
+            hConsoleOutput: HANDLE,
+            dwCursorPosition: COORD,
+        ) -> BOOL;
         /// `ExitThread` (`processthreadsapi.h`). No preconditions; terminates
         /// the calling thread.
         pub safe fn ExitThread(dwExitCode: DWORD) -> !;
@@ -1040,16 +1049,24 @@ pub mod kernel32 {
         ) -> *mut c_void;
         /// `SetUnhandledExceptionFilter` (`errhandlingapi.h`). Runs after all
         /// frame-based (SEH) handlers have declined.
-        pub fn SetUnhandledExceptionFilter(
+        pub safe fn SetUnhandledExceptionFilter(
             lpTopLevelExceptionFilter: Option<unsafe extern "system" fn(*mut c_void) -> i32>,
         ) -> Option<unsafe extern "system" fn(*mut c_void) -> i32>;
         /// `GetModuleHandleW` (`libloaderapi.h`). `lpModuleName == null` returns
         /// the base address of the calling process's executable image.
         pub fn GetModuleHandleW(lpModuleName: LPCWSTR) -> HMODULE;
         /// `RemoveVectoredExceptionHandler` (`errhandlingapi.h`).
-        pub fn RemoveVectoredExceptionHandler(Handle: *mut c_void) -> u32;
+        /// `Handle` is the cookie `AddVectoredExceptionHandler` returned; a stale
+        /// one is rejected with 0.
+        pub safe fn RemoveVectoredExceptionHandler(Handle: *mut c_void) -> u32;
     }
     // Re-export externs declared at the crate root so `kernel32::Foo` resolves.
+    #[cfg(windows)]
+    pub use super::{
+        CancelIoEx, CompareStringOrdinal, CreateEventW, GetCurrentProcessId, GetCurrentThreadId,
+        GetEnvironmentVariableW, GetFileType, GetShortPathNameW, GetTickCount64, SetEvent,
+        TerminateProcess, WaitForMultipleObjects, WaitForSingleObject,
+    };
     pub use super::{
         CreateFileW, GetCurrentDirectoryW, GetFileAttributesW, GetSystemDirectoryW, GetSystemInfo,
         SYSTEM_INFO, SetCurrentDirectoryW, SetFilePointerEx,
@@ -1298,6 +1315,8 @@ impl Win32Error {
     pub const META_EXPANSION_TOO_LONG: Win32Error = Win32Error(208);
     pub const BAD_PIPE: Win32Error = Win32Error(230);
     pub const PIPE_BUSY: Win32Error = Win32Error(231);
+    #[cfg(windows)]
+    pub const MORE_DATA: Win32Error = Win32Error(234);
     pub const NO_DATA: Win32Error = Win32Error(232);
     pub const PIPE_NOT_CONNECTED: Win32Error = Win32Error(233);
     pub const PIPE_CONNECTED: Win32Error = Win32Error(535);
@@ -1306,6 +1325,8 @@ impl Win32Error {
     pub const DELETE_PENDING: Win32Error = Win32Error(303);
     pub const ELEVATION_REQUIRED: Win32Error = Win32Error(740);
     pub const OPERATION_ABORTED: Win32Error = Win32Error(995);
+    #[cfg(windows)]
+    pub const IO_PENDING: Win32Error = Win32Error(997);
     pub const NOACCESS: Win32Error = Win32Error(998);
     pub const INVALID_FLAGS: Win32Error = Win32Error(1004);
     pub const END_OF_MEDIA: Win32Error = Win32Error(1100);
@@ -1365,7 +1386,13 @@ impl Win32Error {
     pub const WSAETIMEDOUT: Win32Error = Win32Error(10060);
     pub const WSAECONNREFUSED: Win32Error = Win32Error(10061);
     pub const WSAEHOSTUNREACH: Win32Error = Win32Error(10065);
+    #[cfg(windows)]
+    pub const WSATYPE_NOT_FOUND: Win32Error = Win32Error(10109);
     pub const WSAHOST_NOT_FOUND: Win32Error = Win32Error(11001);
+    #[cfg(windows)]
+    pub const WSATRY_AGAIN: Win32Error = Win32Error(11002);
+    #[cfg(windows)]
+    pub const WSANO_RECOVERY: Win32Error = Win32Error(11003);
     pub const WSANO_DATA: Win32Error = Win32Error(11004);
     pub const WSA_QOS_RESERVED_PETYPE: Win32Error = Win32Error(11031);
 
@@ -1856,9 +1883,10 @@ unsafe extern "system" {
     /// No preconditions; returns 0 on failure.
     pub safe fn SetConsoleOutputCP(wCodePageID: UINT) -> BOOL;
 
-    pub fn GetConsoleMode(hConsoleHandle: HANDLE, lpMode: *mut DWORD) -> BOOL;
+    /// A handle that is not a console's fails with `ERROR_INVALID_HANDLE`.
+    pub safe fn GetConsoleMode(hConsoleHandle: HANDLE, lpMode: &mut DWORD) -> BOOL;
 
-    pub fn SetConsoleMode(hConsoleHandle: HANDLE, dwMode: DWORD) -> BOOL;
+    pub safe fn SetConsoleMode(hConsoleHandle: HANDLE, dwMode: DWORD) -> BOOL;
 
     pub fn InitializeProcThreadAttributeList(
         lpAttributeList: *mut u8,
@@ -1877,7 +1905,7 @@ unsafe extern "system" {
         lpReturnSize: *mut usize,     // [in, optional]
     ) -> BOOL;
 
-    pub fn IsProcessInJob(process: HANDLE, job: HANDLE, result: *mut BOOL) -> BOOL;
+    pub safe fn IsProcessInJob(process: HANDLE, job: HANDLE, result: &mut BOOL) -> BOOL;
 
     pub fn CreatePseudoConsole(
         size: COORD,
@@ -2005,5 +2033,155 @@ unsafe extern "system" {
 }
 
 unsafe extern "C" {
-    pub fn windows_enable_stdio_inheritance();
+    /// `c-bindings.cpp`: sets `HANDLE_FLAG_INHERIT` on the three standard handles.
+    pub safe fn windows_enable_stdio_inheritance();
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Declarations only Windows code names. Behind `cfg(windows)` so a lint run
+// on another target does not report them as unused.
+// ──────────────────────────────────────────────────────────────────────────
+#[cfg(windows)]
+pub use windows_only::*;
+
+#[cfg(windows)]
+mod windows_only {
+    use super::*;
+
+    /// `GetFileAttributesW` failure value.
+    pub const INVALID_FILE_ATTRIBUTES: DWORD = DWORD::MAX;
+
+    // `GetFileType` results (`winbase.h`).
+    pub const FILE_TYPE_UNKNOWN: DWORD = 0x0000;
+    pub const FILE_TYPE_DISK: DWORD = 0x0001;
+    pub const FILE_TYPE_CHAR: DWORD = 0x0002;
+    pub const FILE_TYPE_PIPE: DWORD = 0x0003;
+    pub const FILE_TYPE_REMOTE: DWORD = 0x8000;
+
+    // `GetConsoleMode` / `SetConsoleMode` flags (`consoleapi.h`): input handles.
+    pub const ENABLE_PROCESSED_INPUT: DWORD = 0x0001;
+    pub const ENABLE_LINE_INPUT: DWORD = 0x0002;
+    pub const ENABLE_ECHO_INPUT: DWORD = 0x0004;
+    pub const ENABLE_VIRTUAL_TERMINAL_INPUT: DWORD = 0x0200;
+    // Screen-buffer handles.
+    pub const ENABLE_PROCESSED_OUTPUT: DWORD = 0x0001;
+    pub const ENABLE_WRAP_AT_EOL_OUTPUT: DWORD = 0x0002;
+    pub const ENABLE_VIRTUAL_TERMINAL_PROCESSING: DWORD = 0x0004;
+
+    /// `INPUT_RECORD::EventType` (`wincon.h`).
+    pub const KEY_EVENT: WORD = 0x0001;
+    /// `KEY_EVENT_RECORD::dwControlKeyState` (`wincon.h`).
+    pub const LEFT_CTRL_PRESSED: DWORD = 0x0008;
+
+    // `CreateProcessW` dwCreationFlags (`winbase.h`).
+    pub const CREATE_UNICODE_ENVIRONMENT: DWORD = 0x0000_0400;
+    pub const EXTENDED_STARTUPINFO_PRESENT: DWORD = 0x0008_0000;
+
+    /// `UpdateProcThreadAttribute` Attribute (`winbase.h`).
+    pub const PROC_THREAD_ATTRIBUTE_JOB_LIST: usize = 0x0002_000D;
+
+    // `JOBOBJECT_BASIC_LIMIT_INFORMATION::LimitFlags` (`winnt.h`).
+    pub const JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION: DWORD = 0x0000_0400;
+    pub const JOB_OBJECT_LIMIT_BREAKAWAY_OK: DWORD = 0x0000_0800;
+    pub const JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK: DWORD = 0x0000_1000;
+    pub const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: DWORD = 0x0000_2000;
+
+    /// `WaitForSingleObject` / `WaitForMultipleObjects`: the first handle is signalled.
+    pub const WAIT_OBJECT_0: DWORD = 0;
+
+    /// `CompareStringOrdinal` result.
+    pub const CSTR_EQUAL: c_int = 2;
+
+    /// `LoadLibraryExW` dwFlags.
+    pub const LOAD_WITH_ALTERED_SEARCH_PATH: DWORD = 0x0000_0008;
+
+    /// Registry key handle (`winreg.h`).
+    pub type HKEY = *mut c_void;
+    /// `(HKEY)(ULONG_PTR)((LONG)0x80000002)`: a predefined handle (the `LONG`
+    /// sign-extends), not a pointer.
+    pub const HKEY_LOCAL_MACHINE: HKEY = 0x8000_0002_u32 as i32 as isize as HKEY;
+
+    /// `GUID` (`guiddef.h`).
+    #[repr(C)]
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub struct GUID {
+        pub Data1: u32,
+        pub Data2: u16,
+        pub Data3: u16,
+        pub Data4: [u8; 8],
+    }
+
+    /// `RTL_OSVERSIONINFOW` (`winnt.h`).
+    #[repr(C)]
+    pub struct OSVERSIONINFOW {
+        pub dwOSVersionInfoSize: DWORD,
+        pub dwMajorVersion: DWORD,
+        pub dwMinorVersion: DWORD,
+        pub dwBuildNumber: DWORD,
+        pub dwPlatformId: DWORD,
+        pub szCSDVersion: [WCHAR; 128],
+    }
+
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        /// A bad handle is `WAIT_FAILED`.
+        pub safe fn WaitForSingleObject(hHandle: HANDLE, dwMilliseconds: DWORD) -> DWORD;
+        pub fn WaitForMultipleObjects(
+            nCount: DWORD,
+            lpHandles: *const HANDLE,
+            bWaitAll: BOOL,
+            dwMilliseconds: DWORD,
+        ) -> DWORD;
+        pub fn CreateEventW(
+            lpEventAttributes: *mut SECURITY_ATTRIBUTES,
+            bManualReset: BOOL,
+            bInitialState: BOOL,
+            lpName: LPCWSTR,
+        ) -> HANDLE;
+        pub fn SetEvent(hEvent: HANDLE) -> BOOL;
+        pub fn CancelIoEx(hFile: HANDLE, lpOverlapped: *mut OVERLAPPED) -> BOOL;
+        /// No preconditions.
+        pub safe fn GetCurrentThreadId() -> DWORD;
+        /// No preconditions.
+        pub safe fn GetCurrentProcessId() -> DWORD;
+        /// No preconditions.
+        pub safe fn GetTickCount64() -> u64;
+        /// A bad handle is `FILE_TYPE_UNKNOWN` with the last error set.
+        pub safe fn GetFileType(hFile: HANDLE) -> DWORD;
+        /// A bad handle fails with `ERROR_INVALID_HANDLE`.
+        pub safe fn TerminateProcess(hProcess: HANDLE, uExitCode: UINT) -> BOOL;
+        pub fn GetEnvironmentVariableW(lpName: LPCWSTR, lpBuffer: LPWSTR, nSize: DWORD) -> DWORD;
+        pub fn GetShortPathNameW(
+            lpszLongPath: LPCWSTR,
+            lpszShortPath: LPWSTR,
+            cchBuffer: DWORD,
+        ) -> DWORD;
+        pub fn CompareStringOrdinal(
+            lpString1: *const WCHAR,
+            cchCount1: c_int,
+            lpString2: *const WCHAR,
+            cchCount2: c_int,
+            bIgnoreCase: BOOL,
+        ) -> c_int;
+    }
+
+    #[link(name = "advapi32")]
+    unsafe extern "system" {
+        /// Returns a Win32 error code, `ERROR_SUCCESS` on success.
+        pub fn RegGetValueW(
+            hkey: HKEY,
+            lpSubKey: LPCWSTR,
+            lpValue: LPCWSTR,
+            dwFlags: DWORD,
+            pdwType: *mut DWORD,
+            pvData: *mut c_void,
+            pcbData: *mut DWORD,
+        ) -> LONG;
+    }
+
+    #[link(name = "ntdll")]
+    unsafe extern "system" {
+        /// Fills `lpVersionInformation`, whose `dwOSVersionInfoSize` the caller set.
+        pub safe fn RtlGetVersion(lpVersionInformation: &mut OSVERSIONINFOW) -> NTSTATUS;
+    }
 }

@@ -15,6 +15,7 @@ use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, Ordering};
 
 use bun_jsc::posix_signal_handle::Bun__onPosixSignal;
 use bun_sys::windows as win;
+use bun_sys::windows::kernel32::GetTickCount64;
 
 // The numbers `os.constants.signals` reports on Windows.
 const SIGHUP: c_int = 1;
@@ -25,7 +26,6 @@ const SIGWINCH: c_int = 28;
 #[link(name = "kernel32")]
 unsafe extern "system" {
     safe fn Sleep(dwMilliseconds: win::DWORD);
-    safe fn GetTickCount64() -> u64;
     fn CreateThreadpoolTimer(
         pfnti: extern "system" fn(*mut c_void, *mut c_void, *mut c_void),
         pv: *mut c_void,

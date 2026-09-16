@@ -284,13 +284,10 @@ fn blank_cells(
         let info = screen_buffer_info(handle)?;
         let (start, count, attributes) = region(&info);
         let mut written: DWORD = 0;
-        // SAFETY: `written` is a valid out-pointer; everything else is by value.
-        let filled = unsafe {
-            FillConsoleOutputCharacterW(handle, u16::from(b' '), count, start, &raw mut written)
-                != 0
-                && FillConsoleOutputAttribute(handle, attributes, written, start, &raw mut written)
-                    != 0
-        };
+        let filled =
+            FillConsoleOutputCharacterW(handle, u16::from(b' '), count, start, &mut written) != 0
+                && FillConsoleOutputAttribute(handle, attributes, written, start, &mut written)
+                    != 0;
         if filled {
             return Ok(info);
         }
@@ -364,11 +361,8 @@ impl Console {
     fn determine_vterm_state(&mut self, handle: HANDLE) {
         self.need_check_vterm_state = false;
         let mut mode: DWORD = 0;
-        // SAFETY: `mode` is a valid out-pointer; a bad `handle` makes the calls fail.
-        let enabled = unsafe {
-            GetConsoleMode(handle, &raw mut mode) != 0
-                && SetConsoleMode(handle, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING) != 0
-        };
+        let enabled = GetConsoleMode(handle, &mut mode) != 0
+            && SetConsoleMode(handle, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING) != 0;
         if enabled {
             self.vterm_state = VtermState::Supported;
         }
@@ -931,8 +925,7 @@ impl Writer<'_> {
             let position = self
                 .console
                 .make_real_coord(&info, x, x_relative, y, y_relative);
-            // SAFETY: by-value arguments only.
-            if unsafe { SetConsoleCursorPosition(self.handle, position) } != 0 {
+            if SetConsoleCursorPosition(self.handle, position) != 0 {
                 return Ok(());
             }
             let err = GetLastError();
@@ -949,8 +942,7 @@ impl Writer<'_> {
         let attributes = self.console.default_text_attributes;
 
         set_text_attribute(self.handle, attributes)?;
-        // SAFETY: by-value arguments only.
-        if unsafe { SetConsoleCursorPosition(self.handle, ORIGIN) } == 0 {
+        if SetConsoleCursorPosition(self.handle, ORIGIN) == 0 {
             return Err(GetLastError());
         }
         let info = blank_cells(self.handle, |info| {

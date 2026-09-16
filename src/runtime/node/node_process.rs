@@ -183,12 +183,7 @@ mod _impl {
     };
 
     #[cfg(windows)]
-    unsafe extern "C" {
-        // SAFETY precondition: `name` must point to a NUL-terminated wide string;
-        // `value` must be either null (delete) or a NUL-terminated wide string.
-        // Raw-pointer contract — cannot be `safe fn`.
-        fn SetEnvironmentVariableW(name: *const u16, value: *const u16) -> i32;
-    }
+    use bun_sys::windows::SetEnvironmentVariableW;
 
     // ───────────────────────────── title ─────────────────────────────
 

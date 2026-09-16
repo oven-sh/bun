@@ -332,10 +332,7 @@ impl Process {
         use bun_spawn_sys::windows::win32;
         let rusage = bun_spawn_sys::process_rusage(self.process_handle);
         let mut exit_code: win32::DWORD = 0;
-        // SAFETY: `exit_code` is a valid out-pointer.
-        let status = if unsafe { win32::GetExitCodeProcess(self.process_handle, &mut exit_code) }
-            == 0
-        {
+        let status = if win32::GetExitCodeProcess(self.process_handle, &mut exit_code) == 0 {
             Status::Err(win32::last_error(bun_sys::Tag::waitpid))
         } else if self.exit_signal > 0 && self.exit_signal < bun_core::SignalCode::SIGSYS as u8 {
             Status::Signaled(self.exit_signal)
@@ -787,7 +784,7 @@ impl Exited {
     /// Ended by the default Ctrl+C handler (`STATUS_CONTROL_C_EXIT`). Never on
     /// POSIX, where that is a `SIGINT` death.
     #[inline]
-    pub fn is_ctrl_c_exit(&self) -> bool {
+    pub fn is_ctrl_c_exit(self) -> bool {
         #[cfg(windows)]
         return self.raw == bun_sys::windows::STATUS_CONTROL_C_EXIT;
         #[cfg(not(windows))]
@@ -2052,8 +2049,7 @@ mod spawn_process_body {
                 return Ok(Err(win32::last_error(bun_sys::Tag::waitpid)));
             }
             let mut exit_code: u32 = 0;
-            // SAFETY: `exit_code` is a valid out-pointer.
-            if unsafe { win32::GetExitCodeProcess(process.0, &mut exit_code) } == 0 {
+            if win32::GetExitCodeProcess(process.0, &mut exit_code) == 0 {
                 return Ok(Err(win32::last_error(bun_sys::Tag::waitpid)));
             }
 

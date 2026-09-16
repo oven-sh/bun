@@ -1063,6 +1063,7 @@ fn copy_by_path(
                 path: destination.pathlike.clone(),
                 len: max_length as u64,
                 flags: 0,
+                as_written: true,
             },
             node_fs::Flavor::Sync,
         );

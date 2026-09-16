@@ -1260,14 +1260,7 @@ pub unsafe fn fd_path_raw(fd: Fd, buf: *mut u8, cap: usize) -> isize {
 pub unsafe fn fd_path_raw_w(fd: Fd, buf: *mut u16, cap: usize) -> isize {
     #[cfg(windows)]
     {
-        unsafe extern "system" {
-            fn GetFinalPathNameByHandleW(
-                hFile: *mut core::ffi::c_void,
-                lpszFilePath: *mut u16,
-                cchFilePath: u32,
-                dwFlags: u32,
-            ) -> u32;
-        }
+        use bun_windows_sys::GetFinalPathNameByHandleW;
         // VOLUME_NAME_DOS (0) — matches `bun_sys::windows::GetFinalPathNameByHandle` default.
         // SAFETY: buf has `cap` u16 units; handle from Fd::native().
         let n = unsafe { GetFinalPathNameByHandleW(fd.native(), buf, cap as u32, 0) } as usize;
@@ -4046,9 +4039,7 @@ fn getcwd_len(buf: &mut PathBuffer) -> crate::CrateResult<usize> {
     {
         // Windows: wrap
         // `kernel32.GetCurrentDirectoryW` and transcode WTF-16 → WTF-8.
-        unsafe extern "system" {
-            fn GetCurrentDirectoryW(nBufferLength: u32, lpBuffer: *mut u16) -> u32;
-        }
+        use bun_windows_sys::GetCurrentDirectoryW;
         let mut wbuf = WPathBuffer::ZEROED;
         // SAFETY: `wbuf` has `PATH_MAX_WIDE` writable u16 units.
         let n = unsafe { GetCurrentDirectoryW(wbuf.0.len() as u32, wbuf.0.as_mut_ptr()) } as usize;
@@ -4285,12 +4276,7 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
     {
         // Signal the watcher-manager parent via magic exit code.
         use crate::windows_sys::kernel32::{GetCurrentProcess, GetLastError};
-        unsafe extern "system" {
-            // `h` is an opaque kernel HANDLE (never dereferenced in-process);
-            // the kernel validates it and returns FALSE on a bad handle. No
-            // memory-safety preconditions.
-            safe fn TerminateProcess(h: *mut core::ffi::c_void, code: u32) -> i32;
-        }
+        use bun_windows_sys::TerminateProcess;
         // = 3224497970. Parent
         // watcher-manager compares the child's exit code against exactly this.
         const WATCHER_RELOAD_EXIT: u32 = 0xC031_EF32;

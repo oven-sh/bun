@@ -999,14 +999,15 @@ pub mod get_addr_info_request {
         result: *mut *mut AddrInfo,
     ) -> c_int {
         use bun_errno::uv_codes as uv;
-        const WSAEINVAL: c_int = 10022;
-        const WSAEAFNOSUPPORT: c_int = 10047;
-        const WSAESOCKTNOSUPPORT: c_int = 10044;
-        const WSATYPE_NOT_FOUND: c_int = 10109;
-        const WSAHOST_NOT_FOUND: c_int = 11001;
-        const WSATRY_AGAIN: c_int = 11002;
-        const WSANO_RECOVERY: c_int = 11003;
-        const WSA_NOT_ENOUGH_MEMORY: c_int = 8;
+        use bun_sys::windows::Win32Error as W;
+        const WSAEINVAL: c_int = W::WSAEINVAL.0 as c_int;
+        const WSAEAFNOSUPPORT: c_int = W::WSAEAFNOSUPPORT.0 as c_int;
+        const WSAESOCKTNOSUPPORT: c_int = W::WSAESOCKTNOSUPPORT.0 as c_int;
+        const WSATYPE_NOT_FOUND: c_int = W::WSATYPE_NOT_FOUND.0 as c_int;
+        const WSAHOST_NOT_FOUND: c_int = W::WSAHOST_NOT_FOUND.0 as c_int;
+        const WSATRY_AGAIN: c_int = W::WSATRY_AGAIN.0 as c_int;
+        const WSANO_RECOVERY: c_int = W::WSANO_RECOVERY.0 as c_int;
+        const WSA_NOT_ENOUGH_MEMORY: c_int = W::NOT_ENOUGH_MEMORY.0 as c_int;
 
         bun_uws_sys::iocp::us_internal_winsock_ensure();
 

@@ -2014,6 +2014,8 @@ pub mod args {
         pub path: PathOrFileDescriptor<'a>,
         pub(crate) len: u64, // u63
         pub(crate) flags: i32,
+        /// `path` is a `Bun.file`'s: see [`PathLikeExt::slice_z_as_written`].
+        pub(crate) as_written: bool,
     }
     impl Truncate<'static> {
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
@@ -2031,6 +2033,7 @@ pub mod args {
                 path,
                 len,
                 flags: 0,
+                as_written: false,
             })
         }
     }
@@ -3289,6 +3292,8 @@ pub mod args {
         pub(crate) limit_size_for_javascript: bool,
         pub(crate) flag: FileSystemFlags,
         pub(crate) signal: Option<AbortSignalRef>,
+        /// `path` is a `Bun.file`'s: see [`PathLikeExt::slice_z_as_written`].
+        pub(crate) as_written: bool,
     }
     impl Default for ReadFile<'_> {
         fn default() -> Self {
@@ -3300,6 +3305,7 @@ pub mod args {
                 limit_size_for_javascript: false,
                 flag: FileSystemFlags::R,
                 signal: None,
+                as_written: false,
             }
         }
     }
@@ -5987,7 +5993,11 @@ impl NodeFS {
         let path_is_path = matches!(args.path, PathOrFileDescriptor::Path(_));
         let fd: FD = match &args.path {
             PathOrFileDescriptor::Path(p) => {
-                let path = p.slice_z(&mut self.sync_error_buf);
+                let path = if args.as_written {
+                    p.slice_z_as_written(&mut self.sync_error_buf)
+                } else {
+                    p.slice_z(&mut self.sync_error_buf)
+                };
 
                 if let Some(graph) = standalone_module_graph() {
                     if let Some(file) = graph.find_ref(path.as_bytes()) {
@@ -6847,26 +6857,33 @@ impl NodeFS {
         }
     }
 
-    fn truncate_inner(&mut self, path: &PathLike, len: u64, flags: i32) -> Maybe<ret::Truncate> {
+    fn truncate_inner(
+        &mut self,
+        path: &PathLike,
+        len: u64,
+        flags: i32,
+        as_written: bool,
+    ) -> Maybe<ret::Truncate> {
         // Mask `len` to a `u63` envelope so the `i64` cast is always in range,
         // rather than `try_from().unwrap()`-panicking
         // on a hostile `> i64::MAX` value.
         let len_i64 = (len & ((1u64 << 63) - 1)) as i64;
         #[cfg(windows)]
         {
-            let fd = sys::open(
-                path.slice_z(&mut self.sync_error_buf),
-                sys::O::WRONLY | flags,
-                0o644,
-            )
-            .map_err(|err| err.with_path_and_syscall(path.slice(), sys::Tag::truncate))?;
+            let path_z = if as_written {
+                path.slice_z_as_written(&mut self.sync_error_buf)
+            } else {
+                path.slice_z(&mut self.sync_error_buf)
+            };
+            let fd = sys::open(path_z, sys::O::WRONLY | flags, 0o644)
+                .map_err(|err| err.with_path_and_syscall(path.slice(), sys::Tag::truncate))?;
             let _close = scopeguard::guard(fd, |fd| fd.close());
             return sys::ftruncate(fd, len_i64)
                 .map_err(|err| err.with_path_and_syscall(path.slice(), sys::Tag::truncate));
         }
         #[cfg(not(windows))]
         {
-            let _ = flags;
+            let _ = (flags, as_written);
             // SAFETY: path is NUL-terminated by slice_z; truncate(2) is the libc FFI
             Maybe::<ret::Truncate>::errno_sys_p(
                 unsafe {
@@ -6888,7 +6905,9 @@ impl NodeFS {
             PathOrFileDescriptor::Fd(fd) => {
                 sys::ftruncate(*fd, (args.len & ((1u64 << 63) - 1)) as i64)
             }
-            PathOrFileDescriptor::Path(p) => self.truncate_inner(p, args.len, args.flags),
+            PathOrFileDescriptor::Path(p) => {
+                self.truncate_inner(p, args.len, args.flags, args.as_written)
+            }
         }
     }
 

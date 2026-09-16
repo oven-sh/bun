@@ -1080,8 +1080,8 @@ fn create_overlapped_pipe_pair(
     // PIPE_ACCESS_OUTBOUND: server writes, client reads.
     server_access: u32,
 ) -> Result<PipePair, CreatePtyError> {
+    use windows::FILE_FLAG_FIRST_PIPE_INSTANCE;
     use windows::kernel32 as k32;
-    const FILE_FLAG_FIRST_PIPE_INSTANCE: u32 = 0x00080000;
 
     let pid: u32 = windows::GetCurrentProcessId();
     let counter = windows::fs::next_pipe_serial();

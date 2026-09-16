@@ -289,10 +289,11 @@ mod windows {
     use bun_jsc::JSGlobalObject;
     use bun_jsc::virtual_machine::VirtualMachine;
 
-    type HANDLE = *mut c_void;
-    type BOOL = i32;
-    type DWORD = u32;
-    const WAIT_OBJECT_0: DWORD = 0;
+    use bun_sys::windows::kernel32::{
+        CreateEventW, SetEvent, WaitForMultipleObjects, WaitForSingleObject,
+    };
+    use bun_sys::windows::{CloseHandle, DWORD, HANDLE, WAIT_OBJECT_0};
+
     const LOW_MEMORY_RESOURCE_NOTIFICATION: i32 = 0;
     /// The notification handle stays signalled while memory is low; after
     /// posting once we wait on `shutdown` alone for this long before
@@ -301,16 +302,6 @@ mod windows {
 
     unsafe extern "system" {
         fn CreateMemoryResourceNotification(kind: i32) -> HANDLE;
-        fn CreateEventW(
-            attrs: *mut c_void,
-            manual_reset: BOOL,
-            initial: BOOL,
-            name: *const u16,
-        ) -> HANDLE;
-        fn SetEvent(h: HANDLE) -> BOOL;
-        fn WaitForSingleObject(h: HANDLE, ms: DWORD) -> DWORD;
-        fn WaitForMultipleObjects(n: DWORD, h: *const HANDLE, wait_all: BOOL, ms: DWORD) -> DWORD;
-        fn CloseHandle(h: HANDLE) -> BOOL;
     }
 
     /// Owns a kernel HANDLE; closes on drop.
@@ -351,8 +342,7 @@ mod windows {
                 unsafe { drop(bun_core::heap::take(task.as_ptr())) };
                 break;
             }
-            // SAFETY: `shutdown` is valid for the thread's lifetime.
-            if unsafe { WaitForSingleObject(handles[0], HOLDOFF_MS) } == WAIT_OBJECT_0 {
+            if WaitForSingleObject(handles[0], HOLDOFF_MS) == WAIT_OBJECT_0 {
                 break;
             }
         }

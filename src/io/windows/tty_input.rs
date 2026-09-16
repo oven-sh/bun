@@ -227,15 +227,15 @@ fn vt100_fn_key(vk: WORD, shift: bool, ctrl: bool) -> Option<&'static [u8]> {
 mod ffi {
     use bun_windows_sys::{BOOL, DWORD, HANDLE, INPUT_RECORD, WORD};
 
+    pub(super) use bun_windows_sys::{KEY_EVENT, LEFT_CTRL_PRESSED};
+
     // `INPUT_RECORD::EventType`
-    pub(super) const KEY_EVENT: WORD = 0x0001;
     pub(super) const WINDOW_BUFFER_SIZE_EVENT: WORD = 0x0004;
 
     // `KEY_EVENT_RECORD::dwControlKeyState`
     pub(super) const RIGHT_ALT_PRESSED: DWORD = 0x0001;
     pub(super) const LEFT_ALT_PRESSED: DWORD = 0x0002;
     pub(super) const RIGHT_CTRL_PRESSED: DWORD = 0x0004;
-    pub(super) const LEFT_CTRL_PRESSED: DWORD = 0x0008;
     pub(super) const SHIFT_PRESSED: DWORD = 0x0010;
     pub(super) const ENHANCED_KEY: DWORD = 0x0100;
 
@@ -723,7 +723,7 @@ mod tests {
     fn read_raw_reports_the_os_error() {
         let mut state = RawInputState::new();
         let mut out = Vec::new();
-        const ERROR_INVALID_HANDLE: u32 = 6;
+        const ERROR_INVALID_HANDLE: u32 = bun_windows_sys::Win32Error::INVALID_HANDLE.0 as u32;
         assert_eq!(
             read_raw(core::ptr::null_mut(), &mut state, &mut out).map(|result| result.resized),
             Err(ERROR_INVALID_HANDLE)

@@ -56,7 +56,9 @@ The host's references to the graph's objects are dead too. Do not use a graph's 
 - Synchronous calls such as `Bun.spawnSync` and `fs.writeFileSync` run to completion.
 - A raw descriptor from `fs.openSync()` is only a number and stays open, as it does when a worker is terminated.
 
-Native addons are shared, but their asynchronous work is the graph's too. A Node-API async work item or thread-safe function completes in the context of the graph whose code created it. After `dispose()` the addon's completion callback still runs, so it can free what it allocated. It cannot call into JavaScript: `napi_call_function` and the like return `napi_cannot_run_js`, as they do in a worker that is terminating. A promise it settles for the disposed graph stays pending.
+Native addons are shared, but their asynchronous work is the graph's too. A Node-API async work item or thread-safe function completes in the context of the graph whose code created it. After `dispose()` the addon's completion callback still runs, so it can free what it allocated. It cannot call into JavaScript: `napi_call_function` and the like return `napi_cannot_run_js`, as they do in a worker that is terminating. A promise it settles for the disposed graph stays pending. A promise it settles for the host or for another graph is settled.
+
+A thread-safe function keeps the process running only for as long as the graph that created it lives, unless script outside that graph has also asked it to (`napi_ref_threadsafe_function`): then it keeps the process running until the addon lets go, whichever graph is disposed. Its calls always run in the context of the graph that created it. If an addon keeps one thread-safe function for everybody and calls your JavaScript callbacks from it, load the addon in the host first, so that the function is the host's.
 
 ## Disposing
 

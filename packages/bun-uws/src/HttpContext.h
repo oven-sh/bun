@@ -417,10 +417,13 @@ private:
             /* Bun.serve, RFC 9112 9.6: a complete response marked this connection close
              * and sawConnectionClose did not see it (a Connection: close response
              * header). Run onData's tail now: resetResponseState() below drops the mark.
-             * Before the timeout reset, so a socket that has not drained still times out. */
+             * Latch first: a socket that has not drained stays open, and the parser
+             * holds this request's framing, so later bytes must not reach it. Before
+             * the timeout reset, so that socket still times out. */
             if constexpr (!IsNodeHttp) {
                 constexpr uint32_t closeOrPending = HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE | HttpResponseData<SSL>::HTTP_RESPONSE_PENDING;
                 if ((httpResponseData->state & closeOrPending) == HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE) [[unlikely]] {
+                    httpResponseData->sawConnectionClose = true;
                     us_socket_unref((us_socket_t *) s);
                     ((AsyncSocket<SSL> *) s)->uncork();
                     ((HttpResponse<SSL> *) s)->closeIfDoneAndMarked(httpResponseData);

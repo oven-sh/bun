@@ -634,7 +634,7 @@ struct HttpResponseData;
          * at the next request boundary and park the rest", cleared for replay so it can make progress. */
         bool nodeHttpParkAtNextBoundary = false;
         bool nodeHttpSpillReplayScheduled = false;
-        /* A request on this connection had Connection: close or was HTTP/1.0 (RFC 9112 9.6). */
+        /* A request on this connection had Connection: close or was HTTP/1.0, or a Bun.serve response closed it (RFC 9112 9.6). */
         bool sawConnectionClose = false;
         WTF::Vector<char> nodeHttpPausedSpill;
     private:

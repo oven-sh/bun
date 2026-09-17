@@ -5378,8 +5378,25 @@ describe("requests pipelined in one read", () => {
   describe("does not run the requests behind a response that closes the connection", () => {
     const secure = (port: number) => (onConnect: () => void) =>
       nodeTls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false }, onConnect);
+    const close = { headers: { Connection: "close" } };
+    const post = (path: string) => `POST ${path} HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhello`;
 
-    async function run(payload: string, expected: string[], options: object = {}, connect = plain) {
+    // `payload` ends with the request whose response closes. Two more requests follow it.
+    it.each([
+      { name: "at the start of the read", payload: get("/close"), ran: ["/close"] },
+      { name: "in the middle of the read", payload: get("/a") + get("/close"), ran: ["/a", "/close"] },
+      {
+        name: "in the middle of the read, over TLS",
+        payload: get("/a") + get("/close"),
+        ran: ["/a", "/close"],
+        options: { tls },
+        connect: secure,
+      },
+      // The paths below complete the response outside the request handler call.
+      { name: "completed by the request body", payload: get("/a") + post("/body"), ran: ["/a", "/body"] },
+      { name: "with a stream body", payload: get("/a") + get("/stream"), ran: ["/a", "/stream"] },
+      { name: "without a body", payload: get("/a") + get("/204"), ran: ["/a", "/204"] },
+    ])("$name", async ({ payload, ran: expected, options = {}, connect = plain }) => {
       const ran: string[] = [];
       using server = Bun.serve({
         port: 0,
@@ -5388,22 +5405,36 @@ describe("requests pipelined in one read", () => {
         fetch(req) {
           const { pathname } = new URL(req.url);
           ran.push(pathname);
-          return new Response(pathname, pathname === "/close" ? { headers: { Connection: "close" } } : undefined);
+          switch (pathname) {
+            case "/close":
+              return new Response(pathname, close);
+            case "/body":
+              return req.text().then(() => new Response(pathname, close));
+            case "/stream":
+              return new Response(
+                new ReadableStream({
+                  start(controller) {
+                    controller.enqueue(pathname);
+                    controller.close();
+                  },
+                }),
+                close,
+              );
+            case "/204":
+              return new Response(null, { status: 204, ...close });
+            default:
+              return new Response(pathname);
+          }
         },
       });
+      const responses = (reply: string) => reply.split("HTTP/1.1 ").length - 1;
       // Resolves when the server closes. One response too many ends it early.
       const reply = await exchange(
         connect(server.port),
-        payload,
-        reply => parseResponses(reply).length > expected.length,
+        payload + get("/b") + get("/c"),
+        reply => responses(reply) > expected.length,
       );
-      const answered = parseResponses(reply).map(response => response.body);
-      expect({ ran, answered }).toEqual({ ran: expected, answered: expected });
-    }
-
-    it("at the start of the read", () => run(get("/close") + get("/b") + get("/c"), ["/close"]));
-    it("in the middle of the read", () => run(get("/a") + get("/close") + get("/b") + get("/c"), ["/a", "/close"]));
-    it("in the middle of the read, over TLS", () =>
-      run(get("/a") + get("/close") + get("/b") + get("/c"), ["/a", "/close"], { tls }, secure));
+      expect({ ran, responses: responses(reply) }).toEqual({ ran: expected, responses: expected.length });
+    });
   });
 });

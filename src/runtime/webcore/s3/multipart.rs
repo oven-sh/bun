@@ -130,8 +130,7 @@ pub struct MultiPartUpload {
     pub(crate) current_part_number: Cell<u16>,
     pub(crate) ref_count: Cell<u32>,
     pub(crate) ended: Cell<bool>,
-    /// Parts that were in flight when the upload failed and have not reported back yet. The
-    /// rollback waits for them: S3 keeps a part that lands after `AbortMultipartUpload`.
+    /// Parts still in flight after `fail()`: the rollback waits for them.
     pub(crate) parts_in_flight: Cell<u8>,
 
     pub(crate) options: Cell<MultiPartUploadOptions>,
@@ -643,8 +642,7 @@ impl MultiPartUpload {
         Ok(())
     }
 
-    /// A part that was in flight when the upload failed has reported back. True for the last
-    /// one: the rollback that `fail` held back can go out now.
+    /// True when the last part in flight after `fail()` has reported back.
     fn last_part_in_flight_reported(&self) -> bool {
         let left = self.parts_in_flight.get();
         if left == 0 {

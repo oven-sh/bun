@@ -552,6 +552,13 @@ pub mod vec {
             self.0.as_mut_ptr().cast::<u8>()
         }
 
+        /// The whole buffer as uninitialized bytes, for producers typed over `MaybeUninit`.
+        #[inline(always)]
+        pub fn as_uninit_mut(&mut self) -> &mut [core::mem::MaybeUninit<u8>] {
+            // SAFETY: `MaybeUninit<[u8; N]>` and `[MaybeUninit<u8>; N]` have identical layout and no validity invariant.
+            unsafe { core::slice::from_raw_parts_mut(self.0.as_mut_ptr().cast(), N) }
+        }
+
         /// # Safety
         /// Write-only view, same contract as [`spare_bytes_mut`]: only a producer may store into it, and only the prefix it reports may be read back.
         #[inline(always)]

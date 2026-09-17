@@ -91,6 +91,9 @@ pub type uv_uid_t = u8;
 pub type uv_gid_t = u8;
 pub type uv_req_type = c_uint;
 pub type uv_fs_type = c_int;
+pub const UV_FS_READLINK: uv_fs_type = 25;
+pub const UV_FS_REALPATH: uv_fs_type = 28;
+pub const UV_FS_STATFS: uv_fs_type = 34;
 pub(crate) type uv_tty_mode_t = c_uint;
 /// `uv_tty_mode_t` (uv.h) — typed wrapper for `uv_tty_set_mode` callers.
 #[repr(u32)]
@@ -1894,7 +1897,7 @@ pub struct fs_t {
     pub cb: uv_fs_cb,
     pub result: ReturnCodeI64,
     pub(crate) ptr: *mut c_void,
-    pub path: *const c_char,
+    pub(crate) path: *const c_char,
     pub statbuf: uv_stat_t,
     pub work_req: uv__work,
     pub(crate) flags: c_int,
@@ -1904,9 +1907,67 @@ pub struct fs_t {
 }
 pub type uv_fs_t = fs_t;
 
+/// An owned `uv_fs_t` that runs `uv_fs_req_cleanup` on drop if a `uv_fs_*`
+/// call ever wrote it. Safe to move once libuv is done with it: the one
+/// self-reference libuv leaves behind (`fs.info.bufs` pointing at the inline
+/// `bufsml` for reads/writes of ≤ 4 buffers) is cleared before cleanup, so a
+/// moved request never frees a stale interior pointer. While a request is in
+/// flight libuv holds its address, so it must not move then (the async
+/// submitters in `bun_io::uv_fs` keep it boxed).
+#[repr(transparent)]
+pub struct OwnedFsReq(fs_t);
+
+impl OwnedFsReq {
+    #[inline]
+    pub fn new() -> Self {
+        Self(fs_t::uninitialized())
+    }
+}
+impl Default for OwnedFsReq {
+    #[inline]
+    fn default() -> Self {
+        Self::new()
+    }
+}
+impl Drop for OwnedFsReq {
+    #[inline]
+    fn drop(&mut self) {
+        if !self.0.is_initialized() {
+            return;
+        }
+        // SAFETY: `uv__fs_req_init` zeroes the `fs` union, and only
+        // `uv_fs_read`/`uv_fs_write` write the `info` arm's `nbufs`/`bufs`;
+        // with `nbufs <= 4` libuv uses (and `bufs` points at) the inline
+        // `bufsml`, which `uv_fs_req_cleanup` must not free — null it so the
+        // `bufs != bufsml` check there cannot misfire after a move.
+        unsafe {
+            let info = &mut self.0.fs.info;
+            if !info.bufs.is_null() && info.nbufs as usize <= info.bufsml.len() {
+                info.bufs = core::ptr::null_mut();
+            }
+        }
+        self.0.deinit();
+    }
+}
+impl core::ops::Deref for OwnedFsReq {
+    type Target = fs_t;
+    #[inline]
+    fn deref(&self) -> &fs_t {
+        &self.0
+    }
+}
+impl core::ops::DerefMut for OwnedFsReq {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut fs_t {
+        &mut self.0
+    }
+}
+
 impl fs_t {
     #[cfg(debug_assertions)]
     const UV_FS_CLEANEDUP: c_int = 0x0010;
+    /// Poison `loop_` value marking a request never handed to libuv.
+    const UNINIT_LOOP_SENTINEL: usize = 0xAAAA_AAAA_AAAA_0000;
 
     /// Debug sentinel: `loop_` is poisoned so `deinit()` can assert that libuv
     /// actually wrote the request before we try to clean it up.
@@ -1917,7 +1978,7 @@ impl fs_t {
     #[inline(always)]
     pub fn uninitialized() -> fs_t {
         let mut v: fs_t = bun_core::ffi::zeroed();
-        v.loop_ = 0xAAAA_AAAA_AAAA_0000usize as *mut Loop;
+        v.loop_ = Self::UNINIT_LOOP_SENTINEL as *mut Loop;
         v
     }
 
@@ -1931,7 +1992,7 @@ impl fs_t {
     #[inline]
     fn assert_initialized(&self) {
         #[cfg(debug_assertions)]
-        if self.loop_ as usize == 0xAAAA_AAAA_AAAA_0000usize {
+        if self.loop_ as usize == Self::UNINIT_LOOP_SENTINEL {
             panic!("uv_fs_t was not initialized");
         }
     }
@@ -1939,7 +2000,7 @@ impl fs_t {
     pub fn assert_cleaned_up(&self) {
         #[cfg(debug_assertions)]
         {
-            if self.loop_ as usize == 0xAAAA_AAAA_AAAA_0000usize {
+            if self.loop_ as usize == Self::UNINIT_LOOP_SENTINEL {
                 return;
             }
             if (self.flags & Self::UV_FS_CLEANEDUP) != 0 {
@@ -1954,6 +2015,53 @@ impl fs_t {
     pub unsafe fn ptr_as<T>(&self) -> *const T {
         self.assert_initialized();
         self.ptr.cast::<T>()
+    }
+    /// Whether a `uv_fs_*` call has written this request (vs. the
+    /// [`uninitialized`](Self::uninitialized) sentinel).
+    #[inline]
+    pub fn is_initialized(&self) -> bool {
+        self.loop_ as usize != Self::UNINIT_LOOP_SENTINEL
+    }
+    /// The `uv_statfs_t` a successful `uv_fs_statfs` left in `req.ptr`, copied
+    /// out (`None` before completion, on error, or after cleanup nulled it).
+    #[inline]
+    pub fn statfs_result(&self) -> Option<uv_statfs_t> {
+        if !self.is_initialized() || self.fs_type != UV_FS_STATFS || self.ptr.is_null() {
+            return None;
+        }
+        // SAFETY: for a completed `UV_FS_STATFS` request libuv points `ptr` at a
+        // heap `uv_statfs_t` it owns until `uv_fs_req_cleanup`; no alignment
+        // promise, hence the unaligned read.
+        Some(unsafe { core::ptr::read_unaligned(self.ptr.cast::<uv_statfs_t>()) })
+    }
+    /// The NUL-terminated string a successful `uv_fs_realpath`/`uv_fs_readlink`
+    /// left in `req.ptr` (`None` before completion, on error, or after cleanup).
+    #[inline]
+    pub fn ptr_c_str(&self) -> Option<&core::ffi::CStr> {
+        if !self.is_initialized()
+            || !(self.fs_type == UV_FS_REALPATH || self.fs_type == UV_FS_READLINK)
+            || self.ptr.is_null()
+        {
+            return None;
+        }
+        // SAFETY: for these request types libuv stores a heap NUL-terminated
+        // string in `ptr`, owned by the request until `uv_fs_req_cleanup`.
+        Some(unsafe { core::ffi::CStr::from_ptr(self.ptr.cast::<c_char>()) })
+    }
+    /// `req.path` — the request's (UTF-8, NUL-terminated) path; for
+    /// `uv_fs_mkdtemp`/`uv_fs_mkstemp` libuv rewrites it to the created name.
+    ///
+    /// # Safety
+    /// The path passed to the originating `uv_fs_*` call must still be alive:
+    /// synchronous requests (`cb == NULL`) borrow it instead of copying.
+    #[inline]
+    pub unsafe fn path_c_str(&self) -> Option<&core::ffi::CStr> {
+        if !self.is_initialized() || self.path.is_null() {
+            return None;
+        }
+        // SAFETY: NUL-terminated; either libuv's owned copy (until
+        // `uv_fs_req_cleanup` nulls it) or the caller's input per the contract.
+        Some(unsafe { core::ffi::CStr::from_ptr(self.path) })
     }
     /// `req.file.fd` union arm. The union is private
     /// because the active variant is path-dependent (`uv_fs_open` writes `fd`;
@@ -2322,6 +2430,12 @@ impl fmt::Display for ReturnCode {
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct ReturnCodeI64(pub(crate) i64);
+impl From<ReturnCode> for ReturnCodeI64 {
+    #[inline]
+    fn from(rc: ReturnCode) -> Self {
+        Self(i64::from(rc.int()))
+    }
+}
 impl ReturnCodeI64 {
     #[inline]
     pub const fn int(self) -> i64 {

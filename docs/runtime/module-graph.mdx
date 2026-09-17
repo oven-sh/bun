@@ -5,7 +5,7 @@ description: Run many instances of one app in a single process with Bun.ModuleGr
 
 <Warning>`Bun.ModuleGraph` is experimental.</Warning>
 
-A `Bun.ModuleGraph` loads modules into the current global another time. Each graph has its own module instances, its own `require.cache`, and its own values for the names you pass as `globals`. Parsed code and bytecode are shared between graphs; ES modules share JIT-compiled code too. The first module a graph `import()`s is that graph's main module: `import.meta.main` and `require.main === module` are true in it, and in no other module of the graph.
+A `Bun.ModuleGraph` loads modules into the current global another time. Each graph has its own module instances, its own `require.cache`, and its own values for the names you pass as `globals`. Graphs whose `globals` have the same names share the compiled code of their ES modules (see [Compiled code](#compiled-code)). The first module a graph `import()`s is that graph's main module: `import.meta.main` and `require.main === module` are true in it, and in no other module of the graph.
 
 ```ts host.ts icon="/icons/typescript.svg"
 // A `process` of the tenant's own: its module code sees this one.
@@ -126,3 +126,12 @@ The global object, `globalThis` properties, plugins and native addons are shared
 `http.globalAgent` and `https.globalAgent` are shared too. A connection belongs to the `Agent` that opened it, and an `Agent` to the script that made it, so a request a graph makes without an `agent` uses a connection that is not the graph's: `dispose()` does not close it, and it keeps the process running like any connection of the host's. Code whose connections should go with its graph passes an `Agent` it made itself.
 
 `mock.module()` in `bun test` is one of the shared things: it applies to what a graph loads afterwards. A graph that already loaded the module keeps the instance it has.
+
+### Compiled code
+
+Graphs whose `globals` have the same names share the compiled code of their ES modules: the parsed code, the bytecode and the JIT-compiled code. A graph whose `globals` have other names compiles its own copy, and so does the host.
+
+Sharing saves memory and makes a graph faster to load. It does not make every graph start warm, because JIT-compiled code that graphs share has to be right for all of them:
+
+- While a module has one instance, the engine optimizes the module's code for that instance. When a second graph loads the module, the engine discards that optimized code and optimizes the code again for any instance. The second graph starts cold, and the first one slows down until the code is optimized again. Graphs that come later start with the code the others have warmed up.
+- A class that a module defines is a different class in each graph, so code that uses it is optimized for the classes of all the graphs that run it. That code runs slower with several graphs than with one, more so when the class has private fields, and it can be optimized again when another graph starts to run it.

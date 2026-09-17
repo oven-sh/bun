@@ -5421,9 +5421,11 @@ declare module "bun" {
   /**
    * A further instantiation of ES module graphs in **this** global object.
    *
-   * Every graph that loads a file shares that file's parsed code and
-   * bytecode with every other graph and with the host, and for ES modules
-   * the JIT-compiled code too; each graph gets its own module-level state
+   * Graphs whose `globals` have the same names share the compiled code of
+   * their ES modules: parsed code, bytecode and JIT-compiled code. That
+   * saves memory and load time; it does not make every graph start warm
+   * (see https://bun.com/docs/runtime/module-graph#compiled-code). Each
+   * graph gets its own module-level state
    * (top-level bindings, classes, closures), its own module registry for
    * `import` / `import()`, its own `require.cache` (`require()`,
    * `import.meta.require()` and `createRequire()` called from the graph's

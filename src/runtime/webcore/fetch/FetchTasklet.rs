@@ -1162,8 +1162,8 @@ impl FetchTasklet {
     }
 
     /// `Ok` when the callback approved the certificate; `Err(Some(error))`
-    /// with the Error it returned, what it threw, or a TypeError for another
-    /// truthy return value; `Err(None)` when there was no certificate to show it.
+    /// with the reason when it did not; `Err(None)` when there was no
+    /// certificate to show it.
     fn run_check_server_identity(
         &mut self,
         certificate_info: &CertificateInfo,
@@ -1213,10 +1213,7 @@ impl FetchTasklet {
         if check_result.is_any_error() {
             return Err(Some(check_result));
         }
-        // > On success, returns <undefined>
-        // Node fails the connection for every truthy value, so a Promise from
-        // an `async` callback approves nothing:
-        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1671-L1688
+        // Like Node, fail on any other truthy value, a Promise included: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1671-L1688
         if check_result.to_boolean() {
             let received = JSGlobalObject::determine_specific_type(&global_object, check_result)
                 .map_err(|e| Some(global_object.take_exception(e)))?;
@@ -1231,6 +1228,7 @@ impl FetchTasklet {
                     .to_js(),
             ));
         }
+        // > On success, returns <undefined>
         Ok(())
     }
 

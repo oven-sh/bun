@@ -348,12 +348,18 @@ pub mod random {
             let max: i64 = max_value.as_number().trunc() as i64;
 
             if max <= min {
+                // Node renders the received value with util.inspect, which keeps the sign of -0.
+                let mut buf = [0u8; 124];
+                let received = bun_core::fmt::FormatDouble::dtoa_with_negative_zero(
+                    &mut buf,
+                    max_value.as_number(),
+                );
                 return Err(global
                 .err(
                     jsc::ErrorCode::OUT_OF_RANGE,
                     format_args!(
                         "The value of \"max\" is out of range. It must be greater than the value of \"min\" ({}). Received {}",
-                        min, max
+                        min, bstr::BStr::new(received)
                     ),
                 )
                 .throw());

@@ -12,8 +12,11 @@
 #include "helpers.h"
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/ErrorInstance.h"
+#include "JavaScriptCore/JSFunction.h"
 #include "JavaScriptCore/JSString.h"
 #include "JavaScriptCore/JSType.h"
+#include "JavaScriptCore/MathCommon.h"
+#include "JavaScriptCore/ProxyObject.h"
 #include "JavaScriptCore/Symbol.h"
 #include "wtf/Assertions.h"
 #include "wtf/Vector.h"
@@ -351,6 +354,12 @@ void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, MessageBuilder& buil
 {
     ASSERT(!arg.isEmpty());
     if (!arg.isCell()) {
+        // util.inspect and util.format's %s both print -0 with its sign. ToString drops it.
+        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/inspect.js#L2191-L2197
+        if (arg.isDouble() && JSC::isNegativeZero(arg.asDouble())) {
+            builder.append("-0"_s);
+            return;
+        }
         builder.append(arg.toWTFStringForConsole(globalObject));
         return;
     }
@@ -410,6 +419,48 @@ void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, MessageBuilder& buil
 
     // Node renders objects inline in error messages ("Received { abc: 123 }").
     builder.append(Bun__inspect_singleline(defaultGlobalObject(globalObject), arg).transferToWTFString());
+}
+
+// util.format's %s prints an object through String() when the toString or Symbol.toPrimitive
+// it would call is user code, and through util.inspect otherwise (hasBuiltInToString in
+// lib/internal/util/inspect.js).
+static bool hasUserToString(JSC::JSGlobalObject* globalObject, JSC::JSObject* object)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    while (auto* proxy = dynamicDowncast<JSC::ProxyObject>(object)) {
+        if (proxy->isRevoked())
+            return false;
+        object = proxy->target();
+    }
+    const JSC::Identifier* names[] = { &vm.propertyNames->toPrimitiveSymbol, &vm.propertyNames->toString };
+    for (const auto* name : names) {
+        JSValue method = object->get(globalObject, *name);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!method.isCell())
+            continue;
+        auto* function = dynamicDowncast<JSC::JSFunction>(method.asCell());
+        if (function && !function->isHostFunction())
+            return true;
+    }
+    return false;
+}
+
+void JSValueToStringLikeFormatS(JSC::JSGlobalObject* globalObject, MessageBuilder& builder, JSValue arg)
+{
+    if (arg.isObject()) {
+        auto& vm = JSC::getVM(globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        bool userToString = hasUserToString(globalObject, arg.getObject());
+        RETURN_IF_EXCEPTION(scope, );
+        if (userToString) {
+            auto string = arg.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, );
+            builder.append(string);
+            return;
+        }
+    }
+    JSValueToStringSafe(globalObject, builder, arg);
 }
 
 void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, MessageBuilder& builder, JSValue value)
@@ -1260,20 +1311,11 @@ JSC::EncodedJSValue INVALID_FILE_URL_PATH(JSC::ThrowScope& throwScope, JSC::JSGl
     return {};
 }
 
-JSC::EncodedJSValue UNKNOWN_ENCODING(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::StringView encoding)
-{
-    MessageBuilder message;
-    message.append("Unknown encoding: "_s, encoding);
-    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_UNKNOWN_ENCODING, message));
-    throwScope.release();
-    return {};
-}
-
 JSC::EncodedJSValue UNKNOWN_ENCODING(JSC::ThrowScope& scope, JSGlobalObject* globalObject, JSValue encodingValue)
 {
     MessageBuilder builder;
     builder.append("Unknown encoding: "_s);
-    JSValueToStringSafe(globalObject, builder, encodingValue);
+    JSValueToStringLikeFormatS(globalObject, builder, encodingValue);
     RELEASE_RETURN_IF_EXCEPTION(scope, {});
     scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_UNKNOWN_ENCODING, builder));
     scope.release();
@@ -1878,9 +1920,9 @@ JSC::EncodedJSValue Bun::throwError(JSC::JSGlobalObject* globalObject, JSC::Thro
 
 namespace Bun {
 
-// Error codes whose message is fixed text around one or two stringified
-// arguments; `jsFunctionMakeErrorWithCode` builds these from the table instead
-// of a switch case each.
+// Error codes whose message is fixed text around one or two `%s` arguments;
+// `jsFunctionMakeErrorWithCode` builds these from the table instead of a switch
+// case each.
 struct SimpleErrorMessage {
     Bun::ErrorCode code;
     uint8_t argumentCount;
@@ -1926,6 +1968,7 @@ static constexpr SimpleErrorMessage simpleErrorMessages[] = {
     { ErrorCode::ERR_VM_MODULE_STATUS, 1, { "Module status "_s, ""_s, ""_s } },
     { ErrorCode::ERR_ZSTD_INVALID_PARAM, 1, { ""_s, " is not a valid zstd parameter"_s, ""_s } },
     { ErrorCode::ERR_INSPECTOR_COMMAND, 1, { "Inspector error "_s, ""_s, ""_s } },
+    { ErrorCode::ERR_UNKNOWN_SIGNAL, 1, { "Unknown signal: "_s, ""_s, ""_s } },
 };
 
 static JSC::EncodedJSValue makeSimpleErrorMessage(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame, JSC::ThrowScope& scope, const SimpleErrorMessage& entry)
@@ -1933,9 +1976,8 @@ static JSC::EncodedJSValue makeSimpleErrorMessage(JSC::JSGlobalObject* globalObj
     MessageBuilder builder;
     builder.append(entry.pieces[0]);
     for (unsigned i = 0; i < entry.argumentCount; ++i) {
-        auto string = callFrame->argument(i + 1).toWTFString(globalObject);
+        JSValueToStringLikeFormatS(globalObject, builder, callFrame->argument(i + 1));
         RETURN_IF_EXCEPTION(scope, {});
-        builder.append(string);
         builder.append(entry.pieces[i + 1]);
     }
     return JSC::JSValue::encode(createError(globalObject, entry.code, builder));
@@ -2055,7 +2097,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Bun::jsFunctionMakeErrorWithCode, __att
         auto arg0 = callFrame->argument(1);
         MessageBuilder builder;
         builder.append("Unknown encoding: "_s);
-        JSValueToStringSafe(globalObject, builder, arg0);
+        JSValueToStringLikeFormatS(globalObject, builder, arg0);
         RETURN_IF_EXCEPTION(scope, {});
         return JSC::JSValue::encode(createError(globalObject, error, builder));
     }

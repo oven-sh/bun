@@ -582,11 +582,7 @@ static JSStringDecoder* createDecoder(JSC::JSGlobalObject* lexicalGlobalObject, 
         if (opt.has_value()) {
             encoding = opt.value();
         } else {
-            auto* encodingString = jsEncoding.toString(lexicalGlobalObject);
-            RETURN_IF_EXCEPTION(throwScope, nullptr);
-            const auto& view = encodingString->view(lexicalGlobalObject);
-            RETURN_IF_EXCEPTION(throwScope, nullptr);
-            Bun::ERR::UNKNOWN_ENCODING(throwScope, lexicalGlobalObject, view);
+            Bun::ERR::UNKNOWN_ENCODING(throwScope, lexicalGlobalObject, jsEncoding);
             return nullptr;
         }
     }

@@ -405,6 +405,7 @@ declare function $ERR_INVALID_ARG_TYPE(argName: string, expectedType: string, ac
 declare function $ERR_INVALID_ARG_TYPE(argName: string, expectedTypes: string[], actualValue: any): TypeError;
 declare function $ERR_INVALID_ARG_VALUE(name: string, value: any, reason?: string): TypeError;
 declare function $ERR_UNKNOWN_ENCODING(enc: string): TypeError;
+declare function $ERR_UNKNOWN_SIGNAL(signal: string | number): TypeError;
 declare function $ERR_STREAM_DESTROYED(method: string): Error;
 declare function $ERR_METHOD_NOT_IMPLEMENTED(method: string): Error;
 declare function $ERR_STREAM_ALREADY_FINISHED(method: string): Error;

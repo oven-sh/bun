@@ -1897,6 +1897,24 @@ impl<Impl: BunSelectorImpl> GenericSelector<Impl> {
         }
     }
 
+    /// The selector of a nested declarations rule. See [`SelectorFlags::NESTED_DECLARATIONS`].
+    pub(crate) fn nested_declarations_in(alloc: ArenaPtr) -> Self {
+        let mut this = Self::from_component_in(GenericComponent::Nesting, alloc);
+        this.specificity_and_flags
+            .flags
+            .insert(SelectorFlags::NESTED_DECLARATIONS);
+        this
+    }
+
+    /// The flag survives `append()`, which turns the selector into an ordinary
+    /// `&<component>`, so the components are checked too.
+    pub(crate) fn is_nested_declarations(&self) -> bool {
+        self.specificity_and_flags
+            .flags
+            .contains(SelectorFlags::NESTED_DECLARATIONS)
+            && matches!(self.components.as_slice(), [GenericComponent::Nesting])
+    }
+
     pub(crate) fn specificity(&self) -> u32 {
         self.specificity_and_flags.specificity
     }
@@ -2745,6 +2763,11 @@ bitflags::bitflags! {
         const HAS_PSEUDO = 1 << 0;
         const HAS_SLOTTED = 1 << 1;
         const HAS_PART = 1 << 2;
+        /// The `&` of a [nested declarations rule](https://drafts.csswg.org/css-nesting-1/#nested-declarations-rule).
+        /// It stands for the parent rule's selector list as written: pseudo-elements
+        /// included, each selector with its own specificity. A parsed `&` is
+        /// `:is(<parent list>)`, which has neither property.
+        const NESTED_DECLARATIONS = 1 << 3;
     }
 }
 

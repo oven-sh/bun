@@ -414,6 +414,21 @@ impl<R> CssRule<R> {
             _ => false,
         }
     }
+
+    /// Whether the output of this rule ends with a declaration and not with
+    /// `}`. Minified, such a rule needs a `;` before the rule that follows it.
+    fn ends_with_declaration(&self, dest: &Printer) -> bool {
+        match self {
+            CssRule::Style(style) => style.prints_bare_declarations(dest),
+            CssRule::Media(media) if media.prints_only_its_rules(dest) => media
+                .rules
+                .v
+                .iter()
+                .rfind(|rule| !matches!(rule, CssRule::Ignored))
+                .is_some_and(|rule| rule.ends_with_declaration(dest)),
+            _ => false,
+        }
+    }
 }
 
 // ─── CssRuleList::{to_css,minify,deep_clone} ──────────────────────────────
@@ -422,6 +437,7 @@ impl<R> CssRuleList<R> {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         let mut first = true;
         let mut last_without_block = false;
+        let mut last_needs_semicolon = false;
 
         for rule in self.v.iter() {
             if matches!(rule, CssRule::Ignored) {
@@ -464,6 +480,9 @@ impl<R> CssRuleList<R> {
             if first {
                 first = false;
             } else {
+                if last_needs_semicolon {
+                    dest.write_char(b';')?;
+                }
                 if !dest.minify
                     && !(last_without_block
                         && matches!(
@@ -480,6 +499,8 @@ impl<R> CssRuleList<R> {
                 rule,
                 CssRule::Import(_) | CssRule::Namespace(_) | CssRule::LayerStatement(_)
             );
+            // Not minified, the last declaration already has its `;`.
+            last_needs_semicolon = dest.minify && rule.ends_with_declaration(dest);
         }
         Ok(())
     }
@@ -1152,8 +1173,16 @@ fn merge_style_rules<R>(
             return true;
         }
 
+        // With nesting preserved, a nested declarations rule prints with no
+        // selector (`StyleRule::prints_bare_declarations`), so it cannot share
+        // a selector list with another rule.
+        let keeps_bare_declarations = (src.is_nested_declarations()
+            || dst.is_nested_declarations())
+            && !context.targets.should_compile_same(css::Feature::Nesting);
+
         // Append the selectors to the last rule if the declarations are the same, and all selectors are compatible.
-        if cached_is_compatible(src, src_compat, context.targets)
+        if !keeps_bare_declarations
+            && cached_is_compatible(src, src_compat, context.targets)
             && cached_is_compatible(dst, dst_compat, context.targets)
         {
             let moved = core::mem::take(&mut src.selectors.v);

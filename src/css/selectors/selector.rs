@@ -583,6 +583,23 @@ pub(crate) mod serialize {
         })
     }
 
+    /// Serializes the selector list of a style rule. With nesting compiled
+    /// away, the selector of a nested declarations rule is the parent rule's
+    /// list, as the parent rule prints it. `:is(<parent list>)` would drop the
+    /// parent's pseudo-elements and raise its specificity.
+    pub(crate) fn serialize_style_rule_selectors(
+        list: &[parser::Selector],
+        dest: &mut Printer,
+        context: Option<&StyleContext>,
+    ) -> Result<(), PrintErr> {
+        dest.write_comma_separated(list, |d, sel| match context {
+            Some(ctx) if sel.is_nested_declarations() => {
+                serialize_style_rule_selectors(ctx.selectors.v.slice(), d, ctx.parent)
+            }
+            _ => serialize_selector(sel, d, context, false),
+        })
+    }
+
     fn serialize_selector(
         selector: &parser::Selector,
         dest: &mut Printer,

@@ -16,8 +16,13 @@ pub struct MediaRule<R> {
 // `minify` lives in `rules/mod.rs` (hoisted next to `CssRuleList::minify` so
 // the dispatch can call it without re-exporting `MinifyContext` here).
 impl<R> MediaRule<R> {
+    /// Minified, a query that always matches prints its rules with no `@media` block.
+    pub(crate) fn prints_only_its_rules(&self, dest: &Printer) -> bool {
+        dest.minify && self.query.always_matches()
+    }
+
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        if dest.minify && self.query.always_matches() {
+        if self.prints_only_its_rules(dest) {
             self.rules.to_css(dest)?;
             return Ok(());
         }

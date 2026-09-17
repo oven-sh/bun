@@ -2,6 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
+import { cssInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "path";
@@ -7694,6 +7695,145 @@ describe("css tests", () => {
       "@container style(((--a:1) or (--b:2)) and (--c:3)){a{color:red}}",
       "@container style(((--a:1) or (--b:2)) and (--c:3)){a{color:red}}",
     );
+  });
+
+  // Declarations written directly inside an at-rule that is nested in a style rule form a
+  // nested declarations rule (css-nesting-1, "The Nested Declarations Rule"). It matches what
+  // the parent rule matches: pseudo-elements included, each selector with its own
+  // specificity. An explicit `& {}` does not, because `&` is `:is(<parent list>)`.
+  describe("nested declarations", () => {
+    const { minifyTest, prefixTest } = cssInternals;
+    // Chrome 95 has no CSS nesting, so nesting is compiled away.
+    const chrome95 = { chrome: 95 << 16 };
+
+    describe("nesting compiled away", () => {
+      test.each([
+        [
+          "*, ::before, ::after { @media (prefers-reduced-motion: reduce) { animation: none } }",
+          "@media (prefers-reduced-motion:reduce){*,:before,:after{animation:none}}",
+        ],
+        [
+          ".a::before, .b::after { @media (min-width: 1px) { color: red } }",
+          "@media (min-width:1px){.a:before,.b:after{color:red}}",
+        ],
+        [
+          ".a::before, .b { color: blue; @supports (display: grid) { color: red } }",
+          ".a:before,.b{color:#00f}@supports (display: grid){.a:before,.b{color:red}}",
+        ],
+        // `:is(.a, #b)` would give `.a` the specificity of `#b`.
+        [".a, #b { @media screen { color: red } }", "@media screen{.a,#b{color:red}}"],
+        ["div, span { @layer x { color: red } }", "@layer x{div,span{color:red}}"],
+        [".a, .b { @container (width > 1px) { color: red } }", "@container (width>1px){.a,.b{color:red}}"],
+        [".a, .b { @starting-style { color: red } }", "@starting-style{.a,.b{color:red}}"],
+        [
+          ".a, .b { @media screen { @supports (display: grid) { color: red } } }",
+          "@media screen{@supports (display: grid){.a,.b{color:red}}}",
+        ],
+        // The parent list prints as the parent rule prints it, so its own `&` still uses `:is()`.
+        [
+          ".a, .b { .c &, .d { @media screen { color: red } } }",
+          "@media screen{.c :is(.a,.b),:is(.a,.b) .d{color:red}}",
+        ],
+        [".a, .b { & { @media screen { color: red } } }", "@media screen{:is(.a,.b){color:red}}"],
+        // A nested rule with the same declarations shares the selector list.
+        [".a, .b { @media screen { color: red; .c { color: red } } }", "@media screen{.a,.b,:is(.a,.b) .c{color:red}}"],
+        // Rules that the minifier derives from the declarations keep the parent list too.
+        [
+          ".a::before, .b { @media screen { color: var(--x, lab(50% 20 30)) } }",
+          "@media screen{.a:before,.b{color:var(--x,#a16945)}@supports (color:lab(0% 0 0)){.a:before,.b{color:var(--x,lab(50% 20 30))}}}",
+        ],
+      ])("%s", (source, expected) => {
+        expect(minifyTest(source, "", chrome95)).toBe(expected);
+      });
+
+      test("an explicit `&` keeps :is()", () => {
+        expect(minifyTest(".a::before, .b { & { color: red } }", "", chrome95)).toBe(":is(.a:before,.b){color:red}");
+        expect(minifyTest(".a, #b { @media screen { & { color: red } } }", "", chrome95)).toBe(
+          "@media screen{:is(.a,#b){color:red}}",
+        );
+        expect(minifyTest(".a, .b { :not(&) { color: red } }", "", chrome95)).toBe(":not(:is(.a,.b)){color:red}");
+      });
+
+      test("an explicit `& {}` does not merge into the nested declarations", () => {
+        expect(minifyTest(".a, #b { @media screen { color: red; & { color: blue } } }", "", chrome95)).toBe(
+          "@media screen{.a,#b{color:red}:is(.a,#b){color:#00f}}",
+        );
+      });
+
+      test("a parent list that the minifier splits or wraps for the targets", () => {
+        // Safari 8 needs `::-webkit-input-placeholder`, so each selector gets its own rule.
+        expect(minifyTest("input::placeholder, .b { @media screen { color: red } }", "", { safari: 8 << 16 })).toBe(
+          "@media screen{input::-webkit-input-placeholder{color:red}}" +
+            "@media screen{input::placeholder{color:red}}" +
+            "@media screen{.b{color:red}}",
+        );
+        // Safari 14 has `:is()` and no `:focus-visible`, so the parent list becomes one `:is()`.
+        expect(
+          minifyTest(".a:focus-visible, .b:hover { @media screen { color: red } }", "", { safari: 14 << 16 }),
+        ).toBe("@media screen{:is(.a:focus-visible,.b:hover){color:red}}");
+      });
+
+      test("a logical property fallback rule appends to `&`, so it keeps :is()", () => {
+        const safari8 = { safari: 8 << 16 };
+        // Derived from a control on the same build, so this does not pin how `:dir()` is downleveled.
+        const control = minifyTest(".p { margin-inline-start: 1px }", "", safari8);
+        expect(control).toStartWith(".p:not(");
+        expect(minifyTest(".a, .b { @media screen { margin-inline-start: 1px } }", "", safari8)).toBe(
+          "@media screen{" + control.replaceAll(".p", ":is(.a,.b)") + "}",
+        );
+      });
+
+      test("pretty", () => {
+        expect(prefixTest(".a::before, .b { color: blue; @media screen { color: red } }", "", chrome95)).toBe(
+          ".a:before, .b {\n  color: #00f;\n}\n\n@media screen {\n  .a:before, .b {\n    color: red;\n  }\n}\n",
+        );
+      });
+    });
+
+    // `& { ... }` in place of the declarations would not match `.a::before` in a browser.
+    describe("nesting kept", () => {
+      test.each([
+        [".a::before { @media (hover: hover) { opacity: .5 } }", ".a:before{@media (hover:hover){opacity:.5}}"],
+        [
+          "*, ::before, ::after { @media (prefers-reduced-motion: reduce) { animation: none } }",
+          "*,:before,:after{@media (prefers-reduced-motion:reduce){animation:none}}",
+        ],
+        [
+          ".a { @media screen { color: red !important; background: blue } }",
+          ".a{@media screen{background:#00f;color:red!important}}",
+        ],
+        [".a { @scope (.x) { color: red } }", ".a{@scope(.x){color:red}}"],
+        [
+          ".a { @media screen { @supports (display: grid) { color: red } } }",
+          ".a{@media screen{@supports (display: grid){color:red}}}",
+        ],
+        // A rule after the declarations needs a `;` in between. The two do not share a selector list.
+        [".a { @media screen { color: red; .c { color: red } } }", ".a{@media screen{color:red;& .c{color:red}}}"],
+        [
+          ".a { @media screen { color: red; @supports (display: grid) { color: blue } } }",
+          ".a{@media screen{color:red;@supports (display: grid){color:#00f}}}",
+        ],
+        [
+          ".a { @media screen { color: red; .c { color: blue } } @media screen { background: blue } }",
+          ".a{@media screen{color:red;& .c{color:#00f}background:#00f}}",
+        ],
+        // A minified `@media all` prints only its rules.
+        [".a { @media all { color: red } .b { color: blue } }", ".a{color:red;& .b{color:#00f}}"],
+        [".a { @media all { @media all { color: red } } .b { color: blue } }", ".a{color:red;& .b{color:#00f}}"],
+        [".a { color: green; @media all { background: red } }", ".a{color:green;background:red}"],
+        // An explicit `& {}` prints as written.
+        [".a { @media screen { & { color: red } } }", ".a{@media screen{&{color:red}}}"],
+        [".a { @media screen { color: red; & { color: red } } }", ".a{@media screen{color:red;&{color:red}}}"],
+      ])("%s", (source, expected) => {
+        expect(minifyTest(source, "")).toBe(expected);
+      });
+
+      test("pretty", () => {
+        expect(prefixTest(".a, .b { @media screen { color: red; background: blue; .c { color: red } } }", "")).toBe(
+          ".a, .b {\n  @media screen {\n    color: red;\n    background: #00f;\n\n    & .c {\n      color: red;\n    }\n  }\n}\n",
+        );
+      });
+    });
   });
 
   describe("font-palette-values", () => {

@@ -61,6 +61,53 @@ describe("bundler", () => {
     },
   });
 
+  // Declarations directly inside a nested at-rule apply to everything the parent rule
+  // matches. `:is()` and `&` cannot match a pseudo-element, so neither may stand in.
+  itBundled("css/CSSNestingDeclarationsInAtRule", {
+    files: {
+      "/entry.css": /* css */ `
+  *, ::before, ::after {
+    @media (prefers-reduced-motion: reduce) {
+      animation: none;
+    }
+  }`,
+    },
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(`
+  /* entry.css */
+  @media (prefers-reduced-motion: reduce) {
+    *, :before, :after {
+      animation: none;
+    }
+  }
+  `);
+    },
+  });
+
+  itBundled("css/CSSNestingDeclarationsInAtRuleNestingKept", {
+    target: "bun",
+    files: {
+      "/entry.css": /* css */ `
+  .a::before {
+    @media (hover: hover) {
+      opacity: 0.5;
+    }
+  }`,
+    },
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(`
+  /* entry.css */
+  .a:before {
+    @media (hover: hover) {
+      opacity: .5;
+    }
+  }
+  `);
+    },
+  });
+
   itBundled("css/CSSAtImportMissing", {
     files: {
       "/entry.css": `@import "./missing.css";`,

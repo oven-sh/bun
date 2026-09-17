@@ -29,6 +29,20 @@ impl<R> StyleRule<R> {
     pub(crate) fn is_empty(&self) -> bool {
         self.selectors.v.is_empty() || (self.declarations.is_empty() && self.rules.v.len() == 0)
     }
+
+    /// Whether this is a [nested declarations rule](https://drafts.csswg.org/css-nesting-1/#nested-declarations-rule):
+    /// the declarations written directly inside an at-rule that is nested in a style rule.
+    pub(crate) fn is_nested_declarations(&self) -> bool {
+        self.selectors.v.len() == 1 && self.selectors.v.at(0).is_nested_declarations()
+    }
+
+    /// With nesting preserved, a nested declarations rule prints as it was
+    /// written: declarations with no selector and no block. No selector can
+    /// stand in, see `SelectorFlags::NESTED_DECLARATIONS`.
+    pub(crate) fn prints_bare_declarations(&self, dest: &Printer) -> bool {
+        self.is_nested_declarations()
+            && !css::targets::Targets::should_compile_same(&dest.targets, css::Feature::Nesting)
+    }
 }
 
 // ─── behavior bodies ──────────────────────────────────────────────────────
@@ -168,26 +182,28 @@ impl<R> StyleRule<R> {
         let len =
             self.declarations.declarations.len() + self.declarations.important_declarations.len();
         let has_declarations = supports_nesting || len > 0 || self.rules.v.len() == 0;
+        let has_block = has_declarations && !self.prints_bare_declarations(dest);
 
         if has_declarations {
             //   #[cfg(feature = "sourcemap")]
             //   dest.add_mapping(self.loc);
 
-            // `dest.context()` borrows `dest`; copy the (Copy) raw
-            // ctx field out so it doesn't conflict with the `&mut *dest` below.
-            let ctx = dest.ctx;
-            // Each rule prelude gets its own budget for `&` substitutions when
-            // compiling nesting (see `serialize::serialize_nesting`).
-            dest.nesting_expansions = 0;
-            selector::serialize::serialize_selector_list(
-                self.selectors.v.slice(),
-                dest,
-                ctx,
-                false,
-            )?;
-            dest.whitespace()?;
-            dest.write_char(b'{')?;
-            dest.indent();
+            if has_block {
+                // `dest.context()` borrows `dest`; copy the (Copy) raw
+                // ctx field out so it doesn't conflict with the `&mut *dest` below.
+                let ctx = dest.ctx;
+                // Each rule prelude gets its own budget for `&` substitutions when
+                // compiling nesting (see `serialize::serialize_nesting`).
+                dest.nesting_expansions = 0;
+                selector::serialize::serialize_style_rule_selectors(
+                    self.selectors.v.slice(),
+                    dest,
+                    ctx,
+                )?;
+                dest.whitespace()?;
+                dest.write_char(b'{')?;
+                dest.indent();
+            }
 
             let mut i: usize = 0;
             // A pair of (slice, important) tuples; declarations first, then
@@ -234,7 +250,9 @@ impl<R> StyleRule<R> {
                         }
                     }
 
-                    dest.newline()?;
+                    if has_block || i > 0 {
+                        dest.newline()?;
+                    }
                     decl.to_css(dest, important)?;
                     if i != len - 1 || !dest.minify || (supports_nesting && self.rules.v.len() > 0)
                     {
@@ -261,8 +279,8 @@ impl<R> StyleRule<R> {
             Ok(())
         }
 
-        fn helpers_end(d: &mut Printer, has_decls: bool) -> Result<(), PrintErr> {
-            if has_decls {
+        fn helpers_end(d: &mut Printer, has_block: bool) -> Result<(), PrintErr> {
+            if has_block {
                 d.dedent();
                 d.newline()?;
                 d.write_char(b'}')?;
@@ -274,7 +292,7 @@ impl<R> StyleRule<R> {
         if supports_nesting {
             helpers_newline(self, dest, supports_nesting, len)?;
             self.rules.to_css(dest)?;
-            helpers_end(dest, has_declarations)?;
+            helpers_end(dest, has_block)?;
         } else {
             // This rule is serialized once per vendor prefix, and each pass
             // re-serializes the nested rules. Nested style rules that carry
@@ -293,7 +311,7 @@ impl<R> StyleRule<R> {
                     !matches!(rule, CssRule::Ignored) && !rule.is_deferred_to_final_prefix_pass()
                 });
 
-            helpers_end(dest, has_declarations)?;
+            helpers_end(dest, has_block)?;
             if has_nested_output {
                 helpers_newline(self, dest, supports_nesting, len)?;
             }

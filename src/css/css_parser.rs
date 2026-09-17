@@ -1490,8 +1490,10 @@ mod rule_parsers {
             };
 
             // Declarations can be immediately within @media and @supports blocks
-            // that are nested within a parent style rule. These act the same way
-            // as if they were nested within a `& { ... }` block.
+            // that are nested within a parent style rule. They form a nested
+            // declarations rule, which matches what the parent rule matches. An
+            // explicit `& { ... }` block does not: `&` cannot match a
+            // pseudo-element and takes the highest specificity of the parent list.
             let (declarations, mut rules) = self.parse_nested(input, false)?;
 
             if declarations.len() > 0 {
@@ -1499,8 +1501,7 @@ mod rule_parsers {
                     0,
                     CssRule::Style(StyleRule {
                         // Arena-backed: this StyleRule lands in arena AST; bulk-free won't run Drop.
-                        selectors: SelectorList::from_selector(Selector::from_component_in(
-                            Component::Nesting,
+                        selectors: SelectorList::from_selector(Selector::nested_declarations_in(
                             bun_alloc::ArenaPtr::new(input.arena()),
                         )),
                         declarations,

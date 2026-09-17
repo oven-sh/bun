@@ -208,13 +208,15 @@ type HoldingPeer = { port: number; ended: Promise<void>; closed: Promise<void>; 
 
 function holdingTlsPeer(
   greeting: Buffer | null,
-  // answers the client's plaintext SSL request; returns the bytes after it
-  onSslRequest: (raw: Socket, chunk: Buffer) => Buffer,
+  // the length of the client's plaintext SSL request, once enough of it has arrived to tell
+  sslRequestLength: (buffered: Buffer) => number | undefined,
+  // answers the complete plaintext SSL request
+  onSslRequest: (raw: Socket) => void,
   onSecureData: (socket: Socket, chunk: Buffer) => void,
 ): HoldingPeer {
   const ended = Promise.withResolvers<void>();
   const closed = Promise.withResolvers<void>();
-  const listener = Bun.listen({
+  const listener = Bun.listen<Buffer | "upgraded" | undefined>({
     hostname: "127.0.0.1",
     port: 0,
     allowHalfOpen: true,
@@ -224,11 +226,18 @@ function holdingTlsPeer(
       },
       data(raw, chunk) {
         // the raw socket keeps observing bytes after the upgrade
-        if (raw.data) return;
-        raw.data = true;
+        if (raw.data === "upgraded") return;
+        const buffered = raw.data ? Buffer.concat([raw.data, chunk]) : chunk;
+        const length = sslRequestLength(buffered);
+        if (length === undefined || buffered.length < length) {
+          raw.data = buffered;
+          return;
+        }
+        raw.data = "upgraded";
+        onSslRequest(raw);
         raw.upgradeTLS({
           isServer: true,
-          initialData: onSslRequest(raw, chunk),
+          initialData: buffered.subarray(length),
           tls: { key: tlsCert.key, cert: tlsCert.cert },
           socket: {
             handshake() {},
@@ -268,11 +277,9 @@ function holdingPostgresPeer(
   let started = false;
   return holdingTlsPeer(
     null,
-    (raw, chunk) => {
-      // the 8-byte SSLRequest; the client sends nothing else until it sees 'S'
-      raw.write(pgSSLResponse("S"));
-      return chunk.subarray(8);
-    },
+    // the 8-byte SSLRequest; the client sends nothing else until it sees 'S'
+    () => 8,
+    raw => raw.write(pgSSLResponse("S")),
     (socket, _chunk) => {
       if (started) return;
       started = true;
@@ -287,7 +294,9 @@ function holdingMysqlPeer(authReply: (seq: number) => Buffer = seq => mysqlOkPac
   let authed = false;
   return holdingTlsPeer(
     mysqlHandshakeV10({ capabilities: MYSQL_DEFAULT_CAPABILITIES | MYSQL_CLIENT_SSL }),
-    (_raw, chunk) => chunk.subarray(4 + (chunk[0] | (chunk[1] << 8) | (chunk[2] << 16))),
+    // the SSLRequest packet: a 3-byte payload length, a sequence id, the payload
+    buffered => (buffered.length >= 4 ? 4 + (buffered[0] | (buffered[1] << 8) | (buffered[2] << 16)) : undefined),
+    () => {},
     (socket, chunk) => {
       buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), (seq, payload) => {
         if (!authed) {

@@ -173,6 +173,7 @@ new!(pub NODE_DISABLE_COMPILE_CACHE: string, "NODE_DISABLE_COMPILE_CACHE", {});
 new!(pub BUN_INTERNAL_WEBVIEW_HOST: string, "BUN_INTERNAL_WEBVIEW_HOST", {});
 new!(pub NODE_PENDING_DEPRECATION: string, "NODE_PENDING_DEPRECATION", {});
 new!(pub NODE_PRESERVE_SYMLINKS_MAIN: boolean, "NODE_PRESERVE_SYMLINKS_MAIN", { default: false });
+new!(pub NODE_TEST_CONTEXT: string, "NODE_TEST_CONTEXT", {});
 new!(pub NODE_USE_SYSTEM_CA: boolean, "NODE_USE_SYSTEM_CA", { default: false });
 new!(pub npm_lifecycle_event: string, "npm_lifecycle_event", {});
 new!(pub PATH: string, "PATH", {});

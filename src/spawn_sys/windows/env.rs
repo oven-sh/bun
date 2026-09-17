@@ -67,7 +67,7 @@ pub fn make_env_block<'a>(
     let name = |v: &Entry| &strings[v.start..v.start + v.name_len];
     vars.sort_by(|a, b| compare_names(name(a), name(b)));
 
-    let mut block: Vec<u16> = Vec::with_capacity(strings.len() + vars.len() + 1);
+    let mut block: Vec<u16> = Vec::with_capacity(strings.len() + vars.len() + 2);
     let mut next_var = 0usize;
     let mut next_required = 0usize;
     while next_var < vars.len() || next_required < REQUIRED_VARS.len() {
@@ -99,6 +99,12 @@ pub fn make_env_block<'a>(
                 next_required += 1;
             }
         }
+    }
+    // "A Unicode environment block is terminated by four zero bytes"
+    // (`CreateProcessW`): the last string's and the block's, or both the
+    // block's when it has no strings.
+    if block.is_empty() {
+        block.push(0);
     }
     block.push(0);
     block
@@ -255,9 +261,18 @@ mod tests {
     }
 
     #[test]
-    fn empty_environment_is_a_valid_block() {
+    fn empty_environment_ends_in_two_nuls() {
         let block = make_env_block(core::iter::empty(), compare, |_, _| false);
-        assert_eq!(block, [0]);
+        assert_eq!(block, [0, 0]);
+        let dropped = make_env_block([&b"NOEQUALS"[..]].into_iter(), compare, |_, _| false);
+        assert_eq!(dropped, [0, 0]);
+    }
+
+    #[test]
+    fn one_variable_ends_in_two_nuls() {
+        let block = make_env_block([&b"A=1"[..]].into_iter(), compare, |_, _| false);
+        let expected: Vec<u16> = "A=1\0\0".encode_utf16().collect();
+        assert_eq!(block, expected);
     }
 
     #[test]

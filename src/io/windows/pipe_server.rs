@@ -1,11 +1,15 @@
 //! A named-pipe server: a fixed number of instances wait for clients, and each
 //! one a client takes is replaced when it is accepted.
+//!
+//! A slot whose instance cannot be made to wait for a client is left idle and
+//! tried again at the start of each tick of the loop ([`Starved`]); the owner
+//! does not hear of it, as with libuv and so Node.
 
 use core::ptr::{self, NonNull};
 
 use bun_sys::{self as sys, E, Tag};
 use bun_uws_sys::Loop;
-use bun_uws_sys::iocp::{self, Op, OverlappedEntry};
+use bun_uws_sys::iocp::{self, Op, OverlappedEntry, Starved};
 
 use super::sys as win;
 use super::sys::{HANDLE, INVALID_HANDLE_VALUE, Win32Error};
@@ -26,6 +30,9 @@ pub struct PipeServer {
 #[repr(C)]
 struct Inner {
     link: Link,
+    starved: Starved,
+    /// `starved` is linked: a slot is idle.
+    is_starved: bool,
     name: Vec<u16>,
     slots: Vec<*mut AcceptOp>,
     /// Connected instances nobody has accepted yet.
@@ -45,9 +52,10 @@ struct AcceptOp {
     op: Op,
     server: *mut Inner,
     handle: HANDLE,
-    /// How the wait ended, when `arm` queued the packet itself. `None` while
-    /// the packet out is the kernel's: the OVERLAPPED has the status then.
-    posted: Option<Win32Error>,
+    /// `arm` found a client connected already and queued the packet itself.
+    /// Otherwise the packet out is the kernel's and the OVERLAPPED has the
+    /// status.
+    posted: bool,
     in_flight: bool,
 }
 
@@ -87,6 +95,8 @@ impl PipeServer {
         let count = pending_instances.max(1) as usize;
         let inner = bun_core::heap::into_raw(Box::new(Inner {
             link: Link::new(loop_, Inner::shut),
+            starved: Starved::new(Inner::retry),
+            is_starved: false,
             name,
             slots: Vec::with_capacity(count),
             connected: Vec::new(),
@@ -112,12 +122,13 @@ impl PipeServer {
                     } else {
                         INVALID_HANDLE_VALUE
                     },
-                    posted: None,
+                    posted: false,
                     in_flight: false,
                 }));
                 (*inner).slots.push(slot);
                 Inner::arm(inner, slot);
             }
+            Inner::update_starved(inner);
             Inner::update_keep_alive(inner);
             Ok(PipeServer {
                 inner: NonNull::new_unchecked(inner),
@@ -220,6 +231,7 @@ impl Inner {
     }
 
     /// Wait for a client on `slot`, creating its instance first if it has none.
+    /// A slot that cannot be made to wait stays idle, without an instance.
     ///
     /// # Safety
     /// `this` and the idle `slot` are live; `this` is not closing.
@@ -228,37 +240,76 @@ impl Inner {
         // freed only from its own completion.
         unsafe {
             let loop_ = (*this).link.loop_;
+            if (*slot).handle == INVALID_HANDLE_VALUE {
+                match create_instance(loop_, &(*this).name, false) {
+                    Ok(handle) => (*slot).handle = handle,
+                    Err(_) => return,
+                }
+            }
             (*slot).op.overlapped.Internal = 0;
             (*slot).op.overlapped.InternalHigh = 0;
-            // `None`: the kernel queues the packet. `Some`: the call said how
-            // the wait ended and nothing is queued.
-            let ended: Option<Win32Error> = 'ended: {
-                if (*slot).handle == INVALID_HANDLE_VALUE {
-                    match create_instance(loop_, &(*this).name, false) {
-                        Ok(handle) => (*slot).handle = handle,
-                        Err(err) => break 'ended Some(err),
+            // A call that succeeded at once queues its packet like one that pends.
+            let queued = win::ConnectNamedPipe((*slot).handle, (&raw mut (*slot).op).cast()) != 0
+                || match win::last_error() {
+                    Win32Error::IO_PENDING => true,
+                    // A client got in between the instance's creation and this
+                    // call, and nothing is queued. `NO_DATA`: it has closed its
+                    // end already; what it wrote is still there to read.
+                    Win32Error::PIPE_CONNECTED | Win32Error::NO_DATA => false,
+                    _ => {
+                        win::CloseHandle((*slot).handle);
+                        (*slot).handle = INVALID_HANDLE_VALUE;
+                        return;
                     }
-                }
-                // A call that succeeded at once queues its packet like one that pends.
-                if win::ConnectNamedPipe((*slot).handle, (&raw mut (*slot).op).cast()) != 0 {
-                    break 'ended None;
-                }
-                match win::last_error() {
-                    Win32Error::IO_PENDING => None,
-                    // A client got in between the instance's creation and this call.
-                    Win32Error::PIPE_CONNECTED => Some(Win32Error::SUCCESS),
-                    err => Some(err),
-                }
-            };
-            (*slot).posted = ended;
-            // What the call decided is reported from the loop too, so the owner
-            // hears of every client from there.
-            match ended {
-                None => super::op_submitted(loop_),
-                Some(_) => super::complete_from_loop(loop_, &raw mut (*slot).op),
+                };
+            (*slot).posted = !queued;
+            // The owner hears of every client from the loop.
+            if queued {
+                super::op_submitted(loop_);
+            } else {
+                super::complete_from_loop(loop_, &raw mut (*slot).op);
             }
             (*slot).in_flight = true;
             (*this).pending += 1;
+        }
+    }
+
+    /// Link or unlink `starved` to match whether a slot is idle.
+    ///
+    /// # Safety
+    /// `this` is live and its loop is too. Must run on the loop's thread.
+    unsafe fn update_starved(this: *mut Inner) {
+        // SAFETY: caller contract; slots are live while listed.
+        unsafe {
+            let wanted = !(*this).closing && (*this).slots.iter().any(|&slot| !(*slot).in_flight);
+            if wanted == (*this).is_starved {
+                return;
+            }
+            (*this).is_starved = wanted;
+            if wanted {
+                iocp::us_iocp_starved_link((*this).link.loop_, &raw mut (*this).starved);
+            } else {
+                iocp::us_iocp_starved_unlink((*this).link.loop_, &raw mut (*this).starved);
+            }
+        }
+    }
+
+    /// The start of a tick with a slot idle. No owner callback runs from here:
+    /// a client `arm` finds connected is reported from the ready list.
+    unsafe extern "C" fn retry(starved: *mut Starved) {
+        // SAFETY: `starved` is the field of a live `Inner` that linked it,
+        // which is listening. `arm` leaves `slots` alone.
+        unsafe {
+            let this = starved
+                .byte_sub(core::mem::offset_of!(Inner, starved))
+                .cast::<Inner>();
+            for index in 0..(&(*this).slots).len() {
+                let slot = (&(*this).slots)[index];
+                if !(*slot).in_flight {
+                    Self::arm(this, slot);
+                }
+            }
+            Self::update_starved(this);
         }
     }
 
@@ -271,6 +322,7 @@ impl Inner {
             if !(*this).closing {
                 Self::stop(this);
                 (*this).closing = true;
+                Self::update_starved(this);
                 Self::update_keep_alive(this);
             }
             Self::maybe_finish(this);
@@ -285,6 +337,7 @@ impl Inner {
             if !(*this).closing {
                 Self::stop(this);
                 (*this).closing = true;
+                Self::update_starved(this);
             }
             Self::update_keep_alive(this);
             (*this).detached = true;
@@ -353,34 +406,22 @@ impl AcceptOp {
                 Inner::maybe_finish(this);
                 return;
             }
-            let err = match (*slot).posted.take() {
-                Some(ended) => ended,
-                None => win::status_to_win32((*slot).op.status()),
-            };
-            if err != Win32Error::SUCCESS {
-                // Nothing the owner can act on: replace the instance.
-                if (*slot).handle != INVALID_HANDLE_VALUE {
-                    win::CloseHandle((*slot).handle);
-                    (*slot).handle = INVALID_HANDLE_VALUE;
-                }
-                // Out of instances: retrying at once would spin.
-                if err != Win32Error::PIPE_BUSY && err != Win32Error::NOT_ENOUGH_MEMORY {
-                    Inner::arm(this, slot);
-                }
+            let connected = core::mem::take(&mut (*slot).posted)
+                || win::status_to_win32((*slot).op.status()) == Win32Error::SUCCESS;
+            if !connected {
+                // The wait failed and took the instance with it.
+                win::CloseHandle((*slot).handle);
+                (*slot).handle = INVALID_HANDLE_VALUE;
+                Inner::update_starved(this);
                 return;
             }
 
             (*this).connected.push((*slot).handle);
             (*slot).handle = INVALID_HANDLE_VALUE;
             // A fresh instance waits for the next client before the owner
-            // hears of this one. So do the slots that ran out of resources
-            // earlier and were left idle rather than retried in a loop.
-            for index in 0..(&(*this).slots).len() {
-                let other = (&(*this).slots)[index];
-                if !(*other).in_flight {
-                    Inner::arm(this, other);
-                }
-            }
+            // hears of this one.
+            Inner::arm(this, slot);
+            Inner::update_starved(this);
             let on_connection = (*this).on_connection;
             (*this).pins += 1;
             on_connection.invoke(());

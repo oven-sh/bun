@@ -1,6 +1,11 @@
 //! Win32 declarations process creation needs.
 
-#![allow(non_snake_case, non_camel_case_types, clippy::upper_case_acronyms)]
+#![allow(
+    non_snake_case,
+    non_camel_case_types,
+    non_upper_case_globals,
+    clippy::upper_case_acronyms
+)]
 
 pub use bun_windows_sys::externs::kernel32::{
     CreateNamedPipeW, CreateProcessW, DuplicateHandle, GetCurrentProcess, GetExitCodeProcess,
@@ -15,16 +20,16 @@ pub use bun_windows_sys::externs::{
     FILE_TYPE_PIPE, FILE_TYPE_REMOTE, FILE_TYPE_UNKNOWN, FILE_WRITE_ATTRIBUTES, FILETIME,
     GENERIC_READ, GENERIC_WRITE, GetCurrentDirectoryW, GetCurrentProcessId,
     GetEnvironmentVariableW, GetFileAttributesW, GetFileType, GetProcessTimes, GetShortPathNameW,
-    HANDLE, HANDLE_FLAG_INHERIT, HPCON, INFINITE, INVALID_FILE_ATTRIBUTES, INVALID_HANDLE_VALUE,
+    HANDLE, HPCON, INFINITE, INVALID_FILE_ATTRIBUTES, INVALID_HANDLE_VALUE,
     InitializeProcThreadAttributeList, JOB_OBJECT_LIMIT_BREAKAWAY_OK,
     JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
     JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-    JobObjectExtendedLimitInformation, MAX_PATH, OPEN_EXISTING, OVERLAPPED, OpenProcess,
+    JobObjectExtendedLimitInformation, MAX_PATH, NTSTATUS, OPEN_EXISTING, OVERLAPPED, OpenProcess,
     PIPE_ACCESS_INBOUND, PIPE_ACCESS_OUTBOUND, PIPE_READMODE_BYTE, PIPE_REJECT_REMOTE_CLIENTS,
     PIPE_TYPE_BYTE, PIPE_WAIT, PROC_THREAD_ATTRIBUTE_JOB_LIST, PROCESS_INFORMATION,
-    SECURITY_ATTRIBUTES, STARTF_USESTDHANDLES, STARTUPINFOEXW, STARTUPINFOW, SYNCHRONIZE,
-    SetHandleInformation, SetInformationJobObject, TerminateProcess, UpdateProcThreadAttribute,
-    WAIT_FAILED, WAIT_OBJECT_0, WRITE_DAC, WaitForMultipleObjects, WaitForSingleObject, Win32Error,
+    RtlNtStatusToDosError, STARTF_USESTDHANDLES, STARTUPINFOEXW, STARTUPINFOW, SYNCHRONIZE,
+    SetInformationJobObject, TerminateProcess, UpdateProcThreadAttribute, WAIT_FAILED,
+    WAIT_OBJECT_0, WRITE_DAC, WaitForMultipleObjects, WaitForSingleObject, Win32Error,
 };
 
 pub const SECURITY_SQOS_PRESENT: DWORD = 0x0010_0000;
@@ -38,7 +43,6 @@ pub const CREATE_NEW_PROCESS_GROUP: DWORD = 0x0000_0200;
 pub const DETACHED_PROCESS: DWORD = 0x0000_0008;
 pub const CREATE_NO_WINDOW: DWORD = 0x0800_0000;
 
-pub const PROC_THREAD_ATTRIBUTE_HANDLE_LIST: usize = 0x0002_0002;
 pub const PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE: usize = 0x0002_0016;
 
 pub const PROCESS_TERMINATE: DWORD = 0x0001;
@@ -55,6 +59,25 @@ pub const ERROR_BROKEN_PIPE: DWORD = Win32Error::BROKEN_PIPE.0 as DWORD;
 pub const ERROR_PIPE_BUSY: DWORD = Win32Error::PIPE_BUSY.0 as DWORD;
 pub const ERROR_IO_PENDING: DWORD = Win32Error::IO_PENDING.0 as DWORD;
 
+#[repr(C)]
+pub struct OBJECT_HANDLE_FLAG_INFORMATION {
+    pub Inherit: u8,
+    pub ProtectFromClose: u8,
+}
+
+/// `OBJECT_INFORMATION_CLASS`.
+pub const ObjectHandleFlagInformation: DWORD = 4;
+
+#[link(name = "ntdll")]
+unsafe extern "system" {
+    pub fn NtSetInformationObject(
+        Handle: HANDLE,
+        ObjectInformationClass: DWORD,
+        ObjectInformation: *const core::ffi::c_void,
+        ObjectInformationLength: DWORD,
+    ) -> NTSTATUS;
+}
+
 unsafe extern "system" {
     pub safe fn GetProcessId(Process: HANDLE) -> DWORD;
     pub fn DeleteProcThreadAttributeList(lpAttributeList: *mut u8);
@@ -68,6 +91,13 @@ unsafe extern "system" {
     pub fn GetProcessIoCounters(
         hProcess: HANDLE,
         lpIoCounters: *mut bun_windows_sys::IO_COUNTERS,
+    ) -> BOOL;
+    pub fn QueryInformationJobObject(
+        hJob: HANDLE,
+        JobObjectInformationClass: DWORD,
+        lpJobObjectInformation: *mut core::ffi::c_void,
+        cbJobObjectInformationLength: DWORD,
+        lpReturnLength: *mut DWORD,
     ) -> BOOL;
 }
 

@@ -159,6 +159,9 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
 
     use_mimalloc_in_dependencies();
 
+    // Before any thread: reading the umask sets it for a moment.
+    bun_sys::init_umask();
+
     // SIGPIPE/SIGXFSZ → SIG_IGN.
     // SAFETY: `SIGPIPE`/`SIGXFSZ` are valid signal numbers and `SIG_IGN` is a
     // valid disposition; called once on the main thread before any other

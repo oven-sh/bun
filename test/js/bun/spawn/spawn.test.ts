@@ -2047,3 +2047,114 @@ it.if(parentThp() === "1")("spawned children keep the system THP policy", async 
   expect(thpEnabled(readFileSync("/proc/self/status", "utf8"))).toBe("1");
   expect(exitCode).toBe(0);
 });
+
+// Output that nobody streams is accumulated by the pipe's reader, chunk after chunk into one buffer.
+describe("stdout that is buffered", () => {
+  const size = 3 * 1024 * 1024 + 17;
+  const pattern = () => {
+    const bytes = Buffer.alloc(size);
+    for (let i = 0; i < size; i++) bytes[i] = i % 251;
+    return bytes;
+  };
+  const child = `const bytes = Buffer.alloc(${size}); for (let i = 0; i < ${size}; i++) bytes[i] = i % 251;`;
+
+  it.concurrent("arrives whole and in order from spawnSync", () => {
+    const { stdout, exitCode } = spawnSync({
+      cmd: [bunExe(), "-e", child + "process.stdout.write(bytes);"],
+      env: bunEnv,
+      stderr: "inherit",
+    });
+    expect(stdout.length).toBe(size);
+    expect(stdout.equals(pattern())).toBe(true);
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("arrives whole and in order when the stream is first asked for between two chunks", async () => {
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        child +
+          `const half = ${size >> 1};
+          process.stdout.write(bytes.subarray(0, half), () => {
+            process.stderr.write("HALF");
+            process.stdin.once("data", () => process.stdout.write(bytes.subarray(half), () => process.exit(0)));
+          });`,
+      ],
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    // The child has written the first half, which the parent may or may not have buffered by now.
+    const stderr = proc.stderr.getReader();
+    expect(new TextDecoder().decode((await stderr.read()).value)).toBe("HALF");
+    const stdout = proc.stdout.bytes();
+    proc.stdin.write("go");
+    await proc.stdin.end();
+    const bytes = Buffer.from(await stdout);
+    expect(bytes.length).toBe(size);
+    expect(bytes.equals(pattern())).toBe(true);
+    expect(await proc.exited).toBe(0);
+  });
+});
+
+// Bun finds out for itself whether an inherited pipe is synchronous or overlapped, from the thread
+// that does the first read and the one that does the first write.
+describe("a child's Bun.stdin.stream() and Bun.stdout.writer()", () => {
+  for (const kind of isWindows ? ["pipe", "overlapped"] : ["pipe"]) {
+    it.concurrent(`echo through ${kind} stdio`, async () => {
+      await using proc = spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const writer = Bun.stdout.writer();
+          for await (const chunk of Bun.stdin.stream()) {
+            writer.write(chunk);
+            await writer.flush();
+          }
+          await writer.end();`,
+        ],
+        env: bunEnv,
+        stdin: kind as "pipe",
+        stdout: kind as "pipe",
+        stderr: "inherit",
+      });
+      const echoed = proc.stdout.text();
+      const chunks = ["first\n", Buffer.alloc(200_000, "m").toString(), "\nlast\n"];
+      for (const chunk of chunks) {
+        proc.stdin.write(chunk);
+        await proc.stdin.flush();
+      }
+      await proc.stdin.end();
+      expect(await echoed).toBe(chunks.join(""));
+      expect(await proc.exited).toBe(0);
+    });
+  }
+});
+
+// The child lets go of its stdin at some point while the buffer is being written, or before the first
+// byte of it is. Either way that ends the writer, not the spawn.
+describe("stdin: a buffer the child never reads", () => {
+  const child = "require('fs').closeSync(0); console.log('closed');";
+  const unread = () => Buffer.alloc(8 * 1024 * 1024, "x");
+
+  it.concurrent("spawn", async () => {
+    await using proc = spawn({ cmd: [bunExe(), "-e", child], env: bunEnv, stdin: unread(), stdout: "pipe" });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("closed\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("spawnSync", () => {
+    const { stdout, exitCode } = spawnSync({ cmd: [bunExe(), "-e", child], env: bunEnv, stdin: unread() });
+    expect(stdout.toString()).toBe("closed\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("$ redirect", async () => {
+    const { stdout, exitCode } = await Bun.$`${bunExe()} -e ${child} < ${unread()}`.env(bunEnv).nothrow().quiet();
+    expect(stdout.toString()).toBe("closed\n");
+    expect(exitCode).toBe(0);
+  });
+});

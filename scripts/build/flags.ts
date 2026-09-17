@@ -13,6 +13,7 @@
 
 import { join } from "node:path";
 import { bunExeName, type Config } from "./config.ts";
+import { NODEJS_UV_VERSION } from "./deps/nodejs-headers.ts";
 import { quote, slash } from "./shell.ts";
 import { ucrtServicingLibDir } from "./winsysroot.ts";
 
@@ -792,6 +793,10 @@ export const defines: Flag[] = [
   {
     flag: c => `REPORTED_NODEJS_V8_VERSION=\\"${c.nodejsV8Version}\\"`,
     desc: "V8 version string (process.versions.v8)",
+  },
+  {
+    flag: `REPORTED_NODEJS_UV_VERSION=\\"${NODEJS_UV_VERSION}\\"`,
+    desc: "libuv version string (process.versions.uv)",
   },
   {
     // Hardcoded ON — experimental flag not exposed in config

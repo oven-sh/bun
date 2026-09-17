@@ -1666,14 +1666,9 @@ mod windows_impl {
     use bun_sys::windows::kernel32::{CompareStringOrdinal, GetShortPathNameW};
     use bun_sys::windows::{BOOL, CSTR_EQUAL, DWORD, HANDLE, OVERLAPPED};
 
-    /// The largest buffer `ReadDirectoryChangesW` accepts for a directory on a
-    /// network share.
-    const BUFFER_SIZE: usize = 64 * 1024;
-
-    /// `OVERLAPPED.Internal` of a request that ended because its directory
-    /// handle was closed. Like an overflow it completes successfully with zero
-    /// bytes.
-    const STATUS_NOTIFY_CLEANUP: usize = 0x0000_010B;
+    /// libuv's `uv_directory_watcher_buffer_size`, so a burst of changes
+    /// overflows into `('change', null)` where it does in Node.
+    const BUFFER_SIZE: usize = 4096;
 
     #[repr(C)]
     #[allow(non_snake_case)]
@@ -1709,8 +1704,9 @@ mod windows_impl {
         /// First field: the completion's `OVERLAPPED*` is the `DirRequest*`.
         overlapped: OVERLAPPED,
         /// At offset 32, so `FILE_NOTIFY_INFORMATION` (DWORD-aligned) records
-        /// can be read in place.
-        buffer: [u8; BUFFER_SIZE],
+        /// can be read in place. Only what a completion reports written is
+        /// initialized.
+        buffer: [core::mem::MaybeUninit<u8>; BUFFER_SIZE],
         dir: HANDLE,
         /// Null once the owner detached. Guarded by `manager.mutex`.
         watcher: *mut PathWatcher,
@@ -1875,11 +1871,10 @@ mod windows_impl {
             let request: *mut DirRequest = {
                 let mut uninit = Box::<DirRequest>::new_uninit();
                 let p = uninit.as_mut_ptr();
-                // SAFETY: every field is written in place before `assume_init`
-                // (`buffer` is an output buffer; zeroed so no byte is uninit).
+                // SAFETY: every field but `buffer`, which is `MaybeUninit`, is
+                // written in place before `assume_init`.
                 unsafe {
                     core::ptr::addr_of_mut!((*p).overlapped).write(bun_core::ffi::zeroed());
-                    core::ptr::addr_of_mut!((*p).buffer).write_bytes(0, 1);
                     core::ptr::addr_of_mut!((*p).dir).write(dir);
                     core::ptr::addr_of_mut!((*p).watcher).write(watcher);
                     core::ptr::addr_of_mut!((*p).pending).write(false);
@@ -2056,21 +2051,17 @@ mod windows_impl {
                 None if bytes > 0 => {
                     request.emit_records(watcher, bytes, name_buf, long_buf, full_buf)
                 }
-                None => {
-                    if request.overlapped.Internal == STATUS_NOTIFY_CLEANUP {
-                        return;
-                    }
-                    watcher.emit_overflow();
-                }
+                // More changed than `buffer` holds.
+                None => watcher.emit_overflow(),
                 Some(error) => {
                     if !(error == w::Win32Error::ACCESS_DENIED && request.is_deleted_directory()) {
                         watcher.emit_error(&sys::Error::from_win32(error, Tag::watch), true);
                         return;
                     }
-                    // The watched directory was deleted: libuv reports a rename
-                    // of the directory's full path, then the error from the
-                    // request that can no longer be issued.
+                    // The watched directory was deleted: a rename of its full
+                    // path, and nothing is left to ask for.
                     watcher.emit(WatchEventKind::Rename, watcher.path.as_bytes(), false);
+                    return;
                 }
             }
             // SAFETY: caller contract; no request is outstanding.
@@ -2135,9 +2126,14 @@ mod windows_impl {
                 if name_start + name_len > bytes {
                     break;
                 }
-                let name: &[u16] = bun_core::cast_slice::<u8, u16>(
-                    &self.buffer[name_start..name_start + name_len],
-                );
+                // SAFETY: within the `bytes` the kernel wrote (checked above), and
+                // `FileName` is at a DWORD-aligned offset of a DWORD-aligned record.
+                let name: &[u16] = unsafe {
+                    core::slice::from_raw_parts(
+                        self.buffer.as_ptr().add(name_start).cast::<u16>(),
+                        name_len / 2,
+                    )
+                };
 
                 let event_type = match action {
                     w::FILE_ACTION_MODIFIED => Some(WatchEventKind::Change),

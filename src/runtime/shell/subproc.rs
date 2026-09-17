@@ -8,7 +8,6 @@ use crate::shell::interpreter::{Interpreter, NodeId};
 use crate::shell::io_writer::{self, IOWriter};
 use crate::shell::states::cmd::Cmd as ShellCmd;
 use crate::shell::{self as sh, Yield};
-use crate::webcore::{self, FileSink};
 use bun_alloc::Arena;
 use bun_collections::VecExt;
 use bun_io::Loop as AsyncLoop;
@@ -761,37 +760,6 @@ impl ShellSubprocess {
             }
         }
 
-        // Wire the FileSink's close-signal back to the enclosing `Writable` so
-        // `Writable::on_close` (drops the `Arc<FileSink>`) runs when the sink
-        // finishes. `stdin` lives inside the Box-allocated `Subprocess` at a
-        // stable address, so the self-referential raw pointer is sound for the
-        // life of the subprocess. Only reachable on Windows (POSIX
-        // `Writable::init` never returns `Pipe` for shell stdio).
-        {
-            // Derive `stdin_ptr` from the raw heap pointer (`subprocess`), not
-            // the local `subproc: &mut` reborrow — the pointer is stored
-            // long-term in `FileSink::source` and dereferenced from
-            // `Writable::on_close` after this frame returns. Under Stacked
-            // Borrows a child of `subproc`'s tag would be invalidated when
-            // that borrow ends; rooting in the allocation's provenance keeps
-            // it valid for the box's lifetime.
-            // SAFETY: `subprocess` is the live, fully-initialised heap alloc.
-            let stdin_ptr: *mut Writable = unsafe { &raw mut (*subprocess).stdin };
-            // SAFETY: reborrow as a child of `stdin_ptr` so it does not
-            // invalidate the sibling we store in `source`.
-            if let Writable::Pipe(pipe) = unsafe { &mut *stdin_ptr } {
-                // SAFETY: shell is single-threaded; the FileSink allocation is
-                // disjoint from `*stdin_ptr`. `stdin_ptr` outlives the sink —
-                // the Subprocess owns both and `Writable::on_close` is the only
-                // path that drops it.
-                pipe.source
-                    .set(webcore::streams::SourceHandle::ShellWritable(
-                        // SAFETY: `stdin_ptr` is the live `&raw mut` writable (write provenance).
-                        unsafe { bun_ptr::BackRef::from_raw_mut(stdin_ptr) },
-                    ));
-            }
-        }
-
         // SAFETY: scoped access; `watch` does not re-enter the subprocess.
         match unsafe { (*subprocess).proc().watch() } {
             bun_sys::Result::Ok(()) => {}
@@ -906,26 +874,11 @@ pub enum WritableInitError {
 }
 
 pub enum Writable {
-    Pipe(RefPtr<FileSink>),
     Fd(Fd),
     Buffer(RefPtr<StaticPipeWriter>),
     Memfd(Fd),
     Inherit,
     Ignore,
-}
-
-impl Writable {
-    // When the stream has closed we need to be notified to prevent a use-after-free
-    // We can test for this use-after-free by enabling hot module reloading on a file and then saving it twice
-    pub fn on_close(&mut self, _: Option<bun_sys::Error>) {
-        match self {
-            Writable::Buffer(_) | Writable::Pipe(_) => {
-                // Dropping the Arc on reassignment below derefs.
-            }
-            _ => {}
-        }
-        *self = Writable::Ignore;
-    }
 }
 
 impl Writable {
@@ -1002,10 +955,6 @@ impl Writable {
 
     pub fn finalize(&mut self) {
         match self {
-            Writable::Pipe(_) => {
-                // deref via drop-on-reassign
-                *self = Writable::Ignore;
-            }
             Writable::Buffer(_) => {
                 let Writable::Buffer(buffer) = core::mem::replace(self, Writable::Ignore) else {
                     unreachable!()

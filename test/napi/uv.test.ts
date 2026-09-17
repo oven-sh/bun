@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, canBuildNodeAddons, isWindows, tempDirWithFiles } from "harness";
 import { existsSync, readFileSync } from "node:fs";
 import { constants } from "node:os";
 import path from "node:path";
@@ -8,7 +8,7 @@ import source from "./uv-stub-stuff/uv_impl.c";
 
 const symbols_to_test = symbols.filter(s => !test_skipped.includes(s));
 
-describe("uv stubs", () => {
+describe.skipIf(!canBuildNodeAddons())("uv stubs", () => {
   const cwd = process.cwd();
   let tempdir: string = "";
   let outdir: string = "";
@@ -29,6 +29,8 @@ describe("uv stubs", () => {
           "typescript": "^5.0.0",
         },
         "scripts": {
+          // Under Bun, as test/napi/napi-app builds: a Node that was itself built with clang has
+          // node-gyp ask MSBuild for the ClangCL toolset, which a machine with only MSVC lacks.
           "build:napi": "bun --bun node-gyp configure && bun --bun node-gyp build",
         },
         "dependencies": {

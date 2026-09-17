@@ -46,6 +46,48 @@ impl Default for PipelineState {
     }
 }
 
+/// Whether `item` runs as a builtin whatever its words expand to: a command
+/// whose name is a literal word that names one. Any other stage may spawn a
+/// child process, which inherits the stage's ends of the pipes.
+#[cfg(windows)]
+fn is_certainly_builtin(item: &ast::PipelineItem) -> bool {
+    let ast::PipelineItem::Cmd(cmd) = item else {
+        return false;
+    };
+    matches!(
+        cmd.name_and_args.first(),
+        Some(ast::Atom::Simple(ast::SimpleAtom::Text(name)))
+            if crate::shell::builtin::Kind::from_argv0(name).is_some()
+    )
+}
+
+/// The pipe between two neighbouring stages. An end that only a builtin uses
+/// is overlapped and runs on the loop's port; an end that a child process may
+/// inherit is synchronous, which is what a program expects of its stdio.
+#[cfg(windows)]
+fn create_pipe(writer_is_builtin: bool, reader_is_builtin: bool) -> bun_sys::Result<Pipe> {
+    use bun_spawn_sys::windows::stdio::{ChildPipe, create_pipe_pair};
+    if !writer_is_builtin && !reader_is_builtin {
+        return bun_sys::pipe();
+    }
+    // `parent` is always overlapped; `child` is the end the other stage gets.
+    let pair = create_pipe_pair(ChildPipe {
+        readable: writer_is_builtin,
+        writable: !writer_is_builtin,
+        overlapped: writer_is_builtin && reader_is_builtin,
+    })
+    .map_err(|code| bun_spawn_sys::windows::win32::sys_error(code, bun_sys::Tag::pipe))?;
+    let (read, write) = if writer_is_builtin {
+        (pair.child, pair.parent)
+    } else {
+        (pair.parent, pair.child)
+    };
+    Ok([
+        bun_sys::Fd::from_system(read),
+        bun_sys::Fd::from_system(write),
+    ])
+}
+
 impl Pipeline {
     pub(crate) fn init(
         interp: &Interpreter,
@@ -149,16 +191,24 @@ impl Pipeline {
             return Some(Self::finish(interp, this, 0));
         }
 
+        // By runnable child, like `pipes[]` and `cmds[]`.
+        #[cfg(windows)]
+        let runs_builtin: Vec<bool> = items
+            .iter()
+            .filter(|it| !matches!(it, ast::PipelineItem::Assigns(_)))
+            .map(is_certainly_builtin)
+            .collect();
+
         let mut pipes: Vec<Pipe> = Vec::with_capacity(cmd_count - 1);
-        for _ in 0..cmd_count - 1 {
+        while pipes.len() < cmd_count - 1 {
             // On POSIX use a
             // UNIX stream socketpair via `socketpairForShell` — on macOS
             // that variant intentionally skips SO_NOSIGPIPE so the
             // subprocess writing to a closed read end is killed by SIGPIPE
             // (like a real shell) instead of seeing EPIPE and printing
-            // "Broken pipe" to stderr; on Windows use pipe().
+            // "Broken pipe" to stderr.
             #[cfg(windows)]
-            let r = bun_sys::pipe();
+            let r = create_pipe(runs_builtin[pipes.len()], runs_builtin[pipes.len() + 1]);
             #[cfg(unix)]
             let r = bun_sys::socketpair_for_shell(libc::AF_UNIX, libc::SOCK_STREAM, 0, false);
             match r {
@@ -191,12 +241,29 @@ impl Pipeline {
                 let stdin = if cmd_idx == 0 {
                     me.io.stdin.clone()
                 } else {
-                    InKind::Fd(IOReader::init(pipes[cmd_idx - 1][0], interp))
+                    let fd = pipes[cmd_idx - 1][0];
+                    #[cfg(windows)]
+                    let reader = if runs_builtin[cmd_idx] {
+                        IOReader::init_overlapped_pipe(fd, interp)
+                    } else {
+                        IOReader::init_created_pipe(fd, interp)
+                    };
+                    #[cfg(unix)]
+                    let reader = IOReader::init_created_pipe(fd, interp);
+                    InKind::Fd(reader)
                 };
                 let stdout = if cmd_idx == cmd_count - 1 {
                     me.io.stdout.clone()
                 } else {
-                    let w = IOWriter::init(pipes[cmd_idx][1], io_writer::Flags::pipe(), interp);
+                    #[cfg(windows)]
+                    let flags = if runs_builtin[cmd_idx] {
+                        io_writer::Flags::overlapped_pipe()
+                    } else {
+                        io_writer::Flags::pipe()
+                    };
+                    #[cfg(unix)]
+                    let flags = io_writer::Flags::pipe();
+                    let w = IOWriter::init(pipes[cmd_idx][1], flags, interp);
                     OutKind::Fd(crate::shell::io::OutFd {
                         writer: w,
                         captured: None,

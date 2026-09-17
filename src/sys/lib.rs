@@ -1216,6 +1216,12 @@ pub mod O {
     pub const NOCTTY: i32 = 0;
     #[cfg(windows)]
     pub const ACCMODE: i32 = 3;
+    /// Windows: the file is read or written front to back, which the cache
+    /// manager reads ahead and unmaps behind for. Nothing to say elsewhere.
+    #[cfg(windows)]
+    pub const SEQUENTIAL: i32 = 0o20000;
+    #[cfg(not(windows))]
+    pub const SEQUENTIAL: i32 = 0;
     #[cfg(target_os = "macos")]
     pub const SYMLINK: i32 = libc::O_SYMLINK;
     #[cfg(not(target_os = "macos"))]
@@ -1388,8 +1394,7 @@ impl Tag {
     pub(crate) const GetFinalPathNameByHandle: Tag = Tag(97);
     #[cfg(windows)]
     pub(crate) const CloseHandle: Tag = Tag(98);
-    #[cfg(windows)]
-    pub(crate) const SetFilePointerEx: Tag = Tag(99);
+    // 99 is `SetFilePointerEx` in `name()`; nothing reports it.
     pub const SetEndOfFile: Tag = Tag(100);
     // ── later additions — appended above the frozen range so existing
     // discriminants never shift.
@@ -3015,7 +3020,7 @@ mod posix_impl {
         check!(safe_libc::fchdir(fd.native()), Tag::fchdir);
         Ok(())
     }
-    pub fn umask(mode: Mode) -> Mode {
+    pub(crate) fn libc_umask(mode: Mode) -> Mode {
         // `Mode` is normalized to u32 across platforms; libc::mode_t is u16 on
         // Darwin/FreeBSD and u32 on Linux — cast at the boundary.
         safe_libc::umask(mode as libc::mode_t) as Mode
@@ -3481,6 +3486,59 @@ pub use posix_impl::*;
 // impls in posix_impl/windows_impl were uncached duplicates.
 pub use bun_alloc::page_size;
 
+/// The process umask. libc can only read it by setting it, which a file
+/// created on another thread at that moment sees, so it is kept here:
+/// [`init_umask`] reads it once, [`umask`] is the only thing that sets it.
+static UMASK: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+static UMASK_SET_LOCK: bun_core::Mutex<()> = bun_core::Mutex::new(());
+#[cfg(debug_assertions)]
+static UMASK_WAS_READ: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+/// Call once, before the process has a second thread.
+pub fn init_umask() {
+    let mask = libc_umask(0);
+    libc_umask(mask);
+    UMASK.store(mask, core::sync::atomic::Ordering::Relaxed);
+    #[cfg(debug_assertions)]
+    UMASK_WAS_READ.store(true, core::sync::atomic::Ordering::Relaxed);
+}
+
+#[inline]
+pub fn get_umask() -> Mode {
+    #[cfg(debug_assertions)]
+    debug_assert!(
+        UMASK_WAS_READ.load(core::sync::atomic::Ordering::Relaxed),
+        "init_umask() has not run"
+    );
+    UMASK.load(core::sync::atomic::Ordering::Relaxed)
+}
+
+/// `umask(2)`: sets the process umask and returns the one it replaces.
+pub fn umask(mode: Mode) -> Mode {
+    #[cfg(debug_assertions)]
+    debug_assert!(
+        UMASK_WAS_READ.load(core::sync::atomic::Ordering::Relaxed),
+        "init_umask() has not run"
+    );
+    let _guard = UMASK_SET_LOCK.lock();
+    libc_umask(mode);
+    // Setting it again returns the bits of `mode` libc kept.
+    let kept = libc_umask(mode);
+    UMASK.swap(kept, core::sync::atomic::Ordering::Relaxed)
+}
+
+/// `process.umask()`.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__getUmask() -> u32 {
+    get_umask()
+}
+
+/// `process.umask(mask)`. Returns the umask it replaces.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__setUmask(mask: u32) -> u32 {
+    umask(mask)
+}
+
 /// `bun.jsc.Node.TimeLike` — `timespec` shape, decoupled from JSC (T6).
 /// futimens/utimens take this; the JSC binding constructs it from
 /// JS Date/number. T1 owns the data shape.
@@ -3920,13 +3978,8 @@ mod windows_impl {
         // as the drive root, not the drive's saved cwd.
         let mut wbuf = bun_paths::w_path_buffer_pool::get();
         let wpath = bun_paths::string_paths::to_w_dir_path(&mut wbuf, path.as_bytes());
-        // SAFETY: FFI; `wpath` is NUL-terminated.
-        if unsafe { w::SetCurrentDirectoryW(wpath.as_ptr()) } == 0 {
-            return Err(
-                Error::from_win32(w::Win32Error::get(), Tag::chdir).with_path(path.as_bytes())
-            );
-        }
-        Ok(())
+        crate::windows::fs::set_current_directory(wpath)
+            .map_err(|e| Error::from_win32(e, Tag::chdir).with_path(path.as_bytes()))
     }
     pub fn fchdir(fd: Fd) -> Maybe<()> {
         let mut buf = bun_paths::path_buffer_pool::get();
@@ -3937,7 +3990,7 @@ mod windows_impl {
         // SAFETY: NUL-terminated above.
         chdir(ZStr::from_buf(&zb.0[..], p.len()))
     }
-    pub fn umask(mode: Mode) -> Mode {
+    pub(crate) fn libc_umask(mode: Mode) -> Mode {
         unsafe extern "C" {
             safe fn _umask(m: core::ffi::c_int) -> core::ffi::c_int;
         }
@@ -6406,7 +6459,9 @@ pub(crate) fn open_file_at_windows_nt_path(
 
         if rc == w::NTSTATUS::ACCESS_DENIED
             && attributes == w::FILE_ATTRIBUTE_NORMAL
-            && (options.access_mask & (w::GENERIC_READ | w::GENERIC_WRITE)) == w::GENERIC_WRITE
+            && (options.access_mask & (w::GENERIC_WRITE | w::FILE_WRITE_DATA | w::FILE_APPEND_DATA))
+                != 0
+            && (options.access_mask & (w::GENERIC_READ | w::FILE_READ_DATA)) == 0
         {
             // > If CREATE_ALWAYS and FILE_ATTRIBUTE_NORMAL are specified,
             // > CreateFile fails and sets the last error to ERROR_ACCESS_DENIED
@@ -6425,27 +6480,16 @@ pub(crate) fn open_file_at_windows_nt_path(
 
         // `RtlNtStatusToDosError` turns this one into ERROR_ACCESS_DENIED.
         if rc == w::NTSTATUS::FILE_IS_A_DIRECTORY {
-            return Err(Error::from_code(E::EISDIR, Tag::open));
+            // To `O_EXCL` a directory is a name that exists, like any other.
+            let errno = if options.disposition == w::FILE_CREATE {
+                E::EEXIST
+            } else {
+                E::EISDIR
+            };
+            return Err(Error::from_code(errno, Tag::open));
         }
         return match windows::Win32Error::from_nt_status(rc) {
-            windows::Win32Error::SUCCESS => {
-                if (options.access_mask & w::FILE_APPEND_DATA) != 0 {
-                    // https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-setfilepointerex
-                    // SAFETY: FFI; result is a valid handle.
-                    if unsafe { w::SetFilePointerEx(result, 0, core::ptr::null_mut(), w::FILE_END) }
-                        == 0
-                    {
-                        // NtCreateFile succeeded — close the live HANDLE before
-                        // bailing so this error path doesn't leak it.
-                        // SAFETY: FFI; `result` is the just-created handle.
-                        unsafe {
-                            w::CloseHandle(result);
-                        }
-                        return Err(Error::from_code(E::EUNKNOWN, Tag::SetFilePointerEx));
-                    }
-                }
-                Ok(Fd::from_system(result))
-            }
+            windows::Win32Error::SUCCESS => Ok(Fd::from_system(result)),
             // See `open_dir_at_windows_nt_path`: Rtl mapping, not the curated table.
             code => Err(Error::from_win32(code, Tag::open)),
         };
@@ -6502,8 +6546,7 @@ pub fn open_file_at_windows(dir_fd: Fd, path: &[u16], opts: NtCreateFileOptions)
     open_file_at_windows_nt_path(dir_fd, norm, opts)
 }
 
-/// POSIX-flag → NtCreateFile
-/// translation.
+/// `open(2)` over `NtCreateFile`. `flags` are `bun_sys::O` values.
 #[cfg(windows)]
 fn openat_windows_impl(dir: Fd, norm: &bun_core::WStr, flags: i32, perm: Mode) -> Maybe<Fd> {
     use bun_windows_sys::externs as w;
@@ -6521,41 +6564,37 @@ fn openat_windows_impl(dir: Fd, norm: &bun_core::WStr, flags: i32, perm: Mode) -
         );
     }
 
-    // O_RDONLY asks for read access only, like `open()`. GENERIC_WRITE already
-    // includes FILE_WRITE_ATTRIBUTES for the write-mode branches.
+    use windows::fs::Disposition;
+    // `CreateOptions` bits of `NtCreateFile` (`wdm.h`).
+    const FILE_WRITE_THROUGH: u32 = 0x0000_0002;
+    const FILE_SEQUENTIAL_ONLY: u32 = 0x0000_0004;
+    const FILE_NO_INTERMEDIATE_BUFFERING: u32 = 0x0000_0008;
+
+    let request = windows::fs::OpenRequest::new(windows::O::from_bun_o(flags), perm)
+        .map_err(|errno| Error::from_code(errno, Tag::open))?;
     // FILE_READ_ATTRIBUTES is what `fstat` needs; `CreateFileW` adds it to
     // every open, `NtCreateFile` does not.
-    let mut access_mask: u32 = w::READ_CONTROL | w::SYNCHRONIZE | w::FILE_READ_ATTRIBUTES;
-    if (flags & O::RDWR) != 0 {
-        access_mask |= w::GENERIC_READ | w::GENERIC_WRITE;
-    } else if (flags & O::WRONLY) != 0 {
-        access_mask |= w::GENERIC_WRITE;
-    } else {
-        access_mask |= w::GENERIC_READ;
-    }
-    // O_APPEND is orthogonal to the access mode, so it cannot be another arm of
-    // the chain above: `a+` is O_RDWR|O_APPEND and would otherwise never get
-    // FILE_APPEND_DATA, which is what the post-open seek to FILE_END keys off.
-    if (flags & O::APPEND) != 0 {
-        access_mask |= w::GENERIC_WRITE | w::FILE_APPEND_DATA;
-    }
-
-    // Create disposition is derived from O_CREAT/O_EXCL/O_TRUNC alone; the
-    // read/write access mode only affects `access_mask` above.
-    let creat = (flags & O::CREAT) != 0;
-    let excl = (flags & O::EXCL) != 0;
-    let truncate = (flags & O::TRUNC) != 0;
-    let disposition: u32 = match (creat, excl, truncate) {
-        (true, true, _) => w::FILE_CREATE,
-        (true, false, true) => w::FILE_OVERWRITE_IF,
-        (true, false, false) => w::FILE_OPEN_IF,
-        (false, _, true) => w::FILE_OVERWRITE,
-        (false, _, false) => w::FILE_OPEN,
+    let access_mask: u32 = request.access | w::FILE_READ_ATTRIBUTES;
+    let disposition: u32 = match request.disposition {
+        Disposition::Open => w::FILE_OPEN,
+        Disposition::OpenOrCreate => w::FILE_OPEN_IF,
+        Disposition::CreateNew => w::FILE_CREATE,
+        Disposition::Truncate => w::FILE_OVERWRITE,
+        Disposition::CreateOrTruncate => w::FILE_OVERWRITE_IF,
     };
 
     // Always a synchronous handle, whatever `O::NONBLOCK` says: `read`/`write`
     // pass no OVERLAPPED, which an asynchronous file handle rejects.
     let mut opts: u32 = w::FILE_SYNCHRONOUS_IO_NONALERT;
+    if request.no_buffering {
+        opts |= FILE_NO_INTERMEDIATE_BUFFERING;
+    }
+    if request.write_through {
+        opts |= FILE_WRITE_THROUGH;
+    }
+    if request.sequential {
+        opts |= FILE_SEQUENTIAL_ONLY;
+    }
     if (flags & O::NOFOLLOW) != 0 {
         opts |= w::FILE_OPEN_REPARSE_POINT;
     }
@@ -6565,7 +6604,7 @@ fn openat_windows_impl(dir: Fd, norm: &bun_core::WStr, flags: i32, perm: Mode) -
     }
 
     let mut attributes: u32 = w::FILE_ATTRIBUTE_NORMAL;
-    if (flags & O::CREAT) != 0 && (perm & 0x80) == 0 && perm != 0 {
+    if request.read_only {
         attributes |= w::FILE_ATTRIBUTE_READONLY;
     }
 
@@ -7180,7 +7219,7 @@ pub fn get_fd_path_w(fd: Fd, out: &mut [u16]) -> Maybe<&mut [u16]> {
         use crate::windows::GetFinalPathNameByHandleError as GE;
         Error::from_code(
             match e {
-                GE::FileNotFound => E::ENOENT,
+                GE::Failed(_) => E::ENOENT,
                 GE::NameTooLong => E::ENAMETOOLONG,
             },
             Tag::GetFinalPathNameByHandle,

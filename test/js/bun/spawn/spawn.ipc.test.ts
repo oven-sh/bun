@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, gcTick, isWindows } from "harness";
+import { bunEnv, bunExe, gcTick, isWindows, tempDir } from "harness";
 import path from "path";
 
 describe.each(["advanced", "json"])("ipc mode %s", mode => {
@@ -497,6 +497,35 @@ it("child with unusable NODE_CHANNEL_FD tears down IPC without crashing", async 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toContain("Unable to start IPC");
   expect(stdout).toBe("err ERR_IPC_CHANNEL_CLOSED\nok\n");
+  expect(exitCode).toBe(0);
+});
+
+it.skipIf(!isWindows)("child whose NODE_CHANNEL_FD is a file, not a pipe, has no IPC channel", async () => {
+  using dir = tempDir("ipc-channel-fd-file", { "target.txt": "not a pipe\n" });
+  const target = path.join(String(dir), "target.txt");
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        process.on('error', e => console.log('err', e.code));
+        process.send('x');
+        setImmediate(() => setImmediate(() => console.log('ok')));
+      `,
+    ],
+    env: {
+      ...bunEnv,
+      NODE_CHANNEL_FD: "3",
+      NODE_CHANNEL_SERIALIZATION_MODE: "json",
+    },
+    stdio: ["ignore", "pipe", "pipe", Bun.file(target)],
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("Unable to start IPC");
+  expect({ stdout, target: await Bun.file(target).text() }).toEqual({
+    stdout: "err ERR_IPC_CHANNEL_CLOSED\nok\n",
+    target: "not a pipe\n",
+  });
   expect(exitCode).toBe(0);
 });
 

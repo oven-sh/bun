@@ -1226,20 +1226,12 @@ impl Interpreter {
 
         let stdout_writer = IOWriter::init(
             stdout_fd,
-            crate::shell::io_writer::Flags {
-                #[cfg(not(windows))]
-                pollable: is_pollable(stdout_fd),
-                ..Default::default()
-            },
+            crate::shell::io_writer::Flags::unclassified(),
             self,
         );
         let stderr_writer = IOWriter::init(
             stderr_fd,
-            crate::shell::io_writer::Flags {
-                #[cfg(not(windows))]
-                pollable: is_pollable(stderr_fd),
-                ..Default::default()
-            },
+            crate::shell::io_writer::Flags::unclassified(),
             self,
         );
 
@@ -2278,7 +2270,7 @@ fn open_null_device() -> bun_sys::Result<Fd> {
 
 /// `false` when `fstat` fails (non-pollable → synchronous write path).
 #[cfg(not(windows))]
-fn is_pollable(fd: Fd) -> bool {
+pub(crate) fn is_pollable(fd: Fd) -> bool {
     let mode = match bun_sys::fstat(fd) {
         Ok(st) => st.st_mode,
         Err(_) => return false,
@@ -2561,6 +2553,13 @@ impl OutputSrc {
     pub(crate) fn slice(&self) -> &[u8] {
         match self {
             OutputSrc::Arrlist(v) => v.as_slice(),
+        }
+    }
+
+    /// The bytes, for the one write that consumes them.
+    pub(crate) fn take(&mut self) -> Vec<u8> {
+        match self {
+            OutputSrc::Arrlist(v) => core::mem::take(v),
         }
     }
 }

@@ -868,7 +868,7 @@ mod draft {
                                 .unwrap_or(b"<unknown>");
                             if write!(
                                 writer,
-                                bun_core::pretty_fmt!("Bun encountered a crash when running a NAPI module that tried to call\nthe <red>{s}<r> libuv function.\n\nBun is actively working on supporting all libuv functions, please see\nthis issue to track our progress:\n\n<cyan>https://github.com/oven-sh/bun/issues/18546<r>\n\n", true),
+                                bun_core::pretty_fmt!("Bun encountered a crash when running a NAPI module that tried to call\nthe <red>{s}<r> libuv function.\n\nBun does not use libuv and implements only a few of its functions. This\nissue lists the functions and packages known to be affected:\n\n<cyan>https://github.com/oven-sh/bun/issues/18546<r>\n\n", true),
                                 bstr::BStr::new(name)
                             )
                             .is_err()
@@ -1098,7 +1098,7 @@ mod draft {
                                     .unwrap_or(b"<unknown>");
                                 if write!(
                                     writer,
-                                    bun_core::pretty_fmt!("Bun encountered a crash when running a NAPI module that tried to call\nthe <red>{s}<r> libuv function.\n\nBun is actively working on supporting all libuv functions, please see\nthis issue to track our progress:\n\n<cyan>https://github.com/oven-sh/bun/issues/18546<r>\n\n", true),
+                                    bun_core::pretty_fmt!("Bun encountered a crash when running a NAPI module that tried to call\nthe <red>{s}<r> libuv function.\n\nBun does not use libuv and implements only a few of its functions. This\nissue lists the functions and packages known to be affected:\n\n<cyan>https://github.com/oven-sh/bun/issues/18546<r>\n\n", true),
                                     bstr::BStr::new(name)
                                 )
                                 .is_err()

@@ -262,7 +262,7 @@ pub fn event_loop_handle_to_ctx(handle: EventLoopHandle) -> bun_io::EventLoopCtx
 // ─── spawn-result / exit-watch Process methods ───────────────────────────────
 impl Process {
     /// Heap-allocates the `Process` for a spawned child with its initial ref.
-    pub(crate) fn init(spawned: &SpawnResult, event_loop: EventLoopHandle) -> *mut Process {
+    pub(crate) fn init(spawned: &mut SpawnResult, event_loop: EventLoopHandle) -> *mut Process {
         #[cfg(unix)]
         let status = 'brk: {
             if spawned.has_exited {
@@ -280,7 +280,7 @@ impl Process {
             #[cfg(any(target_os = "linux", target_os = "android"))]
             pidfd: spawned.pidfd.unwrap_or(0),
             #[cfg(windows)]
-            process_handle: spawned.process_handle,
+            process_handle: spawned.process_handle.take(),
             #[cfg(windows)]
             exit_signal: 0,
             #[cfg(unix)]
@@ -1609,9 +1609,9 @@ pub trait SpawnResultExt: Sized {
 }
 
 impl SpawnResultExt for SpawnResult {
-    fn to_process(self, event_loop: EventLoopHandle) -> RefPtr<Process> {
+    fn to_process(mut self, event_loop: EventLoopHandle) -> RefPtr<Process> {
         // SAFETY: `init` heap-allocates the `Process` with its initial ref.
-        unsafe { RefPtr::from_raw(Process::init(&self, event_loop)) }
+        unsafe { RefPtr::from_raw(Process::init(&mut self, event_loop)) }
     }
 }
 
@@ -1984,14 +1984,7 @@ mod spawn_process_body {
                 Ok(spawned) => spawned,
             };
 
-            struct ProcessHandle(bun_sys::windows::HANDLE);
-            impl Drop for ProcessHandle {
-                fn drop(&mut self) {
-                    // SAFETY: the process handle of the result is ours.
-                    unsafe { win32::CloseHandle(self.0) };
-                }
-            }
-            let process = ProcessHandle(spawned.process_handle);
+            let process = spawned.process_handle.get();
 
             // Nothing is written to the child's stdin: end it.
             if let Some(stdin) = spawned.stdin {
@@ -2000,7 +1993,7 @@ mod spawn_process_body {
 
             let kill_child = || {
                 let _ =
-                    bun_spawn_sys::windows::kill(process.0, bun_spawn_sys::windows::kill::SIGKILL);
+                    bun_spawn_sys::windows::kill(process, bun_spawn_sys::windows::kill::SIGKILL);
             };
             let mut drains = match (
                 PipeDrain::new(spawned.stdout),
@@ -2050,11 +2043,11 @@ mod spawn_process_body {
                 return Ok(Err(err));
             }
 
-            if win32::WaitForSingleObject(process.0, win32::INFINITE) != win32::WAIT_OBJECT_0 {
+            if win32::WaitForSingleObject(process, win32::INFINITE) != win32::WAIT_OBJECT_0 {
                 return Ok(Err(win32::last_error(bun_sys::Tag::waitpid)));
             }
             let mut exit_code: u32 = 0;
-            if win32::GetExitCodeProcess(process.0, &mut exit_code) == 0 {
+            if win32::GetExitCodeProcess(process, &mut exit_code) == 0 {
                 return Ok(Err(win32::last_error(bun_sys::Tag::waitpid)));
             }
 

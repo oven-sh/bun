@@ -2708,6 +2708,10 @@ pub mod args {
         pub(crate) mode: Mode,
         /// If set to true, the return value is never set to a string
         pub(crate) always_return_none: bool,
+        /// `path` leads a `Bun.file`'s path (recursive only): every level is
+        /// named as the open of that file names it. See
+        /// [`PathLikeExt::slice_z_as_written`].
+        pub(crate) as_written: bool,
     }
     impl Mkdir<'_> {
         pub(crate) const DEFAULT_MODE: Mode = 0o777;
@@ -2719,6 +2723,7 @@ pub mod args {
                 recursive: false,
                 mode: Self::DEFAULT_MODE,
                 always_return_none: false,
+                as_written: false,
             }
         }
     }
@@ -2749,6 +2754,7 @@ pub mod args {
                 recursive,
                 mode,
                 always_return_none: false,
+                as_written: false,
             })
         }
     }
@@ -4773,6 +4779,26 @@ impl NodeFS {
         args: &args::Mkdir,
         ctx: &Ctx,
     ) -> Maybe<ret::Mkdir> {
+        #[cfg(windows)]
+        if args.as_written {
+            let path = match sys::windows::fs::WPath::directory(args.path.slice()) {
+                Ok(path) => path,
+                Err(err) => {
+                    return Err(
+                        sys::Error::from_win32(err, sys::Tag::mkdir).with_path(args.path.slice())
+                    );
+                }
+            };
+            let result = if args.always_return_none {
+                self.mkdir_recursive_os_path_impl::<Ctx, false>(ctx, path.as_wstr(), args.mode)
+            } else {
+                self.mkdir_recursive_os_path_impl::<Ctx, true>(ctx, path.as_wstr(), args.mode)
+            };
+            // The walk names the Win32 form it worked on.
+            return result.map_err(|err| err.with_path(args.path.slice()));
+        }
+        #[cfg(not(windows))]
+        let _ = args.as_written;
         let mut buf = paths::path_buffer_pool::get();
         let path = match args.path.os_path_kernel32(&mut *buf) {
             Ok(p) => p,

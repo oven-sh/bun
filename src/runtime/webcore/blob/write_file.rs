@@ -122,8 +122,11 @@ bun_io::intrusive_io_request!(WriteFile, io_request);
 // ──────────────────────────────────────────────────────────────────────────
 
 impl FileOpener for WriteFile {
-    const OPEN_FLAGS: i32 =
-        bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC | bun_sys::O::NONBLOCK;
+    const OPEN_FLAGS: i32 = bun_sys::O::WRONLY
+        | bun_sys::O::CREAT
+        | bun_sys::O::TRUNC
+        | bun_sys::O::NONBLOCK
+        | bun_sys::O::SEQUENTIAL;
 
     fn opened_fd(&self) -> Fd {
         self.opened_fd

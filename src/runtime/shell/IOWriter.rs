@@ -95,43 +95,88 @@ pub enum WriterTag {
 // Flags / Writer queue entry
 // ──────────────────────────────────────────────────────────────────────────
 
-// What kind of fd this is decides how POSIX writes to it; on Windows the
-// writer classifies the handle itself.
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub struct Flags {
-    #[cfg(not(windows))]
+    /// Whether what the fd is has been asked; the first chunk asks
+    /// (`IOWriter::classify`). `pollable` means nothing before that.
+    classified: bool,
+    /// A write may wait for whoever is at the other end (a pipe, a socket, a
+    /// terminal), so it goes through the event loop. A write to anything else
+    /// is made in place: a disk file, and on POSIX a device such as
+    /// `/dev/null` too.
     pub(crate) pollable: bool,
     #[cfg(not(windows))]
     pub(crate) nonblock: bool,
     #[cfg(not(windows))]
     pub(crate) is_socket: bool,
+    /// Where a pipe came from, for the source that writes to it.
+    #[cfg(windows)]
+    pub(crate) origin: bun_io::windows::PipeOrigin,
+    /// What `classify` found the fd to be, for the source that writes to it.
+    #[cfg(windows)]
+    kind: Option<sys::FileKind>,
     pub(crate) broken_pipe: bool,
 }
 
 impl Flags {
-    #[cfg_attr(windows, allow(unused_variables))]
+    /// An fd nobody has asked anything about: a duplicate of the process's
+    /// stdout or stderr, a redirect target on Windows.
+    pub(crate) fn unclassified() -> Flags {
+        Flags {
+            classified: false,
+            pollable: false,
+            #[cfg(not(windows))]
+            nonblock: false,
+            #[cfg(not(windows))]
+            is_socket: false,
+            #[cfg(windows)]
+            origin: bun_io::windows::PipeOrigin::Foreign,
+            #[cfg(windows)]
+            kind: None,
+            broken_pipe: false,
+        }
+    }
+
+    /// A redirect target, which opening it has classified.
+    #[cfg(not(windows))]
     pub(crate) fn classified(pollable: bool, nonblock: bool, is_socket: bool) -> Flags {
         Flags {
-            #[cfg(not(windows))]
+            classified: true,
             pollable,
-            #[cfg(not(windows))]
             nonblock,
-            #[cfg(not(windows))]
             is_socket,
             broken_pipe: false,
         }
     }
 
-    /// The write end of a pipe between two commands, which on POSIX is a
-    /// socketpair end.
+    /// The write end of a pipe between two commands whose writing command may
+    /// turn out to be a child process, which inherits it: a socketpair end on
+    /// POSIX, a synchronous pipe end on Windows.
     pub(crate) fn pipe() -> Flags {
         Flags {
-            #[cfg(not(windows))]
+            classified: true,
             pollable: true,
             #[cfg(not(windows))]
             nonblock: false,
             #[cfg(not(windows))]
             is_socket: true,
+            #[cfg(windows)]
+            origin: bun_io::windows::PipeOrigin::CreatedSynchronous,
+            #[cfg(windows)]
+            kind: None,
+            broken_pipe: false,
+        }
+    }
+
+    /// The write end of a pipe between two commands that only a builtin
+    /// writes to: an overlapped end, which runs on the loop's port.
+    #[cfg(windows)]
+    pub(crate) fn overlapped_pipe() -> Flags {
+        Flags {
+            classified: true,
+            pollable: true,
+            origin: bun_io::windows::PipeOrigin::Created,
+            kind: None,
             broken_pipe: false,
         }
     }
@@ -362,13 +407,14 @@ impl IOWriter {
     fn __start(&self) -> sys::Result<()> {
         let s = self.state();
         crate::shell_log!("IOWriter(fd={}) __start()", s.fd);
-        // On Windows `true` claims an overlapped pipe end made for a spawned
-        // child, which no fd of the shell's is; the writer finds out what it has.
         #[cfg(windows)]
-        let pollable = false;
+        let started = match s.flags.kind {
+            Some(kind) => s.writer.start_with_kind(s.fd, s.flags.origin, kind),
+            None => s.writer.start_with_origin(s.fd, s.flags.origin),
+        };
         #[cfg(not(windows))]
-        let pollable = s.flags.pollable;
-        if let Err(e) = s.writer.start(s.fd, pollable) {
+        let started = s.writer.start(s.fd, s.flags.pollable);
+        if let Err(e) = started {
             #[cfg(not(windows))]
             {
                 // We get this if we pass in a file descriptor that is not
@@ -432,7 +478,6 @@ impl IOWriter {
     /// re-entering `Yield::run` (see `DbgDepthGuard`).
     fn write(&self) -> WriteOutcome {
         let s = self.state();
-        #[cfg(not(windows))]
         debug_assert!(s.flags.pollable);
 
         if !s.started {
@@ -465,8 +510,10 @@ impl IOWriter {
         {
             // Does nothing while a write is in flight; its completion
             // continues with whatever was queued meanwhile.
-            s.writer.write();
-            return WriteOutcome::Suspended;
+            return match s.writer.write() {
+                Ok(()) => WriteOutcome::Suspended,
+                Err(e) => WriteOutcome::Failed(e),
+            };
         }
 
         #[cfg(not(windows))]
@@ -568,7 +615,6 @@ impl IOWriter {
 
     // ── file write (non-pollable sync path) ─────────────────────────────
 
-    #[cfg(not(windows))]
     fn do_file_write(&self) -> Yield {
         let s = self.state();
         debug_assert!(!s.flags.pollable);
@@ -584,10 +630,14 @@ impl IOWriter {
                 // partial write and restart this writer on the pollable path.
                 front.advance(amt);
                 s.flags.pollable = true;
-                s.flags.nonblock = true;
+                #[cfg(not(windows))]
+                {
+                    s.flags.nonblock = true;
+                }
                 s.started = false;
                 return match self.write() {
                     WriteOutcome::Suspended => Yield::suspended(),
+                    #[cfg(not(windows))]
                     WriteOutcome::IsActuallyFile => {
                         self.on_sync_error(&sys::Error::from_code(E::EAGAIN, sys::Tag::write))
                     }
@@ -615,7 +665,6 @@ impl IOWriter {
     /// chunk were written. Runs on the event loop.
     fn on_write_pollable(&self, amount: usize, status: bun_io::WriteStatus) {
         let s = self.state();
-        #[cfg(not(windows))]
         debug_assert!(s.flags.pollable);
         #[cfg(windows)]
         {
@@ -650,8 +699,8 @@ impl IOWriter {
         let s = self.state();
         if !s.writers.is_empty() {
             #[cfg(windows)]
-            {
-                s.writer.write();
+            if let Err(e) = s.writer.write() {
+                self.on_error(&e);
             }
             #[cfg(not(windows))]
             {
@@ -709,12 +758,9 @@ impl IOWriter {
         None
     }
 
-    /// Write failure reported by the `bun_io` writer callbacks. Each pending
-    /// chunk's error completion is driven through its own `Yield::run`; on
-    /// POSIX these callbacks only fire from the event loop, with no trampoline
-    /// on the stack. On Windows a write that cannot be submitted is also
-    /// reported from under `write()`, a re-entry `write()` cannot turn into a
-    /// `WriteOutcome::Failed`.
+    /// Write failure reported by the `bun_io` writer callbacks, which only
+    /// fire from the event loop, with no trampoline on the stack: each pending
+    /// chunk's error completion is driven through its own `Yield::run`.
     fn on_error(&self, err: &sys::Error) {
         let _keepalive = self.keepalive();
         self.fail_pending_writers(err);
@@ -803,7 +849,6 @@ impl IOWriter {
         None
     }
 
-    #[cfg(not(windows))]
     fn enqueue_file(&self) -> Yield {
         // The pollable path sets `started` in write(); the non-pollable file
         // path bypasses write() entirely, so set it here.
@@ -811,11 +856,28 @@ impl IOWriter {
         self.do_file_write()
     }
 
+    /// Ask what the fd is. A query that fails leaves it to the source, whose
+    /// open fails the same way and is the write's error.
+    fn classify(s: &mut State) {
+        s.flags.classified = true;
+        #[cfg(windows)]
+        {
+            s.flags.kind = sys::File::borrow(&s.fd).kind().ok();
+            s.flags.pollable = s.flags.kind != Some(sys::FileKind::File);
+        }
+        #[cfg(not(windows))]
+        {
+            s.flags.pollable = crate::shell::interpreter::is_pollable(s.fd);
+        }
+    }
+
     /// For the chunk that was just pushed.
     fn enqueue_internal(&self) -> Yield {
         debug_assert!(!self.state().flags.broken_pipe);
         debug_assert!(self.state().err.is_none());
-        #[cfg(not(windows))]
+        if !self.state().flags.classified {
+            Self::classify(self.state());
+        }
         if !self.state().flags.pollable {
             return self.enqueue_file();
         }
@@ -931,13 +993,12 @@ bun_io::impl_buffered_writer_parent! {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// POSIX file path
+// File path
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Writes all of `buf` unless the fd stops taking bytes. A failure is an
 /// error even after a partial write: `do_file_write` fails the whole chunk
 /// either way.
-#[cfg(not(windows))]
 fn write_to_file(fd: Fd, buf: &[u8]) -> bun_io::WriteResult {
     let mut offset: usize = 0;
     while offset < buf.len() {

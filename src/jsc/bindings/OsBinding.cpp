@@ -107,7 +107,7 @@ extern "C" uint64_t Bun__Os__getFreeMemory(void)
 #include <ws2tcpip.h>
 #include <windows.h>
 #include <iphlpapi.h>
-#include "BunWinternl.h"
+#include <winternl.h>
 #include <wtf/FastMalloc.h>
 
 extern "C" uint64_t Bun__Os__getFreeMemory(void)

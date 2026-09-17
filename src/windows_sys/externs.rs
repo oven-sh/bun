@@ -22,7 +22,6 @@ pub type DWORD = c_ulong;
 type DWORD_PTR = usize;
 pub type UINT = c_uint;
 pub type ULONG = c_ulong;
-pub type LONG = c_long;
 pub type LARGE_INTEGER = i64;
 pub type WCHAR = u16;
 pub type CHAR = c_char;
@@ -90,18 +89,6 @@ pub struct OVERLAPPED {
     pub Offset: DWORD,
     pub OffsetHigh: DWORD,
     pub hEvent: HANDLE,
-}
-
-/// `RTL_CRITICAL_SECTION` (`winnt.h`) — 40 bytes / align 8 on x64.
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct CRITICAL_SECTION {
-    pub DebugInfo: *mut c_void,
-    pub LockCount: LONG,
-    pub RecursionCount: LONG,
-    pub OwningThread: HANDLE,
-    pub LockSemaphore: HANDLE,
-    pub SpinCount: ULONG_PTR,
 }
 
 /// `WIN32_FIND_DATAW` (`minwinbase.h`) — 592 bytes / align 4.
@@ -184,7 +171,6 @@ pub struct INPUT_RECORD {
 #[cfg(all(windows, target_pointer_width = "64"))]
 const _: () = {
     assert!(core::mem::size_of::<OVERLAPPED>() == 32);
-    assert!(core::mem::size_of::<CRITICAL_SECTION>() == 40);
     assert!(core::mem::size_of::<WIN32_FIND_DATAW>() == 592);
     assert!(core::mem::size_of::<INPUT_RECORD>() == 20);
 };
@@ -221,9 +207,6 @@ pub struct WIN32_FILE_ATTRIBUTE_DATA {
     pub nFileSizeHigh: DWORD,
     pub nFileSizeLow: DWORD,
 }
-
-/// `GET_FILEEX_INFO_LEVELS` — enum(u32) selecting `GetFileAttributesExW` payload.
-pub(crate) type GET_FILEEX_INFO_LEVELS = u32;
 
 /// `FILE_INFO_BY_HANDLE_CLASS` (`winbase.h`), as a bare `u32`.
 pub type FILE_INFO_BY_HANDLE_CLASS = u32;
@@ -310,7 +293,7 @@ pub const FILE_LIST_DIRECTORY: ACCESS_MASK = 0x0001;
 pub const FILE_WRITE_DATA: ACCESS_MASK = 0x0002;
 pub const FILE_APPEND_DATA: ACCESS_MASK = 0x0004;
 pub const FILE_READ_EA: ACCESS_MASK = 0x0008;
-pub const FILE_WRITE_EA: ACCESS_MASK = 0x0010;
+pub(crate) const FILE_WRITE_EA: ACCESS_MASK = 0x0010;
 pub const FILE_TRAVERSE: ACCESS_MASK = 0x0020;
 pub const FILE_READ_ATTRIBUTES: ACCESS_MASK = 0x0080;
 pub const FILE_WRITE_ATTRIBUTES: ACCESS_MASK = 0x0100;
@@ -335,9 +318,7 @@ pub const TRUNCATE_EXISTING: DWORD = 5;
 pub const FILE_FLAG_FIRST_PIPE_INSTANCE: DWORD = 0x0008_0000;
 pub const FILE_FLAG_OPEN_REPARSE_POINT: DWORD = 0x0020_0000;
 pub const FILE_FLAG_BACKUP_SEMANTICS: DWORD = 0x0200_0000;
-pub const FILE_FLAG_DELETE_ON_CLOSE: DWORD = 0x0400_0000;
 pub const FILE_FLAG_SEQUENTIAL_SCAN: DWORD = 0x0800_0000;
-pub const FILE_FLAG_RANDOM_ACCESS: DWORD = 0x1000_0000;
 pub const FILE_FLAG_NO_BUFFERING: DWORD = 0x2000_0000;
 pub const FILE_FLAG_OVERLAPPED: DWORD = 0x4000_0000;
 pub const FILE_FLAG_WRITE_THROUGH: DWORD = 0x8000_0000;
@@ -355,6 +336,21 @@ pub const IO_REPARSE_TAG_APPEXECLINK: DWORD = 0x8000_001B;
 pub const FSCTL_SET_REPARSE_POINT: DWORD = 0x0009_00A4;
 pub const FSCTL_GET_REPARSE_POINT: DWORD = 0x0009_00A8;
 pub const MAXIMUM_REPARSE_DATA_BUFFER_SIZE: usize = 16 * 1024;
+
+/// `FSCTL_PIPE_PEEK` (`ntifs.h`): what `PeekNamedPipe` sends. The output is a
+/// [`FILE_PIPE_PEEK_BUFFER`] followed by the peeked bytes; with no room for
+/// all of those the call returns `STATUS_BUFFER_OVERFLOW` and the fixed fields
+/// are valid.
+pub const FSCTL_PIPE_PEEK: DWORD = 0x0011_400C;
+
+/// The fixed part of `FILE_PIPE_PEEK_BUFFER` (`ntifs.h`).
+#[repr(C)]
+pub struct FILE_PIPE_PEEK_BUFFER {
+    pub NamedPipeState: ULONG,
+    pub ReadDataAvailable: ULONG,
+    pub NumberOfMessages: ULONG,
+    pub MessageLength: ULONG,
+}
 
 // Reparse tags (`winnt.h`). `IsReparseTagNameSurrogate` == bit 29: the reparse
 // point names another filesystem entity (symlink, mount point). Non-surrogate
@@ -837,6 +833,21 @@ pub mod ntdll {
             Length: ULONG,
             FsInformationClass: FS_INFORMATION_CLASS,
         ) -> NTSTATUS;
+        /// `NtFsControlFile` (`ntifs.h`). On a handle opened for overlapped
+        /// I/O it can return `STATUS_PENDING`, and then only `Event` (or the
+        /// completion port) says when `IoStatusBlock` and the output are valid.
+        pub fn NtFsControlFile(
+            FileHandle: HANDLE,
+            Event: HANDLE,
+            ApcRoutine: *mut c_void,
+            ApcContext: *mut c_void,
+            IoStatusBlock: *mut IO_STATUS_BLOCK,
+            FsControlCode: ULONG,
+            InputBuffer: *mut c_void,
+            InputBufferLength: ULONG,
+            OutputBuffer: *mut c_void,
+            OutputBufferLength: ULONG,
+        ) -> NTSTATUS;
         /// A bad handle is `STATUS_INVALID_HANDLE`.
         pub safe fn NtClose(Handle: HANDLE) -> NTSTATUS;
 
@@ -1315,8 +1326,6 @@ impl Win32Error {
     pub const META_EXPANSION_TOO_LONG: Win32Error = Win32Error(208);
     pub const BAD_PIPE: Win32Error = Win32Error(230);
     pub const PIPE_BUSY: Win32Error = Win32Error(231);
-    #[cfg(windows)]
-    pub const MORE_DATA: Win32Error = Win32Error(234);
     pub const NO_DATA: Win32Error = Win32Error(232);
     pub const PIPE_NOT_CONNECTED: Win32Error = Win32Error(233);
     pub const PIPE_CONNECTED: Win32Error = Win32Error(535);
@@ -1441,7 +1450,7 @@ impl Win32Error {
     // that directly (T0 must not depend on T1).
 }
 
-pub type LPDWORD = *mut DWORD;
+pub(crate) type LPDWORD = *mut DWORD;
 pub type HPCON = *mut c_void;
 
 #[cfg_attr(windows, link(name = "kernel32"))]
@@ -1968,12 +1977,6 @@ unsafe extern "system" {
         dwFlags: ULONG,
     ) -> BOOL;
 
-    pub fn GetFileAttributesExW(
-        lpFileName: LPCWSTR,
-        fInfoLevelId: GET_FILEEX_INFO_LEVELS,
-        lpFileInformation: LPVOID,
-    ) -> BOOL;
-
     pub fn SetFileAttributesW(lpFileName: LPCWSTR, dwFileAttributes: DWORD) -> BOOL;
 
     pub fn RemoveDirectoryW(lpPathName: LPCWSTR) -> BOOL;
@@ -2047,6 +2050,8 @@ pub use windows_only::*;
 #[cfg(windows)]
 mod windows_only {
     use super::*;
+
+    type LONG = c_long;
 
     /// `GetFileAttributesW` failure value.
     pub const INVALID_FILE_ATTRIBUTES: DWORD = DWORD::MAX;

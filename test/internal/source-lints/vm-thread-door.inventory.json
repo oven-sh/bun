@@ -182,6 +182,9 @@
       "ThreadIsolated<T>"
     ]
   },
+  "src/runtime/node/windows_signal.rs": {
+    "thread spawn": 1
+  },
   "src/runtime/shell/IOReader.rs": {
     "unsafe impl Send": [
       "IOReader"

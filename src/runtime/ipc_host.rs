@@ -94,7 +94,8 @@ pub(crate) fn do_send(
     global_object: &JSGlobalObject,
     call_frame: &CallFrame,
     from: FromEnum,
-    peer_pid: u32,
+    // Windows: only a message that carries a handle asks who is on the other end.
+    peer_pid: impl FnOnce() -> u32,
 ) -> JsResult<JSValue> {
     let [mut message, mut handle, options_, mut callback] = call_frame.arguments_as_array::<4>();
     #[cfg(not(windows))]
@@ -265,6 +266,7 @@ pub(crate) fn do_send(
 
     #[cfg(windows)]
     if let Some(h) = &mut zig_handle {
+        let peer_pid = peer_pid();
         match attach_windows_socket_payload(global_object, message, h.fd, peer_pid)? {
             Some(hex) => {
                 h.win_export_hex = Some(hex);
@@ -372,7 +374,7 @@ fn Bun__Process__send(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
     // `None`); the instance is heap-allocated, not embedded in `vm`.
     let ipc = get_ipc_instance(vm).map(|i| unsafe { (*i).data() });
     #[cfg(windows)]
-    let peer_pid = {
+    let peer_pid = || {
         let from_pipe = ipc.as_ref().map(|i| i.ipc_peer_pid()).unwrap_or(0);
         if from_pipe != 0 {
             from_pipe
@@ -381,7 +383,7 @@ fn Bun__Process__send(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
         }
     };
     #[cfg(not(windows))]
-    let peer_pid = 0;
+    let peer_pid = || 0;
     do_send(ipc, global, frame, FromEnum::Process, peer_pid)
 }
 

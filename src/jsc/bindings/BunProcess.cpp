@@ -90,9 +90,8 @@
 #include <psapi.h>
 #include <io.h>
 #include <fcntl.h>
-// Using the same typedef and define for `mode_t` and `umask` as node on windows.
+// Using the same typedef for `mode_t` as node on windows.
 // https://github.com/nodejs/node/blob/ad5e2dab4c8306183685973387829c2f69e793da/src/node_process_methods.cc#L29
-#define umask _umask
 typedef int mode_t;
 #endif
 #include "JSNextTickQueue.h"
@@ -299,7 +298,7 @@ static JSValue constructVersions(VM& vm, JSObject* processObject)
         // Use commit hash for zstd (semantic version extraction not working yet)
         { "zstd", BUN_VERSION_ZSTD_HASH },
         { "v8", REPORTED_NODEJS_V8_VERSION },
-        { "uv", BUN_REPORTED_LIBUV_VERSION },
+        { "uv", REPORTED_NODEJS_UV_VERSION },
     };
     auto putVersion = [&](const char* name, String&& version) {
         object->putDirect(vm, JSC::Identifier::fromString(vm, ASCIILiteral::fromLiteralUnsafe(name)), JSC::jsOwnedString(vm, version), 0);
@@ -816,12 +815,13 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
     return JSValue::encode(resultValue);
 }
 
+extern "C" uint32_t Bun__getUmask();
+extern "C" uint32_t Bun__setUmask(uint32_t);
+
 JSC_DEFINE_HOST_FUNCTION(Process_functionUmask, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     if (callFrame->argumentCount() == 0 || callFrame->argument(0).isUndefined()) {
-        mode_t currentMask = umask(0);
-        umask(currentMask);
-        return JSValue::encode(jsNumber(currentMask));
+        return JSValue::encode(jsNumber(Bun__getUmask()));
     }
 
     auto& vm = JSC::getVM(globalObject);
@@ -842,7 +842,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionUmask, (JSGlobalObject * globalObject, 
         newUmask = JSC::toUInt32(value.asNumber());
     }
 
-    return JSC::JSValue::encode(JSC::jsNumber(umask(newUmask)));
+    return JSC::JSValue::encode(JSC::jsNumber(Bun__setUmask(static_cast<uint32_t>(newUmask))));
 }
 
 extern "C" uint64_t Bun__readOriginTimer(void*);

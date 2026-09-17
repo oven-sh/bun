@@ -11,6 +11,8 @@ pub const RDWR: i32 = 0x0002;
 pub const TRUNC: i32 = 0x0200;
 pub const WRONLY: i32 = 0x0001;
 pub const DIRECT: i32 = 0x0200_0000;
+/// `_O_SEQUENTIAL`: the file is read or written front to back.
+pub const SEQUENTIAL: i32 = 0x0020;
 pub const DSYNC: i32 = 0x0400_0000;
 pub const SYNC: i32 = 0x0800_0000;
 
@@ -18,7 +20,7 @@ pub const SYNC: i32 = 0x0800_0000;
 // the Linux values of SYNC/DSYNC/DIRECT, which are zero in `crate::O` on
 // Windows but are still recognised here when a caller passes them.
 mod bun_o {
-    pub(super) use crate::O::{APPEND, CREAT, EXCL, RDWR, TRUNC, WRONLY};
+    pub(super) use crate::O::{APPEND, CREAT, EXCL, RDWR, SEQUENTIAL, TRUNC, WRONLY};
     pub(super) const DSYNC: i32 = 0o10000;
     pub(super) const DIRECT: i32 = 0o40000;
     pub(super) const SYNC: i32 = 0o4010000;
@@ -58,6 +60,9 @@ pub fn from_bun_o(c_flags: i32) -> i32 {
     if c_flags & bun_o::DIRECT != 0 {
         flags |= DIRECT;
     }
+    if c_flags & bun_o::SEQUENTIAL != 0 {
+        flags |= SEQUENTIAL;
+    }
     if c_flags & FILEMAP != 0 {
         flags |= FILEMAP;
     }
@@ -95,6 +100,9 @@ pub fn to_bun_o(windows_flags: i32) -> i32 {
     }
     if windows_flags & DIRECT != 0 {
         flags |= bun_o::DIRECT;
+    }
+    if windows_flags & SEQUENTIAL != 0 {
+        flags |= bun_o::SEQUENTIAL;
     }
     if windows_flags & FILEMAP != 0 {
         flags |= FILEMAP;

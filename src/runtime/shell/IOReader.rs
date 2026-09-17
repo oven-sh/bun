@@ -38,8 +38,20 @@ type Readers = Vec<ChildPtr>;
 
 pub(crate) type ReaderImpl = bun_io::BufferedReader;
 
+/// What whoever makes an `IOReader` knows about its fd.
+#[derive(Clone, Copy)]
+enum Made {
+    Elsewhere,
+    SynchronousPipe,
+    #[cfg(windows)]
+    OverlappedPipe,
+}
+
 struct State {
     fd: Fd,
+    /// What `fd` is, as far as whoever made this reader knows.
+    #[cfg(windows)]
+    origin: bun_io::windows::PipeOrigin,
     readers: Readers,
     /// What the reader has failed with since it was last started; an
     /// `on_reader_done` after it carries it.
@@ -118,10 +130,34 @@ impl IOReader {
 
     /// A reader of `fd` (closed with it) whose listeners are nodes of `interp`.
     pub(crate) fn init(fd: Fd, interp: &Interpreter) -> std::sync::Arc<IOReader> {
+        Self::new(fd, interp, Made::Elsewhere)
+    }
+
+    /// [`init`](Self::init) for the read end of a `bun_sys::pipe()`.
+    pub(crate) fn init_created_pipe(fd: Fd, interp: &Interpreter) -> std::sync::Arc<IOReader> {
+        Self::new(fd, interp, Made::SynchronousPipe)
+    }
+
+    /// [`init`](Self::init) for an overlapped pipe end the shell created, which
+    /// nothing else has opened on this loop.
+    #[cfg(windows)]
+    pub(crate) fn init_overlapped_pipe(fd: Fd, interp: &Interpreter) -> std::sync::Arc<IOReader> {
+        Self::new(fd, interp, Made::OverlappedPipe)
+    }
+
+    fn new(fd: Fd, interp: &Interpreter, made: Made) -> std::sync::Arc<IOReader> {
+        #[cfg(not(windows))]
+        let _ = made;
         let this = std::sync::Arc::new_cyclic(|w| IOReader {
             reader: UnsafeCell::new(ReaderImpl::init::<IOReader>()),
             state: UnsafeCell::new(State {
                 fd,
+                #[cfg(windows)]
+                origin: match made {
+                    Made::Elsewhere => bun_io::windows::PipeOrigin::Foreign,
+                    Made::SynchronousPipe => bun_io::windows::PipeOrigin::CreatedSynchronous,
+                    Made::OverlappedPipe => bun_io::windows::PipeOrigin::Created,
+                },
                 readers: Readers::new(),
                 raw_err: None,
                 evtloop: interp.event_loop,
@@ -185,8 +221,11 @@ impl IOReader {
         if need_start {
             let s = self.state();
             s.raw_err = None;
-            let fd = s.fd;
-            if let Err(e) = Self::start_reader(r, fd) {
+            #[cfg(not(windows))]
+            let started = Self::start_reader(r, s.fd);
+            #[cfg(windows)]
+            let started = Self::start_reader(r, s.fd, &mut s.origin);
+            if let Err(e) = started {
                 self.on_reader_error(&e);
             }
         }
@@ -200,15 +239,32 @@ impl IOReader {
 
     /// A Windows source releases its HANDLE only once the loop has collected
     /// its last operation, which can be after this `IOReader` (and `fd`) is
-    /// gone, so it reads through a HANDLE of its own. What `fd` is (a file,
-    /// a pipe of either kind, the console) is for the reader to find out.
+    /// gone, so it reads through a HANDLE of its own: the same file object,
+    /// so what `origin` says of `fd` holds for it.
     #[cfg(windows)]
-    fn start_reader(r: &mut ReaderImpl, fd: Fd) -> sys::Result<()> {
+    fn start_reader(
+        r: &mut ReaderImpl,
+        fd: Fd,
+        origin: &mut bun_io::windows::PipeOrigin,
+    ) -> sys::Result<()> {
+        use bun_io::windows::PipeOrigin;
         use bun_sys::FdExt as _;
         // Lets go of a source that ended with an error.
         r.deinit();
         let own = sys::dup(fd)?;
-        let started = r.start(own, false);
+        let source = match r.open_source(own, *origin) {
+            Ok(source) => source,
+            Err(e) => {
+                own.close();
+                return Err(e);
+            }
+        };
+        // The port has the file object from here on, whether or not reading
+        // starts; a later start reads through another duplicate of it.
+        if *origin == PipeOrigin::Created {
+            *origin = PipeOrigin::Associated;
+        }
+        let started = r.start_with_source(source);
         if started.is_err() {
             own.close();
         }

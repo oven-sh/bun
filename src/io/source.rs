@@ -1,6 +1,6 @@
 use core::ffi::c_int;
 
-use bun_sys::Fd;
+use bun_sys::{Fd, FileKind};
 use bun_uws_sys::Loop;
 
 use crate::windows::{self, File, Pipe, PipeOrigin, Tty};
@@ -15,9 +15,9 @@ pub enum Source {
 }
 
 impl Source {
-    /// Take `fd` over. [`PipeOrigin::Created`] says it is a pipe; with any
-    /// other `origin` it is classified first, and `origin` says whose it is if
-    /// it turns out to be a pipe. `fd` is closed with the source when
+    /// Take `fd` over. `Foreign` and `InheritedUnshared` leave what `fd` is to
+    /// be found out first, and say whose it is if it turns out to be a pipe;
+    /// every other `origin` says it is one. `fd` is closed with the source when
     /// `close_fd` is set, except a standard handle, which is never closed. On
     /// `Err` the caller still owns `fd`.
     pub fn open(
@@ -26,27 +26,40 @@ impl Source {
         origin: PipeOrigin,
         close_fd: bool,
     ) -> bun_sys::Result<Source> {
-        if origin == PipeOrigin::Created {
-            bun_core::scoped_log!(PipeSource, "open(fd: {}, created)", fd);
+        if matches!(
+            origin,
+            PipeOrigin::Created | PipeOrigin::Associated | PipeOrigin::CreatedSynchronous
+        ) {
+            bun_core::scoped_log!(PipeSource, "open(fd: {}, {:?})", fd, origin);
             return Pipe::open(loop_, fd, origin, close_fd).map(Source::Pipe);
         }
-        let handle = fd.native();
-        let file_type = bun_sys::windows::GetFileType(handle);
-        bun_core::scoped_log!(PipeSource, "open(fd: {}, type: {})", fd, file_type);
-        match file_type {
-            bun_sys::windows::FILE_TYPE_PIPE => {
-                Pipe::open(loop_, fd, origin, close_fd).map(Source::Pipe)
+        let kind = bun_sys::File::borrow(&fd).kind().map_err(|err| {
+            bun_sys::Error {
+                syscall: bun_sys::Tag::open,
+                ..err
+            }
+            .with_fd(fd)
+        })?;
+        Self::open_as(loop_, fd, origin, kind, close_fd)
+    }
+
+    /// [`open`](Self::open) by a caller that has asked what `fd` is already
+    /// (`bun_sys::File::kind`).
+    pub fn open_as(
+        loop_: *mut Loop,
+        fd: Fd,
+        origin: PipeOrigin,
+        kind: FileKind,
+        close_fd: bool,
+    ) -> bun_sys::Result<Source> {
+        bun_core::scoped_log!(PipeSource, "open(fd: {}, {:?})", fd, kind);
+        match kind {
+            FileKind::NamedPipe => {
+                Pipe::open_classified(loop_, fd, origin, close_fd).map(Source::Pipe)
             }
             // `NUL` and serial ports are character devices too.
-            bun_sys::windows::FILE_TYPE_CHAR if windows::tty::is_console(handle) => {
+            FileKind::CharacterDevice if windows::tty::is_console(fd.native()) => {
                 Tty::open(loop_, fd, close_fd).map(Source::Tty)
-            }
-            FILE_TYPE_UNKNOWN => {
-                let err = bun_sys::windows::Win32Error::get();
-                if err == bun_sys::windows::Win32Error::SUCCESS {
-                    return File::open(loop_, fd, close_fd).map(Source::File);
-                }
-                Err(bun_sys::Error::from_win32(err, bun_sys::Tag::open).with_fd(fd))
             }
             _ => File::open(loop_, fd, close_fd).map(Source::File),
         }
@@ -141,8 +154,6 @@ impl Source {
         }
     }
 }
-
-use bun_windows_sys::FILE_TYPE_UNKNOWN;
 
 /// `process.stdin.setRawMode`. Raw mode asks the console to produce VT input
 /// sequences itself where it can, which is also what makes sequences such as

@@ -7,7 +7,7 @@
 
 use core::ffi::c_void;
 use core::ptr;
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 
 use bun_core::{S, Timespec, ZStr};
 use bun_paths::{is_drive_letter_t, is_sep_any_t};
@@ -196,11 +196,44 @@ fn exceeds_max_path(path: &[u16]) -> bool {
     if is_absolute {
         return false;
     }
+    path.len() + current_directory_len() >= LONG_PATH_THRESHOLD
+}
+
+/// The length of the current directory, NUL included; 0 until it is asked for.
+/// Asking takes the process-wide PEB lock, so it is asked once per directory
+/// rather than once per relative path.
+static CURRENT_DIRECTORY_LEN: AtomicUsize = AtomicUsize::new(0);
+static CURRENT_DIRECTORY_LOCK: bun_core::Mutex<()> = bun_core::Mutex::new(());
+
+fn current_directory_len() -> usize {
+    let len = CURRENT_DIRECTORY_LEN.load(Ordering::Relaxed);
+    if len != 0 {
+        return len;
+    }
+    let _guard = CURRENT_DIRECTORY_LOCK.lock();
+    read_current_directory_len()
+}
+
+/// Caller holds `CURRENT_DIRECTORY_LOCK`.
+fn read_current_directory_len() -> usize {
     // SAFETY: a zero-length query writes nothing and returns the length of
     // the current directory, NUL included.
-    let cwd_len =
+    let len =
         unsafe { bun_windows_sys::externs::GetCurrentDirectoryW(0, ptr::null_mut()) } as usize;
-    path.len() + cwd_len >= LONG_PATH_THRESHOLD
+    CURRENT_DIRECTORY_LEN.store(len, Ordering::Relaxed);
+    len
+}
+
+/// `SetCurrentDirectoryW`. The only call in the process that changes the
+/// current directory, which is what keeps `CURRENT_DIRECTORY_LEN` true.
+pub(crate) fn set_current_directory(path: &bun_core::WStr) -> Win32Result<()> {
+    let _guard = CURRENT_DIRECTORY_LOCK.lock();
+    // SAFETY: `path` is NUL-terminated.
+    if unsafe { bun_windows_sys::externs::SetCurrentDirectoryW(path.as_ptr()) } == 0 {
+        return Err(Win32Error::get());
+    }
+    read_current_directory_len();
+    Ok(())
 }
 
 /// Writes the NUL-terminated `path` into `full`, resolved by
@@ -283,6 +316,55 @@ pub struct WPath {
 
 impl WPath {
     pub fn new(path: &[u8]) -> Win32Result<WPath> {
+        let wpath = WPath::converted(path)?;
+        if !exceeds_max_path(wpath.units()) {
+            return Ok(wpath);
+        }
+        wpath.into_long()
+    }
+
+    /// The directory `path` names where it leads a longer path, absolute and
+    /// `\\?\`-prefixed, so a call names it (and each level above it) literally.
+    /// Win32 names a segment differently by position: a leading segment loses
+    /// one trailing period and keeps its spaces, the last segment loses every
+    /// trailing period and space.
+    pub fn directory(path: &[u8]) -> Win32Result<WPath> {
+        let mut wpath = WPath::converted(path)?;
+        if !is_device_path(wpath.units()) {
+            let len = wpath.len;
+            // `X:` is the current directory of drive X; `X:\` is its root.
+            let is_drive = len == 2 && wpath.buf[1] == b':' as u16;
+            if len > 0 && !is_drive && !is_sep_any_t(wpath.buf[len - 1]) {
+                wpath.buf[len] = b'\\' as u16;
+                wpath.buf[len + 1] = 0;
+                wpath.len = len + 1;
+            }
+            wpath = wpath.into_long()?;
+        }
+        let units = wpath.units();
+        let mut len = units.len();
+        while len > 1 && is_sep_any_t(units[len - 1]) && units[len - 2] != b':' as u16 {
+            len -= 1;
+        }
+        wpath.truncate(len);
+        Ok(wpath)
+    }
+
+    /// `path` as the NT object name (`\??\…`) that Win32 turns it into, for a
+    /// native call.
+    fn nt(path: &[u8]) -> Win32Result<WPath> {
+        let mut wpath = WPath::converted(path)?;
+        if !is_device_path(wpath.units()) {
+            wpath = wpath.into_long()?;
+        }
+        // `\\?\` and `\\.\` are both `\??\`.
+        let start = wpath.start;
+        wpath.buf[start..start + 4].copy_from_slice(&super::NT_OBJECT_PREFIX);
+        Ok(wpath)
+    }
+
+    /// `path` in UTF-16 as it was written, with `/` turned into `\`.
+    fn converted(path: &[u8]) -> Win32Result<WPath> {
         use bun_paths::string_paths;
         if !string_paths::fits_in_wide_path_buffer(string_paths::without_nt_prefix(path)) {
             return Err(Win32Error::FILENAME_EXCED_RANGE);
@@ -297,12 +379,13 @@ impl WPath {
         if len >= 4 && buf[..4] == super::NT_OBJECT_PREFIX {
             buf[1] = b'\\' as u16;
         }
+        Ok(WPath { buf, start: 0, len })
+    }
 
-        if !exceeds_max_path(&buf[..len]) {
-            return Ok(WPath { buf, start: 0, len });
-        }
+    /// Resolved by `GetFullPathNameW` and `\\?\`-prefixed.
+    fn into_long(self) -> Win32Result<WPath> {
         let mut full = bun_paths::w_path_buffer_pool::get();
-        let (start, len) = write_long_path(buf.as_ptr(), &mut full[..])?;
+        let (start, len) = write_long_path(self.as_ptr(), &mut full[..])?;
         Ok(WPath {
             buf: full,
             start,
@@ -330,6 +413,11 @@ impl WPath {
     }
 
     #[inline]
+    pub fn as_wstr(&self) -> &bun_core::WStr {
+        bun_core::WStr::from_buf(&self.buf[self.start..], self.len)
+    }
+
+    #[inline]
     fn units(&self) -> &[u16] {
         &self.buf[self.start..self.start + self.len]
     }
@@ -351,11 +439,101 @@ impl WPath {
 // open
 // ──────────────────────────────────────────────────────────────────────────
 
+/// What [`OpenRequest`] does with a file that exists or does not.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Disposition {
+    Open,
+    OpenOrCreate,
+    CreateNew,
+    Truncate,
+    CreateOrTruncate,
+}
+
+/// What the flags and mode of `open(2)` ask of Windows, by the rules of
+/// libuv's `fs__open`. [`open`] spells it for `CreateFileW`, `openat` for
+/// `NtCreateFile`.
+pub(crate) struct OpenRequest {
+    /// File-specific rights, no `GENERIC_*` bits. `O_APPEND` is
+    /// `FILE_APPEND_DATA` without `FILE_WRITE_DATA`: the kernel then puts every
+    /// write at end-of-file atomically, whatever offset it is given.
+    pub access: u32,
+    pub disposition: Disposition,
+    /// A file this open creates is read-only.
+    pub read_only: bool,
+    pub no_buffering: bool,
+    pub write_through: bool,
+    pub sequential: bool,
+}
+
+impl OpenRequest {
+    /// `flags` are `windows::O` values (the numbers `fs.constants` exposes).
+    /// `O::FILEMAP` (Node's `UV_FS_O_FILEMAP`) requests I/O through a file
+    /// mapping. File contents are the same without it, so it is accepted and
+    /// ignored, as Node documents for every other OS.
+    pub(crate) fn new(flags: i32, mode: Mode) -> core::result::Result<OpenRequest, E> {
+        let mut access = match flags & (O::RDONLY | O::WRONLY | O::RDWR) {
+            O::RDONLY => win32::FILE_GENERIC_READ,
+            O::WRONLY => win32::FILE_GENERIC_WRITE,
+            O::RDWR => win32::FILE_GENERIC_READ | win32::FILE_GENERIC_WRITE,
+            _ => return Err(E::EINVAL),
+        };
+
+        if flags & O::APPEND != 0 {
+            access &= !win32::FILE_WRITE_DATA;
+            access |= win32::FILE_APPEND_DATA;
+        }
+
+        const CREAT_EXCL: i32 = O::CREAT | O::EXCL;
+        const CREAT_TRUNC_EXCL: i32 = O::CREAT | O::TRUNC | O::EXCL;
+        const TRUNC_EXCL: i32 = O::TRUNC | O::EXCL;
+        const CREAT_TRUNC: i32 = O::CREAT | O::TRUNC;
+        let disposition = match flags & (O::CREAT | O::EXCL | O::TRUNC) {
+            0 | O::EXCL => Disposition::Open,
+            O::CREAT => Disposition::OpenOrCreate,
+            CREAT_EXCL | CREAT_TRUNC_EXCL => Disposition::CreateNew,
+            O::TRUNC | TRUNC_EXCL => Disposition::Truncate,
+            CREAT_TRUNC => Disposition::CreateOrTruncate,
+            _ => return Err(E::EINVAL),
+        };
+
+        // A zero mode would create the file read-only.
+        let mode = if mode == 0 { 0o644 } else { mode };
+        let read_only = flags & O::CREAT != 0 && (mode & !crate::get_umask()) & S::IWUSR == 0;
+
+        let no_buffering = flags & O::DIRECT != 0;
+        if no_buffering {
+            // FILE_APPEND_DATA (part of FILE_GENERIC_WRITE) cannot be combined
+            // with unbuffered I/O. FILE_WRITE_DATA also permits appends, so
+            // drop it when both are present; append-only + direct is invalid.
+            if access & win32::FILE_APPEND_DATA != 0 {
+                if access & win32::FILE_WRITE_DATA != 0 {
+                    access &= !win32::FILE_APPEND_DATA;
+                } else {
+                    return Err(E::EINVAL);
+                }
+            }
+        }
+
+        let write_through = match flags & (O::DSYNC | O::SYNC) {
+            0 => false,
+            O::DSYNC | O::SYNC => true,
+            _ => return Err(E::EINVAL),
+        };
+
+        Ok(OpenRequest {
+            access,
+            disposition,
+            read_only,
+            no_buffering,
+            write_through,
+            sequential: flags & O::SEQUENTIAL != 0,
+        })
+    }
+}
+
 /// `open(2)` over `CreateFileW`. `flags` are `bun_sys::O` values. The result
 /// is a HANDLE-kind `Fd`.
 pub fn open(path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
-    // A zero mode would create the file read-only.
-    let mode = if mode == 0 { 0o644 } else { mode };
     let result = open_impl(path.as_bytes(), O::from_bun_o(flags), mode);
     crate::syslog!(
         "open({}, {:#o}, {:#o}) = {:?}",
@@ -370,74 +548,42 @@ pub fn open(path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
     }
 }
 
-/// `flags` are `windows::O` values (the numbers `fs.constants` exposes).
+/// `flags` are `windows::O` values.
 fn open_impl(path: &[u8], flags: i32, mode: Mode) -> core::result::Result<HANDLE, E> {
-    // `O::FILEMAP` (Node's `UV_FS_O_FILEMAP`) requests I/O through a file
-    // mapping. File contents are the same without it, so it is accepted and
-    // ignored, as Node documents for every other OS.
-    let mut access = match flags & (O::RDONLY | O::WRONLY | O::RDWR) {
-        O::RDONLY => win32::FILE_GENERIC_READ,
-        O::WRONLY => win32::FILE_GENERIC_WRITE,
-        O::RDWR => win32::FILE_GENERIC_READ | win32::FILE_GENERIC_WRITE,
-        _ => return Err(E::EINVAL),
+    let request = OpenRequest::new(flags, mode)?;
+    let disposition = match request.disposition {
+        Disposition::Open => win32::OPEN_EXISTING,
+        Disposition::OpenOrCreate => win32::OPEN_ALWAYS,
+        Disposition::CreateNew => win32::CREATE_NEW,
+        Disposition::Truncate => win32::TRUNCATE_EXISTING,
+        Disposition::CreateOrTruncate => win32::CREATE_ALWAYS,
     };
 
-    if flags & O::APPEND != 0 {
-        // Append-only access makes the kernel write at end-of-file atomically.
-        access &= !win32::FILE_WRITE_DATA;
-        access |= win32::FILE_APPEND_DATA;
+    // FILE_FLAG_BACKUP_SEMANTICS makes it possible to open a directory.
+    let mut attributes = win32::FILE_ATTRIBUTE_NORMAL | win32::FILE_FLAG_BACKUP_SEMANTICS;
+    if request.read_only {
+        attributes |= win32::FILE_ATTRIBUTE_READONLY;
     }
-
-    const CREAT_EXCL: i32 = O::CREAT | O::EXCL;
-    const CREAT_TRUNC_EXCL: i32 = O::CREAT | O::TRUNC | O::EXCL;
-    const TRUNC_EXCL: i32 = O::TRUNC | O::EXCL;
-    const CREAT_TRUNC: i32 = O::CREAT | O::TRUNC;
-    let disposition = match flags & (O::CREAT | O::EXCL | O::TRUNC) {
-        0 | O::EXCL => win32::OPEN_EXISTING,
-        O::CREAT => win32::OPEN_ALWAYS,
-        CREAT_EXCL | CREAT_TRUNC_EXCL => win32::CREATE_NEW,
-        O::TRUNC | TRUNC_EXCL => win32::TRUNCATE_EXISTING,
-        CREAT_TRUNC => win32::CREATE_ALWAYS,
-        _ => return Err(E::EINVAL),
-    };
-
-    let mut attributes = win32::FILE_ATTRIBUTE_NORMAL;
-    if flags & O::CREAT != 0 {
-        // The CRT only has a setter; read the umask by setting it twice.
-        let umask = crate::umask(0);
-        crate::umask(umask);
-        if (mode & !umask) & S::IWUSR == 0 {
-            attributes |= win32::FILE_ATTRIBUTE_READONLY;
-        }
-    }
-
-    if flags & O::DIRECT != 0 {
-        // FILE_APPEND_DATA (part of FILE_GENERIC_WRITE) cannot be combined
-        // with FILE_FLAG_NO_BUFFERING. FILE_WRITE_DATA also permits appends,
-        // so drop it when both are present; append-only + direct is invalid.
-        if access & win32::FILE_APPEND_DATA != 0 {
-            if access & win32::FILE_WRITE_DATA != 0 {
-                access &= !win32::FILE_APPEND_DATA;
-            } else {
-                return Err(E::EINVAL);
-            }
-        }
+    if request.no_buffering {
         attributes |= win32::FILE_FLAG_NO_BUFFERING;
     }
-
-    match flags & (O::DSYNC | O::SYNC) {
-        0 => {}
-        O::DSYNC | O::SYNC => attributes |= win32::FILE_FLAG_WRITE_THROUGH,
-        _ => return Err(E::EINVAL),
+    if request.write_through {
+        attributes |= win32::FILE_FLAG_WRITE_THROUGH;
     }
-
-    // Makes it possible to open a directory.
-    attributes |= win32::FILE_FLAG_BACKUP_SEMANTICS;
+    if request.sequential {
+        attributes |= win32::FILE_FLAG_SEQUENTIAL_SCAN;
+    }
 
     let wpath = WPath::new(path).map_err(|e| e.to_e())?;
     // All sharing modes, to match UNIX semantics: in particular the file can
     // be deleted or renamed while it is open.
-    match create_file(wpath.as_ptr(), access, SHARE_ALL, disposition, attributes) {
+    match create_file(
+        wpath.as_ptr(),
+        request.access,
+        SHARE_ALL,
+        disposition,
+        attributes,
+    ) {
         Ok(handle) => {
             let raw = handle.0;
             core::mem::forget(handle);
@@ -1328,25 +1474,14 @@ pub fn rmdir(path: &ZStr) -> Maybe<()> {
     result.map_err(|errno| Error::from_code(errno, Tag::rmdir).with_path(path.as_bytes()))
 }
 
-fn unlink_or_rmdir(path: &[u8], is_rmdir: bool) -> core::result::Result<(), E> {
-    let to_e = |e: Win32Error| e.to_e();
-    let wpath = WPath::new(path).map_err(to_e)?;
-    // Never follows a link: the link itself is what gets removed.
-    let handle = create_file(
-        wpath.as_ptr(),
-        win32::FILE_READ_ATTRIBUTES | win32::DELETE,
-        SHARE_ALL,
-        win32::OPEN_EXISTING,
-        win32::FILE_FLAG_OPEN_REPARSE_POINT | win32::FILE_FLAG_BACKUP_SEMANTICS,
-    )
-    .map_err(to_e)?;
-
+/// `FileBasicInformation.FileAttributes` of `handle`.
+fn file_attributes(handle: HANDLE) -> Win32Result<u32> {
     let mut io: win32::IO_STATUS_BLOCK = bun_core::ffi::zeroed();
     let mut info: win32::FILE_BASIC_INFORMATION = bun_core::ffi::zeroed();
     // SAFETY: `handle` is live; `info` is writable for its size.
     let status = unsafe {
         win32::ntdll::NtQueryInformationFile(
-            handle.0,
+            handle,
             &mut io,
             ptr::from_mut(&mut info).cast(),
             core::mem::size_of::<win32::FILE_BASIC_INFORMATION>() as u32,
@@ -1354,31 +1489,100 @@ fn unlink_or_rmdir(path: &[u8], is_rmdir: bool) -> core::result::Result<(), E> {
         )
     };
     if !win32::NT_SUCCESS(status) {
-        return Err(Win32Error::from_ntstatus(status).to_e());
+        return Err(Win32Error::from_ntstatus(status));
     }
-    let attributes = info.FileAttributes;
-    let is_directory = attributes & win32::FILE_ATTRIBUTE_DIRECTORY != 0;
+    Ok(info.FileAttributes)
+}
 
-    if is_rmdir && !is_directory {
-        // What Node on Windows reports for `rmdir(file)`, not ENOTDIR.
-        return Err(E::ENOENT);
+/// Opens the directory `path` for deletion, never following a link. The open
+/// itself refuses what is not a directory (`ERROR_DIRECTORY`, which is
+/// `ENOENT`: what Node on Windows reports for `rmdir(file)`, not `ENOTDIR`),
+/// which `CreateFileW` has no flag for.
+fn open_directory_for_delete(path: &[u8]) -> Win32Result<OwnedHandle> {
+    // `CreateOptions` and `OBJECT_ATTRIBUTES.Attributes` bits (`wdm.h`).
+    const FILE_OPEN_FOR_BACKUP_INTENT: u32 = 0x0000_4000;
+    const OBJ_CASE_INSENSITIVE: u32 = 0x0000_0040;
+
+    let wpath = WPath::nt(path)?;
+    let Ok(byte_len) = u16::try_from(wpath.len * 2) else {
+        return Err(Win32Error::FILENAME_EXCED_RANGE);
+    };
+    let mut name = win32::UNICODE_STRING {
+        Length: byte_len,
+        MaximumLength: byte_len,
+        Buffer: wpath.as_ptr().cast_mut(),
+    };
+    let mut attributes = win32::OBJECT_ATTRIBUTES {
+        Length: core::mem::size_of::<win32::OBJECT_ATTRIBUTES>() as u32,
+        RootDirectory: ptr::null_mut(),
+        ObjectName: &mut name,
+        Attributes: OBJ_CASE_INSENSITIVE,
+        SecurityDescriptor: ptr::null_mut(),
+        SecurityQualityOfService: ptr::null_mut(),
+    };
+    let mut io: win32::IO_STATUS_BLOCK = bun_core::ffi::zeroed();
+    let mut handle: HANDLE = ptr::null_mut();
+    // SAFETY: every pointer is to a live local; `name.Buffer` is only read.
+    let status = unsafe {
+        win32::ntdll::NtCreateFile(
+            &mut handle,
+            win32::FILE_READ_ATTRIBUTES | win32::DELETE | win32::SYNCHRONIZE,
+            &mut attributes,
+            &mut io,
+            ptr::null_mut(),
+            0,
+            SHARE_ALL,
+            win32::FILE_OPEN,
+            win32::FILE_DIRECTORY_FILE
+                | win32::FILE_OPEN_REPARSE_POINT
+                | FILE_OPEN_FOR_BACKUP_INTENT
+                | win32::FILE_SYNCHRONOUS_IO_NONALERT,
+            ptr::null_mut(),
+            0,
+        )
+    };
+    if !win32::NT_SUCCESS(status) {
+        return Err(Win32Error::from_ntstatus(status));
     }
+    Ok(OwnedHandle(handle))
+}
 
-    if !is_rmdir && is_directory {
-        // POSIX wants EPERM for unlink(directory). A directory symlink or
-        // junction is a link, though, and unlink removes those.
-        if attributes & win32::FILE_ATTRIBUTE_REPARSE_POINT == 0 {
-            return Err(Win32Error::ACCESS_DENIED.to_e());
+fn unlink_or_rmdir(path: &[u8], is_rmdir: bool) -> core::result::Result<(), E> {
+    let to_e = |e: Win32Error| e.to_e();
+    // `unlink` needs the attributes to tell a link to a directory from a
+    // directory; `rmdir` only if it comes to the classic delete below.
+    let (handle, attributes) = if is_rmdir {
+        (open_directory_for_delete(path).map_err(to_e)?, None)
+    } else {
+        let wpath = WPath::new(path).map_err(to_e)?;
+        // Never follows a link: the link itself is what gets removed.
+        let handle = create_file(
+            wpath.as_ptr(),
+            win32::FILE_READ_ATTRIBUTES | win32::DELETE,
+            SHARE_ALL,
+            win32::OPEN_EXISTING,
+            win32::FILE_FLAG_OPEN_REPARSE_POINT | win32::FILE_FLAG_BACKUP_SEMANTICS,
+        )
+        .map_err(to_e)?;
+        let attributes = file_attributes(handle.0).map_err(to_e)?;
+        if attributes & win32::FILE_ATTRIBUTE_DIRECTORY != 0 {
+            // POSIX wants EPERM for unlink(directory). A directory symlink or
+            // junction is a link, though, and unlink removes those.
+            if attributes & win32::FILE_ATTRIBUTE_REPARSE_POINT == 0 {
+                return Err(Win32Error::ACCESS_DENIED.to_e());
+            }
+            let mut reparse = ReparseBuffer::new();
+            if let Err(e) = reparse.read_link_target(handle.0) {
+                return Err(match e {
+                    Win32Error::SYMLINK_NOT_SUPPORTED => Win32Error::ACCESS_DENIED.to_e(),
+                    e => e.to_e(),
+                });
+            }
         }
-        let mut reparse = ReparseBuffer::new();
-        if let Err(e) = reparse.read_link_target(handle.0) {
-            return Err(match e {
-                Win32Error::SYMLINK_NOT_SUPPORTED => Win32Error::ACCESS_DENIED.to_e(),
-                e => e.to_e(),
-            });
-        }
-    }
+        (handle, Some(attributes))
+    };
 
+    let mut io: win32::IO_STATUS_BLOCK = bun_core::ffi::zeroed();
     // POSIX delete: the name disappears at once even while other handles are
     // open, and a read-only file needs no attribute change.
     let mut disposition_ex = win32::FILE_DISPOSITION_INFORMATION_EX {
@@ -1409,6 +1613,10 @@ fn unlink_or_rmdir(path: &[u8], is_rmdir: bool) -> core::result::Result<(), E> {
         return Err(error.to_e());
     }
 
+    let attributes = match attributes {
+        Some(attributes) => attributes,
+        None => file_attributes(handle.0).map_err(to_e)?,
+    };
     if attributes & win32::FILE_ATTRIBUTE_READONLY != 0 {
         // A classic delete refuses read-only files. The first handle was
         // opened without FILE_WRITE_ATTRIBUTES because asking for it up front
@@ -1546,32 +1754,12 @@ pub fn realpath<'a>(path: &ZStr, buf: &'a mut bun_paths::PathBuffer) -> Maybe<&'
     .map_err(to_error)?;
     let mut wide = bun_paths::w_path_buffer_pool::get();
     let resolved = super::GetFinalPathNameByHandle(handle.0, Default::default(), &mut wide[..])
-        .map_err(|e| {
-            let error = match e {
-                super::GetFinalPathNameByHandleError::NameTooLong => {
-                    Error::from_code(E::ENAMETOOLONG, Tag::realpath)
-                }
-                super::GetFinalPathNameByHandleError::FileNotFound => {
-                    // The wrapper tried several forms of the query. Ask once
-                    // more for the code itself: a volume that cannot answer
-                    // is EISDIR to Node, not ENOENT.
-                    // SAFETY: a zero-length buffer is valid; the call only sizes.
-                    let sized = unsafe {
-                        bun_windows_sys::externs::GetFinalPathNameByHandleW(
-                            handle.0,
-                            ptr::null_mut(),
-                            0,
-                            0,
-                        )
-                    };
-                    if sized == 0 {
-                        Error::from_win32(Win32Error::get(), Tag::realpath)
-                    } else {
-                        Error::from_code(E::ENOENT, Tag::realpath)
-                    }
-                }
-            };
-            error.with_path(path.as_bytes())
+        .map_err(|e| match e {
+            super::GetFinalPathNameByHandleError::NameTooLong => {
+                Error::from_code(E::ENAMETOOLONG, Tag::realpath).with_path(path.as_bytes())
+            }
+            // A volume that cannot answer is `EISDIR`, as in Node.
+            super::GetFinalPathNameByHandleError::Failed(e) => to_error(e),
         })?;
     let len = bun_paths::string_paths::from_w_path(&mut buf.0[..], resolved).len();
     Ok(&buf.0[..len])

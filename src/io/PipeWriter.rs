@@ -12,7 +12,7 @@ use crate::pipes::{FileType, PollOrFd};
 #[cfg(windows)]
 use crate::source::Source;
 #[cfg(windows)]
-use crate::windows::PipeOrigin;
+use crate::windows::{PipeOrigin, Refusal};
 
 bun_core::define_scoped_log!(log, PipeWriter, hidden);
 
@@ -1125,6 +1125,7 @@ pub trait WindowsWriterParent {
 }
 
 /// Hand `data` to `source`; `on_write(ctx, ..)` runs from the loop afterwards.
+/// `refusal` is for a pipe: only its peer can have a write refused.
 ///
 /// # Safety
 /// `data` and `ctx` stay valid until `on_write` has run.
@@ -1132,12 +1133,13 @@ pub trait WindowsWriterParent {
 unsafe fn submit_write<T>(
     source: &mut Source,
     data: &[u8],
+    refusal: Refusal,
     ctx: *mut T,
     on_write: unsafe fn(*mut T, sys::Result<usize>),
 ) -> sys::Result<()> {
     match source {
         // SAFETY: caller contract.
-        Source::Pipe(pipe) => unsafe { pipe.write(data, ctx, on_write) },
+        Source::Pipe(pipe) => unsafe { pipe.write(data, refusal, ctx, on_write) },
         Source::Tty(tty) => tty.write(data, ctx, on_write),
         // SAFETY: caller contract.
         Source::File(file) => unsafe { file.write(data, ctx, on_write) },
@@ -1209,15 +1211,8 @@ impl<Parent: BufferedWriterParent> WindowsBufferedWriter<Parent> {
         self.parent
     }
 
-    #[inline]
-    fn parent_on_error(&self, err: sys::Error) {
-        // SAFETY: type invariant — set-once parent backref outlives writer.
-        unsafe { Parent::on_error(self.parent(), err) }
-    }
-
-    /// Laundered-receiver variant of [`parent_on_error`](Self::parent_on_error):
-    /// takes `*mut Self` so the field read completes before dispatch
-    /// and no Rust borrow of `*this` is live across the (re-entrant)
+    /// Takes `*mut Self` so the field read completes before dispatch and no
+    /// Rust borrow of `*this` is live across the (re-entrant)
     /// `Parent::on_error` call.
     #[inline(always)]
     fn r_on_error(this: *mut Self, err: sys::Error) {
@@ -1270,19 +1265,54 @@ impl<Parent: BufferedWriterParent> WindowsBufferedWriter<Parent> {
         self.update_ref(event_loop, false);
     }
 
-    /// See [`PipeOrigin::from_is_pollable`] for `is_pollable`. On `Err` the
-    /// writer holds nothing; `fd` is still the caller's to close.
+    /// Open `fd` and start writing what the parent has. See
+    /// [`PipeOrigin::from_is_pollable`] for `is_pollable`.
+    ///
+    /// `Err` is a source that cannot be opened or used; the writer then holds
+    /// nothing and `fd` is still the caller's to close. A reader that is gone
+    /// already is a failed write like any later one: the parent hears
+    /// `on_error` from the loop, as it does from the POSIX writer, whose
+    /// `start` writes nothing.
     pub fn start(&mut self, fd: Fd, is_pollable: bool) -> sys::Result<()> {
-        debug_assert!(self.source.is_none());
-        // The parent's loop, not the thread's: `spawnSync` writes on its own.
+        self.start_with_origin(fd, PipeOrigin::from_is_pollable(is_pollable))
+    }
+
+    /// As [`start`](Self::start), by a caller that knows where `fd` came from.
+    pub fn start_with_origin(&mut self, fd: Fd, origin: PipeOrigin) -> sys::Result<()> {
+        let source = Source::open(self.parent_loop(), fd, origin, self.close_fd)?;
+        self.start_on(source)
+    }
+
+    /// As [`start_with_origin`](Self::start_with_origin), by a caller that has
+    /// asked what `fd` is already (`bun_sys::File::kind`).
+    pub fn start_with_kind(
+        &mut self,
+        fd: Fd,
+        origin: PipeOrigin,
+        kind: sys::FileKind,
+    ) -> sys::Result<()> {
+        let source = Source::open_as(self.parent_loop(), fd, origin, kind, self.close_fd)?;
+        self.start_on(source)
+    }
+
+    /// The parent's loop, not the thread's: `spawnSync` writes on its own.
+    fn parent_loop(&self) -> *mut bun_uws_sys::Loop {
         // SAFETY: parent is the BACKREF set via set_parent; valid while the writer is.
-        let loop_ = unsafe { Parent::event_loop(self.parent) }.loop_();
-        let origin = PipeOrigin::from_is_pollable(is_pollable);
-        let source = Source::open(loop_, fd, origin, self.close_fd)?;
+        unsafe { Parent::event_loop(self.parent) }.loop_()
+    }
+
+    fn start_on(&mut self, source: Source) -> sys::Result<()> {
+        debug_assert!(self.source.is_none());
         self.source = Some(source);
         self.is_done = false;
-        self.write();
-        sys::Result::Ok(())
+        let submitted = self.submit(Refusal::Posted);
+        if submitted.is_err() {
+            self.is_done = true;
+            if let Some(mut source) = self.source.take() {
+                source.disown();
+            }
+        }
+        submitted
     }
 
     /// `report`: whether the parent hears `on_close`, and whether a write still
@@ -1370,40 +1400,57 @@ impl<Parent: BufferedWriterParent> WindowsBufferedWriter<Parent> {
         }
     }
 
-    pub fn write(&mut self) {
+    /// Write what the parent has, unless a write is out already. A write the
+    /// source refuses at once is this call's error: the source is let go of
+    /// and the parent hears neither `on_error` nor `on_close` for it.
+    pub fn write(&mut self) -> sys::Result<()> {
+        let submitted = self.submit(Refusal::Returned);
+        if submitted.is_err() {
+            self.close_source(false);
+        }
+        submitted
+    }
+
+    fn submit(&mut self, refusal: Refusal) -> sys::Result<()> {
         // if we are already done or if we have some pending payload we just wait until next write
         // Before `get_buffer`: a parent may rebuild the buffer it returns, and
         // the write in flight borrows the one it returned last.
         if self.is_done || self.pending_payload_size > 0 {
-            return;
+            return sys::Result::Ok(());
         }
         // SAFETY: parent is a BACKREF set via set_parent; valid while writer is
         // alive. Not through `get_buffer_internal`, whose result borrows `self`.
         let buffer: &[u8] = unsafe { Parent::get_buffer(self.parent()) };
         if buffer.is_empty() {
-            return;
+            return sys::Result::Ok(());
         }
         let this: *mut Self = self;
         let Some(source) = self.source.as_mut() else {
-            return;
+            return sys::Result::Ok(());
         };
         let len = buffer.len();
-        // SAFETY: the parent keeps `buffer` in place while a write is in
-        // flight (`get_buffer` contract) and is itself kept alive by the ref
-        // taken below; `this` is a field of it.
-        match unsafe { submit_write(source, buffer, this, Self::on_write_result) } {
-            sys::Result::Err(err) => {
-                self.close();
-                self.parent_on_error(err);
+        match source {
+            // `close_source` cannot hand the source bytes that are the
+            // parent's, so a write it could not recall either gets its own.
+            Source::Pipe(pipe) if pipe.writes_outlive_cancel() => {
+                pipe.write_owned_with(buffer.to_vec(), refusal, this, Some(Self::on_write_result))?;
             }
-            sys::Result::Ok(()) => {
-                self.pending_payload_size = len;
-                // The matching deref is in `on_write_result`, which runs for
-                // every submitted write, cancelled ones included.
-                // SAFETY: parent BACKREF valid; intrusive refcount bump.
-                unsafe { Parent::ref_(self.parent()) };
+            Source::File(file) => {
+                file.write_owned(buffer.to_vec(), this, Self::on_write_result)?;
+            }
+            // SAFETY: the parent keeps `buffer` in place while a write is in
+            // flight (`get_buffer` contract) and is itself kept alive by the
+            // ref taken below; `this` is a field of it.
+            source => {
+                unsafe { submit_write(source, buffer, refusal, this, Self::on_write_result) }?
             }
         }
+        self.pending_payload_size = len;
+        // The matching deref is in `on_write_result`, which runs for every
+        // submitted write, cancelled ones included.
+        // SAFETY: parent BACKREF valid; intrusive refcount bump.
+        unsafe { Parent::ref_(self.parent()) };
+        sys::Result::Ok(())
     }
 
     fn get_buffer_internal(&self) -> &[u8] {
@@ -1765,8 +1812,14 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         } else {
             // Nobody will be told when the write in flight is done with its
             // bytes, so they go with the source.
-            if let Source::Pipe(pipe) = &mut source {
-                pipe.adopt_write_buffer(mem::take(&mut self.current_payload.list));
+            match &mut source {
+                Source::Pipe(pipe) => {
+                    pipe.adopt_write_buffer(mem::take(&mut self.current_payload.list));
+                }
+                Source::File(file) => {
+                    file.adopt_write_buffer(mem::take(&mut self.current_payload.list));
+                }
+                Source::Tty(_) => {}
             }
             drop(source);
         }
@@ -1905,6 +1958,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
             submit_write(
                 source,
                 (*this).current_payload.slice(),
+                Refusal::Returned,
                 this,
                 Self::on_write_result,
             )

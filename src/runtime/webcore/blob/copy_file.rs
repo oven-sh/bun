@@ -1012,7 +1012,7 @@ fn copy_by_path(
         if unsafe { w::CopyFileW(source_w.as_ptr(), dest_w.as_ptr(), 0) } != 0 {
             break;
         }
-        let mut err = bun_sys::Error::from_win32(w::Win32Error::get(), bun_sys::Tag::copyfile);
+        let err = bun_sys::Error::from_win32(w::Win32Error::get(), bun_sys::Tag::copyfile);
         match err.get_errno() {
             // Both sides are the same file: nothing to copy, as in libuv's
             // uv_fs_copyfile.
@@ -1041,10 +1041,33 @@ fn copy_by_path(
                     }
                 }
             }
-            // https://github.com/oven-sh/bun/issues/6336
-            E::EPERM => err = bun_sys::Error::from_code(E::ENOENT, bun_sys::Tag::copyfile),
+            // A source that is a directory is refused this way.
+            E::EPERM => {
+                if matches!(bun_sys::stat(source_path), Ok(stat) if bun_sys::S::ISDIR(stat.st_mode as u32))
+                {
+                    return CopyByPath::Failed(unsupported_directory_error());
+                }
+            }
             _ => {}
         }
+        // A source that does not open for reading is the side that failed.
+        // SAFETY: the path is NUL-terminated; no security attributes or template.
+        let source_handle = unsafe {
+            w::CreateFileW(
+                source_w.as_ptr(),
+                w::GENERIC_READ,
+                w::FILE_SHARE_READ | w::FILE_SHARE_WRITE | w::FILE_SHARE_DELETE,
+                core::ptr::null_mut(),
+                w::OPEN_EXISTING,
+                0,
+                core::ptr::null_mut(),
+            )
+        };
+        if source_handle == w::INVALID_HANDLE_VALUE {
+            return CopyByPath::Failed(error_with_pathlike(err, &source.pathlike));
+        }
+        // SAFETY: a handle this function opened.
+        unsafe { w::CloseHandle(source_handle) };
         return CopyByPath::Failed(error_with_pathlike(err, &destination.pathlike));
     }
 

@@ -430,13 +430,50 @@ pub enum Stdio {
     Dup2(Dup2),
 }
 
+/// A process handle, closed when dropped.
+#[cfg(windows)]
+pub struct OwnedProcessHandle(bun_sys::windows::HANDLE);
+
+#[cfg(windows)]
+impl OwnedProcessHandle {
+    pub fn new(handle: bun_sys::windows::HANDLE) -> Self {
+        Self(handle)
+    }
+
+    pub fn get(&self) -> bun_sys::windows::HANDLE {
+        self.0
+    }
+
+    /// The handle, now the caller's to close.
+    pub fn take(&mut self) -> bun_sys::windows::HANDLE {
+        core::mem::replace(&mut self.0, bun_sys::windows::INVALID_HANDLE_VALUE)
+    }
+}
+
+#[cfg(windows)]
+impl Default for OwnedProcessHandle {
+    fn default() -> Self {
+        Self(bun_sys::windows::INVALID_HANDLE_VALUE)
+    }
+}
+
+#[cfg(windows)]
+impl Drop for OwnedProcessHandle {
+    fn drop(&mut self) {
+        if self.0 != bun_sys::windows::INVALID_HANDLE_VALUE {
+            // SAFETY: a process handle this value owns.
+            unsafe { crate::windows::win32::CloseHandle(self.0) };
+        }
+    }
+}
+
+#[derive(Default)]
 pub struct SpawnResult {
     pub pid: PidT,
     pub pidfd: Option<PidFdType>,
-    /// The process; the result's owner closes it (`to_process` moves it into
-    /// the `Process`).
+    /// `to_process` moves it into the `Process`.
     #[cfg(windows)]
-    pub process_handle: bun_sys::windows::HANDLE,
+    pub process_handle: OwnedProcessHandle,
     pub stdin: Option<Fd>,
     pub stdout: Option<Fd>,
     pub stderr: Option<Fd>,
@@ -444,28 +481,6 @@ pub struct SpawnResult {
     pub memfds: [bool; 3],
     // ESRCH can happen when requesting the pidfd
     pub has_exited: bool,
-}
-
-#[allow(
-    clippy::derivable_impls,
-    reason = "only derivable where the windows-gated `process_handle` is absent; its default is \
-              `INVALID_HANDLE_VALUE`, not null"
-)]
-impl Default for SpawnResult {
-    fn default() -> Self {
-        Self {
-            pid: 0,
-            pidfd: None,
-            #[cfg(windows)]
-            process_handle: bun_sys::windows::INVALID_HANDLE_VALUE,
-            stdin: None,
-            stdout: None,
-            stderr: None,
-            extra_pipes: Vec::new(),
-            memfds: [false; 3],
-            has_exited: false,
-        }
-    }
 }
 
 /// Entry in `extra_pipes` for a stdio slot at index >= 3.

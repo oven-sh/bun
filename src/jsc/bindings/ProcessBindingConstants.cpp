@@ -23,34 +23,7 @@
 #endif
 
 #if OS(WINDOWS)
-
-#include <io.h> // _S_IREAD _S_IWRITE
-#ifndef S_IRUSR
-#define S_IRUSR _S_IREAD
-#endif // S_IRUSR
-#ifndef S_IWUSR
-#define S_IWUSR _S_IWRITE
-#endif // S_IWUSR
-// The UCRT only defines the underscore-prefixed _S_IFIFO; whether the plain
-// spelling is visible here otherwise depends on what happened to be defined
-// earlier in the unified source. Node exposes fs.constants.S_IFIFO (4096) on
-// Windows, so pin it to the CRT value instead of relying on header luck.
-#if !defined(S_IFIFO) && defined(_S_IFIFO)
-#define S_IFIFO _S_IFIFO
-#endif // S_IFIFO
-// Not in the UCRT. Node has them on Windows with these values.
-#ifndef S_IFLNK
-#define S_IFLNK 0xA000
-#endif // S_IFLNK
-#ifndef F_OK
-#define F_OK 0
-#define R_OK 4
-#define W_OK 2
-#define X_OK 1
-#endif // F_OK
-
-#include "BunWindowsSignals.h"
-
+#include "BunWindowsPosixConstants.h"
 #else // OS(WINDOWS)
 #include <dlfcn.h>
 #endif

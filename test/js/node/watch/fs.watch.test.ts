@@ -244,9 +244,9 @@ describe("fs.watch", () => {
     }
   });
 
-  // Elsewhere the sequence differs (Linux: two "rename" events and the watcher stays open).
+  // Elsewhere the sequence differs (Linux: two "rename" events). The watcher stays open everywhere.
   test.skipIf(!isWindows).each([false, true])(
-    "deleting the watched directory reports one rename, then EPERM, and closes (recursive: %p)",
+    "deleting the watched directory reports a rename and no error (recursive: %p)",
     async recursive => {
       using dir = tempDir("watch-deleted-dir", { watched: {} });
       await using proc = Bun.spawn({
@@ -258,9 +258,13 @@ describe("fs.watch", () => {
             const path = require("path");
             const target = path.join(process.argv[1], "watched");
             const log = [];
+            // No "error" listener: an error would be an uncaught exception.
             const watcher = fs.watch(target, { recursive: ${recursive} });
-            watcher.on("change", (event, filename) => log.push(event + ":" + path.basename(String(filename))));
-            watcher.on("error", error => log.push("error:" + error.code));
+            watcher.on("change", (event, filename) => {
+              log.push(event + ":" + path.basename(String(filename)));
+              // Whatever else the deletion produced was dequeued with this event.
+              if (log.length === 1) setImmediate(() => watcher.close());
+            });
             watcher.on("close", () => log.push("close"));
             process.on("exit", () => console.log(JSON.stringify(log)));
             fs.rmdirSync(target);
@@ -271,10 +275,9 @@ describe("fs.watch", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      // The child exits once the watcher has closed itself; a watcher that keeps re-arming never does.
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect({ stdout: stdout.trim(), stderr }).toEqual({
-        stdout: JSON.stringify(["rename:watched", "error:EPERM", "close"]),
+        stdout: JSON.stringify(["rename:watched", "close"]),
         stderr: "",
       });
       expect(exitCode).toBe(0);
@@ -810,6 +813,53 @@ describe("fs.watch", () => {
     },
     90_000,
   );
+
+  // A change is reported by its path below the watched directory, in a 4096-byte buffer as in Node. A
+  // change whose record is larger than that cannot be reported by name.
+  test.skipIf(!isWindows)("a change too large for the request's buffer is delivered as ('change', null)", async () => {
+    using dir = tempDir("fs-watch-overflow-windows", {});
+    const root = String(dir);
+    let deep = root;
+    for (let i = 0; i < 9; i++) deep = path.join(deep, Buffer.alloc(240, "d").toString());
+    fs.mkdirSync(deep, { recursive: true });
+    // 12 bytes of header and 2 per UTF-16 unit of the name.
+    expect(12 + 2 * path.relative(root, deep).length).toBeGreaterThan(4096);
+    const after = path.join(root, "after.txt");
+
+    const first = Promise.withResolvers<[string, string | null]>();
+    const bufferFirst = Promise.withResolvers<[string, Buffer | null]>();
+    const named = Promise.withResolvers<string>();
+    const pending = [first, bufferFirst, named];
+    for (const p of pending) p.promise.catch(() => {});
+    const fail = (err: unknown) => pending.forEach(p => p.reject(err));
+    const watcher = fs.watch(root, { recursive: true }, (eventType, filename) => {
+      first.resolve([eventType, filename]);
+      // Changes made while a request overflows are dropped with it, and that is reported the same way.
+      if (filename === null) fs.writeFileSync(after, "x");
+      else named.resolve(filename);
+    });
+    const bufferWatcher = fs.watch(root, { recursive: true, encoding: "buffer" }, (eventType, filename) => {
+      bufferFirst.resolve([eventType, filename]);
+    });
+    let closing = false;
+    for (const w of [watcher, bufferWatcher]) {
+      w.once("error", fail);
+      w.once("close", () => {
+        if (!closing) fail(new Error("watcher closed unexpectedly"));
+      });
+    }
+    try {
+      fs.writeFileSync(path.join(deep, "f"), "x");
+      expect(await first.promise).toEqual(["change", null]);
+      expect(await bufferFirst.promise).toEqual(["change", null]);
+      // The watcher keeps working.
+      expect(await named.promise).toBe("after.txt");
+    } finally {
+      closing = true;
+      watcher.close();
+      bufferWatcher.close();
+    }
+  });
 
   // When inotify_add_watch fails for a subdirectory during the recursive walk
   // (ENOSPC at the watch limit, EACCES on an unreadable subdir), bun used to

@@ -1053,12 +1053,6 @@ fn create_pty_posix(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
     })
 }
 
-#[cfg(windows)]
-struct PipePair {
-    pub server: windows::HANDLE,
-    pub client: windows::HANDLE,
-}
-
 /// Inbox kernel32's HPCON layout. Stable ABI since build 17763: documented as
 /// "part of an ABI shared with the rest of the operating system" in
 /// microsoft/terminal `src/winconpty/winconpty.h`.
@@ -1070,94 +1064,11 @@ struct PseudoConsole {
     h_conpty_process: windows::HANDLE,
 }
 
-/// Create one end of a pipe pair as an overlapped named pipe (server) and the
-/// other as a synchronous client. Returns both raw HANDLEs. Caller closes
-/// both on error. The "server" end is what the loop's completion port drives
-/// and the "client" end is suitable for ConPTY (which uses synchronous I/O).
-#[cfg(windows)]
-fn create_overlapped_pipe_pair(
-    // PIPE_ACCESS_INBOUND: server reads, client writes.
-    // PIPE_ACCESS_OUTBOUND: server writes, client reads.
-    server_access: u32,
-) -> Result<PipePair, CreatePtyError> {
-    use windows::FILE_FLAG_FIRST_PIPE_INSTANCE;
-    use windows::kernel32 as k32;
-
-    let pid: u32 = windows::GetCurrentProcessId();
-    let counter = windows::fs::next_pipe_serial();
-    let mut name_utf8_buf = [0u8; 96];
-    let name = {
-        use std::io::Write;
-        let mut cursor = &mut name_utf8_buf[..];
-        // An AppContainer may only create server pipes under `\\.\pipe\LOCAL\`;
-        // insert the segment only then so the name is unchanged outside one
-        // (as the pipes spawn creates for a child's stdio are).
-        let local = if windows::is_app_container() {
-            r"LOCAL\"
-        } else {
-            ""
-        };
-        if write!(cursor, r"\\.\pipe\{local}bun-conpty-{pid}-{counter}").is_err() {
-            return Err(CreatePtyError::OpenPtyFailed);
-        }
-        let written = 96 - cursor.len();
-        &name_utf8_buf[..written]
-    };
-    let mut name_w_buf = [0u16; 97]; // [96:0]u16
-    let name_w_len = bun_core::convert_utf8_to_utf16_in_buffer(&mut name_w_buf, name).len();
-    name_w_buf[name_w_len] = 0;
-    // SAFETY: name_w_buf[name_w_len] == 0 written above.
-    let name_w = bun_core::WStr::from_buf(&name_w_buf[..], name_w_len);
-
-    // SAFETY: name_w is NUL-terminated; all other params are valid per Win32.
-    let server = unsafe {
-        k32::CreateNamedPipeW(
-            name_w.as_ptr(),
-            server_access | windows::FILE_FLAG_OVERLAPPED | FILE_FLAG_FIRST_PIPE_INSTANCE,
-            windows::PIPE_TYPE_BYTE | windows::PIPE_READMODE_BYTE | windows::PIPE_WAIT,
-            1,
-            65536,
-            65536,
-            0,
-            core::ptr::null_mut(),
-        )
-    };
-    if server == windows::INVALID_HANDLE_VALUE {
-        return Err(CreatePtyError::OpenPtyFailed);
-    }
-    let server_guard = scopeguard::guard(server, |h| unsafe {
-        // SAFETY: h is a valid open HANDLE on the error path.
-        let _ = windows::CloseHandle(h);
-    });
-
-    let client_access: u32 = if server_access == windows::PIPE_ACCESS_INBOUND {
-        windows::GENERIC_WRITE
-    } else {
-        windows::GENERIC_READ
-    };
-
-    // SAFETY: name_w is NUL-terminated; all other params are valid per Win32.
-    let client = unsafe {
-        k32::CreateFileW(
-            name_w.as_ptr(),
-            client_access,
-            0,
-            core::ptr::null_mut(),
-            windows::OPEN_EXISTING,
-            0,
-            core::ptr::null_mut(),
-        )
-    };
-    if client == windows::INVALID_HANDLE_VALUE {
-        return Err(CreatePtyError::OpenPtyFailed);
-    }
-
-    let server = scopeguard::ScopeGuard::into_inner(server_guard);
-    Ok(PipePair { server, client })
-}
-
 #[cfg(windows)]
 fn create_pty_windows(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
+    use bun_spawn_sys::windows::InheritableHandles;
+    use bun_spawn_sys::windows::stdio::{ChildPipe, create_pipe_pair};
+
     let close = |handles: [windows::HANDLE; 2]| {
         for handle in handles {
             // SAFETY: both are open handles this function still owns.
@@ -1165,14 +1076,24 @@ fn create_pty_windows(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError>
         }
     };
 
-    // Output pipe: ConPTY writes (client), we read (overlapped server).
-    let out = create_overlapped_pipe_pair(windows::PIPE_ACCESS_INBOUND)?;
-    // Input pipe: we write (overlapped server), ConPTY reads (client).
-    let input = match create_overlapped_pipe_pair(windows::PIPE_ACCESS_OUTBOUND) {
+    // The pseudoconsole's ends are synchronous, ours are overlapped.
+    // Output: the pseudoconsole writes, we read.
+    let out = create_pipe_pair(ChildPipe {
+        readable: false,
+        writable: true,
+        overlapped: false,
+    })
+    .map_err(|_| CreatePtyError::OpenPtyFailed)?;
+    // Input: we write, the pseudoconsole reads.
+    let input = match create_pipe_pair(ChildPipe {
+        readable: true,
+        writable: false,
+        overlapped: false,
+    }) {
         Ok(pair) => pair,
-        Err(e) => {
-            close([out.server, out.client]);
-            return Err(e);
+        Err(_) => {
+            close([out.parent, out.child]);
+            return Err(CreatePtyError::OpenPtyFailed);
         }
     };
 
@@ -1181,22 +1102,26 @@ fn create_pty_windows(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError>
         Y: clamp_to_coord(rows),
     };
     let mut hpcon: windows::HPCON = core::ptr::null_mut();
-    // SAFETY: both client ends are valid open HANDLEs; `hpcon` is a valid out-ptr.
-    let created =
-        unsafe { windows::CreatePseudoConsole(size, input.client, out.client, 0, &mut hpcon) } >= 0;
-    // ConPTY duplicated the client handles internally; close our copies.
-    close([input.client, out.client]);
+    let created = {
+        // `CreatePseudoConsole` hands conhost the pipes through inheritable
+        // handles, which exist in this process for the length of the call.
+        let _inheritable = InheritableHandles::lock();
+        // SAFETY: both ends are valid open HANDLEs; `hpcon` is a valid out-ptr.
+        let result =
+            unsafe { windows::CreatePseudoConsole(size, input.child, out.child, 0, &mut hpcon) };
+        result >= 0
+    };
+    // The pseudoconsole has its own duplicates.
+    close([input.child, out.child]);
     if !created {
-        close([input.server, out.server]);
+        close([input.parent, out.parent]);
         return Err(CreatePtyError::OpenPtyFailed);
     }
 
-    // The server (overlapped) ends go to BufferedReader/StreamingWriter.start()
-    // as they are.
     Ok(PtyResult {
         master: Fd::INVALID,
-        read_fd: Fd::from_system(out.server),
-        write_fd: Fd::from_system(input.server),
+        read_fd: Fd::from_system(out.parent),
+        write_fd: Fd::from_system(input.parent),
         slave: Fd::INVALID,
         hpcon,
     })

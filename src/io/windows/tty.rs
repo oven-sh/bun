@@ -8,7 +8,8 @@
 //!
 //! The input mode belongs to the console, not to a handle, so it is
 //! process-wide state here too: every reader picks its mechanism from it when
-//! it arms, and a mode change wakes the readers so they re-arm.
+//! it arms, and a mode change wakes the readers so they re-arm: a line reader
+//! through the wake key, a raw reader through [`LINE_MODE`].
 //!
 //! The console cannot abandon a line read, but it returns from one when a
 //! chosen control character is entered (`dwCtrlWakeupMask`). Ending a read
@@ -21,11 +22,12 @@
 use core::ffi::c_void;
 use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU8, AtomicU32, AtomicU64, Ordering};
+use std::collections::VecDeque;
 use std::sync::Arc;
 
 use bun_sys::{self as sys, E, Fd, FdExt as _, Tag};
 use bun_uws_sys::Loop;
-use bun_uws_sys::iocp::{self, Op, OverlappedEntry, Wait};
+use bun_uws_sys::iocp::{self, CompleteFn, Op, OverlappedEntry, Wait};
 
 use super::pipe::ReadEvent;
 use super::sys as win;
@@ -49,7 +51,10 @@ pub enum Mode {
 static INPUT_MODE: AtomicU8 = AtomicU8::new(Mode::Normal as u8);
 /// The console's input mode before the first change; `u32::MAX` until then.
 static ORIGINAL_INPUT_MODE: AtomicU32 = AtomicU32::new(u32::MAX);
-static RAW_WAITERS: AtomicU32 = AtomicU32::new(0);
+/// A manual-reset event that is set while the console is in line mode, made by
+/// the first change to a raw mode. Every raw reader waits on it next to the
+/// console's input.
+static LINE_MODE: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
 static ON_RESIZE: AtomicPtr<()> = AtomicPtr::new(ptr::null_mut());
 
 /// Held to change anything below, to change the console's mode, and to type
@@ -76,6 +81,11 @@ const WAKE_CHAR: u16 = 0x1d;
 /// the user pressed (Ctrl+] is the same character). The line editor only looks
 /// at the character.
 const WAKE_VIRTUAL_KEY: u16 = 0xFF;
+
+#[link(name = "kernel32")]
+unsafe extern "system" {
+    fn ResetEvent(hEvent: HANDLE) -> win::BOOL;
+}
 
 /// UTF-16 units asked of one line read. Converted to UTF-8 they stay within
 /// the 8 KiB the console handles well.
@@ -134,6 +144,14 @@ pub fn set_console_mode(input: HANDLE, mode: Mode) -> sys::Result<()> {
     if unsafe { win::GetNumberOfConsoleInputEvents(input, &raw mut events) } == 0 {
         return Err(sys::Error::from_code(E::EINVAL, Tag::uv_tty_set_mode));
     }
+    if mode != Mode::Normal && LINE_MODE.load(Ordering::Acquire).is_null() {
+        // SAFETY: plain Win32 call: manual-reset, not set, unnamed.
+        let event = unsafe { win::CreateEventW(ptr::null_mut(), 1, 0, ptr::null()) };
+        if event.is_null() {
+            return Err(fail(win::last_error()));
+        }
+        LINE_MODE.store(event, Ordering::Release);
+    }
     if ORIGINAL_INPUT_MODE
         .compare_exchange(u32::MAX, previous, Ordering::AcqRel, Ordering::Acquire)
         .is_ok()
@@ -155,10 +173,14 @@ pub fn set_console_mode(input: HANDLE, mode: Mode) -> sys::Result<()> {
         type_wake_key();
     }
     let was = current_mode();
+    if mode != Mode::Normal {
+        signal_line_mode(false);
+    }
     INPUT_MODE.store(mode as u8, Ordering::Release);
-    if was != Mode::Normal && mode == Mode::Normal {
-        wake_raw_waiters(input);
-    } else if was == Mode::Normal && mode != Mode::Normal {
+    if mode == Mode::Normal {
+        signal_line_mode(true);
+    }
+    if was == Mode::Normal && mode != Mode::Normal {
         // Helpers still waiting for their turn have nothing to wait for.
         LINE_TURN.broadcast();
     }
@@ -197,11 +219,8 @@ pub fn reset_console_mode() {
         PENDING_FLAGS.store(u64::MAX, Ordering::Release);
         // SAFETY: `console` is the console's input.
         let _ = unsafe { apply_flags(console, original, original) };
-        let was = current_mode();
         INPUT_MODE.store(Mode::Normal as u8, Ordering::Release);
-        if was != Mode::Normal {
-            wake_raw_waiters(console);
-        }
+        signal_line_mode(true);
     }
     // SAFETY: opened above.
     unsafe { win::CloseHandle(console) };
@@ -244,18 +263,22 @@ pub fn set_resize_listener(listener: Option<fn()>) {
     );
 }
 
-/// The console is in line mode again: get the raw readers to re-arm.
-fn wake_raw_waiters(input: HANDLE) {
-    if RAW_WAITERS.load(Ordering::Acquire) == 0 {
+/// Set or reset [`LINE_MODE`]. With [`LINE_LOCK`] held; reset before
+/// `INPUT_MODE` leaves `Normal` and set after it is `Normal` again, so the
+/// event is never set while `INPUT_MODE` says raw.
+fn signal_line_mode(line_mode: bool) {
+    let event = LINE_MODE.load(Ordering::Acquire);
+    if event.is_null() {
         return;
     }
-    // Any record signals the handle; this one means nothing to anybody.
-    // SAFETY: an all-zero `INPUT_RECORD` is a valid (empty) record.
-    let mut record: win::INPUT_RECORD = unsafe { bun_core::ffi::zeroed_unchecked() };
-    record.EventType = win::FOCUS_EVENT;
-    let mut written: u32 = 0;
-    // SAFETY: `record` is initialized; `written` is a live local.
-    unsafe { win::WriteConsoleInputW(input, &raw const record, 1, &raw mut written) };
+    // SAFETY: `event` is the event made by `set_console_mode`, never closed.
+    unsafe {
+        if line_mode {
+            win::SetEvent(event);
+        } else {
+            ResetEvent(event);
+        }
+    }
 }
 
 /// End [`LINE_READER`]'s `ReadConsoleW`. With [`LINE_LOCK`] held.
@@ -334,7 +357,11 @@ struct Inner {
 
     reader: Option<ReadCallback>,
     raw_state: RawInputState,
-    raw_op: *mut RawOp,
+    /// The wait on the console's input, and what was read when it fired.
+    raw_op: *mut WaitOp,
+    raw_buf: Vec<u8>,
+    /// The wait on [`LINE_MODE`], armed with `raw_op`.
+    mode_op: *mut WaitOp,
     line_op: *mut LineOp,
     /// A line that arrived while the owner was not reading.
     held: Vec<u8>,
@@ -345,19 +372,23 @@ struct Inner {
     held_end: bool,
 
     output: OutputState,
-    writes_in_flight: u32,
+    /// Writes whose callback is due, oldest first.
+    written: VecDeque<(Callback<sys::Result<usize>>, sys::Result<usize>)>,
+    /// Held input is due to a reader that resumed.
+    held_due: bool,
+    posted: PostedOp,
 
     pending: u32,
     pins: u32,
 }
 
+/// A wait on a handle: the console's input, or [`LINE_MODE`].
 #[repr(C)]
-struct RawOp {
+struct WaitOp {
     op: Op,
     tty: *mut Inner,
     wait: *mut Wait,
     armed: bool,
-    buf: Vec<u8>,
 }
 
 #[repr(C)]
@@ -382,12 +413,13 @@ struct LineOp {
     woken: bool,
 }
 
-/// A packet that carries no I/O: a write's completion or held input.
+/// A packet that carries no I/O: it delivers `written` and held input.
 #[repr(C)]
 struct PostedOp {
     op: Op,
     tty: *mut Inner,
-    write: Option<(Callback<sys::Result<usize>>, sys::Result<usize>)>,
+    /// On its way through `complete_from_loop`.
+    out: bool,
 }
 
 impl Tty {
@@ -427,18 +459,27 @@ impl Tty {
             reader: None,
             raw_state: RawInputState::new(),
             raw_op: ptr::null_mut(),
+            raw_buf: Vec::new(),
+            mode_op: ptr::null_mut(),
             line_op: ptr::null_mut(),
             held: Vec::new(),
             held_error: None,
             ctrl_z_ends_input: false,
             held_end: false,
             output: OutputState::new(),
-            writes_in_flight: 0,
+            written: VecDeque::new(),
+            held_due: false,
+            posted: PostedOp {
+                op: Op::new(PostedOp::complete),
+                tty: ptr::null_mut(),
+                out: false,
+            },
             pending: 0,
             pins: 0,
         }));
         // SAFETY: `inner` is at its final address; `link` is its first field.
         unsafe {
+            (*inner).posted.tty = inner;
             Link::insert(inner.cast());
             Ok(Tty {
                 inner: NonNull::new_unchecked(inner),
@@ -497,7 +538,7 @@ impl Tty {
         // SAFETY: `inner` is live while the owner's `Tty` is.
         let inner = unsafe { &*self.raw() };
         !inner.flags.contains(Flags::DETACHED)
-            && (inner.flags.contains(Flags::READING) || inner.writes_in_flight > 0)
+            && (inner.flags.contains(Flags::READING) || !inner.written.is_empty())
     }
 
     /// Let reading keep the loop alive (the default).
@@ -596,14 +637,10 @@ impl Tty {
                 return Err(sys::Error::from_code(E::EBADF, Tag::write));
             }
             let result = self.try_write(data);
-            let op = bun_core::heap::into_raw(Box::new(PostedOp {
-                op: Op::new(PostedOp::complete),
-                tty: this,
-                write: Some((Callback::new(ctx, on_write), result)),
-            }));
-            super::complete_from_loop((*this).link.loop_, &raw mut (*op).op);
-            (*this).pending += 1;
-            (*this).writes_in_flight += 1;
+            (*this)
+                .written
+                .push_back((Callback::new(ctx, on_write), result));
+            Inner::post(this);
             Inner::update_keep_alive(this);
         }
         Ok(())
@@ -689,7 +726,7 @@ impl Inner {
             }
             let wanted = !inner.flags.contains(Flags::CLOSING)
                 && (inner.flags.contains(Flags::REFD | Flags::READING)
-                    || inner.writes_in_flight > 0);
+                    || !inner.written.is_empty());
             if wanted == inner.flags.contains(Flags::KEEPING_ALIVE) {
                 return;
             }
@@ -711,6 +748,17 @@ impl Inner {
         // when no packet or thread refers to them.
         unsafe {
             let loop_ = (*this).link.loop_;
+            // One read for every decision below: a change by another thread in
+            // between would arm a raw wait without its `LINE_MODE` wait.
+            let mode = current_mode();
+            if mode != Mode::Normal {
+                WaitOp::start(
+                    &raw mut (*this).mode_op,
+                    this,
+                    LINE_MODE.load(Ordering::Acquire),
+                    WaitOp::line_mode_set,
+                )?;
+            }
             let line_out = !(*this).line_op.is_null() && (*(*this).line_op).in_flight;
             let raw_out = !(*this).raw_op.is_null() && (*(*this).raw_op).armed;
             if line_out || raw_out {
@@ -718,7 +766,7 @@ impl Inner {
             }
 
             let line = (*this).line_op;
-            if current_mode() != Mode::Normal && !line.is_null() && (*line).carry > 0 {
+            if mode != Mode::Normal && !line.is_null() && (*line).carry > 0 {
                 // Typed in line mode and never entered: a raw reader gets
                 // those keys as they are.
                 let carried = &(&(*line).chars)[..(*line).carry];
@@ -728,19 +776,14 @@ impl Inner {
                 (*line).carry = 0;
             }
 
-            if !(*this).held.is_empty() || (*this).held_error.is_some() {
+            if !(*this).held.is_empty() || (*this).held_error.is_some() || (*this).held_end {
                 // From the loop, not from inside `read_start`.
-                let op = bun_core::heap::into_raw(Box::new(PostedOp {
-                    op: Op::new(PostedOp::complete),
-                    tty: this,
-                    write: None,
-                }));
-                super::complete_from_loop(loop_, &raw mut (*op).op);
-                (*this).pending += 1;
+                (*this).held_due = true;
+                Self::post(this);
                 return Ok(());
             }
 
-            if current_mode() == Mode::Normal {
+            if mode == Mode::Normal {
                 if (*this).line_op.is_null() {
                     (*this).line_op = bun_core::heap::into_raw(Box::new(LineOp {
                         op: Op::new(LineOp::complete),
@@ -774,30 +817,33 @@ impl Inner {
                 }
                 super::op_submitted(loop_);
                 (*op).in_flight = true;
+                (*this).pending += 1;
             } else {
-                if (*this).raw_op.is_null() {
-                    let wait = iocp::us_iocp_wait_create(loop_);
-                    if wait.is_null() {
-                        return Err(Win32Error::NOT_ENOUGH_MEMORY);
-                    }
-                    (*this).raw_op = bun_core::heap::into_raw(Box::new(RawOp {
-                        op: Op::new(RawOp::complete),
-                        tty: this,
-                        wait,
-                        armed: false,
-                        buf: Vec::new(),
-                    }));
-                }
-                let op = (*this).raw_op;
-                if iocp::us_iocp_wait_start((*op).wait, (*this).handle, &raw mut (*op).op) != 0 {
-                    return Err(win::last_error());
-                }
-                super::wait_submitted(loop_);
-                RAW_WAITERS.fetch_add(1, Ordering::AcqRel);
-                (*op).armed = true;
+                WaitOp::start(
+                    &raw mut (*this).raw_op,
+                    this,
+                    (*this).handle,
+                    WaitOp::input_ready,
+                )?;
             }
-            (*this).pending += 1;
             Ok(())
+        }
+    }
+
+    /// Have [`PostedOp::complete`] run from the loop's next tick.
+    ///
+    /// # Safety
+    /// `this` is live. Must run on the loop's thread.
+    unsafe fn post(this: *mut Inner) {
+        // SAFETY: caller contract; `posted` is part of `this`, which `pending`
+        // keeps allocated until the packet is dequeued.
+        unsafe {
+            if (*this).posted.out {
+                return;
+            }
+            (*this).posted.out = true;
+            super::complete_from_loop((*this).link.loop_, &raw mut (*this).posted.op);
+            (*this).pending += 1;
         }
     }
 
@@ -897,14 +943,8 @@ impl Inner {
     unsafe fn cancel_reads(this: *mut Inner) {
         // SAFETY: caller contract.
         unsafe {
-            let raw = (*this).raw_op;
-            if !raw.is_null() && (*raw).armed && iocp::us_iocp_wait_stop((*raw).wait) != 0 {
-                // Removed before it fired: no packet will come for it.
-                (*raw).armed = false;
-                RAW_WAITERS.fetch_sub(1, Ordering::AcqRel);
-                super::op_dequeued((*this).link.loop_);
-                (*this).pending -= 1;
-            }
+            WaitOp::stop((*this).raw_op);
+            WaitOp::stop((*this).mode_op);
             let line = (*this).line_op;
             if !line.is_null() && (*line).in_flight {
                 // The handle stays open until the read has returned.
@@ -932,9 +972,11 @@ impl Inner {
                 Self::update_keep_alive(this);
                 Link::remove(this.cast());
             }
-            if !(*this).raw_op.is_null() {
-                let raw = bun_core::heap::take((*this).raw_op);
-                iocp::us_iocp_wait_free(raw.wait);
+            for op in [(*this).raw_op, (*this).mode_op] {
+                if !op.is_null() {
+                    let op = bun_core::heap::take(op);
+                    iocp::us_iocp_wait_free(op.wait);
+                }
             }
             if !(*this).line_op.is_null() {
                 drop(bun_core::heap::take((*this).line_op));
@@ -944,21 +986,112 @@ impl Inner {
     }
 }
 
-impl RawOp {
-    unsafe extern "C" fn complete(loop_: *mut Loop, op: *mut Op, _entry: *mut OverlappedEntry) {
-        let raw = op.cast::<RawOp>();
-        // SAFETY: `op` is the first field of the `RawOp` whose wait fired; the
-        // tty outlives its packets (`pending`).
+impl WaitOp {
+    /// Arm `*slot`, made on first use, on `handle`; nothing to do while it is
+    /// armed.
+    ///
+    /// # Safety
+    /// `tty` is live and owns `slot`. Must run on the loop's thread.
+    unsafe fn start(
+        slot: *mut *mut WaitOp,
+        tty: *mut Inner,
+        handle: HANDLE,
+        complete: CompleteFn,
+    ) -> Result<(), Win32Error> {
+        // SAFETY: caller contract; the op is freed with `tty`, which `pending`
+        // keeps until the wait has fired or was taken back.
+        unsafe {
+            let loop_ = (*tty).link.loop_;
+            if (*slot).is_null() {
+                let wait = iocp::us_iocp_wait_create(loop_);
+                if wait.is_null() {
+                    return Err(Win32Error::NOT_ENOUGH_MEMORY);
+                }
+                *slot = bun_core::heap::into_raw(Box::new(WaitOp {
+                    op: Op::new(complete),
+                    tty,
+                    wait,
+                    armed: false,
+                }));
+            }
+            let op = *slot;
+            if (*op).armed {
+                return Ok(());
+            }
+            if iocp::us_iocp_wait_start((*op).wait, handle, &raw mut (*op).op) != 0 {
+                return Err(win::last_error());
+            }
+            super::wait_submitted(loop_);
+            (*op).armed = true;
+            (*tty).pending += 1;
+            Ok(())
+        }
+    }
+
+    /// Take the wait back, unless its packet is already on the way.
+    ///
+    /// # Safety
+    /// `op` is null or a live op of a live tty. Must run on the loop's thread.
+    unsafe fn stop(op: *mut WaitOp) {
+        // SAFETY: caller contract.
+        unsafe {
+            if !op.is_null() && (*op).armed && iocp::us_iocp_wait_stop((*op).wait) != 0 {
+                // Removed before it fired: no packet will come for it.
+                (*op).armed = false;
+                let tty = (*op).tty;
+                super::op_dequeued((*tty).link.loop_);
+                (*tty).pending -= 1;
+            }
+        }
+    }
+
+    /// The wait's packet was dequeued. The tty, unless that was the last thing
+    /// a closed one waited for.
+    ///
+    /// # Safety
+    /// `op` is the first field of a `WaitOp` whose wait fired.
+    unsafe fn fired(loop_: *mut Loop, op: *mut Op) -> Option<*mut Inner> {
+        let wait = op.cast::<WaitOp>();
+        // SAFETY: caller contract; the tty outlives its packets (`pending`).
         unsafe {
             super::op_dequeued(loop_);
-            RAW_WAITERS.fetch_sub(1, Ordering::AcqRel);
-            (*raw).armed = false;
-            let this = (*raw).tty;
+            (*wait).armed = false;
+            let this = (*wait).tty;
             (*this).pending -= 1;
             if (*this).gone() {
                 Inner::maybe_finish(this);
-                return;
+                return None;
             }
+            Some(this)
+        }
+    }
+
+    /// [`LINE_MODE`] was set: the console's input is not this reader's to wait
+    /// on any more.
+    unsafe extern "C" fn line_mode_set(
+        loop_: *mut Loop,
+        op: *mut Op,
+        _entry: *mut OverlappedEntry,
+    ) {
+        // SAFETY: `op` is the first field of the `WaitOp` whose wait fired.
+        unsafe {
+            let Some(this) = Self::fired(loop_, op) else {
+                return;
+            };
+            if current_mode() == Mode::Normal {
+                Self::stop((*this).raw_op);
+            }
+            Inner::rearm(this);
+        }
+    }
+
+    /// The console's input queue holds records.
+    unsafe extern "C" fn input_ready(loop_: *mut Loop, op: *mut Op, _entry: *mut OverlappedEntry) {
+        // SAFETY: `op` is the first field of the `WaitOp` whose wait fired.
+        unsafe {
+            let Some(this) = Self::fired(loop_, op) else {
+                return;
+            };
             // Not reading: the records stay queued (the handle stays
             // signalled), and `read_start` arms again.
             if !(*this).flags.contains(Flags::READING) {
@@ -969,9 +1102,9 @@ impl RawOp {
                 return;
             }
 
-            (*raw).buf.clear();
+            (*this).raw_buf.clear();
             let result =
-                tty_input::read_raw((*this).handle, &mut (*this).raw_state, &mut (*raw).buf);
+                tty_input::read_raw((*this).handle, &mut (*this).raw_state, &mut (*this).raw_buf);
             if matches!(&result, Ok(read) if read.wake_key) {
                 // If a line read is waiting for that key, this read got to
                 // the queue ahead of it.
@@ -989,8 +1122,8 @@ impl RawOp {
                 }
             }
             let open = Inner::with_owner(this, || {
-                if !(*raw).buf.is_empty() && (*this).flags.contains(Flags::READING) {
-                    Inner::deliver(this, ReadEvent::Data(&mut (*raw).buf));
+                if !(*this).raw_buf.is_empty() && (*this).flags.contains(Flags::READING) {
+                    Inner::deliver(this, ReadEvent::Data(&mut (*this).raw_buf));
                 }
                 if let Err(code) = result
                     && (*this).flags.contains(Flags::READING)
@@ -1220,31 +1353,32 @@ impl Inner {
 
 impl PostedOp {
     unsafe extern "C" fn complete(loop_: *mut Loop, op: *mut Op, _entry: *mut OverlappedEntry) {
-        // SAFETY: `op` is the first field of a `PostedOp` posted by this
-        // module; the tty outlives its packets (`pending`).
+        // SAFETY: `op` is the first field of the `PostedOp` of a tty, which
+        // outlives its packets (`pending`).
         unsafe {
             super::op_dequeued(loop_);
-            let posted = bun_core::heap::take(op.cast::<PostedOp>());
-            let this = posted.tty;
+            let this = (*op.cast::<PostedOp>()).tty;
+            (*this).posted.out = false;
             (*this).pending -= 1;
 
-            if let Some((callback, result)) = posted.write {
-                (*this).writes_in_flight -= 1;
-                let open = Inner::with_owner(this, || {
+            // A write made from a callback is the next tick's.
+            let due = (*this).written.len();
+            let held_due = core::mem::take(&mut (*this).held_due);
+            let open = Inner::with_owner(this, || {
+                for _ in 0..due {
+                    let Some((callback, result)) = (*this).written.pop_front() else {
+                        break;
+                    };
                     if !(*this).flags.contains(Flags::SILENT) {
                         callback.invoke(result);
                     }
-                });
-                if open {
-                    Inner::update_keep_alive(this);
                 }
+            });
+            if !open {
                 return;
             }
-
-            // Held input on its way to a reader that resumed.
-            if (*this).gone() {
-                Inner::maybe_finish(this);
-            } else {
+            Inner::update_keep_alive(this);
+            if held_due {
                 Inner::flush_held(this);
             }
         }

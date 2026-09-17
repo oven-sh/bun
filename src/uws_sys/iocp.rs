@@ -73,6 +73,27 @@ bun_opaque::opaque_ffi! {
     pub struct SocketPoll;
 }
 
+/// `struct us_iocp_starved`: something that could not start waiting for what
+/// it serves. While linked, `retry` runs at the start of every tick, before
+/// the tick looks at the port, and the loop keeps ticking for it. `retry` may
+/// unlink its own node and must not run an owner's callback.
+#[repr(C)]
+pub struct Starved {
+    pub retry: unsafe extern "C" fn(*mut Starved),
+    prev: *mut Starved,
+    next: *mut Starved,
+}
+
+impl Starved {
+    pub const fn new(retry: unsafe extern "C" fn(*mut Starved)) -> Self {
+        Self {
+            retry,
+            prev: core::ptr::null_mut(),
+            next: core::ptr::null_mut(),
+        }
+    }
+}
+
 pub const SOCKET_READABLE: c_int = 1;
 pub const SOCKET_WRITABLE: c_int = 2;
 
@@ -90,6 +111,12 @@ unsafe extern "C" {
     /// `op`'s `complete` runs from the loop's next tick, before that tick
     /// takes packets from the port. Loop thread only; counted like a packet.
     pub fn us_iocp_op_ready(loop_: *mut Loop, op: *mut Op);
+
+    /// `starved` is not linked, and stays at its address until unlinked. Loop
+    /// thread only.
+    pub fn us_iocp_starved_link(loop_: *mut Loop, starved: *mut Starved);
+    /// `starved` is linked. Loop thread only.
+    pub fn us_iocp_starved_unlink(loop_: *mut Loop, starved: *mut Starved);
 
     pub fn us_iocp_wait_create(loop_: *mut Loop) -> *mut Wait;
     /// 0, or -1 if the wait could not be registered.

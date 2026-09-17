@@ -24,7 +24,7 @@ mod tty_input;
 mod tty_output;
 
 pub use file::File;
-pub use pipe::{ConnectRequest, Pipe, PipeOrigin, ReadEvent};
+pub use pipe::{ConnectRequest, Pipe, PipeOrigin, ReadEvent, Refusal};
 pub use pipe_server::PipeServer;
 pub use tty::Tty;
 
@@ -99,13 +99,17 @@ impl Port {
     /// Hand `op` to the loop thread. The loop-side accounting
     /// ([`op_submitted`]) was done by the loop thread when it started the work.
     ///
+    /// The port is this `Port`'s own open handle, so the one thing the call
+    /// can fail for is the kernel having no memory for the packet. The loop
+    /// would wait for `op` forever, and the calling thread has no other way
+    /// to reach it: that is the process out of memory.
+    ///
     /// # Safety
     /// `op` stays allocated until its `complete` has run.
     pub(crate) unsafe fn post(&self, op: *mut iocp::Op) {
         // SAFETY: caller contract.
         if unsafe { sys::PostQueuedCompletionStatus(self.0, 0, 0, op.cast()) } == 0 {
-            // The loop thread would wait for this completion forever.
-            panic!("PostQueuedCompletionStatus failed: {:?}", sys::last_error());
+            bun_core::out_of_memory();
         }
     }
 }

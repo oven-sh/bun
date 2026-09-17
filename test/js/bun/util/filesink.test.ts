@@ -466,10 +466,24 @@ if (isWindows) {
 // `CreateFileW` has rules for names: `NUL` and `LPT1` are devices, in a directory too, and a trailing
 // dot or space is dropped. Which names those are differs between Windows versions, so the ways of
 // writing a `Bun.file` are compared with each other, for a relative name and for the absolute path of it.
+// A directory on the way to the file loses one trailing dot and nothing else; the missing ones are
+// created under the names the open then looks for.
 it.skipIf(!isWindows)(
   "every way of writing a Bun.file writes to the same place for names Win32 treats specially",
   async () => {
-    const names = ["NUL", "nul", "sub/NUL", "lpt1", "conin$", "trail.", "sp "];
+    const names = [
+      "NUL",
+      "nul",
+      "sub/NUL",
+      "lpt1",
+      "conin$",
+      "trail.",
+      "sp ",
+      "trail./f.txt",
+      "sp ./deep./f.txt",
+      "sp /f.txt",
+      "dots../f.txt",
+    ];
     using dir = tempDir("filesink-win32-names", {
       "fixture.mjs": String.raw`
         import fs from "node:fs";
@@ -555,9 +569,12 @@ it.skipIf(!isWindows)(
       Record<"write" | "copy" | "copySlice" | "empty" | "writePath" | "writeStream" | "writer", Result>
     >;
     const keys = names.flatMap(name => [name, "absolute " + name]);
+    // `writer()` does not create directories.
+    const inExistingDirectory = keys.filter(key => !key.endsWith("/f.txt"));
     for (const api of ["copy", "writePath", "writeStream", "writer"] as const) {
-      expect(Object.fromEntries(keys.map(key => [key, { api, ...results[key][api] }]))).toEqual(
-        Object.fromEntries(keys.map(key => [key, { api, ...results[key].write }])),
+      const compared = api === "writer" ? inExistingDirectory : keys;
+      expect(Object.fromEntries(compared.map(key => [key, { api, ...results[key][api] }]))).toEqual(
+        Object.fromEntries(compared.map(key => [key, { api, ...results[key].write }])),
       );
     }
     // These two cut the file to a length, which a device refuses: compared where the name is a file's.
@@ -577,6 +594,21 @@ it.skipIf(!isWindows)(
       created: ["trail"],
       readBack: { text: "x", exists: true, size: 1, deleted: [] },
     });
+    for (const [name, parents] of [
+      ["trail./f.txt", ["trail"]],
+      ["sp ./deep./f.txt", ["sp ", "sp \\deep"]],
+      ["sp /f.txt", ["sp "]],
+      ["dots../f.txt", ["dots.."]],
+    ] as const) {
+      for (const key of [name, "absolute " + name]) {
+        expect({ key, ...results[key].write }).toEqual({
+          key,
+          ok: true,
+          created: [...parents, parents.at(-1) + "\\f.txt"],
+          readBack: { text: "x", exists: true, size: 1, deleted: [...parents] },
+        });
+      }
+    }
     expect(exitCode).toBe(0);
   },
 );
@@ -1141,9 +1173,9 @@ describe("FileSink on a pipe stays alive until end() has drained the buffer", ()
   // The unref'd child does not hold the loop. The bytes still owed to its
   // stdin must. The child starts to read only once end() has been called, so
   // the first write has filled the pipe by then. It inherits stdout, so its
-  // count arrives on the parent's stdout after it has read everything. It is
-  // detached so that it outlives the parent: on Windows a child that is not is
-  // killed when the parent exits, which can be before it has printed.
+  // count arrives on the parent's stdout after it has read everything. On
+  // Windows it is detached so that it outlives the parent: a child that is not
+  // is killed when the parent exits, which can be before it has printed.
   it.concurrent("Bun.spawn stdin pipe with an unref'd child", async () => {
     const flag = join(tmpdirSync(), "ended");
     // Polls for the flag with a deadline so that it cannot outlive a parent
@@ -1167,7 +1199,7 @@ describe("FileSink on a pipe stays alive until end() has drained the buffer", ()
         `
           const child = Bun.spawn(
             [process.execPath, "-e", ${JSON.stringify(reader)}, ${JSON.stringify(flag)}],
-            { stdin: "pipe", stdout: "inherit", stderr: "inherit", detached: true },
+            { stdin: "pipe", stdout: "inherit", stderr: "inherit", detached: ${isWindows} },
           );
           try {
             child.stdin.write(Buffer.alloc(${size}, 65));

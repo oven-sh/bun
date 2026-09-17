@@ -23,6 +23,9 @@ export const NODEJS_ABI_VERSION = "147";
 /** V8 version reported by process.versions.v8 — must match the pinned Node.js version's. */
 export const NODEJS_V8_VERSION = "14.6.202.34-node.20";
 
+/** libuv version reported by process.versions.uv — the pinned Node.js version's deps/uv/include/uv/version.h. */
+export const NODEJS_UV_VERSION = "1.52.1";
+
 export const nodejsHeaders: Dependency = {
   name: "nodejs",
 

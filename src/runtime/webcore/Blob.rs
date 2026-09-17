@@ -3798,23 +3798,25 @@ pub enum Retry {
     No,
 }
 
-/// Create the parent directories of `path`.
+/// Create the parent directories of `path`, a `Bun.file`'s. An error names
+/// `path`, as the write it is for does.
 #[inline(never)]
 pub(crate) fn mkdirp_parent(path: &[u8]) -> bun_sys::Result<()> {
     let Some(dirname) = bun_core::dirname(path) else {
-        return Err(bun_sys::Error::from_code(
-            bun_sys::E::ENOENT,
-            bun_sys::Tag::mkdir,
-        ));
+        return Err(
+            bun_sys::Error::from_code(bun_sys::E::ENOENT, bun_sys::Tag::mkdir).with_path(path),
+        );
     };
-    node::fs::NodeFS::default()
-        .mkdir_recursive(&node::fs::args::Mkdir {
-            path: PathLike::borrowed(dirname),
-            recursive: true,
-            always_return_none: true,
-            ..Default::default()
-        })
-        .map(|_| ())
+    match node::fs::NodeFS::default().mkdir_recursive(&node::fs::args::Mkdir {
+        path: PathLike::borrowed(dirname),
+        recursive: true,
+        always_return_none: true,
+        as_written: true,
+        ..Default::default()
+    }) {
+        Ok(_) => Ok(()),
+        Err(err) => Err(err.with_path(path)),
+    }
 }
 
 // TODO: move this to bun_sys?
@@ -3929,75 +3931,48 @@ fn write_file_with_empty_source_to_destination(
             );
 
             if let bun_sys::Result::Err(ref mut err) = result {
-                let errno = err.get_errno();
-                let mut was_eperm = false;
                 'err: {
-                    let mut current = errno;
-                    loop {
-                        match current {
-                            // truncate might return EPERM when the parent directory doesn't exist
-                            // #6336
-                            bun_sys::E::EPERM => {
-                                was_eperm = true;
-                                err.errno = bun_sys::E::ENOENT as _;
-                                current = bun_sys::E::ENOENT;
-                                continue;
-                            }
-                            bun_sys::E::ENOENT => {
-                                if options.mkdirp_if_not_exists == Some(false) {
-                                    break 'err;
-                                }
-                                let dirpath: &[u8] = match &file.pathlike {
-                                    PathOrFileDescriptor::Path(path) => {
-                                        match bun_core::dirname(path.slice()) {
-                                            Some(d) => d,
-                                            None => break 'err,
-                                        }
-                                    }
-                                    PathOrFileDescriptor::Fd(_) => {
-                                        // NOTE: if this is an fd, it means the file
-                                        // exists, so we shouldn't try to mkdir it
-                                        if was_eperm {
-                                            err.errno = bun_sys::E::EPERM as _;
-                                        }
-                                        break 'err;
-                                    }
-                                };
-                                let mkdir_result =
-                                    node_fs.mkdir_recursive(&node::fs::args::Mkdir {
-                                        path: PathLike::borrowed(dirpath),
-                                        recursive: true,
-                                        always_return_none: true,
-                                        ..Default::default()
-                                    });
-                                if let bun_sys::Result::Err(e) = mkdir_result {
-                                    *err = e;
-                                    break 'err;
-                                }
+                    if err.get_errno() != bun_sys::E::ENOENT
+                        || options.mkdirp_if_not_exists == Some(false)
+                    {
+                        break 'err;
+                    }
+                    // An fd is a file that exists: there is nothing to mkdir.
+                    let PathOrFileDescriptor::Path(path) = &file.pathlike else {
+                        break 'err;
+                    };
+                    let Some(dirpath) = bun_core::dirname(path.slice()) else {
+                        break 'err;
+                    };
+                    let mkdir_result = node_fs.mkdir_recursive(&node::fs::args::Mkdir {
+                        path: PathLike::borrowed(dirpath),
+                        recursive: true,
+                        always_return_none: true,
+                        as_written: true,
+                        ..Default::default()
+                    });
+                    if let bun_sys::Result::Err(e) = mkdir_result {
+                        *err = e;
+                        break 'err;
+                    }
 
-                                // SAFETY: we check if `file.pathlike` is an fd above, returning if it is.
-                                let mut buf = bun_paths::path_buffer_pool::get();
-                                let mode: bun_sys::Mode =
-                                    options.mode.unwrap_or(node::fs::DEFAULT_PERMISSION);
-                                match bun_sys::File::open(
-                                    file.pathlike.path().slice_z_as_written(&mut buf),
-                                    bun_sys::O::CREAT | bun_sys::O::TRUNC,
-                                    mode,
-                                ) {
-                                    bun_sys::Result::Err(e) => {
-                                        *err = e;
-                                        break 'err;
-                                    }
-                                    bun_sys::Result::Ok(f) => {
-                                        let _ = f.close(); // close error is non-actionable
-                                        return Ok(JSPromise::resolved_promise_value(
-                                            cx.global(),
-                                            JSValue::js_number(0.0),
-                                        ));
-                                    }
-                                }
-                            }
-                            _ => break 'err,
+                    let mut buf = bun_paths::path_buffer_pool::get();
+                    let mode: bun_sys::Mode = options.mode.unwrap_or(node::fs::DEFAULT_PERMISSION);
+                    match bun_sys::File::open(
+                        path.slice_z_as_written(&mut buf),
+                        bun_sys::O::CREAT | bun_sys::O::TRUNC,
+                        mode,
+                    ) {
+                        bun_sys::Result::Err(e) => {
+                            *err = e;
+                            break 'err;
+                        }
+                        bun_sys::Result::Ok(f) => {
+                            let _ = f.close(); // close error is non-actionable
+                            return Ok(JSPromise::resolved_promise_value(
+                                cx.global(),
+                                JSValue::js_number(0.0),
+                            ));
                         }
                     }
                 }

@@ -36,8 +36,6 @@ pub(crate) struct CONSOLE_READCONSOLE_CONTROL {
     pub dwControlKeyState: u32,
 }
 
-pub(crate) const FOCUS_EVENT: u16 = 0x0010;
-
 pub(crate) const ENABLE_WINDOW_INPUT: DWORD = 0x0008;
 
 pub(crate) type LPTHREAD_START_ROUTINE = unsafe extern "system" fn(*mut c_void) -> DWORD;

@@ -61,7 +61,8 @@ static bool getWindowSize(int fd, size_t* width, size_t* height)
     if (!GetConsoleScreenBufferInfo(handle, &csbi))
         return false;
 
-    *width = csbi.srWindow.Right - csbi.srWindow.Left + 1;
+    // Text wraps at the width of the screen buffer, which a window can be narrower than.
+    *width = csbi.dwSize.X;
     *height = csbi.srWindow.Bottom - csbi.srWindow.Top + 1;
     return true;
 #else
@@ -133,10 +134,6 @@ private:
         ASSERT(inherits(info()));
     }
 };
-
-#if OS(WINDOWS)
-extern "C" void Bun__setCTRLHandler(BOOL add);
-#endif
 
 const ClassInfo TTYWrapObject::s_info = {
     "LibuvStreamWrap"_s,
@@ -214,11 +211,6 @@ JSC_DEFINE_HOST_FUNCTION(TTYWrap_functionSetMode,
     }
 
     int modeInt = JSC::toInt32(mode.asNumber());
-#if OS(WINDOWS)
-    if (modeInt == 0) {
-        Bun__setCTRLHandler(1);
-    }
-#endif
     // Nodejs does not throw when ttySetMode fails. An Error event is emitted instead.
     int err = Bun__ttySetMode(fd, modeInt, &ttyWrap->ttyState, 1);
     return JSValue::encode(jsNumber(err));

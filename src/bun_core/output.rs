@@ -497,11 +497,6 @@ pub mod windows_stdio {
     static CONSOLE_OUTPUT_CODEPAGE: core::sync::atomic::AtomicU32 =
         core::sync::atomic::AtomicU32::new(0);
 
-    #[unsafe(no_mangle)]
-    extern "C" fn Bun__restoreWindowsStdio() {
-        restore();
-    }
-
     pub(crate) fn restore() {
         // SAFETY: PEB access is sound on Windows; handles are valid for process
         // lifetime. `peb()` returns a raw pointer because the OS/CRT mutate the

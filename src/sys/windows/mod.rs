@@ -340,17 +340,6 @@ pub fn GetFileType(hFile: HANDLE) -> DWORD {
 pub use bun_windows_sys::{FILE_TYPE_CHAR, FILE_TYPE_PIPE};
 pub(crate) use bun_windows_sys::{FILE_TYPE_DISK, FILE_TYPE_REMOTE, FILE_TYPE_UNKNOWN};
 
-pub use SetCurrentDirectoryW as SetCurrentDirectory;
-/// Each process has a single current directory made up of two parts:
-///
-/// - A disk designator that is either a drive letter followed by a colon, or a server name and share name (\\servername\sharename)
-/// - A directory on the disk designator
-///
-/// The current directory is shared by all threads of the process: If one thread changes the current directory, it affects all threads in the process. Multithreaded applications and shared library code should avoid calling the SetCurrentDirectory function due to the risk of affecting relative path calculations being performed by other threads. Conversely, multithreaded applications and shared library code should avoid using relative paths so that they are unaffected by changes to the current directory performed by other threads.
-///
-/// Note that the current directory for a process is locked while the process is executing. This will prevent the directory from being deleted, moved, or renamed.
-pub use bun_windows_sys::externs::SetCurrentDirectoryW;
-
 pub use bun_windows_sys::externs::RtlNtStatusToDosError;
 
 pub use bun_windows_sys::externs::SaferiIsExecutableFileType;
@@ -588,8 +577,9 @@ pub use bun_windows_sys::externs::CreateDirectoryExW;
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
 pub enum GetFinalPathNameByHandleError {
-    #[error("FileNotFound")]
-    FileNotFound,
+    /// What `GetFinalPathNameByHandleW` failed with.
+    #[error("{0:?}")]
+    Failed(Win32Error),
     #[error("NameTooLong")]
     NameTooLong,
 }
@@ -704,7 +694,9 @@ fn lowbox_dos_name_fallback(
             "GetFinalPathNameByHandleW({:p}) = denied (no NT name)",
             hFile
         );
-        return Err(GetFinalPathNameByHandleError::FileNotFound);
+        return Err(GetFinalPathNameByHandleError::Failed(
+            Win32Error::ACCESS_DENIED,
+        ));
     };
     let nt = &nt_buf.0[..nt_len];
     let Some((device, letter)) = system_volume_device() else {
@@ -712,7 +704,9 @@ fn lowbox_dos_name_fallback(
             "GetFinalPathNameByHandleW({:p}) = denied (system volume unresolved)",
             hFile
         );
-        return Err(GetFinalPathNameByHandleError::FileNotFound);
+        return Err(GetFinalPathNameByHandleError::Failed(
+            Win32Error::ACCESS_DENIED,
+        ));
     };
     if !(nt.len() > device.len()
         && nt[..device.len()] == device[..]
@@ -723,7 +717,9 @@ fn lowbox_dos_name_fallback(
             hFile,
             bun_core::fmt::utf16(nt)
         );
-        return Err(GetFinalPathNameByHandleError::FileNotFound);
+        return Err(GetFinalPathNameByHandleError::Failed(
+            Win32Error::ACCESS_DENIED,
+        ));
     }
     let rest = &nt[device.len()..];
     let total = 2 + rest.len();
@@ -815,18 +811,18 @@ pub(crate) fn GetFinalPathNameByHandle(
     };
 
     if return_length == 0 {
-        let err = GetLastError();
+        let err = Win32Error::get();
         bun_sys::syslog!("GetFinalPathNameByHandleW({:p}) = {:?}", hFile, err);
         // An AppContainer (lowbox) token is denied the mount-manager lookup
         // behind the DOS volume-name translation while the NT form still
         // works; rebuild `X:\…` from the NT name (system volume only).
         if fmt.volume_name == win32::VolumeName::Dos
-            && err == u32::from(Win32Error::ACCESS_DENIED.0)
+            && err == Win32Error::ACCESS_DENIED
             && is_app_container()
         {
             return lowbox_dos_name_fallback(hFile, out_buffer);
         }
-        return Err(GetFinalPathNameByHandleError::FileNotFound);
+        return Err(GetFinalPathNameByHandleError::Failed(err));
     }
 
     if (return_length as usize) >= out_buffer.len() {

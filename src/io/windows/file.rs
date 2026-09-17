@@ -14,7 +14,6 @@ use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 
 use bun_sys::{self as sys, E, Fd, FdExt as _, Tag};
-use bun_threading::Futex;
 use bun_threading::work_pool::{IntrusiveWorkTask as _, Task, WorkPool};
 use bun_uws_sys::Loop;
 use bun_uws_sys::iocp::{self, Op, OverlappedEntry};
@@ -47,10 +46,15 @@ enum Request {
         offset: Option<u64>,
     },
     Write {
-        data: *const u8,
-        len: usize,
+        data: WriteData,
         callback: Callback<sys::Result<usize>>,
     },
+}
+
+enum WriteData {
+    /// The owner's, valid as [`File::write`] asks.
+    Borrowed(*const u8, usize),
+    Owned(Vec<u8>),
 }
 
 impl Request {
@@ -71,8 +75,6 @@ struct Inner {
     close_fd: bool,
     port: Arc<Port>,
     state: AtomicU32,
-    /// The loop thread sleeps on `state` ([`Inner::shut`]).
-    shut_waiting: AtomicBool,
     /// After the request was orphaned, the owner and the pool thread each let
     /// go once; the second one frees.
     released: AtomicBool,
@@ -81,6 +83,8 @@ struct Inner {
     /// while the work pool holds the request.
     reader: Option<ReadCallback>,
     buf: Vec<u8>,
+    /// [`File::adopt_write_buffer`]: freed with `self`.
+    adopted: Vec<u8>,
     result: sys::Result<usize>,
     owner_gone: bool,
     /// The loop was torn down ([`Link::shut`]): an operation still out
@@ -112,11 +116,11 @@ impl File {
             close_fd,
             port,
             state: AtomicU32::new(IDLE),
-            shut_waiting: AtomicBool::new(false),
             released: AtomicBool::new(false),
             request: Request::None,
             reader: None,
             buf: Vec::new(),
+            adopted: Vec::new(),
             result: Ok(0),
             owner_gone: false,
             detached: false,
@@ -178,10 +182,12 @@ impl File {
     /// from the loop.
     ///
     /// # Safety
-    /// `data` must stay valid until `on_write` runs — also when the `File` is
-    /// dropped first, in which case `on_write` still runs — or until the loop
-    /// has been torn down ([`super::close_all_for_loop`]), after which
-    /// `on_write` does not run.
+    /// `data` must stay valid until `on_write` runs, also when the `File` is
+    /// dropped first: `on_write` still runs then. Once the loop has been torn
+    /// down ([`super::close_all_for_loop`]) it does not run, and a write that
+    /// was running goes on reading `data`: an owner that lets go of the bytes
+    /// after that gives them to the file first
+    /// ([`adopt_write_buffer`](Self::adopt_write_buffer)).
     pub unsafe fn write<T>(
         &mut self,
         data: &[u8],
@@ -189,10 +195,32 @@ impl File {
         on_write: unsafe fn(*mut T, sys::Result<usize>),
     ) -> sys::Result<()> {
         self.start(Request::Write {
-            data: data.as_ptr(),
-            len: data.len(),
+            data: WriteData::Borrowed(data.as_ptr(), data.len()),
             callback: Callback::new(ctx, on_write),
         })
+    }
+
+    /// As [`write`](Self::write), for bytes the request should own: nothing
+    /// needs to outlive the call.
+    pub fn write_owned<T>(
+        &mut self,
+        data: Vec<u8>,
+        ctx: *mut T,
+        on_write: unsafe fn(*mut T, sys::Result<usize>),
+    ) -> sys::Result<()> {
+        self.start(Request::Write {
+            data: WriteData::Owned(data),
+            callback: Callback::new(ctx, on_write),
+        })
+    }
+
+    /// `buffer` is kept until the file itself is freed: for an owner about to
+    /// go away while a write that borrows `buffer` may still be running.
+    pub fn adopt_write_buffer(&mut self, buffer: Vec<u8>) {
+        // SAFETY: `inner` is live while the owner's `File` is; the work pool
+        // never looks at `adopted`, and a write that is out borrows the heap
+        // buffer, which does not move with the `Vec`.
+        unsafe { (*self.inner.as_ptr()).adopted = buffer };
     }
 
     fn start(&mut self, request: Request) -> sys::Result<()> {
@@ -303,14 +331,8 @@ impl Inner {
                     // A result that is on its way to the port is collected by
                     // the loop's teardown drain.
                     IDLE | POSTED => return,
-                    // A write that is running reads the owner's bytes, and the
-                    // owner goes away with the loop: see it through.
-                    RUNNING if matches!((*this).request, Request::Write { .. }) => {
-                        (*this).shut_waiting.store(true, Ordering::SeqCst);
-                        Futex::wait_forever(&(*this).state, RUNNING);
-                    }
-                    // Everything else the request needs is its own: the pool
-                    // thread is left to finish (or skip) it by itself.
+                    // The pool thread is left to finish (or skip) the request
+                    // by itself, however long the device takes.
                     _ => {
                         if (*this)
                             .state
@@ -406,9 +428,6 @@ impl Inner {
             {
                 return Self::release(this);
             }
-            if (*this).shut_waiting.load(Ordering::SeqCst) {
-                Futex::wake(&(*this).state, 1);
-            }
             port.post(&raw mut (*this).op);
         }
     }
@@ -436,8 +455,11 @@ impl Inner {
                     }
                     result
                 }
-                Request::Write { data, len, .. } => {
-                    let data = core::slice::from_raw_parts(*data, *len);
+                Request::Write { data, .. } => {
+                    let data: &[u8] = match data {
+                        WriteData::Borrowed(data, len) => core::slice::from_raw_parts(*data, *len),
+                        WriteData::Owned(data) => data,
+                    };
                     let mut written = 0usize;
                     let mut failure = None;
                     while written < data.len() {

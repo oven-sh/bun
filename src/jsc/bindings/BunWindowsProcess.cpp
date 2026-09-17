@@ -5,7 +5,7 @@
 #include "BunWindowsProcess.h"
 #include <uv/errno.h>
 #include <windows.h>
-#include "BunWinternl.h"
+#include <winternl.h>
 #include <psapi.h>
 
 extern "C" int32_t Bun__getParentProcessId()

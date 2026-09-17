@@ -622,14 +622,15 @@ impl Builtin {
                     return None;
                 }
 
+                // `open_for_writing_impl` classifies the fd on POSIX only.
+                #[cfg(windows)]
+                let flags = io_writer::Flags::unclassified();
                 // Honor the `pollable` computed by `open_for_writing_impl` on
                 // POSIX so a FIFO/socket target (whose fd is now O_NONBLOCK)
                 // takes the pollable path.
-                let redirect_writer = IOWriter::init(
-                    redirfd,
-                    io_writer::Flags::classified(pollable, is_nonblocking, is_socket),
-                    interp,
-                );
+                #[cfg(not(windows))]
+                let flags = io_writer::Flags::classified(pollable, is_nonblocking, is_socket);
+                let redirect_writer = IOWriter::init(redirfd, flags, interp);
 
                 if redirect.stdout() {
                     let me = Self::of_mut(interp, cmd);

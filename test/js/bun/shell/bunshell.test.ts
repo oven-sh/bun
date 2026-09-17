@@ -992,6 +992,181 @@ describe("bunshell", () => {
     });
   });
 
+  // Every `$` has its own writer on stdout and one on stderr, each on a duplicate of a handle the process
+  // was given. With the readers gone every write fails, and every script still runs to its end. The first
+  // script ends from a write's completion, so the second one starts from there. The parent's ends close
+  // some time after `cancel()` resolves; a write of the child's own that fails says they have.
+  describe("builtins writing to a stdout and a stderr whose readers have gone", () => {
+    for (const kind of ["overlapped", "pipe"] as const) {
+      test.concurrent.skipIf(!isWindows)(kind, async () => {
+        using dir = tempDir("shell-refused-write", {});
+        const result = join(String(dir), "result.json");
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `
+            import { $ } from "bun";
+            import { writeFileSync } from "fs";
+            $.nothrow();
+            await Bun.stdin.text();
+            // More than the pipe holds: the write ends when the reader's end closes, not before.
+            const broken = stream =>
+              new Promise(resolve => stream.on("error", resolve).write(Buffer.alloc(1024 * 1024, "x")));
+            await Promise.all([broken(process.stdout), broken(process.stderr)]);
+            const failed = [];
+            for (const script of ["echo x > /dev/null", "echo a; echo b 1>&2", "echo c 1>&2; echo d; echo e"])
+              failed.push((await $\`\${{ raw: script }}\`).exitCode !== 0);
+            writeFileSync(process.argv[1], JSON.stringify(failed));
+            `,
+            result,
+          ],
+          env: bunEnv,
+          stdin: "pipe",
+          stdout: kind as "pipe",
+          stderr: kind as "pipe",
+        });
+        await Promise.all([proc.stdout.cancel(), proc.stderr.cancel()]);
+        proc.stdin.end();
+        const exitCode = await proc.exited;
+        const failed = await Bun.file(result)
+          .json()
+          .catch(() => null);
+        expect({ failed, exitCode }).toEqual({ failed: [false, true, true], exitCode: 0 });
+      });
+    }
+  });
+
+  // A stage that ends without reading closes its end of the pipe, and what the stage before it writes
+  // from then on is refused as it is made. `true` and a captured `echo` end while the pipeline is being
+  // started. `cat`'s input arrives after that, so its first write is refused; `yes` has made one write
+  // by then, which fits the pipe, and its second is refused; `seq`'s one write does not fit and fails
+  // when the reader goes. Each script starts from the write completion the one before it ended with.
+  describe.skipIf(!isWindows)("a builtin writing into a pipe whose reading builtin has ended", () => {
+    const cases: [string, string][] = [
+      ["cat big.txt | true", ""],
+      ["cat big.txt | echo hi", "hi\n"],
+      ["yes | true", ""],
+      ["yes | echo hi", "hi\n"],
+      ["seq 1 200000 | true", ""],
+    ];
+    for (const [script, expected] of cases) {
+      test.concurrent(script, async () => {
+        using dir = tempDir("shell-reader-ended", { "big.txt": Buffer.alloc(256 * 1024, "abcdefg\n").toString() });
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `
+            import { $ } from "bun";
+            $.nothrow();
+            await $\`echo x > /dev/null\`;
+            const results = [];
+            for (const script of [process.argv[1], process.argv[1], "echo done"]) {
+              const { stdout, stderr, exitCode } = await $\`\${{ raw: script }}\`.quiet();
+              results.push({ stdout: stdout.toString(), stderr: stderr.toString(), exitCode });
+            }
+            console.log(JSON.stringify(results));
+            `,
+            script,
+          ],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        const ran = { stdout: expected, stderr: "", exitCode: 0 };
+        expect({ results: stdout.trim() && JSON.parse(stdout), stderr }).toEqual({
+          results: [ran, ran, { stdout: "done\n", stderr: "", exitCode: 0 }],
+          stderr: "",
+        });
+        expect(exitCode).toBe(0);
+      });
+    }
+  });
+
+  // Whether a stage is a builtin is known before its pipes are made only when its name is a literal word,
+  // quoted or not. A stage of assignments alone takes no pipe.
+  describe("a pipe between stages whose names are literal, expanded, or external", () => {
+    const env = { ...bunEnv, ECHO: "echo", CAT: "cat" };
+    const forward = "process.stdin.pipe(process.stdout)";
+    const cases: [string, () => ReturnType<typeof $>, string][] = [
+      ["echo hi | cat", () => $`echo hi | cat`, "hi\n"],
+      ["$ECHO hi | cat", () => $`$ECHO hi | cat`, "hi\n"],
+      ["echo hi | $CAT", () => $`echo hi | $CAT`, "hi\n"],
+      ['"echo" hi | cat', () => $`"echo" hi | cat`, "hi\n"],
+      ["echo hi 2>&1 | cat", () => $`echo hi 2>&1 | cat`, "hi\n"],
+      ["echo hi | FOO=1 | cat", () => $`echo hi | FOO=1 | cat`, "hi\n"],
+      ["$ECHO hi | $CAT", () => $`$ECHO hi | $CAT`, "hi\n"],
+      ["echo hi | cat | cat", () => $`echo hi | cat | cat`, "hi\n"],
+      ["echo hi | external", () => $`echo hi | ${bunExe()} -e ${forward}`, "hi\n"],
+      ["external | cat", () => $`${bunExe()} -e "console.log('hi')" | cat`, "hi\n"],
+      ["$ECHO hi | external | $CAT", () => $`$ECHO hi | ${bunExe()} -e ${forward} | $CAT`, "hi\n"],
+      ["(echo hi; echo there) | cat", () => $`(echo hi; echo there) | cat`, "hi\nthere\n"],
+      ["echo hi | (cat; cat)", () => $`echo hi | (cat; cat)`, "hi\n"],
+    ];
+    for (const [name, run, expected] of cases) {
+      test.concurrent(name, async () => {
+        const { stdout, stderr, exitCode } = await run().env(env).nothrow().quiet();
+        expect({ stdout: stdout.toString(), stderr: stderr.toString() }).toEqual({ stdout: expected, stderr: "" });
+        expect(exitCode).toBe(0);
+      });
+    }
+
+    test.concurrent("more than a pipe holds", async () => {
+      using dir = tempDir("shell-pipe-kinds", { "big.txt": Buffer.alloc(1024 * 1024, "abcdefg\n").toString() });
+      const big = join(String(dir), "big.txt").replaceAll("\\", "/");
+      for (const run of [
+        () => $`cat ${big} | cat | cat`,
+        () => $`cat ${big} | $CAT | cat`,
+        () => $`$CAT ${big} | cat`,
+      ]) {
+        const { stdout, exitCode } = await run().env(env).nothrow().quiet();
+        expect(stdout.length).toBe(1024 * 1024);
+        expect(exitCode).toBe(0);
+      }
+    });
+
+    // A child does its stdio with plain blocking calls, which only a synchronous pipe end serves.
+    test.concurrent.skipIf(!isWindows)(
+      "an external stage has synchronous ends whatever its neighbours are",
+      async () => {
+        using dir = tempDir("shell-pipe-ends", {
+          "ends.ts": `
+          import { dlopen, ptr } from "bun:ffi";
+          const { GetStdHandle } = dlopen("kernel32.dll", { GetStdHandle: { args: ["i32"], returns: "ptr" } }).symbols;
+          const { NtQueryInformationFile } = dlopen("ntdll.dll", {
+            NtQueryInformationFile: { args: ["ptr", "ptr", "ptr", "u32", "i32"], returns: "i32" },
+          }).symbols;
+          const end = which => {
+            const mode = new Uint32Array(1);
+            // FileModeInformation; FILE_SYNCHRONOUS_IO_ALERT | FILE_SYNCHRONOUS_IO_NONALERT
+            const status = NtQueryInformationFile(GetStdHandle(which), ptr(new BigUint64Array(2)), ptr(mode), 4, 16);
+            return status !== 0 ? "status " + status : mode[0] & 0x30 ? "synchronous" : "overlapped";
+          };
+          const ends = "stdin " + end(-10) + ", stdout " + end(-11);
+          for await (const _ of Bun.stdin.stream());
+          console.log(ends);
+        `,
+        });
+        const ends = join(String(dir), "ends.ts").replaceAll("\\", "/");
+        for (const run of [
+          () => $`echo hi | ${bunExe()} ${ends} | cat`,
+          () => $`$ECHO hi | ${bunExe()} ${ends} | $CAT`,
+          () => $`echo hi | cat | ${bunExe()} ${ends} | cat | cat`,
+        ]) {
+          const { stdout, stderr, exitCode } = await run().env(env).nothrow().quiet();
+          expect({ stdout: stdout.toString(), stderr: stderr.toString() }).toEqual({
+            stdout: "stdin synchronous, stdout synchronous\n",
+            stderr: "",
+          });
+          expect(exitCode).toBe(0);
+        }
+      },
+    );
+  });
+
   // A pipeline's pipes and a child's stdio pipes are created side by side in one process. Each
   // script runs in a fresh process so that the two start from the same state no matter what ran
   // earlier in this file.
@@ -3956,4 +4131,67 @@ test.skipIf(isWindows)("external command resolution uses the PATH from the shell
     expect(stdout.toString()).toBe("from-onlyintool\n");
     expect(exitCode).toBe(0);
   }
+});
+
+// A builtin reads the process's stdin through a duplicate of it. Asking Windows what kind of pipe a
+// handle is waits for as long as a read is parked on that pipe, which process.stdin's is here until
+// input arrives, so the question is never the JS thread's to ask. The rest of the input is sent only
+// once every `cat` has been started: a start that waits for input never gets there.
+test.skipIf(!isWindows)("starting builtins on a stdin that another reader is parked on does not block", async () => {
+  using dir = tempDir("shell-busy-stdin", { "input.txt": "file" });
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      import { $ } from "bun";
+      const start = make => {
+        const runs = [];
+        for (let i = 0; i < 20; i++) runs.push(make().quiet().then(r => r.stdout.length));
+        return Promise.all(runs).then(all => all.reduce((a, b) => a + b, 0));
+      };
+      let received = 0;
+      const ended = new Promise(resolve => process.stdin.once("end", resolve));
+      process.stdin.once("data", () => {
+        process.stdin.on("data", chunk => (received += chunk.length));
+        // By the second turn process.stdin has asked for more and its read is parked in the pipe.
+        setImmediate(() => setImmediate(async () => {
+          const onFile = start(() => $\`cat < \${process.argv[1]}\`);
+          const onStdin = start(() => $\`cat\`);
+          process.stdout.write("STARTED\\n");
+          const [fileBytes, catBytes] = await Promise.all([onFile, onStdin]);
+          // Whatever process.stdin took of the input has been counted once it has ended.
+          await ended;
+          process.stdout.write(JSON.stringify({ fileBytes, stdinBytes: catBytes + received }) + "\\n");
+        }));
+      });
+      process.stdout.write("READY\\n");
+      `,
+      join(String(dir), "input.txt"),
+    ],
+    env: bunEnv,
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const decoder = new TextDecoder();
+  const reader = proc.stdout.getReader();
+  let output = "";
+  const until = async (text: string) => {
+    while (!output.includes(text)) {
+      const { value, done } = await reader.read();
+      if (done) throw new Error("stdout ended before " + JSON.stringify(text) + ": " + output);
+      output += decoder.decode(value, { stream: true });
+    }
+  };
+  await until("READY");
+  proc.stdin.write("x");
+  proc.stdin.flush();
+  await until("STARTED");
+  proc.stdin.write(Buffer.alloc(1000, "y"));
+  await proc.stdin.end();
+  await until("}\n");
+  const bytes = JSON.parse(output.slice(output.indexOf("{")));
+  expect(bytes).toEqual({ fileBytes: 20 * "file".length, stdinBytes: 1000 });
+  expect(await proc.exited).toBe(0);
 });

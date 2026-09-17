@@ -179,7 +179,12 @@ pub struct BufferedReader {
     /// `None` before `start` and after `close`.
     #[cfg(windows)]
     pub source: Option<Source>,
+    /// A reader that accumulates (no `on_read_chunk`) lends this to its pipe
+    /// between chunks, so each read lands in place (`lent`).
     pub _buffer: Vec<u8>,
+    /// How much of `_buffer` is with the pipe (`Pipe::lend_read_buffer`).
+    #[cfg(windows)]
+    lent: usize,
     pub(crate) _offset: usize,
     limit: ReadLimit,
     pub(crate) vtable: BufferedReaderVTable,
@@ -220,6 +225,8 @@ impl BufferedReader {
             #[cfg(windows)]
             source: None,
             _buffer: Vec::new(),
+            #[cfg(windows)]
+            lent: 0,
             _offset: 0,
             limit: ReadLimit::NONE,
             vtable: BufferedReaderVTable::init::<T>(),
@@ -238,14 +245,20 @@ impl BufferedReader {
     }
 
     pub fn memory_cost(&self) -> usize {
-        mem::size_of::<Self>() + self._buffer.capacity()
+        #[cfg(windows)]
+        let lent = self.lent;
+        #[cfg(not(windows))]
+        let lent = 0;
+        mem::size_of::<Self>() + self._buffer.capacity() + lent
     }
 
     pub fn take_buffer(&mut self) -> Vec<u8> {
-        mem::take(&mut self._buffer)
+        mem::take(self.buffer())
     }
 
     pub fn buffer(&mut self) -> &mut Vec<u8> {
+        #[cfg(windows)]
+        self.recall_buffer();
         &mut self._buffer
     }
 
@@ -1075,10 +1088,36 @@ impl BufferedReader {
     }
 
     /// Whether `buffer()` has to be left alone because a read is on its way
-    /// into it. Never: a read completes into a buffer of its own, which
-    /// `on_source_read` moves or copies into `buffer()` on the loop thread.
+    /// into it. Never: the allocation a read lands in is the source's until
+    /// the read is over, and `buffer()` takes back what was lent of it.
     pub fn buffer_is_awaiting_read(&self) -> bool {
         false
+    }
+
+    /// Lend `_buffer` to the pipe so the next chunk lands after what it holds.
+    fn lend_buffer(&mut self) {
+        if self._buffer.is_empty() || self.vtable.is_streaming_enabled() {
+            return;
+        }
+        let Some(Source::Pipe(pipe)) = self.source.as_mut() else {
+            return;
+        };
+        let len = self._buffer.len();
+        match pipe.lend_read_buffer(mem::take(&mut self._buffer)) {
+            Ok(()) => self.lent = len,
+            Err(buffer) => self._buffer = buffer,
+        }
+    }
+
+    /// Undo `lend_buffer`.
+    fn recall_buffer(&mut self) {
+        if mem::take(&mut self.lent) == 0 {
+            return;
+        }
+        if let Some(Source::Pipe(pipe)) = self.source.as_mut() {
+            debug_assert!(self._buffer.is_empty());
+            self._buffer = pipe.take_read_buffer();
+        }
     }
 
     /// Dispatches what is in `_buffer`. Returns `false` when the reader was
@@ -1114,6 +1153,7 @@ impl BufferedReader {
     }
 
     fn finish(&mut self) {
+        self.recall_buffer();
         self.flags.insert(ReaderFlags::IS_DONE);
         self._buffer.shrink_to_fit();
     }
@@ -1148,22 +1188,33 @@ impl BufferedReader {
         .max(1)
     }
 
-    /// With a byte budget, the size of each read depends on the one before it.
-    fn may_read_ahead(&self) -> bool {
-        self.limit.0.is_none() && self.maxbuf.is_none()
-    }
-
     /// See [`PipeOrigin::from_is_pollable`] for `is_pollable`. On `Err` the
     /// reader holds nothing; `fd` is still the caller's to close.
     pub fn start(&mut self, fd: Fd, is_pollable: bool) -> sys::Result<()> {
+        self.start_with_origin(fd, PipeOrigin::from_is_pollable(is_pollable))
+    }
+
+    /// As [`start`](Self::start), by a caller that knows where `fd` came from.
+    pub fn start_with_origin(&mut self, fd: Fd, origin: PipeOrigin) -> sys::Result<()> {
+        let source = self.open_source(fd, origin)?;
+        self.start_with_source(source)
+    }
+
+    /// The first half of [`start_with_origin`](Self::start_with_origin), for
+    /// [`start_with_source`](Self::start_with_source). Once this has opened a
+    /// [`PipeOrigin::Created`] `fd`, the loop's port has its file object,
+    /// whatever becomes of the source.
+    pub fn open_source(&mut self, fd: Fd, origin: PipeOrigin) -> sys::Result<Source> {
         debug_assert!(self.source.is_none());
         // The parent's loop, not the thread's: `spawnSync` reads on its own.
         let loop_ = self.vtable.loop_();
         let close_fd = self.flags.contains(ReaderFlags::CLOSE_HANDLE);
-        let origin = PipeOrigin::from_is_pollable(is_pollable);
         let source = Source::open(loop_, fd, origin, close_fd)?;
-        self.flags.set(ReaderFlags::POLLABLE, is_pollable);
-        self.start_with_source(source)
+        self.flags.set(
+            ReaderFlags::POLLABLE,
+            matches!(origin, PipeOrigin::Created | PipeOrigin::Associated),
+        );
+        Ok(source)
     }
 
     /// Read from a source that is already open (an accepted or connected
@@ -1221,7 +1272,6 @@ impl BufferedReader {
         }
         let this: *mut Self = self;
         let len = self.next_read_len();
-        let read_ahead = self.may_read_ahead();
         let offset = self
             .flags
             .contains(ReaderFlags::USE_PREAD)
@@ -1230,7 +1280,6 @@ impl BufferedReader {
             None => sys::Result::Err(sys::Error::from_code(sys::E::BADF, sys::Tag::read)),
             Some(Source::Pipe(pipe)) => {
                 pipe.set_read_size(len);
-                pipe.set_read_ahead(read_ahead);
                 pipe.read_start(this, Self::on_source_read)
             }
             Some(Source::Tty(tty)) => tty.read_start(this, Self::on_source_read),
@@ -1257,9 +1306,10 @@ impl BufferedReader {
         let is_file = unsafe { matches!((*this).source, Some(Source::File(_))) };
         match event {
             ReadEvent::Data(data) => {
-                let len = data.len();
                 // SAFETY: as above.
                 unsafe {
+                    // `data` starts with what was lent, which is back with it.
+                    let len = data.len() - mem::take(&mut (*this).lent);
                     if (*this)._buffer.is_empty() {
                         mem::swap(&mut (*this)._buffer, data);
                     } else {
@@ -1312,11 +1362,10 @@ impl BufferedReader {
         }
         // A pipe or console keeps delivering on its own; it only needs to know how much the next read may take. A file is read one request at a time.
         let len = self.next_read_len();
-        let read_ahead = self.may_read_ahead();
         match self.source.as_mut() {
             Some(Source::Pipe(pipe)) => {
                 pipe.set_read_size(len);
-                pipe.set_read_ahead(read_ahead);
+                self.lend_buffer();
             }
             Some(Source::File(_)) => {
                 if let sys::Result::Err(err) = self.start_reading() {
@@ -1350,6 +1399,7 @@ impl BufferedReader {
         // handle once that has been collected; nothing reports here again.
         // `IS_PAUSED` stays the owner's: a reader started again reads unless
         // the owner paused it.
+        self.recall_buffer();
         if self.source.take().is_some() && CALL_DONE {
             self.done();
         }
@@ -1365,6 +1415,8 @@ impl BufferedReader {
     /// already-taken source.
     pub fn deinit(&mut self) {
         MaxBuf::remove_from_pipereader(&mut self.maxbuf);
+        // What was lent goes with the source.
+        self.lent = 0;
         self.close_impl::<false>();
         self._buffer = Vec::new();
     }

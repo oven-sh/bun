@@ -1,3 +1,4 @@
+// The uv_mutex_* functions are libuv's (src/win/thread.c).
 #include "uv-polyfills.h"
 
 uv_pid_t uv_os_getpid()
@@ -41,32 +42,27 @@ UV_EXTERN uint64_t uv_hrtime(void)
     return seconds * 1000000000ull + remainder * 1000000000ull / (uint64_t)frequency.QuadPart;
 }
 
-// Copy-pasted from libuv
 UV_EXTERN void uv_mutex_destroy(uv_mutex_t* mutex)
 {
     DeleteCriticalSection(mutex);
 }
 
-// Copy-pasted from libuv
 UV_EXTERN int uv_mutex_init(uv_mutex_t* mutex)
 {
     InitializeCriticalSection(mutex);
     return 0;
 }
 
-// Copy-pasted from libuv
 UV_EXTERN int uv_mutex_init_recursive(uv_mutex_t* mutex)
 {
     return uv_mutex_init(mutex);
 }
 
-// Copy-pasted from libuv
 UV_EXTERN void uv_mutex_lock(uv_mutex_t* mutex)
 {
     EnterCriticalSection(mutex);
 }
 
-// Copy-pasted from libuv
 UV_EXTERN int uv_mutex_trylock(uv_mutex_t* mutex)
 {
     if (TryEnterCriticalSection(mutex))
@@ -74,7 +70,6 @@ UV_EXTERN int uv_mutex_trylock(uv_mutex_t* mutex)
     return UV_EBUSY;
 }
 
-// Copy-pasted from libuv
 UV_EXTERN void uv_mutex_unlock(uv_mutex_t* mutex)
 {
     LeaveCriticalSection(mutex);

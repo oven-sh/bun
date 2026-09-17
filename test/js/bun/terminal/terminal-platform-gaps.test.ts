@@ -293,6 +293,56 @@ describe("Bun.Terminal platform behaviour", () => {
     );
   }
 
+  // The queue is shared with every process attached to the console.
+  test.skipIf(!isWindows)("GAP: leaving raw mode puts nothing into the console's input queue", async () => {
+    using dir = tempDir("terminal-raw-mode-queue", {
+      // Reads the console's input records, as a child that shares the console may.
+      "records.js": `
+        const { dlopen, ptr } = require("bun:ffi");
+        const k32 = dlopen("kernel32.dll", {
+          GetStdHandle: { args: ["i32"], returns: "ptr" },
+          ReadConsoleInputW: { args: ["ptr", "ptr", "u32", "ptr"], returns: "i32" },
+        }).symbols;
+        const input = k32.GetStdHandle(-10);
+        const record = new Uint16Array(10);
+        const count = new Uint32Array(1);
+        const eventTypes = [];
+        process.stdout.write("CHILD-READY");
+        for (;;) {
+          if (!k32.ReadConsoleInputW(input, ptr(record), 1, ptr(count))) throw new Error("ReadConsoleInputW");
+          // KEY_EVENT, bKeyDown, UnicodeChar "x"
+          if (record[0] === 1 && record[2] === 1 && record[7] === 0x78) break;
+          eventTypes.push(record[0]);
+        }
+        process.stdout.write("RECORDS=" + JSON.stringify(eventTypes) + " DONE");`,
+    });
+    const { output } = await runInTerminal(
+      `process.stdin.setRawMode(true);
+       process.stdin.on("data", () => {});
+       // The wait on the console's input stays armed; the records are the child's to read.
+       process.stdin.pause();
+       setImmediate(async () => {
+         const child = Bun.spawn({
+           cmd: [process.execPath, ${JSON.stringify(join(String(dir), "records.js"))}],
+           stdio: ["inherit", "inherit", "inherit"],
+         });
+         process.stdin.setRawMode(false);
+         process.stdout.write("SWITCHED");
+         process.exit(await child.exited);
+       });`,
+      {
+        readyMarker: "CHILD-READY",
+        done: o => o.includes(" DONE"),
+        afterReady: async (t, _output, waitFor) => {
+          await waitFor("SWITCHED");
+          t.write("x");
+        },
+      },
+    );
+    // A FOCUS_EVENT record would be 16.
+    expect(Bun.stripANSI(output)).toContain("RECORDS=[] DONE");
+  });
+
   // The key that ends input is Ctrl-Z at the start of a line on Windows and Ctrl-D on POSIX.
   test("SAME: a shell builtin that reads the terminal ends at the end-of-input key, and the next one reads on", async () => {
     const end = isWindows ? "\x1a\r" : "\x04";
@@ -416,13 +466,34 @@ describe("Bun.Terminal platform behaviour", () => {
   // resize
   // ──────────────────────────────────────────────────────────────────────────
 
-  test("SAME: resize while child is running fires SIGWINCH in child", async () => {
+  // A pseudoconsole raises no WinEvents; it reports a resize only to the reader of its input.
+  test.todoIf(isWindows)("SAME: resize while child is running fires SIGWINCH in child", async () => {
     const { output } = await runInTerminal(
       `process.on('SIGWINCH', () => setImmediate(() => {
          process.stdout.write('WINCH cols=' + process.stdout.columns + ' rows=' + process.stdout.rows);
          process.exit(0);
        }));
        setInterval(() => {}, 1000);
+       process.stdout.write('READY');`,
+      {
+        cols: 80,
+        rows: 24,
+        done: o => o.includes("WINCH"),
+        afterReady: t => void t.resize(133, 41),
+      },
+    );
+    expect(output).toContain("cols=133");
+    expect(output).toContain("rows=41");
+  });
+
+  test("SAME: resize fires SIGWINCH in an idle child that reads the terminal in raw mode", async () => {
+    const { output } = await runInTerminal(
+      `process.stdin.setRawMode(true);
+       process.stdin.on("data", () => {});
+       process.on('SIGWINCH', () => setImmediate(() => {
+         process.stdout.write('WINCH cols=' + process.stdout.columns + ' rows=' + process.stdout.rows);
+         process.exit(0);
+       }));
        process.stdout.write('READY');`,
       {
         cols: 80,

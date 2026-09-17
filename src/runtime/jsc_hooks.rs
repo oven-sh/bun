@@ -1027,11 +1027,6 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
             unsafe { (*loop_).tick_without_idle() };
         }
     }
-    #[cfg(windows)]
-    // SAFETY: per fn contract — `vm` is the live per-thread VM.
-    if unsafe { (*vm).is_main_thread } {
-        crate::node::windows_signal::check_console_size_after_wake();
-    }
 
     // Note (§Forbidden aliased-&mut): `drain_timers` fires user
     // `setTimeout` callbacks which may re-enter `timer::All::insert`/
@@ -1144,11 +1139,6 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
             // SAFETY: `loop_` is the live per-thread uws loop.
             unsafe { (*loop_).tick_without_idle() };
         }
-    }
-    #[cfg(windows)]
-    // SAFETY: per fn contract — `vm` is the live per-thread VM.
-    if unsafe { (*vm).is_main_thread } {
-        crate::node::windows_signal::check_console_size_after_wake();
     }
 
     // SAFETY: `state` is the live per-thread `RuntimeState`; see Note

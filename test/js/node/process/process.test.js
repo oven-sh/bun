@@ -4,7 +4,7 @@ import { memoryUsage as jscMemoryUsage } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import { familySync } from "detect-libc";
 import { bunEnv, bunExe, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
-import { copyFileSync, mkdirSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { basename, join, resolve } from "path";
 import { getHeapStatistics } from "v8";
 
@@ -94,6 +94,11 @@ it("process", () => {
 it.skipIf(!isWindows).each([8190, 8191, 8192, 20000])(
   "process.title reads a console title of %d UTF-16 units, truncated to 8191",
   async units => {
+    using dir = tempDir("process-title-console", {});
+    const resultPath = join(String(dir), "result.json");
+    let terminalOutput = "";
+    // The terminal is the child's console, whatever the test runner itself has. Its stdout is that
+    // console, so the result comes back in a file.
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -102,25 +107,28 @@ it.skipIf(!isWindows).each([8190, 8191, 8192, 20000])(
         const { dlopen, ptr } = require("bun:ffi");
         const k32 = dlopen("kernel32.dll", {
           SetConsoleTitleW: { args: ["ptr"], returns: "i32" },
-          GetConsoleTitleW: { args: ["ptr", "u32"], returns: "u32" },
         }).symbols;
-        const previous = new Uint16Array(8192);
-        const hadConsole = k32.GetConsoleTitleW(ptr(previous), previous.length) !== 0;
         const title = new Uint16Array(${units} + 1).fill(0x78, 0, ${units});
         const set = k32.SetConsoleTitleW(ptr(title)) !== 0;
         const read = process.title;
-        if (hadConsole) k32.SetConsoleTitleW(ptr(previous));
-        console.log(JSON.stringify({ set, length: read.length, onlyFill: /^x*$/.test(read) }));
+        require("fs").writeFileSync(
+          process.argv[1],
+          JSON.stringify({ set, length: read.length, onlyFill: /^x*$/.test(read) }),
+        );
         `,
+        resultPath,
       ],
       env: bunEnv,
-      stdout: "pipe",
-      stderr: "inherit",
+      terminal: {
+        data(_terminal, chunk) {
+          terminalOutput += Buffer.from(chunk).toString();
+        },
+      },
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    const result = JSON.parse(stdout);
-    // Without a console there is no title to set, and process.title is "bun".
-    if (result.set) expect(result).toEqual({ set: true, length: Math.min(units, 8191), onlyFill: true });
+    const exitCode = await proc.exited;
+    proc.terminal.close();
+    const result = existsSync(resultPath) ? JSON.parse(readFileSync(resultPath, "utf8")) : { terminalOutput };
+    expect(result).toEqual({ set: true, length: Math.min(units, 8191), onlyFill: true });
     expect(exitCode).toBe(0);
   },
 );

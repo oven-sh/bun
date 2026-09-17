@@ -1551,7 +1551,6 @@ it("stat == statSync", async () => {
   expect(Object.entries(sync)).toEqual(Object.entries(async));
 });
 
-// https://github.com/oven-sh/bun/issues/1887
 it("mkdtempSync names do not repeat from one thread to the next", async () => {
   using dir = tempDir("mkdtemp-threads", {});
   const prefix = join(String(dir), "t-");
@@ -1650,6 +1649,7 @@ it.skipIf(!isWindows)("readvSync on a pipe goes on to the next buffer after a sh
   expect(await proc.exited).toBe(0);
 });
 
+// https://github.com/oven-sh/bun/issues/1887
 it("mkdtempSync, readdirSync, rmdirSync and unlinkSync with non-ascii", () => {
   const tempdir = mkdtempSync(`${tmpdir()}/emoji-fruit-🍇 🍈 🍉 🍊 🍋`);
   expect(existsSync(tempdir)).toBe(true);
@@ -3022,6 +3022,125 @@ describe("open with a numeric flag boxed as a double", () => {
   });
 });
 
+it.concurrent("appends through the 'a' flag from several processes do not overwrite each other", async () => {
+  using dir = tempDir("fs-append-processes", {
+    "append.mjs": `
+      import fs from "node:fs";
+      const [, , id, count] = process.argv;
+      for (let i = 0; i < Number(count); i++) {
+        const line = id + ":" + i + "\\n";
+        fs.writeFileSync("writeFileSync.log", line, { flag: "a" });
+        await fs.promises.writeFile("writeFile.log", line, { flag: "a" });
+        fs.appendFileSync("appendFileSync.log", line);
+      }
+    `,
+  });
+  const ids = ["a", "b", "c", "d"];
+  const count = 400;
+  const exitCodes = await Promise.all(
+    ids.map(async id => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "append.mjs", id, String(count)],
+        env: bunEnv,
+        cwd: String(dir),
+        stdio: ["ignore", "inherit", "inherit"],
+      });
+      return await proc.exited;
+    }),
+  );
+  const expected = new Set(ids.flatMap(id => Array.from({ length: count }, (_, i) => id + ":" + i)));
+  for (const log of ["writeFileSync.log", "writeFile.log", "appendFileSync.log"]) {
+    const lines = readFileSync(join(String(dir), log), "utf8")
+      .split("\n")
+      .filter(Boolean);
+    const written = new Set(lines);
+    expect({
+      log,
+      lines: lines.length,
+      missing: [...expected].filter(line => !written.has(line)).length,
+      mangled: lines.filter(line => !expected.has(line)),
+    }).toEqual({ log, lines: expected.size, missing: 0, mangled: [] });
+  }
+  expect(exitCodes).toEqual([0, 0, 0, 0]);
+});
+
+it.concurrent("process.umask() applies to a file whichever call creates it", async () => {
+  using dir = tempDir("fs-create-umask", {});
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const fs = require("fs");
+        process.umask(0o222);
+        const create = {
+          openSync: file => fs.closeSync(fs.openSync(file, "w")),
+          writeFileSync: file => fs.writeFileSync(file, "x"),
+          writeFile: file => fs.promises.writeFile(file, "x"),
+          appendFileSync: file => fs.appendFileSync(file, "x"),
+          appendFile: file => fs.promises.appendFile(file, "x"),
+          "writeFileSync a": file => fs.writeFileSync(file, "x", { flag: "a" }),
+          "Bun.write": file => Bun.write(file, "x"),
+        };
+        const writable = [];
+        for (const [name, run] of Object.entries(create)) {
+          await run(name);
+          if (fs.statSync(name).mode & 0o222) writable.push(name);
+          fs.chmodSync(name, 0o666);
+        }
+        console.log(JSON.stringify(writable));
+      `,
+    ],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout.trim()).toBe("[]");
+  expect(exitCode).toBe(0);
+});
+
+it.concurrent("creating files on several threads at once leaves process.umask() alone and applies it", async () => {
+  using dir = tempDir("fs-open-umask", {});
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const fs = require("fs");
+        const path = require("path");
+        const root = process.argv[1];
+        process.umask(0o222);
+        const expected = process.umask();
+        let created = 0;
+        const writable = [];
+        let umask = expected;
+        for (let round = 0; round < 50 && umask === expected; round++) {
+          const files = Array.from({ length: 64 }, (_, i) => path.join(root, round + "-" + i));
+          await Promise.all(files.map(file => fs.promises.open(file, "w").then(handle => handle.close())));
+          for (const file of files) {
+            created++;
+            if (fs.statSync(file).mode & 0o222) writable.push(path.basename(file));
+          }
+          umask = process.umask();
+        }
+        for (const file of fs.readdirSync(root)) fs.chmodSync(path.join(root, file), 0o666);
+        console.log(JSON.stringify({ expected, umask, created, writable }));
+      `,
+      String(dir),
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  // The CRT keeps only the owner's bits of a umask.
+  const expected = isWindows ? 0o200 : 0o222;
+  expect(JSON.parse(stdout)).toEqual({ expected, umask: expected, created: 50 * 64, writable: [] });
+  expect(exitCode).toBe(0);
+});
+
 describe("open flag string validation matches node", () => {
   // Node's stringToFlags is a case-sensitive exhaustive switch; anything not
   // in the table (including uppercase spellings like "W" or numeric strings
@@ -3889,6 +4008,61 @@ describe("rmdirSync", () => {
     rmdirSync(path);
     expect(existsSync(path)).toBe(false);
   });
+  it("reports what Node does for a file, a missing path and a directory with entries", () => {
+    using dir = tempDir("rmdirsync-errors", { "file.txt": "x", "full/f.txt": "x" });
+    const codeOf = (path: string) => {
+      try {
+        rmdirSync(path);
+        return null;
+      } catch (e: any) {
+        return [e.code, e.syscall];
+      }
+    };
+    expect({
+      file: codeOf(join(String(dir), "file.txt")),
+      missing: codeOf(join(String(dir), "missing")),
+      missingParent: codeOf(join(String(dir), "missing", "x")),
+      full: codeOf(join(String(dir), "full")),
+    }).toEqual({
+      // libuv's name for ERROR_DIRECTORY.
+      file: [isWindows ? "ENOENT" : "ENOTDIR", "rmdir"],
+      missing: ["ENOENT", "rmdir"],
+      missingParent: ["ENOENT", "rmdir"],
+      full: ["ENOTEMPTY", "rmdir"],
+    });
+    expect(readdirSync(String(dir)).sort()).toEqual(["file.txt", "full"]);
+  });
+  // POSIX rmdir(2) refuses a symbolic link.
+  it.skipIf(!isWindows)(
+    "removes a junction and not its target, a read-only directory, and a relative path",
+    async () => {
+      using dir = tempDir("rmdirsync-kinds", { "target/keep.txt": "x", "readonly": {}, "relative": {}, "slash": {} });
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          const fs = require("fs");
+          const path = require("path");
+          fs.symlinkSync(path.resolve("target"), "link", "junction");
+          fs.rmdirSync(path.resolve("link"));
+          fs.chmodSync("readonly", 0o555);
+          fs.rmdirSync(path.resolve("readonly"));
+          fs.rmdirSync("relative");
+          fs.rmdirSync(path.resolve("slash") + path.sep);
+          console.log(JSON.stringify(fs.readdirSync(".", { recursive: true }).sort()));
+        `,
+        ],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(JSON.parse(stdout)).toEqual(["target", join("target", "keep.txt")]);
+      expect(exitCode).toBe(0);
+    },
+  );
   it("removes a non-empty tree with recursive: true", () => {
     using dir = tempDir("rmdirsync-recursive", { "a/b/c.txt": "c", "a/d.txt": "d", "e": {} });
     const a = join(String(dir), "a");
@@ -6232,6 +6406,65 @@ it.if(isWindows)("writing to windows hidden file is possible", () => {
   expect(content).toBe("Hello World");
 });
 
+it.if(isWindows)("writeFile to a windows hidden file works with every flag that writes", async () => {
+  using dir = tempDir("fs-hidden-flags", {});
+  const temp = String(dir);
+  const flags: [string | number, string][] = [
+    ["a", "old-contentNEW"],
+    ["a+", "old-contentNEW"],
+    ["as", "old-contentNEW"],
+    ["w", "NEW"],
+    ["w+", "NEW"],
+    ["r+", "NEW-content"],
+    // Appends, and replaces what is there when it opens.
+    [constants.O_APPEND | constants.O_TRUNC | constants.O_WRONLY | constants.O_CREAT, "NEW"],
+  ];
+  const names = flags.flatMap((_, i) => [`sync-${i}.txt`, `async-${i}.txt`]);
+  for (const name of names) writeFileSync(join(temp, name), "old-content");
+  const status = Bun.spawnSync(["cmd", "/C", "attrib +h *.txt"], {
+    stdio: ["ignore", "ignore", "ignore"],
+    cwd: temp,
+  });
+  expect(status.exitCode).toBe(0);
+
+  const results: [string | number, string, string][] = [];
+  for (const [i, [flag]] of flags.entries()) {
+    writeFileSync(join(temp, `sync-${i}.txt`), "NEW", { flag });
+    await fs.promises.writeFile(join(temp, `async-${i}.txt`), "NEW", { flag });
+    results.push([
+      flag,
+      readFileSync(join(temp, `sync-${i}.txt`), "utf8"),
+      readFileSync(join(temp, `async-${i}.txt`), "utf8"),
+    ]);
+  }
+  expect(results).toEqual(flags.map(([flag, content]) => [flag, content, content]));
+});
+
+it("writeFile with an exclusive flag onto a directory is EEXIST", async () => {
+  using dir = tempDir("fs-exclusive-directory", { "sub": {} });
+  const target = join(String(dir), "sub");
+  const results: [string, string, string][] = [];
+  for (const flag of ["wx", "wx+", "ax", "ax+"]) {
+    let sync = "no error";
+    try {
+      writeFileSync(target, "x", { flag });
+    } catch (e: any) {
+      sync = e.code;
+    }
+    const async_ = await fs.promises.writeFile(target, "x", { flag }).then(
+      () => "no error",
+      e => e.code,
+    );
+    results.push([flag, sync, async_]);
+  }
+  expect(results).toEqual([
+    ["wx", "EEXIST", "EEXIST"],
+    ["wx+", "EEXIST", "EEXIST"],
+    ["ax", "EEXIST", "EEXIST"],
+    ["ax+", "EEXIST", "EEXIST"],
+  ]);
+});
+
 it("fs.ReadStream allows functions", () => {
   // @ts-expect-error
   expect(() => new fs.ReadStream(".", function lol() {})).not.toThrow();
@@ -7028,6 +7261,25 @@ describe.skipIf(!isWindows)("relative paths past MAX_PATH", () => {
       false,
     );
     expect({ stdout, stderr }).toEqual({ stdout: "x", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("a path that is only past MAX_PATH from the directory process.chdir() moved to", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      11,
+      `
+        // A relative path is measured against the current directory: once before it changes.
+        fs.existsSync("missing");
+        const parts = rel.split(path.sep);
+        process.chdir(parts.slice(0, 7).join(path.sep));
+        const rest = path.join(parts.slice(7).join(path.sep), "f.txt");
+        fs.writeFileSync(rest, "x");
+        const fromBelow = fs.readFileSync(rest, "utf8");
+        process.chdir(Array(7).fill("..").join(path.sep));
+        console.log(JSON.stringify({ fromBelow, fromAbove: fs.readFileSync(path.join(rel, "f.txt"), "utf8") }));
+      `,
+    );
+    expect({ stdout, stderr }).toEqual({ stdout: JSON.stringify({ fromBelow: "x", fromAbove: "x" }), stderr: "" });
     expect(exitCode).toBe(0);
   });
 });

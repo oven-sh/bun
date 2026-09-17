@@ -109,6 +109,12 @@ const noUnify: readonly string[] = [
   // `fs.constants`, breaking Node.js parity and test/js/node/fs/fs.test.ts.
   "src/jsc/bindings/ProcessBindingConstants.cpp",
 
+  // <winternl.h> declares a global `STRING` and then names it unqualified,
+  // which is ambiguous with JSC::STRING once an earlier sibling's
+  // `using namespace JSC` is in effect.
+  "src/jsc/bindings/BunWindowsProcess.cpp",
+  "src/jsc/bindings/OsBinding.cpp",
+
   // Defines extern "C" replacements for platform symbols (strncasecmp,
   // fstat64, environ, ...). On Windows an earlier sibling can leak
   // `#define strncasecmp _strnicmp`, turning the definition here into a

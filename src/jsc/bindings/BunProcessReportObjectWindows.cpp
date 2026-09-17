@@ -115,7 +115,7 @@ JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Pr
         JSObject* versions = constructEmptyObject(globalObject, globalObject->objectPrototype());
         Bun::putDirectNamed(vm, versions, "node"_s, jsString(vm, String(REPORTED_NODEJS_VERSION ""_s)));
         Bun::putDirectNamed(vm, versions, "v8"_s, jsString(vm, String(ASCIILiteral::fromLiteralUnsafe(REPORTED_NODEJS_V8_VERSION))));
-        Bun::putDirectNamed(vm, versions, "uv"_s, jsString(vm, String(BUN_REPORTED_LIBUV_VERSION ""_s)));
+        Bun::putDirectNamed(vm, versions, "uv"_s, jsString(vm, String(REPORTED_NODEJS_UV_VERSION ""_s)));
         Bun::putDirectNamed(vm, versions, "modules"_s, jsString(vm, String(ASCIILiteral::fromLiteralUnsafe(STRINGIFY(REPORTED_NODEJS_ABI_VERSION)))));
         Bun::putDirectNamed(vm, header, "componentVersions"_s, versions);
         RETURN_IF_EXCEPTION(scope, {});

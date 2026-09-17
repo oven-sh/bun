@@ -38,6 +38,51 @@ waiting, as with a readiness poll: while the loop is blocked (a synchronous
 spawn whose child inherits the handle), it stays for the child. libuv does the
 same: its pool thread only ever does the zero-byte read.
 
+### Finding out whether a handle is synchronous
+
+Whoever made a pipe says what it is (`PipeOrigin`). For somebody else's handle
+the kernel has to be asked, and every way of asking takes the lock of a
+synchronous file object, which is held for as long as any thread of any process
+has I/O in flight on it (a parked read of an inherited stdin, a writer blocked
+on a full stdout). With another thread parked in `ReadFile(h, _, 0)`:
+
+| call on a duplicate of the handle                                        | result                              |
+| ------------------------------------------------------------------------ | ----------------------------------- |
+| `NtQueryInformationFile(FileModeInformation)`                            | blocks                              |
+| `SetNamedPipeHandleState`, `GetNamedPipeHandleState`, `GetNamedPipeInfo` | block                               |
+| `PeekNamedPipe`                                                          | blocks                              |
+| `CreateIoCompletionPort(h, port)`                                        | blocks, then refuses as above       |
+| `GetFileType`, `NtQueryInformationFile(FileAccessInformation)`           | return at once                      |
+| `NtQueryObject`, `DuplicateHandle`, `CompareObjectHandles`               | return at once                      |
+| `CancelSynchronousIo` on a thread that is waiting for that lock          | `ERROR_NOT_FOUND`, the thread stays |
+
+None of the calls that do not block tells the two kinds apart, and an
+overlapped file object has no such lock. So a handle of unknown kind
+(`Mode::Unknown`) is classified by the helper thread that does its first read or
+write, before that thread's first I/O (`classify`), for as long as that takes;
+the loop thread never asks. The three standard handles are remembered once
+classified. The one exception is an end nobody else does I/O on
+(`PipeOrigin::InheritedUnshared`, the IPC channel): its lock is free, so the
+loop thread tries `CreateIoCompletionPort` on it, and success says overlapped.
+
+### What the reader thread costs
+
+1 GiB through a synchronous pipe into a completion-port loop, MiB/s, with
+0 / 20 / 100 µs of loop work per 64 KiB chunk and a writer that keeps the pipe
+full:
+
+| mechanism                                                                                   | MiB/s             | why not                                                                                          |
+| ------------------------------------------------------------------------------------------- | ----------------- | ------------------------------------------------------------------------------------------------ |
+| I/O ring read                                                                               | 6700 / 2456 / 588 | see Follow-ups                                                                                   |
+| libuv: zero-byte read on a pool thread, then peek + `ReadFile` on the loop thread           | 4984 / 2310 / 581 | the loop thread blocks in `ReadFile` when another reader of the pipe gets there first            |
+| reader thread that takes the next chunk while the loop handles the current one              | 4342 / 2591 / 605 | that chunk is gone from the pipe if the owner pauses in its callback                             |
+| reader thread that takes what is there as soon as it is asked, else waits and says readable | 3116 / 1600 / 515 | asked, the owner may still pause before the loop comes round: what was taken is gone for a child |
+| a pool work item per chunk (wait, peek, read, post)                                         | 2730 / 1579 / 494 | same as the row above                                                                            |
+| **reader thread: wait, say readable, be asked, peek + read (`SyncReader`)**                 | 1891 / 1099 / 478 | in use: two loop round trips per chunk                                                           |
+
+With a writer slower than the reader (the pipe drains between chunks) every row
+runs at the writer's speed.
+
 ## Follow-ups
 
 ### I/O rings for synchronous handles (Windows 11+)
@@ -64,10 +109,7 @@ no thread. Measured on build 26300, ring version 400, feature flags `0x2`:
 - `CloseIoRing` does not cancel in-flight operations, and neither does the exit
   of the submitting thread: cancel and drain before freeing buffers.
 - Works inside an AppContainer.
-- 1 GiB through a synchronous pipe into a completion-port loop, MiB/s, with
-  0 / 20 / 100 µs of loop work per 64 KiB chunk: ring read 6700 / 2456 / 588;
-  reader thread with one chunk of read-ahead 4342 / 2591 / 605; a pool work
-  item per chunk 2730 / 1579 / 494; libuv-style inline peek+read 4984 / 2310 / 581.
+- Throughput: see the table under "What the reader thread costs".
 
 What stands in the way of relying on it:
 

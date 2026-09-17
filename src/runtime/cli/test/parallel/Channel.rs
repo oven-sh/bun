@@ -164,8 +164,8 @@ pub struct WindowsBackend {
 impl<Owner: ChannelOwner> Channel<Owner> {
     /// Adopt a duplex fd into the channel and start reading. POSIX: the
     /// socketpair end. Windows: an end of the pipe spawn made for fd 3;
-    /// `inherited` says it is the worker's (this process did not create it),
-    /// which decides how a pipe may be driven there. Takes `fd` either way.
+    /// `inherited` says it is the worker's: the coordinator made it for this
+    /// process alone. Takes `fd` either way.
     /// `this` is the channel's address derived from the owner's `&mut`.
     pub(crate) fn adopt(this: *mut Self, fd: Fd, inherited: bool) -> bool {
         // SAFETY: caller passes `&raw mut owner.channel` (live for the call).
@@ -179,7 +179,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
         {
             let loop_ = VirtualMachine::get().as_mut().uws_loop();
             let origin = if inherited {
-                PipeOrigin::Foreign
+                PipeOrigin::InheritedUnshared
             } else {
                 PipeOrigin::Created
             };

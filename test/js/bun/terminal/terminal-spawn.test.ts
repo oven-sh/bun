@@ -604,4 +604,83 @@ describe("Bun.Terminal subprocess integration", () => {
     expect(output).not.toContain("PROBE-CORRUPTED");
     expect(exitCode).toBe(0);
   });
+
+  // A child gets every handle that is inheritable when it is created, and
+  // creating a pseudoconsole makes inheritable handles to its pipes for a
+  // moment. A child another thread spawned in that moment kept the output pipe
+  // open, so the terminal's `exit` waited for that child to go away.
+  test.skipIf(!isWindows)("a child spawned by a Worker while a terminal is created does not hold it open", async () => {
+    using dir = tempDir("conpty-concurrent-spawn", {
+      "worker-fixture.js": `
+        const children = [];
+        self.onmessage = ({ data: gate }) => {
+          postMessage("ready");
+          let seen = 0;
+          while (true) {
+            Atomics.wait(gate, 0, seen);
+            seen = Atomics.load(gate, 0);
+            if (seen < 0) break;
+            // \`pause\` reads stdin, which stays open: the child lives until it is killed.
+            const child = Bun.spawn({ cmd: ["cmd.exe", "/d", "/c", "pause"], stdio: ["pipe", "ignore", "ignore"] });
+            children.push(child);
+            postMessage(child.pid);
+          }
+        };
+      `,
+      "main-fixture.js": `
+        const WORKERS = 2;
+        const TERMINALS = 6;
+        const gate = new Int32Array(new SharedArrayBuffer(4));
+        const pids = [];
+        const workers = [];
+        const allReady = Promise.withResolvers();
+        let ready = 0;
+        let onPid;
+        for (let i = 0; i < WORKERS; i++) {
+          const worker = new Worker(new URL("./worker-fixture.js", import.meta.url).href);
+          worker.onmessage = ({ data }) => {
+            if (data === "ready") {
+              if (++ready === WORKERS) allReady.resolve();
+              return;
+            }
+            pids.push(data);
+            onPid?.();
+          };
+          worker.postMessage(gate);
+          workers.push(worker);
+        }
+        await allReady.promise;
+
+        // Each Worker spawns as this thread enters \`new Bun.Terminal\`, once
+        // per round: the gate only moves on when every Worker has reported.
+        for (let i = 1; i <= TERMINALS; i++) {
+          const exited = Promise.withResolvers();
+          Atomics.store(gate, 0, i);
+          Atomics.notify(gate, 0);
+          const terminal = new Bun.Terminal({ data() {}, exit: exited.resolve });
+          terminal.close();
+          await exited.promise;
+          while (pids.length < WORKERS * i) await new Promise(resolve => (onPid = resolve));
+        }
+
+        // Throws for a process that is gone: every \`exit\` above arrived
+        // with all of the children still running.
+        for (const pid of pids) process.kill(pid, 0);
+        console.log("exits:", TERMINALS, "children alive:", pids.length);
+        for (const pid of pids) process.kill(pid);
+        process.exit(0);
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main-fixture.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("exits: 6 children alive: 12\n");
+    expect(exitCode).toBe(0);
+  });
 });

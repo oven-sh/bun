@@ -167,7 +167,7 @@
 "unused_pub:src/sys/lib.rs" = 45
 "unused_pub:src/threading/WaitGroup.rs" = 3
 "unused_pub:src/uws/lib.rs" = 1
-"unused_pub:src/windows_sys/externs.rs" = 290
+"unused_pub:src/windows_sys/externs.rs" = 287
 "unused_pub:src/windows_sys/lib.rs" = 7
 "unused_pub:src/wyhash/lib.rs" = 1
 "unused_pub:src/zstd/lib.rs" = 2

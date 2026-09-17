@@ -1,4 +1,5 @@
 import { describe, expect, it, test } from "bun:test";
+import { dlopen, FFIType, ptr } from "bun:ffi";
 import fs, { mkdirSync } from "fs";
 import {
   bunEnv,
@@ -20,10 +21,12 @@ let i = 0;
 const IS_UV_FS_COPYFILE_DISABLED =
   process.platform === "win32" && process.env.BUN_FEATURE_FLAG_DISABLE_UV_FS_COPYFILE === "1";
 
+// A test named "path to path: ..." copies one path to another, which is CopyFileW on Windows.
+// "Bun.write() without CopyFileW" runs those again with it disabled.
 (isWindows ? describe : describe.concurrent)("Bun.write", () => {
   process.platform === "win32" && process.env.BUN_FEATURE_FLAG_DISABLE_UV_FS_COPYFILE === "1";
 
-  it("Bun.write blob", async () => {
+  it("path to path: Bun.write blob", async () => {
     using tmpbase = tempDir("bun-write-blob", {});
     await Bun.write(
       Bun.file(join(tmpbase, "response-file.test.txt")),
@@ -106,7 +109,7 @@ const IS_UV_FS_COPYFILE_DISABLED =
     await gcTick();
   });
 
-  it("Bun.write file not found returns ENOENT, issue#6336", async () => {
+  it("path to path: Bun.write file not found returns ENOENT, issue#6336", async () => {
     using tmpbase = tempDir("bun-write-enoent", {});
     const dst = Bun.file(path.join(tmpbase, join("does", "not", "exist.txt")));
     fs.rmSync(join(tmpbase, "does"), { force: true, recursive: true });
@@ -141,7 +144,7 @@ const IS_UV_FS_COPYFILE_DISABLED =
   });
 
   describe.each(["plain-ascii-missing.txt", "surro-\ud800-gate.txt"])(
-    "Bun.write(dest, Bun.file(missing source)) rejects with ENOENT (%s)",
+    "path to path: Bun.write(dest, Bun.file(missing source)) rejects with ENOENT (%s)",
     basename => {
       it("rejects instead of crashing", async () => {
         using dir = tempDir("bun-write-missing-src", {});
@@ -197,7 +200,7 @@ const IS_UV_FS_COPYFILE_DISABLED =
     },
   );
 
-  it("Bun.write(dest, Bun.file(src)) creates missing destination directory", async () => {
+  it("path to path: Bun.write(dest, Bun.file(src)) creates missing destination directory", async () => {
     using dir = tempDir("bun-write-mkdirp-dest", {
       "src.txt": "copy me",
     });
@@ -240,7 +243,7 @@ const IS_UV_FS_COPYFILE_DISABLED =
     }
   });
 
-  it("Bun.file -> Bun.file", async () => {
+  it("path to path: Bun.file -> Bun.file", async () => {
     using tmpbase = tempDir("bun-file-to-file", {});
     try {
       fs.unlinkSync(path.join(tmpbase, "fetch.js.in"));
@@ -279,7 +282,7 @@ const IS_UV_FS_COPYFILE_DISABLED =
   });
 
   // https://github.com/oven-sh/bun/issues/42060
-  it("Bun.write(existing path, Bun.file(src)) resolves to the number of bytes copied", async () => {
+  it("path to path: Bun.write(existing path, Bun.file(src)) resolves to the number of bytes copied", async () => {
     using dir = tempDir("bun-write-existing-dest", {
       "existing.bin": "placeholder",
     });
@@ -798,12 +801,16 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
       ENOENT: isWindows ? -4058 : -2,
       ENOTDIR: isWindows ? -4052 : -20,
       EISDIR: isWindows ? -4068 : -21,
+      EPERM: isWindows ? -4048 : -1,
+      EBUSY: isWindows ? -4082 : -16,
       ENOSPC: -28,
     };
     const descriptionOf = {
       ENOENT: "no such file or directory",
       ENOTDIR: "not a directory",
       EISDIR: "illegal operation on a directory",
+      EPERM: "operation not permitted",
+      EBUSY: "resource busy or locked",
       ENOSPC: "no space left on device",
     };
     const systemError = (code, syscall, path) => ({
@@ -868,17 +875,119 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
       expect(await rejectionOf(Bun.file(missing).text())).toEqual(systemError("ENOENT", "open", missing));
     });
 
-    it("Bun.write(Bun.file(directory), Bun.file(source))", async () => {
+    it("path to path: Bun.write(Bun.file(directory), Bun.file(source))", async () => {
       using dir = tempDir("bun-write-error-shape", { "source.txt": "source", "dest": {} });
       const dest = join(String(dir), "dest");
       const copied = rejectionOf(Bun.write(Bun.file(dest), Bun.file(join(String(dir), "source.txt"))));
-      // CopyFileW refuses a directory with ERROR_ACCESS_DENIED, which is reported as ENOENT (#6336).
+      // CopyFileW refuses a directory with ERROR_ACCESS_DENIED.
       expect(await copied).toEqual(
         isWindows && !IS_UV_FS_COPYFILE_DISABLED
-          ? systemError("ENOENT", "copyfile", dest)
+          ? systemError("EPERM", "copyfile", dest)
           : systemError("EISDIR", "open", dest),
       );
       expect(fs.readdirSync(dest)).toEqual([]);
+    });
+
+    // Elsewhere the mode does not stop root.
+    it.skipIf(!isWindows)("path to path: Bun.write(Bun.file(readOnly), Bun.file(source))", async () => {
+      using dir = tempDir("bun-write-error-shape", { "source.txt": "source", "dest.txt": "dest" });
+      const dest = join(String(dir), "dest.txt");
+      fs.chmodSync(dest, 0o444);
+      try {
+        const copied = rejectionOf(Bun.write(Bun.file(dest), Bun.file(join(String(dir), "source.txt"))));
+        expect(await copied).toEqual(systemError("EPERM", IS_UV_FS_COPYFILE_DISABLED ? "open" : "copyfile", dest));
+        expect(fs.readFileSync(dest, "utf8")).toBe("dest");
+      } finally {
+        fs.chmodSync(dest, 0o666);
+      }
+    });
+
+    it("path to path: Bun.write(Bun.file(dest), Bun.file(directory))", async () => {
+      using dir = tempDir("bun-write-error-shape", { "source": {} });
+      const source = join(String(dir), "source");
+      const copied = rejectionOf(Bun.write(Bun.file(join(String(dir), "dest.txt")), Bun.file(source)));
+      expect(await copied).toMatchObject({
+        syscall: "fstat",
+        path: source,
+        message: "That doesn't work on folders",
+      });
+    });
+
+    // Reading with no sharing allowed makes every other open of the file fail.
+    const openExclusively = file => {
+      const { symbols: kernel32 } = dlopen("kernel32.dll", {
+        CreateFileW: {
+          args: [FFIType.ptr, FFIType.u32, FFIType.u32, FFIType.ptr, FFIType.u32, FFIType.u32, FFIType.ptr],
+          returns: FFIType.i64_fast,
+        },
+        CloseHandle: { args: [FFIType.ptr], returns: FFIType.i32 },
+      });
+      const GENERIC_READ = 0x80000000;
+      const OPEN_EXISTING = 3;
+      const name = Buffer.from(file + "\0", "utf16le");
+      const handle = kernel32.CreateFileW(ptr(name), GENERIC_READ, 0, null, OPEN_EXISTING, 0, null);
+      if (handle === -1) throw new Error("CreateFileW failed: " + file);
+      return { [Symbol.dispose]: () => kernel32.CloseHandle(handle) };
+    };
+
+    // The handle loop opens with backup semantics, which a process holding
+    // SeBackupPrivilege is not held to the sharing mode by.
+    it.skipIf(!isWindows || IS_UV_FS_COPYFILE_DISABLED)(
+      "path to path: the file that is in use is the one the error names",
+      async () => {
+        using dir = tempDir("bun-write-error-shape", { "source.txt": "source", "dest.txt": "dest" });
+        const source = join(String(dir), "source.txt");
+        const dest = join(String(dir), "dest.txt");
+        {
+          using _ = openExclusively(source);
+          expect(await rejectionOf(Bun.write(Bun.file(dest), Bun.file(source)))).toEqual(
+            systemError("EBUSY", "copyfile", source),
+          );
+        }
+        {
+          using _ = openExclusively(dest);
+          expect(await rejectionOf(Bun.write(Bun.file(dest), Bun.file(source)))).toEqual(
+            systemError("EBUSY", "copyfile", dest),
+          );
+        }
+        expect(fs.readFileSync(dest, "utf8")).toBe("dest");
+      },
+    );
+
+    describe.each([
+      ["a string", () => "x"],
+      ["an empty string", () => ""],
+      ["a file", dir => Bun.file(join(dir, "source.txt"))],
+      ["a Response", () => new Response("x")],
+    ])("Bun.write(path, %s) names the path it was given", (_, data) => {
+      it.skipIf(!isWindows)("when a file is where a parent directory has to be", async () => {
+        using dir = tempDir("bun-write-error-shape", { "source.txt": "source", "file.txt": "file" });
+        const dest = join(String(dir), "file.txt", "sub", "f.txt");
+        expect(await rejectionOf(Bun.write(dest, data(String(dir))))).toMatchObject({ path: dest });
+        expect(fs.readFileSync(join(String(dir), "file.txt"), "utf8")).toBe("file");
+      });
+
+      // `|` is in no file name, so the write fails and its parent, the root
+      // of the drive, is what Bun tries to create.
+      it.skipIf(!isWindows)("when the parent directory is the root of a drive", async () => {
+        using dir = tempDir("bun-write-error-shape", { "source.txt": "source" });
+        const dest = join(path.parse(String(dir)).root, "bun-write|error-shape.txt");
+        expect(await rejectionOf(Bun.write(dest, data(String(dir))))).toMatchObject({ path: dest });
+      });
+    });
+
+    it.skipIf(!isWindows)("Bun.write(readOnly, '') with createPath: false", async () => {
+      using dir = tempDir("bun-write-error-shape", { "dest.txt": "dest" });
+      const dest = join(String(dir), "dest.txt");
+      fs.chmodSync(dest, 0o444);
+      try {
+        expect(await rejectionOf(Bun.write(dest, "", { createPath: false }))).toEqual(
+          systemError("EPERM", "truncate", dest),
+        );
+        expect(fs.readFileSync(dest, "utf8")).toBe("dest");
+      } finally {
+        fs.chmodSync(dest, 0o666);
+      }
     });
 
     // Opening /dev/full succeeds; every write to it fails.
@@ -910,7 +1019,7 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
   if (isWindows && !IS_UV_FS_COPYFILE_DISABLED) {
     it("Bun.write() without CopyFileW", async () => {
       const { exited } = Bun.spawn({
-        cmd: [bunExe(), "test", import.meta.path],
+        cmd: [bunExe(), "test", import.meta.path, "-t", "path to path: "],
         env: {
           ...bunEnv,
           BUN_FEATURE_FLAG_DISABLE_UV_FS_COPYFILE: "1",
@@ -919,8 +1028,7 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
       });
 
       expect(await exited).toBe(0);
-      // A whole run of this file; a debug build takes longer than 10 s for it.
-    }, 60000);
+    }, 10000);
   }
 
   it("BunFile.name survives multiple file.write() calls + GC", async () => {

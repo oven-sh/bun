@@ -4847,7 +4847,14 @@ it("connections that queued up while the loop was busy are all accepted in one t
         stderr: "inherit",
       });
       // Without a turn of the loop: the clients connect, and nothing here accepts them.
-      while (!fs.existsSync(process.argv[2])) Bun.sleepSync(1);
+      const deadline = Date.now() + 60_000;
+      while (!fs.existsSync(process.argv[2])) {
+        if (Date.now() > deadline) {
+          console.error("gave up waiting for " + process.argv[2]);
+          process.exit(3);
+        }
+        Bun.sleepSync(1);
+      }
       const before = accepted;
       while (accepted === 0) await new Promise(resolve => setImmediate(resolve));
       console.log(JSON.stringify({ before, firstSeen: accepted }));

@@ -1,4 +1,4 @@
-//! Process creation on Windows: `CreateProcessW` with an explicit handle list.
+//! Process creation on Windows: `CreateProcessW`.
 
 use core::ffi::c_void;
 use core::ptr;
@@ -46,13 +46,42 @@ impl Default for WindowsOptions {
     }
 }
 
+/// Held while this process has inheritable handles that are meant for one
+/// child, or for none.
+///
+/// A child is created with `bInheritHandles` and gets every handle of this
+/// process that is inheritable at that moment, as with libuv and so Node: a
+/// handle the program marked inheritable (an addon, `bun:ffi`, one this process
+/// was itself started with) reaches the child by value. So a spawn makes its
+/// child's handles inheritable only while it holds this, and a call that makes
+/// inheritable handles of its own (`CreatePseudoConsole`) runs under it too.
+/// Otherwise another thread's child would hold them as well, and a pipe does
+/// not reach EOF until every holder of its other end is gone.
+// TODO: name exactly the child's handles with
+// PROC_THREAD_ATTRIBUTE_HANDLE_LIST once dropping the others is known not to
+// break too much; this lock goes with it.
+pub struct InheritableHandles {
+    _guard: bun_core::MutexGuard<'static, ()>,
+}
+
+impl InheritableHandles {
+    pub fn lock() -> Self {
+        static LOCK: bun_core::Mutex<()> = bun_core::Mutex::new(());
+        Self {
+            _guard: LOCK.lock(),
+        }
+    }
+}
+
 /// The handles the child inherits, and the parent ends of the pipes made for it.
 /// Every fd of the child has a handle of its own: its C runtime closes them one
 /// by one, and a value in two slots would be closed twice.
 struct ChildStdio {
     fds: Vec<ChildFd>,
-    /// Child-side handles this spawn made, closed once the child has its copies
-    /// (or was not created); a pipe only reports EOF when no writer is left.
+    /// Child-side handles this spawn made: every handle in `fds`. Inheritable
+    /// only inside [`ChildStdio::create_process`], and closed once the child
+    /// has its copies (or was not created); a pipe only reports EOF when no
+    /// writer is left.
     to_close: Vec<HANDLE>,
     parent_ends: Vec<HANDLE>,
     keep_parent_ends: bool,
@@ -60,10 +89,7 @@ struct ChildStdio {
 
 impl Drop for ChildStdio {
     fn drop(&mut self) {
-        for &handle in &self.to_close {
-            // SAFETY: handles this spawn created and still owns.
-            unsafe { win32::CloseHandle(handle) };
-        }
+        self.close_child_handles();
         if !self.keep_parent_ends {
             for &handle in &self.parent_ends {
                 // SAFETY: see above.
@@ -74,6 +100,40 @@ impl Drop for ChildStdio {
 }
 
 impl ChildStdio {
+    /// Runs `create` (`CreateProcessW`) with the child's handles inheritable
+    /// when it `inherits` handles. `Ok(false)`: `create` failed with a code
+    /// `may_retry` accepts, and the handles are as they were. They are closed
+    /// on every other way out.
+    fn create_process(
+        &mut self,
+        inherits: bool,
+        create: &mut dyn FnMut() -> Result<(), DWORD>,
+        may_retry: impl Fn(DWORD) -> bool,
+    ) -> Result<bool, DWORD> {
+        let _inheritable = inherits.then(InheritableHandles::lock);
+        let set_all = |handles: &[HANDLE], inheritable: bool| {
+            handles
+                .iter()
+                .try_for_each(|&handle| stdio::set_inheritable(handle, inheritable))
+        };
+        let result = set_all(&self.to_close, true).and_then(|()| match create() {
+            Ok(()) => Ok(true),
+            Err(code) if may_retry(code) => set_all(&self.to_close, false).map(|()| false),
+            Err(code) => Err(code),
+        });
+        if !matches!(result, Ok(false)) {
+            self.close_child_handles();
+        }
+        result
+    }
+
+    fn close_child_handles(&mut self) {
+        for handle in self.to_close.drain(..) {
+            // SAFETY: a handle this spawn created and still owns.
+            unsafe { win32::CloseHandle(handle) };
+        }
+    }
+
     fn nul(&mut self, writable: bool) -> Result<ChildFd, DWORD> {
         let handle = stdio::open_nul(writable)?;
         self.to_close.push(handle);
@@ -89,7 +149,7 @@ impl ChildStdio {
         if fd.handle == INVALID_HANDLE_VALUE {
             return Ok(fd);
         }
-        let handle = stdio::duplicate_inheritable(fd.handle)?;
+        let handle = stdio::duplicate(fd.handle)?;
         self.to_close.push(handle);
         Ok(ChildFd {
             handle,
@@ -98,7 +158,7 @@ impl ChildStdio {
     }
 
     fn inherit(&mut self, source: HANDLE) -> Result<ChildFd, DWORD> {
-        let handle = stdio::duplicate_inheritable(source)?;
+        let handle = stdio::duplicate(source)?;
         self.to_close.push(handle);
         Ok(ChildFd {
             handle,
@@ -110,14 +170,6 @@ impl ChildStdio {
         let pair = stdio::create_pipe_pair(child)?;
         self.to_close.push(pair.child);
         self.parent_ends.push(pair.parent);
-        if win32::SetHandleInformation(
-            pair.child,
-            win32::HANDLE_FLAG_INHERIT,
-            win32::HANDLE_FLAG_INHERIT,
-        ) == 0
-        {
-            return Err(win32::GetLastError());
-        }
         Ok((
             ChildFd {
                 handle: pair.child,
@@ -186,14 +238,6 @@ fn make_slot(
             };
             let handle = bun_sys::open_a(path, access | bun_sys::O::CREAT, 0o664)?.native();
             stdio.to_close.push(handle);
-            if win32::SetHandleInformation(
-                handle,
-                win32::HANDLE_FLAG_INHERIT,
-                win32::HANDLE_FLAG_INHERIT,
-            ) == 0
-            {
-                return Err(win32::last_error(Tag::uv_spawn));
-            }
             Ok(Slot::Fd(ChildFd {
                 handle,
                 crt_flags: stdio::crt_flags_for(handle).map_err(spawn_error)?,
@@ -430,19 +474,6 @@ unsafe fn spawn(options: &SpawnOptions, argv: Argv, envp: Envp) -> bun_sys::Resu
         return Err(spawn_error(win32::ERROR_NOT_SUPPORTED));
     }
 
-    // `CreateProcessW` below gives the child every inheritable handle of this
-    // process, as libuv and so Node do: a handle the program marked inheritable
-    // (an addon, `bun:ffi`, one this process was itself started with) reaches
-    // the child by value. The handles made here for this child are inheritable
-    // too, so another thread must not spawn between their creation and their
-    // closing, or its child would hold them as well (a pipe would not reach EOF
-    // until that child exits).
-    // TODO: name exactly the child's handles with
-    // PROC_THREAD_ATTRIBUTE_HANDLE_LIST once dropping the others is known not to
-    // break too much; the lock goes with it.
-    static INHERITABLE_HANDLES: bun_core::Mutex<()> = bun_core::Mutex::new(());
-    let _inheritable_handles = INHERITABLE_HANDLES.lock();
-
     let mut result = SpawnResult::default();
     let mut child_stdio = ChildStdio {
         fds: Vec::new(),
@@ -516,8 +547,8 @@ unsafe fn spawn(options: &SpawnOptions, argv: Argv, envp: Envp) -> bun_sys::Resu
     // SAFETY: all-zero is a valid STARTUPINFOEXW.
     let mut startup: win32::STARTUPINFOEXW = unsafe { core::mem::zeroed() };
     // Always STARTF_USESTDHANDLES: without it the system duplicates this
-    // process's own std handles into the child, handle list or not, which
-    // would also override a pseudoconsole.
+    // process's own std handles into the child, which would also override a
+    // pseudoconsole.
     startup.StartupInfo.dwFlags = win32::STARTF_USESTDHANDLES | win32::STARTF_USESHOWWINDOW;
     if use_stdio {
         startup.StartupInfo.cbReserved2 = crt_block.len() as u16;
@@ -596,36 +627,43 @@ unsafe fn spawn(options: &SpawnOptions, argv: Argv, envp: Envp) -> bun_sys::Resu
             }
         };
 
-        // SAFETY: every pointer is valid for the call; the strings are NUL-terminated.
-        let created = unsafe {
-            win32::CreateProcessW(
-                application_path.as_ptr(),
-                command_line.as_mut_ptr(),
-                ptr::null_mut(),
-                ptr::null_mut(),
-                // A pseudoconsole's child takes its std handles from it.
-                i32::from(use_stdio),
-                process_flags | extended,
-                env_block
-                    .as_mut()
-                    .map_or(ptr::null_mut(), |block| block.as_mut_ptr().cast()),
-                cwd.as_ref().map_or(ptr::null(), |cwd| cwd.as_ptr()),
-                ptr::from_mut(&mut startup).cast(),
-                &mut info,
-            )
+        let mut create = || {
+            // SAFETY: every pointer is valid for the call; the strings are NUL-terminated.
+            let created = unsafe {
+                win32::CreateProcessW(
+                    application_path.as_ptr(),
+                    command_line.as_mut_ptr(),
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    // A pseudoconsole's child takes its std handles from it.
+                    i32::from(use_stdio),
+                    process_flags | extended,
+                    env_block
+                        .as_mut()
+                        .map_or(ptr::null_mut(), |block| block.as_mut_ptr().cast()),
+                    cwd.as_ref().map_or(ptr::null(), |cwd| cwd.as_ptr()),
+                    ptr::from_mut(&mut startup).cast(),
+                    &mut info,
+                )
+            };
+            if created != 0 {
+                Ok(())
+            } else {
+                Err(win32::GetLastError())
+            }
         };
-        if created != 0 {
+        // A child born in a job that the job cannot nest below is refused
+        // with ERROR_ACCESS_DENIED. Such a parent must still be able to
+        // spawn: go without ending the child with us.
+        let has_job = !job.is_null();
+        let without_job = move |code: DWORD| has_job && code == win32::ERROR_ACCESS_DENIED;
+        if child_stdio
+            .create_process(use_stdio, &mut create, without_job)
+            .map_err(spawn_error)?
+        {
             break;
         }
-        let code = win32::GetLastError();
-        // A process in a job that cannot nest (before Windows 8, or an odd
-        // sandbox) cannot put its children in another job. Such a parent must
-        // still be able to spawn: go without ending the child with us.
-        if code == win32::ERROR_ACCESS_DENIED && !job.is_null() {
-            job = ptr::null_mut();
-            continue;
-        }
-        return Err(spawn_error(code));
+        job = ptr::null_mut();
     }
 
     // SAFETY: the thread handle is ours and unused.
@@ -633,6 +671,6 @@ unsafe fn spawn(options: &SpawnOptions, argv: Argv, envp: Envp) -> bun_sys::Resu
 
     child_stdio.keep_parent_ends = true;
     result.pid = info.dwProcessId as crate::PidT;
-    result.process_handle = info.hProcess;
+    result.process_handle = crate::spawn_process::OwnedProcessHandle::new(info.hProcess);
     Ok(result)
 }

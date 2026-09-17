@@ -683,7 +683,9 @@ pub(crate) mod serialize {
             sel: selector,
             i: 0,
         };
-        let should_compile_nesting = dest.targets.should_compile_same(Feature::Nesting);
+        // The end of `@scope (.a) to (&)` replaces its `&` even when the targets have nesting.
+        let should_compile_nesting =
+            context.is_some() || dest.targets.should_compile_same(Feature::Nesting);
 
         let mut first = true;
         let mut combinators_exhausted = false;
@@ -929,7 +931,12 @@ pub(crate) mod serialize {
                     Component::Where(_) => dest.write_str(b":where(")?,
                     Component::Is(selectors) => {
                         // If there's only one simple selector, serialize it directly.
-                        if should_unwrap_is(selectors) {
+                        // `:is(&div)` stays wrapped after other simple selectors,
+                        // where its type selector cannot go.
+                        if should_unwrap_is(selectors)
+                            && !(position == NestingPosition::MidCompound
+                                && has_type_selector_past_nesting(&selectors[0]))
+                        {
                             return serialize_selector_impl(
                                 &selectors[0],
                                 dest,
@@ -1392,7 +1399,9 @@ pub(crate) mod serialize {
                 match position {
                     NestingPosition::SelectorStart => true,
                     NestingPosition::CompoundStart => is_simple(parent),
-                    NestingPosition::MidCompound => !has_type_selector(parent) && is_simple(parent),
+                    NestingPosition::MidCompound => {
+                        !has_type_selector_past_nesting(parent) && is_simple(parent)
+                    }
                 }
             };
             if fits {
@@ -1755,13 +1764,20 @@ pub(crate) fn should_unwrap_is(selectors: &[parser::Selector]) -> bool {
 }
 
 fn has_type_selector(selector: &parser::Selector) -> bool {
-    let mut iter = selector.iter_raw_match_order();
-    let mut first = iter.next();
+    leads_with_type_selector(selector.iter_raw_match_order())
+}
 
-    // `&div` prints as `div&`, with the type selector first.
-    if matches!(first, Some(Component::Nesting)) {
-        first = iter.next();
+/// Also true for `&div`, which prints as `div&`.
+fn has_type_selector_past_nesting(selector: &parser::Selector) -> bool {
+    let mut iter = selector.iter_raw_match_order();
+    if matches!(selector.components.first(), Some(Component::Nesting)) {
+        iter.next();
     }
+    leads_with_type_selector(iter)
+}
+
+fn leads_with_type_selector<'a>(mut iter: impl Iterator<Item = &'a parser::Component>) -> bool {
+    let first = iter.next();
 
     if is_namespace(first) {
         return is_type_selector(iter.next());

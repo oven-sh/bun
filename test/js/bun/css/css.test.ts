@@ -5923,16 +5923,19 @@ describe("css tests", () => {
   });
 
   describe("nesting: where a `&` lands in the lowered selector", () => {
-    // Chrome 95 has no CSS nesting, so the printer replaces every `&` with the parent selector.
-    const targets = { chrome: 95 << 16 };
-    function lowered_nesting_test(source: string, expected: string) {
-      test(source, () => {
-        const output = cssInternals.minifyTest(source, "", targets);
-        expect(output).toBe(expected);
-        // The output has no `&` left. It must parse again.
-        cssInternals.minifyTest(output, "", targets);
-      });
+    function nesting_tester(targets: { chrome: number }) {
+      return (source: string, expected: string) =>
+        test(source, () => {
+          const output = cssInternals.minifyTest(source, "", targets);
+          expect(output).toBe(expected);
+          // The output must parse again.
+          cssInternals.minifyTest(output, "", targets);
+        });
     }
+    // Chrome 95 has no CSS nesting, so the printer replaces every `&` with the parent selector.
+    const lowered_nesting_test = nesting_tester({ chrome: 95 << 16 });
+    // Chrome 130 has CSS nesting, so the printer keeps every `&`.
+    const preserved_nesting_test = nesting_tester({ chrome: 130 << 16 });
 
     describe("simple selectors come before the `&`", () => {
       // The parent selector leads with a `&` that stands for a type selector.
@@ -5951,6 +5954,8 @@ describe("css tests", () => {
       // An unwrapped `:is()` puts its argument after `.x`.
       lowered_nesting_test("div { .x:is(&) { color: red } }", ".x:is(div){color:red}");
       lowered_nesting_test(".a .b { .x:is(&) { color: red } }", ".x:is(.a .b){color:red}");
+
+      lowered_nesting_test(".a { .x:is(&div) { color: red } }", ".x:is(div.a){color:red}");
 
       // One compound selector with no type selector needs no `:is()`.
       lowered_nesting_test(".a { &.b { .x& { color: red } } }", ".x.a.b{color:red}");
@@ -5973,6 +5978,7 @@ describe("css tests", () => {
       // `&div` prints as `div&` in every compound selector.
       lowered_nesting_test("span { .dark &div { color: red } }", ".dark div:is(span){color:red}");
       lowered_nesting_test(".a { .dark &div { color: red } }", ".dark div.a{color:red}");
+      lowered_nesting_test(".a { .dark :is(&div) { color: red } }", ".dark div.a{color:red}");
       lowered_nesting_test(
         "@namespace svg url(http://www.w3.org/2000/svg); .a { &svg|b { color: red } }",
         '@namespace svg "http://www.w3.org/2000/svg";svg|b.a{color:red}',
@@ -5993,6 +5999,7 @@ describe("css tests", () => {
       lowered_nesting_test("div { &:hover { &.y { color: red } } }", "div:hover.y{color:red}");
       lowered_nesting_test(".a .b { &:hover { & .c { color: red } } }", ".a .b:hover .c{color:red}");
       lowered_nesting_test("div { :is(&):hover { color: red } }", "div:hover{color:red}");
+      lowered_nesting_test(".a { :is(&div) { color: red } }", "div.a{color:red}");
       lowered_nesting_test(".a .b { *& { color: red } }", ".a .b{color:red}");
     });
 
@@ -6010,6 +6017,23 @@ describe("css tests", () => {
       lowered_nesting_test(
         "input::file-selector-button { &:hover { .dark & { color: red } } }",
         ".dark input::file-selector-button:hover{color:red}",
+      );
+    });
+
+    describe("the targets have nesting", () => {
+      preserved_nesting_test(".a .b { &:hover { .dark & { color: red } } }", ".a .b{&:hover{.dark &{color:red}}}");
+      preserved_nesting_test(".a { :is(&div) { color: red } }", ".a{&div{color:red}}");
+      preserved_nesting_test(".a { .x:is(&div) { color: red } }", ".a{.x:is(&div){color:red}}");
+      preserved_nesting_test(
+        "@namespace svg url(http://www.w3.org/2000/svg); .a { &svg|* { color: red } }",
+        '@namespace svg "http://www.w3.org/2000/svg";.a{&svg|*{color:red}}',
+      );
+
+      // The end of `@scope` replaces its `&` with the start selector in every mode.
+      preserved_nesting_test("@scope (.a) to (&div) { .x { color: red } }", "@scope(.a) to (div.a){.x{color:red}}");
+      preserved_nesting_test(
+        "@scope (.a .b) to (&div) { .x { color: red } }",
+        "@scope(.a .b) to (div:is(.a .b)){.x{color:red}}",
       );
     });
   });

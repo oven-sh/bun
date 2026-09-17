@@ -6,7 +6,7 @@ use core::mem::size_of;
 
 use bun_http::headers::api::StringPointer;
 use bun_http::headers::append_etag;
-use bun_http::{Headers, Method};
+use bun_http::{Headers, Method, headers_have_connection_close};
 use bun_http_types::ETag;
 use bun_ptr::{RefPtr, ThisPtr};
 
@@ -35,6 +35,8 @@ pub struct StaticRoute {
     pub(crate) blob: AnyBlob,
     pub(crate) cached_blob_size: u64,
     pub(crate) has_date: bool,
+    /// `headers` carries a `Connection` header with the `close` option.
+    has_connection_close: bool,
     pub(crate) headers: Headers,
 }
 
@@ -70,6 +72,7 @@ impl StaticRoute {
             pending_responses: Cell::new(0),
             cached_blob_size: blob.size(),
             has_date: headers.get(b"date").is_some(),
+            has_connection_close: headers_have_connection_close(&headers),
             blob,
             headers,
             server: Cell::new(server),
@@ -131,6 +134,7 @@ impl StaticRoute {
             blob: AnyBlob::Blob(duped),
             cached_blob_size: self.cached_blob_size,
             has_date: self.has_date,
+            has_connection_close: self.has_connection_close,
             headers: self.headers.clone(),
             server: Cell::new(self.server.get()),
             status_code: self.status_code,
@@ -439,6 +443,12 @@ impl StaticRoute {
         // carries one, suppress uWS's auto-Date so only the user's value is sent.
         if self.has_date {
             resp.mark_wrote_date_header();
+        }
+        // RFC 9112 §9.6: the server closes the connection after a response that
+        // carries `Connection: close`. Every end call below reads this mark
+        // through `should_close_connection()`.
+        if self.has_connection_close {
+            resp.mark_connection_close();
         }
         let entries = self.headers.entries.slice();
         let names: &[StringPointer] = entries.items_name();

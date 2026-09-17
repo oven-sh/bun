@@ -3,7 +3,7 @@ use core::mem::size_of;
 
 use bun_core::String as BunString;
 use bun_core::strings;
-use bun_http::{Headers, Method};
+use bun_http::{Headers, Method, headers_have_connection_close};
 use bun_http_types::ETag;
 use bun_http_types::ETag::StringPointer;
 use bun_io::Closer;
@@ -39,6 +39,8 @@ pub struct FileRoute {
     has_content_length_header: bool,
     has_content_range_header: bool,
     has_date_header: bool,
+    /// `headers` carries a `Connection` header with the `close` option.
+    has_connection_close: bool,
 }
 
 pub struct InitOptions<'a> {
@@ -117,6 +119,7 @@ impl FileRoute {
             has_content_length_header: headers.get(b"content-length").is_some(),
             has_content_range_header: headers.get(b"content-range").is_some(),
             has_date_header: headers.get(b"date").is_some(),
+            has_connection_close: headers_have_connection_close(&headers),
             blob,
             headers,
             status_code,
@@ -222,6 +225,13 @@ impl FileRoute {
 
         if self.has_content_length_header {
             resp.mark_wrote_content_length_header();
+        }
+
+        // RFC 9112 §9.6: the server closes the connection after a response that
+        // carries `Connection: close`. The end calls in `serve` and in
+        // `FileResponseStream` read this mark through `should_close_connection()`.
+        if self.has_connection_close {
+            resp.mark_connection_close();
         }
     }
 

@@ -341,6 +341,10 @@ impl<const SSL: bool> Response<SSL> {
         c::uws_res_mark_wrote_date_header(Self::ssl_flag(), self.as_raw())
     }
 
+    pub(crate) fn mark_connection_close(&mut self) {
+        c::uws_res_mark_connection_close(Self::ssl_flag(), self.as_raw())
+    }
+
     pub(crate) fn write_mark(&mut self) {
         c::uws_res_write_mark(Self::ssl_flag(), self.as_raw())
     }
@@ -755,6 +759,13 @@ impl AnyResponse {
 
     pub fn mark_wrote_date_header(self) {
         any_dispatch!(self, |r| r.mark_wrote_date_header())
+    }
+
+    /// For a caller that writes its own `Connection: close` header with
+    /// `write_header`. `should_close_connection()` is then true, so the end
+    /// call closes the connection and does not write the header again.
+    pub fn mark_connection_close(self) {
+        any_dispatch!(self, |r| r.mark_connection_close())
     }
 
     pub fn write_mark(self) {
@@ -1172,6 +1183,7 @@ pub mod c {
     unsafe extern "C" {
         pub(crate) safe fn uws_res_mark_wrote_content_length_header(ssl: i32, res: &mut uws_res);
         pub(crate) safe fn uws_res_mark_wrote_date_header(ssl: i32, res: &mut uws_res);
+        pub(crate) safe fn uws_res_mark_connection_close(ssl: i32, res: &mut uws_res);
         pub(crate) safe fn uws_res_write_mark(ssl: i32, res: &mut uws_res);
         pub(crate) safe fn us_socket_mark_needs_more_not_ssl(socket: &mut uws_res);
         pub(crate) safe fn uws_res_state(ssl: c_int, res: &uws_res) -> State;

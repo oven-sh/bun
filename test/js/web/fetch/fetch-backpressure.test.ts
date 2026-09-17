@@ -17,6 +17,7 @@ import { createServer as createTlsServer } from "node:tls";
 import {
   brotliCompressSync,
   createZstdCompress,
+  deflateRawSync,
   deflateSync,
   gzipSync,
   constants as zlibConstants,
@@ -526,16 +527,20 @@ describe.concurrent("fetch() receive backpressure — the decompressor does not 
   const PEAK_LIMIT = (isASAN || isDebug ? 96 : 64) * 1024 * 1024;
 
   type Enc = "gzip" | "deflate" | "br" | "zstd";
-  type Bomb = Exclude<Enc, "deflate">;
-  const bombs: Partial<Record<Bomb, Buffer>> = {};
-  function bombFor(enc: Bomb) {
+  const bombs: Partial<Record<Enc, Buffer>> = {};
+  function bombFor(enc: Enc) {
     return (bombs[enc] ??= (() => {
-      // gzip members and zstd frames concatenate, so one compressed MB makes the whole body.
-      // A debug build takes seconds to really compress 256 MB; brotli has no such shortcut.
+      // A debug build takes seconds to really compress 256 MB, so one compressed MB is repeated:
+      // gzip members and zstd frames concatenate, and so do raw deflate blocks after a full
+      // flush (an empty final stored block then ends the stream). brotli has no such shortcut.
       const mb = Buffer.alloc(1 << 20);
       const repeat = (piece: Buffer) => Buffer.concat(Array(DECODED / mb.length).fill(piece));
       if (enc === "gzip") return repeat(gzipSync(mb, { level: 9 }));
       if (enc === "zstd") return repeat(zstdCompressSync(mb));
+      if (enc === "deflate") {
+        const block = deflateRawSync(mb, { level: 9, finishFlush: zlibConstants.Z_FULL_FLUSH });
+        return Buffer.concat([repeat(block), Buffer.from([1, 0, 0, 0xff, 0xff])]);
+      }
       return brotliCompressSync(Buffer.alloc(DECODED), { params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 1 } });
     })());
   }
@@ -555,7 +560,7 @@ describe.concurrent("fetch() receive backpressure — the decompressor does not 
   }
 
   // Close-delimited, and the origin never closes: for the client this body does not end.
-  async function serveBomb(enc: Bomb, secure: boolean) {
+  async function serveBomb(enc: Enc, secure: boolean) {
     const bomb = bombFor(enc);
     const handler = (s: import("node:net").Socket) => {
       s.on("error", () => {});
@@ -649,10 +654,13 @@ describe.concurrent("fetch() receive backpressure — the decompressor does not 
     expect(exitCode).toBe(0);
   }
 
-  test.each(["gzip", "br", "zstd"] as Bomb[])("%s: a reader that takes a little holds a little", async enc => {
-    await using server = await serveBomb(enc, false);
-    expectBounded(await runClient(server.url, {}, READ_A_LITTLE));
-  });
+  test.each(["gzip", "deflate", "br", "zstd"] as Enc[])(
+    "%s: a reader that takes a little holds a little",
+    async enc => {
+      await using server = await serveBomb(enc, false);
+      expectBounded(await runClient(server.url, {}, READ_A_LITTLE));
+    },
+  );
 
   test("zstd through a CONNECT proxy: a reader that takes a little holds a little", async () => {
     await using server = await serveBomb("zstd", true);

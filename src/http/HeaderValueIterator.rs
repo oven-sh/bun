@@ -54,3 +54,10 @@ pub fn connection_header_keep_alive(value: &[u8]) -> Option<bool> {
     }
     keep_alive
 }
+
+/// True if the `Connection` entry of `headers` has the `close` option. `FetchHeaders` joins repeated values into one entry.
+pub fn headers_have_connection_close(headers: &crate::Headers) -> bool {
+    headers
+        .get(b"connection")
+        .is_some_and(|value| connection_header_keep_alive(value) == Some(false))
+}

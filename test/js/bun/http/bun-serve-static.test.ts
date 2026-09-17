@@ -1,5 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test";
-import { isBroken, isMacOS, tempDir } from "harness";
+import { isBroken, isMacOS, isWindows, tempDir, tls as tlsCert } from "harness";
+import { once } from "node:events";
+import net from "node:net";
+import tls from "node:tls";
 import { routes, static_responses } from "./bun-serve-static-helpers";
 
 describe.todoIf(isBroken && isMacOS)("static", () => {
@@ -342,6 +345,204 @@ describe("static route preconditions (RFC 9110 §13.2.2)", () => {
 
     it("If-Match pass then If-None-Match match → 304", async () => {
       expect((await get("/s", { "If-Match": '"s1"', "If-None-Match": '"s1"' }, method)).status).toBe(304);
+    });
+  });
+});
+
+// RFC 9112 §9.6: a server that sends the "close" connection option closes the
+// connection after that response and processes no further request on it.
+describe("static route Connection: close", () => {
+  const followUp = "GET /second HTTP/1.1\r\nHost: x\r\n\r\n";
+
+  // The complete responses in `raw`. `methods[i]` is the method of request i.
+  function parseResponses(raw: string, methods: string[]) {
+    const responses: { status: number; connection: string[] }[] = [];
+    for (let offset = 0; ; ) {
+      const headEnd = raw.indexOf("\r\n\r\n", offset);
+      if (headEnd === -1) return responses;
+      const head = raw.slice(offset, headEnd);
+      const status = Number(head.slice(9, 12));
+      const bodiless = methods[responses.length] === "HEAD" || status === 204 || status === 304;
+      offset = headEnd + 4 + (bodiless ? 0 : Number(/^content-length: (\d+)$/im.exec(head)?.[1] ?? 0));
+      if (raw.length < offset) return responses;
+      responses.push({ status, connection: head.split("\r\n").filter(line => /^connection:/i.test(line)) });
+    }
+  }
+
+  // Sends `payload`, and `followUp` behind it: in the same write when
+  // `pipelined`, otherwise once `expected` responses have arrived in full.
+  // Settles when the server closes the socket or when it answers `followUp`.
+  async function exchange(server: Server, payload: string, expected: number, pipelined: boolean) {
+    const secure = server.url.protocol === "https:";
+    const socket = secure
+      ? tls.connect({ host: "127.0.0.1", port: server.port, rejectUnauthorized: false })
+      : net.connect(server.port, "127.0.0.1");
+    try {
+      // On Windows the follow-up write after the server closes gets ECONNRESET.
+      socket.on("error", () => {});
+      await once(socket, secure ? "secureConnect" : "connect");
+
+      const methods = (payload + followUp).match(/^[A-Z]+(?= \/)/gm)!;
+      const { promise, resolve } = Promise.withResolvers<boolean>();
+      let raw = "";
+      let sentFollowUp = pipelined;
+      socket.on("data", chunk => {
+        raw += chunk.toString("latin1");
+        const responses = parseResponses(raw, methods).length;
+        if (!sentFollowUp && responses === expected) {
+          sentFollowUp = true;
+          socket.write(followUp);
+        }
+        if (responses > expected) resolve(false);
+      });
+      socket.on("close", () => resolve(true));
+      socket.write(pipelined ? payload + followUp : payload);
+      const closedByServer = await promise;
+      return { responses: parseResponses(raw, methods), closedByServer };
+    } finally {
+      socket.destroy();
+    }
+  }
+
+  type Route = (init: ResponseInit) => Response | { GET: Response };
+
+  let dir: ReturnType<typeof tempDir>;
+  beforeAll(() => {
+    dir = tempDir("static-connection-close", {
+      "a.txt": "file-body",
+      // Linux sends a file of 1 MB or more with sendfile().
+      "big.txt": Buffer.alloc(4 * 1024 * 1024, "x"),
+    });
+  });
+  afterAll(() => dir[Symbol.dispose]());
+
+  // Serves `route` at /r with one Connection header entry for each value of
+  // `connection`. `ran` lists the requests that reached the fetch handler.
+  async function serveAndExchange(
+    protocol: string,
+    route: Route,
+    payload: string,
+    { connection = ["close"] as string[], expected = 1, pipelined = false } = {},
+  ) {
+    const ran: string[] = [];
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      tls: protocol === "https" ? tlsCert : undefined,
+      development: false,
+      idleTimeout: 0,
+      routes: { "/r": route({ headers: connection.map(value => ["Connection", value]) }) },
+      fetch(req) {
+        ran.push(new URL(req.url).pathname);
+        return new Response("fallback");
+      },
+    });
+    return { ...(await exchange(server, payload, expected, pipelined)), ran };
+  }
+
+  const get = (path = "/r", headers = "") => `GET ${path} HTTP/1.1\r\nHost: x\r\n${headers}\r\n`;
+  const head = "HEAD /r HTTP/1.1\r\nHost: x\r\n\r\n";
+  const text: Route = init => new Response("static", init);
+  const file: Route = init => new Response(Bun.file(`${dir}/a.txt`), init);
+
+  const cases: { name: string; route: Route; request: string; status: number }[] = [
+    { name: "GET", route: text, request: get(), status: 200 },
+    { name: "HEAD", route: text, request: head, status: 200 },
+    {
+      name: "GET, { GET: Response } route",
+      route: init => ({ GET: new Response("static", init) }),
+      request: get(),
+      status: 200,
+    },
+    {
+      // Too large for one send(): the body ends from the onWritable callback.
+      name: "GET, 4 MB body",
+      route: init => new Response(Buffer.alloc(4 * 1024 * 1024, "y"), init),
+      request: get(),
+      status: 200,
+    },
+    { name: "GET, If-None-Match", route: text, request: get("/r", "If-None-Match: *\r\n"), status: 304 },
+    { name: "GET, If-Match fails", route: text, request: get("/r", 'If-Match: "other"\r\n'), status: 412 },
+    {
+      name: "GET, 204 route",
+      route: init => new Response(null, { ...init, status: 204 }),
+      request: get(),
+      status: 204,
+    },
+    { name: "Bun.file GET", route: file, request: get(), status: 200 },
+    {
+      name: "Bun.file GET, 4 MB file",
+      route: init => new Response(Bun.file(`${dir}/big.txt`), init),
+      request: get(),
+      status: 200,
+    },
+    { name: "Bun.file HEAD", route: file, request: head, status: 200 },
+    { name: "Bun.file GET, If-None-Match", route: file, request: get("/r", "If-None-Match: *\r\n"), status: 304 },
+    { name: "Bun.file GET, Range", route: file, request: get("/r", "Range: bytes=0-3\r\n"), status: 206 },
+  ];
+
+  describe.each(["http", "https"])("%s", protocol => {
+    test.each(cases)("$name", async ({ route, request, status }) => {
+      expect(await serveAndExchange(protocol, route, request)).toEqual({
+        responses: [{ status, connection: ["Connection: close"] }],
+        ran: [],
+        closedByServer: true,
+      });
+    });
+
+    test.each([
+      { name: "Close", connection: ["Close"] },
+      { name: "keep-alive, close", connection: ["keep-alive, close"] },
+      // Headers joins the two entries into "keep-alive, close".
+      { name: "keep-alive and close in two entries", connection: ["keep-alive", "close"] },
+    ])("Connection: $name", async ({ connection }) => {
+      const expected = {
+        responses: [{ status: 200, connection: [`Connection: ${connection.join(", ")}`] }],
+        ran: [],
+        closedByServer: true,
+      };
+      expect({
+        static: await serveAndExchange(protocol, text, get(), { connection }),
+        file: await serveAndExchange(protocol, file, get(), { connection }),
+      }).toEqual({ static: expected, file: expected });
+    });
+
+    // One write: the requests behind the closing response are already in the
+    // read that the server parses.
+    async function pipelined(route: Route) {
+      expect({
+        closerFirst: await serveAndExchange(protocol, route, get(), { pipelined: true }),
+        closerSecond: await serveAndExchange(protocol, route, get("/first") + get(), { pipelined: true, expected: 2 }),
+      }).toEqual({
+        closerFirst: { responses: [{ status: 200, connection: ["Connection: close"] }], ran: [], closedByServer: true },
+        closerSecond: {
+          responses: [
+            { status: 200, connection: [] },
+            { status: 200, connection: ["Connection: close"] },
+          ],
+          ran: ["/first"],
+          closedByServer: true,
+        },
+      });
+    }
+
+    test("static route, pipelined", () => pipelined(text));
+
+    // Windows reads the file in the background. The request behind it finds a
+    // pending response, and the server then closes the connection at once.
+    test.skipIf(isWindows)("Bun.file route, pipelined", () => pipelined(file));
+
+    test.each([
+      { name: "no Connection header", connection: [] },
+      { name: "Connection: keep-alive", connection: ["keep-alive"] },
+    ])("keeps the connection open with $name", async ({ connection }) => {
+      const kept = { status: 200, connection: connection.map(value => `Connection: ${value}`) };
+      const expected = { responses: [kept, { status: 200, connection: [] }], ran: ["/second"], closedByServer: false };
+      expect({
+        static: await serveAndExchange(protocol, text, get(), { connection }),
+        file: await serveAndExchange(protocol, file, get(), { connection }),
+        pipelined: await serveAndExchange(protocol, text, get(), { connection, pipelined: true }),
+      }).toEqual({ static: expected, file: expected, pipelined: expected });
     });
   });
 });

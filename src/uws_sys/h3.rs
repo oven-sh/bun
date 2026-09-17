@@ -144,6 +144,8 @@ impl Response {
     pub(crate) fn mark_wrote_date_header(&mut self) {
         c::uws_h3_res_mark_wrote_date_header(self)
     }
+    /// `write_header` drops `Connection` on HTTP/3. A stream does not close the connection.
+    pub(crate) fn mark_connection_close(&mut self) {}
     pub(crate) fn write_continue(&mut self) {
         c::uws_h3_res_write_continue(self)
     }

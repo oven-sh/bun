@@ -51,6 +51,54 @@ describe("fs.watchFile", () => {
     expect(entries[0][1].size).toBe(0);
     expect(entries[0][1].mtimeMs).toBe(0);
   });
+  // libuv calls back again while the file stays missing when the error code
+  // of the failed stat() changes (`busy_polling != req->result` in poll_cb):
+  // https://github.com/libuv/libuv/blob/5152db2cbfeb5582e9c27c5ea1dba2cd9e10759b/src/fs-poll.c#L200-L208
+  // Windows reports a file in the middle of the path as ENOENT, not ENOTDIR,
+  // so the error code never changes there.
+  test.skipIf(isWindows)("calls back when the stat error code changes while the file is missing", async () => {
+    const dir = path.join(testDir, "d");
+    const file = path.join(dir, "f.txt");
+    fs.mkdirSync(dir);
+    fs.writeFileSync(file, "hello");
+
+    let { promise: called, resolve: wake } = Promise.withResolvers<void>();
+    const calls: { curr: number; prev: number }[] = [];
+    fs.watchFile(file, { interval: 20 }, (curr, prev) => {
+      calls.push({ curr: curr.size, prev: prev.size });
+      wake();
+      ({ promise: called, resolve: wake } = Promise.withResolvers<void>());
+    });
+    async function callCount(count: number) {
+      while (calls.length < count) await called;
+      return calls.length;
+    }
+
+    try {
+      // stat() fails with ENOENT
+      fs.rmSync(dir, { recursive: true });
+      expect(await callCount(1)).toBe(1);
+      expect(calls[0]).toEqual({ curr: 0, prev: 5 });
+
+      // stat() fails with ENOTDIR: a different error code, so node calls back
+      fs.writeFileSync(dir, "x");
+      expect(await callCount(2)).toBe(2);
+      expect(calls[1].curr).toBe(0);
+
+      // back to ENOENT
+      fs.rmSync(dir);
+      expect(await callCount(3)).toBe(3);
+      expect(calls[2].curr).toBe(0);
+
+      fs.mkdirSync(dir);
+      fs.writeFileSync(file, "hi");
+      expect(await callCount(4)).toBe(4);
+      expect(calls[3].curr).toBe(2);
+    } finally {
+      fs.unwatchFile(file);
+    }
+  });
+
   test("it watches a file", async () => {
     let { promise, resolve } = Promise.withResolvers<void>();
     let entries: any = [];

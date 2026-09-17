@@ -1,6 +1,6 @@
 use core::cell::Cell;
 use core::ptr::NonNull;
-use core::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicI32, AtomicU16, Ordering};
 use std::thread::{self, ThreadId};
 use std::time::Instant;
 
@@ -458,6 +458,9 @@ pub struct StatWatcher {
     poll_ref: JsCell<KeepAlive>,
 
     last_stat: Guarded<PosixStat>,
+    /// The errno of the last `stat()`, 0 when it succeeded. libuv calls the
+    /// listener again when the error code changes while the stat keeps failing.
+    last_errno: AtomicU16,
 
     scheduler: RefPtr<StatWatcherScheduler>,
 }
@@ -740,18 +743,18 @@ impl StatWatcher {
     /// Pool thread (the scheduler's pass).
     fn restat(&self, ticket: &bun_jsc::Ticket) {
         log!("recalling stat");
-        let stat = restat_impl(&self.path);
-        let res = match stat {
-            Ok(res) => res,
+        let (res, errno) = match restat_impl(&self.path) {
+            Ok(res) => (res, 0),
             // SAFETY: all-zero is a valid PosixStat (POD #[repr(C)])
-            Err(_) => bun_core::ffi::zeroed::<PosixStat>(),
+            Err(err) => (bun_core::ffi::zeroed::<PosixStat>(), err.errno),
         };
 
         let last_stat = self.get_last_stat();
 
         // Ignore atime changes when comparing stats
         // Compare field-by-field to avoid false positives from padding bytes
-        if res.dev == last_stat.dev
+        if errno == self.last_errno.load(Ordering::Relaxed)
+            && res.dev == last_stat.dev
             && res.ino == last_stat.ino
             && res.mode == last_stat.mode
             && res.nlink == last_stat.nlink
@@ -772,6 +775,7 @@ impl StatWatcher {
         }
 
         self.set_last_stat(&res);
+        self.last_errno.store(errno, Ordering::Relaxed);
         // R-2: derive the ctx pointer from `&self` — the callback derefs it as
         // shared (`&*const`), so no write provenance is required.
         let this_ptr: *mut StatWatcher = self.as_ctx_ptr();
@@ -862,6 +866,7 @@ impl StatWatcher {
             // InitStatTask is responsible for setting this
             // SAFETY: all-zero is a valid PosixStat (POD #[repr(C)])
             last_stat: Guarded::init(bun_core::ffi::zeroed::<PosixStat>()),
+            last_errno: AtomicU16::new(0),
             scheduler: Self::lazy_scheduler(vm),
         });
         let this_ptr = bun_core::heap::into_raw(this);
@@ -1073,11 +1078,12 @@ impl InitialStatTask {
                 this_ref.set_last_stat(res);
                 this_ref.post_to_js_thread(StatWatcherHop::InitialStatSuccess, &ticket);
             }
-            Err(_) => {
+            Err(err) => {
                 // on enoent, eperm, we call cb with two zeroed stat objects
                 // and store previous stat as a zeroed stat object, and then call the callback.
                 // SAFETY: all-zero is a valid PosixStat (POD #[repr(C)])
                 this_ref.set_last_stat(&bun_core::ffi::zeroed::<PosixStat>());
+                this_ref.last_errno.store(err.errno, Ordering::Relaxed);
                 this_ref.post_to_js_thread(StatWatcherHop::InitialStatError, &ticket);
             }
         }

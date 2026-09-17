@@ -560,8 +560,9 @@ impl<'a> URL<'a> {
         bun_core::ip_address::is_ip_address(self.hostname)
     }
 
+    /// A URL with no port uses the default port of its scheme.
     pub fn has_valid_port(&self) -> bool {
-        self.get_port().unwrap_or(0) > 0
+        self.port.is_empty() || self.get_port().unwrap_or(0) > 0
     }
 
     pub fn is_empty(&self) -> bool {

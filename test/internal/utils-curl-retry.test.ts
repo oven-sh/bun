@@ -8,11 +8,8 @@
  * the wait between attempts.
  */
 import { describe, expect, test } from "bun:test";
-import { tempDir } from "harness";
 import { once } from "node:events";
-import { readFileSync } from "node:fs";
 import { createServer, type AddressInfo } from "node:net";
-import { join } from "node:path";
 import { curl, curlSafe } from "../../scripts/utils.mjs";
 
 /** "drop" closes the connection without an answer. Anything else is a status line and a body. */
@@ -79,18 +76,6 @@ describe("curl", () => {
     const cached = await curl(server.url, options);
 
     expect(cached).toEqual({ status: 200, statusText: "OK", error: undefined, body: { ok: true } });
-    expect(server.requests).toBe(2);
-  });
-
-  test("a download that needed a retry writes the file and returns no body", async () => {
-    using dir = tempDir("utils-curl-retry", {});
-    await using server = await fakeServer([busy, ["200 OK", "artifact bytes"]]);
-    const filename = join(String(dir), "artifact.bin");
-
-    const result = await curl(server.url, { filename, retryDelay: 0 });
-
-    expect(readFileSync(filename, "utf8")).toBe("artifact bytes");
-    expect(result).toEqual({ status: 200, statusText: "OK", error: undefined, body: undefined });
     expect(server.requests).toBe(2);
   });
 

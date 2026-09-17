@@ -14,6 +14,7 @@
 #include "JavaScriptCore/ErrorInstance.h"
 #include "JavaScriptCore/JSString.h"
 #include "JavaScriptCore/JSType.h"
+#include "JavaScriptCore/MathCommon.h"
 #include "JavaScriptCore/Symbol.h"
 #include "wtf/Assertions.h"
 #include "wtf/Vector.h"
@@ -351,6 +352,12 @@ void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, MessageBuilder& buil
 {
     ASSERT(!arg.isEmpty());
     if (!arg.isCell()) {
+        // util.inspect and util.format's %s both print -0 with its sign. ToString drops it.
+        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/inspect.js#L2191-L2197
+        if (arg.isDouble() && JSC::isNegativeZero(arg.asDouble())) {
+            builder.append("-0"_s);
+            return;
+        }
         builder.append(arg.toWTFStringForConsole(globalObject));
         return;
     }

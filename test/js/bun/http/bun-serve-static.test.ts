@@ -415,13 +415,13 @@ describe("static route Connection: close", () => {
   });
   afterAll(() => dir[Symbol.dispose]());
 
-  // Serves `route` at /r with `connection` as its Connection header. `ran`
-  // lists the requests that reached the fetch handler.
+  // Serves `route` at /r with one Connection header entry for each value of
+  // `connection`. `ran` lists the requests that reached the fetch handler.
   async function serveAndExchange(
     protocol: string,
     route: Route,
     payload: string,
-    { connection = "close" as string | null, expected = 1, pipelined = false } = {},
+    { connection = ["close"] as string[], expected = 1, pipelined = false } = {},
   ) {
     const ran: string[] = [];
     await using server = Bun.serve({
@@ -430,7 +430,7 @@ describe("static route Connection: close", () => {
       tls: protocol === "https" ? tlsCert : undefined,
       development: false,
       idleTimeout: 0,
-      routes: { "/r": route(connection === null ? {} : { headers: { Connection: connection } }) },
+      routes: { "/r": route({ headers: connection.map(value => ["Connection", value]) }) },
       fetch(req) {
         ran.push(new URL(req.url).pathname);
         return new Response("fallback");
@@ -489,9 +489,14 @@ describe("static route Connection: close", () => {
       });
     });
 
-    test.each(["Close", "keep-alive, close"])("Connection: %s", async connection => {
+    test.each([
+      { name: "Close", connection: ["Close"] },
+      { name: "keep-alive, close", connection: ["keep-alive, close"] },
+      // Headers joins the two entries into "keep-alive, close".
+      { name: "keep-alive and close in two entries", connection: ["keep-alive", "close"] },
+    ])("Connection: $name", async ({ connection }) => {
       const expected = {
-        responses: [{ status: 200, connection: [`Connection: ${connection}`] }],
+        responses: [{ status: 200, connection: [`Connection: ${connection.join(", ")}`] }],
         ran: [],
         closedByServer: true,
       };
@@ -527,10 +532,10 @@ describe("static route Connection: close", () => {
     test.skipIf(isWindows)("Bun.file route, pipelined", () => pipelined(file));
 
     test.each([
-      ["no Connection header", null],
-      ["Connection: keep-alive", "keep-alive"],
-    ])("keeps the connection open with %s", async (_, connection) => {
-      const kept = { status: 200, connection: connection === null ? [] : [`Connection: ${connection}`] };
+      { name: "no Connection header", connection: [] },
+      { name: "Connection: keep-alive", connection: ["keep-alive"] },
+    ])("keeps the connection open with $name", async ({ connection }) => {
+      const kept = { status: 200, connection: connection.map(value => `Connection: ${value}`) };
       const expected = { responses: [kept, { status: 200, connection: [] }], ran: ["/second"], closedByServer: false };
       expect({
         static: await serveAndExchange(protocol, text, get(), { connection }),

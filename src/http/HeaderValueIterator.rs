@@ -55,7 +55,9 @@ pub fn connection_header_keep_alive(value: &[u8]) -> Option<bool> {
     keep_alive
 }
 
-/// True if `headers` carries a `Connection` header with the `close` option.
+/// True if the `Connection` header of `headers` carries the `close` option.
+/// Like `Headers::get`, this reads the first `Connection` entry. A snapshot of
+/// `FetchHeaders` has one entry, because `FetchHeaders` joins repeated values.
 pub fn headers_have_connection_close(headers: &crate::Headers) -> bool {
     headers
         .get(b"connection")

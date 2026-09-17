@@ -32,6 +32,7 @@
 #include "ScriptExecutionContext.h"
 #include "headers-handwritten.h"
 #include "ZigGlobalObject.h"
+#include "ModuleGraph.h"
 #include "FormatStackTraceForJS.h"
 #include "headers.h"
 #include "JSEnvironmentVariableMap.h"
@@ -1332,6 +1333,8 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
     auto& vm = JSC::getVM(globalObject);
     if (vm.hasPendingTerminationException()) [[unlikely]]
         return true;
+    // The process's handlers are the realm's: they run as it, whichever Bun.ModuleGraph's error this is.
+    Bun::ErrorHandlerContextScope inRealmsContext(globalObject, nullptr);
 
     // Node exits with code 6 (InvalidFatalExceptionMonkeyPatching) when process._fatalException
     // is replaced with a non-callable. Top exception scope: no caller declares a ThrowScope
@@ -1486,6 +1489,8 @@ extern "C" int Bun__handleUnhandledRejection(JSC::JSGlobalObject* lexicalGlobalO
     if (vm.hasPendingTerminationException()) [[unlikely]]
         return true;
     auto* process = globalObject->processObject();
+    // As in Bun__handleUncaughtException.
+    Bun::ErrorHandlerContextScope inRealmsContext(globalObject, nullptr);
 
     auto eventType = Identifier::fromString(vm, "unhandledRejection"_s);
     auto& wrapped = process->wrapped();

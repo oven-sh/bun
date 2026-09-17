@@ -130,6 +130,23 @@ void disposeModuleGraphOfContext(WebCore::ScriptExecutionContext&);
 // What runs while this is alive runs inside a graph's context: an async context frame naming
 // the graph is current, and every continuation captured meanwhile carries it. Nothing for a
 // null graph, or when already inside it.
+// What runs while this is alive runs in `graph`'s context (null: the realm's own). For a call made
+// from wherever an error is being delivered: a handler runs as its owner, not as whoever failed.
+// Only the async context is swapped (ModuleGraphContextScope is for native code coming from the
+// event loop).
+class ErrorHandlerContextScope {
+    WTF_MAKE_NONCOPYABLE(ErrorHandlerContextScope);
+    WTF_FORBID_HEAP_ALLOCATION;
+
+public:
+    ErrorHandlerContextScope(Zig::GlobalObject*, JSModuleGraph* owner);
+    ~ErrorHandlerContextScope();
+
+private:
+    Zig::GlobalObject* m_globalObject;
+    JSC::JSValue m_previous;
+};
+
 class ModuleGraphContextScope {
     WTF_MAKE_NONCOPYABLE(ModuleGraphContextScope);
     WTF_FORBID_HEAP_ALLOCATION;

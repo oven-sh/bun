@@ -1628,6 +1628,46 @@ describe("Bun.ModuleGraph — an error belongs to the context it happens in, wha
     expect(exitCode).toBe(0);
   });
 
+  test("the process's own uncaughtException and unhandledRejection handlers run in the host's context, whichever graph failed", async () => {
+    using d = tempDir("module-graph-process-handlers-context", {
+      "tenant.mjs": `
+        export const throws = () => setTimeout(() => { throw new Error("thrown"); }, 0);
+        export const rejects = () => { Promise.reject(new Error("rejected")); };
+      `,
+      "main.mjs": `
+        const told = [];
+        const where = () => Bun.ModuleGraph.current === undefined ? "the host's context" : "a graph's context";
+        let started;
+        // What the handler starts is the host's: it is still there after the graph that failed is disposed.
+        const handle = kind => error => { told.push(kind + " of '" + error.message + "' handled in " + where()); started = setTimeout(() => told.push("what the handler started ran, in " + where()), 20); };
+        process.on("uncaughtException", handle("uncaughtException"));
+        process.on("unhandledRejection", handle("unhandledRejection"));
+        const until = async condition => { while (!condition()) await new Promise(resolve => setImmediate(resolve)); };
+        const out = [];
+        for (const how of ["throws", "rejects"]) {
+          told.length = 0;
+          const graph = new Bun.ModuleGraph();   // no onError anywhere: the process's handlers take it
+          const tenant = await graph.import(import.meta.dir + "/tenant.mjs?" + how);
+          graph.run(() => tenant[how]());
+          await until(() => told.length >= 1);
+          graph.dispose();
+          await until(() => told.length >= 2);
+          out.push(...told);
+        }
+        console.log(JSON.stringify(out, null, 1));
+        process.exit(0);
+      `,
+    });
+    const { stdout, exitCode } = await runBun(["main.mjs"], { cwd: String(d) });
+    expect(JSON.parse(stdout)).toEqual([
+      "uncaughtException of 'thrown' handled in the host's context",
+      "what the handler started ran, in the host's context",
+      "unhandledRejection of 'rejected' handled in the host's context",
+      "what the handler started ran, in the host's context",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
   test("createRequire() and new Module() belong to the context they are called in", async () => {
     using d = tempDir("module-graph-node-module-context", {
       "who.cjs": `module.exports = typeof TENANT === "undefined" ? "the host's" : "the graph's";`,

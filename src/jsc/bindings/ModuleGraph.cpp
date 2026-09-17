@@ -175,8 +175,6 @@ JSModuleGraph* moduleGraphRejecting(Zig::GlobalObject* globalObject)
 
 // ─── onError ─────────────────────────────────────────────────────────────────────────
 
-static JSValue makeContextCurrent(Zig::GlobalObject*, JSModuleGraph*);
-
 static bool deliverToOnError(Zig::GlobalObject* globalObject, JSModuleGraph* graph, JSValue error, ASCIILiteral kind)
 {
     graph = graphGivenErrorsOf(graph);
@@ -190,11 +188,7 @@ static bool deliverToOnError(Zig::GlobalObject* globalObject, JSModuleGraph* gra
     args.append(jsString(vm, String(kind)));
     // The handler is its maker's: it runs in the context the graph was made in (the host's, or the
     // enclosing graph's), so what it throws, rejects or starts is that context's.
-    JSValue previous = makeContextCurrent(globalObject, graph->maker());
-    auto leaveMakersContext = makeScopeExit([&] {
-        if (previous)
-            globalObject->m_asyncContextData.get()->putInternalField(vm, 0, previous);
-    });
+    ErrorHandlerContextScope inMakersContext(globalObject, graph->maker());
     JSC::call(globalObject, onError, getCallData(onError), jsUndefined(), args);
     if (scope.exception()) [[unlikely]] {
         if (vm.hasPendingTerminationException())
@@ -384,6 +378,18 @@ static JSValue makeContextCurrent(Zig::GlobalObject* globalObject, JSModuleGraph
         frame = createModuleGraphFrame(globalObject, graph, previous);
     asyncContextData->putInternalField(globalObject->vm(), 0, frame);
     return previous;
+}
+
+ErrorHandlerContextScope::ErrorHandlerContextScope(Zig::GlobalObject* globalObject, JSModuleGraph* owner)
+    : m_globalObject(globalObject)
+    , m_previous(makeContextCurrent(globalObject, owner))
+{
+}
+
+ErrorHandlerContextScope::~ErrorHandlerContextScope()
+{
+    if (m_previous)
+        m_globalObject->m_asyncContextData.get()->putInternalField(m_globalObject->vm(), 0, m_previous);
 }
 
 // As makeContextCurrent, for native code coming from the event loop: what it entered is what a

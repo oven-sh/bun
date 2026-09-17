@@ -106,9 +106,11 @@ impl Query {
             && !range.has_right()
     }
 
-    /// `Group::satisfies` for one AND chain, with the same prerelease rule.
+    /// `Group::satisfies` for one AND chain, with the same prerelease rule. `*` admits a prerelease too.
     fn admits(&self, version: Version, query_buf: &[u8], version_buf: &[u8]) -> bool {
-        if version.tag.has_pre() {
+        if self.admits_all() {
+            true
+        } else if version.tag.has_pre() {
             let mut pre_matched = false;
             self.satisfies_pre(version, query_buf, version_buf, &mut pre_matched) && pre_matched
         } else {
@@ -120,18 +122,16 @@ impl Query {
 impl Group {
     /// Whether some version satisfies both groups; an exact version goes through `satisfies`, two ranges compare bounds only.
     pub fn intersects(&self, self_buf: &[u8], other: &Group, other_buf: &[u8]) -> bool {
-        if other.has_branch_admitting_all() {
-            return true;
-        }
         let mut a = Some(&self.head);
         while let Some(list_a) = a {
             a = list_a.next.as_deref();
-            if list_a.head.admits_all() {
-                return true;
-            }
             if let Some(version) = list_a.head.exact_version() {
-                if other.satisfies(version, other_buf, self_buf) {
-                    return true;
+                let mut b = Some(&other.head);
+                while let Some(list_b) = b {
+                    b = list_b.next.as_deref();
+                    if list_b.head.admits(version, other_buf, self_buf) {
+                        return true;
+                    }
                 }
                 continue;
             }
@@ -155,17 +155,6 @@ impl Group {
                     return true;
                 }
             }
-        }
-        false
-    }
-
-    fn has_branch_admitting_all(&self) -> bool {
-        let mut list = Some(&self.head);
-        while let Some(l) = list {
-            if l.head.admits_all() {
-                return true;
-            }
-            list = l.next.as_deref();
         }
         false
     }

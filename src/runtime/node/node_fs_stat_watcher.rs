@@ -32,14 +32,13 @@ macro_rules! log {
     ($($arg:tt)*) => { bun_output::scoped_log!(StatWatcher, $($arg)*) };
 }
 
-/// `None` (the `stat()` failed) becomes the zeroed stats object node reports
-/// for a missing file.
 fn stat_to_js_stats(
     global_this: &JSGlobalObject,
-    stats: Option<&PosixStat>,
+    stats: &Option<PosixStat>,
     bigint: bool,
 ) -> JsResult<JSValue> {
-    let stats = stats.copied().unwrap_or_else(bun_core::ffi::zeroed);
+    // node reports a zeroed stats object while `stat()` fails.
+    let stats = stats.unwrap_or_else(bun_core::ffi::zeroed);
     if bigint {
         StatsBig::init(&stats).to_js(global_this)
     } else {
@@ -460,9 +459,7 @@ pub struct StatWatcher {
 
     poll_ref: JsCell<KeepAlive>,
 
-    /// The result of the most recent `stat()`: `None` when it failed. The
-    /// stat reported as `previous` lives in the JS `prevStat` slot instead,
-    /// which a failed `stat()` leaves alone.
+    /// The most recent `stat()` result. `None` when it failed.
     last_stat: Guarded<Option<PosixStat>>,
 
     scheduler: RefPtr<StatWatcherScheduler>,
@@ -602,9 +599,9 @@ impl StatWatcher {
     }
 
     /// Set the last stat.
-    fn set_last_stat(&self, stat: Option<&PosixStat>) {
+    fn set_last_stat(&self, stat: &Option<PosixStat>) {
         let mut value = self.last_stat.lock();
-        *value = stat.copied();
+        *value = *stat;
         // unlock on Drop of guard
     }
 
@@ -693,11 +690,7 @@ impl StatWatcher {
 
         // Propagated to the task fold: reporting here would leave a
         // termination pending for the next queued task's JS entry.
-        let jsvalue = stat_to_js_stats(
-            global_this,
-            this_ref.get_last_stat().as_ref(),
-            this_ref.bigint,
-        )?;
+        let jsvalue = stat_to_js_stats(global_this, &this_ref.get_last_stat(), this_ref.bigint)?;
         js::prev_stat_set_cached(js_this, global_this, jsvalue);
 
         // SAFETY: scheduler is live (`RefPtr`); `this` is live (ref'd, guard above).
@@ -722,11 +715,7 @@ impl StatWatcher {
             return Ok(());
         };
         let global_this = this_ref.global_this();
-        let jsvalue = stat_to_js_stats(
-            global_this,
-            this_ref.get_last_stat().as_ref(),
-            this_ref.bigint,
-        )?;
+        let jsvalue = stat_to_js_stats(global_this, &this_ref.get_last_stat(), this_ref.bigint)?;
         js::prev_stat_set_cached(js_this, global_this, jsvalue);
 
         let result = js::listener_get_cached(js_this).unwrap().call(
@@ -754,39 +743,34 @@ impl StatWatcher {
     /// Pool thread (the scheduler's pass).
     fn restat(&self, ticket: &bun_jsc::Ticket) {
         log!("recalling stat");
-        let res = restat_impl(&self.path).ok();
+        // Not ported (#43051): libuv also calls back when the error code of a failed stat changes.
+        let stat = restat_impl(&self.path).ok();
+        let res = stat.unwrap_or_else(bun_core::ffi::zeroed);
+        let last_stat = self.get_last_stat().unwrap_or_else(bun_core::ffi::zeroed);
 
-        let unchanged = match (&res, &self.get_last_stat()) {
-            // Ignore atime changes when comparing stats
-            // Compare field-by-field to avoid false positives from padding bytes
-            (Some(res), Some(last_stat)) => {
-                res.dev == last_stat.dev
-                    && res.ino == last_stat.ino
-                    && res.mode == last_stat.mode
-                    && res.nlink == last_stat.nlink
-                    && res.uid == last_stat.uid
-                    && res.gid == last_stat.gid
-                    && res.rdev == last_stat.rdev
-                    && res.size == last_stat.size
-                    && res.blksize == last_stat.blksize
-                    && res.blocks == last_stat.blocks
-                    && res.mtim.sec == last_stat.mtim.sec
-                    && res.mtim.nsec == last_stat.mtim.nsec
-                    && res.ctim.sec == last_stat.ctim.sec
-                    && res.ctim.nsec == last_stat.ctim.nsec
-                    && res.birthtim.sec == last_stat.birthtim.sec
-                    && res.birthtim.nsec == last_stat.birthtim.nsec
-            }
-            // libuv also calls back when the error code of the failed stat
-            // changes (`busy_polling != req->result`). That is not ported.
-            (None, None) => true,
-            (Some(_), None) | (None, Some(_)) => false,
-        };
-        if unchanged {
+        // Ignore atime changes when comparing stats
+        // Compare field-by-field to avoid false positives from padding bytes
+        if res.dev == last_stat.dev
+            && res.ino == last_stat.ino
+            && res.mode == last_stat.mode
+            && res.nlink == last_stat.nlink
+            && res.uid == last_stat.uid
+            && res.gid == last_stat.gid
+            && res.rdev == last_stat.rdev
+            && res.size == last_stat.size
+            && res.blksize == last_stat.blksize
+            && res.blocks == last_stat.blocks
+            && res.mtim.sec == last_stat.mtim.sec
+            && res.mtim.nsec == last_stat.mtim.nsec
+            && res.ctim.sec == last_stat.ctim.sec
+            && res.ctim.nsec == last_stat.ctim.nsec
+            && res.birthtim.sec == last_stat.birthtim.sec
+            && res.birthtim.nsec == last_stat.birthtim.nsec
+        {
             return;
         }
 
-        self.set_last_stat(res.as_ref());
+        self.set_last_stat(&stat);
         // R-2: derive the ctx pointer from `&self` — the callback derefs it as
         // shared (`&*const`), so no write provenance is required.
         let this_ptr: *mut StatWatcher = self.as_ctx_ptr();
@@ -815,11 +799,8 @@ impl StatWatcher {
         let global_this = this_ref.global_this();
         let prev_jsvalue = js::prev_stat_get_cached(js_this).unwrap_or(JSValue::UNDEFINED);
         let last_stat = this_ref.get_last_stat();
-        let current_jsvalue = stat_to_js_stats(global_this, last_stat.as_ref(), this_ref.bigint)?;
-        // A failed `stat()` does not become `previous`: when the file comes
-        // back, node still reports the stat from before it went missing.
-        // libuv's `poll_cb` saves `ctx->statbuf` only after a successful stat:
-        // https://github.com/libuv/libuv/blob/5152db2cbfeb5582e9c27c5ea1dba2cd9e10759b/src/fs-poll.c#L200-L218
+        let current_jsvalue = stat_to_js_stats(global_this, &last_stat, this_ref.bigint)?;
+        // A failed stat() keeps `previous`, like libuv's poll_cb: https://github.com/libuv/libuv/blob/5152db2cbfeb5582e9c27c5ea1dba2cd9e10759b/src/fs-poll.c#L200-L218
         if last_stat.is_some() {
             js::prev_stat_set_cached(js_this, global_this, current_jsvalue);
         }
@@ -1088,15 +1069,15 @@ impl InitialStatTask {
 
         let stat = restat_impl(&this_ref.path);
         match stat {
-            Ok(ref res) => {
+            Ok(res) => {
                 // we store the stat, but do not call the callback
-                this_ref.set_last_stat(Some(res));
+                this_ref.set_last_stat(&Some(res));
                 this_ref.post_to_js_thread(StatWatcherHop::InitialStatSuccess, &ticket);
             }
             Err(_) => {
                 // on enoent, eperm, we call cb with two zeroed stat objects
                 // and store previous stat as a zeroed stat object, and then call the callback.
-                this_ref.set_last_stat(None);
+                this_ref.set_last_stat(&None);
                 this_ref.post_to_js_thread(StatWatcherHop::InitialStatError, &ticket);
             }
         }

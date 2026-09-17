@@ -367,8 +367,8 @@ unsafe impl Send for WalkTask {}
 /// While a scan is pending the `Glob` wrapper reports `hasPendingActivity`
 /// (so it is not collected); released on the JS thread with the completion.
 pub(crate) struct PendingScan(JsPtr<AtomicUsize>);
-// SAFETY: a counter inside the Glob's native part, which its wrapper owns.
-unsafe impl bun_jsc::job::JsAffine for PendingScan {}
+// JS-thread state: a counter inside the Glob's native part, which its wrapper owns.
+impl bun_jsc::job::JsAffine for PendingScan {}
 impl PendingScan {
     fn new(counter: &AtomicUsize) -> Self {
         let _ = counter.fetch_add(1, Ordering::SeqCst);

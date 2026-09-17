@@ -1017,8 +1017,7 @@ pub fn derive_js_affine(input: TokenStream) -> TokenStream {
     // The field checks sit in an associated const on the type itself, so its
     // generic parameters are in scope and nothing is left unused.
     quote! {
-        // SAFETY: every field is `JsAffine` (checked below).
-        unsafe impl #impl_g ::bun_jsc::job::JsAffine for #name #ty_g #where_g {}
+        impl #impl_g ::bun_jsc::job::JsAffine for #name #ty_g #where_g {}
         #[doc(hidden)]
         impl #impl_g #name #ty_g #where_g {
             pub const __JS_AFFINE_FIELDS: () = {

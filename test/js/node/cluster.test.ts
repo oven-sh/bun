@@ -853,6 +853,67 @@ if (cluster.isPrimary) {
   expect(stdout).toContain("reply: echo:hi");
 }, 30_000);
 
+test("TLS cluster worker whose listen() fails while it loads addContext() entries ends up closed", async () => {
+  const dir = tempDirWithFiles("bun-test", {
+    "cert.pem": tlsCerts.cert,
+    "key.pem": tlsCerts.key,
+    "main.ts": `
+const cluster = require("node:cluster");
+const tls = require("node:tls");
+const fs = require("node:fs");
+const path = require("node:path");
+const key = fs.readFileSync(path.join(__dirname, "key.pem"));
+const cert = fs.readFileSync(path.join(__dirname, "cert.pem"));
+
+if (cluster.isPrimary) {
+  const worker = cluster.fork();
+  worker.on("message", msg => {
+    console.log("after failed listen:", JSON.stringify(msg));
+    if (msg.listeningEvent) {
+      worker.kill();
+      process.exit(1);
+    }
+  });
+  cluster.on("listening", (w, address) => {
+    const c = tls.connect({ port: address.port, host: "127.0.0.1", rejectUnauthorized: false });
+    c.setEncoding("utf8");
+    c.on("data", d => {
+      console.log("reply:", d);
+      c.end();
+      worker.kill();
+      process.exit(0);
+    });
+    c.on("error", e => {
+      console.log("client error:", e.code);
+      process.exit(1);
+    });
+  });
+} else {
+  const bad = tls.createServer({ key, cert }, socket => socket.end());
+  // Two names with more than 10 labels land on one node of the native SNI tree
+  // (#43092), so listen() rejects the second one as a duplicate after the bind.
+  const name = "a.b.c.d.e.f.g.h.i.j.k.example";
+  bad.addContext(name, { key, cert });
+  bad.addContext(name + ".", { key, cert });
+  bad.on("listening", () => process.send({ listeningEvent: true }));
+  bad.on("error", err => {
+    process.send({ error: err.message, listening: bad.listening, address: bad.address() });
+    // The worker's cluster state is still usable after the failure.
+    const good = tls.createServer({ key, cert }, socket => socket.end("ok"));
+    good.listen(0);
+  });
+  bad.listen(0);
+}
+`,
+  });
+  const { stdout } = await bunRun(joinP(dir, "main.ts"), bunEnv);
+  expect(stdout).toContain(
+    'after failed listen: {"error":"Failed to register SNI for \'a.b.c.d.e.f.g.h.i.j.k.example.\'","listening":false,"address":null}',
+  );
+  expect(stdout).not.toContain("listeningEvent");
+  expect(stdout).toContain("reply: ok");
+}, 30_000);
+
 test("plain worker listening on a key already owned by a TLS shared-only handle fails with EINVAL", async () => {
   const dir = tempDirWithFiles("bun-test", {
     "cert.pem": tlsCerts.cert,

@@ -1511,6 +1511,7 @@ impl QuicEndpoint {
             if let Some(callback) = callbacks::get(global, "onSessionNew") {
                 let vm = global.bun_vm().as_mut();
                 vm.event_loop_ref().run_callback(
+                    bun_event_loop::ContextId::NONE,
                     callback,
                     global,
                     self.this_value.get().get(),
@@ -2181,6 +2182,7 @@ impl QuicEndpoint {
         if let Some(callback) = callbacks::get(global, "onEndpointClose") {
             let vm = global.bun_vm().as_mut();
             vm.event_loop_ref().run_callback(
+                bun_event_loop::ContextId::NONE,
                 callback,
                 global,
                 self.this_value.get().get(),

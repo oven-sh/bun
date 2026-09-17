@@ -2304,10 +2304,7 @@ export function compileFixture(sourcePath: string, options: { flags?: string[] }
   return outPath;
 }
 
-export const rss: () => number =
-  process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
-    ? (Bun.unsafe.memoryFootprint as () => number)
-    : process.memoryUsage.rss;
+export const rss: () => number = process.memoryUsage.rss;
 
 /** Read exactly `len` bytes from `fd` at absolute `offset`. */
 export function preadExact(fd: number, offset: number, len: number): Buffer {

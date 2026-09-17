@@ -323,16 +323,29 @@ function stopPerf(target, key, context) {
  * One registered observer of node-only entry types. The PerformanceObserver
  * wrapper in node:perf_hooks owns one of these when it observes such a type.
  */
+const isFrameOfStoppedModuleGraph = $newCppFunction("ModuleGraph.cpp", "jsFunctionIsFrameOfStoppedModuleGraph", 1);
+/** Whether the script that is running is a disposed `Bun.ModuleGraph`'s (what it had queued still runs). */
+function isStoppedModuleGraphRunning() {
+  return isFrameOfStoppedModuleGraph(require("internal/async_context_frame").current());
+}
+
 class NodeEntryObserver {
   callback;
   owner;
   types = new Set();
   buffer = [];
   scheduled = false;
+  // The frame of the Bun.ModuleGraph the observer was made in, if any. Entries are delivered in
+  // that graph's context (or the host's), not the one of whatever produced the entry: set from a
+  // graph that is then disposed, the immediate would be cancelled with `scheduled` left true, and
+  // this observer would never be called again. An observer made in a graph goes with it: see
+  // bufferEntry.
+  frame;
 
   constructor(callback, owner) {
     this.callback = callback;
     this.owner = owner;
+    this.frame = require("internal/async_context_frame").currentGraphFrame();
   }
 
   observe(types) {
@@ -359,10 +372,16 @@ class NodeEntryObserver {
     if (!this.types.has(entry.entryType)) {
       return;
     }
+    // Its graph was disposed: nothing of it runs again, so it would buffer for ever (and keep
+    // the entry type produced for nobody).
+    if (isFrameOfStoppedModuleGraph(this.frame)) {
+      this.disconnect();
+      return;
+    }
     this.buffer.push(entry);
     if (!this.scheduled) {
       this.scheduled = true;
-      setImmediate(() => {
+      const deliver = () => {
         this.scheduled = false;
         const entries = this.buffer;
         if (entries.length === 0) {
@@ -370,7 +389,10 @@ class NodeEntryObserver {
         }
         this.buffer = [];
         this.callback.$call(undefined, makeNodeEntryList(entries), this.owner);
-      });
+      };
+      const AsyncContextFrame = require("internal/async_context_frame");
+      if (this.frame === undefined && AsyncContextFrame.currentGraph() === undefined) setImmediate(deliver);
+      else AsyncContextFrame.run(this.frame, setImmediate, undefined, deliver);
     }
   }
 }
@@ -401,6 +423,7 @@ const kInternalAssertionSuffix =
 //
 
 export default {
+  isStoppedModuleGraphRunning,
   kInternalAssertionSuffix,
   throwNotImplemented,
   hideFromStack,

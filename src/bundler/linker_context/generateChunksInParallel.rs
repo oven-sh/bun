@@ -14,7 +14,6 @@ use crate::BundleV2;
 use crate::Chunk;
 use crate::Index;
 use crate::analyze_transpiled_module;
-use crate::analyze_transpiled_module::StringIDExt as _;
 use crate::cheap_prefix_normalizer;
 use crate::chunk::{ReferencePathStyle, SourceMapShiftTracking};
 use crate::options;
@@ -24,7 +23,6 @@ use crate::LinkerContext;
 use crate::linker_context::generate_compile_result_for_css_chunk::generate_compile_result_for_css_chunk;
 use crate::linker_context::generate_compile_result_for_html_chunk::generate_compile_result_for_html_chunk;
 use crate::linker_context::generate_compile_result_for_js_chunk::generate_compile_result_for_js_chunk;
-use crate::linker_context::metafile_builder;
 use crate::linker_context::output_file_list_builder::OutputFileList as OutputFileListBuilder;
 use crate::linker_context::prepare_css_asts_for_chunk::{
     PrepareCssAstTask, prepare_css_asts_for_chunk,
@@ -36,8 +34,7 @@ use crate::linker_context_mod::{GenerateChunkCtx, PendingPartRange};
 /// Bytecode output file extension (also defined in `writeOutputFilesToDisk.rs`).
 const BYTECODE_EXTENSION: &str = ".jsc";
 
-// `Chunk.final_rel_path` / `metafile_chunk_json` are owned
-// `Box<[u8]>`; assignments
+// `Chunk.final_rel_path` is an owned `Box<[u8]>`; assignments
 // below move the boxed buffer directly — no lifetime promotion needed.
 use crate::linker_context_mod::debug;
 
@@ -61,6 +58,12 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         debug!(" START {} renamers", chunks.len());
         if c.graph.code_splitting && !c.options.minify_identifiers {
             crate::linker_context::cross_chunk_names::assign_unminified(c, chunks)?;
+        }
+        if !c.options.minify_identifiers {
+            c.renamer_rows = crate::linker_context::rename_symbols_in_chunk::renamer_rows(
+                c.graph.symbols.symbols_for_source.len(),
+                chunks,
+            );
         }
         let ctx = GenerateChunkCtx {
             chunk: bun_ptr::BackRef::new_mut(&mut chunks[0]),
@@ -93,6 +96,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             for chunk in chunks.iter_mut() {
                 chunk.nested_scopes_to_rename = Vec::new();
             }
+            crate::linker_context::rename_symbols_in_chunk::log_renamer_tables(chunks);
         }
         if c.graph.code_splitting {
             if c.options.minify_identifiers {
@@ -568,6 +572,8 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         // Fix up each chunk's module_info; every chunk's strings go into one
         // table (`OutputKind::ModuleInfoStringTable`) their bodies index into.
         let mut table_ids: Vec<Vec<u32>> = Vec::new();
+        let unique_key_prefix: &[u8] = &c.unique_key_prefix;
+        let paths = &unique_key_to_path;
         for chunk in chunks.iter_mut() {
             let crate::chunk::Content::Javascript(js) = &mut chunk.content else {
                 continue;
@@ -576,35 +582,13 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 continue;
             };
 
-            // Collect replacements first (can't modify string table while iterating)
-            struct Replacement {
-                old_id: analyze_transpiled_module::StringID,
-                resolved_path: Box<[u8]>,
-            }
-            let mut replacements: Vec<Replacement> = Vec::new();
-
-            // `as_deserialized()` debug-asserts `finalized`; this runs pre-finalize
-            // so `replace_string_id` (asserts `!finalized`) can still mutate.
-            let (strings_buf, strings_lens): (&[u8], &[u32]) = mi.strings();
-            let mut offset: usize = 0;
-            for (string_index, &slen) in strings_lens.iter().enumerate() {
-                let len: usize = usize::try_from(slen).expect("int cast");
-                let s = &strings_buf[offset..][..len];
-                if let Some(resolved_path) = unique_key_to_path.get(s) {
-                    replacements.push(Replacement {
-                        old_id: analyze_transpiled_module::StringID::from_raw(
-                            u32::try_from(string_index).expect("int cast"),
-                        ),
-                        resolved_path: resolved_path.clone(),
-                    });
+            // In place, so the per-build placeholder does not survive as an extra string.
+            mi.rewrite_strings(move |s| {
+                if !s.starts_with(unique_key_prefix) {
+                    return None;
                 }
-                offset += len;
-            }
-
-            for rep in replacements.iter() {
-                let new_id = mi.str(&rep.resolved_path);
-                mi.replace_string_id(rep.old_id, new_id);
-            }
+                paths.get(s).map(|path| &path[..])
+            });
 
             if mi.finalize().is_err() {
                 js.module_info = None;
@@ -671,17 +655,6 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 module_info_strings.count(),
                 table_ids,
             ));
-        }
-    }
-
-    // Generate metafile JSON fragments for each chunk (after paths are resolved)
-    if c.options.metafile {
-        // Reshaped for borrowck — `generate_chunk_json` reads all chunks
-        // immutably while we write one chunk's `metafile_chunk_json`; index split.
-        for i in 0..chunks.len() {
-            let json =
-                metafile_builder::generate_chunk_json(c, &chunks[i], chunks).unwrap_or_default();
-            chunks[i].metafile_chunk_json = json;
         }
     }
 
@@ -864,6 +837,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 SourceMapOption::None => {}
             }
 
+            chunks[ci].final_output_size = buffer.len();
             scc[ci] = Some(buffer);
         }
 
@@ -1281,6 +1255,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
             let output_kind = c.chunk_output_kind(chunk);
 
+            chunk.final_output_size = code_result.buffer.len();
             let chunk_index =
                 output_files.insert_for_chunk(options::OutputFile::init(options::OutputFileInit {
                     data: options::OutputFileData::Buffer {
@@ -1402,6 +1377,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             // else: item at `i` will be dropped by truncate below (impl Drop handles deinit)
         }
         result.truncate(write_idx);
+        debug_assert_no_placeholder_left(c, &result);
         return Ok(result);
     }
 
@@ -1485,7 +1461,24 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             ..Default::default()
         }));
     }
+    debug_assert_no_placeholder_left(c, &result);
     Ok(result)
+}
+
+/// Debug check: no in-memory output may still contain the per-build `unique_key` placeholder prefix.
+fn debug_assert_no_placeholder_left(c: &LinkerContext, files: &[options::OutputFile]) {
+    if !cfg!(debug_assertions) || c.unique_key_prefix.is_empty() {
+        return;
+    }
+    for file in files {
+        debug_assert!(
+            !strings::contains(file.value.as_slice(), &c.unique_key_prefix),
+            "{} ({:?}) still contains the chunk placeholder prefix {}",
+            bstr::BStr::new(&file.dest_path),
+            file.output_kind,
+            bstr::BStr::new(&c.unique_key_prefix),
+        );
+    }
 }
 
 /// `--compile --bytecode`: the executable also carries ahead-of-time bytecode for the internal modules (node:fs, …) the

@@ -286,6 +286,41 @@ struct HttpResponseData;
             return std::string_view(nullptr, 0);
         }
 
+        /* RFC 9112 9.6: "close" is a case-insensitive token in the Connection list. */
+        bool hasConnectionClose()
+        {
+            if (!bf.mightHave("connection")) {
+                return false;
+            }
+            for (Header *h = headers; (++h)->key.length();) {
+                if (h->key.length() != 10 || strncasecmp(h->key.data(), "connection", 10)) {
+                    continue;
+                }
+                const auto value = h->value;
+                size_t pos = 0;
+                while (pos < value.length()) {
+                    while (pos < value.length() && (value[pos] == ' ' || value[pos] == '\t')) {
+                        pos++;
+                    }
+                    size_t tokenStart = pos;
+                    while (pos < value.length() && value[pos] != ',') {
+                        pos++;
+                    }
+                    size_t tokenEnd = pos;
+                    while (tokenEnd > tokenStart && (value[tokenEnd - 1] == ' ' || value[tokenEnd - 1] == '\t')) {
+                        tokenEnd--;
+                    }
+                    if (tokenEnd - tokenStart == 5 && !strncasecmp(value.data() + tokenStart, "close", 5)) {
+                        return true;
+                    }
+                    if (pos < value.length()) {
+                        pos++;
+                    }
+                }
+            }
+            return false;
+        }
+
         struct TransferEncoding {
             bool has: 1 = false;
             bool chunked: 1 = false;
@@ -599,14 +634,12 @@ struct HttpResponseData;
          * at the next request boundary and park the rest", cleared for replay so it can make progress. */
         bool nodeHttpParkAtNextBoundary = false;
         bool nodeHttpSpillReplayScheduled = false;
+        /* A request on this connection had Connection: close or was HTTP/1.0, or a Bun.serve response closed it (RFC 9112 9.6). */
+        bool sawConnectionClose = false;
         WTF::Vector<char> nodeHttpPausedSpill;
     private:
          /* This guy really has only 30 bits since we reserve two highest bits to chunked encoding parsing state */
         uint64_t remainingStreamingBytes = 0;
-        /* node:http compat: a completed request on this connection forbade keep-alive
-         * (Connection: close, or HTTP/1.0), so no further message may be dispatched
-         * (llhttp parses nothing after such a message: HPE_CLOSED_CONNECTION). */
-        bool nodeHttpSawConnectionClose = false;
 
         const size_t MAX_FALLBACK_SIZE = BUN_DEFAULT_MAX_HTTP_HEADER_SIZE;
         /* maxHeaderSize bounds what llhttp counts (URL + field names/values), not framing
@@ -1144,6 +1177,13 @@ struct HttpResponseData;
                     }
                 }
             }
+            /* Must stay below the tunnel check, the park and the CR/LF skip, like llhttp's closed state. */
+            if (sawConnectionClose) {
+                if constexpr (IsNodeHttp) {
+                    return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_CLOSED_CONNECTION);
+                }
+                return HttpParserResult::success(consumedTotal + length, user);
+            }
             auto result = getHeaders(data, data + length, req->headers, req->ancientHttp, isConnectRequest, useStrictMethodValidation, useInsecureHTTPParser, maxHeaderSize);
             if(result.isError()) {
                 return result;
@@ -1169,17 +1209,8 @@ struct HttpResponseData;
             for (HttpRequest::Header *h = req->headers; (++h)->key.length(); ) {
                 req->bf.add(h->key);
             }
-            /* node:http compat: a pipelined request behind one that forbade keep-alive is
-             * never dispatched - node's parser is closed after that message and raises
-             * HPE_CLOSED_CONNECTION ('clientError') on further bytes. The predicate is the
-             * same one that marks the connection for close at dispatch (HttpContext). */
-            if constexpr (IsNodeHttp) {
-                if (nodeHttpSawConnectionClose) {
-                    return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_CLOSED_CONNECTION);
-                }
-                if (req->isAncient() || req->getHeader("connection").length() == 5) {
-                    nodeHttpSawConnectionClose = true;
-                }
+            if (req->isAncient() || req->hasConnectionClose()) {
+                sawConnectionClose = true;
             }
             /* RFC 9112 6.3
             * If a message is received with both a Transfer-Encoding and a Content-Length header field,

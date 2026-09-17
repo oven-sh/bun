@@ -2,7 +2,7 @@ import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isLinux, isWindows, rmScope, rss, tempDir, tempDirWithFiles } from "harness";
 import { mkfifo } from "mkfifo";
-import { closeSync, openSync, unlinkSync, writeSync } from "node:fs";
+import { chmodSync, closeSync, openSync, unlinkSync, writeSync } from "node:fs";
 import { join } from "node:path";
 
 const LARGE_SIZE = 1024 * 1024 * 8;
@@ -1755,3 +1755,48 @@ test.skipIf(!isLinux)("sendfile serves an intact >=1MB file over a unix socket l
   expect(body.length).toBe(data.length);
   expect(body.compare(data)).toBe(0);
 });
+
+// A 304 needs the file's metadata, never its contents: a matching If-None-Match
+// against a user-set ETag is answered from one stat(), without opening the file.
+test.skipIf(isWindows || process.getuid?.() === 0)(
+  "file route answers a matching If-None-Match without opening the file",
+  async () => {
+    const dir = tempDirWithFiles("file-route-304-stat", { "unreadable.txt": "secret", "gone.txt": "gone" });
+    const headers = { ETag: '"v1"' };
+    await using server = Bun.serve({
+      port: 0,
+      routes: {
+        "/unreadable.txt": new Response(Bun.file(join(dir, "unreadable.txt")), { headers }),
+        "/gone.txt": new Response(Bun.file(join(dir, "gone.txt")), { headers }),
+      },
+      fetch: () => new Response("fallback", { status: 404 }),
+    });
+    chmodSync(join(dir, "unreadable.txt"), 0o000);
+    unlinkSync(join(dir, "gone.txt"));
+
+    const match = { headers: { "If-None-Match": '"v1"' } };
+
+    // open() would fail with EACCES and fall through; stat() does not need read access
+    const not_modified = await fetch(new URL("/unreadable.txt", server.url), match);
+    expect(not_modified.status).toBe(304);
+    expect(not_modified.headers.get("ETag")).toBe('"v1"');
+    expect(not_modified.headers.get("Last-Modified")).not.toBeNull();
+    expect(await not_modified.text()).toBe("");
+
+    const head = await fetch(new URL("/unreadable.txt", server.url), { method: "HEAD", ...match });
+    expect(head.status).toBe(304);
+
+    // anything the ETag alone cannot decide still takes the regular path
+    const stale = await fetch(new URL("/unreadable.txt", server.url), { headers: { "If-None-Match": '"v0"' } });
+    expect(await stale.text()).toBe("fallback");
+    const if_match = await fetch(new URL("/unreadable.txt", server.url), {
+      headers: { "If-None-Match": '"v1"', "If-Match": '"v0"' },
+    });
+    expect(await if_match.text()).toBe("fallback");
+
+    // a missing file never validates a cached copy
+    const gone = await fetch(new URL("/gone.txt", server.url), match);
+    expect(gone.status).toBe(404);
+    expect(await gone.text()).toBe("fallback");
+  },
+);

@@ -464,3 +464,45 @@ test("a proxy that refuses CONNECT fails the command with ProxyConnectFailed", a
   expect(stderr).toContain("ProxyConnectFailed");
   expect(exitCode).toBe(1);
 });
+
+describe.concurrent("a registry manifest whose matched version is not an object", () => {
+  const entries = { "a string": "1.0.0", "null": null, "an array": [{ name: "pkg", version: "1.0.0" }] };
+  const commands = [
+    ["info", "pkg"],
+    ["pm", "view", "pkg@1.0.0", "version", "--json"],
+  ];
+
+  for (const [label, entry] of Object.entries(entries)) {
+    for (const command of commands) {
+      test(`${label}: bun ${command.join(" ")}`, async () => {
+        const manifest = JSON.stringify({
+          name: "pkg",
+          "dist-tags": { latest: "1.0.0" },
+          versions: { "1.0.0": entry },
+        });
+        await using server = Bun.serve({
+          port: 0,
+          fetch: () => new Response(manifest, { headers: { "content-type": "application/json" } }),
+        });
+        const dir = tempDirWithFiles("bun-info-version-not-object", {
+          "package.json": JSON.stringify({ name: "test", version: "1.0.0" }),
+          "bunfig.toml": Bun.TOML.stringify({ install: { registry: `http://localhost:${server.port}/` } }),
+        });
+        await using proc = spawn({
+          cmd: [bunExe(), ...command],
+          cwd: dir,
+          env: { ...bunEnv, http_proxy: "", https_proxy: "", HTTP_PROXY: "", HTTPS_PROXY: "" },
+          stdout: "pipe",
+          stderr: "pipe",
+          stdin: "ignore",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, exitCode }).toEqual({
+          stdout: "",
+          stderr: `error: registry manifest for "pkg" has a "1.0.0" version that is not an object\n`,
+          exitCode: 1,
+        });
+      });
+    }
+  }
+});

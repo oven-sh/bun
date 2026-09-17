@@ -223,8 +223,16 @@ pub(crate) fn view(
                     let sliced_version = Semver::SlicedString::init(version_str, version_str);
                     let parsed_version = Semver::Version::parse(sliced_version);
                     if parsed_version.valid && parsed_version.version.max().eql(wanted_version) {
+                        let value = prop.value.expect("infallible: prop has value");
+                        if !matches!(value.data, bun_ast::ExprData::EObject(_)) {
+                            Output::err_generic(
+                                "registry manifest for <b>{}<r> has a <b>{}<r> version that is not an object",
+                                (bun_fmt::quote(name), bun_fmt::quote(version_str)),
+                            );
+                            Global::exit(1);
+                        }
                         version = version_str;
-                        manifest = prop.value.expect("infallible: prop has value");
+                        manifest = value;
                         break 'brk;
                     }
                 }

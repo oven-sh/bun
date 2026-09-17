@@ -288,7 +288,7 @@ pub fn do_patch_commit(
     )
     .expect("formatting into a Vec is infallible");
 
-    let patchfile_contents: Vec<u8> = 'brk: {
+    let patchfile_contents: Option<Vec<u8>> = 'brk: {
         let new_folder = changes_dir;
         let mut buf2 = bun_paths::path_buffer_pool::get();
         let mut buf3 = bun_paths::path_buffer_pool::get();
@@ -354,10 +354,8 @@ pub fn do_patch_commit(
             }
         };
 
-        // `Global::crash()` exits without unwinding, so it skips `restore` below.
-        // Every step that can fail before the diff runs ahead of the renames, and
-        // every exit after them drops `restore` first. Otherwise the nested
-        // node_modules folder stays under its temporary name in the root node_modules.
+        // `Global::crash()` skips the deferred restore below. From the renames on,
+        // a failure leaves `'brk` with `None` and the exit happens after the block.
         let new_folder_handle =
             match Dir::cwd().open_dir(new_folder, sys::OpenDirOptions::default()) {
                 Ok(h) => h,
@@ -426,7 +424,7 @@ pub fn do_patch_commit(
         };
         // deferred restore — one-off rename-back logic on every exit
         // path of `'brk`. Captures borrow into stack buffers.
-        let restore = scopeguard::guard((), |()| {
+        scopeguard::defer! {
             if has_nested_node_modules || bun_patch_tag.is_some() {
                 if has_nested_node_modules {
                     if let Err(e) = sys::renameat_concurrently_a(
@@ -434,14 +432,9 @@ pub fn do_patch_commit(
                         random_tempdir.as_bytes(),
                         new_folder_handle.fd,
                         b"node_modules",
-                        sys::RenameOptions {
-                            move_fallback: true,
-                        },
+                        sys::RenameOptions { move_fallback: true },
                     ) {
-                        bun_core::warn!(
-                            "failed renaming nested node_modules folder, this may cause issues: {}",
-                            e
-                        );
+                        bun_core::warn!("failed renaming nested node_modules folder, this may cause issues: {}", e);
                     }
                 }
 
@@ -451,18 +444,13 @@ pub fn do_patch_commit(
                         patch_tag_tmpname.as_bytes(),
                         new_folder_handle.fd,
                         patch_tag,
-                        sys::RenameOptions {
-                            move_fallback: true,
-                        },
+                        sys::RenameOptions { move_fallback: true },
                     ) {
-                        bun_core::warn!(
-                            "failed renaming the bun patch tag, this may cause issues: {}",
-                            e
-                        );
+                        bun_core::warn!("failed renaming the bun patch tag, this may cause issues: {}", e);
                     }
                 }
             }
-        });
+        }
 
         let paths = bun_patch::git_diff_preprocess_paths(old_folder, new_folder);
         let (opts, _envp_guard) =
@@ -471,14 +459,12 @@ pub fn do_patch_commit(
         let mut spawn_result = match bun_spawn::sync::spawn(&opts) {
             Err(e) => {
                 bun_core::pretty_error!("<r><red>error<r>: failed to make diff {}<r>\n", e.name(),);
-                drop(restore);
-                Global::crash();
+                break 'brk None;
             }
             Ok(Ok(r)) => r,
             Ok(Err(e)) => {
                 bun_core::pretty_error!("<r><red>error<r>: failed to make diff {}<r>\n", e);
-                drop(restore);
-                Global::crash();
+                break 'brk None;
             }
         };
 
@@ -489,8 +475,7 @@ pub fn do_patch_commit(
                         "<r><red>error<r>: failed to make diff {}<r>\n",
                         e.name(),
                     );
-                    drop(restore);
-                    Global::crash();
+                    break 'brk None;
                 }
                 Ok(Ok(stdout)) => stdout,
                 Ok(Err(stderr)) => {
@@ -518,8 +503,7 @@ pub fn do_patch_commit(
                         Truncate { stderr: &stderr }
                     );
                     drop(stderr);
-                    drop(restore);
-                    Global::crash();
+                    break 'brk None;
                 }
             };
 
@@ -534,7 +518,10 @@ pub fn do_patch_commit(
             return Ok(None);
         }
 
-        break 'brk contents;
+        break 'brk Some(contents);
+    };
+    let Some(patchfile_contents) = patchfile_contents else {
+        Global::crash();
     };
 
     // write the patch contents to temp file then rename

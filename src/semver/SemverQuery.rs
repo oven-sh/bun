@@ -6,6 +6,7 @@ use bun_collections::IntegerBitSet;
 use bun_core::strings;
 
 use crate::range::{Comparator, Op as RangeOp};
+use crate::version::Tag;
 use crate::{Range, SlicedString, Version, version};
 
 // Re-export sub-namespace so
@@ -728,6 +729,7 @@ impl Token {
                             major: version.major.unwrap_or(0),
                             minor: 0,
                             patch: 0,
+                            tag: Tag::zero_pre(),
                             ..Default::default()
                         },
                     },
@@ -779,6 +781,7 @@ impl Token {
                             major: version.major.unwrap_or(0),
                             minor: version.minor.unwrap_or(0),
                             patch: 0,
+                            tag: Tag::zero_pre(),
                             ..Default::default()
                         },
                     },
@@ -997,7 +1000,7 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
 
             if hyphenate {
                 let second_parsed = Version::parse(sliced.sub(&input[i..]));
-                let mut second_version = second_parsed.version.min();
+                let second_version = second_parsed.version.min();
                 if second_version.tag.has_build() {
                     list.flags.set(Flags::BUILD);
                 }
@@ -1016,51 +1019,26 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
                         }
                     }
                     Wildcard::Minor => {
-                        // "1.0.0 - 1.x" --> ">=1.0.0 < 2.0.0"
-                        let right = match second_version.major.checked_add(1) {
-                            Some(m) => {
-                                second_version.major = m;
-                                second_version.minor = 0;
-                                second_version.patch = 0;
-                                Comparator {
-                                    op: RangeOp::Lt,
-                                    version: second_version,
-                                }
-                            }
-                            None => Comparator::lt_next_major(second_version.major),
-                        };
-
+                        // "1.0.0 - 1.x" --> ">=1.0.0 <2.0.0-0"
                         Range {
                             left: Comparator {
                                 op: RangeOp::Gte,
                                 version,
                             },
-                            right,
+                            right: Comparator::lt_next_major(second_version.major),
                         }
                     }
                     Wildcard::Patch => {
-                        // "1.0.0 - 1.0.x" --> ">=1.0.0 <1.1.0"
-                        let right = match second_version.minor.checked_add(1) {
-                            Some(m) => {
-                                second_version.minor = m;
-                                second_version.patch = 0;
-                                Comparator {
-                                    op: RangeOp::Lt,
-                                    version: second_version,
-                                }
-                            }
-                            None => Comparator::lt_next_minor(
-                                second_version.major,
-                                second_version.minor,
-                            ),
-                        };
-
+                        // "1.0.0 - 1.0.x" --> ">=1.0.0 <1.1.0-0"
                         Range {
                             left: Comparator {
                                 op: RangeOp::Gte,
                                 version,
                             },
-                            right,
+                            right: Comparator::lt_next_minor(
+                                second_version.major,
+                                second_version.minor,
+                            ),
                         }
                     }
                     Wildcard::None => Range {

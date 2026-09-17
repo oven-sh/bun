@@ -68,10 +68,12 @@ pub enum Tag {
     HTMLRewriterPipeFree,
     /// The pump of an S3 stream upload (`S3UploadStreamWrapper`).
     S3UploadStream,
+    /// A `Bun.cron()` job whose tick returned a promise.
+    CronJob,
 }
 
 impl Tag {
-    pub const COUNT: usize = 11;
+    pub const COUNT: usize = 12;
 
     #[inline]
     const fn from_raw(n: u8) -> Tag {
@@ -87,6 +89,7 @@ impl Tag {
             8 => Tag::HTMLRewriterSuspension,
             9 => Tag::HTMLRewriterPipeFree,
             10 => Tag::S3UploadStream,
+            11 => Tag::CronJob,
             _ => unreachable!(),
         }
     }
@@ -123,6 +126,9 @@ impl NativePromiseContextType for html_rewriter::RewriterPipe {
 }
 impl NativePromiseContextType for crate::webcore::s3::client::S3UploadStreamWrapper {
     const TAG: Tag = Tag::S3UploadStream;
+}
+impl NativePromiseContextType for crate::api::cron::CronJob {
+    const TAG: Tag = Tag::CronJob;
 }
 
 // `&JSGlobalObject` is ABI-identical to a non-null pointer. `ctx` is stored
@@ -208,6 +214,7 @@ fn clear_remembered_cell(ctx: *mut c_void, tag: Tag) {
             Tag::DebugHTTPSServerMuxRequestContext => {
                 (*ctx.cast::<DebugHTTPSServerMuxRequestContext>()).promise_cell_collected()
             }
+            Tag::CronJob => (*ctx.cast::<crate::api::cron::CronJob>()).tick_cell_collected(),
             Tag::HTMLRewriterSuspension | Tag::HTMLRewriterPipeFree | Tag::S3UploadStream => {}
         }
     }
@@ -338,6 +345,12 @@ impl DeferredDerefTask {
                     (*ctx.cast::<crate::webcore::s3::client::S3UploadStreamWrapper>())
                         .handle_reject_stream(JSValue::ZERO);
                 }
+                Tag::CronJob => {
+                    // The tick's promise was collected unsettled.
+                    crate::api::cron::CronJob::tick_promise_collected(NonNull::new_unchecked(
+                        ctx.cast::<crate::api::cron::CronJob>(),
+                    ));
+                }
             }
         }
     }
@@ -370,3 +383,5 @@ const _: () = assert!(
     core::mem::align_of::<crate::webcore::s3::client::S3UploadStreamWrapper>()
         > DeferredDerefTask::TAG_MASK
 );
+const _: () =
+    assert!(core::mem::align_of::<crate::api::cron::CronJob>() > DeferredDerefTask::TAG_MASK);

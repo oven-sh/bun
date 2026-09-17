@@ -1366,8 +1366,10 @@ impl Drop for CronRemoveJob {
 // `unref()` on this same wrapper, so a `noalias` `&mut Self` held across the
 // re-entry is Stacked-Borrows UB and an LLVM-level miscompile hazard. `&self`
 // + `UnsafeCell`-backed fields suppresses `noalias` on the receiver.
+// (Aligned for `NativePromiseContext`, which packs its tag into the pointer's low bits.)
 #[bun_jsc::JsClass(no_constructor)]
 #[derive(bun_ptr::CellRefCounted)]
+#[repr(align(16))]
 pub struct CronJob {
     ref_count: Cell<u32>,
     /// Set from the allocating `RefPtr` so `&self` host fns can reach the
@@ -1390,9 +1392,10 @@ pub struct CronJob {
     /// Last computed wall-clock fire target (ms epoch); floors the next search
     /// so monotonic-vs-wall skew can't recompute the same minute.
     last_next_ms: Cell<f64>,
-    /// The ref held across an in-flight callback promise. Released exactly
-    /// once by either onPromiseResolve/Reject or clearAllForVM(.teardown).
-    pending_ref: JsCell<Option<RefPtr<CronJob>>>,
+    /// Set while a tick's promise is pending: the `NativePromiseContext` cell its reactions were
+    /// given, which holds a ref on the job. The reaction that runs hands the ref back; the
+    /// collector releases it if the promise is never settled; teardown takes it back.
+    tick_cell: Cell<JSValue>,
     /// True between onTimerFire's cb.call() and processing of its result.
     in_fire: Cell<bool>,
     /// The context of the script that called `Bun.cron()`: its ticks are that script's.
@@ -1427,18 +1430,67 @@ impl CronJob {
     /// the wrapper and pass the real Promise to unhandledRejection.
     fn maybe_downgrade(&self) {
         if self.stopped.get()
-            && self.pending_ref.get().is_none()
+            && self.tick_cell.get().is_empty()
             && !matches!(self.this_value.get(), JsRef::Finalized)
         {
             self.this_value.with_mut(|v| v.downgrade());
         }
     }
 
-    /// May free `this`.
-    fn release_pending_ref(this: ThisPtr<Self>) {
-        if let Some(_pending) = this.pending_ref.replace(None) {
-            this.maybe_downgrade();
+    /// The job's script is gone (its context stopped): nothing reads the wrapper again, so the
+    /// callback and what it closes over are not kept for a tick whose promise may never settle.
+    fn let_go_of_wrapper(&self) {
+        if !matches!(self.this_value.get(), JsRef::Finalized) {
+            self.this_value.with_mut(|v| v.downgrade());
         }
+    }
+
+    /// Takes one ref as the cell's claim on the job and remembers the cell.
+    fn create_tick_cell(this: ThisPtr<Self>) -> JSValue {
+        debug_assert!(this.tick_cell.get().is_empty());
+        bun_ptr::CellRefCounted::ref_(&*this);
+        let cell =
+            crate::api::native_promise_context::create(&this.global, this.as_ptr(), JSValue::ZERO);
+        this.tick_cell.set(cell);
+        cell
+    }
+
+    /// A reaction took the claim back from its cell. May free `this`.
+    fn tick_settled(this: ThisPtr<Self>) {
+        this.tick_cell.set(JSValue::ZERO);
+        this.maybe_downgrade();
+        // SAFETY: `this` is live: the claim being released is a ref on it.
+        unsafe {
+            <Self as bun_ptr::CellRefCounted>::deref_nn(core::ptr::NonNull::new_unchecked(this.as_ptr()))
+        };
+    }
+
+    /// The tick's promise will not settle on this VM (it is going): take the claim back, so the
+    /// reactions find an empty cell. May free `this`.
+    fn reclaim_tick_claim(this: ThisPtr<Self>) {
+        let cell = this.tick_cell.get();
+        if !cell.is_empty()
+            && crate::api::native_promise_context::take::<Self>(cell).is_some()
+        {
+            Self::tick_settled(this);
+        }
+    }
+
+    /// From the cell's destructor (GC sweep): the tick's promise was collected unsettled. The
+    /// field stops pointing at the dying cell now (a plain write); the claim is released from
+    /// the event loop ([`tick_promise_collected`](Self::tick_promise_collected)).
+    pub(crate) fn tick_cell_collected(&self) {
+        self.tick_cell.set(JSValue::ZERO);
+    }
+
+    /// Releases the claim of a cell that was collected. May free `this`.
+    ///
+    /// # Safety
+    /// `this` carries the collected cell's ref.
+    pub(crate) unsafe fn tick_promise_collected(this: core::ptr::NonNull<Self>) {
+        // SAFETY: fn contract.
+        unsafe { this.as_ref() }.maybe_downgrade();
+        <Self as bun_ptr::CellRefCounted>::deref_nn(this);
     }
 
     /// Idempotent — every step checks its own state.
@@ -1467,15 +1519,16 @@ impl CronJob {
     }
 
     /// The context of the script that scheduled the job stopped. A tick's promise that is pending
-    /// will never settle (what waits on it went with the context), so the ref held for it is
-    /// released here, as worker teardown does. With the tick's callback on the stack (it disposed
-    /// its own graph) `on_timer_fire` finishes the stop when the callback returns. May free `this`.
+    /// may still settle (the host, or another graph, may hold it): its reactions' cell keeps the
+    /// job until then, or until the promise is collected. Nothing else of the job is kept. With
+    /// the tick's callback on the stack (it disposed its own graph) `on_timer_fire` finishes the
+    /// stop when the callback returns. May free `this`.
     fn stop_with_its_context(this: ThisPtr<Self>, vm: &VirtualMachine) {
         if this.in_fire.get() {
             return Self::self_stop(this, vm);
         }
         this.stop_internal(vm);
-        Self::release_pending_ref(this);
+        this.let_go_of_wrapper();
         Self::remove_from_list(this);
     }
 
@@ -1484,8 +1537,8 @@ impl CronJob {
         // While the callback is on the stack or its promise is pending, defer
         // list removal + downgrade to finishDeferredStop (called from
         // scheduleNext after settle) so onPromiseReject can read pendingPromise
-        // and clearAllForVM(.teardown) can release pending_ref.
-        if this.in_fire.get() || this.pending_ref.get().is_some() {
+        // and clearAllForVM(.teardown) can take the tick's claim back.
+        if this.in_fire.get() || !this.tick_cell.get().is_empty() {
             this.stopped.set(true);
             this.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
             return;
@@ -1505,9 +1558,9 @@ impl CronJob {
     }
 
     /// `.reload`: --hot — promises in flight will still settle on this VM, so
-    /// the pending ref is left for onPromiseResolve/Reject to balance.
+    /// the tick's claim is left for onPromiseResolve/Reject to take.
     /// `.teardown`: worker exit — the event loop is dying, settle never
-    /// happens, so release the pending ref here to avoid leaking the struct.
+    /// happens, so take the claim back here to avoid leaking the struct.
     pub(crate) fn clear_all_for_vm<const MODE: ClearMode>(vm: &mut VirtualMachine) {
         // Drain the list first so `stop_internal` (which re-enters the VM)
         // doesn't alias the list borrow.
@@ -1518,7 +1571,7 @@ impl CronJob {
             let this = job.this_ptr();
             this.stop_internal(vm);
             if MODE == ClearMode::Teardown {
-                Self::release_pending_ref(this);
+                Self::reclaim_tick_claim(this);
             }
         }
     }
@@ -1608,6 +1661,9 @@ impl CronJob {
         // `enter()` now, `exit()` on drop; holds the raw pointer (not `&mut`)
         // so re-entrant JS can re-borrow.
         let _ev_guard = vm.enter_event_loop_scope();
+        // The tick and what follows from it (the reactions on the promise it returns, what they
+        // report) are the script's that scheduled the job.
+        let _context = vm.enter_context(this.context);
 
         this.in_fire.set(true);
         // A top-level call: what the tick throws is reported here (before the
@@ -1637,22 +1693,25 @@ impl CronJob {
         if let Some(promise) = result.as_any_promise() {
             match promise.status() {
                 jsc::js_promise::Status::Pending => {
-                    this.pending_ref.set(Some(RefPtr::from_this(this)));
                     js::pending_promise_set_cached(js_this, &this.global, result);
-                    result.then(
+                    // The reactions own the job's ref through their cell, not a raw pointer: a
+                    // promise that settles after the job stopped finds the job, and one that
+                    // never settles releases it when it is collected.
+                    result.then_with_value(
                         &this.global,
-                        this.as_ptr(),
+                        Self::create_tick_cell(this),
                         crate::generated_host_exports::Bun__CronJob__onPromiseResolve,
                         crate::generated_host_exports::Bun__CronJob__onPromiseReject,
                     );
-                    // `then()` returns `()`, so re-check the VM status and
-                    // recover on termination — otherwise `pending_ref` leaks. Likewise when the
-                    // tick stopped its own context: nothing will settle this promise's reaction.
-                    if vm.script_execution_status() != jsc::ScriptExecutionStatus::Running
-                        || this.abort_handle.context_stopped()
-                    {
+                    // `then_with_value()` returns `()`, so re-check the VM status and recover on
+                    // termination: the reactions will not run.
+                    if vm.script_execution_status() != jsc::ScriptExecutionStatus::Running {
                         js::pending_promise_set_cached(js_this, &this.global, JSValue::UNDEFINED);
-                        Self::release_pending_ref(this);
+                        Self::reclaim_tick_claim(this);
+                        Self::schedule_next(this, vm);
+                    } else if this.abort_handle.context_stopped() {
+                        // The tick stopped its own context (`self_stop` deferred to here).
+                        this.let_go_of_wrapper();
                         Self::schedule_next(this, vm);
                     }
                     return;
@@ -1750,7 +1809,7 @@ impl CronJob {
             this_value: JsCell::new(JsRef::empty()),
             stopped: Cell::new(false),
             last_next_ms: Cell::new(0.0),
-            pending_ref: JsCell::new(None),
+            tick_cell: Cell::new(JSValue::ZERO),
             in_fire: Cell::new(false),
             context: cx.context().id(),
             abort_handle: bun_jsc::AbortHandle::for_owner::<CronJob>(),
@@ -1801,13 +1860,16 @@ impl CronJob {
 // C++ `promiseHandlerID` compares the handler passed to `JSValue::then` against
 // these symbols by address, so they must stay function exports.
 // HOST_EXPORT(Bun__CronJob__onPromiseResolve, jsc)
-pub fn on_promise_resolve(
-    this: ThisPtr<CronJob>,
-    _global: &JSGlobalObject,
-    _frame: &CallFrame,
-) -> JsResult<JSValue> {
-    // `pending_ref` holds the ref taken before `then` until `release_pending_ref`.
-    let _guard = scopeguard::guard(this, CronJob::release_pending_ref);
+pub fn on_promise_resolve(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let args = frame.arguments();
+    // The cell hands back the job's ref. None: the claim was taken back (the VM is going).
+    let Some(job) = crate::api::native_promise_context::take::<CronJob>(args[args.len() - 1])
+    else {
+        return Ok(JSValue::UNDEFINED);
+    };
+    // SAFETY: the claim the cell handed back is a ref on the live job.
+    let this = unsafe { ThisPtr::new(job.as_ptr()) };
+    let _guard = scopeguard::guard(this, CronJob::tick_settled);
     let vm = this.global.bun_vm();
     if let Some(js_this) = this.this_value.get().try_get() {
         js::pending_promise_set_cached(js_this, &this.global, JSValue::UNDEFINED);
@@ -1817,13 +1879,16 @@ pub fn on_promise_resolve(
 }
 
 // HOST_EXPORT(Bun__CronJob__onPromiseReject, jsc)
-pub fn on_promise_reject(
-    this: ThisPtr<CronJob>,
-    _global: &JSGlobalObject,
-    frame: &CallFrame,
-) -> JsResult<JSValue> {
+pub fn on_promise_reject(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let args = frame.arguments();
-    let _guard = scopeguard::guard(this, CronJob::release_pending_ref);
+    // As `on_promise_resolve`.
+    let Some(job) = crate::api::native_promise_context::take::<CronJob>(args[args.len() - 1])
+    else {
+        return Ok(JSValue::UNDEFINED);
+    };
+    // SAFETY: the claim the cell handed back is a ref on the live job.
+    let this = unsafe { ThisPtr::new(job.as_ptr()) };
+    let _guard = scopeguard::guard(this, CronJob::tick_settled);
     let vm = this.global.bun_vm().as_mut();
     let err = args[0];
     let mut promise_value = JSValue::UNDEFINED;

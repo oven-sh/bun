@@ -50,6 +50,10 @@ const dir = String(
       export function cronTickThatParks() {
         Bun.cron("* * * * *", () => { control.ticks++; return new Promise(() => {}); });
       }
+      // A cron job whose tick waits for a promise the host holds.
+      export function cronTickThatWaitsFor(promise) {
+        Bun.cron("* * * * *", () => { control.ticks++; return promise; });
+      }
       export async function connectToOwnServer() {
         const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {}, close() { control.heard.push("server socket close"); } } });
         control.tcpPort = server.port;
@@ -479,6 +483,50 @@ describe("ModuleGraph GC: what the graph's context owns", () => {
     }
     expect(await lifetimes.stillAlive("graph")).toEqual([]);
   });
+
+  // The tick's promise is the host's to settle: the job is still there when it does, and gone afterwards.
+  for (const how of ["resolves", "rejects"] as const) {
+    test(`a Bun.cron() job whose tick waits on a promise the host ${how} after the graph was disposed: the job outlives the wait, and the graph goes`, async () => {
+      const lifetimes = new Lifetimes();
+      const state = control();
+      const held = Promise.withResolvers<void>();
+      held.promise.catch(() => {});
+      const told: string[] = [];
+      jest.useFakeTimers();
+      try {
+        jest.setSystemTime(new Date("2026-01-01T12:00:00.000Z"));
+        await (async () => {
+          const graph = lifetimes.track(
+            "graph",
+            new ModuleGraph({
+              globals: { control: state },
+              onError: (error: any, kind) => told.push(kind + ": " + error.message),
+            }),
+          );
+          const io = await graph.import(file("io.mjs"));
+          graph.run(() => io.cronTickThatWaitsFor(held.promise));
+          jest.advanceTimersByTime(60_000);
+          expect(state.ticks).toBe(1);
+          graph.dispose();
+        })();
+      } finally {
+        jest.useRealTimers();
+      }
+      // While the host holds the promise, its reactions keep the job, and the context they run in.
+      for (let i = 0; i < 3; i++) {
+        Bun.gc(true);
+        await new Promise<void>(resolve => setImmediate(resolve));
+      }
+      how === "resolves" ? held.resolve() : held.reject(new Error("the host gave up"));
+      // The reaction runs and lets the job go: a tick that rejected is reported, as for any job, to the
+      // graph it ran in; the tick does not run again.
+      for (let i = 0; i < 5; i++) await new Promise<void>(resolve => setImmediate(resolve));
+      Bun.gc(true);
+      expect(told).toEqual(how === "resolves" ? [] : ["unhandledRejection: the host gave up"]);
+      expect(state.ticks).toBe(1);
+      expect(await lifetimes.stillAlive("graph")).toEqual([]);
+    });
+  }
 
   test("run(): what the host opens inside the graph's context keeps the graph alive until it is closed", async () => {
     const lifetimes = new Lifetimes();

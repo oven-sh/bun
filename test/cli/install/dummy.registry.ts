@@ -28,7 +28,7 @@
  * ```
  */
 import { file, Server } from "bun";
-import { tmpdirSync } from "harness";
+import { githubTarball, tmpdirSync } from "harness";
 
 let expect: (typeof import("bun:test"))["expect"];
 
@@ -47,6 +47,62 @@ type Pkg = {
 let server: Server;
 export let root_url: string;
 export let check_npm_auth_type = { check: true };
+
+// ============================================================================
+// GitHub Repository Fixtures
+// ============================================================================
+
+/** Request path (`/repos/<owner>/<repo>/tarball/<ref>`) -> the tarball served for it */
+const githubTarballs = new Map<string, Uint8Array>();
+
+/**
+ * `bun install` downloads an `owner/repo#ref` dependency from
+ * `${GITHUB_API_URL}/repos/<owner>/<repo>/tarball/<ref>`. An install that runs with
+ * `GITHUB_API_URL` set to `root_url` gets the repository registered here instead of
+ * contacting api.github.com. These requests are not counted in `requested` or
+ * `ctx.requested`.
+ *
+ * @param commit - The short sha GitHub puts in the tarball's root directory name. bun reports it as the resolved commit.
+ * @param refs - Every committish the tests ask for (`""` for a dependency without one)
+ * @param files - Repository files, by path relative to the repository root
+ */
+export async function setGithubRepository(
+  owner: string,
+  repo: string,
+  commit: string,
+  refs: string[],
+  files: Record<string, string>,
+) {
+  const tarball = await githubTarball(`${owner}-${repo}-${commit}`, files);
+  for (const ref of refs) {
+    githubTarballs.set(`/repos/${owner}/${repo}/tarball/${ref}`, tarball);
+  }
+}
+
+/**
+ * Registers a stand-in for github.com/mishoo/UglifyJS at tag v3.14.1 (commit e219a9a). It has
+ * the top-level entries, package name, version and bin that the tests assert.
+ */
+export function setUglifyJsRepository() {
+  return setGithubRepository("mishoo", "UglifyJS", "e219a9a", ["", "v3.14.1", "e219a9a"], {
+    ".gitattributes": "",
+    ".github/ISSUE_TEMPLATE.md": "",
+    ".gitignore": "",
+    "CONTRIBUTING.md": "",
+    "LICENSE": "",
+    "README.md": "",
+    "bin/uglifyjs": "#! /usr/bin/env node\n",
+    "lib/minify.js": "",
+    "package.json": JSON.stringify({
+      name: "uglify-js",
+      version: "3.14.1",
+      main: "tools/node.js",
+      bin: { uglifyjs: "bin/uglifyjs" },
+    }),
+    "test/mocha.js": "",
+    "tools/node.js": "",
+  });
+}
 
 // ============================================================================
 // Concurrent Test Context Support
@@ -342,6 +398,15 @@ export function dummyBeforeAll() {
     async fetch(request) {
       const url = request.url;
 
+      // GitHub tarball requests from installs that run with GITHUB_API_URL=root_url
+      const { pathname } = new URL(url);
+      if (pathname.startsWith("/repos/")) {
+        const tarball = githubTarballs.get(pathname);
+        return tarball
+          ? new Response(tarball)
+          : new Response(`No GitHub repository registered for ${pathname}`, { status: 404 });
+      }
+
       // Check if this is a prefixed request (for concurrent tests)
       const prefixInfo = extractTestPrefix(url);
       if (prefixInfo) {
@@ -366,6 +431,7 @@ export function dummyBeforeAll() {
 export function dummyAfterAll() {
   server.stop();
   testContexts.clear();
+  githubTarballs.clear();
 }
 
 export function getPort() {

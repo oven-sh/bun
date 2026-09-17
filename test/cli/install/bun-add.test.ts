@@ -15,11 +15,40 @@ import {
   package_dir,
   requested,
   root_url,
+  setGithubRepository,
   setHandler,
+  setUglifyJsRepository,
 } from "./dummy.registry";
 
 beforeAll(dummyBeforeAll);
 afterAll(dummyAfterAll);
+
+// The `owner/repo#ref` dependencies below are downloaded from GITHUB_API_URL. The tests that
+// add them run with it set to the dummy registry, which serves these stand-ins for the real
+// repositories. Each one has the files and package.json fields the tests look at.
+beforeAll(async () => {
+  await Promise.all([
+    setUglifyJsRepository(),
+    setGithubRepository("dylan-conway", "install-test-3", "db5a426", ["v1.0.0"], {
+      "index.js": "",
+    }),
+    setGithubRepository("dylan-conway", "install-test-3", "b67a409", ["v1.0.1"], {
+      "index.js": "",
+      "package.json": JSON.stringify({ description: "hi" }),
+    }),
+    setGithubRepository("dylan-conway", "install-test-3", "506300a", ["v1.0.2"], {
+      "index.js": "",
+      "package.json": JSON.stringify({ name: "", description: "hi" }),
+    }),
+    setGithubRepository("liz3", "empty-bun-repo", "26049f7", [""], {
+      "index.ts": "",
+      "package.json": JSON.stringify({ name: "test-repo", module: "index.ts", type: "module" }),
+    }),
+  ]);
+});
+function githubEnv() {
+  return { ...env, GITHUB_API_URL: root_url };
+}
 
 expect.extend({
   toHaveBins,
@@ -1037,7 +1066,7 @@ it("should add dependency (GitHub)", async () => {
     stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
-    env,
+    env: githubEnv(),
   });
   const err = await stderr.text();
   expect(err).not.toContain("error:");
@@ -1452,7 +1481,7 @@ it("should add aliased dependency (GitHub)", async () => {
     stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
-    env,
+    env: githubEnv(),
   });
   const err = await stderr.text();
   expect(err).not.toContain("error:");
@@ -1533,7 +1562,7 @@ for (const { desc, dep } of gitNameTests) {
       cwd: package_dir,
       stdout: "ignore",
       stderr: "pipe",
-      env,
+      env: githubEnv(),
     });
 
     const err = await stderr.text();
@@ -1927,7 +1956,7 @@ it("should not save git urls twice", async () => {
     stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
-    env,
+    env: githubEnv(),
   });
 
   expect(await exited1).toBe(0);
@@ -1943,7 +1972,7 @@ it("should not save git urls twice", async () => {
     stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
-    env,
+    env: githubEnv(),
   });
 
   expect(await exited2).toBe(0);
@@ -2198,7 +2227,7 @@ it("should add dependency without duplication (GitHub)", async () => {
     stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
-    env,
+    env: githubEnv(),
   });
   const err1 = await new Response(stderr1).text();
   expect(err1).not.toContain("error:");
@@ -2258,7 +2287,7 @@ it("should add dependency without duplication (GitHub)", async () => {
     stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
-    env,
+    env: githubEnv(),
   });
   const err2 = await new Response(stderr2).text();
   expect(err2).not.toContain("error:");

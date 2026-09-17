@@ -1,6 +1,7 @@
 import { socketFaultInjection as fault } from "bun:internal-for-testing";
 import { afterEach, describe, expect, test } from "bun:test";
-import { isWindows } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
+import { spawn } from "node:child_process";
 import { once } from "node:events";
 import net from "node:net";
 
@@ -226,6 +227,43 @@ describe.skipIf(skip)("node:net under injected syscall faults", () => {
     expect({ code: err.code, syscall: err.syscall }).toEqual({ code: "EPROTOTYPE", syscall: "write" });
     await closeP;
     expect(p.serverSock.destroyed).toBe(true);
+  });
+
+  // A socket that adopts an fd with socket.connect({ fd }) runs on the
+  // SocketHandlers table. A cluster worker adopts each connection that way, and
+  // child_process adopts each extra stdio pipe (a socketpair) that way: this
+  // test uses the latter. SocketHandlers.error failed the waiting write
+  // callback, which makes the stream destroy itself and queue 'error', and then
+  // emitted 'error' a second time. https://github.com/oven-sh/bun/issues/43030
+  test("fd-adopted socket: send → fatal flush of a buffered write emits 'error' once, then 'close'", async () => {
+    using child = spawn(bunExe(), ["-e", "setInterval(() => {}, 1 << 30)"], {
+      env: bunEnv,
+      stdio: ["ignore", "ignore", "ignore", "pipe"],
+    });
+    const sock = child.stdio[3] as net.Socket;
+    const fd = (sock as any)._handle.fd as number;
+    expect(fd).toBeGreaterThanOrEqual(0);
+
+    const events: string[] = [];
+    sock.on("error", (err: NodeJS.ErrnoException) => events.push(`error:${err.code}`));
+    const closeP = new Promise<void>(resolve =>
+      sock.once("close", hadError => {
+        events.push(`close:${hadError}`);
+        resolve();
+      }),
+    );
+
+    // send #0 is clamped to 1 byte: the other 199 bytes stay in the native
+    // buffer and the write callback waits for the writable event.
+    fault.set({ syscall: "send", action: "short", bytes: 1, repeat: 1, fd });
+    sock.write(Buffer.alloc(200, "h"), err => events.push(`write:${(err as NodeJS.ErrnoException)?.code ?? "ok"}`));
+    // send #1 is the flush on that writable event.
+    fault.set({ syscall: "send", action: "errno", errno: "EPIPE", repeat: 1, fd });
+
+    await closeP;
+    fault.clear();
+    expect(events).toEqual(["write:EPIPE", "error:EPIPE", "close:true"]);
+    expect(sock.destroyed).toBe(true);
   });
 
   test("connect → ECONNREFUSED is reported on connecting socket", async () => {

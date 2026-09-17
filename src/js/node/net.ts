@@ -546,8 +546,9 @@ const SocketHandlers: SocketHandler = {
       self[kwriteCallback] = null;
       callback(error);
     }
-
-    self.emit("error", error);
+    // Same shape as the plain TCP branch of ServerHandlers.error: callback(error)
+    // destroys the stream, and destroy() emits 'error' one time only.
+    if (!self.destroyed) self.destroy(error);
   },
   open(socket) {
     const self = socket.data;

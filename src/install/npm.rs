@@ -2463,22 +2463,22 @@ impl PackageManifest {
                                             Some(r) => r.len() == group_len,
                                             None => false,
                                         };
-                                        let mut group_i: u32 = 0;
-
                                         // The boxed slice is fully initialised
                                         // (`vec![Default; n].into_boxed_slice()` in the counting
                                         // pass) and `ExternalString: Copy`, so plain absolute
                                         // indexing at `group_start + group_i` works — no
                                         // `from_raw_parts`/`.add()` needed, and the `prev` read
                                         // at a disjoint index needs no split.
-                                        for s in entries.iter().flat_map(|(k, v)| [*k, *v]) {
+                                        for (group_i, s) in
+                                            entries.iter().flat_map(|(k, v)| [*k, *v]).enumerate()
+                                        {
                                             let cur = string_builder.append::<ExternalString>(s);
-                                            all_extern_strings_bin_entries
-                                                [group_start + group_i as usize] = cur;
+                                            all_extern_strings_bin_entries[group_start + group_i] =
+                                                cur;
                                             if is_identical {
                                                 let prev = prev_extern_bin_group.as_ref().unwrap();
                                                 let prev_item = all_extern_strings_bin_entries
-                                                    [prev.start + group_i as usize];
+                                                    [prev.start + group_i];
                                                 is_identical = cur.hash == prev_item.hash;
                                                 if cfg!(debug_assertions) && is_identical {
                                                     let first =
@@ -2494,7 +2494,6 @@ impl PackageManifest {
                                                     }
                                                 }
                                             }
-                                            group_i += 1;
                                         }
 
                                         let final_range = if is_identical {

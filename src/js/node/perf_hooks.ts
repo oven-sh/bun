@@ -7,13 +7,24 @@ const {
   PerformanceNodeEntry,
   kEmptyObject,
 } = require("internal/shared");
-const { validateFunction, validateObject } = require("internal/validators");
+const { validateFunction, validateInteger, validateObject } = require("internal/validators");
 
 const cppCreateHistogram = $newCppFunction("JSNodePerformanceHooksHistogram.cpp", "jsFunction_createHistogram", 3) as (
-  min: number,
-  max: number,
+  min: number | bigint,
+  max: number | bigint,
   figures: number,
 ) => import("node:perf_hooks").RecordableHistogram;
+
+// hdr_init() takes int64_t bounds.
+const kMaxInt64 = 9223372036854775807n;
+
+function validateHistogramBound(value: number | bigint, name: string) {
+  if (typeof value !== "bigint") {
+    validateInteger(value, name, 1, Number.MAX_SAFE_INTEGER);
+  } else if (value < 1n || value > kMaxInt64) {
+    throw $ERR_OUT_OF_RANGE(name, `>= 1n && <= ${kMaxInt64}n`, value);
+  }
+}
 
 var {
   Performance,
@@ -329,51 +340,24 @@ export default {
     // non-object argument instead of silently ignoring it.
     validateObject(options, "options");
 
-    let lowest = 1;
-    let highest = Number.MAX_SAFE_INTEGER;
-    let figures = 3;
+    const { lowest = 1, highest = Number.MAX_SAFE_INTEGER, figures = 3 } = options;
 
-    const lowestOpt = options.lowest;
-    if (lowestOpt !== undefined) {
-      if (typeof lowestOpt === "bigint") {
-        lowest = Number(lowestOpt);
-      } else if (typeof lowestOpt === "number") {
-        lowest = lowestOpt;
-      } else {
-        throw $ERR_INVALID_ARG_TYPE("options.lowest", ["number", "bigint"], lowestOpt);
+    if (typeof lowest !== "bigint" && typeof highest !== "bigint") {
+      // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/histogram.js#L374-L378
+      validateInteger(lowest, "options.lowest", 1, Number.MAX_SAFE_INTEGER);
+      validateInteger(highest, "options.highest", 2 * lowest, Number.MAX_SAFE_INTEGER);
+    } else {
+      // Node v26.3.0 has no usable BigInt path: `2 * lowest` throws a TypeError unless both are
+      // a BigInt, and hdr_init() aborts for a bound outside int64. This is the validation of Node main:
+      // https://github.com/nodejs/node/blob/c327212373689b970425777b847a767ed6860494/lib/internal/histogram.js#L878-L900
+      validateHistogramBound(lowest, "options.lowest");
+      validateHistogramBound(highest, "options.highest");
+      const minimumHighest = typeof lowest === "bigint" ? 2n * lowest : 2 * lowest;
+      if (highest < minimumHighest) {
+        throw $ERR_OUT_OF_RANGE("options.highest", `>= 2 * options.lowest (${minimumHighest}n)`, highest);
       }
     }
-
-    const highestOpt = options.highest;
-    if (highestOpt !== undefined) {
-      if (typeof highestOpt === "bigint") {
-        highest = Number(highestOpt);
-      } else if (typeof highestOpt === "number") {
-        highest = highestOpt;
-      } else {
-        throw $ERR_INVALID_ARG_TYPE("options.highest", ["number", "bigint"], highestOpt);
-      }
-    }
-
-    const figuresOpt = options.figures;
-    if (figuresOpt !== undefined) {
-      if (typeof figuresOpt !== "number") {
-        throw $ERR_INVALID_ARG_TYPE("options.figures", "number", figuresOpt);
-      }
-      if (figuresOpt < 1 || figuresOpt > 5) {
-        throw $ERR_OUT_OF_RANGE("options.figures", ">= 1 && <= 5", figuresOpt);
-      }
-      figures = figuresOpt;
-    }
-
-    // Node.js validation - highest must be >= 2 * lowest
-    if (lowest < 1) {
-      throw $ERR_OUT_OF_RANGE("options.lowest", ">= 1 && <= 9007199254740991", lowest);
-    }
-
-    if (highest < 2 * lowest) {
-      throw $ERR_OUT_OF_RANGE("options.highest", `>= ${2 * lowest} && <= 9007199254740991`, highest);
-    }
+    validateInteger(figures, "options.figures", 1, 5);
 
     return cppCreateHistogram(lowest, highest, figures);
   },

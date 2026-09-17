@@ -39,17 +39,11 @@ unsafe extern "C" fn Bun__readCertificateFile(
     read_file_for(unsafe { ZStr::from_c_ptr(path) }, ctx, on_file)
 }
 
-/// The contents of an OpenSSL default certificate file that is not a regular file, kept for the life of the process. A
-/// pipe or FIFO can be read only once, and two loaders read this file: the default store and the posix system store
-/// (`system_certs.rs`). The first read keeps the bytes here for the second. The lock is held across the open, so the
-/// second loader waits for these bytes instead of waiting in `open(2)` for a writer that is gone.
+/// A pipe or FIFO reads only once, so the first loader keeps its bytes for the other. Locked across `open(2)`.
 static STREAMED_DEFAULT_CERT_FILE: bun_threading::Guarded<Option<&'static [u8]>> =
     bun_threading::Guarded::new(None);
 
-/// Hands `on_file` the contents of the OpenSSL default certificate file: `$SSL_CERT_FILE`, else `default_path`
-/// (`X509_get_default_cert_file()`). A variable that is set but empty names no file. There is no file-type check, as
-/// in Node, so `SSL_CERT_FILE` may name a pipe. `on_file` also gets the `stat` of a regular file. Failures are
-/// silent, as in `X509_STORE_set_default_paths`.
+/// Reads `$SSL_CERT_FILE`, else `default_path`, with no file-type check (as Node). Only a regular file has a `stat`.
 pub(crate) fn read_openssl_default_cert_file(
     default_path: &ZStr,
     on_file: impl FnOnce(&[u8], Option<&bun_sys::Stat>),

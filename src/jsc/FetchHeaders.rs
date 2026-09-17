@@ -94,7 +94,8 @@ struct PicoHeaders {
 /// The two copies the Fetch standard makes of a `Headers` object.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HeadersCopy {
-    /// The header list as is: `clone()`, and the `input` of the Request constructor.
+    /// The header list as is: `clone()`, and a Request given as the `input` of the
+    /// Request constructor.
     List,
     /// The object is a `HeadersInit`: the `headers` member of an init dictionary, or
     /// of a Request/Response used as one. The standard reads it through its iterator

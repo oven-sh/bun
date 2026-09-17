@@ -1082,7 +1082,9 @@ impl Request {
             let value_type = value.js_type();
             // `values_to_try` is `[init?, input?]`.
             let is_input = !is_first_argument_a_url && i == values_to_try.len() - 1;
-            let headers_copy = if is_input {
+            // Only a Request `input` hands over its header list. Every other value is read
+            // as an init dictionary.
+            let headers_copy = if is_input && value.as_::<Request>().is_some() {
                 HeadersCopy::List
             } else {
                 HeadersCopy::AsInit

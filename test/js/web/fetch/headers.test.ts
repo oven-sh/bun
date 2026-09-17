@@ -287,6 +287,8 @@ describe("Headers", () => {
       ["new Request(url, response)", () => new Request(url, response() as RequestInit).headers],
       ["new Request(request, { headers })", () => new Request(request(), { headers: fill(new Headers()) }).headers],
       ["new Request(request, otherRequest)", () => new Request(new Request(url), request()).headers],
+      // Bun also takes the url from an init-like first argument.
+      ["new Request({ url, headers })", () => new Request({ url, headers: fill(new Headers()) } as any).headers],
     ])("%s appends each combined value again", (_, copy) => {
       expect([...copy()]).toEqual(appendedAgain);
     });

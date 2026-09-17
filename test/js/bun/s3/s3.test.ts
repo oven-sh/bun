@@ -1715,7 +1715,7 @@ describe.skipIf(!minioCredentials)("Archive with S3", () => {
 });
 
 describe("s3 multipart upload id validation", () => {
-  it("rejects a CreateMultipartUpload response whose upload id is not UTF-8", async () => {
+  it("rejects a CreateMultipartUpload response whose upload id contains non-ASCII bytes", async () => {
     // The whole scenario runs in a subprocess so a misbehaving runtime cannot take down the test runner.
     const fixture = `
         const goodUploadId = "valid-upload-id-1234567890";
@@ -1731,8 +1731,8 @@ describe("s3 multipart upload id validation", () => {
           async fetch(req) {
             const isCreateMultipartUpload = req.method === "POST" && req.url.includes("?uploads=");
             if (isCreateMultipartUpload) {
-              // The "malformed-id-object" key gets an upload id made entirely of 0xFF bytes, which
-              // are not UTF-8 and no real S3 server returns. Everything else gets a normal ASCII upload id.
+              // The "malformed-id-object" key gets an upload id made entirely of bytes >= 0x80,
+              // which no real S3 server returns. Everything else gets a normal ASCII upload id.
               const uploadId = req.url.includes("malformed-id-object")
                 ? Buffer.alloc(1024, 0xff)
                 : Buffer.from(goodUploadId);
@@ -1793,7 +1793,7 @@ describe("s3 multipart upload id validation", () => {
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    // A server-supplied upload id that is not UTF-8 must surface as a normal S3 error
+    // A server-supplied upload id containing non-ASCII bytes must surface as a normal S3 error
     // on the writer promise instead of terminating the process.
     expect(stdout).toContain("malformed-id: rejected UnknownError - Failed to initiate multipart upload");
     // A well-formed upload id still completes the multipart upload in the same process.
@@ -1906,12 +1906,27 @@ describe("s3 multipart upload id validation", () => {
     ]);
   });
 
-  it("sends back an upload id that holds query delimiters, a space and non-ASCII text", async () => {
-    expect(await multipartRequests("a&b#c?d e\u00e9", { failParts: false })).toEqual([
-      { request: "PUT ?partNumber=1&uploadId=a%26b%23c%3Fd%20e%C3%A9&x-id=UploadPart", signatureVerifies: true },
-      { request: "PUT ?partNumber=2&uploadId=a%26b%23c%3Fd%20e%C3%A9&x-id=UploadPart", signatureVerifies: true },
-      { request: "POST ?uploadId=a%26b%23c%3Fd%20e%C3%A9", signatureVerifies: true },
+  it("sends back an upload id that holds query delimiters", async () => {
+    expect(await multipartRequests("a&b#c?d", { failParts: false })).toEqual([
+      { request: "PUT ?partNumber=1&uploadId=a%26b%23c%3Fd&x-id=UploadPart", signatureVerifies: true },
+      { request: "PUT ?partNumber=2&uploadId=a%26b%23c%3Fd&x-id=UploadPart", signatureVerifies: true },
+      { request: "POST ?uploadId=a%26b%23c%3Fd", signatureVerifies: true },
     ]);
+  });
+
+  it("limits the length of the percent-encoded upload id, not of the raw one", async () => {
+    // 666 `+` and "ab" encode to exactly 2000 bytes, which is the limit.
+    const encoded = Buffer.alloc(666 * 3, "%2B").toString() + "ab";
+    expect(await multipartRequests(Buffer.alloc(666, "+").toString() + "ab", { failParts: false })).toEqual([
+      { request: `PUT ?partNumber=1&uploadId=${encoded}&x-id=UploadPart`, signatureVerifies: true },
+      { request: `PUT ?partNumber=2&uploadId=${encoded}&x-id=UploadPart`, signatureVerifies: true },
+      { request: `POST ?uploadId=${encoded}`, signatureVerifies: true },
+    ]);
+    // 667 `+` encode to 2001 bytes.
+    await expect(multipartRequests(Buffer.alloc(667, "+").toString(), { failParts: false })).rejects.toMatchObject({
+      code: "UnknownError",
+      message: "Failed to initiate multipart upload",
+    });
   });
 });
 

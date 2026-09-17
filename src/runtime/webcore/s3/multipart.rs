@@ -668,8 +668,9 @@ impl MultiPartUpload {
                         .flatten()
                 })
                 .flatten()
-                // The id is opaque (a store may mint `+`, `/` or `=` in it), so it
-                // goes into query strings percent-encoded.
+                // Printable ASCII only. That still leaves `+`, `/`, `=`, `&` and the
+                // like, so the id goes into query strings percent-encoded.
+                .filter(|id| id.iter().all(u8::is_ascii_graphic))
                 .and_then(|id| {
                     let mut encoded = [0u8; Self::MAX_UPLOAD_ID_LEN];
                     encode_uri_component::<true>(&id, &mut encoded)

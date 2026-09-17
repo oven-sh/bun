@@ -662,15 +662,17 @@ impl StatWatcher {
             return Ok(());
         };
         let global_this = this_ref.global_this();
-        // Node calls back with two zeroed stats when the first stat() fails.
+        // Node calls back with two distinct zeroed stats when the first
+        // stat() fails.
         // SAFETY: all-zero is a valid PosixStat (POD #[repr(C)])
         let zeroed = bun_core::ffi::zeroed::<PosixStat>();
-        let jsvalue = stat_to_js_stats(global_this, &zeroed, this_ref.bigint)?;
+        let current_jsvalue = stat_to_js_stats(global_this, &zeroed, this_ref.bigint)?;
+        let prev_jsvalue = stat_to_js_stats(global_this, &zeroed, this_ref.bigint)?;
 
         let result = js::listener_get_cached(js_this).unwrap().call(
             global_this,
             JSValue::UNDEFINED,
-            &[jsvalue, jsvalue],
+            &[current_jsvalue, prev_jsvalue],
         );
 
         // Append to the scheduler before propagating a listener error so the

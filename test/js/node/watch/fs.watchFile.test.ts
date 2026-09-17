@@ -61,6 +61,8 @@ describe("fs.watchFile", () => {
     expect(entries[0][0].mtimeMs).toBe(0);
     expect(entries[0][1].size).toBe(0);
     expect(entries[0][1].mtimeMs).toBe(0);
+    // node passes two distinct objects
+    expect(entries[0][0]).not.toBe(entries[0][1]);
   });
   test("it watches a file", async () => {
     let { promise, resolve } = Promise.withResolvers<void>();

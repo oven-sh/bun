@@ -21,7 +21,6 @@ use bun_uws::{AnyRequest, AnyResponse};
 use crate::api::js_bundle_completion_task::JSBundleCompletionTask;
 use crate::api::js_bundler::js_bundler::{self as JSBundler, Config as JSBundlerConfig};
 use crate::api::output_file_jsc::OutputFileJsc as _;
-use crate::bake::dev_server::route_bundle;
 use crate::server::jsc::{JSGlobalObject, JSValue, JsResult};
 use crate::server::server_config::MethodOptional;
 use crate::server::{AnyRoute, AnyServer, GetOrStartLoadResult, ServePluginsCallback, StaticRoute};
@@ -133,6 +132,15 @@ impl HTMLBundle {
 /// Deprecated: use Route instead.
 pub(crate) type HTMLBundleRoute = Route;
 
+/// Marker for [`DevServerRouteId`].
+pub enum DevServerRouteIdMarker {}
+
+/// Opaque per-route token assigned by an attached dev server (see the
+/// dev-server slot seam in `mod.rs`) when it registers the route with its
+/// bundler. The host only reserves the [`Route::dev_server_id`] slot; the
+/// dev-server module defines what the token means.
+pub type DevServerRouteId = bun_core::GenericIndex<u32, DevServerRouteIdMarker>;
+
 /// An HTMLBundle can be used across multiple server instances, an
 /// HTMLBundle.Route can only be used on one server, but is also
 /// reference-counted because a server can have multiple instances of the same
@@ -153,9 +161,9 @@ pub struct Route {
     pub(crate) server: Cell<Option<AnyServer>>,
     /// When using DevServer, this value is never read or written to.
     pub(crate) state: JsCell<State>,
-    /// Written and read by DevServer to identify if this route has been
-    /// registered with the bundler.
-    pub(crate) dev_server_id: Cell<Option<route_bundle::Index>>,
+    /// Written and read by the attached dev server to identify if this route
+    /// has been registered with its bundler.
+    pub(crate) dev_server_id: Cell<Option<DevServerRouteId>>,
     /// When state == .pending, incomplete responses are stored here.
     pending_responses: JsCell<Vec<PendingResponse>>,
 }

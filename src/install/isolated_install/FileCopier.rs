@@ -192,7 +192,7 @@ impl FileCopier {
 
                 let dest = match dest_dir.create_file_z(entry.path, Default::default()) {
                     Ok(f) => f,
-                    Err(_) => 'dest: {
+                    Err(_) => {
                         if let Some(entry_dirname) =
                             bun_paths::Dirname::dirname::<OSPathChar>(entry.path)
                         {
@@ -202,10 +202,7 @@ impl FileCopier {
                             );
                         }
 
-                        match dest_dir.create_file_z(entry.path, Default::default()) {
-                            Ok(f) => break 'dest f,
-                            Err(err) => return sys::Result::Err(err),
-                        }
+                        dest_dir.create_file_z(entry.path, Default::default())?
                     }
                 };
 

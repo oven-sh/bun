@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { mkfifo } from "mkfifo";
 import fs, { existsSync, readdirSync, rmSync } from "node:fs";
 import { join } from "path";
-import { mkfifo } from "mkfifo";
 
 // Minimal ustar tarball builder (pathnames must be <100 bytes). `name` accepts
 // a Buffer so tests can put raw, non-UTF-8 byte sequences into the name field.

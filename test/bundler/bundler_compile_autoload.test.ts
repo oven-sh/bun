@@ -166,6 +166,8 @@ console.log("PRELOAD");
     run: {
       exitCode: 1,
       setCwd: true,
+      // With flags in BUN_OPTIONS the executable loads the config during argument parsing instead.
+      env: { BUN_OPTIONS: "" },
       validate({ stdout, stderr }) {
         expect({ stdout, stderr }).toEqual({
           stdout: "",

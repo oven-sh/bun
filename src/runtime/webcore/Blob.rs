@@ -5420,8 +5420,7 @@ pub(crate) fn construct_bun_file(
     Ok(unsafe { BlobExt::to_js(&*ptr, global_object) })
 }
 
-/// `fs.openAsBlob(path, type)`: a `Bun.file` Blob whose creation stat is
-/// kept as the store's `snapshot` (see `open_as_blob_read_error`).
+/// `fs.openAsBlob(path, type)`: a file Blob that keeps its creation stat as `snapshot`.
 pub(crate) fn construct_blob_for_open_as_blob(
     global_object: &JSGlobalObject,
     callframe: &CallFrame,
@@ -5843,8 +5842,7 @@ fn apply_file_stat(file: &mut store::File, stat: &bun_sys::Stat) {
     file.last_modified = stat_to_js_mtime(stat);
 }
 
-/// `fs.openAsBlob`: the `NotReadableError` to fail a read with when the file
-/// no longer matches the creation stat (node's contract), else `None`.
+/// `fs.openAsBlob`: `NotReadableError` if the file no longer matches its `snapshot`.
 pub(crate) fn open_as_blob_read_error(blob: &Blob, global: &JSGlobalObject) -> Option<JSValue> {
     let store = blob.store.get().as_ref()?;
     let store::Data::File(file) = &store.data else {

@@ -1730,6 +1730,95 @@ describe("package-lock.json migration fixes", () => {
     ).toHaveProperty("name", "shared-lib");
   });
 
+  // The same holds down a chain of out-of-tree file: packages: every package.json in it is the user's own.
+  test.concurrent("a chain of out-of-tree file: packages migrates", async () => {
+    const dependencies = { plugin: "file:../packages/plugin" };
+    using copy = tempDir("npm-migrate-folder-chain", {
+      "root/package.json": JSON.stringify({ name: "root", dependencies }),
+      "root/package-lock.json": npmLock("root", {
+        "": { name: "root", dependencies },
+        "../packages/plugin": { version: "1.0.0", dependencies: { "shared-lib": "file:../shared-lib" } },
+        "../packages/plugin/node_modules/shared-lib": { resolved: "../packages/shared-lib", link: true },
+        "../packages/shared-lib": { version: "1.0.0", dependencies: { "base-lib": "file:../base-lib" } },
+        "../packages/shared-lib/node_modules/base-lib": { resolved: "../packages/base-lib", link: true },
+        "../packages/base-lib": { version: "1.0.0" },
+        "node_modules/plugin": { resolved: "../packages/plugin", link: true },
+      }),
+      "packages/plugin/package.json": JSON.stringify({
+        name: "plugin",
+        version: "1.0.0",
+        dependencies: { "shared-lib": "file:../shared-lib" },
+      }),
+      "packages/shared-lib/package.json": JSON.stringify({
+        name: "shared-lib",
+        version: "1.0.0",
+        dependencies: { "base-lib": "file:../base-lib" },
+      }),
+      "packages/base-lib/package.json": JSON.stringify({ name: "base-lib", version: "1.0.0" }),
+    });
+    const dir = join(String(copy), "root");
+    writeExtra(dir, {});
+
+    const { stderr, exitCode, lock } = await migrate(dir);
+    expect(stderr).not.toContain("outside the project");
+    expect(exitCode).toBe(0);
+    expect(lock.packages).toStrictEqual({
+      plugin: ["plugin@file:../packages/plugin", { dependencies: { "shared-lib": "file:../shared-lib" } }],
+      "plugin/shared-lib": [
+        "shared-lib@file:../packages/shared-lib",
+        { dependencies: { "base-lib": "file:../base-lib" } },
+      ],
+      "plugin/shared-lib/base-lib": ["base-lib@file:../packages/base-lib", {}],
+    });
+    await frozen(dir);
+
+    const install = await run(dir, "install", "--frozen-lockfile");
+    expect(install.stderr).not.toContain("error");
+    expect(install.exitCode).toBe(0);
+    const sharedLib = join(dir, "node_modules", "plugin", "node_modules", "shared-lib");
+    expect(await Bun.file(join(sharedLib, "node_modules", "base-lib", "package.json")).json()).toHaveProperty(
+      "name",
+      "base-lib",
+    );
+  });
+
+  // The chain has to start at the root or a workspace. A folder inside a folder that a registry
+  // package ships has a folder for a parent, and its `file:` path that leaves the project is skipped.
+  test.concurrent("a file: dependency down a registry package's folder chain is still skipped", async () => {
+    const dependencies = { evil: "1.0.0" };
+    using copy = tempDir("npm-migrate-registry-folder-chain", {
+      "root/package.json": JSON.stringify({ name: "root", dependencies }),
+      "root/package-lock.json": npmLock("root", {
+        "": { name: "root", dependencies },
+        "node_modules/evil": {
+          version: "1.0.0",
+          resolved: `${OFFLINE_REGISTRY}evil/-/evil-1.0.0.tgz`,
+          dependencies: { inner: "file:./inner" },
+        },
+        "node_modules/evil/node_modules/inner": { resolved: "node_modules/evil/inner", link: true },
+        "node_modules/evil/inner": { version: "1.0.0", dependencies: { mid: "file:./mid" } },
+        "node_modules/evil/inner/node_modules/mid": { resolved: "node_modules/evil/inner/mid", link: true },
+        "node_modules/evil/inner/mid": { version: "1.0.0", dependencies: { loot: "file:../../../../../secret" } },
+        "node_modules/evil/inner/mid/node_modules/loot": { resolved: "../secret", link: true },
+        "../secret": { version: "1.0.0" },
+      }),
+      "secret/package.json": JSON.stringify({ name: "loot", version: "1.0.0" }),
+      "secret/credentials.txt": "do-not-link-me",
+    });
+    const dir = join(String(copy), "root");
+    writeExtra(dir, {});
+
+    const { stderr, exitCode, text, lock } = await migrate(dir);
+    expect(stderr).toContain(
+      'skipped "loot" from package-lock.json: transitive folder dependency "../secret" is outside the project',
+    );
+    expect(exitCode).toBe(0);
+    expect(Object.keys(lock.packages).sort()).toStrictEqual(["evil", "evil/inner", "evil/inner/mid"]);
+    expect(lock.packages["evil/inner/mid"]).toStrictEqual(["mid@file:node_modules/evil/inner/mid", {}]);
+    expect(text).not.toContain("../secret");
+    expect(text).not.toContain("loot");
+  });
+
   // A folder that a registry package ships inside itself is a `Folder` entry too, but the registry
   // package declared it, so a `file:` path in its package.json that leaves the project is still skipped.
   test.concurrent("a file: dependency declared by a registry package's own folder is still skipped", async () => {

@@ -861,32 +861,48 @@ impl Lockfile {
         0
     }
 
-    /// Does the root or a workspace depend on package `id` directly?
-    pub(crate) fn is_workspace_declared_package(&self, id: PackageID) -> bool {
+    /// Does the root or a workspace reach package `id` through `file:` packages only?
+    pub(crate) fn is_locally_declared_package(&self, id: PackageID) -> bool {
         let packages = self.packages.slice();
+        let package_resolutions = packages.items_resolution();
+        let resolution_lists = packages.items_resolutions();
         let resolutions = self.buffers.resolutions.as_slice();
-        for (pkg_id, res_list) in packages.items_resolutions().iter().enumerate() {
-            let tag = packages.items_resolution()[pkg_id].tag;
-            if tag != ResolutionTag::Workspace && tag != ResolutionTag::Root {
-                continue;
+
+        let mut visited = bun_core::handle_oom(DynamicBitSet::init_empty(packages.len()));
+        let mut declarers: Vec<PackageID> = Vec::new();
+        for (pkg_id, resolution) in package_resolutions.iter().enumerate() {
+            if resolution.tag == ResolutionTag::Workspace || resolution.tag == ResolutionTag::Root {
+                declarers.push(PackageID::try_from(pkg_id).expect("int cast"));
             }
-            if res_list.get(resolutions).contains(&id) {
-                return true;
+        }
+        while let Some(declarer) = declarers.pop() {
+            for &pkg_id in resolution_lists[declarer as usize].get(resolutions) {
+                if pkg_id == id {
+                    return true;
+                }
+                let Some(resolution) = package_resolutions.get(pkg_id as usize) else {
+                    continue;
+                };
+                if resolution.tag != ResolutionTag::Folder || visited.is_set(pkg_id as usize) {
+                    continue;
+                }
+                visited.set(pkg_id as usize);
+                declarers.push(pkg_id);
             }
         }
         false
     }
 
     /// Is dependency `id` declared by the root, a workspace, or a `file:` package
-    /// one of them depends on directly? Checked, not assumed: a migrated lockfile
-    /// can carry dependencies for a folder that a registry package shipped.
+    /// they reach through `file:` packages only? Checked, not assumed: a migrated
+    /// lockfile can carry dependencies for a folder that a registry package shipped.
     pub(crate) fn is_dependency_of_local_package(&self, id: DependencyID) -> bool {
         let Some(parent_id) = self.get_parent_pkg_of_dependency(id) else {
             return false;
         };
         match self.packages.items_resolution()[parent_id as usize].tag {
             ResolutionTag::Root | ResolutionTag::Workspace => true,
-            ResolutionTag::Folder => self.is_workspace_declared_package(parent_id),
+            ResolutionTag::Folder => self.is_locally_declared_package(parent_id),
             _ => false,
         }
     }

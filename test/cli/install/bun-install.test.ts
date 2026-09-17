@@ -10451,6 +10451,67 @@ it("refuses to install an escaping file: dependency that a registry package's ow
   });
 });
 
+it("refuses to install an escaping file: dependency at the end of a folder chain that a registry package ships", async () => {
+  // Trust follows a chain of file: packages only when the chain starts at the
+  // root or a workspace. Here the declaring folder's parent is a folder too, but
+  // the chain starts at a registry package.
+  await withContext(defaultOpts, async ctx => {
+    const urls: string[] = [];
+    using dir = tempDir("registry-folder-chain-declares-file-dep", {
+      "secret/package.json": JSON.stringify({ name: "loot", version: "1.0.0" }),
+      "secret/credentials.txt": "do-not-link-me",
+    });
+    const secretDir = join(String(dir), "secret").replaceAll("\\", "/");
+    setContextHandler(
+      ctx,
+      dummyRegistryForContext(ctx, urls, {
+        "0.0.3": {
+          dependencies: {
+            inner: "file:./inner",
+          },
+        },
+      }),
+    );
+    const dependencies = { baz: "0.0.3" };
+    await writeFile(
+      join(ctx.package_dir, "package.json"),
+      JSON.stringify({ name: "my-app", version: "1.0.0", dependencies }),
+    );
+    await writeFile(
+      join(ctx.package_dir, "bun.lock"),
+      JSON.stringify({
+        lockfileVersion: 1,
+        workspaces: {
+          "": { name: "my-app", dependencies },
+        },
+        packages: {
+          "baz": ["baz@0.0.3", `${ctx.registry_url}baz-0.0.3.tgz`, { dependencies: { inner: "file:./inner" } }, ""],
+          "baz/inner": ["inner@file:node_modules/baz/inner", { dependencies: { mid: "file:./mid" } }],
+          "baz/inner/mid": ["mid@file:node_modules/baz/inner/mid", { dependencies: { loot: "file:" + secretDir } }],
+          "baz/inner/mid/loot": ["loot@file:" + secretDir, {}],
+        },
+      }),
+    );
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: ctx.package_dir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    const [err, out, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+
+    expect(err).toContain("refusing to install dependency loot with unsafe folder path");
+    const midModules = join("node_modules", "baz", "node_modules", "inner", "node_modules", "mid", "node_modules");
+    expect(await exists(join(ctx.package_dir, "node_modules", "loot"))).toBe(false);
+    expect(await exists(join(ctx.package_dir, midModules, "loot"))).toBe(false);
+    expect(out).not.toContain("4 packages installed");
+    expect(exitCode).toBe(1);
+  });
+});
+
 it("installs transitive file: dependencies of a local file: package that point outside the project", async () => {
   // A file: package referenced by the root package.json lives outside the
   // project and declares its own relative folder dependencies that also land
@@ -10522,6 +10583,97 @@ it("installs transitive file: dependencies of a local file: package that point o
     await exists(join(projectDir, "node_modules", "plugin", "node_modules", "shared-dev-lib", "package.json")),
   ).toBe(true);
 });
+
+// Every package in the chain is a local file: package, so every hop is user
+// authored and may point outside the project, however deep the chain is.
+for (const linker of ["hoisted", "isolated"] as const) {
+  it.concurrent(`${linker}: installs a chain of local file: packages that point outside the project`, async () => {
+    using dir = tempDir("local-file-dep-chain-outside", {
+      "packages/c/package.json": JSON.stringify({ name: "c", version: "1.0.0", dependencies: { a: "file:../a" } }),
+      "packages/c/index.js": `module.exports = "c+" + require("a");`,
+      "packages/a/package.json": JSON.stringify({ name: "a", version: "1.0.0", dependencies: { b: "file:../b" } }),
+      "packages/a/index.js": `module.exports = "a+" + require("b");`,
+      "packages/b/package.json": JSON.stringify({ name: "b", version: "1.0.0", dependencies: { d: "file:../d" } }),
+      "packages/b/index.js": `module.exports = "b+" + require("d");`,
+      "packages/d/package.json": JSON.stringify({ name: "d", version: "1.0.0" }),
+      "packages/d/index.js": `module.exports = "d";`,
+      "project/package.json": JSON.stringify({
+        name: "my-app",
+        version: "1.0.0",
+        dependencies: { c: "file:../packages/c" },
+      }),
+      "project/index.js": `console.log(require("c"));`,
+    });
+    const projectDir = join(String(dir), "project");
+    const locks: string[] = [];
+
+    // The first pass resolves from the package.json files, the second installs
+    // what the first one recorded in bun.lock.
+    for (const args of [["install"], ["install", "--frozen-lockfile"]]) {
+      await rm(join(projectDir, "node_modules"), { recursive: true, force: true });
+
+      await using proc = spawn({
+        cmd: [bunExe(), ...args, `--linker=${linker}`],
+        cwd: projectDir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env,
+      });
+      const [err, out, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+
+      expect(err).not.toContain("error:");
+      expect(out).toContain("4 packages installed");
+      expect(exitCode).toBe(0);
+
+      locks.push(await file(join(projectDir, "bun.lock")).text());
+
+      if (linker === "hoisted") {
+        // Folder packages are never hoisted: each one nests under its declarer.
+        const deepest = join("node_modules", "c", "node_modules", "a", "node_modules", "b", "node_modules", "d");
+        expect(await file(join(projectDir, deepest, "package.json")).json()).toEqual({ name: "d", version: "1.0.0" });
+      } else {
+        await using run = spawn({
+          cmd: [bunExe(), "index.js"],
+          cwd: projectDir,
+          stdout: "pipe",
+          stderr: "pipe",
+          env,
+        });
+        const [runOut, runErr, runExit] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+        expect(runErr).toBe("");
+        expect(runOut).toBe("c+a+b+d\n");
+        expect(runExit).toBe(0);
+      }
+    }
+
+    expect(locks[1]).toBe(locks[0]);
+    // On Windows the stored folder path uses backslashes, JSON-escaped in the lockfile.
+    expect(normalizeBunSnapshot(locks[0].replaceAll("\\\\", "/"), projectDir)).toMatchInlineSnapshot(`
+      "{
+        "lockfileVersion": 2,
+        "configVersion": 1,
+        "workspaces": {
+          "": {
+            "name": "my-app",
+            "dependencies": {
+              "c": "file:../packages/c",
+            },
+          },
+        },
+        "packages": {
+          "c": ["c@file:../packages/c", { "dependencies": { "a": "file:../a" } }],
+
+          "c/a": ["a@file:../packages/a", { "dependencies": { "b": "file:../b" } }],
+
+          "c/a/b": ["b@file:../packages/b", { "dependencies": { "d": "file:../d" } }],
+
+          "c/a/b/d": ["d@file:../packages/d", {}],
+        }
+      }"
+    `);
+  });
+}
 
 it("does not install transitive file: dependencies with overlong folder targets", async () => {
   const overlongTarget = "file:./" + Buffer.alloc(120000, "a").toString();

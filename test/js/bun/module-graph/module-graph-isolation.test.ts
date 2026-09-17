@@ -511,7 +511,7 @@ const dir = String(
     "modules-made-by-a-graph.mjs": `
       const graph = new Bun.ModuleGraph({ globals: { tag: "the graph's" } });
       const app = (await graph.import(import.meta.dir + "/makes-modules.cjs")).default;
-      console.log(JSON.stringify({ compiled: app.compiled(), required: app.required(), inTheHostsCache: Object.keys(require.cache).some(key => key.endsWith("says-its-tag.cjs")) }));
+      console.log(JSON.stringify({ compiled: graph.run(app.compiled), required: graph.run(app.required), inTheHostsCache: Object.keys(require.cache).some(key => key.endsWith("says-its-tag.cjs")) }));
       process.exit(0);
     `,
     "builds-with-a-plugin.mjs": `
@@ -3642,7 +3642,7 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
       exitCode: 0,
     });
   });
-  test("a Module its code makes with new Module() is the graph's: its globals, its require cache", async () => {
+  test("a Module its code makes with new Module() in its context is the graph's: its globals, its require cache", async () => {
     expect(await runsFixture("modules-made-by-a-graph.mjs")).toEqual({
       stdout: `{"compiled":"the graph's","required":"the graph's","inTheHostsCache":false}`,
       exitCode: 0,

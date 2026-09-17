@@ -178,12 +178,23 @@ class Lifetimes {
     // Say what keeps them, not just that something does: a heap snapshot taken while they are retained.
     return [...remaining(), ...whatRetainsGraphs()];
   }
-  /** Collects a few times; whether `name` survived all of them. */
-  async survives(name: string): Promise<boolean> {
+  /** As `stillAlive`, satisfied once at most `allowed` of the names are left. For a claim about a kind of
+   *  thing rather than about one object: something that keeps graphs alive keeps every one of them, and the
+   *  test makes several. */
+  async aliveBeyond(allowed: number, ...names: string[]): Promise<string[]> {
+    const remaining = () => names.filter(name => !this.#finalized.has(name));
+    for (let i = 0; i < 100 && remaining().length > allowed; i++) {
+      await collect();
+    }
+    if (remaining().length <= allowed) return [];
+    return [...remaining(), ...whatRetainsGraphs()];
+  }
+  /** Collects a few times; whether every one of `names` survived all of them. */
+  async survives(...names: string[]): Promise<boolean> {
     for (let i = 0; i < 5; i++) {
       await collect();
     }
-    return !this.#finalized.has(name);
+    return !names.some(name => this.#finalized.has(name));
   }
 }
 
@@ -450,17 +461,21 @@ describe("ModuleGraph GC: what the graph's context owns", () => {
 
   test("a repeating timer keeps its graph alive; clearing it lets the graph go", async () => {
     const lifetimes = new Lifetimes();
-    const state = control();
+    const states = Array.from({ length: 10 }, control);
+    const names = states.map((_, i) => "graph " + i);
     await (async () => {
-      const graph = lifetimes.track("graph", new ModuleGraph({ globals: { control: state } }));
-      const io = await graph.import(file("io.mjs"));
-      graph.run(() => io.tick());
+      for (const [i, state] of states.entries()) {
+        const graph = lifetimes.track(names[i], new ModuleGraph({ globals: { control: state } }));
+        const io = await graph.import(file("io.mjs"));
+        graph.run(() => io.tick());
+      }
     })();
-    expect(await lifetimes.survives("graph")).toBe(true);
-    const ticks = state.ticks;
-    while (state.ticks === ticks) await new Promise<void>(resolve => setImmediate(resolve));
-    state.stop = true;
-    expect(await lifetimes.stillAlive("graph")).toEqual([]);
+    expect(await lifetimes.survives(...names)).toBe(true);
+    const ticks = states.map(state => state.ticks);
+    while (states.some((state, i) => state.ticks === ticks[i]))
+      await new Promise<void>(resolve => setImmediate(resolve));
+    for (const state of states) state.stop = true;
+    expect(await lifetimes.aliveBeyond(1, ...names)).toEqual([]);
   });
 
   // The job holds a ref on itself while a tick's promise is pending; nothing settles it once the graph is disposed.
@@ -609,23 +624,27 @@ describe("ModuleGraph GC: what the graph's context owns", () => {
 // node:fs remembers every open FileHandle for the life of the realm, to close the ones nobody
 // did: what it remembers of one must not hold the graph whose module holds the handle.
 describe.concurrent("ModuleGraph GC: node:fs's record of open FileHandles", () => {
-  test("a dropped graph whose module keeps a FileHandle open is collected", async () => {
+  test("dropped graphs whose modules keep a FileHandle open are collected", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         `
-          // (node:fs reports the handle nobody closed; whoever that reaches, it is not the point here.)
+          // (node:fs reports the handles nobody closed; whoever that reaches, it is not the point here.)
           process.on("uncaughtException", () => {});
-          let collected = false;
-          const registry = new FinalizationRegistry(() => { collected = true; });
+          // Several graphs: what node:fs remembers of an open FileHandle would keep every one of them.
+          const made = 10;
+          let collected = 0;
+          const registry = new FinalizationRegistry(() => { collected++; });
           await (async () => {
-            const graph = new Bun.ModuleGraph({ onError() {} });
-            registry.register(graph, "graph");
-            await graph.import(${JSON.stringify(join(dir, "keeps-a-file-handle.mjs"))});
+            for (let i = 0; i < made; i++) {
+              const graph = new Bun.ModuleGraph({ onError() {} });
+              registry.register(graph, "graph");
+              await graph.import(${JSON.stringify(join(dir, "keeps-a-file-handle.mjs"))});
+            }
           })();
-          for (let i = 0; i < 200 && !collected; i++) { Bun.gc(true); await new Promise(resolve => setImmediate(resolve)); }
-          console.log(JSON.stringify({ collected }));
+          for (let i = 0; i < 200 && collected < made - 1; i++) { Bun.gc(true); await new Promise(resolve => setImmediate(resolve)); }
+          console.log(JSON.stringify({ made, left: made - collected }));
           process.exit(0);
           `,
       ],
@@ -634,7 +653,8 @@ describe.concurrent("ModuleGraph GC: node:fs's record of open FileHandles", () =
       stderr: "inherit",
     });
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(stdout.trim()).toBe(`{"collected":true}`);
+    const { made, left } = JSON.parse(stdout);
+    expect({ made, leftAtMostOne: left <= 1 }).toEqual({ made: 10, leftAtMostOne: true });
     expect(exitCode).toBe(0);
   });
 });

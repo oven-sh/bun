@@ -611,11 +611,12 @@ impl MultiPartUpload {
         if self.state.get() != State::Finished {
             let old_state = self.state.replace(State::Finished);
             self.abort_handle.leave();
-            (self.callback)(
+            // The store still holds the parts when the callback fails: the rollback goes out anyway.
+            let r = (self.callback)(
                 self,
                 S3UploadResult::Failure(err),
                 self.callback_context.get(),
-            )?;
+            );
             // Nothing more is expected for this upload (a rollback request keeps the loop alive
             // itself), and whoever still holds a ref may hold it for as long as the collector likes.
             self.poll_ref.with_mut(|poll_ref| {
@@ -628,15 +629,16 @@ impl MultiPartUpload {
                 // we are a multipart upload so we need to rollback
                 // will deref after rollback
                 if in_flight == 0 {
-                    self.rollback_multi_part_request()?;
-                } else {
-                    // `on_part_response` of the last part in flight sends the rollback.
-                    self.parts_in_flight.set(in_flight);
+                    let rolled_back = self.rollback_multi_part_request();
+                    return r.and(rolled_back);
                 }
+                // `on_part_response` of the last part in flight sends the rollback.
+                self.parts_in_flight.set(in_flight);
             } else {
                 // single file upload no need to rollback
                 MultiPartUpload::deref_(self.root_ptr());
             }
+            return r;
         }
         Ok(())
     }

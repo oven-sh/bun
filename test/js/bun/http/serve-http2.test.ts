@@ -897,12 +897,11 @@ describe("Bun.serve http2 in-process", () => {
     await server.stop();
   });
 
-  // The stream close is the only notification left when the pump promise never
-  // settles, so this case cannot be handled in its resolve reaction. The end
-  // has to come from a later microtask: an end inside the first pull() leaves
-  // the response already finished when the stream is attached, which takes a
-  // different path. HTTP/1 has the same shape and still leaks there, because
-  // its socket is not freed per request.
+  // The request hears the controller close, so it does not wait for a pull()
+  // that never settles (the HTTP/1.1 cases are in
+  // serve-direct-readable-stream.test.ts). The end has to come from a later
+  // microtask: an end inside the first pull() leaves the response already
+  // finished when the stream is attached, which takes a different path.
   test("a direct stream whose pull() never settles after it ended the response", async () => {
     await using server = Bun.serve({
       port: 0,

@@ -400,6 +400,10 @@ fn match_hostname(pattern: &[u8], hostname: &[u8], opts: MatchOpts) -> bool {
         &hostname[..end]
     };
 
+    // Node lets `*` match the empty label of ".example.com", the IDNA form of "。example.com".
+    if host_first.is_empty() {
+        return false;
+    }
     if prefix.len() + suffix.len() > host_first.len() {
         return false;
     }
@@ -434,9 +438,27 @@ fn match_dns_name(pattern: &[u8], hostname: &[u8]) -> bool {
     match_hostname(pattern, hostname, MatchOpts::TLS_CHECK)
 }
 
+unsafe extern "C" {
+    /// `url.domainToASCII` in NodeURL.cpp. `Tag::Dead` when `domain` is not a valid host.
+    safe fn Bun__domainToASCII(domain: &bun_core::String) -> bun_core::String;
+}
+
 pub fn check_x509_server_identity(x509: &mut boring::X509, hostname: &[u8]) -> bool {
+    // As in Node.js, a host is an IP address only as typed, not after the IDNA mapping.
+    let host_is_ip = bun_core::ip_address::is_ip_address(unfqdn(hostname));
+    let ascii_hostname;
+    // CVE-2026-48618: IDNA maps "。" to ".", so a non-ASCII host is matched on `domainToASCII(host)`.
+    let hostname = if strings::first_non_ascii(hostname).is_some() {
+        let ascii = Bun__domainToASCII(&bun_core::String::borrow_utf8(hostname));
+        if ascii.is_dead() {
+            return false;
+        }
+        ascii_hostname = ascii.to_owned_slice();
+        &ascii_hostname[..]
+    } else {
+        hostname
+    };
     let hostname = unfqdn(hostname);
-    let host_is_ip = bun_core::ip_address::is_ip_address(hostname);
     let mut has_dns_san = false;
 
     match x509.subject_alt_names() {
@@ -651,6 +673,18 @@ impl core::fmt::Display for NameBytes<'_> {
     }
 }
 
+/// The host as typed, as Node.js prints it. Invalid UTF-8 takes the `NameBytes` escaping.
+struct HostName<'a>(&'a [u8]);
+
+impl core::fmt::Display for HostName<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match core::str::from_utf8(self.0) {
+            Ok(host) => f.write_str(host),
+            Err(_) => NameBytes(self.0).fmt(f),
+        }
+    }
+}
+
 /// Node's `subjectaltname` rendering of an IP entry: dotted IPv4, or IPv6 as
 /// uncompressed lowercase-hex groups (`0:0:0:0:0:0:0:1`).
 struct AltNameIp<'a>(&'a [u8]);
@@ -740,7 +774,7 @@ pub fn write_server_identity_mismatch_reason(
 ) -> core::fmt::Result {
     const NO_DNS: &str = "Cert does not contain a DNS name";
     let hostname = unfqdn(hostname);
-    let host = NameBytes(hostname);
+    let host = HostName(hostname);
     let host_is_ip = bun_core::ip_address::is_ip_address(hostname);
 
     let Some(x509) = ssl_ptr.peer_leaf_certificate() else {

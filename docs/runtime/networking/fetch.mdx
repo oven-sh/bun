@@ -493,6 +493,12 @@ session.close(); // closes the idle connections
 
 An option given on the request takes precedence over the session's, `proxy: false` included. A request's `tls` replaces the session's `tls` as a whole.
 
+The constructor throws for a `proxy` or a `tls.checkServerIdentity` that it cannot use, such as `proxy: 8080`, a `proxy` object without a `url`, or a `checkServerIdentity` that is not a function. For `proxy`, only `undefined`, `null` and `""` mean no option. On a request, `fetch` ignores such a `proxy` (`true` throws), and the request keeps the proxy of its session or of the environment.
+
+Bun rounds `idleTimeout` up to its socket timer, which moves in 4 second steps up to four minutes and in whole minutes beyond that. A connection is never closed before `idleTimeout`, and it can stay open for up to two steps longer. The longest `idleTimeout` is 238 minutes. A larger value means 238 minutes.
+
+Without `maxIdleSockets` a session has no limit of its own. The idle connections of all sessions and of plain `fetch` share one bounded pool per kind. When that pool is full, Bun closes the longest-idle connection in it, whichever session it belongs to. A `maxIdleSockets` above the size of the pool has no effect.
+
 #### Connecting to a specific address
 
 To send a request for a hostname to an address you resolved and checked yourself, put the address in the URL and name the origin in the `Host` header and in `tls.serverName`. Bun dials the address, sends `Host` (as `:authority` over HTTP/2), uses `serverName` for SNI, and verifies the certificate against `serverName`.

@@ -2707,7 +2707,7 @@ impl<'a> HTTPClient<'a> {
             Some(href) => {
                 // SAFETY: self-borrow. `href` points into `self.proxy_settings`'s
                 // boxed storage, which lives as long as `self` (>= `'a`).
-                let proxy: URL<'a> = unsafe { URL::parse(href).erase_lifetime() };
+                let proxy: URL<'a> = unsafe { URL::parse_single_reader(href).erase_lifetime() };
                 self.proxy_authorization = async_http::basic_authorization(&proxy);
                 self.http_proxy = Some(proxy);
             }

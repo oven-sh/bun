@@ -175,7 +175,8 @@ JSModuleGraph* moduleGraphRejecting(Zig::GlobalObject* globalObject)
 
 // ─── onError ─────────────────────────────────────────────────────────────────────────
 
-static bool deliverToOnError(Zig::GlobalObject* globalObject, JSModuleGraph* graph, JSValue error, ASCIILiteral kind)
+// `thrownIn`: as for ErrorHandlerContextScope.
+static bool deliverToOnError(Zig::GlobalObject* globalObject, JSModuleGraph* graph, JSValue error, ASCIILiteral kind, JSValue thrownIn)
 {
     graph = graphGivenErrorsOf(graph);
     if (!graph)
@@ -188,7 +189,7 @@ static bool deliverToOnError(Zig::GlobalObject* globalObject, JSModuleGraph* gra
     args.append(jsString(vm, String(kind)));
     // The handler is its maker's: it runs in the context the graph was made in (the host's, or the
     // enclosing graph's), so what it throws, rejects or starts is that context's.
-    ErrorHandlerContextScope inMakersContext(globalObject, graph->maker());
+    ErrorHandlerContextScope inMakersContext(globalObject, graph->maker(), thrownIn);
     JSC::call(globalObject, onError, getCallData(onError), jsUndefined(), args);
     if (scope.exception()) [[unlikely]] {
         if (vm.hasPendingTerminationException())
@@ -213,7 +214,7 @@ extern "C" EncodedJSValue Bun__ModuleGraph__rejecting(JSGlobalObject* lexicalGlo
 extern "C" bool Bun__ModuleGraph__handleUnhandledRejection(JSGlobalObject* lexicalGlobalObject, EncodedJSValue reason, EncodedJSValue owner)
 {
     auto* graph = dynamicDowncast<JSModuleGraph>(JSValue::decode(owner));
-    return graph && deliverToOnError(defaultGlobalObject(lexicalGlobalObject), graph, JSValue::decode(reason), "unhandledRejection"_s);
+    return graph && deliverToOnError(defaultGlobalObject(lexicalGlobalObject), graph, JSValue::decode(reason), "unhandledRejection"_s, JSValue());
 }
 
 static JSModuleGraph* moduleGraphOfFrame(Zig::GlobalObject*, JSValue asyncContext, JSObject** enteredWith);
@@ -234,7 +235,7 @@ extern "C" bool Bun__ModuleGraph__handleUncaughtException(JSGlobalObject* lexica
     }
     if (!asyncContext)
         asyncContext = globalObject->m_asyncContextData.get()->getInternalField(0);
-    return deliverToOnError(globalObject, moduleGraphOfFrame(globalObject, asyncContext, nullptr), error, "uncaughtException"_s);
+    return deliverToOnError(globalObject, moduleGraphOfFrame(globalObject, asyncContext, nullptr), error, "uncaughtException"_s, asyncContext);
 }
 
 // ─── The graph's context ─────────────────────────────────────────────────────────────
@@ -391,18 +392,20 @@ static JSValue makeContextCurrent(Zig::GlobalObject* globalObject, JSModuleGraph
 // returns the one to put back.
 extern "C" uint32_t Bun__VirtualMachine__replaceEnteredContext(void* bunVM, uint32_t context);
 
-ErrorHandlerContextScope::ErrorHandlerContextScope(Zig::GlobalObject* globalObject, JSModuleGraph* owner)
+ErrorHandlerContextScope::ErrorHandlerContextScope(Zig::GlobalObject* globalObject, JSModuleGraph* owner, JSValue thrownIn)
     : m_globalObject(globalObject)
-    , m_previous(makeContextCurrent(globalObject, owner))
+    , m_previous(globalObject->m_asyncContextData.get()->getInternalField(0))
     , m_previousEntered(Bun__VirtualMachine__replaceEnteredContext(globalObject->bunVM(), (owner ? owner->context() : *globalObject->scriptExecutionContext()).identifier()))
 {
+    if (thrownIn)
+        globalObject->m_asyncContextData.get()->putInternalField(globalObject->vm(), 0, thrownIn);
+    makeContextCurrent(globalObject, owner);
 }
 
 ErrorHandlerContextScope::~ErrorHandlerContextScope()
 {
     Bun__VirtualMachine__replaceEnteredContext(m_globalObject->bunVM(), m_previousEntered);
-    if (m_previous)
-        m_globalObject->m_asyncContextData.get()->putInternalField(m_globalObject->vm(), 0, m_previous);
+    m_globalObject->m_asyncContextData.get()->putInternalField(m_globalObject->vm(), 0, m_previous);
 }
 
 // As makeContextCurrent, for native code coming from the event loop: what it entered is what a

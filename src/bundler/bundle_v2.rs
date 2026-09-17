@@ -5837,6 +5837,12 @@ pub mod bv2_impl {
             import_record_index: u32,
             original_target: options::Target,
         ) -> bool {
+            // The runtime's import (`node:module`, for `__require` when the target
+            // is node) is Bun's, not the project's.
+            if source_index == Index::RUNTIME.get() {
+                return false;
+            }
+
             if let Some(plugins) = self.plugins_ref() {
                 // `ImportRecord.path` is `bun_paths::fs::Path`; `has_any_matches`
                 // takes the structurally-identical `bun_resolver::fs::Path`. Rebuild the

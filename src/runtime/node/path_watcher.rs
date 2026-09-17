@@ -584,10 +584,8 @@ pub(crate) fn watch(
 /// Shared recursive directory walk for Linux and Kqueue: open `abs_dir`, iterate,
 /// and for every entry call `cb` with (abs, rel, kind); recurse into
 /// subdirectories. When `dirs_only`, only directories and symlinks are reported
-/// (inotify delivers file events on the parent dir's wd so we only need a watch
-/// per directory, plus one per symlink because its target can be outside the
-/// tree; kqueue needs an fd per file too). A symlink is reported but never
-/// descended into: its target can be an ancestor, and the walk would not end.
+/// (inotify delivers file events on the parent dir's wd; kqueue needs an fd per
+/// file too). A symlink is never descended into: its target can be an ancestor.
 /// Best-effort — an unreadable subdirectory just stops that branch (matches Node).
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 fn walk_subtree<const DIRS_ONLY: bool>(
@@ -693,9 +691,8 @@ struct WdOwner {
     /// Path of the watched directory/file relative to `watcher.path`. Empty for
     /// the root. Owned; freed when this owner is removed from the wd.
     subpath: ZBox,
-    /// `subpath` is a symlink entry of a recursive tree and the wd is on its
-    /// target. Every event on it is reported as a rename of the link itself,
-    /// like node's recursive watcher (lib/internal/fs/recursive_watch.js).
+    /// `subpath` is a symlink entry and the wd is on its target. Every event is
+    /// reported as a rename of the link, like node's recursive watcher.
     is_symlink: bool,
 }
 
@@ -703,11 +700,9 @@ struct WdOwner {
 #[derive(Default)]
 pub(crate) struct LinuxWatch {
     /// All wds belonging to this PathWatcher (one for a file/non-recursive dir,
-    /// many for a recursive dir). No duplicates: a wd with several owners for
-    /// this watcher (a directory plus links to it) is listed once.
+    /// many for a recursive dir). A wd with several owners is listed once.
     wds: Vec<i32>,
     /// Symlink entries of a recursive tree: subpath → wd of the link target.
-    /// `IN_DELETE` / `IN_MOVED_FROM` of the link name looks its owner up here.
     link_wds: StringArrayHashMap<i32>,
 }
 
@@ -737,9 +732,7 @@ mod inotify_masks {
         | IN::MOVED_TO
         | IN::MOVE_SELF
         | IN::ONLYDIR;
-    /// A symlink entry of a recursive tree. `inotify_add_watch` follows the
-    /// link, and the target can be a file or a directory: the union of both
-    /// masks. On a file only the `WATCH_FILE_MASK` events fire.
+    /// A symlink entry: the target can be a file or a directory.
     pub(super) const WATCH_LINK_MASK: u32 = WATCH_DIR_MASK & !IN::ONLYDIR;
 }
 
@@ -790,10 +783,7 @@ impl Linux {
     }
 
     /// Add a single inotify watch and record ownership. Caller holds `manager.mutex`.
-    /// `is_symlink`: `abs_path` is a symlink entry of a recursive tree. The
-    /// watch lands on its target, which can be a file or a directory anywhere.
-    /// The caller has dropped any owner the same name held before (see
-    /// [`remove_link_owner`](Self::remove_link_owner)).
+    /// `is_symlink`: `abs_path` is a symlink entry; the watch lands on its target.
     fn add_one(
         manager: &'static PathWatcherManager,
         watcher: &mut PathWatcher,
@@ -805,10 +795,8 @@ impl Linux {
         let mask: u32 = if watcher.is_file && subpath.is_empty() {
             inotify_masks::WATCH_FILE_MASK
         } else if is_symlink {
-            // Only a regular file or a directory. A link to a pipe or a tty
-            // (`access.log -> /dev/stdout`) would report every write the
-            // handler itself makes, and never stop. A link that does not
-            // resolve, or loops, has nothing to watch.
+            // A link to a pipe or a tty (`access.log -> /dev/stdout`) would
+            // report every write the handler itself makes.
             let Ok(st) = sys::stat(abs_path) else {
                 return Ok(());
             };
@@ -826,9 +814,7 @@ impl Linux {
         if rc < 0 {
             let err = sys::Error::from_code_int(sys::last_errno(), Tag::watch);
             // ENOENT/ENOTDIR during a recursive walk just means we raced; skip.
-            // A link target the process may not read is outside the tree the
-            // caller asked for: skip it too, instead of an 'error' on a watcher
-            // that worked before links were followed.
+            // A link target the process may not read is outside the tree; skip.
             let skip = match err.get_errno() {
                 E::ENOENT | E::ENOTDIR | E::ELOOP => true,
                 E::EACCES | E::EPERM => is_symlink,
@@ -842,16 +828,11 @@ impl Linux {
         let wd: i32 = rc;
         // SAFETY: caller holds manager.mutex; exclusive access to `wd_map`.
         let owners = unsafe { (*plat).wd_map.entry(wd).or_default() };
-        // This wd may already have this watcher as an owner. A watcher holds at
-        // most one owner for the path itself, and one more per symlink entry
-        // whose target is this inode (an alias, possibly of an ancestor): each
-        // link reports under its own name, as node does with one watcher per
-        // entry. For the path itself:
-        //   - IN_CREATE raced the initial walk (same subpath → the reassign is a no-op)
-        //   - a subdirectory was *renamed* within the tree: IN_MOVED_TO re-adds it,
-        //     inotify returns the same wd (it watches by inode), and the cached subpath
-        //     is now stale. Overwrite so later events under the moved dir report the
-        //     new name.
+        // One owner per watcher for the path itself, plus one per symlink entry
+        // that points at this inode (each link reports under its own name).
+        // For the path itself: a subdirectory *renamed* within the tree comes
+        // back with the same wd (inotify watches by inode), so overwrite the
+        // stale subpath.
         let mut owned = false;
         for o in owners.iter_mut() {
             if !core::ptr::eq(o.watcher, watcher) {
@@ -893,13 +874,9 @@ impl Linux {
         Ok(())
     }
 
-    /// Drop the owner a symlink entry holds on its target's wd: the link was
-    /// deleted, moved away, or replaced. Node closes the link's watcher when the
-    /// link is gone, so its name is not reported again. The wd is released when
-    /// no owner is left. Caller holds `manager.mutex`.
-    /// Returns the index the owner had in the wd's list: the dispatch loop walks
-    /// that list by index and has to step back when an entry before its
-    /// position goes away.
+    /// Drop the owner a symlink entry holds on its target's wd, and the wd when
+    /// no owner is left. Returns the index the owner had in the wd's list.
+    /// Caller holds `manager.mutex`.
     fn remove_link_owner(
         manager: &'static PathWatcherManager,
         watcher: &mut PathWatcher,
@@ -932,9 +909,7 @@ impl Linux {
 
     /// Best-effort recursive directory walk. inotify watches are per-directory (events
     /// for files arrive on their parent's wd), so only descend into subdirectories.
-    /// A symlink entry gets a watch on its target, like node's recursive watcher
-    /// (lib/internal/fs/recursive_watch.js), so a change behind a link that
-    /// leaves the tree is still reported (as a rename of the link).
+    /// A symlink entry gets a watch on its target, like node's recursive watcher.
     /// Returns the first `inotify_add_watch` failure without stopping the walk.
     fn walk_and_add(
         manager: &'static PathWatcherManager,
@@ -1040,9 +1015,8 @@ impl Linux {
             manager.mutex.lock();
             // Track which PathWatchers got at least one event so we flush() each once.
             let mut touched: ArrayHashMap<*mut PathWatcher, ()> = ArrayHashMap::default();
-            // Symlink entries deleted or moved away by the current event, as
-            // (watcher, subpath). Their owners are dropped once the owner loop
-            // is done with the event: the owner can sit on the very wd it walks.
+            // Symlink entries the current event removed. Their owners are
+            // dropped after the owner loop: one can sit on the wd being walked.
             let mut dead_links: Vec<(*mut PathWatcher, Box<[u8]>)> = Vec::new();
 
             let mut i: usize = 0;
@@ -1082,9 +1056,8 @@ impl Linux {
                 if ev.mask & IN::IGNORED != 0 {
                     // SAFETY: holding manager.mutex; exclusive access to `wd_map`.
                     let wd_map = unsafe { &mut (*plat).wd_map };
-                    // Symlink entries whose target inode is gone. The link itself
-                    // may still be there and resolve again (an editor saved the
-                    // target by a rename over it), so each is watched again below.
+                    // Symlink entries whose target inode is gone. The link may
+                    // resolve again (a save by rename over the target).
                     let mut relink: Vec<(*mut PathWatcher, ZBox)> = Vec::new();
                     if let Some(owners) = wd_map.get_mut(&wd) {
                         for o in owners.drain(..) {
@@ -1202,9 +1175,8 @@ impl Linux {
                     };
                     oi += 1;
 
-                    // A symlink entry's wd is on its target, which can be anywhere.
-                    // node's recursive watcher reports every event there as a rename
-                    // of the link itself, and never descends into the target.
+                    // node's recursive watcher reports every event behind a link as
+                    // a rename of the link, and never descends into the target.
                     if owner_is_symlink {
                         // SAFETY: owner_watcher live under manager.mutex; `emit` takes `&self`.
                         unsafe {
@@ -1268,9 +1240,8 @@ impl Linux {
                         continue;
                     }
 
-                    // Recursive: a symlink entry is gone. A deleted or moved symlink
-                    // carries no IN_ISDIR even when it points at a directory. A
-                    // directory moved away takes the links under it along.
+                    // Recursive: a symlink entry is gone (a link carries no IN_ISDIR),
+                    // or a directory moved away with the links under it.
                     if ev.mask & (IN::DELETE | IN::MOVED_FROM) != 0 {
                         // SAFETY: owner_watcher live under manager.mutex; shared read.
                         let link_wds = unsafe { &(*owner_watcher).platform.link_wds };
@@ -1294,9 +1265,8 @@ impl Linux {
                     if ev.mask & (IN::CREATE | IN::MOVED_TO) == 0 {
                         continue;
                     }
-                    // The name was a symlink entry: it was renamed over (`ln -sfn`,
-                    // `mv file link`), with no IN_DELETE for the old link. Drop the
-                    // owner on the old target first, whatever the new entry is.
+                    // The name was a symlink entry that got renamed over (`ln -sfn`):
+                    // no IN_DELETE for it, so drop the owner on the old target here.
                     // SAFETY: owner_watcher live under manager.mutex; the `&mut` is
                     // scoped to the call.
                     let old_link_wd =

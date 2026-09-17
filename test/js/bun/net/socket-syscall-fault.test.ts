@@ -324,11 +324,11 @@ test.skipIf(!fault.available() || !isWindows)(
   },
 );
 
-// A Windows listener waits for a connection with AcceptEx. When that cannot be started (no socket
-// to accept into) it waits with a poll instead and takes what arrives with accept(), and when the
-// poll cannot be handed to the kernel either, every tick tries again. 10055 is WSAENOBUFS.
+// A Windows listener takes connections with AcceptEx, into a socket it makes first. While that
+// socket cannot be made, connections wait in the backlog, and every tick tries again. 10055 is
+// WSAENOBUFS.
 test.skipIf(!fault.available() || !isWindows)(
-  "a listener that could neither accept nor be polled takes the waiting connection once it can",
+  "a listener that could not start accepting takes the waiting connections once it can",
   async () => {
     await using proc = Bun.spawn({
       cmd: [
@@ -358,8 +358,7 @@ test.skipIf(!fault.available() || !isWindows)(
               socket: { open: resolve, data() {}, connectError: (_, e) => reject(e), error: (_, e) => reject(e) },
             }).catch(reject),
           );
-        // A turn of the loop. A poll that reported goes back to the kernel at the start of the
-        // tick after the one that reported it.
+        // A turn of the loop.
         const tick = () => new Promise(resolve => setImmediate(resolve));
         try {
           await connect();
@@ -368,17 +367,12 @@ test.skipIf(!fault.available() || !isWindows)(
           fault.set({ syscall: "socket", action: "errno", errno: 10055, fd: server.fd, repeat: -1 });
           await connect();
           await acceptedReaches(2);
-          // The listener is polled now. The next connection completes the poll and is taken, and
-          // the poll cannot go back: nothing tells the listener about the connection after that.
-          fault.set({ syscall: "poll_start", action: "errno", errno: 10055, fd: server.fd, repeat: -1 });
           await connect();
-          await acceptedReaches(3);
-          for (let i = 0; i < 4; i++) await tick();
           await connect();
           for (let i = 0; i < 4; i++) await tick();
-          if (accepted !== 3) throw new Error("accepted " + accepted + " connections with nothing waiting for them");
+          if (accepted !== 2) throw new Error("accepted " + accepted + " connections with no socket to take them into");
           fault.clear();
-          await acceptedReaches(4);
+          // Both that waited, and this one behind them.
           await connect();
           await acceptedReaches(5);
           console.log("OK");
@@ -631,3 +625,26 @@ describe.skipIf(skip)("h2 client under injected unclassified send errno (EPROTOT
     H2_TIMEOUT_MS,
   );
 });
+
+// On Windows a socket's poll goes back to the kernel between callbacks, so a refusal has no caller
+// to return to: the socket closes from the loop. That has to happen where every other completion
+// is delivered, after the tick has looked for events, or the answer to something its close handler
+// wrote arrives within the same tick, ahead of the microtasks the handler queued.
+test.skipIf(!fault.available() || !isWindows)(
+  "a socket whose poll the kernel refuses closes after the tick has looked for events",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "socket-refused-poll-tick-fixture.ts")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const result = stdout.startsWith("{") ? JSON.parse(stdout) : stdout;
+    expect({ result, stderr, exitCode }).toEqual({
+      result: { closed: ["refused"], replyBeforeCheckpoint: false },
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+);

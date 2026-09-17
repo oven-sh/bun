@@ -38,6 +38,16 @@ struct us_iocp_op {
     struct us_iocp_op *next_ready;
 };
 
+/* Something that could not start waiting for what it serves (a listener whose
+ * AcceptEx could not be started, a pipe server with an idle slot). While it is linked,
+ * `retry` runs at the start of every tick, and the loop's sweep timer is held so
+ * that ticks keep coming. `retry` may unlink its own node and no other. */
+struct us_iocp_starved {
+    void (*retry)(struct us_iocp_starved *starved);
+    struct us_iocp_starved *prev;
+    struct us_iocp_starved *next;
+};
+
 struct us_internal_afd_poll;
 struct us_internal_afd_helper;
 struct us_internal_acceptor;
@@ -81,6 +91,7 @@ struct us_loop_t {
     struct us_internal_afd_poll *afd_update_tail;
     /* Listening sockets with an AcceptEx outstanding. */
     struct us_internal_acceptor *acceptors;
+    struct us_iocp_starved *starved;
     /* Polls whose cancellation has not been dequeued yet. */
     unsigned int afd_cancelled_polls;
     /* us_loop_free is collecting what is still in flight: nothing is reported or re-armed. */
@@ -105,6 +116,8 @@ struct us_loop_t {
     /* When the armed timer is due, on the clock of us_internal_monotonic_ns
      * (which the tick's `now_ns` is a reading of); 0 while it is not armed. */
     uint64_t hrtimer_deadline_ns;
+    /* The wait packet is associated with the timer, or queued on the port. */
+    unsigned char hrtimer_packet_out;
 
     alignas(LIBUS_EXT_ALIGNMENT) OVERLAPPED_ENTRY ready_polls[US_IOCP_MAX_ENTRIES];
 };
@@ -137,6 +150,10 @@ void us_iocp_op_submitted(struct us_loop_t *loop);
  * op and nothing else. Loop thread only. Counts as submitted: call
  * us_iocp_op_submitted as for a packet. */
 void us_iocp_op_ready(struct us_loop_t *loop, struct us_iocp_op *op);
+
+/* Loop thread only. A linked node is unlinked before the loop is freed. */
+void us_iocp_starved_link(struct us_loop_t *loop, struct us_iocp_starved *starved);
+void us_iocp_starved_unlink(struct us_loop_t *loop, struct us_iocp_starved *starved);
 
 /* Deliver `op` once when `handle` becomes signalled (process exit, event,
  * console input...). us_iocp_wait_stop returns nonzero if the wait was removed

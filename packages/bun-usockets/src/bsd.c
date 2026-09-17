@@ -1252,11 +1252,14 @@ LIBUS_SOCKET_DESCRIPTOR bsd_socket_import(void *info, int *err) {
     bsd_winsock_ensure();
 #ifdef _WIN32
     SOCKET s = WSASocketW(FROM_PROTOCOL_INFO, FROM_PROTOCOL_INFO, FROM_PROTOCOL_INFO,
-                          (WSAPROTOCOL_INFOW *) info, 0, WSA_FLAG_OVERLAPPED);
+                          (WSAPROTOCOL_INFOW *) info, 0, WSA_FLAG_OVERLAPPED | WSA_FLAG_NO_HANDLE_INHERIT);
     if (s == INVALID_SOCKET) {
         *err = WSAGetLastError();
         return LIBUS_SOCKET_ERROR;
     }
+    /* The handle was put into this process by the sender's WSADuplicateSocketW,
+     * inheritable, and the flag above does not change one that exists. */
+    SetHandleInformation((HANDLE) s, HANDLE_FLAG_INHERIT, 0);
     return s;
 #else
     (void) info;

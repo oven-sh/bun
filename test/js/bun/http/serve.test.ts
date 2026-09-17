@@ -5372,8 +5372,10 @@ describe("requests pipelined in one read", () => {
     expect(parseResponses(reply)).toEqual([{ status: "HTTP/1.1 200 OK", body: "done" }]);
   });
 
-  // RFC 9112 9.6: the server does not process a request behind the one that closes the connection.
-  describe("does not run the requests behind", () => {
+  // RFC 9112 9.6: a response that carries Connection: close is the last one on its connection.
+  // The request head does not show that, so the parser latch for a Connection: close request
+  // ("does not dispatch a pipelined request after Connection: close") does not cover it.
+  describe("does not run the requests behind a response that closes the connection", () => {
     const secure = (port: number) => (onConnect: () => void) =>
       nodeTls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false }, onConnect);
 
@@ -5384,9 +5386,9 @@ describe("requests pipelined in one read", () => {
         hostname: "127.0.0.1",
         ...options,
         fetch(req) {
-          const { pathname, search } = new URL(req.url);
+          const { pathname } = new URL(req.url);
           ran.push(pathname);
-          return new Response(pathname, search === "?close" ? { headers: { Connection: "close" } } : undefined);
+          return new Response(pathname, pathname === "/close" ? { headers: { Connection: "close" } } : undefined);
         },
       });
       // Resolves when the server closes. One response too many ends it early.
@@ -5399,22 +5401,9 @@ describe("requests pipelined in one read", () => {
       expect({ ran, answered }).toEqual({ ran: expected, answered: expected });
     }
 
-    const closers = {
-      "a Connection: close request": get("/close", "Connection: close\r\n"),
-      "an HTTP/1.0 request": "GET /close HTTP/1.0\r\nHost: x\r\n\r\n",
-      "a request answered with Connection: close": get("/close?close"),
-    };
-    for (const [name, closer] of Object.entries(closers)) {
-      it(`${name} at the start of the read`, () => run(closer + get("/b") + get("/c"), ["/close"]));
-      it(`${name} in the middle of the read`, () => run(get("/a") + closer + get("/b") + get("/c"), ["/a", "/close"]));
-    }
-
-    it("a Connection: close request in the middle of the read, over TLS", () =>
-      run(
-        get("/a") + closers["a Connection: close request"] + get("/b") + get("/c"),
-        ["/a", "/close"],
-        { tls },
-        secure,
-      ));
+    it("at the start of the read", () => run(get("/close") + get("/b") + get("/c"), ["/close"]));
+    it("in the middle of the read", () => run(get("/a") + get("/close") + get("/b") + get("/c"), ["/a", "/close"]));
+    it("in the middle of the read, over TLS", () =>
+      run(get("/a") + get("/close") + get("/b") + get("/c"), ["/a", "/close"], { tls }, secure));
   });
 });

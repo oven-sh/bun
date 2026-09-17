@@ -414,11 +414,10 @@ private:
 
             HttpResponseData<SSL> *httpResponseData = (HttpResponseData<SSL> *) us_socket_ext((us_socket_t *) s);
 
-            /* Bun.serve, RFC 9112 9.6: a complete earlier response closes this
-             * connection (Connection: close, HTTP/1.0), so the requests behind it
-             * are not processed; resetResponseState() below would drop the mark.
-             * Same steps as onData's tail. Runs before the timeout reset: a socket
-             * that has not drained keeps its timeout until onWritable closes it. */
+            /* Bun.serve, RFC 9112 9.6: a complete response marked this connection close
+             * and sawConnectionClose did not see it (a Connection: close response
+             * header). Run onData's tail now: resetResponseState() below drops the mark.
+             * Before the timeout reset, so a socket that has not drained still times out. */
             if constexpr (!IsNodeHttp) {
                 constexpr uint32_t closeOrPending = HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE | HttpResponseData<SSL>::HTTP_RESPONSE_PENDING;
                 if ((httpResponseData->state & closeOrPending) == HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE) [[unlikely]] {

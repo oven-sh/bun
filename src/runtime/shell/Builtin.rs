@@ -250,9 +250,7 @@ pub enum BuiltinIO {
     Buf(IoKind),
     ArrayBuf {
         buf: PinnedArrayBuffer,
-        /// Offset of the next write. `&> ${buf}` gives stdout and stderr the
-        /// same cell, so both append at one position, the way `&> file`
-        /// shares one file offset.
+        /// Next write offset. `&> ${buf}` gives stdout and stderr the same cell.
         i: Rc<Cell<u32>>,
     },
     Blob(Arc<BuiltinBlob>),

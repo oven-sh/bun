@@ -2291,11 +2291,9 @@ mod spawn_process_body {
             if dup_src == Some(u32::try_from(i).expect("int cast")) {
                 *result_stdio = WindowsStdioResult::Unavailable;
             } else if dup_tgt == Some(u32::try_from(i).expect("int cast")) {
-                // The dup target reads `dup_fds[0]`: the pipe the caller allocated
-                // for it was never initialized, and no result slot takes it.
+                // The dup target reads `dup_fds[0]`, so no result slot takes its pipe.
                 if let WindowsStdio::Buffer(pipe) = stdio_options[i] {
-                    // SAFETY: heap allocation from `create_zeroed_pipe`; this is
-                    // its only release on the success path.
+                    // SAFETY: `create_zeroed_pipe` allocation that has no other owner.
                     unsafe { uv::Pipe::close_and_destroy(*pipe) };
                 }
                 *result_stdio = WindowsStdioResult::BufferFd(Fd::from_uv(dup_fds[0]));

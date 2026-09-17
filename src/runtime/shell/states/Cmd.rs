@@ -756,8 +756,7 @@ impl Cmd {
                         redirect_out(STDOUT_NO, redirect_stdout)?;
                     }
                     if flags.stdout() && flags.stderr() {
-                        // `&>`: stderr is a dup of stdout's pipe, like `&> file` shares one
-                        // fd. The bytes arrive in write order and one reader places them.
+                        // `&>`: one pipe for both streams keeps their bytes in write order.
                         stdio[STDERR_NO] = Stdio::Dup2(crate::api::bun_spawn::stdio::Dup2 {
                             out: StdioKind::Stderr,
                             to: StdioKind::Stdout,

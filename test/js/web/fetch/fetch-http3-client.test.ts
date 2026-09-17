@@ -453,6 +453,15 @@ describe("fetch protocol: http3", () => {
     }
   });
 
+  test("a request with more than 250 headers sends every header", async () => {
+    const sent: Record<string, string> = {};
+    for (let i = 0; i < 300; i++) sent["x-" + String(i).padStart(4, "0")] = "v";
+    const res = await fetch(`${base}/headers-echo`, { ...h3, headers: sent });
+    expect(res.status).toBe(200);
+    const got: Record<string, string> = await res.json();
+    expect(Object.keys(got).filter(name => name.startsWith("x-")).length).toBe(300);
+  });
+
   test("response consumed as blob / bytes", async () => {
     const r1 = await fetch(`${base}/hello`, h3);
     expect(await r1.blob().then(b => b.text())).toBe("hello over h3");

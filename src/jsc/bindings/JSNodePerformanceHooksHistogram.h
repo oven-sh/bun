@@ -116,9 +116,6 @@ public:
     static size_t estimatedSize(JSC::JSCell* cell, JSC::VM& vm);
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
 
-    template<typename Visitor>
-    static void visitChildren(JSCell*, Visitor&);
-
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
 

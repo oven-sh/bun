@@ -29,7 +29,6 @@
 #include "ZigGlobalObject.h"
 #include "JSDOMGlobalObject.h"
 #include "JSDOMExceptionHandling.h"
-#include "JSDOMConvertResult.h"
 #include <JavaScriptCore/Error.h>
 
 namespace WebCore {

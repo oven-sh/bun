@@ -12,8 +12,6 @@ pub const TRACING: bool = true;
 
 pub const WATCH_DIRECTORIES: bool = true;
 
-pub const DISABLE_COMPRESSION_IN_HTTP_CLIENT: bool = false;
-
 pub const ENABLE_KEEPALIVE: bool = true;
 
 pub const ATOMIC_FILE_WATCHER: bool = env::IS_LINUX;

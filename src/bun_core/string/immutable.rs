@@ -970,10 +970,7 @@ pub fn starts_with_case_insensitive_ascii(self_: &[u8], prefix: &[u8]) -> bool {
         && eql_case_insensitive_ascii(&self_[0..prefix.len()], prefix, false)
 }
 
-pub use crate::strings_impl::{
-    has_prefix_t, has_prefix_t as starts_with_generic, has_suffix_t,
-    has_suffix_t as ends_with_generic,
-};
+pub use crate::strings_impl::{has_prefix_t, has_suffix_t};
 
 #[inline]
 pub fn ends_with(self_: &[u8], str: &[u8]) -> bool {

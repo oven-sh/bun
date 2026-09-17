@@ -10451,6 +10451,77 @@ it("refuses to install an escaping file: dependency that a registry package's ow
   });
 });
 
+describe.concurrent('a registry package\'s file: dependency that hides ".." behind a NUL', () => {
+  // The OS ends a path at a NUL. For a check that only splits on separators,
+  // "..\0not-a-parent" is one ordinary component, but the directory that gets
+  // opened is "..".
+  const target = "..\u0000not-a-parent";
+
+  it("is refused by the resolver", async () => {
+    await withContext(defaultOpts, async ctx => {
+      const urls: string[] = [];
+      setContextHandler(
+        ctx,
+        dummyRegistryForContext(ctx, urls, { "0.0.3": { dependencies: { loot: "file:" + target } } }),
+      );
+      await writeFile(
+        join(ctx.package_dir, "package.json"),
+        JSON.stringify({ name: "my-app", version: "1.0.0", dependencies: { baz: "0.0.3" } }),
+      );
+
+      await using proc = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: ctx.package_dir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env,
+      });
+      const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+      expect(err).toContain("Could not find package.json");
+      expect(await exists(join(ctx.package_dir, "node_modules", "baz", "node_modules", "loot"))).toBe(false);
+      expect(exitCode).toBe(1);
+    });
+  });
+
+  it("is refused by the hoisted installer when the lockfile carries it", async () => {
+    await withContext(defaultOpts, async ctx => {
+      const urls: string[] = [];
+      setContextHandler(ctx, dummyRegistryForContext(ctx, urls, { "0.0.3": {} }));
+      await writeFile(
+        join(ctx.package_dir, "package.json"),
+        JSON.stringify({ name: "my-app", version: "1.0.0", dependencies: { baz: "0.0.3" } }),
+      );
+      await writeFile(
+        join(ctx.package_dir, "bun.lock"),
+        JSON.stringify({
+          lockfileVersion: 1,
+          workspaces: { "": { name: "my-app", dependencies: { baz: "0.0.3" } } },
+          packages: {
+            "baz": ["baz@0.0.3", `${ctx.registry_url}baz-0.0.3.tgz`, { dependencies: { loot: "file:" + target } }, ""],
+            "baz/loot": ["loot@file:" + target, {}],
+          },
+        }),
+      );
+
+      await using proc = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: ctx.package_dir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env,
+      });
+      const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+      expect(err).toContain("refusing to install dependency loot with unsafe folder path");
+      expect(await exists(join(ctx.package_dir, "node_modules", "baz", "node_modules", "loot"))).toBe(false);
+      expect(exitCode).toBe(1);
+    });
+  });
+});
+
 it("installs transitive file: dependencies of a local file: package that point outside the project", async () => {
   // A file: package referenced by the root package.json lives outside the
   // project and declares its own relative folder dependencies that also land
@@ -10568,6 +10639,11 @@ describe.concurrent("isolated linker: file: dependencies that point outside the 
     "a registry package declares with an absolute path": (tarball, secretDir) => ({
       "baz": ["baz@0.0.3", tarball, { dependencies: { loot: "file:" + secretDir } }, ""],
       "baz/loot": ["loot@file:" + secretDir, {}],
+    }),
+    // The OS ends a path at a NUL, so this row opens "..".
+    'a registry package declares with ".." hidden behind a NUL': tarball => ({
+      "baz": ["baz@0.0.3", tarball, { dependencies: { loot: "file:..\u0000not-a-parent" } }, ""],
+      "baz/loot": ["loot@file:..\u0000not-a-parent", {}],
     }),
     // Trust for a folder parent is anchored at the root or a workspace.
     "the folder of a registry package declares": tarball => ({

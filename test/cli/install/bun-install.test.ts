@@ -11675,7 +11675,8 @@ for (const linker of ["hoisted", "isolated"] as const) {
         cwd: projectDir,
         stdout: "pipe",
         stderr: "pipe",
-        env: { ...env, TOOL_MARKER: marker },
+        // Own cache: the shared one also holds the registry's copy of `qux`.
+        env: { ...env, TOOL_MARKER: marker, BUN_INSTALL_CACHE_DIR: join(projectDir, ".bun-cache") },
       });
       const [err, out, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
       expect(err).not.toContain("error:");
@@ -11719,6 +11720,19 @@ for (const linker of ["hoisted", "isolated"] as const) {
       const { out, ran } = await install(String(dir), [], 3);
       if (linker === "hoisted") expect(out).toContain("Blocked 1 postinstall");
       expect(ran).toBe(true);
+    }
+
+    {
+      // A trusted name meant for another package: `lib` declares the folder under
+      // the alias `sharp`, the root trusts `sharp`. The folder's own name is
+      // `tool`, so the entry does not reach it.
+      using dir = tempDir(
+        "nested-file-dep-scripts-alias",
+        fixture({ trustedDependencies: ["sharp"] }, { sharp: "file:../tool" }),
+      );
+      const { out, ran } = await install(String(dir), []);
+      if (linker === "hoisted") expect(out).toContain("Blocked 2 postinstalls");
+      expect(ran).toBe(false);
     }
   });
 }

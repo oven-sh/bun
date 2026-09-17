@@ -54,7 +54,7 @@ A curated list of popular npm packages with lifecycle scripts is allowed by defa
 
 A `trustedDependencies` entry for a package from one of these sources applies only when your `package.json` or a
 workspace declares that dependency. The one exception is a `file:` directory that another `file:` directory of yours
-declares: those package.json files are yours too, so the entry applies at any depth of such a chain.
+declares under the directory's own package name: the entry applies at any depth of such a chain.
 
 </Note>
 

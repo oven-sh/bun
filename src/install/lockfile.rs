@@ -3382,10 +3382,12 @@ impl Lockfile {
     }
 
     /// Does one of `local_packages` depend on `resolution` as `alias`? A `file:`
-    /// declarer only counts for a dependency that is itself in `local_packages`.
+    /// declarer only counts for a dependency that is itself in `local_packages`
+    /// and whose package name is `alias`.
     fn declared_by_local_package(&self, alias: &[u8], resolution: &Resolution) -> bool {
         let buf = self.buffers.string_bytes.as_slice();
         let packages = self.packages.slice();
+        let names = packages.items_name();
         let resolutions = packages.items_resolution();
         let dependencies_lists = packages.items_dependencies();
         let local = self.local_packages();
@@ -3405,7 +3407,10 @@ impl Lockfile {
                 if package_id == invalid_package_id || package_id as usize >= resolutions.len() {
                     continue;
                 }
-                if !is_root_or_workspace && !local.is_set(package_id as usize) {
+                if !is_root_or_workspace
+                    && (!local.is_set(package_id as usize)
+                        || names[package_id as usize].slice(buf) != alias)
+                {
                     continue;
                 }
                 if resolutions[package_id as usize].eql(resolution, buf, buf) {

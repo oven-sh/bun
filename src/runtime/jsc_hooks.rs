@@ -4274,10 +4274,17 @@ pub unsafe extern "C" fn Bun__transpileFile(
         // regex /\.[jt]s$/
         if ext.len() == b".ts".len() && (ext == b".js" || ext == b".ts") {
             // Use the package.json module type if it exists.
-            break 'brk lr
+            let package_module_type = lr
                 .package_json
                 .map(|pkg| pkg.module_type)
                 .unwrap_or(ModuleType::Unknown);
+            if package_module_type == ModuleType::Unknown
+                && ext == b".js"
+                && bun_paths::strings::path_contains_node_modules_folder(lr.path.text)
+            {
+                break 'brk ModuleType::Cjs;
+            }
+            break 'brk package_module_type;
         }
         // For JSX/TSX and other extensions, let the file contents decide.
         ModuleType::Unknown
@@ -4337,7 +4344,7 @@ pub unsafe extern "C" fn Bun__transpileFile(
                     &lr.path,
                     referrer.clone(),
                     concurrent_loader,
-                    lr.package_json,
+                    module_type,
                 )
             };
         }

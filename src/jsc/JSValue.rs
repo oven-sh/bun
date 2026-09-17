@@ -2577,6 +2577,12 @@ impl JSValue {
         unsafe { crate::TopExceptionScope::destroy(scope) };
         result
     }
+    /// Whether [`for_each_property`](Self::for_each_property) and
+    /// [`for_each_property_ordered`](Self::for_each_property_ordered) report no
+    /// property of this object. Runs no JS, so `false` also means "cannot tell".
+    pub(crate) fn is_definitely_empty_for_each_property(self, global: &JSGlobalObject) -> bool {
+        crate::cpp::JSC__JSValue__isDefinitelyEmptyForEachProperty(self, global)
+    }
     /// `JSValue.isBuffer` — `instanceof Buffer` check via
     /// the C++ `JSBuffer__isBuffer` shim. Accepts any JSValue; the C++ side
     /// handles non-cells (returns false), so no precondition is asserted.

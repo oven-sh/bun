@@ -5369,7 +5369,11 @@ pub mod formatter {
             let single_line = self.single_line;
             let always_newline =
                 !single_line && (self.always_newline_scope || self.good_time_for_a_new_line());
-            if self.depth > self.max_depth {
+            // An object with nothing to print falls through and prints the same
+            // `{}` text as inside the cap, like an empty Array, Map, or Set.
+            if self.depth > self.max_depth
+                && !value.is_definitely_empty_for_each_property(self.global_this)
+            {
                 return self.print_object_depth_exceeded::<C>(writer_, value);
             }
             let ordered_properties = self.ordered_properties;
@@ -5420,9 +5424,7 @@ pub mod formatter {
                     pfmt!($s, C)
                 };
             }
-            if self.single_line {
-                let _ = writer_.write_all(b" ");
-            } else if self.always_newline_scope || self.good_time_for_a_new_line() {
+            if !self.single_line && (self.always_newline_scope || self.good_time_for_a_new_line()) {
                 let _ = writer_.write_all(b"\n");
                 let _ = self.write_indent(writer_);
                 self.reset_line();

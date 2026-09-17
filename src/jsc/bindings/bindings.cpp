@@ -5722,6 +5722,42 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInInt64Range(JSC::EncodedJS
     properties.releaseData();
 }
 
+// True when forEachProperty and forEachPropertyOrdered report no property of this object.
+// Reads structures only and runs no JS, so false also means "cannot tell".
+extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__JSValue__isDefinitelyEmptyForEachProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject)
+{
+    JSC::JSObject* object = JSC::JSValue::decode(JSValue0).getObject();
+    if (!object)
+        return false;
+
+    auto& vm = JSC::getVM(globalObject);
+    // forEachProperty never looks past the fifth prototype.
+    constexpr unsigned maxPrototypeLevel = 5;
+    for (unsigned level = 0; level <= maxPrototypeLevel; level++) {
+        JSC::Structure* structure = object->structure();
+        const JSC::TypeInfo& typeInfo = structure->typeInfo();
+        // The property table must list every own property name of this level.
+        if (typeInfo.overridesGetOwnPropertySlot() || typeInfo.overridesAnyFormOfGetOwnPropertyNames() || typeInfo.overridesGetPrototype()
+            || structure->hasNonReifiedStaticProperties() || hasIndexedProperties(structure->indexingType()))
+            return false;
+
+        bool skipsEveryProperty = true;
+        structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
+            skipsEveryProperty = entry.key() == vm.propertyNames->constructor
+                || (PropertyName(entry.key()).isPrivateName() && !JSC::Options::showPrivateScriptsInStackTraces());
+            return skipsEveryProperty;
+        });
+        if (!skipsEveryProperty)
+            return false;
+
+        JSValue prototype = object->getPrototypeDirect();
+        if (!prototype.isObject() || prototype == globalObject->objectPrototype() || prototype == globalObject->functionPrototype())
+            return true;
+        object = asObject(prototype);
+    }
+    return true;
+}
+
 [[ZIG_EXPORT(nothrow)]] bool JSC__JSValue__isConstructor(JSC::EncodedJSValue JSValue0)
 {
     JSValue value = JSValue::decode(JSValue0);

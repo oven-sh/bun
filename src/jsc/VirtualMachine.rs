@@ -4759,11 +4759,14 @@ impl VirtualMachine {
             }
         }
 
-        let specifier_utf8 = specifier.to_utf8();
         let source_utf8 = source.to_utf8();
 
+        // A plugin `onResolve` answer in the `file` namespace replaces the
+        // specifier and is resolved below like one the source wrote.
+        let mut plugin_file_path: Option<bun_core::String> = None;
         if jsc_vm.plugin_runner.is_some() {
             use bun_bundler::transpiler::PluginRunner;
+            let specifier_utf8 = specifier.to_utf8();
             let spec = specifier_utf8.slice();
             if PluginRunner::could_be_plugin(spec) {
                 let namespace = PluginRunner::extract_namespace(spec);
@@ -4772,17 +4775,22 @@ impl VirtualMachine {
                 } else {
                     &spec[namespace.len() + 1..]
                 };
-                if let Some(resolved_path) = plugin_runner_on_resolve_jsc(
+                match plugin_runner_on_resolve_jsc(
                     global,
                     &bun_core::String::from_bytes(namespace),
                     &bun_core::String::borrow_utf8(after_namespace),
                     source,
                     crate::BunPluginTarget::Bun,
                 )? {
-                    return Ok(resolved_path);
+                    Some(Ok(PluginResolved::Namespaced(key))) => return Ok(Ok(key)),
+                    Some(Ok(PluginResolved::File(path))) => plugin_file_path = Some(path),
+                    Some(Err(err)) => return Ok(Err(err)),
+                    None => {}
                 }
             }
         }
+        let specifier = plugin_file_path.as_ref().unwrap_or(specifier);
+        let specifier_utf8 = specifier.to_utf8();
 
         if let Some(hardcoded) = ModuleLoader::HardcodedModule::Alias::get(
             specifier_utf8.slice(),
@@ -7077,6 +7085,17 @@ fn wrap_unhandled_rejection_error_for_uncaught_exception(
         .to_js())
 }
 
+/// What a `Bun.plugin()` `onResolve` callback answered for a specifier.
+pub(crate) enum PluginResolved {
+    /// A path in the `file` namespace. It is a filesystem path that the
+    /// resolver still has to resolve relative to the importer (it may be
+    /// relative, have no extension, or name a directory).
+    File(bun_core::String),
+    /// A `namespace:path` key for a custom namespace. The module loader
+    /// dispatches on it as-is.
+    Namespaced(bun_core::String),
+}
+
 /// `None` when no `Bun.plugin()` `onResolve` callback claimed the specifier.
 pub(crate) fn plugin_runner_on_resolve_jsc(
     global: &JSGlobalObject,
@@ -7084,7 +7103,7 @@ pub(crate) fn plugin_runner_on_resolve_jsc(
     specifier: &bun_core::String,
     importer: &bun_core::String,
     target: crate::BunPluginTarget,
-) -> JsResult<Option<Result<bun_core::String, JSValue>>> {
+) -> JsResult<Option<Result<PluginResolved, JSValue>>> {
     let empty = bun_core::String::EMPTY;
     let Some(on_resolve_plugin) = global.run_on_resolve_plugins(
         if namespace.length() > 0 && !namespace.eq_ascii(b"file") {
@@ -7155,15 +7174,11 @@ pub(crate) fn plugin_runner_on_resolve_jsc(
         break 'brk bun_core::String::static_("file");
     };
 
-    // A `file`-namespace result (the default) is a filesystem path, not a new
-    // specifier: hand it back unprefixed. Other namespaces keep the `ns:path`
-    // form the module loader dispatches on.
     if user_namespace.eq_ascii(b"file") {
-        return Ok(Some(Ok(file_path)));
+        return Ok(Some(Ok(PluginResolved::File(file_path))));
     }
 
-    Ok(Some(Ok(bun_core::String::create_format(format_args!(
-        "{}:{}",
-        user_namespace, file_path
-    )))))
+    Ok(Some(Ok(PluginResolved::Namespaced(
+        bun_core::String::create_format(format_args!("{}:{}", user_namespace, file_path)),
+    ))))
 }

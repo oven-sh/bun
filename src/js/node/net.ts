@@ -547,7 +547,11 @@ const SocketHandlers: SocketHandler = {
       callback(error);
     }
 
-    self.emit("error", error);
+    // destroy() owns the single 'error' emission; callback(error) may have
+    // already destroyed the stream (same shape as ServerHandlers.error).
+    if (!self.destroyed) {
+      self.destroy(error);
+    }
   },
   open(socket) {
     const self = socket.data;

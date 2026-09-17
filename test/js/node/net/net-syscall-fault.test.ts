@@ -1,6 +1,6 @@
 import { socketFaultInjection as fault } from "bun:internal-for-testing";
 import { afterEach, describe, expect, test } from "bun:test";
-import { isWindows } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { once } from "node:events";
 import net from "node:net";
 
@@ -226,6 +226,64 @@ describe.skipIf(skip)("node:net under injected syscall faults", () => {
     expect({ code: err.code, syscall: err.syscall }).toEqual({ code: "EPROTOTYPE", syscall: "write" });
     await closeP;
     expect(p.serverSock.destroyed).toBe(true);
+  });
+
+  // A socket that adopts an fd (every connection a cluster worker accepts goes
+  // through socket.connect({ fd })) binds the SocketHandlers table. Its error
+  // handler failed the parked write callback, which already destroyed the
+  // stream with the error, and then emitted 'error' a second time.
+  // https://github.com/oven-sh/bun/issues/43030
+  test("cluster worker: send → fatal flush of a buffered write emits 'error' once on the adopted fd", async () => {
+    using dir = tempDir("net-fault-cluster", {
+      "fixture.js": `
+        const cluster = require("node:cluster");
+        const net = require("node:net");
+
+        if (cluster.isPrimary) {
+          const worker = cluster.fork();
+          worker.on("message", msg => {
+            if (msg.port) {
+              const peer = net.connect(msg.port, "127.0.0.1");
+              peer.on("error", () => {});
+              peer.resume();
+            } else {
+              console.log(JSON.stringify(msg));
+              worker.kill();
+              process.exit(0);
+            }
+          });
+        } else {
+          const { socketFaultInjection: fault } = require("bun:internal-for-testing");
+          const events = [];
+          const server = net.createServer(c => {
+            const fd = c._handle.fd;
+            c.on("error", e => events.push("error:" + e.code));
+            c.on("close", hadError => {
+              events.push("close:" + hadError);
+              setImmediate(() => process.send({ events }));
+            });
+            // send #0 is short: 199 bytes stay buffered and the write callback is parked.
+            fault.set({ syscall: "send", action: "short", bytes: 1, repeat: 1, fd });
+            c.write(Buffer.alloc(200, "h"), err => events.push("write:" + (err ? err.code : "ok")));
+            // send #1 is the flush on the writable event.
+            fault.set({ syscall: "send", action: "errno", errno: "EPIPE", repeat: 1, fd });
+          });
+          server.listen(0, "127.0.0.1", () => process.send({ port: server.address().port }));
+        }
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr }).toEqual({
+      stdout: JSON.stringify({ events: ["write:EPIPE", "error:EPIPE", "close:true"] }),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
   });
 
   test("connect → ECONNREFUSED is reported on connecting socket", async () => {

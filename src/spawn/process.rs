@@ -3830,29 +3830,37 @@ mod spawn_process_body {
                 // loops concurrently with no subreaper; a `wait4(-1)` there would
                 // reap a sibling thread's `git` child, discard its status as an
                 // "orphan", and leave that sibling busy-polling a permanently-
-                // readable pidfd. Target `child` directly in that case.
+                // readable pidfd. Only `child` is waited for in that case.
                 //
                 // WUNTRACED only on a TTY: bridges Ctrl-Z via `JobControl`.
                 // Non-TTY callers never see stops, matching plain `bun run`.
                 let wopts: u32 =
                     (libc::WNOHANG | if jc.is_active() { libc::WUNTRACED } else { 0 }) as u32;
-                let wait_target: libc::pid_t = if drain_orphans { -1 } else { child };
-                loop {
-                    let r = posix_spawn::wait4(wait_target, wopts, None);
-                    let w = match &r {
-                        Err(_) => break,
-                        Ok(w) => *w,
-                    };
-                    if w.pid <= 0 {
-                        break;
-                    }
-                    if w.pid != child {
-                        continue; // subreaper-adopted orphan reaped
-                    }
-                    if libc::WIFSTOPPED(w.status as i32) {
-                        jc.on_child_stopped();
-                    } else {
-                        child_status = Status::from(child, &r);
+                // `r` is about `child`: a stop is bridged, an exit status or a wait
+                // error ends the loop.
+                let mut on_child = |r: &Maybe<WaitPidResult>| match r {
+                    Ok(w) if libc::WIFSTOPPED(w.status as i32) => jc.on_child_stopped(),
+                    _ => child_status = Status::from(child, r),
+                };
+                // `child` by pid, before the `-1` drain. While SIGCHLD is ignored (the
+                // disposition survives exec) the kernel reaps `child` itself and its
+                // status is lost: by pid that is ECHILD, reported the way `reap_child`
+                // reports it. `wait4(-1)` cannot tell, it answers 0 for as long as an
+                // adopted orphan lives, and the pidfd of the exited `child` stays
+                // readable, so `poll()` below would never block again.
+                let r = posix_spawn::wait4(child, wopts, None);
+                match &r {
+                    Ok(w) if w.pid != child => {} // still running
+                    _ => on_child(&r),
+                }
+                if drain_orphans {
+                    loop {
+                        let r = posix_spawn::wait4(-1, wopts, None);
+                        match &r {
+                            Ok(w) if w.pid == child => on_child(&r),
+                            Ok(w) if w.pid > 0 => {} // subreaper-adopted orphan reaped
+                            _ => break,
+                        }
                     }
                 }
                 if child_status.is_some() {

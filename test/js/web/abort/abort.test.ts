@@ -179,7 +179,7 @@ describe("AbortSignal", () => {
       },
     });
     const client = new AbortController();
-    const fetched = fetch(server.url, { signal: client.signal }).catch(() => {});
+    const fetched = fetch(server.url, { signal: client.signal }).catch(handling.reject);
     await handling.promise;
     for (let i = 0; i < 5; i++) {
       Bun.gc(true);

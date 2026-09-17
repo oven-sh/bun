@@ -455,13 +455,10 @@ pub struct StatWatcher {
 
     poll_ref: JsCell<KeepAlive>,
 
-    /// The last successful `stat()` (libuv's `ctx->statbuf`). Every successful
-    /// poll refreshes it, also one that found no change, because it is the
-    /// `previous` of the next listener call and node reports an `atime` that
-    /// moved without a call. A failed `stat()` leaves it alone.
+    /// The last successful `stat()`, the next `previous` (libuv's `ctx->statbuf`).
+    /// Every successful poll refreshes it. A failed one leaves it alone.
     last_stat: Guarded<PosixStat>,
-    /// The errno of the last `stat()`, 0 when it succeeded (libuv's
-    /// `busy_polling`). Pool thread only.
+    /// errno of the last `stat()`, 0 on success (libuv's `busy_polling`). Pool thread only.
     last_errno: Cell<u16>,
 
     scheduler: RefPtr<StatWatcherScheduler>,
@@ -536,9 +533,7 @@ impl StatWatcher {
         unsafe { VirtualMachine::event_loop_ctx(self.ctx.as_ptr()) }
     }
 
-    /// Take a ref on `self` for a pool→JS hop. The callbacks deref the
-    /// pointer as `&*const` (shared), so no write provenance is required; the
-    /// `*mut` spelling is purely to match the refcount API.
+    /// Take a ref on `self` for a pool→JS hop.
     #[inline]
     fn ref_for_hop(&self) -> RefPtr<Self> {
         // SAFETY: `self` is live.
@@ -630,9 +625,8 @@ impl StatWatcher {
     }
 
     fn initial_stat_success_on_main_thread(this: *mut StatWatcher) -> bun_event_loop::JsResult<()> {
-        // BACKREF — `this` is alive (the running `StatWatcherHop` holds a
-        // ref). R-2: all field access via Cell/JsCell/Atomic; `ParentRef`
-        // Deref gives safe `&Self`.
+        // BACKREF — the running `StatWatcherHop` holds a ref. R-2: all field
+        // access via Cell/JsCell/Atomic; `ParentRef` Deref gives safe `&Self`.
         let this_ref = ParentRef::from(NonNull::new(this).expect("initial_stat_success: watcher"));
         if this_ref.closed.load(Ordering::Relaxed) {
             return Ok(());
@@ -648,11 +642,9 @@ impl StatWatcher {
     }
 
     fn initial_stat_error_on_main_thread(this: *mut StatWatcher) -> bun_event_loop::JsResult<()> {
-        // BACKREF — `this` is alive (the running `StatWatcherHop` holds a
-        // ref). R-2: `cb.call()` below
-        // re-enters JS, which may call `do_close()` → fresh `&Self` from
-        // m_ctx; aliased `&` is sound, aliased `&mut` is not. `ParentRef`
-        // Deref gives that shared `&`.
+        // BACKREF — the running `StatWatcherHop` holds a ref. R-2: `cb.call()`
+        // below re-enters JS, which may call `do_close()` → fresh `&Self` from
+        // m_ctx; aliased `&` is sound, aliased `&mut` is not.
         let this_ref = ParentRef::from(NonNull::new(this).expect("initial_stat_error: watcher"));
         if this_ref.closed.load(Ordering::Relaxed) {
             return Ok(());
@@ -691,8 +683,7 @@ impl StatWatcher {
         result.map(drop)
     }
 
-    /// Pool thread (the scheduler's pass). Ports libuv's `poll_cb`
-    /// (`src/fs-poll.c`): `previous` is always the last successful stat.
+    /// Pool thread (the scheduler's pass). Ports libuv's `poll_cb` (`src/fs-poll.c`).
     fn restat(&self, ticket: &bun_jsc::Ticket) {
         log!("recalling stat");
         let previous = self.get_last_stat();
@@ -706,8 +697,7 @@ impl StatWatcher {
                 }
                 res
             }
-            // A stat that keeps failing with the same error is not a change.
-            // A new error code is one, as in libuv.
+            // As in libuv, a new error code is a change. The same one is not.
             Err(err) => {
                 if err.errno == last_errno {
                     return;
@@ -731,12 +721,9 @@ impl StatWatcher {
         previous: &PosixStat,
         current: &PosixStat,
     ) -> bun_event_loop::JsResult<()> {
-        // BACKREF — `this` is alive (the running `StatWatcherHop` holds a
-        // ref). R-2: `cb.call()`
+        // BACKREF — the running `StatWatcherHop` holds a ref. R-2: `cb.call()`
         // below re-enters JS, which may call `do_close()` → fresh `&Self` from
-        // m_ctx; aliased `&` is sound, aliased `&mut` is not (and the
-        // work-pool thread may still hold `&*watcher`). `ParentRef` Deref
-        // gives that shared `&`.
+        // m_ctx; aliased `&` is sound, aliased `&mut` is not.
         let this_ref = ParentRef::from(NonNull::new(this).expect("swap_and_call: watcher"));
         if this_ref.closed.load(Ordering::Relaxed) {
             return Ok(());
@@ -940,23 +927,18 @@ impl Arguments {
     }
 }
 
-/// One pool→JS hop. It owns a ref on the watcher across the crossing; a VM
-/// tearing down drops it unrun from its queue.
+/// One pool→JS hop. It owns a ref on the watcher across the crossing.
 pub(crate) struct StatWatcherHop {
     watcher: RefPtr<StatWatcher>,
     kind: StatWatcherHopKind,
 }
 
 /// Which JS-thread continuation a [`StatWatcherHop`] runs.
-#[allow(
-    clippy::large_enum_variant,
-    reason = "lives only inside the boxed hop; a second box per listener call gains nothing"
-)]
+#[allow(clippy::large_enum_variant, reason = "lives only inside the boxed hop")]
 enum StatWatcherHopKind {
     InitialStatSuccess,
     InitialStatError,
-    /// The listener arguments, captured on the pool thread when it found the
-    /// change. `current` is zeroed when the `stat()` failed.
+    /// The listener arguments. `current` is zeroed when the `stat()` failed.
     Changed {
         previous: PosixStat,
         current: PosixStat,
@@ -1000,8 +982,7 @@ impl bun_event_loop::Taskable for StatWatcherHop {
     }
 }
 
-/// libuv's `statbuf_eq`: the fields a poll compares. `atime` is not one of
-/// them, so a read between two changes fires no listener call.
+/// libuv's `statbuf_eq`: the fields a poll compares. `atime` is not one of them.
 fn stat_eq(a: &PosixStat, b: &PosixStat) -> bool {
     a.dev == b.dev
         && a.ino == b.ino
@@ -1022,9 +1003,7 @@ fn stat_eq(a: &PosixStat, b: &PosixStat) -> bool {
 }
 
 pub(crate) struct InitialStatTask {
-    // StatWatcher is intrusively ref-counted (ThreadSafeRefCount m_ctx
-    // payload). We hold one ref (`ref_()` in `create_and_schedule`) and keep
-    // the raw `*mut`; `run_owned` adopts it into a `RefPtr`.
+    // One ref, taken in `create_and_schedule`; `run_owned` adopts it into a `RefPtr`.
     watcher: *mut StatWatcher,
     ticket: bun_jsc::Ticket,
     task: WorkPoolTask,
@@ -1065,8 +1044,7 @@ impl InitialStatTask {
         // `ParentRef` Deref gives that shared `&`.
         let this_ref = ParentRef::from(NonNull::new(this).expect("run_owned: watcher"));
         let ticket = self.ticket;
-        // SAFETY: `this` is live; adopt the ref from `create_and_schedule`.
-        // The hop carries it to the JS thread, or it drops here when closed.
+        // SAFETY: `this` is live; this adopts the ref from `create_and_schedule`.
         let watcher = unsafe { RefPtr::from_raw(this) };
 
         if this_ref.closed.load(Ordering::Relaxed) {
@@ -1080,9 +1058,7 @@ impl InitialStatTask {
                 StatWatcherHopKind::InitialStatSuccess
             }
             Err(err) => {
-                // on enoent, eperm, we call cb with two zeroed stat objects.
-                // `last_stat` stays zeroed: it is the `previous` reported when
-                // the file appears.
+                // `last_stat` stays zeroed: the `previous` reported when the file appears.
                 this_ref.last_errno.set(err.errno);
                 StatWatcherHopKind::InitialStatError
             }

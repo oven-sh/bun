@@ -132,18 +132,17 @@ public:
     static JSString* computeSubjectAltName(ncrypto::X509View view, JSGlobalObject*);
     static JSObject* computePublicKey(ncrypto::X509View view, JSGlobalObject*);
 
+    // Convert the certificate to PEM format
+    String toPEMString() const;
+
+private:
     JSX509Certificate(JSC::VM& vm, JSC::Structure* structure)
         : Base(vm, structure)
     {
     }
 
-    // Convert the certificate to PEM format
-    String toPEMString() const;
-
-private:
-    // Every JSX509Certificate that JS can reach holds a parsed certificate. This
-    // overload leaves m_x509 null, so it stays an implementation detail of the
-    // public create() overloads, which fill m_x509 right after.
+    // Leaves m_x509 null. Only the public create() overloads call it, and each
+    // sets m_x509 before it returns.
     static JSX509Certificate* create(JSC::VM& vm, JSC::Structure* structure);
 
     uint16_t m_extraMemorySizeForGC = 0;

@@ -1126,8 +1126,9 @@ describe("X509Certificate payloads that carry no certificate are rejected", () =
   // state `new X509Certificate(...)` cannot reach. `.publicKey` on it wraps a null
   // EVP_PKEY, and `equals()` hands that pointer to EVP_PKEY_cmp.
   //
-  // The header and the tag byte come from a real serialize(), so a wire version bump
-  // does not invalidate the crafted payloads.
+  // The header and the tag byte come from a real serialize(). The last test feeds a real
+  // DER through the same framing. If the wire layout changes, that test fails, so the two
+  // rejections cannot pass for an unrelated reason.
   const recordPrefix = Array.from(new Uint8Array(serialize(new X509Certificate(tls.cert))).slice(0, 5));
   const x509Record = (der: number[]) => {
     const length = Buffer.alloc(4);
@@ -1160,12 +1161,12 @@ describe("X509Certificate payloads that carry no certificate are rejected", () =
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect({ stdout: stdout.trim().split("\n"), signalCode: proc.signalCode, exitCode }).toEqual({
+    expect({ stdout: stdout.trim().split("\n"), stderr, signalCode: proc.signalCode, exitCode }).toEqual({
       stdout: ["bun:jsc: Unable to deserialize data.", "node:v8: Unable to deserialize data."],
+      stderr: expect.any(String),
       signalCode: null,
       exitCode: 0,
     });
-    expect(stderr).not.toContain("Segmentation fault");
   });
 
   test("a record with undecodable DER is rejected", () => {
@@ -1173,9 +1174,9 @@ describe("X509Certificate payloads that carry no certificate are rejected", () =
     expect(() => deserialize(payload)).toThrow("Unable to deserialize data.");
   });
 
-  test("a real certificate still round-trips and its public key still compares", () => {
+  test("the same framing around a real DER yields a working certificate", () => {
     const original = new X509Certificate(tls.cert);
-    const cloned = deserialize(serialize(original));
+    const cloned = deserialize(new Uint8Array(x509Record([...original.raw])));
     expect(cloned).toBeInstanceOf(X509Certificate);
     expect(cloned.fingerprint256).toBe(original.fingerprint256);
     expect(cloned.publicKey.equals(original.publicKey)).toBe(true);

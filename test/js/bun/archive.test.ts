@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { existsSync, readdirSync, rmSync } from "node:fs";
+import { gzipSync } from "node:zlib";
 import { join } from "path";
 
 // Minimal ustar tarball builder (pathnames must be <100 bytes). `name` accepts
@@ -784,6 +785,150 @@ describe("Bun.Archive", () => {
       expect(stderr).toBe("");
       expect(stdout).toContain("RSS growth:");
       expect(exitCode).toBe(0);
+    });
+
+    // Every archive below starts with a complete "a.txt", so a reader that
+    // stops at the damage without an error resolves with a partial result.
+    describe("damage after a complete entry", () => {
+      const a = ustarEntry("a.txt", Buffer.from("hello"));
+      const c = ustarEntry("c.txt", Buffer.from("third"));
+      const endOfArchive = Buffer.alloc(1024);
+
+      const outcome = (promise: Promise<unknown>) =>
+        promise.then(
+          value => ({ resolved: value instanceof Map ? [...value.keys()] : value }),
+          error => ({ rejected: (error as Error).message }),
+        );
+      // The "files: N" line of console.log(archive), which cannot reject.
+      const inspected = (archive: Bun.Archive) => Bun.inspect(archive).match(/files: \d+/)?.[0];
+
+      // libarchive's gzip filter inflates 64 KiB at a time. "a.txt" (header
+      // and data) is exactly the first block. The input ends inside the second
+      // block, and nothing asks for that block until the read of the next header.
+      const blockAligned = Buffer.concat([
+        ustarEntry("a.txt", Buffer.alloc(64 * 1024 - 512, "a")),
+        ustarEntry("b.txt", Buffer.alloc(200 * 1024, "b")),
+        endOfArchive,
+      ]);
+      const gz = gzipSync(blockAligned, { level: 0 });
+
+      // libarchive reports each of these from the read of a header.
+      const damagedAtHeader = {
+        "a tar that ends inside a header": {
+          bytes: Buffer.concat([a, ustarHeader("b.txt", 5).subarray(0, 100)]),
+          message: "Truncated tar archive detected while reading next header",
+        },
+        "a tar that ends after a pax extended header": {
+          bytes: Buffer.concat([a, paxEntry("b.txt", "world", 0).subarray(0, 1024)]),
+          message: "Damaged tar archive (end-of-archive within a sequence of headers)",
+        },
+        "a tar.gz that ends inside the second 64 KiB block of gzip output": {
+          bytes: gz.subarray(0, gz.indexOf("bbbbbbbb") + 5000),
+          message: "Truncated tar archive detected while reading next header",
+        },
+      };
+
+      test.each(Object.entries(damagedAtHeader))("%s rejects", async (_, { bytes, message }) => {
+        using dir = tempDir("archive-damaged-header", {});
+        const archive = new Bun.Archive(bytes);
+
+        expect({
+          files: await outcome(archive.files()),
+          filesGlob: await outcome(archive.files("*.txt")),
+          extract: await outcome(archive.extract(join(String(dir), "all"))),
+          extractGlob: await outcome(archive.extract(join(String(dir), "glob"), { glob: "*.txt" })),
+          inspect: inspected(archive),
+        }).toEqual({
+          files: { rejected: message },
+          filesGlob: { rejected: message },
+          extract: { rejected: "ReadError" },
+          extractGlob: { rejected: "ReadError" },
+          inspect: "files: 1",
+        });
+      });
+
+      test("a tar that ends inside the data of an entry the glob skips rejects", async () => {
+        // Nothing reads the data of "b.bin". libarchive skips it, and finds
+        // that it is cut short, in the read of the next header.
+        const bytes = Buffer.concat([a, ustarEntry("b.bin", Buffer.alloc(4096, "b")).subarray(0, 512 + 1000)]);
+        using dir = tempDir("archive-damaged-skipped-data", {});
+        const archive = new Bun.Archive(bytes);
+
+        expect({
+          filesGlob: await outcome(archive.files("*.txt")),
+          extractGlob: await outcome(archive.extract(String(dir), { glob: "*.txt" })),
+        }).toEqual({
+          filesGlob: { rejected: "Truncated tar archive detected while skipping data" },
+          extractGlob: { rejected: "ReadError" },
+        });
+      });
+
+      test("a tar that ends inside the data of an entry rejects", async () => {
+        const bytes = Buffer.concat([a, ustarEntry("b.txt", Buffer.alloc(4096, "b")).subarray(0, 512 + 1000)]);
+        using dir = tempDir("archive-damaged-data", {});
+        const archive = new Bun.Archive(bytes);
+
+        expect({
+          files: await outcome(archive.files()),
+          extractGlob: await outcome(archive.extract(String(dir), { glob: "*.txt" })),
+        }).toEqual({
+          files: { rejected: "Truncated tar archive detected while reading data" },
+          extractGlob: { rejected: "ReadError" },
+        });
+        // The partial "b.txt" does not stay on disk.
+        expect(readdirSync(String(dir))).toEqual(["a.txt"]);
+      });
+
+      test("extract() with a glob rejects when libarchive cannot read the data of an entry", async () => {
+        // An old GNU sparse header whose map lists the second data block first.
+        // `archive_read_data` fails on it, but the archive stays readable: the
+        // header of "c.txt" reads without an error after it.
+        const octal = (n: number) => n.toString(8).padStart(11, "0") + "\0";
+        const sparse = ustarHeader("s.txt", 1024, "S");
+        sparse.write("ustar  \0", 257);
+        sparse.write(octal(512) + octal(512) + octal(0) + octal(512), 386); // [offset, length] of each data block
+        sparse.write(octal(1536), 483); // the size of the file with its holes
+        sparse.write("        ", 148);
+        const checksum = sparse.reduce((sum, byte) => sum + byte, 0);
+        sparse.write(checksum.toString(8).padStart(6, "0") + "\0 ", 148);
+        const bytes = Buffer.concat([a, sparse, Buffer.alloc(1024, "s"), c, endOfArchive]);
+        using dir = tempDir("archive-damaged-sparse-map", {});
+        const archive = new Bun.Archive(bytes);
+
+        expect({
+          files: await outcome(archive.files()),
+          extractGlob: await outcome(archive.extract(String(dir), { glob: "*.txt" })),
+        }).toEqual({
+          files: { rejected: "Encountered out-of-order sparse blocks" },
+          extractGlob: { rejected: "ReadError" },
+        });
+        expect(readdirSync(String(dir))).toEqual(["a.txt"]);
+      });
+
+      test("a header block with a bad checksum is skipped, as in extract() without a glob", async () => {
+        // libarchive drops the block and reports `ARCHIVE_RETRY`. It did not
+        // read the size of "b.txt", so it drops the data block of "b.txt" the
+        // same way. Then it reads "c.txt".
+        const damaged = ustarEntry("b.txt", Buffer.from("world"));
+        damaged[100] ^= 0x01; // in the mode field, so the checksum no longer matches
+        const bytes = Buffer.concat([a, damaged, c, endOfArchive]);
+        using dir = tempDir("archive-damaged-checksum", {});
+        const archive = new Bun.Archive(bytes);
+
+        expect({
+          files: await outcome(archive.files()),
+          filesGlob: await outcome(archive.files("*.txt")),
+          extract: await outcome(archive.extract(join(String(dir), "all"))),
+          extractGlob: await outcome(archive.extract(join(String(dir), "glob"), { glob: "*.txt" })),
+          inspect: inspected(archive),
+        }).toEqual({
+          files: { resolved: ["a.txt", "c.txt"] },
+          filesGlob: { resolved: ["a.txt", "c.txt"] },
+          extract: { resolved: 2 },
+          extractGlob: { resolved: 2 },
+          inspect: "files: 2",
+        });
+      });
     });
   });
 

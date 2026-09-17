@@ -127,6 +127,24 @@ fn entry_pathname_utf8(entry: &libarchive::lib::Entry) -> Result<Vec<u8>, bun_al
     bun_core::strings::to_utf8_list_with_type(Vec::new(), entry.pathname_w().as_slice())
 }
 
+/// The next entry of an archive opened with `read_open_memory`, or `None` at
+/// the end of the archive. On `Err`, `error_string()` has libarchive's message.
+fn read_next_entry(
+    archive: &libarchive::lib::Archive,
+) -> crate::Result<Option<&libarchive::lib::Entry>> {
+    use libarchive::lib;
+    let mut entry: *mut lib::Entry = core::ptr::null_mut();
+    loop {
+        return match archive.read_next_header(&mut entry) {
+            lib::Result::Ok | lib::Result::Warn => Ok(Some(lib::Entry::opaque_ref(entry))),
+            lib::Result::Eof => Ok(None),
+            // libarchive skipped a header block with a bad checksum.
+            lib::Result::Retry => continue,
+            lib::Result::Failed | lib::Result::Fatal => Err(crate::Error::ReadError),
+        };
+    }
+}
+
 /// Count the number of files in an archive
 fn count_files_in_archive(data: &[u8]) -> u32 {
     use libarchive::lib;
@@ -137,10 +155,10 @@ fn count_files_in_archive(data: &[u8]) -> u32 {
         return 0;
     }
 
+    // The inspect output has no error channel: a failed header read ends the count.
     let mut count: u32 = 0;
-    let mut entry: *mut lib::Entry = core::ptr::null_mut();
-    while archive.read_next_header(&mut entry).succeeded() {
-        if lib::Entry::opaque_ref(entry).filetype() == FILETYPE_REGULAR {
+    while let Ok(Some(entry)) = read_next_entry(&archive) {
+        if entry.filetype() == FILETYPE_REGULAR {
             count += 1;
         }
     }
@@ -1028,26 +1046,32 @@ impl FilesContext {
         CString::new(err_str).ok()
     }
 
+    /// The result for a libarchive read that failed.
+    fn read_error(archive: &libarchive::lib::Archive) -> FilesResult {
+        match Self::clone_error_string(archive) {
+            Some(err) => FilesResult::LibarchiveErr(err),
+            None => FilesResult::Err(FilesError::ReadError),
+        }
+    }
+
     fn do_run(&mut self) -> Result<FilesResult, bun_alloc::AllocError> {
         use libarchive::lib;
         let archive = lib::ReadArchive::new();
         configure_archive_reader(&archive);
 
         if archive.read_open_memory(self.store.shared_view()) != lib::Result::Ok {
-            // SAFETY: `archive` is the live `read_new()` handle opened above.
-            return Ok(if let Some(err) = Self::clone_error_string(&archive) {
-                FilesResult::LibarchiveErr(err)
-            } else {
-                FilesResult::Err(FilesError::ReadError)
-            });
+            return Ok(Self::read_error(&archive));
         }
 
         let mut entries: FileEntryList = Vec::new();
         // errdefer freeEntries(&entries) — handled by Drop on `entries`
 
-        let mut entry: *mut lib::Entry = core::ptr::null_mut();
-        while archive.read_next_header(&mut entry).succeeded() {
-            let entry_ref = lib::Entry::opaque_ref(entry);
+        loop {
+            let entry_ref = match read_next_entry(&archive) {
+                Ok(Some(entry)) => entry,
+                Ok(None) => break,
+                Err(_) => return Ok(Self::read_error(&archive)),
+            };
             if entry_ref.filetype() != FILETYPE_REGULAR {
                 continue;
             }
@@ -1081,14 +1105,8 @@ impl FilesContext {
                 let dest = unsafe { &mut bun_core::vec::spare_bytes_mut(&mut data)[..to_read] };
                 let read = archive.read_data(dest);
                 if read < 0 {
-                    // Read error.
                     // NOTE: both `data` and `entries` drop automatically here.
-                    // SAFETY: `archive` is the live `read_new()` handle opened above.
-                    return Ok(if let Some(err) = Self::clone_error_string(&archive) {
-                        FilesResult::LibarchiveErr(err)
-                    } else {
-                        FilesResult::Err(FilesError::ReadError)
-                    });
+                    return Ok(Self::read_error(&archive));
                 }
                 if read == 0 {
                     break;
@@ -1324,13 +1342,11 @@ fn extract_to_disk_filtered(
     let _dir_close = bun_sys::CloseOnDrop::new(dir_fd);
 
     let mut count: u32 = 0;
-    let mut entry: *mut lib::Entry = core::ptr::null_mut();
     let mut stack_buf = bun_core::vec::UninitBuf::<{ 64 * 1024 }>::uninit();
     // SAFETY: `archive_read_data` is the only writer of `buf`; each chunk reads back only `buf[..bytes_read]`.
     let buf = unsafe { stack_buf.as_bytes_mut() };
 
-    while archive.read_next_header(&mut entry).succeeded() {
-        let entry_ref = lib::Entry::opaque_ref(entry);
+    while let Some(entry_ref) = read_next_entry(&archive)? {
         // Same platform split as `FilesContext::do_run`; see `entry_pathname_utf8`.
         #[cfg(not(windows))]
         let raw_pathname_z = entry_ref.pathname();
@@ -1414,6 +1430,7 @@ fn extract_to_disk_filtered(
                 };
 
                 let mut write_success = true;
+                let mut read_failed = false;
                 if size > 0 {
                     // Read archive data and write to file
                     let mut remaining = size;
@@ -1421,6 +1438,7 @@ fn extract_to_disk_filtered(
                         let to_read = remaining.min(buf.len());
                         let read = archive.read_data(&mut buf[..to_read]);
                         if read <= 0 {
+                            read_failed = read < 0;
                             write_success = false;
                             break;
                         }
@@ -1454,6 +1472,9 @@ fn extract_to_disk_filtered(
                 } else {
                     // Remove partial file on failure
                     let _ = bun_sys::unlinkat(dir_fd, pathname_z);
+                    if read_failed {
+                        return Err(crate::Error::ReadError);
+                    }
                 }
             }
             bun_sys::FileKind::SymLink => {

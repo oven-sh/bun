@@ -457,8 +457,7 @@ export function runOnResolvePlugins(this: BundlerPlugin, specifier, inputNamespa
             if (process.platform !== "win32" ? path[0] !== "/" : require("node:path").isAbsolute(path) === false) {
               throw new TypeError('onResolve plugin "path" must be absolute when the namespace is "file"');
             }
-            // ".." is refused as a path segment only: "[...slug].ts" is a file name.
-            // "\" is a separator on POSIX too: the bundler derives the pretty path with platform::Loose.
+            // The bundler treats "\" as a separator on every platform (platform::Loose).
             const slashed = path.replaceAll("\\", "/");
             if (slashed.includes("/../") || slashed.endsWith("/..")) {
               throw new TypeError(

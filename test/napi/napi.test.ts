@@ -1079,17 +1079,22 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
 
   it.each([
     ["does not keep the process running", [], ["disposed", "it asked to be held again", "ran dry at once"]],
-    // The addon is everyone's: a function more than one context has asked to hold the loop holds it
-    // for the process, whichever of them made it and whichever goes first.
-    ...["after the graph was disposed", "while the graph lived"].map(when => [
-      "holds the loop for the process once the host refs it, " + when,
-      [when],
-      ["disposed", "it asked to be held again", "ran dry once the host let go"],
-    ]),
+    // A function is its maker's, whoever asks it to hold the loop: a host that wants a hold that
+    // outlives a tenant asks for it after the tenant is gone, or on a function of its own.
     [
-      "that its leftover script made holds the loop for the process once the host refs it",
+      "holds the loop for the host that refs it after the graph was disposed, until the host lets go",
+      ["after the graph was disposed"],
+      ["disposed", "it asked to be held again", "ran dry once the host let go"],
+    ],
+    [
+      "that the host reffed while the graph lived lets go of the loop with the graph",
+      ["while the graph lived"],
+      ["disposed", "it asked to be held again", "ran dry at once"],
+    ],
+    [
+      "that its leftover script made is closed with it, whoever refs it meanwhile",
       ["that the graph's leftover script made"],
-      ["disposed", "ran dry once the host let go"],
+      ["disposed", "ran dry at once"],
     ],
     [
       "that the host reffed and let go of holds nothing for its own call_js after that",

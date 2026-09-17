@@ -2560,14 +2560,9 @@ pub(crate) struct ThreadSafeFunction {
     /// The context whose script created the function: its calls run in it.
     pub(crate) context: bun_jsc::ContextId,
     /// Armed in that context until the JS thread lets go of the function (`finalize`,
-    /// `env_teardown`) or another context refs it: once the context has stopped, the function no
-    /// longer keeps the loop alive. Addon threads can still call it and it is finalized as usual.
+    /// `env_teardown`): once the context has stopped, the function no longer keeps the loop
+    /// alive, whoever asked it to. Addon threads can still call it and it is finalized as usual.
     abort_handle: bun_jsc::AbortHandle,
-    /// Script of a live context other than its maker's has asked it to hold the loop. An addon
-    /// is shared by the process, and whose such a function is cannot be told from who touched
-    /// it last: until the addon lets go (`unref`) its hold is the process's, which no context's
-    /// stop lets go of.
-    held_for_the_process: bool,
 
     /// Dropped on the JS thread by `env_teardown`; `None` afterwards.
     pub(crate) env: Option<NapiEnvRef>,
@@ -3200,27 +3195,11 @@ impl ThreadSafeFunction {
         if caller.is_stopped() {
             return;
         }
-        if !self.held_for_the_process && caller.id() != self.context {
-            // (Its calls stay its maker's: where they run never changes.)
-            self.held_for_the_process = true;
-            self.abort_handle.leave();
-        }
         self.poll_ref.ref_(bun_io::js_vm_ctx());
     }
 
     /// `napi_unref_threadsafe_function` — JS thread only (as in Node).
     pub(crate) fn unref(&mut self) {
-        if self.held_for_the_process {
-            // The hold the process had is over: whose the next one is, the next ref says. Until
-            // then the function goes with its maker again, if that is still there.
-            self.held_for_the_process = false;
-            let maker = VirtualMachine::get().context_of(self.context);
-            if !maker.is_stopped() {
-                // SAFETY: as at creation: a heap allocation that leaves its context on this
-                // thread before it is freed.
-                unsafe { bun_jsc::AbortHandle::arm_owner(std::ptr::from_mut(self), maker) };
-            }
-        }
         self.poll_ref.unref(bun_io::js_vm_ctx());
     }
 
@@ -3374,7 +3353,6 @@ extern "C" fn napi_create_threadsafe_function(
         tracker: Debugger::AsyncTaskTracker::init(vm),
         context: vm.context_of_caller_no_frame().id(),
         abort_handle: bun_jsc::AbortHandle::for_owner::<ThreadSafeFunction>(),
-        held_for_the_process: false,
         finalizer_fun: thread_finalize_cb,
         finalizer_data: thread_finalize_data,
         has_queued_finalizer: false,

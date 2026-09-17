@@ -1453,6 +1453,14 @@ pub mod command {
             return run_command::RunCommand::exec_eval(ctx);
         }
 
+        if tag == Tag::AutoCommand
+            && ctx.positionals.is_empty()
+            && ctx.worker_eval_mode != bun_options_types::context::WorkerEvalMode::Auto
+        {
+            run_command::RunCommand::exec_stdin(ctx, false)?;
+            return Ok(());
+        }
+
         if tag == Tag::AutoCommand && ctx.args.entry_points.len() == 1 {
             let extension = bun_paths::extension(&ctx.args.entry_points[0]);
             if extension == b".lockb" {

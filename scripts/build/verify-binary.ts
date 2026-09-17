@@ -822,15 +822,15 @@ function verifyDuplicates(nm: string, objdump: string | undefined, rspfile: stri
 
 /**
  * `--warn-only` (first argument): the same scan and the same report, but a
- * finding does not fail the step. bun.ts passes it for ASan and debug builds
- * (see binaryChecksWarnOnly there); every other configuration fails on a
- * finding.
+ * finding does not fail the step. bun.ts passes it for every local (non-CI)
+ * build and for ASan and debug builds in CI (see binaryChecksWarnOnly there);
+ * release builds in CI fail on a finding.
  */
 function main(argv: string[]): number {
   if (argv[0] !== "--warn-only") return scan(argv);
   const status = scan(argv.slice(1));
   if (status !== 1) return status;
-  console.log("warning: findings above do not fail this build (ASan/debug configuration); they fail every other one.");
+  console.log("warning: findings above do not fail this build (local, ASan or debug); they fail release builds in CI.");
   return 0;
 }
 

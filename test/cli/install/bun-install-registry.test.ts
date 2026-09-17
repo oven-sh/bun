@@ -1494,6 +1494,97 @@ describe("bundledDependencies", () => {
       await check();
     });
   }
+
+  // bundled-file@1.0.0 depends on "bundled-file-dep" through a `file:` spec and
+  // bundles it. The tarball ships the bundled copy in its node_modules. The
+  // install from bun.lock must keep treating the dependency as bundled and must
+  // not replace the bundled copy with symlinks.
+  test("(bun.lock) file: dependency stays bundled when installing from the lockfile", async () => {
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "bundled-file-root",
+        dependencies: {
+          "bundled-file": "1.0.0",
+        },
+      }),
+    );
+
+    const bundledDepDir = join(packageDir, "node_modules", "bundled-file", "node_modules", "bundled-file-dep");
+
+    async function check() {
+      const [pkgJsonStat, indexStat] = await Promise.all([
+        lstat(join(bundledDepDir, "package.json")),
+        lstat(join(bundledDepDir, "index.js")),
+      ]);
+      expect([pkgJsonStat.isFile(), indexStat.isFile()]).toEqual([true, true]);
+
+      await using proc = spawn({
+        cmd: [bunExe(), "-e", `console.log(require("bundled-file"))`],
+        cwd: packageDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("bundled-file-dep\n");
+      expect(exitCode).toBe(0);
+    }
+
+    let { out } = await runBunInstall(env, packageDir, { saveTextLockfile: true });
+    expect(out).toContain("1 package installed");
+    await check();
+
+    const lockfile = await file(join(packageDir, "bun.lock")).text();
+    expect(lockfile).toContain(
+      `"bundled-file/bundled-file-dep": ["bundled-file-dep@file:vendor/bundled-file-dep", { "bundled": true }],`,
+    );
+
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+    ({ out } = await runBunInstall(env, packageDir, { frozenLockfile: true }));
+    expect(out).toContain("1 package installed");
+    await check();
+  });
+
+  // bundled-file@2.0.0 ships node_modules/bundled-file-dep in its tarball but
+  // does not bundle it. The install links the `file:` dependency over those
+  // files. The links must point at the cached vendor copy, not at themselves.
+  test("file: dependency links over files the tarball already shipped", async () => {
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "unbundled-file-root",
+        dependencies: {
+          "bundled-file": "2.0.0",
+        },
+      }),
+    );
+
+    const { out } = await runBunInstall(env, packageDir, { saveTextLockfile: true });
+    expect(out).toContain("2 packages installed");
+
+    const depDir = join(packageDir, "node_modules", "bundled-file", "node_modules", "bundled-file-dep");
+    const [pkgJsonStat, indexStat] = await Promise.all([
+      lstat(join(depDir, "package.json")),
+      lstat(join(depDir, "index.js")),
+    ]);
+    expect([pkgJsonStat.isSymbolicLink(), indexStat.isSymbolicLink()]).toEqual([true, true]);
+    expect(await readlink(join(depDir, "package.json"))).toEndWith(join("vendor", "bundled-file-dep", "package.json"));
+
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", `console.log(require("bundled-file"))`],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("bundled-file-dep\n");
+    expect(exitCode).toBe(0);
+  });
 });
 
 describe("optionalDependencies", () => {

@@ -3794,6 +3794,33 @@ describe("bundler", () => {
     },
   });
 
+  // The only `await` of the importee folds away and the rest hoists, so the
+  // importee has no `init_t` wrapper: there is nothing to call or await.
+  itElides("DeadTopLevelAwaitInImportee", {
+    variants: ["esm", "esmMinify"],
+    files: {
+      "/entry.js": /* js */ `
+        const { u } = await import("./t.js");
+        const ns = await import("./t.js");
+        console.log("got", u(), ns.t);
+        await import("./t.js").then(ns => console.log("then", ns.t));
+        import("./t.js");
+      `,
+      "/t.js": /* js */ `
+        export function u() { return "u"; }
+        export const t = "t";
+        export const d = "DROPPED";
+        false && await 0;
+      `,
+    },
+    stdout: "got u t\nthen t",
+    output(out) {
+      expect(out).not.toContain("init_t");
+      expect(out).toContain("await Promise.resolve();");
+      expect(out).toContain("await Promise.resolve().then(() => ({}));");
+    },
+  });
+
   // The importee statically imports the module that dynamically imports it.
   itElides("Cycle", {
     files: {

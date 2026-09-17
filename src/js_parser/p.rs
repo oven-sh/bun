@@ -9590,6 +9590,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                     }
                     js_ast::StmtData::SLocal(local) => {
+                        // The linker keeps a `using` declaration inside the wrapper.
+                        if local.kind.is_using() {
+                            return true;
+                        }
                         if local.origin.is_commonjs_export()
                             || self.commonjs_named_exports.count() == 0
                         {

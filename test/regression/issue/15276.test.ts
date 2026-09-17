@@ -11,9 +11,9 @@ test("parsing npm aliases without package manager does not crash", () => {
     env: bunEnv,
   });
 
-  expect(exitCode).toBe(1);
   // The 404 fails the request, so it is the only error, as for `bunx another-bun@1.0.0`.
   expect(stderr.toString()).toContain("error: GET https://registry.npmjs.org/another-bun - 404");
   expect(stderr.toString()).not.toContain("failed to resolve");
   expect(stdout.toString()).toBe("");
+  expect(exitCode).toBe(1);
 });

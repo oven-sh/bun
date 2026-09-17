@@ -1063,11 +1063,8 @@ impl Linux {
                         )
                     };
 
-                    // libuv: every bit outside IN_ATTRIB|IN_MODIFY is a rename, and
-                    // IN_ISDIR is one, so a directory's attribute change is "rename":
-                    // https://github.com/libuv/libuv/blob/v1.52.1/src/unix/linux.c#L2611-L2615
-                    // node's recursive watcher (lib/internal/fs/recursive_watch.js)
-                    // reports no event for it.
+                    // libuv: a directory's attribute change is "rename" (IN_ISDIR is
+                    // outside IN_ATTRIB|IN_MODIFY). node's recursive watcher drops it.
                     let event_type = if is_structural {
                         WatchEventKind::Rename
                     } else if !is_dir_child {

@@ -125,6 +125,144 @@ describe("fs.watchFile", () => {
     expect(typeof entries[0][0].mtimeMs === "bigint").toBe(true);
   });
 
+  // Node does not validate `bigint`: it spreads the caller's own options over
+  // its defaults and hands `options.bigint` to the native StatWatcher, which
+  // checks it with IsTrue(). So every value is accepted and only exactly
+  // `true` switches to BigIntStats.
+  test("options.bigint accepts any value and enables BigIntStats only for true", async () => {
+    const cases: Record<string, any> = {
+      "true": { bigint: true },
+      "false": { bigint: false },
+      "1": { bigint: 1 },
+      '"true"': { bigint: "true" },
+      "null": { bigint: null },
+      "undefined": { bigint: undefined },
+      "{}": { bigint: {} },
+      "new Boolean(true)": { bigint: new Boolean(true) },
+      "inherited true": Object.create({ bigint: true }),
+    };
+
+    const results = Object.fromEntries(
+      await Promise.all(
+        Object.entries(cases).map(async ([label, options], i) => {
+          // The path does not exist, so the listener fires right away with zeroed stats.
+          const file = path.join(testDir, `bigint-option-${i}`);
+          const { promise, resolve } = Promise.withResolvers<string>();
+          try {
+            fs.watchFile(file, options, (curr, prev) => resolve(`${curr.constructor.name}/${prev.constructor.name}`));
+            return [label, await promise];
+          } catch (e: any) {
+            return [label, `throws ${e.code}`];
+          } finally {
+            fs.unwatchFile(file);
+          }
+        }),
+      ),
+    );
+
+    expect(results).toEqual({
+      "true": "BigIntStats/BigIntStats",
+      "false": "Stats/Stats",
+      "1": "Stats/Stats",
+      '"true"': "Stats/Stats",
+      "null": "Stats/Stats",
+      "undefined": "Stats/Stats",
+      "{}": "Stats/Stats",
+      "new Boolean(true)": "Stats/Stats",
+      "inherited true": "Stats/Stats",
+    });
+  });
+
+  // Node does not validate `persistent` either: after spreading the caller's
+  // own options over `{ persistent: true }` it only does `if (!persistent) unref()`.
+  // So any value is accepted, truthiness decides whether the watcher keeps the
+  // process alive, an own `persistent: undefined` replaces the default, and an
+  // inherited property is not seen at all.
+  //
+  // Whether a watcher keeps the process alive is observed per process: the
+  // fixtures watch files that an unref'd interval keeps appending to, so a
+  // watcher that holds the process alive gets to report a change, and one that
+  // does not lets the process exit first. `cases` holds the option expressions
+  // as source text; each fixture evaluates them next to their labels.
+  describe("options.persistent accepts any value and is read for truthiness", () => {
+    const casesSource = (cases: string[]) => `[${cases.map(c => `[${JSON.stringify(c)}, ${c}]`).join(", ")}]`;
+
+    async function runFixture(fixture: string) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+
+    test.concurrent("truthy values keep the process alive", async () => {
+      const cases = [
+        "{ persistent: true }",
+        "{ persistent: 1 }",
+        '{ persistent: "x" }',
+        "Object.create({ persistent: false })",
+      ];
+      using dir = tempDir("watchfile-persistent-truthy", { "file.txt": "a" });
+      // The values are tried one at a time, each one being the only watcher in
+      // the process, so every line printed is one value that kept the process
+      // alive on its own; the process exits after the first value that does not.
+      const fixture = /* js */ `
+        const fs = require("fs");
+        const file = ${JSON.stringify(path.join(String(dir), "file.txt"))};
+        const cases = ${casesSource(cases)};
+        const touch = setInterval(() => fs.appendFileSync(file, "b"), 10).unref();
+        function watchNext() {
+          if (cases.length === 0) return clearInterval(touch);
+          const [label, options] = cases.shift();
+          options.interval = 20;
+          fs.watchFile(file, options, () => {
+            console.log(label);
+            fs.unwatchFile(file);
+            watchNext();
+          });
+        }
+        watchNext();
+      `;
+
+      expect(await runFixture(fixture)).toEqual({ stdout: cases.join("\n") + "\n", stderr: "", exitCode: 0 });
+    });
+
+    test.concurrent("falsy values do not keep the process alive", async () => {
+      const cases = [
+        "{ persistent: false }",
+        "{ persistent: 0 }",
+        '{ persistent: "" }',
+        "{ persistent: null }",
+        "{ persistent: undefined }",
+      ];
+      using dir = tempDir("watchfile-persistent-falsy", Object.fromEntries(cases.map((_, i) => [`${i}.txt`, "a"])));
+      // All values are watched at once (a separate file each, since watchFile
+      // shares one watcher per path). Nothing else holds the process, so it must
+      // exit without printing; any value that wrongly holds it prints its label.
+      const fixture = /* js */ `
+        const fs = require("fs");
+        const path = require("path");
+        const dir = ${JSON.stringify(String(dir))};
+        const cases = ${casesSource(cases)};
+        const files = cases.map((_, i) => path.join(dir, i + ".txt"));
+        const touch = setInterval(() => files.forEach(file => fs.appendFileSync(file, "b")), 10).unref();
+        cases.forEach(([label, options], i) => {
+          options.interval = 20;
+          fs.watchFile(files[i], options, () => {
+            console.log(label);
+            files.forEach(file => fs.unwatchFile(file));
+            clearInterval(touch);
+          });
+        });
+      `;
+
+      expect(await runFixture(fixture)).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+    });
+  });
+
   test.if(isWindows)("does not fire on atime-only update", async () => {
     let called = false;
     const file = path.join(testDir, "watch.txt");

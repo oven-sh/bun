@@ -44,15 +44,7 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
         return *out != nullptr;
     };
 
-    // What a rejection passed to `handler` settles, if `handler` is the reject
-    // half of a JSC resolving-function pair that was not called yet: the pair's
-    // promise or, for the pair an `await` creates, the await's context. JSC
-    // calls then(resolve, reject) with such a pair where it has no internal
-    // reaction to register: to await a thenable or a Promise subclass, and to
-    // resolve a promise with another promise once the realm's
-    // promiseThenWatchpointSet or promiseSpeciesWatchpointSet has fired (for
-    // good: `then` defined on Object.prototype, Promise.prototype.then replaced,
-    // Promise.prototype frozen). Nothing awaits the promise that then() returned.
+    // What an uncalled JSC promise reject function settles: the promise it rejects, or the await context it resumes.
     auto rejectionTargetOf = [&](JSC::JSValue handler) -> JSC::JSValue {
         using Field = JSC::JSFunctionWithFields::Field;
         JSC::JSFunctionWithFields* function = nullptr;
@@ -87,9 +79,7 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
         return {};
     };
 
-    // The promise that then() returned for a heap-allocated reaction. Once the
-    // realm's promiseSpeciesWatchpointSet has fired, then() stores a capability
-    // record { resolve, reject, promise } in the reaction instead.
+    // The promise then() returned. A capability record holds it once promiseSpeciesWatchpointSet has fired.
     auto derivedPromiseOf = [&](JSC::JSPromiseReaction* reaction) -> JSC::JSPromise* {
         JSC::JSObject* promiseOrCapability = nullptr;
         if (!dynamicCastValue(reaction->promise(), &promiseOrCapability))
@@ -126,10 +116,7 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
     //  - As a heap-allocated JSPromiseReaction list once a second handler is
     //    attached, headed at payloadCell().
     auto walkReactions = [&](JSC::JSPromise* p, WTF::Vector<JSC::JSPromise*, 4>* fallbacks) -> JSC::JSAsyncFunctionGenerator* {
-        // Moves `p` along a then() reaction. Where a reject function says the
-        // rejection goes (see rejectionTargetOf) comes first, and `derived`, the
-        // promise then() returned, goes to `fallbacks` for when nothing awaits
-        // that. Without `fallbacks` the walk knows `derived` only.
+        // Off its promise fast paths JSC passes its own reject functions to then(), and nothing awaits `derived`.
         auto followThen = [&](JSC::JSValue rejectHandler, JSC::JSPromise* derived) -> JSC::JSAsyncFunctionGenerator* {
             JSC::JSValue target = fallbacks ? rejectionTargetOf(rejectHandler) : JSC::JSValue();
             if (auto* generator = unwrapGeneratorFromContext(target))
@@ -185,8 +172,7 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
         return nullptr;
     };
 
-    // The generators that the loop below has visited. A chain that leads back to
-    // one is a cycle.
+    // Generators already visited. A chain that leads back to one is a cycle.
     WTF::HashSet<JSC::JSAsyncFunctionGenerator*> seen;
     auto unlessSeen = [&](JSC::JSAsyncFunctionGenerator* generator) {
         return generator && seen.contains(generator) ? nullptr : generator;
@@ -199,8 +185,7 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
             if (auto* generator = unlessSeen(walkReactions(fallbacks.takeLast(), &fallbacks)))
                 return generator;
         }
-        // Fallbacks remain only if the limit ended the search. One walk without
-        // reject functions then covers what the search found before it knew them.
+        // The walk limit ended the search. Reject functions must not hide what the plain then() chain leads to.
         return fallbacks.isEmpty() ? nullptr : unlessSeen(walkReactions(start, nullptr));
     };
 

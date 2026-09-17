@@ -969,10 +969,11 @@ impl<'a> Migrator<'a> {
         self.skipped_external.set(t as usize);
         if !self.silent {
             let source = self.copy_sources[t as usize].as_deref();
+            let folder = source.unwrap_or_else(|| self.entries[t as usize].key.slice());
             bun_core::warn!(
                 "skipped \"{}\" from package-lock.json: transitive folder dependency \"{}\" is outside the project",
                 bstr::BStr::new(name),
-                bstr::BStr::new(source.unwrap_or(self.entries[t as usize].key.slice())),
+                bstr::BStr::new(folder),
             );
         }
         self.shadow(t);

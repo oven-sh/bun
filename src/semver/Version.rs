@@ -605,6 +605,7 @@ impl<T: VersionInt> VersionType<T> {
                             }
                             _ => {}
                         }
+                        result.wildcard_written = result.wildcard != Wildcard::None;
                     }
                 }
                 c => {
@@ -1191,6 +1192,9 @@ pub struct TagResult {
 pub struct ParseResult<T: VersionInt> {
     pub wildcard: Wildcard,
     pub valid: bool,
+    /// The `wildcard` part is a written `x`, `X` or `*`. False when that part is only absent,
+    /// as in `1` or in text that is not a version (which also reads as `Wildcard::Major`).
+    pub(crate) wildcard_written: bool,
     pub version: Partial<T>,
     pub(crate) len: u32,
 }
@@ -1200,6 +1204,7 @@ impl<T: VersionInt> Default for ParseResult<T> {
         Self {
             wildcard: Wildcard::None,
             valid: true,
+            wildcard_written: false,
             version: Partial::default(),
             len: 0,
         }

@@ -1917,7 +1917,8 @@ fn is_not_found_an_error(this: &PackageManager, task_id: Task::Id) -> bool {
     this.task_queue.get(&task_id).is_none_or(|waiters| {
         waiters.is_empty()
             || waiters.iter().any(|waiter| match waiter {
-                bun_install::TaskCallbackContext::Dependency(id) => {
+                bun_install::TaskCallbackContext::Dependency(id)
+                | bun_install::TaskCallbackContext::RootDependency(id) => {
                     this.lockfile.buffers.dependencies[*id as usize]
                         .behavior
                         .must_exist()

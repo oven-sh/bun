@@ -294,10 +294,7 @@ impl S3Credentials {
         if matches!(content_disposition, Some(s) if s.is_empty()) {
             content_disposition = None;
         }
-        // As a signed header, SigV4 hashes the value with outer whitespace
-        // removed and inner runs collapsed. Send that exact form so the wire
-        // value and the signed value cannot drift. A presigned URL carries the
-        // value as a query parameter instead and keeps it as given.
+        // A signed header goes out in Trimall form so the wire bytes equal the signed bytes.
         let content_type: Option<Box<[u8]>> = sign_options
             .content_type
             .map(|ct| {
@@ -484,8 +481,6 @@ impl S3Credentials {
         let service_name: &str = "s3";
 
         let aws_content_hash: &[u8] = content_hash.unwrap_or(b"UNSIGNED-PAYLOAD");
-        // Canonical request: path (up to 1089 bytes), query, session token (up
-        // to 2 KB), and every signed header value.
         let mut tmp_buffer = [0u8; 8192];
 
         let authorization: Box<[u8]> = 'brk: {
@@ -1371,9 +1366,7 @@ impl CanonicalRequest {
         macro_rules! w {
             ($($arg:tt)*) => { core::fmt::Write::write_fmt(&mut c, format_args!($($arg)*))? };
         }
-        // The server hashes the header bytes it receives. `BStr` Display
-        // replaces invalid UTF-8 with U+FFFD, so user header values (Latin-1
-        // from fetch headers) go in as raw bytes.
+        // `BStr` Display replaces invalid UTF-8 with U+FFFD; user header values go in as raw bytes.
         macro_rules! header {
             ($name:literal, $value:expr) => {{
                 w!(concat!($name, ":"));
@@ -1442,8 +1435,7 @@ fn contains_newline_or_cr(value: &[u8]) -> bool {
     strings::index_of_any(value, b"\r\n").is_some()
 }
 
-/// SigV4 `Trimall`: drop leading and trailing spaces and tabs and replace each
-/// inner run with one space. CR and LF stay so `contains_newline_or_cr` rejects them.
+/// SigV4 `Trimall`: trim spaces and tabs, collapse each inner run to one space.
 fn collapse_whitespace(value: &[u8]) -> Box<[u8]> {
     let mut out = Vec::with_capacity(value.len());
     let mut pending_space = false;

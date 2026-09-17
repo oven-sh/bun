@@ -127,8 +127,9 @@ test("tsconfig 'extends' merge still works after freeing intermediates", async (
 // extends `a`. A later entry overrides an earlier one, and the config that
 // holds the array overrides all of them. https://github.com/oven-sh/bun/issues/43097
 describe.concurrent("tsconfig 'extends' array", () => {
-  // Prints which tsconfig option reached the transpiler and the resolver:
+  // Prints which tsconfig options reached the transpiler and the resolver:
   // - "legacy" when experimentalDecorators is on, "standard" otherwise
+  // - "metadata" when emitDecoratorMetadata is on, "no-metadata" otherwise
   // - the "@x/who" path alias target
   const files = {
     "a/who.ts": `export const who = "a";`,
@@ -136,18 +137,24 @@ describe.concurrent("tsconfig 'extends' array", () => {
     "leaf/who.ts": `export const who = "leaf";`,
     "index.ts": `
       import { who } from "@x/who";
+      let metadata = "no-metadata";
+      (Reflect as any).metadata = () => {
+        metadata = "metadata";
+        return () => {};
+      };
       function deco(target: any, key: any) {
         console.log(typeof key === "string" ? "legacy" : "standard");
       }
       class A {
-        @deco x = 1;
+        @deco x: string = "1";
       }
+      console.log(metadata);
       console.log(who);
     `,
   };
 
-  // Asserts the two printed lines, then the exit code.
-  async function expectRun(tsconfigs: Record<string, object>, expected: [string, string]) {
+  // Asserts the printed lines, then the exit code.
+  async function expectRun(tsconfigs: Record<string, object>, expected: string[]) {
     const entries = Object.fromEntries(Object.entries(tsconfigs).map(([k, v]) => [k, JSON.stringify(v)]));
     using dir = tempDir("tsconfig-extends-array", { ...files, ...entries });
     await using proc = Bun.spawn({
@@ -174,7 +181,7 @@ describe.concurrent("tsconfig 'extends' array", () => {
         "base.json": base,
         "tsconfig.json": { extends: ["./base.json"] },
       },
-      ["legacy", "a"],
+      ["legacy", "no-metadata", "a"],
     );
   });
 
@@ -185,7 +192,7 @@ describe.concurrent("tsconfig 'extends' array", () => {
         "b.json": b,
         "tsconfig.json": { extends: ["./base.json", "./b.json"] },
       },
-      ["legacy", "b"],
+      ["legacy", "no-metadata", "b"],
     );
     await expectRun(
       {
@@ -193,7 +200,7 @@ describe.concurrent("tsconfig 'extends' array", () => {
         "b.json": b,
         "tsconfig.json": { extends: ["./b.json", "./base.json"] },
       },
-      ["legacy", "a"],
+      ["legacy", "no-metadata", "a"],
     );
   });
 
@@ -207,7 +214,7 @@ describe.concurrent("tsconfig 'extends' array", () => {
           compilerOptions: { paths: { "@x/*": ["./leaf/*"] } },
         },
       },
-      ["legacy", "leaf"],
+      ["legacy", "no-metadata", "leaf"],
     );
   });
 
@@ -219,36 +226,69 @@ describe.concurrent("tsconfig 'extends' array", () => {
         "mid.json": { extends: ["./base.json", "./b.json"] },
         "tsconfig.json": { extends: "./mid.json" },
       },
-      ["legacy", "b"],
+      ["legacy", "no-metadata", "b"],
     );
   });
 
   test("an entry with its own extends is resolved before the next entry", async () => {
-    await expectRun(
-      {
-        "base.json": base,
-        "b.json": { extends: "./base.json", ...b },
-        "c.json": { compilerOptions: { paths: { "@x/*": ["./leaf/*"] } } },
-        "tsconfig.json": { extends: ["./b.json", "./c.json"] },
-      },
-      ["legacy", "leaf"],
-    );
-  });
-
-  test("a child config sets or clears experimentalDecorators", async () => {
+    // Chain: base, b, c, leaf. If b landed before base, "a" would win.
     await expectRun(
       {
         "base.json": { compilerOptions: { paths: { "@x/*": ["./a/*"] } } },
-        "tsconfig.json": { extends: "./base.json", compilerOptions: { experimentalDecorators: true } },
+        "b.json": { extends: "./base.json", ...b },
+        "c.json": { compilerOptions: { experimentalDecorators: true } },
+        "tsconfig.json": { extends: ["./b.json", "./c.json"] },
       },
-      ["legacy", "a"],
+      ["legacy", "no-metadata", "b"],
+    );
+  });
+
+  test("a child config sets or clears the decorator flags", async () => {
+    await expectRun(
+      {
+        "base.json": { compilerOptions: { paths: { "@x/*": ["./a/*"] } } },
+        "tsconfig.json": {
+          extends: "./base.json",
+          compilerOptions: { experimentalDecorators: true, emitDecoratorMetadata: true },
+        },
+      },
+      ["legacy", "metadata", "a"],
+    );
+    await expectRun(
+      {
+        "base.json": {
+          compilerOptions: { experimentalDecorators: true, emitDecoratorMetadata: true, paths: { "@x/*": ["./a/*"] } },
+        },
+        "tsconfig.json": { extends: ["./base.json"], compilerOptions: { emitDecoratorMetadata: false } },
+      },
+      ["legacy", "no-metadata", "a"],
     );
     await expectRun(
       {
         "base.json": base,
         "tsconfig.json": { extends: ["./base.json"], compilerOptions: { experimentalDecorators: false } },
       },
-      ["standard", "a"],
+      ["standard", "no-metadata", "a"],
+    );
+  });
+
+  test("an entry that does not exist is skipped", async () => {
+    await expectRun(
+      {
+        "base.json": base,
+        "tsconfig.json": { extends: ["./missing.json", "./base.json"] },
+      },
+      ["legacy", "no-metadata", "a"],
+    );
+  });
+
+  test("a cycle is skipped", async () => {
+    await expectRun(
+      {
+        "base.json": { extends: "./tsconfig.json", ...base },
+        "tsconfig.json": { extends: ["./tsconfig.json", "./base.json"] },
+      },
+      ["legacy", "no-metadata", "a"],
     );
   });
 });

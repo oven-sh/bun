@@ -441,8 +441,8 @@ static RESOLVER_MUTEX: Mutex = Mutex::new();
 
 type BinFolderArray = BoundedArray<&'static [u8], 128>;
 
-/// The most nested `extends` the resolver follows from one tsconfig.json.
-const MAX_TSCONFIG_EXTENDS_DEPTH: usize = 64;
+/// The most configs one tsconfig.json can reach through `extends`.
+const MAX_TSCONFIG_EXTENDS_CHAIN: usize = 64;
 // `BoundedArray` has no const constructor; init lazily under
 // `BIN_FOLDERS_LOADED`.
 static BIN_FOLDERS: bun_core::RacyCell<core::mem::MaybeUninit<BinFolderArray>> =
@@ -4063,17 +4063,17 @@ impl<'a> Resolver<'a> {
     }
 
     /// Appends `config` and everything it extends to `chain` in merge order:
-    /// bases first, `config` last.
+    /// bases first, `config` last. `visiting` holds the paths of the configs
+    /// on the current recursion path. An entry that is already on it (a cycle)
+    /// is skipped.
     fn collect_tsconfig_extends_chain(
         &mut self,
         config: Box<TSConfigJSON>,
-        depth: usize,
+        visiting: &mut Vec<Box<[u8]>>,
         chain: &mut Vec<Box<TSConfigJSON>>,
-    ) -> crate::CrateResult<()> {
-        if depth >= MAX_TSCONFIG_EXTENDS_DEPTH {
-            return Err(bun_core::bounded_array::OverflowError::Overflow.into());
-        }
+    ) {
         let ts_dir_name = Dirname::dirname(&config.abs_path);
+        visiting.push(config.abs_path.clone());
         for extends in config.extends.iter() {
             let abs_path = ResolvePath::join_abs_string_buf(
                 ts_dir_name,
@@ -4081,9 +4081,22 @@ impl<'a> Resolver<'a> {
                 &[ts_dir_name, extends],
                 bun_paths::Platform::AUTO,
             );
+            if visiting.iter().any(|p| &**p == abs_path)
+                || visiting.len() + chain.len() >= MAX_TSCONFIG_EXTENDS_CHAIN
+            {
+                let _ = self.log_mut().add_debug_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!(
+                        "Skipping tsconfig.json extends {} (cycle or chain too long)",
+                        bun_core::fmt::quote(abs_path)
+                    ),
+                );
+                continue;
+            }
             match self.parse_tsconfig(abs_path, FD::INVALID) {
                 Ok(Some(parent_config)) => {
-                    self.collect_tsconfig_extends_chain(parent_config, depth + 1, chain)?;
+                    self.collect_tsconfig_extends_chain(parent_config, visiting, chain);
                 }
                 Ok(None) => {}
                 Err(err) => {
@@ -4099,8 +4112,8 @@ impl<'a> Resolver<'a> {
                 }
             }
         }
+        visiting.pop();
         chain.push(config);
-        Ok(())
     }
 
     pub fn bin_dirs(&self) -> &[&'static [u8]] {
@@ -6526,7 +6539,7 @@ impl<'a> Resolver<'a> {
                 // tsconfig_json to None otherwise.
                 if let Some(tsconfig_json) = parsed_tsconfig {
                     let mut chain: Vec<Box<TSConfigJSON>> = Vec::new();
-                    self.collect_tsconfig_extends_chain(tsconfig_json, 0, &mut chain)?;
+                    self.collect_tsconfig_extends_chain(tsconfig_json, &mut Vec::new(), &mut chain);
 
                     let mut chain = chain.into_iter();
                     let mut merged_config = chain.next().expect("the leaf config is in the chain");

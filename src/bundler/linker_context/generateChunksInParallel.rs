@@ -399,6 +399,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             sources: Vec<bun_ptr::BackRef<Chunk>>,
         }
         let mut duplicates_map: StringArrayHashMap<DuplicateEntry> = StringArrayHashMap::default();
+        let mut has_unusable_output_path = false;
 
         // Compute the final hashes of each chunk, then use those to create the final
         // paths of each chunk.
@@ -424,6 +425,18 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             // which importers of the chunk would copy verbatim.
             while let Some(i) = strings::index_of(&rel_path, b"/./") {
                 rel_path.drain(i..i + 2);
+            }
+
+            let input: &[u8] = c.parse_graph().input_files.items_source()
+                [chunk.entry_point.source_index() as usize]
+                .path
+                .pretty;
+            if !chunk
+                .template
+                .check_output_path(c.log_disjoint(), input, &rel_path)
+            {
+                has_unusable_output_path = true;
+                continue;
             }
 
             let claimed = path_names_map.get_or_put(&rel_path)?;
@@ -524,6 +537,10 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             }
 
             return Err(crate::Error::DuplicateOutputPath);
+        }
+
+        if has_unusable_output_path {
+            return Err(crate::Error::BuildFailed);
         }
     }
 
@@ -763,7 +780,6 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         // so the sourceMappingURL resolves relative to the HTML
                         // file rather than a JS file next to the .map. Point at
                         // the .map path relative to the HTML chunk's directory.
-                        let mut relative_platform_buf = path::path_buffer_pool::get();
                         let [a, b]: [&[u8]; 2] = if !c.options.public_path.is_empty() {
                             cheap_prefix_normalizer(
                                 c.options.public_path,
@@ -791,13 +807,11 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                                 if html_dir.is_empty() {
                                     &source_map_final_rel_path
                                 } else {
-                                    path::resolve_path::relative_platform_buf::<
+                                    path::resolve_path::relative_platform::<
                                         path::platform::Posix,
                                         false,
                                     >(
-                                        &mut relative_platform_buf[..],
-                                        html_dir,
-                                        &source_map_final_rel_path,
+                                        html_dir, &source_map_final_rel_path
                                     )
                                 },
                             )

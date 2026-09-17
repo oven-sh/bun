@@ -457,6 +457,7 @@ impl S3Credentials {
             content_disposition: content_disposition.is_some(),
             content_encoding: content_encoding.is_some(),
             content_md5: content_md5.is_some(),
+            content_type: content_type.is_some(),
             acl: acl.is_some(),
             request_payer,
             session_token: session_token.is_some(),
@@ -743,6 +744,7 @@ impl S3Credentials {
                     content_disposition,
                     content_encoding,
                     content_md5.as_deref(),
+                    content_type,
                     &host,
                     acl,
                     aws_content_hash,
@@ -810,6 +812,7 @@ impl S3Credentials {
             || content_md5.as_deref().is_some_and(contains_newline_or_cr)
             || content_disposition.is_some_and(contains_newline_or_cr)
             || content_encoding.is_some_and(contains_newline_or_cr)
+            || content_type.is_some_and(contains_newline_or_cr)
             || session_token.is_some_and(contains_newline_or_cr)
             || contains_newline_or_cr(region)
             || contains_newline_or_cr(&self.access_key_id)
@@ -886,6 +889,14 @@ impl S3Credentials {
             result._headers[result._headers_len as usize] =
                 pico_header_new(b"content-md5", &content_md5_value);
             result.content_md5 = content_md5_value;
+            result._headers_len += 1;
+        }
+
+        if let Some(ct) = content_type {
+            let content_type_value = Box::<[u8]>::from(ct);
+            result._headers[result._headers_len as usize] =
+                pico_header_new(b"content-type", &content_type_value);
+            result.content_type = content_type_value;
             result._headers_len += 1;
         }
 
@@ -975,6 +986,7 @@ pub struct SignResult {
     pub(crate) content_disposition: Box<[u8]>,
     pub(crate) content_encoding: Box<[u8]>,
     pub(crate) content_md5: Box<[u8]>,
+    pub(crate) content_type: Box<[u8]>,
     pub(crate) session_token: Box<[u8]>,
     pub(crate) acl: Option<ACL>,
     pub(crate) storage_class: Option<StorageClass>,
@@ -986,7 +998,7 @@ pub struct SignResult {
 }
 
 impl SignResult {
-    pub const MAX_HEADERS: usize = 11;
+    pub const MAX_HEADERS: usize = 12;
 
     pub fn headers(&self) -> &[PicoHeader] {
         &self._headers[0..self._headers_len as usize]
@@ -1017,6 +1029,7 @@ impl Default for SignResult {
             content_disposition: Box::default(),
             content_encoding: Box::default(),
             content_md5: Box::default(),
+            content_type: Box::default(),
             session_token: Box::default(),
             acl: None,
             storage_class: None,
@@ -1037,7 +1050,7 @@ impl Drop for SignResult {
         zero_sensitive(&mut self.host);
         zero_sensitive(&mut self.authorization);
         zero_sensitive(&mut self.url);
-        // content_md5 is not sensitive; Box drop handles it.
+        // content_md5 and content_type are not sensitive; Box drop handles them.
     }
 }
 
@@ -1263,6 +1276,7 @@ pub(crate) struct SignedHeadersKey {
     pub content_disposition: bool,
     pub content_encoding: bool,
     pub content_md5: bool,
+    pub content_type: bool,
     pub acl: bool,
     pub request_payer: bool,
     pub session_token: bool,
@@ -1291,6 +1305,9 @@ impl SignedHeaders {
         }
         if key.content_md5 {
             push!(b"content-md5;");
+        }
+        if key.content_type {
+            push!(b"content-type;");
         }
         push!(b"host;");
         if key.acl {
@@ -1328,6 +1345,7 @@ impl CanonicalRequest {
         content_disposition: Option<&[u8]>,
         content_encoding: Option<&[u8]>,
         content_md5: Option<&[u8]>,
+        content_type: Option<&[u8]>,
         host: &[u8],
         acl: Option<&[u8]>,
         hash: &[u8],
@@ -1361,6 +1379,9 @@ impl CanonicalRequest {
         }
         if key.content_md5 {
             w!("content-md5:{}\n", BStr::new(content_md5.unwrap()));
+        }
+        if key.content_type {
+            w!("content-type:{}\n", BStr::new(content_type.unwrap()));
         }
         w!("host:{}\n", BStr::new(host));
         if key.acl {

@@ -1802,6 +1802,105 @@ describe("s3 multipart upload id validation", () => {
   }, 60_000);
 });
 
+describe.concurrent("s3 multipart upload rollback", () => {
+  // A multipart upload that fails is rolled back with AbortMultipartUpload
+  // (DELETE ?uploadId=). S3 answers that request with 204 No Content.
+  //
+  // The stub fails every part, so the writer gives up and rolls back. It
+  // records each request it gets. The rollback request keeps the event loop
+  // alive, so the list the child prints at exit is final.
+  function fixture(abort: { status: number; body: string | null }) {
+    return `
+      const abort = ${JSON.stringify(abort)};
+      const requests = [];
+      const server = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          const url = new URL(req.url);
+          await req.arrayBuffer();
+          if (req.method === "POST" && url.searchParams.has("uploads")) {
+            requests.push("initiate");
+            return new Response(
+              "<InitiateMultipartUploadResult><Bucket>my_bucket</Bucket><Key>obj</Key><UploadId>upload-1</UploadId></InitiateMultipartUploadResult>",
+              { headers: { "Content-Type": "application/xml" } },
+            );
+          }
+          if (req.method === "PUT" && url.searchParams.has("partNumber")) {
+            requests.push("part");
+            return new Response(
+              "<Error><Code>InternalError</Code><Message>We encountered an internal error. Please try again.</Message></Error>",
+              { status: 500, headers: { "Content-Type": "application/xml" } },
+            );
+          }
+          if (req.method === "DELETE" && url.searchParams.get("uploadId") === "upload-1") {
+            requests.push("abort");
+            return new Response(abort.body, { status: abort.status, headers: { "Content-Type": "application/xml" } });
+          }
+          requests.push(req.method + " " + url.pathname + url.search);
+          return new Response(null, { status: 400 });
+        },
+      });
+      // Only the upload may keep the child alive.
+      server.unref();
+
+      const client = new Bun.S3Client({
+        accessKeyId: "test",
+        secretAccessKey: "test",
+        region: "eu-west-3",
+        bucket: "my_bucket",
+        endpoint: \`http://127.0.0.1:\${server.port}\`,
+      });
+      // Exactly one part, so the order of the requests is fixed.
+      const writer = client.file("obj").writer({ partSize: 5 * 1024 * 1024, retry: 3 });
+      writer.write(new Uint8Array(5 * 1024 * 1024));
+      const outcome = await writer.end().then(
+        () => "resolved",
+        e => "rejected " + e.code,
+      );
+      process.on("exit", () => console.log(JSON.stringify({ outcome, requests })));
+    `;
+  }
+
+  it.each([
+    // The abort worked.
+    ["204 No Content", 1, { status: 204, body: null }],
+    // The upload id is already gone. A retry cannot change that.
+    [
+      "404 NoSuchUpload",
+      1,
+      {
+        status: 404,
+        body: "<Error><Code>NoSuchUpload</Code><Message>The specified upload does not exist.</Message></Error>",
+      },
+    ],
+    // A real failure: the best-effort rollback still retries, 1 + retry times.
+    [
+      "500 InternalError",
+      4,
+      {
+        status: 500,
+        body: "<Error><Code>InternalError</Code><Message>We encountered an internal error. Please try again.</Message></Error>",
+      },
+    ],
+  ])("AbortMultipartUpload answered with %s is sent %d time(s)", async (_, aborts, abort) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture(abort)],
+      // The S3 client honors the proxy environment; the stub is on loopback.
+      env: { ...bunEnv, HTTP_PROXY: undefined, HTTPS_PROXY: undefined, http_proxy: undefined, https_proxy: undefined },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout.trim())).toEqual({
+      outcome: "rejected InternalError",
+      // retry: 3 gives the part 4 attempts before the writer rolls back.
+      requests: ["initiate", "part", "part", "part", "part", ...Array(aborts).fill("abort")],
+    });
+    expect(exitCode).toBe(0);
+  });
+});
+
 describe("s3 upload stream body error", () => {
   // The readStreamIntoSink abrupt path dispatches a single-file PUT before
   // the pump promise rejects; the PUT's response callback must not read a

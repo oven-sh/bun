@@ -3239,8 +3239,7 @@ pub(crate) fn parse_into_binary_lockfile(
                     continue 'deps;
                 }
 
-                // So does a bundled edge without an entry of its own. The walk below would bind it
-                // to a same-named package of an ancestor.
+                // Bundled and no entry of its own: stays unresolved, never an ancestor's package.
                 if dep.behavior.is_bundled()
                     && child_pkg_path(pkg_path, dep.name.slice(string_buf), &mut path_buf[..])
                         .is_some_and(|own_entry| !pkg_map.contains(own_entry))
@@ -3438,8 +3437,7 @@ pub(crate) fn resolve_peer_dep_version_based(
     None
 }
 
-/// `<pkg_path>/<dep_name>`: the key of the entry placed directly under `pkg_path`, which is where a
-/// bundled dependency always goes. `None` when it does not fit in `path_buf`.
+/// Key of the entry directly under `pkg_path`, where a bundled dependency goes. `None` if too long.
 fn child_pkg_path<'a>(
     pkg_path: &[u8],
     dep_name: &[u8],

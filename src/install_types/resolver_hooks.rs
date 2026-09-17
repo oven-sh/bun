@@ -228,8 +228,7 @@ impl Behavior {
     pub fn includes(self, rhs: Self) -> bool {
         self.intersects(rhs)
     }
-    /// Whether a failed lookup or download of this dependency is an error and not a warning.
-    /// A bundled dependency is not required: its parent's tarball ships the copy that is used.
+    /// Whether a failed lookup or download is an error. The parent's tarball ships a bundled one.
     #[inline]
     pub fn is_required(self) -> bool {
         !self.is_optional() && !self.is_bundled()

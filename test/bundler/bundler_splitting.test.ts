@@ -2014,6 +2014,68 @@ describe("bundler", () => {
     run: { file: "/out/entry.js", stdout: "late2 b late1 b" },
   });
 
+  // entry.js uses only x from pkg, so it does not load loader.js. The import() in
+  // loader.js is not one that entry.js comes to: late2.js loads first, enters the
+  // A/B cycle at A, and the chunk that late1.js and late2.js share follows it.
+  itBundled("splitting/SharedChunkIgnoresImportCallInFileThatEntryDoesNotLoad", {
+    files: {
+      "/node_modules/pkg/package.json": JSON.stringify({ name: "pkg", main: "index.js", sideEffects: false }),
+      "/node_modules/pkg/index.js": `export * from "./x.js"; export * from "./loader.js";`,
+      "/node_modules/pkg/x.js": `export const x = 1;`,
+      "/node_modules/pkg/loader.js": `export const loadLate1 = () => import("../../late1.js");`,
+      "/node_modules/pkg/a.js": /* js */ `
+        export * as A from "./a.js";
+        import { B } from "./b.js";
+        export var node = { name: "a", dep: B.node?.name ?? "undefined" };
+      `,
+      "/node_modules/pkg/b.js": /* js */ `
+        export * as B from "./b.js";
+        import { A } from "./a.js";
+        export var node = { name: "b" };
+        export const readA = () => A.node.dep;
+      `,
+      "/late1.js": `import { B } from "pkg/b.js"; export const go = () => B.readA();`,
+      "/late2.js": /* js */ `
+        import { A } from "pkg/a.js";
+        import { loadLate1 } from "pkg/loader.js";
+        export const go = () => (loadLate1(), A.node.dep);
+      `,
+      "/entry.js": /* js */ `
+        import { x } from "pkg";
+        console.log(x);
+        const m2 = await import("./late2.js");
+        const m1 = await import("./late1.js");
+        console.log(m2.go(), m1.go());
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/entry.js", stdout: "1\nb b" },
+  });
+
+  // card.js is in the chunk of w.js alone. The walk first comes to it under r.js, through
+  // an import that r.js does not use. Its class-name object still prints with it.
+  itBundled("splitting/CssModuleObjectOfFileReachedThroughSplitRequire", {
+    files: {
+      "/node_modules/ui/package.json": JSON.stringify({ name: "ui", main: "index.js", sideEffects: false }),
+      "/node_modules/ui/index.js": `export { Button } from "./button.js"; export { Card } from "./card.js";`,
+      "/node_modules/ui/button.js": `export const Button = () => "button";`,
+      "/node_modules/ui/card.js": `import styles from "./card.module.css"; export const Card = () => styles.card;`,
+      "/node_modules/ui/card.module.css": `.card { color: red; }`,
+      "/r.js": `import { Button } from "ui/button.js"; import { Card as Unused } from "ui"; export const x = Button();`,
+      "/m.js": `const r = require("./r.js"); console.log(r.x);`,
+      "/w.js": `import "./m.js"; import { Card } from "ui/card.js"; console.log(typeof Card());`,
+    },
+    entryPoints: ["/w.js"],
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/w.js", stdout: "button\nstring" },
+  });
+
   // e1.js comes first and its import goes through a barrel that re-exports
   // b.js before a.js, but it uses nothing from them, so it does not load the
   // chunk that e2.js and e3.js share. Both of those enter the A/B cycle at A.

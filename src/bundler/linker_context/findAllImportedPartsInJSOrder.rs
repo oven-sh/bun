@@ -115,7 +115,7 @@ pub(crate) fn find_all_imported_parts_in_js_order(
 /// reach the output (blank lines between ranges) and the chunk hash.
 const RANGE_SOURCE_BYTES_MAX: i32 = 128 * 1024;
 
-/// Lays out the chunk's files in the order an `EvaluationWalk` placed them.
+/// Lays out the chunk's files in the order its owner's `EntryWalk` placed them.
 pub(crate) fn find_imported_parts_in_js_order(
     this: &LinkerContext,
     chunk: &mut Chunk,
@@ -329,7 +329,10 @@ impl WalkPlan {
 /// The order the entry points load in: the user's, then the on-demand ones as evaluation meets them, then the rest.
 struct LoadOrder<'a, 'ctx> {
     c: &'a LinkerContext<'ctx>,
+    /// The load of an entry point that loads the file evaluated it.
     visited: AutoBitSet,
+    /// Per file: 1 + the entry point of the last load that went through it and does not load it.
+    passed: Vec<u32>,
     entry_id_of_file: &'a [u32],
     rank: Vec<u32>,
     next_rank: u32,
@@ -339,7 +342,11 @@ struct LoadOrder<'a, 'ctx> {
 
 #[derive(Clone, Copy)]
 enum LoadFrame {
-    Enter(IndexInt),
+    /// `loader`: the entry point whose load reaches the file.
+    Enter {
+        source_index: IndexInt,
+        loader: u32,
+    },
     /// A split `require()` that runs at load: the entry point loads here.
     Load(u32),
     Later(u32),
@@ -353,6 +360,7 @@ impl<'a, 'ctx> LoadOrder<'a, 'ctx> {
         let mut this = LoadOrder {
             c,
             visited: bun_core::handle_oom(AutoBitSet::init_empty(files_len)),
+            passed: vec![0; files_len],
             entry_id_of_file,
             rank: vec![u32::MAX; entry_points.len()],
             next_rank: 0,
@@ -392,18 +400,19 @@ impl<'a, 'ctx> LoadOrder<'a, 'ctx> {
         let loaders = c.parse_graph().input_files.items_loader();
         let parts = c.graph.ast.items_parts();
         let import_records = c.graph.ast.items_import_records();
+        let entry_bits = c.graph.files.items_entry_bits();
 
         debug_assert!(stack.is_empty());
         let entry_points = c.graph.entry_points.items_source_index();
         stack.push(LoadFrame::Load(entry_id));
         while let Some(frame) = stack.pop() {
-            let source_index = match frame {
+            let (source_index, loader) = match frame {
                 LoadFrame::Load(entry_id) => {
                     if self.rank[entry_id as usize] == u32::MAX {
                         self.rank[entry_id as usize] = self.next_rank;
                         self.next_rank += 1;
                     }
-                    entry_points[entry_id as usize]
+                    (entry_points[entry_id as usize], entry_id)
                 }
                 LoadFrame::Later(entry_id) => {
                     if self.rank[entry_id as usize] == u32::MAX
@@ -413,13 +422,25 @@ impl<'a, 'ctx> LoadOrder<'a, 'ctx> {
                     }
                     continue;
                 }
-                LoadFrame::Enter(source_index) => source_index,
+                LoadFrame::Enter {
+                    source_index,
+                    loader,
+                } => (source_index, loader),
             };
             if source_index == Index::RUNTIME.value() || self.visited.is_set(source_index as usize)
             {
                 continue;
             }
-            self.visited.set(source_index as usize);
+            // A load evaluates the files that its entry point loads. It goes through the others.
+            let evaluates = c.graph.files_live.is_set(source_index as usize)
+                && entry_bits[source_index as usize].is_set(loader as usize);
+            if evaluates {
+                self.visited.set(source_index as usize);
+            } else if core::mem::replace(&mut self.passed[source_index as usize], loader + 1)
+                == loader + 1
+            {
+                continue;
+            }
 
             let mark = stack.len();
             let records = import_records[source_index as usize].as_slice();
@@ -428,15 +449,17 @@ impl<'a, 'ctx> LoadOrder<'a, 'ctx> {
             {
                 for record in records {
                     if record.source_index.is_valid() {
-                        stack.push(LoadFrame::Enter(record.source_index.get()));
+                        stack.push(LoadFrame::Enter {
+                            source_index: record.source_index.get(),
+                            loader,
+                        });
                     }
                 }
             } else {
-                let is_live = c.graph.files_live.is_set(source_index as usize);
                 let parts_live = &c.graph.parts_live[source_index as usize];
                 for (part_index, part) in parts[source_index as usize].as_slice().iter().enumerate()
                 {
-                    let runs = is_live && parts_live.is_set(part_index);
+                    let runs = evaluates && parts_live.is_set(part_index);
                     for &record_id in part.import_record_indices.slice() {
                         let record: &ImportRecord = &records[record_id as usize];
                         if !record.source_index.is_valid()
@@ -446,7 +469,10 @@ impl<'a, 'ctx> LoadOrder<'a, 'ctx> {
                         }
                         let other = record.source_index.get();
                         stack.push(if !c.is_external_dynamic_import(record, source_index) {
-                            LoadFrame::Enter(other)
+                            LoadFrame::Enter {
+                                source_index: other,
+                                loader,
+                            }
                         } else if record.kind == ImportKind::Require
                             && !part_has_no_side_effects(part)
                         {
@@ -457,7 +483,10 @@ impl<'a, 'ctx> LoadOrder<'a, 'ctx> {
                     }
                     if runs {
                         for dependency in part.dependencies.iter() {
-                            stack.push(LoadFrame::Enter(dependency.source_index.get()));
+                            stack.push(LoadFrame::Enter {
+                                source_index: dependency.source_index.get(),
+                                loader,
+                            });
                         }
                     }
                 }
@@ -601,7 +630,15 @@ impl EntryWalk {
                 let is_css = css[other as usize].is_some();
                 if is_css {
                     let Some(slot) = slot else { return };
-                    if !loads(other, loader) {
+                    // The chunk of the importer loads the CSS file, whatever load reached the importer.
+                    let chunk_loads_css = if plan.code_splitting {
+                        files_live.is_set(other as usize)
+                            && entry_bits[other as usize]
+                                .has_intersection(&entry_bits[source_index as usize])
+                    } else {
+                        loads(other, entry_id)
+                    };
+                    if !chunk_loads_css {
                         return;
                     }
                     let key = u64::from(slot) << 32 | u64::from(other);

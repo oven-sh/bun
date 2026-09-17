@@ -51,6 +51,95 @@ describe("fs.watchFile", () => {
     expect(entries[0][1].size).toBe(0);
     expect(entries[0][1].mtimeMs).toBe(0);
   });
+
+  // https://nodejs.org/api/fs.html#fswatchfilefilename-options-listener
+  // "When a file being watched by fs.watchFile() disappears and reappears, then
+  // the contents of previous in the second callback event (the file's
+  // reappearance) will be the same as the contents of previous in the first
+  // callback event (its disappearance)."
+  test.each([false, true])(
+    "previous is the last real stat when a deleted file reappears (bigint: %p)",
+    async bigint => {
+      type AnyStats = fs.Stats | fs.BigIntStats;
+      const pick = (stats: AnyStats) => ({
+        ino: Number(stats.ino),
+        size: Number(stats.size),
+        mtimeMs: Number(stats.mtimeMs),
+      });
+      const zeroed = { ino: 0, size: 0, mtimeMs: 0 };
+
+      let { promise: called, resolve: wake } = Promise.withResolvers<void>();
+      const onCall = () => {
+        wake();
+        ({ promise: called, resolve: wake } = Promise.withResolvers<void>());
+      };
+
+      const file = path.join(testDir, "reappear.txt");
+      const calls: { curr: ReturnType<typeof pick>; prev: ReturnType<typeof pick> }[] = [];
+      fs.watchFile(file, { interval: 20, bigint }, (curr, prev) => {
+        calls.push({ curr: pick(curr), prev: pick(prev) });
+        onCall();
+      });
+
+      // Resolves with the index of the next callback whose `curr` has this size.
+      let cursor = 0;
+      async function nextCallWithSize(size: number) {
+        for (;;) {
+          for (; cursor < calls.length; cursor++) {
+            if (calls[cursor].curr.size === size) return cursor++;
+          }
+          await called;
+        }
+      }
+
+      // A second watcher with the same interval. Each of its callbacks proves
+      // that one more poll ran, so polls can elapse without a sleep.
+      const sentinel = path.join(testDir, "sentinel.txt");
+      let sentinelCalls = 0;
+      fs.watchFile(sentinel, { interval: 20 }, () => {
+        sentinelCalls++;
+        onCall();
+      });
+      async function pollsElapse(count: number) {
+        // The sentinel does not exist at first. Its first callback reports that.
+        while (sentinelCalls === 0) await called;
+        for (let size = 1; size <= count; size++) {
+          const before = sentinelCalls;
+          updateFile(sentinel, Buffer.alloc(size, "x").toString());
+          while (sentinelCalls === before) await called;
+        }
+      }
+
+      try {
+        // The file does not exist yet: the first callback has two zeroed stats.
+        const absent = calls[await nextCallWithSize(0)];
+        expect(absent).toEqual({ curr: zeroed, prev: zeroed });
+
+        // It never had a real stat, so `previous` is still zeroed when it appears.
+        updateFile(file, "aaa");
+        const created = calls[await nextCallWithSize(3)];
+        expect(created.prev).toEqual(zeroed);
+
+        fs.unlinkSync(file);
+        const goneIndex = await nextCallWithSize(0);
+        const lastReal = calls[goneIndex - 1].curr;
+        expect(lastReal.size).toBe(3);
+        expect(calls[goneIndex]).toEqual({ curr: zeroed, prev: lastReal });
+
+        // A file that stays missing does not call back again.
+        await pollsElapse(3);
+        expect(calls.length).toBe(goneIndex + 1);
+
+        updateFile(file, "bb");
+        const back = calls[await nextCallWithSize(2)];
+        expect(back.prev).toEqual(lastReal);
+      } finally {
+        fs.unwatchFile(file);
+        fs.unwatchFile(sentinel);
+      }
+    },
+  );
+
   test("it watches a file", async () => {
     let { promise, resolve } = Promise.withResolvers<void>();
     let entries: any = [];

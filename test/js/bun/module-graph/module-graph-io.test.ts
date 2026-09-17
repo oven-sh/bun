@@ -1031,6 +1031,45 @@ describe.concurrent("ModuleGraph: an error in what a graph opened is the graph's
     expect(await run(dir)).toEqual({ stdout: "graph: ECONNREFUSED\n", stderr: "", exitCode: 0 });
   });
 
+  test("handlers a graph set on a RedisClient of the host's are not called once the graph is disposed", async () => {
+    const dir = fixture({
+      "host.mjs": hostHelpers,
+      "tenant.mjs": `
+        export const listen = (client, heard) => {
+          client.onconnect = () => heard.push("onconnect");
+          client.onclose = () => heard.push("onclose");
+        };
+      `,
+      "main.mjs": `
+        import { host } from "./host.mjs";
+        const until = async condition => { while (!condition()) await new Promise(resolve => setImmediate(resolve)); };
+        const graph = new Bun.ModuleGraph();
+        const app = await graph.import(import.meta.dir + "/tenant.mjs");
+        // The client is the host's; the graph only sets its handlers.
+        const client = new Bun.RedisClient("redis://127.0.0.1:" + host.redisServer(), { autoReconnect: false });
+        const heard = [];
+        graph.run(() => app.listen(client, heard));
+        await client.connect();
+        host.dropRedisConnections();
+        await until(() => heard.includes("onclose"));
+        const whileAlive = heard.splice(0);
+        graph.dispose();
+        // The client still works for the host; the disposed graph's handlers hear nothing of it.
+        await client.connect();
+        host.dropRedisConnections();
+        await until(() => !client.connected);
+        for (let turn = 0; turn < 10; turn++) await new Promise(resolve => setImmediate(resolve));
+        console.log(JSON.stringify({ whileAlive, afterDispose: heard }));
+        process.exit(0);
+      `,
+    });
+    expect(await run(dir)).toEqual({
+      stdout: JSON.stringify({ whileAlive: ["onconnect", "onclose"], afterDispose: [] }) + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   test("two graphs on either end of one connection each get what their own handler throws", async () => {
     const dir = fixture({
       "server.mjs": `

@@ -5786,8 +5786,12 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskJob(JSC::JSGlobalObject* arg0
         JSValue::decode(JSValue4)
     };
 
-    // A callback stored with its async context: the job runs the function in that context.
+    // A callback stored with its async context: the job runs the function in that context. One of
+    // a Bun.ModuleGraph that was disposed is not called, as on the other two routes a stored
+    // callback is called through (Bun__JSValue__call, AsyncContextFrame::call).
     if (auto* wrapper = dynamicDowncast<AsyncContextFrame>(microtaskArgs[0])) {
+        if (Bun::shouldDropCallbackOfStoppedModuleGraph(globalObject, wrapper->context.get())) [[unlikely]]
+            return;
         microtaskArgs[1] = wrapper->context.get();
         microtaskArgs[0] = wrapper->callback.get();
     }

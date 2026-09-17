@@ -591,8 +591,7 @@ pub(crate) mod serialize {
         Other,
     }
 
-    /// Whether `selector` can take the place of a `&` at `position` as written,
-    /// with `tail` after it.
+    /// Whether `selector` can replace a `&` at `position` as written, with `tail` after it.
     fn fits_at(selector: &parser::Selector, position: NestingPosition, tail: NestingTail) -> bool {
         (tail == NestingTail::OnlyPseudos || !has_pseudo_element(selector))
             && match position {
@@ -684,7 +683,7 @@ pub(crate) mod serialize {
         )
     }
 
-    /// `start` is where the first simple selector of `selector` lands, and
+    /// `start` is where the first simple selector of `selector` lands.
     /// `tail` is what prints after `selector`.
     fn serialize_selector_impl(
         selector: &parser::Selector,
@@ -696,8 +695,7 @@ pub(crate) mod serialize {
     ) -> Result<(), PrintErr> {
         let mut is_relative = is_relative_;
 
-        // `:is()` cannot hold a pseudo-element, so the pseudo-element of a parent
-        // selector does not keep it from `start`. `fits_at` still looks at `tail`.
+        // `:is()` cannot hold a pseudo-element, so a pseudo-element alone keeps no parent out.
         let start = match context {
             Some(ctx)
                 if ctx.selectors.v.len() == 1
@@ -814,9 +812,7 @@ pub(crate) mod serialize {
             };
             let mut perform_step_2 = true;
             let next_combinator = combinators.next();
-            // Only pseudos print after `compound[index]` when `index + 1` is in the
-            // run of pseudos that ends `compound`, and only pseudo-elements follow
-            // `compound`.
+            // Where the run of pseudos that ends `compound` starts, if only pseudos print after it.
             let pseudos_start = if tail == NestingTail::OnlyPseudos
                 && matches!(
                     next_combinator,
@@ -1526,11 +1522,9 @@ pub(crate) mod serialize {
             // Otherwise, use an :is() pseudo class.
             // Type selectors are only allowed at the start of a compound selector,
             // so use :is() if that is not the case.
-            // Only pseudo-classes and pseudo-elements can follow a pseudo-element,
-            // so use :is() for a parent selector with one if something else follows.
+            // Only pseudos can follow a pseudo-element, so use :is() if something else follows one.
             if ctx.selectors.v.len() == 1 && fits_at(ctx.selectors.v.at(0), position, tail) {
-                // A `&` that leads the parent selector lands where this `&` does,
-                // with the same tail.
+                // A `&` that leads the parent selector lands where this `&` does.
                 serialize_selector_impl(
                     ctx.selectors.v.at(0),
                     dest,

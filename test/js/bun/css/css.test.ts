@@ -6025,8 +6025,7 @@ describe("css tests", () => {
       );
     });
 
-    // Only pseudo-classes and pseudo-elements can follow a pseudo-element, so a
-    // parent selector with one goes in `:is()` when something else follows the `&`.
+    // Only pseudos can follow a pseudo-element, so such a parent selector goes in `:is()` before anything else.
     describe("what follows a `&` whose parent selector has a pseudo-element", () => {
       lowered_nesting_test("input:after { a:after { color: red } }", ":is(input:after) a:after{color:red}");
       lowered_nesting_test(".foo::before { > .bar { color: red } }", ":is(.foo:before)>.bar{color:red}");

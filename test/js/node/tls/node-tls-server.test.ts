@@ -1437,22 +1437,24 @@ it("an asynchronous SNICallback resolving cb(null, null) still honors addContext
   await once(server, "close");
 });
 
-it("a listen() that fails while it loads addContext() entries leaves the server closed", async () => {
-  // The native SNI tree adds names of any label count but only removes names
-  // of up to 10 labels (#43092). Two names that land on one node make the
-  // second add a duplicate, so listen() throws after the socket is bound. When
-  // that limit goes away, this test needs another input that throws there.
-  const altCert = { key: rawKey, cert: cert };
+it("a listen() that fails after the socket is bound leaves the server closed", async () => {
+  // listen() binds the socket, then wires the handle and loads the addContext()
+  // entries. A throw from any of those steps (an entry the native listener
+  // rejects, for example) must stop the bound listener. address() is the first
+  // step after the bind that a test can make throw, so it stands in for them.
   const server: Server = createServer(COMMON_CERT, socket => socket.end());
-  const name = "a.b.c.d.e.f.g.h.i.j.k.example";
-  server.addContext(name, altCert);
-  server.addContext(name + ".", altCert);
+  server.addContext("alt.example.com", { key: rawKey, cert: cert });
+  const realAddress = server.address;
+  server.address = function () {
+    server.address = realAddress;
+    throw new Error("address() failed after the bind");
+  };
   server.listen(0, "127.0.0.1");
   const outcome = await new Promise<string>(resolve => {
     server.once("listening", () => resolve("listening"));
     server.once("error", err => resolve(`error: ${err.message}`));
   });
-  expect(outcome).toStartWith("error: Failed to register SNI for 'a.b.c.d.e.f.g.h.i.j.k.example.'");
+  expect(outcome).toBe("error: address() failed after the bind");
   expect({
     listening: server.listening,
     address: server.address(),

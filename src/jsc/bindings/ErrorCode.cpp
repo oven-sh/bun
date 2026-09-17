@@ -354,8 +354,7 @@ void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, MessageBuilder& buil
 {
     ASSERT(!arg.isEmpty());
     if (!arg.isCell()) {
-        // util.inspect and util.format's %s both print -0 with its sign. ToString drops it.
-        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/inspect.js#L2191-L2197
+        // util.inspect and %s keep the sign of -0 (lib/internal/util/inspect.js, formatNumber). ToString drops it.
         if (arg.isDouble() && JSC::isNegativeZero(arg.asDouble())) {
             builder.append("-0"_s);
             return;
@@ -421,9 +420,7 @@ void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, MessageBuilder& buil
     builder.append(Bun__inspect_singleline(defaultGlobalObject(globalObject), arg).transferToWTFString());
 }
 
-// util.format's %s prints an object through String() when the toString or Symbol.toPrimitive
-// it would call is user code, and through util.inspect otherwise (hasBuiltInToString in
-// lib/internal/util/inspect.js).
+// The inverse of hasBuiltInToString in node's lib/internal/util/inspect.js.
 static bool hasUserToString(JSC::JSGlobalObject* globalObject, JSC::JSObject* object)
 {
     auto& vm = JSC::getVM(globalObject);

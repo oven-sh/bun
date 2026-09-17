@@ -361,6 +361,7 @@ const kOutHeaders = Symbol("kOutHeaders");
 const kNeedDrain = Symbol("kNeedDrain");
 const kProxyConfig = Symbol("kProxyConfig");
 const kWaitForProxyTunnel = Symbol("kWaitForProxyTunnel");
+const kPerRequestCheckServerIdentity = Symbol("kPerRequestCheckServerIdentity");
 
 // The `date` header, formatted once per second like Node.js does
 // (https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http.js). Keyed by the second rather than reset by a timer:
@@ -543,6 +544,7 @@ export {
   kNeedDrain,
   kOutHeaders,
   kPendingCallbacks,
+  kPerRequestCheckServerIdentity,
   kProxyConfig,
   kRealListen,
   kRequest,

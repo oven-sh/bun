@@ -5860,6 +5860,18 @@ impl VirtualMachine {
             None
         };
         if let Some(errors) = errors {
+            let members_past_cap =
+                formatter.depth.saturating_add(1) > formatter.error_chain_max_depth();
+            if members_past_cap {
+                self.print_error_from_maybe_private_data(
+                    value,
+                    exception_list.as_deref_mut(),
+                    formatter,
+                    writer,
+                    allow_ansi_color,
+                    allow_side_effects,
+                );
+            }
             // Note: `JSValue::for_each` takes a C-ABI fn
             // pointer + erased ctx, so thread the captures through a struct.
             // The C trampoline erases lifetimes via `*mut c_void`; round-trip
@@ -5897,15 +5909,31 @@ impl VirtualMachine {
                 // live across the synchronous `for_each` call.
                 let writer = unsafe { &mut *ctx.writer };
                 ctx.printed_member = true;
-                vm.print_errorlike_object(
-                    next_value,
-                    None,
-                    exception_list,
-                    formatter,
-                    writer,
-                    ctx.allow_ansi_color,
-                    ctx.allow_side_effects,
-                );
+                formatter.depth = formatter.depth.saturating_add(1);
+                if formatter.depth > formatter.error_chain_max_depth()
+                    || !formatter.stack_check.is_safe_to_recurse()
+                {
+                    let _ = if ctx.allow_ansi_color {
+                        writer.write_all(
+                            bun_core::pretty_fmt!("<r><cyan>[Error ...]<r>\n", true).as_bytes(),
+                        )
+                    } else {
+                        writer.write_all(
+                            bun_core::pretty_fmt!("<r><cyan>[Error ...]<r>\n", false).as_bytes(),
+                        )
+                    };
+                } else {
+                    vm.print_errorlike_object(
+                        next_value,
+                        None,
+                        exception_list,
+                        formatter,
+                        writer,
+                        ctx.allow_ansi_color,
+                        ctx.allow_side_effects,
+                    );
+                }
+                formatter.depth = formatter.depth.saturating_sub(1);
             }
             let mut ctx = AggCtx {
                 formatter: std::ptr::from_mut(&mut *formatter),
@@ -5923,7 +5951,7 @@ impl VirtualMachine {
             {
                 global_ref.clear_exception();
             }
-            if ctx.printed_member {
+            if ctx.printed_member || members_past_cap {
                 return;
             }
             // `errors` is empty or not iterable: print the AggregateError itself.
@@ -7017,10 +7045,12 @@ impl VirtualMachine {
                     let prev_disable_inspect_custom = formatter.disable_inspect_custom;
                     let prev_quote_strings = formatter.quote_strings;
                     let prev_max_depth = formatter.max_depth;
+                    let prev_outer_max_depth = formatter.outer_max_depth;
                     let prev_format_buffer_as_text = formatter.format_buffer_as_text;
                     formatter.depth += 1;
                     formatter.format_buffer_as_text = true;
-                    formatter.max_depth = 1;
+                    formatter.outer_max_depth = Some(formatter.error_chain_max_depth());
+                    formatter.max_depth = formatter.depth;
                     formatter.quote_strings = true;
                     formatter.disable_inspect_custom = true;
                     // Hand-rolled drop guard restores the formatter state.
@@ -7029,12 +7059,14 @@ impl VirtualMachine {
                         d: bool,
                         q: bool,
                         m: u16,
+                        o: Option<u16>,
                         b: bool,
                     }
                     impl Drop for RestoreFmt<'_, '_> {
                         fn drop(&mut self) {
                             self.f.depth -= 1;
                             self.f.max_depth = self.m;
+                            self.f.outer_max_depth = self.o;
                             self.f.quote_strings = self.q;
                             self.f.disable_inspect_custom = self.d;
                             self.f.format_buffer_as_text = self.b;
@@ -7045,6 +7077,7 @@ impl VirtualMachine {
                         d: prev_disable_inspect_custom,
                         q: prev_quote_strings,
                         m: prev_max_depth,
+                        o: prev_outer_max_depth,
                         b: prev_format_buffer_as_text,
                     };
                     let formatter = &mut *restore.f;
@@ -7153,15 +7186,24 @@ impl VirtualMachine {
             }
 
             writer.write_all(b"\n")?;
-            self.print_error_instance_js(
-                err,
-                exception_list.as_deref_mut(),
-                formatter,
-                writer,
-                allow_ansi_color,
-                allow_side_effects,
-            )?;
+            let prev_depth = formatter.depth;
+            formatter.depth = formatter.depth.saturating_add(1);
+            let over_cap = formatter.depth > formatter.error_chain_max_depth();
+            let result: crate::CrateResult<()> = if over_cap {
+                pretty_write!(writer, "<r><cyan>[Error ...]<r>").map_err(Into::into)
+            } else {
+                self.print_error_instance_js(
+                    err,
+                    exception_list.as_deref_mut(),
+                    formatter,
+                    writer,
+                    allow_ansi_color,
+                    allow_side_effects,
+                )
+            };
+            formatter.depth = prev_depth;
             let _ = formatter.map.remove(&err);
+            result?;
         }
 
         Ok(())

@@ -10785,6 +10785,45 @@ describe.concurrent("isolated linker: file: dependencies that point outside the 
         ).toBe("module.exports = 'shared';");
       });
     });
+
+    it(`links one that a nested root "${field}" rule gives to a local file: package's dependency`, async () => {
+      // The only dependency that resolves to the folder is `"shared": "1.0.0"` of
+      // `pkg-a`. The trust checks consult only plain rules, so the trust comes
+      // from the package that declares the dependency, not from its version.
+      using dir = tempDir(`isolated-nested-${field}-local-file-dep`, {
+        "shared/package.json": JSON.stringify({ name: "shared", version: "1.0.0" }),
+        "shared/index.js": "module.exports = 'shared';",
+        "project/bunfig.toml": Bun.TOML.stringify({ install: { cache: false, linker: "isolated" } }),
+        "project/package.json": JSON.stringify({
+          name: "my-app",
+          version: "1.0.0",
+          dependencies: { "pkg-a": "file:./pkg-a" },
+          [field]:
+            field === "overrides" ? { "pkg-a": { shared: "file:../shared" } } : { "pkg-a/shared": "file:../shared" },
+        }),
+        "project/pkg-a/package.json": JSON.stringify({
+          name: "pkg-a",
+          version: "1.0.0",
+          dependencies: { shared: "1.0.0" },
+        }),
+        "project/pkg-a/index.js": "module.exports = require('shared');",
+      });
+      const projectDir = join(String(dir), "project");
+
+      await installTwice(projectDir);
+
+      await using run = spawn({
+        cmd: [bunExe(), "-e", `console.log(require("pkg-a"))`],
+        cwd: projectDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const [runErr, runOut, runExit] = await Promise.all([run.stderr.text(), run.stdout.text(), run.exited]);
+      expect(runErr).toBe("");
+      expect(runOut).toBe("shared\n");
+      expect(runExit).toBe(0);
+    });
   }
 });
 

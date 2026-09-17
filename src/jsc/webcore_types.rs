@@ -795,8 +795,7 @@ pub mod store {
         pub max_size: SizeType,
         /// Milliseconds since ECMAScript epoch.
         pub last_modified: crate::JSTimeType,
-        /// `fs.openAsBlob` only: the stat taken when the Blob was created.
-        /// Node fails every read once the file no longer matches it.
+        /// `fs.openAsBlob` only: reads fail once the file differs from this.
         pub snapshot: Option<FileSnapshot>,
     }
 
@@ -815,9 +814,7 @@ pub mod store {
         }
     }
 
-    /// The size and mtime of a file at one point in time. Node's
-    /// `fs.openAsBlob` compares these before each read and rejects the read
-    /// with a `NotReadableError` when either differs.
+    /// Size and mtime of a file at one point in time.
     #[derive(Clone, Copy, PartialEq, Eq, Debug)]
     pub struct FileSnapshot {
         pub size: i64,

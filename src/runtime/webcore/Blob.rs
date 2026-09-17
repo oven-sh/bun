@@ -5420,11 +5420,8 @@ pub(crate) fn construct_bun_file(
     Ok(unsafe { BlobExt::to_js(&*ptr, global_object) })
 }
 
-/// `fs.openAsBlob(path, options)` (node:fs). Like `Bun.file`, the Blob reads
-/// the path lazily, but Node's contract differs in two ways: a path that
-/// cannot be stat'd throws `ERR_INVALID_ARG_VALUE` here, and the stat taken
-/// now is kept as the store's `snapshot`, so `size` is fixed and every later
-/// read fails with `NotReadableError` once the file changes.
+/// `fs.openAsBlob(path, type)`: a `Bun.file` Blob whose creation stat is
+/// kept as the store's `snapshot` (see `open_as_blob_read_error`).
 pub(crate) fn construct_blob_for_open_as_blob(
     global_object: &JSGlobalObject,
     callframe: &CallFrame,
@@ -5441,9 +5438,7 @@ pub(crate) fn construct_blob_for_open_as_blob(
     };
     let file_type = arguments_slice.get(1).copied().filter(|v| v.is_string());
 
-    // Node copies the path out of a Buffer. The store must not keep a ref to
-    // the caller's Buffer either: its drop would unprotect the cell from a
-    // GC sweep.
+    // Like node, do not alias the caller's Buffer.
     if let PathOrFileDescriptor::Path(p) = &mut path {
         if matches!(p, PathLike::Buffer(_)) {
             *p = PathLike::owned(p.slice().to_vec());
@@ -5848,10 +5843,8 @@ fn apply_file_stat(file: &mut store::File, stat: &bun_sys::Stat) {
     file.last_modified = stat_to_js_mtime(stat);
 }
 
-/// `fs.openAsBlob`: the `NotReadableError` a read must fail with when the
-/// file no longer matches the stat taken at creation, else `None`. Node
-/// stats the file synchronously before each read, so this does too. A file
-/// that cannot be stat'd any more (unlinked) counts as changed.
+/// `fs.openAsBlob`: the `NotReadableError` to fail a read with when the file
+/// no longer matches the creation stat (node's contract), else `None`.
 pub(crate) fn open_as_blob_read_error(blob: &Blob, global: &JSGlobalObject) -> Option<JSValue> {
     let store = blob.store.get().as_ref()?;
     let store::Data::File(file) = &store.data else {

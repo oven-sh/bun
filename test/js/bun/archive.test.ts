@@ -1,7 +1,8 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { mkfifo } from "mkfifo";
 import fs, { existsSync, readdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "path";
 
 // Minimal ustar tarball builder (pathnames must be <100 bytes). `name` accepts
@@ -662,6 +663,23 @@ describe("Bun.Archive", () => {
     })();
     const canLockDir = !isWindows && (!isRoot || nobody !== null);
 
+    // The test runner puts TMPDIR in a 0700 directory. `nobody` must reach
+    // the fixtures, so the ancestors of the temp dir get o+x for the duration.
+    const widened: [string, number][] = [];
+    beforeAll(() => {
+      if (!nobody) return;
+      for (let p = fs.realpathSync.native(tmpdir()); p !== dirname(p); p = dirname(p)) {
+        const mode = fs.statSync(p).mode;
+        if ((mode & 0o011) !== 0o011) {
+          widened.push([p, mode]);
+          fs.chmodSync(p, mode | 0o011);
+        }
+      }
+    });
+    afterAll(() => {
+      for (const [p, mode] of widened) fs.chmodSync(p, mode);
+    });
+
     // GNU tar removes a file the destination already holds and creates a new
     // one. Writing into the old inode would reach every other name linked to it.
     describe.each([
@@ -729,11 +747,6 @@ describe("Bun.Archive", () => {
             fs.lchownSync(join(dir, String(p)), nobody.uid, nobody.gid);
           }
           fs.chownSync(dir, nobody.uid, nobody.gid);
-          // The test runner puts TMPDIR in a 0700 directory. `nobody` must reach the fixture.
-          for (let p = dirname(dir); p !== dirname(p); p = dirname(p)) {
-            const mode = fs.statSync(p).mode;
-            if ((mode & 0o011) !== 0o011) fs.chmodSync(p, mode | 0o011);
-          }
         }
         fs.chmodSync(locked, 0o555);
         try {

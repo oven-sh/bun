@@ -1461,7 +1461,9 @@ impl CronJob {
         this.maybe_downgrade();
         // SAFETY: `this` is live: the claim being released is a ref on it.
         unsafe {
-            <Self as bun_ptr::CellRefCounted>::deref_nn(core::ptr::NonNull::new_unchecked(this.as_ptr()))
+            <Self as bun_ptr::CellRefCounted>::deref_nn(core::ptr::NonNull::new_unchecked(
+                this.as_ptr(),
+            ))
         };
     }
 
@@ -1469,9 +1471,7 @@ impl CronJob {
     /// reactions find an empty cell. May free `this`.
     fn reclaim_tick_claim(this: ThisPtr<Self>) {
         let cell = this.tick_cell.get();
-        if !cell.is_empty()
-            && crate::api::native_promise_context::take::<Self>(cell).is_some()
-        {
+        if !cell.is_empty() && crate::api::native_promise_context::take::<Self>(cell).is_some() {
             Self::tick_settled(this);
         }
     }

@@ -206,6 +206,99 @@ describe("fork() IPC", () => {
     });
     expect(exitCode).toBe(0);
   });
+
+  // node v26.3.0 reports the same values in all three: `channel` is null as soon as the channel is disconnected.
+  describe("channel is null once the IPC channel disconnects", () => {
+    const show = `const show = c => (c === null ? null : typeof c);`;
+
+    async function readAll(stream: NodeJS.ReadableStream) {
+      let out = "";
+      for await (const chunk of stream) out += chunk;
+      return out;
+    }
+
+    it.concurrent("subprocess.channel, when the child exits", async () => {
+      using dir = tempDir("ipc-channel-null-child-exit", { "child.js": `process.send("ready");` });
+      const child = fork(path.join(String(dir), "child.js"), { env: bunEnv });
+      try {
+        const before = typeof child.channel;
+        let atDisconnect: unknown = "no 'disconnect' event";
+        child.once("disconnect", () => (atDisconnect = child.channel));
+        await once(child, "close");
+        expect({ before, atDisconnect, afterClose: child.channel }).toEqual({
+          before: "object",
+          atDisconnect: null,
+          afterClose: null,
+        });
+      } finally {
+        child.kill("SIGKILL");
+      }
+    });
+
+    it.concurrent("process.channel in the child, when the parent disconnects", async () => {
+      using dir = tempDir("ipc-channel-null-parent-disconnect", {
+        "child.js": `
+          ${show}
+          const before = show(process.channel);
+          process.on("message", () => {});
+          process.on("disconnect", () => {
+            console.log(JSON.stringify({ before, atDisconnect: show(process.channel), connected: process.connected }));
+          });
+          process.send("ready");
+        `,
+      });
+      const child = fork(path.join(String(dir), "child.js"), {
+        env: bunEnv,
+        stdio: ["ignore", "pipe", "inherit", "ipc"],
+      });
+      try {
+        // node never emits 'close' after subprocess.disconnect(), so wait for 'exit'.
+        const exited = once(child, "exit");
+        const stdout = readAll(child.stdout!);
+        await once(child, "message");
+        child.disconnect();
+        const afterDisconnectCall = child.channel;
+        expect({ afterDisconnectCall, child: JSON.parse(await stdout), exit: await exited }).toEqual({
+          afterDisconnectCall: null,
+          child: { before: "object", atDisconnect: null, connected: false },
+          exit: [0, null],
+        });
+      } finally {
+        child.kill("SIGKILL");
+      }
+    });
+
+    it.concurrent("process.channel in the child and subprocess.channel, when the child disconnects", async () => {
+      using dir = tempDir("ipc-channel-null-child-disconnect", {
+        "child.js": `
+          ${show}
+          const before = show(process.channel);
+          process.on("disconnect", () => {
+            console.log(JSON.stringify({ before, afterDisconnectCall, atDisconnect: show(process.channel) }));
+          });
+          process.disconnect();
+          const afterDisconnectCall = show(process.channel);
+        `,
+      });
+      const child = fork(path.join(String(dir), "child.js"), {
+        env: bunEnv,
+        stdio: ["ignore", "pipe", "inherit", "ipc"],
+      });
+      try {
+        const closed = once(child, "close");
+        const stdout = readAll(child.stdout!);
+        let atDisconnect: unknown = "no 'disconnect' event";
+        child.once("disconnect", () => (atDisconnect = child.channel));
+        expect({ child: JSON.parse(await stdout), exit: await closed, atDisconnect }).toEqual({
+          child: { before: "object", afterDisconnectCall: null, atDisconnect: null },
+          exit: [0, null],
+          atDisconnect: null,
+        });
+      } finally {
+        child.kill("SIGKILL");
+      }
+    });
+  });
 });
 
 describe("spawn()", () => {

@@ -3085,6 +3085,13 @@ static JSValue constructProcessSend(VM& vm, JSObject* processObject)
     }
 }
 
+// node sets process.channel to null when the channel disconnects: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L924-L929
+static void clearProcessChannel(Zig::GlobalObject* global)
+{
+    auto& vm = JSC::getVM(global);
+    global->processObject()->putDirect(vm, Identifier::fromString(vm, "channel"_s), jsNull(), 0);
+}
+
 JSC_DEFINE_HOST_FUNCTION(Bun__Process__disconnect, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto global = uncheckedDowncast<GlobalObject>(globalObject);
@@ -3095,6 +3102,7 @@ JSC_DEFINE_HOST_FUNCTION(Bun__Process__disconnect, (JSGlobalObject * globalObjec
     }
 
     Bun__closeChildIPC(globalObject);
+    clearProcessChannel(global);
     return JSC::JSValue::encode(jsUndefined());
 }
 
@@ -4945,6 +4953,7 @@ extern "C" void Process__emitMessageEvent(Zig::GlobalObject* global, EncodedJSVa
 
 extern "C" void Process__emitDisconnectEvent(Zig::GlobalObject* global)
 {
+    clearProcessChannel(global);
     auto* process = global->processObject();
     auto& vm = JSC::getVM(global);
     auto ident = Identifier::fromString(vm, "disconnect"_s);

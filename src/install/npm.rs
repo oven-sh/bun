@@ -2926,12 +2926,11 @@ impl PackageManifest {
                                         dep_name.value.slice(string_buf)
                                             == this_names[j].value.slice(string_buf)
                                     );
-                                    // Not the bytes: an inline `String` ends at the first NUL.
+                                    // Through a `String`: its inline form ends at the first NUL.
+                                    let source = stored[j].0;
                                     debug_assert!(
-                                        dep_name.hash
-                                            == Semver::semver_string::Builder::string_hash(
-                                                stored[j].0
-                                            )
+                                        dep_name.value.slice(string_buf)
+                                            == SemverString::init(source, source).slice(source)
                                     );
                                 }
                                 for (j, dep_version) in value_dependencies.iter().enumerate() {
@@ -2939,11 +2938,10 @@ impl PackageManifest {
                                         dep_version.value.slice(string_buf)
                                             == this_versions[j].value.slice(string_buf)
                                     );
+                                    let source = stored[j].1;
                                     debug_assert!(
-                                        dep_version.hash
-                                            == Semver::semver_string::Builder::string_hash(
-                                                stored[j].1
-                                            )
+                                        dep_version.value.slice(string_buf)
+                                            == SemverString::init(source, source).slice(source)
                                     );
                                 }
                             }

@@ -108,6 +108,7 @@ for (let i = 0; i < testLoopCount; ++i) {
     ownExec(replace);
     ownExec(replaceAll);
     ownFlags(replace);
+    ownFlags(replaceAll);
     lastIndexObject(replace);
     toStringRunsOnce(replace);
     toStringRunsOnce(replaceAll);

@@ -178,10 +178,19 @@ function integrityOf(tarball: Uint8Array) {
   return `sha512-${new Bun.CryptoHasher("sha512").update(tarball).digest("base64")}`;
 }
 
-function writeProject(root: string, dependencies: Record<string, string>): string {
+type OtherGroup = "optionalDependencies" | "peerDependencies";
+
+function writeProject(
+  root: string,
+  dependencies: Record<string, string>,
+  otherGroups: Partial<Record<OtherGroup, Record<string, string>>> = {},
+): string {
   const project = join(root, "project");
   mkdirSync(project, { recursive: true });
-  writeFileSync(join(project, "package.json"), JSON.stringify({ name: "project", version: "1.0.0", dependencies }));
+  writeFileSync(
+    join(project, "package.json"),
+    JSON.stringify({ name: "project", version: "1.0.0", dependencies, ...otherGroups }),
+  );
   return project;
 }
 
@@ -585,6 +594,134 @@ test.concurrent("installs a git+file:// dependency", async () => {
   expect(await installedVersions(project, [nameOf("b")])).toEqual(markers(["b"]));
   expect(await lockedPackages(project)).toEqual(locked);
   expect(exitCode).toBe(0);
+});
+
+// The `error:` and `warn:` lines of an install's stderr. What git itself prints
+// between them depends on its version.
+function diagnostics(stderr: string): string[] {
+  return stderr.split(/\r?\n/).filter(line => /^(error|warn):/.test(line));
+}
+
+const gitFailed = expect.stringMatching(/^error: git failed with exit code \d+$/);
+
+// A clone or checkout that failed while the dependencies were resolved stayed
+// on record, and a locked dependency that needed the same one joined it when
+// it got installed: the isolated linker waited forever, the hoisted linker
+// skipped the package. The new dependency is optional or a peer, so its
+// missing resolution does not end the install before that.
+for (const linker of ["hoisted", "isolated"] as const) {
+  const failedToInstall = (name: string, resolution: string, hoistedError: string) =>
+    linker === "hoisted" ? hoistedError : expect.stringContaining(`error: failed to download ${name}@${resolution}`);
+
+  for (const group of ["optionalDependencies", "peerDependencies"] as const) {
+    test.concurrent(
+      `${linker} linker clones again for a locked dependency after the clone failed for one of the ${group}`,
+      async () => {
+        using dir = tempDir(`git-dep-${linker}-failed-clone`, {});
+        const root = String(dir);
+        const bare = await makeSharedRepo(root, [
+          { name: nameOf("m"), branch: "pkg-m" },
+          { name: nameOf("n"), branch: "pkg-n" },
+        ]);
+        const repoUrl = `git+${pathToFileURL(bare)}`;
+        const project = writeProject(root, { [nameOf("m")]: `${repoUrl}#pkg-m` });
+
+        const warm = await runInstall(project, join(root, "cache-warm"), {}, `--linker=${linker}`);
+        expect(diagnostics(warm.stderr)).toEqual([]);
+        expect(warm.exitCode).toBe(0);
+
+        // a fresh machine that cannot reach the repository, and a new dependency on it
+        rmSync(bare, { recursive: true });
+        rmSync(join(project, "node_modules"), { recursive: true });
+        writeProject(root, { [nameOf("m")]: `${repoUrl}#pkg-m` }, { [group]: { [nameOf("n")]: `${repoUrl}#pkg-n` } });
+        const { stderr, exitCode } = await runInstall(project, join(root, "cache-cold"), {}, `--linker=${linker}`);
+        expect(diagnostics(stderr)).toEqual([
+          gitFailed,
+          `error: "git clone" for "${nameOf("n")}" failed`,
+          `error: InstallFailed cloning repository for ${nameOf("n")}`,
+          gitFailed,
+          `error: "git clone" for "${nameOf("m")}" failed`,
+          failedToInstall(nameOf("m"), `${repoUrl}#`, `error: InstallFailed cloning repository for ${nameOf("m")}`),
+        ]);
+        expect(exitCode).toBe(1);
+      },
+      30_000,
+    );
+  }
+
+  // `git checkout` fails for a repository that holds a path the platform
+  // cannot create. Here a wrapper around git fails it once `fail-checkout` exists.
+  test.concurrent.skipIf(isWindows)(
+    `${linker} linker checks out again for a locked dependency after the checkout failed for another one`,
+    async () => {
+      using dir = tempDir(`git-dep-${linker}-failed-checkout`, {});
+      const root = String(dir);
+      const failCheckout = join(root, "fail-checkout");
+      const bin = join(root, "bin");
+      mkdirSync(bin);
+      writeFileSync(
+        join(bin, "git"),
+        `#!/bin/sh
+for arg in "$@"; do
+  if [ "$arg" = checkout ] && [ -e '${failCheckout}' ]; then echo 'fatal: cannot check out' >&2; exit 128; fi
+done
+exec '${Bun.which("git")}' "$@"
+`,
+        { mode: 0o755 },
+      );
+      const env = { PATH: `${bin}:${gitEnv.PATH}` };
+      const repoUrl = `git+${pathToFileURL(sharedBare)}`;
+      const project = writeProject(root, { [nameOf("b")]: `${repoUrl}#pkg-b` });
+
+      const warm = await runInstall(project, join(root, "cache-warm"), env, `--linker=${linker}`);
+      expect(diagnostics(warm.stderr)).toEqual([]);
+      expect(warm.exitCode).toBe(0);
+
+      // a fresh machine, and the same commit once more under another name
+      rmSync(join(project, "node_modules"), { recursive: true });
+      writeFileSync(failCheckout, "");
+      writeProject(
+        root,
+        { [nameOf("b")]: `${repoUrl}#pkg-b` },
+        { optionalDependencies: { alias: `${repoUrl}#pkg-b` } },
+      );
+      const { stderr, exitCode } = await runInstall(project, join(root, "cache-cold"), env, `--linker=${linker}`);
+      expect(diagnostics(stderr)).toEqual([
+        gitFailed,
+        'error: "git checkout" for "alias" failed',
+        "error: InstallFailed checking out repository for alias",
+        gitFailed,
+        `error: "git checkout" for "${nameOf("b")}" failed`,
+        failedToInstall(
+          nameOf("b"),
+          `${repoUrl}#${sharedCommits["pkg-b"]}`,
+          `error: InstallFailed checking out repository for ${nameOf("b")}`,
+        ),
+      ]);
+      expect(exitCode).toBe(1);
+    },
+    30_000,
+  );
+}
+
+// A commit lookup that failed stayed on record too. A peer dependency is
+// resolved in a later pass: it joined the finished lookup, ran no `git log`,
+// and the install ended with an error about the first package only.
+test.concurrent("looks the commit up again for a peer dependency after the lookup failed for another one", async () => {
+  using dir = tempDir("git-dep-failed-commit", {});
+  const root = String(dir);
+  const spec = `${sharedRepoUrl}#no-such-branch`;
+  const project = writeProject(root, {}, { optionalDependencies: { first: spec }, peerDependencies: { second: spec } });
+
+  const { stderr, exitCode } = await runInstall(project, join(root, "cache"), {});
+  // git's own failures print at once, the errors about the packages after the resolve phase
+  expect(diagnostics(stderr)).toEqual([
+    gitFailed,
+    gitFailed,
+    'error: no commit matching "no-such-branch" found for "first" (but repository exists)',
+    'error: no commit matching "no-such-branch" found for "second" (but repository exists)',
+  ]);
+  expect(exitCode).toBe(1);
 });
 
 // issue #40803: `bun install <git url>` (no alias) sorted the workspace dep

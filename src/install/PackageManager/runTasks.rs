@@ -1414,15 +1414,18 @@ fn run_tasks_erased(
                                 url,
                             );
                         }
-                    } else if log_level != Options::LogLevel::Silent {
-                        bun_ast::add_error_pretty!(
-                            manager.log_mut(),
-                            None,
-                            bun_ast::Loc::EMPTY,
-                            "{} cloning repository for <b>{}<r>",
-                            err.name(),
-                            bstr::BStr::new(name),
-                        );
+                    } else {
+                        if log_level != Options::LogLevel::Silent {
+                            bun_ast::add_error_pretty!(
+                                manager.log_mut(),
+                                None,
+                                bun_ast::Loc::EMPTY,
+                                "{} cloning repository for <b>{}<r>",
+                                err.name(),
+                                bstr::BStr::new(name),
+                            );
+                        }
+                        manager.forget_failed_git_task(task.id);
                     }
                     continue;
                 }
@@ -1524,8 +1527,8 @@ fn run_tasks_erased(
 
                 if task.status == Task::Status::Fail {
                     let err = task.err.unwrap_or(crate::Error::Failed);
-                    let _ = manager.task_queue.remove(&task.id);
                     if cb.has_on_package_manifest_error {
+                        let _ = manager.task_queue.remove(&task.id);
                         (cb.on_package_manifest_error)(extract_ctx, name, err, url);
                     } else {
                         let _ = manager.log_mut().add_error_fmt(
@@ -1537,6 +1540,7 @@ fn run_tasks_erased(
                                 bstr::BStr::new(name),
                             ),
                         );
+                        manager.forget_failed_git_task(task.id);
                     }
                     continue;
                 }
@@ -1590,6 +1594,7 @@ fn run_tasks_erased(
                             err.name(),
                             bstr::BStr::new(alias.slice()),
                         );
+                        manager.forget_failed_git_task(task.id);
                     }
 
                     continue;
@@ -1946,6 +1951,12 @@ pub(crate) fn network_task_has_failed(this: &PackageManager, task_id: Task::Id) 
         .is_some_and(|e| e.failed)
 }
 
+/// A later dependency that joins an entry left in `task_queue` waits forever.
+pub(crate) fn forget_failed_git_task(this: &mut PackageManager, task_id: Task::Id) {
+    let _ = this.task_queue.remove(&task_id);
+    let _ = this.network_dedupe_map.remove(&task_id);
+}
+
 /// The first failed download in a `run_tasks` pass halves the number of
 /// concurrent requests (down to the configured minimum).
 fn throttle_after_network_error(manager: &PackageManager, has_network_error: &mut bool) {
@@ -2171,6 +2182,10 @@ impl PackageManager {
     #[inline]
     pub(crate) fn network_task_has_failed(&self, task_id: Task::Id) -> bool {
         network_task_has_failed(self, task_id)
+    }
+    #[inline]
+    pub(crate) fn forget_failed_git_task(&mut self, task_id: Task::Id) {
+        forget_failed_git_task(self, task_id)
     }
     #[inline]
     pub(crate) fn get_network_task(&mut self) -> *mut NetworkTask {

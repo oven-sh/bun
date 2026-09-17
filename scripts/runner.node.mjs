@@ -2738,6 +2738,27 @@ function getExecPath(bunExe) {
 }
 
 /**
+ * `rm -rf` for a directory that a process spawnSafe() killed on a timeout was writing to.
+ * spawnSafe() does not wait for that process to exit, and on Windows a file it still holds
+ * open cannot be removed. rmSync's own `maxRetries` does not cover this: it skips the
+ * EPERM that a sharing violation becomes.
+ * @param {string} path
+ */
+async function rmAfterTimeout(path) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      rmSync(path, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      if (attempt === 50) {
+        throw error;
+      }
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+  }
+}
+
+/**
  * @param {string} target
  * @param {string} [buildId]
  * @returns {Promise<string>}
@@ -2770,7 +2791,7 @@ async function getExecPathFromBuildKite(target, buildId) {
       // The zip the timeout interrupted is truncated. If it stayed on disk, the
       // readdir below would pick it (or the smaller release zip that did finish)
       // and the tests would run against the wrong binary.
-      rmSync(releasePath, { recursive: true, force: true });
+      await rmAfterTimeout(releasePath);
       mkdirSync(releasePath, { recursive: true });
       if (++downloadTimeouts >= maxDownloadTimeouts) {
         throw new Error(

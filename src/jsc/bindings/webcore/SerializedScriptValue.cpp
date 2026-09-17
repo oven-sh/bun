@@ -3389,10 +3389,13 @@ private:
             return JSValue();
         }
 
+        // The serializer never writes an empty DER: it returns false when i2d_X509
+        // reports a size of 0 or less, which raises DataCloneError before the tag is
+        // written. So an empty record is crafted input. Reject it like any other
+        // undecodable DER instead of building a certificate that holds no X509.
         if (buffer.size() == 0) {
-            auto* cert_obj = Bun::JSX509Certificate::create(m_lexicalGlobalObject->vm(), defaultGlobalObject(m_globalObject)->m_JSX509CertificateClassStructure.get(m_globalObject));
-            addTerminalToObjectPool(cert_obj);
-            return cert_obj;
+            fail();
+            return JSValue();
         }
         ncrypto::ClearErrorOnReturn clear_error_on_return;
         X509* ptr = nullptr;

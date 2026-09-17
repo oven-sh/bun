@@ -92,10 +92,6 @@ public:
 
     static JSX509Certificate* create(
         JSC::VM& vm,
-        JSC::Structure* structure);
-
-    static JSX509Certificate* create(
-        JSC::VM& vm,
         JSC::Structure* structure,
         JSC::JSGlobalObject* globalObject,
         std::span<const uint8_t> data);
@@ -145,6 +141,11 @@ public:
     String toPEMString() const;
 
 private:
+    // Every JSX509Certificate that JS can reach holds a parsed certificate. This
+    // overload leaves m_x509 null, so it stays an implementation detail of the
+    // public create() overloads, which fill m_x509 right after.
+    static JSX509Certificate* create(JSC::VM& vm, JSC::Structure* structure);
+
     uint16_t m_extraMemorySizeForGC = 0;
 };
 

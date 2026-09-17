@@ -1119,3 +1119,65 @@ describe("string constant pool entries survive GC during deserialization", () =>
     }
   });
 });
+
+describe("X509Certificate payloads that carry no certificate are rejected", () => {
+  // The reader must enforce what the constructor enforces. An X509Certificate record
+  // with a zero-length DER used to build a certificate object that holds no X509, a
+  // state `new X509Certificate(...)` cannot reach. `.publicKey` on it wraps a null
+  // EVP_PKEY, and `equals()` hands that pointer to EVP_PKEY_cmp.
+  //
+  // The header and the tag byte come from a real serialize(), so a wire version bump
+  // does not invalidate the crafted payloads.
+  const recordPrefix = Array.from(new Uint8Array(serialize(new X509Certificate(tls.cert))).slice(0, 5));
+  const x509Record = (der: number[]) => {
+    const length = Buffer.alloc(4);
+    length.writeUInt32LE(der.length);
+    return [...recordPrefix, ...length, ...der];
+  };
+
+  test("an empty DER record cannot produce a certificate with a null public key", async () => {
+    // A subprocess: without the fix, `equals()` takes the test runner down with a SEGV.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `import { deserialize } from "bun:jsc";
+         import { deserialize as v8Deserialize } from "node:v8";
+         for (const [name, fn] of [["bun:jsc", deserialize], ["node:v8", v8Deserialize]]) {
+           try {
+             const cert = fn(Buffer.from(${JSON.stringify(x509Record([]))}));
+             const key = cert.publicKey;
+             console.log(name + ": RETURNED " + key.equals(key));
+           } catch (e) {
+             console.log(name + ": " + e.message);
+           }
+         }`,
+      ],
+      env: bunEnv,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout: stdout.trim().split("\n"), signalCode: proc.signalCode, exitCode }).toEqual({
+      stdout: ["bun:jsc: Unable to deserialize data.", "node:v8: Unable to deserialize data."],
+      signalCode: null,
+      exitCode: 0,
+    });
+    expect(stderr).not.toContain("Segmentation fault");
+  });
+
+  test("a record with undecodable DER is rejected", () => {
+    const payload = new Uint8Array(x509Record([0xde, 0xad, 0xbe, 0xef]));
+    expect(() => deserialize(payload)).toThrow("Unable to deserialize data.");
+  });
+
+  test("a real certificate still round-trips and its public key still compares", () => {
+    const original = new X509Certificate(tls.cert);
+    const cloned = deserialize(serialize(original));
+    expect(cloned).toBeInstanceOf(X509Certificate);
+    expect(cloned.fingerprint256).toBe(original.fingerprint256);
+    expect(cloned.publicKey.equals(original.publicKey)).toBe(true);
+  });
+});

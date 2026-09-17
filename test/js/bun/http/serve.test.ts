@@ -806,6 +806,190 @@ describe("does not dispatch a pipelined request after Connection: close", () => 
       has400: false,
     });
   });
+
+  // RFC 9112 9.6, second paragraph: a server that sends the "close" connection
+  // option MUST NOT process further requests either. Here the request is
+  // persistent and the handler's Response carries the header.
+  describe("sent in the response", () => {
+    const get = (path: string) => `GET ${path} HTTP/1.1\r\nHost: x\r\n\r\n`;
+
+    it.each(["close", "Close", "keep-alive, close"])("%s, first request of a read", async connection => {
+      const handled: string[] = [];
+      using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch(req) {
+          const p = new URL(req.url).pathname;
+          handled.push(p);
+          return new Response("body:" + p, p === "/a" ? { headers: { Connection: connection } } : undefined);
+        },
+      });
+
+      const { raw, responses, closedByServer } = await roundTrip(server.port, get("/a") + get("/b"), 2);
+
+      expect(raw).toEndWith("body:/a");
+      expect({ handled, responses, closedByServer }).toEqual({ handled: ["/a"], responses: 1, closedByServer: true });
+    });
+
+    it("in the middle of a read", async () => {
+      const handled: string[] = [];
+      using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch(req) {
+          const p = new URL(req.url).pathname;
+          handled.push(p);
+          return new Response("body:" + p, p === "/1" ? { headers: { Connection: "close" } } : undefined);
+        },
+      });
+
+      const { raw, responses, closedByServer } = await roundTrip(
+        server.port,
+        get("/0") + get("/1") + get("/2") + get("/3"),
+        4,
+      );
+
+      expect(raw).toEndWith("body:/1");
+      expect((raw.match(/^connection: close\r$/gim) ?? []).length).toBe(1);
+      expect({ handled, responses, closedByServer }).toEqual({
+        handled: ["/0", "/1"],
+        responses: 2,
+        closedByServer: true,
+      });
+    });
+
+    // The headers go out with the first chunk, while the body is still
+    // streaming. Without the discard, /b hits the "request behind a pending
+    // response" close and the rest of the body to /a is never sent.
+    it("delivers a streamed body in full before it closes", async () => {
+      const handled: string[] = [];
+      using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch(req) {
+          const p = new URL(req.url).pathname;
+          handled.push(p);
+          return new Response(
+            new ReadableStream({
+              async start(controller) {
+                controller.enqueue("body:");
+                await new Promise<void>(r => setImmediate(r));
+                controller.enqueue(p + ";end");
+                controller.close();
+              },
+            }),
+            { headers: { Connection: "close" } },
+          );
+        },
+      });
+
+      const { raw, responses, closedByServer } = await roundTrip(server.port, get("/a") + get("/b"), 2);
+
+      // The last chunk and the terminating chunk both arrived.
+      expect(raw).toContain("/a;end");
+      expect(raw).toEndWith("\r\n0\r\n\r\n");
+      expect({ handled, responses, closedByServer }).toEqual({ handled: ["/a"], responses: 1, closedByServer: true });
+    });
+
+    // The handler is async, so its dispatch returns before the header exists,
+    // and /b arrives in a later read, while the body to /a still streams.
+    it("delivers a streamed body in full when the next request arrives in a later read", async () => {
+      const handled: string[] = [];
+      const { promise: serverReadB, resolve: letBodyFinish } = Promise.withResolvers<void>();
+      using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        async fetch(req) {
+          const p = new URL(req.url).pathname;
+          handled.push(p);
+          if (p === "/ping") return new Response("pong");
+          await new Promise<void>(r => setImmediate(r));
+          return new Response(
+            new ReadableStream({
+              async start(controller) {
+                controller.enqueue("body:");
+                await serverReadB;
+                controller.enqueue(p + ";end");
+                controller.close();
+              },
+            }),
+            { headers: { Connection: "close" } },
+          );
+        },
+      });
+
+      const chunks: Buffer[] = [];
+      const raw = () => Buffer.concat(chunks).toString("latin1");
+      const { promise: firstChunk, resolve: gotFirstChunk } = Promise.withResolvers<void>();
+      const { promise: closed, resolve: onClose } = Promise.withResolvers<void>();
+      const socket = net.connect(server.port, "127.0.0.1");
+      socket.on("data", c => {
+        chunks.push(c);
+        if (raw().includes("body:")) gotFirstChunk();
+      });
+      socket.on("error", () => {});
+      socket.on("close", () => {
+        gotFirstChunk();
+        onClose();
+      });
+      socket.write(get("/a"));
+      await firstChunk;
+      socket.write(get("/b"));
+      // The server runs on this event loop. Once it has answered a request on
+      // another connection, it has also read /b.
+      expect(await (await fetch(new URL("/ping", server.url))).text()).toBe("pong");
+      letBodyFinish();
+      await closed;
+
+      expect(raw()).toContain("/a;end");
+      expect(raw()).toEndWith("\r\n0\r\n\r\n");
+      expect(handled).toEqual(["/a", "/ping"]);
+    });
+
+    // The server writes this `Connection: close` itself: the 413 for a body
+    // over maxRequestBodySize ends the response with closeConnection.
+    it("written by the server with a 413", async () => {
+      const handled: string[] = [];
+      using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        maxRequestBodySize: 8,
+        fetch(req) {
+          const p = new URL(req.url).pathname;
+          handled.push(p);
+          return new Response("body:" + p);
+        },
+      });
+
+      const { raw, responses, closedByServer } = await roundTrip(
+        server.port,
+        "POST /a HTTP/1.1\r\nHost: x\r\nContent-Length: 16\r\n\r\n0123456789abcdef" + get("/b"),
+        2,
+      );
+
+      expect(raw).toBe("HTTP/1.1 413 Request Entity Too Large\r\nConnection: close\r\n\r\n");
+      expect({ handled, responses, closedByServer }).toEqual({ handled: [], responses: 1, closedByServer: true });
+    });
+
+    it("control: Connection: keep-alive in the response still serves both requests", async () => {
+      const handled: string[] = [];
+      using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch(req) {
+          const p = new URL(req.url).pathname;
+          handled.push(p);
+          return new Response("body:" + p, { headers: { Connection: "keep-alive" } });
+        },
+      });
+
+      const { raw, responses } = await roundTrip(server.port, get("/a") + get("/b"), 2);
+
+      expect(raw).toContain("body:/a");
+      expect(raw).toEndWith("body:/b");
+      expect({ handled, responses }).toEqual({ handled: ["/a", "/b"], responses: 2 });
+    });
+  });
 });
 
 describe("streaming", () => {

@@ -381,6 +381,12 @@ private:
             }
         }
 
+        /* A response marked the connection for close after its dispatch returned
+         * (an async handler): the requests of this read are not dispatched. */
+        if constexpr (!IsNodeHttp) {
+            httpResponseData->latchConnectionClose();
+        }
+
         /* Cork this socket */
         ((AsyncSocket<SSL> *) s)->cork();
 
@@ -570,6 +576,12 @@ private:
             /* If we have not responded and we have a data handler, we need to timeout to enfore client sending the data */
             if (!((HttpResponse<SSL> *) s)->hasResponded() && httpResponseData->inStream) {
                 ((HttpResponse<SSL> *) s)->resetTimeout();
+            }
+
+            /* The response to this request marked the connection for close:
+             * the requests behind it in this read are not dispatched. */
+            if constexpr (!IsNodeHttp) {
+                httpResponseData->latchConnectionClose();
             }
 
             /* Continue parsing */

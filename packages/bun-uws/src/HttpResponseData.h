@@ -237,6 +237,17 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
             || ((state & HTTP_NODE_RECEIVED_FIN) && nodeHttpQueuedPipelinedCount == 0)
             || ((state & HTTP_CLOSE_WHEN_IDLE) && this->isIdle);
     }
+
+    /* RFC 9112 9.6: a response that marks the connection for close (a
+     * `Connection: close` response header, end() with closeConnection) is the
+     * last one on it. Bun.serve calls this before the parser looks for another
+     * request, so that request is discarded and not dispatched. A dispatch would
+     * also clear the mark in resetResponseState(). */
+    void latchConnectionClose() {
+        if (state & HTTP_CONNECTION_CLOSE) {
+            this->sawConnectionClose = true;
+        }
+    }
 };
 
 /* Per-connection state that only node:http compat servers need.

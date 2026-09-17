@@ -21,7 +21,6 @@ pub struct CPUProfilerConfig {
     pub dir: &'static [u8],
     pub md_format: bool,
     pub json_format: bool,
-    pub interval: u32,
 }
 
 // C++ function declarations

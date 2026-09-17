@@ -11,7 +11,10 @@ const ReadyState_CLOSED = 3;
 const EventEmitter = require("node:events");
 const onceObject = { once: true };
 const kBunInternals = Symbol.for("::bunternal::");
+const kUnshiftData = Symbol("kUnshiftData");
 const readyStates = ["CONNECTING", "OPEN", "CLOSING", "CLOSED"];
+
+const unshiftWebSocketData = $newRustFunction("node_http_binding.rs", "unshiftWebSocketData", 2);
 
 const encoder = new TextEncoder();
 
@@ -19,6 +22,12 @@ const encoder = new TextEncoder();
 let http;
 function lazyHttp() {
   return (http ??= require("node:http"));
+}
+
+function unshiftEarlyData(ws, chunks) {
+  for (let i = 0; i < chunks.length; i++) {
+    ws[kUnshiftData](chunks[i]);
+  }
 }
 
 // npm ws's sendAfterClose: a ping/pong/send on a CLOSING/CLOSED socket delivers
@@ -1074,6 +1083,12 @@ class BunWebSocketMocked extends EventEmitter {
     this.emit("close", code, reason);
   }
 
+  // Bytes the client sent before the 101 reached it (see completeUpgrade).
+  [kUnshiftData](chunk) {
+    const ws = this.#ws;
+    if (ws) unshiftWebSocketData(ws, chunk);
+  }
+
   #drain(ws) {
     let chunk;
     while ((chunk = this.#enquedMessages[0]) && this.#state === 1) {
@@ -1562,6 +1577,15 @@ class WebSocketServer extends EventEmitter {
     const headers = ["HTTP/1.1 101 Switching Protocols", "Upgrade: websocket", "Connection: Upgrade"];
     this.emit("headers", headers, request);
 
+    // Frames a client sent before it had the 101: the head of the 'upgrade'
+    // event, then whatever net.Socket buffered while handleUpgrade() waited.
+    // npm ws unshifts them into the socket stream it parses. Here the native
+    // parser takes over at server.upgrade(), so they are handed to it after
+    // cb() has attached the 'message' listeners.
+    const early = head?.length ? [head] : [];
+    let chunk;
+    while ((chunk = socket.read()) !== null) early.push(chunk);
+
     if (
       server.upgrade(req, {
         data: ws[kBunInternals],
@@ -1580,6 +1604,10 @@ class WebSocketServer extends EventEmitter {
         });
       }
       cb(ws, request);
+      if (early.length) process.nextTick(unshiftEarlyData, ws, early);
+      // A chunk the socket read before the handoff can still be in flight to
+      // net.Socket; it belongs to the WebSocket too.
+      socket.on("data", ws[kUnshiftData].bind(ws));
     } else {
       abortHandshake(socket, 500);
     }

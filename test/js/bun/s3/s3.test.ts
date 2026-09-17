@@ -2133,6 +2133,64 @@ describe("s3 upload stream body error", () => {
   });
 });
 
+describe("s3 writer upload failure", () => {
+  // A mock S3 that answers 403 to every UploadPart. `abortSeen` settles when
+  // AbortMultipartUpload arrives, which the upload sends after it reported the
+  // failure to the sink.
+  function failingS3(abortSeen: PromiseWithResolvers<void>) {
+    return Bun.serve({
+      port: 0,
+      async fetch(req) {
+        const q = new URL(req.url).searchParams;
+        if (req.method === "POST" && q.has("uploads")) {
+          return new Response(
+            "<InitiateMultipartUploadResult><Bucket>b</Bucket><Key>k</Key><UploadId>UP1</UploadId></InitiateMultipartUploadResult>",
+          );
+        }
+        if (req.method === "PUT" && q.has("partNumber")) {
+          await req.arrayBuffer();
+          return new Response("<Error><Code>AccessDenied</Code><Message>Access Denied</Message></Error>", {
+            status: 403,
+          });
+        }
+        if (req.method === "DELETE") {
+          abortSeen.resolve();
+          return new Response(null, { status: 204 });
+        }
+        return new Response("", { headers: { ETag: '"e"' } });
+      },
+    });
+  }
+  const accessDenied = expect.objectContaining({ code: "AccessDenied" });
+
+  it("throws the S3 error from write(), flush() and end() when no promise was pending", async () => {
+    const abortSeen = Promise.withResolvers<void>();
+    await using server = failingS3(abortSeen);
+    const client = new S3Client({ endpoint: server.url.href, accessKeyId: "a", secretAccessKey: "b", bucket: "bkt" });
+    const writer = client.file("obj.bin").writer({ partSize: 5 * 1024 * 1024, retry: 0 });
+    // A full part starts the multipart upload. No promise is kept.
+    writer.write(new Uint8Array(5 * 1024 * 1024));
+    await abortSeen.promise;
+
+    expect(() => writer.write(new Uint8Array(1024))).toThrow(accessDenied);
+    expect(() => writer.flush()).toThrow(accessDenied);
+    expect(() => writer.end()).toThrow(accessDenied);
+  });
+
+  it("rejects the pending end() and throws from later write() and end()", async () => {
+    const abortSeen = Promise.withResolvers<void>();
+    await using server = failingS3(abortSeen);
+    const client = new S3Client({ endpoint: server.url.href, accessKeyId: "a", secretAccessKey: "b", bucket: "bkt" });
+    const writer = client.file("obj.bin").writer({ partSize: 5 * 1024 * 1024, retry: 0 });
+    writer.write(new Uint8Array(5 * 1024 * 1024));
+    await expect(writer.end()).rejects.toEqual(accessDenied);
+    await abortSeen.promise;
+
+    expect(() => writer.write(new Uint8Array(1024))).toThrow(accessDenied);
+    expect(() => writer.end()).toThrow(accessDenied);
+  });
+});
+
 describe("presigned url signature", () => {
   function verifyPresignedUrl(presigned: string, credentials: { secretAccessKey: string; region: string }) {
     const url = new URL(presigned);

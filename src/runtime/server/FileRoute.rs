@@ -227,9 +227,7 @@ impl FileRoute {
             resp.mark_wrote_content_length_header();
         }
 
-        // RFC 9112 §9.6: the server closes the connection after a response that
-        // carries `Connection: close`. The end calls in `serve` and in
-        // `FileResponseStream` read this mark through `should_close_connection()`.
+        // RFC 9112 §9.6. The end calls in `serve` and `FileResponseStream` read this mark through `should_close_connection()`.
         if self.has_connection_close {
             resp.mark_connection_close();
         }

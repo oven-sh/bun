@@ -761,9 +761,7 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.mark_wrote_date_header())
     }
 
-    /// For a caller that writes its own `Connection: close` header with
-    /// `write_header`. `should_close_connection()` is then true, so the end
-    /// call closes the connection and does not write the header again.
+    /// For a caller that writes its own `Connection: close` header. The end call then closes and does not write the header again.
     pub fn mark_connection_close(self) {
         any_dispatch!(self, |r| r.mark_connection_close())
     }

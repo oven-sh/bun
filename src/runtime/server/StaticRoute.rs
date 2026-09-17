@@ -444,9 +444,7 @@ impl StaticRoute {
         if self.has_date {
             resp.mark_wrote_date_header();
         }
-        // RFC 9112 §9.6: the server closes the connection after a response that
-        // carries `Connection: close`. Every end call below reads this mark
-        // through `should_close_connection()`.
+        // RFC 9112 §9.6. Every end call reads this mark through `should_close_connection()`.
         if self.has_connection_close {
             resp.mark_connection_close();
         }

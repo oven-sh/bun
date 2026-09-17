@@ -10,6 +10,10 @@ export default [
     JSType: "0b11101110",
     configurable: false,
     klass: {},
+    // Visited slot holding the array of callbacks and handler objects given to
+    // `on()` / `onDocument()`, shared with every transform cell made from this
+    // rewriter.
+    values: ["handlers"],
     proto: {
       on: {
         fn: "on",
@@ -302,6 +306,14 @@ export default [
     proto: {},
     // WriteBarrier slots: everything the pipe must keep reachable and that
     // would otherwise need a StrongOptional root.
-    values: ["response", "inputStream", "outputStream", "pendingPromise", "handlerError", "suspensionPromise"],
+    values: [
+      "response",
+      "inputStream",
+      "outputStream",
+      "pendingPromise",
+      "handlerError",
+      "suspensionPromise",
+      "handlers",
+    ],
   }),
 ];

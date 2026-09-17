@@ -1,5 +1,5 @@
 import { heapStats } from "bun:jsc";
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, expectRssDeltaBelow, isASAN, isDebug, tempDir } from "harness";
 
 // `wire_input`'s materialized-body path transfers the body's `+1` (a
@@ -731,3 +731,315 @@ test("element.attributes iterator does not leak names/values", async () => {
   // Unfixed: ~120 MiB. Fixed: allocator slack only.
   await expectRssDeltaBelow(["--smol", "-e", code], { release: 50, debug: 70 });
 });
+
+// on() and onDocument() used to gcProtect() every callback and handler object
+// for as long as the rewriter, or any transform made from it, was alive. A
+// protected value is a GC root, so a handler that reached its own rewriter (or
+// the Response of its own transform) closed a cycle through a root and none of
+// it was ever collected. The handlers now sit in a visited slot of the
+// rewriter's and of each transform's wrapper: ordinary edges, ordinary cycles.
+describe("a handler that reaches its own rewriter does not pin it", () => {
+  const N = 100;
+
+  const shapes: Record<string, () => Promise<void>> = {
+    // The everyday shape: an object owns the rewriter, the handler is an arrow that uses `this`.
+    "an element handler that closes over the rewriter's owner": async () => {
+      class Counter {
+        count = 0;
+        rewriter = new HTMLRewriter().on("p", { element: () => void this.count++ });
+      }
+      const counter = new Counter();
+      await counter.rewriter.transform(new Response("<p>x</p>")).text();
+      expect(counter.count).toBe(1);
+    },
+    "a document handler that closes over the rewriter": async () => {
+      let ended = 0;
+      const rewriter: HTMLRewriter = new HTMLRewriter().onDocument({
+        end: () => void (ended += rewriter ? 1 : 0),
+      });
+      await rewriter.transform(new Response("<p>x</p>")).text();
+      expect(ended).toBe(1);
+    },
+    "a handler object that holds the rewriter": async () => {
+      const handler = {
+        rewriter: undefined as HTMLRewriter | undefined,
+        elements: 0,
+        element() {
+          this.elements++;
+        },
+      };
+      handler.rewriter = new HTMLRewriter().on("p", handler);
+      await handler.rewriter.transform(new Response("<p>x</p>")).text();
+      expect(handler.elements).toBe(1);
+    },
+    // No cycle through the rewriter here: each transform kept the handlers protected too.
+    "an element handler that closes over the transformed Response": async () => {
+      let elements = 0;
+      const holder: { response?: Response } = {};
+      holder.response = new HTMLRewriter()
+        .on("p", { element: () => void (elements += holder ? 1 : 0) })
+        .transform(new Response("<p>x</p>"));
+      await holder.response.text();
+      expect(elements).toBe(1);
+    },
+  };
+
+  const counts = () => {
+    Bun.gc(true);
+    const { objectTypeCounts, protectedObjectTypeCounts } = heapStats();
+    return {
+      rewriters: objectTypeCounts.HTMLRewriter ?? 0,
+      responses: objectTypeCounts.Response ?? 0,
+      protectedFunctions: protectedObjectTypeCounts.Function ?? 0,
+    };
+  };
+
+  test.each(Object.entries(shapes))("%s", async (_, once) => {
+    for (let i = 0; i < 10; i++) await once();
+    const before = counts();
+    for (let i = 0; i < N; i++) await once();
+    const after = counts();
+
+    // Unfixed: N protected callbacks, with N rewriters or N Responses behind them.
+    expect(after.protectedFunctions - before.protectedFunctions).toBeLessThan(N / 4);
+    expect(after.rewriters - before.rewriters).toBeLessThan(N / 4);
+    expect(after.responses - before.responses).toBeLessThan(N / 4);
+  });
+});
+
+// The other half of holding the handlers by a visited slot: they have to stay
+// alive for exactly as long as something can still invoke them. These pass
+// before the change too (a protected value cannot die): they guard the slots.
+describe("handlers that nothing else references stay alive", () => {
+  // A full collection, then garbage in the cell sizes of the handler objects,
+  // their callbacks and the list, so that a handler collected by mistake is
+  // reused and cannot keep working by luck.
+  const churn = () => {
+    Bun.gc(true);
+    const junk: unknown[] = [];
+    for (let i = 0; i < 20_000; i++) {
+      junk.push({ index: i, element() {} });
+      junk.push({ tag: "junk", element() {}, comments() {}, text() {} });
+      junk.push({ tag: "junk", doctype() {}, comments() {}, text() {}, end() {} });
+      junk.push([junk, i, "junk", churn]);
+    }
+  };
+  const alive = (refs: WeakRef<object>[]) => refs.map(ref => ref.deref() !== undefined);
+
+  test("for as long as their rewriter", async () => {
+    const seen: string[] = [];
+    // Once this returns, only the rewriter reaches the two handler objects and their callbacks.
+    const makeRewriter = () => {
+      const elementHandler = {
+        tag: "p-handler",
+        element(el: HTMLRewriterTypes.Element) {
+          el.setAttribute("by", this.tag);
+        },
+        comments(comment: HTMLRewriterTypes.Comment) {
+          comment.text = this.tag;
+        },
+        text(chunk: HTMLRewriterTypes.Text) {
+          if (chunk.lastInTextNode) chunk.after(this.tag);
+        },
+      };
+      const documentHandler = {
+        tag: "document-handler",
+        doctype(doctype: HTMLRewriterTypes.Doctype) {
+          seen.push(`${this.tag} doctype ${doctype.name}`);
+        },
+        comments(comment: HTMLRewriterTypes.Comment) {
+          seen.push(`${this.tag} comment ${comment.text}`);
+        },
+        text(chunk: HTMLRewriterTypes.Text) {
+          if (chunk.text) seen.push(`${this.tag} text ${chunk.text}`);
+        },
+        end(end: HTMLRewriterTypes.DocumentEnd) {
+          end.append(`<!--${this.tag}-->`, { html: true });
+        },
+      };
+      return {
+        rewriter: new HTMLRewriter().on("p", elementHandler).onDocument(documentHandler),
+        held: [
+          elementHandler,
+          elementHandler.element,
+          elementHandler.comments,
+          elementHandler.text,
+          documentHandler,
+          documentHandler.doctype,
+          documentHandler.comments,
+          documentHandler.text,
+          documentHandler.end,
+        ].map(value => new WeakRef<object>(value)),
+      };
+    };
+    const { rewriter, held } = makeRewriter();
+
+    for (let round = 0; round < 3; round++) {
+      churn();
+      seen.length = 0;
+      expect({
+        alive: alive(held),
+        output: await rewriter.transform(new Response("<!doctype html><p>a<!--c--></p>")).text(),
+        seen,
+      }).toEqual({
+        alive: held.map(() => true),
+        output: '<!doctype html><p by="p-handler">ap-handler<!--p-handler--></p><!--document-handler-->',
+        seen: ["document-handler doctype html", "document-handler text a", "document-handler comment p-handler"],
+      });
+    }
+  });
+
+  test("for as long as a transform is in flight, after the rewriter is collected", async () => {
+    const N = 40;
+    const rewriters = () => {
+      Bun.gc(true);
+      return heapStats().objectTypeCounts.HTMLRewriter ?? 0;
+    };
+
+    // The rewriter is a temporary. Once this returns, only the transform reaches `handler`.
+    const start = (index: number) => {
+      let controller!: ReadableStreamDefaultController;
+      const input = new ReadableStream({ start: c => void (controller = c) });
+      const handled = Promise.withResolvers<number>();
+      const handler = {
+        index,
+        element(el: HTMLRewriterTypes.Element) {
+          el.setInnerContent(`handler ${this.index}`);
+          handled.resolve(this.index);
+        },
+      };
+      const output = new HTMLRewriter().on("p", handler).transform(new Response(input));
+      return {
+        controller,
+        handled: handled.promise,
+        held: [new WeakRef<object>(handler), new WeakRef<object>(handler.element)],
+        // Every other output is dropped as well: an unobserved rewrite still runs its handlers.
+        output: index % 2 ? undefined : output,
+      };
+    };
+
+    const before = rewriters();
+    const inFlight = Array.from({ length: N }, (_, i) => start(i));
+    churn();
+    // The premise: the rewriters are gone while their transforms still wait for input.
+    expect(rewriters() - before).toBeLessThan(N / 4);
+    expect(inFlight.map(({ held }) => alive(held))).toEqual(inFlight.map(() => [true, true]));
+
+    for (const { controller } of inFlight) {
+      controller.enqueue(new TextEncoder().encode("<p>original</p>"));
+      controller.close();
+    }
+    expect(await Promise.all(inFlight.map(({ output }) => output?.text()))).toEqual(
+      inFlight.map((_, i) => (i % 2 ? undefined : `<p>handler ${i}</p>`)),
+    );
+    expect(await Promise.all(inFlight.map(({ handled }) => handled))).toEqual(inFlight.map((_, i) => i));
+  });
+});
+
+const withoutAsanWarning = (stderr: string) =>
+  stderr
+    .split("\n")
+    .filter(line => !line.startsWith("WARNING: ASAN"))
+    .join("\n")
+    .trim();
+
+// The handlers are kept in a JS array that script never sees. Nothing it does
+// to Array.prototype may reach them either. (Passes before the change too:
+// there was no array.)
+test.concurrent("an indexed accessor on Array.prototype never sees a handler", async () => {
+  const code = /* js */ `
+    const handler = { element(el) { el.setInnerContent("rewritten"); } };
+    const documentHandler = { end(end) { end.append("!"); } };
+    const ours = new Set([handler, handler.element, documentHandler, documentHandler.end]);
+    const intercepted = new Set();
+    const INDEXES = 8;
+
+    // One registration before the accessors exist and one after: installing
+    // them converts the storage of every array that is already there.
+    const rewriter = new HTMLRewriter().on("p", handler);
+    for (let i = 0; i < INDEXES; i++) {
+      Object.defineProperty(Array.prototype, i, {
+        configurable: true,
+        get() { return undefined; },
+        set(value) { if (ours.has(value)) intercepted.add(i); },
+      });
+    }
+    const output = rewriter.onDocument(documentHandler).transform("<p>original</p>");
+    for (let i = 0; i < INDEXES; i++) delete Array.prototype[i];
+
+    process.stdout.write(JSON.stringify({ output, intercepted: [...intercepted] }));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(withoutAsanWarning(stderr)).toBe("");
+  expect(stdout).toBe(JSON.stringify({ output: "<p>rewritten</p>!", intercepted: [] }));
+  expect(exitCode).toBe(0);
+});
+
+// A handler cancels the output reader: only the native stack still reaches the
+// transform cell, and lol-html goes on to run the handlers for the rest of the
+// chunk. A collection in that window swept the cell, and the next handler to
+// throw recorded its error on a null cell (segfault at address 0x40).
+test.concurrent(
+  "a handler can throw after an earlier one cancelled the output and collected, in the same chunk",
+  async () => {
+    const code = /* js */ `
+    const encoder = new TextEncoder();
+    const readerAttached = Promise.withResolvers();
+    using server = Bun.serve({
+      port: 0,
+      fetch: () =>
+        new Response(
+          new ReadableStream({
+            async start(controller) {
+              controller.enqueue(encoder.encode("<!doctype html>"));
+              await readerAttached.promise;
+              controller.enqueue(encoder.encode("<p>a</p><p>b</p>"));
+              controller.close();
+            },
+          }),
+        ),
+    });
+
+    let calls = 0;
+    const upstream = await fetch(server.url);
+    // The output Response is a temporary: only its reader is kept, and
+    // cancelling it cuts the stream's edge to the transform cell.
+    const reader = new HTMLRewriter()
+      .on("p", {
+        element() {
+          if (++calls === 1) {
+            reader.cancel();
+            Bun.gc(true);
+          } else {
+            throw new Error("second handler");
+          }
+        },
+      })
+      .transform(upstream)
+      .body.getReader();
+
+    // Both <p> arrive in one chunk, so both handlers run in one lol-html call.
+    readerAttached.resolve();
+    while (!(await reader.read()).done);
+    process.stdout.write(JSON.stringify({ calls }));
+  `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(withoutAsanWarning(stderr)).toBe("");
+    expect(stdout).toBe(JSON.stringify({ calls: 2 }));
+    expect(exitCode).toBe(0);
+  },
+);

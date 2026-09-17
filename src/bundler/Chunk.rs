@@ -25,8 +25,7 @@ use crate::Graph::Graph;
 use crate::html_import_manifest as HTMLImportManifest;
 use crate::options::{self, Loader};
 use crate::{
-    AdditionalFile, CompileResult, LinkerContext, LinkerGraph, PartRange, PathTemplate,
-    cheap_prefix_normalizer,
+    CompileResult, LinkerContext, LinkerGraph, PartRange, PathTemplate, cheap_prefix_normalizer,
 };
 
 use crate::IndexInt;
@@ -533,19 +532,6 @@ fn alloc_buf(_arena: DynAlloc, n: usize) -> Result<Vec<u8>, AllocError> {
     Ok(v)
 }
 
-/// Extract the `OutputFile` index from a trailing `AdditionalFile` entry
-/// (the bundler always pushes `.output_file = …` for asset additional-files,
-/// see bundle_v2.rs).
-#[inline]
-fn additional_output_file_index(f: &AdditionalFile) -> usize {
-    match *f {
-        AdditionalFile::OutputFile(i) => i as usize,
-        AdditionalFile::SourceIndex(_) => {
-            unreachable!("asset additional_files entry must be .output_file")
-        }
-    }
-}
-
 impl IntermediateOutput {
     pub(crate) fn allocator_for_size(_size: usize) -> &'static DynAlloc {
         // mimalloc serves large allocations via mmap already, so the global
@@ -718,7 +704,6 @@ impl IntermediateOutput {
         // `LinkerGraph.files` SoA (`items_entry_point_chunk_index`) lands with
         // the LinkerGraph work. `bun_paths` / `bun_core::fmt::count` /
         // `bun_alloc::alloc_slice` surfaces are tracked upstream.
-        let additional_files = graph.input_files.items_additional_files();
         let unique_key_for_additional_files =
             graph.input_files.items_unique_key_for_additional_file();
         let mut relative_platform_buf = bun_paths::path_buffer_pool::get();
@@ -805,17 +790,13 @@ impl IntermediateOutput {
 
                             let file_path: &[u8] = match piece.query.kind() {
                                 QueryKind::Asset => {
-                                    let files = &additional_files[index];
-                                    if !(files.len() > 0) {
+                                    let Some(output_file) = graph.asset_output_file(index) else {
                                         Output::panic(format_args!(
                                             "Internal error: missing asset file"
                                         ));
-                                    }
+                                    };
 
-                                    let output_file =
-                                        additional_output_file_index(files.slice().last().unwrap());
-
-                                    &graph.additional_output_files.as_slice()[output_file].dest_path
+                                    &output_file.dest_path
                                 }
                                 QueryKind::Chunk => &chunks[index].final_rel_path,
                                 QueryKind::Scb => {
@@ -962,20 +943,16 @@ impl IntermediateOutput {
 
                             let file_path: &[u8] = match piece.query.kind() {
                                 QueryKind::Asset => 'brk: {
-                                    let files = &additional_files[index];
-                                    debug_assert!(files.len() > 0);
-
-                                    let output_file =
-                                        additional_output_file_index(files.slice().last().unwrap());
-
                                     if ENABLE_SOURCE_MAP_SHIFTS {
                                         shift
                                             .before
                                             .advance(&unique_key_for_additional_files[index]);
                                     }
 
-                                    break 'brk &graph.additional_output_files.as_slice()
-                                        [output_file]
+                                    // The counting pass above already found this asset's file.
+                                    break 'brk &graph
+                                        .asset_output_file(index)
+                                        .expect("asset has an output file")
                                         .dest_path;
                                 }
                                 QueryKind::Chunk => 'brk: {

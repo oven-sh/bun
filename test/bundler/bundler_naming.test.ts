@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { readdirSync } from "node:fs";
+import { readdirSync, writeFileSync } from "node:fs";
+import { basename, join } from "node:path";
 import { ESBUILD, itBundled } from "./expectBundled";
 
 describe("bundler", () => {
@@ -449,6 +450,47 @@ describe("bundler", () => {
       expect(stdout).toContain(`${option}: unterminated "[`);
       expect(stdout).toContain(`(missing "]")`);
       expect(exitCode).toBe(0);
+    });
+  }
+});
+
+// A chunk prints the output path of each asset it embeds, so its [hash] has to
+// change when that path does.
+describe("bundler", () => {
+  for (const { asset, entrypoints, fromPlugin } of [
+    { asset: "only imported", entrypoints: ["entry.js"], fromPlugin: false },
+    { asset: "also an entry point", entrypoints: ["logo.png", "entry.js"], fromPlugin: false },
+    { asset: "the result of an onLoad plugin", entrypoints: ["entry.js"], fromPlugin: true },
+  ]) {
+    test.concurrent(`naming/ChunkHashCoversAssetPath (the asset is ${asset})`, async () => {
+      using dir = tempDir("naming-chunk-hash-asset", {
+        "entry.js": `import logo from "./logo.png";\nconsole.log(logo);`,
+        "logo.png": "on disk",
+      });
+      // Builds with `bytes` as the asset. Returns the name of the chunk of entry.js and the asset path in it.
+      const build = async (bytes: string) => {
+        if (!fromPlugin) writeFileSync(join(String(dir), "logo.png"), bytes);
+        const logoPlugin: Bun.BunPlugin = {
+          name: "logo",
+          setup(builder) {
+            builder.onLoad({ filter: /\.png$/ }, () => ({ contents: bytes, loader: "file" }));
+          },
+        };
+        const { outputs } = await Bun.build({
+          entrypoints: entrypoints.map(file => join(String(dir), file)),
+          naming: { entry: "[name]-[hash].[ext]" },
+          plugins: fromPlugin ? [logoPlugin] : [],
+        });
+        const chunk = outputs.find(output => basename(output.path).startsWith("entry-"))!;
+        return { chunk: basename(chunk.path), asset: (await chunk.text()).match(/logo-\w+\.png/)?.[0] };
+      };
+
+      const first = await build("AAAA");
+      const second = await build("BBBB");
+      expect(first.asset).toBeString();
+      expect(second.asset).toBeString();
+      expect(second.asset).not.toBe(first.asset);
+      expect(second.chunk).not.toBe(first.chunk);
     });
   }
 });

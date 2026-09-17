@@ -209,24 +209,25 @@ fn executable_path(
     };
     let joined: Option<&[u8]> = if outdir_slice.is_empty() && paths::is_absolute(outfile_slice) {
         // Used as written: a lexical join would resolve `..` before a symlink does.
-        (outfile_slice.len() < paths::MAX_PATH_BYTES).then_some(outfile_slice)
+        Some(outfile_slice)
     } else {
         join_abs_string_buf_checked::<platform::Auto>(top_level_dir, &mut outbuf[..], parts)
     };
-    let Some(joined) = joined else {
-        // `Err` holds the unresolved path, for the caller's ENAMETOOLONG message.
-        return Err(parts.join(&SEP));
-    };
-    Ok(
-        if compile.compile_target.os == OperatingSystem::Windows && !joined.ends_with(b".exe") {
-            let mut v = Vec::with_capacity(joined.len() + 4);
-            v.extend_from_slice(joined);
-            v.extend_from_slice(b".exe");
-            v.into_boxed_slice()
+    let with_suffix = joined.map(|joined| {
+        let is_windows = compile.compile_target.os == OperatingSystem::Windows;
+        let suffix: &[u8] = if is_windows && !joined.ends_with(b".exe") {
+            b".exe"
         } else {
-            Box::from(joined)
-        },
-    )
+            b""
+        };
+        [joined, suffix].concat()
+    });
+    match with_suffix {
+        // The suffix counts too: the path is NUL-terminated in a path buffer to be moved into place.
+        Some(path) if path.len() < paths::MAX_PATH_BYTES => Ok(path.into_boxed_slice()),
+        // `Err` holds the unresolved path, for the caller's ENAMETOOLONG message.
+        _ => Err(parts.join(&SEP)),
+    }
 }
 
 /// Without `.exe`, as in the CLI.

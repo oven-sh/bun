@@ -3650,8 +3650,7 @@ impl FormDataContext<'_> {
                             // we need to make this async and use download/downloadSlice
                         }
                         store::Data::File(file) => {
-                            // `fs.openAsBlob`: open first, then check the snapshot
-                            // against that descriptor and read through it.
+                            // `fs.openAsBlob`: check the snapshot on the descriptor that is read.
                             let mut snapshot_fd: Option<Fd> = None;
                             if file.snapshot.is_some() {
                                 if let PathOrFileDescriptor::Path(path) = &file.pathlike {

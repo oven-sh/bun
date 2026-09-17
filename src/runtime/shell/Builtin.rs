@@ -495,6 +495,10 @@ impl Builtin {
             for a in me.args.iter().skip(1) {
                 argv.push(a.as_ptr().cast::<c_char>());
             }
+            #[cfg(not(windows))]
+            if let OutKind::Fd(fd) = &me.io.stdout {
+                fd.writer.claim_for_builtin();
+            }
             // `Arc::clone` (inside `OutFd: Clone` / `InKind: Clone`) bumps
             // the `IOWriter`/`IOReader` refcount; the builtin's `Drop`
             // decrements it symmetrically. No double-deref.

@@ -133,8 +133,8 @@ class PooledMySQLConnection extends BasePooledConnection<$ZigGeneratedClasses.My
     this.connection = await createPooledConnectionHandle(
       createMySQLConnection,
       this.connectionInfo,
-      this.handleConnected.bind(this),
-      this.handleClose.bind(this),
+      this.nativeCallback(this.handleConnected),
+      this.nativeCallback(this.handleClose),
     );
   }
 
@@ -182,6 +182,9 @@ class MySQLAdapter
   }
 
   escapeIdentifier(str: string) {
+    if (str.includes("\0")) {
+      throw $ERR_INVALID_ARG_VALUE("name", str, "must not contain null bytes");
+    }
     return "`" + str.replaceAll("`", "``") + "`";
   }
 

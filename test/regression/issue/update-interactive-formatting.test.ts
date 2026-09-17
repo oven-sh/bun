@@ -1,11 +1,11 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 describe("bun update --interactive formatting regression", () => {
   it("should not underflow when dependency type text is longer than available space", async () => {
     // This test verifies the fix for the padding calculation underflow issue
     // in lines 745-750 of update_interactive_command.zig
-    const dir = tempDirWithFiles("formatting-regression-test", {
+    await using dir = tempDir("formatting-regression-test", {
       "package.json": JSON.stringify({
         name: "test-project",
         version: "1.0.0",
@@ -44,7 +44,7 @@ describe("bun update --interactive formatting regression", () => {
   it("should handle dev tag length calculation correctly", async () => {
     // This test verifies that dev/peer/optional tags are properly accounted for
     // in the column width calculations
-    const dir = tempDirWithFiles("dev-tag-formatting-test", {
+    await using dir = tempDir("dev-tag-formatting-test", {
       "package.json": JSON.stringify({
         name: "test-project",
         version: "1.0.0",
@@ -92,7 +92,7 @@ describe("bun update --interactive formatting regression", () => {
   it("should truncate extremely long package names without crashing", async () => {
     // This test verifies that package names longer than MAX_NAME_WIDTH (60) are handled
     const longPackageName = "extremely-long-package-name-that-exceeds-maximum-width-and-should-be-truncated";
-    const dir = tempDirWithFiles("truncate-test", {
+    await using dir = tempDir("truncate-test", {
       "package.json": JSON.stringify({
         name: "test-project",
         version: "1.0.0",
@@ -132,7 +132,7 @@ describe("bun update --interactive formatting regression", () => {
   it("should handle long version strings without formatting issues", async () => {
     // This test verifies that version strings longer than MAX_VERSION_WIDTH (20) are handled
     const longVersion = "1.0.0-alpha.1.2.3.4.5.6.7.8.9.10.11.12.13.14.15.16.17.18.19.20.21.22.23.24.25";
-    const dir = tempDirWithFiles("long-version-test", {
+    await using dir = tempDir("long-version-test", {
       "package.json": JSON.stringify({
         name: "test-project",
         version: "1.0.0",
@@ -174,7 +174,7 @@ describe("bun update --interactive formatting regression", () => {
     const maxWidthPackage = "a".repeat(60); // MAX_NAME_WIDTH
     const maxWidthVersion = "1.0.0-" + "a".repeat(15); // MAX_VERSION_WIDTH
 
-    const dir = tempDirWithFiles("max-width-test", {
+    await using dir = tempDir("max-width-test", {
       "package.json": JSON.stringify({
         name: "test-project",
         version: "1.0.0",

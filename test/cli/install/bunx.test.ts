@@ -1326,3 +1326,57 @@ it.concurrent.skipIf(isWindows)(
     }
   },
 );
+
+it.concurrent.skipIf(isWindows)(
+  "validates every path component of a scoped package's bunx cache directory",
+  async () => {
+    const { x_dir, env } = setup();
+    const scope = "bunx-cache-scope-fixture";
+    const pkg = "bunx-cache-root-fixture";
+    const scopeDir = join(env.TMPDIR, `bunx-${process.getuid!()}-@${scope}`);
+
+    const run = () => {
+      const subprocess = spawn({
+        cmd: [bunExe(), "x", "--no-install", `@${scope}/${pkg}`],
+        cwd: x_dir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env,
+      });
+      return Promise.all([subprocess.stderr.text(), subprocess.stdout.text(), subprocess.exited] as const);
+    };
+
+    await mkdir(scopeDir, { recursive: true });
+    chmodSync(scopeDir, 0o755);
+    {
+      const [err, out, exitCode] = await run();
+      expect(err).not.toContain("refusing to use bunx cache directory");
+      expect(err).toContain(`Could not find an existing '${pkg}' binary to run.`);
+      expect(out).toHaveLength(0);
+      expect(exitCode).toBe(1);
+    }
+
+    chmodSync(scopeDir, 0o777);
+    {
+      const [err, out, exitCode] = await run();
+      expect(err).toContain("refusing to use bunx cache directory");
+      expect(err).toContain("not a directory owned by the current user");
+      expect(out).toHaveLength(0);
+      expect(exitCode).toBe(1);
+    }
+
+    await rm(scopeDir, { recursive: true, force: true });
+    const elsewhere = join(env.TMPDIR, "bunx-cache-scope-fixture-elsewhere");
+    await mkdir(elsewhere, { recursive: true });
+    chmodSync(elsewhere, 0o755);
+    symlinkSync(elsewhere, scopeDir);
+    {
+      const [err, out, exitCode] = await run();
+      expect(err).toContain("refusing to use bunx cache directory");
+      expect(err).toContain("not a directory owned by the current user");
+      expect(out).toHaveLength(0);
+      expect(exitCode).toBe(1);
+    }
+  },
+);

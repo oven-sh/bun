@@ -22,8 +22,7 @@ use crate::hir::environment::Environment;
 use crate::hir::object_shape::HookKind;
 use crate::hir::visitors;
 use crate::hir::{
-    BlockId, Effect, FunctionId, HirFunction, IdentifierId, InstructionValue, ParamPattern,
-    Terminal, Type,
+    BlockId, Effect, FunctionId, HirFunction, IdentifierId, InstructionValue, Terminal, Type,
 };
 
 use crate::utils::DisjointSet;
@@ -37,7 +36,7 @@ use crate::inference::infer_reactive_scope_variables::find_disjoint_mutable_valu
 /// Infer which places in a function are reactive.
 ///
 /// Corresponds to TS `inferReactivePlaces(fn: HIRFunction): void`.
-pub fn infer_reactive_places(
+pub(crate) fn infer_reactive_places(
     func: &mut HirFunction,
     env: &mut Environment,
 ) -> Result<(), CompilerDiagnostic> {
@@ -48,10 +47,7 @@ pub fn infer_reactive_places(
 
     // Mark all function parameters as reactive
     for param in &func.params {
-        let place = match param {
-            ParamPattern::Place(p) => p,
-            ParamPattern::Spread(s) => &s.place,
-        };
+        let place = param.place();
         reactive_map.mark_reactive(place.identifier);
     }
 
@@ -558,10 +554,7 @@ fn apply_reactive_flags_replay(
 
     // 1. Mark params
     for param in &mut func.params {
-        let place = match param {
-            ParamPattern::Place(p) => p,
-            ParamPattern::Spread(s) => &mut s.place,
-        };
+        let place = param.place_mut();
         place.reactive = true;
     }
 

@@ -4,6 +4,7 @@
 #include "JSDOMWrapper.h" // For JSDOMObject
 #include "JSMIMEParams.h" // Need JSMIMEParams
 #include <JavaScriptCore/JSObject.h>
+#include <JavaScriptCore/JSDestructibleObject.h>
 #include <JavaScriptCore/InternalFunction.h>
 #include <JavaScriptCore/LazyClassStructure.h>
 #include <JavaScriptCore/JSGlobalObject.h>
@@ -11,22 +12,23 @@
 
 namespace WebCore {
 
-class JSMIMEType final : public JSC::JSNonFinalObject {
+// Destructible so that m_type and m_subtype are released when the cell is swept.
+class JSMIMEType final : public JSC::JSDestructibleObject {
 public:
-    using Base = JSC::JSNonFinalObject;
+    using Base = JSC::JSDestructibleObject;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
+
+    static void destroy(JSC::JSCell* cell)
+    {
+        static_cast<JSMIMEType*>(cell)->JSMIMEType::~JSMIMEType();
+    }
 
     template<typename MyClassT, JSC::SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<MyClassT, WebCore::UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForJSMIMEType.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSMIMEType = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForJSMIMEType.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForJSMIMEType = std::forward<decltype(space)>(space); });
+        return WebCore::subspaceForImpl<MyClassT, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForJSMIMEType, m_subspaceForJSMIMEType));
     }
 
     static JSMIMEType* create(JSC::VM& vm, JSC::Structure* structure, WTF::String type, WTF::String subtype, JSMIMEParams* params);

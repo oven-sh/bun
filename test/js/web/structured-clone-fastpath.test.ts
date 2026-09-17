@@ -1,11 +1,24 @@
 import { describe, expect, test } from "bun:test";
-import { isASAN } from "harness";
+import { isASAN, rss } from "harness";
 
 describe("Structured Clone Fast Path", () => {
   test("structuredClone should work with empty object", () => {
     const object = {};
     const cloned = structuredClone(object);
     expect(cloned).toStrictEqual({});
+  });
+
+  test("structuredClone({}) result is spreadable after adding a property", () => {
+    // The fast-path deserializer sized the clone with inline capacity 0 for an
+    // empty source, so spreading it tripped JSC's hasInlineStorage() debug
+    // assert once a property was added.
+    const x = structuredClone({});
+    x.a = 1;
+    expect({ ...x }).toEqual({ a: 1 });
+
+    const [y] = structuredClone([{}]);
+    y.b = 2;
+    expect({ ...y }).toEqual({ b: 2 });
   });
 
   test("structuredClone should work with empty string", () => {
@@ -63,13 +76,13 @@ describe("Structured Clone Fast Path", () => {
       clones.push(structuredClone(largeString));
     }
     Bun.gc(true);
-    const rss = process.memoryUsage.rss();
+    const rss1 = rss();
     for (let i = 0; i < 10000; i++) {
       clones.push(structuredClone(largeString));
     }
     Bun.gc(true);
-    const rss2 = process.memoryUsage.rss();
-    const delta = rss2 - rss;
+    const rss2 = rss();
+    const delta = rss2 - rss1;
     // ASAN's free quarantine (default 256 MB) plus redzones and glibc page
     // retention inflate RSS even when nothing is leaking.
     expect(delta).toBeLessThan(isASAN ? 1024 * 1024 * 400 : 1024 * 1024 * 8);
@@ -83,13 +96,13 @@ describe("Structured Clone Fast Path", () => {
       structuredClone(largeValue);
     }
     Bun.gc(true);
-    const rss = process.memoryUsage.rss();
+    const rss1 = rss();
     for (let i = 0; i < 10000; i++) {
       structuredClone(largeValue);
     }
     Bun.gc(true);
-    const rss2 = process.memoryUsage.rss();
-    const delta = rss2 - rss;
+    const rss2 = rss();
+    const delta = rss2 - rss1;
     // ASAN's free quarantine (default 256 MB) plus redzones and glibc page
     // retention inflate RSS even when nothing is leaking.
     expect(delta).toBeLessThan(isASAN ? 1024 * 1024 * 400 : 1024 * 1024);

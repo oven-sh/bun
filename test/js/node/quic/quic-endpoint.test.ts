@@ -4,7 +4,9 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import { createPrivateKey } from "node:crypto";
+import { createSocket } from "node:dgram";
 import { readFileSync } from "node:fs";
+import { BlockList } from "node:net";
 import { join } from "node:path";
 import { connect, listen, QuicEndpoint } from "node:quic";
 
@@ -37,6 +39,47 @@ describe("QuicEndpoint client-engine mode", () => {
       expect.objectContaining({ code: "ERR_INVALID_STATE" }),
     );
     await endpoint.close();
+  });
+});
+
+describe("endpoint blockList", () => {
+  test("applies to packets forwarded from a sibling endpoint on the same loop", async () => {
+    const tp = { maxIdleTimeout: 1 };
+    const sniOpt = { "*": { keys: [key], certs: [cert] } };
+    const onSession = async (s: any) => {
+      s.onstream = (st: any) => st.closed.catch(() => {});
+      await s.closed.catch(() => {});
+    };
+
+    const blockList = new BlockList();
+    blockList.addAddress("127.0.0.1");
+
+    await using receiver = await listen(onSession, { sni: sniOpt, transportParams: tp });
+    await using filtered = await listen(onSession, {
+      sni: sniOpt,
+      transportParams: tp,
+      endpoint: { blockList, blockListPolicy: "deny" },
+    });
+
+    const stray = Buffer.alloc(64, 0x41);
+    const sock = createSocket("udp4");
+    await new Promise<void>((resolve, reject) => {
+      sock.send(stray, receiver.address.port, "127.0.0.1", err => (err ? reject(err) : resolve()));
+    });
+    sock.close();
+
+    const client = await connect(receiver.address, {
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: tp,
+    });
+    await client.opened;
+    client.close();
+
+    expect({
+      receiver: receiver.stats.packetsBlocked,
+      filtered: filtered.stats.packetsBlocked,
+    }).toEqual({ receiver: 0n, filtered: 1n });
   });
 });
 
@@ -271,8 +314,9 @@ describe("endpoint.close() while a session is live", () => {
 // Worker VM teardown runs lastChanceToFinalize, which sweeps the QUIC wrappers
 // in unspecified order. QuicEndpoint::finalize -> lsquic_engine_destroy drives
 // on_close/on_conn_closed into per-stream/per-session ctx pointers; when those
-// wrappers were swept first the ctx is a freed box and ASAN reports
-// heap-use-after-free at nq_on_stream_close / nq_on_conn_closed.
+// wrappers were swept first the ctx is a freed box. ASAN reports
+// heap-use-after-free at nq_on_stream_close / nq_on_conn_closed, and a release
+// build segfaults (exit 139).
 describe("node:quic in a Worker", () => {
   test("worker.terminate() with a live endpoint + session does not UAF at VM teardown", async () => {
     await using proc = Bun.spawn({

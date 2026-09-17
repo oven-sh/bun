@@ -27,7 +27,7 @@ impl Ch for u16 {}
 /// caller upholding the documented `wbuf[len] == 0` precondition).
 /// Mirrors [`ZStr::from_buf`].
 #[inline(always)]
-pub(crate) fn wstr_in_buf(wbuf: &[u16], len: usize) -> &WStr {
+fn wstr_in_buf(wbuf: &[u16], len: usize) -> &WStr {
     WStr::from_buf(wbuf, len)
 }
 
@@ -160,7 +160,7 @@ pub fn to_nt_path16<'a>(wbuf: &'a mut [u16], path: &[u16]) -> &'a WStr {
     wstr_in_buf(wbuf, total)
 }
 
-pub(crate) fn add_nt_path_prefix<'a>(wbuf: &'a mut [u16], utf16: &[u16]) -> &'a WStr {
+fn add_nt_path_prefix<'a>(wbuf: &'a mut [u16], utf16: &[u16]) -> &'a WStr {
     let plen = windows::NT_OBJECT_PREFIX.len();
     wbuf[..plen].copy_from_slice(&windows::NT_OBJECT_PREFIX);
     wbuf[plen..plen + utf16.len()].copy_from_slice(utf16);
@@ -222,7 +222,7 @@ pub fn to_w_path_normalized<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a WStr {
     to_w_path(wbuf, path_to_use)
 }
 
-pub(crate) fn to_w_path_normalized16<'a>(wbuf: &'a mut [u16], path: &[u16]) -> &'a WStr {
+fn to_w_path_normalized16<'a>(wbuf: &'a mut [u16], path: &[u16]) -> &'a WStr {
     // Input (plus the NUL) doesn't fit in `wbuf` — fail-safe to "" like
     // `to_w_path_maybe_dir` does, instead of panicking in the
     // `normalize_slashes_only_t` copy below.
@@ -250,12 +250,7 @@ pub(crate) fn to_w_path_normalized16<'a>(wbuf: &'a mut [u16], path: &[u16]) -> &
     wstr_in_buf(wbuf, len)
 }
 
-pub(crate) fn normalize_slashes_only_t<
-    'a,
-    T: Ch,
-    const DESIRED_SLASH: u8,
-    const ALWAYS_COPY: bool,
->(
+fn normalize_slashes_only_t<'a, T: Ch, const DESIRED_SLASH: u8, const ALWAYS_COPY: bool>(
     buf: &'a mut [T],
     path: &'a [T],
 ) -> &'a [T] {
@@ -361,7 +356,7 @@ pub fn to_kernel32_path<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a WStr {
     to_w_path(wbuf, path)
 }
 
-pub(crate) fn to_w_path_maybe_dir<'a, const ADD_TRAILING_LASH: bool>(
+fn to_w_path_maybe_dir<'a, const ADD_TRAILING_LASH: bool>(
     wbuf: &'a mut [u16],
     utf8: &[u8],
 ) -> &'a WStr {

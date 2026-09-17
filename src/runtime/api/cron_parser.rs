@@ -53,13 +53,13 @@ impl CronTz {
 
 #[derive(Clone, Copy)]
 pub struct CronExpression {
-    pub minutes: u64,               // bits 0-59
-    pub hours: u32,                 // bits 0-23
-    pub days: u32,                  // bits 1-31
-    pub months: u16,                // bits 1-12
-    pub weekdays: u8,               // bits 0-6 (0=Sunday)
-    pub days_is_wildcard: bool,     // true if day-of-month field was *
-    pub weekdays_is_wildcard: bool, // true if weekday field was *
+    pub(crate) minutes: u64,               // bits 0-59
+    pub(crate) hours: u32,                 // bits 0-23
+    pub(crate) days: u32,                  // bits 1-31
+    pub(crate) months: u16,                // bits 1-12
+    pub(crate) weekdays: u8,               // bits 0-6 (0=Sunday)
+    pub(crate) days_is_wildcard: bool,     // true if day-of-month field was *
+    pub(crate) weekdays_is_wildcard: bool, // true if weekday field was *
 }
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug, Clone, Copy, PartialEq, Eq)]
@@ -101,9 +101,7 @@ impl CronExpression {
 
         let mut count: usize = 0;
         let mut fields: [&[u8]; 5] = [&[]; 5];
-        let mut iter = expr
-            .split(|b| *b == b' ' || *b == b'\t')
-            .filter(|s| !s.is_empty());
+        let mut iter = strings::tokenize_any(expr, b" \t");
         while let Some(field) = iter.next() {
             if count >= 5 {
                 return Err(CronError::TooManyFields);
@@ -297,8 +295,8 @@ impl CronExpression {
 const MINUTE_MS: f64 = 60_000.0;
 const MAX_DST_SHIFT_MIN: f64 = 120.0;
 
-pub(crate) const ALL_MINUTES: u64 = (1 << 60) - 1;
-pub(crate) const ALL_HOURS: u32 = (1 << 24) - 1;
+const ALL_MINUTES: u64 = (1 << 60) - 1;
+const ALL_HOURS: u32 = (1 << 24) - 1;
 pub(crate) const ALL_DAYS: u32 = ((1u64 << 32) - 1) as u32 & !1u32;
 pub(crate) const ALL_MONTHS: u16 = ((1u32 << 13) - 1) as u16 & !1u16;
 pub(crate) const ALL_WEEKDAYS: u8 = (1 << 7) - 1;
@@ -403,13 +401,13 @@ fn parse_field<T: BitInt>(field: &[u8], min: u8, max: u8, kind: NameKind) -> Res
         return Err(CronError::InvalidField);
     }
     let mut result: T = T::ZERO;
-    let mut parts = field.split(|b| *b == b',');
+    let mut parts = strings::split(field, b",");
     while let Some(part) = parts.next() {
         if part.is_empty() {
             return Err(CronError::InvalidField);
         }
         // Split by / for step
-        let mut step_iter = part.split(|b| *b == b'/');
+        let mut step_iter = strings::split(part, b"/");
         let base = step_iter.next().ok_or(CronError::InvalidField)?;
         let step_str = step_iter.next();
         if step_iter.next().is_some() {

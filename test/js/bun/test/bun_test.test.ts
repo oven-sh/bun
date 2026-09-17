@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 
 test("describe/test", async () => {
   const result = await Bun.spawn({
@@ -34,8 +34,15 @@ test("describe/test", async () => {
         at <anonymous> (file:NN:NN)
     -------------------------------
 
+    76 | 
+    77 | describe("actual tests", () => {
+    78 |   test("more functions called after delayed done", done => {
+    79 |     process.nextTick(() => {
+    80 |       done();
+    81 |       throw "uh oh";
+                     ^
     error: uh oh
-    uh oh
+        at <anonymous> (file:NN:NN)
     (fail) actual tests > more functions called after delayed done
     (pass) actual tests > another test
     (pass) concurrent describe 1 > item 1
@@ -265,6 +272,79 @@ test("multi-file", async () => {
     preload: afterEach
     preload: after last file"
   `);
+});
+
+test.concurrent("hooks may be registered during preload, test/describe may not", async () => {
+  using dir = tempDir("bun-test-preload-scope", {
+    "preload.ts": `
+      import { test, describe, beforeAll } from "bun:test";
+      beforeAll(() => console.log("preload beforeAll ran"));
+      for (const [name, fn] of [
+        ["test", () => test("in preload", () => {})],
+        ["describe", () => describe("in preload", () => {})],
+      ] as const) {
+        try {
+          fn();
+          console.log(name + ": did not throw");
+        } catch (e) {
+          console.log(name + ": " + (e as Error).message);
+        }
+      }
+    `,
+    "a.test.ts": `
+      import { test } from "bun:test";
+      test("a", () => console.log("a ran"));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--preload", "./preload.ts", "./a.test.ts"],
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+    "bun test <version> (<revision>)
+    test: Cannot use test during preload.
+    describe: Cannot use describe during preload.
+    preload beforeAll ran
+    a ran"
+  `);
+  expect(stderr).toContain("1 pass");
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("test/describe and hooks throw outside of the test runner", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        import { test, describe, beforeAll } from "bun:test";
+        for (const fn of [() => test("x", () => {}), () => describe("x", () => {}), () => beforeAll(() => {})]) {
+          try {
+            fn();
+            console.log("did not throw");
+          } catch (e) {
+            console.log(e.message);
+          }
+        }
+      `,
+    ],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toMatchInlineSnapshot(`
+    "Cannot use test outside of the test runner. Run "bun test" to run tests.
+    Cannot use describe outside of the test runner. Run "bun test" to run tests.
+    Cannot use beforeAll() outside of the test runner. Run "bun test" to run tests.
+    "
+  `);
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
 });
 
 test("--only flag with multiple files", async () => {

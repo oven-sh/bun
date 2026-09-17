@@ -6,6 +6,8 @@ const {
   SQLQueryFlags,
   symbols: { _strings, _values },
 } = require("internal/sql/query");
+const AsyncContextFrame = require("internal/async_context_frame");
+const { isStoppedModuleGraphRunning } = require("internal/shared");
 
 declare global {
   interface NumberConstructor {
@@ -127,8 +129,11 @@ function normalizeSSLMode(value: string): SSLMode {
   value = (value + "").toLowerCase();
   switch (value) {
     case "disable":
+    case "disabled":
       return SSLMode.disable;
+    case "allow": // libpq value; both accept either outcome, so map to prefer
     case "prefer":
+    case "preferred":
       return SSLMode.prefer;
     case "require":
     case "required":
@@ -138,13 +143,19 @@ function normalizeSSLMode(value: string): SSLMode {
       return SSLMode.verify_ca;
     case "verify-full":
     case "verify_full":
+    case "verify-identity":
+    case "verify_identity":
       return SSLMode.verify_full;
     default: {
       break;
     }
   }
 
-  throw $ERR_INVALID_ARG_VALUE("sslmode", value, "must be one of: disable, prefer, require, verify-ca, verify-full");
+  throw $ERR_INVALID_ARG_VALUE(
+    "sslmode",
+    value,
+    "must be one of: disable, allow, prefer, require, verify-ca, verify-full",
+  );
 }
 
 export type { SQLHelper };
@@ -581,6 +592,8 @@ const enum PooledConnectionFlags {
   reserved = 1 << 1,
   /// preReserved is used to indicate that the connection will be reserved in the future when queryCount drops to 0
   preReserved = 1 << 2,
+  /// onConnectFired is used to indicate that handleConnected ran for this slot, so the user's onconnect callback already fired (with null or an error)
+  onConnectFired = 1 << 3,
 }
 export type { PooledConnectionState };
 
@@ -629,13 +642,18 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
    */
   protected abstract isConnectFailureError(err: Error | null): boolean;
 
+  /// `method` bound to this slot for the native connection to call.
+  protected nativeCallback(method: (...args: any[]) => void): (...args: any[]) => void {
+    return this.adapter.ownerCallback(method.bind(this));
+  }
+
   async #beginConnecting() {
     // a fresh connect cycle (not a backoff retry) starts the retry budget
     if (this.connectStartedAt === 0) {
       this.connectStartedAt = Date.now();
       this.connectAttempts = 0;
     }
-    await this.startConnection();
+    await this.adapter.runAsOwner(this.startConnection, this);
     if (this.onFinish !== null) {
       // the pool was force-closed while the native handle was being created;
       // close it now so onClose fires and onFinish settles
@@ -647,11 +665,12 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
     if (err) {
       err = this.wrapError(err);
     }
+    this.flags |= PooledConnectionFlags.onConnectFired;
     const connectionInfo = this.connectionInfo;
     try {
       // user code; a throw must not abort the pool bookkeeping below
       if (connectionInfo?.onconnect) {
-        connectionInfo.onconnect(err);
+        AsyncContextFrame.run(this.adapter.callbackAsyncContext, connectionInfo.onconnect, connectionInfo, err);
       }
     } finally {
       this.storedError = err;
@@ -749,10 +768,12 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
 
   #finishClose(err: any) {
     const connectionInfo = this.connectionInfo;
+    const poolClosedSlotBeforeOnconnect =
+      this.onFinish !== null && !(this.flags & PooledConnectionFlags.onConnectFired);
     try {
       // user code; a throw must not abort the pool bookkeeping below
-      if (connectionInfo?.onclose) {
-        connectionInfo.onclose(err);
+      if (!poolClosedSlotBeforeOnconnect && connectionInfo?.onclose) {
+        AsyncContextFrame.run(this.adapter.callbackAsyncContext, connectionInfo.onclose, connectionInfo, err);
       }
     } finally {
       this.state = PooledConnectionState.closed;
@@ -762,7 +783,6 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
       this.adapter.readyConnections.delete(this);
       const queries = new Set(this.queries);
       this.queries?.clear?.();
-      this.queryCount = 0;
       this.flags &= ~PooledConnectionFlags.reserved;
 
       // notify all queries that the connection is closed
@@ -791,10 +811,11 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
     if (this.adapter.closed) {
       return;
     }
-    // reset error and state
+    // reset error and state; the new cycle has not fired onconnect yet
     this.storedError = null;
     this.connectStartedAt = 0;
     this.state = PooledConnectionState.pending;
+    this.flags &= ~PooledConnectionFlags.onConnectFired;
     // retry connection
     this.#beginConnecting();
   }
@@ -862,6 +883,10 @@ async function createPooledConnectionHandle<ConnectionHandle>(
     allowPublicKeyRetrieval = false,
   } = options;
 
+  // What script of a disposed Bun.ModuleGraph starts does not start: nothing is dialed, and what
+  // waits for this connection waits.
+  if (isStoppedModuleGraphRunning()) return null;
+
   let password: Bun.MaybePromise<string> | string | undefined | (() => Bun.MaybePromise<string>) = options.password;
 
   try {
@@ -918,9 +943,40 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
   public closed: boolean = false;
   public totalQueries: number = 0;
   public onAllQueriesFinished: (() => void) | null = null;
+  /// AsyncLocalStorage context the SQL instance was created in. onconnect/onclose run
+  /// inside it rather than in whatever context the native callback happens to fire in
+  /// (none for a socket event, the close() caller's when the socket closes synchronously).
+  public readonly callbackAsyncContext: unknown;
+  /// The Bun.ModuleGraph context frame the SQL instance was created inside of, if any:
+  /// every connection of the pool is opened in it, so it belongs to that graph.
+  public readonly ownerGraphFrame: unknown;
+
+  /// Calls `dial` as the SQL instance's owner, whoever is calling: a connection is its owner's,
+  /// the Bun.ModuleGraph the instance was made in (a redial starts from a close event, which has
+  /// no async context), or no graph's when the host made it, even if a graph's query or listen()
+  /// is what makes it dial. That graph's dispose() would otherwise close the host's connection
+  /// under the host, and its leftover script could leave the host waiting for one never opened.
+  public runAsOwner<This, Result>(dial: (this: This) => Result, thisValue: This): Result {
+    const graphFrame = this.ownerGraphFrame;
+    return graphFrame === undefined && AsyncContextFrame.currentGraph() === undefined
+      ? dial.$call(thisValue)
+      : AsyncContextFrame.run(graphFrame, dial, thisValue);
+  }
+
+  /// `callback` for a native connection to call (from a socket event, which has no async
+  /// context): as the SQL instance's owner, so a retry timer it arms is the owner's too, and is
+  /// cancelled with the Bun.ModuleGraph that owns the instance.
+  public ownerCallback<Args extends unknown[]>(callback: (...args: Args) => void): (...args: Args) => void {
+    const graphFrame = this.ownerGraphFrame;
+    if (graphFrame === undefined) return callback;
+    return (...args) => AsyncContextFrame.run(graphFrame, callback, undefined, ...args);
+  }
 
   constructor(connectionInfo: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions) {
     this.connectionInfo = connectionInfo;
+    this.ownerGraphFrame = AsyncContextFrame.currentGraphFrame();
+    this.callbackAsyncContext =
+      connectionInfo.onconnect || connectionInfo.onclose ? AsyncContextFrame.current() : undefined;
     // Slots are filled one at a time in connect()'s pool-start loop, and
     // createPooledConnection can synchronously run user code (for example a
     // function-valued `password`) that re-enters methods scanning this array,
@@ -978,6 +1034,53 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
 
   supportsReservedConnections() {
     return true;
+  }
+
+  /// Removes a pending reserve callback that is still waiting for a
+  /// connection. Returns false when the callback already ran (the caller owns
+  /// a connection and must release() it) or was never queued.
+  cancelReserve(onConnected: (err: Error | null, result: any) => void): boolean {
+    const index = this.reservedQueue.indexOf(onConnected);
+    if (index === -1) {
+      return false;
+    }
+    this.reservedQueue.splice(index, 1);
+    this.#dropExcessPreReservations();
+    // the cancelled reservation may have been the last pending work; a
+    // graceful close() is waiting on this callback
+    if (this.onAllQueriesFinished && !this.hasPendingQueries()) {
+      this.onAllQueriesFinished();
+    }
+    return true;
+  }
+
+  /// preReserved marks are not tied to a specific reservation. When a
+  /// reservation leaves reservedQueue without taking a marked connection
+  /// (cancelled, or an unmarked connection went idle first), the mark would
+  /// keep queries off that connection until it happens to go idle, which is
+  /// the only point where release() clears it. Keep at most one mark per
+  /// reservation still queued.
+  #dropExcessPreReservations() {
+    const preReserved: PooledConnection[] = [];
+    const pollSize = this.connections.length;
+    for (let i = 0; i < pollSize; i++) {
+      const connection = this.connections[i];
+      // unassigned holes while the pool is starting, null once it is closed
+      if (connection && connection.flags & PooledConnectionFlags.preReserved) {
+        preReserved.push(connection);
+      }
+    }
+    const excess = preReserved.length - this.reservedQueue.length;
+    if (excess <= 0) {
+      return;
+    }
+    // the connections closest to idle serve the remaining reservations
+    // soonest, so give up the busiest marks first
+    preReserved.sort((a, b) => b.queryCount - a.queryCount);
+    for (let i = 0; i < excess; i++) {
+      preReserved[i].flags &= ~PooledConnectionFlags.preReserved;
+    }
+    this.flushConcurrentQueries();
   }
 
   getConnectionForQuery(pooledConnection: PooledConnection) {
@@ -1039,7 +1142,9 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
 
     while (true) {
       const nonReservedConnections = Array.from(this.readyConnections).filter(
-        c => !(c.flags & PooledConnectionFlags.preReserved) && c.queryCount < maxDistribution,
+        c =>
+          !(c.flags & (PooledConnectionFlags.preReserved | PooledConnectionFlags.reserved)) &&
+          c.queryCount < maxDistribution,
       );
       if (nonReservedConnections.length === 0) {
         return;
@@ -1112,8 +1217,11 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
         connection.flags |= PooledConnectionFlags.reserved;
         connection.queryCount++;
         this.totalQueries++;
+        this.readyConnections.delete(connection);
         // we have a connection waiting for a reserved connection lets prioritize it
         pendingReserved(connection.storedError, connection);
+        // the reservation may have been draining a different connection
+        this.#dropExcessPreReservations();
         return;
       }
     }
@@ -1222,19 +1330,27 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
     return Promise.all(promises);
   }
 
+  /** Runs from close() after `closed` is set; overridden by Postgres for its LISTEN connection. */
+  protected closeDedicatedConnections(): void {}
+
   async close(options?: { timeout?: number }): Promise<void> {
     if (this.closed) {
       return;
     }
 
     let timeout = options?.timeout;
-    if (timeout) {
+    const hasTimeout = !!timeout;
+    if (hasTimeout) {
       timeout = Number(timeout);
       if (timeout > 2 ** 31 || timeout < 0 || timeout !== timeout) {
         throw $ERR_INVALID_ARG_VALUE("options.timeout", timeout, "must be a non-negative integer less than 2^31");
       }
+    }
 
-      this.closed = true;
+    this.closed = true;
+    this.closeDedicatedConnections();
+
+    if (hasTimeout) {
       if (timeout === 0 || !this.hasPendingQueries()) {
         // close immediately
         await this.#close();
@@ -1256,7 +1372,6 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
 
       return promise;
     } else {
-      this.closed = true;
       if (!this.hasPendingQueries()) {
         // close immediately
         await this.#close();
@@ -1362,8 +1477,8 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
         if (connection.flags & PooledConnectionFlags.preReserved || connection.flags & PooledConnectionFlags.reserved)
           continue;
         const queryCount = connection.queryCount;
-        if (queryCount > 0) {
-          if (queryCount < leastQueries) {
+        if (queryCount !== 0) {
+          if (queryCount > 0 && queryCount < leastQueries) {
             leastQueries = queryCount;
             connectionWithLeastQueries = connection;
           }
@@ -1498,22 +1613,6 @@ function parseSQLiteOptions(
   }
 
   return sqliteOptions;
-}
-
-function isOptionsOfAdapter<A extends Bun.SQL.__internal.Adapter>(
-  options: Bun.SQL.Options,
-  adapter: A,
-): options is Extract<Bun.SQL.Options, { adapter?: A }> {
-  return options.adapter === adapter;
-}
-
-function assertIsOptionsOfAdapter<A extends Bun.SQL.__internal.Adapter>(
-  options: Bun.SQL.Options,
-  adapter: A,
-): asserts options is Extract<Bun.SQL.Options, { adapter?: A }> {
-  if (!isOptionsOfAdapter(options, adapter)) {
-    throw new Error(`Expected adapter to be ${adapter}, but got '${options.adapter}'`);
-  }
 }
 
 const DEFAULT_PROTOCOL: Bun.SQL.__internal.Adapter = "postgres";
@@ -1762,6 +1861,11 @@ function parseOptions(
   // The rest of this function is logic specific to postgres/mysql/mariadb (they have the same options object)
 
   let sslMode: SSLMode = sslModeFromConnectionDetails || SSLMode.disable;
+  if (sslMode === SSLMode.disable) {
+    // libpq honours PGSSLMODE as the default; a URL ?sslmode= below overrides it.
+    const envSslMode = adapter === "postgres" ? env.PG_SSLMODE || env.PGSSLMODE : undefined;
+    if (envSslMode) sslMode = normalizeSSLMode(envSslMode);
+  }
 
   let url = _url;
 
@@ -1794,13 +1898,24 @@ function parseOptions(
     username ||= options.user || options.username || decodeIfValid(url.username);
     password ||= options.pass || options.password || decodeIfValid(url.password);
 
-    path ||= options.path || url.pathname;
+    path ||= options.path || (url.hostname ? "" : url.pathname);
 
     const queryObject = url.searchParams.toJSON();
     for (const key in queryObject) {
-      if (key.toLowerCase() === "sslmode") {
+      const lowerKey = key.toLowerCase();
+      if (lowerKey === "sslmode" || lowerKey === "ssl-mode" || lowerKey === "ssl_mode") {
         sslMode = normalizeSSLMode(queryObject[key]);
-      } else if (key.toLowerCase() === "path") {
+      } else if (lowerKey === "ssl" || lowerKey === "tls") {
+        const value = `${queryObject[key]}`.toLowerCase();
+        if (value === "true" || value === "1") {
+          tls = true;
+          if (sslMode === SSLMode.disable) sslMode = SSLMode.prefer;
+        } else if (value === "false" || value === "0") {
+          sslMode = SSLMode.disable;
+        } else if (value) {
+          sslMode = normalizeSSLMode(value);
+        }
+      } else if (lowerKey === "path") {
         path = queryObject[key];
       } else {
         // this is valid for postgres for other databases it might not be valid
@@ -1944,7 +2059,17 @@ function parseOptions(
     }
   }
 
-  tls ||= options.tls || options.ssl;
+  const tlsOption = options.tls || options.ssl;
+  if (typeof tlsOption === "string" && tlsOption) {
+    sslMode = normalizeSSLMode(tlsOption);
+    tls = undefined;
+  } else if (!tlsOption && (options.tls === false || options.ssl === false)) {
+    sslMode = SSLMode.disable;
+    tls = undefined;
+  } else {
+    tls = tlsOption || tls;
+  }
+  const explicitTls = tls;
   max = options.max;
 
   idleTimeout ??= options.idleTimeout;
@@ -2024,7 +2149,7 @@ function parseOptions(
   }
 
   if ($isObject(tls) && sslMode < SSLMode.verify_ca) {
-    if (tls.rejectUnauthorized === true || (tls.rejectUnauthorized !== false && tls.ca)) {
+    if (tls.rejectUnauthorized === true || (tls.rejectUnauthorized !== false && (tls.ca || tls.caFile))) {
       sslMode = SSLMode.verify_full;
     }
   }
@@ -2040,8 +2165,8 @@ function parseOptions(
   // Explicit tls/ssl options request an encrypted connection: if the server
   // declines TLS, the connection is aborted instead of continuing in plaintext.
   // Certificate verification is only enabled when explicitly requested
-  // (ca, rejectUnauthorized, or a verify-* sslmode).
-  if (tls && sslMode === SSLMode.disable) {
+  // (ca, caFile, rejectUnauthorized, or a verify-* sslmode).
+  if (explicitTls && sslMode <= SSLMode.prefer) {
     sslMode = SSLMode.require;
   }
 
@@ -2122,6 +2247,7 @@ export interface DatabaseAdapter<Connection, ConnectionHandle, QueryHandle> {
   get closed(): boolean;
 
   supportsReservedConnections?(): boolean;
+  cancelReserve?(onConnected: OnConnected<Connection>): boolean;
   getConnectionForQuery?(pooledConnection: Connection): ConnectionHandle | null;
   attachConnectionCloseHandler?(connection: Connection, handler: () => void): void;
   detachConnectionCloseHandler?(connection: Connection, handler: () => void): void;
@@ -2143,13 +2269,8 @@ export interface DatabaseAdapter<Connection, ConnectionHandle, QueryHandle> {
 }
 
 export default {
-  parseDefinitelySqliteUrl,
-  isOptionsOfAdapter,
-  assertIsOptionsOfAdapter,
   parseOptions,
   SQLHelper,
-  buildDefinedColumnsAndQuery,
-  normalizeSSLMode,
   SQLResultArray,
   SQLArrayParameter,
   getHelperCommandFromDetect,
@@ -2158,7 +2279,4 @@ export default {
   BasePooledConnection,
   BaseSQLAdapter,
   createPooledConnectionHandle,
-  // @ts-expect-error we're exporting a const enum which works in our builtins
-  // generator but not in typescript officially
-  SSLMode,
 };

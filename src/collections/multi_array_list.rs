@@ -46,9 +46,8 @@
 //! `<[MaybeUninit<u8>]>` slice ops over [`Col`]/[`ColMut`] views.
 
 use core::alloc::Layout;
-use core::any::TypeId;
 use core::marker::PhantomData;
-use core::mem::type_info::{Type as TypeInfo, TypeKind};
+use core::mem::type_info;
 use core::mem::{ManuallyDrop, MaybeUninit};
 use core::ptr::{self, NonNull};
 use std::alloc::{Allocator, Global};
@@ -242,35 +241,19 @@ macro_rules! __mal_column_impl {
 
 /// Upper bound on struct field count. The reflected per-field metadata is
 /// cached in fixed-size `[_; MAX_FIELDS]` arrays so `Slice<T>` can be a plain
-/// value type without a `where [(); field_count::<T>()]:` bound propagating to
-/// every caller.
-pub(crate) const MAX_FIELDS: usize = 32;
+/// value type without a `where [(); Reflected::<T>::COUNT]:` bound propagating
+/// to every caller.
+const MAX_FIELDS: usize = 32;
 
 // ──────────────────────── const-eval reflection helpers ───────────────────
 
 use crate::const_str_eq;
 
-/// `TypeId` of `F` without the `'static` bound `TypeId::of` imposes — needed
-/// because reflected `Field::ty` ids are not `'static`-restricted, and column
-/// callers routinely use lifetime-carrying field types (`&'a [u8]`, `Ref<'a>`).
-#[inline(always)]
-const fn type_id_of<F: ?Sized>() -> TypeId {
-    const { core::intrinsics::type_id::<F>() }
-}
-
-/// Reflected fields of `T` (struct only). Panics at const-eval for non-structs.
-const fn fields_of<T>() -> &'static [core::mem::type_info::Field] {
-    match TypeInfo::of::<T>().kind {
-        TypeKind::Struct(s) => s.fields,
-        _ => panic!("MultiArrayList<T>: T must be a struct with named fields"),
-    }
-}
-
-/// Number of fields in `T`.
-#[inline(always)]
-pub(crate) const fn field_count<T>() -> usize {
-    fields_of::<T>().len()
-}
+// The reflection methods on `TypeId` are compile-time-only functions: they can
+// be called from a `const` item or an inline `const { }` block, not from a
+// `const fn` body. `type_info::of::<F>()` is `TypeId::of` without the `'static`
+// bound — reflected field ids are not `'static`-restricted, and column callers
+// routinely use lifetime-carrying field types (`&'a [u8]`, `Ref<'a>`).
 
 /// Column-layout sort key for a field of `size` bytes within a struct of
 /// alignment `struct_align`.
@@ -323,7 +306,41 @@ const ZERO_META: FieldMeta = FieldMeta {
 struct Reflected<T>(PhantomData<T>);
 
 impl<T> Reflected<T> {
-    const COUNT: usize = field_count::<T>();
+    /// Number of fields in `T`; const-panics unless `T` is laid out as a struct.
+    ///
+    /// The reflection API has no "is this a struct" query (`Type::of::<T>().kind`
+    /// ICEs on nightly-2026-09-15, and `variant(0)` is a hard error on a struct),
+    /// so the check is on what the scatter/gather needs: one variant (not a
+    /// multi-variant enum), fields unless `T` is zero-sized (not a primitive,
+    /// pointer or array), and fields that do not overlap (not a union; disjoint
+    /// fields cannot sum past `size_of::<T>()`). A single-variant enum with an
+    /// explicit `#[repr(int)]` still passes; its tag would never be written.
+    const COUNT: usize = {
+        let id = type_info::of::<T>();
+        assert!(
+            id.variants() == 1,
+            "MultiArrayList<T>: T must be a struct with named fields",
+        );
+        let n = id.fields(0);
+        assert!(
+            n > 0 || core::mem::size_of::<T>() == 0,
+            "MultiArrayList<T>: T must be a struct with named fields",
+        );
+        let mut sum = 0usize;
+        let mut i = 0;
+        while i < n {
+            sum += match id.field(0, i).type_id().size() {
+                Some(s) => s,
+                None => panic!("MultiArrayList: field type must be Sized"),
+            };
+            i += 1;
+        }
+        assert!(
+            sum <= core::mem::size_of::<T>(),
+            "MultiArrayList<T>: T must be a struct with named fields",
+        );
+        n
+    };
     const ALIGN: usize = core::mem::align_of::<T>();
 
     /// Dangling sentinel for an empty buffer. Aligned to `align_of::<T>()`,
@@ -333,8 +350,8 @@ impl<T> Reflected<T> {
 
     /// `[FieldMeta; COUNT]` in declaration order.
     const META: [FieldMeta; MAX_FIELDS] = {
-        let fields = fields_of::<T>();
-        let n = fields.len();
+        let id = type_info::of::<T>();
+        let n = Self::COUNT;
         assert!(
             n <= MAX_FIELDS,
             "MultiArrayList: too many fields (raise MAX_FIELDS)",
@@ -343,15 +360,15 @@ impl<T> Reflected<T> {
         let struct_align = core::mem::align_of::<T>();
         let mut i = 0;
         while i < n {
-            let f = &fields[i];
-            let size = match f.ty.size() {
+            let f = id.field(0, i);
+            let size = match f.type_id().size() {
                 Some(s) => s,
                 None => panic!("MultiArrayList: field type must be Sized"),
             };
             let align = align_sort_key(size, struct_align);
             out[i] = FieldMeta {
                 size,
-                offset: f.offset,
+                offset: f.offset(),
                 align,
             };
             i += 1;
@@ -423,15 +440,18 @@ impl<T> Reflected<T> {
     /// Field index for `NAME`; const-panics if no such field.
     #[cfg(test)]
     const fn index_of<const NAME: &'static str>() -> usize {
-        let fields = fields_of::<T>();
-        let mut i = 0;
-        while i < fields.len() {
-            if const_str_eq(fields[i].name, NAME) {
-                return i;
+        const {
+            let id = type_info::of::<T>();
+            let mut i = 0;
+            while i < Self::COUNT {
+                if const_str_eq(id.field(0, i).name(), NAME) {
+                    break;
+                }
+                i += 1;
             }
-            i += 1;
+            assert!(i < Self::COUNT, "MultiArrayList: no such field");
+            i
         }
-        panic!("MultiArrayList: no such field");
     }
 
     /// Const-panics unless field `NAME` exists and has type `F`.
@@ -443,22 +463,25 @@ impl<T> Reflected<T> {
     /// so a size match is accepted when ids differ. Size mismatch is always
     /// rejected.
     const fn check<const NAME: &'static str, F>() -> usize {
-        let fields = fields_of::<T>();
-        let mut i = 0;
-        while i < fields.len() {
-            if const_str_eq(fields[i].name, NAME) {
-                if fields[i].ty == type_id_of::<F>() {
-                    return i;
+        const {
+            let id = type_info::of::<T>();
+            let mut i = 0;
+            while i < Self::COUNT {
+                let f = id.field(0, i);
+                if const_str_eq(f.name(), NAME) {
+                    if !(f.type_id() == type_info::of::<F>()) {
+                        assert!(
+                            Self::META[i].size == core::mem::size_of::<F>(),
+                            "MultiArrayList: column type does not match field type",
+                        );
+                    }
+                    break;
                 }
-                assert!(
-                    Self::META[i].size == core::mem::size_of::<F>(),
-                    "MultiArrayList: column type does not match field type",
-                );
-                return i;
+                i += 1;
             }
-            i += 1;
+            assert!(i < Self::COUNT, "MultiArrayList: no such field");
+            i
         }
-        panic!("MultiArrayList: no such field");
     }
 }
 
@@ -585,13 +608,6 @@ impl<T> Copy for Slice<T> {}
 // ───────────────────────────── Slice ─────────────────────────────
 
 impl<T> Slice<T> {
-    pub const EMPTY: Self = Self {
-        ptrs: [Reflected::<T>::DANGLING; MAX_FIELDS],
-        len: 0,
-        capacity: 0,
-        _marker: PhantomData,
-    };
-
     /// Build a `Slice` over a raw buffer. `INVARIANT:column_base` applies.
     #[inline]
     fn from_raw(bytes: NonNull<u8>, len: usize, cap: usize) -> Self {
@@ -612,11 +628,6 @@ impl<T> Slice<T> {
     #[inline]
     pub fn len(&self) -> usize {
         self.len
-    }
-
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.len == 0
     }
 
     /// Typed column base for field `fi`. Substitutes a properly-aligned
@@ -699,7 +710,7 @@ impl<T> Slice<T> {
         Reflected::<T>::META[field_index].size
     }
 
-    pub fn set(&mut self, index: usize, elem: T) {
+    pub(crate) fn set(&mut self, index: usize, elem: T) {
         assert!(
             index < self.len,
             "MultiArrayList::Slice::set: index out of bounds"
@@ -713,7 +724,7 @@ impl<T> Slice<T> {
     /// ownership of every field. Dropping the gathered struct would free
     /// columns the storage still owns (double-free on next `get` / `Drop`),
     /// so it is wrapped in `ManuallyDrop`.
-    pub fn get(&self, index: usize) -> ManuallyDrop<T> {
+    pub(crate) fn get(&self, index: usize) -> ManuallyDrop<T> {
         assert!(
             index < self.len,
             "MultiArrayList::Slice::get: index out of bounds"
@@ -721,7 +732,7 @@ impl<T> Slice<T> {
         ManuallyDrop::new(self.gather(index))
     }
 
-    pub fn to_multi_array_list(self) -> MultiArrayList<T> {
+    pub(crate) fn to_multi_array_list(self) -> MultiArrayList<T> {
         if Reflected::<T>::COUNT == 0 || self.capacity == 0 {
             return MultiArrayList::default();
         }
@@ -868,16 +879,6 @@ impl<T, A: Allocator + Default> Default for MultiArrayList<T, A> {
     }
 }
 
-impl<T> MultiArrayList<T, Global> {
-    pub const EMPTY: Self = Self {
-        bytes: Reflected::<T>::DANGLING,
-        len: 0,
-        capacity: 0,
-        alloc: Global,
-        _marker: PhantomData,
-    };
-}
-
 impl<T, A: Allocator> MultiArrayList<T, A> {
     /// Construct an empty list backed by `alloc`.
     #[inline]
@@ -895,11 +896,6 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
     #[inline]
     pub fn len(&self) -> usize {
         self.len
-    }
-
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.len == 0
     }
 
     #[inline]
@@ -975,7 +971,7 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
     }
 
     /// Extend the list by 1 element. Allocates more memory as necessary.
-    pub fn push(&mut self, elem: T) -> Result<(), AllocError> {
+    pub(crate) fn push(&mut self, elem: T) -> Result<(), AllocError> {
         self.ensure_unused_capacity(1)?;
         self.append_assume_capacity(elem);
         Ok(())
@@ -996,24 +992,6 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
         s.set(self.len - 1, elem);
     }
 
-    /// Extend the list by 1 element, returning the newly reserved
-    /// index with uninitialized data.
-    /// Allocates more memory as necessary.
-    pub fn add_one(&mut self) -> Result<usize, AllocError> {
-        self.ensure_unused_capacity(1)?;
-        Ok(self.add_one_assume_capacity())
-    }
-
-    /// Extend the list by 1 element, asserting `self.capacity`
-    /// is sufficient to hold an additional item. Returns the
-    /// newly reserved index with uninitialized data.
-    pub fn add_one_assume_capacity(&mut self) -> usize {
-        debug_assert!(self.len < self.capacity);
-        let index = self.len;
-        self.len += 1;
-        index
-    }
-
     /// Remove and return the last element from the list, or return `None` if list is empty.
     /// Invalidates pointers to fields of the removed element.
     pub fn pop(&mut self) -> Option<T> {
@@ -1026,27 +1004,6 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
         Some(ManuallyDrop::into_inner(val))
     }
 
-    /// Inserts an item into an ordered list. Shifts all elements
-    /// after and including the specified index back by one and
-    /// sets the given index to the specified element. May reallocate
-    /// and invalidate iterators.
-    pub fn insert(&mut self, index: usize, elem: T) -> Result<(), AllocError> {
-        self.ensure_unused_capacity(1)?;
-        self.insert_assume_capacity(index, elem);
-        Ok(())
-    }
-
-    /// Inserts an item into an ordered list which has room for it.
-    pub fn insert_assume_capacity(&mut self, index: usize, elem: T) {
-        debug_assert!(self.len < self.capacity);
-        debug_assert!(index <= self.len);
-        let tail = self.len - index;
-        self.len += 1;
-        let mut s = self.slice();
-        s.copy_rows_within(index, index + 1, tail);
-        s.scatter(index, elem);
-    }
-
     pub fn append_list_assume_capacity(&mut self, other: &Self) {
         let offset = self.len;
         self.len += other.len;
@@ -1056,29 +1013,33 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
 
     /// Remove the specified item from the list, swapping the last
     /// item in the list into its position. Fast, but does not
-    /// retain list ordering.
-    pub fn swap_remove(&mut self, index: usize) {
+    /// retain list ordering. Returns the removed element, like [`pop`](Self::pop).
+    pub fn swap_remove(&mut self, index: usize) -> T {
         assert!(
             index < self.len,
             "MultiArrayList::swap_remove: index out of bounds"
         );
         let last = self.len - 1;
         let mut s = self.slice();
+        let removed = s.gather(index);
         s.copy_rows_within(last, index, 1);
         self.len -= 1;
+        removed
     }
 
     /// Remove the specified item from the list, shifting items
-    /// after it to preserve order.
-    pub fn ordered_remove(&mut self, index: usize) {
+    /// after it to preserve order. Returns the removed element, like [`pop`](Self::pop).
+    pub fn ordered_remove(&mut self, index: usize) -> T {
         assert!(
             index < self.len,
             "MultiArrayList::ordered_remove: index out of bounds"
         );
         let tail = self.len - 1 - index;
         let mut s = self.slice();
+        let removed = s.gather(index);
         s.copy_rows_within(index + 1, index, tail);
         self.len -= 1;
+        removed
     }
 
     /// Attempt to reduce allocated capacity to `new_len`.
@@ -1104,7 +1065,7 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
         self.capacity = new_len;
     }
 
-    pub fn clear_and_free(&mut self) {
+    pub(crate) fn clear_and_free(&mut self) {
         self.free_allocated_bytes();
         self.bytes = Reflected::<T>::DANGLING;
         self.len = 0;
@@ -1131,11 +1092,6 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
             }
         }
         self.len = 0;
-    }
-
-    /// Reduce length to `new_len`.
-    pub fn shrink_retaining_capacity(&mut self, new_len: usize) {
-        self.len = new_len;
     }
 
     /// Invalidates all element pointers.
@@ -1200,7 +1156,7 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
         self.sort_internal::<C, true>(0, self.len, ctx);
     }
 
-    pub fn capacity_in_bytes(capacity: usize) -> usize {
+    pub(crate) fn capacity_in_bytes(capacity: usize) -> usize {
         Reflected::<T>::ELEM_BYTES * capacity
     }
 
@@ -1479,12 +1435,10 @@ mod tests {
         // (i.e. a `u64`-aligned dangling base, not `NonNull::<u8>::dangling()`).
         let list = MultiArrayList::<Foo>::default();
         assert_eq!(list.items::<"c", u64>(), &[] as &[u64]);
-        let s = Slice::<Foo>::EMPTY;
-        assert_eq!(s.items::<"c", u64>(), &[] as &[u64]);
     }
 
     #[test]
-    fn insert_ordered_remove_memmove() {
+    fn ordered_remove_memmove() {
         let mut list = MultiArrayList::<Foo>::default();
         for i in 0..6u32 {
             list.push(Foo {
@@ -1494,20 +1448,51 @@ mod tests {
             })
             .unwrap();
         }
-        list.insert(
-            2,
-            Foo {
-                a: 99,
-                b: 99,
-                c: 99,
-            },
-        )
-        .unwrap();
-        assert_eq!(list.items::<"a", u32>(), &[0, 1, 99, 2, 3, 4, 5]);
-        list.ordered_remove(2);
         assert_eq!(list.items::<"a", u32>(), &[0, 1, 2, 3, 4, 5]);
-        list.swap_remove(1);
-        assert_eq!(list.items::<"a", u32>(), &[0, 5, 2, 3, 4]);
+        assert_eq!(list.ordered_remove(2), Foo { a: 2, b: 2, c: 2 });
+        assert_eq!(list.items::<"a", u32>(), &[0, 1, 3, 4, 5]);
+        assert_eq!(list.swap_remove(1), Foo { a: 1, b: 1, c: 1 });
+        assert_eq!(list.items::<"a", u32>(), &[0, 5, 3, 4]);
+        assert_eq!(list.items::<"c", u64>(), &[0, 5, 3, 4]);
+        // Removing the last row swaps it with itself / shifts nothing.
+        assert_eq!(list.swap_remove(3), Foo { a: 4, b: 4, c: 4 });
+        assert_eq!(list.items::<"a", u32>(), &[0, 5, 3]);
+        assert_eq!(list.ordered_remove(2), Foo { a: 3, b: 3, c: 3 });
+        assert_eq!(list.items::<"a", u32>(), &[0, 5]);
+    }
+
+    struct Owning {
+        name: Box<[u8]>,
+        n: u32,
+    }
+
+    // Under Miri this also checks that every `name` is freed exactly once.
+    #[test]
+    fn remove_returns_owned_element() {
+        let mut list = MultiArrayList::<Owning>::default();
+        for i in 0..4u32 {
+            list.push(Owning {
+                name: vec![b'a' + i as u8; 3].into_boxed_slice(),
+                n: i,
+            })
+            .unwrap();
+        }
+
+        let removed = list.swap_remove(1);
+        assert_eq!(&*removed.name, b"bbb");
+        assert_eq!(removed.n, 1);
+        assert_eq!(list.items::<"n", u32>(), &[0, 3, 2]);
+        drop(removed);
+
+        let removed = list.ordered_remove(0);
+        assert_eq!(&*removed.name, b"aaa");
+        assert_eq!(list.items::<"n", u32>(), &[3, 2]);
+        assert_eq!(&*list.items::<"name", Box<[u8]>>()[0], b"ddd");
+        assert_eq!(&*list.items::<"name", Box<[u8]>>()[1], b"ccc");
+        drop(removed);
+
+        list.drop_elements();
+        assert_eq!(list.len(), 0);
     }
 
     #[test]

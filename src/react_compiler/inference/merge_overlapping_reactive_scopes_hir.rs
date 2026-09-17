@@ -323,7 +323,7 @@ fn get_overlapping_reactive_scopes(
 /// Merges reactive scopes that have overlapping ranges.
 ///
 /// Corresponds to TS `mergeOverlappingReactiveScopesHIR(fn: HIRFunction): void`.
-pub fn merge_overlapping_reactive_scopes_hir(func: &mut HirFunction, env: &mut Environment) {
+pub(crate) fn merge_overlapping_reactive_scopes_hir(func: &mut HirFunction, env: &mut Environment) {
     // Collect scope info
     let scope_info = collect_scope_info(func, env);
 

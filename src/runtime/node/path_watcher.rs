@@ -1267,11 +1267,12 @@ impl Linux {
                     }
                     // The name was a symlink entry that got renamed over (`ln -sfn`):
                     // no IN_DELETE for it, so drop the owner on the old target here.
-                    // SAFETY: owner_watcher live under manager.mutex; the `&mut` is
-                    // scoped to the call.
+                    // SAFETY: owner_watcher live under manager.mutex; shared read.
                     let old_link_wd =
                         unsafe { (*owner_watcher).platform.link_wds.get(rel).copied() };
                     if let Some(old_wd) = old_link_wd {
+                        // SAFETY: owner_watcher live under manager.mutex; the `&mut`
+                        // is scoped to the call.
                         let removed = unsafe {
                             Linux::remove_link_owner(manager, &mut *owner_watcher, old_wd, rel)
                         };

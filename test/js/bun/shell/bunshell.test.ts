@@ -1504,7 +1504,7 @@ describe("deno_task", () => {
     // One case per place that expands a word: command arguments, a subshell,
     // an assignment statement, an assignment prefix, a redirect target, and
     // a `[[ ]]` operand.
-    test.concurrent.each([
+    describe.each([
       ["in a pipeline command", String.raw`echo hi | echo "[$(cat)]"`],
       ["in a pipeline subshell", String.raw`echo hi | (echo "[$(cat)]")`],
       ["in an assignment inside a pipeline subshell", String.raw`echo hi | (A=$(cat); echo "[$A]")`],
@@ -1516,20 +1516,22 @@ describe("deno_task", () => {
       ["in a [[ ]] operand of a pipeline", String.raw`echo hi | [[ $(cat) == hi ]] && echo "[hi]"`],
       // The substitution drains the pipe. A later read of the same stdin gets EOF.
       ["and a later cat sees EOF", String.raw`echo hi | (A=$(cat); cat; echo "[$A]")`],
-    ])("reads the pipe %s (#43052)", async (_, script) => {
-      using dir = tempDir("shell-cmdsubst-stdin", {});
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "-e", `const r = await Bun.$\`${script}\`.quiet(); process.stdout.write(r.stdout);`],
-        env: bunEnv,
-        cwd: String(dir),
-        stdin: new Blob(["FROM_PROCESS_STDIN\n"]),
-        stdout: "pipe",
-        stderr: "pipe",
+    ])("command substitution %s", (_, script) => {
+      test.concurrent("reads the pipe (#43052)", async () => {
+        using dir = tempDir("shell-cmdsubst-stdin", {});
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", `const r = await Bun.$\`${script}\`.quiet(); process.stdout.write(r.stdout);`],
+          env: bunEnv,
+          cwd: String(dir),
+          stdin: new Blob(["FROM_PROCESS_STDIN\n"]),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(stdout).toBe("[hi]\n");
+        expect(exitCode).toBe(0);
       });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).toBe("");
-      expect(stdout).toBe("[hi]\n");
-      expect(exitCode).toBe(0);
     });
   });
 

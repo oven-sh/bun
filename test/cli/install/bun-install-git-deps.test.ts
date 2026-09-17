@@ -510,8 +510,8 @@ test.concurrent(
 );
 
 // The URL parser removes a tab, so the committish it hands back (`feat`) is
-// nowhere in the dependency as written. The committish was then left empty and
-// the default branch was installed. A part that cannot be found fails to resolve.
+// not in the fragment as written. The committish was then left empty and the
+// default branch was installed. A part that cannot be found fails to resolve.
 test.concurrent("does not install the default branch for a github: committish it cannot find", async () => {
   using dir = tempDir("github-dep-tab", {});
   const root = String(dir);
@@ -526,15 +526,22 @@ test.concurrent("does not install the default branch for a github: committish it
     },
   });
 
-  const project = writeProject(root, { [nameOf("a")]: "github:scope/pkg-a#fe\tat" });
+  const project = writeProject(root, {
+    [nameOf("a")]: "github:scope/pkg-a#fe\tat",
+    // `feat` in front of the `#` is not the committish
+    [nameOf("b")]: "github:scope/feat-b#fe\tat",
+  });
   const { stderr, exitCode } = await runInstall(project, join(root, "cache"), {
     GITHUB_API_URL: `http://localhost:${server.port}`,
   });
-  expect({ requests, installed: await installedVersionOf(project, nameOf("a")) }).toEqual({
+  expect({ requests, installed: await installedVersions(project, [nameOf("a"), nameOf("b")]) }).toEqual({
     requests: [],
-    installed: null,
+    installed: { [nameOf("a")]: null, [nameOf("b")]: null },
   });
-  expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`"error: @scope/pkg-a@ failed to resolve"`);
+  expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
+    "error: @scope/pkg-a@ failed to resolve
+    error: @scope/pkg-b@ failed to resolve"
+  `);
   expect(exitCode).toBe(1);
 });
 

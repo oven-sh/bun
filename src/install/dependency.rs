@@ -1275,8 +1275,7 @@ pub(crate) fn parse_with_tag(
                 Ok(None) | Err(_) => return None,
             };
 
-            // `info` is percent-decoded, but a `String` can only point into `dependency`, so each
-            // part keeps its escapes. The tarball URL takes them as written.
+            // `info` is percent-decoded, and a `String` can only point into `dependency`.
             let (before_fragment, fragment) =
                 strings::split_once_char(dependency, b'#').unwrap_or((dependency, b""));
             let owner = info.user().unwrap_or(b"");
@@ -1286,14 +1285,9 @@ pub(crate) fn parse_with_tag(
                 literal: sliced.value(),
                 value: Value {
                     github: ManuallyDrop::new(Repository {
-                        owner: percent_encoded_part(*sliced, &[before_fragment], owner)?,
-                        repo: percent_encoded_part(*sliced, &[before_fragment], info.project())?,
-                        // A `/tree/<committish>` URL has the committish in its path.
-                        committish: percent_encoded_part(
-                            *sliced,
-                            &[fragment, before_fragment],
-                            committish,
-                        )?,
+                        owner: percent_encoded_part(*sliced, before_fragment, owner)?,
+                        repo: percent_encoded_part(*sliced, before_fragment, info.project())?,
+                        committish: percent_encoded_part(*sliced, fragment, committish)?,
                         ..Default::default()
                     }),
                 },
@@ -1555,21 +1549,18 @@ fn hgi_to_tag(info: &hosted_git_info::HostedGitInfo) -> Tag {
     }
 }
 
-/// The first span of `regions` that percent-decodes to `decoded`. A part that is not empty and
-/// has no span is `None` (the URL parser drops tabs and newlines): an empty committish would
-/// install the default branch.
+/// The first span of `region` that percent-decodes to `decoded`, as a `String` into `sliced`.
 fn percent_encoded_part<'a>(
     sliced: SlicedString<'a>,
-    regions: &[&'a [u8]],
+    region: &'a [u8],
     decoded: &[u8],
 ) -> Option<String> {
     if decoded.is_empty() {
         return Some(String::default());
     }
-    regions.iter().find_map(|region| {
-        let span = index_of_percent_encoded(region, decoded)?;
-        Some(sliced.sub(&region[span]).value())
-    })
+    // `None` and not an empty `String`: an empty committish installs the default branch.
+    let span = index_of_percent_encoded(region, decoded)?;
+    Some(sliced.sub(&region[span]).value())
 }
 
 /// The first span of `haystack` that percent-decodes to `decoded`.

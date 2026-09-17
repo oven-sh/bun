@@ -2277,6 +2277,23 @@ void FillWithSkipMaskImpl(const uint8_t* HWY_RESTRICT mask, size_t mask_len, uin
     }
 }
 
+// Returns `v`. The empty asm statement stops the compiler from reasoning about
+// the value, the same idiom as BoringSSL's value_barrier_w.
+static HWY_INLINE uint64_t ValueBarrier(uint64_t v)
+{
+    __asm__("" : "+r"(v) : /* no inputs */);
+    return v;
+}
+
+// True if every byte of `diff` is zero. The per-lane result goes through a
+// value barrier, so the compiler cannot tell that only "any difference"
+// matters and has no license to stop folding at the first one.
+template<class V>
+static HWY_INLINE bool NoLaneDiffers(D8 d, V diff)
+{
+    return ValueBarrier(hn::BitsFromMask(d, hn::Ne(diff, hn::Zero(d)))) == 0;
+}
+
 // Constant-time equality for crypto.timingSafeEqual. The number of loads
 // depends on `len` only: every byte pair is XORed into an accumulator, and the
 // accumulators are tested once, after the last load. Do not add an early exit.
@@ -2286,7 +2303,7 @@ bool ConstantTimeEqualImpl(const uint8_t* a, const uint8_t* b, size_t len)
     D8 d;
     const size_t N = hn::Lanes(d);
     if (HWY_UNLIKELY(len < N)) {
-        return hn::AllBits0(d, hn::Xor(hn::LoadN(d, a, len), hn::LoadN(d, b, len)));
+        return NoLaneDiffers(d, hn::Xor(hn::LoadN(d, a, len), hn::LoadN(d, b, len)));
     }
 
     // Four vectors per iteration so that the 128-bit targets keep up with a
@@ -2308,7 +2325,7 @@ bool ConstantTimeEqualImpl(const uint8_t* a, const uint8_t* b, size_t len)
     // The last vector overlaps bytes that are already folded in, which cannot
     // change the result.
     diff1 = hn::Or(diff1, hn::Xor(hn::LoadU(d, a + len - N), hn::LoadU(d, b + len - N)));
-    return hn::AllBits0(d, hn::Or(hn::Or(diff0, diff1), hn::Or(diff2, diff3)));
+    return NoLaneDiffers(d, hn::Or(hn::Or(diff0, diff1), hn::Or(diff2, diff3)));
 }
 
 } // namespace HWY_NAMESPACE

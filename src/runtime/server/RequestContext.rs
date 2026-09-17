@@ -958,7 +958,7 @@ where
         ctx_log!("deinit<d> ({:p})<r>", self);
         debug_assert!(self.flags.has_finalized());
 
-        // A response body stream suspended inside its `pull()` never settles the promise
+        // A client abort while the body stream is in flight reclaims the claim of the promise
         // whose reactions consume the sink (`handleResolveStream` / `handleRejectStream`),
         // so a client abort in that state reaches deinit with the sink still owned here.
         // This is the owner's last exit: release it exactly like the settle paths do.
@@ -2912,10 +2912,7 @@ where
         stream_log!("onResolve({})", wrote_anything);
         // HTTP/1 only: the sink already fully ended the response, so `resp`
         // can no longer be dereferenced (see `end_already_responded_stream`).
-        // This resolution can run arbitrarily later than the end: e.g. a
-        // direct stream whose `pull()` calls `controller.end()` and then
-        // awaits a promise the user only settles after the client has
-        // disconnected. H2/H3 keep the end_stream() path: their `resp` is still
+        // H2/H3 keep the end_stream() path: their `resp` is still
         // alive here and its still-armed onAborted must be disarmed.
         if !MUX && ended_response {
             self.end_already_responded_stream();

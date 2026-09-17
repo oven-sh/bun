@@ -1886,8 +1886,10 @@ mod posix_impl {
         // Linux/FreeBSD, `openat$NOCANCEL(AT_FDCWD, ..)` on Darwin.
         openat(Fd::cwd(), path, flags, mode)
     }
+    /// Always `O_CLOEXEC`. A child gets a descriptor only through the spawn path.
     pub fn openat(dir: impl AsFd, path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
         let dir = dir.as_fd();
+        let flags = flags | O::CLOEXEC;
         // macOS: `openat$NOCANCEL`, retried on EINTR.
         #[cfg(target_os = "macos")]
         {
@@ -1918,6 +1920,7 @@ mod posix_impl {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn openat2_beneath(dir: impl AsFd, path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
         let dir = dir.as_fd();
+        let flags = flags | O::CLOEXEC;
         super::linux_syscall::openat2_beneath(dir, path, flags, mode)
             .map_err(|e| Error::from_code_int(e, Tag::open).with_path(path.as_bytes()))
     }
@@ -1930,6 +1933,7 @@ mod posix_impl {
         static UNAVAILABLE: AtomicBool = AtomicBool::new(false);
 
         let dir = dir.as_fd();
+        let flags = flags | O::CLOEXEC;
         if !UNAVAILABLE.load(Ordering::Relaxed) {
             match super::linux_syscall::openat2_in_root(dir, path, flags, mode) {
                 Ok(fd) => return Ok(fd),
@@ -4773,8 +4777,8 @@ pub mod linux {
     type time_t = libc::time_t;
 
     /// kernel-shaped timespec (`sec`/`nsec`, no `tv_` prefix).
-    /// Layout-identical to `libc::timespec` so a `*const timespec` can be
-    /// passed straight to `syscall(SYS_futex, ..)`.
+    /// Layout-identical to `libc::timespec`; cast the pointer to that type where
+    /// it is passed to a variadic `syscall(SYS_futex, ..)`.
     #[repr(C)]
     #[derive(Clone, Copy)]
     pub struct timespec {
@@ -4897,6 +4901,9 @@ pub mod linux {
         val: u32,
         timeout: *const timespec,
     ) -> isize {
+        // `syscall` is variadic, and Miri checks the pointee type of each argument
+        // against the one the kernel interface declares: `libc::timespec` here.
+        let timeout = timeout.cast::<libc::timespec>();
         // SAFETY: caller contract — `uaddr` points to a live `u32`; `timeout`
         // is null or points to a valid `timespec` for the syscall's duration.
         let rc = unsafe { libc::syscall(libc::SYS_futex, uaddr, op.raw(), val, timeout) };

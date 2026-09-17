@@ -8814,6 +8814,10 @@ declare module "bun" {
     tls?: BunFetchRequestInitTLS | undefined;
     /**
      * The proxy for the requests of this session.
+     *
+     * The constructor throws for a value that names no proxy, such as a number
+     * or an object without a `url`. Only `undefined`, `null` and `""` mean no
+     * option. On a request, `fetch()` ignores such a value.
      */
     proxy?: FetchProxyOption | undefined;
     /**
@@ -8828,7 +8832,10 @@ declare module "bun" {
           /**
            * Seconds an idle connection stays in the pool before it is closed.
            * The socket timer is coarse: it moves in 4 second steps up to four
-           * minutes, and in whole minutes beyond that.
+           * minutes, and in whole minutes beyond that. Bun rounds the value up
+           * to the timer, so a connection is never closed before `idleTimeout`,
+           * and it can stay open for up to two steps longer. The longest is
+           * 238 minutes (14280), and a larger value means that.
            *
            * @default 300
            */
@@ -8837,6 +8844,11 @@ declare module "bun" {
            * Most idle connections this session keeps per kind of connection
            * (plain, TLS, each distinct `tls` configuration, Unix socket). When
            * one more is released, the longest-idle one is closed.
+           *
+           * Without it the session has no limit of its own. The idle
+           * connections of all sessions and of plain `fetch()` share one bounded
+           * pool per kind, and when it is full Bun closes the longest-idle
+           * connection in it. A value above the size of that pool has no effect.
            */
           maxIdleSockets?: number | undefined;
         }

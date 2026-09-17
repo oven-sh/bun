@@ -338,16 +338,13 @@ impl<Owner: ChannelOwner> Channel<Owner> {
 
     /// True while any encoded bytes are still queued or in flight.
     pub(crate) fn has_pending_writes(&self) -> bool {
-        if !self.out.get().is_empty() {
-            return true;
-        }
         #[cfg(windows)]
         {
-            return self.backend.writing.get();
+            !self.out.get().is_empty() || self.backend.writing.get()
         }
         #[cfg(not(windows))]
         {
-            false
+            !self.out.get().is_empty()
         }
     }
 

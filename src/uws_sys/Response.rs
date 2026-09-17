@@ -189,6 +189,11 @@ impl<const SSL: bool> Response<SSL> {
         c::uws_res_send_corked(Self::ssl_flag(), self.as_raw())
     }
 
+    /// Marks the response in flight as one that user JavaScript produces. It is sent when it completes.
+    pub fn send_when_complete(&mut self) {
+        c::uws_res_send_when_complete(Self::ssl_flag(), self.as_raw())
+    }
+
     pub(crate) fn pause(&mut self) {
         c::uws_res_pause(Self::ssl_flag(), self.as_raw())
     }
@@ -1181,6 +1186,7 @@ pub mod c {
         ) -> usize;
         pub(crate) safe fn uws_res_uncork(ssl: i32, res: &mut uws_res);
         pub(crate) safe fn uws_res_send_corked(ssl: i32, res: &mut uws_res);
+        pub(crate) safe fn uws_res_send_when_complete(ssl: i32, res: &mut uws_res);
         pub(crate) fn uws_res_end(
             ssl: i32,
             res: *mut uws_res,

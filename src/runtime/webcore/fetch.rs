@@ -925,7 +925,11 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 if let Some(proxy_arg) =
                     obj.get_common_string(global_this, jsc::CommonString::FetchOptionProxy)?
                 {
-                    proxy_option = fetch_session::parse_proxy(global_this, proxy_arg)?;
+                    if let fetch_session::ProxyArg::Policy(policy) =
+                        fetch_session::parse_proxy(global_this, proxy_arg)?
+                    {
+                        proxy_option = Some(policy);
+                    }
                 }
             }
         }

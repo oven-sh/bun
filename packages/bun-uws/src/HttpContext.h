@@ -491,7 +491,7 @@ private:
                 const bool isAncient = httpRequest->isAncient();
                 if (isAncient) {
                     httpResponseData->state |= HttpResponseData<SSL>::HTTP_ANCIENT_REQUEST | HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
-                } else if (httpRequest->hasConnectionClose()) {
+                } else if (httpResponseData->sawConnectionClose) {
                     httpResponseData->state |= HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
                 }
 

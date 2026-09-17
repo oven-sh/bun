@@ -181,6 +181,33 @@ describe("uid/gid", () => {
     expect(() => Bun.spawnSync({ cmd: [bunExe()], env: bunEnv, gid: 1.5 })).toThrow();
   });
 
+  // NaN used to be coerced to 0, so a uid from a failed lookup ran the child as root.
+  it("rejects a NaN uid/gid before spawning", () => {
+    expect(() => Bun.spawnSync({ cmd: [bunExe(), "--version"], env: bunEnv, uid: NaN })).toThrow(
+      expect.objectContaining({
+        code: "ERR_OUT_OF_RANGE",
+        message: 'The value of "uid" is out of range. It must be an integer. Received NaN',
+      }),
+    );
+    expect(() => Bun.spawnSync({ cmd: [bunExe(), "--version"], env: bunEnv, gid: NaN })).toThrow(
+      expect.objectContaining({
+        code: "ERR_OUT_OF_RANGE",
+        message: 'The value of "gid" is out of range. It must be an integer. Received NaN',
+      }),
+    );
+  });
+
+  it("accepts a null uid/gid", () => {
+    const result = Bun.spawnSync({
+      cmd: [bunExe(), "-e", "console.log('ok')"],
+      env: bunEnv,
+      uid: null as any,
+      gid: null as any,
+    });
+    expect(result.stdout.toString()).toBe("ok\n");
+    expect(result.exitCode).toBe(0);
+  });
+
   it.if(isPosix && isRoot)("applies uid/gid and drops supplementary groups", () => {
     const result = Bun.spawnSync({ cmd: ["id"], uid: 65534, gid: 65534 });
     const out = result.stdout.toString();

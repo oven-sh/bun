@@ -4,6 +4,7 @@
 #include "BakeGlobalObject.h"
 #include "JavaScriptCore/CallData.h"
 #include "JavaScriptCore/Completion.h"
+#include "JavaScriptCore/Error.h"
 #include "JavaScriptCore/Identifier.h"
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/JSCast.h"
@@ -15,6 +16,7 @@
 #include "JavaScriptCore/JSString.h"
 #include "JavaScriptCore/JSModuleNamespaceObject.h"
 #include "ImportMetaObject.h"
+#include <wtf/text/MakeString.h>
 
 namespace Bake {
 
@@ -23,6 +25,8 @@ extern "C" BunString BakeSourceProvider__getSourceSlice(SourceProvider* provider
 {
     return Bun::toStringView(provider->source());
 }
+
+// Rust calls the EncodedJSValue entry points below through `from_js_host_call`: empty return <=> exception pending.
 
 extern "C" JSC::EncodedJSValue BakeLoadInitialServerCode(JSC::JSGlobalObject* global, BunString source, bool separateSSRGraph) {
   auto& vm = JSC::getVM(global);
@@ -51,11 +55,24 @@ extern "C" JSC::EncodedJSValue BakeLoadInitialServerCode(JSC::JSGlobalObject* gl
   args.append(JSC::jsBoolean(separateSSRGraph)); // separateSSRGraph
   args.append(Zig::ImportMetaObject::create(global, "bake://server-runtime.js"_s)); // importMeta
 
-  RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::profiledCall(global, JSC::ProfilingReason::API, fn, callData, JSC::jsUndefined(), args)));
+  // `JSC::call` returns undefined (not empty) when the callee throws.
+  JSC::JSValue result = JSC::profiledCall(global, JSC::ProfilingReason::API, fn, callData, JSC::jsUndefined(), args);
+  RETURN_IF_EXCEPTION(scope, {});
+  return JSC::JSValue::encode(result);
 }
 
-extern "C" JSC::JSPromise* BakeLoadModuleByKey(GlobalObject* global, JSC::JSString* key) {
-  return JSC::loadAndEvaluateModule(global, key->getString(global), nullptr, nullptr);
+extern "C" JSC::EncodedJSValue BakeLoadModuleByKey(JSC::JSGlobalObject* global, JSC::EncodedJSValue keyValue) {
+  auto& vm = JSC::getVM(global);
+  auto scope = DECLARE_THROW_SCOPE(vm);
+
+  JSC::JSString* key = uncheckedDowncast<JSC::JSString>(JSC::JSValue::decode(keyValue));
+  String keyString = key->getString(global);
+  RETURN_IF_EXCEPTION(scope, {});
+
+  JSC::JSPromise* promise = JSC::loadAndEvaluateModule(global, keyString, nullptr, nullptr);
+  RETURN_IF_EXCEPTION(scope, {});
+  ASSERT(promise);
+  return JSC::JSValue::encode(promise);
 }
 
 extern "C" JSC::EncodedJSValue BakeLoadServerHmrPatch(GlobalObject* global, BunString source) {
@@ -108,42 +125,73 @@ extern "C" JSC::EncodedJSValue BakeLoadServerHmrPatchWithSourceMap(GlobalObject*
   return JSC::JSValue::encode(result);
 }
 
+// nullptr <=> exception pending.
+static JSC::JSModuleNamespaceObject* getModuleNamespace(JSC::JSGlobalObject* global, JSC::JSValue keyValue) {
+  auto& vm = JSC::getVM(global);
+  auto scope = DECLARE_THROW_SCOPE(vm);
+
+  JSC::JSString* key = uncheckedDowncast<JSC::JSString>(keyValue);
+  String keyString = key->getString(global);
+  RETURN_IF_EXCEPTION(scope, nullptr);
+
+  auto keyIdent = JSC::Identifier::fromString(vm, keyString);
+  auto* entry = global->moduleLoader()->registryEntry(keyIdent);
+  auto* module = entry ? entry->record() : nullptr;
+  if (!module) [[unlikely]] {
+    throwTypeError(global, scope, makeString("Module \""_s, keyString, "\" is not in the module registry"_s));
+    return nullptr;
+  }
+  JSC::JSModuleNamespaceObject* namespaceObject = global->moduleLoader()->getModuleNamespaceObject(global, module);
+  RETURN_IF_EXCEPTION(scope, nullptr);
+  ASSERT(namespaceObject);
+  return namespaceObject;
+}
+
 extern "C" JSC::EncodedJSValue BakeGetModuleNamespace(
   JSC::JSGlobalObject* global,
-  JSC::JSValue keyValue
+  JSC::EncodedJSValue keyValue
 ) {
-  JSC::JSString* key = uncheckedDowncast<JSC::JSString>(keyValue);
-  auto& vm = JSC::getVM(global);
-  auto keyIdent = JSC::Identifier::fromString(vm, key->value(global));
-  auto* entry = global->moduleLoader()->registryEntry(keyIdent);
-  ASSERT(entry); // should have called BakeLoadServerCode and wait for that promise
-  auto* module = entry ? entry->record() : nullptr;
-  ASSERT(module);
-  JSC::JSModuleNamespaceObject* namespaceObject = global->moduleLoader()->getModuleNamespaceObject(global, module);
-  ASSERT(namespaceObject);
-  return JSC::JSValue::encode(namespaceObject);
+  return JSC::JSValue::encode(getModuleNamespace(global, JSC::JSValue::decode(keyValue)));
 }
 
 extern "C" JSC::EncodedJSValue BakeGetDefaultExportFromModule(
   JSC::JSGlobalObject* global,
-  JSC::JSValue keyValue
+  JSC::EncodedJSValue keyValue
 ) {
   auto& vm = JSC::getVM(global);
-  return JSC::JSValue::encode(uncheckedDowncast<JSC::JSModuleNamespaceObject>(JSC::JSValue::decode(BakeGetModuleNamespace(global, keyValue)))->get(global, vm.propertyNames->defaultKeyword));
+  auto scope = DECLARE_THROW_SCOPE(vm);
+
+  JSC::JSModuleNamespaceObject* namespaceObject = getModuleNamespace(global, JSC::JSValue::decode(keyValue));
+  RETURN_IF_EXCEPTION(scope, {});
+
+  JSC::JSValue defaultExport = namespaceObject->get(global, vm.propertyNames->defaultKeyword);
+  RETURN_IF_EXCEPTION(scope, {});
+  return JSC::JSValue::encode(defaultExport);
 }
 
-// There were issues when trying to use JSValue.get from zig
+// `bun_core::ffi::FfiSlice<u8>`: a borrowed `&[u8]` passed by value.
+struct BakeModuleNamespaceKey {
+  const unsigned char* ptr;
+  size_t len;
+};
+
+// `moduleNamespaceValue` must be a namespace object from BakeGetModuleNamespace.
 extern "C" JSC::EncodedJSValue BakeGetOnModuleNamespace(
   JSC::JSGlobalObject* global,
-  JSC::JSModuleNamespaceObject* moduleNamespace,
-  const unsigned char* key,
-  size_t keyLength
+  JSC::EncodedJSValue moduleNamespaceValue,
+  BakeModuleNamespaceKey key
 ) {
   auto& vm = JSC::getVM(global);
-  const auto propertyString = String(StringImpl::createWithoutCopying({ key, keyLength }));
+  auto scope = DECLARE_THROW_SCOPE(vm);
+
+  auto* moduleNamespace = uncheckedDowncast<JSC::JSModuleNamespaceObject>(JSC::JSValue::decode(moduleNamespaceValue));
+  // Copy: Identifier::fromString atomizes the impl in place, and the key is only borrowed for this call.
+  const auto propertyString = String::fromUTF8(std::span { key.ptr, key.len });
   const auto identifier = JSC::Identifier::fromString(vm, propertyString);
   const auto property = JSC::PropertyName(identifier);
-  return JSC::JSValue::encode(moduleNamespace->get(global, property));
+  JSC::JSValue value = moduleNamespace->get(global, property);
+  RETURN_IF_EXCEPTION(scope, {});
+  return JSC::JSValue::encode(value);
 }
 
 } // namespace Bake

@@ -875,6 +875,47 @@ test.concurrent(
   isASAN ? 30_000 : 5_000,
 );
 
+test.concurrent(
+  "a fetch Response held only by its signal's abort listener is collected",
+  async () => {
+    const script = `
+    const { heapStats } = require("bun:jsc");
+    const server = Bun.serve({ port: 0, fetch: () => new Response(new Uint8Array(8)) });
+    const statuses = [];
+    async function once(readBody) {
+      const controller = new AbortController();
+      const response = await fetch(server.url, { signal: controller.signal });
+      controller.signal.addEventListener("abort", () => statuses.push(response.status));
+      if (readBody) await response.arrayBuffer();
+    }
+    for (let i = 0; i < 50; i++) await once(i % 2 === 0);
+    let counts;
+    for (let i = 0; i < 10; i++) {
+      Bun.gc(true);
+      await new Promise(resolve => setImmediate(resolve));
+      counts = heapStats().objectTypeCounts;
+      if ((counts.Response ?? 0) <= 2) break;
+    }
+    server.stop(true);
+    console.log(JSON.stringify({ Response: counts.Response ?? 0, AbortSignal: counts.AbortSignal ?? 0 }));
+  `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const counts = JSON.parse(stdout.trim());
+    // Each count includes the class's prototype object. Leaked: 51 and 51.
+    expect(counts.Response).toBeLessThanOrEqual(2);
+    expect(counts.AbortSignal).toBeLessThanOrEqual(2);
+    expect(exitCode).toBe(0);
+  },
+  isASAN ? 30_000 : 5_000,
+);
+
 // https://github.com/oven-sh/bun/issues/32659
 test("aborting an in-flight streaming fetch() discards the buffered body and errors the reader", async () => {
   await using proc = Bun.spawn({

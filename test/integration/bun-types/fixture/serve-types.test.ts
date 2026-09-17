@@ -517,8 +517,8 @@ test("permutations of valid route values", {
     "/index.test-d.ts.2": () => Bun.file("index.test-d.ts"),
     "/ping": new Response("pong"),
     "/": html,
-    // @ts-expect-error this is invalid, but hopefully not for too long
     "/index.html": new Response(html),
+    "/handler-response": () => new Response(html, { status: 404 }),
     ...files,
   },
 

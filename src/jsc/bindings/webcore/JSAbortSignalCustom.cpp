@@ -54,7 +54,7 @@ bool JSAbortSignalOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> ha
                 // This runs on GC marker threads, so the set is only read:
                 // isEmptyIgnoringNullReferences() would prune dead entries.
                 for (auto& source : std::as_const(abortSignal).sourceSignals()) {
-                    if (source.isFiringEventListeners() || source.hasActiveTimeoutTimer() || source.hasPendingActivity() || visitor.containsOpaqueRoot(&source)) {
+                    if (source.hasActiveTimeoutTimer() || source.hasPendingActivity() || visitor.containsOpaqueRoot(&source)) {
                         if (reason) [[unlikely]]
                             *reason = "Has Source Signal That Can Abort And Abort Event Listener"_s;
                         return true;

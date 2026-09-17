@@ -164,6 +164,33 @@ describe("AbortSignal", () => {
     expect(await promise).toBe("TimeoutError");
   });
 
+  test("AbortSignal.any() unreferenced dependent with a listener still fires when a server request's signal aborts", async () => {
+    const aborted = Promise.withResolvers<string>();
+    const handling = Promise.withResolvers<void>();
+    const response = Promise.withResolvers<Response>();
+    await using server = Bun.serve({
+      port: 0,
+      fetch(request) {
+        AbortSignal.any([request.signal]).addEventListener("abort", event => {
+          aborted.resolve((event.target as AbortSignal).reason.name);
+        });
+        handling.resolve();
+        return response.promise;
+      },
+    });
+    const client = new AbortController();
+    const fetched = fetch(server.url, { signal: client.signal }).catch(() => {});
+    await handling.promise;
+    for (let i = 0; i < 5; i++) {
+      Bun.gc(true);
+      await new Promise<void>(resolve => setImmediate(resolve));
+    }
+    client.abort();
+    expect(await aborted.promise).toBe("AbortError");
+    response.resolve(new Response());
+    await fetched;
+  });
+
   function fmt(value: any) {
     const res = {};
     for (const key in value) {

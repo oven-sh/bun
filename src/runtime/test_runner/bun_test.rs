@@ -1645,6 +1645,16 @@ impl ScopeMode {
             Self::FilteredOut => "filtered_out",
         }
     }
+
+    /// `.skip`, or `.todo` without `--todo`: the test file says this scope does not run.
+    /// Not `FilteredOut`: a `.only` that `-t` filters out still focuses the file, as in Jest.
+    pub(crate) fn is_disabled(self) -> bool {
+        match self {
+            Self::Skip => true,
+            Self::Todo => !Jest::runner().is_some_and(|runner| runner.run_todo),
+            Self::Normal | Self::Failing | Self::FilteredOut => false,
+        }
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -1707,19 +1717,44 @@ impl BaseScope {
         }
     }
 
+    /// Called for each appended test. Focus comes from tests, not from `describe.only` itself:
+    /// a `.only` that selects no test that can run must not drop the rest of the file.
     pub(crate) fn propagate(&mut self, has_callback: bool) {
         self.has_callback = has_callback;
+        if !self.mode.is_disabled() {
+            self.mark_focus();
+        }
         if let Some(parent) = self.parent {
             // SAFETY: parent backref valid; tree is single-threaded and parent
             // outlives child. Borrows are scoped to each call.
             unsafe {
-                if self.only != Only::No {
-                    (*parent).mark_contains_only();
-                }
                 if self.has_callback {
                     (*parent).mark_has_callback();
                 }
             }
+        }
+    }
+
+    /// Marks every ancestor of the innermost `.only` scope: this test, or a describe around it.
+    fn mark_focus(&self) {
+        let mut scope: &BaseScope = self;
+        loop {
+            match scope.only {
+                Only::Yes => {
+                    if let Some(parent) = scope.parent {
+                        // SAFETY: parent backref valid; tree is single-threaded and parent
+                        // outlives child. `scope` is a different node than the ones marked.
+                        unsafe { (*parent).mark_contains_only() };
+                    }
+                    return;
+                }
+                // `mark_contains_only` marks up to the root, so every ancestor is marked already.
+                Only::Contains => return,
+                Only::No => {}
+            }
+            let Some(parent) = scope.parent else { return };
+            // SAFETY: parent backref valid; tree is single-threaded and parent outlives child.
+            scope = unsafe { &(*parent).base };
         }
     }
 }
@@ -1791,8 +1826,7 @@ impl DescribeScope {
         name_not_owned: Option<&[u8]>,
         base: BaseScopeCfg,
     ) -> &mut DescribeScope {
-        let mut child = Self::create(BaseScope::init(base, name_not_owned, Some(std::ptr::from_mut(self)), false));
-        child.base.propagate(false);
+        let child = Self::create(BaseScope::init(base, name_not_owned, Some(std::ptr::from_mut(self)), false));
         self.entries.push(TestScheduleEntry::Describe(child));
         match self.entries.last_mut().unwrap() {
             TestScheduleEntry::Describe(d) => &mut **d,
@@ -1913,14 +1947,9 @@ impl ExecutionEntry {
         });
 
         if let Some(c) = cb {
-            entry.callback = match entry.base.mode {
-                ScopeMode::Skip => None,
-                ScopeMode::Todo => {
-                    let run_todo = Jest::runner().is_some_and(|runner| runner.run_todo);
-                    if run_todo { Some(strong_create(c)) } else { None }
-                }
-                _ => Some(strong_create(c)),
-            };
+            if !entry.base.mode.is_disabled() {
+                entry.callback = Some(strong_create(c));
+            }
         }
         entry
     }

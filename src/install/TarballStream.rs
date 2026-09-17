@@ -880,10 +880,9 @@ impl TarballStream {
             FileKind::File => {
                 #[cfg(windows)]
                 let mode: Mode = 0;
-                // Mask to permission bits so setuid/setgid/sticky bits from the
-                // archive never reach `openat`'s mode argument.
                 #[cfg(not(windows))]
-                let mode: Mode = Mode::try_from((entry.perm() & 0o777) | 0o666).expect("int cast");
+                let mode: Mode =
+                    bun_libarchive::file_mode(entry.perm(), bun_libarchive::FileReaders::Everyone);
                 let fd = open_output_file(dest, path, path_slice, mode)?;
                 self.entry_count += 1;
 

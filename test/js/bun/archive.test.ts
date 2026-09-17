@@ -689,24 +689,74 @@ describe("Bun.Archive", () => {
         expect(count).toBe(1);
         expect(fs.readFileSync(join(String(dir), "a.txt"), "utf8")).toBe("new");
       });
+
+      // The old name cannot be removed from a directory the user cannot write.
+      // The entry is then written in place, as before.
+      test.skipIf(isWindows || process.getuid?.() === 0)(
+        "writes in place when the old name cannot be removed",
+        async () => {
+          using dir = tempDir("archive-replace-in-place", {
+            "locked/a.txt": "old",
+          });
+          const locked = join(String(dir), "locked");
+          fs.chmodSync(locked, 0o555);
+          try {
+            const before = fs.statSync(join(locked, "a.txt")).ino;
+
+            const count = await new Bun.Archive({ "locked/a.txt": "new" }).extract(String(dir), options);
+
+            expect(count).toBe(1);
+            expect(fs.readFileSync(join(locked, "a.txt"), "utf8")).toBe("new");
+            expect(fs.statSync(join(locked, "a.txt")).ino).toBe(before);
+          } finally {
+            fs.chmodSync(locked, 0o755);
+          }
+        },
+      );
+
+      test.skipIf(isWindows)("gives an existing file the mode of the entry", async () => {
+        const tarball = Buffer.concat([
+          ustarHeader("secret.txt", 3, "0", { mode: Buffer.from("0000600\0") }),
+          Buffer.concat([Buffer.from("new"), Buffer.alloc(512 - 3)]),
+          Buffer.alloc(1024),
+        ]);
+        using dir = tempDir("archive-replace-mode", {
+          "secret.txt": "old",
+        });
+        fs.chmodSync(join(String(dir), "secret.txt"), 0o644);
+
+        const count = await new Bun.Archive(tarball).extract(String(dir), options);
+
+        expect(count).toBe(1);
+        expect(fs.readFileSync(join(String(dir), "secret.txt"), "utf8")).toBe("new");
+        expect(fs.statSync(join(String(dir), "secret.txt")).mode & 0o777).toBe(0o600);
+      });
     });
 
-    test.skipIf(isWindows)("with a glob, an existing file takes the mode of the entry", async () => {
-      const tarball = Buffer.concat([
-        ustarHeader("secret.txt", 3, "0", { mode: Buffer.from("0000600\0") }),
-        Buffer.concat([Buffer.from("new"), Buffer.alloc(512 - 3)]),
-        Buffer.alloc(1024),
-      ]);
-      using dir = tempDir("archive-replace-mode", {
-        "secret.txt": "old",
+    // Both extractors create a file with the mode of the entry. A zero mode
+    // field gets 0644. `bun install` keeps adding 0o666 (npm's fmode).
+    describe.each([
+      ["without a glob", undefined],
+      ["with a glob", { glob: "**" }],
+    ])("creates a file with the mode of the entry %s", (_, options) => {
+      test.skipIf(isWindows).each([
+        ["0000600", 0o600],
+        ["0000755", 0o755],
+        ["0000444", 0o444],
+        ["0000000", 0o644],
+      ])("mode field %s", async (field, expected) => {
+        const tarball = Buffer.concat([
+          ustarHeader("f", 1, "0", { mode: Buffer.from(field + "\0") }),
+          Buffer.concat([Buffer.from("x"), Buffer.alloc(511)]),
+          Buffer.alloc(1024),
+        ]);
+        using dir = tempDir("archive-entry-mode", {});
+
+        const count = await new Bun.Archive(tarball).extract(String(dir), options);
+
+        expect(count).toBe(1);
+        expect(fs.statSync(join(String(dir), "f")).mode & 0o777).toBe(expected & ~process.umask());
       });
-      fs.chmodSync(join(String(dir), "secret.txt"), 0o644);
-
-      const count = await new Bun.Archive(tarball).extract(String(dir), { glob: "**" });
-
-      expect(count).toBe(1);
-      expect(fs.readFileSync(join(String(dir), "secret.txt"), "utf8")).toBe("new");
-      expect(fs.statSync(join(String(dir), "secret.txt")).mode & 0o777).toBe(0o600);
     });
   });
 

@@ -5392,6 +5392,8 @@ declare module "bun" {
      * (e.g. `{ process: myProcess, fetch: myFetch }`). Graphs constructed
      * with the same set of names share their ES modules' compiled code with
      * each other.
+     *
+     * @see https://bun.com/docs/runtime/module-graph#shared-compiled-code
      */
     globals?: Record<string, unknown> | undefined;
     /**

@@ -5,7 +5,7 @@ description: Run many instances of one app in a single process with Bun.ModuleGr
 
 <Warning>`Bun.ModuleGraph` is experimental.</Warning>
 
-A `Bun.ModuleGraph` loads modules into the current global another time. Each graph has its own module instances, its own `require.cache`, and its own values for the names you pass as `globals`. Parsed code and bytecode are shared between graphs; ES modules share JIT-compiled code too. The first module a graph `import()`s is that graph's main module: `import.meta.main` and `require.main === module` are true in it, and in no other module of the graph.
+A `Bun.ModuleGraph` loads modules into the current global another time. Each graph has its own module instances, its own `require.cache`, and its own values for the names you pass as `globals`. Parsed code and bytecode are shared between graphs; ES modules share JIT-compiled code too (see [Shared compiled code](#shared-compiled-code)). The first module a graph `import()`s is that graph's main module: `import.meta.main` and `require.main === module` are true in it, and in no other module of the graph.
 
 ```ts host.ts icon="/icons/typescript.svg"
 // A `process` of the tenant's own: its module code sees this one.
@@ -126,3 +126,16 @@ The global object, `globalThis` properties, plugins and native addons are shared
 `http.globalAgent` and `https.globalAgent` are shared too. A connection belongs to the `Agent` that opened it, and an `Agent` to the script that made it, so a request a graph makes without an `agent` uses a connection that is not the graph's: `dispose()` does not close it, and it keeps the process running like any connection of the host's. Code whose connections should go with its graph passes an `Agent` it made itself.
 
 `mock.module()` in `bun test` is one of the shared things: it applies to what a graph loads afterwards. A graph that already loaded the module keeps the instance it has.
+
+## Shared compiled code
+
+Graphs whose `globals` have the same names share one copy of each ES module's compiled code, JIT-compiled code included. Graphs with other `globals` names compile a copy of their own.
+
+While one graph runs a module, JavaScriptCore optimizes the module's code for that one instance. When a second graph that shares the code imports the same module, JavaScriptCore discards the optimized code and compiles it again so that it serves every instance. The graph that is already running slows down while that happens. In a test app of 120 small modules, the running graph dropped to about a tenth of its speed and needed one to three seconds to reach a steady speed again.
+
+The steady speed of the shared code depends on what the modules declare:
+
+- Functions, imports and module-level variables run about as fast as before, however many graphs there are. JavaScriptCore recompiles this code once, when the second graph appears. A version of the test app that uses no classes ran 2% slower with two graphs, with ten and with fifty.
+- A `class` is a different class in each graph, because each graph evaluates the declaration. The shared code that creates or uses its instances handles one kind of object for each graph. JavaScriptCore recompiles that code again when a third graph starts to run it. That code runs slower with two graphs than with one, and slower again with more. The test app creates small objects of classes with private fields in its hot code. It ran 15% to 45% slower with two graphs and 40% to 80% slower with ten.
+
+A [`Worker`](/runtime/workers) or a separate process compiles its own copy of the code, so its speed does not depend on how many other instances exist. Measure your app with the number of graphs you plan to run.

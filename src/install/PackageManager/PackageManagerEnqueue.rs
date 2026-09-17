@@ -2417,6 +2417,17 @@ fn get_or_put_resolved_package_with_find_result(
     let this: &mut PackageManager = unsafe { &mut *guard.0 };
     // The scopeguard runs on ALL exits, never disarmed.
 
+    // The installers filter this package (`is_filtered_dependency_or_workspace`), and with it
+    // everything below. `remote_package_features` only lacks groups that no remote package has.
+    // The runtime auto-install has no installer: it loads every package from the cache.
+    let unplaced = !this.options.runtime_auto_install
+        && (!behavior.is_placed(this.options.local_package_features)
+            || package.is_disabled(this.options.cpu, this.options.os)
+            || this.lockfile.is_in_unplaced_subtree(dependency_id));
+    if unplaced {
+        this.lockfile.mark_unplaced_subtree(package.dependencies);
+    }
+
     // non-null if the package is in "patchedDependencies"
     let mut name_and_version_hash: Option<u64> = None;
     let mut patchfile_hash: Option<u64> = None;
@@ -2436,11 +2447,14 @@ fn get_or_put_resolved_package_with_find_result(
         }),
         // Do we need to download the tarball?
         install::PreinstallState::Extract => 'extract: {
-            // Skip tarball download when prefetch_resolved_tarballs is disabled (e.g., --lockfile-only)
-            if !this
-                .options
-                .do_
-                .contains(crate::package_manager_real::options::Do::PREFETCH_RESOLVED_TARBALLS)
+            // Skip tarball download when prefetch_resolved_tarballs is disabled (e.g., --lockfile-only),
+            // and for a package the installers do not place. When a dependency they do place
+            // resolves to the same package, the install phase downloads it like any other cache miss.
+            if unplaced
+                || !this
+                    .options
+                    .do_
+                    .contains(crate::package_manager_real::options::Do::PREFETCH_RESOLVED_TARBALLS)
             {
                 break 'extract Some(ResolvedPackageResult {
                     package,

@@ -734,7 +734,7 @@ impl Lockfile {
 
         let dep = &self.buffers.dependencies[dep_id as usize];
 
-        dep.behavior.is_bundled() || !dep.behavior.is_enabled(features)
+        !dep.behavior.is_placed(features)
     }
 
     pub fn resolve_catalog_dependency(&self, dep: &Dependency) -> Option<DependencyVersion> {
@@ -2196,6 +2196,27 @@ impl Lockfile {
         self.exact_pinned.set(i);
     }
 
+    /// Record that `dependencies` belong to a package that the installers do not
+    /// place. See the `Scratch::unplaced_subtree` field doc.
+    pub(crate) fn mark_unplaced_subtree(&mut self, dependencies: DependencySlice) {
+        let range = bun_collections::bit_set::Range {
+            start: dependencies.begin() as usize,
+            end: dependencies.end() as usize,
+        };
+        let unplaced_subtree = &mut self.scratch.unplaced_subtree;
+        if unplaced_subtree.bit_length() < range.end {
+            bun_core::handle_oom(unplaced_subtree.resize(range.end, false));
+        }
+        unplaced_subtree.set_range_value(range, true);
+    }
+
+    #[inline]
+    pub(crate) fn is_in_unplaced_subtree(&self, id: DependencyID) -> bool {
+        self.scratch
+            .unplaced_subtree
+            .is_set_allow_out_of_bound(id as usize, false)
+    }
+
     pub(crate) fn get_package_id(
         &self,
         name_hash: u64,
@@ -2539,6 +2560,11 @@ impl Lockfile {
 pub struct Scratch {
     pub(crate) duplicate_checker_map: DuplicateCheckerMap,
     pub(crate) dependency_list_queue: DependencyQueue,
+    /// `bit[dependency_id]` is set for the dependencies of a package that this resolve
+    /// first reached through a dependency the installers do not place
+    /// (`is_filtered_dependency_or_workspace`). They place nothing below it either, and
+    /// no flag on those dependencies says so. Sized lazily in `mark_unplaced_subtree`.
+    pub(crate) unplaced_subtree: DynamicBitSet,
 }
 
 pub(crate) type DuplicateCheckerMap =
@@ -2550,6 +2576,7 @@ impl Scratch {
         Scratch {
             dependency_list_queue: DependencyQueue::init(),
             duplicate_checker_map: DuplicateCheckerMap::default(),
+            unplaced_subtree: DynamicBitSet::default(),
         }
     }
 }

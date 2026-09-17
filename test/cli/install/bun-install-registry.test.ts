@@ -1587,6 +1587,230 @@ describe("bundledDependencies", () => {
   });
 });
 
+// A fresh resolve starts to download tarballs before the install phase runs.
+// It must ask for the tarballs that an install from its lockfile asks for, and
+// for no others. The installers place nothing below a bundled dependency, a
+// package for another platform, or a group that --production or --omit turns off.
+describe.concurrent("tarballs of a fresh resolve", () => {
+  const packages: Record<string, object> = {
+    // The tarball of outer ships bd and tr in its node_modules.
+    "outer": { dependencies: { bd: "1.0.0" }, bundleDependencies: ["bd"] },
+    "bd": { dependencies: { tr: "1.0.0" } },
+    // No CI machine has this cpu.
+    "uses-native": { optionalDependencies: { "native-wasm": "1.0.0" } },
+    "native-wasm": { cpu: ["wasm32"], dependencies: { tr: "1.0.0" } },
+    "tool": { dependencies: { tr: "1.0.0" } },
+    "uses-tr": { dependencies: { tr: "1.0.0" } },
+    "tr": {},
+    "leaf": {},
+  };
+  const packageJsonOf = (name: string) => JSON.stringify({ name, version: "1.0.0", ...packages[name] });
+  const files: Record<string, Record<string, string>> = {
+    "outer": {
+      "index.js": `module.exports = require("bd");`,
+      "node_modules/bd/package.json": packageJsonOf("bd"),
+      "node_modules/bd/index.js": `module.exports = "bundled bd, " + require("tr");`,
+      "node_modules/tr/package.json": packageJsonOf("tr"),
+      "node_modules/tr/index.js": `module.exports = "bundled tr";`,
+    },
+    "bd": { "index.js": `module.exports = "registry bd, " + require("tr");` },
+    "tr": { "index.js": `module.exports = "registry tr";` },
+    "uses-tr": { "index.js": `module.exports = require("tr");` },
+  };
+  const tarballs: Record<string, Uint8Array> = {};
+
+  beforeAll(async () => {
+    for (const name of Object.keys(packages)) {
+      const archive: Record<string, string> = { "package/package.json": packageJsonOf(name) };
+      for (const [path, contents] of Object.entries(files[name] ?? {})) archive[`package/${path}`] = contents;
+      tarballs[name] = await new Bun.Archive(archive, { compress: "gzip" }).bytes();
+    }
+  });
+
+  /** Serves the packages above and records the tarballs it is asked for. `holdManifest` can delay a manifest. */
+  function serveRegistry(tarballRequests: string[], holdManifest: (name: string) => Promise<void> | void = () => {}) {
+    return Bun.serve({
+      port: 0,
+      async fetch(request) {
+        const { origin, pathname } = new URL(request.url);
+        const tarballOf = pathname.match(/^\/(.+)-1\.0\.0\.tgz$/)?.[1];
+        const name = tarballOf ?? pathname.slice(1);
+        if (!(name in packages)) return new Response("not found", { status: 404 });
+        if (tarballOf) {
+          tarballRequests.push(name);
+          return new Response(tarballs[name]);
+        }
+        await holdManifest(name);
+        const integrity = "sha512-" + new Bun.CryptoHasher("sha512").update(tarballs[name]).digest("base64");
+        return Response.json({
+          name,
+          "dist-tags": { latest: "1.0.0" },
+          versions: {
+            "1.0.0": {
+              name,
+              version: "1.0.0",
+              ...packages[name],
+              dist: { tarball: `${origin}/${name}-1.0.0.tgz`, integrity },
+            },
+          },
+        });
+      },
+    });
+  }
+
+  function envFor(cwd: string) {
+    const tmp = join(cwd, ".bun-tmp");
+    return { ...env, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache"), BUN_TMPDIR: tmp, TMPDIR: tmp, TEMP: tmp };
+  }
+
+  type Project = {
+    manifest: object;
+    args?: string[];
+    /** The tarballs that the installers need, sorted. */
+    tarballs: string[];
+    /** What `require(name)` returns from the root after the install. */
+    requires?: Record<string, string>;
+    /** Hold the manifest of `uses-tr` until the other dependency has asked for the manifest of `tr`, so that one resolves tr@1.0.0 first. */
+    usesTrResolvesLast?: boolean;
+  };
+
+  /**
+   * Installs the project twice with a cold cache: a fresh resolve, then again
+   * from the lockfile that the fresh resolve saved (--production saves none
+   * and resolves again).
+   */
+  async function installTwice(linker: string, project: Project) {
+    const trRequested = Promise.withResolvers<void>();
+    const tarballRequests: string[] = [];
+    await using registry = serveRegistry(tarballRequests, name => {
+      if (name === "tr") trRequested.resolve();
+      if (name === "uses-tr" && project.usesTrResolvesLast) return trRequested.promise;
+    });
+    using dir = tempDir("fresh-resolve-tarballs", {
+      "package.json": JSON.stringify({ name: "foo", ...project.manifest }),
+      "bunfig.toml": Bun.TOML.stringify({ install: { registry: registry.url.href, linker } }),
+    });
+    const cwd = String(dir);
+
+    const asked: Record<string, string[]> = {};
+    for (const phase of ["fresh resolve", "from the lockfile"]) {
+      await Promise.all([
+        rm(join(cwd, "node_modules"), { recursive: true, force: true }),
+        rm(join(cwd, ".bun-cache"), { recursive: true, force: true }),
+      ]);
+      tarballRequests.length = 0;
+      await using proc = spawn({
+        cmd: [bunExe(), "install", ...(project.args ?? [])],
+        cwd,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: envFor(cwd),
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+      asked[phase] = tarballRequests.toSorted();
+    }
+    expect(asked).toEqual({ "fresh resolve": project.tarballs, "from the lockfile": project.tarballs });
+
+    const names = Object.keys(project.requires ?? {});
+    if (names.length === 0) return;
+    await using proc = spawn({
+      cmd: [bunExe(), "-p", `JSON.stringify([${names.map(name => `require(${JSON.stringify(name)})`).join(", ")}])`],
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: envFor(cwd),
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual(Object.values(project.requires!));
+    expect(exitCode).toBe(0);
+  }
+
+  const projects: Record<string, Project> = {
+    "below a bundled dependency": {
+      manifest: { dependencies: { outer: "1.0.0" } },
+      tarballs: ["outer"],
+      requires: { outer: "bundled bd, bundled tr" },
+    },
+    "below a package for another platform": {
+      manifest: { dependencies: { "uses-native": "1.0.0" } },
+      tarballs: ["uses-native"],
+    },
+    "below a devDependency with --production": {
+      manifest: { dependencies: { leaf: "1.0.0" }, devDependencies: { tool: "1.0.0" } },
+      args: ["--production"],
+      tarballs: ["leaf"],
+    },
+    "below a devDependency with --omit=dev": {
+      manifest: { dependencies: { leaf: "1.0.0" }, devDependencies: { tool: "1.0.0" } },
+      args: ["--omit=dev"],
+      tarballs: ["leaf"],
+    },
+    "below an optionalDependency with --omit=optional": {
+      manifest: { dependencies: { leaf: "1.0.0" }, optionalDependencies: { tool: "1.0.0" } },
+      args: ["--omit=optional"],
+      tarballs: ["leaf"],
+    },
+    "below a peerDependency with --omit=peer": {
+      manifest: { dependencies: { leaf: "1.0.0" }, peerDependencies: { tool: "1.0.0" } },
+      args: ["--omit=peer"],
+      tarballs: ["leaf"],
+    },
+    // The install phase downloads a package that was first resolved below a
+    // dependency the installers do not place, when another dependency needs it.
+    "first below a bundled dependency, then needed": {
+      manifest: { dependencies: { outer: "1.0.0", "uses-tr": "1.0.0" } },
+      tarballs: ["outer", "tr", "uses-tr"],
+      requires: { outer: "bundled bd, bundled tr", "uses-tr": "registry tr" },
+      usesTrResolvesLast: true,
+    },
+    "first below a package for another platform, then needed": {
+      manifest: { dependencies: { "uses-native": "1.0.0", "uses-tr": "1.0.0" } },
+      tarballs: ["tr", "uses-native", "uses-tr"],
+      requires: { "uses-tr": "registry tr" },
+      usesTrResolvesLast: true,
+    },
+    "first below a devDependency with --production, then needed": {
+      manifest: { dependencies: { "uses-tr": "1.0.0" }, devDependencies: { tool: "1.0.0" } },
+      args: ["--production"],
+      tarballs: ["tr", "uses-tr"],
+      requires: { "uses-tr": "registry tr" },
+      usesTrResolvesLast: true,
+    },
+  };
+
+  for (const linker of ["hoisted", "isolated"]) {
+    for (const [name, project] of Object.entries(projects)) {
+      test(`(${linker}) ${name}`, () => installTwice(linker, project));
+    }
+  }
+
+  // The runtime has no install phase. With --install=force it loads every
+  // package from the cache, a bundled dependency too.
+  test("the runtime auto-install downloads a bundled dependency", async () => {
+    const tarballRequests: string[] = [];
+    await using registry = serveRegistry(tarballRequests);
+    using dir = tempDir("fresh-resolve-tarballs", {
+      "bunfig.toml": Bun.TOML.stringify({ install: { registry: registry.url.href } }),
+    });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "--install=force", "-p", `require("outer@1.0.0")`],
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: envFor(String(dir)),
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("registry bd, registry tr\n");
+    expect(tarballRequests.toSorted()).toEqual(["bd", "outer", "tr"]);
+    expect(exitCode).toBe(0);
+  });
+});
+
 describe("optionalDependencies", () => {
   for (const optional of [true, false]) {
     test(`exit code is ${optional ? 0 : 1} when ${optional ? "optional" : ""} dependency tarball is missing`, async () => {

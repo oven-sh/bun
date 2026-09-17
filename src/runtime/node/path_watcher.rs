@@ -1018,8 +1018,6 @@ impl Linux {
                 };
 
                 let is_dir_child = ev.mask & IN::ISDIR != 0;
-                // Create, delete, move, and IN_UNMOUNT, which the kernel sends
-                // whether subscribed or not.
                 let is_structural = ev.mask & !(IN::ATTRIB | IN::MODIFY | IN::ISDIR) != 0;
 
                 // Dispatch to every owner of this wd. The recursive branch below calls
@@ -1065,16 +1063,11 @@ impl Linux {
                         )
                     };
 
-                    // libuv maps every mask bit outside IN_ATTRIB|IN_MODIFY to
-                    // rename, and the kernel sets IN_ISDIR on every event about a
-                    // directory, so node reports a directory's attribute change
-                    // as "rename":
+                    // libuv: every bit outside IN_ATTRIB|IN_MODIFY is a rename, and
+                    // IN_ISDIR is one, so a directory's attribute change is "rename":
                     // https://github.com/libuv/libuv/blob/v1.52.1/src/unix/linux.c#L2611-L2615
-                    // node's recursive watcher is not libuv
-                    // (lib/internal/fs/recursive_watch.js): it rescans a directory
-                    // whose watch fires and reports only entries that came or
-                    // went, so an attribute change of a directory, root or
-                    // subdirectory, is no event.
+                    // node's recursive watcher (lib/internal/fs/recursive_watch.js)
+                    // reports no event for it.
                     let event_type = if is_structural {
                         WatchEventKind::Rename
                     } else if !is_dir_child {

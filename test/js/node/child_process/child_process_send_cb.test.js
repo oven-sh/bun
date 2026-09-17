@@ -67,15 +67,16 @@ describe.each(["json", "advanced"])("send() callbacks for messages still queued 
     });
     const child = fork(path.join(String(dir), "child.js"), { env: bunEnv, serialization });
     try {
+      const events = [];
+      child.on("close", () => events.push("close"));
       const closed = once(child, "close");
       const pad = Buffer.alloc(1 << 20, "d").toString();
-      const errors = [];
-      for (let i = 0; i < 3; i++) child.send({ i, pad }, err => errors.push(err));
+      for (let i = 0; i < 3; i++) child.send({ i, pad }, err => events.push(`callback ${i}: ${err}`));
       if (how === "kill") child.kill("SIGKILL");
       else child.disconnect();
 
       await closed;
-      expect(errors).toEqual([null, null, null]);
+      expect(events).toEqual(["callback 0: null", "callback 1: null", "callback 2: null", "close"]);
     } finally {
       child.kill("SIGKILL");
     }
@@ -84,11 +85,12 @@ describe.each(["json", "advanced"])("send() callbacks for messages still queued 
   test.concurrent("run before 'exit' after process.disconnect() in the child", async () => {
     using dir = tempDir("send-cb-at-close-child", {
       "child.js": `
+        const { writeSync } = require("node:fs");
         const pad = Buffer.alloc(1 << 20, "d").toString();
         const errors = [];
         for (let i = 0; i < 3; i++) process.send({ i, pad }, err => errors.push(err));
         process.disconnect();
-        process.on("exit", () => require("node:fs").writeSync(1, JSON.stringify(errors)));
+        process.on("exit", () => writeSync(1, JSON.stringify(errors)));
       `,
     });
     const child = fork(path.join(String(dir), "child.js"), {

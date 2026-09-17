@@ -600,18 +600,23 @@ const server = net.createServer();
 server.listen(0, '127.0.0.1', () => {
   net.connect(server.address().port, '127.0.0.1', function () {
     const out = { before: 'never called', handle: 'never called', behind: 'never called', behindLarge: 'never called' };
+    const order = [];
+    const record = name => err => { out[name] = err; order.push(name); };
     // Larger than the IPC socket buffer, so it is still being written when the handle is queued.
     const pad = Buffer.alloc(1 << 21, 'd').toString();
-    child.send({ pad }, err => { out.before = err; });
-    child.send('handle', this, err => { out.handle = err; });
-    child.send('behind', err => { out.behind = err; });
-    child.send({ pad }, err => { out.behindLarge = err; });
+    child.send({ pad }, record('before'));
+    child.send('handle', this, record('handle'));
+    child.send('behind', record('behind'));
+    child.send({ pad }, record('behindLarge'));
     child.kill('SIGKILL');
-    child.on('close', () => setImmediate(() => {
-      console.log(JSON.stringify(out));
-      server.close();
-      process.exit(0);
-    }));
+    child.on('close', () => {
+      order.push('close');
+      setImmediate(() => {
+        console.log(JSON.stringify({ ...out, order }));
+        server.close();
+        process.exit(0);
+      });
+    });
   }).on('error', () => {});
 });
 `,
@@ -626,7 +631,13 @@ server.listen(0, '127.0.0.1', () => {
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect({ out: JSON.parse(stdout.trim()), stderr }).toEqual({
-        out: { before: null, handle: null, behind: "never called", behindLarge: "never called" },
+        out: {
+          before: null,
+          handle: null,
+          behind: "never called",
+          behindLarge: "never called",
+          order: ["before", "handle", "close"],
+        },
         stderr: expect.any(String),
       });
       expect(exitCode).toBe(0);

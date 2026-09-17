@@ -1197,6 +1197,7 @@ impl SendQueue {
                             item.complete(&global);
                         }
                     }
+                    // The callbacks are queued first on purpose: ChildProcess queues 'disconnect' and 'close' from this call, and they must not run after 'close'.
                     if let Some(owner) = sq.owner.get() {
                         owner.handle_ipc_close();
                     }

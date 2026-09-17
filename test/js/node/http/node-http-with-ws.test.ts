@@ -183,16 +183,20 @@ describe.concurrent("frames the client sends before the 101", () => {
   const modes: Mode[] = ["in-event", "deferred", "verifyClient", "later-read"];
 
   // Runs one connection. `early` goes out before the 101, `afterUpgrade` right
-  // after it. Resolves with what the server's 'message' listener saw once the
-  // "later" text frame arrives, and the pong payloads the client received.
-  async function run(mode: Mode, secure: boolean, early: Buffer, afterUpgrade: Buffer[]) {
+  // after it. Resolves with what the server's 'message' listener saw and the
+  // pong payloads the client received, once the "later" text frame has arrived
+  // at the server and `expectedPongs` pongs at the client.
+  async function run(mode: Mode, secure: boolean, early: Buffer, afterUpgrade: Buffer[], expectedPongs = 0) {
     const seen: string[] = [];
     const pongs: string[] = [];
     const done = Promise.withResolvers<{ seen: string[]; pongs: string[] }>();
+    const settle = () => {
+      if (seen.includes("later") && pongs.length >= expectedPongs) done.resolve({ seen, pongs });
+    };
     const onConnection = (ws: WsWebSocket) => {
       ws.on("message", data => {
         seen.push(String(data));
-        if (String(data) === "later") done.resolve({ seen, pongs });
+        settle();
       });
     };
 
@@ -257,6 +261,7 @@ describe.concurrent("frames the client sends before the 101", () => {
         if ((buffered[0] & 0x0f) === 0xa) pongs.push(buffered.subarray(2, 2 + length).toString());
         buffered = buffered.subarray(2 + length);
       }
+      settle();
     });
 
     try {
@@ -284,7 +289,7 @@ describe.concurrent("frames the client sends before the 101", () => {
       });
 
       test.each(modes)("a ping among the early frames, handleUpgrade() %s", async mode => {
-        expect(await run(mode, secure, Buffer.concat([text("early"), ping("k")]), [text("later")])).toEqual({
+        expect(await run(mode, secure, Buffer.concat([text("early"), ping("k")]), [text("later")], 1)).toEqual({
           seen: ["early", "later"],
           pongs: ["k"],
         });

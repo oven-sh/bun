@@ -505,7 +505,10 @@ it.skipIf(!isLinux)("epoll_pwait fallback does not busy-spin on sub-ms timers", 
 // restarted by SA_RESTART)
 describe.skipIf(!isLinux)("epoll EINTR retry accounts for elapsed time", () => {
   const src = `
+#define _GNU_SOURCE
+#include <dlfcn.h>
 #include <signal.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/time.h>
 static void noop(int s) { (void) s; }
@@ -517,6 +520,15 @@ __attribute__((constructor)) static void arm(void) {
     itv.it_interval.tv_sec = 0; itv.it_interval.tv_usec = 20000;
     itv.it_value = itv.it_interval;
     setitimer(ITIMER_REAL, &itv, 0);
+}
+// ASAN builds leave through exit(). LeakSanitizer (LLVM 22+) then forks and calls waitpid() once
+// with no EINTR retry, and a SIGALRM there makes it print "ptrace appears to be blocked" to
+// stderr. Stop the timer first. An atexit() handler is too late: the leak check runs before it.
+void exit(int status) {
+    struct itimerval off; memset(&off, 0, sizeof off);
+    setitimer(ITIMER_REAL, &off, 0);
+    ((void (*)(int)) dlsym(RTLD_NEXT, "exit"))(status);
+    abort();
 }`;
   let soPath = "";
   let built = false;
@@ -547,14 +559,7 @@ __attribute__((constructor)) static void arm(void) {
            process.exit(0);
          }, 200);`,
       ],
-      env: {
-        ...bunEnv,
-        ...extraEnv,
-        LD_PRELOAD: soPath,
-        // detect_leaks=0: at exit, LeakSanitizer (LLVM 22+) forks and calls waitpid() once with no
-        // EINTR retry. A SIGALRM there makes it print "ptrace appears to be blocked" to stderr.
-        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
-      },
+      env: { ...bunEnv, ...extraEnv, LD_PRELOAD: soPath },
       stdout: "pipe",
       stderr: "pipe",
     });

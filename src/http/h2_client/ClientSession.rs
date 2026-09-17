@@ -554,7 +554,8 @@ impl ClientSession {
             client.fail(e);
             return;
         }
-        let request = client.h2_build_request(client.body_len_for_send());
+        let mut header_overflow = Vec::new();
+        let request = client.h2_build_request(client.body_len_for_send(), &mut header_overflow);
         if let Err(err) = encode::write_request(self, client, stream_ref, &request) {
             // encodeHeader pushes into the HPACK encoder's dynamic table per
             // call, so a mid-encode failure leaves entries the server will

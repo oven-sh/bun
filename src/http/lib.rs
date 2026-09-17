@@ -1045,10 +1045,6 @@ static SHARED_REQUEST_HEADERS_BUF: bun_core::RacyCell<
     [picohttp::Header; MAX_REQUEST_HEADERS_INLINE],
 > = bun_core::RacyCell::new([picohttp::Header::ZERO; MAX_REQUEST_HEADERS_INLINE]);
 
-// Spillover for requests with more than MAX_REQUEST_HEADERS_INLINE fields.
-static SHARED_REQUEST_HEADERS_OVERFLOW: bun_core::RacyCell<Vec<picohttp::Header>> =
-    bun_core::RacyCell::new(Vec::new());
-
 // this doesn't need to be stack memory because it is immediately cloned after use
 static SHARED_RESPONSE_HEADERS_BUF: bun_core::RacyCell<[picohttp::Header; 256]> =
     bun_core::RacyCell::new([picohttp::Header::ZERO; 256]);
@@ -1072,11 +1068,6 @@ mod scratch {
     pub(super) fn request_headers() -> &'static mut [picohttp::Header; MAX_REQUEST_HEADERS_INLINE] {
         // SAFETY: see module-level INVARIANT.
         unsafe { &mut *SHARED_REQUEST_HEADERS_BUF.get() }
-    }
-    #[inline]
-    pub(super) fn request_headers_overflow() -> &'static mut Vec<picohttp::Header> {
-        // SAFETY: see module-level INVARIANT.
-        unsafe { &mut *SHARED_REQUEST_HEADERS_OVERFLOW.get() }
     }
     #[inline]
     pub(super) fn response_headers() -> &'static mut [picohttp::Header; 256] {
@@ -2407,7 +2398,12 @@ impl<'a> HTTPClient<'a> {
         &buf[ptr.offset as usize..end]
     }
 
-    pub(crate) fn build_request(&mut self, body_len: usize) -> picohttp::Request<'static> {
+    /// `overflow` backs the returned headers only when they do not fit the shared inline scratch.
+    pub(crate) fn build_request<'h>(
+        &mut self,
+        body_len: usize,
+        overflow: &'h mut Vec<picohttp::Header>,
+    ) -> picohttp::Request<'h> {
         let mut header_count: usize = 0;
         let header_entries = self.header_entries.slice();
         let header_names = header_entries.items_name();
@@ -2417,13 +2413,13 @@ impl<'a> HTTPClient<'a> {
         // (Connection, User-Agent, Accept, Host, Accept-Encoding, Content-Length/Transfer-Encoding).
         const MAX_DEFAULT_HEADERS: usize = 6;
         let needed = header_names.len() + MAX_DEFAULT_HEADERS;
-        let request_headers_buf: &mut [picohttp::Header] = if needed <= MAX_REQUEST_HEADERS_INLINE {
-            scratch::request_headers().as_mut_slice()
-        } else {
-            let overflow = scratch::request_headers_overflow();
-            overflow.resize(needed, picohttp::Header::ZERO);
-            overflow.as_mut_slice()
-        };
+        let request_headers_buf: &'h mut [picohttp::Header] =
+            if needed <= MAX_REQUEST_HEADERS_INLINE {
+                scratch::request_headers().as_mut_slice()
+            } else {
+                overflow.resize(needed, picohttp::Header::ZERO);
+                overflow.as_mut_slice()
+            };
 
         let mut override_accept_encoding = false;
         let mut override_accept_header = false;
@@ -2565,21 +2561,12 @@ impl<'a> HTTPClient<'a> {
             header_count += 1;
         }
 
-        // SAFETY: every borrowed slice points into storage that outlives the
-        // returned `Request` — `Method::as_str()` is `'static`; `url.pathname`
-        // borrows `self.url` (lives for the client); `request_headers_buf` is
-        // either the per-HTTP-thread `SHARED_REQUEST_HEADERS_BUF` static or the
-        // `SHARED_REQUEST_HEADERS_OVERFLOW` Vec (buffer moves on resize). Callers
-        // serialize the returned `Request` before the next `build_request()` call
-        // resizes, so the erased borrow never dangles. Return as `'static` so
-        // callers don't pin `&mut self` for the rest of their fn.
         picohttp::Request {
             method: self.method.as_str().as_bytes(),
             // SAFETY: `url.pathname` borrows `self.url`, which outlives the returned `Request`.
             path: unsafe { bun_ptr::detach_lifetime(self.url.pathname) },
             minor_version: 1,
-            // SAFETY: see the block-level comment above.
-            headers: unsafe { bun_ptr::detach_lifetime(&request_headers_buf[0..header_count]) },
+            headers: &request_headers_buf[..header_count],
             bytes_read: 0,
         }
     }
@@ -2995,7 +2982,8 @@ impl<'a> HTTPClient<'a> {
 
         let writer = &mut temporary_send_buffer; // Vec<u8> impls bun_io::Write
 
-        let request = self.build_request(self.body_len_for_send());
+        let mut header_overflow = Vec::new();
+        let request = self.build_request(self.body_len_for_send(), &mut header_overflow);
 
         if self.http_proxy.is_some() {
             if self.url.is_https() {
@@ -3481,7 +3469,9 @@ impl<'a> HTTPClient<'a> {
                     let mut temporary_send_buffer: Vec<u8> = Vec::with_capacity(16 * 1024);
                     let writer = &mut temporary_send_buffer;
 
-                    let request = self.build_request(self.body_len_for_send());
+                    let mut header_overflow = Vec::new();
+                    let request =
+                        self.build_request(self.body_len_for_send(), &mut header_overflow);
                     if let Err(e) = write_request(writer, &request) {
                         self.close_and_fail::<IS_SSL>(e, socket);
                         return;

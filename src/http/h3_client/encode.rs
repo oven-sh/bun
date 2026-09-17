@@ -45,7 +45,8 @@ pub(crate) fn write_request(
         HTTPRequestBody::Bytes(_)
     );
 
-    let request = client.build_request(body_len);
+    let mut header_overflow = Vec::new();
+    let request = client.build_request(body_len, &mut header_overflow);
     if verbose != HTTPVerboseLevel::None {
         let body = req_body.slice();
         crate::print_request(

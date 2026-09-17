@@ -130,15 +130,12 @@ mod bridge {
             self.drain_response_body::<true>(socket);
         }
         #[inline]
-        pub(crate) fn h2_build_request(&mut self, body_len: usize) -> picohttp::Request<'static> {
-            // SAFETY: `build_request` returns a `Request<'_>` whose borrowed
-            // slices point only at (a) the per-HTTP-thread request-header
-            // scratch (`SHARED_REQUEST_HEADERS_BUF` or its `_OVERFLOW` Vec)
-            // and (b) `self.header_buf`, which is itself `&'static [u8]` —
-            // neither is tied to the `&mut self` borrow. Erasing to `'static`
-            // lets `ClientSession::attach` re-borrow `client` while the
-            // `Request` is still live. Same pattern as lib.rs `on_writable`.
-            unsafe { self.build_request(body_len).detach_lifetime() }
+        pub(crate) fn h2_build_request<'h>(
+            &mut self,
+            body_len: usize,
+            overflow: &'h mut Vec<picohttp::Header>,
+        ) -> picohttp::Request<'h> {
+            self.build_request(body_len, overflow)
         }
     }
 

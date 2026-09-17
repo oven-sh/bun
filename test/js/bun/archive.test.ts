@@ -725,12 +725,11 @@ describe("Bun.Archive", () => {
           fs.symlinkSync("../target.txt", join(locked, "a.txt"));
           fs.chmodSync(locked, 0o555);
           try {
-            const archive = new Bun.Archive({ "locked/a.txt": "new" });
-            const extracted = archive.extract(String(dir), options);
+            const extracted = new Bun.Archive({ "locked/a.txt": "new" }).extract(String(dir), options);
             if (options) {
               expect(await extracted).toBe(0);
             } else {
-              expect(extracted).rejects.toThrow();
+              await expect(extracted).rejects.toThrow("ReadError");
             }
 
             expect(fs.readFileSync(join(String(dir), "target.txt"), "utf8")).toBe("old");

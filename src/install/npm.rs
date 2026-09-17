@@ -2167,22 +2167,19 @@ impl PackageManifest {
                     if let Some(bin) = version_obj.and_then(|o| o.get(b"bin")) {
                         match bin {
                             JSON::E::JsonValue::Object(obj) => {
-                                let bin_props = obj.get().properties();
-                                match bin_props.len() {
-                                    0 => break 'bin,
-                                    1 => {}
-                                    _ => {
-                                        extern_string_count_bin += bin_props.len() * 2;
-                                    }
-                                }
-
-                                for bin_prop in bin_props {
-                                    string_builder.count(bin_prop.key.slice());
+                                let mut entries: usize = 0;
+                                for bin_prop in obj.get().properties() {
                                     let Some(v) = bin_prop.value.as_str() else {
-                                        break 'bin;
+                                        continue;
                                     };
+                                    string_builder.count(bin_prop.key.slice());
                                     string_builder.count(v);
+                                    entries += 1;
                                 }
+                                if entries > 1 {
+                                    extern_string_count_bin += entries * 2;
+                                }
+                                break 'bin;
                             }
                             JSON::E::JsonValue::String(str_) => {
                                 // The build pass reads `directories.bin` when `bin` is empty.
@@ -2438,15 +2435,17 @@ impl PackageManifest {
                     if let Some(bin) = version_obj.and_then(|o| o.get(b"bin")) {
                         match bin {
                             JSON::E::JsonValue::Object(obj) => {
-                                let bin_props = obj.get().properties();
-                                match bin_props.len() {
-                                    0 => {}
-                                    1 => {
-                                        let bin_name = bin_props[0].key.slice();
-                                        let Some(value) = bin_props[0].value.as_str() else {
-                                            break 'bin;
-                                        };
-
+                                // Like npm's normalize-package-bin: an entry whose
+                                // value is not a string is skipped, the others are kept.
+                                let entries: Vec<(&[u8], &[u8])> = obj
+                                    .get()
+                                    .properties()
+                                    .iter()
+                                    .filter_map(|p| Some((p.key.slice(), p.value.as_str()?)))
+                                    .collect();
+                                match entries.as_slice() {
+                                    [] => {}
+                                    [(bin_name, value)] => {
                                         package_version.bin = Bin {
                                             tag: bin::Tag::NamedFile,
                                             _padding_tag: [0; 3],
@@ -2456,9 +2455,9 @@ impl PackageManifest {
                                             ]),
                                         };
                                     }
-                                    _ => {
+                                    entries => {
                                         let group_start = extern_strings_bin_entries_cursor;
-                                        let group_len = bin_props.len() * 2;
+                                        let group_len = entries.len() * 2;
 
                                         let mut is_identical = match &prev_extern_bin_group {
                                             Some(r) => r.len() == group_len,
@@ -2472,36 +2471,8 @@ impl PackageManifest {
                                         // indexing at `group_start + group_i` works — no
                                         // `from_raw_parts`/`.add()` needed, and the `prev` read
                                         // at a disjoint index needs no split.
-                                        for bin_prop in bin_props {
-                                            let k = bin_prop.key.slice();
-                                            let cur = string_builder.append::<ExternalString>(k);
-                                            all_extern_strings_bin_entries
-                                                [group_start + group_i as usize] = cur;
-                                            if is_identical {
-                                                let prev = prev_extern_bin_group.as_ref().unwrap();
-                                                let prev_item = all_extern_strings_bin_entries
-                                                    [prev.start + group_i as usize];
-                                                is_identical = cur.hash == prev_item.hash;
-                                                if cfg!(debug_assertions) && is_identical {
-                                                    let first =
-                                                        cur.slice(string_builder.allocated_slice());
-                                                    let second = prev_item
-                                                        .slice(string_builder.allocated_slice());
-                                                    if !strings::eql_long(first, second, true) {
-                                                        Output::panic(format_args!(
-                                                            "Bin group is not identical: {} != {}",
-                                                            bstr::BStr::new(first),
-                                                            bstr::BStr::new(second),
-                                                        ));
-                                                    }
-                                                }
-                                            }
-                                            group_i += 1;
-
-                                            let Some(v) = bin_prop.value.as_str() else {
-                                                break 'bin;
-                                            };
-                                            let cur = string_builder.append::<ExternalString>(v);
+                                        for s in entries.iter().flat_map(|(k, v)| [*k, *v]) {
+                                            let cur = string_builder.append::<ExternalString>(s);
                                             all_extern_strings_bin_entries
                                                 [group_start + group_i as usize] = cur;
                                             if is_identical {

@@ -34,17 +34,39 @@ pub(crate) fn find_all_imported_parts_in_js_order(
         }
     }
 
-    // With code splitting the chunks share one evaluation order, so one walk lays out all of them.
-    let split_order = if this.graph.code_splitting {
-        Some(EvaluationWalk::over_all_entry_points(this, chunks))
-    } else {
-        None
-    };
+    let (plan, mut walks) = WalkPlan::new(this, chunks);
+    {
+        struct WalkCtx<'a, 'f> {
+            c: bun_ptr::ParentRef<LinkerContext<'a>, bun_ptr::Mut>,
+            plan: &'f WalkPlan,
+            chunks: &'f [Chunk],
+        }
+        let walk_ctx = WalkCtx {
+            // SAFETY: `this` is the live `&mut LinkerContext` for the link step.
+            c: unsafe {
+                bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<LinkerContext>(this))
+            },
+            plan: &plan,
+            chunks: &*chunks,
+        };
+        this.worker_pool().each_ptr(
+            walk_ctx,
+            |ctx: &WalkCtx, walk: *mut EntryWalk, _: usize| {
+                // SAFETY: `each_ptr` hands each task a distinct `*mut EntryWalk`.
+                let walk = unsafe { &mut *walk };
+                // SAFETY: the walks only read the graph.
+                let c: &LinkerContext = unsafe { &*ctx.c.as_mut_ptr() };
+                walk.run(c, ctx.plan, ctx.chunks);
+            },
+            &mut walks,
+        );
+    }
+    let order = WalkOrder::collect(this, chunks.len(), walks);
 
     struct Ctx<'a, 'f> {
         inner: crate::linker_context_mod::GenerateChunkCtx<'a>,
         chunk_of_file: &'f [u32],
-        split_order: Option<&'f SplitOrder>,
+        order: &'f WalkOrder,
     }
 
     // One chunk per task. Each task writes only its own `Chunk` and, for
@@ -60,7 +82,7 @@ pub(crate) fn find_all_imported_parts_in_js_order(
             chunks: bun_ptr::BackRef::new(&*chunks),
         },
         chunk_of_file: &chunk_of_file,
-        split_order: split_order.as_ref(),
+        order: &order,
     };
     let chunks_len = chunks.len();
     this.worker_pool().each_ptr(
@@ -78,7 +100,7 @@ pub(crate) fn find_all_imported_parts_in_js_order(
                 chunk,
                 u32::try_from(index).expect("int cast"),
                 ctx.chunk_of_file,
-                ctx.split_order,
+                ctx.order,
                 chunks_len,
             ));
         },
@@ -99,20 +121,12 @@ pub(crate) fn find_imported_parts_in_js_order(
     chunk: &mut Chunk,
     chunk_index: u32,
     chunk_of_file: &[u32],
-    split_order: Option<&SplitOrder>,
+    order: &WalkOrder,
     chunks_len: usize,
 ) -> Result<(), bun_alloc::AllocError> {
     let flags = this.graph.meta.items_flags();
 
-    // Without code splitting each entry point keeps its own module order: walk from this one.
-    let own_runs: Vec<PartRun>;
-    let runs: &[PartRun] = match split_order {
-        Some(order) => &order.runs_of_chunk[chunk_index as usize],
-        None => {
-            own_runs = EvaluationWalk::from_entry_point(this, chunk.entry_point);
-            &own_runs
-        }
-    };
+    let runs: &[PartRun] = &order.runs_of_chunk[chunk_index as usize];
 
     let mut layout = ChunkLayout {
         c: this,
@@ -153,11 +167,10 @@ pub(crate) fn find_imported_parts_in_js_order(
     parts_in_chunk_order.extend_from_slice(&parts_prefix);
     parts_in_chunk_order.extend_from_slice(&part_ranges);
 
-    let reached_chunks = match split_order {
-        Some(order) => {
-            reached_chunks_in_order(this, chunk, chunk_index, chunk_of_file, order, chunks_len)?
-        }
-        None => Vec::new(),
+    let reached_chunks = if this.graph.code_splitting {
+        reached_chunks_in_order(this, chunk, chunk_index, chunk_of_file, order, chunks_len)?
+    } else {
+        Vec::new()
     };
 
     match &mut chunk.content {
@@ -182,243 +195,336 @@ struct PartRun {
     end: u32,
 }
 
-/// What `EvaluationWalk::over_all_entry_points` recorded.
-pub(crate) struct SplitOrder {
+/// What the walks recorded.
+pub(crate) struct WalkOrder {
     runs_of_chunk: Vec<Vec<PartRun>>,
-    /// Per file: when a walk placed it (`u32::MAX`: never).
+    /// With code splitting, per file: when its walk entered it (`u32::MAX`: never).
     entered: Vec<u32>,
 }
 
-#[derive(Clone, Copy)]
-enum WalkFrame {
-    Enter {
-        source_index: IndexInt,
-        entry_id: u32,
-    },
-    /// `Enter` for a split `require()` that runs at load, unless a walk of the chunk of `entry_id` has started.
-    EnterChunk {
-        source_index: IndexInt,
-        entry_id: u32,
-    },
-    /// The chunk of `entry_id` loads on demand: it joins `on_demand`, unless a walk of it has started.
-    Later { entry_id: u32 },
-    /// The walk is past what `run` waits for: `run` goes at the end of `lists[list]`.
-    Place { run: PartRun, list: u32 },
-    /// The class-name object of a CSS file goes at the end of `lists[list]`, unless the list has it.
-    PlaceCss { source_index: IndexInt, list: u32 },
-}
-
-/// The files a walk visited: one walk without code splitting, a stamp per walk with it.
-enum Seen {
-    Once(AutoBitSet),
-    Stamps(Vec<u32>),
-}
-
-impl Seen {
-    fn has(&self, source_index: IndexInt, stamp: u32) -> bool {
-        match self {
-            Seen::Once(files) => files.is_set(source_index as usize),
-            Seen::Stamps(stamps) => stamps[source_index as usize] == stamp,
-        }
-    }
-
-    /// False when the walk visited the file before.
-    fn add(&mut self, source_index: IndexInt, stamp: u32) -> bool {
-        match self {
-            Seen::Once(files) => {
-                let is_new = !files.is_set(source_index as usize);
-                files.set(source_index as usize);
-                is_new
+impl WalkOrder {
+    fn collect(c: &LinkerContext, chunks_len: usize, walks: Vec<EntryWalk>) -> WalkOrder {
+        let mut order = WalkOrder {
+            runs_of_chunk: vec![Vec::new(); chunks_len],
+            entered: vec![u32::MAX; c.graph.files.len()],
+        };
+        for walk in walks {
+            for (&chunk_index, runs) in walk.chunks.iter().zip(walk.runs) {
+                order.runs_of_chunk[chunk_index as usize] = runs;
             }
-            Seen::Stamps(stamps) => {
-                core::mem::replace(&mut stamps[source_index as usize], stamp) != stamp
+            for (tick, &source_index) in walk.entered.iter().enumerate() {
+                order.entered[source_index as usize] = tick as u32;
             }
         }
+        order
     }
 }
 
-/// Depth first along every `import` statement, also through dropped files; places what its entry point loads.
-struct EvaluationWalk<'a, 'ctx> {
-    c: &'a LinkerContext<'ctx>,
-    stack: Vec<WalkFrame>,
-    /// The stamp of a walk is 1 + its entry point id.
-    seen: Seen,
-    /// The runs placed so far: one list per chunk with code splitting, else one list.
-    lists: Vec<Vec<PartRun>>,
-    /// `list << 32 | file`. A CSS file is in no JS chunk: its class-name object prints in each chunk that imports it.
-    css_placed: HashMap<u64, ()>,
-    split: Option<SplitWalk>,
-}
-
-/// With code splitting a file is in one chunk. The first walk whose entry point loads it places it.
-struct SplitWalk {
-    /// Per file: the JS chunk that holds it (`u32::MAX`: none).
-    list_of_file: Vec<u32>,
-    entered: Vec<u32>,
-    next_tick: u32,
-    /// The entry point id of each entry point's file, `u32::MAX` for the others.
+/// Which walk lays out which chunk. A chunk has one owner, so the walks share nothing they write.
+struct WalkPlan {
+    code_splitting: bool,
+    /// With code splitting, per file: the JS chunk that holds it (`u32::MAX`: none).
+    chunk_of_file: Vec<u32>,
+    /// Per chunk: the entry point id of the walk that lays it out (`u32::MAX`: not a JS chunk).
+    owner_of_chunk: Vec<u32>,
+    /// Per chunk: its index in `EntryWalk::runs` of its owner.
+    slot_of_chunk: Vec<u32>,
+    /// With code splitting: the entry point id of each entry point's file, `u32::MAX` for the others.
     entry_id_of_file: Vec<u32>,
-    /// Per entry point id: its walk has started.
-    walked: Vec<bool>,
-    /// Per entry point id: it is in `on_demand`.
+}
+
+impl WalkPlan {
+    fn new(c: &LinkerContext, chunks: &[Chunk]) -> (WalkPlan, Vec<EntryWalk>) {
+        let files_len = c.graph.files.len();
+        let entry_points = c.graph.entry_points.items_source_index();
+        let code_splitting = c.graph.code_splitting;
+        let mut plan = WalkPlan {
+            code_splitting,
+            chunk_of_file: Vec::new(),
+            owner_of_chunk: vec![u32::MAX; chunks.len()],
+            slot_of_chunk: vec![0; chunks.len()],
+            entry_id_of_file: Vec::new(),
+        };
+
+        if code_splitting {
+            // A file is in the chunk that has its entry bits as key, also when it prints nothing there.
+            let file_entry_bits = c.graph.files.items_entry_bits();
+            let css = c.graph.ast.items_css();
+            let mut chunk_of_key: StringHashMap<u32> = StringHashMap::default();
+            for (chunk_index, chunk) in chunks.iter().enumerate() {
+                if matches!(chunk.content, chunk::Content::Javascript(_)) {
+                    bun_core::handle_oom(chunk_of_key.put(
+                        chunk.entry_bits().bytes(entry_points.len()),
+                        chunk_index as u32,
+                    ));
+                }
+            }
+            plan.chunk_of_file = vec![u32::MAX; files_len];
+            for source_index in c.graph.reachable_files.iter() {
+                let file = source_index.get() as usize;
+                if c.graph.files_live.is_set(file)
+                    && css[file].is_none()
+                    && let Some(&chunk_index) =
+                        chunk_of_key.get(file_entry_bits[file].bytes(entry_points.len()))
+                {
+                    plan.chunk_of_file[file] = chunk_index;
+                }
+            }
+        }
+
+        // The entry point that loads first among the chunk's entry points owns the chunk.
+        let mut rank = Vec::new();
+        if code_splitting {
+            plan.entry_id_of_file = vec![u32::MAX; files_len];
+            for (entry_id, &source_index) in entry_points.iter().enumerate() {
+                let slot = &mut plan.entry_id_of_file[source_index as usize];
+                if *slot == u32::MAX {
+                    *slot = entry_id as u32;
+                }
+            }
+            rank = LoadOrder::rank(c, &plan.entry_id_of_file);
+        }
+        let mut walk_of_entry = vec![u32::MAX; entry_points.len()];
+        let mut walks: Vec<EntryWalk> = Vec::new();
+        for (chunk_index, chunk) in chunks.iter().enumerate() {
+            if !matches!(chunk.content, chunk::Content::Javascript(_)) {
+                continue;
+            }
+            let owner = if code_splitting {
+                let mut bits = chunk.entry_bits().iterator::<true, true>();
+                let mut owner = u32::MAX;
+                while let Some(entry_id) = bits.next() {
+                    if owner == u32::MAX || rank[entry_id] < rank[owner as usize] {
+                        owner = entry_id as u32;
+                    }
+                }
+                owner
+            } else {
+                chunk.entry_point.entry_point_id()
+            };
+            if owner == u32::MAX {
+                continue;
+            }
+            let walk_index = &mut walk_of_entry[owner as usize];
+            if *walk_index == u32::MAX {
+                *walk_index = walks.len() as u32;
+                walks.push(EntryWalk {
+                    entry_id: owner,
+                    root: entry_points[owner as usize],
+                    chunks: Vec::new(),
+                    runs: Vec::new(),
+                    entered: Vec::new(),
+                });
+            }
+            let walk = &mut walks[*walk_index as usize];
+            plan.owner_of_chunk[chunk_index] = owner;
+            plan.slot_of_chunk[chunk_index] = walk.chunks.len() as u32;
+            walk.chunks.push(chunk_index as u32);
+            walk.runs.push(Vec::new());
+        }
+        (plan, walks)
+    }
+}
+
+/// The order the entry points load in: the user's, then the on-demand ones as evaluation meets them, then the rest.
+struct LoadOrder<'a, 'ctx> {
+    c: &'a LinkerContext<'ctx>,
+    visited: AutoBitSet,
+    entry_id_of_file: &'a [u32],
+    rank: Vec<u32>,
+    next_rank: u32,
     queued: Vec<bool>,
-    /// Entry point ids of the chunks that load on demand, in the order the walks met them.
     on_demand: Vec<u32>,
 }
 
-impl<'a, 'ctx> EvaluationWalk<'a, 'ctx> {
-    fn new(c: &'a LinkerContext<'ctx>, lists: usize, split: Option<SplitWalk>) -> Self {
-        EvaluationWalk {
-            c,
-            stack: Vec::new(),
-            seen: match split {
-                Some(_) => Seen::Stamps(vec![0; c.graph.files.len()]),
-                None => Seen::Once(bun_core::handle_oom(AutoBitSet::init_empty(
-                    c.graph.files.len(),
-                ))),
-            },
-            lists: vec![Vec::new(); lists],
-            css_placed: HashMap::default(),
-            split,
-        }
-    }
+#[derive(Clone, Copy)]
+enum LoadFrame {
+    Enter(IndexInt),
+    /// A split `require()` that runs at load: the entry point loads here.
+    Load(u32),
+    Later(u32),
+}
 
-    /// Without code splitting: the runs of the chunk of `entry_point`.
-    fn from_entry_point(
-        c: &'a LinkerContext<'ctx>,
-        entry_point: chunk::EntryPoint,
-    ) -> Vec<PartRun> {
-        let mut walk = Self::new(c, 1, None);
-        walk.walk(entry_point.entry_point_id(), entry_point.source_index());
-        walk.lists.pop().unwrap_or_default()
-    }
-
-    /// With code splitting. Load order: the user's entry points, then on-demand chunks as met, then the rest.
-    fn over_all_entry_points(c: &'a LinkerContext<'ctx>, chunks: &[Chunk]) -> SplitOrder {
+impl<'a, 'ctx> LoadOrder<'a, 'ctx> {
+    fn rank(c: &'a LinkerContext<'ctx>, entry_id_of_file: &'a [u32]) -> Vec<u32> {
         let files_len = c.graph.files.len();
         let entry_points = c.graph.entry_points.items_source_index();
         let entry_point_kinds = c.graph.files.items_entry_point_kind();
-
-        // A file is in the chunk that has its entry bits as key, also when it prints nothing there.
-        let file_entry_bits = c.graph.files.items_entry_bits();
-        let css = c.graph.ast.items_css();
-        let mut chunk_of_key: StringHashMap<u32> = StringHashMap::default();
-        for (chunk_index, chunk) in chunks.iter().enumerate() {
-            if matches!(chunk.content, chunk::Content::Javascript(_)) {
-                bun_core::handle_oom(chunk_of_key.put(
-                    chunk.entry_bits().bytes(entry_points.len()),
-                    chunk_index as u32,
-                ));
-            }
-        }
-        let mut list_of_file = vec![u32::MAX; files_len];
-        for source_index in c.graph.reachable_files.iter() {
-            let file = source_index.get() as usize;
-            if c.graph.files_live.is_set(file)
-                && css[file].is_none()
-                && let Some(&chunk_index) =
-                    chunk_of_key.get(file_entry_bits[file].bytes(entry_points.len()))
-            {
-                list_of_file[file] = chunk_index;
-            }
-        }
-        let mut entry_id_of_file = vec![u32::MAX; files_len];
-        for (entry_id, &source_index) in entry_points.iter().enumerate() {
-            let slot = &mut entry_id_of_file[source_index as usize];
-            if *slot == u32::MAX {
-                *slot = entry_id as u32;
-            }
-        }
-
-        let mut walk = Self::new(
+        let mut this = LoadOrder {
             c,
-            chunks.len(),
-            Some(SplitWalk {
-                list_of_file,
-                entered: vec![u32::MAX; files_len],
-                next_tick: 0,
-                entry_id_of_file,
-                walked: vec![false; entry_points.len()],
-                queued: vec![false; entry_points.len()],
-                on_demand: Vec::new(),
-            }),
-        );
+            visited: bun_core::handle_oom(AutoBitSet::init_empty(files_len)),
+            entry_id_of_file,
+            rank: vec![u32::MAX; entry_points.len()],
+            next_rank: 0,
+            queued: vec![false; entry_points.len()],
+            on_demand: Vec::new(),
+        };
+        let mut stack: Vec<LoadFrame> = Vec::new();
         for (entry_id, &source_index) in entry_points.iter().enumerate() {
             if entry_point_kinds[source_index as usize] != EntryPoint::Kind::DynamicImport {
-                walk.walk_entry_point(entry_id as u32, source_index);
+                this.load(&mut stack, entry_id as u32);
             }
         }
         let (mut met, mut unmet) = (0, 0);
         loop {
-            let split = walk.split.as_ref().expect("set above");
-            if let Some(&entry_id) = split.on_demand.get(met) {
+            if let Some(&entry_id) = this.on_demand.get(met) {
                 met += 1;
-                walk.walk_entry_point(entry_id, entry_points[entry_id as usize]);
+                this.load(&mut stack, entry_id);
                 continue;
             }
-            while unmet < entry_points.len() && split.walked[unmet] {
+            while unmet < entry_points.len() && this.rank[unmet] != u32::MAX {
                 unmet += 1;
             }
             if unmet == entry_points.len() {
                 break;
             }
-            walk.walk_entry_point(unmet as u32, entry_points[unmet]);
+            this.load(&mut stack, unmet as u32);
         }
+        this.rank
+    }
 
-        // Chunk folding can move a file into a chunk whose entry points do not import it. It goes last there.
-        let runtime = Index::RUNTIME.value();
-        for chunk in chunks {
-            if !matches!(chunk.content, chunk::Content::Javascript(_)) {
+    fn load(&mut self, stack: &mut Vec<LoadFrame>, entry_id: u32) {
+        if self.rank[entry_id as usize] != u32::MAX {
+            return;
+        }
+        let c = self.c;
+        let css = c.graph.ast.items_css();
+        let loaders = c.parse_graph().input_files.items_loader();
+        let parts = c.graph.ast.items_parts();
+        let import_records = c.graph.ast.items_import_records();
+
+        debug_assert!(stack.is_empty());
+        let entry_points = c.graph.entry_points.items_source_index();
+        stack.push(LoadFrame::Load(entry_id));
+        while let Some(frame) = stack.pop() {
+            let source_index = match frame {
+                LoadFrame::Load(entry_id) => {
+                    if self.rank[entry_id as usize] == u32::MAX {
+                        self.rank[entry_id as usize] = self.next_rank;
+                        self.next_rank += 1;
+                    }
+                    entry_points[entry_id as usize]
+                }
+                LoadFrame::Later(entry_id) => {
+                    if self.rank[entry_id as usize] == u32::MAX
+                        && !core::mem::replace(&mut self.queued[entry_id as usize], true)
+                    {
+                        self.on_demand.push(entry_id);
+                    }
+                    continue;
+                }
+                LoadFrame::Enter(source_index) => source_index,
+            };
+            if source_index == Index::RUNTIME.value() || self.visited.is_set(source_index as usize)
+            {
                 continue;
             }
-            for &source_index in chunk.files_with_parts_in_chunk.keys() {
-                let split = walk.split.as_ref().expect("set above");
-                if source_index != runtime
-                    && split.entered[source_index as usize] == u32::MAX
-                    && let Some(entry_id) = file_entry_bits[source_index as usize].find_first_set()
-                {
-                    walk.walk(entry_id as u32, source_index);
-                }
-            }
-        }
+            self.visited.set(source_index as usize);
 
-        let EvaluationWalk { lists, split, .. } = walk;
-        let entered = split.expect("set above").entered;
-        if cfg!(debug_assertions) {
-            for chunk in chunks {
-                if matches!(chunk.content, chunk::Content::Javascript(_)) {
-                    for &source_index in chunk.files_with_parts_in_chunk.keys() {
-                        debug_assert!(
-                            source_index == runtime || entered[source_index as usize] != u32::MAX,
-                            "no walk placed file {source_index}"
-                        );
+            let mark = stack.len();
+            let records = import_records[source_index as usize].as_slice();
+            if css[source_index as usize].is_some()
+                || loaders[source_index as usize] == Loader::Html
+            {
+                for record in records {
+                    if record.source_index.is_valid() {
+                        stack.push(LoadFrame::Enter(record.source_index.get()));
+                    }
+                }
+            } else {
+                let is_live = c.graph.files_live.is_set(source_index as usize);
+                let parts_live = &c.graph.parts_live[source_index as usize];
+                for (part_index, part) in parts[source_index as usize].as_slice().iter().enumerate()
+                {
+                    let runs = is_live && parts_live.is_set(part_index);
+                    for &record_id in part.import_record_indices.slice() {
+                        let record: &ImportRecord = &records[record_id as usize];
+                        if !record.source_index.is_valid()
+                            || !(record.kind == ImportKind::Stmt || runs)
+                        {
+                            continue;
+                        }
+                        let other = record.source_index.get();
+                        stack.push(if !c.is_external_dynamic_import(record, source_index) {
+                            LoadFrame::Enter(other)
+                        } else if record.kind == ImportKind::Require
+                            && !part_has_no_side_effects(part)
+                        {
+                            LoadFrame::Load(self.entry_id_of_file[other as usize])
+                        } else {
+                            LoadFrame::Later(self.entry_id_of_file[other as usize])
+                        });
+                    }
+                    if runs {
+                        for dependency in part.dependencies.iter() {
+                            stack.push(LoadFrame::Enter(dependency.source_index.get()));
+                        }
                     }
                 }
             }
+            stack[mark..].reverse();
         }
-        SplitOrder {
-            runs_of_chunk: lists,
-            entered,
+    }
+}
+
+#[derive(Clone, Copy)]
+enum WalkFrame {
+    /// `loader`: the entry point whose load runs the file. A split `require()` that runs at load changes it.
+    Enter { source_index: IndexInt, loader: u32 },
+    /// The walk is past what `run` waits for: `run` goes at the end of `runs[slot]`.
+    Place { run: PartRun, slot: u32 },
+    /// The class-name object of a CSS file goes at the end of `runs[slot]`, unless the list has it.
+    PlaceCss { source_index: IndexInt, slot: u32 },
+}
+
+/// One walk from an entry point. It lays out the chunks that the entry point owns.
+struct EntryWalk {
+    entry_id: u32,
+    root: IndexInt,
+    chunks: Vec<u32>,
+    /// Per owned chunk: the runs placed so far.
+    runs: Vec<Vec<PartRun>>,
+    /// With code splitting: the files placed, in the order the walk entered them.
+    entered: Vec<IndexInt>,
+}
+
+impl EntryWalk {
+    fn run(&mut self, c: &LinkerContext, plan: &WalkPlan, chunks: &[Chunk]) {
+        let mut seen = bun_core::handle_oom(AutoBitSet::init_empty(c.graph.files.len()));
+        let mut stack: Vec<WalkFrame> = Vec::new();
+        let mut css_placed: HashMap<u64, ()> = HashMap::default();
+        self.walk(c, plan, &mut seen, &mut stack, &mut css_placed, self.root);
+
+        // Chunk folding can move a file into a chunk whose entry points do not import it. It goes last there.
+        let runtime = Index::RUNTIME.value();
+        for slot in 0..self.chunks.len() {
+            let chunk = &chunks[self.chunks[slot] as usize];
+            for &source_index in chunk.files_with_parts_in_chunk.keys() {
+                if source_index != runtime && !seen.is_set(source_index as usize) {
+                    self.walk(
+                        c,
+                        plan,
+                        &mut seen,
+                        &mut stack,
+                        &mut css_placed,
+                        source_index,
+                    );
+                }
+            }
         }
     }
 
-    fn walk_entry_point(&mut self, entry_id: u32, root: IndexInt) {
-        let walked = &mut self.split.as_mut().expect("code splitting").walked;
-        if !core::mem::replace(&mut walked[entry_id as usize], true) {
-            self.walk(entry_id, root);
-        }
-    }
-
-    fn walk(&mut self, entry_id: u32, root: IndexInt) {
-        let Self {
-            c,
-            stack,
-            seen,
-            lists,
-            css_placed,
-            split,
-        } = self;
-        let c: &LinkerContext = c;
+    /// Depth first along every `import` statement, also through dropped files; places the files of the owned chunks.
+    fn walk(
+        &mut self,
+        c: &LinkerContext,
+        plan: &WalkPlan,
+        seen: &mut AutoBitSet,
+        stack: &mut Vec<WalkFrame>,
+        css_placed: &mut HashMap<u64, ()>,
+        root: IndexInt,
+    ) {
+        let entry_id = self.entry_id;
         let files_live = &c.graph.files_live;
         let entry_bits = c.graph.files.items_entry_bits();
         let flags = c.graph.meta.items_flags();
@@ -426,26 +532,38 @@ impl<'a, 'ctx> EvaluationWalk<'a, 'ctx> {
         let loaders = c.parse_graph().input_files.items_loader();
         let parts = c.graph.ast.items_parts();
         let import_records = c.graph.ast.items_import_records();
-        let loads = |source_index: IndexInt, entry_id: u32| {
+        let loads = |source_index: IndexInt, loader: u32| {
             files_live.is_set(source_index as usize)
-                && entry_bits[source_index as usize].is_set(entry_id as usize)
+                && entry_bits[source_index as usize].is_set(loader as usize)
+        };
+        // The slot of the owned chunk that holds the file.
+        let slot_of = |source_index: IndexInt| -> Option<u32> {
+            if !plan.code_splitting {
+                return loads(source_index, entry_id).then_some(0);
+            }
+            if !files_live.is_set(source_index as usize) {
+                return None;
+            }
+            let chunk_index = plan.chunk_of_file[source_index as usize];
+            (chunk_index != u32::MAX && plan.owner_of_chunk[chunk_index as usize] == entry_id)
+                .then(|| plan.slot_of_chunk[chunk_index as usize])
         };
 
         debug_assert!(stack.is_empty());
         stack.push(WalkFrame::Enter {
             source_index: root,
-            entry_id,
+            loader: entry_id,
         });
         while let Some(frame) = stack.pop() {
-            let (source_index, entry_id) = match frame {
-                WalkFrame::Place { run, list } => {
-                    lists[list as usize].push(run);
+            let (source_index, loader) = match frame {
+                WalkFrame::Place { run, slot } => {
+                    self.runs[slot as usize].push(run);
                     continue;
                 }
-                WalkFrame::PlaceCss { source_index, list } => {
-                    let key = u64::from(list) << 32 | u64::from(source_index);
+                WalkFrame::PlaceCss { source_index, slot } => {
+                    let key = u64::from(slot) << 32 | u64::from(source_index);
                     if !bun_core::handle_oom(css_placed.get_or_put(key)).found_existing {
-                        lists[list as usize].push(PartRun {
+                        self.runs[slot as usize].push(PartRun {
                             source_index,
                             begin: 0,
                             end: u32::MAX,
@@ -453,83 +571,46 @@ impl<'a, 'ctx> EvaluationWalk<'a, 'ctx> {
                     }
                     continue;
                 }
-                WalkFrame::Later { entry_id } => {
-                    let split = split.as_mut().expect("code splitting");
-                    if !split.walked[entry_id as usize]
-                        && !core::mem::replace(&mut split.queued[entry_id as usize], true)
-                    {
-                        split.on_demand.push(entry_id);
-                    }
-                    continue;
-                }
-                WalkFrame::EnterChunk {
-                    source_index,
-                    entry_id,
-                } => {
-                    let split = split.as_mut().expect("code splitting");
-                    if core::mem::replace(&mut split.walked[entry_id as usize], true) {
-                        continue;
-                    }
-                    (source_index, entry_id)
-                }
                 WalkFrame::Enter {
                     source_index,
-                    entry_id,
-                } => (source_index, entry_id),
+                    loader,
+                } => (source_index, loader),
             };
-            let stamp = entry_id + 1;
-            if !seen.add(source_index, stamp) {
+            if seen.is_set(source_index as usize) {
                 continue;
             }
-            // An earlier walk placed this file and walked what it imports.
-            if let Some(split) = split.as_ref()
-                && split.entered[source_index as usize] != u32::MAX
-            {
-                continue;
-            }
+            seen.set(source_index as usize);
 
-            // The walk places a file that its entry point loads. It goes through the others.
-            let mut list: Option<u32> = None;
-            if loads(source_index, entry_id) {
-                list = match split.as_mut() {
-                    None => Some(0),
-                    Some(split) => {
-                        split.entered[source_index as usize] = split.next_tick;
-                        split.next_tick += 1;
-                        Some(split.list_of_file[source_index as usize])
-                            .filter(|&list| list != u32::MAX)
-                    }
-                };
+            // The walk places a file of a chunk it owns. It goes through the others.
+            let slot = slot_of(source_index);
+            if slot.is_some() && plan.code_splitting {
+                self.entered.push(source_index);
             }
+            // The parts of a file run when the walk places it, or when its loader loads it into another chunk.
+            let runs = slot.is_some() || loads(source_index, loader);
             // Wrapped files can't be split because they are all inside the wrapper
-            let splits = list.is_some() && flags[source_index as usize].wrap == Wrap::None;
+            let splits = slot.is_some() && flags[source_index as usize].wrap == Wrap::None;
             let mut begin = 0;
             let mark = stack.len();
 
             // The parts ahead of the one that imports `other` print before `other` does.
-            let mut import = |part_index: u32, other: IndexInt, other_entry: u32, later: bool| {
-                if later {
-                    stack.push(WalkFrame::Later {
-                        entry_id: other_entry,
-                    });
-                    return;
-                }
-                if other == Index::RUNTIME.value() || seen.has(other, other_entry + 1) {
+            let mut import = |part_index: u32, other: IndexInt, loader: u32| {
+                if other == Index::RUNTIME.value() || seen.is_set(other as usize) {
                     return;
                 }
                 let is_css = css[other as usize].is_some();
                 if is_css {
-                    let Some(list) = list else { return };
-                    if !loads(other, entry_id) {
+                    let Some(slot) = slot else { return };
+                    if !loads(other, loader) {
                         return;
                     }
-                    let key = u64::from(list) << 32 | u64::from(other);
+                    let key = u64::from(slot) << 32 | u64::from(other);
                     if css_placed.contains(&key) {
                         return;
                     }
                 }
                 let end = part_index.max(bun_ast::NAMESPACE_EXPORT_PART_INDEX + 1);
-                if let Some(list) = list
+                if let Some(slot) = slot
                     && splits
                     && end > begin
                 {
@@ -539,22 +620,18 @@ impl<'a, 'ctx> EvaluationWalk<'a, 'ctx> {
                             begin,
                             end,
                         },
-                        list,
+                        slot,
                     });
                     begin = end;
                 }
-                stack.push(match list {
-                    Some(list) if is_css => WalkFrame::PlaceCss {
+                stack.push(match slot {
+                    Some(slot) if is_css => WalkFrame::PlaceCss {
                         source_index: other,
-                        list,
-                    },
-                    _ if other_entry != entry_id => WalkFrame::EnterChunk {
-                        source_index: other,
-                        entry_id: other_entry,
+                        slot,
                     },
                     _ => WalkFrame::Enter {
                         source_index: other,
-                        entry_id: other_entry,
+                        loader,
                     },
                 });
             };
@@ -566,14 +643,14 @@ impl<'a, 'ctx> EvaluationWalk<'a, 'ctx> {
                 // A CSS or HTML file has no parts; every record counts.
                 for record in records {
                     if record.source_index.is_valid() {
-                        import(0, record.source_index.get(), entry_id, false);
+                        import(0, record.source_index.get(), loader);
                     }
                 }
             } else {
                 let parts_live = &c.graph.parts_live[source_index as usize];
                 for (part_index, part) in parts[source_index as usize].as_slice().iter().enumerate()
                 {
-                    let runs_here = list.is_some() && parts_live.is_set(part_index);
+                    let runs_here = runs && parts_live.is_set(part_index);
                     let part_index = part_index as u32;
                     for &record_id in part.import_record_indices.slice() {
                         let record: &ImportRecord = &records[record_id as usize];
@@ -584,24 +661,18 @@ impl<'a, 'ctx> EvaluationWalk<'a, 'ctx> {
                         }
                         let other = record.source_index.get();
                         if !c.is_external_dynamic_import(record, source_index) {
-                            import(part_index, other, entry_id, false);
-                            continue;
-                        }
-                        let Some(split) = split.as_ref() else {
-                            continue;
-                        };
-                        let other_entry = split.entry_id_of_file[other as usize];
-                        if !split.walked[other_entry as usize] {
-                            // A `require()` in a part that runs at load walks the chunk here, from its own entry point.
-                            let runs_at_load = record.kind == ImportKind::Require
-                                && !part_has_no_side_effects(part);
-                            import(part_index, other, other_entry, !runs_at_load);
+                            import(part_index, other, loader);
+                        } else if record.kind == ImportKind::Require
+                            && !part_has_no_side_effects(part)
+                        {
+                            // A split `require()` in a part that runs at load runs its chunk here.
+                            import(part_index, other, plan.entry_id_of_file[other as usize]);
                         }
                     }
                     // A file that the `import` statements did not reach: ahead of the part that uses it.
                     if runs_here && part_index != bun_ast::NAMESPACE_EXPORT_PART_INDEX {
                         for dependency in part.dependencies.iter() {
-                            import(part_index, dependency.source_index.get(), entry_id, false);
+                            import(part_index, dependency.source_index.get(), loader);
                         }
                     }
                 }
@@ -609,28 +680,23 @@ impl<'a, 'ctx> EvaluationWalk<'a, 'ctx> {
                 let file_parts = parts[source_index as usize].as_slice();
                 if let Some(namespace_export) =
                     file_parts.get(bun_ast::NAMESPACE_EXPORT_PART_INDEX as usize)
-                    && list.is_some()
+                    && runs
                     && parts_live.is_set(bun_ast::NAMESPACE_EXPORT_PART_INDEX as usize)
                 {
                     let after_all_parts = file_parts.len() as u32;
                     for dependency in namespace_export.dependencies.iter() {
-                        import(
-                            after_all_parts,
-                            dependency.source_index.get(),
-                            entry_id,
-                            false,
-                        );
+                        import(after_all_parts, dependency.source_index.get(), loader);
                     }
                 }
             }
-            if let Some(list) = list {
+            if let Some(slot) = slot {
                 stack.push(WalkFrame::Place {
                     run: PartRun {
                         source_index,
                         begin,
                         end: u32::MAX,
                     },
-                    list,
+                    slot,
                 });
             }
             stack[mark..].reverse();
@@ -759,7 +825,7 @@ fn reached_chunks_in_order(
     chunk: &Chunk,
     chunk_index: u32,
     chunk_of_file: &[u32],
-    order: &SplitOrder,
+    order: &WalkOrder,
     chunks_len: usize,
 ) -> Result<Vec<u32>, bun_alloc::AllocError> {
     #[derive(Copy, Clone)]

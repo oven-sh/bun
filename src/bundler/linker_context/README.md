@@ -761,8 +761,8 @@ The renamed symbols are then used during final code generation to produce output
 
 **Key functions**:
 
-- Walks the import graph in evaluation order (`EvaluationWalk`): depth first along every `import` statement, also through files that tree shaking dropped, so a file prints after the files it imports. A walk places the files that its entry point loads (`entry_bits`)
-- With code splitting, one pass walks from every entry point in load order and gives each chunk its files in that order. The first walk whose entry point loads a file places it. Without code splitting, each chunk walks from its own entry point
+- Walks the import graph in evaluation order (`EntryWalk`): depth first along every `import` statement, also through files that tree shaking dropped, so a file prints after the files it imports
+- One walk per entry point, in parallel. A chunk has one owner: the entry point that loads first among the chunk's entry points (`LoadOrder`). The owner's walk places the files of the chunk, so no two walks write the same list. Without code splitting, each chunk is owned by its own entry point
 - Places the parts of a file in runs: a part prints after the files it imports and before the files that the next part imports
 - Collects the live parts of each run into part ranges
 - Records the other chunks in the order a walk from the chunk's files reaches their first file with side effects (`reached_chunks_in_order`), which orders the chunk's cross-chunk `import` statements

@@ -1026,7 +1026,7 @@ pub fn create_entry_file(dir: Fd, path: &ZStr, mode: bun_sys::Mode) -> bun_sys::
     match bun_sys::openat(dir, path, flags, mode) {
         Err(err) if err.get_errno() == bun_sys::E::EEXIST => match bun_sys::unlinkat(dir, path) {
             Ok(()) => bun_sys::openat(dir, path, flags, mode),
-            Err(unlink_err) => truncate_entry_file(dir, path, unlink_err),
+            Err(unlink_err) => truncate_entry_file(dir, path, mode, unlink_err),
         },
         result => result,
     }
@@ -1034,8 +1034,17 @@ pub fn create_entry_file(dir: Fd, path: &ZStr, mode: bun_sys::Mode) -> bun_sys::
 
 /// Truncates a file that cannot be removed, unless it is a symlink or has other names.
 #[cfg(not(windows))]
-fn truncate_entry_file(dir: Fd, path: &ZStr, unlink_err: bun_sys::Error) -> bun_sys::Maybe<Fd> {
-    let fd = bun_sys::openat(dir, path, bun_sys::O::WRONLY | bun_sys::O::NOFOLLOW, 0)?;
+fn truncate_entry_file(
+    dir: Fd,
+    path: &ZStr,
+    mode: bun_sys::Mode,
+    unlink_err: bun_sys::Error,
+) -> bun_sys::Maybe<Fd> {
+    // O_CREAT keeps the kernel's sticky directory checks (fs.protected_regular).
+    // O_NONBLOCK makes a FIFO fail with ENXIO instead of waiting for a reader.
+    let flags =
+        bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::NOFOLLOW | bun_sys::O::NONBLOCK;
+    let fd = bun_sys::openat(dir, path, flags, mode)?;
     let guard = scopeguard::guard(fd, |fd| fd.close());
     let stat = bun_sys::fstat(fd)?;
     if !bun_sys::is_regular_file(stat.st_mode as bun_sys::Mode) || stat.st_nlink != 1 {

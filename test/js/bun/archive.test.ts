@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import fs, { existsSync, readdirSync, rmSync } from "node:fs";
 import { join } from "path";
+import { mkfifo } from "mkfifo";
 
 // Minimal ustar tarball builder (pathnames must be <100 bytes). `name` accepts
 // a Buffer so tests can put raw, non-UTF-8 byte sequences into the name field.
@@ -765,6 +766,28 @@ describe("Bun.Archive", () => {
           }
         },
       );
+
+      // Opening a FIFO for writing waits for a reader. The extraction must fail instead.
+      test.skipIf(isWindows || process.getuid?.() === 0)("does not wait on a FIFO that cannot be removed", async () => {
+        using dir = tempDir("archive-replace-locked-fifo", {
+          "locked/.keep": "",
+        });
+        const locked = join(String(dir), "locked");
+        mkfifo(join(locked, "a.txt"), 0o644);
+        fs.chmodSync(locked, 0o555);
+        try {
+          const extracted = new Bun.Archive({ "locked/a.txt": "new" }).extract(String(dir), options);
+          if (options) {
+            expect(await extracted).toBe(0);
+          } else {
+            await expect(extracted).rejects.toThrow("ReadError");
+          }
+
+          expect(fs.lstatSync(join(locked, "a.txt")).isFIFO()).toBe(true);
+        } finally {
+          fs.chmodSync(locked, 0o755);
+        }
+      });
 
       test.skipIf(isWindows)("gives an existing file the mode of the entry", async () => {
         const tarball = Buffer.concat([

@@ -620,6 +620,8 @@ pub mod node {
     pub use super::Ids as DependencyIds;
 
     pub struct Node {
+        /// Only the first dependency that reached this node: `build_store` shares a
+        /// node between the dependents of a package, whatever declares them.
         pub dep_id: DependencyID,
         pub pkg_id: PackageID,
         pub parent_id: Id,

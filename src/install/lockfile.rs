@@ -905,6 +905,24 @@ impl Lockfile {
             .contains_name(dep.name_hash, dep.name.slice(buf), buf)
     }
 
+    /// May the path of folder package `id` leave the project? Yes when a trusted
+    /// dependency resolves to it. Every dependency in the lockfile counts, also one
+    /// that this install filters out (`--production`, `--filter`): the user wrote
+    /// the path either way. For the isolated linker, which links a folder package
+    /// once for all of its dependents.
+    pub(crate) fn is_trusted_folder_package(&self, id: PackageID) -> bool {
+        self.buffers
+            .resolutions
+            .iter()
+            .enumerate()
+            .any(|(dep_id, &pkg_id)| {
+                pkg_id == id
+                    && self.is_trusted_folder_dependency(
+                        DependencyID::try_from(dep_id).expect("int cast"),
+                    )
+            })
+    }
+
     /// Does this tree id belong to a workspace (including workspace root)?
     /// TODO(dylan-conway) fix!
     pub(crate) fn is_workspace_tree_id(&self, id: tree::Id) -> bool {

@@ -945,17 +945,6 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
     // meaning that changes to the folder will also change the package in the cache.
     //
     // So we will overwrite the folder by directly copying the package in cache into it
-    //
-    // With the isolated linker's global virtual store, `module_folder` is
-    // reached *through* a `node_modules/.bun/<storepath>` symlink that points
-    // into `<cache>/links/`. `deleteTree(module_folder)` would follow that
-    // symlink and wipe the shared global entry (and its dep symlinks)
-    // underneath every other project, then FileCopier would write the user's
-    // edits into the shared cache. Detach first: walk up `module_folder` to
-    // find the first symlink ancestor, replace it with a real directory, and
-    // recreate the path below it so the copy lands in a project-local tree.
-    detach_module_folder_from_shared_store(module_folder);
-
     if let Err(e) =
         overwrite_package_in_node_modules_folder(cache_dir, cache_dir_subpath, module_folder)
     {
@@ -1144,7 +1133,22 @@ fn overwrite_package_in_node_modules_folder(
     cache_dir_subpath: &[u8],
     node_modules_folder_path: &[u8],
 ) -> Result<(), crate::Error> {
-    let _ = Fd::cwd().delete_tree(node_modules_folder_path);
+    // The copy lands in a staging folder under the root node_modules and is
+    // renamed over `node_modules_folder_path` once it is complete. A copy
+    // that fails part-way (ENOSPC, an unreadable cache file, an I/O error)
+    // leaves the installed package as it was. The staging folder is not a
+    // sibling of the destination: with the isolated linker's global store
+    // the destination can be reached through a symlink into the shared
+    // cache until `detach_module_folder_from_shared_store` runs below.
+    let mut tmpname_buf = bun_paths::path_buffer_pool::get();
+    let tmpname = bun_paths::fs::FileSystem::tmpname(
+        b"patch_tmp",
+        &mut tmpname_buf[..],
+        bun_core::fast_random(),
+    )?;
+    let staging_path =
+        resolve_path::join::<platform::Posix>(&[b"node_modules", tmpname.as_bytes()]).to_vec();
+    let staging_path: &[u8] = &staging_path;
 
     // FileCopier's path fields are `.unit = .os` (u16 on Windows). `Path::from`
     // is generic over the *input* width and converts internally, so accepting
@@ -1155,7 +1159,7 @@ fn overwrite_package_in_node_modules_folder(
         bun_paths::OSPathChar,
         { bun_paths::path_options::Kind::ANY },
         { bun_paths::path_options::PathSeparators::AUTO },
-    >::from(node_modules_folder_path)
+    >::from(staging_path)
     .unwrap();
 
     let src_path: bun_paths::AbsPath<
@@ -1205,7 +1209,42 @@ fn overwrite_package_in_node_modules_folder(
         ignore_directories,
     )?;
 
-    copier.copy()?;
+    if let Err(e) = copier.copy() {
+        let _ = Fd::cwd().delete_tree(staging_path);
+        return Err(e.into());
+    }
+
+    // With the isolated linker's global virtual store, `node_modules_folder_path`
+    // is reached *through* a `node_modules/.bun/<storepath>` symlink that points
+    // into `<cache>/links/`. The rename below would replace the shared global
+    // entry (and its dep symlinks) underneath every other project. Detach
+    // first: walk up the path to find the first symlink ancestor, replace it
+    // with a real directory, and recreate the path below it so the rename
+    // lands in a project-local tree.
+    detach_module_folder_from_shared_store(node_modules_folder_path);
+
+    // A hoisted workspace dependency that is patched by name may not be
+    // installed at this path yet, so its parent may not exist.
+    let parent = resolve_path::dirname::<platform::Auto>(node_modules_folder_path);
+    if !parent.is_empty() {
+        let _ = Fd::cwd().make_path(parent);
+    }
+
+    if let Err(e) = sys::renameat_concurrently_a(
+        Fd::cwd(),
+        staging_path,
+        Fd::cwd(),
+        node_modules_folder_path,
+        sys::RenameOptions {
+            move_fallback: true,
+        },
+    ) {
+        let _ = Fd::cwd().delete_tree(staging_path);
+        return Err(e.into());
+    }
+
+    // An atomic exchange leaves the old package at the staging path.
+    let _ = Fd::cwd().delete_tree(staging_path);
     Ok(())
 }
 

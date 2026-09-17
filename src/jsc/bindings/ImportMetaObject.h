@@ -56,6 +56,9 @@ public:
     /// stated in https://github.com/oven-sh/bun/pull/9399
     static ImportMetaObject* createFromSpecifier(JSC::JSGlobalObject* globalObject, const String& specifier);
 
+    /// At link time: gives the variables of `HoistedModuleBinding` (src/js_printer/lib.rs) their values.
+    void initializeHoistedBindings(JSC::JSGlobalObject*, JSC::JSModuleRecord*);
+
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
 

@@ -7710,6 +7710,37 @@ pub(crate) fn get_source_map_builder<'a, const IS_BUN_PLATFORM: bool>(
 // Top-level print entry points
 // ───────────────────────────────────────────────────────────────────────────
 
+/// A `var` that starts an unbundled ES module. C++ (`initializeHoistedBindings`) matches the text at link time.
+#[derive(Copy, Clone)]
+enum HoistedModuleBinding {
+    Require,
+    Dirname,
+    Filename,
+}
+
+impl HoistedModuleBinding {
+    /// In the order `print_ast` prints them. `initializeHoistedBindings` has a table in the same order.
+    const ALL: [Self; 3] = [Self::Require, Self::Dirname, Self::Filename];
+
+    /// The exact text that `print_ast` prints.
+    const fn declaration(self) -> &'static core::ffi::CStr {
+        match self {
+            // Not `import.meta.require` at each call site: https://github.com/oven-sh/bun/issues/15738#issuecomment-2574283514
+            Self::Require => c"var {require}=import.meta;",
+            Self::Dirname => c"var __dirname=import.meta.dir;",
+            Self::Filename => c"var __filename=import.meta.path;",
+        }
+    }
+}
+
+/// The declaration of entry `index` of `HoistedModuleBinding::ALL`. Null after the last one.
+#[unsafe(no_mangle)]
+extern "C" fn Bun__hoistedModuleBindingDeclaration(index: usize) -> *const core::ffi::c_char {
+    HoistedModuleBinding::ALL
+        .get(index)
+        .map_or(core::ptr::null(), |binding| binding.declaration().as_ptr())
+}
+
 pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOURCE_MAP: bool>(
     _writer: W,
     bump: &'a bun_alloc::Arena,
@@ -7854,22 +7885,29 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     }
     printer.binary_expression_stack = Vec::new();
 
-    if !printer.options.bundling
-        && tree.uses_require_ref
-        && tree.exports_kind == js_ast::ExportsKind::Esm
-        && printer.options.target == bun_ast::Target::Bun
-    {
-        // Hoist the `var {require}=import.meta;` declaration. Previously,
-        // `import.meta.require` was inlined into transpiled files, which
-        // meant calling `func.toString()` on a function with `require`
-        // would observe `import.meta.require` inside of the source code.
-        // https://github.com/oven-sh/bun/issues/15738#issuecomment-2574283514
-        //
-        // This is never a symbol collision because `uses_require_ref` means
-        // `require` must be an unbound variable.
-        printer.print(b"var {require}=import.meta;");
+    if !printer.options.bundling {
+        let mut declared_any = false;
+        for binding in HoistedModuleBinding::ALL {
+            let declare = match binding {
+                // `uses_require_ref` means `require` is unbound, so this cannot collide.
+                HoistedModuleBinding::Require => {
+                    tree.uses_require_ref
+                        && tree.exports_kind == js_ast::ExportsKind::Esm
+                        && printer.options.target == bun_ast::Target::Bun
+                }
+                HoistedModuleBinding::Dirname => tree.uses_dirname_ref,
+                HoistedModuleBinding::Filename => tree.uses_filename_ref,
+            };
+            if !declare {
+                continue;
+            }
+            // C++ matches the declarations at the start of the source.
+            debug_assert!(declared_any || printer.writer.slice().is_empty());
+            printer.print(binding.declaration().to_bytes());
+            declared_any = true;
+        }
 
-        if PrinterType::<W, ASCII_ONLY, GENERATE_SOURCE_MAP>::MAY_HAVE_MODULE_INFO {
+        if declared_any && PrinterType::<W, ASCII_ONLY, GENERATE_SOURCE_MAP>::MAY_HAVE_MODULE_INFO {
             if let Some(mi) = printer.module_info.as_deref_mut() {
                 mi.flags.contains_import_meta = true;
             }

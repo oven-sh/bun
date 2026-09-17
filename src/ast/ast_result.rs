@@ -33,6 +33,9 @@ pub struct Ast<'a> {
     pub uses_exports_ref: bool,
     pub uses_module_ref: bool,
     pub uses_require_ref: bool,
+    /// `print_ast` declares `__dirname` / `__filename` for this ES module.
+    pub uses_dirname_ref: bool,
+    pub uses_filename_ref: bool,
     pub commonjs_module_exports_assigned_deoptimized: bool,
 
     pub force_cjs_to_esm: bool,
@@ -116,6 +119,8 @@ impl<'a> Ast<'a> {
             uses_exports_ref: false,
             uses_module_ref: false,
             uses_require_ref: false,
+            uses_dirname_ref: false,
+            uses_filename_ref: false,
             commonjs_module_exports_assigned_deoptimized: false,
             force_cjs_to_esm: false,
             commonjs_lifted_to_esm: false,

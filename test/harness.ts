@@ -1888,9 +1888,13 @@ export function libcPathForDlopen() {
  * x64 and a CPU with the `cpuid_fault` flag.
  */
 export function canFaultOnCpuid(): boolean {
-  return (
-    isLinux && process.arch === "x64" && /^flags\s*:.*\bcpuid_fault\b/m.test(fs.readFileSync("/proc/cpuinfo", "utf8"))
-  );
+  if (!isLinux || process.arch !== "x64") return false;
+  try {
+    return /^flags\s*:.*\bcpuid_fault\b/m.test(fs.readFileSync("/proc/cpuinfo", "utf8"));
+  } catch {
+    // This runs while the test file loads. An unreadable /proc/cpuinfo skips one test, not the file.
+    return false;
+  }
 }
 
 /**
@@ -1900,16 +1904,32 @@ export function canFaultOnCpuid(): boolean {
  *
  * The fault applies to the calling thread and to each thread that starts while it is on. A thread
  * that exists before that never faults, so work for another thread belongs under `cpuidFaults`.
+ * A script that depends on Bun's work pool checks `workPoolThreads()`: 0 at the end of `op(false)`,
+ * or the pool threads do not fault and the test passes for the wrong reason.
+ *
  * Skip the test unless `canFaultOnCpuid()`. `args` follow the libc path, so the first one is
  * `process.argv[2]`.
  */
 export async function runWithCpuidFaultAfterWarmup(script: string, args: string[] = []) {
   const source = `
     import { dlopen } from "bun:ffi";
+    import * as harnessFs from "node:fs";
     const { symbols: { syscall } } = dlopen(process.argv[1], {
       syscall: { args: ["i64", "i32", "u64"], returns: "i64" },
     });
     const SYS_arch_prctl = 158n, ARCH_SET_CPUID = 0x1012;
+    function workPoolThreads() {
+      let count = 0;
+      for (const tid of harnessFs.readdirSync("/proc/self/task")) {
+        try {
+          const name = harnessFs.readFileSync("/proc/self/task/" + tid + "/comm", "utf8");
+          if (name.startsWith("Bun Pool")) count++;
+        } catch {
+          // The thread ended after readdir.
+        }
+      }
+      return count;
+    }
     ${script}
     await op(false);
     if (syscall(SYS_arch_prctl, ARCH_SET_CPUID, 0n) !== 0n) throw new Error("ARCH_SET_CPUID failed");

@@ -1300,9 +1300,15 @@ describe("JPEG codec setup", () => {
         async function op(cpuidFaults) {
           // new Response(image) decodes and encodes on this thread.
           check(await new Response(new Bun.Image(jpeg).jpeg()).bytes());
-          // bytes() uses the work pool. The warm-up leaves the pool without threads, so its
-          // threads start while CPUID faults, and they fault too.
-          if (cpuidFaults) check(await new Bun.Image(jpeg).jpeg().bytes());
+          if (!cpuidFaults) {
+            // A pool thread that exists now never faults. It means the line above ran on the
+            // pool, or the pool started for another reason. This test then checks nothing.
+            if (workPoolThreads() !== 0) throw new Error("a work pool thread exists before CPUID faults");
+            return;
+          }
+          // bytes() uses the work pool. Its threads start while CPUID faults, so they fault too.
+          check(await new Bun.Image(jpeg).jpeg().bytes());
+          if (workPoolThreads() === 0) throw new Error("bytes() did not use a work pool thread");
         }
       `,
       [Buffer.from(gradientPng).toString("base64")],

@@ -7710,82 +7710,82 @@ describe("css tests", () => {
       [
         "@scope (.a) to (& > .b) { .c { color: red } }",
         "@scope(.a) to (&>.b){.c{color:red}}",
-        "@scope(.a) to (:scope>.b){.c{color:red}}",
+        "@scope(.a) to (:where(:scope)>.b){.c{color:red}}",
       ],
       [
         "@scope (.a) to (& .b) { .c { color: red } }",
         "@scope(.a) to (& .b){.c{color:red}}",
-        "@scope(.a) to (:scope .b){.c{color:red}}",
+        "@scope(.a) to (:where(:scope) .b){.c{color:red}}",
       ],
       [
         "@scope (.a) to (&) { .c { color: red } }",
         "@scope(.a) to (&){.c{color:red}}",
-        "@scope(.a) to (:scope){.c{color:red}}",
+        "@scope(.a) to (:where(:scope)){.c{color:red}}",
       ],
       [
         "@scope (.a) to (.b&) { .c { color: red } }",
         "@scope(.a) to (.b&){.c{color:red}}",
-        "@scope(.a) to (.b:scope){.c{color:red}}",
+        "@scope(.a) to (.b:where(:scope)){.c{color:red}}",
       ],
       [
         "@scope (.a) to (.p & > .b) { .c { color: red } }",
         "@scope(.a) to (.p &>.b){.c{color:red}}",
-        "@scope(.a) to (.p :scope>.b){.c{color:red}}",
+        "@scope(.a) to (.p :where(:scope)>.b){.c{color:red}}",
       ],
       [
         "@scope (.a) to (:not(&) > .b) { .c { color: red } }",
         "@scope(.a) to (:not(&)>.b){.c{color:red}}",
-        "@scope(.a) to (:not(:scope)>.b){.c{color:red}}",
+        "@scope(.a) to (:not(:where(:scope))>.b){.c{color:red}}",
       ],
       [
         "@scope (.a) to (& > .b, & > .c) { .d { color: red } }",
         "@scope(.a) to (&>.b,&>.c){.d{color:red}}",
-        "@scope(.a) to (:scope>.b,:scope>.c){.d{color:red}}",
+        "@scope(.a) to (:where(:scope)>.b,:where(:scope)>.c){.d{color:red}}",
       ],
 
       // A scope-start selector list, or one with a combinator. These printed as `:is(...)` in the scope-end selector.
       [
         "@scope (.a, .b) to (& > .x) { .c { color: red } }",
         "@scope(.a,.b) to (&>.x){.c{color:red}}",
-        "@scope(.a,.b) to (:scope>.x){.c{color:red}}",
+        "@scope(.a,.b) to (:where(:scope)>.x){.c{color:red}}",
       ],
       [
         "@scope (.p > .a) to (& > .b) { .c { color: red } }",
         "@scope(.p>.a) to (&>.b){.c{color:red}}",
-        "@scope(.p>.a) to (:scope>.b){.c{color:red}}",
+        "@scope(.p>.a) to (:where(:scope)>.b){.c{color:red}}",
       ],
 
       // A type selector with `&`. With nesting kept, `to (&div)` printed `to (.adiv)`, the class `adiv`.
       [
         "@scope (.a) to (div&) { .c { color: red } }",
         "@scope(.a) to (div&){.c{color:red}}",
-        "@scope(.a) to (div:scope){.c{color:red}}",
+        "@scope(.a) to (div:where(:scope)){.c{color:red}}",
       ],
       // `&div` is not valid CSS any more (w3c/csswg-drafts#8662), but the parser takes it. The kept output is
       // provisional: it is the source as written, as for `&div` in a style rule, and browsers drop it.
       [
         "@scope (.a) to (&div) { .c { color: red } }",
         "@scope(.a) to (&div){.c{color:red}}",
-        "@scope(.a) to (div:scope){.c{color:red}}",
+        "@scope(.a) to (div:where(:scope)){.c{color:red}}",
       ],
 
       // In a style rule, `&` in the scope-start selector is the parent rule. `&` in the scope-end selector is not.
       [
         ".p { @scope (& > .a) to (& > .b) { .c { color: red } } }",
-        ".p{@scope(&>.a) to (&>.b){& .c{color:red}}}",
-        "@scope(.p>.a) to (:scope>.b){:scope .c{color:red}}",
+        ".p{@scope(&>.a) to (&>.b){.c{color:red}}}",
+        "@scope(.p>.a) to (:where(:scope)>.b){.c{color:red}}",
       ],
       // `:host()` reads the context of the printer, not the one that the selector list gets.
       [
         ".p { @scope (.a) to (:host(&)) { .c { color: red } } }",
-        ".p{@scope(.a) to (:host(&)){& .c{color:red}}}",
-        "@scope(.a) to (:host(:scope)){:scope .c{color:red}}",
+        ".p{@scope(& .a) to (:host(&)){.c{color:red}}}",
+        "@scope(.p .a) to (:host(:where(:scope))){.c{color:red}}",
       ],
       // The same in another `@scope`: `&` in the scope-start selector is the outer scoping root.
       [
         "@scope (.p) { @scope (& > .a) to (& > .b) { .c { color: red } } }",
         "@scope(.p){@scope(&>.a) to (&>.b){.c{color:red}}}",
-        "@scope(.p){@scope(:scope>.a) to (:scope>.b){.c{color:red}}}",
+        "@scope(.p){@scope(:where(:scope)>.a) to (:where(:scope)>.b){.c{color:red}}}",
       ],
 
       // No scope-start selector. The scoping root is the parent of the `<style>` element, also in a style rule.
@@ -7798,8 +7798,8 @@ describe("css tests", () => {
       ],
       [
         ".p { @scope to (& > .b) { .c { color: red } } }",
-        ".p{@scope to (&>.b){& .c{color:red}}}",
-        "@scope to (:scope>.b){:scope .c{color:red}}",
+        ".p{@scope to (&>.b){.c{color:red}}}",
+        "@scope to (:where(:scope)>.b){.c{color:red}}",
       ],
 
       // No `&`: printed as written, as before.
@@ -7825,6 +7825,89 @@ describe("css tests", () => {
         lowered: cssInternals.minifyTest(lowered, "", no_nesting),
       }).toEqual({ kept, lowered });
     });
+  });
+
+  describe("scope", () => {
+    // Targets without CSS nesting support: `&` is compiled away.
+    const noNesting = { chrome: 95 << 16 };
+
+    // An `@scope` in a style rule: <scope-start> is relative to the parent rule.
+    // https://drafts.csswg.org/css-cascade-6/#scope-nesting
+    minify_test(".p { @scope (.a) { span { color: red } } }", ".p{@scope(& .a){span{color:red}}}");
+    prefix_test(".p { @scope (.a) { span { color: red } } }", "@scope (.p .a) { span { color: red; } }", noNesting);
+    minify_test(".p { @scope (> .a) { span { color: red } } }", ".p{@scope(&>.a){span{color:red}}}");
+    prefix_test(".p { @scope (> .a) { span { color: red } } }", "@scope (.p > .a) { span { color: red; } }", noNesting);
+    minify_test(".p { @scope (.a) to (.b) { span { color: red } } }", ".p{@scope(& .a) to (.b){span{color:red}}}");
+    prefix_test(
+      ".p { @scope (.a) to (& .b) { span { color: red } } }",
+      "@scope (.p .a) to (:where(:scope) .b) { span { color: red; } }",
+      noNesting,
+    );
+
+    // Rules in an `@scope` in a style rule are scoped rules. They get no `&`
+    // prefix: `&` in `@scope` is the scoping root, not the parent rule.
+    minify_test(".p { @scope (.a) { :scope > .c { color: red } } }", ".p{@scope(& .a){:scope>.c{color:red}}}");
+    prefix_test(
+      ".p { @scope (.a) { :scope > .c { color: red } } }",
+      "@scope (.p .a) { :scope > .c { color: red; } }",
+      noNesting,
+    );
+    prefix_test(".p { @scope (.a) { .c { color: red } } }", "@scope (.p .a) { .c { color: red; } }", noNesting);
+    // A style rule nested in a scoped rule is relative to that rule again.
+    minify_test(".p { @scope (.a) { .c { .d { color: red } } } }", ".p{@scope(& .a){.c{& .d{color:red}}}}");
+    prefix_test(
+      ".p { @scope (.a) { .c { .d { color: red } } } }",
+      "@scope (.p .a) { .c .d { color: red; } }",
+      noNesting,
+    );
+
+    // `&` in a scoped rule behaves as `:where(:scope)`: it adds no specificity.
+    minify_test("@scope (.a) { & .c { color: red } }", "@scope(.a){& .c{color:red}}");
+    prefix_test("@scope (.a) { & .c { color: red } }", "@scope (.a) { :where(:scope) .c { color: red; } }", noNesting);
+    prefix_test(
+      "@scope (.a) { & .c { & .d { color: red } } }",
+      "@scope (.a) { :where(:scope) .c .d { color: red; } }",
+      noNesting,
+    );
+    // `&` at the top level of a stylesheet is still `:scope`.
+    prefix_test("& .c { color: red }", ":scope .c { color: red; }", noNesting);
+
+    // Scoped rules take a relative selector list.
+    // https://drafts.csswg.org/css-cascade-6/#scoped-rules
+    minify_test("@scope (.a) { > .c { color: red } }", "@scope(.a){&>.c{color:red}}");
+    prefix_test(
+      "@scope (.a) { > .c { color: red } }",
+      "@scope (.a) { :where(:scope) > .c { color: red; } }",
+      noNesting,
+    );
+    minify_test("@scope (.a) { + .c { color: red } }", "@scope(.a){&+.c{color:red}}");
+    minify_test("@scope (.a) { ~ .c { color: red } }", "@scope(.a){&~.c{color:red}}");
+    minify_test("@scope (.a) { @media screen { > .c { color: red } } }", "@scope(.a){@media screen{&>.c{color:red}}}");
+    minify_test(".p { @scope (.a) { > .c { color: red } } }", ".p{@scope(& .a){&>.c{color:red}}}");
+    prefix_test(
+      ".p { @scope (.a) { > .c { color: red } } }",
+      "@scope (.p .a) { :where(:scope) > .c { color: red; } }",
+      noNesting,
+    );
+
+    // Declarations directly in `@scope` apply to the scoping root.
+    // https://github.com/w3c/csswg-drafts/issues/10389
+    minify_test("@scope (.a) { color: red }", "@scope(.a){&{color:red}}");
+    prefix_test("@scope (.a) { color: red }", "@scope (.a) { :where(:scope) { color: red; } }", noNesting);
+    minify_test("@scope (.a) { color: red; .c { color: blue } }", "@scope(.a){&{color:red}.c{color:#00f}}");
+    minify_test("@scope (.a) { .c { color: blue } color: red }", "@scope(.a){&{color:red}.c{color:#00f}}");
+
+    // <scope-start> and <scope-end> are unforgiving selector lists.
+    // https://github.com/w3c/csswg-drafts/issues/10042
+    for (const source of [
+      "@scope (.a) to (.b, !!!) { .c { color: red } }",
+      "@scope (.a, !!!) to (.b) { .c { color: red } }",
+      "@scope (.a) to (!!!) { .c { color: red } }",
+    ]) {
+      test(`ERROR: ${source}`, () => {
+        expect(() => cssInternals.minifyTest(source, "")).toThrow("Invalid selector");
+      });
+    }
   });
 
   describe("font-palette-values", () => {

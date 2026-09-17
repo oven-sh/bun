@@ -40,29 +40,37 @@ impl<R> ScopeRule<R> {
             dest.write_char(b')')?;
             dest.whitespace()?;
         }
-        if let Some(scope_end) = &self.scope_end {
-            if dest.minify {
-                dest.write_char(b' ')?;
-            }
-            dest.write_str("to (")?;
-            // `&` in <scope-end> is the scoping root (css-cascade-6), not <scope-start>.
-            dest.with_cleared_context(scope_end, |scope_end, d: &mut Printer| {
-                serialize_selector_list(scope_end.v.slice(), d, None, false)
-            })?;
-            dest.write_char(b')')?;
-            dest.whitespace()?;
-        }
-        dest.write_char(b'{')?;
-        dest.indent();
-        dest.newline()?;
-        // Nested style rules within @scope are implicitly relative to the <scope-start>
-        // so clear our style context while printing them to avoid replacing & ourselves.
+        // From here on `&` is the scoping root: in <scope-end> and in the
+        // nested rules. With no nesting in the targets it prints as
+        // `:where(:scope)` (see `serialize::serialize_nesting`).
         // https://drafts.csswg.org/css-cascade-6/#scoped-rules
-        dest.with_cleared_context(&self.rules, |rules, d: &mut Printer| rules.to_css(d))?;
-        dest.dedent();
-        dest.newline()?;
-        dest.write_char(b'}')?;
-        Ok(())
+        let was_in_scope_rule = dest.in_scope_rule;
+        dest.in_scope_rule = true;
+        let result = (|dest: &mut Printer| -> Result<(), PrintErr> {
+            if let Some(scope_end) = &self.scope_end {
+                if dest.minify {
+                    dest.write_char(b' ')?;
+                }
+                dest.write_str("to (")?;
+                // `&` in <scope-end> is the scoping root (css-cascade-6), not <scope-start>.
+                dest.with_cleared_context(scope_end, |scope_end, d: &mut Printer| {
+                    serialize_selector_list(scope_end.v.slice(), d, None, false)
+                })?;
+                dest.write_char(b')')?;
+                dest.whitespace()?;
+            }
+            dest.write_char(b'{')?;
+            dest.indent();
+            dest.newline()?;
+            // Nested style rules within @scope are implicitly relative to the <scope-start>
+            // so clear our style context while printing them to avoid replacing & ourselves.
+            dest.with_cleared_context(&self.rules, |rules, d: &mut Printer| rules.to_css(d))?;
+            dest.dedent();
+            dest.newline()?;
+            dest.write_char(b'}')
+        })(dest);
+        dest.in_scope_rule = was_in_scope_rule;
+        result
     }
 }
 

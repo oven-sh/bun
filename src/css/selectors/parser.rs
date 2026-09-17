@@ -835,7 +835,10 @@ fn parse_relative_selector<Impl: BunSelectorImpl>(
         None
     };
 
-    let scope: GenericComponent<Impl> = if nesting_requirement == NestingRequirement::Implicit {
+    let scope: GenericComponent<Impl> = if matches!(
+        nesting_requirement,
+        NestingRequirement::Implicit | NestingRequirement::Scoped
+    ) {
         GenericComponent::Nesting
     } else {
         GenericComponent::Scope
@@ -2766,6 +2769,11 @@ pub enum NestingRequirement {
     Prefixed,
     Contained,
     Implicit,
+    /// A scoped style rule (a rule nested in `@scope`). A leading combinator is
+    /// anchored to `&` (the scoping root), but a selector without one gets no
+    /// implicit prefix: scoped rules already match within the scope.
+    /// https://drafts.csswg.org/css-cascade-6/#scoped-rules
+    Scoped,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, strum::IntoStaticStr, CssHash)]

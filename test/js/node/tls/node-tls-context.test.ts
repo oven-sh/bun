@@ -569,7 +569,7 @@ describe.each(["TLSv1.3", "TLSv1.2"] as const)("session resumption across SNI co
       expect(atA.seen).toEqual(accepted("a.test"));
 
       const fromA = await connect(server, "b.test", { session: atA.session });
-      expect(fromA.seen).toMatchObject({ servername: "b.test", authorized: false, resumed: false });
+      expect(fromA.seen).toEqual(refused("b.test"));
 
       const again = await connect(server, "a.test", { session: atA.session });
       expect(again.seen).toEqual({ ...accepted("a.test"), resumed: true });

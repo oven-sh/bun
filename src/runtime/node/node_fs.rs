@@ -13,18 +13,18 @@ use bun_core::Environment;
 use bun_core::{String as BunString, Utf8WithString, ZStr};
 use bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
 use bun_io::KeepAlive;
+use bun_jsc::AbortSignal;
 use bun_jsc::debugger::AsyncTaskTracker;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::AbortSignal;
 use bun_jsc::{
     ArrayBuffer, EventLoopHandle, JSGlobalObject, JSValue, JsResult, PinnedArrayBuffer,
     StringJsc as _,
 };
 use bun_paths::{self as paths, OSPathBuffer, OSPathChar, OSPathSliceZ, PathBuffer};
 use bun_sys::FdExt as _;
-use bun_sys::{self as sys, Fd as FD, Maybe, Mode, SystemErrno, E};
-use bun_threading::work_pool::{IntrusiveWorkTask as _, Task as WorkPoolTask, WorkPool};
+use bun_sys::{self as sys, E, Fd as FD, Maybe, Mode, SystemErrno};
 use bun_threading::UnboundedQueue;
+use bun_threading::work_pool::{IntrusiveWorkTask as _, Task as WorkPoolTask, WorkPool};
 
 // ──────────────────────────────────────────────────────────────────────────
 // `Maybe(T)` shim — `crate::node::Maybe` is the same `Result<T, Error>` alias
@@ -227,8 +227,8 @@ use bun_resolver::fs::FileSystem;
 // here so misuse is a compile error, not a silent null.
 #[cfg(windows)]
 use bun_sys::{
-    windows::{self, libuv as uv},
     ReturnCodeExt as _,
+    windows::{self, libuv as uv},
 };
 
 // Syscall = `bun_sys::sys_uv` on Windows, `bun_sys` otherwise
@@ -2593,9 +2593,9 @@ mod _async_tasks {
     }
 } // mod _async_tasks
 pub use _async_tasks::{
-    async_, AsyncCpTask, AsyncFSTask, AsyncReaddirRecursiveTask, CpSingleTask, FsArgument,
-    FsReturn, IntoResultListEntry, NewAsyncCpTask, ResultListEntry, ResultListEntryValue,
-    ShellAsyncCpTask, UVFSRequest,
+    AsyncCpTask, AsyncFSTask, AsyncReaddirRecursiveTask, CpSingleTask, FsArgument, FsReturn,
+    IntoResultListEntry, NewAsyncCpTask, ResultListEntry, ResultListEntryValue, ShellAsyncCpTask,
+    UVFSRequest, async_,
 };
 
 // ──────────────────────────────────────────────────────────────────────────

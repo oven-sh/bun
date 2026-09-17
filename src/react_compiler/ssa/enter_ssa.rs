@@ -149,6 +149,9 @@ impl SSABuilder {
         block_id: BlockId,
         env: &mut Environment,
     ) -> IdentifierId {
+        if !crate::stack_guard::is_safe_to_recurse() {
+            return old_place.identifier;
+        }
         if let Some(state) = &self.states[block_id.0 as usize] {
             if let Some(&new_id) = state.defs.get(old_place.identifier) {
                 return new_id;
@@ -303,6 +306,7 @@ fn enter_ssa_impl(
     env: &mut Environment,
     root_entry: BlockId,
 ) -> Result<(), CompilerDiagnostic> {
+    crate::stack_guard::check()?;
     let mut visited_blocks: HashSet<BlockId> = HashSet::new();
     let block_ids: Vec<BlockId> = func.body.blocks.keys().copied().collect();
 

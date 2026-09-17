@@ -100,6 +100,25 @@ enum HeadParse {
 
 use boringssl::c::OwnedSslCtx;
 
+/// The response head at the start of `buf`, through its blank line. All of `buf` while no blank line ends it.
+fn response_head(buf: &[u8]) -> &[u8] {
+    let mut len = 0;
+    while let Some(line_end) = strings::index_of_char_usize(&buf[len..], b'\n') {
+        len += line_end + 1;
+        match &buf[len..] {
+            [b'\n', ..] => return &buf[..len + 1],
+            [b'\r', b'\n', ..] => return &buf[..len + 2],
+            _ => {}
+        }
+    }
+    buf
+}
+
+/// picohttpparser rejects a head with more field lines than slots, so give it one slot per line.
+fn header_scratch(head: &[u8]) -> Vec<picohttp::Header> {
+    vec![picohttp::Header::ZERO; strings::count_char(head, b'\n')]
+}
+
 /// WebSocket HTTP upgrade client, generic over `SSL`. Intrusively refcounted;
 /// dropped when the count hits 0.
 #[derive(bun_ptr::CellRefCounted)]
@@ -119,7 +138,6 @@ pub struct HTTPClient<const SSL: bool> {
     // The unsent bytes are always a suffix of `input_body_buf`; stored here as
     // the suffix length so we don't hold a self-referential slice.
     to_send_len: Cell<usize>,
-    headers_buf: JsCell<[picohttp::Header; 128]>,
     body: JsCell<Vec<u8>>,
     /// Owned NUL-terminated hostname for SNI; empty when unset.
     hostname: JsCell<ZBox>,
@@ -375,7 +393,6 @@ where
             outgoing_websocket: JsCell::new(None),
             input_body_buf: JsCell::new(input_body_buf),
             to_send_len: Cell::new(0),
-            headers_buf: JsCell::new([picohttp::Header::ZERO; 128]),
             body: JsCell::new(Vec::new()),
             hostname: JsCell::new(ZBox::default()),
             poll_ref: JsCell::new(poll_ref),
@@ -700,12 +717,15 @@ where
 
         let parsed = {
             let body: &[u8] = if buffered { self.body.get() } else { data };
-            self.headers_buf.with_mut(|headers_buf| {
-                picohttp::Response::parse(body, headers_buf).map(|response| HeadParse::Done {
-                    status_code: response.status_code,
-                    head_len: response.bytes_read,
-                    full: body.to_vec(),
-                })
+            let head = response_head(body);
+            if head.len() > bun_http::max_http_header_size() {
+                return HeadParse::Invalid;
+            }
+            let mut scratch = header_scratch(head);
+            picohttp::Response::parse(body, &mut scratch).map(|response| HeadParse::Done {
+                status_code: response.status_code,
+                head_len: response.bytes_read,
+                full: body.to_vec(),
             })
         };
 
@@ -716,15 +736,7 @@ where
                 if !buffered {
                     self.body.with_mut(|b| b.extend_from_slice(data));
                 }
-                // ShortRead means no \r\n\r\n was found, so every byte in
-                // `body` is part of an incomplete header — cap that, not
-                // total bytes received (which may include pipelined
-                // WebSocket frames once the header does complete).
-                if self.body.get().len() > bun_http::max_http_header_size() {
-                    HeadParse::Invalid
-                } else {
-                    HeadParse::NeedMore
-                }
+                HeadParse::NeedMore
             }
         }
     }
@@ -808,7 +820,7 @@ where
 
     /// Caller holds a `RefPtr` guard and owns `full` (must not borrow `self`).
     fn process_websocket_upgrade_response(this: ThisPtr<Self>, full: &[u8]) {
-        let mut scratch = [picohttp::Header::ZERO; 128];
+        let mut scratch = header_scratch(response_head(full));
         let Ok(response) = picohttp::Response::parse(full, &mut scratch) else {
             return Self::terminate(this, ErrorCode::InvalidResponse);
         };

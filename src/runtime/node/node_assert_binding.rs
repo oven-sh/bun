@@ -111,7 +111,7 @@ pub(crate) fn generate(global: &JSGlobalObject) -> JSValue {
 
     exports.put(
         global,
-        bstring::String::static_(b"myersDiff"),
+        bstring::String::static_("myersDiff"),
         JSFunction::create(
             global,
             "myersDiff",
@@ -122,7 +122,7 @@ pub(crate) fn generate(global: &JSGlobalObject) -> JSValue {
     );
     exports.put(
         global,
-        bstring::String::static_(b"printSimpleMyersDiff"),
+        bstring::String::static_("printSimpleMyersDiff"),
         JSFunction::create(
             global,
             "printSimpleMyersDiff",
@@ -133,7 +133,7 @@ pub(crate) fn generate(global: &JSGlobalObject) -> JSValue {
     );
     exports.put(
         global,
-        bstring::String::static_(b"printMyersDiff"),
+        bstring::String::static_("printMyersDiff"),
         JSFunction::create(
             global,
             "printMyersDiff",

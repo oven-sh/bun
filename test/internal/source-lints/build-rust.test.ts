@@ -10,6 +10,8 @@
  *   import), so it is read as text.
  * - The rustflags put the Rust half of the binary on the CPU baseline the C++
  *   half is compiled for (`cpuTargetFlags` in scripts/build/flags.ts).
+ * - Under ASAN, the Rust half and the C/C++ half (bun's sources and the deps)
+ *   both compile out the fake-stack instrumentation.
  */
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
@@ -24,6 +26,7 @@ import {
   type PartialConfig,
   type Toolchain,
 } from "../../../scripts/build/config.ts";
+import { computeDepFlags, computeFlags } from "../../../scripts/build/flags.ts";
 import {
   allRustTargets,
   cargoBuildInvocation,
@@ -48,11 +51,12 @@ const mockToolchain: Toolchain = {
   ld64Lld: "/fake/llvm/bin/ld64.lld",
   rustLld: undefined,
   rustLlvmVersion: "22.1.4",
-  rustSysroot: undefined,
-  rustHostTriple: undefined,
   strip: "/fake/bin/strip",
   llvmStrip: "/fake/llvm/bin/llvm-strip",
   nm: "/fake/llvm/bin/llvm-nm",
+  readobj: "/fake/llvm/bin/llvm-readobj",
+  objdump: "/fake/llvm/bin/llvm-objdump",
+  cxxfilt: "/fake/llvm/bin/llvm-cxxfilt",
   dsymutil: "/fake/llvm/bin/dsymutil",
   bun: "/fake/bin/bun",
   jsRuntime: "/fake/bin/bun",
@@ -187,7 +191,7 @@ describe("CPU baseline", () => {
     );
   }
 
-  test("arm64 linux, freebsd and windows assume armv8-a+crc tuned for Ampere, like the C++ side", () => {
+  test("arm64 linux and freebsd assume armv8-a+crc tuned for Ampere, windows armv8-a+crc generic, like the C++ side", () => {
     // flags.ts: `-march=armv8-a+crc -mtune=ampere1`. Naming a CPU instead
     // (this used to be `-Ctarget-cpu=cortex-a72`) also assumes that CPU's
     // aes/sha2/pmuv3, which the C++ side doesn't, and gives every Rust
@@ -199,8 +203,12 @@ describe("CPU baseline", () => {
     expect(cpuFlags(linuxGnu)).toEqual(expected);
     expect(cpuFlags(withAbi(linuxGnu, "musl"))).toEqual(expected);
     expect(cpuFlags(resolve({ os: "freebsd", arch: "aarch64", freebsdSysroot: "/fake" }))).toEqual(expected);
-    // clang-cl spells the same flags `/clang:-march=...`.
-    expect(cpuFlags(resolve({ os: "windows", arch: "aarch64", winsysroot: "/fake" }))).toEqual(expected);
+    // clang-cl spells it `/clang:-march=...`; no -mtune there (Windows-on-ARM
+    // is Snapdragon, generic tuning like MSVC/Chromium/Rust).
+    expect(cpuFlags(resolve({ os: "windows", arch: "aarch64", winsysroot: "/fake" }))).toEqual([
+      "-Ctarget-cpu=generic",
+      "-Ctarget-feature=+crc",
+    ]);
   });
 
   test("arm64 android assumes armv8-a+crc tuned for Cortex-A78, like the C++ side", () => {
@@ -217,5 +225,53 @@ describe("CPU baseline", () => {
     const linuxX64 = resolve({ os: "linux", arch: "x64", abi: "gnu", linuxSysroot: "/fake" });
     expect(cpuFlags(linuxX64)).toEqual(["-Ctarget-cpu=nehalem"]);
     expect(cpuFlags(withAbi(linuxX64, "android"))).toEqual(["-Ctarget-cpu=nehalem"]);
+  });
+});
+
+describe("ASAN stack-use-after-return instrumentation", () => {
+  // JSC's conservative GC scan needs every frame on the machine stack, so an
+  // ASAN build runs with `detect_stack_use_after_return=0` and the fake-stack
+  // prologue that the default `runtime` mode emits is dead code. clang has a
+  // driver flag that leaves it out. rustc has none and takes the LLVM option
+  // behind that flag.
+  const clangFlag = "-fsanitize-address-use-after-return=never";
+  const rustFlag = "-Cllvm-args=-asan-use-after-return=never";
+  const linuxX64: PartialConfig = { os: "linux", arch: "x64", abi: "gnu", linuxSysroot: "/fake" };
+
+  /** Every C and C++ flag list a config produces: bun's own sources, then the deps. */
+  function compileFlagLists(cfg: Config): string[][] {
+    const bun = computeFlags(cfg);
+    const deps = computeDepFlags(cfg);
+    return [bun.cflags, bun.cxxflags, deps.cflags, deps.cxxflags];
+  }
+
+  function rustflags(cfg: Config): string[] {
+    return cargoBuildInvocation(cfg).env.CARGO_ENCODED_RUSTFLAGS!.split("\x1f");
+  }
+
+  test("an ASAN build compiles it out of the C/C++ half and the Rust half", () => {
+    for (const buildType of ["Debug", "Release"] as const) {
+      const cfg = resolve({ ...linuxX64, buildType, asan: true });
+      for (const flags of compileFlagLists(cfg)) {
+        expect(flags).toContain("-fsanitize=address");
+        expect(flags).toContain(clangFlag);
+      }
+      expect(rustflags(cfg)).toContain("-Zsanitizer=address");
+      expect(rustflags(cfg)).toContain(rustFlag);
+    }
+  });
+
+  // clang reports its flag as an unused argument when -fsanitize=address is
+  // absent, which -Werror turns into a failed compile.
+  test("a build without ASAN passes neither flag", () => {
+    for (const buildType of ["Debug", "Release"] as const) {
+      const cfg = resolve({ ...linuxX64, buildType, asan: false });
+      for (const flags of compileFlagLists(cfg)) {
+        expect(flags).not.toContain("-fsanitize=address");
+        expect(flags).not.toContain(clangFlag);
+      }
+      expect(rustflags(cfg)).not.toContain("-Zsanitizer=address");
+      expect(rustflags(cfg)).not.toContain(rustFlag);
+    }
   });
 });

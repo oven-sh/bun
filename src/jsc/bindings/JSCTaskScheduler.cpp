@@ -2,6 +2,7 @@
 #include <JavaScriptCore/VM.h>
 #include <JavaScriptCore/TopExceptionScope.h>
 #include <JavaScriptCore/JSGlobalObject.h>
+#include <JavaScriptCore/GlobalObjectMethodTable.h>
 #include "JSCTaskScheduler.h"
 #include "BunClientData.h"
 #include "ZigGlobalObject.h"
@@ -121,11 +122,19 @@ static void runPendingWork(const ::BunVmHandleRef* vmHandle, Bun::JSCTaskSchedul
     if (wasPending && !job->ticket->isCancelled() && Bun__VmHandle__scriptAllowed(vmHandle)) {
         auto& vm = job->vm();
         auto* globalObject = job->ticket->target()->globalObject();
-        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        job->task(job->ticket.get());
-        if (auto* exception = scope.exception(); exception && !vm.hasPendingTerminationException()) {
-            scope.clearException();
-            Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+        // The realm's own status, as DeferredWorkTimer::doWork asks it before it runs a
+        // task. A realm that `bun test --isolate` retired reports Stopped, so the
+        // finished file's leftover work is dropped instead of running under the next
+        // file. doWork re-queues a Suspended realm's task; no Bun realm reports that.
+        auto status = globalObject->globalObjectMethodTable()->scriptExecutionStatus(globalObject, job->ticket->scriptExecutionOwner());
+        ASSERT(status != ScriptExecutionStatus::Suspended);
+        if (status == ScriptExecutionStatus::Running) {
+            auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+            job->task(job->ticket.get());
+            if (auto* exception = scope.exception(); exception && !vm.hasPendingTerminationException()) {
+                scope.clearException();
+                Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+            }
         }
     }
 

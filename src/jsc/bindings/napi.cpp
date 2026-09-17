@@ -85,10 +85,18 @@
 using namespace JSC;
 using namespace Zig;
 
+// Node: RETURN_STATUS_IF_FALSE(env, env->can_call_into_js(), ...)
+#define NAPI_RETURN_IF_CANNOT_CALL_INTO_JS(_env)                                \
+    do {                                                                        \
+        if (!(_env)->canCallIntoJS()) [[unlikely]]                              \
+            return napi_set_last_error(_env, (_env)->cannotCallIntoJSStatus()); \
+    } while (0)
+
 // Every NAPI function should use this at the start. It does the following:
 // - if NAPI_VERBOSE is 1, log that the function was called
 // - if env is nullptr, return napi_invalid_arg
 // - if there is a pending exception, return napi_pending_exception
+// - if the VM is stopping or stopped (env->canCallIntoJS()), return env->cannotCallIntoJSStatus()
 // No do..while is used as this declares a variable that other macros need to use
 #define NAPI_PREAMBLE(_env)                                                     \
     NAPI_LOG_CURRENT_FUNCTION;                                                  \
@@ -100,10 +108,7 @@ using namespace Zig;
     /* or clear exceptions, make your own scope. */                             \
     auto napi_preamble_throw_scope__ = DECLARE_TOP_EXCEPTION_SCOPE(_env->vm()); \
     NAPI_RETURN_IF_EXCEPTION(_env);                                             \
-    /* Node: RETURN_STATUS_IF_FALSE(env, env->can_call_into_js(), ...) */       \
-    if (WebCore::clientData(_env->vm())->isStoppingOrStopped(_env->vm()))       \
-        [[unlikely]]                                                            \
-        return napi_set_last_error(_env, _env->napiModule().nm_version >= 10 ? napi_cannot_run_js : napi_pending_exception);
+    NAPI_RETURN_IF_CANNOT_CALL_INTO_JS(_env);
 
 // Only use this for functions that need their own throw or catch scope. Functions that call into
 // JS code that might throw should use NAPI_RETURN_IF_EXCEPTION.
@@ -111,6 +116,13 @@ using namespace Zig;
     do {                                   \
         NAPI_LOG_CURRENT_FUNCTION;         \
         NAPI_CHECK_ARG(_env, _env);        \
+    } while (0)
+
+// NAPI_PREAMBLE_NO_THROW_SCOPE plus the can_call_into_js gate, for a function Node opens with NAPI_PREAMBLE.
+#define NAPI_PREAMBLE_NO_THROW_SCOPE_GATED(_env)  \
+    do {                                          \
+        NAPI_PREAMBLE_NO_THROW_SCOPE(_env);       \
+        NAPI_RETURN_IF_CANNOT_CALL_INTO_JS(_env); \
     } while (0)
 
 // What the value constructors/accessors Node gates with CHECK_ENV only run under (NAPI_PREAMBLE_NO_PENDING_CHECK
@@ -301,12 +313,13 @@ napi_get_last_error_info(napi_env env, const napi_extended_error_info** result)
 void Napi::NapiRefWeakHandleOwner::finalize(JSC::Handle<JSC::Unknown>, void* context)
 {
     auto* weakValue = reinterpret_cast<NapiRef*>(context);
-    weakValue->callFinalizer();
+    weakValue->callFinalizerFromGC();
 }
 
 void Napi::NapiRefSelfDeletingWeakHandleOwner::finalize(JSC::Handle<JSC::Unknown>, void* context)
 {
     auto* weakValue = reinterpret_cast<NapiRef*>(context);
+    // The ref goes away right here, so the finalizer is queued as a copy that does not need it.
     weakValue->callFinalizer();
     delete weakValue;
 }
@@ -1128,7 +1141,7 @@ extern "C" napi_status napi_throw_error(napi_env env,
     const char* code,
     const char* msg)
 {
-    NAPI_PREAMBLE_NO_THROW_SCOPE(env);
+    NAPI_PREAMBLE_NO_THROW_SCOPE_GATED(env);
     return throwErrorWithCStrings(env, code, msg, JSC::ErrorType::Error);
 }
 
@@ -1209,7 +1222,7 @@ extern "C" JS_EXPORT napi_status node_api_post_finalizer(napi_env env,
     void* finalize_hint)
 {
     NAPI_PREAMBLE_NO_THROW_SCOPE(env);
-    napi_internal_enqueue_finalizer(env, finalize_cb, finalize_data, finalize_hint);
+    Bun__napi_enqueue_finalizer(env, finalize_cb, finalize_data, finalize_hint);
     return napi_set_last_error(env, napi_ok);
 }
 
@@ -1408,9 +1421,6 @@ extern "C" napi_status napi_throw(napi_env env, napi_value error)
 {
     NAPI_PREAMBLE(env);
     NAPI_CHECK_ENV_NOT_IN_GC(env);
-    if (env->isFinishingFinalizers()) {
-        return napi_set_last_error(env, env->napiModule().nm_version >= 10 ? napi_cannot_run_js : napi_pending_exception);
-    }
     NAPI_CHECK_ARG(env, error);
     env->scheduleException(toJS(error));
     NAPI_RETURN_SUCCESS(env);
@@ -1455,14 +1465,14 @@ extern "C" napi_status node_api_throw_syntax_error(napi_env env,
     const char* code,
     const char* msg)
 {
-    NAPI_PREAMBLE_NO_THROW_SCOPE(env);
+    NAPI_PREAMBLE_NO_THROW_SCOPE_GATED(env);
     return throwErrorWithCStrings(env, code, msg, JSC::ErrorType::SyntaxError);
 }
 
 extern "C" napi_status napi_throw_type_error(napi_env env, const char* code,
     const char* msg)
 {
-    NAPI_PREAMBLE_NO_THROW_SCOPE(env);
+    NAPI_PREAMBLE_NO_THROW_SCOPE_GATED(env);
     return throwErrorWithCStrings(env, code, msg, JSC::ErrorType::TypeError);
 }
 
@@ -1586,7 +1596,7 @@ extern "C" JS_EXPORT napi_status node_api_create_buffer_from_arraybuffer(napi_en
     napi_value* result)
 {
     NAPI_LOG_CURRENT_FUNCTION;
-    NAPI_PREAMBLE_NO_THROW_SCOPE(env);
+    NAPI_PREAMBLE_NO_THROW_SCOPE_GATED(env);
     auto* globalObject = toJS(env);
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
     NAPI_RETURN_IF_EXCEPTION_WITH_SCOPE(env, scope);
@@ -1794,7 +1804,7 @@ extern "C" napi_status napi_create_error(napi_env env, napi_value code,
 extern "C" napi_status napi_throw_range_error(napi_env env, const char* code,
     const char* msg)
 {
-    NAPI_PREAMBLE_NO_THROW_SCOPE(env);
+    NAPI_PREAMBLE_NO_THROW_SCOPE_GATED(env);
     return throwErrorWithCStrings(env, code, msg, JSC::ErrorType::RangeError);
 }
 
@@ -1868,7 +1878,7 @@ extern "C" napi_status napi_create_dataview(napi_env env, size_t length,
     size_t byte_offset,
     napi_value* result)
 {
-    NAPI_PREAMBLE_NO_THROW_SCOPE(env);
+    NAPI_PREAMBLE_NO_THROW_SCOPE_GATED(env);
     Zig::GlobalObject* globalObject = toJS(env);
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
     NAPI_RETURN_IF_EXCEPTION_WITH_SCOPE(env, scope);
@@ -2287,7 +2297,7 @@ extern "C" napi_status napi_create_buffer(napi_env env, size_t length,
     void** data,
     napi_value* result)
 {
-    NAPI_PREAMBLE_NO_THROW_SCOPE(env);
+    NAPI_PREAMBLE_NO_THROW_SCOPE_GATED(env);
     Zig::GlobalObject* globalObject = toJS(env);
     auto scope = DECLARE_THROW_SCOPE(env->vm());
     NAPI_RETURN_IF_EXCEPTION_WITH_SCOPE(env, scope);
@@ -2325,7 +2335,7 @@ extern "C" napi_status napi_create_buffer_copy(napi_env env, size_t length,
     void** result_data,
     napi_value* result)
 {
-    NAPI_PREAMBLE_NO_THROW_SCOPE(env);
+    NAPI_PREAMBLE_NO_THROW_SCOPE_GATED(env);
     Zig::GlobalObject* globalObject = toJS(env);
     auto scope = DECLARE_THROW_SCOPE(env->vm());
     NAPI_RETURN_IF_EXCEPTION_WITH_SCOPE(env, scope);
@@ -3038,7 +3048,7 @@ extern "C" napi_status napi_get_instance_data(napi_env env,
 extern "C" napi_status napi_run_script(napi_env env, napi_value script,
     napi_value* result)
 {
-    NAPI_PREAMBLE_NO_THROW_SCOPE(env);
+    NAPI_PREAMBLE_NO_THROW_SCOPE_GATED(env);
     Zig::GlobalObject* globalObject = toJS(env);
     auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -3110,7 +3120,7 @@ extern "C" napi_status napi_create_bigint_words(napi_env env,
     const uint64_t* words,
     napi_value* result)
 {
-    NAPI_PREAMBLE_NO_THROW_SCOPE(env);
+    NAPI_PREAMBLE_NO_THROW_SCOPE_GATED(env);
     Zig::GlobalObject* globalObject = toJS(env);
     auto& vm = env->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -3382,7 +3392,7 @@ extern "C" JS_EXPORT napi_status napi_remove_async_cleanup_hook(napi_async_clean
     NAPI_RETURN_SUCCESS(env);
 }
 
-extern "C" void napi_internal_cleanup_env_cpp(napi_env env)
+extern "C" void Bun__napi_cleanup_env_cpp(napi_env env)
 {
     env->cleanup();
 }
@@ -3397,12 +3407,12 @@ extern "C" void NapiEnv__unregisterThreadSafeFunction(napi_env env, void* tsfn)
     env->unregisterThreadSafeFunction(tsfn);
 }
 
-extern "C" void napi_internal_remove_finalizer(napi_env env, napi_finalize callback, void* hint, void* data)
+extern "C" void Bun__napi_remove_finalizer(napi_env env, napi_finalize callback, void* hint, void* data)
 {
     env->removeFinalizer(callback, hint, data);
 }
 
-extern "C" void napi_internal_check_gc(napi_env env)
+extern "C" void Bun__napi_check_gc(napi_env env)
 {
     env->checkGC();
 }
@@ -3416,9 +3426,15 @@ extern "C" bool NapiEnv__hasPendingException(napi_env env)
     return scope.exception() != nullptr;
 }
 
-extern "C" uint32_t napi_internal_get_version(napi_env env)
+extern "C" uint32_t Bun__napi_get_version(napi_env env)
 {
     return env->napiModule().nm_version;
+}
+
+// napi_ok, or the status NAPI_RETURN_IF_CANNOT_CALL_INTO_JS returns (not yet set as the last error).
+extern "C" napi_status NapiEnv__checkCanCallIntoJS(napi_env env)
+{
+    return env->canCallIntoJS() ? napi_ok : env->cannotCallIntoJSStatus();
 }
 
 extern "C" JSGlobalObject* NapiEnv__globalObject(napi_env env)

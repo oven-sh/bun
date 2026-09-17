@@ -10,7 +10,7 @@
 
 use bun_boringssl::c::OwnedSslCtx;
 use bun_core::ffi::FfiSlice;
-use bun_core::{String as BunString, ZigString};
+use bun_core::{EncodedSlice, String as BunString};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_ptr::ThisPtr;
 use bun_uws_sys::Socket;
@@ -66,7 +66,7 @@ unsafe extern "C" {
     safe fn WebSocket__didReceiveText(
         websocket_context: &CppWebSocket,
         clone: bool,
-        text: &ZigString,
+        text: &EncodedSlice,
     );
     safe fn WebSocket__didReceiveBytes(
         websocket_context: &CppWebSocket,
@@ -121,7 +121,7 @@ impl CppWebSocket {
         event_loop.exit();
     }
 
-    pub(crate) fn did_receive_text(&self, clone: bool, text: &ZigString) {
+    pub(crate) fn did_receive_text(&self, clone: bool, text: &EncodedSlice) {
         let event_loop = VirtualMachine::get().event_loop_mut();
         event_loop.enter();
         WebSocket__didReceiveText(self, clone, text);

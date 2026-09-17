@@ -102,6 +102,35 @@ describe("node:events", () => {
     expect(p).toBeInstanceOf(Promise);
     await expect(p).rejects.toMatchObject({ code: "ERR_INVALID_ARG_TYPE" });
   });
+
+  test("once rejects with the value emitted on 'error' and removes both listeners", async () => {
+    const emitter = new EventEmitter();
+    const p = EventEmitter.once(emitter, "hey");
+    const err = new Error("boom");
+    emitter.emit("error", err);
+    await expect(p).rejects.toBe(err);
+    expect([emitter.listenerCount("hey"), emitter.listenerCount("error")]).toEqual([0, 0]);
+  });
+
+  test("once settles once when the event fires and the signal aborts afterwards", async () => {
+    const emitter = new EventEmitter();
+    const controller = new AbortController();
+    const p = EventEmitter.once(emitter, "hey", { signal: controller.signal });
+    emitter.emit("hey", 42);
+    controller.abort();
+    expect(await p).toEqual([42]);
+    expect([emitter.listenerCount("hey"), emitter.listenerCount("error")]).toEqual([0, 0]);
+  });
+
+  test("once resolves with the Event dispatched on an EventTarget and ignores later events", async () => {
+    const target = new EventTarget();
+    const p = EventEmitter.once(target, "ping");
+    const event = new Event("ping");
+    target.dispatchEvent(event);
+    target.dispatchEvent(new Event("ping"));
+    const [received] = await p;
+    expect(received).toBe(event);
+  });
 });
 
 describe("EventEmitter", () => {
@@ -625,6 +654,24 @@ describe("EventEmitter.on", () => {
     }
 
     expect((await asyncIterator.next()).value).toEqual([0]);
+  });
+
+  test("does not resume the emitter after a close event", async () => {
+    const calls: string[] = [];
+    const emitter = Object.assign(new EventEmitter(), {
+      pause: () => calls.push("pause"),
+      resume: () => calls.push("resume"),
+    });
+    const asyncIterator = EventEmitter.on(emitter, "hey", { close: ["close"], highWaterMark: 2 } as any);
+
+    // The third queued event exceeds highWaterMark and pauses the emitter.
+    for (let i = 0; i < 4; i++) emitter.emit("hey", i);
+    emitter.emit("close");
+
+    const result = [];
+    for await (const ev of asyncIterator) result.push(ev);
+
+    expect({ result, calls }).toEqual({ result: [[0], [1], [2], [3]], calls: ["pause"] });
   });
 
   test("readline.createInterface", async () => {

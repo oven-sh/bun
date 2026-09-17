@@ -1,3 +1,4 @@
+import { dnsGetaddrinfoError } from "bun:internal-for-testing";
 import { beforeAll, describe, expect, it, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isWindows } from "harness";
 import * as dgram from "node:dgram";
@@ -1027,5 +1028,56 @@ describe("pending cache", () => {
   test.concurrent("concurrent lookup() of the same name all settle", async () => {
     const results = await Promise.all(Array.from({ length: 8 }, () => dns_promises.lookup("localhost", { family: 4 })));
     expect(results).toEqual(Array(8).fill({ address: "127.0.0.1", family: 4 }));
+  });
+});
+
+// The socket never answers. The QTYPE that reaches it and the syscall the
+// cancelled query reports pin resolve()'s rrtype dispatch to the query that
+// resolveNaptr() issues; decoding is covered by the resolveNaptr() tests.
+test.concurrent.each(["NAPTR", "naptr"])("resolve(hostname, %p) issues a NAPTR query", async rrtype => {
+  const socket = dgram.createSocket("udp4");
+  try {
+    socket.bind(0, "127.0.0.1");
+    await once(socket, "listening");
+    const resolver = new dns_promises.Resolver();
+    resolver.setServers(["127.0.0.1:" + socket.address().port]);
+    const received = once(socket, "message");
+    const promise = resolver.resolve("naptr.example.test", rrtype);
+    const [query] = await received;
+    // QNAME ends at the first zero byte after the 12-byte header; QTYPE follows it.
+    expect(query.readUInt16BE(query.indexOf(0, 12) + 1)).toBe(35);
+    resolver.cancel();
+    expect(await promise.catch(err => err)).toMatchObject({ code: "ECANCELLED", syscall: "queryNaptr" });
+  } finally {
+    socket.close();
+  }
+});
+
+// dns.lookup() is getaddrinfo(3). Node reports a temporary resolver failure
+// (every nameserver timed out or answered SERVFAIL) as `EAI_AGAIN` with
+// libuv's errno, and retry libraries key on that code. Bun used to report it
+// as the c-ares code `ETIMEOUT`. CI cannot point getaddrinfo at a failing
+// resolver, so this drives the same mapping the system backend, fetch() and
+// Bun.connect() use with the raw EAI_* status.
+describe("getaddrinfo status mapping", () => {
+  test("EAI_AGAIN is reported as EAI_AGAIN, like Node", () => {
+    const err = dnsGetaddrinfoError("EAI_AGAIN", "redis.example");
+    expect(err).toBeInstanceOf(Error);
+    expect(err).toMatchObject({
+      message: "getaddrinfo EAI_AGAIN redis.example",
+      code: "EAI_AGAIN",
+      errno: -3001,
+      syscall: "getaddrinfo",
+      hostname: "redis.example",
+    });
+  });
+
+  test("EAI_NONAME is still reported as ENOTFOUND, like Node", () => {
+    expect(dnsGetaddrinfoError("EAI_NONAME", "redis.example")).toMatchObject({
+      message: "getaddrinfo ENOTFOUND redis.example",
+      code: "ENOTFOUND",
+      syscall: "getaddrinfo",
+      hostname: "redis.example",
+    });
   });
 });

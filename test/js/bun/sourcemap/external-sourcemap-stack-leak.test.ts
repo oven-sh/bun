@@ -60,10 +60,7 @@ const mainSource = /* js */ `
   const mode = process.argv[2];
   const marker = ${JSON.stringify(remappedMarker)};
   Error.stackTraceLimit = ${FRAMES};
-  const rss =
-    process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
-      ? Bun.unsafe.memoryFootprint
-      : process.memoryUsage.rss;
+  const rss = process.memoryUsage.rss;
 
   let remappedFrames = 0;
   if (mode === "prepareStackTrace") {

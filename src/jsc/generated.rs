@@ -43,15 +43,12 @@ pub struct GenOpt<T>(Option<T>);
 
 impl<T> GenOpt<T> {
     #[inline]
-    pub fn get(&self) -> Option<T>
-    where
-        T: Copy,
-    {
-        self.0
-    }
-    #[inline]
     pub fn as_ref(&self) -> Option<&T> {
         self.0.as_ref()
+    }
+    #[inline]
+    pub fn into_inner(self) -> Option<T> {
+        self.0
     }
 }
 

@@ -144,7 +144,7 @@ pub fn init_global(
         // Dupe to keep Box<[u8]> ownership uniform.
         global.top_level_dir = Box::<[u8]>::from(dir);
     } else if global.top_level_dir.is_empty() {
-        let mut buf = bun_paths::PathBuffer::uninit();
+        let mut buf = bun_paths::path_buffer_pool::get();
         match sys::getcwd(&mut buf[..]) {
             Ok(len) => {
                 global.top_level_dir = Box::<[u8]>::from(&buf[..len]);

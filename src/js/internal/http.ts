@@ -41,6 +41,19 @@ const kPendingCallbacks = Symbol("pendingCallbacks");
 const kRequest = Symbol("request");
 const kCloseCallback = Symbol("closeCallback");
 
+// node:_http_server registers its pipelined-response machinery here at module
+// initialization, letting internal/http1_server_fallback drive the same
+// per-connection queue without widening node:_http_server's exports. The
+// fallback loads node:http (and with it _http_server) before reading these.
+const http1ServerPipeline: {
+  queuePipelinedResponse?: (socket: unknown, res: unknown, isAncient: boolean) => void;
+  advanceResponsePipeline?: (server: unknown, socket: unknown) => void;
+  abortQueuedPipelinedResponses?: (socket: unknown) => void;
+  maybePauseFallbackReads?: (socket: unknown) => void;
+  resumeFallbackReadsOnDrain?: (socket: unknown) => void;
+  kMustCloseConnection?: symbol;
+} = {};
+
 export const enum NodeHTTPResponseAbortEvent {
   none = 0,
   abort = 1,
@@ -348,6 +361,7 @@ const kOutHeaders = Symbol("kOutHeaders");
 const kNeedDrain = Symbol("kNeedDrain");
 const kProxyConfig = Symbol("kProxyConfig");
 const kWaitForProxyTunnel = Symbol("kWaitForProxyTunnel");
+const kPerRequestCheckServerIdentity = Symbol("kPerRequestCheckServerIdentity");
 
 // Cached HTTP Date header value, refreshed once a second like Node.js does.
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http.js
@@ -503,6 +517,7 @@ export {
   getMaxHTTPHeaderSize,
   hasServerResponseFinished,
   headerStateSymbol,
+  http1ServerPipeline,
   isTlsSymbol,
   kAbortController,
   kCloseCallback,
@@ -511,6 +526,7 @@ export {
   kNeedDrain,
   kOutHeaders,
   kPendingCallbacks,
+  kPerRequestCheckServerIdentity,
   kProxyConfig,
   kRealListen,
   kRequest,

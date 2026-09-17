@@ -152,7 +152,7 @@ impl<'a> DataURL<'a> {
             strings::index_of_char(url, b',').ok_or(ParseDataURLError::InvalidDataURL)? as usize;
 
         let mut parsed = DataURL {
-            url: bun_core::String::empty(),
+            url: bun_core::String::EMPTY,
             mime_type: &url[b"data:".len()..comma],
             data: &url[comma + 1..url.len()],
             is_base64: false,

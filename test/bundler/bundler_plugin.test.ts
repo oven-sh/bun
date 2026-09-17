@@ -259,7 +259,7 @@ describe("bundler", () => {
         });
         builder.onResolve({ filter: /^magic:.*/ }, args => {
           expect(args.path).toBe("magic:some_string");
-          expect(args.importer).toBe(root + "/index.ts");
+          expect(args.importer).toBe(path.join(root, "index.ts"));
           expect(args.namespace).toBe("file");
           expect(args.kind).toBe("import-statement");
           onResolveCount++;
@@ -441,6 +441,105 @@ describe("bundler", () => {
       },
     };
   });
+  // Like esbuild, an external import is printed with the path that onResolve returned.
+  itBundled("plugin/ResolveExternalRewritesPath", {
+    files: {
+      "index.ts": /* ts */ `
+        import React from "react";
+        import { createRoot } from "react-dom/client";
+        export { h } from "preact";
+        export * from "mobx";
+        console.log(React, createRoot, await import("lodash"));
+      `,
+    },
+    plugins(builder) {
+      builder.onResolve({ filter: /^(react|react-dom\/client|preact|mobx|lodash)$/ }, args => {
+        return { path: "https://esm.sh/" + args.path, external: true };
+      });
+    },
+    onAfterBundle(api) {
+      const contents = api.readFile("/out.js");
+      expect(contents).toContain(`from "https://esm.sh/react"`);
+      expect(contents).toContain(`from "https://esm.sh/react-dom/client"`);
+      expect(contents).toContain(`from "https://esm.sh/preact"`);
+      expect(contents).toContain(`from "https://esm.sh/mobx"`);
+      expect(contents).toContain(`import("https://esm.sh/lodash")`);
+      for (const original of ["react", "react-dom/client", "preact", "mobx", "lodash"]) {
+        expect(contents).not.toContain(`"${original}"`);
+      }
+    },
+  });
+  itBundled("plugin/ResolveExternalRewritesPathRequire", {
+    files: {
+      "index.ts": /* ts */ `
+        const React = require("react");
+        console.log(React);
+      `,
+    },
+    format: "cjs",
+    plugins(builder) {
+      builder.onResolve({ filter: /^react$/ }, () => {
+        return { path: "./vendor/react.cjs", external: true };
+      });
+    },
+    onAfterBundle(api) {
+      const contents = api.readFile("/out.js");
+      expect(contents).toContain(`require("./vendor/react.cjs")`);
+      expect(contents).not.toContain(`require("react")`);
+    },
+  });
+  for (const format of ["esm", "cjs"] as const) {
+    itBundled(`plugin/ResolveExternalRewritesRelativeImport_${format}`, {
+      files: {
+        "/a.js": /* js */ `
+          import { v } from "./b.js";
+          console.log(v);
+        `,
+        "/b.js": `export const v = "bundled";`,
+      },
+      target: "bun",
+      format,
+      plugins(builder) {
+        builder.onResolve({ filter: /b\.js$/ }, () => {
+          return { path: "/somewhere/else/b.js", external: true };
+        });
+      },
+      onAfterBundle(api) {
+        const contents = api.readFile("/out.js");
+        expect(contents).toContain(
+          format === "esm" ? `import { v } from "/somewhere/else/b.js";` : `require("/somewhere/else/b.js")`,
+        );
+        expect(contents).not.toContain(`"./b.js"`);
+        expect(contents).not.toContain(`"bundled"`);
+      },
+    });
+  }
+  // rewriteExternalWithNamespace and rewriteExternalWithoutNamespace in
+  // https://github.com/evanw/esbuild/blob/f6058f8364fe7ab91ca57a83e02577ed74c9cae4/scripts/plugin-tests.js#L680-L728
+  for (const namespace of ["for-testing", undefined]) {
+    itBundled(`plugin/RewriteExternal${namespace ? "WithNamespace" : "WithoutNamespace"}`, {
+      files: {
+        "/in.js": /* js */ `
+          import { exists } from "extern";
+          export default exists;
+        `,
+        "/check.js": /* js */ `
+          const fs = require("fs");
+          console.log(require("./out.js").default === fs.exists);
+        `,
+      },
+      format: "cjs",
+      plugins(builder) {
+        builder.onResolve({ filter: /^extern$/ }, () => {
+          return { path: "fs", external: true, namespace };
+        });
+      },
+      run: {
+        file: "/check.js",
+        stdout: "true",
+      },
+    });
+  }
   itBundled("plugin/ResolveOverrideFile", ({ root }) => {
     return {
       files: {
@@ -537,7 +636,7 @@ describe("bundler", () => {
         stdout: "this string should exist once this string should exist once",
       },
       onAfterBundle(api) {
-        expect(importers.sort()).toEqual([root + "/one.ts", root + "/two.ts"].sort());
+        expect(importers.sort()).toEqual([path.join(root, "one.ts"), path.join(root, "two.ts")].sort());
         expect(onResolveCount).toBe(2);
         const contents = api.readFile("/out.js");
         expect([...contents.matchAll(/this string should exist once/g)].length).toBe(1);
@@ -1766,4 +1865,32 @@ describe("bundler", () => {
     });
     expect(exitCode).toBe(0);
   });
+
+  // Two entry point names that onResolve maps to one file make one output file.
+  for (const splitting of [false, true]) {
+    test.concurrent(`plugin/two entry points that resolve to one file (splitting: ${splitting})`, async () => {
+      using dir = tempDir("plugin-two-entry-points-one-file", {
+        "entry.ts": `console.log("entry");`,
+      });
+      const result = await Bun.build({
+        entrypoints: ["first-name", "second-name"],
+        outdir: join(String(dir), "out"),
+        splitting,
+        throw: false,
+        plugins: [
+          {
+            name: "alias",
+            setup(build) {
+              build.onResolve({ filter: /-name$/ }, () => ({ path: join(String(dir), "entry.ts") }));
+            },
+          },
+        ],
+      });
+      expect({
+        success: result.success,
+        logs: result.logs.map(log => log.message),
+        outputs: result.outputs.map(output => path.basename(output.path)),
+      }).toEqual({ success: true, logs: [], outputs: ["second-name.js"] });
+    });
+  }
 });

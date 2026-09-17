@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { once } from "events";
-import { bunEnv, bunExe, tls as COMMON_CERT_, isASAN } from "harness";
+import { bunEnv, bunExe, tls as COMMON_CERT_, isASAN, nodeExe, tempDir } from "harness";
 import https from "https";
 import net from "net";
 import { join } from "path";
@@ -1668,3 +1668,433 @@ describe.concurrent("a client paused while connecting", () => {
     });
   });
 });
+
+// #40653: a TLS 1.3 client must send its final handshake flight and the first
+// write issued from the 'secureConnect' callback in ONE TCP segment, like
+// Node does through its memory BIO. Two segments let a server that tears the
+// connection down right after the handshake (Node's post-verify destroy of a
+// rejected client certificate) close with the second segment unread, which
+// turns its FIN teardown into an RST and a bogus 'read ECONNRESET' at the
+// client. A raw TCP proxy in front of the server records the client's segment
+// boundaries: the client child's writes are milliseconds apart when they are
+// separate sends, so each reaches the proxy as its own 'data' chunk.
+it("TLS 1.3 client coalesces its final handshake flight with the first write from secureConnect into one segment (#40653)", async () => {
+  // Resolves with the number of client-to-server chunks the proxy had
+  // forwarded by the time the server's plaintext 'data' event fired.
+  const { promise: chunksWhenServerGotData, resolve: reportChunks } = Promise.withResolvers<number>();
+
+  // Client-to-server chunk sizes as the proxy receives them. One recv per
+  // arriving segment: the proxy is idle between the child's sends.
+  const upstreamChunks: number[] = [];
+
+  const server = tls.createServer({
+    key: COMMON_CERT_.key,
+    cert: COMMON_CERT_.cert,
+    minVersion: "TLSv1.3",
+    maxVersion: "TLSv1.3",
+  });
+  server.on("secureConnection", socket => {
+    socket.on("data", () => {
+      reportChunks(upstreamChunks.length);
+      socket.end();
+    });
+    socket.on("error", () => {});
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const serverPort = (server.address() as AddressInfo).port;
+
+  const proxy = net.createServer({ allowHalfOpen: true }, client => {
+    const upstream = net.connect({ port: serverPort, host: "127.0.0.1", allowHalfOpen: true });
+    client.on("data", data => {
+      upstreamChunks.push(data.length);
+      upstream.write(data);
+    });
+    upstream.on("data", data => client.write(data));
+    client.on("end", () => upstream.end());
+    upstream.on("end", () => client.end());
+    client.on("error", () => {});
+    upstream.on("error", () => {});
+  });
+  await once(proxy.listen(0, "127.0.0.1"), "listening");
+  const proxyPort = (proxy.address() as AddressInfo).port;
+
+  try {
+    const clientScript = `
+      const tls = require("node:tls");
+      const events = [];
+      const socket = tls.connect({
+        host: "127.0.0.1",
+        port: ${proxyPort},
+        rejectUnauthorized: false,
+        minVersion: "TLSv1.3",
+        maxVersion: "TLSv1.3",
+      });
+      socket.on("secureConnect", () => {
+        events.push("secureConnect");
+        socket.write("HELLO");
+      });
+      socket.on("data", () => events.push("data"));
+      socket.on("end", () => events.push("end"));
+      socket.on("error", error => events.push("error:" + error.code));
+      socket.on("close", hadError => {
+        events.push("close:" + hadError);
+        console.log(events.join(","));
+      });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", clientScript],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("secureConnect,end,close:false");
+    expect(exitCode).toBe(0);
+
+    // ClientHello, then ONE segment carrying change_cipher_spec + Finished +
+    // the "HELLO" application record. On the unfixed client the flight and
+    // the application record are two sends, so the server's data arrives in
+    // a third chunk. Note: the two unfixed sends can coalesce in the kernel
+    // when this process is descheduled between them (a heavily loaded
+    // machine), so a PASS discriminates reliably only on an unloaded one. A
+    // split of the single fixed send cannot happen: 1.3KB is far below the
+    // loopback MTU and the receive buffer.
+    expect(await chunksWhenServerGotData).toBe(2);
+  } finally {
+    proxy.close();
+    server.close();
+  }
+});
+
+// Hard path of the batching fix: a write to a SECOND TLS socket on the same
+// loop, issued from inside 'secureConnect' while the first socket's final
+// flight is still held in the shared batch. The BIO must deliver the held
+// flight to its owner before it takes the slot for the second socket, or one
+// socket's ciphertext lands on the other's fd and both connections die.
+it("a write to a second TLS socket from inside secureConnect keeps both streams intact (#40653)", async () => {
+  const tlsOptions = {
+    key: COMMON_CERT_.key,
+    cert: COMMON_CERT_.cert,
+    minVersion: "TLSv1.3" as const,
+    maxVersion: "TLSv1.3" as const,
+  };
+  const first = Promise.withResolvers<string>();
+  const second = Promise.withResolvers<string>();
+  function makeServer(got: (data: string) => void) {
+    const server = tls.createServer(tlsOptions, socket => {
+      socket.on("data", data => {
+        got(data.toString());
+        socket.end();
+      });
+      socket.on("error", () => {});
+    });
+    return server;
+  }
+  const server1 = makeServer(first.resolve);
+  const server2 = makeServer(second.resolve);
+  await once(server1.listen(0, "127.0.0.1"), "listening");
+  await once(server2.listen(0, "127.0.0.1"), "listening");
+
+  try {
+    const connectOptions = {
+      host: "127.0.0.1",
+      rejectUnauthorized: false,
+      minVersion: "TLSv1.3" as const,
+      maxVersion: "TLSv1.3" as const,
+    };
+    // Establish the second socket fully first.
+    const client2 = tlsConnect({ ...connectOptions, port: (server2.address() as AddressInfo).port });
+    await once(client2, "secureConnect");
+    client2.on("error", () => {});
+
+    const client1 = tlsConnect({ ...connectOptions, port: (server1.address() as AddressInfo).port });
+    client1.on("error", () => {});
+    client1.on("secureConnect", () => {
+      // Foreign-owner write while client1's flight is held in the batch.
+      client2.write("to-second");
+      client1.write("to-first");
+    });
+
+    expect(await first.promise).toBe("to-first");
+    expect(await second.promise).toBe("to-second");
+    await Promise.all([once(client1, "close"), once(client2, "close")]);
+  } finally {
+    server1.close();
+    server2.close();
+  }
+});
+
+// Hard path of the batching fix: end() called synchronously from the
+// handshake callback, with the final flight still held in the batch. The
+// shutdown path must flush the held flight before it sends close_notify and
+// FIN; in the wrong order the server never completes the handshake. The Bun
+// socket API is used because its end() reaches the TLS shutdown inside the
+// same dispatch.
+it("ending a TLS 1.3 socket from its handshake callback still completes the server's handshake (#40653)", async () => {
+  const serverSaw = Promise.withResolvers<string>();
+  const clientClosed = Promise.withResolvers<void>();
+  await using listener = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    tls: { key: COMMON_CERT_.key, cert: COMMON_CERT_.cert },
+    socket: {
+      handshake(_socket, success, authorizationError) {
+        serverSaw.resolve(success ? "handshake" : `fail:${authorizationError}`);
+      },
+      data() {},
+      error() {},
+      close() {},
+    },
+  });
+  await Bun.connect({
+    hostname: "127.0.0.1",
+    port: listener.port,
+    tls: { rejectUnauthorized: false },
+    socket: {
+      handshake(socket) {
+        socket.end();
+      },
+      data() {},
+      error() {},
+      close() {
+        clientClosed.resolve();
+      },
+    },
+  });
+  expect(await serverSaw.promise).toBe("handshake");
+  await clientClosed.promise;
+});
+
+// End-to-end shape of the issue: a Node TLS 1.3 server that rejects the
+// client's certificate does so AFTER the client saw 'secureConnect' (TLS 1.3
+// clients finish first), and destroys the raw socket with no close_notify.
+// With the coalesced segment above, the server closes with an empty receive
+// buffer, so the client sees a bare FIN and reports a clean 'end'. The server
+// must be Node: it is Node's post-verify destroy (bare close, no
+// SSL_shutdown) that produces this teardown shape.
+it.skipIf(!nodeExe())(
+  "TLS 1.3 client sees 'end', not ECONNRESET, when the server tears down right after rejecting its certificate (#40653)",
+  async () => {
+    using dir = tempDir("tls13-bare-fin", {
+      "server.mjs": `
+        import tls from "node:tls";
+        const server = tls.createServer({
+          key: ${JSON.stringify(COMMON_CERT_.key)},
+          cert: ${JSON.stringify(COMMON_CERT_.cert)},
+          // No 'ca': the client's self-signed cert fails verification.
+          requestCert: true,
+          rejectUnauthorized: true,
+          minVersion: "TLSv1.3",
+          maxVersion: "TLSv1.3",
+        });
+        server.on("tlsClientError", () => {});
+        server.listen(0, "127.0.0.1", () => {
+          console.log(server.address().port);
+        });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [nodeExe()!, "server.mjs"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const reader = proc.stdout.getReader();
+    const decoder = new TextDecoder();
+    let out = "";
+    while (!out.includes("\n")) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      out += decoder.decode(value);
+    }
+    const port = parseInt(out.trim(), 10);
+    expect(port).toBeGreaterThan(0);
+
+    // The bug is a race between the client's second segment and the server's
+    // destroy. One clean run proves little; five runs failed 5/5 before the
+    // fix on Linux and 20/20 in the report on macOS.
+    for (let i = 0; i < 5; i++) {
+      const events: string[] = [];
+      await new Promise<void>(resolve => {
+        const socket = tlsConnect({
+          host: "127.0.0.1",
+          port,
+          rejectUnauthorized: false,
+          key: COMMON_CERT_.key,
+          cert: COMMON_CERT_.cert,
+          minVersion: "TLSv1.3",
+          maxVersion: "TLSv1.3",
+        });
+        socket.on("secureConnect", () => {
+          events.push("secureConnect");
+          socket.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+        });
+        socket.on("error", error => events.push(`error:${(error as NodeJS.ErrnoException).code}`));
+        socket.on("end", () => events.push("end"));
+        socket.on("close", hadError => {
+          events.push(`close:${hadError}`);
+          resolve();
+        });
+      });
+      expect(events).toEqual(["secureConnect", "end", "close:false"]);
+    }
+  },
+);
+
+// The peer accepts the TCP connection and never answers the ClientHello (a dead
+// TLS backend, a plaintext service on a TLS port). A caller that gives up must
+// still finish its writable side and send the FIN, as node does:
+// https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L1203-L1213
+// The fixture runs on both runtimes so the expected reports are pinned to node.
+describe.each([
+  ["bun", bunExe()],
+  ["node", nodeExe()],
+])("end() and destroySoon() before the handshake completes (%s)", (_runtime, exe) => {
+  async function run(mode: string) {
+    await using proc = Bun.spawn({
+      cmd: [exe!, join(import.meta.dir, "tls-shutdown-before-handshake-fixture.mjs"), mode],
+      env: { ...bunEnv, TLS_KEY: COMMON_CERT_.key, TLS_CERT: COMMON_CERT_.cert },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const report = JSON.parse(stdout);
+    expect(exitCode).toBe(0);
+    return report;
+  }
+
+  it.skipIf(!exe)("end() finishes the writable side and sends the FIN", async () => {
+    expect(await run("end")).toEqual({
+      log: ["connect secureConnecting=true", "finish"],
+      peerSawFin: true,
+      writableFinished: true,
+      readyState: "readOnly",
+      destroyed: false,
+    });
+  });
+
+  it.skipIf(!exe)("destroySoon() closes the socket", async () => {
+    expect(await run("destroySoon")).toEqual({
+      log: ["connect secureConnecting=true", "finish", "close"],
+      peerSawFin: true,
+      writableFinished: true,
+      readyState: "closed",
+      destroyed: true,
+    });
+  });
+
+  it.skipIf(!exe)("a server-side TLSSocket end()s while it waits for the client's first flight", async () => {
+    expect(await run("server-end")).toEqual({
+      log: ["end secureConnecting=true", "finish"],
+      clientSawFin: true,
+    });
+  });
+});
+
+it.each(["TLSv1.3", "TLSv1.2"] as const)(
+  "%s: re-checks server identity on a resumed session (cross-servername resume must not authorize)",
+  async version => {
+    // A resumed handshake sends no certificate, so a ticket alone says nothing
+    // about the name the peer was verified for. BoringSSL keeps the peer chain
+    // on the SSL_SESSION, and Bun re-checks that certificate against the current
+    // servername. Without the check, any peer that can decrypt the ticket (a
+    // vhost on the same context, a server that shares ticket keys) is authorized
+    // under a name its certificate does not cover. Node had the same hole
+    // (CVE-2026-48934). Node closes it earlier: it does not offer a session that
+    // was authenticated for another servername.
+    await using server = tls.createServer({ ...COMMON_CERT_, minVersion: version, maxVersion: version }, c => {
+      c.on("error", () => {});
+      c.end("x");
+    });
+    server.on("tlsClientError", () => {});
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const port = (server.address() as AddressInfo).port;
+
+    // Full handshake: capture the ticket. The server ends the connection, so by
+    // 'close' the post-handshake NewSessionTicket has arrived.
+    let ticket: Buffer | undefined;
+    const first = tlsConnect({
+      port,
+      host: "127.0.0.1",
+      ca: COMMON_CERT_.cert,
+      servername: "localhost",
+      minVersion: version,
+      maxVersion: version,
+    });
+    first.on("session", s => (ticket = s));
+    first.on("data", () => {});
+    first.on("error", () => {});
+    await once(first, "close");
+    expect(first.authorized).toBe(true);
+    expect(Buffer.isBuffer(ticket)).toBe(true);
+
+    type Outcome = {
+      reused: boolean;
+      authorized: boolean;
+      authorizationError: unknown;
+      identityChecks: [string, unknown][];
+      result: string;
+    };
+    const resume = (servername: string) =>
+      new Promise<Outcome>(resolve => {
+        const identityChecks: [string, unknown][] = [];
+        let done = false;
+        let reused = false;
+        const s = tlsConnect({
+          port,
+          host: "127.0.0.1",
+          ca: COMMON_CERT_.cert,
+          servername,
+          session: ticket,
+          minVersion: version,
+          maxVersion: version,
+          checkServerIdentity: (host, cert) => {
+            identityChecks.push([host, cert?.subject?.CN]);
+            return tls.checkServerIdentity(host, cert);
+          },
+        });
+        const finish = (result: string) => {
+          if (done) return;
+          done = true;
+          s.destroy();
+          resolve({
+            reused,
+            authorized: s.authorized,
+            authorizationError: s.authorizationError,
+            identityChecks,
+            result,
+          });
+        };
+        s.on("secureConnect", () => (reused = s.isSessionReused()));
+        s.on("data", () => finish("ok"));
+        s.on("close", () => finish("ok"));
+        s.on("error", (e: NodeJS.ErrnoException) => finish(String(e.code ?? e.message)));
+      });
+
+    // Resuming under a servername the certificate does not cover is rejected:
+    // the stored peer certificate (CN=server-bun, SAN=localhost) is re-checked
+    // against the new servername and fails exactly as it would on a full
+    // handshake.
+    expect(await resume("not-in-cert.example")).toEqual({
+      reused: false,
+      authorized: false,
+      authorizationError: "ERR_TLS_CERT_ALTNAME_INVALID",
+      identityChecks: [["not-in-cert.example", "server-bun"]],
+      result: "ERR_TLS_CERT_ALTNAME_INVALID",
+    });
+
+    // Resuming under the same servername still authorizes. checkServerIdentity
+    // runs again, on the stored certificate. Node does not call it on a resumed
+    // session.
+    expect(await resume("localhost")).toEqual({
+      reused: true,
+      authorized: true,
+      authorizationError: null,
+      identityChecks: [["localhost", "server-bun"]],
+      result: "ok",
+    });
+  },
+);

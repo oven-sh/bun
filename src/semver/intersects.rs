@@ -87,8 +87,17 @@ impl<'a> Interval<'a> {
 }
 
 impl Group {
-    /// Whether some version satisfies both groups; prerelease-exclusion rules are not modelled, comparators are compared directly.
+    /// Whether some version satisfies both groups. A group that is one exact version intersects
+    /// the other group only when that version satisfies it, so a prerelease is held to the
+    /// prerelease rule, as in node-semver. Between two ranges the prerelease rule is not
+    /// modelled, comparators are compared directly.
     pub fn intersects(&self, self_buf: &[u8], other: &Group, other_buf: &[u8]) -> bool {
+        if let Some(version) = self.get_exact_version() {
+            return other.satisfies(version, other_buf, self_buf);
+        }
+        if let Some(version) = other.get_exact_version() {
+            return self.satisfies(version, self_buf, other_buf);
+        }
         let mut a = Some(&self.head);
         while let Some(list_a) = a {
             a = list_a.next.as_deref();

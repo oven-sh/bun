@@ -2140,9 +2140,11 @@ describe.concurrent("s3 writer() upload failure with no pending promise", () => 
   // key "create-denied". `aborted` resolves when the client sends
   // AbortMultipartUpload, which it does only after the upload has failed.
   const prelude = `
-    // A key over the 1024 byte limit cannot be signed, so the upload fails inside
-    // the call that starts it, before that call has made its promise.
-    const unsignableKey = Buffer.alloc(2048, "k").toString();
+    // The percent-encoded key is over the 1024 byte limit, so no request can be
+    // signed: the upload fails inside the call that starts it, before that call
+    // has made its promise. The key itself is under every platform's path limit
+    // (1024 bytes on macOS), which file() checks.
+    const unsignableKey = Buffer.alloc(512, "+").toString();
     const settle = p =>
       Promise.resolve(p).then(
         v => "resolved " + v,
@@ -2238,6 +2240,13 @@ describe.concurrent("s3 writer() upload failure with no pending promise", () => 
        const end = await settle(writer.end());
        await aborted.promise;`,
       { flush: { ...accessDenied, path: "obj" }, end: "resolved 0", requests: ["create", "part"] },
+    ],
+    [
+      // close() reports no outcome of the upload, so it drops the failure.
+      "close() after a part upload failed",
+      `${partUploadFailed}
+       const close = String(writer.close());`,
+      { close: "undefined", requests: ["create", "part"] },
     ],
     [
       "end() after CreateMultipartUpload was denied",

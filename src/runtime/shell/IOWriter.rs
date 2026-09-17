@@ -795,26 +795,23 @@ impl IOWriter {
         }
     }
 
-    /// Shared failure path: record the error, then fail every chunk that is
-    /// still queued, oldest first, with its own error completion.
+    /// Shared failure path: record the error, then give every chunk that is
+    /// still queued its own error completion, oldest first.
     ///
-    /// One completion per *chunk*, not per child. `rm` and the `OutputTask`
+    /// One completion per *chunk*, not per child: `rm` and the `OutputTask`
     /// builtins (`ls`, `mkdir`, `touch`, `cp`) queue one chunk per task under
-    /// the same `ChildPtr` and finish once they have counted a completion for
-    /// each, so a single per-child error left them waiting for the rest
-    /// forever. A child that stops at its first error while more of its
-    /// chunks are queued (`cat`, the subprocess `CapturedWriter`) calls
-    /// `cancel_chunks` from that callback; that is why the queue is walked in
-    /// place, each entry re-checked right before its callback, and only
-    /// cleared after the last completion. Nothing is appended meanwhile:
-    /// `err`/`broken_pipe` are set before the first callback, so a child that
-    /// enqueues from its callback (the next statement, the RHS of `&&`, ...)
-    /// is answered by `handle_dead_writer` instead of being queued onto a
-    /// writer whose handle the error path is tearing down.
+    /// one `ChildPtr` and finish only after a completion for each. A child
+    /// that stops at its first error (`cat`, the subprocess `CapturedWriter`)
+    /// calls `cancel_chunks` from that callback, so the queue is walked in
+    /// place and each entry is re-checked right before its callback. Nothing
+    /// is appended meanwhile: `err` is set before the first callback, so a
+    /// child that enqueues from its callback (the next statement, the RHS of
+    /// `&&`, ...) is answered by `handle_dead_writer`, not queued onto a writer
+    /// whose handle the error path is tearing down.
     ///
     /// `withhold` is the child whose `enqueue` is still on the stack (see
-    /// `on_sync_error`): the first of its chunks is not dispatched here but
-    /// returned, provided it is still live once everything else has run.
+    /// `on_sync_error`). Its first live chunk is not dispatched here. It is
+    /// returned, if it is still live after everything else has run.
     fn fail_pending_writers(&self, err: &sys::Error, withhold: Option<ChildPtr>) -> Option<Yield> {
         // A completion may drop the last external `Arc` to this writer.
         let _keepalive = self.keepalive();

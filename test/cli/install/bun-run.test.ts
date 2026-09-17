@@ -1,7 +1,7 @@
 import { $ } from "bun";
 import { describe, expect, it } from "bun:test";
 import { chmodSync } from "fs";
-import { bunEnv as bunEnv_, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv as bunEnv_, bunExe, isLinux, isWindows, tempDir, tempDirWithFiles } from "harness";
 import { basename, join } from "path";
 
 const bunEnv = {
@@ -1326,7 +1326,9 @@ describe.concurrent("bun run", () => {
       expect(exitCode).toBe(1);
     });
 
-    it("waiting for the shell fails, --silent", async () => {
+    // Linux only. On macOS an ignored SIGCHLD survives exec too, but the child
+    // stays waitable there, so waitpid() does not fail.
+    it.skipIf(!isLinux)("waiting for the shell fails, --silent", async () => {
       using dir = prePostScripts();
 
       // With SIGCHLD ignored (inherited through exec), the kernel reaps the shell
@@ -1335,7 +1337,15 @@ describe.concurrent("bun run", () => {
       await using proc = Bun.spawn({
         cmd: ["bash", "-c", 'trap "" CHLD; exec "$0" "$@"', bunExe(), "run", "--silent", "--shell=system", "hi"],
         cwd: String(dir),
-        env: bunEnv,
+        env: {
+          ...bunEnv,
+          // The ASAN lanes export this flag. The no-orphans wait loop does not
+          // return once the kernel has reaped the child, so use the plain one.
+          BUN_FEATURE_FLAG_NO_ORPHANS: undefined,
+          // LeakSanitizer forks a ptrace probe at exit. Its waitpid() fails the
+          // same way and it prints a warning to stderr.
+          ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+        },
         stdout: "pipe",
         stderr: "pipe",
       });

@@ -1801,16 +1801,11 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             method = Method::PUT;
         }
 
-        let content_type = if range.is_none() {
-            headers.as_ref().and_then(|h| h.get_content_type())
-        } else {
-            None
-        };
         let mut result = match credentials_with_options.credentials.sign_request::<false>(
             &SignOptions {
                 path: url.s3_path(),
                 method,
-                content_type,
+                content_type: headers.as_ref().and_then(|h| h.get_content_type()),
                 ..Default::default()
             },
             None,

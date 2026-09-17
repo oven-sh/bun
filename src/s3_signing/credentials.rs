@@ -294,10 +294,14 @@ impl S3Credentials {
         if matches!(content_disposition, Some(s) if s.is_empty()) {
             content_disposition = None;
         }
-        let mut content_type = sign_options.content_type;
-        if matches!(content_type, Some(s) if s.is_empty()) {
-            content_type = None;
-        }
+        // SigV4 hashes the header value with outer whitespace removed and
+        // inner runs collapsed. Send that exact form so the wire value and
+        // the signed value cannot drift.
+        let content_type: Option<Box<[u8]>> = sign_options
+            .content_type
+            .map(collapse_whitespace)
+            .filter(|s| !s.is_empty());
+        let content_type = content_type.as_deref();
         let mut content_encoding = sign_options.content_encoding;
         if matches!(content_encoding, Some(s) if s.is_empty()) {
             content_encoding = None;
@@ -1423,6 +1427,25 @@ impl CanonicalRequest {
 /// which would allow HTTP header injection if used in a header value.
 fn contains_newline_or_cr(value: &[u8]) -> bool {
     strings::index_of_any(value, b"\r\n").is_some()
+}
+
+/// SigV4 `Trimall`: drop leading and trailing spaces and tabs and replace each
+/// inner run with one space. CR and LF stay so `contains_newline_or_cr` rejects them.
+fn collapse_whitespace(value: &[u8]) -> Box<[u8]> {
+    let mut out = Vec::with_capacity(value.len());
+    let mut pending_space = false;
+    for &c in value {
+        if c == b' ' || c == b'\t' {
+            pending_space = !out.is_empty();
+        } else {
+            if pending_space {
+                out.push(b' ');
+                pending_space = false;
+            }
+            out.push(c);
+        }
+    }
+    out.into_boxed_slice()
 }
 
 fn is_valid_host_component(value: &[u8]) -> bool {

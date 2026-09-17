@@ -22,6 +22,12 @@ interface Seen {
   signatureMatches: boolean;
 }
 
+// SigV4 "Trimall": servers hash header values with outer whitespace removed
+// and inner runs collapsed to one space.
+function trimall(value: string): string {
+  return value.trim().replace(/[ \t]+/g, " ");
+}
+
 function verifySigV4(req: Request, body: string): Seen {
   const url = new URL(req.url);
   const authorization = req.headers.get("authorization")!;
@@ -31,7 +37,7 @@ function verifySigV4(req: Request, body: string): Seen {
   const day = amzDate.slice(0, 8);
   const contentHash = req.headers.get("x-amz-content-sha256")!;
 
-  const canonicalHeaders = signedHeaders.map(name => `${name}:${req.headers.get(name)}\n`).join("");
+  const canonicalHeaders = signedHeaders.map(name => `${name}:${trimall(req.headers.get(name)!)}\n`).join("");
   const canonicalRequest = [
     req.method,
     url.pathname,
@@ -120,6 +126,30 @@ describe.concurrent("s3 content-type signing", () => {
           "x-amz-content-sha256",
           "x-amz-date",
         ],
+        signatureMatches: true,
+      },
+    ]);
+  });
+
+  it("collapses whitespace in the type so the wire value matches the signed value", async () => {
+    const { server, seen } = startServer();
+    using _ = server;
+    const client = new S3Client({ ...credentials, endpoint: server.url.href });
+
+    await client.write("h", "x", { type: "  text/html;   charset=utf-8  " });
+    await client.write("i", "x", { type: "a/b;    c=d" });
+
+    expect(seen).toEqual([
+      {
+        method: "PUT",
+        contentType: "text/html; charset=utf-8",
+        signedHeaders: ["content-type", "host", "x-amz-content-sha256", "x-amz-date"],
+        signatureMatches: true,
+      },
+      {
+        method: "PUT",
+        contentType: "a/b; c=d",
+        signedHeaders: ["content-type", "host", "x-amz-content-sha256", "x-amz-date"],
         signatureMatches: true,
       },
     ]);

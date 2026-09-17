@@ -1406,8 +1406,7 @@ impl ServerWebSocket {
         Ok(JSValue::UNDEFINED)
     }
 
-    /// Parses `data` as if the loop had just read it (bytes the peer sent
-    /// before the handshake completed). Returns false when the socket is not open.
+    /// Parses `data` as if the loop had just read it. Returns false when the socket is not open.
     pub(crate) fn unshift_data(&self, data: &[u8]) -> bool {
         let socket: *mut bun_uws_sys::us_socket_t = self.websocket().raw().cast();
         if socket.is_null() || self.is_closed() {

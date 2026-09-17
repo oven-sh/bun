@@ -51,9 +51,7 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
         return generator;
     };
 
-    // Both phases of the finally() fast path register a reaction whose context is
-    // a JSSlimPromiseReaction record; record->promise() is the promise finally()
-    // returned. The reaction's cell slot can be empty or hold the async context.
+    // A finally() reaction's context is a JSSlimPromiseReaction record; its promise() is the promise finally() returned.
     auto finallyResultPromise = [&](JSC::JSValue context) -> JSC::JSPromise* {
         JSC::JSSlimPromiseReaction* record = nullptr;
         JSC::JSPromise* result = nullptr;

@@ -1,0 +1,58 @@
+---
+title: Use ClickHouse Managed Postgres with Bun
+sidebarTitle: ClickHouse Managed Postgres
+mode: center
+---
+
+[ClickHouse Managed Postgres](https://clickhouse.com/cloud/postgres) is a managed PostgreSQL service. Connect using Bun's built-in [SQL client](/runtime/sql).
+
+## Get your connection details
+
+Open **Connect** for your instance in the ClickHouse Cloud console. Turn **via PgBouncer** off to use a direct connection in this example. Copy the connection URL and download the instance's CA certificate bundle from **Settings**.
+
+Create a project directory and add your connection details to a `.env` file:
+
+```ini .env icon="settings"
+DATABASE_URL="postgresql://USER:PASSWORD@HOST:5432/postgres"
+PGSSLROOTCERT="/absolute/path/to/ca-certificate.pem"
+```
+
+For this example, use the hostname from the connection modal and remove the query string (the part starting with `?`) from the URL, including parameters such as `sslmode` and `channel_binding`. The client below configures TLS and verifies the server's certificate using the downloaded CA bundle. Keep `.env` out of version control. See the [connection documentation](https://clickhouse.com/docs/products/managed-postgres/connection) for details.
+
+## Query the database
+
+Create `index.ts` with a SQL client and a query that returns the database name:
+
+```ts index.ts icon="/icons/typescript.svg"
+import { SQL } from "bun";
+
+const databaseUrl = Bun.env.DATABASE_URL;
+const caPath = Bun.env.PGSSLROOTCERT;
+
+if (!databaseUrl || !caPath) {
+  throw new Error("Set DATABASE_URL and PGSSLROOTCERT before running this script.");
+}
+
+const sql = new SQL({
+  url: databaseUrl,
+  tls: {
+    ca: await Bun.file(caPath).text(),
+    rejectUnauthorized: true,
+  },
+});
+
+try {
+  const rows = await sql`SELECT current_database() AS database`;
+  console.log(rows[0].database);
+} finally {
+  await sql.close();
+}
+```
+
+Run the script with your environment file:
+
+```bash terminal icon="terminal"
+bun --env-file=.env run index.ts
+```
+
+The output is the name of the database in your connection URL, such as `postgres`.

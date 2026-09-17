@@ -13,7 +13,7 @@ use bun_http::{self as HTTP, headers};
 use bun_install::integrity::{Integrity, Tag as IntegrityTag};
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_parsers::json as JSON;
-use bun_paths::{self, PathBuffer, SEP_STR};
+use bun_paths::{self, SEP_STR};
 use bun_resolver::fs;
 use bun_sys as sys;
 use bun_url::URL;
@@ -197,7 +197,6 @@ impl UpgradeCommand {
             },
         };
         header_entries.append(accept).expect("oom");
-        // defer if SILENT header_entries.deinit() — Drop handles this
 
         // Incase they're using a GitHub proxy in e.g. China
         let mut github_api_domain: &[u8] = b"api.github.com";
@@ -264,10 +263,8 @@ impl UpgradeCommand {
             api_url,
             header_entries,
             headers_buf,
-            std::ptr::from_mut::<MutableString>(metadata_body),
             b"",
             http_proxy,
-            None,
             HTTP::FetchRedirect::Follow,
         ));
         async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
@@ -278,7 +275,7 @@ impl UpgradeCommand {
             // frame returns, so the pointee outlives every use.
             async_http.client.progress_node = Some(NonNull::from(progress.as_deref_mut().unwrap()));
         }
-        let response = async_http.send_sync()?;
+        let response = async_http.send_sync(metadata_body)?;
 
         match response.status_code() {
             404 => return Err(crate::Error::HTTP404),
@@ -657,10 +654,8 @@ impl UpgradeCommand {
                 zip_url,
                 headers::EntryList::default(),
                 b"",
-                std::ptr::from_mut::<MutableString>(zip_file_buffer),
                 b"",
                 http_proxy,
-                None,
                 HTTP::FetchRedirect::Follow,
             ));
             // `progress` is intentionally leaked (process-lifetime), so the
@@ -669,7 +664,7 @@ impl UpgradeCommand {
                 Some(NonNull::new(progress).expect("leaked Box is non-null"));
             async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
 
-            let response = async_http.send_sync()?;
+            let response = async_http.send_sync(zip_file_buffer)?;
 
             match response.status_code() {
                 404 => {
@@ -761,7 +756,7 @@ impl UpgradeCommand {
             let save_dir: sys::Dir = save_dir_it;
 
             // Reshaped for borrowck — use a stack-local PathBuffer instead of thread_local
-            let mut tmpdir_path_buf = PathBuffer::uninit();
+            let mut tmpdir_path_buf = bun_paths::path_buffer_pool::get();
             let tmpdir_path = match sys::get_fd_path(save_dir.fd(), &mut tmpdir_path_buf) {
                 Ok(p) => p,
                 Err(err) => {
@@ -821,7 +816,7 @@ impl UpgradeCommand {
 
                 #[cfg(unix)]
                 {
-                    let mut unzip_path_buf = PathBuffer::uninit();
+                    let mut unzip_path_buf = bun_paths::path_buffer_pool::get();
                     let Some(unzip_exe) = which(
                         &mut unzip_path_buf,
                         env_loader.map.get(b"PATH").unwrap_or(b""),
@@ -901,10 +896,10 @@ impl UpgradeCommand {
                     )
                     .expect("oom");
 
-                    let mut buf = PathBuffer::uninit();
+                    let mut buf = bun_paths::path_buffer_pool::get();
                     // Separate fallback buffer — borrowck holds `buf` for the lifetime
                     // of `which`'s returned `Option<&ZStr>` even across the `None` arm.
-                    let mut buf2 = PathBuffer::uninit();
+                    let mut buf2 = bun_paths::path_buffer_pool::get();
                     let powershell_path: &ZStr = match which(
                         &mut buf,
                         bun_core::env_var::PATH.get().unwrap_or(b""),
@@ -1088,6 +1083,9 @@ impl UpgradeCommand {
             let destination_executable_z: &ZStr = bun_core::self_exe_path()
                 .map_err(|_| crate::Error::UpgradeFailedMissingExecutable)?;
             let destination_executable: &[u8] = destination_executable_z.as_bytes();
+            if destination_executable.len() >= bun_paths::MAX_PATH_BYTES {
+                return Err(crate::Error::PathTooLong);
+            }
             // Reshaped for borrowck — use stack-local buffer.
             // Stacked Borrows: take ONE `*mut u8` over the buffer up front and
             // route every read/write through it. Indexing the `PathBuffer`
@@ -1095,7 +1093,7 @@ impl UpgradeCommand {
             // or `&mut [u8]` over the *whole* array, retagging it and
             // invalidating the raw-pointer-derived `&ZStr` views below. The
             // single `buf_ptr` is the shared provenance root.
-            let mut current_executable_buf = PathBuffer::uninit();
+            let mut current_executable_buf = bun_paths::path_buffer_pool::get();
             let buf_ptr: *mut u8 = current_executable_buf.as_mut_ptr();
             // SAFETY: `buf_ptr` covers `MAX_PATH_BYTES`; `destination_executable`
             // came from `self_exe_path()` which is bounded by that.
@@ -1147,7 +1145,7 @@ impl UpgradeCommand {
 
             // `move_file_z` wants `&ZStr`; pre-compute a NUL-terminated
             // copy of `exe`.
-            let mut exe_z_buf = PathBuffer::uninit();
+            let mut exe_z_buf = bun_paths::path_buffer_pool::get();
             exe_z_buf[..exe.len()].copy_from_slice(exe);
             exe_z_buf[exe.len()] = 0;
             // SAFETY: NUL written above.
@@ -1401,7 +1399,7 @@ pub(crate) mod upgrade_js_bindings {
             b"openTempDirWithoutSharingDelete",
             jsc::JSFunction::create(
                 global,
-                b"openTempDirWithoutSharingDelete",
+                "openTempDirWithoutSharingDelete",
                 // `#[bun_jsc::host_fn]` emits the C-ABI shim with a
                 // `__jsc_host_` prefix.
                 __jsc_host_js_open_temp_dir_without_sharing_delete,
@@ -1414,7 +1412,7 @@ pub(crate) mod upgrade_js_bindings {
             b"closeTempDirHandle",
             jsc::JSFunction::create(
                 global,
-                b"closeTempDirHandle",
+                "closeTempDirHandle",
                 __jsc_host_js_close_temp_dir_handle,
                 1,
                 Default::default(),
@@ -1438,9 +1436,9 @@ pub(crate) mod upgrade_js_bindings {
         {
             use sys::windows as w;
 
-            let mut buf = bun_paths::WPathBuffer::uninit();
+            let mut buf = bun_paths::w_path_buffer_pool::get();
             let tmpdir_path = fs::RealFS::get_default_temp_dir();
-            let mut wtmp = bun_paths::WPathBuffer::uninit();
+            let mut wtmp = bun_paths::w_path_buffer_pool::get();
             let tmpdir_w = bun_core::convert_utf8_to_utf16_in_buffer(&mut wtmp[..], tmpdir_path);
             let path = match sys::normalize_path_windows(sys::Fd::INVALID, tmpdir_w, &mut buf[..]) {
                 sys::Result::Err(_) => return Ok(JSValue::UNDEFINED),

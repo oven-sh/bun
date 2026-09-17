@@ -107,7 +107,7 @@ impl FontPaletteValuesProperty {
                 css::to_css::from_list(o.as_slice(), dest)
             }
             FontPaletteValuesProperty::Custom(custom) => {
-                dest.write_str(custom.name.as_str())?;
+                custom.name.to_css(dest)?;
                 dest.delim(b':', false)?;
                 custom.value.to_css(dest, true)
             }

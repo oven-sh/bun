@@ -223,10 +223,15 @@ struct SecretsJobOptions {
         }
         }
 
-        scope.assertNoException();
+        RETURN_IF_EXCEPTION(scope, nullptr);
 
         if (service.isEmpty() || name.isEmpty()) {
             Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "Expected service and name to not be empty"_s);
+            RELEASE_AND_RETURN(scope, nullptr);
+        }
+
+        if (service.contains(static_cast<char16_t>(0)) || name.contains(static_cast<char16_t>(0)) || password.contains(static_cast<char16_t>(0))) {
+            Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_VALUE, "Expected service, name, and value to be strings without null bytes"_s);
             RELEASE_AND_RETURN(scope, nullptr);
         }
 
@@ -238,7 +243,7 @@ struct SecretsJobOptions {
 extern "C" {
 
 // Runs on the threadpool - does the actual platform API work
-void Bun__SecretsJobOptions__runTask(SecretsJobOptions* opts, JSGlobalObject* global)
+void Bun__SecretsJobOptions__runTask(SecretsJobOptions* opts)
 {
     // Already have CString fields, pass them directly to platform APIs
     switch (opts->op) {
@@ -290,7 +295,6 @@ void Bun__SecretsJobOptions__runFromJS(SecretsJobOptions* opts, JSGlobalObject* 
             if (opts->resultPassword.has_value()) {
                 auto resultPassword = WTF::move(opts->resultPassword.value());
                 result = jsString(vm, String::fromUTF8(resultPassword.span()));
-                RETURN_IF_EXCEPTION(scope, );
                 memsetSpan(resultPassword.mutableSpan(), 0);
             } else {
                 result = jsNull();
@@ -305,7 +309,6 @@ void Bun__SecretsJobOptions__runFromJS(SecretsJobOptions* opts, JSGlobalObject* 
             result = jsBoolean(opts->deleted);
             break;
         }
-        RETURN_IF_EXCEPTION(scope, );
         RELEASE_AND_RETURN(scope, promise->resolve(global, vm, result));
     }
 }

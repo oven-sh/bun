@@ -1,4 +1,5 @@
 #include "EventEmitter.h"
+#include "BunClientData.h"
 
 #include "Event.h"
 
@@ -85,8 +86,18 @@ bool EventEmitter::removeAllListeners()
 
     auto& map = data->eventListenerMap;
     bool any = !map.isEmpty();
+    // Collect before clearing so per-event teardown (signal handlers, IPC
+    // refs, listener-count mirrors) observes the post-removal zero counts.
+    Vector<Identifier> eventTypes = map.eventTypes();
     map.clear();
     this->m_thisObject.clear();
+    if (any) {
+        eventListenersDidChange();
+        if (this->onDidChangeListener) {
+            for (auto& eventType : eventTypes)
+                this->onDidChangeListener(*this, eventType, false);
+        }
+    }
     return any;
 }
 
@@ -122,10 +133,6 @@ bool EventEmitter::emitForBindings(const Identifier& eventType, const MarkedArgu
 bool EventEmitter::emit(const Identifier& eventType, const MarkedArgumentBuffer& arguments)
 {
     return fireEventListeners(eventType, arguments);
-}
-
-void EventEmitter::uncaughtExceptionInEventHandler()
-{
 }
 
 Vector<Identifier> EventEmitter::getEventNames()
@@ -240,6 +247,8 @@ bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
 
         if (!jsFunction) [[unlikely]]
             continue;
+        if (WebCore::clientData(vm)->isStoppingOrStopped(vm)) [[unlikely]]
+            break;
 
         JSC::JSGlobalObject* lexicalGlobalObject = jsFunction->globalObject();
         auto callData = JSC::getCallData(jsFunction);
@@ -270,25 +279,6 @@ bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
     }
 
     return fired;
-}
-
-Vector<Identifier> EventEmitter::eventTypes()
-{
-    if (auto* data = eventTargetData())
-        return data->eventListenerMap.eventTypes();
-    return {};
-}
-
-const SimpleEventListenerVector& EventEmitter::eventListeners(const Identifier& eventType)
-{
-    auto* data = eventTargetData();
-    auto* listenerVector = data ? data->eventListenerMap.find(eventType) : nullptr;
-    static NeverDestroyed<SimpleEventListenerVector> emptyVector;
-    return listenerVector ? *listenerVector : emptyVector.get();
-}
-
-void EventEmitter::invalidateEventListenerRegions()
-{
 }
 
 } // namespace WebCore

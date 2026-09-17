@@ -36,6 +36,7 @@ import { parseArgs } from "node:util";
 import { prestartMap as dockerPrestartMap } from "../test/docker/prestart-map.mjs";
 import pLimit from "./p-limit.mjs";
 import {
+  createLiveOutputFilter,
   getAbi,
   getAbiVersion,
   getArch,
@@ -54,6 +55,7 @@ import {
   getSecret,
   getShell,
   getWindowsExitReason,
+  isAndroid,
   isBuildkite,
   isCI,
   isGithubAction,
@@ -62,6 +64,7 @@ import {
   isWindows,
   isX64,
   markBuildkiteStepReported,
+  parseJunitFileSuites,
   printEnvironment,
   reportAnnotationToBuildKite,
   startGroup,
@@ -73,6 +76,7 @@ import {
 let isQuiet = false;
 const cwd = import.meta.dirname ? dirname(import.meta.dirname) : process.cwd();
 const testsPath = join(cwd, "test");
+const ciRemapServerPath = join(cwd, "scripts", "ci-remap-server");
 
 const runnerStartedAt = Date.now();
 const jobBudgetMs = () => {
@@ -97,6 +101,12 @@ function getNodeParallelTestTimeout(testPath) {
   if (testPath.includes("test-cluster-")) return 60_000; // cluster IPC + socket-handle passing is process-heavy under runner concurrency
   if (testPath.includes("-docker-")) return 60_000;
   if (testPath.includes("test-stdin-pipe-large")) return 60_000; // pipes 1MB stdin->stdout through an extra child process; slow under runner concurrency
+  // test-fs-read-stream-pos.js exit condition is a pure timing race (writer must append
+  // between two consecutive ReadStream preads) with a 90s upstream safety timer; solo
+  // runtimes are ~1s on linux-x64 but 1-40s on Windows since #34834 raised its timer
+  // resolution, and aarch64 CI retries running alone have exceeded 20s (builds 85866,
+  // 85400). 120s lets the safety timer fire.
+  if (testPath.includes("test-fs-read-stream-pos")) return 120_000;
   if (!isCI) return 60_000; // everything slower in debug mode
   if (options["step"]?.includes("-asan-")) return 60_000;
   return 20_000;
@@ -178,7 +188,7 @@ const { values: options, positionals: filters } = parseArgs({
     },
     ["coredump-upload"]: {
       type: "boolean",
-      default: isBuildkite && isLinux,
+      default: isBuildkite && isLinux && !isAndroid,
     },
     ["parallel"]: {
       type: "boolean",
@@ -366,8 +376,22 @@ const skipsForLeaksan = (() => {
   }
   return readFileSync(path, "utf-8")
     .split("\n")
+    .map(line => line.trim())
     .filter(line => !line.startsWith("#") && line.length > 0);
 })();
+
+// Informational: a file that passes only on a retry and is not listed here is annotated as a new flake.
+const flakyTests = (() => {
+  const path = join(cwd, "test/flaky-tests.txt");
+  if (!existsSync(path)) return new Set();
+  return new Set(
+    readFileSync(path, "utf-8")
+      .split("\n")
+      .map(line => line.split("#")[0].trim())
+      .filter(line => line.length > 0),
+  );
+})();
+const isKnownFlakyTest = title => flakyTests.has(title.replaceAll("\\", "/"));
 
 const parallelAllowlist = (() => {
   try {
@@ -634,7 +658,14 @@ async function runTests() {
   const parallelSafeLimit = parallelism > 1 ? limit : pLimit(parallelSafeWidth);
   const isParallelSafeTest = testPath => {
     const p = testPath.replaceAll("\\", "/");
-    return p.includes("js/node/test/parallel/") || p.includes("js/bun/test/parallel/");
+    if (!p.includes("js/node/test/parallel/") && !p.includes("js/bun/test/parallel/")) return false;
+    // test-fs-read-stream-pos.js arms a common.mustCallAtLeast per stream; under
+    // I/O-heavy neighbours (e.g. test-fs-read-stream-fd-leak) the 1ms append
+    // interval is starved long enough for a stream to catch cur == EOF and get
+    // zero 'data' events, failing the mustCallAtLeast check on exit. Run it in
+    // the serial phase so the writer keeps its 1ms cadence.
+    if (p.endsWith("test-fs-read-stream-pos.js")) return false;
+    return true;
   };
   console.log("parallel-safe width", parallelSafeWidth);
   const validationApplies = basename(execPath).includes("asan") || !isCI;
@@ -705,21 +736,17 @@ async function runTests() {
     }
 
     if (isBuildkite) {
-      // Group flaky tests together, regardless of the title
-      const context = flaky ? "flaky" : title;
+      // Group flaky tests together, regardless of the title; unlisted flakes get their own group above the known ones.
+      const newFlaky = flaky && !title.endsWith("package.json") && !isKnownFlakyTest(title);
+      const context = flaky ? (newFlaky ? "flaky-new" : "flaky") : title;
       const style = flaky ? "warning" : "error";
+      const priority = newFlaky ? 4 : 3;
       if (!flaky) attempt = 1; // no need to show the retries count on failures, we know it maxed out
 
-      if (title.startsWith("vendor")) {
-        const content = formatTestToMarkdown({ ...failure, testPath: title }, false, attempt - 1);
-        if (content) {
-          reportAnnotationToBuildKite({ context, label: title, content, style });
-        }
-      } else {
-        const content = formatTestToMarkdown(failure, false, attempt - 1);
-        if (content) {
-          reportAnnotationToBuildKite({ context, label: title, content, style });
-        }
+      const result = title.startsWith("vendor") ? { ...failure, testPath: title } : failure;
+      const content = formatTestToMarkdown(result, false, attempt - 1, newFlaky);
+      if (content) {
+        reportAnnotationToBuildKite({ context, label: title, content, style, priority });
       }
     }
 
@@ -774,16 +801,14 @@ async function runTests() {
 
   if (!failedResults.length) {
     // TODO: remove windows exclusion here
-    if (isCI && !isWindows) {
-      // bun install has succeeded
+    if (isCI && !isWindows && (await installCiRemapServer(execPath))) {
       const { promise: portPromise, resolve: portResolve } = Promise.withResolvers();
       const { promise: errorPromise, resolve: errorResolve } = Promise.withResolvers();
-      console.log("run in", cwd);
       let exiting = false;
 
       const server = spawn(execPath, ["run", "--silent", "ci-remap-server", execPath, cwd, getCommit()], {
         stdio: ["ignore", "pipe", "inherit"],
-        cwd, // run in main repo
+        cwd: ciRemapServerPath,
         env: { ...process.env, BUN_DEBUG_QUIET_LOGS: "1", NO_COLOR: "1" },
       });
       server.unref();
@@ -911,8 +936,8 @@ async function runTests() {
                 // calls from wiping each other when parallelSafeWidth > 1.
                 TEST_SERIAL_ID: String(index),
               },
-              stdout: concurrent ? () => {} : chunk => pipeTestStdout(process.stdout, chunk),
-              stderr: concurrent ? () => {} : chunk => pipeTestStdout(process.stderr, chunk),
+              stdout: concurrent ? () => {} : pipeTestStdout(process.stdout),
+              stderr: concurrent ? () => {} : pipeTestStdout(process.stderr),
             });
             const mb = 1024 ** 3;
             let stdoutPreview = stdout.slice(0, mb).split("\n").slice(0, 50).join("\n");
@@ -936,8 +961,8 @@ async function runTests() {
           async () =>
             spawnBunTest(execPath, join("test", testPath), {
               cwd,
-              stdout: concurrent ? () => {} : chunk => pipeTestStdout(process.stdout, chunk),
-              stderr: concurrent ? () => {} : chunk => pipeTestStdout(process.stderr, chunk),
+              stdout: concurrent ? () => {} : pipeTestStdout(process.stdout),
+              stderr: concurrent ? () => {} : pipeTestStdout(process.stderr),
             }),
           concurrent,
         );
@@ -994,38 +1019,15 @@ async function runTests() {
           idleTimeout: parseInt(process.env.BUN_RUNNER_BATCH_IDLE_MS || "", 10) || 4 * 60_000,
           gracefulTimeout: true,
           env,
-          stdout: chunk => pipeTestStdout(process.stdout, chunk),
-          stderr: chunk => pipeTestStdout(process.stderr, chunk),
+          stdout: pipeTestStdout(process.stdout),
+          stderr: pipeTestStdout(process.stderr),
         }),
       );
       if (crashes) process.stderr.write(crashes);
 
-      const suites = new Map(); // repo-relative path -> { failures, seconds, cases: [{name, message}] }
-      const unescapeXml = str =>
-        str
-          .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)))
-          .replace(/&quot;/g, '"')
-          .replace(/&apos;/g, "'")
-          .replace(/&lt;/g, "<")
-          .replace(/&gt;/g, ">")
-          .replace(/&amp;/g, "&");
+      let suites = new Map(); // repo-relative path -> { failures, seconds, cases: [{name, message}] }
       try {
-        const xml = readFileSync(junitPath, "utf-8");
-        for (const [, attrs] of xml.matchAll(/<testsuite\b([^>]*)>/g)) {
-          const file = /\bfile="([^"]+)"/.exec(attrs)?.[1];
-          const failures = Number(/\bfailures="(\d+)"/.exec(attrs)?.[1] ?? 0);
-          const seconds = Number(/\btime="([\d.]+)"/.exec(attrs)?.[1] ?? 0);
-          if (file) suites.set(unescapeXml(file).replaceAll("\\", "/"), { failures, seconds, cases: [] });
-        }
-        for (const [, caseAttrs, failureAttrs] of xml.matchAll(/<testcase\b([^>]*)>\s*<failure\b([^>]*)>/g)) {
-          const file = /\bfile="([^"]+)"/.exec(caseAttrs)?.[1];
-          const entry = file && suites.get(unescapeXml(file).replaceAll("\\", "/"));
-          if (!entry) continue;
-          entry.cases.push({
-            name: unescapeXml(/\bname="([^"]*)"/.exec(caseAttrs)?.[1] ?? "(unnamed)"),
-            message: unescapeXml(/\bmessage="([^"]*)"/.exec(failureAttrs)?.[1] ?? ""),
-          });
-        }
+        suites = parseJunitFileSuites(readFileSync(junitPath, "utf-8"));
       } catch {}
       if (suites.size && isBuildkite) uploadArtifactsToBuildKite(junitPath);
       else rmSync(junitPath, { force: true });
@@ -1098,7 +1100,7 @@ async function runTests() {
       }
       if (rerun.length) {
         console.log(
-          `${getAnsi("yellow")}parallel bucket: ${evidence ? `retrying ${failed.size} failed and ${incomplete.size} unfinished file(s)${suites.size ? "" : " (from streamed output; no junit)"}` : `no junit and no streamed evidence, re-running all ${rerun.length} file(s)`} one at a time${getAnsi("reset")}`,
+          `${getAnsi("yellow")}parallel bucket: retrying ${failed.size} failed and ${rerun.length - failed.size} unfinished file(s) one at a time${getAnsi("reset")}`,
         );
         for (const testPath of rerun) {
           const result = await runOneTest(testPath, false);
@@ -1113,11 +1115,13 @@ async function runTests() {
             const detail = cases.length
               ? `\n\n\`\`\`terminal\n${cases.map(({ name, message }) => `✗ ${name}\n${message}`).join("\n\n")}\n\`\`\`\n\n`
               : "";
+            const unlisted = !isKnownFlakyTest(title);
             reportAnnotationToBuildKite({
-              context: "flaky",
+              context: unlisted ? "flaky-new" : "flaky",
               label: title,
               style: "warning",
-              content: `<details><summary><a href="${getFileUrl(title)}"><code>${title}</code></a> - ${reason} <i>(in the parallel batch on ${getBuildLabel()}; passed alone)</i></summary>${detail}</details>`,
+              priority: unlisted ? 4 : 3,
+              content: `<details><summary><a href="${getFileUrl(title)}"><code>${title}</code></a> - ${reason} <i>(in the parallel batch on ${getBuildLabel()}; passed alone)</i>${unlisted ? " <b>(not in test/flaky-tests.txt)</b>" : ""}</summary>${detail}</details>`,
             });
           }
         }
@@ -1413,8 +1417,8 @@ async function runTests() {
  * @property {string} [cwd]
  * @property {number} [timeout]
  * @property {object} [env]
- * @property {function} [stdout]
- * @property {function} [stderr]
+ * @property {((chunk: string) => void) & { end?: () => void }} [stdout] called per chunk; `end` when the stream closes
+ * @property {((chunk: string) => void) & { end?: () => void }} [stderr]
  */
 
 /**
@@ -1558,12 +1562,14 @@ async function spawnSafe(options) {
         stdout?.(text);
         buffer += text;
       });
+      subprocess.stdout.on("close", () => stdout?.end?.());
       subprocess.stderr.on("data", chunk => {
         armIdleTimer?.();
         const text = chunk.toString("utf-8");
         stderr?.(text);
         buffer += text;
       });
+      subprocess.stderr.on("close", () => stderr?.end?.());
     } catch (error) {
       spawnError = error;
       resolve();
@@ -1770,6 +1776,7 @@ async function spawnBun(execPath, { args, cwd, timeout, gracefulTimeout, idleTim
     FORCE_COLOR: "1",
     BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
     BUN_DEBUG_QUIET_LOGS: "1",
+    BUN_DISABLE_SLOW_FILESYSTEM_WARNING: "1",
     BUN_GARBAGE_COLLECTOR_LEVEL: "1",
     BUN_JSC_randomIntegrityAuditRate: "1.0",
     BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
@@ -1941,6 +1948,8 @@ async function spawnBun(execPath, { args, cwd, timeout, gracefulTimeout, idleTim
  * @param {string} [opts.cwd]
  * @param {string[]} [opts.args]
  * @param {object} [opts.env]
+ * @param {(chunk: string) => void} [opts.stdout]
+ * @param {(chunk: string) => void} [opts.stderr]
  * @returns {Promise<TestResult>}
  */
 async function spawnBunTest(execPath, testPath, opts = { cwd }) {
@@ -2005,8 +2014,8 @@ async function spawnBunTest(execPath, testPath, opts = { cwd }) {
     // per-test multiplier so the overall shard stays inside the job timeout.
     timeout: isReallyTest ? Math.ceil(timeout * (isAsan ? 2 : 1)) : 30_000,
     env,
-    stdout: options.stdout,
-    stderr: options.stderr,
+    stdout: opts.stdout ?? pipeTestStdout(process.stdout),
+    stderr: opts.stderr ?? pipeTestStdout(process.stderr),
   });
   let { tests, errors, stdout: stdoutPreview } = parseTestStdout(stdout, testPath);
   if (crashes) stdoutPreview += crashes;
@@ -2047,17 +2056,24 @@ function getTestTimeout(testPath) {
 }
 
 /**
+ * Streams the output of one child process stream to `io`, without the workflow
+ * commands bun test prints because GITHUB_ACTIONS is set (see createLiveOutputFilter).
+ * spawnSafe calls `end()` when the stream closes.
+ *
  * @param {NodeJS.WritableStream} io
- * @param {string} chunk
+ * @returns {((chunk: string) => void) & { end: () => void }}
  */
-function pipeTestStdout(io, chunk) {
-  if (isGithubAction) {
-    io.write(chunk.replace(/\:\:(?:end)?group\:\:.*(?:\r\n|\r|\n)/gim, ""));
-  } else if (isBuildkite) {
-    io.write(chunk.replace(/(?:---|\+\+\+|~~~|\^\^\^) /gim, " ").replace(/\:\:.*(?:\r\n|\r|\n)/gim, ""));
-  } else {
-    io.write(chunk.replace(/\:\:.*(?:\r\n|\r|\n)/gim, ""));
-  }
+function pipeTestStdout(io) {
+  const filter = createLiveOutputFilter();
+  const write = chunk => {
+    const text = filter(chunk);
+    if (text) io.write(text);
+  };
+  write.end = () => {
+    const text = filter.end();
+    if (text) io.write(text);
+  };
+  return write;
 }
 
 /**
@@ -2187,14 +2203,23 @@ function parseTestStdout(stdout, testPath) {
 async function spawnBunInstall(execPath, options) {
   // spawnBun sets BUN_INSTALL_CACHE_DIR to a fresh tmpdir so per-test installs
   // are hermetic. This function only runs the runner's own dependency setup
-  // (root, test/, vendor), which should hit the image's baked cache when one
-  // exists (bootstrap.{sh,ps1} set BUN_INSTALL_CACHE_DIR machine-wide).
+  // (root, test/, scripts/ci-remap-server, vendor), which should hit the
+  // image's baked cache when one exists (bootstrap.{sh,ps1} set
+  // BUN_INSTALL_CACHE_DIR machine-wide).
   const cacheDir = process.env.BUN_INSTALL_CACHE_DIR;
   let { ok, error, stdout, duration, crashes } = await spawnBun(execPath, {
     args: ["install"],
     timeout: testTimeout,
     ...options,
-    env: { ...options.env, ...(cacheDir && { BUN_INSTALL_CACHE_DIR: cacheDir }) },
+    env: {
+      // A puppeteer postinstall reached through these installs would download
+      // Chrome into the agent's shared ~/.cache; a half-extracted download left
+      // there on a persistent agent fails every later job's install. Tests that
+      // need a browser install one into a per-run cache (getPuppeteerInstallEnv).
+      PUPPETEER_SKIP_DOWNLOAD: "1",
+      ...options.env,
+      ...(cacheDir && { BUN_INSTALL_CACHE_DIR: cacheDir }),
+    },
   });
   if (crashes) stdout += crashes;
   const relativePath = relative(cwd, options.cwd);
@@ -2217,6 +2242,23 @@ async function spawnBunInstall(execPath, options) {
     stdout,
     stdoutPreview: stdout,
   };
+}
+
+/**
+ * Installs `ci-remap-server`, the bin of bun-tracestrings (github:oven-sh/bun.report).
+ * It is pinned in scripts/ci-remap-server/package.json rather than the root
+ * package.json because this runner is its only user, and as a github: dependency
+ * it would otherwise put GitHub on the critical path of the root `bun install`
+ * every GitHub Actions workflow and every build runs. Best-effort, like starting
+ * the server itself: without it crash reports are not remapped, the tests still run.
+ * @param {string} execPath
+ * @returns {Promise<boolean>}
+ */
+async function installCiRemapServer(execPath) {
+  const title = relative(cwd, join(ciRemapServerPath, "package.json")).replaceAll(sep, "/");
+  const { ok, error } = await startGroup(title, () => spawnBunInstall(execPath, { cwd: ciRemapServerPath }));
+  if (!ok) console.warn(`ci-remap server not installed (${title}: ${error}), crash reports will not be remapped`);
+  return ok;
 }
 
 /**
@@ -2449,6 +2491,39 @@ async function getVendorTests(cwd) {
 }
 
 /**
+ * Checked-in median wall-clock duration per test file for this lane, from
+ * expected-durations.json (see scripts/update-test-durations.mjs).
+ * @param {string} cwd
+ * @returns {Record<string, number>}
+ */
+function loadExpectedDurations(cwd) {
+  const durations = {};
+  try {
+    const raw = JSON.parse(readFileSync(join(cwd, "expected-durations.json"), "utf8"));
+    const step = options["step"] || "";
+    // Most specific column first, then the nearest lane, then anything.
+    const columns = step.includes("asan")
+      ? ["asan"]
+      : step.includes("musl")
+        ? ["musl"]
+        : step.includes("windows-aarch64") || (isWindows && process.arch === "arm64")
+          ? ["windows-aarch64", "windows"]
+          : isWindows || step.includes("windows")
+            ? ["windows"]
+            : ["default"];
+    columns.push("default", "asan", "musl", "windows", "windows-aarch64");
+    for (const [path, entry] of Object.entries(raw)) {
+      if (path === "_meta") continue;
+      const ms = columns.map(column => entry[column]).find(value => typeof value === "number");
+      if (typeof ms === "number") durations[path] = ms;
+    }
+  } catch (e) {
+    console.warn("expected-durations.json not loaded:", e?.message || e);
+  }
+  return durations;
+}
+
+/**
  * @param {string} cwd
  * @param {string[]} testModifiers
  * @param {TestExpectation[]} testExpectations
@@ -2540,25 +2615,7 @@ function getRelevantTests(cwd, testModifiers, testExpectations) {
     // machines without any coordination. Tests absent from the table (new
     // files, or the file failing to load) fall back to the table's median so
     // they spread across shards instead of all landing on shard 0.
-    let durations = {};
-    try {
-      const raw = JSON.parse(readFileSync(join(cwd, "expected-durations.json"), "utf8"));
-      const step = options["step"] || "";
-      const lane = step.includes("asan")
-        ? "asan"
-        : step.includes("musl")
-          ? "musl"
-          : isWindows || step.includes("windows")
-            ? "windows"
-            : "default";
-      for (const [path, entry] of Object.entries(raw)) {
-        if (path === "_meta") continue;
-        const ms = entry[lane] ?? entry.default ?? entry.asan ?? entry.musl ?? entry.windows;
-        if (typeof ms === "number") durations[path] = ms;
-      }
-    } catch (e) {
-      console.warn("expected-durations.json not loaded, sharding by index:", e?.message || e);
-    }
+    const durations = loadExpectedDurations(cwd);
     const known = Object.values(durations).sort((a, b) => a - b);
     const unknownCost = known.length ? known[Math.floor(known.length / 2)] : 100;
     const costOf = testPath => durations[testPath.replaceAll("\\", "/")] ?? unknownCost;
@@ -2680,7 +2737,8 @@ async function getExecPathFromBuildKite(target, buildId) {
 
   let zipPath;
   downloadLoop: for (let i = 0; i < 10; i++) {
-    const args = ["artifact", "download", "**", releasePath, "--step", target];
+    // build-bun also uploads libbun-*.a / libbun_runtime.a / dep libs; only the zips are wanted here.
+    const args = ["artifact", "download", "*.zip", releasePath, "--step", target];
     if (buildId) {
       args.push("--build", buildId);
     }
@@ -2775,9 +2833,10 @@ function getTestLabel() {
  * @param  {TestResult | TestResult[]} result
  * @param  {boolean} concise
  * @param  {number} retries
+ * @param  {boolean} [unlisted] passed on a retry but test/flaky-tests.txt does not list it
  * @returns {string}
  */
-function formatTestToMarkdown(result, concise, retries) {
+function formatTestToMarkdown(result, concise, retries, unlisted = false) {
   const results = Array.isArray(result) ? result : [result];
   const buildLabel = getTestLabel();
   const buildUrl = getBuildUrl();
@@ -2824,6 +2883,9 @@ function formatTestToMarkdown(result, concise, retries) {
     if (retries > 0) {
       markdown += ` (${retries} ${retries === 1 ? "retry" : "retries"})`;
     }
+    if (unlisted) {
+      markdown += ` <b>(not in test/flaky-tests.txt)</b>`;
+    }
     if (newFiles.includes(testTitle)) {
       markdown += ` (new)`;
     }
@@ -2855,38 +2917,6 @@ function uploadArtifactsToBuildKite(glob) {
     timeout: spawnTimeout,
     cwd,
   });
-}
-
-/**
- * @param {string} [glob]
- * @param {string} [step]
- */
-function listArtifactsFromBuildKite(glob, step) {
-  const args = [
-    "artifact",
-    "search",
-    "--no-color",
-    "--allow-empty-results",
-    "--include-retried-jobs",
-    "--format",
-    "%p\n",
-    glob || "*",
-  ];
-  if (step) {
-    args.push("--step", step);
-  }
-  const { error, status, signal, stdout, stderr } = spawnSync("buildkite-agent", args, {
-    stdio: ["ignore", "ignore", "ignore"],
-    encoding: "utf-8",
-    timeout: spawnTimeout,
-    cwd,
-  });
-  if (status === 0) {
-    return stdout?.split("\n").map(line => line.trim()) || [];
-  }
-  const cause = error ?? signal ?? `code ${status}`;
-  console.warn("Failed to list artifacts from BuildKite:", cause, stderr);
-  return [];
 }
 
 /**
@@ -2932,14 +2962,6 @@ function getAnsi(color) {
  */
 function stripAnsi(string) {
   return string.replace(/\u001b\[\d+m/g, "");
-}
-
-/**
- * @param {string} string
- * @returns {string}
- */
-function escapeGitHubAction(string) {
-  return string.replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
 }
 
 /**
@@ -3343,6 +3365,39 @@ function escapeXml(str) {
     .replace(/'/g, "&apos;");
 }
 
+/**
+ * Windows 11 ships Smart App Control in evaluation mode. In that mode the kernel
+ * hashes every unsigned executable on its first launch and asks the cloud for
+ * its reputation, which costs 2 to 3.5 seconds for a 77 MB `bun build --compile`
+ * output. bundler_compile.test.ts launches about 85 of those, which puts the file
+ * at 220 to 290 seconds against the 300 second per-file cap. Turning the policy
+ * off takes effect at once and needs no reboot. scripts/bootstrap.ps1 does the
+ * same at image bake time; this covers images baked before that change.
+ *
+ * Only on Buildkite: the policy cannot be turned on again without a reinstall,
+ * so a developer's machine running with CI=true must not get this.
+ */
+async function disableSmartAppControl() {
+  if (!isBuildkite) return;
+  const script = [
+    "$p = 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\CI\\Policy'",
+    "if (-not (Test-Path $p)) { exit 0 }",
+    "$state = (Get-ItemProperty $p).VerifiedAndReputablePolicyState",
+    "if ($null -eq $state -or $state -eq 0) { exit 0 }",
+    "Set-ItemProperty $p -Name VerifiedAndReputablePolicyState -Value 0 -Type DWord",
+    "if (Get-Command CiTool -ErrorAction SilentlyContinue) { CiTool --refresh -json | Out-Null }",
+    'Write-Output "Smart App Control: state $state -> 0"',
+  ].join("; ");
+  const { ok, error } = await spawnSafe({
+    command: "pwsh",
+    args: ["-NoProfile", "-Command", script],
+    timeout: 60_000,
+  });
+  if (!ok) {
+    console.warn(`Failed to disable Smart App Control: ${error}`);
+  }
+}
+
 export async function main() {
   for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
     process.on(signal, () => onExit(signal));
@@ -3360,6 +3415,7 @@ export async function main() {
       "-Command",
       "Set-DnsClientServerAddress -InterfaceAlias 'Ethernet 4' -ServerAddresses ('8.8.8.8','8.8.4.4')",
     ]);
+    await disableSmartAppControl();
   }
 
   let doRunTests = true;

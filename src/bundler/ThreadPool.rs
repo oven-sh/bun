@@ -4,7 +4,7 @@
 //!
 //! `Worker::create` / `initialize_transpiler` build the per-worker
 //! `Transpiler` via `Transpiler::for_worker` (per-field deep clone — no
-//! bitwise struct copy); the `linker.resolver` backref is wired by
+//! bitwise struct copy); the self-referential `linker` backrefs are wired by
 //! `Transpiler::wire_after_move` once the value is at its final address.
 
 use core::mem::{ManuallyDrop, MaybeUninit};
@@ -49,9 +49,7 @@ pub struct ThreadPool {
     // `wake_for_idle_events`) take `&self` — so the safe `Deref` projection is
     // sufficient and the per-read `unsafe { p.as_ref() }` disappears.
     pub(crate) io_pool: Option<bun_ptr::ParentRef<ThreadPoolLib::ThreadPool>>,
-    // Conditionally owned via `worker_pool_is_owned`; kept raw so callers
-    // (bundle_v2.rs) can dereference for `wake_for_idle_events()` without a
-    // borrow on `ThreadPool`.
+    // Conditionally owned via `worker_pool_is_owned`.
     pub worker_pool: *mut ThreadPoolLib::ThreadPool,
     pub(crate) worker_pool_is_owned: bool,
     // Per PORTING.md §Concurrency ("Mutex<T> owns T"), the lock is folded into
@@ -237,7 +235,7 @@ impl ThreadPool {
     pub(crate) fn worker_pool(&self) -> &ThreadPoolLib::ThreadPool {
         debug_assert!(!self.worker_pool.is_null());
         // SAFETY: `worker_pool` is initialized before any caller can observe
-        // `self` and lives until `deinit_v2`; all driver methods take `&self`.
+        // `self` and lives until `deinit`; all driver methods take `&self`.
         unsafe { &*self.worker_pool }
     }
 
@@ -247,6 +245,14 @@ impl ThreadPool {
     #[inline]
     pub(crate) fn io_pool_ref(&self) -> Option<&ThreadPoolLib::ThreadPool> {
         self.io_pool.as_deref()
+    }
+
+    /// Sends every thread that may hold a [`Worker`] through its idle queue.
+    pub(crate) fn wake_for_idle_events(&self) {
+        self.worker_pool().wake_for_idle_events();
+        if let Some(io) = self.io_pool_ref() {
+            io.wake_for_idle_events();
+        }
     }
 
     pub(crate) fn start(&self) {
@@ -274,33 +280,51 @@ impl ThreadPool {
         return false;
     }
 
-    fn schedule_with_options(&self, parse_task: *mut ParseTask, is_inside_thread_pool: bool) {
-        // SAFETY: callers (`schedule`/`schedule_inside_thread_pool`) pass a
-        // live, exclusively-owned ParseTask (heap- or arena-allocated raw
-        // pointer); see call sites in bundle_v2.rs.
-        let parse_task = unsafe { &mut *parse_task };
-        if matches!(parse_task.contents_or_fd, ContentsOrFd::Contents(_))
-            && matches!(parse_task.stage, ParseTaskStage::NeedsSourceCode)
-        {
-            let ContentsOrFd::Contents(contents) = parse_task.contents_or_fd else {
+    /// `parse_task` is raw, not `&mut`: `schedule_fn` publishes the embedded
+    /// `task`/`io_task` to the worker pool mid-body, and a worker can dequeue
+    /// and mutate `*parse_task` before this returns — a `&mut` parameter's
+    /// FnEntry protector would make that a foreign-write UB. All accesses are
+    /// scoped raw place expressions ending before the publish.
+    ///
+    /// # Safety
+    /// `parse_task` is a live, exclusively-owned `ParseTask` (heap- or
+    /// arena-allocated) until it is published to the pool below.
+    unsafe fn schedule_with_options(
+        &self,
+        parse_task: *mut ParseTask,
+        is_inside_thread_pool: bool,
+    ) {
+        // SAFETY: caller contract; each read ends at the statement.
+        let needs_source = unsafe {
+            matches!((*parse_task).contents_or_fd, ContentsOrFd::Contents(_))
+                && matches!((*parse_task).stage, ParseTaskStage::NeedsSourceCode)
+        };
+        if needs_source {
+            // SAFETY: caller contract; match by reference (ContentsOrFd is not Copy).
+            let ContentsOrFd::Contents(contents) = (unsafe { &(*parse_task).contents_or_fd })
+            else {
                 unreachable!()
             };
+            let contents = *contents;
             // `cache::Contents` has no borrowed-slice variant; the
             // contract (see ParseTask.rs `run_with_source_code` defer) is that
             // `entry.deinit()` is *skipped* when `contents_or_fd == .contents`,
             // so an `External` provenance tag (no-op deinit) is the correct
             // mapping for these unowned bytes.
-            parse_task.stage = ParseTaskStage::NeedsParse(CacheEntry {
-                contents: if contents.is_empty() {
-                    Contents::Empty
-                } else {
-                    Contents::External {
-                        ptr: contents.as_ptr(),
-                        len: contents.len(),
-                    }
-                },
-                fd: Fd::INVALID,
-            });
+            // SAFETY: caller contract; borrow ends at `;`.
+            unsafe {
+                (*parse_task).stage = ParseTaskStage::NeedsParse(CacheEntry {
+                    contents: if contents.is_empty() {
+                        Contents::Empty
+                    } else {
+                        Contents::External {
+                            ptr: contents.as_ptr(),
+                            len: contents.len(),
+                        }
+                    },
+                    fd: Fd::INVALID,
+                });
+            }
         }
 
         let schedule_fn: fn(&ThreadPoolLib::ThreadPool, ThreadPoolLib::Batch) =
@@ -310,36 +334,47 @@ impl ThreadPool {
                 ThreadPoolLib::ThreadPool::schedule
             };
 
-        if Self::uses_io_pool() {
-            match parse_task.stage {
-                ParseTaskStage::NeedsParse(_) => {
-                    schedule_fn(
-                        self.worker_pool(),
-                        ThreadPoolLib::Batch::from(&raw mut parse_task.task),
-                    );
+        // SAFETY: caller contract; `stage` read + the `&raw mut` field
+        // projections take no reference to `*parse_task`. After `schedule_fn`
+        // the task is owned by the pool — nothing below touches it.
+        unsafe {
+            if Self::uses_io_pool() {
+                match (*parse_task).stage {
+                    ParseTaskStage::NeedsParse(_) => {
+                        schedule_fn(
+                            self.worker_pool(),
+                            ThreadPoolLib::Batch::from(&raw mut (*parse_task).task),
+                        );
+                    }
+                    ParseTaskStage::NeedsSourceCode => {
+                        // io_pool is Some when uses_io_pool().
+                        let io = self.io_pool_ref().unwrap();
+                        schedule_fn(
+                            io,
+                            ThreadPoolLib::Batch::from(&raw mut (*parse_task).io_task),
+                        );
+                    }
                 }
-                ParseTaskStage::NeedsSourceCode => {
-                    // io_pool is Some when uses_io_pool().
-                    let io = self.io_pool_ref().unwrap();
-                    schedule_fn(io, ThreadPoolLib::Batch::from(&raw mut parse_task.io_task));
-                }
+            } else {
+                schedule_fn(
+                    self.worker_pool(),
+                    ThreadPoolLib::Batch::from(&raw mut (*parse_task).task),
+                );
             }
-        } else {
-            schedule_fn(
-                self.worker_pool(),
-                ThreadPoolLib::Batch::from(&raw mut parse_task.task),
-            );
         }
     }
 
     // takes `*mut` so callers can pass either a
     // raw heap pointer (e.g. `load.parse_task`) or a `&mut` (auto-coerces).
     pub(crate) fn schedule(&self, parse_task: *mut ParseTask) {
-        self.schedule_with_options(parse_task, false);
+        // SAFETY: callers pass a live, exclusively-owned ParseTask (heap- or
+        // arena-allocated raw pointer); see call sites in bundle_v2.rs.
+        unsafe { self.schedule_with_options(parse_task, false) };
     }
 
     pub(crate) fn schedule_inside_thread_pool(&self, parse_task: *mut ParseTask) {
-        self.schedule_with_options(parse_task, true);
+        // SAFETY: see `schedule`.
+        unsafe { self.schedule_with_options(parse_task, true) };
     }
 
     // returns `&'static mut` — the `Worker` is `heap::alloc`'d
@@ -393,6 +428,7 @@ impl ThreadPool {
                     // fn-pointer in `deinit_task.callback`, `bool` fields).
                     worker = bun_core::heap::into_raw(Box::<Worker>::new_uninit()).cast::<Worker>();
                     v.insert(worker);
+                    WORKER_LIVE_COUNT.fetch_add(1, Ordering::SeqCst);
                 }
             }
         }
@@ -433,6 +469,10 @@ static TLS_WORKER: core::cell::Cell<(u64, *mut Worker)> =
     core::cell::Cell::new((0, core::ptr::null_mut()));
 
 static POOL_GENERATION: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(1);
+
+/// `Worker`s created and not yet torn down by their thread, across every pool in the process.
+/// Read by `bun:internal-for-testing`.
+pub static WORKER_LIVE_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 // ───────────────────────────────────────────────────────────────────────────
 // Worker
@@ -483,7 +523,6 @@ impl Worker {
     /// Reborrow the self-referential `arena` (= `&self.heap`) as a shared
     /// reference. `BackRef` field, so the deref is encapsulated in
     /// [`bun_ptr::BackRef::get`]; see note on the field.
-    ///
     /// `arena` is set to `&self.heap` in [`Worker::create`] before any caller
     /// can observe the `Worker`, and is never dangling after that point. The
     /// pointee is the worker's own `heap` field, which is pinned for the
@@ -568,8 +607,11 @@ impl Worker {
     /// # Safety
     /// `this` must have come from `heap::alloc` in [`ThreadPool::get_worker`].
     pub(crate) unsafe fn deinit(this: *mut Worker) {
-        // SAFETY: caller contract.
-        let worker = unsafe { &mut *this };
+        // SAFETY: caller contract — reclaim the Box; dropping it at scope end
+        // runs the remaining field drop glue (`Option` fields are `None`,
+        // `ast_memory_store` is `ManuallyDrop`), defending against future
+        // `Drop`-carrying fields.
+        let mut worker = unsafe { bun_core::heap::take(this) };
         if worker.has_created {
             // `wire_after_move` boxed a `bun_js_parser_jsc::Macro::MacroContext`
             // behind `macro_context.data` (raw `*mut`, no `Drop` glue);
@@ -606,11 +648,7 @@ impl Worker {
         if worker.has_created {
             worker.heap = None;
         }
-        // SAFETY: caller contract — `this` was heap-allocated via `get_worker`.
-        // Runs full field drop glue: remaining `Option` fields are `None`
-        // (no-op), `ast_memory_store` is `ManuallyDrop` (no auto-drop), so no
-        // double-free; defends against future `Drop`-carrying fields.
-        unsafe { bun_core::heap::destroy(this) };
+        WORKER_LIVE_COUNT.fetch_sub(1, Ordering::SeqCst);
     }
 
     // returns `&'static mut` (detached) — the `Worker` is
@@ -664,11 +702,10 @@ impl Worker {
         let arena_ref: &'static ThreadLocalArena =
             unsafe { bun_ptr::detach_lifetime_ref(self.arena.get()) };
 
-        // The
-        // ASTMemoryAllocator owns its bump arena internally and ignores the
-        // passed fallback (see ASTMemoryAllocator::new doc).
-        *self.ast_memory_store = bun_ast::ASTMemoryAllocator::new(arena_ref);
-        self.ast_memory_store.reset();
+        // One mi_heap for the AST stores, `AstAlloc` spills and the parser's
+        // arena: allocations alternate between them per node, and mimalloc
+        // caches only the last heap a thread touched.
+        *self.ast_memory_store = bun_ast::ASTMemoryAllocator::borrowing(arena_ref);
 
         let log: *mut bun_ast::Log = arena_ref.alloc(bun_ast::Log::init());
         self.ctx = bun_ptr::BackRef::from(NonNull::from(ctx).cast::<BundleV2<'static>>());

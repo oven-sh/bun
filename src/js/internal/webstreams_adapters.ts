@@ -33,9 +33,6 @@ const SafePromisePrototypeFinally = $Promise.prototype.finally;
 
 const constants_zlib = $processBindingConstants.zlib;
 
-const kValidateChunk = Symbol("kValidateChunk");
-const kDestroyOnSyncError = Symbol("kDestroyOnSyncError");
-
 function tryTransferToNativeReadable(stream, options) {
   const ptr = stream.$bunNativePtr;
   if (!ptr || ptr === -1) {
@@ -48,9 +45,11 @@ class ReadableFromWeb extends Readable {
   #reader;
   #closed;
   #stream;
+  // node-fetch, undici: `stream` is a Response body, which text(), json(), ... lock for good.
+  #responseBody;
 
   constructor(options, stream) {
-    const { objectMode, highWaterMark, encoding, signal } = options;
+    const { objectMode, highWaterMark, encoding, signal, responseBody = false } = options;
     super({
       objectMode,
       highWaterMark,
@@ -60,6 +59,12 @@ class ReadableFromWeb extends Readable {
     this.#reader = undefined;
     this.#stream = stream;
     this.#closed = false;
+    this.#responseBody = responseBody;
+  }
+
+  // Locked before this wrapper opened it: a body method has the contents, nothing to read or cancel.
+  #takenByResponse(stream) {
+    return this.#responseBody && stream.locked;
   }
 
   #handleDone(reader) {
@@ -89,6 +94,12 @@ class ReadableFromWeb extends Readable {
     var reader = this.#reader;
     var stream = this.#stream;
     if (stream) {
+      if (this.#takenByResponse(stream)) {
+        this.#stream = undefined;
+        this.#closed = true;
+        this.push(null);
+        return;
+      }
       reader = this.#reader = stream.getReader();
       this.#stream = undefined;
     }
@@ -122,12 +133,14 @@ class ReadableFromWeb extends Readable {
       var stream = this.#stream;
       if (stream) {
         this.#stream = undefined;
-        PromisePrototypeThen.$call(
-          stream.cancel(error),
-          () => callback(error),
-          cancelError => callback(error ?? cancelError),
-        );
-        return;
+        if (!this.#takenByResponse(stream)) {
+          PromisePrototypeThen.$call(
+            stream.cancel(error),
+            () => callback(error),
+            cancelError => callback(error ?? cancelError),
+          );
+          return;
+        }
       }
     }
     try {
@@ -191,7 +204,7 @@ function handleKnownInternalErrors(cause: Error | null): Error | null {
 
 const noop = () => {};
 
-function newWritableStreamFromStreamWritable(streamWritable, options = kEmptyObject) {
+function newWritableStreamFromStreamWritable(streamWritable) {
   // Not using the internal/streams/utils isWritableNodeStream utility
   // here because it will return false if streamWritable is a Duplex
   // whose writable option is false. For a Duplex that is not writable,
@@ -268,34 +281,20 @@ function newWritableStreamFromStreamWritable(streamWritable, options = kEmptyObj
       },
 
       write(chunk) {
-        try {
-          options[kValidateChunk]?.(chunk);
-          if (!streamWritable.writableObjectMode && isAnyArrayBuffer(chunk)) {
-            chunk = new Uint8Array(chunk);
+        if (!streamWritable.writableObjectMode && isAnyArrayBuffer(chunk)) {
+          chunk = new Uint8Array(chunk);
+        }
+        const needDrainBefore = streamWritable.writableNeedDrain;
+        if (needDrainBefore || !streamWritable.write(chunk)) {
+          backpressurePromise = PromiseWithResolvers();
+          // write() may set writableNeedDrain; the post-write value is
+          // what decides whether we resolve immediately.
+          if (!streamWritable.writableNeedDrain) {
+            backpressurePromise.resolve();
           }
-          const needDrainBefore = streamWritable.writableNeedDrain;
-          if (needDrainBefore || !streamWritable.write(chunk)) {
-            backpressurePromise = PromiseWithResolvers();
-            // write() may set writableNeedDrain; the post-write value is
-            // what decides whether we resolve immediately.
-            if (!streamWritable.writableNeedDrain) {
-              backpressurePromise.resolve();
-            }
-            return SafePromisePrototypeFinally.$call(backpressurePromise.promise, () => {
-              backpressurePromise = undefined;
-            });
-          }
-        } catch (error) {
-          // When the kDestroyOnSyncError flag is set (e.g. for
-          // CompressionStream), a sync throw must also destroy the
-          // stream so the readable side is errored too. Without this
-          // the readable side hangs forever. This replicates the
-          // TransformStream semantics: error both sides on any throw
-          // in the transform path.
-          if (options[kDestroyOnSyncError]) {
-            destroyer(streamWritable, error);
-          }
-          throw error;
+          return SafePromisePrototypeFinally.$call(backpressurePromise.promise, () => {
+            backpressurePromise = undefined;
+          });
         }
       },
 
@@ -573,6 +572,9 @@ function newStreamReadableFromReadableStream(readableStream, options: Record<str
     throw $ERR_INVALID_ARG_VALUE("options.encoding", encoding);
   validateBoolean(objectMode, "options.objectMode");
 
+  // Node acquires the reader at this point, so a locked stream throws here too.
+  if (readableStream.locked) throw $ERR_INVALID_STATE_TypeError("ReadableStream is locked");
+
   const nativeStream = tryTransferToNativeReadable(readableStream, options);
 
   return (
@@ -634,15 +636,7 @@ function newReadableWritablePairFromDuplex(duplex, options = kEmptyObject) {
     return { readable, writable };
   }
 
-  const writableOptions = {
-    __proto__: null,
-    [kValidateChunk]: options[kValidateChunk],
-    [kDestroyOnSyncError]: options[kDestroyOnSyncError],
-  };
-
-  const writable = isWritable(duplex)
-    ? newWritableStreamFromStreamWritable(duplex, writableOptions)
-    : new WritableStream();
+  const writable = isWritable(duplex) ? newWritableStreamFromStreamWritable(duplex) : new WritableStream();
 
   if (!isWritable(duplex)) writable.close();
 
@@ -840,22 +834,6 @@ function newStreamDuplexFromReadableWritablePair(pair = kEmptyObject, options = 
   return duplex;
 }
 
-// Shared by CompressionStream and DecompressionStream: per the Compression
-// Streams spec, chunks must be BufferSource (ArrayBuffer or ArrayBufferView
-// not backed by SharedArrayBuffer), and an invalid chunk must error both
-// sides of the pair synchronously.
-function newBufferSourceTransformPairFromDuplex(duplex) {
-  const { isArrayBufferView, isSharedArrayBuffer } = require("node:util/types");
-  return newReadableWritablePairFromDuplex(duplex, {
-    [kValidateChunk]: function validateBufferSourceChunk(chunk) {
-      if (isSharedArrayBuffer(isArrayBufferView(chunk) ? chunk.buffer : chunk)) {
-        throw $ERR_INVALID_ARG_TYPE("chunk", ["ArrayBuffer", "Buffer", "TypedArray", "DataView"], chunk);
-      }
-    },
-    [kDestroyOnSyncError]: true,
-  });
-}
-
 export default {
   newWritableStreamFromStreamWritable,
   newReadableStreamFromStreamReadable,
@@ -863,8 +841,5 @@ export default {
   newStreamReadableFromReadableStream,
   newReadableWritablePairFromDuplex,
   newStreamDuplexFromReadableWritablePair,
-  newBufferSourceTransformPairFromDuplex,
-  kValidateChunk,
-  kDestroyOnSyncError,
   _ReadableFromWeb: ReadableFromWeb,
 };

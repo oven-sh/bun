@@ -3,7 +3,6 @@ use core::ffi::{c_uint, c_void};
 
 use crate::virtual_machine::VirtualMachine;
 use crate::{JSGlobalObject, JSValue};
-use bun_collections::IntegerBitSet;
 #[cfg(debug_assertions)]
 use bun_core::ZStr;
 
@@ -117,15 +116,14 @@ impl CallFrame {
         // JSC stores and works with value as signed, but it is always 1 or more.
         // SAFETY: `registers` is the JSC register-file base derived from `&self`;
         // OFFSET_ARGUMENT_COUNT_INCLUDING_THIS is a valid in-bounds Register slot.
-        unsafe {
-            u32::try_from(
-                (*registers.add(OFFSET_ARGUMENT_COUNT_INCLUDING_THIS))
-                    .encoded_value
-                    .as_bits
-                    .payload,
-            )
-            .unwrap()
-        }
+        let payload: i32 = unsafe {
+            (*registers.add(OFFSET_ARGUMENT_COUNT_INCLUDING_THIS))
+                .encoded_value
+                .as_bits
+                .payload
+        };
+        debug_assert!(payload >= 1);
+        payload as u32
     }
 
     /// Do not use this function. Migration path:
@@ -230,19 +228,14 @@ pub struct CallerSrcLoc {
 /// Node.fs, `will_be_async` is set to true which allows string/path APIs to
 /// know if they have to do threadsafe clones.
 pub struct ArgumentsSlice<'a> {
-    /// Backing storage for the remaining-args view. Both [`Self::init`] and
-    /// [`Self::init_async`] borrow — `all: &'a [JSValue]` already ties this
-    /// struct's lifetime to the source slice, so a heap-owned dupe
-    /// buys nothing here (it could not outlive `'a`). Kept as
-    /// `Cow` so a future caller that does own its args can pass `Owned`
-    /// without changing the type.
+    /// Backing storage for `remaining()`; `Cow` so an owning caller can pass `Owned`.
     remaining_buf: Cow<'a, [JSValue]>,
     /// Cursor into `remaining_buf`; advances on `eat()`.
     remaining_start: usize,
     pub vm: &'a VirtualMachine,
-    pub all: &'a [JSValue],
-    pub(crate) protected: IntegerBitSet<32>,
     pub will_be_async: bool,
+    /// An errno a converter met under `will_be_async`; the binding rejects its promise with it.
+    pub deferred_error: Option<Box<bun_sys::SystemError>>,
 }
 
 impl<'a> ArgumentsSlice<'a> {
@@ -252,41 +245,13 @@ impl<'a> ArgumentsSlice<'a> {
         &self.remaining_buf[self.remaining_start..]
     }
 
-    pub(crate) fn unprotect(&mut self) {
-        let mut iter = self.protected.iterator::<true, true>();
-        while let Some(i) = iter.next() {
-            self.all[i].unprotect();
-        }
-        self.protected = IntegerBitSet::<32>::init_empty();
-    }
-
-    pub fn protect_eat(&mut self) {
-        if self.remaining().is_empty() {
-            return;
-        }
-        // `remaining_buf.len() == all.len()` for both init variants, so
-        // `all.len() - remaining().len()` reduces to `remaining_start`.
-        let index = self.all.len() - self.remaining().len();
-        self.protected.set(index);
-        self.all[index].protect();
-        self.eat();
-    }
-
-    pub fn protect_eat_next(&mut self) -> Option<JSValue> {
-        if self.remaining().is_empty() {
-            return None;
-        }
-        self.next_eat()
-    }
-
     pub fn init(vm: &'a VirtualMachine, slice: &'a [JSValue]) -> ArgumentsSlice<'a> {
         ArgumentsSlice {
             remaining_buf: Cow::Borrowed(slice),
             remaining_start: 0,
             vm,
-            all: slice,
-            protected: IntegerBitSet::<32>::init_empty(),
             will_be_async: false,
+            deferred_error: None,
         }
     }
 
@@ -311,12 +276,6 @@ impl<'a> ArgumentsSlice<'a> {
         let v = self.remaining().first().copied()?;
         self.eat();
         Some(v)
-    }
-}
-
-impl<'a> Drop for ArgumentsSlice<'a> {
-    fn drop(&mut self) {
-        self.unprotect();
     }
 }
 

@@ -1,15 +1,16 @@
 use bun_collections::VecExt;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
+use bun_ptr::RefPtr;
 
 use crate::webcore::blob::store::StoreExt as _;
-use crate::webcore::blob::{self, Blob, BlobExt as _, StoreRef};
+use crate::webcore::blob::{self, Blob, BlobExt as _, Store};
 use crate::webcore::readable_stream;
 use crate::webcore::streams;
 
 pub struct ByteBlobLoader {
     pub offset: blob::SizeType,
     // LIFETIMES.tsv: SHARED — ref() on setup, deref() in clearData
-    pub(crate) store: Option<StoreRef>,
+    pub(crate) store: Option<RefPtr<Store>>,
     pub(crate) chunk_size: blob::SizeType,
     pub(crate) remain: blob::SizeType,
     pub(crate) done: bool,
@@ -49,7 +50,7 @@ impl readable_stream::SourceContext for ByteBlobLoader {
         Self::on_pull(self, buf, view)
     }
     fn on_cancel(&mut self) {
-        Self::on_cancel(self)
+        Self::on_cancel(self);
     }
     fn deinit_fn(&mut self) {
         Self::deinit(self)
@@ -69,7 +70,7 @@ impl readable_stream::SourceContext for ByteBlobLoader {
     }
 }
 
-bun_core::impl_field_parent! { ByteBlobLoader => Source.context; pub fn parent_const; pub fn parent; }
+bun_core::impl_field_parent! { ByteBlobLoader => Source.context; fn parent; }
 
 impl ByteBlobLoader {
     pub(crate) fn setup(&mut self, blob: &Blob, user_chunk_size: blob::SizeType) {
@@ -146,10 +147,10 @@ impl ByteBlobLoader {
         // Take ownership via detach_store() up front.
         let store = self.detach_store()?;
         if self.offset == 0 && self.remain == store.size() && self.content_type.is_empty() {
-            // SAFETY: `StoreRef` deref is `&Store`; `to_any_blob` needs `&mut` to move bytes out.
+            // SAFETY: `RefPtr<Store>` deref is `&Store`; `to_any_blob` needs `&mut` to move bytes out.
             // We hold the only outstanding ref (just detached) so exclusive access is sound.
             if let Some(blob) = unsafe { (*store.as_ptr()).to_any_blob() } {
-                drop(store); // defer store.deref()
+                drop(store);
                 return Some(blob);
             }
         }
@@ -166,11 +167,11 @@ impl ByteBlobLoader {
             blob.content_type.set(ct);
         }
 
-        self.parent_const().is_closed.set(true);
+        self.parent().is_closed.set(true);
         Some(blob::Any::Blob(blob))
     }
 
-    pub(crate) fn detach_store(&mut self) -> Option<StoreRef> {
+    pub(crate) fn detach_store(&mut self) -> Option<RefPtr<Store>> {
         if let Some(store) = self.store.take() {
             self.done = true;
             return Some(store);
@@ -223,7 +224,7 @@ impl ByteBlobLoader {
         if let Some(mut blob) = self.to_any_blob(global) {
             let result = blob.to_promise(global, action);
             blob.detach();
-            return Ok(result?);
+            return result;
         }
 
         // globalThis.ERR(.BODY_ALREADY_USED, "...", .{}).reject()

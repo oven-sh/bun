@@ -74,7 +74,7 @@ impl FontFaceProperty {
                 write_property_multi!(dest, "unicode-range", value.as_slice())
             }
             FontFaceProperty::Custom(custom) => {
-                dest.write_str(custom.name.as_str())?;
+                custom.name.to_css(dest)?;
                 dest.delim(b':', false)?;
                 custom.value.to_css(dest, true)
             }
@@ -214,7 +214,7 @@ impl UnicodeRange {
     }
 
     fn parse_tokens(input: &mut css::Parser) -> css::Result<()> {
-        let tok = input.next_including_whitespace()?.clone();
+        let tok = *input.next_including_whitespace()?;
         // Tag-only matches on `Dimension`/`Number` — payloads are never inspected.
         match tok {
             css::Token::Dimension { .. } => return Self::parse_question_marks(input),
@@ -238,7 +238,7 @@ impl UnicodeRange {
             }
             css::Token::Delim(c) => {
                 if c == '+' as u32 {
-                    let next = input.next_including_whitespace()?.clone();
+                    let next = *input.next_including_whitespace()?;
                     if !(matches!(next, css::Token::Ident(_))
                         || matches!(next, css::Token::Delim(d) if d == '?' as u32))
                     {
@@ -439,7 +439,7 @@ impl FontFormat {
             FontFormat::EmbeddedOpentype => dest.write_str("embedded-opentype"),
             FontFormat::Collection => dest.write_str("collection"),
             FontFormat::Svg => dest.write_str("svg"),
-            FontFormat::String(s) => dest.write_str(*s),
+            FontFormat::String(s) => dest.serialize_string(*s),
         }
     }
 

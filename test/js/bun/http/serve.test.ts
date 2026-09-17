@@ -5,11 +5,19 @@ import {
   bunEnv,
   bunExe,
   dumpStats,
+  emptyProcessMaxRSS,
+  isAndroid,
+  isASAN,
   isBroken,
+  isDebug,
   isIntelMacOS,
   isIPv4,
   isIPv6,
+  isLinux,
   isPosix,
+  isWindows,
+  libcPathForDlopen,
+  runFixtureMaxRSS,
   tempDir,
   tls,
   tmpdirSync,
@@ -20,9 +28,12 @@ import { join, resolve } from "path";
 // import app_jsx from "./app.jsx";
 import { heapStats } from "bun:jsc";
 import { spawn } from "child_process";
+import { on, once } from "node:events";
 import net from "node:net";
 import { networkInterfaces } from "node:os";
+import { Duplex } from "node:stream";
 import nodeTls from "node:tls";
+import { Worker } from "node:worker_threads";
 import { tmpdir } from "os";
 
 let renderToReadableStream: any = null;
@@ -91,7 +102,7 @@ it("should be able to abruptly stop the server many times", async () => {
         await fetch(url, { keepalive: true }).then(res => res.text());
         expect.unreachable();
       } catch (e) {
-        expect(["ECONNRESET", "ConnectionRefused"]).toContain(e.code);
+        expect(["ECONNRESET", "ECONNREFUSED"]).toContain(e.code);
       }
     }
 
@@ -615,14 +626,201 @@ it.each([
   expect(response.slice(response.indexOf("\r\n\r\n") + 4)).toBe("/helloooo");
 });
 
+// RFC 9112 9.6: a server that receives a "close" connection option MUST NOT
+// process any further requests on that connection. The parser must stop at the
+// close-flagged request even when a well-formed follow-up sits in the same TCP
+// segment; the response to /a is delivered and the socket is then closed.
+describe("does not dispatch a pipelined request after Connection: close", () => {
+  async function roundTrip(port: number, payload: string, expectedResponses: number) {
+    const chunks: Buffer[] = [];
+    // Settle once the server has either closed the socket or written the
+    // expected number of responses; an unfixed server writes one response too
+    // many and never closes, so the second condition keeps the failure fast.
+    const { promise: done, resolve } = Promise.withResolvers<void>();
+    const count = () =>
+      (
+        Buffer.concat(chunks)
+          .toString("latin1")
+          .match(/HTTP\/1\.[01] \d{3} /g) ?? []
+      ).length;
+    const socket = net.connect(port, "127.0.0.1");
+    socket.on("data", c => {
+      chunks.push(c);
+      if (count() >= expectedResponses) resolve();
+    });
+    socket.on("error", () => {});
+    let closed = false;
+    socket.on("close", () => {
+      closed = true;
+      resolve();
+    });
+    await new Promise<void>((ok, fail) => {
+      socket.once("connect", ok);
+      socket.once("error", fail);
+    });
+    socket.write(payload);
+    await done;
+    // True only when the server closed the socket before `expectedResponses`
+    // responses arrived; read before destroy() so it is never our own close.
+    const closedByServer = closed;
+    socket.destroy();
+    const raw = Buffer.concat(chunks).toString("latin1");
+    return { raw, responses: count(), closedByServer };
+  }
+
+  const pipelinedB = "GET /b HTTP/1.1\r\nHost: x\r\n\r\n";
+
+  it.each([
+    ["close", "GET /a HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"],
+    ["Close (mixed case)", "GET /a HTTP/1.1\r\nHost: x\r\nConnection: Close\r\n\r\n"],
+    ["keep-alive, close", "GET /a HTTP/1.1\r\nHost: x\r\nConnection: keep-alive, close\r\n\r\n"],
+    ["close, TE", "GET /a HTTP/1.1\r\nHost: x\r\nConnection: close, TE\r\n\r\n"],
+    ["HTTP/1.0 (implicit)", "GET /a HTTP/1.0\r\nHost: x\r\n\r\n"],
+  ])("%s", async (_label, requestA) => {
+    const handled: string[] = [];
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        const p = new URL(req.url).pathname;
+        handled.push(p);
+        return new Response("body:" + p);
+      },
+    });
+
+    const { raw, responses, closedByServer } = await roundTrip(server.port, requestA + pipelinedB, 2);
+
+    expect(raw).toContain("body:/a");
+    expect(raw).not.toContain("body:/b");
+    expect({ handled, responses, closedByServer }).toEqual({ handled: ["/a"], responses: 1, closedByServer: true });
+  });
+
+  // The close-flagged request is not the first of its read. The requests
+  // before it are answered, the requests behind it are not, and the server
+  // closes after the response to the close-flagged one.
+  it("stops at a close-flagged request in the middle of a read", async () => {
+    const handled: string[] = [];
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        const p = new URL(req.url).pathname;
+        handled.push(p);
+        return new Response("body:" + p);
+      },
+    });
+
+    const { raw, responses, closedByServer } = await roundTrip(
+      server.port,
+      "GET /0 HTTP/1.1\r\nHost: x\r\n\r\n" +
+        "GET /1 HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n" +
+        "GET /2 HTTP/1.1\r\nHost: x\r\n\r\n" +
+        "GET /3 HTTP/1.1\r\nHost: x\r\n\r\n",
+      4,
+    );
+
+    expect(raw).toEndWith("body:/1");
+    expect({ handled, responses, closedByServer }).toEqual({
+      handled: ["/0", "/1"],
+      responses: 2,
+      closedByServer: true,
+    });
+  });
+
+  // The response to /a is still pending when the parser reaches /b. Without
+  // the discard, /b hits the "request behind a pending response" close and the
+  // response to /a is never sent.
+  it("delivers the response of an async handler before it closes", async () => {
+    const handled: string[] = [];
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      async fetch(req) {
+        const p = new URL(req.url).pathname;
+        handled.push(p);
+        await new Promise<void>(r => setImmediate(r));
+        return new Response("body:" + p);
+      },
+    });
+
+    const { raw, responses, closedByServer } = await roundTrip(
+      server.port,
+      "GET /a HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n" + pipelinedB,
+      2,
+    );
+
+    expect(raw).toEndWith("body:/a");
+    expect({ handled, responses, closedByServer }).toEqual({ handled: ["/a"], responses: 1, closedByServer: true });
+  });
+
+  it.each([
+    ["five-byte non-close token", "GET /a HTTP/1.1\r\nHost: x\r\nConnection: nope!\r\n\r\n"],
+    ["no Connection header (control)", "GET /a HTTP/1.1\r\nHost: x\r\n\r\n"],
+  ])("still serves both requests: %s", async (_label, requestA) => {
+    const handled: string[] = [];
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        const p = new URL(req.url).pathname;
+        handled.push(p);
+        return new Response("body:" + p);
+      },
+    });
+
+    // /a keeps the connection alive; /b carries the close so the server
+    // closes the socket and roundTrip's `done` settles via the close event.
+    const { raw, responses } = await roundTrip(
+      server.port,
+      requestA + "GET /b HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+      2,
+    );
+
+    expect(raw).toContain("body:/a");
+    expect(raw).toContain("body:/b");
+    expect({ handled, responses }).toEqual({ handled: ["/a", "/b"], responses: 2 });
+  });
+
+  it("discards malformed bytes after the close-flagged request without emitting an error response", async () => {
+    const handled: string[] = [];
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        const p = new URL(req.url).pathname;
+        handled.push(p);
+        return new Response("body:" + p);
+      },
+    });
+
+    const { raw, responses } = await roundTrip(
+      server.port,
+      "GET /a HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n@@@ not HTTP\r\n\r\n",
+      2,
+    );
+
+    expect(raw).toContain("body:/a");
+    expect({ handled, responses, has400: raw.includes(" 400 ") }).toEqual({
+      handled: ["/a"],
+      responses: 1,
+      has400: false,
+    });
+  });
+});
+
 describe("streaming", () => {
   describe("error handler", () => {
-    it("throw on pull renders headers, does not call error handler", async () => {
+    // The body source fails before any byte is written. The Response's status
+    // and headers are already committed to uWS, so error() cannot replace them
+    // and is not called; the connection is closed without a complete response
+    // so the client cannot mistake the failed body for an empty one.
+    it("throw on pull closes the connection, does not call error handler", async () => {
+      let outcome: string | undefined;
       const onMessage = mock(async url => {
-        const response = await fetch(url);
-        expect(response.status).toBe(402);
-        expect(response.headers.get("X-Hey")).toBe("123");
-        expect(response.text()).resolves.toBe("");
+        outcome = await fetch(url).then(
+          response => `resolved ${response.status}`,
+          (err: any) => `rejected ${err.code}`,
+        );
         subprocess.kill();
       });
 
@@ -637,17 +835,23 @@ describe("streaming", () => {
 
       let [exitCode, stderr] = await Promise.all([subprocess.exited, subprocess.stderr.text()]);
       expect(exitCode).toBeInteger();
+      expect(outcome).toBe("rejected ECONNRESET");
       expect(stderr).toContain("error: Oops");
+      expect(stderr).not.toContain("error handler called");
       expect(onMessage).toHaveBeenCalled();
     });
 
-    it("throw on pull after writing should not call the error handler", async () => {
+    // pull() queues two chunks, requests close, then throws: per the streams
+    // spec the error wins and the queued chunks are discarded, so this is the
+    // same "failed before any byte" case as above.
+    it("throw on pull after writing closes the connection, does not call the error handler", async () => {
+      let outcome: string | undefined;
       const onMessage = mock(async href => {
         const url = new URL("write", href);
-        const response = await fetch(url);
-        expect(response.status).toBe(402);
-        expect(response.headers.get("X-Hey")).toBe("123");
-        expect(response.text()).resolves.toBe("");
+        outcome = await fetch(url).then(
+          response => `resolved ${response.status}`,
+          (err: any) => `rejected ${err.code}`,
+        );
         subprocess.kill();
       });
 
@@ -662,7 +866,9 @@ describe("streaming", () => {
 
       let [exitCode, stderr] = await Promise.all([subprocess.exited, subprocess.stderr.text()]);
       expect(exitCode).toBeInteger();
+      expect(outcome).toBe("rejected ECONNRESET");
       expect(stderr).toContain("error: Oops");
+      expect(stderr).not.toContain("error handler called");
       expect(onMessage).toHaveBeenCalled();
     });
 
@@ -1056,6 +1262,55 @@ describe("streaming", () => {
   });
 });
 
+// A handler's Response reaches the server four ways: returned from fetch(),
+// returned from fetch() through an already-settled promise, returned from
+// error(), and returned from error() through a promise. A Bun.file() or
+// ReadableStream body is still being sent after the handler has returned, and
+// all four paths have to keep the Response alive for it; each must deliver
+// such a body whole.
+describe("file and stream bodies arrive whole from every handler path", () => {
+  const expected = Buffer.alloc(16 * 1024, "p").toString();
+  const chunk = Buffer.alloc(4 * 1024, "p").toString();
+  const boom = (): never => {
+    throw new Error("boom");
+  };
+  type Handlers = { fetch: () => Response | Promise<Response>; error?: () => Response | Promise<Response> };
+  const paths: [label: string, status: number, handlers: (make: () => Response) => Handlers][] = [
+    ["returned from fetch()", 201, make => ({ fetch: make })],
+    ["returned from fetch() through a settled promise", 201, make => ({ fetch: async () => make() })],
+    ["returned from error()", 597, make => ({ fetch: boom, error: make })],
+    ["returned from error() through a settled promise", 597, make => ({ fetch: boom, error: async () => make() })],
+  ];
+  const bodies: [kind: string, body: (dir: string) => Blob | ReadableStream][] = [
+    ["Bun.file()", dir => file(join(dir, "payload.txt"))],
+    [
+      "ReadableStream",
+      () => {
+        let remaining = 4;
+        return new ReadableStream({
+          pull(controller) {
+            controller.enqueue(chunk);
+            if (--remaining === 0) controller.close();
+          },
+        });
+      },
+    ],
+  ];
+
+  describe.each(bodies)("%s body", (_kind, body) => {
+    it.each(paths)("%s", async (_label, status, handlers) => {
+      using dir = tempDir("serve-deferred-body", { "payload.txt": expected });
+      using server = serve({
+        port: 0,
+        development: false,
+        ...handlers(() => new Response(body(String(dir)), { status })),
+      });
+      const response = await fetch(server.url);
+      expect({ status: response.status, body: await response.text() }).toEqual({ status, body: expected });
+    });
+  });
+});
+
 it("should work for a hello world", async () => {
   await runTest(
     {
@@ -1296,6 +1551,74 @@ it("reload() cannot turn a Bun.serve server into a node:http server", async () =
       }
     },
   );
+});
+
+it("reload() that drops the node:http handler keeps the server's node:http stop() semantics", async () => {
+  // The other direction of the kind invariant: a server created as a node:http
+  // one stays one. node's close() contract is that stop(false) neither sweeps
+  // idle keep-alive connections nor waits for them, and a reload() that routes
+  // requests to fetch instead of the node handler must not switch the server
+  // over to Bun.serve's drain (which closes the idle connection here).
+  using server = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    // @ts-expect-error internal option used by node:http's Server
+    onNodeHTTPRequest() {
+      throw new Error("replaced by reload() before any request");
+    },
+  });
+  server.reload({ fetch: () => new Response("ok") });
+
+  let received = "";
+  let connectionClosed = false;
+  let waiter = Promise.withResolvers<void>();
+  await using connection = await Bun.connect({
+    hostname: "127.0.0.1",
+    port: server.port,
+    socket: {
+      data(_, data) {
+        received += data.toString("latin1");
+        waiter.resolve();
+      },
+      end() {
+        connectionClosed = true;
+        waiter.resolve();
+      },
+      close() {
+        connectionClosed = true;
+        waiter.resolve();
+      },
+      error() {
+        connectionClosed = true;
+        waiter.resolve();
+      },
+    },
+  });
+  // Sends a keep-alive request and returns "<status line> <body>", or "closed"
+  // if the server hung up instead of answering.
+  async function request(): Promise<string> {
+    connection.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+    connection.flush();
+    while (true) {
+      const headEnd = received.indexOf("\r\n\r\n");
+      if (headEnd !== -1) {
+        const head = received.slice(0, headEnd);
+        const bodyEnd = headEnd + 4 + Number(/^content-length: (\d+)$/im.exec(head)?.[1] ?? 0);
+        if (received.length >= bodyEnd) {
+          const result = `${head.split("\r\n")[0]} ${received.slice(headEnd + 4, bodyEnd)}`;
+          received = received.slice(bodyEnd);
+          return result;
+        }
+      }
+      if (connectionClosed) return "closed";
+      await waiter.promise;
+      waiter = Promise.withResolvers();
+    }
+  }
+
+  expect(await request()).toBe("HTTP/1.1 200 OK ok");
+  await server.stop(false);
+  expect(await request()).toBe("HTTP/1.1 200 OK ok");
 });
 
 describe("status code text", () => {
@@ -1574,18 +1897,83 @@ describe("response framing", () => {
       expect(headerNames).not.toContain("transfer-encoding");
     });
 
-    // 205 MUST indicate a zero-length body (RFC 9110 15.3.6) and 304 MAY carry
-    // a Content-Length (RFC 9110 15.4.5) -- both keep the explicit 0.
-    it.each([205, 304])("a %i response keeps Content-Length: 0", async status => {
+    // RFC 9110 15.3.6: a 205 MUST NOT generate content; the explicit 0 it
+    // already emitted stays (still conformant, and matches prior releases).
+    it("a 205 response keeps Content-Length: 0", async () => {
       using server = Bun.serve({
         port: 0,
         hostname: "127.0.0.1",
-        fetch: () => new Response(null, { status }),
+        fetch: () => new Response(null, { status: 205 }),
       });
-      const { statusLine, headerNames } = await rawRequest(server.port, method);
-      expect(statusLine).toStartWith(`HTTP/1.1 ${status} `);
-      expect(headerNames).toContain("content-length");
+      const { statusLine, headers } = await rawRequest(server.port, method);
+      expect(statusLine).toStartWith(`HTTP/1.1 205 `);
+      expect(headers["content-length"]).toBe("0");
     });
+
+    // RFC 9110 8.6: a 304 MAY carry Content-Length but MUST NOT unless it
+    // equals what the 200 would have sent. Only the handler knows that value,
+    // so pass its header through; when it sets none, emit none (a fabricated 0
+    // poisons caches that update stored headers from a 304, RFC 9111 4.3.4).
+    it.each([
+      [undefined, null],
+      ["1234", "1234"],
+      ["0", "0"],
+      ["abc", null],
+    ])("a 304 response passes the handler's Content-Length through (%p -> %p)", async (appCL, expected) => {
+      using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch: () =>
+          new Response(null, {
+            status: 304,
+            headers: appCL === undefined ? { etag: '"x"' } : { etag: '"x"', "content-length": appCL },
+          }),
+      });
+      const { statusLine, headers, body } = await rawRequest(server.port, method);
+      expect({ statusLine: statusLine.slice(0, 12), contentLength: headers["content-length"] ?? null, body }).toEqual({
+        statusLine: "HTTP/1.1 304",
+        contentLength: expected,
+        body: "",
+      });
+      expect(headers["date"]).toBeDefined();
+    });
+  });
+
+  // RFC 9112 6.3: a 304 is terminated at the blank line regardless of
+  // Content-Length, so a non-zero handler value must not desync keep-alive.
+  it("a 304 with a handler Content-Length does not desync keep-alive", async () => {
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        const p = new URL(req.url).pathname;
+        if (p === "/a") return new Response(null, { status: 304, headers: { "content-length": "1234", etag: '"a"' } });
+        return new Response("ok-b");
+      },
+    });
+    const received: Buffer[] = [];
+    const { resolve, reject, promise } = Promise.withResolvers<void>();
+    await using c = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      socket: {
+        data: (_, d) => received.push(d),
+        close: () => resolve(),
+        end: () => resolve(),
+        error: (_, e) => reject(e),
+      },
+    });
+    c.write(
+      "GET /a HTTP/1.1\r\nHost: x\r\n\r\n" + //
+        "GET /b HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+    );
+    c.flush();
+    await promise;
+    const raw = Buffer.concat(received).toString();
+    const [first, ...rest] = raw.split("HTTP/1.1 ").filter(Boolean);
+    expect(first).toMatch(/^304 Not Modified\r\n/);
+    expect(first).toMatch(/\r\ncontent-length: 1234\r\n/i);
+    expect(rest.join("HTTP/1.1 ")).toMatch(/^200 OK\r\n[\s\S]*\r\n\r\nok-b$/);
   });
 
   // RFC 9112 6.3 terminates a 1xx/204/304 at the blank line after the header
@@ -1599,8 +1987,8 @@ describe("response framing", () => {
       [204, "HEAD", null],
       [205, "GET", "0"],
       [205, "HEAD", "0"],
-      [304, "GET", "0"],
-      [304, "HEAD", "0"],
+      [304, "GET", null],
+      [304, "HEAD", null],
     ];
     it.each(cases)("%i %s", async (status, method, contentLength) => {
       const makeResponse = () => new Response("data", { status });
@@ -1808,6 +2196,188 @@ describe("response framing", () => {
       expect(exitCode).toBe(0);
     });
   });
+});
+
+it.concurrent("dev error page embeds the thrown error, its stack, and build/resolve errors as JSON", async () => {
+  using dir = tempDir("serve-dev-error-page", {
+    "server.ts": `
+      function inner() {
+        throw new TypeError("boom <b>&</b>");
+      }
+      const server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        development: true,
+        async fetch(req) {
+          const { pathname } = new URL(req.url);
+          if (pathname === "/throw") inner();
+          if (pathname === "/syntax") await import("./broken.ts");
+          if (pathname === "/resolve") await import("./bad-import.ts");
+          return new Response("unreachable");
+        },
+      });
+      const out = {};
+      for (const path of ["/throw", "/syntax", "/resolve"]) {
+        const res = await fetch(server.url + path.slice(1));
+        const html = await res.text();
+        const match = /<script id="__bunfallback" type="application\\/json">([^<]*)<\\/script>/.exec(html);
+        out[path] = {
+          status: res.status,
+          type: res.headers.get("content-type"),
+          payload: match && JSON.parse(match[1]),
+          // the page must carry the bun-error renderer (which registers this symbol) plus the call into it
+          rendererMentions: html.split('Symbol.for("Bun__renderFallbackError")').length - 1,
+          unfilledPlaceholder: /\\{\\[\\w+\\]s?\\}|\\[bun_error_js\\]/.test(html),
+        };
+      }
+      console.log(JSON.stringify(out));
+      server.stop(true);
+      // The thrown errors were reported through the unhandled-rejection path, which sets the exit code.
+      process.exit(0);
+    `,
+    "broken.ts": `export const a = 1;\nexport const oops = ;\n`,
+    "bad-import.ts": `import { nope } from "does-not-exist-pkg";\nexport const b = nope;\n`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "server.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const out = JSON.parse(stdout.trim().split("\n").at(-1)!);
+
+  for (const path of ["/throw", "/syntax", "/resolve"]) {
+    expect(out[path]).toMatchObject({
+      status: 500,
+      type: "text/html;charset=utf-8",
+      payload: { cwd: String(dir) },
+      rendererMentions: 2,
+      unfilledPlaceholder: false,
+    });
+  }
+
+  // Thrown exception: name/message, 1-based frame positions and the source lines around the throw.
+  const thrown = out["/throw"].payload.problems;
+  expect(thrown.exceptions).toHaveLength(1);
+  const [exception] = thrown.exceptions;
+  expect({ name: exception.name, message: exception.message }).toEqual({
+    name: "TypeError",
+    message: "boom <b>&</b>",
+  });
+  expect(exception.stack.frames[0]).toEqual({
+    function_name: "inner",
+    file: join(String(dir), "server.ts"),
+    // 1-based, pointing at `TypeError` — the same position `bun` prints to the terminal
+    position: { line: 3, column: 19 },
+    scope: 3, // function
+  });
+  expect(exception.stack.source_lines).toContainEqual({
+    line: 3,
+    text: '        throw new TypeError("boom <b>&</b>");',
+  });
+
+  // Syntax error in an imported module: reported as a build message with its location.
+  const syntax = out["/syntax"].payload.problems;
+  expect(syntax.build.errors).toBe(1);
+  expect(syntax.build.msgs[0]).toMatchObject({
+    level: 1,
+    data: {
+      text: "Unexpected ;",
+      location: { line: 2, line_text: "export const oops = ;" },
+    },
+    on: { build: true, resolve: "" },
+  });
+  expect(syntax.build.msgs[0].data.location.file).toEndWith("broken.ts");
+
+  // Failed resolution: reported as a resolve message carrying the specifier.
+  const resolution = out["/resolve"].payload.problems;
+  expect(resolution.build.errors).toBe(1);
+  expect(resolution.build.msgs[0].on).toEqual({ build: false, resolve: "does-not-exist-pkg" });
+  expect(resolution.build.msgs[0].data.text).toStartWith("Cannot find package 'does-not-exist-pkg'");
+
+  expect(stderr).toContain("boom <b>&</b>");
+  expect(exitCode).toBe(0);
+});
+
+it.concurrent("dev error page ships a bun-error bundle that evaluates and registers the renderer", async () => {
+  using dir = tempDir("serve-dev-error-page-bundle", {
+    "server.ts": `
+      const server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        development: true,
+        fetch() {
+          throw new Error("bundle-test boom");
+        },
+      });
+      const html = await (await fetch(server.url)).text();
+      // dev-error-page.html inlines one module script: two lines that move the JSON payload out of the
+      // document, then the packages/bun-error bundle, then the call into the function the bundle registers.
+      const lines = /<script type="module">([^]*?)<\\/script>/.exec(html)[1].trim().split("\\n");
+      await Bun.write("bun-error-bundle.mjs", lines.slice(2, -1).join("\\n"));
+      console.log(JSON.stringify({ setup: lines.slice(0, 2).map(line => line.trim()), call: lines.at(-1).trim() }));
+      server.stop(true);
+      // The thrown error was reported through the unhandled-rejection path, which sets the exit code.
+      process.exit(0);
+    `,
+    "renderer-check.ts": `
+      import { dismissError, renderFallbackError } from "./bun-error-bundle.mjs";
+      const registered = globalThis[Symbol.for("Bun__renderFallbackError")];
+      console.log(JSON.stringify({
+        registered: typeof registered,
+        registeredIsTheExport: registered === renderFallbackError,
+        // Nothing is rendered, so dismissing must be a no-op; there is no document to touch here.
+        dismissWithoutOverlay: dismissError() === undefined,
+        document: typeof document,
+      }));
+    `,
+  });
+
+  await using server = Bun.spawn({
+    cmd: [bunExe(), "server.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [serverStdout, serverStderr, serverExitCode] = await Promise.all([
+    server.stdout.text(),
+    server.stderr.text(),
+    server.exited,
+  ]);
+  expect(JSON.parse(serverStdout.trim().split("\n").at(-1)!)).toEqual({
+    setup: [
+      'globalThis.__BUN_DATA__ = JSON.parse(document.getElementById("__bunfallback").textContent);',
+      'document.getElementById("__bunfallback").remove();',
+    ],
+    call: 'globalThis[Symbol.for("Bun__renderFallbackError")](globalThis.__BUN_DATA__);',
+  });
+  expect(serverStderr).toContain("bundle-test boom");
+  expect(serverExitCode).toBe(0);
+
+  // The bundle must evaluate outside a browser too: its only top-level side effect is registering the renderer.
+  await using check = Bun.spawn({
+    cmd: [bunExe(), "renderer-check.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [checkStdout, checkStderr, checkExitCode] = await Promise.all([
+    check.stdout.text(),
+    check.stderr.text(),
+    check.exited,
+  ]);
+  expect(checkStderr).toBe("");
+  expect(JSON.parse(checkStdout.trim())).toEqual({
+    registered: "function",
+    registeredIsTheExport: true,
+    dismissWithoutOverlay: true,
+    document: "undefined",
+  });
+  expect(checkExitCode).toBe(0);
 });
 
 it("should support multiple Set-Cookie headers", async () => {
@@ -2148,7 +2718,8 @@ it("#5859 json", async () => {
     body: new Uint8Array([0xfd]),
   });
 
-  expect(await response.text()).toBe("Failed to parse JSON");
+  // The body decodes to U+FFFD, so req.json() rejects with the error of JSON.parse("\uFFFD").
+  expect(await response.text()).toBe("JSON Parse error: Unrecognized token '\uFFFD'");
   expect(response.ok).toBeFalse();
 });
 
@@ -2991,6 +3562,73 @@ it("Bun.serve hostname with interior NUL byte does not crash the process", async
   });
 });
 
+// A "[...]" hostname has its brackets stripped before it is handed to the socket layer.
+// That copy used to live in a fixed 1024-byte buffer, so a longer bracketed hostname
+// aborted the process instead of failing to listen like any other bogus hostname.
+it("Bun.serve with a bracketed hostname longer than 1024 bytes throws instead of crashing", async () => {
+  const script = `
+    const hostname = "[" + Buffer.alloc(1100, "a").toString() + "]";
+    let server;
+    try {
+      server = Bun.serve({ port: 0, hostname, fetch() { return new Response("ok"); } });
+    } catch (e) {
+      console.log("caught:" + (e instanceof Error));
+    }
+    if (server) {
+      console.log("listening:" + server.port);
+      server.stop(true);
+    }
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: "caught:true",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+it("development error log prints the request pathname verbatim", async () => {
+  const script = `
+    const net = require("node:net");
+    const server = Bun.serve({
+      port: 0,
+      development: true,
+      fetch() {
+        throw new Error("boom");
+      },
+    });
+    const socket = net.connect(server.port, "127.0.0.1", () => {
+      socket.write("GET /a<b>c>d HTTP/1.1\\r\\nHost: 127.0.0.1\\r\\nConnection: close\\r\\n\\r\\n");
+    });
+    socket.on("data", () => {});
+    socket.on("close", () => {
+      server.stop(true);
+      process.exit(0);
+    });
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain("GET - /a<b>c>d failed");
+  expect(exitCode).toBe(0);
+});
+
 // The HTTP parser shares HttpParser.h between Bun.serve and node:http. When a request
 // handler tears the connection down from inside the request-body data callback, the
 // parser must stop consuming the rest of the TCP segment instead of routing a request
@@ -3571,11 +4209,11 @@ it("type: direct stream awaiting flush(true) under backpressure does not re-ente
         async pull(controller) {
           pullEntries++;
           for (let i = 0; i < TOTAL_CHUNKS; i++) {
-            // write() returns a negative number when the socket is backed up;
+            // write() returns a pending Promise when the socket is backed up;
             // await flush(true) (the pending-flush promise) to pause until the
             // drain.
             const n = controller.write(CHUNK);
-            if (typeof n === "number" && n < 0) {
+            if (n instanceof Promise) {
               await controller.flush(true);
             }
             writes++;
@@ -3627,6 +4265,199 @@ it("type: direct stream awaiting flush(true) under backpressure does not re-ente
     expect(writes).toBe(TOTAL_CHUNKS);
     expect(received).toBeGreaterThanOrEqual(TOTAL_CHUNKS * CHUNK.length);
   } finally {
+    socket.destroy();
+  }
+});
+
+// Under backpressure a type:"direct" controller.write() returns a Promise that
+// settles once the client drains; awaiting it must suspend pull and resume it
+// exactly there, with every chunk delivered once and in order.
+it("type: direct controller.write() Promise resolves on drain and resumes pull", async () => {
+  const CHUNK = Buffer.alloc(256 * 1024, 71);
+  const TOTAL_CHUNKS = 128; // 32 MiB
+  let awaited = 0;
+
+  using server = serve({
+    port: 0,
+    fetch() {
+      return new Response(
+        new ReadableStream({
+          type: "direct",
+          async pull(controller) {
+            for (let i = 0; i < TOTAL_CHUNKS; i++) {
+              const wrote = controller.write(CHUNK);
+              if (wrote instanceof Promise) {
+                awaited++;
+                await wrote;
+              }
+            }
+            await controller.flush();
+            controller.close();
+          },
+        }),
+      );
+    },
+  });
+
+  const socket = net.connect(server.port, "127.0.0.1");
+  const { promise: closed, resolve: onClosed, reject: onSocketError } = Promise.withResolvers<void>();
+  socket.on("error", onSocketError);
+  socket.on("close", () => onClosed());
+  let received = 0;
+  socket.on("data", d => (received += d.length));
+  socket.on("connect", () => {
+    socket.pause();
+    socket.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+  });
+
+  try {
+    {
+      const t0 = Date.now();
+      while (awaited === 0 && Date.now() - t0 < 30000) await Bun.sleep(1);
+      expect(awaited).toBeGreaterThan(0);
+    }
+    // pull is suspended on the drain Promise; releasing the client must
+    // resume it and deliver the full body without duplication.
+    socket.resume();
+    await closed;
+    // headers + chunked framing on top; duplication would add >= one CHUNK.
+    expect(received).toBeGreaterThanOrEqual(TOTAL_CHUNKS * CHUNK.length);
+    expect(received).toBeLessThan(TOTAL_CHUNKS * CHUNK.length + 16 * 1024);
+  } finally {
+    socket.destroy();
+  }
+});
+
+// A handler that proxies an upstream response body to a slow client must
+// pause the upstream socket instead of buffering the rate difference:
+// ByteStream (fetch response) → HttpResponse sink with backpressure.
+it.each(["chunked", "content-length"] as const)(
+  "bounds memory when proxying a %s fetch response body to a stalled client",
+  async encoding => {
+    const fixture = `
+    const net = require("node:net");
+    const CHUNK = Buffer.alloc(64 * 1024, 0x47), COUNT = 2048; // 128 MB
+    // Upstream: written as fast as the socket accepts it.
+    const source = net.createServer(sock => {
+      let n = 0;
+      if (${JSON.stringify(encoding)} === "chunked") {
+        sock.write("HTTP/1.1 200 OK\\r\\ntransfer-encoding: chunked\\r\\nconnection: close\\r\\n\\r\\n");
+        const framed = Buffer.concat([Buffer.from("10000\\r\\n"), CHUNK, Buffer.from("\\r\\n")]);
+        const pump = () => { while (n < COUNT) { n++; if (!sock.write(framed)) return sock.once("drain", pump); } sock.end("0\\r\\n\\r\\n"); };
+        pump();
+      } else {
+        sock.write("HTTP/1.1 200 OK\\r\\ncontent-length: " + CHUNK.length * COUNT + "\\r\\nconnection: close\\r\\n\\r\\n");
+        const pump = () => { while (n < COUNT) { n++; if (!sock.write(CHUNK)) return sock.once("drain", pump); } sock.end(); };
+        pump();
+      }
+    });
+    await new Promise(r => source.listen(0, "127.0.0.1", r));
+
+    const proxy = Bun.serve({
+      port: 0,
+      idleTimeout: 0,
+      async fetch() {
+        const up = await fetch(\`http://127.0.0.1:\${source.address().port}/\`);
+        return new Response(up.body);
+      },
+    });
+
+    // Downstream client stalls before reading, then drains the whole body.
+    let received = 0;
+    const { promise: done, resolve } = Promise.withResolvers();
+    const client = net.connect(proxy.port, "127.0.0.1", () => {
+      client.pause();
+      setTimeout(() => client.resume(), 500);
+      client.write("GET / HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n");
+    });
+    client.on("data", d => { received += d.length; if (received >= CHUNK.length * COUNT) resolve(); });
+    client.on("error", () => {});
+    await done;
+    client.destroy();
+    console.log(JSON.stringify({ received: received >= CHUNK.length * COUNT }));
+    process.exit(0);
+  `;
+    const [fixtureMaxRSS, baselineMaxRSS] = await Promise.all([
+      runFixtureMaxRSS(fixture, { received: true }),
+      emptyProcessMaxRSS(),
+    ]);
+    // Without upstream pause the proxy accumulates the whole payload while the
+    // client stalls; with it, in-flight bytes are bounded by the socket buffers.
+    expect((fixtureMaxRSS - baselineMaxRSS) / 1024 / 1024).toBeLessThan(isASAN || isDebug ? 256 : 96);
+  },
+  10_000,
+);
+
+// Same as the test above but the pull does *not* await flush(true) — it keeps
+// writing through backpressure and then parks on an unrelated promise. The
+// sink's onWritable drain must not re-invoke pull; a second entry would
+// duplicate the already-written bytes into the response body.
+it("type: direct stream that ignores backpressure is not re-entered on drain", async () => {
+  const CHUNK = Buffer.alloc(256 * 1024, 69);
+  const TOTAL_CHUNKS = 128; // 32 MiB — well past any localhost send buffer
+  let pullEntries = 0;
+  let sawBackpressure = false;
+  let parked = false;
+  const gate = Promise.withResolvers<void>();
+
+  using server = serve({
+    port: 0,
+    fetch() {
+      return new Response(
+        new ReadableStream({
+          type: "direct",
+          async pull(controller) {
+            pullEntries++;
+            for (let i = 0; i < TOTAL_CHUNKS; i++) {
+              if (controller.write(CHUNK) instanceof Promise) sawBackpressure = true;
+              await controller.flush();
+            }
+            parked = true;
+            await gate.promise;
+            controller.close();
+          },
+        }),
+      );
+    },
+  });
+
+  const socket = net.connect(server.port, "127.0.0.1");
+  const { promise: bodyDone, resolve: onBodyDone, reject: onSocketError } = Promise.withResolvers<void>();
+  socket.on("error", onSocketError);
+  socket.on("close", () => onBodyDone());
+  socket.on("connect", () => {
+    socket.pause();
+    socket.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+  });
+
+  try {
+    // Hold the client paused while pull pushes 32 MiB and parks on `gate`,
+    // then drain: onWritable fires while pull is still suspended.
+    {
+      const t0 = Date.now();
+      while (!sawBackpressure && Date.now() - t0 < 30000) await Bun.sleep(1);
+      expect(sawBackpressure).toBe(true);
+    }
+    {
+      const t0 = Date.now();
+      while (!parked && Date.now() - t0 < 30000) await Bun.sleep(1);
+      expect(parked).toBe(true);
+    }
+    let received = 0;
+    socket.on("data", d => (received += d.length));
+    socket.resume();
+    {
+      const t0 = Date.now();
+      while (received < TOTAL_CHUNKS * CHUNK.length && Date.now() - t0 < 30000) await Bun.sleep(10);
+      expect(received).toBeGreaterThanOrEqual(TOTAL_CHUNKS * CHUNK.length);
+    }
+
+    expect(pullEntries).toBe(1);
+    gate.resolve();
+    await bodyDone;
+    expect(pullEntries).toBe(1);
+  } finally {
+    gate.resolve();
     socket.destroy();
   }
 });
@@ -3701,7 +4532,7 @@ it("type: direct stream — small write queued under backpressure is delivered i
           // pending_flush is already parked.
           for (let i = 0; i < 256 && !hitBackpressure; i++) {
             const n = controller.write(BIG);
-            if (typeof n === "number" && n < 0) hitBackpressure = true;
+            if (n instanceof Promise) hitBackpressure = true;
           }
           controller.write(SMALL);
           await controller.flush(true);
@@ -3963,4 +4794,647 @@ it.each([
   socket.destroy();
 
   expect(statusLine).toBe("HTTP/1.1 400 Bad Request");
+});
+
+// HTTPServerWritable must stop dequeuing from a JS ReadableStream once uWS reports
+// socket backpressure. We observe this by snapshotting how many chunks the server has
+// enqueued once the client has consumed only a small prefix: with backpressure the
+// producer tracks the consumer + kernel send-buffer; without it the producer drains
+// the whole stream into uWS's internal buffer before the client reads anything.
+it("applies backpressure to a ReadableStream response while the client drains", async () => {
+  const chunk = Buffer.alloc(256 * 1024, 0x61);
+  const chunkCount = 64; // 16 MB — well above loopback socket-buffer capacity
+  let sent = 0;
+
+  using server = serve({
+    port: 0,
+    idleTimeout: 0,
+    fetch() {
+      return new Response(
+        new ReadableStream({
+          pull(controller) {
+            controller.enqueue(chunk);
+            sent++;
+            if (sent === chunkCount) controller.close();
+          },
+        }),
+      );
+    },
+  });
+
+  const response = await fetch(server.url);
+  const reader = response.body!.getReader();
+  let received = 0;
+  let sentAtPartialDrain = -1;
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    received += value.byteLength;
+    if (sentAtPartialDrain < 0 && received >= chunk.byteLength * 4) {
+      // Client has consumed 1 MB of 16 MB. Sample the producer's progress.
+      sentAtPartialDrain = sent;
+    }
+  }
+
+  expect(received).toBe(chunk.byteLength * chunkCount);
+  expect(sentAtPartialDrain).toBeGreaterThan(0);
+  // If the sink ignored backpressure it would have already drained all chunkCount
+  // chunks into uWS's buffer by the time the client read 1 MB.
+  expect(sentAtPartialDrain).toBeLessThan(chunkCount);
+});
+
+// A TLS connection the server accepted before stop() but whose handshake completes afterwards must still
+// be served like any connection accepted before a graceful stop — and through a wrapper the server still
+// holds strongly. Connections were counted from the end of the handshake, so such a socket was invisible:
+// stop() saw the server drained, released the wrapper (and its handlers) to the GC, and the request that
+// then arrived dispatched through whatever the GC had left of them.
+it("serves a TLS connection whose handshake completes after a graceful stop()", async () => {
+  let server: Server | null = Bun.serve({ port: 0, tls, fetch: () => new Response("served") });
+  const raw = net.connect(server.port, "127.0.0.1");
+  let client: nodeTls.TLSSocket | undefined;
+  try {
+    await new Promise((res, rej) => (raw.on("connect", res), raw.on("error", rej)));
+    // Client→server bytes flow freely; server→client bytes are held until released, so the server has answered
+    // the ClientHello and is waiting mid-handshake when stop() runs.
+    let hold = true;
+    const held: Buffer[] = [];
+    const wire = new Duplex({
+      read() {},
+      write(chunk, enc, cb) {
+        raw.write(chunk, cb);
+      },
+    });
+    raw.on("data", d => (hold ? held.push(d) : wire.push(d)));
+    raw.on("close", () => wire.push(null));
+    const c = (client = nodeTls.connect({ socket: wire, rejectUnauthorized: false }));
+    c.on("error", () => {});
+    for (const t = Date.now(); held.length === 0 && Date.now() - t < 10_000; ) await Bun.sleep(5);
+    expect(held.length).toBeGreaterThan(0);
+
+    const stopped = server.stop();
+    server = null;
+    Bun.gc(true);
+
+    hold = false;
+    for (const d of held) wire.push(d);
+    // Written now, sent once the handshake completes.
+    c.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+    let response = "";
+    await new Promise(res => (c.on("data", d => (response += d)), c.on("end", res), c.on("close", res)));
+    expect(response.split("\r\n")[0]).toBe("HTTP/1.1 200 OK");
+    expect(response.split("\r\n\r\n")[1]).toBe("served");
+    await stopped;
+  } finally {
+    server?.stop(true);
+    client?.destroy();
+    raw.destroy();
+  }
+});
+
+// HTTP/1.1 requests that arrive in one read are dispatched from one onData()
+// call. The socket is corked for the whole call. Responses that need no
+// JavaScript share one send(), and they leave before the handler of a later
+// request runs JavaScript. A response that JavaScript produced leaves when it
+// completes.
+describe("requests pipelined in one read", () => {
+  const get = (path: string, extraHeaders = "") => `GET ${path} HTTP/1.1\r\nHost: x\r\n${extraHeaders}\r\n`;
+
+  // Writes `payload` in one write. Collects the reply until `complete(reply)` or the peer closes.
+  function exchange(
+    connect: (onConnect: () => void) => net.Socket,
+    payload: string,
+    complete: (reply: string) => boolean = () => false,
+  ) {
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    let reply = "";
+    const socket = connect(() => socket.write(payload));
+    socket.on("data", chunk => {
+      reply += chunk.toString("latin1");
+      if (complete(reply)) socket.destroy();
+    });
+    socket.on("error", reject);
+    socket.on("close", () => resolve(reply));
+    return promise;
+  }
+  const plain = (port: number) => (onConnect: () => void) => net.connect(port, "127.0.0.1", onConnect);
+
+  function parseResponses(reply: string) {
+    const responses: { status: string; body: string }[] = [];
+    while (reply.length) {
+      const headEnd = reply.indexOf("\r\n\r\n");
+      if (headEnd === -1) {
+        responses.push({ status: "incomplete head", body: reply });
+        break;
+      }
+      const head = reply.slice(0, headEnd);
+      const length = Number(/^content-length: (\d+)$/im.exec(head)?.[1] ?? 0);
+      responses.push({
+        status: head.slice(0, head.indexOf("\r\n")),
+        body: reply.slice(headEnd + 4, headEnd + 4 + length),
+      });
+      reply = reply.slice(headEnd + 4 + length);
+    }
+    return responses;
+  }
+
+  const echoPath = (req: Request) => new Response(new URL(req.url).pathname);
+
+  // Each send() is one TCP segment on loopback (TCP_NODELAY). The client counts
+  // the segments with TCP_INFO. A handler that runs JavaScript first sends the
+  // responses completed before it, and its own response leaves when it
+  // completes. Responses that need no JavaScript (static routes) collect until
+  // a handler runs JavaScript, or until the read is consumed.
+  it.skipIf(!isLinux && !isAndroid)("share one send() until a handler runs JavaScript", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          import { dlopen, ptr } from "bun:ffi";
+          const libc = dlopen(${JSON.stringify(libcPathForDlopen())}, {
+            getsockopt: { args: ["int", "int", "int", "ptr", "ptr"], returns: "int" },
+          });
+          // struct tcp_info: tcpi_data_segs_in is a u32 at byte 152 (linux/tcp.h, since 4.6).
+          function dataSegmentsIn(fd) {
+            const info = new Uint8Array(280);
+            const len = new Uint32Array([info.length]);
+            if (libc.symbols.getsockopt(fd, 6 /* IPPROTO_TCP */, 11 /* TCP_INFO */, ptr(info), ptr(len)) !== 0) {
+              throw new Error("getsockopt(TCP_INFO) failed");
+            }
+            if (len[0] < 156) throw new Error("tcp_info has no tcpi_data_segs_in: " + len[0] + " bytes");
+            return new DataView(info.buffer).getUint32(152, true);
+          }
+          const request = path => "GET " + path + " HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n";
+          async function run(options, paths = ["/", "/", "/", "/", "/", "/", "/", "/"]) {
+            const server = Bun.serve({ port: 0, hostname: "127.0.0.1", ...options });
+            const done = Promise.withResolvers();
+            let reply = "";
+            const responses = () => reply.split("HTTP/1.1 200 OK").length - 1;
+            const socket = await Bun.connect({
+              hostname: "127.0.0.1",
+              port: server.port,
+              socket: {
+                open(socket) {
+                  socket.write(paths.map(request).join(""));
+                },
+                data(socket, chunk) {
+                  reply += chunk.toString("latin1");
+                  if (responses() === paths.length && reply.endsWith("hello")) done.resolve();
+                },
+                error(socket, error) {
+                  done.reject(error);
+                },
+                close() {
+                  done.resolve();
+                },
+              },
+            });
+            await done.promise;
+            const result = { responses: responses(), segments: dataSegmentsIn(socket.fd) };
+            socket.end();
+            server.stop(true);
+            return result;
+          }
+          // The 413 for a body over maxRequestBodySize runs no JavaScript. A client that reads
+          // the 100 Continue alone starts an upload that the server then resets.
+          async function runTooLarge() {
+            const server = Bun.serve({
+              port: 0,
+              hostname: "127.0.0.1",
+              maxRequestBodySize: 1024,
+              fetch: () => new Response("hello"),
+            });
+            const done = Promise.withResolvers();
+            let reply = "";
+            let segments = 0;
+            await Bun.connect({
+              hostname: "127.0.0.1",
+              port: server.port,
+              socket: {
+                open(socket) {
+                  socket.write(
+                    "POST / HTTP/1.1\\r\\nHost: x\\r\\nExpect: 100-continue\\r\\nContent-Length: 2000000\\r\\n\\r\\n",
+                  );
+                },
+                data(socket, chunk) {
+                  reply += chunk.toString("latin1");
+                  segments = dataSegmentsIn(socket.fd);
+                },
+                error(socket, error) {
+                  done.reject(error);
+                },
+                close() {
+                  done.resolve();
+                },
+              },
+            });
+            await done.promise;
+            server.stop(true);
+            return { statuses: reply.split("\\r\\n").filter(line => line.startsWith("HTTP/1.1 ")), segments };
+          }
+          console.log(JSON.stringify({
+            fetch: await run({ fetch: () => new Response("hello", { headers: { "X-Custom": "1" } }) }),
+            route: await run({ routes: { "/": () => new Response("hello") } }),
+            static: await run({ routes: { "/": new Response("hello") } }),
+            // One send() before each "/js" handler, one for its response, and one when the read is consumed:
+            // [static static static] [js] [static static] [js] [static]
+            mixed: await run(
+              { routes: { "/static": new Response("hello"), "/js": () => new Response("hello") } },
+              ["/static", "/static", "/static", "/js", "/static", "/static", "/js", "/static"],
+            ),
+            tooLarge: await runTooLarge(),
+          }));
+        `,
+      ],
+      env: bunEnv,
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect({ result: stdout.trim() ? JSON.parse(stdout) : stdout, exitCode }).toEqual({
+      result: {
+        fetch: { responses: 8, segments: 8 },
+        route: { responses: 8, segments: 8 },
+        static: { responses: 8, segments: 1 },
+        mixed: { responses: 8, segments: 5 },
+        tooLarge: { statuses: ["HTTP/1.1 100 Continue", "HTTP/1.1 413 Request Entity Too Large"], segments: 1 },
+      },
+      exitCode: 0,
+    });
+  });
+
+  // On Windows the exit resets the connection (the client reads ECONNRESET), and
+  // the reset can discard what the client has not read yet.
+  it.skipIf(isWindows)("delivers the completed responses when a later handler ends the process", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const server = Bun.serve({
+            port: 0,
+            hostname: "127.0.0.1",
+            routes: { "/static": new Response("/static") },
+            fetch(req) {
+              const { pathname } = new URL(req.url);
+              if (pathname === "/exit") process.exit(0);
+              return new Response(pathname);
+            },
+          });
+          console.log(server.port);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    let stdout = "";
+    for await (const chunk of proc.stdout) {
+      stdout += Buffer.from(chunk).toString();
+      if (stdout.includes("\n")) break;
+    }
+    // The static response needs no JavaScript. It is still in the cork buffer when "/exit" is dispatched.
+    const reply = await exchange(plain(Number(stdout)), get("/a") + get("/static") + get("/exit"));
+    expect(parseResponses(reply)).toEqual([
+      { status: "HTTP/1.1 200 OK", body: "/a" },
+      { status: "HTTP/1.1 200 OK", body: "/static" },
+    ]);
+    expect(await proc.exited).toBe(0);
+  });
+
+  it("sends the completed responses before a later handler blocks", async () => {
+    // The "/wait" handler blocks the server's thread until the client has the
+    // responses before it, so the server runs in a worker.
+    using dir = tempDir("serve-pipelined-blocked-handler", {
+      "server.mjs": `
+        import { parentPort, workerData as released } from "node:worker_threads";
+        const server = Bun.serve({
+          port: 0,
+          hostname: "127.0.0.1",
+          routes: { "/static": new Response("/static") },
+          fetch(req) {
+            const { pathname } = new URL(req.url);
+            if (pathname !== "/wait") return new Response(pathname);
+            return new Response(Atomics.wait(released, 0, 0, 2000) === "timed-out" ? "timed-out" : "released");
+          },
+        });
+        parentPort.postMessage(server.port);
+      `,
+    });
+    const released = new Int32Array(new SharedArrayBuffer(4));
+    const worker = new Worker(join(String(dir), "server.mjs"), { workerData: released });
+    try {
+      const [port] = await once(worker, "message");
+      // The static response needs no JavaScript. It is still in the cork buffer when "/wait" is dispatched.
+      const reply = await exchange(
+        plain(port),
+        get("/a") + get("/static") + get("/wait", "Connection: close\r\n"),
+        reply => {
+          if (parseResponses(reply).length >= 2 && reply.includes("\r\n\r\n/static")) {
+            Atomics.store(released, 0, 1);
+            Atomics.notify(released, 0);
+          }
+          return false;
+        },
+      );
+      expect(parseResponses(reply)).toEqual([
+        { status: "HTTP/1.1 200 OK", body: "/a" },
+        { status: "HTTP/1.1 200 OK", body: "/static" },
+        { status: "HTTP/1.1 200 OK", body: "released" },
+      ]);
+    } finally {
+      await worker.terminate();
+    }
+  });
+
+  // One request, no pipelining. Its body arrives with it, so the handler resumes from the
+  // body callback and the response completes inside onData(). The work that the handler
+  // leaves behind runs after that, before onData() returns.
+  const postJson = `POST / HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nContent-Length: 7\r\n\r\n{"a":1}`;
+  // More awaits than the handler's promise needs to reach the server, so that the
+  // response is complete when the last one resumes.
+  const trailingWork = (work: string) => `
+    async function trailing() {
+      for (let i = 0; i < 4; i++) await null;
+      ${work}
+    }
+    const server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      async fetch(req) {
+        await req.json();
+        trailing();
+        return new Response("accepted", { status: 202 });
+      },
+    });
+  `;
+
+  it("sends a response before the JavaScript that runs after it", async () => {
+    // The trailing work blocks the server's thread until the client has the
+    // response, so the server runs in a worker.
+    using dir = tempDir("serve-response-before-trailing-js", {
+      "server.mjs": `
+        import { parentPort, workerData as received } from "node:worker_threads";
+        ${trailingWork(`parentPort.postMessage(Atomics.wait(received, 0, 0, 2000) === "timed-out" ? "timed-out" : "released");`)}
+        parentPort.postMessage(server.port);
+      `,
+    });
+    const received = new Int32Array(new SharedArrayBuffer(4));
+    const worker = new Worker(join(String(dir), "server.mjs"), { workerData: received });
+    try {
+      const messages = on(worker, "message");
+      const [port] = (await messages.next()).value;
+      const reply = await exchange(plain(port), postJson, reply => {
+        if (!reply.endsWith("accepted")) return false;
+        Atomics.store(received, 0, 1);
+        Atomics.notify(received, 0);
+        return true;
+      });
+      const [outcome] = (await messages.next()).value;
+      expect({ responses: parseResponses(reply), outcome }).toEqual({
+        responses: [{ status: "HTTP/1.1 202 Accepted", body: "accepted" }],
+        outcome: "released",
+      });
+    } finally {
+      await worker.terminate();
+    }
+  });
+
+  // Skipped on Windows for the same reason as the test above that ends the process.
+  it.skipIf(isWindows)("delivers a response when the JavaScript that runs after it ends the process", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `${trailingWork("process.exit(0);")} console.log(server.port);`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    let stdout = "";
+    for await (const chunk of proc.stdout) {
+      stdout += Buffer.from(chunk).toString();
+      if (stdout.includes("\n")) break;
+    }
+    const reply = await exchange(plain(Number(stdout)), postJson);
+    expect(parseResponses(reply)).toEqual([{ status: "HTTP/1.1 202 Accepted", body: "accepted" }]);
+    expect(await proc.exited).toBe(0);
+  });
+
+  // The tests below pass without the batching too. They cover the paths that
+  // have to send the cork buffer before they close or hand over the socket.
+
+  it("keeps the order when a response is larger than the cork buffer", async () => {
+    // Twice the 16 KB cork buffer.
+    const big = Buffer.alloc(32 * 1024, "b").toString();
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch: req => (req.url.endsWith("/big") ? new Response(big) : echoPath(req)),
+    });
+    const reply = await exchange(
+      plain(server.port),
+      get("/a") + get("/b") + get("/big") + get("/c") + get("/d", "Connection: close\r\n"),
+    );
+    const ok = "HTTP/1.1 200 OK";
+    expect(parseResponses(reply)).toEqual([
+      { status: ok, body: "/a" },
+      { status: ok, body: "/b" },
+      { status: ok, body: big },
+      { status: ok, body: "/c" },
+      { status: ok, body: "/d" },
+    ]);
+  });
+
+  it("keeps the order over TLS", async () => {
+    using server = Bun.serve({ port: 0, hostname: "127.0.0.1", tls, fetch: echoPath });
+    const reply = await exchange(
+      onConnect => nodeTls.connect({ port: server.port, host: "127.0.0.1", rejectUnauthorized: false }, onConnect),
+      get("/a") + get("/b") + get("/c", "Connection: close\r\n"),
+    );
+    const ok = "HTTP/1.1 200 OK";
+    expect(parseResponses(reply)).toEqual([
+      { status: ok, body: "/a" },
+      { status: ok, body: "/b" },
+      { status: ok, body: "/c" },
+    ]);
+  });
+
+  it("sends the completed responses before the response to a malformed request", async () => {
+    using server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: echoPath });
+    // The third request has no Host header.
+    const reply = await exchange(plain(server.port), get("/a") + get("/b") + "GET /c HTTP/1.1\r\n\r\n");
+    expect(parseResponses(reply)).toEqual([
+      { status: "HTTP/1.1 200 OK", body: "/a" },
+      { status: "HTTP/1.1 200 OK", body: "/b" },
+      { status: "HTTP/1.1 400 Bad Request", body: "" },
+    ]);
+  });
+
+  it("sends the completed responses before it closes on a request behind a pending response", async () => {
+    const pending = Promise.withResolvers<Response>();
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch: req => (req.url.endsWith("/pending") ? pending.promise : echoPath(req)),
+    });
+    try {
+      const reply = await exchange(
+        plain(server.port),
+        get("/a") + get("/b") + get("/pending") + get("/c"),
+        reply => parseResponses(reply).length >= 2 && reply.endsWith("/b"),
+      );
+      expect(parseResponses(reply)).toEqual([
+        { status: "HTTP/1.1 200 OK", body: "/a" },
+        { status: "HTTP/1.1 200 OK", body: "/b" },
+      ]);
+    } finally {
+      pending.resolve(new Response("late"));
+    }
+  });
+
+  it("sends the completed responses before the 101 of a WebSocket upgrade", async () => {
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req, server) {
+        if (req.url.endsWith("/ws")) {
+          if (server.upgrade(req)) return;
+          return new Response("upgrade failed", { status: 500 });
+        }
+        return echoPath(req);
+      },
+      websocket: {
+        open(ws) {
+          ws.send("hello");
+        },
+        message() {},
+      },
+    });
+    const frame = "\x81\x05hello";
+    const reply = await exchange(
+      plain(server.port),
+      get("/a") +
+        get(
+          "/ws",
+          "Connection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n",
+        ),
+      reply => reply.endsWith(frame),
+    );
+    const [first, ...rest] = reply.split("HTTP/1.1 ");
+    expect(first).toBe("");
+    expect(rest.map(part => part.slice(0, part.indexOf("\r\n")))).toEqual(["200 OK", "101 Switching Protocols"]);
+    expect(rest[0]).toEndWith("\r\n\r\n/a");
+    expect(rest[1]).toEndWith("\r\n\r\n" + frame);
+  });
+
+  it("sends the completed responses before an upgrade that open() terminates", async () => {
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req, server) {
+        if (req.url.endsWith("/ws")) {
+          if (server.upgrade(req)) return;
+          return new Response("upgrade failed", { status: 500 });
+        }
+        return echoPath(req);
+      },
+      websocket: {
+        open(ws) {
+          ws.terminate();
+        },
+        message() {},
+      },
+    });
+    const reply = await exchange(
+      plain(server.port),
+      get("/a") +
+        get("/b") +
+        get(
+          "/ws",
+          "Connection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n",
+        ),
+    );
+    expect(parseResponses(reply).slice(0, 2)).toEqual([
+      { status: "HTTP/1.1 200 OK", body: "/a" },
+      { status: "HTTP/1.1 200 OK", body: "/b" },
+    ]);
+  });
+
+  it("sends the completed response before a graceful stop() closes the idle connection", async () => {
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req, server) {
+        // The response completes before the body arrives. That rejects this
+        // read, and its handler runs before onData uncorks.
+        req.text().catch(() => server.stop());
+        return new Response("done");
+      },
+    });
+    const reply = await exchange(plain(server.port), "POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\n");
+    expect(parseResponses(reply)).toEqual([{ status: "HTTP/1.1 200 OK", body: "done" }]);
+  });
+
+  // RFC 9112 9.6: a response that carries Connection: close is the last one on its connection.
+  // The request head does not show that, so the parser latch for a Connection: close request
+  // ("does not dispatch a pipelined request after Connection: close") does not cover it.
+  describe("does not run the requests behind a response that closes the connection", () => {
+    const secure = (port: number) => (onConnect: () => void) =>
+      nodeTls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false }, onConnect);
+    const close = { headers: { Connection: "close" } };
+    const post = (path: string) => `POST ${path} HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhello`;
+
+    // `payload` ends with the request whose response closes. Two more requests follow it.
+    it.each([
+      { name: "at the start of the read", payload: get("/close"), ran: ["/close"] },
+      { name: "in the middle of the read", payload: get("/a") + get("/close"), ran: ["/a", "/close"] },
+      {
+        name: "in the middle of the read, over TLS",
+        payload: get("/a") + get("/close"),
+        ran: ["/a", "/close"],
+        options: { tls },
+        connect: secure,
+      },
+      // The paths below complete the response outside the request handler call.
+      { name: "completed by the request body", payload: get("/a") + post("/body"), ran: ["/a", "/body"] },
+      { name: "with a stream body", payload: get("/a") + get("/stream"), ran: ["/a", "/stream"] },
+      { name: "without a body", payload: get("/a") + get("/204"), ran: ["/a", "/204"] },
+    ])("$name", async ({ payload, ran: expected, options = {}, connect = plain }) => {
+      const ran: string[] = [];
+      using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        ...options,
+        fetch(req) {
+          const { pathname } = new URL(req.url);
+          ran.push(pathname);
+          switch (pathname) {
+            case "/close":
+              return new Response(pathname, close);
+            case "/body":
+              return req.text().then(() => new Response(pathname, close));
+            case "/stream":
+              return new Response(
+                new ReadableStream({
+                  start(controller) {
+                    controller.enqueue(pathname);
+                    controller.close();
+                  },
+                }),
+                close,
+              );
+            case "/204":
+              return new Response(null, { status: 204, ...close });
+            default:
+              return new Response(pathname);
+          }
+        },
+      });
+      const responses = (reply: string) => reply.split("HTTP/1.1 ").length - 1;
+      // Resolves when the server closes. One response too many ends it early.
+      const reply = await exchange(
+        connect(server.port),
+        payload + get("/b") + get("/c"),
+        reply => responses(reply) > expected.length,
+      );
+      expect({ ran, responses: responses(reply) }).toEqual({ ran: expected, responses: expected.length });
+    });
+  });
 });

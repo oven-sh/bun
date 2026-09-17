@@ -60,7 +60,10 @@ pub(super) mod property_id_mixin {
                 .filter(|p| prefix_value.contains(*p)),
             |d, p| {
                 p.to_css(d)?;
-                d.write_str(name)
+                match this {
+                    PropertyId::Custom(_) => d.serialize_identifier(name),
+                    _ => d.write_str(name),
+                }
             },
         )
     }

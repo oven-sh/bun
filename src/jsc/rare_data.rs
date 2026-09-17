@@ -11,11 +11,11 @@ use bun_collections::StringArrayHashMap;
 use bun_core::strings;
 use bun_core::{Mutex, Output};
 use bun_event_loop::MiniEventLoop::__bun_stdio_blob_store_new;
-use bun_http::MimeType as mime_type;
 use bun_io::{self as Async};
+use bun_libdeflate_sys::libdeflate;
 use bun_paths::MAX_PATH_BYTES;
 use bun_sys::{self as syscall, Fd, Mode};
-use bun_uws::{self as uws, SocketGroup, SslCtx};
+use bun_uws::{self as uws, SocketGroup};
 
 use bun_event_loop::SpawnSyncEventLoop::SpawnSyncEventLoop;
 
@@ -31,10 +31,10 @@ use super::uuid::UUID;
 //
 //   - `mysql_context` / `postgresql_context` / `ssl_ctx_cache` / `editor_context`
 //     → moved to `bun_runtime::jsc_hooks::RuntimeState` (already there).
-//   - `cron_jobs` / `node_fs_stat_watcher_scheduler`
-//     → erased `*mut c_void` slots; high tier lazy-inits.
+//   - `node_fs_stat_watcher_scheduler`
+//     → erased `*mut c_void` slot; high tier lazy-inits.
 //   - the `bun test --isolate` watcher/server registries → moved to
-//     `bun_runtime::jsc_hooks::IsolationHandles` so the entries keep their
+//     `bun_runtime::jsc_hooks::ActiveHandles` so the entries keep their
 //     concrete types.
 //   - `stdin/stdout/stderr_store` → erased `*mut blob::Store` constructed via
 //     `__bun_stdio_blob_store_new` (link-time extern).
@@ -210,8 +210,6 @@ pub struct RareData {
     pub(crate) entropy_cache: Option<Box<EntropyCache>>,
 
     pub(crate) hot_map: Option<HotMap>,
-    /// `Vec<*mut bun_runtime::api::cron::CronJob>` — only stored/iterated here.
-    pub cron_jobs: Vec<*mut c_void>,
 
     // TODO: make this per JSGlobalObject instead of global
     // This does not handle ShadowRealm correctly!
@@ -248,9 +246,8 @@ pub struct RareData {
     /// CTX. Cached separately so the hot `tls:true` / `wss://` path skips even the
     /// SHA-256 + map lookup. Ref owned here. Lazy-init body lives in
     /// `bun_runtime` (it calls `SSLContextCache::get_or_create_opts`).
-    pub default_client_ssl_ctx: Option<*mut SslCtx>,
-
-    pub(crate) mime_types: Option<mime_type::Map>,
+    /// Held for the VM's lifetime so the weak-cache entry never tombstones.
+    pub default_client_ssl_ctx: Option<boring::OwnedSslCtx>,
 
     /// `bun_runtime::node::StatWatcherScheduler` — erased `RefPtr` payload;
     /// lazy-init in `bun_runtime::node::node_fs_stat_watcher`.
@@ -266,7 +263,16 @@ pub struct RareData {
     /// owns the data, no sidecar `Mutex<()>`).
     pub(crate) listening_sockets_for_watch_mode: Mutex<Vec<Fd>>,
 
-    pub(crate) temp_pipe_read_buffer: Option<Box<PipeReadBuffer>>,
+    pub pipe_read_scratch: Box<bun_event_loop::PipeReadScratch>,
+
+    /// `node:http2` PADDED DATA scratch; see [`Self::take_h2_padded_frame_buffer`].
+    h2_padded_frame_buffer: Option<Box<H2PaddedFrameBuffer>>,
+    /// Output scratch for one JS-thread `CompressionStream` step; see [`Self::take_compression_scratch`].
+    compression_scratch: Option<Vec<u8>>,
+    /// Inflated payload of one `new WebSocket()` client message; see [`Self::take_websocket_inflate_scratch`].
+    websocket_inflate_scratch: Option<Vec<u8>>,
+    /// One libdeflate handle for every JS-thread one-shot inflate; see [`Self::libdeflate_decompressor`].
+    libdeflate_decompressor: Option<libdeflate::OwnedDecompressor>,
 
     // There is intentionally no `aws_signature_cache` field — storage lives in
     // `bun_s3_signing::credentials::AWS_SIGNATURE_CACHE` (process static; it
@@ -303,7 +309,6 @@ impl Default for RareData {
             stdout_mode: 0,
             entropy_cache: None,
             hot_map: None,
-            cron_jobs: Vec::new(),
             cleanup_hooks: Vec::new(),
             file_polls: None,
             spawn_ipc_group: SocketGroup::default(),
@@ -321,11 +326,14 @@ impl Default for RareData {
             ws_client_group_: SocketGroup::default(),
             ws_client_tls_group: SocketGroup::default(),
             default_client_ssl_ctx: None,
-            mime_types: None,
             node_fs_stat_watcher_scheduler: None,
             memory_pressure_watcher: None,
             listening_sockets_for_watch_mode: Mutex::new(Vec::new()),
-            temp_pipe_read_buffer: None,
+            pipe_read_scratch: Box::new(bun_event_loop::PipeReadScratch::new()),
+            h2_padded_frame_buffer: None,
+            compression_scratch: None,
+            websocket_inflate_scratch: None,
+            libdeflate_decompressor: None,
             s3_default_client: Strong::empty(),
             node_quic_callbacks: Strong::empty(),
             default_csrf_secret: Box::default(),
@@ -373,14 +381,8 @@ impl PathBuf {
 
 // Drop is automatic for Option<Box<...>> fields — no explicit deinit needed.
 
-// ──────────────────────────────────────────────────────────────────────────
-// PipeReadBuffer / constants
-// ──────────────────────────────────────────────────────────────────────────
-
-// Canonical definition lives in the lower-tier `bun_event_loop` crate (shared
-// with `MiniEventLoop`'s scratch buffer). Re-export so `rare_data::PipeReadBuffer`
-// remains a stable path for existing callers.
-pub use bun_event_loop::PipeReadBuffer;
+/// One max-size HTTP/2 PADDED DATA frame payload (pad-length byte + data + padding).
+pub type H2PaddedFrameBuffer = [u8; 16384];
 
 // ──────────────────────────────────────────────────────────────────────────
 // ProxyEnvStorage
@@ -405,64 +407,28 @@ impl ProxyEnvStorage {
     }
 }
 
+/// Uppercase first: on Windows the case-insensitive compare in `slot` matches
+/// the uppercase entry for either input case.
+const PROXY_ENV_KEYS: [&[u8]; 8] = [
+    b"HTTP_PROXY",
+    b"http_proxy",
+    b"HTTPS_PROXY",
+    b"https_proxy",
+    b"ALL_PROXY",
+    b"all_proxy",
+    b"NO_PROXY",
+    b"no_proxy",
+];
+
+/// One value per `PROXY_ENV_KEYS` entry.
 #[derive(Default)]
-pub struct ProxyEnvSlots {
-    #[allow(non_snake_case)]
-    pub(crate) HTTP_PROXY: Option<Arc<RefCountedEnvValue>>,
-    pub(crate) http_proxy: Option<Arc<RefCountedEnvValue>>,
-    #[allow(non_snake_case)]
-    pub(crate) HTTPS_PROXY: Option<Arc<RefCountedEnvValue>>,
-    pub(crate) https_proxy: Option<Arc<RefCountedEnvValue>>,
-    #[allow(non_snake_case)]
-    pub(crate) NO_PROXY: Option<Arc<RefCountedEnvValue>>,
-    pub(crate) no_proxy: Option<Arc<RefCountedEnvValue>>,
-}
+pub struct ProxyEnvSlots([Option<Arc<RefCountedEnvValue>>; PROXY_ENV_KEYS.len()]);
 
 pub struct Slot<'a> {
-    /// Static-lifetime field name (e.g. "NO_PROXY") — safe to use as
+    /// Static-lifetime name (e.g. "NO_PROXY") — safe to use as
     /// the env map key without duping.
     pub key: &'static [u8],
     pub ptr: &'a mut Option<Arc<RefCountedEnvValue>>,
-}
-
-/// Helper macro: expands `$body` once per proxy-env field, binding `$name`
-/// (the static byte-string key) and `$field` (the field ident).
-macro_rules! for_each_proxy_field {
-    ($self:expr, |$name:ident, $field:ident| $body:block) => {{
-        // Uppercase fields are declared first. On Windows the case-insensitive
-        // eql matches the uppercase field for either input case and returns
-        // before reaching lowercase.
-        {
-            let $name: &'static [u8] = b"HTTP_PROXY";
-            let $field = &mut $self.HTTP_PROXY;
-            $body
-        }
-        {
-            let $name: &'static [u8] = b"http_proxy";
-            let $field = &mut $self.http_proxy;
-            $body
-        }
-        {
-            let $name: &'static [u8] = b"HTTPS_PROXY";
-            let $field = &mut $self.HTTPS_PROXY;
-            $body
-        }
-        {
-            let $name: &'static [u8] = b"https_proxy";
-            let $field = &mut $self.https_proxy;
-            $body
-        }
-        {
-            let $name: &'static [u8] = b"NO_PROXY";
-            let $field = &mut $self.NO_PROXY;
-            $body
-        }
-        {
-            let $name: &'static [u8] = b"no_proxy";
-            let $field = &mut $self.no_proxy;
-            $body
-        }
-    }};
 }
 
 impl ProxyEnvSlots {
@@ -480,28 +446,18 @@ impl ProxyEnvSlots {
         } else {
             strings::eql
         };
-        for_each_proxy_field!(self, |fname, field| {
-            if eql(name, fname) {
-                return Some(Slot {
-                    key: fname,
-                    ptr: field,
-                });
-            }
-        });
-        None
+        let index = PROXY_ENV_KEYS.iter().position(|key| eql(name, key))?;
+        Some(Slot {
+            key: PROXY_ENV_KEYS[index],
+            ptr: &mut self.0[index],
+        })
     }
 
     /// Bump refcounts on all non-null values so a worker can share the
     /// parent's strings. Caller passes the parent's locked guard — the `Arc`
     /// load + clone is not atomic with respect to `Bun__setEnvValue`'s drop.
     pub(crate) fn clone_from(&mut self, parent: &ProxyEnvSlots) {
-        // Arc::clone bumps the refcount.
-        self.HTTP_PROXY.clone_from(&parent.HTTP_PROXY);
-        self.http_proxy.clone_from(&parent.http_proxy);
-        self.HTTPS_PROXY.clone_from(&parent.HTTPS_PROXY);
-        self.https_proxy.clone_from(&parent.https_proxy);
-        self.NO_PROXY.clone_from(&parent.NO_PROXY);
-        self.no_proxy.clone_from(&parent.no_proxy);
+        self.0.clone_from(&parent.0);
     }
 
     /// Overwrite proxy-var entries in an env map with this storage's reffed
@@ -510,19 +466,40 @@ impl ProxyEnvSlots {
     /// clone captured a snapshot the storage doesn't hold a ref on (e.g. an
     /// initial-environ value later overwritten by the setter).
     pub(crate) fn sync_into(&self, map: &mut bun_dotenv::Map) {
-        macro_rules! sync_one {
-            ($name:literal, $field:ident) => {
-                if let Some(val) = &self.$field {
-                    bun_core::handle_oom(map.put($name, &val.bytes));
-                }
-            };
+        for (key, value) in PROXY_ENV_KEYS.iter().zip(&self.0) {
+            if let Some(value) = value {
+                bun_core::handle_oom(map.put(key, &value.bytes));
+            }
         }
-        sync_one!(b"HTTP_PROXY", HTTP_PROXY);
-        sync_one!(b"http_proxy", http_proxy);
-        sync_one!(b"HTTPS_PROXY", HTTPS_PROXY);
-        sync_one!(b"https_proxy", https_proxy);
-        sync_one!(b"NO_PROXY", NO_PROXY);
-        sync_one!(b"no_proxy", no_proxy);
+    }
+
+    /// Undo every `Bun__setEnvValue` since `snapshot` was captured: drop the
+    /// slot refs and put the captured values back into `map`. Caller holds
+    /// the `ProxyEnvStorage` lock, like the setter.
+    pub(crate) fn restore(&mut self, map: &mut bun_dotenv::Map, snapshot: &ProxyEnvSnapshot) {
+        self.0 = Default::default();
+        for (key, value) in &snapshot.entries {
+            match value {
+                Some(value) => bun_core::handle_oom(map.put(key, value)),
+                None => map.remove(key),
+            }
+        }
+    }
+}
+
+/// The proxy keys as the env map held them when the test runner started.
+/// `process.env` writes to these keys go through `Bun__setEnvValue` into the
+/// per-VM env map, which seeds every later global's `process.env`, so
+/// `--isolate` restores them from this between files.
+pub struct ProxyEnvSnapshot {
+    entries: [(&'static [u8], Option<Box<[u8]>>); PROXY_ENV_KEYS.len()],
+}
+
+impl ProxyEnvSnapshot {
+    pub fn capture(map: &bun_dotenv::Map) -> Self {
+        Self {
+            entries: PROXY_ENV_KEYS.map(|key| (key, map.get(key).map(Box::from))),
+        }
     }
 }
 
@@ -656,9 +633,58 @@ impl RareData {
     }
 
     // ── lazy-init: misc heap slots ────────────────────────────────────────
-    pub fn pipe_read_buffer(&mut self) -> &mut PipeReadBuffer {
-        self.temp_pipe_read_buffer
-            .get_or_insert_with(bun_core::boxed_zeroed::<PipeReadBuffer>)
+
+    /// Take the padded-frame scratch out of its slot (lazily allocated). By value rather
+    /// than borrowed: the socket write it feeds can re-enter JS and reach this path
+    /// again, and that nested caller then finds the slot empty and allocates its own.
+    pub fn take_h2_padded_frame_buffer(&mut self) -> Box<H2PaddedFrameBuffer> {
+        self.h2_padded_frame_buffer
+            .take()
+            .unwrap_or_else(bun_core::boxed_zeroed::<H2PaddedFrameBuffer>)
+    }
+
+    /// Hand a taken buffer back; the slot keeps the first one returned.
+    pub fn put_back_h2_padded_frame_buffer(&mut self, buffer: Box<H2PaddedFrameBuffer>) {
+        self.h2_padded_frame_buffer.get_or_insert(buffer);
+    }
+
+    /// Empty `Vec` with whatever capacity the last step left behind.
+    pub fn take_compression_scratch(&mut self) -> Vec<u8> {
+        self.compression_scratch.take().unwrap_or_default()
+    }
+
+    /// Hand a taken buffer back; the slot keeps the first one returned and lets an oversized one go.
+    pub fn put_back_compression_scratch(&mut self, mut buffer: Vec<u8>) {
+        const KEEP: usize = 256 * 1024;
+        if self.compression_scratch.is_none() && buffer.capacity() <= KEEP {
+            buffer.clear();
+            self.compression_scratch = Some(buffer);
+        }
+    }
+
+    /// Empty `Vec` with whatever capacity the last WebSocket client inflate left behind. By value,
+    /// like [`Self::take_h2_padded_frame_buffer`]: delivering the payload runs JS, which can reach
+    /// this path again before the buffer comes back.
+    pub fn take_websocket_inflate_scratch(&mut self) -> Vec<u8> {
+        self.websocket_inflate_scratch.take().unwrap_or_default()
+    }
+
+    /// Hand a taken buffer back; the slot keeps the first one returned and lets an oversized one go.
+    pub fn put_back_websocket_inflate_scratch(&mut self, mut buffer: Vec<u8>) {
+        const KEEP: usize = 256 * 1024;
+        if self.websocket_inflate_scratch.is_none() && buffer.capacity() <= KEEP {
+            buffer.clear();
+            self.websocket_inflate_scratch = Some(buffer);
+        }
+    }
+
+    /// libdeflate keeps no state between calls, so one handle serves every one-shot inflate on
+    /// this thread. `None` when libdeflate cannot allocate it; callers fall back to zlib.
+    pub fn libdeflate_decompressor(&mut self) -> Option<&mut libdeflate::Decompressor> {
+        if self.libdeflate_decompressor.is_none() {
+            self.libdeflate_decompressor = libdeflate::OwnedDecompressor::new();
+        }
+        self.libdeflate_decompressor.as_deref_mut()
     }
 
     pub fn boring_engine(&mut self) -> *mut boring::ENGINE {
@@ -710,29 +736,26 @@ impl RareData {
             .push(CleanupHook::from(global_this, ctx, func));
     }
 
-    pub fn spawn_sync_event_loop(&mut self, vm: &mut VirtualMachine) -> &mut SpawnSyncEventLoop {
+    /// `None` if the loop cannot be created; nothing is cached, so a later call retries.
+    pub fn spawn_sync_event_loop(
+        &mut self,
+        vm: &mut VirtualMachine,
+    ) -> Option<&mut SpawnSyncEventLoop> {
         if self.spawn_sync_event_loop_.is_none() {
             // In-place out-param init: `event_loop` inside captures the
             // `self` address, so the value must not move after init; allocate
             // the Box first, then init into it.
             let mut boxed = Box::<SpawnSyncEventLoop>::new_uninit();
-            SpawnSyncEventLoop::init(
+            if !SpawnSyncEventLoop::init(
                 &mut *boxed,
                 core::ptr::from_mut::<VirtualMachine>(vm).cast::<()>(),
-            );
-            // SAFETY: `init` fully initialised the slot.
+            ) {
+                return None;
+            }
+            // SAFETY: `init` fully initialised the slot when it returned `true`.
             self.spawn_sync_event_loop_ = Some(unsafe { boxed.assume_init() });
         }
-        self.spawn_sync_event_loop_.as_mut().unwrap()
-    }
-
-    pub(crate) fn mime_type_from_string(&mut self, str_: &[u8]) -> Option<mime_type::MimeType> {
-        let table = self
-            .mime_types
-            .get_or_insert_with(|| bun_core::handle_oom(mime_type::create_hash_table()));
-        table
-            .get(str_)
-            .map(|entry| mime_type::Compact::from(*entry).to_mime_type())
+        self.spawn_sync_event_loop_.as_deref_mut()
     }
 
     // ── watch-mode listen sockets ─────────────────────────────────────────
@@ -837,18 +860,20 @@ impl RareData {
     }
 
     // ── close_all_socket_groups ───────────────────────────────────────────
-    /// Drain every embedded socket group. Must run BEFORE JSC teardown — closeAll
-    /// fires on_close → JS callbacks → needs a live VM. RareData.deinit() runs
-    /// after `WebWorker__teardownJSCVM`, so doing the closeAll
-    /// there would dispatch into freed JSC heap.
-    pub(crate) fn close_all_socket_groups(&mut self, vm: &VirtualMachine) {
-        // closeAll() dispatches on_close into JS while the VM is still alive, so a
-        // handler can call Bun.connect/postgres/etc. and re-populate a group we
-        // just drained. Loop until every group is observed empty in the same pass
-        // (bounded — each retry only happens if a JS callback opened a *new*
-        // socket, and the cap stops a deliberately-spinning on_close from wedging
-        // teardown; the post-close force-drain in close_all handles whatever's
-        // left after the cap).
+    /// Drain every embedded socket group. Runs in teardown's stop phase (script
+    /// already forbidden) and must run BEFORE JSC teardown: native close paths
+    /// release Strong handles and touch heap-owned state. RareData.deinit() runs
+    /// after `WebWorker__teardownJSCVM`, so doing the closeAll there would touch
+    /// freed JSC heap.
+    pub(crate) fn close_all_socket_groups(
+        &mut self,
+        vm: &VirtualMachine,
+    ) -> crate::virtual_machine::SweepResult {
+        // A native close path can cascade (closing one socket completes or
+        // fails another, whose own close lands in a group already drained), so
+        // loop until every group is observed empty in the same pass — bounded;
+        // the post-close force-drain in close_all handles whatever is left
+        // after the cap.
         // Walk the loop's linked-group list rather than just our 14 embedded
         // fields: Listener/uWS-App groups own their own SocketGroup, and accepted
         // sockets land *there*, not in RareData. Iterating only the embedded
@@ -865,12 +890,18 @@ impl RareData {
             }
             rounds += 1;
         }
+        let result = if rounds > 0 {
+            crate::virtual_machine::SweepResult::Stopped
+        } else {
+            crate::virtual_machine::SweepResult::Idle
+        };
         // us_socket_close pushes to loop->data.closed_head; loop_post() normally
         // frees it on the next tick. We're past the last tick, so drain it now —
         // every us_socket_t is libc-allocated and otherwise becomes an LSAN leak
         // (the only pointer into it lives in mimalloc-backed RareData, which LSAN
         // can't trace once we unregister the root region).
         vm.uws_loop_mut().drain_closed_sockets();
+        result
     }
 }
 
@@ -1012,14 +1043,14 @@ fn set_tls_default_ciphers_from_js(
     if !ciphers.is_string() {
         return Err(global_this.throw_invalid_argument_type_value(b"ciphers", b"string", ciphers));
     }
-    let sliced = ciphers.to_slice(global_this)?;
+    let utf8 = ciphers.to_utf8(global_this)?;
     // `bun_vm()` is the safe BACKREF accessor for the per-thread VM; `as_mut()`
     // is the audited single-JS-thread `&mut` escape hatch.
     global_this
         .bun_vm()
         .as_mut()
         .rare_data()
-        .set_tls_default_ciphers(sliced.slice());
+        .set_tls_default_ciphers(utf8.slice());
     Ok(JSValue::UNDEFINED)
 }
 
@@ -1043,8 +1074,8 @@ fn get_tls_default_ciphers_from_js(
 
 impl Drop for RareData {
     fn drop(&mut self) {
-        // temp_pipe_read_buffer / spawn_sync_event_loop_ / s3_default_client /
-        // default_csrf_secret / cleanup_hooks / cron_jobs / path_buf /
+        // pipe_read_scratch / h2_padded_frame_buffer / spawn_sync_event_loop_ /
+        // s3_default_client / default_csrf_secret / cleanup_hooks / path_buf /
         // tls_default_ciphers:
         // all dropped automatically via field Drop.
 
@@ -1052,12 +1083,8 @@ impl Drop for RareData {
             // SAFETY: engine was created by ENGINE_new.
             unsafe { boring::ENGINE_free(engine) };
         }
-        debug_assert!(self.cron_jobs.is_empty());
 
-        if let Some(s) = self.default_client_ssl_ctx.take() {
-            // SAFETY: returned by ssl_ctx_cache.get_or_create_opts with +1 ref.
-            unsafe { boring::SSL_CTX_free(s) };
-        }
+        self.default_client_ssl_ctx = None;
         // After the default-ctx free so the tombstone callback still finds a live
         // map; ssl_ctx_cache itself lives in `RuntimeState` and is dropped there.
 
@@ -1072,6 +1099,15 @@ impl Drop for RareData {
             __bun_stdio_blob_store_deinit(store.as_ptr().cast());
         }
 
+        self.detach_socket_groups_from_loop();
+    }
+}
+
+impl RareData {
+    /// Detach every embedded socket group from the thread's uSockets loop
+    /// (asserting each is empty). A thread teardown calls this before it frees
+    /// that loop; `Drop` calls it for every other owner. Idempotent.
+    pub(crate) fn detach_socket_groups_from_loop(&mut self) {
         // closeAllSocketGroups() must have already run (before JSC teardown) so
         // these are empty; deinit() asserts that in debug.
         for_each_socket_group!(self, |g| {
@@ -1085,6 +1121,7 @@ impl Drop for RareData {
                 // loop has already unlinked it (close_all_socket_groups ran),
                 // so destroy reduces to the empty-list debug asserts.
                 unsafe { SocketGroup::destroy(std::ptr::from_mut::<SocketGroup>(g)) };
+                g.loop_ = core::ptr::null_mut();
             }
         });
     }

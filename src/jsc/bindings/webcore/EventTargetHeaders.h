@@ -35,12 +35,11 @@
 #include "JSBroadcastChannel.h"
 #include "MessagePort.h"
 #include "JSMessagePort.h"
-#include "Node.h"
 #include "WebSocket.h"
 #include "JSWebSocket.h"
 #include "Worker.h"
 #include "JSWorker.h"
 
-#include "BunWorkerGlobalScope.h"
+#include "GlobalEventScope.h"
 
 #endif // EventTargetHeaders_h

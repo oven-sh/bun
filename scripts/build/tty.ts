@@ -23,6 +23,11 @@ export const cyan = (s: string): string => (useColor ? `\x1b[36m${s}\x1b[39m` : 
 export const green = (s: string): string => (useColor ? `\x1b[32m${s}\x1b[39m` : s);
 export const red = (s: string): string => (useColor ? `\x1b[31m${s}\x1b[39m` : s);
 
+/** "412ms" under a second, "3.2s" after — for a step's elapsed time. */
+export function formatElapsed(ms: number): string {
+  return ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(1)}s`;
+}
+
 /**
  * Hash a name to a stable 256-color. Same name → same color across runs,
  * so `[tinycc]` in stream output and `tinycc` in the done line match.

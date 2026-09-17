@@ -1,6 +1,6 @@
 import { exposedInternals } from "bun:internal-for-testing";
 import { describe, expect, it, jest } from "bun:test";
-import { bunEnv, bunExe, bunRun, isGlibcVersionAtLeast, isMacOS, tmpdirSync } from "harness";
+import { bunEnv, bunExe, bunRun, isGlibcVersionAtLeast, isMacOS, tempDir, tmpdirSync } from "harness";
 import { createReadStream, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { Duplex, duplexPair, finished, PassThrough, Readable, Stream, Transform, Writable } from "node:stream";
@@ -388,6 +388,41 @@ it("Readable.fromWeb", async () => {
   expect(Buffer.concat(chunks).toString()).toBe("Hello World!\n");
 });
 
+// fromWeb assigns stream.$bunNativePtr on the node Readable. When user code grafts
+// ReadableStream.prototype into the node stream prototype chain, that put used to
+// reach ReadableStream's private custom setter with the Readable as the receiver,
+// writing a JSValue through a type-confused pointer into the Readable's own
+// property storage (observable below as a clobbered Symbol(kCapture) slot).
+it("Readable.fromWeb with ReadableStream.prototype grafted into the prototype chain", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const { Readable } = require("node:stream");
+        const { EventEmitter } = require("node:events");
+        const snap = o => Object.fromEntries(Reflect.ownKeys(o).map(k => [String(k), Object.prototype.toString.call(o[k])]));
+        const before = snap(Readable.fromWeb(new Response("x").body));
+        Object.setPrototypeOf(EventEmitter.prototype, ReadableStream.prototype);
+        const stream = Readable.fromWeb(new Response("y").body);
+        const after = snap(stream);
+        for (const key in before) {
+          if (before[key] !== after[key]) throw new Error("clobbered own slot " + key + ": " + before[key] + " -> " + after[key]);
+        }
+        const chunks = [];
+        for await (const chunk of stream) chunks.push(chunk);
+        console.log("read:" + Buffer.concat(chunks).toString());
+      `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("read:y\n");
+  expect(exitCode).toBe(0);
+});
+
 // An error from the underlying web stream must surface on the node Readable as an
 // 'error' event (and destroy it), not as a global unhandled rejection.
 it("Readable.fromWeb propagates web stream errors to 'error' and destroys", async () => {
@@ -439,6 +474,36 @@ it("Readable.fromWeb on an already-errored web stream emits 'error' and destroys
   expect(err.message).toBe("start-boom");
   expect(r.destroyed).toBe(true);
   expect(r.errored?.message).toBe("start-boom");
+});
+
+// Delivering a 64 KiB file chunk re-enters the native reader: push() over the
+// highWaterMark pauses it, and the next _read unpauses it mid-delivery. On
+// Windows that used to free the buffer an in-flight libuv file read was still
+// writing into, corrupting the heap (#39890).
+it("Readable.fromWeb(Bun.file().stream()) survives pause/unpause during chunk delivery (#39890)", async () => {
+  using dir = tempDir("fromweb-file-39890", {
+    "repro.ts": `
+      import { Readable } from "node:stream";
+      const big = Buffer.alloc(1024 * 1024, 0x61);
+      await Bun.write("big.bin", big);
+      const parts = [];
+      for await (const chunk of Readable.fromWeb(Bun.file("big.bin").stream())) {
+        parts.push(chunk);
+      }
+      const out = Buffer.concat(parts);
+      if (!out.equals(big)) throw new Error("round-trip mismatch: " + out.length);
+      console.log("OK");
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "repro.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr }).toEqual({ stdout: "OK\n", stderr: "" });
+  expect(exitCode).toBe(0);
 });
 
 it("Readable.fromWeb piped to a Writable surfaces web stream errors on the destination", async () => {
@@ -832,6 +897,50 @@ describe("webstreams adapters (Node v26 sync)", () => {
     }
     await pipe;
     expect(writes).toBe(TOTAL);
+  });
+
+  // newStreamWritableFromWritableStream's write() decodes string chunks that
+  // reach _write undecoded, using TypedArrayPrototypeGetBuffer/ByteOffset/
+  // ByteLength from internal/primordials. Those three were missing from
+  // Bun's primordials, so this path threw "TypedArrayPrototypeGetBuffer is
+  // not a function" where Node hands the sink a plain Uint8Array.
+  it("Writable.fromWeb _write decodes non-utf8 string chunks like Node", async () => {
+    const chunks = [];
+    const ws = new WritableStream({
+      write(chunk) {
+        chunks.push(chunk);
+      },
+    });
+    const w = Writable.fromWeb(ws);
+    await new Promise((resolve, reject) => {
+      w._write("68656c6c6f", "hex", err => (err ? reject(err) : resolve()));
+    });
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0].constructor).toBe(Uint8Array);
+    expect(chunks[0]).toEqual(new Uint8Array([0x68, 0x65, 0x6c, 0x6c, 0x6f]));
+  });
+
+  it("Duplex.fromWeb _write decodes non-utf8 string chunks like Node", async () => {
+    const chunks = [];
+    const pair = {
+      readable: new ReadableStream({
+        start(controller) {
+          controller.close();
+        },
+      }),
+      writable: new WritableStream({
+        write(chunk) {
+          chunks.push(chunk);
+        },
+      }),
+    };
+    const d = Duplex.fromWeb(pair);
+    await new Promise((resolve, reject) => {
+      d._write("aGVsbG8=", "base64", err => (err ? reject(err) : resolve()));
+    });
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0].constructor).toBe(Uint8Array);
+    expect(chunks[0]).toEqual(new Uint8Array([0x68, 0x65, 0x6c, 0x6c, 0x6f]));
   });
 
   // Upstream: v26 newStreamWritableFromWritableStream writev done() shape —
@@ -1631,6 +1740,38 @@ describe("pipeline real error overrides AbortError (nodejs/node#62113)", () => {
     });
     expect(caught.name).toBe("Error");
     expect(caught.message).toBe("realboom");
+  });
+});
+
+// Symbol.asyncDispose destroys an unfinished stream with `new AbortError()`:
+// node's default message has no trailing period and, with no signal involved,
+// no cause (https://github.com/nodejs/node/blob/v26.3.0/lib/internal/errors.js#L980).
+describe("Symbol.asyncDispose destroys with node's default AbortError", () => {
+  const cases = [
+    ["Readable", () => new Readable({ read() {} })],
+    [
+      "Writable",
+      () =>
+        new Writable({
+          write(chunk, encoding, cb) {
+            cb();
+          },
+        }),
+    ],
+  ];
+
+  it.each(cases)("%s", async (_, create) => {
+    const stream = create();
+    const errored = new Promise(resolve => stream.once("error", resolve));
+    await stream[Symbol.asyncDispose]();
+    const err = await errored;
+    expect(err).toBeInstanceOf(Error);
+    expect({ name: err.name, code: err.code, message: err.message, hasCause: "cause" in err }).toEqual({
+      name: "AbortError",
+      code: "ABORT_ERR",
+      message: "The operation was aborted",
+      hasCause: false,
+    });
   });
 });
 

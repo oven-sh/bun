@@ -31,7 +31,7 @@ const WHITESPACE: &[u8] = b" \t\n\r";
 // original patch file text. The port generally avoids struct lifetimes, but
 // this parser's whole output is borrowed; raw `*const [u8]` everywhere would
 // be worse.
-pub enum PatchFilePart<'a> {
+enum PatchFilePart<'a> {
     FilePatch(Box<FilePatch<'a>>),
     FileDeletion(Box<FileDeletion<'a>>),
     FileCreation(Box<FileCreation<'a>>),
@@ -53,7 +53,7 @@ struct ApplyState {
 impl ApplyState {
     fn new() -> Self {
         Self {
-            pathbuf: PathBuffer::uninit(),
+            pathbuf: PathBuffer::ZEROED,
             patch_dir_abs_path: None,
         }
     }
@@ -228,7 +228,7 @@ impl<'a> PatchFile<'a> {
                             sys::Result::Ok(p) => p,
                             sys::Result::Err(e) => return Some(e.without_path()),
                         };
-                        let mut buf = PathBuffer::uninit();
+                        let mut buf = bun_paths::path_buffer_pool::get();
                         let joined_absfilepath =
                             paths::resolve_path::join_z_buf::<paths::platform::Auto>(
                                 &mut buf[..],
@@ -299,7 +299,7 @@ fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> 
     let file_line_count: usize;
     let lines_count: usize = {
         let mut count: usize = 0;
-        for _ in filebuf.split(|b| *b == b'\n') {
+        for _ in strings::split(&filebuf, b"\n") {
             count += 1;
         }
         file_line_count = count;
@@ -333,7 +333,7 @@ fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> 
     let mut lines: Vec<&[u8]> = Vec::with_capacity(lines_count);
     {
         let mut i: usize = 0;
-        for line in filebuf.split(|b| *b == b'\n') {
+        for line in strings::split(&filebuf, b"\n") {
             lines.push(line);
             i += 1;
         }
@@ -514,7 +514,7 @@ impl<'a> FileDeets<'a> {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[derive(Default)]
-pub struct PatchMutationPart<'a> {
+struct PatchMutationPart<'a> {
     pub(crate) ty: PartType,
     pub(crate) lines: Vec<&'a [u8]>,
     /// This technically can only be on the last part of a hunk
@@ -532,13 +532,13 @@ pub enum PartType {
 }
 
 #[derive(Default)]
-pub struct Hunk<'a> {
+struct Hunk<'a> {
     pub(crate) header: Header,
     pub(crate) parts: Vec<PatchMutationPart<'a>>,
 }
 
 #[derive(Copy, Clone)]
-pub struct HeaderRange {
+struct HeaderRange {
     pub(crate) start: u32,
     pub(crate) len: u32,
 }
@@ -578,12 +578,8 @@ impl<'a> Hunk<'a> {
             }
         }
 
-        if original_length != self.header.original.len as usize
-            || patched_length != self.header.patched.len as usize
-        {
-            return false;
-        }
-        true
+        original_length == self.header.original.len as usize
+            && patched_length == self.header.patched.len as usize
     }
 }
 
@@ -593,7 +589,7 @@ impl<'a> Hunk<'a> {
 
 #[repr(u32)]
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub enum FileMode {
+enum FileMode {
     NonExecutable = 0o644,
     Executable = 0o755,
 }
@@ -616,34 +612,34 @@ impl FileMode {
 // FileRename / FileModeChange / FilePatch / FileDeletion / FileCreation
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct FileRename<'a> {
+struct FileRename<'a> {
     pub(crate) from_path: &'a [u8],
     pub(crate) to_path: &'a [u8],
 }
 // Does not allocate — no Drop needed.
 
-pub struct FileModeChange<'a> {
+struct FileModeChange<'a> {
     pub(crate) path: &'a [u8],
     pub(crate) old_mode: FileMode,
     pub(crate) new_mode: FileMode,
 }
 // Does not allocate — no Drop needed.
 
-pub struct FilePatch<'a> {
+struct FilePatch<'a> {
     pub(crate) path: &'a [u8],
     pub(crate) hunks: Vec<Hunk<'a>>,
     pub(crate) before_hash: Option<&'a [u8]>,
     pub(crate) after_hash: Option<&'a [u8]>,
 }
 
-pub struct FileDeletion<'a> {
+struct FileDeletion<'a> {
     pub(crate) path: &'a [u8],
     pub(crate) mode: FileMode,
     pub(crate) hunk: Option<Box<Hunk<'a>>>,
     pub(crate) hash: Option<&'a [u8]>,
 }
 
-pub struct FileCreation<'a> {
+struct FileCreation<'a> {
     pub(crate) path: &'a [u8],
     pub(crate) mode: FileMode,
     pub(crate) hunk: Option<Box<Hunk<'a>>>,
@@ -1038,10 +1034,9 @@ fn parse_file_mode(mode: &[u8]) -> Option<FileMode> {
 
 fn is_safe_patch_path(path: &[u8]) -> bool {
     !path.is_empty()
+        && !strings::contains_char(path, 0)
         && !paths::is_absolute_loose(path)
-        && !path
-            .split(|&c| c == b'/' || c == b'\\')
-            .any(|part| part == b"..")
+        && !strings::split_any(path, b"/\\").any(|part| part == b"..")
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1170,7 +1165,7 @@ impl<'a> PatchLinesParser<'a> {
         let end = 'brk: {
             // Peek at the last segment after the final '\n'.
             let mut prev: usize = file_.len();
-            let last_nl = file_.iter().rposition(|b| *b == b'\n');
+            let last_nl = strings::last_index_of_char(file_, b'\n');
             let last_line = match last_nl {
                 Some(i) => &file_[i + 1..],
                 None => file_,
@@ -1759,7 +1754,7 @@ pub fn git_diff_internal(
 
     // `bun_spawn::sync` execs argv[0] verbatim (execve, no PATH search), so
     // resolve `git` here — same as `patchCommit`'s `bun.which` call.
-    let mut gitbuf = PathBuffer::uninit();
+    let mut gitbuf = bun_paths::path_buffer_pool::get();
     let git = bun_which::which(
         &mut gitbuf,
         bun_core::env_var::PATH.get().unwrap_or(b""),
@@ -1886,27 +1881,17 @@ fn git_diff_postprocess(
     let old_folder_trimmed = strings::trim(old_folder, b"/");
     let new_folder_trimmed = strings::trim(new_folder, b"/");
 
-    let mut old_buf = PathBuffer::uninit();
-    let mut new_buf = PathBuffer::uninit();
+    let mut old_buf: Vec<u8> = Vec::with_capacity(old_folder_trimmed.len() + 3);
+    old_buf.extend_from_slice(b"a/");
+    old_buf.extend_from_slice(old_folder_trimmed);
+    old_buf.push(b'/');
 
-    let (a_old_folder_slash, b_new_folder_slash) = {
-        let ob = &mut old_buf[..];
-        ob[0] = b'a';
-        ob[1] = b'/';
-        ob[2..2 + old_folder_trimmed.len()].copy_from_slice(old_folder_trimmed);
-        ob[2 + old_folder_trimmed.len()] = b'/';
+    let mut new_buf: Vec<u8> = Vec::with_capacity(new_folder_trimmed.len() + 3);
+    new_buf.extend_from_slice(b"b/");
+    new_buf.extend_from_slice(new_folder_trimmed);
+    new_buf.push(b'/');
 
-        let nb = &mut new_buf[..];
-        nb[0] = b'b';
-        nb[1] = b'/';
-        nb[2..2 + new_folder_trimmed.len()].copy_from_slice(new_folder_trimmed);
-        nb[2 + new_folder_trimmed.len()] = b'/';
-
-        (
-            &old_buf[0..2 + old_folder_trimmed.len() + 1],
-            &new_buf[0..2 + new_folder_trimmed.len() + 1],
-        )
-    };
+    let (a_old_folder_slash, b_new_folder_slash) = (&old_buf[..], &new_buf[..]);
 
     // const @"$old_folder/" = @"a/$old_folder/"[2..];
     // const @"$new_folder/" = @"b/$new_folder/"[2..];

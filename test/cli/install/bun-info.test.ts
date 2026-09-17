@@ -398,7 +398,11 @@ test.skipIf(!isASAN)(
     });
     const dir = tempDirWithFiles("bun-info-lsan", {
       "package.json": JSON.stringify({ name: "test", version: "1.0.0" }),
-      "bunfig.toml": `[install]\nregistry = "http://localhost:${server.port}/"\n`,
+      "bunfig.toml": Bun.TOML.stringify({
+        install: {
+          registry: `http://localhost:${server.port}/`,
+        },
+      }),
     });
     await using proc = spawn({
       cmd: [bunExe(), "info", "leakpkg", "name"],
@@ -427,3 +431,36 @@ test.skipIf(!isASAN)(
   },
   30_000,
 );
+
+test("a proxy that refuses CONNECT fails the command with ProxyConnectFailed", async () => {
+  using proxy = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: {
+      data(socket) {
+        socket.end("HTTP/1.1 407 Proxy Authentication Required\r\nContent-Length: 0\r\n\r\n");
+      },
+    },
+  });
+  const dir = tempDirWithFiles("bun-info-proxy-refused", {
+    "package.json": JSON.stringify({ name: "test", version: "1.0.0" }),
+    "bunfig.toml": Bun.TOML.stringify({ install: { registry: "https://registry.invalid/" } }),
+  });
+  await using proc = spawn({
+    cmd: [bunExe(), "info", "anything"],
+    cwd: dir,
+    env: {
+      ...bunEnv,
+      HTTPS_PROXY: `http://127.0.0.1:${proxy.port}`,
+      https_proxy: undefined,
+      NO_PROXY: undefined,
+      no_proxy: undefined,
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("ProxyConnectFailed");
+  expect(exitCode).toBe(1);
+});

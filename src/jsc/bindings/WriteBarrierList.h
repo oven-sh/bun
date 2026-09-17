@@ -36,11 +36,6 @@ public:
         m_list.append(JSC::WriteBarrier<T>(vm, owner, value));
     }
 
-    std::span<JSC::WriteBarrier<T>> list()
-    {
-        return m_list.mutableSpan();
-    }
-
     // Move every element into `arguments` and clear the backing vector in one
     // linear pass under a single cellLock.
     void drainTo(JSC::JSCell* owner, JSC::MarkedArgumentBuffer& arguments)

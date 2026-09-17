@@ -1,15 +1,16 @@
+use core::cell::Cell;
 use core::ptr::NonNull;
 
 use crate::host_fn::from_js_host_call_generic;
 use crate::{JSGlobalObject, JSObject, JSValue, JsResult};
-use bun_core as bstr;
 
 /// Runtime flag set passed to [`JSPropertyIterator::init`].
 ///
 /// `Default` is `own_properties_only = true`,
-/// `observable = true`, `only_non_index_properties = false`.
+/// `observable = true`, `only_non_index_properties = false`,
+/// `include_symbols = false`.
 // Runtime flags (not const generics) because the branches gate per-property work, not a
-// hot inner loop, and the monomorphization fan-out would be 32 instantiations. Profile
+// hot inner loop, and the monomorphization fan-out would be 64 instantiations. Profile
 // if hot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct JSPropertyIteratorOptions {
@@ -18,10 +19,14 @@ pub struct JSPropertyIteratorOptions {
     pub own_properties_only: bool,
     pub observable: bool,
     pub only_non_index_properties: bool,
+    /// Also yield Symbol-keyed properties. The yielded name is the symbol's
+    /// description, not a property key, so this is only for callers that
+    /// count or display properties. Off by default, like `Object.keys`.
+    pub include_symbols: bool,
 }
 
 impl JSPropertyIteratorOptions {
-    /// Shorthand for the most common call-site shape; the remaining three
+    /// Shorthand for the most common call-site shape; the remaining
     /// options take the [`Default`] values.
     pub const fn new(skip_empty_name: bool, include_value: bool) -> Self {
         Self {
@@ -30,6 +35,7 @@ impl JSPropertyIteratorOptions {
             own_properties_only: true,
             observable: true,
             only_non_index_properties: false,
+            include_symbols: false,
         }
     }
 }
@@ -43,11 +49,12 @@ impl Default for JSPropertyIteratorOptions {
             own_properties_only: true,
             observable: true,
             only_non_index_properties: false,
+            include_symbols: false,
         }
     }
 }
 
-/// Two-field shorthand of [`JSPropertyIteratorOptions`]; the remaining three options
+/// Two-field shorthand of [`JSPropertyIteratorOptions`]; the remaining options
 /// take the default values via the `From` conversion.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct PropertyIteratorOptions {
@@ -100,19 +107,14 @@ impl IntoIterObject for &mut JSObject {
 
 pub struct JSPropertyIterator<'a> {
     pub len: usize,
-    pub(crate) i: u32,
-    pub(crate) iter_i: u32,
+    /// Index of the property last yielded by `next()`.
+    pub(crate) i: Cell<u32>,
+    iter_i: Cell<u32>,
     /// null if and only if `object` has no properties (i.e. `len == 0`)
     pub(crate) impl_: Option<NonNull<JSPropertyIteratorImpl>>,
 
     pub(crate) global_object: &'a JSGlobalObject,
     pub(crate) object: *mut JSObject,
-    /// Current property value being yielded (only meaningful when
-    /// `options.include_value` is set).
-    // The bare JSValue field is sound because this struct is stack-only (`'a` borrow);
-    // conservative stack scan keeps it alive. Do NOT box this struct.
-    pub value: JSValue,
-
     options: JSPropertyIteratorOptions,
 }
 
@@ -147,6 +149,7 @@ impl<'a> JSPropertyIterator<'a> {
             &mut len,
             options.own_properties_only,
             options.only_non_index_properties,
+            options.include_symbols,
         )?;
         if cfg!(debug_assertions) {
             if len > 0 {
@@ -158,29 +161,30 @@ impl<'a> JSPropertyIterator<'a> {
 
         Ok(Self {
             len,
-            i: 0,
-            iter_i: 0,
+            i: Cell::new(0),
+            iter_i: Cell::new(0),
             impl_,
             global_object,
             object,
-            value: JSValue::ZERO,
             options,
         })
     }
 
-    /// The bun.String returned has not incremented its reference count.
-    pub fn next(&mut self) -> JsResult<Option<bstr::String>> {
-        // Reuse stack space.
+    /// The name borrows the C++ iterator's storage (no ref) and is valid until
+    /// `self` drops, hence `&self`: a yielded name may be held across later
+    /// calls. The value is `JSValue::ZERO` unless `options.include_value`.
+    pub fn next(&self) -> JsResult<Option<(bun_core::StringView<'_>, JSValue)>> {
         loop {
-            let i: usize = self.iter_i as usize;
+            let i: usize = self.iter_i.get() as usize;
             if i >= self.len {
-                self.i = self.iter_i;
+                self.i.set(self.iter_i.get());
                 return Ok(None);
             }
 
-            self.i = self.iter_i;
-            self.iter_i += 1;
-            let mut name = bstr::String::DEAD;
+            self.i.set(self.iter_i.get());
+            self.iter_i.set(self.iter_i.get() + 1);
+            let mut name = bun_core::StringView::DEAD;
+            let mut value = JSValue::ZERO;
             if self.options.include_value {
                 let iter = self.impl_.expect("len > 0 implies impl_ is Some").as_ptr();
                 // `JSPropertyIteratorImpl`/`JSObject` are opaque ZST handles;
@@ -208,7 +212,7 @@ impl<'a> JSPropertyIterator<'a> {
                     continue;
                 }
                 current.ensure_still_alive();
-                self.value = current;
+                value = current;
             } else {
                 // Exception check is unnecessary here because it won't throw.
                 let iter = self.impl_.expect("len > 0 implies impl_ is Some").as_ptr();
@@ -229,7 +233,7 @@ impl<'a> JSPropertyIterator<'a> {
                 continue;
             }
 
-            return Ok(Some(name));
+            return Ok(Some((name, value)));
         }
     }
 }
@@ -254,6 +258,7 @@ impl JSPropertyIteratorImpl {
         count: &mut usize,
         own_properties_only: bool,
         only_non_index_properties: bool,
+        include_symbols: bool,
     ) -> JsResult<Option<NonNull<JSPropertyIteratorImpl>>> {
         // may return null without an exception
         let raw = from_js_host_call_generic(global_object, || {
@@ -263,6 +268,7 @@ impl JSPropertyIteratorImpl {
                 count,
                 own_properties_only,
                 only_non_index_properties,
+                include_symbols,
             )
         })?;
         Ok(NonNull::new(raw))
@@ -272,7 +278,7 @@ impl JSPropertyIteratorImpl {
         iter: &mut JSPropertyIteratorImpl,
         global_object: &JSGlobalObject,
         object: &JSObject,
-        property_name: &mut bstr::String,
+        property_name: &mut bun_core::StringView<'_>,
         i: usize,
     ) -> JsResult<JSValue> {
         // The FFI may return `.zero` without throwing, so the non-generic
@@ -287,7 +293,7 @@ impl JSPropertyIteratorImpl {
         iter: &mut JSPropertyIteratorImpl,
         global_object: &JSGlobalObject,
         object: &JSObject,
-        property_name: &mut bstr::String,
+        property_name: &mut bun_core::StringView<'_>,
         i: usize,
     ) -> JsResult<JSValue> {
         from_js_host_call_generic(global_object, || {
@@ -304,7 +310,7 @@ impl JSPropertyIteratorImpl {
 
 // safe fn: `JSPropertyIteratorImpl`/`JSGlobalObject`/`JSObject` are `opaque_ffi!`
 // ZST handles (`&`/`&mut` are ABI-identical to non-null `*const`/`*mut`);
-// `bstr::String` is a `#[repr(C)]` out-param the C++ side fills in-place; remaining
+// `StringView` is a 24-byte out-param the C++ side fills in-place (borrowed, +0); remaining
 // args are by-value scalars. Only `deinit` (frees the allocation) keeps a raw
 // `*mut` and stays `unsafe`.
 unsafe extern "C" {
@@ -315,24 +321,25 @@ unsafe extern "C" {
         count: &mut usize,
         own_properties_only: bool,
         only_non_index_properties: bool,
+        include_symbols: bool,
     ) -> *mut JSPropertyIteratorImpl;
     safe fn Bun__JSPropertyIterator__getNameAndValue(
         iter: &mut JSPropertyIteratorImpl,
         global_object: &JSGlobalObject,
         object: &JSObject,
-        property_name: &mut bstr::String,
+        property_name: &mut bun_core::StringView<'_>,
         i: usize,
     ) -> JSValue;
     safe fn Bun__JSPropertyIterator__getNameAndValueNonObservable(
         iter: &mut JSPropertyIteratorImpl,
         global_object: &JSGlobalObject,
         object: &JSObject,
-        property_name: &mut bstr::String,
+        property_name: &mut bun_core::StringView<'_>,
         i: usize,
     ) -> JSValue;
     safe fn Bun__JSPropertyIterator__getName(
         iter: &mut JSPropertyIteratorImpl,
-        property_name: &mut bstr::String,
+        property_name: &mut bun_core::StringView<'_>,
         i: usize,
     );
     fn Bun__JSPropertyIterator__deinit(iter: *mut JSPropertyIteratorImpl);

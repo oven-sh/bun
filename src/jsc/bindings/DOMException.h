@@ -34,12 +34,9 @@
 
 namespace WebCore {
 
-class Exception;
-
 class DOMException : public RefCounted<DOMException> {
 public:
     static Ref<DOMException> create(ExceptionCode, const String& message = emptyString());
-    static Ref<DOMException> create(const Exception&);
 
     // For DOM bindings.
     static Ref<DOMException> create(const String& message, const String& name);
@@ -57,9 +54,6 @@ public:
     };
 
     WEBCORE_EXPORT static const Description& description(ExceptionCode);
-
-    static ASCIILiteral name(ExceptionCode ec) { return description(ec).name; }
-    static ASCIILiteral message(ExceptionCode ec) { return description(ec).message; }
 
 protected:
     DOMException(LegacyCode, const String& name, const String& message);

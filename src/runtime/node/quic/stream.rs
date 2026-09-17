@@ -80,11 +80,18 @@ const PULL_STATUS_DATA: f64 = 1.0;
 const PULL_STATUS_BLOCKED: f64 = 2.0;
 const PULL_STATUS_ERROR: f64 = -1.0;
 
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub(super) enum PendingEnd {
+    #[default]
+    None,
+    Fin,
+    Trailers,
+}
+
 #[derive(Default)]
 pub(super) struct Outbound {
     pub data: VecDeque<u8>,
-    pub fin_pending: bool,
-    pub trailers_pending: bool,
+    pub end: PendingEnd,
     pub started: bool,
 }
 
@@ -225,14 +232,22 @@ impl QuicStream {
         if (urgency, incremental) != DEFAULT_PRIORITY {
             let _ = s.set_http_prio(urgency, incremental);
         }
+        // lsquic_stream_send_headers only buffers the block; the flush in
+        // drain_outbound needs a write event, which nothing else requests
+        // unless the JS side already started the writer.
+        let mut want_write = false;
         for (bytes, count, eos) in self.pending_headers.with_mut(core::mem::take) {
             self.wrote_to_lsquic.set(true);
-            if s.send_headers(&bytes, count, eos) == 0 && eos {
-                self.with_state(|st| {
-                    st.fin_sent = 1;
-                    st.write_ended = 1;
-                });
-                s.shutdown(1);
+            if s.send_headers(&bytes, count, eos) == 0 {
+                if eos {
+                    self.with_state(|st| {
+                        st.fin_sent = 1;
+                        st.write_ended = 1;
+                    });
+                    s.shutdown(1);
+                } else {
+                    want_write = true;
+                }
             }
         }
         if uni {
@@ -250,7 +265,7 @@ impl QuicStream {
         } else {
             s.want_read(true);
         }
-        if self.outbound.get().started {
+        if want_write || self.outbound.get().started {
             s.want_write(true);
         }
     }
@@ -343,7 +358,7 @@ impl QuicStream {
     }
     pub(super) fn has_undelivered_outbound(&self) -> bool {
         let out = self.outbound.get();
-        if !out.data.is_empty() || out.fin_pending {
+        if !out.data.is_empty() || out.end == PendingEnd::Fin {
             return true;
         }
         self.ls().is_some_and(|s| s.has_unacked_data())
@@ -390,8 +405,7 @@ impl QuicStream {
         self.mark_reset(code);
         self.outbound.with_mut(|o| {
             o.data.clear();
-            o.fin_pending = false;
-            o.trailers_pending = false;
+            o.end = PendingEnd::None;
         });
         self.with_state(|st| st.write_ended = 1);
         if let Some(s) = self.ls() {
@@ -491,21 +505,20 @@ impl QuicStream {
                 break;
             }
         }
-        let (empty, fin) = {
+        let (empty, end) = {
             let out = self.outbound.get();
-            (out.data.is_empty(), out.fin_pending)
+            (out.data.is_empty(), out.end)
         };
         if empty {
-            if fin {
+            if end == PendingEnd::Fin {
                 s.shutdown(1);
                 self.wrote_to_lsquic.set(true);
-                self.outbound.with_mut(|o| o.fin_pending = false);
+                self.outbound.with_mut(|o| o.end = PendingEnd::None);
                 self.with_state(|s| s.fin_sent = 1);
                 if self.stream_id() & STREAM_ID_UNI_BIT != 0 {
                     s.shutdown(0);
                 }
-            } else if self.outbound.get().trailers_pending && !self.trailers_requested.replace(true)
-            {
+            } else if end == PendingEnd::Trailers && !self.trailers_requested.replace(true) {
                 if let Some(session) = self.session_ref() {
                     session.push_event(SessionEvent::StreamWantsTrailers {
                         stream: core::ptr::from_ref(self).cast_mut(),
@@ -587,12 +600,6 @@ impl QuicStream {
         self.this_value.with_mut(|r| r.downgrade());
     }
 
-    #[expect(
-        clippy::boxed_local,
-        reason = "codegen's host_fn_finalize calls this as `|b| QuicStream::finalize(b)` and requires `self: Box<Self>`"
-    )]
-    pub(crate) fn finalize(self: Box<Self>) {}
-
     pub(crate) fn get_reader(&self, _g: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         self.with_state(|s| s.has_reader = 1);
         Ok(frame.this())
@@ -671,7 +678,7 @@ impl QuicStream {
         self.outbound.with_mut(|o| {
             o.started = true;
             o.data.extend(bytes.iter().copied());
-            o.fin_pending = true;
+            o.end = PendingEnd::Fin;
         });
         self.with_state(|s| s.has_outbound = 1);
         self.kick_write();
@@ -732,11 +739,11 @@ impl QuicStream {
         let wants_trailers = self.with_state(|s| s.wants_trailers != 0);
         self.outbound.with_mut(|o| {
             o.started = true;
-            if wants_trailers {
-                o.trailers_pending = true;
+            o.end = if wants_trailers {
+                PendingEnd::Trailers
             } else {
-                o.fin_pending = true;
-            }
+                PendingEnd::Fin
+            };
         });
         if let Some(session) = self.session_ref() {
             session.note_stream_write();
@@ -765,14 +772,15 @@ impl QuicStream {
                     .session_ref()
                     .is_some_and(|session| session.has_deferred_abort(s.raw()));
                 if !deferred {
-                    let send_ended = write_done || {
-                        let out = self.outbound.get();
-                        out.fin_pending || out.trailers_pending
-                    };
+                    let send_ended = write_done || self.outbound.get().end != PendingEnd::None;
                     if code != 0 || !send_ended {
                         s.reset(code);
                     } else {
-                        self.outbound.with_mut(|o| o.trailers_pending = false);
+                        self.outbound.with_mut(|o| {
+                            if o.end == PendingEnd::Trailers {
+                                o.end = PendingEnd::None;
+                            }
+                        });
                         self.drain_outbound();
                         if self.outbound.get().data.is_empty() {
                             s.close();
@@ -806,8 +814,7 @@ impl QuicStream {
         });
         self.outbound.with_mut(|o| {
             o.data.clear();
-            o.fin_pending = false;
-            o.trailers_pending = false;
+            o.end = PendingEnd::None;
         });
         if let Some(s) = self.ls() {
             s.reset(code);
@@ -865,8 +872,7 @@ impl QuicStream {
             });
             self.outbound.with_mut(|o| {
                 o.data.clear();
-                o.fin_pending = false;
-                o.trailers_pending = false;
+                o.end = PendingEnd::None;
             });
         }
         if let Some(s) = self.ls() {
@@ -1017,69 +1023,84 @@ pub(super) unsafe extern "C" fn on_stream_read(ctx: *mut c_void, s: *mut lsquic:
         return;
     };
     if ctx.is_null() {
-        let mut buf = [0u8; 4096];
-        while stream.read(&mut buf) > 0 {}
+        let mut stack_buf = bun_core::vec::UninitBuf::<4096>::uninit();
+        // SAFETY: lsquic only stores into the slice and the drained bytes are never read back.
+        let buf = unsafe { stack_buf.as_bytes_mut() };
+        while stream.read(buf) > 0 {}
         return;
     }
     // SAFETY: `ctx` is the live QuicStream we returned from on_new_stream.
     let qs = unsafe { &*ctx.cast::<QuicStream>() };
-    if let Some(hset) = stream.take_header_set() {
-        let pairs = hset.pairs();
-        /// RFC 9114 §8.1 H3_MESSAGE_ERROR — malformed message (a request
-        /// carrying :status). Matches lsquic's `HEC_MESSAGE_ERROR`
-        /// (lsquic_hq.h:82); 0x105 is H3_FRAME_UNEXPECTED, a different code.
-        const H3_MESSAGE_ERROR: u64 = 0x10e;
-        let has_status = pairs
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .find(|kv| kv[0] == b":status")
-            .map(|kv| kv[1].len() == 3 && kv[1][0] == b'1');
-        // A :status in a request is malformed: node's nghttp3 resets the
-        // stream (RFC 9114 §4.1.2), and routing it to `oninfo` would leave
-        // the request unanswered until the idle timeout.
-        let peer_is_client = qs.session_ref().is_some_and(|s| s.is_server());
-        if peer_is_client && has_status.is_some() {
-            if let Some(s) = qs.ls() {
-                // reset() only ends the read side when the peer already
-                // FIN'd/RST'd, so STOP_SENDING is what stops a malformed
-                // request streaming a body into a stream nothing will answer.
-                s.reset(H3_MESSAGE_ERROR);
-                s.stop_sending(H3_MESSAGE_ERROR);
+    // Returns false if a malformed header block reset the stream.
+    let claim_header_sets = || -> bool {
+        while let Some(hset) = stream.take_header_set() {
+            let pairs = hset.pairs();
+            /// RFC 9114 §8.1 H3_MESSAGE_ERROR — malformed message (a request
+            /// carrying :status). Matches lsquic's `HEC_MESSAGE_ERROR`
+            /// (lsquic_hq.h:82); 0x105 is H3_FRAME_UNEXPECTED, a different code.
+            const H3_MESSAGE_ERROR: u64 = 0x10e;
+            let has_status = pairs
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .find(|kv| kv[0] == b":status")
+                .map(|kv| kv[1].len() == 3 && kv[1][0] == b'1');
+            // A :status in a request is malformed: node's nghttp3 resets the
+            // stream (RFC 9114 §4.1.2), and routing it to `oninfo` would leave
+            // the request unanswered until the idle timeout.
+            let peer_is_client = qs.session_ref().is_some_and(|s| s.is_server());
+            if peer_is_client && has_status.is_some() {
+                if let Some(s) = qs.ls() {
+                    // reset() only ends the read side when the peer already
+                    // FIN'd/RST'd, so STOP_SENDING is what stops a malformed
+                    // request streaming a body into a stream nothing will answer.
+                    s.reset(H3_MESSAGE_ERROR);
+                    s.stop_sending(H3_MESSAGE_ERROR);
+                }
+                qs.mark_reset(H3_MESSAGE_ERROR);
+                return false;
             }
-            qs.mark_reset(H3_MESSAGE_ERROR);
-            return;
+            // 1xx interim responses are HINTS (RFC 9114 §4.1).
+            let is_interim = has_status.unwrap_or(false);
+            let kind = if is_interim {
+                QUIC_STREAM_HEADERS_KIND_HINTS
+            } else if qs.mark_headers_received() {
+                QUIC_STREAM_HEADERS_KIND_INITIAL
+            } else {
+                QUIC_STREAM_HEADERS_KIND_TRAILING
+            };
+            if let Some(session) = qs.session_ref() {
+                session.push_event(SessionEvent::StreamHeaders {
+                    stream: ctx.cast(),
+                    pairs,
+                    kind,
+                });
+            }
         }
-        // 1xx interim responses are HINTS (RFC 9114 §4.1).
-        let is_interim = has_status.unwrap_or(false);
-        let kind = if is_interim {
-            QUIC_STREAM_HEADERS_KIND_HINTS
-        } else if qs.mark_headers_received() {
-            QUIC_STREAM_HEADERS_KIND_INITIAL
-        } else {
-            QUIC_STREAM_HEADERS_KIND_TRAILING
-        };
-        if let Some(session) = qs.session_ref() {
-            session.push_event(SessionEvent::StreamHeaders {
-                stream: ctx.cast(),
-                pairs,
-                kind,
-            });
-        }
+        true
+    };
+    if !claim_header_sets() {
+        return;
     }
     if stream.received_early_data() {
         qs.with_state(|s| s.received_early_data = 1);
     }
-    let mut buf = [0u8; 16 * 1024];
+    let mut stack_buf = bun_core::vec::UninitBuf::<{ 16 * 1024 }>::uninit();
+    // SAFETY: lsquic is the only writer of `buf`; each iteration reads back only `buf[..n]`.
+    let buf = unsafe { stack_buf.as_bytes_mut() };
     let mut got_any = false;
     loop {
-        let n = stream.read(&mut buf);
+        let n = stream.read(buf);
         match n {
             n if n > 0 => {
                 qs.push_inbound(&buf[..n as usize], false);
                 got_any = true;
             }
             0 => {
+                // lsquic returns 0 even if this read decoded one more header block.
+                if !claim_header_sets() {
+                    break;
+                }
                 qs.push_inbound(&[], true);
                 stream.want_read(false);
                 let write_done = qs.with_state(|s| s.fin_sent != 0 || s.write_ended != 0);

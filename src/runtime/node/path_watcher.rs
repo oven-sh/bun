@@ -410,9 +410,17 @@ pub(crate) fn watch(
     // scoped to this lookup.
     if let Some(&existing) = unsafe { (*manager.watchers.get()).get(key) } {
         // SAFETY: existing is a live PathWatcher under manager.mutex.
-        unsafe { handle_oom((*existing).handlers.put(ctx, ChangeEvent::default())) };
-        manager.mutex.unlock();
-        return Ok(existing);
+        #[cfg(windows)]
+        let reusable = unsafe { Platform::watches_its_path(&*existing) };
+        #[cfg(not(windows))]
+        let reusable = true;
+        if reusable {
+            // SAFETY: existing is a live PathWatcher under manager.mutex.
+            unsafe { handle_oom((*existing).handlers.put(ctx, ChangeEvent::default())) };
+            manager.mutex.unlock();
+            return Ok(existing);
+        }
+        manager.unlink_watcher_locked(existing);
     }
 
     #[cfg(target_os = "macos")]
@@ -948,6 +956,11 @@ impl Linux {
                             // SAFETY: o.watcher live under manager.mutex; shared
                             // access only — `emit_unsuppressed` takes `&self`.
                             let w = unsafe { &*o.watcher };
+                            if o.subpath.as_bytes().is_empty() {
+                                // The path names nothing this watcher watches any more:
+                                // the next `watch()` of it has to start a new one.
+                                manager.unlink_watcher_locked(o.watcher);
+                            }
                             if o.subpath.as_bytes().is_empty() && (w.is_file || !w.recursive) {
                                 w.emit_unsuppressed(
                                     WatchEventKind::Rename,
@@ -1585,6 +1598,11 @@ impl Kqueue {
 
                 watcher.emit(event_type, rel, entry.is_file);
                 let _ = handle_oom(touched.get_or_put(entry.watcher));
+                if entry.subpath.is_empty() && kev.fflags & (NOTE::DELETE | NOTE::REVOKE) != 0 {
+                    // The path names nothing this watcher watches any more:
+                    // the next `watch()` of it has to start a new one.
+                    manager.unlink_watcher_locked(entry.watcher);
+                }
             }
 
             for &w in touched.keys() {
@@ -1791,6 +1809,18 @@ mod windows_impl {
                 }
             }
             Ok(manager)
+        }
+
+        /// Whether the directory `watcher` reads changes from is still the one
+        /// its path names: not once that directory was deleted, whether or not
+        /// the reader thread has heard of it yet. Caller holds `manager.mutex`.
+        pub(super) fn watches_its_path(watcher: &PathWatcher) -> bool {
+            let request = watcher.platform.request;
+            // SAFETY: a watcher's request is live under `manager.mutex`.
+            !request.is_null()
+                && unsafe {
+                    (*request).dir != w::INVALID_HANDLE_VALUE && !(*request).directory_is_gone()
+                }
         }
 
         /// Caller holds `manager.mutex`.
@@ -2068,6 +2098,10 @@ mod windows_impl {
                         w::CloseHandle((*this).dir);
                         (*this).dir = w::INVALID_HANDLE_VALUE;
                     }
+                    // The next `watch()` of this path has to start a new one.
+                    if let Some(manager) = watcher.manager {
+                        manager.unlink_watcher_locked(core::ptr::from_ref(watcher).cast_mut());
+                    }
                     return;
                 }
             }
@@ -2078,9 +2112,10 @@ mod windows_impl {
         }
 
         fn is_deleted_directory(&self) -> bool {
-            if self.file_name.is_some() {
-                return false;
-            }
+            self.file_name.is_none() && self.directory_is_gone()
+        }
+
+        fn directory_is_gone(&self) -> bool {
             let mut info = FILE_STANDARD_INFO {
                 AllocationSize: 0,
                 EndOfFile: 0,

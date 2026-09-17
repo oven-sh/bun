@@ -210,10 +210,13 @@ describe("fs.watch", () => {
     },
   );
 
-  test("a burst of new files is reported in full, or as lost", async () => {
+  test("a burst of new files is reported without losing events", async () => {
     using dir = tempDir("watch-burst", {});
     const root = String(dir);
-    const names = Array.from({ length: 300 }, (_, i) => `f${String(i).padStart(3, "0")}.txt`);
+    // On Windows what happens while no request is with the kernel has to fit the next request's
+    // 4096-byte buffer, as in Node: a name of this length takes 28 bytes per event, and a new file
+    // is a few events. A burst past that is reported as lost, which has a test of its own.
+    const names = Array.from({ length: isWindows ? 20 : 300 }, (_, i) => `f${String(i).padStart(3, "0")}.txt`);
     const watcher = fs.watch(root);
     let interval: ReturnType<typeof repeat> | undefined;
     try {
@@ -224,7 +227,7 @@ describe("fs.watch", () => {
       watcher.on("change", (_, filename) => {
         seen.add(filename as string | null);
         if (filename === "ready.txt") ready.resolve();
-        // A null filename is how a watcher reports that events were lost.
+        // A null filename is how a watcher reports that events were lost: nothing more to wait for.
         if (filename === names.at(-1) || filename === null) settled.resolve();
       });
       interval = repeat(() => fs.writeFileSync(path.join(root, "ready.txt"), "x"));
@@ -235,11 +238,9 @@ describe("fs.watch", () => {
       for (const name of names) fs.writeFileSync(path.join(root, name), "x");
       await Promise.race([settled.promise, failed]);
 
-      // On Windows a burst that does not fit the request's buffer is reported as lost, as in
-      // Node. Nothing is lost without being reported.
-      if (!isWindows) expect(seen.has(null)).toBe(false);
+      expect(seen.has(null)).toBe(false);
       // FSEvents may report kFSEventStreamEventFlagMustScanSubDirs instead of every file.
-      if (!isMacOS && !seen.has(null)) expect(names.filter(name => !seen.has(name))).toEqual([]);
+      if (!isMacOS) expect(names.filter(name => !seen.has(name))).toEqual([]);
     } finally {
       clearInterval(interval);
       watcher.close();
@@ -284,6 +285,47 @@ describe("fs.watch", () => {
       });
       expect(exitCode).toBe(0);
     },
+  );
+
+  // The first watcher is still open, and still the one registered for the path, when the directory
+  // comes back. The second has to watch the new directory, not join the one whose directory is gone.
+  async function watchAgain(afterTheFirstHeard: boolean) {
+    using dir = tempDir("watch-again", { watched: {} });
+    const target = path.join(String(dir), "watched");
+    const first = fs.watch(target);
+    let second: fs.FSWatcher | undefined;
+    let interval: ReturnType<typeof repeat> | undefined;
+    try {
+      const firstFailed = new Promise<never>((_, reject) => first.on("error", reject));
+      const gone = Promise.withResolvers<void>();
+      // inotify reports the directory's deletion and then the end of its watch, each as a rename.
+      let renamesLeft = isLinux ? 2 : 1;
+      first.on("change", event => {
+        if (event === "rename" && --renamesLeft === 0) gone.resolve();
+      });
+      fs.rmdirSync(target);
+      // Not awaited on macOS, where the watcher follows the path rather than the directory.
+      if (afterTheFirstHeard && !isMacOS) await Promise.race([gone.promise, firstFailed]);
+
+      fs.mkdirSync(target);
+      second = fs.watch(target);
+      const secondFailed = new Promise<never>((_, reject) => second!.on("error", reject));
+      const sawFile = Promise.withResolvers<void>();
+      second.on("change", (_, filename) => {
+        if (filename === "new.txt") sawFile.resolve();
+      });
+      interval = repeat(() => fs.writeFileSync(path.join(target, "new.txt"), "x"));
+      await Promise.race([sawFile.promise, firstFailed, secondFailed]);
+    } finally {
+      clearInterval(interval);
+      first.close();
+      second?.close();
+    }
+  }
+
+  test("a directory that was deleted and made again can be watched again", () => watchAgain(true));
+  test.skipIf(!isWindows)("a directory made again before its watcher heard of the deletion can be watched again", () =>
+    watchAgain(false),
   );
 
   test("should emit event when file is deleted", done => {

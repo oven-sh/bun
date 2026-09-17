@@ -175,21 +175,7 @@ impl BunSocketContextOptions {
         unsafe { OwnedSslCtx::from_raw(c::us_ssl_ctx_from_options(self, err)) }
     }
 
-    /// `create_ssl_context` for a context a TLS server can serve. `digest`
-    /// (this struct's `digest()`) becomes the context's session id context:
-    /// BoringSSL resumes a session only under a context whose id matches the
-    /// one that authenticated the client, and it checks after the SNI switch,
-    /// so a session never carries its client-certificate verdict over to a
-    /// context configured differently. Client sockets drop the id again in
-    /// `us_internal_ssl_attach`; it only partitions a server's sessions.
-    ///
-    /// The refusal this produces is deliberate and must not be relaxed for
-    /// parity with another runtime. RFC 6066 section 3 lets a server resume
-    /// only a session established for the requested name, and BoringSSL tells
-    /// servers to partition sessions between SNI hosts with exactly this call
-    /// (`vendor/boringssl/include/openssl/ssl.h:2199-2207`). A mismatch is not
-    /// an error: the handshake falls back to a full one, which authenticates
-    /// the client against the CA of the selected context.
+    /// Sets `digest` (this struct's `digest()`) as the session id context: see `us_ssl_apply_selected_ctx`.
     pub fn create_ssl_context_with_digest(
         self,
         digest: &[u8; 32],

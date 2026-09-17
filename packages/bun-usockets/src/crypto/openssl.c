@@ -3065,7 +3065,15 @@ void us_ssl_ctx_set_sni_policy(SSL_CTX *ctx, int request_cert, int reject_unauth
  * per-serverName entry's requestCert/rejectUnauthorized are added on top of
  * it (the connection's inherited requirement is kept). A context without a
  * recorded policy (node:tls SecureContext, whose policy is server-level)
- * leaves the connection's verify mode untouched. */
+ * leaves the connection's verify mode untouched.
+ *
+ * SSL_set_SSL_CTX also copies the context's session id context, which for
+ * contexts built in Rust is the digest of their options
+ * (create_ssl_context_with_digest). BoringSSL checks it after this switch, so
+ * a session issued under other options is not resumed and the client is
+ * authenticated again, against this context's CA. That refusal is deliberate
+ * (RFC 6066 section 3; openssl/ssl.h: "partition session caches between SNI
+ * hosts") and must not be relaxed for parity with another runtime. */
 static void us_ssl_apply_selected_ctx(SSL *ssl, SSL_CTX *ctx) {
   SSL_set_SSL_CTX(ssl, ctx);
   if (us_ctx_sni_policy_ex_idx < 0) return;

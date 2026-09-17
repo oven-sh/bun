@@ -40,8 +40,7 @@ pub struct SecureContext {
     /// `BunSocketContextOptions.digest()` — exactly the fields that reach
     /// `us_ssl_ctx_from_options`. Stored so an `intern()` WeakGCMap hit (keyed by
     /// the low 64 bits) can do a full content-equality check before reusing.
-    /// Also `ctx`'s session id context (`create_ssl_context_with_digest`), so
-    /// `addCACert` folds every certificate it adds into it.
+    /// Also `ctx`'s session id context, so `addCACert` folds each added certificate into it.
     pub(crate) digest: Cell<[u8; 32]>,
     /// Approximate cert/key/CA byte length plus the BoringSSL `SSL_CTX` floor
     /// (~50 KB), so the GC can account for the off-heap allocation.
@@ -415,9 +414,7 @@ impl SecureContext {
         if ok == 0 {
             return Err(global.throw(format_args!("Invalid CA certificate")));
         }
-        // The context now trusts more than the options it was built from say:
-        // move it to a session id context of its own so it no longer shares
-        // sessions with contexts built from the same options.
+        // Its trust set changed, so it stops sharing sessions with same-option contexts.
         let mut folded = [0u8; 32];
         let mut hasher = bun_sha_hmac::SHA256::init();
         hasher.update(&this.digest.get());

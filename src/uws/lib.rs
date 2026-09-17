@@ -411,8 +411,7 @@ pub mod ssl_wrapper {
                         boring_sys::ssl_renegotiate_explicit,
                     );
                     boring_sys::SSL_set_connect_state(ssl.as_ptr());
-                    // Mirror `us_internal_ssl_attach`: the CTX's session id
-                    // context is for servers; a client keeps none.
+                    // A client keeps no session id context (see `us_internal_ssl_attach`).
                     boring_sys::SSL_set_session_id_context(ssl.as_ptr(), core::ptr::null(), 0);
                     // Mirror `us_internal_ssl_attach`: a SecureContext is
                     // mode-neutral, so a `tls.connect()` without

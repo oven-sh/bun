@@ -1920,11 +1920,7 @@ pub(crate) fn network_task_has_failed(this: &PackageManager, task_id: Task::Id) 
         .is_some_and(|e| e.failed)
 }
 
-/// `bun add` / `bun update <name>` of a package that cannot be fetched exits 1 and saves nothing.
-/// A request names its dependency, which an `npm:` alias or an override spells differently from
-/// `package_name`. So it also fails when the download was for a dependency that
-/// `Lockfile::bind_update_requests` would bind it to: a waiter of the task, or, for an npm tarball
-/// (it has no waiters), a dependency resolved to the package of `tarball_dependency_id`.
+/// `bun add` / `bun update <name>` exits 1 and saves nothing when a download for the request fails.
 fn fail_update_requests(
     this: &mut PackageManager,
     task_id: Task::Id,
@@ -1939,6 +1935,7 @@ fn fail_update_requests(
     let dependencies = lockfile.buffers.dependencies.as_slice();
     let resolutions = lockfile.buffers.resolutions.as_slice();
     let waiters = this.task_queue.get(&task_id).map_or(&[][..], Vec::as_slice);
+    // An npm tarball task has no waiters: the dependencies it was for already resolved to its package.
     let package_id = tarball_dependency_id
         .and_then(|id| resolutions.get(id as usize).copied())
         .filter(|&package_id| package_id != INVALID_PACKAGE_ID);
@@ -1956,6 +1953,7 @@ fn fail_update_requests(
 
     let mut any_failed = false;
     for request in this.update_requests.iter_mut() {
+        // A request names a package.json key, which an `npm:` alias or an override spells differently from `package_name`.
         let names_its_dependency = lockfile
             .workspaces_of_update_request(pending, this.workspace_name_hash, request)
             .into_iter()

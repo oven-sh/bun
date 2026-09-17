@@ -318,42 +318,6 @@ pub fn do_patch_commit(
             }
         };
 
-        // If the package has nested a node_modules folder, we don't want this to
-        // appear in the patch file when we run git diff.
-        //
-        // There isn't an option to exclude it with `git diff --no-index`, so we
-        // will `rename()` it out and back again.
-        let has_nested_node_modules: bool = 'has_nested_node_modules: {
-            let new_folder_handle =
-                match Dir::cwd().open_dir(new_folder, sys::OpenDirOptions::default()) {
-                    Ok(h) => h,
-                    Err(e) => {
-                        Output::err(
-                            e,
-                            "failed to open directory <b>{s}<r>",
-                            (bstr::BStr::new(new_folder),),
-                        );
-                        Global::crash();
-                    }
-                };
-
-            if sys::renameat_concurrently_a(
-                new_folder_handle.fd,
-                b"node_modules",
-                root_node_modules.fd,
-                random_tempdir.as_bytes(),
-                sys::RenameOptions {
-                    move_fallback: true,
-                },
-            )
-            .is_err()
-            {
-                break 'has_nested_node_modules false;
-            }
-
-            break 'has_nested_node_modules true;
-        };
-
         let patch_tag_tmpname = match bun_paths::fs::FileSystem::tmpname(
             b"patch_tmp",
             &mut buf3[..],
@@ -365,91 +329,6 @@ pub fn do_patch_commit(
                 Global::crash();
             }
         };
-
-        let mut bunpatchtagbuf: BuntagHashBuf = BuntagHashBuf::default();
-        // If the package was already patched then it might have a ".bun-tag-XXXXXXXX"
-        // we need to rename this out and back too.
-        let bun_patch_tag: Option<&[u8]> = 'has_bun_patch_tag: {
-            let name_and_version_hash = string_hash(&patch_key);
-            let patch_tag: &[u8] = 'patch_tag: {
-                if let Some(patchdep) = lockfile.patched_dependencies.get(&name_and_version_hash) {
-                    if let Some(hash) = patchdep.patchfile_hash() {
-                        break 'patch_tag &*buntaghashbuf_make(&mut bunpatchtagbuf, hash);
-                    }
-                }
-                break 'has_bun_patch_tag None;
-            };
-            let new_folder_handle =
-                match Dir::cwd().open_dir(new_folder, sys::OpenDirOptions::default()) {
-                    Ok(h) => h,
-                    Err(e) => {
-                        Output::err(
-                            e,
-                            "failed to open directory <b>{s}<r>",
-                            (bstr::BStr::new(new_folder),),
-                        );
-                        Global::crash();
-                    }
-                };
-
-            if let Err(e) = sys::renameat_concurrently_a(
-                new_folder_handle.fd,
-                patch_tag,
-                root_node_modules.fd,
-                patch_tag_tmpname.as_bytes(),
-                sys::RenameOptions {
-                    move_fallback: true,
-                },
-            ) {
-                bun_core::warn!(
-                    "failed renaming the bun patch tag, this may cause issues: {}",
-                    e
-                );
-                break 'has_bun_patch_tag None;
-            }
-            break 'has_bun_patch_tag Some(patch_tag);
-        };
-        // deferred restore — one-off rename-back logic on every exit
-        // path of `'brk`. Captures borrow into stack buffers.
-        scopeguard::defer! {
-            if has_nested_node_modules || bun_patch_tag.is_some() {
-                let new_folder_handle = match Dir::cwd().open_dir(new_folder, sys::OpenDirOptions::default()) {
-                    Ok(h) => h,
-                    Err(e) => {
-                        bun_core::pretty_error!(
-                            "<r><red>error<r>: failed to open directory <b>{}<r> {}<r>\n",
-                            bstr::BStr::new(new_folder),
-                            e,
-                        );
-                        Global::crash();
-                    }
-                };
-
-                if has_nested_node_modules {
-                    if let Err(e) = sys::renameat_concurrently_a(
-                        root_node_modules.fd,
-                        random_tempdir.as_bytes(),
-                        new_folder_handle.fd,
-                        b"node_modules",
-                        sys::RenameOptions { move_fallback: true },
-                    ) {
-                        bun_core::warn!("failed renaming nested node_modules folder, this may cause issues: {}", e);
-                    }
-                }
-
-                if let Some(patch_tag) = bun_patch_tag {
-                    if let Err(e) = sys::renameat_concurrently_a(
-                        root_node_modules.fd,
-                        patch_tag_tmpname.as_bytes(),
-                        new_folder_handle.fd,
-                        patch_tag,
-                        sys::RenameOptions { move_fallback: true },
-                    ) {
-                        bun_core::warn!("failed renaming the bun patch tag, this may cause issues: {}", e);
-                    }
-                }
-            }
-        }
 
         let mut cwdbuf = bun_paths::path_buffer_pool::get();
         let cwd = match sys::getcwd_z(&mut cwdbuf) {
@@ -474,6 +353,117 @@ pub fn do_patch_commit(
                 Global::crash();
             }
         };
+
+        // `Global::crash()` exits without unwinding, so it skips `restore` below.
+        // Every step that can fail before the diff runs ahead of the renames, and
+        // every exit after them drops `restore` first. Otherwise the nested
+        // node_modules folder stays under its temporary name in the root node_modules.
+        let new_folder_handle =
+            match Dir::cwd().open_dir(new_folder, sys::OpenDirOptions::default()) {
+                Ok(h) => h,
+                Err(e) => {
+                    Output::err(
+                        e,
+                        "failed to open directory <b>{s}<r>",
+                        (bstr::BStr::new(new_folder),),
+                    );
+                    Global::crash();
+                }
+            };
+
+        // If the package has nested a node_modules folder, we don't want this to
+        // appear in the patch file when we run git diff.
+        //
+        // There isn't an option to exclude it with `git diff --no-index`, so we
+        // will `rename()` it out and back again.
+        let has_nested_node_modules: bool = 'has_nested_node_modules: {
+            if sys::renameat_concurrently_a(
+                new_folder_handle.fd,
+                b"node_modules",
+                root_node_modules.fd,
+                random_tempdir.as_bytes(),
+                sys::RenameOptions {
+                    move_fallback: true,
+                },
+            )
+            .is_err()
+            {
+                break 'has_nested_node_modules false;
+            }
+
+            break 'has_nested_node_modules true;
+        };
+
+        let mut bunpatchtagbuf: BuntagHashBuf = BuntagHashBuf::default();
+        // If the package was already patched then it might have a ".bun-tag-XXXXXXXX"
+        // we need to rename this out and back too.
+        let bun_patch_tag: Option<&[u8]> = 'has_bun_patch_tag: {
+            let name_and_version_hash = string_hash(&patch_key);
+            let patch_tag: &[u8] = 'patch_tag: {
+                if let Some(patchdep) = lockfile.patched_dependencies.get(&name_and_version_hash) {
+                    if let Some(hash) = patchdep.patchfile_hash() {
+                        break 'patch_tag &*buntaghashbuf_make(&mut bunpatchtagbuf, hash);
+                    }
+                }
+                break 'has_bun_patch_tag None;
+            };
+            if let Err(e) = sys::renameat_concurrently_a(
+                new_folder_handle.fd,
+                patch_tag,
+                root_node_modules.fd,
+                patch_tag_tmpname.as_bytes(),
+                sys::RenameOptions {
+                    move_fallback: true,
+                },
+            ) {
+                bun_core::warn!(
+                    "failed renaming the bun patch tag, this may cause issues: {}",
+                    e
+                );
+                break 'has_bun_patch_tag None;
+            }
+            break 'has_bun_patch_tag Some(patch_tag);
+        };
+        // deferred restore — one-off rename-back logic on every exit
+        // path of `'brk`. Captures borrow into stack buffers.
+        let restore = scopeguard::guard((), |()| {
+            if has_nested_node_modules || bun_patch_tag.is_some() {
+                if has_nested_node_modules {
+                    if let Err(e) = sys::renameat_concurrently_a(
+                        root_node_modules.fd,
+                        random_tempdir.as_bytes(),
+                        new_folder_handle.fd,
+                        b"node_modules",
+                        sys::RenameOptions {
+                            move_fallback: true,
+                        },
+                    ) {
+                        bun_core::warn!(
+                            "failed renaming nested node_modules folder, this may cause issues: {}",
+                            e
+                        );
+                    }
+                }
+
+                if let Some(patch_tag) = bun_patch_tag {
+                    if let Err(e) = sys::renameat_concurrently_a(
+                        root_node_modules.fd,
+                        patch_tag_tmpname.as_bytes(),
+                        new_folder_handle.fd,
+                        patch_tag,
+                        sys::RenameOptions {
+                            move_fallback: true,
+                        },
+                    ) {
+                        bun_core::warn!(
+                            "failed renaming the bun patch tag, this may cause issues: {}",
+                            e
+                        );
+                    }
+                }
+            }
+        });
+
         let paths = bun_patch::git_diff_preprocess_paths(old_folder, new_folder);
         let (opts, _envp_guard) =
             bun_patch::spawn_opts(&paths[0], &paths[1], cwd, git, &mut manager.event_loop);
@@ -481,11 +471,13 @@ pub fn do_patch_commit(
         let mut spawn_result = match bun_spawn::sync::spawn(&opts) {
             Err(e) => {
                 bun_core::pretty_error!("<r><red>error<r>: failed to make diff {}<r>\n", e.name(),);
+                drop(restore);
                 Global::crash();
             }
             Ok(Ok(r)) => r,
             Ok(Err(e)) => {
                 bun_core::pretty_error!("<r><red>error<r>: failed to make diff {}<r>\n", e);
+                drop(restore);
                 Global::crash();
             }
         };
@@ -497,6 +489,7 @@ pub fn do_patch_commit(
                         "<r><red>error<r>: failed to make diff {}<r>\n",
                         e.name(),
                     );
+                    drop(restore);
                     Global::crash();
                 }
                 Ok(Ok(stdout)) => stdout,
@@ -525,6 +518,7 @@ pub fn do_patch_commit(
                         Truncate { stderr: &stderr }
                     );
                     drop(stderr);
+                    drop(restore);
                     Global::crash();
                 }
             };
@@ -945,17 +939,6 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
     // meaning that changes to the folder will also change the package in the cache.
     //
     // So we will overwrite the folder by directly copying the package in cache into it
-    //
-    // With the isolated linker's global virtual store, `module_folder` is
-    // reached *through* a `node_modules/.bun/<storepath>` symlink that points
-    // into `<cache>/links/`. `deleteTree(module_folder)` would follow that
-    // symlink and wipe the shared global entry (and its dep symlinks)
-    // underneath every other project, then FileCopier would write the user's
-    // edits into the shared cache. Detach first: walk up `module_folder` to
-    // find the first symlink ancestor, replace it with a real directory, and
-    // recreate the path below it so the copy lands in a project-local tree.
-    detach_module_folder_from_shared_store(module_folder);
-
     if let Err(e) =
         overwrite_package_in_node_modules_folder(cache_dir, cache_dir_subpath, module_folder)
     {
@@ -1144,7 +1127,16 @@ fn overwrite_package_in_node_modules_folder(
     cache_dir_subpath: &[u8],
     node_modules_folder_path: &[u8],
 ) -> Result<(), crate::Error> {
-    let _ = Fd::cwd().delete_tree(node_modules_folder_path);
+    // Everything that can fail for the source runs before anything in
+    // node_modules is removed: when the source is missing, the installed
+    // package stays as it was.
+    let cached_package_folder = Dir::borrow(&cache_dir).open_dir(
+        cache_dir_subpath,
+        sys::OpenDirOptions {
+            iterate: true,
+            ..Default::default()
+        },
+    )?;
 
     // FileCopier's path fields are `.unit = .os` (u16 on Windows). `Path::from`
     // is generic over the *input* width and converts internally, so accepting
@@ -1184,14 +1176,6 @@ fn overwrite_package_in_node_modules_folder(
         }
     };
 
-    let cached_package_folder = Dir::borrow(&cache_dir).open_dir(
-        cache_dir_subpath,
-        sys::OpenDirOptions {
-            iterate: true,
-            ..Default::default()
-        },
-    )?;
-
     let ignore_directories: &[&bun_paths::OSPathSlice] = &[
         bun_paths::os_path_literal!("node_modules"),
         bun_paths::os_path_literal!(".git"),
@@ -1204,6 +1188,18 @@ fn overwrite_package_in_node_modules_folder(
         dest_subpath,
         ignore_directories,
     )?;
+
+    // With the isolated linker's global virtual store, `node_modules_folder_path`
+    // is reached *through* a `node_modules/.bun/<storepath>` symlink that points
+    // into `<cache>/links/`. `deleteTree(node_modules_folder_path)` would follow that
+    // symlink and wipe the shared global entry (and its dep symlinks)
+    // underneath every other project, then FileCopier would write the user's
+    // edits into the shared cache. Detach first: walk up `node_modules_folder_path` to
+    // find the first symlink ancestor, replace it with a real directory, and
+    // recreate the path below it so the copy lands in a project-local tree.
+    detach_module_folder_from_shared_store(node_modules_folder_path);
+
+    let _ = Fd::cwd().delete_tree(node_modules_folder_path);
 
     copier.copy()?;
     Ok(())

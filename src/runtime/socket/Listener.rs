@@ -1836,7 +1836,9 @@ impl WindowsNamedPipeListeningContext {
         let listener_ref = this_ref.listener.unwrap();
         let listener: &Listener = listener_ref.get();
         use crate::socket::windows_named_pipe_context::SocketType as PipeSocketType;
-        let socket: PipeSocketType = if this_ref.ctx.get().is_some() {
+        // Owned for the whole accept: JS below can replace the slot through setSecureContext().
+        let ssl_ctx = this_ref.ctx.get().clone();
+        let socket: PipeSocketType = if ssl_ctx.is_some() {
             PipeSocketType::Tls(Listener::on_name_pipe_created::<true>(listener))
         } else {
             PipeSocketType::Tcp(Listener::on_name_pipe_created::<false>(listener))
@@ -1850,7 +1852,7 @@ impl WindowsNamedPipeListeningContext {
         let result = unsafe {
             (*client)
                 .named_pipe
-                .get_accepted_by(&mut (*this).uv_pipe, this_ref.ctx.get().as_ref())
+                .get_accepted_by(&mut (*this).uv_pipe, ssl_ctx.as_ref())
         };
         if result.is_err() {
             // connection dropped

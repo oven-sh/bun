@@ -151,6 +151,7 @@ it.if(isWindows)("setSecureContext() rotates the certificate of a server listeni
     new Promise<string>((resolve, reject) => {
       const client = connect({ path: pipe, rejectUnauthorized: false });
       client.on("error", reject);
+      client.on("close", () => reject(new Error("the pipe closed before the server sent anything")));
       client.on("data", () => {
         resolve(client.getPeerCertificate().subject.CN);
         client.destroy();

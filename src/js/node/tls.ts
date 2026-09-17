@@ -1237,6 +1237,8 @@ function Server(options, secureConnectionListener): void {
   this._rejectUnauthorized = serverOptions?.rejectUnauthorized !== false;
   this.servername = undefined;
   this.ALPNProtocols = undefined;
+  // Constructor-only in node, like the two flags above: setSecureContext() never reads it.
+  if (serverOptions?.ALPNProtocols) convertALPNProtocols(serverOptions.ALPNProtocols, this);
   this._sharedCreds = undefined;
 
   let contexts: Map<string, typeof InternalSecureContext> | null = null;
@@ -1268,10 +1270,6 @@ function Server(options, secureConnectionListener): void {
     if (options) {
       validateSecureContextOptions(options);
       options = processPfxOptions(options);
-      const { ALPNProtocols } = options;
-
-      // Kept when omitted, unlike the fields below: node only assigns it in the constructor.
-      if (ALPNProtocols) convertALPNProtocols(ALPNProtocols, next);
 
       let cert = options.cert;
       // Assign unconditionally so a later setSecureContext() that omits an
@@ -1412,13 +1410,8 @@ function Server(options, secureConnectionListener): void {
       if (handle && !(serverTLSOptions instanceof InternalSecureContext)) {
         // [buntls] reads its receiver: the staged fields over the server's own.
         const staged = { __proto__: this, ...next };
-        const tls = staged[buntls](0, undefined, false)[0];
-        // The clamp net.ts applies before Bun.listen().
-        if (!tls.requestCert) tls.rejectUnauthorized = false;
-        setListenerSecureContext(handle, tls);
+        setListenerSecureContext(handle, staged[buntls](0, undefined, false)[0]);
       }
-      const { ALPNProtocols } = next;
-      if (ALPNProtocols !== undefined) this.ALPNProtocols = ALPNProtocols;
       this.cert = next.cert;
       this.key = next.key;
       this.ca = next.ca;
@@ -1462,6 +1455,7 @@ function Server(options, secureConnectionListener): void {
   };
 
   this[buntls] = function (port, host, isClient) {
+    const requestCert = isClient ? true : this._requestCert;
     return [
       {
         serverName: this.servername || host || "localhost",
@@ -1475,8 +1469,9 @@ function Server(options, secureConnectionListener): void {
         ecdhCurve: this.ecdhCurve ?? DEFAULT_ECDH_CURVE,
         passphrase: this.passphrase,
         secureOptions: this.secureOptions,
-        rejectUnauthorized: this._rejectUnauthorized,
-        requestCert: isClient ? true : this._requestCert,
+        // A server that requests no client certificate has none to reject.
+        rejectUnauthorized: requestCert ? this._rejectUnauthorized : false,
+        requestCert,
         ALPNProtocols: this.ALPNProtocols,
         clientRenegotiationLimit: CLIENT_RENEG_LIMIT,
         clientRenegotiationWindow: CLIENT_RENEG_WINDOW,

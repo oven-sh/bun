@@ -1,3 +1,5 @@
+// @ts-expect-error - debug-only export
+import { sslCtxLiveCount } from "bun:internal-for-testing";
 import crypto from "crypto";
 import { readFileSync, realpathSync } from "fs";
 import { bunEnv, bunExe, tls as cert1, isDebug, isWindows } from "harness";
@@ -1460,6 +1462,7 @@ describe("setSecureContext() on a listening server", () => {
       const { port } = await listen(server);
       const before = await judged(port, agent1);
       expect(before.verdict).toBe("agent1 authorized=true reused=false");
+      expect(before.session).toBeDefined();
 
       // The shape @grpc/grpc-js passes on every reload: the flags ride along.
       server.setSecureContext({ ...agent1, ca: ca2, requestCert: true, rejectUnauthorized: false });
@@ -1658,7 +1661,7 @@ describe("setSecureContext() on a listening server", () => {
       live.destroy();
 
       // listen() builds its ALPN list from the server's ALPNProtocols, which
-      // setSecureContext() has to leave alone when the option is omitted.
+      // setSecureContext() has to leave alone.
       server.close();
       await once(server, "close");
       const relistened = await listen(server as unknown as Server);
@@ -1667,6 +1670,72 @@ describe("setSecureContext() on a listening server", () => {
       live?.destroy();
       server.close();
     }
+  });
+
+  // node reads ALPNProtocols in the Server constructor only.
+  it("ignores an ALPNProtocols option: the constructor's list stays", async () => {
+    const server: Server = createServer({ ...agent1, ALPNProtocols: ["h2"] });
+    try {
+      const { port } = await listen(server);
+      const offer = { host: "127.0.0.1", ALPNProtocols: ["http/1.1", "h2"] };
+
+      server.setSecureContext({ ...agent3, ALPNProtocols: ["http/1.1"] });
+      expect(await handshake({ ...offer, port })).toEqual({ cn: "agent3", alpn: "h2" });
+
+      server.close();
+      await once(server, "close");
+      const relistened = await listen(server);
+      expect(await handshake({ ...offer, port: relistened.port })).toEqual({ cn: "agent3", alpn: "h2" });
+    } finally {
+      server.close();
+    }
+  });
+
+  it("frees the context it replaces", async () => {
+    const server: Server = createServer({ ...agent1 });
+    try {
+      await listen(server);
+      Bun.gc(true);
+      const listening = sslCtxLiveCount();
+
+      for (let i = 0; i < 20; i++) server.setSecureContext(i % 2 ? { ...agent1 } : { ...agent3 });
+      expect(() =>
+        server.setSecureContext({
+          key: agent3.key,
+          cert: "-----BEGIN CERTIFICATE-----\nnope\n-----END CERTIFICATE-----",
+        }),
+      ).toThrow();
+      // A leak adds one live SSL_CTX per call.
+      expect(sslCtxLiveCount() - listening).toBeLessThanOrEqual(0);
+
+      server.close();
+      await once(server, "close");
+      // The listener lets go of the last one. Finalizers run on GC, so wait for the condition.
+      for (let i = 0; i < 50 && sslCtxLiveCount() >= listening; i++) {
+        Bun.gc(true);
+        await new Promise<void>(resolve => setImmediate(resolve));
+      }
+      expect(sslCtxLiveCount()).toBeLessThan(listening);
+    } finally {
+      server.close();
+    }
+  });
+
+  // A cluster worker's listen() completes when the primary answers. A call
+  // made before that has to reach the listener the worker then creates.
+  it("counts in a cluster worker when called before 'listening'", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "tls-cluster-set-secure-context-fixture.mjs")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // stderr only shows up in the failure message of a worker that printed nothing.
+    expect(stdout.trim() || stderr).toBe(
+      JSON.stringify({ handleAfterListen: "none", default: "agent3", viaAddContext: "agent2" }),
+    );
+    expect(exitCode).toBe(0);
   });
 });
 

@@ -27,6 +27,9 @@ pub struct Cmd {
     pub(crate) redirection_fd: Option<*mut CowFd>,
     pub(crate) exec: Exec,
     pub(crate) exit_code: Option<ExitCode>,
+    /// A `> ${buf}` target was too small for the output of the builtin or the
+    /// subprocess. [`Cmd::next`] fails a command that would otherwise exit 0.
+    pub(crate) redirect_overflow: bool,
 }
 
 #[derive(Default, strum::IntoStaticStr)]
@@ -216,6 +219,7 @@ impl Cmd {
             redirection_fd: None,
             exec: Exec::None,
             exit_code: None,
+            redirect_overflow: false,
         }))
     }
 
@@ -293,12 +297,35 @@ impl Cmd {
                 }
                 CmdState::WaitingWriteErr => return Yield::suspended(),
                 CmdState::Done => {
-                    let exit = interp.as_cmd(this).exit_code.unwrap_or(0);
-                    let parent = interp.as_cmd(this).base.parent;
+                    let me = interp.as_cmd_mut(this);
+                    let exit = me.exit_code.unwrap_or(0);
+                    if exit == 0 && core::mem::take(&mut me.redirect_overflow) {
+                        return Self::write_redirect_overflow_error(interp, this);
+                    }
+                    let parent = me.base.parent;
                     return interp.child_done(parent, this, exit);
                 }
             }
         }
+    }
+
+    /// Reports the overflow like a command whose stdout is a full device, then
+    /// exits 1.
+    fn write_redirect_overflow_error(interp: &Interpreter, this: NodeId) -> Yield {
+        let argv0: Vec<u8> = interp
+            .as_cmd(this)
+            .args
+            .first()
+            .map(|a| a.strip_suffix(&[0]).unwrap_or(a).to_vec())
+            .unwrap_or_default();
+        Builtin::cmd_write_failing_error(
+            interp,
+            this,
+            format_args!(
+                "{}: write error: No space left on device\n",
+                bstr::BStr::new(&argv0)
+            ),
+        )
     }
 
     /// IOWriter completion callback for the error message written in
@@ -983,12 +1010,15 @@ impl Cmd {
     }
 
     /// Mark the subprocess's buffered stdout/stderr as closed (flushing the
-    /// captured bytes into the shell buffers).
+    /// captured bytes into the shell buffers). `overflow`: a `> ${buf}` target
+    /// was too small for this stream.
     pub(crate) fn buffered_output_close(
         &mut self,
         kind: OutKind,
         err: Option<bun_sys::SystemError>,
+        overflow: bool,
     ) -> Yield {
+        self.redirect_overflow |= overflow;
         match kind {
             OutKind::Stdout => self.buffered_output_close_stdout(err),
             OutKind::Stderr => self.buffered_output_close_stderr(err),

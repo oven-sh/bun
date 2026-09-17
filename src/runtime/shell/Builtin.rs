@@ -355,16 +355,18 @@ impl BuiltinIO {
                 // stored cursor is u32.
                 let idx = *i as usize;
                 let total = arraybuf.byte_len;
-                if idx >= total {
+                let write_len = total.saturating_sub(idx).min(buf.len());
+                if write_len > 0 {
+                    let dst = &mut arraybuf.slice_mut()[idx..idx + write_len];
+                    dst.copy_from_slice(&buf[..write_len]);
+                    *i = i.saturating_add(write_len as u32);
+                }
+                if write_len < buf.len() {
                     return Err(bun_sys::Error::from_code(
                         bun_sys::E::ENOSPC,
                         bun_sys::Tag::write,
                     ));
                 }
-                let write_len = (total - idx).min(buf.len());
-                let dst = &mut arraybuf.slice_mut()[idx..idx + write_len];
-                dst.copy_from_slice(&buf[..write_len]);
-                *i = i.saturating_add(write_len as u32);
                 Ok(write_len)
             }
             BuiltinIO::Blob(_) | BuiltinIO::Ignore => Ok(buf.len()),
@@ -882,7 +884,9 @@ impl Builtin {
     /// Write `buf` to stdout/stderr without going through IOWriter (the
     /// stream is a captured buffer / arraybuffer / blob / /dev/null).
     ///
-    /// Returns `Err(ENOSPC)` when an ArrayBuffer target is already full.
+    /// An ArrayBuffer target that cannot hold all of `buf` keeps the bytes that
+    /// fit and returns `Err(ENOSPC)`. The Cmd records it, so a caller that
+    /// drops the result still fails: see `Cmd::redirect_overflow`.
     /// **WARNING**: caller must have checked `needs_io() == None` first.
     pub(crate) fn write_no_io(
         interp: &Interpreter,
@@ -905,7 +909,11 @@ impl Builtin {
             IoKind::Stderr => &mut me.stderr,
         };
         // SAFETY: `shell` is `cmd_node.base.shell`, live for the Cmd's lifetime.
-        unsafe { out.write_no_io_to(shell, buf) }
+        let result = unsafe { out.write_no_io_to(shell, buf) };
+        if result.is_err() {
+            cmd_node.redirect_overflow = true;
+        }
+        result
     }
 
     /// Shell exec env of the owning Cmd.

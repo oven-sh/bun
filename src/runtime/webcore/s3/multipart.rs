@@ -6,7 +6,7 @@
 // Each part maintains a reference to MultiPartUpload until completion.
 // If a part is canceled or fails early, the allocated slice is freed, and the reference is removed. If a part completes successfully, an etag is received, the allocated slice is deallocated, and the etag is appended to multipart_etags. If a part request fails, it retries until the maximum retry count is reached. If it still fails, MultiPartUpload is marked as failed and its reference is removed.
 // If all parts succeed, a complete request is sent.
-// If any part fails, a rollback request deletes the uploaded parts. It is sent once every part that was in flight has reported back: S3 keeps a part that lands after the abort. Rollback and commit requests do not increase the reference count of MultiPartUpload, as they are the final step. Once commit or rollback finishes, the reference count is decremented, and MultiPartUpload is freed. These requests retry up to the maximum retry count on a best-effort basis.
+// If any part fails, a rollback request deletes the uploaded parts. S3 keeps a part that lands after the abort, so with parts in flight the rollback is sent once more after the last of them has reported back. Rollback and commit requests do not increase the reference count of MultiPartUpload, as they are the final step (the first of two rollbacks takes its own ref). Once commit or rollback finishes, the reference count is decremented, and MultiPartUpload is freed. These requests retry up to the maximum retry count on a best-effort basis.
 
 //                Start Upload
 //                       │
@@ -130,7 +130,7 @@ pub struct MultiPartUpload {
     pub(crate) current_part_number: Cell<u16>,
     pub(crate) ref_count: Cell<u32>,
     pub(crate) ended: Cell<bool>,
-    /// Parts still in flight after `fail()`: the rollback waits for them.
+    /// Parts still in flight after `fail()`: the last one sends the final rollback.
     pub(crate) parts_in_flight: Cell<u8>,
 
     pub(crate) options: Cell<MultiPartUploadOptions>,
@@ -627,12 +627,15 @@ impl MultiPartUpload {
             if old_state == State::MultipartCompleted {
                 // we are a multipart upload so we need to rollback
                 // will deref after rollback
-                if in_flight == 0 {
-                    let rolled_back = self.rollback_multi_part_request();
-                    return r.and(rolled_back);
+                if in_flight > 0 {
+                    // This abort frees what is stored now, also when the process exits before
+                    // the parts in flight report back. The last of them sends the final abort,
+                    // whose callback releases the root ref. This one takes its own.
+                    self.parts_in_flight.set(in_flight);
+                    self.ref_();
                 }
-                // `on_part_response` of the last part in flight sends the rollback.
-                self.parts_in_flight.set(in_flight);
+                let rolled_back = self.rollback_multi_part_request();
+                return r.and(rolled_back);
             } else {
                 // single file upload no need to rollback
                 MultiPartUpload::deref_(self.root_ptr());

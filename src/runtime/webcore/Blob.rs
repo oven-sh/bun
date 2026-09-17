@@ -749,12 +749,14 @@ impl BlobExt for Blob {
                 store.serialize(writer)?;
 
                 // Version 5: the `fs.openAsBlob` snapshot.
-                let snapshot = Store::data_mut(store).as_file().snapshot;
-                writer.write_int_le::<u8>(snapshot.is_some() as u8)?;
-                if let Some(snapshot) = snapshot {
-                    writer.write_int_le::<i64>(snapshot.size)?;
-                    writer.write_int_le::<i64>(snapshot.mtime_sec)?;
-                    writer.write_int_le::<i64>(snapshot.mtime_nsec)?;
+                if let store::Data::File(file) = Store::data_mut(store) {
+                    let snapshot = file.snapshot;
+                    writer.write_int_le::<u8>(snapshot.is_some() as u8)?;
+                    if let Some(snapshot) = snapshot {
+                        writer.write_int_le::<i64>(snapshot.size)?;
+                        writer.write_int_le::<i64>(snapshot.mtime_sec)?;
+                        writer.write_int_le::<i64>(snapshot.mtime_nsec)?;
+                    }
                 }
             }
         }
@@ -3860,6 +3862,16 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
         }
         store::SerializeTag::Empty => Blob::new(Blob::init_empty(global_this)),
     };
+    // `blob` is heap-allocated past this point; on any remaining error
+    // (truncated trailer fields) tear down both the heap object and its
+    // store. `content_type` is handled by its own Drop above since it
+    // hasn't been attached to `blob` yet.
+    // SAFETY: blob is a freshly-allocated heap pointer from Blob::new.
+    let blob_guard = scopeguard::guard(blob, |b| unsafe { (*b).deinit() });
+    // SAFETY: `blob_guard` holds the sole pointer to the fresh heap allocation.
+    // Shared access only — Blob state is Cell/JsCell-based.
+    let blob = unsafe { &**blob_guard };
+
     // Version 5: the `fs.openAsBlob` snapshot (see the serializer).
     if version >= 5 && matches!(store_tag, store::SerializeTag::File) {
         let snapshot = if reader.read_int_le::<u8>()? != 0 {
@@ -3871,22 +3883,12 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
         } else {
             None
         };
-        // SAFETY: `blob` is the fresh heap pointer from `Blob::new` above.
-        if let Some(store) = unsafe { &*blob }.store.get() {
+        if let Some(store) = blob.store.get() {
             if let store::Data::File(file) = Store::data_mut(store) {
                 file.snapshot = snapshot;
             }
         }
     }
-    // `blob` is heap-allocated past this point; on any remaining error
-    // (truncated trailer fields) tear down both the heap object and its
-    // store. `content_type` is handled by its own Drop above since it
-    // hasn't been attached to `blob` yet.
-    // SAFETY: blob is a freshly-allocated heap pointer from Blob::new.
-    let blob_guard = scopeguard::guard(blob, |b| unsafe { (*b).deinit() });
-    // SAFETY: `blob_guard` holds the sole pointer to the fresh heap allocation.
-    // Shared access only — Blob state is Cell/JsCell-based.
-    let blob = unsafe { &**blob_guard };
 
     'versions: {
         if version == 1 {

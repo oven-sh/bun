@@ -77,3 +77,10 @@ describe("S3Client instance method argument validation", () => {
     );
   });
 });
+
+// An S3 Blob serializes to a record the deserializer does not accept. That is
+// a TypeError, never a crash in the serializer.
+test("structuredClone of an S3 file throws", () => {
+  const file = Bun.s3.file("s3://bucket/key", { accessKeyId: "a", secretAccessKey: "b", region: "us-east-1" });
+  expect(() => structuredClone(file)).toThrow(TypeError);
+});

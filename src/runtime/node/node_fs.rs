@@ -3864,8 +3864,7 @@ pub mod args {
                 if position.order(-1i64) == core::cmp::Ordering::Less
                     || position.order(max_position) == core::cmp::Ordering::Greater
                 {
-                    // Node spells this range with "&&" and inspects the bigint with an
-                    // "n" suffix (lib/internal/fs/utils.js validatePosition).
+                    // Node spells this range with "&&" (lib/internal/fs/utils.js validatePosition).
                     let range = format!(">= -1 && <= {max_position}");
                     let mut received = position.to_string(ctx)?.to_owned_slice();
                     received.push(b'n');

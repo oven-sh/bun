@@ -1133,6 +1133,38 @@ describe("X509Certificate records whose DER does not decode are rejected", () =>
     });
   });
 
+  test("the crashing input: no key reaches equals() from an empty-DER record", async () => {
+    // A subprocess, because on a build that accepts the record equals() dies with a SEGV.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `import { deserialize } from "bun:jsc";
+         import { deserialize as v8Deserialize } from "node:v8";
+         for (const [name, fn] of [["bun:jsc", deserialize], ["node:v8", v8Deserialize]]) {
+           try {
+             const key = fn(new Uint8Array(${JSON.stringify([...record(Buffer.alloc(0))])})).publicKey;
+             console.log(name + ": RETURNED " + key.equals(key));
+           } catch (e) {
+             console.log(name + ": " + e.message);
+           }
+         }`,
+      ],
+      env: bunEnv,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout: stdout.trim().split("\n"), stderr, signalCode: proc.signalCode, exitCode }).toEqual({
+      stdout: ["bun:jsc: Unable to deserialize data.", "node:v8: Unable to deserialize data."],
+      stderr: expect.any(String),
+      signalCode: null,
+      exitCode: 0,
+    });
+  });
+
   test("a real certificate rebuilt through record() still round-trips", () => {
     // Guards the record layout the crafted payloads assume.
     expect(record(der)).toEqual(real);

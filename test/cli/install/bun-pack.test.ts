@@ -1939,6 +1939,48 @@ describe.concurrent(".gitignore/.npmignore", () => {
 });
 
 describe.concurrent("bins", () => {
+  // The length of one entry is no reason to drop the others.
+  test("a `files` entry longer than the path buffer on every platform is still matched", async () => {
+    // A brace group of 1000 names that do not exist, then "dist". About 100 KB.
+    const unused = Buffer.alloc(100, "x").toString();
+    const pattern = `{${Array.from({ length: 1000 }, (_, i) => `${unused}${i}`).join(",")},dist}`;
+    expect(pattern.length).toBeGreaterThan(100_000);
+    using dir = tempDir("pack-files-long-glob", {
+      "package.json": JSON.stringify({ name: "pack-files-long-glob", version: "1.0.0", files: [pattern] }),
+      "dist/index.js": "console.log('hello ./dist/index.js')",
+      "src/index.js": "console.log('hello ./src/index.js')",
+    });
+
+    const { err, exitCode } = await runPack(dir);
+    expect(err).toBe("");
+    expect(exitCode).toBe(0);
+    expect(tarballEntries(join(dir, "pack-files-long-glob-1.0.0.tgz"))).toEqual([
+      "package/package.json",
+      "package/dist/index.js",
+    ]);
+  });
+
+  test("a bin longer than the path buffer does not stop the other bins from being packed", async () => {
+    const long = Buffer.alloc(100_000, "b").toString();
+    using dir = tempDir("pack-bins-long-and-short", {
+      "package.json": JSON.stringify({
+        name: "pack-bins-long-and-short",
+        version: "1.0.0",
+        files: ["index.js"],
+        bin: { long, cli: "cli.js" },
+      }),
+      "index.js": indexJs,
+      "cli.js": "#!/usr/bin/env bun\n",
+    });
+
+    const { err, exitCode } = await runPack(dir);
+    expect(err).toBe("");
+    expect(exitCode).toBe(0);
+    const tarball = readTarball(join(dir, "pack-bins-long-and-short-1.0.0.tgz"));
+    expect(entryNames(tarball)).toEqual(["package/package.json", "package/cli.js", "package/index.js"]);
+    expect(tarball.entries[1].perm & 0o111).toBe(0o111);
+  });
+
   // A bin that is not on disk is skipped, whatever its length.
   test.each([
     ["string", (long: string) => ({ bin: long })],

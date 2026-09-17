@@ -861,8 +861,7 @@ impl Lockfile {
         0
     }
 
-    /// Packages whose package.json the user wrote: the root, the workspaces, and
-    /// the `file:` packages they reach through `file:` packages only.
+    /// The root, the workspaces, and the `file:` packages they reach through `file:` packages only.
     pub(crate) fn local_packages(&self) -> DynamicBitSet {
         let packages = self.packages.slice();
         let package_resolutions = packages.items_resolution();
@@ -3382,10 +3381,8 @@ impl Lockfile {
         url == canonical_url.as_slice()
     }
 
-    /// Does the root or a workspace depend on `resolution` under the name `alias`?
-    /// A `file:` package in `local_packages` counts as a declarer too, but only
-    /// for another package in that set: a trusted name never unblocks a git or
-    /// tarball package that the root or a workspace did not name itself.
+    /// Does one of `local_packages` depend on `resolution` as `alias`? A `file:`
+    /// declarer only counts for a dependency that is itself in `local_packages`.
     fn declared_by_local_package(&self, alias: &[u8], resolution: &Resolution) -> bool {
         let buf = self.buffers.string_bytes.as_slice();
         let packages = self.packages.slice();

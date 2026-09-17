@@ -999,6 +999,22 @@ pub fn directory_mode(perm: bun_sys::Mode) -> bun_sys::Mode {
     mode
 }
 
+/// Opens a regular file entry for writing. A file the destination already
+/// holds is removed first, as GNU tar does. Writing into the old inode with
+/// `O_TRUNC` would reach every other name linked to it, fail on a read-only
+/// file, and keep the old mode.
+#[cfg(not(windows))]
+pub fn create_entry_file(dir: Fd, path: &ZStr, mode: bun_sys::Mode) -> bun_sys::Maybe<Fd> {
+    let flags = bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::EXCL;
+    match bun_sys::openat(dir, path, flags, mode) {
+        Err(err) if err.get_errno() == bun_sys::E::EEXIST => {
+            bun_sys::unlinkat(dir, path)?;
+            bun_sys::openat(dir, path, flags, mode)
+        }
+        result => result,
+    }
+}
+
 /// Validates that a symlink target doesn't escape the extraction directory.
 /// Returns true if the symlink is safe (target stays within extraction dir),
 /// false if it would escape (e.g., via ../ traversal or absolute path).
@@ -1693,10 +1709,10 @@ impl Archiver {
                             )
                             .unwrap();
 
-                            let flags = bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC;
-
                             #[cfg(windows)]
-                            let file_handle_native: Fd =
+                            let file_handle_native: Fd = {
+                                let flags =
+                                    bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC;
                                 match bun_sys::openat_windows(dir_fd, path_slice, flags, 0) {
                                     Ok(fd) => fd,
                                     Err(e) => match e.get_errno() {
@@ -1713,16 +1729,16 @@ impl Archiver {
                                         }
                                         _ => return Err(e.into()),
                                     },
-                                };
+                                }
+                            };
 
                             #[cfg(not(windows))]
                             let file_handle_native: Fd = {
-                                // dir.createFileZ(.{truncate, mode}) → bun_sys::openat
                                 // SAFETY: normalized_buf[path_slice.len()] == 0 (written above).
                                 let path_z: &ZStr = unsafe {
                                     ZStr::from_raw(path_slice.as_ptr(), path_slice.len())
                                 };
-                                match bun_sys::openat(dir_fd, path_z, flags, mode) {
+                                match create_entry_file(dir_fd, path_z, mode) {
                                     Ok(fd) => fd,
                                     Err(err) => match err.get_errno() {
                                         bun_sys::E::EACCES
@@ -1733,7 +1749,7 @@ impl Archiver {
                                                 return Err(err.into());
                                             }
                                             let _ = dir.make_path_u8(dirname);
-                                            bun_sys::openat(dir_fd, path_z, flags, mode)?
+                                            create_entry_file(dir_fd, path_z, mode)?
                                         }
                                         _ => return Err(err.into()),
                                     },

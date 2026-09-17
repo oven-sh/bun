@@ -1402,13 +1402,16 @@ fn extract_to_disk_filtered(
                     }
                 }
 
-                // Create and write the file using bun.sys
-                let file_fd: Fd = match bun_sys::openat(
+                #[cfg(windows)]
+                let opened = bun_sys::openat(
                     dir_fd,
                     pathname_z,
                     bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
                     mode,
-                ) {
+                );
+                #[cfg(not(windows))]
+                let opened = libarchive::create_entry_file(dir_fd, pathname_z, mode);
+                let file_fd: Fd = match opened {
                     Ok(fd) => fd,
                     Err(_) => continue,
                 };

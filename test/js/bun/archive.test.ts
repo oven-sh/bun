@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { existsSync, readdirSync, rmSync } from "node:fs";
+import fs, { existsSync, readdirSync, rmSync } from "node:fs";
 import { join } from "path";
 
 // Minimal ustar tarball builder (pathnames must be <100 bytes). `name` accepts
@@ -641,6 +641,72 @@ describe("Bun.Archive", () => {
       expect(stderr).toBe("");
       expect(JSON.parse(stdout)).toEqual({ count: 3, dir: true, inner: "inner", top: "top" });
       expect(exitCode).toBe(0);
+    });
+
+    // GNU tar removes a file the destination already holds and creates a new
+    // one. Writing into the old inode would reach every other name linked to it.
+    describe.each([
+      ["without a glob", undefined],
+      ["with a glob", { glob: "**" }],
+    ])("replaces an existing file %s", (_, options) => {
+      test.skipIf(isWindows)("does not write through a hard link", async () => {
+        using dir = tempDir("archive-replace-hardlink", {
+          "store/a.txt": "old",
+        });
+        fs.linkSync(join(String(dir), "store/a.txt"), join(String(dir), "a.txt"));
+
+        const count = await new Bun.Archive({ "a.txt": "new" }).extract(String(dir), options);
+
+        expect(count).toBe(1);
+        expect(fs.readFileSync(join(String(dir), "a.txt"), "utf8")).toBe("new");
+        expect(fs.readFileSync(join(String(dir), "store/a.txt"), "utf8")).toBe("old");
+        expect(fs.statSync(join(String(dir), "a.txt")).ino).not.toBe(fs.statSync(join(String(dir), "store/a.txt")).ino);
+      });
+
+      test.skipIf(isWindows)("does not write through a symlink", async () => {
+        using dir = tempDir("archive-replace-symlink", {
+          "target.txt": "old",
+        });
+        fs.symlinkSync("target.txt", join(String(dir), "a.txt"));
+
+        const count = await new Bun.Archive({ "a.txt": "new" }).extract(String(dir), options);
+
+        expect(count).toBe(1);
+        expect(fs.lstatSync(join(String(dir), "a.txt")).isSymbolicLink()).toBe(false);
+        expect(fs.readFileSync(join(String(dir), "a.txt"), "utf8")).toBe("new");
+        expect(fs.readFileSync(join(String(dir), "target.txt"), "utf8")).toBe("old");
+      });
+
+      // root can open a read-only file for writing, so the old open succeeds there.
+      test.skipIf(isWindows || process.getuid?.() === 0)("replaces a read-only file", async () => {
+        using dir = tempDir("archive-replace-readonly", {
+          "a.txt": "old",
+        });
+        fs.chmodSync(join(String(dir), "a.txt"), 0o444);
+
+        const count = await new Bun.Archive({ "a.txt": "new" }).extract(String(dir), options);
+
+        expect(count).toBe(1);
+        expect(fs.readFileSync(join(String(dir), "a.txt"), "utf8")).toBe("new");
+      });
+    });
+
+    test.skipIf(isWindows)("with a glob, an existing file takes the mode of the entry", async () => {
+      const tarball = Buffer.concat([
+        ustarHeader("secret.txt", 3, "0", { mode: Buffer.from("0000600\0") }),
+        Buffer.concat([Buffer.from("new"), Buffer.alloc(512 - 3)]),
+        Buffer.alloc(1024),
+      ]);
+      using dir = tempDir("archive-replace-mode", {
+        "secret.txt": "old",
+      });
+      fs.chmodSync(join(String(dir), "secret.txt"), 0o644);
+
+      const count = await new Bun.Archive(tarball).extract(String(dir), { glob: "**" });
+
+      expect(count).toBe(1);
+      expect(fs.readFileSync(join(String(dir), "secret.txt"), "utf8")).toBe("new");
+      expect(fs.statSync(join(String(dir), "secret.txt")).mode & 0o777).toBe(0o600);
     });
   });
 

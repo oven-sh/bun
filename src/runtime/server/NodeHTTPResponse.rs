@@ -677,28 +677,6 @@ impl NodeHTTPResponse {
         true
     }
 
-    pub(crate) fn dump_request_body(
-        &self,
-        global_object: &JSGlobalObject,
-        _callframe: &CallFrame,
-        this_value: JSValue,
-    ) -> JsResult<JSValue> {
-        if self
-            .buffered_request_body_data_during_pause
-            .get()
-            .capacity()
-            > 0
-        {
-            self.buffered_request_body_data_during_pause
-                .with_mut(|b| b.clear_and_free());
-        }
-        if !self.flags.get().contains(Flags::REQUEST_HAS_COMPLETED) {
-            self.clear_on_data_callback(this_value, global_object);
-        }
-
-        Ok(JSValue::UNDEFINED)
-    }
-
     fn mark_request_as_done(&self) {
         scoped_log!(NodeHTTPResponse, "markRequestAsDone()");
         self.update_flags(|f| f.remove(Flags::IS_REQUEST_PENDING));
@@ -784,10 +762,6 @@ impl NodeHTTPResponse {
         // detach and
         self.upgrade_context
             .with_mut(|c| c.preserve_web_socket_headers_if_needed());
-    }
-
-    pub(crate) fn get_ended(&self, _global: &JSGlobalObject) -> JSValue {
-        JSValue::from(self.flags.get().contains(Flags::ENDED))
     }
 
     pub(crate) fn get_finished(&self, _global: &JSGlobalObject) -> JSValue {

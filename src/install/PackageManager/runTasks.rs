@@ -472,25 +472,16 @@ fn run_tasks_erased(
                 // Headers can arrive and the connection still die before the
                 // body does; for a 2xx/3xx that is a failed download too (an
                 // error status keeps its own handling below).
-                let download_failed = match &task.response.metadata {
-                    None => true,
-                    Some(m) => task.response.fail.is_some() && m.response.status_code < 400,
-                };
+                let DownloadOutcome {
+                    failed: download_failed,
+                    retry,
+                } = DownloadOutcome::of(&task.response);
                 if download_failed {
                     throttle_after_network_error(manager, &mut has_network_error);
                 }
 
                 // Handle retry-able errors.
-                if download_failed
-                    || task
-                        .response
-                        .metadata
-                        .as_ref()
-                        .unwrap()
-                        .response
-                        .status_code
-                        > 499
-                {
+                if retry {
                     let err = task
                         .response
                         .fail
@@ -530,7 +521,7 @@ fn run_tasks_erased(
                     if cb.has_on_package_manifest_error {
                         (cb.on_package_manifest_error)(extract_ctx, name, err, &task.url_buf);
                     } else {
-                        let fmt_args = (err.name(), name);
+                        let fmt_args = (DownloadFailure(err.name(), &task.response), name);
                         if manager.is_network_task_required(task.task_id) {
                             bun_ast::add_error_pretty!(
                                 manager.log_mut(),
@@ -746,24 +737,15 @@ fn run_tasks_erased(
                 // NetworkTask back here to be retried like any failed download.
                 debug_assert!(!task.streaming_committed);
 
-                let download_failed = match &task.response.metadata {
-                    None => true,
-                    Some(m) => task.response.fail.is_some() && m.response.status_code < 400,
-                };
+                let DownloadOutcome {
+                    failed: download_failed,
+                    retry,
+                } = DownloadOutcome::of(&task.response);
                 if download_failed {
                     throttle_after_network_error(manager, &mut has_network_error);
                 }
 
-                if download_failed
-                    || task
-                        .response
-                        .metadata
-                        .as_ref()
-                        .unwrap()
-                        .response
-                        .status_code
-                        > 499
-                {
+                if retry {
                     let err = task
                         .response
                         .fail
@@ -852,7 +834,7 @@ fn run_tasks_erased(
                             None,
                             bun_ast::Loc::EMPTY,
                             "{} downloading tarball <b>{}@{}<r>",
-                            err.name(),
+                            DownloadFailure(err.name(), &task.response),
                             bstr::BStr::new(extract.name.slice()),
                             extract
                                 .resolution
@@ -864,7 +846,7 @@ fn run_tasks_erased(
                             None,
                             bun_ast::Loc::EMPTY,
                             "{} downloading tarball <b>{}@{}<r>",
-                            err.name(),
+                            DownloadFailure(err.name(), &task.response),
                             bstr::BStr::new(extract.name.slice()),
                             extract
                                 .resolution
@@ -1714,6 +1696,50 @@ fn run_tasks_erased(
     }
 
     Ok(())
+}
+
+/// `failed`: the connection died, before a response or under a 2xx/3xx one
+/// (an error status keeps its own handling). `retry`: that, or a 5xx from the
+/// registry or from a proxy answering CONNECT. A proxy's 4xx (407, 403) would
+/// be the answer to the retry too.
+struct DownloadOutcome {
+    failed: bool,
+    retry: bool,
+}
+
+impl DownloadOutcome {
+    fn of(response: &http::HTTPClientResult<'static>) -> Self {
+        let proxy_status = response
+            .proxy_connect_response
+            .as_ref()
+            .map(|reply| reply.response.status_code);
+        let failed = match &response.metadata {
+            None => proxy_status.is_none(),
+            Some(m) => response.fail.is_some() && m.response.status_code < 400,
+        };
+        let status = response
+            .metadata
+            .as_ref()
+            .map(|m| m.response.status_code)
+            .or(proxy_status);
+        Self {
+            failed,
+            retry: failed || status.is_some_and(|status| status > 499),
+        }
+    }
+}
+
+/// `ProxyConnectFailed (407)`: a refused CONNECT is reported with the proxy's status.
+struct DownloadFailure<'a>(&'static str, &'a http::HTTPClientResult<'static>);
+
+impl core::fmt::Display for DownloadFailure<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(self.0)?;
+        match &self.1.proxy_connect_response {
+            Some(reply) => write!(f, " ({})", reply.response.status_code),
+            None => Ok(()),
+        }
+    }
 }
 
 #[inline]

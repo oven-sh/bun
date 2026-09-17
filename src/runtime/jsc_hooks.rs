@@ -473,7 +473,6 @@ unsafe fn init_runtime_state(
                 unsafe {
                     let t = &mut (*vm).transpiler;
                     t.options.emit_dce_annotations = false;
-                    t.resolver.store_fd = opts.store_fd;
                     t.resolver.prefer_module_field = false;
                     // Propagate `--preserve-symlinks`
                     // from CLI args to the resolver so symlinked node_modules
@@ -1315,6 +1314,16 @@ unsafe fn timer_remove(
     unsafe { &mut (*state).timer }.remove(t);
 }
 
+/// For `AbortSignal::Timeout`, which turns its delay into a deadline below this tier.
+fn timer_min_delay_ms() -> u32 {
+    let all = timer_all();
+    if all.is_null() {
+        return 0;
+    }
+    // SAFETY: `all` is the live per-thread `All`; leaf hook, field read only.
+    unsafe { (*all).fake_timers.min_delay_ms() }
+}
+
 /// `Node.fs.NodeFS{ .vm = … }` lazy creation.
 /// The low tier stores the result in `vm.node_fs: Option<*mut c_void>`.
 ///
@@ -1516,6 +1525,7 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     print_exception,
     timer_insert,
     timer_remove,
+    timer_min_delay_ms,
     default_client_ssl_ctx,
     ssl_ctx_cache_get_or_create,
     create_node_fs,

@@ -196,6 +196,10 @@ static bool deliverToOnError(Zig::GlobalObject* globalObject, JSModuleGraph* gra
             return true;
         auto* thrown = scope.exception();
         (void)scope.tryClearException();
+        // What the handler lets escape is its own error, wherever inside it that was thrown: it goes on
+        // to the handler's owner and does not come back here (an onError that re-enters its graph with
+        // `run()` and throws there would otherwise be handed its own throw, without end).
+        thrown->setAsyncContext(vm, globalObject->m_asyncContextData.get()->getInternalField(0));
         Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, thrown);
     }
     return true;

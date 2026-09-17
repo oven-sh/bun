@@ -1628,6 +1628,51 @@ describe("Bun.ModuleGraph — an error belongs to the context it happens in, wha
     expect(exitCode).toBe(0);
   });
 
+  test("what escapes onError goes on to the handler's owner once, even thrown inside the graph's own run()", async () => {
+    using d = tempDir("module-graph-onerror-escapes", {
+      "tenant.mjs": `
+        export const throwsLater = message => { setTimeout(() => { throw new Error(message); }, 0); };
+        // A graph this graph's code makes, whose handler re-enters it and throws there.
+        export const makesAGraph = file => {
+          const inner = new Bun.ModuleGraph({ onError: error => { told.push("inner onError: " + error.message); inner.run(() => { throw new Error("thrown in inner.run() by inner's onError"); }); } });
+          return inner.import(file).then(module => inner.run(() => module.throwsLater("the inner graph's fault")));
+        };
+      `,
+      "main.mjs": `
+        const told = [];
+        process.on("uncaughtException", error => told.push("host: " + error.message));
+        const until = async condition => { while (!condition()) await new Promise(resolve => setImmediate(resolve)); };
+        const settle = async () => { for (let turn = 0; turn < 20; turn++) await new Promise(resolve => setImmediate(resolve)); };
+        const out = {};
+        // A graph the host made: its handler re-enters the graph with run() and throws there, every time.
+        const graph = new Bun.ModuleGraph({ onError: error => { told.push("onError: " + error.message); graph.run(() => { throw new Error("thrown in run() by onError"); }); } });
+        const app = await graph.import(import.meta.dir + "/tenant.mjs");
+        graph.run(() => app.throwsLater("the graph's fault"));
+        await until(() => told.length >= 2);
+        await settle();
+        out["a graph the host made"] = told.splice(0);
+        // The same one level down: the outer graph is the inner one's maker.
+        const outer = new Bun.ModuleGraph({ globals: { told }, onError: error => told.push("outer onError: " + error.message) });
+        const made = await outer.import(import.meta.dir + "/tenant.mjs?outer");
+        await outer.run(() => made.makesAGraph(import.meta.dir + "/tenant.mjs?inner"));
+        await until(() => told.length >= 2);
+        await settle();
+        out["a graph a graph made"] = told.splice(0);
+        console.log(JSON.stringify(out, null, 1));
+        process.exit(0);
+      `,
+    });
+    const { stdout, exitCode } = await runBun(["main.mjs"], { cwd: String(d) });
+    expect(JSON.parse(stdout)).toEqual({
+      "a graph the host made": ["onError: the graph's fault", "host: thrown in run() by onError"],
+      "a graph a graph made": [
+        "inner onError: the inner graph's fault",
+        "outer onError: thrown in inner.run() by inner's onError",
+      ],
+    });
+    expect(exitCode).toBe(0);
+  });
+
   test("the process's own uncaughtException and unhandledRejection handlers run in the host's context, whichever graph failed", async () => {
     using d = tempDir("module-graph-process-handlers-context", {
       "tenant.mjs": `

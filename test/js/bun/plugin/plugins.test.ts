@@ -1064,3 +1064,71 @@ it("object loader: an error thrown by a getter on the exports object rejects the
   });
   expect(() => require("object-loader-throwing-esmodule")).toThrow(boom);
 });
+
+// https://github.com/oven-sh/bun/issues/43025
+it.concurrent("a literal require() works when onResolve answers with a custom namespace from a preload", async () => {
+  using dir = tempDir("plugin-onresolve-namespace-preload", {
+    "preload.js": `
+      Bun.plugin({
+        name: "host-modules",
+        setup(build) {
+          build.onResolve({ filter: /^host-package\\/other\\.mod$/ }, args => ({ path: args.path, namespace: "host" }));
+          build.onResolve({ filter: /^host-package\\/throws\\.mod$/ }, () => {
+            throw new Error("onResolve rejected it");
+          });
+          build.onLoad({ filter: /.*/, namespace: "host" }, args => ({
+            exports: { value: "from " + args.path },
+            loader: "object",
+          }));
+        },
+      });
+    `,
+    "entry.cjs": `
+      function attempt(fn) {
+        try {
+          return fn();
+        } catch (error) {
+          return "threw: " + error.message;
+        }
+      }
+      console.log(
+        JSON.stringify({
+          literalRequire: attempt(() => require("host-package/other.mod").value),
+          requireResolve: attempt(() => require.resolve("host-package/other.mod")),
+          throwingRequire: attempt(() => require("host-package/throws.mod").value),
+        }),
+      );
+    `,
+    "entry.mjs": `
+      import { value } from "host-package/other.mod";
+      console.log(JSON.stringify({ staticImport: value }));
+    `,
+  });
+
+  await using cjs = Bun.spawn({
+    cmd: [bunExe(), "--preload", "./preload.js", "entry.cjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [cjsStdout, cjsStderr, cjsExitCode] = await Promise.all([cjs.stdout.text(), cjs.stderr.text(), cjs.exited]);
+  expect(cjsStdout.trim() ? JSON.parse(cjsStdout) : { crashed: cjsStderr }).toEqual({
+    literalRequire: "from host-package/other.mod",
+    requireResolve: "host:host-package/other.mod",
+    // The plugin runs when require() is called, so its error is catchable there.
+    throwingRequire: "threw: onResolve rejected it",
+  });
+  expect(cjsExitCode).toBe(0);
+
+  await using esm = Bun.spawn({
+    cmd: [bunExe(), "--preload", "./preload.js", "entry.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [esmStdout, esmStderr, esmExitCode] = await Promise.all([esm.stdout.text(), esm.stderr.text(), esm.exited]);
+  expect(esmStdout.trim() ? JSON.parse(esmStdout) : { crashed: esmStderr }).toEqual({
+    staticImport: "from host-package/other.mod",
+  });
+  expect(esmExitCode).toBe(0);
+});

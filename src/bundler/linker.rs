@@ -431,8 +431,13 @@ impl Linker {
                             continue;
                         }
 
-                        // Resolve dynamic imports lazily for perf
-                        if import_record.kind == ImportKind::Dynamic {
+                        // Resolve dynamic imports lazily for perf. A require()
+                        // is resolved at call time too: an `onResolve` answer
+                        // with a custom namespace prints as `ns:path`, and the
+                        // runtime resolver does not accept that key.
+                        if import_record.kind == ImportKind::Dynamic
+                            || import_record.kind.is_common_js()
+                        {
                             continue;
                         }
                     }

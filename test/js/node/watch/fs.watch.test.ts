@@ -633,16 +633,19 @@ describe("fs.watch", () => {
   async function recursiveWatchSteps(root: string, steps: [act: () => void, until: string][]) {
     const events: string[] = [];
     let onEvent = (_: string) => {};
+    let onError = (_: Error) => {};
     const watcher = fs.watch(root, { recursive: true }, (eventType, filename) => {
       events.push(`${eventType}:${filename}`);
       onEvent(String(filename));
     });
+    watcher.on("error", err => onError(err));
     try {
       for (const [act, until] of steps) {
-        const { promise, resolve } = Promise.withResolvers<void>();
+        const { promise, resolve, reject } = Promise.withResolvers<void>();
         onEvent = filename => {
           if (filename === until) resolve();
         };
+        onError = reject;
         act();
         await promise;
       }
@@ -724,6 +727,89 @@ describe("fs.watch", () => {
       "change:plain.txt",
       "rename:c.txt",
     ]);
+  });
+
+  test.skipIf(!isLinux)("recursive watch drops a symlink entry that a rename replaced or carried away", async () => {
+    using dir = tempDir("fs-watch-recursive-symlink-replaced", {
+      "real": { "target.txt": "x", "other.txt": "x" },
+      "watched": { "plain.txt": "x", "old": {}, "file.txt": "x" },
+    });
+    const base = String(dir);
+    const target = path.join(base, "real", "target.txt");
+    const plain = path.join(base, "watched", "plain.txt");
+    fs.symlinkSync(target, path.join(base, "watched", "old", "link"));
+    fs.symlinkSync(target, path.join(base, "watched", "swap"));
+    const events = await recursiveWatchSteps(path.join(base, "watched"), [
+      // A directory with a link inside is renamed: the link is known under its
+      // new path only.
+      [() => fs.renameSync(path.join(base, "watched", "old"), path.join(base, "watched", "new")), "new"],
+      [() => fs.appendFileSync(plain, "y"), "plain.txt"],
+      [() => fs.appendFileSync(target, "y"), "new/link"],
+      // A regular file is renamed over a link: the name is no longer a link.
+      [() => fs.renameSync(path.join(base, "watched", "file.txt"), path.join(base, "watched", "swap")), "swap"],
+      [() => fs.appendFileSync(plain, "y"), "plain.txt"],
+      [() => fs.appendFileSync(target, "y"), "new/link"],
+    ]);
+    expect(events).toEqual([
+      "rename:old",
+      "rename:new",
+      "rename:new/link",
+      // IN_MOVE_SELF on the moved directory's own watch.
+      "rename:new",
+      "change:plain.txt",
+      // Both links still point at the target.
+      "rename:swap",
+      "rename:new/link",
+      "rename:file.txt",
+      "rename:swap",
+      "change:plain.txt",
+      "rename:new/link",
+    ]);
+  });
+
+  test.skipIf(!isLinux)(
+    "recursive watch follows a symlink entry again after its target is saved by rename",
+    async () => {
+      using dir = tempDir("fs-watch-recursive-symlink-atomic-save", {
+        "real": { "target.txt": "x" },
+        "watched": { "plain.txt": "x" },
+      });
+      const base = String(dir);
+      const target = path.join(base, "real", "target.txt");
+      const plain = path.join(base, "watched", "plain.txt");
+      fs.symlinkSync(target, path.join(base, "watched", "link"));
+      const events = await recursiveWatchSteps(path.join(base, "watched"), [
+        // The watch is on the old inode. Its retirement puts a watch on the new one.
+        [
+          () => {
+            fs.writeFileSync(path.join(base, "real", "target.txt.tmp"), "y");
+            fs.renameSync(path.join(base, "real", "target.txt.tmp"), target);
+          },
+          "link",
+        ],
+        [() => fs.appendFileSync(plain, "y"), "plain.txt"],
+        [() => fs.appendFileSync(target, "y"), "link"],
+      ]);
+      expect(events.slice(-2)).toEqual(["change:plain.txt", "rename:link"]);
+    },
+  );
+
+  test.skipIf(!isLinux)("recursive watch ignores a symlink entry to a device", async () => {
+    // A watch on /dev/stdout would report every write the handler makes.
+    using dir = tempDir("fs-watch-recursive-symlink-device", { "watched": { "plain.txt": "x" } });
+    const base = String(dir);
+    const plain = path.join(base, "watched", "plain.txt");
+    fs.symlinkSync("/dev/null", path.join(base, "watched", "null"));
+    const events = await recursiveWatchSteps(path.join(base, "watched"), [
+      [
+        () => {
+          fs.writeFileSync("/dev/null", "y");
+          fs.appendFileSync(plain, "y");
+        },
+        "plain.txt",
+      ],
+    ]);
+    expect(events).toEqual(["change:plain.txt"]);
   });
 
   test.skipIf(!isLinux)("recursive watch reports a directory reached through a symlink under both names", async () => {

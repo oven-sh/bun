@@ -792,6 +792,8 @@ impl Linux {
     /// Add a single inotify watch and record ownership. Caller holds `manager.mutex`.
     /// `is_symlink`: `abs_path` is a symlink entry of a recursive tree. The
     /// watch lands on its target, which can be a file or a directory anywhere.
+    /// The caller has dropped any owner the same name held before (see
+    /// [`remove_link_owner`](Self::remove_link_owner)).
     fn add_one(
         manager: &'static PathWatcherManager,
         watcher: &mut PathWatcher,
@@ -803,6 +805,17 @@ impl Linux {
         let mask: u32 = if watcher.is_file && subpath.is_empty() {
             inotify_masks::WATCH_FILE_MASK
         } else if is_symlink {
+            // Only a regular file or a directory. A link to a pipe or a tty
+            // (`access.log -> /dev/stdout`) would report every write the
+            // handler itself makes, and never stop. A link that does not
+            // resolve, or loops, has nothing to watch.
+            let Ok(st) = sys::stat(abs_path) else {
+                return Ok(());
+            };
+            let mode = st.st_mode as u32;
+            if !sys::posix::s_isreg(mode) && !sys::posix::s_isdir(mode) {
+                return Ok(());
+            }
             inotify_masks::WATCH_LINK_MASK
         } else {
             inotify_masks::WATCH_DIR_MASK
@@ -813,22 +826,20 @@ impl Linux {
         if rc < 0 {
             let err = sys::Error::from_code_int(sys::last_errno(), Tag::watch);
             // ENOENT/ENOTDIR during a recursive walk just means we raced; skip.
-            // ELOOP: a symlink entry that points at itself; nothing to watch.
-            if !subpath.is_empty() && matches!(err.get_errno(), E::ENOENT | E::ENOTDIR | E::ELOOP) {
+            // A link target the process may not read is outside the tree the
+            // caller asked for: skip it too, instead of an 'error' on a watcher
+            // that worked before links were followed.
+            let skip = match err.get_errno() {
+                E::ENOENT | E::ENOTDIR | E::ELOOP => true,
+                E::EACCES | E::EPERM => is_symlink,
+                _ => false,
+            };
+            if !subpath.is_empty() && skip {
                 return Ok(());
             }
             return Err(err.with_path(abs_path.as_bytes()));
         }
         let wd: i32 = rc;
-        // The link was replaced (`ln -sfn` renames a new link over the old
-        // name, with no IN_DELETE for it): drop the owner on the old target.
-        if is_symlink {
-            if let Some(&old_wd) = watcher.platform.link_wds.get(subpath) {
-                if old_wd != wd {
-                    Linux::remove_link_owner(manager, watcher, old_wd, subpath);
-                }
-            }
-        }
         // SAFETY: caller holds manager.mutex; exclusive access to `wd_map`.
         let owners = unsafe { (*plat).wd_map.entry(wd).or_default() };
         // This wd may already have this watcher as an owner. A watcher holds at
@@ -886,26 +897,25 @@ impl Linux {
     /// deleted, moved away, or replaced. Node closes the link's watcher when the
     /// link is gone, so its name is not reported again. The wd is released when
     /// no owner is left. Caller holds `manager.mutex`.
+    /// Returns the index the owner had in the wd's list: the dispatch loop walks
+    /// that list by index and has to step back when an entry before its
+    /// position goes away.
     fn remove_link_owner(
         manager: &'static PathWatcherManager,
         watcher: &mut PathWatcher,
         wd: i32,
         subpath: &[u8],
-    ) {
+    ) -> Option<usize> {
         let plat: *mut Linux = manager.platform.get();
         watcher.platform.link_wds.swap_remove(subpath);
         // SAFETY: caller holds manager.mutex; exclusive access to `wd_map`.
         let wd_map = unsafe { &mut (*plat).wd_map };
-        let Some(owners) = wd_map.get_mut(&wd) else {
-            return;
-        };
-        let Some(i) = owners.iter().position(|o| {
+        let owners = wd_map.get_mut(&wd)?;
+        let i = owners.iter().position(|o| {
             core::ptr::eq(o.watcher, watcher)
                 && o.is_symlink
                 && strings::eql(o.subpath.as_bytes(), subpath)
-        }) else {
-            return;
-        };
+        })?;
         owners.remove(i);
         if !owners.iter().any(|o| core::ptr::eq(o.watcher, watcher)) {
             let wds = &mut watcher.platform.wds;
@@ -917,6 +927,7 @@ impl Linux {
             wd_map.remove(&wd);
             sys::linux::inotify_rm_watch(manager.inotify_fd().native(), wd);
         }
+        Some(i)
     }
 
     /// Best-effort recursive directory walk. inotify watches are per-directory (events
@@ -1071,6 +1082,10 @@ impl Linux {
                 if ev.mask & IN::IGNORED != 0 {
                     // SAFETY: holding manager.mutex; exclusive access to `wd_map`.
                     let wd_map = unsafe { &mut (*plat).wd_map };
+                    // Symlink entries whose target inode is gone. The link itself
+                    // may still be there and resolve again (an editor saved the
+                    // target by a rename over it), so each is watched again below.
+                    let mut relink: Vec<(*mut PathWatcher, ZBox)> = Vec::new();
                     if let Some(owners) = wd_map.get_mut(&wd) {
                         for o in owners.drain(..) {
                             // SAFETY: o.watcher live under manager.mutex; shared
@@ -1094,10 +1109,30 @@ impl Linux {
                                 }
                                 if o.is_symlink {
                                     platform.link_wds.swap_remove(o.subpath.as_bytes());
+                                    relink.push((o.watcher, o.subpath));
                                 }
                             }
                         }
                         wd_map.remove(&wd);
+                    }
+                    for (w, subpath) in relink {
+                        let mut abs_buf = path::path_buffer_pool::get();
+                        let mut abs_spill: Vec<u8> = Vec::new();
+                        // SAFETY: w live under manager.mutex; the `&mut` is scoped
+                        // to the call, and `emit_error` takes `&self`.
+                        unsafe {
+                            let link_abs = join_z_buf_spill::<platform::Posix>(
+                                abs_buf.as_mut_slice(),
+                                &mut abs_spill,
+                                &[(*w).path.as_bytes(), subpath.as_bytes()],
+                            );
+                            if let Err(err) =
+                                Linux::add_one(manager, &mut *w, link_abs, subpath.as_bytes(), true)
+                            {
+                                (*w).emit_error(&err, false);
+                                let _ = handle_oom(touched.get_or_put(w));
+                            }
+                        }
                     }
                     continue;
                 }
@@ -1233,11 +1268,22 @@ impl Linux {
                         continue;
                     }
 
-                    // Recursive: a symlink entry is gone (a deleted or moved symlink
-                    // carries no IN_ISDIR even when it points at a directory).
-                    if !is_dir_child && ev.mask & (IN::DELETE | IN::MOVED_FROM) != 0 {
+                    // Recursive: a symlink entry is gone. A deleted or moved symlink
+                    // carries no IN_ISDIR even when it points at a directory. A
+                    // directory moved away takes the links under it along.
+                    if ev.mask & (IN::DELETE | IN::MOVED_FROM) != 0 {
                         // SAFETY: owner_watcher live under manager.mutex; shared read.
-                        if unsafe { (*owner_watcher).platform.link_wds.contains_key(rel) } {
+                        let link_wds = unsafe { &(*owner_watcher).platform.link_wds };
+                        if is_dir_child {
+                            for link in link_wds.keys() {
+                                if link.len() > rel.len()
+                                    && link.starts_with(rel)
+                                    && link[rel.len()] == b'/'
+                                {
+                                    dead_links.push((owner_watcher, link.clone()));
+                                }
+                            }
+                        } else if link_wds.contains_key(rel) {
                             dead_links.push((owner_watcher, Box::from(rel)));
                         }
                         continue;
@@ -1247,6 +1293,22 @@ impl Linux {
                     // directory or a symlink needs a watch of its own.
                     if ev.mask & (IN::CREATE | IN::MOVED_TO) == 0 {
                         continue;
+                    }
+                    // The name was a symlink entry: it was renamed over (`ln -sfn`,
+                    // `mv file link`), with no IN_DELETE for the old link. Drop the
+                    // owner on the old target first, whatever the new entry is.
+                    // SAFETY: owner_watcher live under manager.mutex; the `&mut` is
+                    // scoped to the call.
+                    let old_link_wd =
+                        unsafe { (*owner_watcher).platform.link_wds.get(rel).copied() };
+                    if let Some(old_wd) = old_link_wd {
+                        let removed = unsafe {
+                            Linux::remove_link_owner(manager, &mut *owner_watcher, old_wd, rel)
+                        };
+                        // The owner list being walked lost an entry before this one.
+                        if old_wd == wd && removed.is_some_and(|i| i < oi) {
+                            oi -= 1;
+                        }
                     }
                     let mut abs_buf = path::path_buffer_pool::get();
                     let mut abs_spill: Vec<u8> = Vec::new();

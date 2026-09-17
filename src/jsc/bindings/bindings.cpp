@@ -2617,28 +2617,6 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createValueNotJS(JSC::JSGlobalObje
     return headers;
 }
 
-JSC::EncodedJSValue WebCore__FetchHeaders__createValue(JSC::JSGlobalObject* arg0, StringPointer* arg1, StringPointer* arg2, const EncodedSlice* arg3, uint32_t count)
-{
-    auto throwScope = DECLARE_THROW_SCOPE(arg0->vm());
-    Vector<KeyValuePair<String, String>> pairs;
-    pairs.reserveCapacity(count);
-    EncodedSlice buf = *arg3;
-    for (uint32_t i = 0; i < count; i++) {
-        WTF::String name = Zig::toStringCopy(buf, arg1[i]);
-        WTF::String value = Zig::toStringCopy(buf, arg2[i]);
-        pairs.unsafeAppendWithoutCapacityCheck(KeyValuePair<String, String>(name, value));
-    }
-
-    Ref<WebCore::FetchHeaders> headers = WebCore::FetchHeaders::create();
-    WebCore::propagateException(*arg0, throwScope, headers->fill(WebCore::FetchHeaders::Init(WTF::move(pairs))));
-
-    JSValue value = WebCore::toJSNewlyCreated(arg0, static_cast<Zig::GlobalObject*>(arg0), WTF::move(headers));
-
-    JSFetchHeaders* fetchHeaders = uncheckedDowncast<JSFetchHeaders>(value);
-    fetchHeaders->computeMemoryCost();
-    return JSC::JSValue::encode(fetchHeaders);
-}
-
 void WebCore__FetchHeaders__get_(WebCore::FetchHeaders* headers, const EncodedSlice* arg1, EncodedSlice* arg2, JSC::JSGlobalObject* global)
 {
     auto throwScope = DECLARE_THROW_SCOPE(global->vm());
@@ -2821,7 +2799,17 @@ static JSC::EncodedJSValue systemErrorToErrorInstance(const SystemError* arg0, J
     }
 
     if (err.syscall.tag != BunStringTag::Empty) {
-        JSC::JSValue syscall = Bun::toJS(globalObject, err.syscall);
+        // bun_sys::Error tags are static literals; "write" and "close" are common strings.
+        JSC::JSValue syscall;
+        auto staticSyscall = err.syscall.tag == BunStringTag::StaticEncodedSlice && !Zig::isTaggedUTF16Ptr(err.syscall.impl.encoded.ptr)
+            ? std::span<const Latin1Character> { Zig::untag(err.syscall.impl.encoded.ptr), err.syscall.impl.encoded.len }
+            : std::span<const Latin1Character> {};
+        if (equalSpans(staticSyscall, "write"_span8))
+            syscall = Bun::commonStrings(vm).writeString();
+        else if (equalSpans(staticSyscall, "close"_span8))
+            syscall = Bun::commonStrings(vm).closeString();
+        else
+            syscall = Bun::toJS(globalObject, err.syscall);
         if (scope.exception()) {
             scope.clearException();
         } else {
@@ -3156,11 +3144,7 @@ void JSC__JSValue___then(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1
 void JSC__JSGlobalObject__deleteModuleRegistryEntry(JSC::JSGlobalObject* global, const EncodedSlice* arg1)
 {
     const JSC::Identifier identifier = Zig::toIdentifier(*arg1, global);
-    auto* moduleLoader = global->moduleLoader();
-    // JSModuleLoader::visitChildrenImpl iterates these maps on the GC thread
-    // under cellLock(); take the same lock so the removal can't race it.
-    WTF::Locker locker { moduleLoader->cellLock() };
-    moduleLoader->removeEntry(identifier);
+    global->moduleLoader()->removeEntry(identifier); // takes the loader's cellLock itself
 }
 
 void JSC__VM__collectAsync(JSC::VM* vm, bool full)
@@ -3180,6 +3164,11 @@ void JSC__VM__collectAsyncIdle(JSC::VM* vm)
     JSC::GCRequest request(JSC::CollectionScope::Full);
     request.isIdle = true;
     vm->heap.collectAsync(request);
+}
+
+void JSC__VM__setStartupJITDeferralScale(JSC::VM* vm, double scale)
+{
+    vm->setStartupJITDeferralScale(scale);
 }
 
 size_t JSC__VM__heapSize(JSC::VM* arg0)
@@ -3620,12 +3609,23 @@ CPP_DECL uint8_t JSC__JSValue__pinArrayBuffer(JSC::EncodedJSValue v)
 // Only for a value `pinStorage` answered `Pinned` for: that buffer still exists (pinned buffers are not detached).
 CPP_DECL void JSC__JSValue__unpinArrayBuffer(JSC::EncodedJSValue v)
 {
+    // Reached from finalizers during GC sweep, where classInfo() (and so any
+    // dynamicDowncast) is forbidden; dispatch on JSType like JSC::Weak<T>::get().
     auto value = JSC::JSValue::decode(v);
+    if (!value.isCell())
+        return;
+    JSC::JSCell* cell = value.asCell();
+    JSC::JSType type = cell->type();
     JSC::ArrayBuffer* buf = nullptr;
-    if (auto* jb = dynamicDowncast<JSC::JSArrayBuffer>(value))
-        buf = jb->impl();
-    else if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value); view && view->hasArrayBuffer())
-        buf = view->possiblySharedBuffer();
+    if (type == JSC::ArrayBufferType)
+        buf = static_cast<JSC::JSArrayBuffer*>(cell)->impl();
+    else if (type == JSC::DataViewType)
+        buf = static_cast<JSC::JSDataView*>(cell)->possiblySharedBuffer();
+    else if (JSC::isTypedArrayType(type)) {
+        auto* view = static_cast<JSC::JSArrayBufferView*>(cell);
+        if (JSC::isWastefulTypedArray(view->mode()))
+            buf = view->butterfly()->indexingHeader()->arrayBuffer();
+    }
     if (buf && !buf->isShared())
         buf->unpin();
 }
@@ -5049,11 +5049,7 @@ void JSC__VM__deleteAllCode(JSC::VM* arg1, JSC::JSGlobalObject* globalObject)
     JSC::JSLockHolder locker(globalObject->vm());
 
     arg1->drainMicrotasks();
-    {
-        auto* moduleLoader = globalObject->moduleLoader();
-        WTF::Locker cellLocker { moduleLoader->cellLock() };
-        moduleLoader->clearAll();
-    }
+    globalObject->moduleLoader()->clearAll(); // takes the loader's cellLock itself
     arg1->deleteAllCode(JSC::DeleteAllCodeEffort::PreventCollectionAndDeleteAllCode);
     arg1->heap.reportAbandonedObjectGraph();
 }
@@ -5082,12 +5078,6 @@ bool JSC__VM__isEntered(JSC::VM* arg0)
 extern "C" JSC::EncodedJSValue JSC__VM__terminationException(JSC::VM* vm)
 {
     return JSC::JSValue::encode(JSC::JSValue(vm->ensureTerminationException()));
-}
-
-[[ZIG_EXPORT(nothrow)]]
-bool JSC__VM__hasTerminationRequest(JSC::VM* vm)
-{
-    return vm->hasTerminationRequest();
 }
 
 // The one crossing from the loop-level stop into the exception currency: a nested wait/drain inside a

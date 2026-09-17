@@ -38,6 +38,8 @@ pub struct InternalState<'a> {
     pub(crate) original_request_body: HTTPRequestBody<'a>,
     pub(crate) request_sent_len: usize,
     pub(crate) fail: Option<Error>,
+    /// `errno` of the failed `connect(2)` when `fail` is `ConnectionRefused`; 0 otherwise.
+    pub(crate) connect_errno: i32,
     /// Raw `getaddrinfo(3)` return code when `fail` is `DNSResolveFailed`;
     /// 0 otherwise. The JS side turns it into the resolver error
     /// (`ENOTFOUND`, ...) with `syscall`/`hostname`, matching `node:dns`.
@@ -117,6 +119,7 @@ impl Default for InternalState<'_> {
             original_request_body: HTTPRequestBody::Bytes(b""),
             request_sent_len: 0,
             fail: None,
+            connect_errno: 0,
             dns_error: 0,
             dns_hostname: None,
             request_stage: HTTPStage::Pending,
@@ -210,8 +213,7 @@ impl<'a> InternalState<'a> {
     /// close-delimited response (no Content-Length, no Transfer-Encoding).
     pub(crate) fn is_body_complete_on_close(&self) -> bool {
         if self.is_chunked_encoding() {
-            // 4 = CHUNKED_IN_TRAILERS_LINE_HEAD, 5 = CHUNKED_IN_TRAILERS_LINE_MIDDLE
-            return matches!(self.chunked_decoder._state, 4 | 5);
+            return bun_picohttp::phr_decode_chunked_is_in_trailers(&self.chunked_decoder) != 0;
         }
         self.content_length.is_none() && self.response_stage == HTTPStage::Body
     }

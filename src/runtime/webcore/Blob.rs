@@ -28,23 +28,6 @@ use crate::webcore::{self, Lifetime, ReadableStream, Request, Response, streams}
 
 bun_core::define_scoped_log!(debug, Blob, visible);
 
-/// `bunVM().transpiler.env.getHttpProxy(true, null, null)?.href` as an owned
-/// buffer. Owned (not borrowed) because the env loader's `URL<'_>` ties the
-/// `href` slice to a `&mut Loader` borrow that we cannot keep open across the
-/// S3 request setup.
-#[inline]
-fn http_proxy_href(global: &JSGlobalObject) -> Option<Vec<u8>> {
-    // `Transpiler::env_mut` is the safe accessor for the process-singleton
-    // dotenv loader (initialised before any JS runs).
-    global
-        .bun_vm()
-        .as_mut()
-        .transpiler
-        .env_mut()
-        .get_http_proxy(true, None, None)
-        .map(|p| p.href.to_vec())
-}
-
 #[path = "blob/Store.rs"]
 pub mod store;
 use crate::node::types::{PathLikeExt as _, PathOrFdExt as _};
@@ -290,7 +273,6 @@ pub trait BlobExt {
     fn create(bytes_: &[u8], global_this: &JSGlobalObject, was_string: bool) -> Blob
     where
         Self: Sized;
-    fn transfer(&self);
     fn shared_view_raw(&self) -> *mut [u8];
     fn set_is_ascii_flag(&self, is_all_ascii: bool);
     /// # Safety
@@ -617,7 +599,6 @@ impl BlobExt for Blob {
                 poll: bun_io::KeepAlive::default(),
             });
             t.poll.ref_(bun_io::js_vm_ctx());
-            let proxy = http_proxy_href(global);
             // reshaped for borrowck — `heap::alloc(t)` moves `t`, so clone the
             // credentials ref out and stash `path` as a raw `*const [u8]`
             // whose backing store is kept alive by the same `t.blob` now
@@ -651,18 +632,10 @@ impl BlobExt for Blob {
                     len,
                     Task::<H>::cb,
                     t_ptr,
-                    proxy.as_deref(),
                     payer,
                 )?;
             } else {
-                crate::webcore::__s3_client::download(
-                    &cred,
-                    path,
-                    Task::<H>::cb,
-                    t_ptr,
-                    proxy.as_deref(),
-                    payer,
-                )?;
+                crate::webcore::__s3_client::download(&cred, path, Task::<H>::cb, t_ptr, payer)?;
             }
             return Ok(());
         }
@@ -1394,12 +1367,6 @@ impl BlobExt for Blob {
             };
 
             let path = s3.path();
-            // SAFETY: bun_vm() never returns null for a Bun-owned global; `env`
-            // is a live `*mut Loader` owned by the transpiler.
-            let proxy = unsafe {
-                (*global_this.bun_vm().as_mut().transpiler.env).get_http_proxy(true, None, None)
-            };
-            let proxy_url = proxy.map(|p| p.href);
 
             // When no JS overrides were supplied, hand the store's *base*
             // credentials to the upload.
@@ -1420,7 +1387,7 @@ impl BlobExt for Blob {
                 // backing storage is owned by `aws_options` which outlives this call.
                 aws_options.content_disposition.as_deref(),
                 aws_options.content_encoding.as_deref(),
-                proxy_url,
+                None,
                 aws_options.request_payer,
                 None,
                 core::ptr::null_mut(),
@@ -1566,82 +1533,15 @@ impl BlobExt for Blob {
             }
         };
 
-        // `pipe_stream` takes its own refs.
-        if let Some(promise) =
-            // SAFETY: sole owner so far; `&mut` scoped to the call.
-            unsafe { (*file_sink.as_ptr()).pipe_stream(&readable_stream, global_this) }
-        {
-            return Ok(promise);
-        }
-
-        let assignment_result: JSValue = webcore::file_sink::JSSink::assign_to_stream(
-            global_this,
-            readable_stream.value,
-            file_sink.as_non_null(),
-        );
-
-        assignment_result.ensure_still_alive();
-
-        if let Some(err) = assignment_result.to_error() {
+        // `pipe_stream` takes its own refs; init's +1 drops with `file_sink` on return.
+        let mut readable_stream = readable_stream;
+        // SAFETY: sole owner so far; `&mut` scoped to the call.
+        let result =
+            unsafe { (*file_sink.as_ptr()).pipe_stream(&mut readable_stream, global_this) };
+        if let Some(err) = result.to_error() {
             return Ok(JSPromise::rejected_promise(global_this, err).to_js());
         }
-
-        if !assignment_result.is_empty_or_undefined_or_null() {
-            global_this.bun_vm().as_mut().drain_microtasks();
-
-            assignment_result.ensure_still_alive();
-            // it returns a Promise when it goes through ReadableStreamDefaultReader
-            if let Some(promise) = assignment_result.as_any_promise() {
-                match promise.status() {
-                    jsc::js_promise::Status::Pending => {
-                        let wrapper = bun_core::heap::into_raw(Box::new(FileStreamWrapper {
-                            promise: jsc::JSPromiseStrong::init(global_this),
-                            readable_stream_ref:
-                                webcore::readable_stream::ReadableStreamStrong::init(
-                                    readable_stream,
-                                    global_this,
-                                ),
-                            sink: file_sink,
-                        }));
-                        // SAFETY: wrapper was just produced by heap::alloc; sole owner here.
-                        let promise_value = unsafe { (*wrapper).promise.value() };
-                        assignment_result.then(
-                            global_this,
-                            wrapper.cast::<c_void>(),
-                            on_file_stream_resolve_request_stream_shim,
-                            on_file_stream_reject_request_stream_shim,
-                        );
-                        return Ok(promise_value);
-                    }
-                    jsc::js_promise::Status::Fulfilled => {
-                        let written = file_sink.stream_bytes.get().unwrap_or(0);
-                        readable_stream.done();
-                        return Ok(JSPromise::resolved_promise_value(
-                            global_this,
-                            JSValue::js_number(written as f64),
-                        ));
-                    }
-                    jsc::js_promise::Status::Rejected => {
-                        readable_stream.cancel(global_this)?;
-                        promise.set_handled(global_this.vm());
-                        return Ok(JSPromise::rejected_promise(
-                            global_this,
-                            promise.result(global_this.vm()),
-                        )
-                        .to_js());
-                    }
-                }
-            } else {
-                readable_stream.cancel(global_this)?;
-                return Ok(JSPromise::rejected_promise(global_this, assignment_result).to_js());
-            }
-        }
-        let written = file_sink.stream_bytes.get().unwrap_or(0);
-
-        Ok(JSPromise::resolved_promise_value(
-            global_this,
-            JSValue::js_number(written as f64),
-        ))
+        Ok(result)
     }
 
     fn get_writer(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
@@ -1662,16 +1562,6 @@ impl BlobExt for Blob {
             // content-type writes below don't conflict.
             let s3 = store.data.as_s3();
             let path = s3.path();
-            // SAFETY: `bun_vm()` returns the live per-global VM; `transpiler.env`
-            // is the process-singleton dotenv loader, never null once init'd.
-            let proxy_url: Option<bun_url::URL<'_>> = unsafe {
-                (*global_this.bun_vm().as_mut().transpiler.env).get_http_proxy(true, None, None)
-            };
-            // Copy the href out of the env map before any reentrant JS (the
-            // `get_truthy`/credential getters below) can mutate `process.env`
-            // and free the backing allocation.
-            let proxy_owned: Option<Vec<u8>> = proxy_url.as_ref().map(|p| p.href.to_vec());
-            let proxy = proxy_owned.as_deref();
 
             if has_args && arg0.is_object() {
                 let options = arg0;
@@ -1718,7 +1608,6 @@ impl BlobExt for Blob {
                     self.content_type_or_mime_type(),
                     content_disposition_str.as_ref().map(|s| s.slice()),
                     content_encoding_str.as_ref().map(|s| s.slice()),
-                    proxy,
                     credentials_with_options.storage_class,
                     credentials_with_options.request_payer,
                 );
@@ -1732,7 +1621,6 @@ impl BlobExt for Blob {
                 self.content_type_or_mime_type(),
                 None,
                 None,
-                proxy,
                 None,
                 s3.request_payer,
             );
@@ -2390,17 +2278,6 @@ impl BlobExt for Blob {
 
     fn create(bytes_: &[u8], global_this: &JSGlobalObject, was_string: bool) -> Blob {
         Self::try_create(bytes_, global_this, was_string).expect("oom")
-    }
-
-    // Transferring doesn't change the reference count
-    // It is a move
-    #[inline]
-    fn transfer(&self) {
-        // No `.deref()` here: the receiver already
-        // holds the same `*Store`; leak our +1 into theirs.
-        if let Some(s) = self.take_store() {
-            let _ = s.into_raw();
-        }
     }
 
     // dupe / dupe_with_content_type / to_js: defined once below (top-level impl); duplicates removed (E0592).
@@ -4363,8 +4240,6 @@ fn write_file_with_empty_source_to_destination(
 
             let promise = jsc::JSPromiseStrong::init(ctx);
             let promise_value = promise.value();
-            let proxy_owned = http_proxy_href(ctx);
-            let proxy_url = proxy_owned.as_deref();
             s3_client::upload(
                 &aws_options.credentials,
                 s3.path(),
@@ -4373,7 +4248,6 @@ fn write_file_with_empty_source_to_destination(
                 aws_options.content_disposition.as_deref(),
                 aws_options.content_encoding.as_deref(),
                 aws_options.acl,
-                proxy_url,
                 aws_options.storage_class,
                 aws_options.request_payer,
                 Wrapper::resolve,
@@ -4538,8 +4412,6 @@ pub(crate) fn write_file_with_source_destination(
                 return Ok(JSPromise::rejected_promise_with_caught_exception(ctx, err)?.to_js());
             }
         };
-        let proxy_owned = http_proxy_href(ctx);
-        let proxy_url = proxy_owned.as_deref();
         match &source_store.data {
             store::Data::Bytes(bytes) => {
                 if bytes.len() as usize > S3::MultiPartUploadOptions::MAX_SINGLE_UPLOAD_SIZE {
@@ -4566,7 +4438,7 @@ pub(crate) fn write_file_with_source_destination(
                             destination_blob.content_type_or_mime_type(),
                             aws_options.content_disposition.as_deref(),
                             aws_options.content_encoding.as_deref(),
-                            proxy_url,
+                            None,
                             aws_options.request_payer,
                             None,
                             core::ptr::null_mut(),
@@ -4626,7 +4498,6 @@ pub(crate) fn write_file_with_source_destination(
                         aws_options.content_disposition.as_deref(),
                         aws_options.content_encoding.as_deref(),
                         aws_options.acl,
-                        proxy_url,
                         aws_options.storage_class,
                         aws_options.request_payer,
                         Wrapper::resolve,
@@ -4665,7 +4536,7 @@ pub(crate) fn write_file_with_source_destination(
                         destination_blob.content_type_or_mime_type(),
                         aws_options.content_disposition.as_deref(),
                         aws_options.content_encoding.as_deref(),
-                        proxy_url,
+                        None,
                         aws_options.request_payer,
                         None,
                         core::ptr::null_mut(),
@@ -4931,8 +4802,6 @@ pub(crate) fn write_file_internal(
                                     "ReadableStream has already been used"
                                 )));
                             }
-                            let proxy_owned = http_proxy_href(global_this);
-                            let proxy_url = proxy_owned.as_deref();
                             return Ok(ControlFlow::Break(s3_client::upload_stream(
                                 if options.extra_options.is_some() {
                                     aws_options.credentials.dupe()
@@ -4948,7 +4817,7 @@ pub(crate) fn write_file_internal(
                                 destination_blob.content_type_or_mime_type(),
                                 aws_options.content_disposition.as_deref(),
                                 aws_options.content_encoding.as_deref(),
-                                proxy_url,
+                                None,
                                 aws_options.request_payer,
                                 None,
                                 core::ptr::null_mut(),
@@ -5652,9 +5521,6 @@ impl S3BlobDownloadTask {
         let credentials = s3_store.get_credentials();
         let path = s3_store.path();
 
-        let proxy_owned = http_proxy_href(global_this);
-        let proxy = proxy_owned.as_deref();
-
         fn s3_cb(
             result: crate::webcore::__s3_client::S3DownloadResult<'_>,
             ctx: *mut c_void,
@@ -5678,7 +5544,6 @@ impl S3BlobDownloadTask {
                 len,
                 s3_cb,
                 this.cast::<c_void>(),
-                proxy,
                 s3_store.request_payer,
             )?;
         } else if blob.size.get() == MAX_SIZE {
@@ -5687,7 +5552,6 @@ impl S3BlobDownloadTask {
                 path,
                 s3_cb,
                 this.cast::<c_void>(),
-                proxy,
                 s3_store.request_payer,
             )?;
         } else {
@@ -5700,7 +5564,6 @@ impl S3BlobDownloadTask {
                 Some(len),
                 s3_cb,
                 this.cast::<c_void>(),
-                proxy,
                 s3_store.request_payer,
             )?;
         }
@@ -5719,95 +5582,6 @@ impl Drop for S3BlobDownloadTask {
 // ──────────────────────────────────────────────────────────────────────────
 // doWrite / doUnlink / getExists
 // ──────────────────────────────────────────────────────────────────────────
-
-// ──────────────────────────────────────────────────────────────────────────
-// FileStreamWrapper / pipeReadableStreamToBlob
-// ──────────────────────────────────────────────────────────────────────────
-
-struct FileStreamWrapper {
-    pub(crate) promise: jsc::JSPromiseStrong,
-    pub(crate) readable_stream_ref: webcore::readable_stream::ReadableStreamStrong,
-    pub sink: RefPtr<webcore::FileSink>,
-}
-
-pub(crate) fn on_file_stream_resolve_request_stream(
-    global_this: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    let args = callframe.arguments();
-    // SAFETY: last arg is a promise-ptr created by FileStreamWrapper::new in pipe_readable_stream_to_blob.
-    let mut this: Box<FileStreamWrapper> = unsafe {
-        bun_core::heap::take(args[args.len() - 1].as_number() as usize as *mut FileStreamWrapper)
-    };
-    let strong = core::mem::take(&mut this.readable_stream_ref);
-    if let Some(stream) = strong.get() {
-        stream.done();
-    }
-    let written = this.sink.stream_bytes.get().unwrap_or(0);
-    this.promise
-        .resolve(global_this, JSValue::js_number(written as f64))?;
-    Ok(JSValue::UNDEFINED)
-}
-
-pub(crate) fn on_file_stream_reject_request_stream(
-    global_this: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    let args = callframe.arguments();
-    // Take ownership via Box so Drop runs `sink.deref()`
-    // and frees the wrapper.
-    // SAFETY: the trailing argument is the `FileStreamWrapper*` boxed and passed
-    // through `then()` from the resolve path; we are the sole consumer here.
-    let mut this: Box<FileStreamWrapper> = unsafe {
-        bun_core::heap::take(args[args.len() - 1].as_number() as usize as *mut FileStreamWrapper)
-    };
-    let err = args[0];
-
-    let strong = core::mem::take(&mut this.readable_stream_ref);
-
-    this.promise.reject(global_this, Ok(err))?;
-
-    if let Some(stream) = strong.get() {
-        stream.cancel(global_this)?;
-    }
-    Ok(JSValue::UNDEFINED)
-}
-
-// C-ABI shims for `JSValue::then`. The Rust-side
-// host fns above are `JSHostFnZig`; `then()` wants the raw `JSHostFn` shape.
-// Exported under the legacy symbol names so C++ (`BunPromiseInlines.h`) links
-// the same symbol it does today.
-bun_jsc::jsc_host_abi! {
-    #[unsafe(export_name = "Bun__FileStreamWrapper__onResolveRequestStream")]
-    unsafe fn on_file_stream_resolve_request_stream_shim(
-        global: *mut JSGlobalObject,
-        callframe: *mut CallFrame,
-    ) -> JSValue {
-        // S008: `JSGlobalObject`/`CallFrame` are `opaque_ffi!` ZST handles —
-        // safe `*mut → &` via `opaque_deref` (JSC guarantees non-null/live).
-        let (global, callframe) =
-            (bun_opaque::opaque_deref(global), bun_opaque::opaque_deref(callframe));
-        bun_jsc::host_fn::to_js_host_fn_result(global, on_file_stream_resolve_request_stream(global, callframe))
-    }
-}
-bun_jsc::jsc_host_abi! {
-    #[unsafe(export_name = "Bun__FileStreamWrapper__onRejectRequestStream")]
-    unsafe fn on_file_stream_reject_request_stream_shim(
-        global: *mut JSGlobalObject,
-        callframe: *mut CallFrame,
-    ) -> JSValue {
-        // S008: `JSGlobalObject`/`CallFrame` are `opaque_ffi!` ZST handles —
-        // safe `*mut → &` via `opaque_deref` (JSC guarantees non-null/live).
-        let (global, callframe) =
-            (bun_opaque::opaque_deref(global), bun_opaque::opaque_deref(callframe));
-        bun_jsc::host_fn::to_js_host_fn_result(global, on_file_stream_reject_request_stream(global, callframe))
-    }
-}
-
-// the local `AnyPromiseResultExt` shim was removed —
-// `bun_jsc::AnyPromise::result` is an inherent method (and `JSInternalPromise`
-// is a transparent alias for `JSPromise`), so the `.result(vm)` call below
-// resolves directly upstream.
 
 // ──────────────────────────────────────────────────────────────────────────
 // getSliceFrom / getSlice / type/name/lastModified/size getters
@@ -5994,6 +5768,25 @@ fn resolve_file_stat(store: &RefPtr<Store>) {
             }
             _ => {}
         },
+    }
+}
+
+/// Whether a second Blob over `store` reads the same bytes from the start.
+/// Memory and S3 do. A path does when it names a regular file (each read
+/// opens it again); it is stat'd here if that is not yet known. A file
+/// descriptor never does: its offset, and for a pipe its bytes, are shared.
+pub(crate) fn store_reads_repeatably(store: &RefPtr<Store>) -> bool {
+    match Store::data_mut(store).tag() {
+        store::DataTag::Bytes | store::DataTag::S3 => true,
+        store::DataTag::File => {
+            if let PathOrFileDescriptor::Fd(_) = Store::data_mut(store).as_file().pathlike {
+                return false;
+            }
+            if Store::data_mut(store).as_file().seekable.is_none() {
+                resolve_file_stat(store);
+            }
+            Store::data_mut(store).as_file().seekable != Some(false)
+        }
     }
 }
 

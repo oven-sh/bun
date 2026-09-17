@@ -264,7 +264,7 @@ static bool encodeInternalModule(const String& text, const String& moduleName, c
     JSC::recursivelyGenerateUnlinkedCodeBlocksForFunction(vm, executable, source, error, depth);
     if (error.isValid())
         return false;
-    RefPtr<JSC::CachedBytecode> result = JSC::encodeBuiltinFunction(vm, executable, source.length(), sourceStamp, externalStrings, JSC::BytecodeCacheChecksums::No, JSC::BytecodeCacheUpdatable::No);
+    RefPtr<JSC::CachedBytecode> result = JSC::encodeBuiltinFunction(vm, executable, source.length(), sourceStamp, externalStrings, JSC::BytecodeCacheUpdatable::No);
     if (!result)
         return false;
     result->ref();

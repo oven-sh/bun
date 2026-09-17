@@ -18,8 +18,8 @@
 // — so use this deterministic constant instead. The static_assert on the
 // !LAZY branch below fails the Linux/Windows build if it drifts from
 // sqlite3_local.h.
-#define BUN_SQLITE_BUNDLED_VERSION "3.53.2"
-#define BUN_SQLITE_BUNDLED_VERSION_NUMBER 3053002
+#define BUN_SQLITE_BUNDLED_VERSION "3.53.4"
+#define BUN_SQLITE_BUNDLED_VERSION_NUMBER 3053004
 
 #if LAZY_LOAD_SQLITE
 #include "lazy_sqlite3.h"
@@ -1041,8 +1041,9 @@ bool JSDatabaseSync::open(JSGlobalObject* globalObject, ThrowScope& scope)
     }
 
 #if LAZY_LOAD_SQLITE
-    if (lazyLoadSQLite() < 0) [[unlikely]] {
-        scope.throwException(globalObject, createError(globalObject, WTF::String::fromUTF8(dlerror())));
+    WTF::String msg;
+    if (lazyLoadSQLite(&msg) < 0) [[unlikely]] {
+        scope.throwException(globalObject, createError(globalObject, msg));
         return false;
     }
 #endif

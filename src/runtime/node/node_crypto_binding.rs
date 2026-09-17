@@ -403,14 +403,14 @@ pub mod random {
             }
 
             // Uniform random in [min, max) via Lemire's nearly-divisionless
-            // rejection sampling, backed by BoringSSL `RAND_bytes` (thread-local
-            // AES-CTR DRBG, no syscall per call).
+            // rejection sampling on the VM's entropy cache (`RAND_bytes` costs ~0.5 µs per call).
             let res: i64 = {
                 let range = (max - min) as u64;
                 debug_assert!(range > 0);
+                let rare_data = global.bun_vm().as_mut().rare_data();
                 let mut buf = [0u8; 8];
                 let x = loop {
-                    boringssl::rand_bytes(&mut buf);
+                    buf.copy_from_slice(rare_data.entropy_slice(8));
                     let x = u64::from_ne_bytes(buf);
                     let m = (x as u128).wrapping_mul(range as u128);
                     let l = m as u64;

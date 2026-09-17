@@ -807,10 +807,7 @@ impl Connection {
         echo.copy_from_slice(&payload[..8]);
         self.send_ping_ack(sink, &echo);
         sink.on_ping(&echo, false);
-        if self.note_outbound_ack(sink) {
-            return true;
-        }
-        false
+        self.note_outbound_ack(sink)
     }
 
     fn handle_go_away(&mut self, sink: &impl Sink, payload: &[u8]) -> bool {

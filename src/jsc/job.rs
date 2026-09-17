@@ -223,6 +223,8 @@ pub struct JobHeader {
     cancel: unsafe fn(*mut JobHeader),
     prev: *mut JobHeader,
     next: *mut JobHeader,
+    /// `VirtualMachine::test_isolation_generation` when scheduled.
+    generation: u32,
 }
 
 /// A VM's live [cancellable](JobContext::CANCELLABLE) jobs (JS thread only;
@@ -316,6 +318,7 @@ impl<C: JobContext> Job<C> {
                 cancel: |p| unsafe { C::cancel(&raw mut (*p.cast::<Self>()).off) },
                 prev: core::ptr::null_mut(),
                 next: core::ptr::null_mut(),
+                generation: cx.vm().test_isolation_generation,
             },
             ticket: Some(cx.vm().ticket()),
             task: WorkPoolTask {
@@ -433,7 +436,13 @@ pub unsafe fn complete_erased(ptr: *mut (), cx: &JsThread<'_>) -> JsResult<()> {
     // build script-facing values under a pending termination. Release it as
     // teardown would — Node's threadpool `after` callbacks bail the same way
     // on `!can_call_into_js()`.
-    if !cx.vm().script_allowed() {
+    //
+    // Likewise one scheduled by a file `bun test --isolate` has since retired:
+    // the swap was that file's exit, and a `then` that calls back directly
+    // (node:crypto's callback forms) would run its script under the next file.
+    // SAFETY: `ptr` is a live posted `Job<C>`, header first (fn contract).
+    let stale = unsafe { (*header).generation } != cx.vm().test_isolation_generation;
+    if !cx.vm().script_allowed() || stale {
         // SAFETY: as below; released exactly once, here.
         unsafe { ((*header).release_unrun)(header) };
         return Ok(());

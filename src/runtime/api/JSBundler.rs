@@ -136,6 +136,7 @@ pub mod js_bundler {
         pub(crate) format: options::Format,
         pub(crate) bytecode: bool,
         pub(crate) bytecode_depth: u32,
+        pub(crate) optimize_bytecode: bool,
         pub(crate) banner: OwnedString,
         pub(crate) footer: OwnedString,
         /// Path to write JSON metafile (if specified via metafile object) - TEST: moved here
@@ -145,6 +146,8 @@ pub mod js_bundler {
         pub(crate) css_chunking: bool,
         /// `minChunkSize`: see `BundleOptions::min_chunk_size`.
         pub(crate) min_chunk_size: Option<u64>,
+        /// `foldChunksForTesting`, read only where `bun:internal-for-testing` resolves: see `BundleOptions::fold_chunks`.
+        pub(crate) fold_chunks: bool,
         pub(crate) module_preload: bool,
         pub(crate) drop: StringSet,
         pub(crate) features: StringSet,
@@ -204,12 +207,14 @@ pub mod js_bundler {
                 format: options::Format::Esm,
                 bytecode: false,
                 bytecode_depth: u32::MAX,
+                optimize_bytecode: true,
                 banner: OwnedString::default(),
                 footer: OwnedString::default(),
                 metafile_json_path: OwnedString::default(),
                 metafile_markdown_path: OwnedString::default(),
                 css_chunking: false,
                 min_chunk_size: None,
+                fold_chunks: true,
                 module_preload: true,
                 drop: StringSet::default(),
                 features: StringSet::default(),
@@ -241,6 +246,8 @@ pub mod js_bundler {
         pub(crate) autoload_bunfig: bool,
         pub(crate) autoload_tsconfig: bool,
         pub(crate) autoload_package_json: bool,
+        /// `compile.jitPolicy`: the tier-up threshold scale the executable starts with (1 = normal JIT policy).
+        pub(crate) jit_policy: f32,
     }
 
     impl Default for CompileOptions {
@@ -262,6 +269,7 @@ pub mod js_bundler {
                 autoload_bunfig: true,
                 autoload_tsconfig: false,
                 autoload_package_json: false,
+                jit_policy: 1.0,
             }
         }
     }
@@ -436,6 +444,30 @@ pub mod js_bundler {
                 object.get_boolean_loose(global_this, "autoloadPackageJson")?
             {
                 this.autoload_package_json = autoload_package_json;
+            }
+
+            if let Some(jit_policy) = object.get(global_this, "jitPolicy")? {
+                if !jit_policy.is_undefined() {
+                    if !jit_policy.is_number() {
+                        return Err(global_this.throw_invalid_property_type_value(
+                            b"compile.jitPolicy",
+                            b"number",
+                            jit_policy,
+                        ));
+                    }
+                    let scale = jit_policy.as_number() as f32;
+                    if !(scale.is_finite() && scale >= 1.0) {
+                        return Err(global_this.throw_range_error(
+                            jit_policy.as_number(),
+                            bun_jsc::RangeErrorOptions {
+                                field_name: b"compile.jitPolicy",
+                                msg: b"a finite number >= 1",
+                                ..Default::default()
+                            },
+                        ));
+                    }
+                    this.jit_policy = scale;
+                }
             }
 
             Ok(Some(this))
@@ -618,6 +650,17 @@ pub mod js_bundler {
                         always_allow_zero: false,
                     },
                 )?;
+            }
+
+            if let Some(optimize) = config.get_truthy(global_this, "optimize")? {
+                if !optimize.is_object() {
+                    return Err(global_this.throw_invalid_arguments(format_args!(
+                        "Expected optimize to be an object"
+                    )));
+                }
+                if let Some(bytecode) = optimize.get_boolean_loose(global_this, "bytecode")? {
+                    this.optimize_bytecode = bytecode;
+                }
             }
 
             if let Some(react_fast_refresh) =
@@ -808,6 +851,12 @@ pub mod js_bundler {
             }
             if let Some(module_preload) = config.get_boolean_loose(global_this, "modulePreload")? {
                 this.module_preload = module_preload;
+            }
+            if bun_jsc::module_loader::is_allowed_to_use_internal_testing_apis()
+                && let Some(fold_chunks) =
+                    config.get_boolean_loose(global_this, "foldChunksForTesting")?
+            {
+                this.fold_chunks = fold_chunks;
             }
 
             if let Some(min_chunk_size) =
@@ -1896,6 +1945,19 @@ pub mod js_bundler {
 }
 
 pub use js_bundler as JSBundler;
+
+/// `bun:internal-for-testing`: bundler `Worker`s (one per pool thread a build ran on) not yet torn down.
+#[bun_jsc::host_fn]
+pub(crate) fn js_worker_live_count(
+    _global: &JSGlobalObject,
+    _callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    use core::sync::atomic::Ordering;
+    Ok(JSValue::js_number(
+        bun_bundler::thread_pool::WORKER_LIVE_COUNT.load(Ordering::SeqCst) as f64,
+    ))
+}
+
 /// `jsc.API.JSBundler.Plugin` — re-exported for `crate::bake` (`SplitBundlerOptions.plugin`).
 pub use js_bundler::Plugin;
 pub(crate) use js_bundler::PluginJscExt;

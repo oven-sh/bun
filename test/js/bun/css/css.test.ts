@@ -7787,6 +7787,12 @@ describe("css tests", () => {
         "@scope(.p){@scope(&>.a) to (&>.b){.c{color:red}}}",
         "@scope(.p){@scope(:where(:scope)>.a) to (:where(:scope)>.b){.c{color:red}}}",
       ],
+      // A relative scope-start selector in another `@scope` has the same anchor.
+      [
+        "@scope (.p) { @scope (> .a) { .c { color: red } } }",
+        "@scope(.p){@scope(&>.a){.c{color:red}}}",
+        "@scope(.p){@scope(:where(:scope)>.a){.c{color:red}}}",
+      ],
 
       // No scope-start selector. The scoping root is the parent of the `<style>` element, also in a style rule.
       // The output ended after `@scope to (.b`, and the next rule landed in that broken prelude.

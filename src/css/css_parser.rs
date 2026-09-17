@@ -1634,8 +1634,12 @@ mod rule_parsers {
                         };
                         // Inside a style rule, <scope-start> is relative to the
                         // parent rule, like a nested style rule's selector.
+                        // Inside another @scope it is a scoped selector, like the
+                        // style rules next to it.
                         // https://drafts.csswg.org/css-cascade-6/#scope-nesting
-                        let scope_start_nesting = if this.is_in_style_rule && !this.is_in_scope_rule {
+                        let scope_start_nesting = if this.is_in_scope_rule {
+                            selector_parser::NestingRequirement::Scoped
+                        } else if this.is_in_style_rule {
                             selector_parser::NestingRequirement::Implicit
                         } else {
                             selector_parser::NestingRequirement::None

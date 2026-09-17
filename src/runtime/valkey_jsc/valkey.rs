@@ -977,7 +977,7 @@ impl ValkeyClient {
                 } else {
                     // We should rarely reach this point. If we're guaranteed to be handling a subscribe/unsubscribe,
                     // then this is an unexpected path.
-                    bun_core::hint::cold();
+                    core::hint::cold_path();
                     self.fail(
                         b"Push message is not a subscription message.",
                         RedisError::InvalidResponseType,
@@ -1174,7 +1174,7 @@ impl ValkeyClient {
                             return Ok(());
                         }
                     } else {
-                        bun_core::hint::cold();
+                        core::hint::cold_path();
                         self.fail(
                             b"Unexpected push message kind without promise",
                             RedisError::InvalidResponseType,

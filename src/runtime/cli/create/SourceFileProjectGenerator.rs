@@ -647,7 +647,7 @@ fn find_react_component_export<'r>(bundler: &'r BundleV2<'_>) -> Option<&'r [u8]
 
             let filename = source.path.name().non_unique_name_string_base();
             if filename.is_empty() {
-                bun_core::hint::cold();
+                core::hint::cold_path();
                 continue;
             }
 

@@ -277,29 +277,6 @@ impl<'a> Request<'a> {
             body,
         }
     }
-
-    /// Widen the borrowed slices to `'static` for self-referential storage.
-    ///
-    /// Field-by-field move (no bitwise reinterpret). Used when the request's
-    /// `method`/`path`/`headers` borrow thread-local static buffers
-    /// (`SHARED_REQUEST_HEADERS_BUF`) or a sibling field on the same
-    /// heap-stable owner.
-    ///
-    /// # Safety
-    /// Caller guarantees every borrowed slice outlives the returned value.
-    #[inline]
-    pub unsafe fn detach_lifetime(self) -> Request<'static> {
-        Request {
-            // SAFETY: caller contract.
-            method: unsafe { &*core::ptr::from_ref::<[u8]>(self.method) },
-            // SAFETY: caller contract.
-            path: unsafe { &*core::ptr::from_ref::<[u8]>(self.path) },
-            minor_version: self.minor_version,
-            // SAFETY: caller contract.
-            headers: unsafe { &*core::ptr::from_ref::<[Header]>(self.headers) },
-            bytes_read: self.bytes_read,
-        }
-    }
 }
 
 impl fmt::Display for Request<'_> {

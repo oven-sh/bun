@@ -28,8 +28,6 @@ pub(crate) fn write_request(
     };
     // `stream.client` is a live backref while attached — see `client_mut` doc.
     let client: &mut HTTPClient = super::client_session::client_mut(client_ptr);
-    // `build_request` returns a `Request<'_>`
-    // that mutably borrows `client`; capture every field we need first.
     let verbose = client.verbose;
     let href: &[u8] = client.url.href;
     let host: &[u8] = client.url.host;
@@ -45,7 +43,8 @@ pub(crate) fn write_request(
         HTTPRequestBody::Bytes(_)
     );
 
-    let request = client.build_request(body_len);
+    let mut header_overflow = Vec::new();
+    let request = client.build_request(body_len, &mut header_overflow);
     if verbose != HTTPVerboseLevel::None {
         let body = req_body.slice();
         crate::print_request(

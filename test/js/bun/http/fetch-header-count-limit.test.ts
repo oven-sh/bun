@@ -14,19 +14,17 @@ function makeRawHttpServer() {
         const headerSection = data.split("\r\n\r\n")[0];
         const lines = headerSection.split("\r\n");
         // First line is the request line, rest are headers.
-        let customCount = 0;
         const headerNames: string[] = [];
+        const headers: Record<string, string> = {};
         for (let i = 1; i < lines.length; i++) {
-          const lower = lines[i].toLowerCase();
           const colonIdx = lines[i].indexOf(":");
           if (colonIdx > 0) {
-            headerNames.push(lines[i].substring(0, colonIdx).toLowerCase());
-          }
-          if (lower.startsWith("x-h-")) {
-            customCount++;
+            const name = lines[i].substring(0, colonIdx).toLowerCase();
+            headerNames.push(name);
+            headers[name] = lines[i].substring(colonIdx + 1).trim();
           }
         }
-        const body = JSON.stringify({ customCount, headerNames });
+        const body = JSON.stringify({ headerNames, headers });
         socket.write(
           `HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: ${body.length}\r\nConnection: close\r\n\r\n${body}`,
         );
@@ -42,18 +40,18 @@ test("fetch with many headers does not crash", async () => {
   await once(server, "listening");
   const port = (server.address() as any).port;
 
-  // Build a request with more headers than the internal fixed-size buffer (256).
-  const headers = new Headers();
+  // Build a request with more headers than the inline fixed-size scratch (256).
+  const sent: Record<string, string> = {};
   for (let i = 0; i < 300; i++) {
-    headers.set(`x-h-${i}`, `v${i}`);
+    sent[`x-h-${i}`] = `v${i}`;
   }
 
-  const res = await fetch(`http://127.0.0.1:${port}/test`, { headers });
+  const res = await fetch(`http://127.0.0.1:${port}/test`, { headers: sent });
   expect(res.status).toBe(200);
 
-  const { customCount } = await res.json();
-  // Excess headers beyond the internal cap (250 user headers) are silently dropped.
-  expect(customCount).toBe(250);
+  const { headers: received } = await res.json();
+  // There is no request-side field-count cap; every header reaches the origin.
+  expect(Object.fromEntries(Object.entries(received).filter(([name]) => name.startsWith("x-h-")))).toEqual(sent);
 });
 
 test("fetch with exactly 250 custom headers sends all of them", async () => {
@@ -61,34 +59,31 @@ test("fetch with exactly 250 custom headers sends all of them", async () => {
   await once(server, "listening");
   const port = (server.address() as any).port;
 
-  const headers = new Headers();
+  const sent: Record<string, string> = {};
   for (let i = 0; i < 250; i++) {
-    headers.set(`x-h-${i}`, `v${i}`);
+    sent[`x-h-${i}`] = `v${i}`;
   }
 
-  const res = await fetch(`http://127.0.0.1:${port}/test`, { headers });
+  const res = await fetch(`http://127.0.0.1:${port}/test`, { headers: sent });
   expect(res.status).toBe(200);
 
-  const { customCount } = await res.json();
-  expect(customCount).toBe(250);
+  const { headers: received } = await res.json();
+  expect(Object.fromEntries(Object.entries(received).filter(([name]) => name.startsWith("x-h-")))).toEqual(sent);
 });
 
-test("default headers preserved when user headers overflow the buffer", async () => {
+test("user-supplied Host/User-Agent/Accept sent after >250 other headers keep their values", async () => {
   await using server = makeRawHttpServer().listen(0);
   await once(server, "listening");
   const port = (server.address() as any).port;
 
-  // Use "a-" prefixed headers which sort alphabetically before "accept",
-  // "host", "user-agent", etc. This ensures the filler headers consume all
-  // 250 user-header slots first, pushing the special headers into overflow.
-  // Without the fix, the override flags for Host/Accept/User-Agent would
-  // still be set (suppressing defaults), but the headers themselves would be
-  // dropped — resulting in missing mandatory headers like Host.
+  // fetch() writes headers in code-point order of their case-preserved names.
+  // "A-" sorts before "Accept", so Accept, Host and User-Agent come last.
   const headers = new Headers();
-  for (let i = 0; i < 250; i++) {
-    headers.set(`a-${String(i).padStart(4, "0")}`, `v${i}`);
+  const fillers: Record<string, string> = {};
+  for (let i = 0; i < 251; i++) {
+    headers.set(`A-${String(i).padStart(4, "0")}`, `v${i}`);
+    fillers[`a-${String(i).padStart(4, "0")}`] = `v${i}`;
   }
-  // These special headers sort after "a-*" and will overflow.
   headers.set("Host", "custom-host.example.com");
   headers.set("User-Agent", "custom-agent");
   headers.set("Accept", "text/html");
@@ -96,12 +91,24 @@ test("default headers preserved when user headers overflow the buffer", async ()
   const res = await fetch(`http://127.0.0.1:${port}/test`, { headers });
   expect(res.status).toBe(200);
 
-  const { headerNames } = await res.json();
+  const { headerNames, headers: received } = await res.json();
+  const count = (name: string) => headerNames.filter((n: string) => n === name).length;
 
-  // Even though the user-supplied Host, User-Agent, and Accept were dropped
-  // due to overflow, the DEFAULT versions of these headers must still be
-  // present (the override flags should not have been set for dropped headers).
-  expect(headerNames).toContain("host");
-  expect(headerNames).toContain("user-agent");
-  expect(headerNames).toContain("accept");
+  expect({
+    fillers: Object.fromEntries(Object.entries(received).filter(([name]) => name.startsWith("a-"))),
+    hostLines: count("host"),
+    userAgentLines: count("user-agent"),
+    acceptLines: count("accept"),
+    host: received.host,
+    "user-agent": received["user-agent"],
+    accept: received.accept,
+  }).toEqual({
+    fillers,
+    hostLines: 1,
+    userAgentLines: 1,
+    acceptLines: 1,
+    host: "custom-host.example.com",
+    "user-agent": "custom-agent",
+    accept: "text/html",
+  });
 });

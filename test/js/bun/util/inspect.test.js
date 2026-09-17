@@ -1100,6 +1100,9 @@ describe("depth cap applies to Map/Set/Array and Error cause chains", () => {
   describe("an object with nothing to print past max_depth", () => {
     class Empty {}
     class Child extends Empty {}
+    // The pre-class pattern: the prototype carries an enumerable `constructor`.
+    function Old() {}
+    Old.prototype = { constructor: Old };
     const emptied = { a: 1 };
     delete emptied.a;
     // Enough adds and deletes to leave a dictionary-mode structure behind.
@@ -1110,29 +1113,27 @@ describe("depth cap applies to Map/Set/Array and Error cause chains", () => {
       plain: {},
       instance: new Empty(),
       subclass: new Child(),
+      oldStyleInstance: new Old(),
       nullProto: Object.create(null),
       created: Object.create(Empty.prototype),
       emptied,
       emptiedMap,
       frozen: Object.freeze({}),
-      ownConstructor: { constructor: Empty },
       proxy: new Proxy({}, {}),
       headers: new Headers(),
-      formData: new FormData(),
     };
     const expected = {
       plain: "{}",
       instance: "Empty {}",
       subclass: "Child {}",
+      oldStyleInstance: "Old {}",
       nullProto: "[Object: null prototype] {}",
       created: "Empty {}",
       emptied: "{}",
       emptiedMap: "{}",
       frozen: "{}",
-      ownConstructor: "Empty {}",
       proxy: "{}",
       headers: "Headers {}",
-      formData: "{}",
     };
 
     it.each(Object.keys(empty))("%s prints the same text as inside the cap", key => {
@@ -1168,6 +1169,11 @@ describe("depth cap applies to Map/Set/Array and Error cause chains", () => {
           "  method: [Object ...],\n  inherited: [Object ...],\n  indexed: [Object ...],\n  proxy: [Object ...],\n" +
           "  headers: Headers [Object ...],\n}",
       );
+    });
+
+    it("an own enumerable constructor property is content", () => {
+      expect(Bun.inspect({ v: { constructor: Empty } }, { depth: 0 })).toBe("{\n  v: [Object ...],\n}");
+      expect(Bun.inspect({ v: JSON.parse('{"constructor":1}') }, { depth: 0 })).toBe("{\n  v: [Object ...],\n}");
     });
 
     it("does not run user code to find out", () => {

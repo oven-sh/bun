@@ -5743,7 +5743,9 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__JSValue__isDefinitelyEmptyForEachPr
 
         bool skipsEveryProperty = true;
         structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
-            skipsEveryProperty = entry.key() == vm.propertyNames->constructor
+            // forEachProperty hides every `constructor`. An own enumerable one is real content, so that object is not empty.
+            bool isHiddenConstructor = entry.key() == vm.propertyNames->constructor && (level > 0 || (entry.attributes() & PropertyAttribute::DontEnum));
+            skipsEveryProperty = isHiddenConstructor
                 || (PropertyName(entry.key()).isPrivateName() && !JSC::Options::showPrivateScriptsInStackTraces());
             return skipsEveryProperty;
         });

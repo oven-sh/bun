@@ -1527,8 +1527,8 @@ fn run_tasks_erased(
 
                 if task.status == Task::Status::Fail {
                     let err = task.err.unwrap_or(crate::Error::Failed);
-                    let _ = manager.task_queue.remove(&task.id);
                     if cb.has_on_package_manifest_error {
+                        let _ = manager.task_queue.remove(&task.id);
                         (cb.on_package_manifest_error)(extract_ctx, name, err, url);
                     } else {
                         let _ = manager.log_mut().add_error_fmt(
@@ -1540,6 +1540,7 @@ fn run_tasks_erased(
                                 bstr::BStr::new(name),
                             ),
                         );
+                        manager.forget_failed_git_task(task.id);
                     }
                     continue;
                 }

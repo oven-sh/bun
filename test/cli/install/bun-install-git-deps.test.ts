@@ -704,6 +704,26 @@ exec '${Bun.which("git")}' "$@"
   );
 }
 
+// A commit lookup that failed stayed on record too. A peer dependency is
+// resolved in a later pass: it joined the finished lookup, ran no `git log`,
+// and the install ended with an error about the first package only.
+test.concurrent("looks the commit up again for a peer dependency after the lookup failed for another one", async () => {
+  using dir = tempDir("git-dep-failed-commit", {});
+  const root = String(dir);
+  const spec = `${sharedRepoUrl}#no-such-branch`;
+  const project = writeProject(root, {}, { optionalDependencies: { first: spec }, peerDependencies: { second: spec } });
+
+  const { stderr, exitCode } = await runInstall(project, join(root, "cache"), {});
+  // git's own failures print at once, the errors about the packages after the resolve phase
+  expect(diagnostics(stderr)).toEqual([
+    gitFailed,
+    gitFailed,
+    'error: no commit matching "no-such-branch" found for "first" (but repository exists)',
+    'error: no commit matching "no-such-branch" found for "second" (but repository exists)',
+  ]);
+  expect(exitCode).toBe(1);
+});
+
 // issue #40803: `bun install <git url>` (no alias) sorted the workspace dep
 // under its version literal. The real name is only known once the repo is
 // fetched; it is rewritten in place after resolution, so the written key

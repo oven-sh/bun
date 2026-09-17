@@ -32,11 +32,18 @@ const maxResidentBytesPerCall = 10_000;
 // byte. A run with no leak measures 0 bytes for each call at most. One retained
 // closure measures 32, and one retained stream 117,000 with its buffers.
 const maxHeapBytesPerCall = 256;
+// The level of the JS heap can still move, by what one call leaves behind:
+// 50,000 bytes of input, 66,400 of output chunks, and the stream. The GC scans
+// the stack conservatively, and the frame of VM::drainMicrotasks() can hold a
+// stale word that points into the `process.nextTick` args of a call that is
+// over. From then on it can stay that way for the rest of the run.
+const oneCallGarbage = 120_000;
 // ASAN builds are slower, so they make fewer calls. They can: mimalloc needs
 // about 400 zstd calls to settle, and an ASAN build does not use mimalloc.
 const callsPerRound = isASAN ? (isDebug ? 15 : 25) : 50;
 const rounds = 20;
 const warmupRounds = 2;
+const measuredCalls = (rounds - warmupRounds - 1) * callsPerRound;
 
 // `samples` has one value for each round, taken after the full GC that ends
 // it. Each estimate below is a median, in bytes for each call.
@@ -49,10 +56,12 @@ function measuredSamples(samples: number[]): number[] {
   return samples.slice(warmupRounds);
 }
 
-// Resident memory is noisy around a level that does not move: with no leak, a
-// sample can sit 0.5 MB above the ones around it. The median slope over every
-// pair of samples (Theil-Sen) ignores a few such samples.
-function residentGrowthPerCall(samples: number[]): number {
+// The median slope over every pair of samples (Theil-Sen). A few stray samples
+// cannot move it, and they do happen: with no leak, a sample of the resident
+// memory can sit 0.5 MB above the ones around it. One step in the level does
+// move it: in 17 rounds of 25 calls, a step of 117 KB is up to 340 bytes for
+// each call.
+function medianSlopePerCall(samples: number[]): number {
   const measured = measuredSamples(samples);
   const slopes: number[] = [];
   for (let i = 0; i < measured.length; i++) {
@@ -61,14 +70,10 @@ function residentGrowthPerCall(samples: number[]): number {
   return median(slopes) / callsPerRound;
 }
 
-// The JS heap has no such noise, but its level moves. The GC scans the stack
-// conservatively. So the 117 KB that one call leaves behind (the stream, its
-// input, its output chunks) stay alive for as long as a stale stack word
-// points at them, and such a word can appear or go away in the middle of a
-// run. To the median slope, one such step in 17 rounds of 25 calls is 275
-// bytes for each call. So the heap takes the median of what each round adds: a
-// call that leaks adds to every round, and a step adds to one.
-function heapGrowthPerCall(samples: number[]): number {
+// The median of what each round adds. A call that leaks adds to every round,
+// and a step in the level adds to one. A leak that only some rounds show does
+// not move it.
+function medianRoundPerCall(samples: number[]): number {
   const measured = measuredSamples(samples);
   return median(measured.slice(1).map((sample, i) => sample - measured[i])) / callsPerRound;
 }
@@ -107,8 +112,14 @@ describe("zlib compression does not leak memory", () => {
         mismatches: 0,
         roundTrip: true,
       });
-      expect(heapGrowthPerCall(heap), `heap samples: ${heap}`).toBeLessThan(maxHeapBytesPerCall);
-      expect(residentGrowthPerCall(resident), `resident samples: ${resident}`).toBeLessThan(maxResidentBytesPerCall);
+      // The heap has two checks. Each round is exact for a leak on every call.
+      // The whole run also sees a leak that only some rounds show, and it has
+      // one step of slack.
+      expect(medianRoundPerCall(heap), `heap samples: ${heap}`).toBeLessThan(maxHeapBytesPerCall);
+      expect(medianSlopePerCall(heap), `heap samples: ${heap}`).toBeLessThan(
+        maxHeapBytesPerCall + oneCallGarbage / measuredCalls,
+      );
+      expect(medianSlopePerCall(resident), `resident samples: ${resident}`).toBeLessThan(maxResidentBytesPerCall);
       expect(exitCode).toBe(0);
     },
     // Only a debug build needs more than the default: its slowest method takes

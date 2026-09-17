@@ -361,14 +361,25 @@ describe("Channel", () => {
     const script = `
       const dc = require("node:diagnostics_channel");
       const name = "gc.finalizer.evt";
-      (function () { dc.channel(name); })();
-      await Bun.sleep(0);
-      Bun.gc(true);
-      Bun.gc(true);
+      let firstFinalized = false;
+      const registry = new FinalizationRegistry(() => { firstFinalized = true; });
+      const first = new WeakRef((function () {
+        const channel = dc.channel(name);
+        registry.register(channel, null);
+        return channel;
+      })());
+      // Collect the first channel. Bun.gc() clears the WeakRef target this job
+      // kept alive before it collects. Its finalizers are queued, not run yet.
+      for (let i = 0; i < 50 && first.deref() !== undefined; i++) { await Bun.sleep(0); Bun.gc(true); }
+      if (first.deref() !== undefined) throw new Error("the first channel was not collected");
+      // Create the successor before the queued finalizers run.
       const held = dc.channel(name);
       held.subscribe(() => {});
-      // Let the pending finalizer of the first channel run.
-      for (let i = 0; i < 20; i++) await Bun.sleep(0);
+      for (let i = 0; i < 100 && !firstFinalized; i++) await Bun.sleep(0);
+      if (!firstFinalized) throw new Error("the finalizer of the first channel did not run");
+      // The module's own finalizer for the first channel runs in the same pass
+      // or shortly after. Give it a few more turns.
+      for (let i = 0; i < 5; i++) await Bun.sleep(0);
       console.log(JSON.stringify({
         sameObject: dc.channel(name) === held,
         hasSubscribers: dc.hasSubscribers(name),

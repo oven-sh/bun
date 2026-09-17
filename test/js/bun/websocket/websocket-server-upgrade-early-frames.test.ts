@@ -12,6 +12,7 @@ import type { Server } from "bun";
 import { serve } from "bun";
 import { describe, expect, it } from "bun:test";
 import { tls as tlsCert } from "harness";
+import { maxHeaderSize } from "node:http";
 import net from "node:net";
 import tls from "node:tls";
 
@@ -203,6 +204,27 @@ describe.concurrent("frames in the same read as the upgrade request", () => {
     client.socket.write("GET /plain HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n" + upgradeRequest.slice(0, 40));
     expect(await client.status("plain".length)).toBe("HTTP/1.1 200 OK");
     client.socket.write(Buffer.concat([Buffer.from(upgradeRequest.slice(40)), text("early"), ping("p")]));
+    expect(await client.status()).toBe("HTTP/1.1 101 Switching Protocols");
+    client.socket.write(text("later"));
+
+    expect(await client.framesUntil("text:echo:later")).toEqual(["text:echo:early", "pong:p", "text:echo:later"]);
+    expect(events).toEqual(["open", "message:early", "ping:p", "message:later"]);
+  });
+
+  // The parser's buffer for a split head takes `maxHeaderSize` bytes. A head
+  // of that size fills it, so the frames behind the head never get into it.
+  it("are delivered when a request head that spans two reads is as large as a head can be", async () => {
+    const events: string[] = [];
+    using server = echoServer(events);
+    using client = await rawClient(server.port);
+
+    const padding = maxHeaderSize - upgradeRequest.length - "X-Pad: \r\n".length;
+    const request = `${upgradeRequest.slice(0, -2)}X-Pad: ${Buffer.alloc(padding, "a")}\r\n\r\n`;
+    expect(request.length).toBe(maxHeaderSize);
+
+    client.socket.write("GET /plain HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n" + request.slice(0, 40));
+    expect(await client.status("plain".length)).toBe("HTTP/1.1 200 OK");
+    client.socket.write(Buffer.concat([Buffer.from(request.slice(40)), text("early"), ping("p")]));
     expect(await client.status()).toBe("HTTP/1.1 101 Switching Protocols");
     client.socket.write(text("later"));
 

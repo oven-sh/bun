@@ -122,6 +122,10 @@ struct HttpResponseData;
         unsigned int errorStatusCodeOrConsumedBytes = 0;
         void* returnedData = nullptr;
     public:
+        /* consumedBytes() of a success that leaves none of the read to the caller,
+         * whatever the length of the read. */
+        static constexpr unsigned int WHOLE_READ = UINT_MAX;
+
         static HttpParserResult error(unsigned int errorStatusCode, HttpParserError error) {
             return HttpParserResult{.parserError = error, .errorStatusCodeOrConsumedBytes = errorStatusCode, .returnedData = nullptr};
         }
@@ -1337,7 +1341,7 @@ struct HttpResponseData;
             if (returnedUser != user) {
                 /* We are upgraded to WebSocket or otherwise broken. What follows the head
                  * is the caller's, unless it is the body that this request declared. */
-                return HttpParserResult::success(hasBody ? consumedTotal + length : consumedTotal, returnedUser);
+                return HttpParserResult::success(hasBody ? HttpParserResult::WHOLE_READ : consumedTotal, returnedUser);
             }
 
             if (deferredTransferEncodingError) [[unlikely]] {
@@ -1452,8 +1456,8 @@ public:
     /* When requestHandler returns something other than user (it upgraded or closed
      * the socket), parsing stops and consumedBytes() of the result is the offset in
      * data from which the bytes are the caller's. That is the end of the request's
-     * head, or the end of data when the request declared a body: the body is not
-     * parsed and is not the caller's. The handler may have destroyed this parser. */
+     * head, or WHOLE_READ when the request declared a body: the body is not parsed
+     * and is not the caller's. The handler may have destroyed this parser. */
     template <bool IsNodeHttp>
     HttpParserResult consumePostPadded(uint64_t maxHeaderSize, bool& isConnectRequest, bool requireHostHeader, bool useStrictMethodValidation, bool useInsecureHTTPParser, bool useLenientTransferEncoding, std::string *nodeHttpRequestTrailers, uint64_t *chunkedExtensionsByteCount, char *data, unsigned int length, void *user, MoveOnlyFunction<void *(void *, HttpRequest *)> &&requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &&dataHandler) {
         char *const readStart = data;
@@ -1536,12 +1540,9 @@ public:
             /* Return data will be different than user if we are upgraded to WebSocket or have an error */
             if (consumed.returnedData != user) {
                 /* The count is in fallback bytes, and the first `had` of them came from
-                 * earlier reads. The head ends past them: those reads did not complete it.
-                 * A count that covers all of fallback covers all of the read, also the
-                 * part of a large read that did not fit in fallback. */
-                if (!consumed.isError()) {
-                    unsigned int ofRead = consumed.errorStatusCodeOrConsumedBytes - had;
-                    consumed.errorStatusCodeOrConsumedBytes = ofRead == maxCopyDistance ? length : ofRead;
+                 * earlier reads. The head ends past them: those reads did not complete it. */
+                if (!consumed.isError() && consumed.errorStatusCodeOrConsumedBytes != HttpParserResult::WHOLE_READ) {
+                    consumed.errorStatusCodeOrConsumedBytes -= had;
                 }
                 return consumed;
             }
@@ -1626,7 +1627,7 @@ public:
         /* Return data will be different than user if we are upgraded to WebSocket or have an error */
         if (consumed.returnedData != user) {
             /* A body or a fallback head ahead of this request moved data forward. */
-            if (!consumed.isError()) {
+            if (!consumed.isError() && consumed.errorStatusCodeOrConsumedBytes != HttpParserResult::WHOLE_READ) {
                 consumed.errorStatusCodeOrConsumedBytes += (unsigned int) (data - readStart);
             }
             return consumed;

@@ -5005,6 +5005,29 @@ pub mod bv2_impl {
                                     .filter(|_| path.text == &*resolve.import_record.specifier),
                             );
 
+                            // A file on disk gets the package.json and tsconfig.json that enclose it, as it
+                            // does when the resolver finds it: another import can reach the same file that
+                            // way, and whichever import lands first creates the module.
+                            let transpiler =
+                                this.transpiler_for_target(resolve.import_record.original_target);
+                            let resolve_result = path
+                                .is_file()
+                                .then(|| {
+                                    transpiler
+                                        .resolver
+                                        .result_for_resolved_file(path, resolve.import_record.kind)
+                                })
+                                .flatten()
+                                .unwrap_or_else(|| _resolver::Result {
+                                    path_pair: _resolver::PathPair {
+                                        primary: path,
+                                        secondary: None,
+                                    },
+                                    jsx: transpiler.options.jsx.clone(),
+                                    ..Default::default()
+                                });
+                            let jsx_development = transpiler.options.forced_jsx_development();
+
                             this.graph
                                 .input_files
                                 .append(crate::Graph::InputFile {
@@ -5016,39 +5039,20 @@ pub mod bv2_impl {
                                         ..Default::default()
                                     },
                                     loader,
-                                    side_effects: bun_ast::SideEffects::HasSideEffects,
+                                    side_effects: resolve_result.primary_side_effects_data,
                                     ..Default::default()
                                 })
                                 .expect("unreachable");
-                            let task_val = ParseTask {
-                                // SAFETY: `from_mut(this)` is the live bundle (write provenance);
-                                // outlives the task.
-                                ctx: Some(unsafe {
-                                    bun_ptr::ParentRef::from_raw_mut(
-                                        std::ptr::from_mut::<BundleV2>(this)
-                                            .cast::<BundleV2<'static>>(),
-                                    )
-                                }),
-                                path,
-                                // unknown at this point:
-                                contents_or_fd: parse_task::ContentsOrFd::Fd {
-                                    dir: bun_sys::Fd::INVALID,
-                                    file: bun_sys::Fd::INVALID,
-                                },
-                                side_effects: bun_ast::SideEffects::HasSideEffects,
-                                jsx: this
-                                    .transpiler_for_target(resolve.import_record.original_target)
-                                    .options
-                                    .jsx
-                                    .clone(),
-                                source_index: bun_ast::Index::init(source_index.get()),
-                                module_type: options::ModuleType::Unknown,
-                                loader: Some(loader),
-                                known_target: resolve.import_record.original_target,
-                                is_entry_point: resolve.import_record.kind
-                                    == ImportKind::EntryPointBuild,
-                                ..Default::default()
-                            };
+                            let mut task_val = ParseTask::init(
+                                &resolve_result,
+                                bun_ast::Index::init(source_index.get()),
+                                this,
+                            );
+                            task_val.jsx.development = jsx_development;
+                            task_val.loader = Some(loader);
+                            task_val.known_target = resolve.import_record.original_target;
+                            task_val.is_entry_point =
+                                resolve.import_record.kind == ImportKind::EntryPointBuild;
                             // Arena-owned.
                             // SAFETY: arena outlives the bundle pass.
                             let task: &mut ParseTask = this.arena_create(task_val);

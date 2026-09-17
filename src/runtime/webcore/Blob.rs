@@ -20,7 +20,7 @@ use bun_core::{EncodedSlice, String as BunString, Utf8Bytes, WTFStringImplExt as
 use bun_http_types::MimeType::MimeType;
 use bun_jsc::{EncodedSliceJsc as _, StringJsc as _, bun_string_jsc};
 use bun_ptr::RefPtr;
-use bun_sys::{self, Fd};
+use bun_sys::{self, Fd, FdExt as _};
 
 use crate::webcore::node_types::{PathLike, PathOrBlob, PathOrFileDescriptor};
 use crate::webcore::s3 as S3;
@@ -3650,10 +3650,33 @@ impl FormDataContext<'_> {
                             // we need to make this async and use download/downloadSlice
                         }
                         store::Data::File(file) => {
-                            if let Some(err) = open_as_blob_read_error(blob, global_this) {
-                                self.failed = true;
-                                let _ = global_this.throw_value(err);
-                                return;
+                            // `fs.openAsBlob`: open first, then check the snapshot
+                            // against that descriptor and read through it.
+                            let mut snapshot_fd: Option<Fd> = None;
+                            if file.snapshot.is_some() {
+                                if let PathOrFileDescriptor::Path(path) = &file.pathlike {
+                                    let mut buffer = bun_paths::path_buffer_pool::get();
+                                    let opened = bun_sys::open(
+                                        path.slice_z(&mut buffer),
+                                        bun_sys::O::RDONLY | bun_sys::O::CLOEXEC,
+                                        0,
+                                    );
+                                    let err = match opened {
+                                        Ok(fd) => {
+                                            snapshot_fd = Some(fd);
+                                            open_as_blob_read_error_for_fd(blob, fd, global_this)
+                                        }
+                                        Err(_) => Some(not_readable_error(global_this)),
+                                    };
+                                    if let Some(err) = err {
+                                        if let Some(fd) = snapshot_fd {
+                                            fd.close();
+                                        }
+                                        self.failed = true;
+                                        let _ = global_this.throw_value(err);
+                                        return;
+                                    }
+                                }
                             }
                             // TODO: make this async + lazy
                             // Use a fresh stack
@@ -3663,10 +3686,16 @@ impl FormDataContext<'_> {
                             // `ReadFile` has `Drop`; can't use FRU `..Default::default()`.
                             let mut rf_args = crate::node::fs::args::ReadFile::default();
                             rf_args.encoding = crate::node::types::Encoding::Buffer;
-                            rf_args.path = file.pathlike.clone();
+                            rf_args.path = match snapshot_fd {
+                                Some(fd) => PathOrFileDescriptor::Fd(fd),
+                                None => file.pathlike.clone(),
+                            };
                             rf_args.offset = blob.offset.get();
                             rf_args.max_size = Some(blob.size.get());
                             let res = node_fs.read_file(&rf_args, crate::node::fs::Flavor::Sync);
+                            if let Some(fd) = snapshot_fd {
+                                fd.close();
+                            }
                             match res {
                                 Err(err) => {
                                     self.failed = true;
@@ -5884,6 +5913,23 @@ pub(crate) fn open_as_blob_read_error(blob: &Blob, global: &JSGlobalObject) -> O
     };
     let snapshot = file.snapshot?;
     if matches!(stat_file(file), Ok(stat) if store::FileSnapshot::of(&stat) == snapshot) {
+        return None;
+    }
+    Some(not_readable_error(global))
+}
+
+/// Same as [`open_as_blob_read_error`], against the descriptor a reader just opened.
+pub(crate) fn open_as_blob_read_error_for_fd(
+    blob: &Blob,
+    fd: Fd,
+    global: &JSGlobalObject,
+) -> Option<JSValue> {
+    let store = blob.store.get().as_ref()?;
+    let store::Data::File(file) = &store.data else {
+        return None;
+    };
+    let snapshot = file.snapshot?;
+    if matches!(bun_sys::fstat(fd), Ok(stat) if store::FileSnapshot::of(&stat) == snapshot) {
         return None;
     }
     Some(not_readable_error(global))

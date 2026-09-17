@@ -1,4 +1,4 @@
-//! Idle GC timer: JSC's own `GCActivityCallback` (via `WTFTimer`) paces eden/full against allocation rate; this adds a 1 s / 30 s idle `collect_async()` so a process that stops allocating still releases memory, and once the heap has been quiet for `BUN_IDLE_GC_SECONDS` (default "10,65,65": first after 10 s of quiet, then one per CodeBlock-aging lease; 0 = off; main thread only) full collections so JSC can age out code that no longer runs. Knobs: `BUN_GC_TIMER_INTERVAL` (ms), `BUN_GC_TIMER_DISABLE`. One per JS thread, not thread-safe.
+//! Idle GC timer: JSC's own `GCActivityCallback` (via `WTFTimer`) paces eden/full against allocation rate; this adds a 1 s / 30 s idle `collect_async()` so a process that stops allocating still releases memory, and once the heap has been quiet for `BUN_IDLE_GC_SECONDS` (default "10,110,480": 10 s, 2 min and 10 min of quiet; 0 = off) full collections so JSC can age out code that no longer runs, the last of which also drops the bytecode JSC can decode again. Knobs: `BUN_GC_TIMER_INTERVAL` (ms), `BUN_GC_TIMER_DISABLE`. One per JS thread, not thread-safe.
 
 use core::cell::Cell;
 use core::ffi::c_int;
@@ -93,30 +93,32 @@ impl GarbageCollectionController {
         self.disabled
             .set(env_var::BUN_GC_TIMER_DISABLE::get().unwrap_or(false));
 
-        if vm.is_main_thread() {
-            // "a,b,c,...": seconds of quiet before the first idle full collection, then between consecutive ones (spaced a
-            // CodeBlock-aging lease apart so each can expire what has not run since the previous); "0"/"" = off.
-            let spec = env_var::BUN_IDLE_GC_SECONDS::get().unwrap_or(b"10,65,65");
-            let mut at = [0u32; 3];
-            let mut sum = 0u32;
-            for (slot, part) in at.iter_mut().zip(bun_core::strings::split(spec, b",")) {
-                let secs = bun_core::fmt::parse_int::<u32>(bun_core::strings::trim(part, b" "), 10)
-                    .unwrap_or(0);
-                if secs == 0 {
-                    break;
-                }
-                sum = sum.saturating_add(secs.min(3600) * 1000);
-                *slot = sum;
+        // "a,b,c": seconds of quiet before the first idle full collection, then between consecutive ones (at least a
+        // CodeBlock-aging lease apart so each can expire what has not run since the previous); "0"/"" = off. Every JS
+        // thread, for its own heap: a Worker that has finished a burst gives its garbage back too.
+        // The second at 2 min: what a program does next compiles again what that collection aged out.
+        let spec = env_var::BUN_IDLE_GC_SECONDS::get().unwrap_or(b"10,110,480");
+        let mut at = [0u32; 3];
+        let mut sum = 0u32;
+        for (slot, part) in at.iter_mut().zip(bun_core::strings::split(spec, b",")) {
+            let secs = bun_core::fmt::parse_int::<u32>(bun_core::strings::trim(part, b" "), 10)
+                .unwrap_or(0);
+            if secs == 0 {
+                break;
             }
-            self.idle_gc_at_ms.set(at);
+            sum = sum.saturating_add(secs.min(3600) * 1000);
+            *slot = sum;
         }
+        self.idle_gc_at_ms.set(at);
     }
 
-    /// Decides whether this tick's collection should be a full one. After the first `BUN_IDLE_GC_SECONDS` entry (main
-    /// thread only) of ticks in which the heap did not grow, the tick's collection is made Full (it collects what the
+    /// Decides whether this tick's collection should be a full one. After the first `BUN_IDLE_GC_SECONDS` entry
+    /// of ticks in which the heap did not grow, the tick's collection is made Full (it collects what the
     /// last burst left and lets JSC snapshot which code is still running), and again after each further entry of quiet:
     /// JSC drops code that has not run since the previous one, and each round makes a little more releasable (code whose
-    /// last owner died in that collection, pages it emptied). Returns (full, ms until the next such tick is due).
+    /// last owner died in that collection, pages it emptied). Before the last one JSC also lets go of what it can get back
+    /// cheaply (`shrink_footprint_now`); if it cannot right now, this tick's quiet is not counted and the next one tries
+    /// again. Returns (full, ms until the next such tick is due).
     fn idle_tick(&self, vm: &VirtualMachine, grew: bool, interval_ms: i32) -> (bool, Option<u32>) {
         let dues = self.idle_gc_at_ms.get();
         if dues[0] == 0 || vm.is_inspector_enabled() {
@@ -131,11 +133,13 @@ impl GarbageCollectionController {
         self.idle_quiet_ms.set(quiet);
         let dues = dues.into_iter().filter(|&due| due != 0);
         let crossed = |due: u32| before < due && quiet >= due;
-        let full = dues.clone().any(crossed);
-        (
-            full,
-            dues.clone().find(|&due| quiet < due).map(|due| due - quiet),
-        )
+        let mut full = dues.clone().any(crossed);
+        let next = dues.clone().find(|&due| quiet < due);
+        if full && next.is_none() && !vm.jsc_vm().shrink_footprint_now() {
+            self.idle_quiet_ms.set(before);
+            full = false;
+        }
+        (full, next.map(|due| due - quiet))
     }
 
     /// Idempotent. Must run before JSC teardown: `~RunLoop::Timer` frees the
@@ -185,7 +189,7 @@ impl GarbageCollectionController {
         self.gc_last_heap_size.set(vm.block_bytes_allocated());
     }
 
-    /// `Tag::GcRepeating` fire body: `BUN_GC_TIMER_INTERVAL` (default 1 s) in fast mode, 30 s in slow mode; drops to slow after 30 fires with no heap growth, back to fast when it grows.
+    /// `Tag::GcRepeating` fire body: `BUN_GC_TIMER_INTERVAL` (default 1 s) in fast mode, 30 s in slow mode; drops to slow after 30 fires with no heap growth, back to fast when it grows or an idle full collection was requested.
     ///
     /// # Safety
     /// `this` is the live per-VM controller; `vm` is the per-thread VM.
@@ -206,7 +210,8 @@ impl GarbageCollectionController {
         let (full, idle_gc_due_in) = this.idle_tick(vm_ref, grew, this.repeat_interval());
         this.perform_gc(full);
         // Only growth is activity; a shrinking heap is a collection (possibly the one requested above) doing its job.
-        if this.gc_last_heap_size.get() <= prev_heap_size {
+        // An idle full collection proceeds at this timer's ticks in a program that runs no JS: fast ones for the next 30.
+        if !full && this.gc_last_heap_size.get() <= prev_heap_size {
             let ticks = this
                 .heap_size_didnt_change_for_repeating_timer_ticks_count
                 .get()

@@ -1048,8 +1048,6 @@ function opendirSync(path, options) {
   return new Dir(1, toPathIfFileURL(path), options);
 }
 
-// The native binding accepts a URL as a path, but Dir.path and the opendir
-// errors name the file path, like node.
 function toPathIfFileURL(path) {
   return path instanceof URL ? Bun.fileURLToPath(path) : path;
 }

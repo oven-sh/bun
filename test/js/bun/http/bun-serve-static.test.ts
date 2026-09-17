@@ -378,6 +378,7 @@ describe("static route Connection: close", () => {
       ? tls.connect({ host: "127.0.0.1", port: server.port, rejectUnauthorized: false })
       : net.connect(server.port, "127.0.0.1");
     try {
+      // On Windows the follow-up write after the server closes gets ECONNRESET.
       socket.on("error", () => {});
       await once(socket, secure ? "secureConnect" : "connect");
 

@@ -137,13 +137,14 @@ test("spawnSync AbortSignal works as timeout", async () => {
 });
 
 test("spawn AbortSignal that nothing else references still kills the child after GC", async () => {
+  // Nothing native holds the timeout source: it fires only if its wrapper survives the collections.
   const subprocess = Bun.spawn({
     cmd: [bunExe(), "--eval", "await Bun.sleep(100000)"],
     env: bunEnv,
     stdout: "inherit",
     stderr: "inherit",
     stdin: "inherit",
-    signal: AbortSignal.timeout(100),
+    signal: AbortSignal.any([AbortSignal.timeout(100)]),
   });
   for (let i = 0; i < 5; i++) {
     Bun.gc(true);

@@ -3963,8 +3963,7 @@ Server.prototype[kRealListen] = function (
       data: this,
       pauseOnConnect: this.pauseOnConnect,
     });
-    // The native listener owns the fd from here on, and stop() closes it. A
-    // cluster worker's shared handle must not close the same fd again.
+    // The native listener owns the fd now, so the cluster handle must not close it.
     const clusterHandle = this[kClusterHandle];
     if (clusterHandle != null && clusterHandle.sharedFd === fd) clusterHandle.adopted = true;
   } else {
@@ -3982,14 +3981,9 @@ Server.prototype[kRealListen] = function (
     });
   }
 
-  // The listener is bound and accepting from here on. If a later step throws,
-  // stop it, so a failed listen() leaves the server closed (no 'listening',
-  // listening === false, address() === null) and only 'error' fires.
+  // A throw past this point stops the bound listener, like node's setupListenHandle.
   try {
-    // Mirror libuv uv_pipe_chmod: readableAll/writableAll relax the unix socket
-    // file's group/other permission bits. Skipped on Windows and abstract
-    // sockets (no filesystem entry). uSockets binds synchronously, so the file
-    // exists by the time Bun.listen returns.
+    // uv_pipe_chmod: relax the socket file's group/other bits. No file on Windows or abstract sockets.
     // https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/lib/net.js#L1899
     if (path && (readableAll || writableAll) && process.platform !== "win32" && path.charCodeAt(0) !== 0) {
       let desired = 0;
@@ -4210,8 +4204,7 @@ function listenInCluster(
           sharedFd,
         );
       } catch (err) {
-        // kRealListen marks `handle.adopted` once the native listener owns the
-        // fd. Then this close() releases the primary's key and leaves the fd alone.
+        // With `handle.adopted` set by kRealListen, close() releases the key but not the fd.
         server[kClusterHandle] = null;
         server[kClusterUnixPath] = undefined;
         handle[kClusterOwner] = null;

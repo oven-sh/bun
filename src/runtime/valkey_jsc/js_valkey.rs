@@ -1047,8 +1047,8 @@ impl JSValkeyClient {
     // `()` — `IntoHostSetterReturn for ()` ⇒ `true` at the ABI, identical to
     // the old `-> bool { true }`.
     //
-    // Both are stored with the async context of the script that set them: the connection's
-    // events continue that script, whoever's turn of the loop they arrive in.
+    // Both continue the `Bun.ModuleGraph` whose script set them, whoever's turn of the loop the
+    // connection's events arrive in (and nothing, outside a graph).
     pub fn get_on_connect(_this: &Self, this_value: JSValue, _global: &JSGlobalObject) -> JSValue {
         Js::onconnect_get_cached(this_value)
             .map_or(JSValue::UNDEFINED, JSValue::without_async_context)
@@ -1062,7 +1062,7 @@ impl JSValkeyClient {
         Js::onconnect_set_cached(
             this_value,
             global,
-            value.with_async_context_if_needed(global),
+            value.with_graph_context_if_needed(global),
         );
     }
     pub fn get_on_close(_this: &Self, this_value: JSValue, _global: &JSGlobalObject) -> JSValue {
@@ -1078,7 +1078,7 @@ impl JSValkeyClient {
         Js::onclose_set_cached(
             this_value,
             global,
-            value.with_async_context_if_needed(global),
+            value.with_graph_context_if_needed(global),
         );
     }
 

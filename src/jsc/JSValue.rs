@@ -1653,7 +1653,22 @@ impl JSValue {
         AsyncContextFrame__withAsyncContextIfNeeded(global, self)
     }
 
-    /// The function [`with_async_context_if_needed`](Self::with_async_context_if_needed) was given
+    /// For a handler script sets on something long-lived whose events arrive from the event loop: it
+    /// continues the `Bun.ModuleGraph` whose script set it, without the `AsyncLocalStorage` stores of
+    /// that moment. Outside any graph, `self` unchanged.
+    #[inline]
+    pub fn with_graph_context_if_needed(self, global: &JSGlobalObject) -> JSValue {
+        unsafe extern "C" {
+            safe fn AsyncContextFrame__withGraphContextIfNeeded(
+                global: &JSGlobalObject,
+                callback: JSValue,
+            ) -> JSValue;
+        }
+        AsyncContextFrame__withGraphContextIfNeeded(global, self)
+    }
+
+    /// The function [`with_async_context_if_needed`](Self::with_async_context_if_needed) or
+    /// [`with_graph_context_if_needed`](Self::with_graph_context_if_needed) was given
     /// (`self` unchanged when it is not a wrapper): what a getter hands back to script.
     #[inline]
     pub fn without_async_context(self) -> JSValue {

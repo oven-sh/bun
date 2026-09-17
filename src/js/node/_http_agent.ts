@@ -22,6 +22,7 @@ const kRequestAsyncResource = Symbol("requestAsyncResource");
 // them for ever.
 const kOwnerFrame = Symbol("ownerFrame");
 const AsyncContextFrame = require("internal/async_context_frame");
+const ObjectDefineProperty = Object.defineProperty;
 
 function freeSocketErrorListener(err) {
   const socket = this;
@@ -37,7 +38,9 @@ function Agent(options): void {
   EventEmitter.$call(this);
 
   this.options = { __proto__: null, ...options };
-  this[kOwnerFrame] = AsyncContextFrame.currentGraphFrame();
+  // (Only an Agent made inside a graph has one.)
+  const ownerFrame = AsyncContextFrame.currentGraphFrame();
+  if (ownerFrame !== undefined) ObjectDefineProperty(this, kOwnerFrame, { __proto__: null, value: ownerFrame });
 
   this.defaultPort = this.options.defaultPort || 80;
   this.protocol = this.options.protocol || "http:";
@@ -330,9 +333,15 @@ Agent.prototype.createSocket = function createSocket(req, options, cb) {
 
   // The socket is opened as the Agent's owner (below), but the request that is waiting for it is
   // its requester's: a proxy tunnel answers from the proxy connection's callbacks, which run as
-  // the owner, so the requester's frame is kept here and what follows runs in it on both paths.
+  // the owner. When that is another Bun.ModuleGraph's context than the requester's (or the host's),
+  // what follows runs in the requester's frame; otherwise wherever the answer came in, as in node.
   const requesterFrame = AsyncContextFrame.current();
-  const oncreate = once((err, s) => AsyncContextFrame.run(requesterFrame, onSocketReady, this, err, s));
+  const requesterGraph = AsyncContextFrame.currentGraph();
+  const oncreate = once((err, s) =>
+    requesterGraph === AsyncContextFrame.currentGraph()
+      ? onSocketReady.$call(this, err, s)
+      : AsyncContextFrame.run(requesterFrame, onSocketReady, this, err, s),
+  );
   function onSocketReady(err, s) {
     // `cb` is onSocketCreated.bind(this, req); release it from this closure's
     // scope so retaining this arrow past its call cannot retain req.

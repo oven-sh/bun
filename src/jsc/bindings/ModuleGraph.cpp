@@ -310,6 +310,15 @@ JSModuleGraph* currentModuleGraph(Zig::GlobalObject* globalObject)
     return moduleGraphOfFrame(globalObject, globalObject->m_asyncContextData.get()->getInternalField(0));
 }
 
+JSObject* currentModuleGraphFrame(Zig::GlobalObject* globalObject)
+{
+    if (!globalObject->hasModuleGraphs())
+        return nullptr;
+    JSObject* enteredWith = nullptr;
+    moduleGraphOfFrame(globalObject, globalObject->m_asyncContextData.get()->getInternalField(0), &enteredWith);
+    return enteredWith;
+}
+
 // VirtualMachine::current_context (only asked once a graph has been made).
 extern "C" void* Bun__currentGraphContext(JSGlobalObject* globalObject)
 {

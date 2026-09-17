@@ -59,6 +59,15 @@ JSValue AsyncContextFrame::withAsyncContextIfNeeded(JSGlobalObject* globalObject
         context);
 }
 
+JSValue AsyncContextFrame::withGraphContextIfNeeded(JSGlobalObject* globalObject, JSValue callback)
+{
+    auto* zigGlobalObject = defaultGlobalObject(globalObject);
+    JSObject* graphFrame = Bun::currentModuleGraphFrame(zigGlobalObject);
+    if (!graphFrame || dynamicDowncast<AsyncContextFrame>(callback))
+        return callback;
+    return AsyncContextFrame::create(JSC::getVM(globalObject), zigGlobalObject->AsyncContextFrameStructure(), callback, graphFrame);
+}
+
 template<typename Visitor>
 void AsyncContextFrame::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
@@ -98,7 +107,12 @@ extern "C" JSC::EncodedJSValue AsyncContextFrame__withAsyncContextIfNeeded(JSGlo
     return JSValue::encode(AsyncContextFrame::withAsyncContextIfNeeded(globalObject, JSValue::decode(callback)));
 }
 
-// The function withAsyncContextIfNeeded() was given: what a getter hands back to script.
+extern "C" JSC::EncodedJSValue AsyncContextFrame__withGraphContextIfNeeded(JSGlobalObject* globalObject, JSC::EncodedJSValue callback)
+{
+    return JSValue::encode(AsyncContextFrame::withGraphContextIfNeeded(globalObject, JSValue::decode(callback)));
+}
+
+// The function withAsyncContextIfNeeded() / withGraphContextIfNeeded() was given: what a getter hands back to script.
 extern "C" JSC::EncodedJSValue AsyncContextFrame__callbackOf(JSC::EncodedJSValue stored)
 {
     JSValue value = JSValue::decode(stored);

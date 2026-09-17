@@ -20,8 +20,9 @@ namespace Bun {
 using namespace JSC;
 using namespace WebCore;
 
-// ondata / ondrain / onclose are stored with the async context of whoever set them, so the socket's
-// events continue that script. Reading one back gives the function that was stored.
+// ondata / ondrain / onclose continue the Bun.ModuleGraph whose script set them (nothing, outside a
+// graph: the socket's events arrive in nobody's async context, as in node). Reading one back gives
+// the function that was set.
 static JSValue storedCallback(JSObject* stored)
 {
     if (auto* wrapper = dynamicDowncast<AsyncContextFrame>(stored))
@@ -448,7 +449,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsNodeHttpServerSocketSetterOnDrain, (JSC::JSGlobalObje
         return false;
     }
 
-    thisObject->functionToCallOnDrain.set(vm, thisObject, AsyncContextFrame::withAsyncContextIfNeeded(globalObject, value).getObject());
+    thisObject->functionToCallOnDrain.set(vm, thisObject, AsyncContextFrame::withGraphContextIfNeeded(globalObject, value).getObject());
     return true;
 }
 
@@ -486,7 +487,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsNodeHttpServerSocketSetterOnData, (JSC::JSGlobalObjec
         return false;
     }
 
-    thisObject->functionToCallOnData.set(vm, thisObject, AsyncContextFrame::withAsyncContextIfNeeded(globalObject, value).getObject());
+    thisObject->functionToCallOnData.set(vm, thisObject, AsyncContextFrame::withGraphContextIfNeeded(globalObject, value).getObject());
     return true;
 }
 
@@ -510,7 +511,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsNodeHttpServerSocketSetterOnClose, (JSC::JSGlobalObje
         return false;
     }
 
-    thisObject->functionToCallOnClose.set(vm, thisObject, AsyncContextFrame::withAsyncContextIfNeeded(globalObject, value).getObject());
+    thisObject->functionToCallOnClose.set(vm, thisObject, AsyncContextFrame::withGraphContextIfNeeded(globalObject, value).getObject());
     return true;
 }
 

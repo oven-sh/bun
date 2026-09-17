@@ -29,8 +29,8 @@ namespace Bun {
 using namespace JSC;
 using namespace WebCore;
 
-// Calls ondata / ondrain / onclose in the async context it was stored with (the script that set it,
-// whose work the socket's event continues), and reports what it throws.
+// Calls ondata / ondrain / onclose in the context of the Bun.ModuleGraph whose script set it, if one
+// did, and reports what it throws.
 static void callStoredCallback(Zig::GlobalObject* globalObject, JSObject* callback, JSValue thisValue, const ArgList& args)
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());

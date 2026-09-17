@@ -1686,3 +1686,86 @@ test("an uncaughtException handler reads the store the callback that threw was s
     exitCode: 0,
   });
 });
+
+// What node does, with no Bun.ModuleGraph anywhere: a server socket's own events arrive in nobody's async
+// context, and a request's events keep the context its socket became ready in.
+test("node:http: socket events of a server and of a client request run in the async context node runs them in", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const { AsyncLocalStorage } = require("node:async_hooks");
+        const http = require("node:http");
+        const net = require("node:net");
+        const util = require("node:util");
+        const als = new AsyncLocalStorage();
+        const out = {};
+        const store = () => String(als.getStore());
+
+        // 1. A server started inside a store: what its connections' sockets hear is not in that store.
+        const server = http.createServer((request, response) => {
+          request.socket.on("close", () => { out["server: request.socket 'close'"] = store(); step2(); });
+          response.end("ok");
+        });
+        server.on("upgrade", (request, socket) => {
+          socket.on("data", () => { out["server: upgraded socket 'data'"] = store(); });
+          socket.on("end", () => socket.end());
+          socket.on("close", () => { out["server: upgraded socket 'close'"] = store(); step3(); });
+        });
+        als.run("the store at listen()", () => server.listen(0, "127.0.0.1", () => {
+          // A plain request whose connection closes.
+          const socket = net.connect(server.address().port, "127.0.0.1", () => socket.end("GET / HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n"));
+          socket.resume();
+        }));
+        function step2() {
+          // An upgrade: the peer writes, then closes.
+          const socket = net.connect(server.address().port, "127.0.0.1", () => {
+            socket.write("GET / HTTP/1.1\\r\\nHost: x\\r\\nConnection: Upgrade\\r\\nUpgrade: probe\\r\\n\\r\\n");
+            setTimeout(() => { socket.write("hello"); setTimeout(() => socket.end(), 20); }, 20);
+          });
+          socket.resume();
+        }
+
+        // 2. An Agent whose createConnection answers later, from a store of its own: the request's events
+        // keep that one, as in node.
+        function step3() {
+          const agent = new http.Agent();
+          out["util.inspect(agent) mentions ownerFrame"] = util.inspect(agent).includes("ownerFrame");
+          out["own symbols of an Agent"] = Object.getOwnPropertySymbols(agent).map(String).filter(name => name.includes("ownerFrame"));
+          agent.createConnection = (options, callback) => {
+            als.run("the store createConnection answered in", () => setTimeout(() => callback(null, net.connect(options)), 5));
+          };
+          als.run("the requester's store", () => {
+            const request = http.get({ port: server.address().port, host: "127.0.0.1", agent }, response => {
+              out["client: 'response'"] = store();
+              response.resume();
+              response.on("end", () => {
+                console.log(JSON.stringify(out));
+                process.exit(0);
+              });
+            });
+            request.on("socket", () => { out["client: 'socket'"] = store(); });
+          });
+        }
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout && JSON.parse(stdout), stderr, exitCode }).toEqual({
+    stdout: {
+      "server: request.socket 'close'": "undefined",
+      "server: upgraded socket 'data'": "undefined",
+      "server: upgraded socket 'close'": "undefined",
+      "util.inspect(agent) mentions ownerFrame": false,
+      "own symbols of an Agent": [],
+      "client: 'socket'": "the store createConnection answered in",
+      "client: 'response'": "the store createConnection answered in",
+    },
+    stderr: "",
+    exitCode: 0,
+  });
+});

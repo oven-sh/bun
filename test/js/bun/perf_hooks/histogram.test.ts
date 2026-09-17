@@ -66,14 +66,14 @@ describe("Histogram", () => {
     assert.throws(() => h.record("invalid"), /must be of type number/);
   });
 
-  describe("record validation", () => {
-    const rangeError = (message: string) => ({ name: "RangeError", code: "ERR_OUT_OF_RANGE", message });
-    const typeError = (received: string) => ({
-      name: "TypeError",
-      code: "ERR_INVALID_ARG_TYPE",
-      message: `The "val" argument must be of type number. Received ${received}`,
-    });
+  const rangeError = (message: string) => ({ name: "RangeError", code: "ERR_OUT_OF_RANGE", message });
+  const typeError = (name: string, received: string) => ({
+    name: "TypeError",
+    code: "ERR_INVALID_ARG_TYPE",
+    message: `The "${name}" argument must be of type number. Received ${received}`,
+  });
 
+  describe("record validation", () => {
     test("a number that is not an integer", () => {
       const h = createHistogram();
 
@@ -118,9 +118,9 @@ describe("Histogram", () => {
         [undefined, "undefined"],
         [null, "null"],
       ] as const) {
-        assert.throws(() => h.record(value), typeError(received));
+        assert.throws(() => h.record(value), typeError("val", received));
       }
-      assert.throws(() => h.record(), typeError("undefined"));
+      assert.throws(() => h.record(), typeError("val", "undefined"));
       assert.strictEqual(h.count, 0);
     });
 
@@ -149,6 +149,51 @@ describe("Histogram", () => {
       assert.deepStrictEqual({ count: h.count, min: h.min }, { count: 4, min: 55264 });
     });
   });
+
+  for (const method of ["percentile", "percentileBigInt"] as const) {
+    describe(`${method}() arguments`, () => {
+      test("a number out of range", () => {
+        const h = createHistogram();
+        h.record(50);
+
+        for (const [value, received] of [
+          [101, "101"],
+          [100.5, "100.5"],
+          [0, "0"],
+          [-1, "-1"],
+          [NaN, "NaN"],
+          [Infinity, "Infinity"],
+          [-Infinity, "-Infinity"],
+        ] as const) {
+          assert.throws(
+            () => h[method](value),
+            rangeError(`The value of "percentile" is out of range. It must be > 0 && <= 100. Received ${received}`),
+          );
+        }
+
+        assert.deepStrictEqual(
+          [Number.MIN_VALUE, 100].map(percentile => Number(h[method](percentile))),
+          [50, 50],
+        );
+      });
+
+      test("a value that is not a number", () => {
+        const h: any = createHistogram();
+        h.record(50);
+
+        for (const [value, received] of [
+          ["50", "type string ('50')"],
+          [50n, "type bigint (50n)"],
+          [{}, "an instance of Object"],
+          [undefined, "undefined"],
+          [null, "null"],
+        ] as const) {
+          assert.throws(() => h[method](value), typeError("percentile", received));
+        }
+        assert.throws(() => h[method](), typeError("percentile", "undefined"));
+      });
+    });
+  }
 
   describe("min and max", () => {
     const read = (h: ReturnType<typeof createHistogram>) => ({
@@ -375,6 +420,37 @@ describe("Histogram", () => {
         assert.strictEqual(typeof key, "number");
         assert.strictEqual(typeof value, "bigint");
       }
+    });
+
+    // Node fills both maps with the lowest value of each bucket. percentile() returns the highest.
+    test("percentiles and percentilesBigInt hold the lowest value of each bucket", () => {
+      const h = createHistogram();
+      for (const value of [55281, 433722, 100000, 200000]) h.record(value);
+
+      assert.deepStrictEqual(
+        h.percentilesBigInt,
+        new Map([
+          [0, 55264n],
+          [50, 99968n],
+          [75, 199936n],
+          [87.5, 433664n],
+          [100, 433664n],
+        ]),
+      );
+      assert.deepStrictEqual(
+        Array.from(h.percentiles, ([key, value]) => [key, Number(value)]),
+        [
+          [0, 55264],
+          [50, 99968],
+          [75, 199936],
+          [87.5, 433664],
+          [100, 433664],
+        ],
+      );
+      assert.deepStrictEqual(
+        [50, 75, 87.5, 100].map(percentile => h.percentile(percentile)),
+        [100031, 200063, 433919, 433919],
+      );
     });
   });
 

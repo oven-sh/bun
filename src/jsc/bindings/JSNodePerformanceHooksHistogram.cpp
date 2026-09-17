@@ -203,7 +203,9 @@ void JSNodePerformanceHooksHistogram::getPercentiles(JSGlobalObject* globalObjec
 
     while (hdr_iter_next(&iter)) {
         double percentile = iter.specifics.percentiles.percentile;
-        int64_t value = iter.highest_equivalent_value;
+        // Node.js reports iter.value, the lowest value of the bucket, not what percentile() returns.
+        // https://github.com/nodejs/node/blob/v26.3.0/src/histogram-inl.h#L61-L70
+        int64_t value = iter.value;
         JSValue jsKey = jsNumber(percentile);
         JSValue jsValue = JSBigInt::createFrom(globalObject, value);
         RETURN_IF_EXCEPTION(scope, );
@@ -224,7 +226,7 @@ void JSNodePerformanceHooksHistogram::getPercentilesBigInt(JSGlobalObject* globa
 
     while (hdr_iter_next(&iter)) {
         double percentile = iter.specifics.percentiles.percentile;
-        int64_t value = iter.highest_equivalent_value;
+        int64_t value = iter.value;
         JSValue jsKey = jsNumber(percentile);
         JSValue jsValue = JSBigInt::createFrom(globalObject, value);
         RETURN_IF_EXCEPTION(scope, );

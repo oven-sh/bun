@@ -142,7 +142,9 @@ JSC_DEFINE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncReset, (JSGloba
 
 static double toPercentile(JSC::ThrowScope& scope, JSGlobalObject* globalObject, JSValue value)
 {
-    Bun::V::validateNumber(scope, globalObject, value, "percentile"_s, jsNumber(0), jsNumber(100));
+    // Node.js checks only the type here, so that every out-of-range value gets the "> 0 && <= 100" text below.
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/histogram.js#L189-L197
+    Bun::V::validateNumber(scope, globalObject, value, "percentile"_s, jsUndefined(), jsUndefined());
     RETURN_IF_EXCEPTION(scope, {});
 
     // TODO: rewrite validateNumber to return the validated value.
@@ -165,12 +167,7 @@ JSC_DEFINE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncPercentile, (JS
         return {};
     }
 
-    if (callFrame->argumentCount() < 1) {
-        Bun::ERR::MISSING_ARGS(scope, globalObject, "percentile requires an argument"_s);
-        return {};
-    }
-
-    double percentile = toPercentile(scope, globalObject, callFrame->uncheckedArgument(0));
+    double percentile = toPercentile(scope, globalObject, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, {});
 
     return JSValue::encode(jsNumber(static_cast<double>(thisObject->getPercentile(percentile))));
@@ -187,12 +184,7 @@ JSC_DEFINE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncPercentileBigIn
         return {};
     }
 
-    if (callFrame->argumentCount() < 1) {
-        Bun::ERR::MISSING_ARGS(scope, globalObject, "percentileBigInt requires an argument"_s);
-        return {};
-    }
-
-    double percentile = toPercentile(scope, globalObject, callFrame->uncheckedArgument(0));
+    double percentile = toPercentile(scope, globalObject, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, {});
 
     RELEASE_AND_RETURN(scope, JSValue::encode(JSBigInt::createFrom(globalObject, thisObject->getPercentile(percentile))));

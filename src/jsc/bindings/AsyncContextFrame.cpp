@@ -1,6 +1,7 @@
 #include "root.h"
 #include "ZigGlobalObject.h"
 #include "AsyncContextFrame.h"
+#include "BunClientData.h"
 #include <JavaScriptCore/InternalFieldTuple.h>
 
 #if ASSERT_ENABLED
@@ -100,6 +101,8 @@ extern "C" JSC::EncodedJSValue AsyncContextFrame__withAsyncContextIfNeeded(JSGlo
     if (!functionObject.isCell())                                                   \
         return jsUndefined();                                                       \
     auto& vm = global->vm();                                                        \
+    if (WebCore::clientData(vm)->isStoppingOrStopped(vm)) [[unlikely]]              \
+        return jsUndefined();                                                       \
     JSValue restoreAsyncContext;                                                    \
     InternalFieldTuple* asyncContextData = nullptr;                                 \
     if (auto* wrapper = dynamicDowncast<AsyncContextFrame>(functionObject)) {       \
@@ -121,6 +124,8 @@ JSValue AsyncContextFrame::call(JSGlobalObject* global, JSValue functionObject, 
 #endif
 
     if (!global->isAsyncContextTrackingEnabled()) [[likely]] {
+        if (WebCore::clientData(global->vm())->isStoppingOrStopped(global->vm())) [[unlikely]]
+            return jsUndefined();
         return JSC::profiledCall(global, ProfilingReason::API, functionObject, JSC::getCallData(functionObject), thisValue, args);
     }
 

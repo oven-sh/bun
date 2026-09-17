@@ -752,6 +752,144 @@ describe("`bun audit`", () => {
   });
 });
 
+// Every audit line that names a registry prints it through the same redaction as the install error lines, which
+// replaces an npm token or UUID anywhere in the URL with `***`; the skipped-registry record (the warning and the
+// `unaudited` entries of `audit fix --json`) additionally leaves out credentials written into the URL itself. Most
+// of these tests put the token in the registry path because that reaches the audit command from every config
+// source, while `user:password@` is split out of the URL by some of them (`.npmrc`, bunfig registry strings) and
+// kept by others (the bunfig object form used below, the env vars today).
+describe("`bun audit` with a secret in the registry URL", () => {
+  const SECRET = "npm_" + "secret".padEnd(36, "0");
+  const BULK_PATH = "/-/npm/v1/security/advisories/bulk";
+  const NON_JSON = (registry: string) => `error: ${registry} returned a non-JSON audit response`;
+
+  // `url` is what the project is configured with, `printed` is how every audit line must render it.
+  function secretRegistry(registry: Registry) {
+    return { url: `${registry.url}${SECRET}/`, printed: `${registry.url}***` };
+  }
+
+  // The bulk endpoint lives under the token path, so the registry answers every request the same way.
+  function registryAnswering(body: string, init?: ResponseInit) {
+    return Bun.serve({ port: 0, fetch: () => new Response(body, init) });
+  }
+
+  // `bun audit` only reads bun.lock, so the project never needs an install.
+  function project(dependencies: Record<string, string>, extraFiles: Record<string, string> = {}) {
+    return tempDir("audit-registry-secret-", {
+      "package.json": JSON.stringify({ name: "app", dependencies }),
+      "bun.lock": JSON.stringify({
+        lockfileVersion: 1,
+        workspaces: { "": { name: "app", dependencies } },
+        packages: Object.fromEntries(
+          Object.entries(dependencies).map(([name, version]) => [name, [`${name}@${version}`, "", {}, ""]]),
+        ),
+      }),
+      ...extraFiles,
+    });
+  }
+
+  async function auditAgainst(dir: string, defaultRegistry: string, ...args: string[]) {
+    await using proc = spawn({
+      cmd: [bunExe(), "audit", ...args],
+      cwd: String(dir),
+      env: { ...bunEnv, NPM_CONFIG_REGISTRY: defaultRegistry },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test.concurrent("the failed POST line masks the secret", async () => {
+    await using registry = registryAnswering("not found", { status: 404 });
+    const { url, printed } = secretRegistry(registry);
+    using dir = project({ "no-deps": "1.0.0" });
+
+    const { stdout, stderr, exitCode } = await auditAgainst(dir, url);
+    expect(normalizeBunSnapshot(stderr)).toBe(`error: POST ${printed}${BULK_PATH} - 404`);
+    expect(normalizeBunSnapshot(stdout)).toBe("bun audit <version> (<revision>)");
+    expect(exitCode).toBe(1);
+  });
+
+  test.concurrent("the non-JSON response line masks the secret", async () => {
+    await using registry = registryAnswering("<html><body>sign in</body></html>");
+    const { url, printed } = secretRegistry(registry);
+    using dir = project({ "no-deps": "1.0.0" });
+
+    const { stdout, stderr, exitCode } = await auditAgainst(dir, url);
+    expect(normalizeBunSnapshot(stderr)).toBe(NON_JSON(printed));
+    expect(normalizeBunSnapshot(stdout)).toBe("bun audit <version> (<revision>)");
+    expect(exitCode).toBe(1);
+  });
+
+  // A body starting with `{` gets past the response check and is rejected when it is parsed instead; the report,
+  // --json and fix code paths each report that themselves.
+  test.concurrent("the unparsable response line masks the secret in every mode", async () => {
+    const body = "{ not json";
+    await using registry = registryAnswering(body);
+    const { url, printed } = secretRegistry(registry);
+    using dir = project({ "no-deps": "1.0.0" });
+
+    const report = await auditAgainst(dir, url);
+    expect(normalizeBunSnapshot(report.stderr)).toBe(NON_JSON(printed));
+    expect(normalizeBunSnapshot(report.stdout)).toBe("bun audit <version> (<revision>)");
+    expect(report.exitCode).toBe(1);
+
+    const json = await auditAgainst(dir, url, "--json");
+    expect(normalizeBunSnapshot(json.stderr)).toBe(NON_JSON(printed));
+    expect(json.stdout).toBe(body + "\n");
+    expect(json.exitCode).toBe(1);
+
+    const fix = await auditAgainst(dir, url, "fix");
+    expect(normalizeBunSnapshot(fix.stderr)).toBe(NON_JSON(printed));
+    expect(normalizeBunSnapshot(fix.stdout)).toBe("bun audit fix <version> (<revision>)");
+    expect(fix.exitCode).toBe(1);
+  });
+
+  // `bun audit` and `bun audit fix --json` against a project whose only package comes from a scoped registry that
+  // answers 404, so both commands report that registry as skipped; `printed` is how it must be named.
+  async function expectSkippedRegistry(dir: string, printed: string) {
+    const skipped = skippedWarning(printed, "404", "@foo/bar");
+
+    const report = await auditAgainst(dir, registryHref(server));
+    expect(normalizeBunSnapshot(report.stderr)).toBe(skipped);
+    expect(normalizeBunSnapshot(report.stdout)).toBe(AUDIT_HEADER + noVulnerabilities(0, "1 skipped"));
+    expect(report.exitCode).toBe(0);
+
+    const fix = await auditAgainst(dir, registryHref(server), "fix", "--json");
+    expect(normalizeBunSnapshot(fix.stderr)).toBe(skipped);
+    expect(JSON.parse(fix.stdout)).toStrictEqual({
+      dryRun: false,
+      fixed: 0,
+      remaining: 0,
+      fixes: [],
+      blocked: [],
+      unfixable: [],
+      manifestUnavailable: [],
+      unmatched: [],
+      unaudited: [{ registry: printed, packages: ["@foo/bar"], reason: "404" }],
+      vulnerableAfterInstall: [],
+    });
+    expect(fix.exitCode).toBe(0);
+  }
+
+  test.concurrent("the skipped registry warning and the --json unaudited entry mask the secret", async () => {
+    await using scoped = registryAnswering("not found", { status: 404 });
+    const { url, printed } = secretRegistry(scoped);
+    using dir = project({ "@foo/bar": "1.0.0" }, { ".npmrc": `@foo:registry=${url}\n` });
+
+    await expectSkippedRegistry(dir, printed);
+  });
+
+  test.concurrent("the skipped registry warning and the --json unaudited entry leave out URL credentials", async () => {
+    await using scoped = registryAnswering("not found", { status: 404 });
+    const url = `${scoped.url.protocol}//alice:s3cret@${scoped.url.host}/`;
+    using dir = project({ "@foo/bar": "1.0.0" }, { "bunfig.toml": `[install.scopes]\nfoo = { url = "${url}" }\n` });
+
+    await expectSkippedRegistry(dir, registryHref(scoped));
+  });
+});
+
 describe("`bun audit --prod`", () => {
   // pnpm#13605: an optional peer that only a devDependency brought in is not a production dependency.
   test.concurrent("bun audit --prod skips a dev-only optional peer of a production package", async () => {

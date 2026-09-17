@@ -96,11 +96,13 @@ describe("packages whose label is longer than 1024 bytes", () => {
     return packageDir;
   }
 
+  // CI exports BUN_INSTALL_CACHE_DIR, which overrides the harness bunfig's per-test `cache`. Two of these concurrent
+  // tests install the same tarball spec; sharing one cache, they replace each other's `@T@<hash>` folder on Windows.
   async function runBun(cwd: string, ...args: string[]) {
     await using proc = Bun.spawn({
       cmd: [bunExe(), ...args],
       cwd,
-      env: bunEnv,
+      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache") },
       stdout: "pipe",
       stderr: "pipe",
     });

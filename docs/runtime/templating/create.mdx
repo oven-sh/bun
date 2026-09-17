@@ -121,7 +121,7 @@ bun create remix
 bunx create-remix
 ```
 
-Refer to the `create-<template>` package's documentation for usage instructions.
+Refer to the `create-<template>` package's documentation for usage instructions. For `react` and `next`, Bun doesn't run a package; it only prints a message pointing to `react-app`/`vite` and `next-app`.
 
 ## From GitHub
 
@@ -233,7 +233,7 @@ After cloning a template, `bun create` removes the `"bun-create"` section from `
 
 When you run `bun create ${template} ${destination}`, here’s what happens:
 
-IF remote template (`elysia`, `elysia-buchta`, or `stric`; Bun hands any other npm template name to `bunx create-${template}` instead)
+IF remote template (`elysia`, `elysia-buchta`, or `stric`; Bun hands any other npm template name to `bunx create-${template}` instead, except `react` and `next`, for which it only prints a message pointing to `react-app`/`vite` and `next-app`)
 
 1. GET `registry.npmjs.org/@bun-examples/${template}/latest` and parse it
 2. GET `registry.npmjs.org/@bun-examples/${template}/-/${template}-${latestVersion}.tgz`

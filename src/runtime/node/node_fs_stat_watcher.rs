@@ -21,6 +21,7 @@ use bun_resolver::fs;
 use bun_sys::{self, PosixStat};
 use bun_threading::{Guarded, UnboundedQueue};
 
+use crate::generated_classes::js_StatWatcher as js;
 use crate::node::stat::{StatsBig, StatsSmall};
 use crate::node::types::PathLikeExt;
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
@@ -45,7 +46,6 @@ fn stat_to_js_stats(
 
 /// This is a singleton struct that contains the timer used to schedule re-stat calls.
 #[derive(bun_ptr::ThreadSafeRefCounted)]
-#[ref_count(destroy = Self::deinit)]
 pub struct StatWatcherScheduler {
     current_interval: AtomicI32,
     /// Set by `timer_callback` immediately before scheduling `work_pool_callback`
@@ -88,57 +88,12 @@ unsafe impl bun_threading::Linked for StatWatcher {
     }
 }
 
-/// RAII owner of one outstanding [`StatWatcherScheduler`] ref. Adopts the
-/// "task in flight" ref taken in [`StatWatcherScheduler::timer_callback`] and
-/// releases it on Drop.
-#[must_use = "dropping immediately releases the adopted ref"]
-struct SchedulerRefGuard(*mut StatWatcherScheduler);
-
-impl SchedulerRefGuard {
-    /// Take ownership of a ref the caller already holds (no bump).
-    ///
-    /// # Safety
-    /// `ptr` must point to a live `StatWatcherScheduler` and the caller must
-    /// own one outstanding ref, which is transferred to the returned guard.
-    #[inline]
-    unsafe fn adopt(ptr: *mut StatWatcherScheduler) -> Self {
-        Self(ptr)
-    }
-}
-
-impl Drop for SchedulerRefGuard {
-    #[inline]
+impl Drop for StatWatcherScheduler {
     fn drop(&mut self) {
-        // SAFETY: `adopt` contract — `self.0` is live and we own one ref.
-        unsafe { ThreadSafeRefCount::<StatWatcherScheduler>::deref(self.0) };
-    }
-}
-
-/// RAII owner of one outstanding [`StatWatcher`] ref. Adopts a ref taken
-/// elsewhere (e.g. by `InitialStatTask::create_and_schedule` or
-/// [`StatWatcher::restat`]) and releases it on Drop.
-/// Holds a raw pointer so no `&`/`&mut StatWatcher` is
-/// live across the potential free in `deref`.
-#[must_use = "dropping immediately releases the adopted ref"]
-struct WatcherRefGuard(*mut StatWatcher);
-
-impl WatcherRefGuard {
-    /// Take ownership of a ref the caller already holds (no bump).
-    ///
-    /// # Safety
-    /// `ptr` must point to a live `StatWatcher` and the caller must own one
-    /// outstanding ref, which is transferred to the returned guard.
-    #[inline]
-    unsafe fn adopt(ptr: *mut StatWatcher) -> Self {
-        Self(ptr)
-    }
-}
-
-impl Drop for WatcherRefGuard {
-    #[inline]
-    fn drop(&mut self) {
-        // SAFETY: `adopt` contract — `self.0` is live and we own one ref.
-        unsafe { ThreadSafeRefCount::<StatWatcher>::deref(self.0) };
+        assert!(
+            self.watchers.is_empty(),
+            "destroying StatWatcherScheduler while it still has watchers",
+        );
     }
 }
 
@@ -193,22 +148,6 @@ impl StatWatcherScheduler {
             event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::StatWatcherScheduler),
             ref_count: ThreadSafeRefCount::init(),
         })
-    }
-
-    // Safe fn: only reachable via the `#[ref_count(destroy = …)]` derive,
-    // whose generated trait `destructor` upholds the sole-owner contract
-    // (called only when ref_count reaches zero; `this` was Box-allocated by RefPtr::new).
-    fn deinit(this: *mut StatWatcherScheduler) {
-        // BACKREF — `this` is the live ref-counted scheduler (last ref); wrap
-        // once so the field reads below go through safe `ParentRef` Deref.
-        let this_ref = ParentRef::from(NonNull::new(this).expect("deinit: scheduler"));
-        assert!(
-            this_ref.watchers.is_empty(),
-            "destroying StatWatcherScheduler while it still has watchers",
-        );
-        // SAFETY: refcount reached zero, so `this` is the sole remaining
-        // reference; heap::take reclaims and drops the allocation.
-        drop(unsafe { bun_core::heap::take(this) });
     }
 
     /// # Safety
@@ -326,7 +265,7 @@ impl StatWatcherScheduler {
         }
 
         // One ref is held across the work-pool hop (released by the
-        // `SchedulerRefGuard` in `work_pool_callback`). Taken here — not in
+        // `RefPtr::from_raw` in `work_pool_callback`). Taken here — not in
         // `set_interval` — so the count exactly tracks "task in flight" instead
         // of accumulating one leak per `set_interval(0)` / re-arm.
         // SAFETY: `self` is live (`&mut self`).
@@ -346,7 +285,7 @@ impl StatWatcherScheduler {
         // ref'd when the work-pool task was scheduled
         // SAFETY: `this` is live; one ref (taken in `timer_callback`) is owned
         // by this callback and adopted here.
-        let _ref_guard = unsafe { SchedulerRefGuard::adopt(this) };
+        let guard = unsafe { RefPtr::from_raw(this) };
         // BACKREF — `this` is alive (ref'd when the timer was scheduled);
         // `ParentRef` Deref gives safe `&Self` for the queue/interval reads.
         let this_ref = ParentRef::from(NonNull::new(this).expect("work_pool_callback: scheduler"));
@@ -415,7 +354,7 @@ impl StatWatcherScheduler {
         // Publish the queue writes above before declaring the work-pool hop
         // finished; `shutdown_for_exit` Acquire-loads this and then drains.
         this_ref.work_pool_in_flight.store(false, Ordering::Release);
-        drop(_ref_guard);
+        drop(guard);
         drop(ticket);
     }
 
@@ -475,9 +414,8 @@ impl StatWatcherScheduler {
         }
 
         // Release the RareData ref (`into_raw()` in `lazy_scheduler`). The
-        // scheduler stays alive until every remaining `StatWatcher::finalize`
-        // drops its `RefPtr` during `lastChanceToFinalize`; the last of those
-        // brings the count to zero.
+        // scheduler stays alive until the last remaining `StatWatcher` (each
+        // holds a `scheduler` ref) is freed.
         // SAFETY: `this` is live and we own the RareData ref.
         Self::deref(this);
     }
@@ -493,7 +431,6 @@ impl StatWatcherScheduler {
 // JS-thread-only. Read-only-after-construction fields stay bare.
 #[bun_jsc::JsClass(no_constructor)]
 #[derive(bun_ptr::ThreadSafeRefCounted)]
-#[ref_count(destroy = Self::deinit)]
 pub struct StatWatcher {
     pub(crate) next: bun_threading::Link<StatWatcher>, // INTRUSIVE link for UnboundedQueue
 
@@ -525,61 +462,22 @@ pub struct StatWatcher {
     scheduler: RefPtr<StatWatcherScheduler>,
 }
 
-/// `jsc.Codegen.JSStatWatcher` — cached-value accessors generated from
-/// `.classes.ts`. The C++ symbols are emitted by `generate-classes.ts`; this
-/// module declares them locally so callers can write `js::listener_get_cached`
-/// without depending on the placeholder type in `crate::generated_classes`.
-mod js {
-    use super::{JSGlobalObject, JSValue};
-
-    // `safe fn` to match the `safe fn …CachedValue` declarations
-    // `generate-classes.ts` emits in `generated_classes.rs` (avoids
-    // `clashing_extern_declarations`). C++ side declares these with
-    // `JSC_CALLCONV` (= SysV ABI on win-x64), so import via `jsc_abi_extern!`
-    // — a plain `extern "C"` block here is the wrong ABI on Windows and
-    // garbages the args (Win64 puts them in rcx/rdx/r8, callee reads rdi/rsi/rdx).
-    bun_jsc::jsc_abi_extern! {
-        safe fn StatWatcherPrototype__listenerSetCachedValue(
-            this_value: JSValue,
-            global: *mut JSGlobalObject,
-            value: JSValue,
-        );
-        safe fn StatWatcherPrototype__listenerGetCachedValue(this_value: JSValue) -> JSValue;
-        safe fn StatWatcherPrototype__prevStatSetCachedValue(
-            this_value: JSValue,
-            global: *mut JSGlobalObject,
-            value: JSValue,
-        );
-        safe fn StatWatcherPrototype__prevStatGetCachedValue(this_value: JSValue) -> JSValue;
-    }
-
-    #[inline]
-    pub(super) fn listener_set_cached(
-        this_value: JSValue,
-        global: &JSGlobalObject,
-        value: JSValue,
-    ) {
-        StatWatcherPrototype__listenerSetCachedValue(this_value, global.as_mut_ptr(), value)
-    }
-    #[inline]
-    pub(super) fn listener_get_cached(this_value: JSValue) -> Option<JSValue> {
-        let v = StatWatcherPrototype__listenerGetCachedValue(this_value);
-        if v.is_empty() { None } else { Some(v) }
-    }
-
-    pub(super) mod gc {
-        pub(crate) mod prev_stat {
-            use super::super::*;
-            #[inline]
-            pub(crate) fn set(this_value: JSValue, global: &JSGlobalObject, value: JSValue) {
-                StatWatcherPrototype__prevStatSetCachedValue(this_value, global.as_mut_ptr(), value)
-            }
-            #[inline]
-            pub(crate) fn get(this_value: JSValue) -> Option<JSValue> {
-                let v = StatWatcherPrototype__prevStatGetCachedValue(this_value);
-                if v.is_empty() { None } else { Some(v) }
-            }
+impl Drop for StatWatcher {
+    fn drop(&mut self) {
+        log!("deinit {:x}", std::ptr::from_ref(self) as usize);
+        // Isolation-registry removal lives in `close()`, NOT here: the last
+        // `deref` can happen on the work-pool thread (queue ref dropped in
+        // `work_pool_callback` / `InitialStatTask`), where the thread-local
+        // `active_handles()` is null and the removal would silently no-op,
+        // leaving a dangling registry pointer. Every drop of a registered
+        // watcher is preceded by a JS-thread `close()` (the Strong `this_value`
+        // self-ref keeps the wrapper alive until `close()` downgrades it, so
+        // `finalize` cannot drop the wrapper ref first).
+        if cfg!(debug_assertions) && self.poll_ref.get().is_active() {
+            debug_assert!(core::ptr::eq(VirtualMachine::get(), self.ctx.as_ptr())); // We cannot unref() on another thread this way.
         }
+        let el_ctx = self.ctx_el_ctx();
+        self.poll_ref.with_mut(|p| p.unref(el_ctx));
     }
 }
 
@@ -704,48 +602,6 @@ impl StatWatcher {
         // unlock on Drop of guard
     }
 
-    // Safe fn: reachable via the `#[ref_count(destroy = …)]` derive (whose
-    // generated trait `destructor` upholds the sole-owner contract) and
-    // the `errdefer` scopeguard in `init` (which owns the only reference
-    // on the error path). Not `impl Drop` — this is a `.classes.ts` m_ctx
-    // payload with intrusive refcount; teardown is driven by ref_count, and
-    // `finalize()` is the GC entry point.
-    fn deinit(this: *mut StatWatcher) {
-        log!("deinit {:x}", this as usize);
-
-        // BACKREF — last ref; exclusive access. R-2: all field mutation goes
-        // through Cell/JsCell/Atomic so shared `&` suffices; `ParentRef` Deref
-        // collapses the per-site raw deref.
-        let this_ref = ParentRef::from(NonNull::new(this).expect("deinit: watcher"));
-
-        // Isolation-registry removal lives in `close()`, NOT here: the last
-        // `deref` can happen on the work-pool thread (queue ref dropped in
-        // `work_pool_callback` / `InitialStatTask`), where the thread-local
-        // `active_handles()` is null and the removal would silently no-op,
-        // leaving a dangling registry pointer. Every deinit of a registered
-        // watcher is preceded by a JS-thread `close()` (the Strong `this_value`
-        // self-ref keeps the wrapper alive until `close()` downgrades it, so
-        // `finalize` cannot drop the wrapper ref first).
-        this_ref.persistent.set(false);
-        if cfg!(debug_assertions) {
-            if this_ref.poll_ref.get().is_active() {
-                debug_assert!(core::ptr::eq(VirtualMachine::get(), this_ref.ctx.as_ptr())); // We cannot unref() on another thread this way.
-            }
-        }
-        let el_ctx = this_ref.ctx_el_ctx();
-        this_ref.poll_ref.with_mut(|p| p.unref(el_ctx));
-        this_ref.closed.store(true, Ordering::Relaxed);
-        // `this_value.deinit()` handled by JsRef Drop below; explicit reset
-        // drops the Strong before dealloc.
-        this_ref.this_value.set(JsRef::empty());
-        // `path` freed by ZBox Drop below.
-
-        // SAFETY: the caller is the sole owner (refcount hit zero, or the
-        // error-path scopeguard in `init` holds the only reference);
-        // heap::take reclaims and drops the allocation.
-        drop(unsafe { bun_core::heap::take(this) });
-    }
-
     #[bun_jsc::host_fn(method)]
     pub(crate) fn do_ref(
         this: &Self,
@@ -806,29 +662,16 @@ impl StatWatcher {
         Ok(JSValue::UNDEFINED)
     }
 
-    /// If the scheduler is not using this, free instantly, otherwise mark for being freed.
-    pub(crate) fn finalize(self: Box<Self>) {
+    /// The scheduler holds its own ref; `closed` tells it to drop it.
+    pub(crate) fn finalize(&self) {
         log!("Finalize\n");
-        // Refcounted: hand ownership back to the raw refcount FIRST so a panic
-        // in the work below leaks instead of UAF-ing the scheduler's alias.
-        // R-2: do NOT form `&mut Self` — the work-pool thread may concurrently
-        // hold `&*watcher` (see `work_pool_callback`); `Box::into_raw` then
-        // `&*ptr` keeps the access shared.
-        let this_ptr: *mut Self = bun_core::heap::into_raw(self);
-        // BACKREF — `this_ptr` was just leaked from `Box`; ref_count >= 1.
-        // `ParentRef` Deref gives safe `&Self` for the Cell/Atomic writes.
-        let this = ParentRef::from(NonNull::new(this_ptr).expect("finalize: watcher"));
-        this.this_value.with_mut(|r| r.finalize());
-        this.closed.store(true, Ordering::Relaxed);
-        this.scheduler.deref();
-        // but don't deinit until the scheduler drops its reference.
-        // SAFETY: `this_ptr` was just leaked from `Box`; we own one ref.
-        Self::deref(this_ptr);
+        self.this_value.with_mut(|r| r.finalize());
+        self.closed.store(true, Ordering::Relaxed);
     }
 
     fn initial_stat_success_on_main_thread(this: *mut StatWatcher) -> bun_event_loop::JsResult<()> {
         // SAFETY: balance the ref from createAndSchedule(); raw ptr captured (not `&self`).
-        let _ref_guard = unsafe { WatcherRefGuard::adopt(this) };
+        let _guard = unsafe { RefPtr::from_raw(this) };
         // BACKREF — `this` is alive (ref'd in
         // InitialStatTask::create_and_schedule). R-2: all field access via
         // Cell/JsCell/Atomic; `ParentRef` Deref gives safe `&Self`.
@@ -845,7 +688,7 @@ impl StatWatcher {
         // Propagated to the task fold: reporting here would leave a
         // termination pending for the next queued task's JS entry.
         let jsvalue = stat_to_js_stats(global_this, &this_ref.get_last_stat(), this_ref.bigint)?;
-        js::gc::prev_stat::set(js_this, global_this, jsvalue);
+        js::prev_stat_set_cached(js_this, global_this, jsvalue);
 
         // SAFETY: scheduler is live (`RefPtr`); `this` is live (ref'd, guard above).
         StatWatcherScheduler::append(this_ref.scheduler.as_ptr(), this);
@@ -854,7 +697,7 @@ impl StatWatcher {
 
     fn initial_stat_error_on_main_thread(this: *mut StatWatcher) -> bun_event_loop::JsResult<()> {
         // SAFETY: balance the ref from createAndSchedule(); raw ptr captured (not `&self`).
-        let _ref_guard = unsafe { WatcherRefGuard::adopt(this) };
+        let _guard = unsafe { RefPtr::from_raw(this) };
         // BACKREF — `this` is alive (ref'd in
         // InitialStatTask::create_and_schedule). R-2: `cb.call()` below
         // re-enters JS, which may call `do_close()` → fresh `&Self` from
@@ -870,7 +713,7 @@ impl StatWatcher {
         };
         let global_this = this_ref.global_this();
         let jsvalue = stat_to_js_stats(global_this, &this_ref.get_last_stat(), this_ref.bigint)?;
-        js::gc::prev_stat::set(js_this, global_this, jsvalue);
+        js::prev_stat_set_cached(js_this, global_this, jsvalue);
 
         let result = js::listener_get_cached(js_this).unwrap().call(
             global_this,
@@ -941,7 +784,7 @@ impl StatWatcher {
         this: *mut StatWatcher,
     ) -> bun_event_loop::JsResult<()> {
         // SAFETY: balance the ref from restat(); raw ptr captured (not `&self`).
-        let _ref_guard = unsafe { WatcherRefGuard::adopt(this) };
+        let _guard = unsafe { RefPtr::from_raw(this) };
         // BACKREF — `this` is alive (ref'd in restat()). R-2: `cb.call()`
         // below re-enters JS, which may call `do_close()` → fresh `&Self` from
         // m_ctx; aliased `&` is sound, aliased `&mut` is not (and the
@@ -955,10 +798,10 @@ impl StatWatcher {
             return Ok(());
         };
         let global_this = this_ref.global_this();
-        let prev_jsvalue = js::gc::prev_stat::get(js_this).unwrap_or(JSValue::UNDEFINED);
+        let prev_jsvalue = js::prev_stat_get_cached(js_this).unwrap_or(JSValue::UNDEFINED);
         let current_jsvalue =
             stat_to_js_stats(global_this, &this_ref.get_last_stat(), this_ref.bigint)?;
-        js::gc::prev_stat::set(js_this, global_this, current_jsvalue);
+        js::prev_stat_set_cached(js_this, global_this, current_jsvalue);
 
         // Propagate to the dispatcher: `report_error_or_terminate` reports a
         // regular throw as uncaught and stops the tick loop on termination.
@@ -1022,9 +865,9 @@ impl StatWatcher {
             scheduler: Self::lazy_scheduler(vm),
         });
         let this_ptr = bun_core::heap::into_raw(this);
-        // errdefer this.deinit() — `p` was heap-allocated above; on the error
-        // path we own the only reference (sole-owner contract for `deinit`).
-        let guard = scopeguard::guard(this_ptr, Self::deinit);
+        // errdefer: on the error path we own the only reference.
+        // SAFETY: sole owner on that path.
+        let guard = scopeguard::guard(this_ptr, |p| drop(unsafe { bun_core::heap::take(p) }));
         // BACKREF — `this_ptr` just leaked from Box; alive until deref drops
         // it. R-2: all field mutation goes through Cell/JsCell so shared `&`
         // suffices (and `to_js_ptr` below creates the JS wrapper, after which
@@ -1073,7 +916,7 @@ fn restat_impl(path: &ZStr) -> bun_sys::Maybe<PosixStat> {
 }
 
 pub struct Arguments {
-    pub path: PathLike,
+    pub path: PathLike<'static>,
     pub(crate) listener: JSValue,
 
     pub(crate) persistent: bool,

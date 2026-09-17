@@ -1,4 +1,5 @@
 #include "NodeURL.h"
+#include "ASCIIHostPunycodeCheck.h"
 #include "ErrorCode.h"
 #include "wtf/URL.h"
 #include "wtf/URLParser.h"
@@ -106,6 +107,11 @@ bool hasValidPunycodeHost(WTF::StringView host)
 {
     if (!host.contains("xn--"_s))
         return true;
+    if (host.containsOnlyASCII()) {
+        auto verdict = host.is8Bit() ? checkASCIIHostPunycode(host.span8().data(), host.length()) : checkASCIIHostPunycode(host.span16().data(), host.length());
+        if (verdict != ASCIIHostPunycodeVerdict::NeedsFullCheck)
+            return verdict == ASCIIHostPunycodeVerdict::Valid;
+    }
     return !icuToASCII(host.toString(), IDNAMode::Default).isNull();
 }
 
@@ -149,6 +155,15 @@ static String parseDomainAsHost(const String& domain)
     if (!hasValidPunycodeHost(parsedHost))
         return {};
     return parsedHost;
+}
+
+// url.domainToASCII for src/boringssl/lib.rs, on any thread. Dead when the host does not parse.
+extern "C" BunString Bun__domainToASCII(const BunString* domain)
+{
+    auto host = parseDomainAsHost(domain->toWTFString());
+    if (host.isNull())
+        return { BunStringTag::Dead };
+    return Bun::toStringRef(host);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsDomainToASCII, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -263,16 +278,19 @@ JSC::JSValue createNodeURLBinding(Zig::GlobalObject* globalObject)
         (unsigned)0,
         domainToAsciiFunction,
         false);
+    RETURN_IF_EXCEPTION(scope, {});
     binding->putByIndexInline(
         globalObject,
         (unsigned)1,
         domainToUnicodeFunction,
         false);
+    RETURN_IF_EXCEPTION(scope, {});
     binding->putByIndexInline(
         globalObject,
         (unsigned)2,
         idnaToASCIIFunction,
         false);
+    RETURN_IF_EXCEPTION(scope, {});
     return binding;
 }
 

@@ -212,6 +212,68 @@ it("recovers from a corrupted binary lockfile instead of panicking", async () =>
   expect(await exists(join(packageDir, "node_modules", "a-dep"))).toBe(true);
 });
 
+it("recomputes a package name hash that disagrees with the name in a binary lockfile", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: false } });
+
+  // The name must be longer than 8 bytes. Shorter names are stored inline and
+  // never touch the string buffer.
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "lockb-name-hash",
+      version: "1.0.0",
+      dependencies: {
+        "dep-with-tags": "1.0.0",
+      },
+    }),
+  );
+
+  await runBunInstall(env, packageDir);
+  const lockbPath = join(packageDir, "bun.lockb");
+
+  // Packages are stored as columns. `name` (8 bytes per package) comes first,
+  // then `name_hash` (8 bytes per package). Package 0 is the root.
+  const nameHashColumn = (lockb: Buffer) => {
+    const count = Number(lockb.readBigUInt64LE(86));
+    return { count, start: Number(lockb.readBigUInt64LE(110)) + count * 8 };
+  };
+  const nameHashes = (lockb: Buffer) => {
+    const { count, start } = nameHashColumn(lockb);
+    return Array.from({ length: count }, (_, i) => lockb.readBigUInt64LE(start + i * 8));
+  };
+  const lockb = Buffer.from(await file(lockbPath).arrayBuffer());
+  const hashes = nameHashes(lockb);
+  expect(hashes).toHaveLength(2);
+  const good = hashes[1];
+  const bad = good ^ 0xffffn;
+  lockb.writeBigUInt64LE(bad, nameHashColumn(lockb).start + 1 * 8);
+  expect(nameHashes(lockb)).toEqual([hashes[0], bad]);
+  await write(lockbPath, lockb);
+
+  // The root's dependency had already pooled the name by its bytes, so the
+  // size pass reserved nothing for it. The append in `Package::clone` looked
+  // the name up by the stored hash, found nothing, and wrote the name past the
+  // reserved bytes: "panic: range end index N out of range for slice of length M".
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "add", "no-deps@1.0.0", "--no-progress"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const [out, err, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
+
+  expect(err).not.toContain("error:");
+  expect(out).toContain("installed no-deps@1.0.0");
+  expect(code).toBe(0);
+
+  // The saved lockfile has the hash of the name again.
+  const saved = nameHashes(Buffer.from(await file(lockbPath).arrayBuffer()));
+  expect(saved).toHaveLength(3);
+  expect(saved).toContain(good);
+  expect(saved).not.toContain(bad);
+});
+
 it("rejects a binary lockfile whose patched-dependency flag byte is out of range", async () => {
   const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: false } });
 

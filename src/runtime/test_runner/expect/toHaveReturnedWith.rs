@@ -31,14 +31,14 @@ pub(crate) fn to_have_returned_with(
 
     // Check for a pass and collect info for error messages
     for i in 0..calls_count {
-        let result = returns.get_direct_index(global, i);
+        let result = returns.get_direct_index(global, i)?;
 
         if result.is_object() {
             let result_type = result.get(global, "type")?.unwrap_or(JSValue::UNDEFINED);
             if result_type.is_string() {
-                let type_str = bun_core::OwnedString::new(result_type.to_bun_string(global)?);
+                let type_str = result_type.to_bun_string(global)?;
 
-                if type_str.eql_comptime("return") {
+                if type_str.eq_ascii(b"return") {
                     let result_value = result.get(global, "value")?.unwrap_or(JSValue::UNDEFINED);
                     successful_returns.push(result_value);
 
@@ -48,7 +48,7 @@ pub(crate) fn to_have_returned_with(
                             pass = true;
                         }
                     }
-                } else if type_str.eql_comptime("throw") {
+                } else if type_str.eq_ascii(b"throw") {
                     has_errors = true;
                 }
             }
@@ -82,14 +82,7 @@ pub(crate) fn to_have_returned_with(
     if calls_count == 1 && successful_returns_count == 1 {
         let received = successful_returns[0];
         if expected.is_string() && received.is_string() {
-            let diff_format = DiffFormatter {
-                expected: Some(expected),
-                received: Some(received),
-                expected_string: None,
-                received_string: None,
-                global_this: Some(global),
-                not: false,
-            };
+            let diff_format = DiffFormatter::new(global, received, expected, false)?;
             return throw!(this, global, signature, "\n\n{}\n", diff_format);
         }
 

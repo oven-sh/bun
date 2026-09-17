@@ -115,6 +115,20 @@ export function getStdioWriteStream(
   return [stream, underlyingSink];
 }
 
+// node:worker_threads worker: process.stdout/stderr write to the parent Worker over a
+// MessagePort; process.stdin reads from one for { stdin: true }, else is already ended.
+export function getNodeWorkerStdioStream(process: typeof globalThis.process, fd: number, ports: any) {
+  const stdio = require("internal/worker/stdio");
+  if (fd === 0) {
+    return ports.stdin ? stdio.makePortReadable(ports.stdin, true) : stdio.makeEndedReadable();
+  }
+  const stream = stdio.makePortWritable(fd === 1 ? ports.stdout : ports.stderr);
+  // A synchronous exit leaves no loop turn for the reader's ack; complete the parked
+  // writev so buffered chunks are posted before the thread goes away (node's flushSync).
+  process.on("exit", stream[stdio.kFlushSync]);
+  return stream;
+}
+
 export function getStdinStream(
   process: typeof globalThis.process,
   fd: number,
@@ -477,8 +491,8 @@ export function windowsEnv(
     // name-matching TZ here survives a prior `delete process.env.TZ`.
     const coerced = coerceForWrite(k, value);
     // Track the key for enumeration if it isn't already there. Don't gate on
-    // `k in internalEnv`: the proxy accessors (HTTP_PROXY, ...) always exist
-    // as DontEnum CustomAccessors even when the variable was never set.
+    // `k in internalEnv`: the TZ and NODE_TLS_REJECT_UNAUTHORIZED accessors
+    // always exist as DontEnum CustomAccessors even when the variable was never set.
     if (!envMapList.includes(p) && !envMapList.some(x => x.toUpperCase() === k)) {
       envMapList.push(p);
     }
@@ -488,7 +502,7 @@ export function windowsEnv(
     }
   }
 
-  return new Proxy(internalEnv, {
+  const envProxy = new Proxy(internalEnv, {
     get(_, p) {
       if (typeof p !== "string") {
         // Symbol keys (e.g. Bun.inspect.custom) live on internalEnv as-is.
@@ -505,7 +519,12 @@ export function windowsEnv(
       // matching node where `process.env.hasOwnProperty` is callable.
       return internalEnv[p];
     },
-    set(_, p, value) {
+    set(_, p, value, receiver) {
+      // A write to an object that inherits from process.env is that object's
+      // own: OrdinarySet past a prototype chain that does not have the key.
+      if (receiver !== envProxy) {
+        return Reflect.set({ __proto__: null }, p, value, receiver);
+      }
       // Node's process.env throws a TypeError for symbol keys and symbol
       // values (ToString on a Symbol throws).
       if (typeof p === "symbol" || typeof value === "symbol") {
@@ -597,6 +616,7 @@ export function windowsEnv(
       return envMapList.slice();
     },
   });
+  return envProxy;
 }
 
 export function getChannel() {

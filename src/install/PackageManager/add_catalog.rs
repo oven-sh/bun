@@ -618,7 +618,7 @@ fn keys_named(package_json: &Expr, dependency_list: &[u8], name: &[u8]) -> usize
         })
 }
 
-/// Runs between resolution and `clean_with_logger`, which would otherwise report a nameless positional colliding with the target's own row for the same name as a dependency loop.
+/// Runs between resolution and `clean_with_logger`, whose hoist would otherwise silently collapse a nameless positional onto the target's own row for the same name, keeping whichever of the two it places first.
 pub(crate) fn refuse_declared_positionals(manager: &PackageManager) {
     let Some(flag) = manager.options.add_catalog else {
         return;

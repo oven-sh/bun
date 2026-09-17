@@ -75,6 +75,14 @@ impl Request {
         // SAFETY: ptr/len describe a valid slice owned by the request for its lifetime
         Some(unsafe { bun_core::ffi::slice(ptr, len) })
     }
+    /// The parser's verdict on the Transfer-Encoding header, the one that
+    /// selects chunked body framing. `header(b"transfer-encoding")` sees only
+    /// the first field and reports an empty value as `None`, so it disagrees
+    /// with the framing for "Transfer-Encoding:" followed by
+    /// "Transfer-Encoding: chunked".
+    pub fn has_transfer_encoding(&self) -> bool {
+        c::uws_req_has_transfer_encoding(self)
+    }
     pub fn parameter(&self, index: u16) -> &[u8] {
         let mut ptr: *const u8 = core::ptr::null();
         let len = c::uws_req_get_parameter(self, c_ushort::try_from(index).unwrap(), &mut ptr);
@@ -106,5 +114,6 @@ mod c {
             index: c_ushort,
             dest: &mut *const u8,
         ) -> usize;
+        pub(super) safe fn uws_req_has_transfer_encoding(res: &Request) -> bool;
     }
 }

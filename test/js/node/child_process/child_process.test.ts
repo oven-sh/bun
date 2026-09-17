@@ -1,9 +1,21 @@
 import { semver, write } from "bun";
 import { afterAll, beforeEach, describe, expect, it } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, isLinux, isPosix, isWindows, nodeExe, runBunInstall, shellExe, tmpdirSync } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isLinux,
+  isPosix,
+  isWindows,
+  nodeExe,
+  runBunInstall,
+  shellExe,
+  tempDir,
+  tmpdirSync,
+} from "harness";
 import { ChildProcess, exec, execFile, execFileSync, execSync, fork, spawn, spawnSync } from "node:child_process";
 import { getEventListeners, once, setMaxListeners } from "node:events";
+import os from "node:os";
 import { promisify } from "node:util";
 import path from "path";
 const debug = process.env.DEBUG ? console.log : () => {};
@@ -606,14 +618,18 @@ describe("spawn()", () => {
 
         const [cb1Err, errEvErr] = await Promise.all([cb1.promise, errEv.promise]);
 
+        // Node names the syscall "write" even though the stdio pipe is a
+        // socketpair underneath.
         expect({
           cb1: cb1Err?.code,
           errEv: errEvErr?.code,
+          syscall: errEvErr?.syscall,
           destroyed: child.stdin!.destroyed,
           writable: child.stdin!.writable,
         }).toEqual({
           cb1: "EPIPE",
           errEv: "EPIPE",
+          syscall: "write",
           destroyed: true,
           writable: false,
         });
@@ -628,6 +644,32 @@ describe("spawn()", () => {
       }
     },
   );
+
+  it.skipIf(isWindows)("stdin write to a child that exits before draining it fails with EPIPE", async () => {
+    // The child exits with most of the 16 MiB (more than any socket buffer
+    // holds) unread. Whether the kernel fails the next send or the exit handler
+    // settles the pending write first, the stream reports EPIPE from "write".
+    const child = spawn(bunExe(), ["-e", `require("fs").readSync(0, Buffer.alloc(1)); process.exit(0);`], {
+      env: bunEnv,
+      stdio: ["pipe", "ignore", "ignore"],
+    });
+    const closed = new Promise<void>((resolve, reject) => {
+      child.on("error", reject);
+      child.on("close", () => resolve());
+    });
+    // A stream emits "error" before "close", so a close without an error rejects.
+    const stdinError = new Promise<any>((resolve, reject) => {
+      child.stdin!.on("error", resolve);
+      child.stdin!.on("close", () => reject(new Error("stdin closed without an error")));
+    });
+    child.stdin!.end(Buffer.alloc(16 * 1024 * 1024, 0x61));
+    const [err] = await Promise.all([stdinError, closed]);
+    expect({ code: err.code, syscall: err.syscall, errno: err.errno }).toEqual({
+      code: "EPIPE",
+      syscall: "write",
+      errno: -os.constants.errno.EPIPE,
+    });
+  });
 });
 
 describe("execFile()", () => {
@@ -718,6 +760,34 @@ describe("execFileSync()", () => {
     });
     expect(result.trim()).toBe("data: hello world!");
   });
+
+  // chcp.com is a PE executable with a .com extension and no .exe sibling.
+  // child_process always passes an env object, so the lookup runs in Bun's
+  // which, not libuv's, and it has to accept the extension as spelled. A PE
+  // named by path runs whatever its extension, as CreateProcessW only reads
+  // the file header.
+  it.if(isWindows)("runs a .com executable by absolute path or bare name", () => {
+    const chcp = path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "chcp.com");
+    expect(chcp).toContain("\\");
+    using dir = tempDir("child-process-com", {});
+    const custom = path.join(String(dir), "chcp-copy.bin");
+    fs.copyFileSync(chcp, custom);
+    const run = (file: string) => execFileSync(file, [], { encoding: "utf8" }).trim();
+    // The label is localized ("Active code page", "Aktive Codepage", ...).
+    // Only the number is stable.
+    const codePage = expect.stringMatching(/\d+$/);
+    expect({
+      absolute: run(chcp),
+      bare: run("chcp"),
+      spelled: run("chcp.com"),
+      custom_extension: run(custom),
+    }).toEqual({
+      absolute: codePage,
+      bare: codePage,
+      spelled: codePage,
+      custom_extension: codePage,
+    });
+  });
 });
 
 describe("execSync()", () => {
@@ -801,9 +871,10 @@ it.if(!isWindows)("spawnSync correctly reports signal codes", () => {
     process.kill(process.pid, "SIGTRAP");
   `;
 
-  const { signal } = spawnSync(bunExe(), ["-e", trapCode], {
-    // @ts-expect-error
-    env: { ...bunEnv, BUN_INTERNAL_SUPPRESS_CRASH_ON_PROCESS_KILL_SELF: "1" },
+  // The child dies via SIG_DFL, which dumps core; the coredump upload CI lane
+  // flags a leftover core file as a failure, so turn it off in a shell wrapper.
+  const { signal } = spawnSync("/bin/sh", ["-c", `ulimit -c 0 && exec "$@"`, "--", bunExe(), "-e", trapCode], {
+    env: bunEnv,
   });
 
   expect(signal).toBe("SIGTRAP");
@@ -950,6 +1021,72 @@ it.skipIf(isWindows)("extra stdio pipes are not double-closed on GC", async () =
         console.log("OK");
       `,
     ],
+    env: { ...bunEnv, BUN_GARBAGE_COLLECTOR_LEVEL: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "OK", stderr: "", exitCode: 0 });
+});
+
+// Windows: the extra "pipe" slots are HANDLE values that child_process wraps
+// in net.Sockets (net.connect({fd})); each socket closes its handle. The
+// Subprocess used to keep its own uv_pipe_t on the same HANDLE and close the
+// value again when it was GC'd. Windows reuses a closed handle value at once,
+// so that second close destroyed whatever owned the value by then (here the
+// files opened right after the sockets closed, in the crash reports a worker
+// thread's handle). test/js/bun/spawn/spawn.test.ts pins the exact handle
+// value down; this checks the child_process wiring on top of it.
+it.if(isWindows)("extra stdio 'pipe' sockets deliver data and GC of the ChildProcess closes nothing else", async () => {
+  const fixture = /* js */ `
+    const { spawn } = require("node:child_process");
+    const fs = require("node:fs");
+
+    // The ChildProcess is unreachable once this returns; only the files
+    // opened into the freed handle values are kept.
+    async function spawnAndReadThenOpenFiles(files) {
+      const child = spawn(
+        process.execPath,
+        ["-e", "const fs = require('fs'); for (const fd of [3, 4, 5]) fs.writeSync(fd, 'fd' + fd);"],
+        { stdio: ["ignore", "ignore", "ignore", "pipe", "pipe", "pipe"] },
+      );
+      const sockets = child.stdio.slice(3);
+      if (sockets.length !== 3 || sockets.some(s => s == null)) throw new Error("expected 3 extra sockets");
+      // Each socket closes on the EOF it sees once the child exits.
+      const received = sockets.map(socket => {
+        let data = "";
+        socket.on("data", chunk => (data += chunk));
+        return new Promise(resolve => socket.once("close", () => resolve(data)));
+      });
+      await new Promise(resolve => child.once("exit", resolve));
+      const data = await Promise.all(received);
+      if (data.join(",") !== "fd3,fd4,fd5") throw new Error("bad data: " + JSON.stringify(data));
+      for (let i = 0; i < 32; i++) files.push(fs.openSync(process.execPath, "r"));
+    }
+
+    const files = [];
+    for (let round = 0; round < 3; round++) {
+      await spawnAndReadThenOpenFiles(files);
+      Bun.gc(true);
+      await Bun.sleep(0);
+    }
+    for (let i = 0; i < 4; i++) {
+      Bun.gc(true);
+      await Bun.sleep(0);
+    }
+    let dead = 0;
+    for (const fd of files) {
+      try {
+        fs.fstatSync(fd);
+      } catch {
+        dead++;
+      }
+    }
+    if (dead) throw new Error("GC of the ChildProcess closed " + dead + " unrelated handles");
+    console.log("OK");
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
     env: { ...bunEnv, BUN_GARBAGE_COLLECTOR_LEVEL: "1" },
     stdout: "pipe",
     stderr: "pipe",
@@ -1269,4 +1406,109 @@ describe("spawn/execFile({signal}) does not leak abort listeners on spawn failur
     ac.abort();
     expect(errors.map(e => e.code)).toEqual(["ENOENT"]);
   });
+});
+
+// A 'data' handler runs inside the native read loop that delivered its chunk,
+// and node streams pull again from there, so that pull reads synchronously,
+// nested in the outer loop, and can run all the way to EOF. The reader used to
+// collect a nested read in a heap buffer it freed as soon as the chunk was
+// handed over, while FileReader kept pointing at a tail that did not fit the
+// pull buffer (heap-use-after-free under ASAN, corrupt or short output
+// otherwise).
+//
+// Pinned down with two markers: the head is bigger than half of the reader's
+// 256 KiB scratch, so it is flushed to JS from the middle of the outer loop,
+// and the 'data' handler does not return until the tail and EOF are in the
+// socket. The tail is bigger than the 64 KiB pull buffer.
+describe.skipIf(!isPosix)("child.stdout pull nested in a 'data' event", () => {
+  it("delivers a tail read to EOF that does not fit the pull buffer", async () => {
+    const HEAD = 136 * 1024;
+    const TAIL = 96 * 1024;
+    using dir = tempDir("child-stdout-nested-pull", {
+      "producer.js": `
+        const fs = require("node:fs");
+        const [headMarker, headDone, tailMarker, tailDone] = process.argv.slice(2);
+        const deadline = Date.now() + 15_000;
+        function waitFor(file) {
+          while (!fs.existsSync(file)) {
+            if (Date.now() > deadline) throw new Error("producer timed out waiting for " + file);
+            Bun.sleepSync(1);
+          }
+        }
+        function writeAll(buf) {
+          for (let off = 0; off < buf.length; ) off += fs.writeSync(1, buf, off);
+        }
+        waitFor(headMarker);
+        writeAll(Buffer.alloc(${HEAD}, "h"));
+        fs.writeFileSync(headDone, "");
+        waitFor(tailMarker);
+        writeAll(Buffer.alloc(${TAIL}, "t"));
+        fs.closeSync(1);
+        fs.writeFileSync(tailDone, "");
+      `,
+      "reader.js": `
+        const { spawn } = require("node:child_process");
+        const fs = require("node:fs");
+        const path = require("node:path");
+        const file = name => path.join(__dirname, name);
+        const deadline = Date.now() + 15_000;
+        function waitFor(name) {
+          while (!fs.existsSync(file(name))) {
+            if (Date.now() > deadline) throw new Error("reader timed out waiting for " + name);
+            Bun.sleepSync(1);
+          }
+        }
+        const child = spawn(
+          process.execPath,
+          [file("producer.js"), file("head"), file("head-done"), file("tail"), file("tail-done")],
+          { stdio: ["ignore", "pipe", "inherit"] },
+        );
+        const chunks = [];
+        // 'resume' is emitted after the stream's first read() has been issued
+        // and found the socket empty, so the head written now is picked up by
+        // the poll it armed and arrives in one wake.
+        child.stdout.once("resume", () => {
+          fs.writeFileSync(file("head"), "");
+          waitFor("head-done");
+        });
+        child.stdout.on("data", chunk => {
+          chunks.push(chunk);
+          if (chunks.length === 1) {
+            fs.writeFileSync(file("tail"), "");
+            waitFor("tail-done");
+          }
+        });
+        child.on("close", exitCode => {
+          const out = Buffer.concat(chunks);
+          console.log(
+            JSON.stringify({
+              exitCode,
+              firstChunkOverHalfScratch: chunks[0].length > 128 * 1024,
+              length: out.length,
+              head: out.subarray(0, ${HEAD}).equals(Buffer.alloc(${HEAD}, "h")),
+              tail: out.subarray(${HEAD}).equals(Buffer.alloc(${TAIL}, "t")),
+            }),
+          );
+        });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "reader.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout:
+        JSON.stringify({ exitCode: 0, firstChunkOverHalfScratch: true, length: HEAD + TAIL, head: true, tail: true }) +
+        "\n",
+      stderr: "",
+      exitCode: 0,
+    });
+    // The budget covers the failure modes: a symbolized ASAN report takes
+    // several seconds, and the fixtures give up on their markers after 15 s so
+    // their own error, not a test timeout, is what gets reported.
+  }, 30_000);
 });

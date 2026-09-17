@@ -43,7 +43,7 @@ BroadcastChannel::BroadcastChannel(ScriptExecutionContext& context, const String
     , m_contextId(context.identifier())
 {
     EventTarget::initializeWeakPtrFactory();
-    BunBroadcastChannelRegistry::singleton().subscribe(m_name, m_contextId, *this);
+    BunBroadcastChannelRegistry::singleton().subscribe(m_name, context, *this);
     jsRef(context.jsGlobalObject());
 }
 
@@ -81,13 +81,18 @@ void BroadcastChannel::dispatchMessage(Ref<SerializedScriptValue>&& message)
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
+    // https://html.spec.whatwg.org/multipage/web-messaging.html#dom-broadcastchannel-postmessage (step 7's task,
+    // sub-step 3): if deserializing throws, catch it and fire messageerror instead.
     Vector<RefPtr<MessagePort>> dummyPorts;
     auto event = MessageEvent::create(*globalObject, WTF::move(message), {}, {}, nullptr, WTF::move(dummyPorts));
     if (scope.exception()) [[unlikely]] {
-        RELEASE_ASSERT(vm.hasPendingTerminationException());
+        if (vm.hasPendingTerminationException())
+            return;
+        scope.clearException();
+        dispatchEvent(MessageEvent::create(eventNames().messageerrorEvent, MessageEvent::Init { {}, jsNull() }, MessageEvent::IsTrusted::Yes));
         return;
     }
-    dispatchEvent(event.event);
+    dispatchEvent(event->event);
 }
 
 void BroadcastChannel::close()

@@ -1,8 +1,8 @@
-//! This task is run once all parse and resolve tasks have been complete
-//! and we have deferred onLoad plugins that we need to resume.
-//!
-//! It enqueues a task to be run on the JS thread which resolves the promise
-//! for every onLoad callback which called `.defer()`.
+//! Once every other parse/resolve of a pass is done while some onLoad plugins have called `.defer()`, this
+//! hops to the plugins' (JS) thread and resolves those `.defer()` promises so the plugins resume; then it
+//! comes back. It is embedded in its `BundleV2` and counts as one of the pass's pending items while it is
+//! out, so the pass cannot finish and be freed under it (a plugin may answer a deferred load without
+//! awaiting `.defer()`, so nothing else orders the pass's completion after this hop).
 
 use crate::BundleV2;
 // Task is `(tag: u8, ptr: *mut ())` owned by bun_event_loop;
@@ -12,33 +12,23 @@ use bun_event_loop::{Task, task_tag};
 
 #[derive(Default)]
 pub struct DeferredBatchTask {
-    // Debug-only flag; zero-sized in release.
-    #[cfg(debug_assertions)]
-    running: bool,
+    /// Intrusive node for the trip back to the bundle thread's Mini loop.
+    returned: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext,
 }
 
 impl bun_event_loop::Taskable for DeferredBatchTask {
     const TAG: bun_event_loop::TaskTag = task_tag::BundleV2DeferredBatchTask;
-    /// Embedded in its `BundleV2`, which outlives the queue entry and owns
-    /// everything the drain would have touched; nothing to free.
-    unsafe fn release_unrun(_: *mut Self) {}
+    /// The plugins' VM released the hop unrun (it is shutting down; its stop phase has answered what the
+    /// plugins held): nothing to resolve, but the pass is waiting for the hop to come back.
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: released ⇒ never ran; `BundleV2` is alive until this comes back.
+        unsafe { (*this).come_back() };
+    }
 }
 
 impl DeferredBatchTask {
-    pub(crate) fn init(&mut self) {
-        // Kept as `&mut self` (not `-> Self`) — this struct is embedded
-        // by value in BundleV2 (recovered via container_of in `get_bundle_v2`), so
-        // it is reset in place, never separately constructed.
-        #[cfg(debug_assertions)]
-        debug_assert!(!self.running);
-        // No Drop / no owned fields — pure reset.
-        let _ = core::mem::take(self);
-    }
-
     pub(crate) fn get_bundle_v2(&mut self) -> &mut BundleV2<'static> {
-        // SAFETY: `self` is always the `drain_defer_task` field of a live `BundleV2`;
-        // this struct is never instantiated standalone. Lifetime erased to 'static;
-        // callers must not outlive the owning bundle.
+        // SAFETY: self points to the `drain_defer_task` field embedded in a BundleV2.
         unsafe {
             &mut *bun_core::from_field_ptr!(
                 BundleV2<'static>,
@@ -48,37 +38,42 @@ impl DeferredBatchTask {
         }
     }
 
+    /// Bundle thread. The caller has counted the hop as a pending item (`Graph::drain_deferred_tasks`).
     pub(crate) fn schedule(&mut self) {
-        #[cfg(debug_assertions)]
-        {
-            debug_assert!(!self.running);
-            self.running = false;
-        }
         let task = ConcurrentTask::create(Task::init(std::ptr::from_mut::<Self>(self)));
-
         self.get_bundle_v2().enqueue_on_js_loop_for_plugins(task);
     }
 
+    /// Plugins' (JS) thread.
     pub fn run_on_js_thread(&mut self) {
-        // `deinit` only resets
-        // the debug `running` flag; nothing follows `drain_deferred`, so
-        // resetting the flag afterwards covers both paths.
         {
             let bv2 = self.get_bundle_v2();
-            let rejected = bv2.completion.map(|c| c.result_is_err()).unwrap_or(false);
-            // The void result is discarded — see
-            // `Plugin::drain_deferred` for the exception-scope note.
+            // A cancelled pass rejects the `.defer()` promises rather than resuming plugins into it.
+            // (The completion's flag, not `graph.cancelled`: that one is the bundle thread's.)
+            let rejected = bv2.completion.as_ref().is_some_and(|c| c.is_cancelled());
             bv2.plugins_mut().expect("plugins").drain_deferred(rejected);
         }
-        self.deinit();
+        self.come_back();
     }
 
-    // Not `impl Drop` — this struct is an intrusive field of `BundleV2`
-    // and `deinit` is a debug-flag reset, not resource teardown.
-    fn deinit(&mut self) {
-        #[cfg(debug_assertions)]
-        {
-            self.running = false;
+    /// Plugins' (JS) thread → bundle thread: the hop's pending item is consumed there.
+    fn come_back(&mut self) {
+        let this: *mut Self = self;
+        let bv2 = self.get_bundle_v2();
+        match bv2.any_loop_mut() {
+            // bake: the plugins run on the loop that runs the bundle; already there.
+            bun_event_loop::AnyEventLoop::Js { .. } => bv2.decrement_scan_counter(),
+            bun_event_loop::AnyEventLoop::Mini(mini) => {
+                // SAFETY: `returned` is this struct's own node; `BundleV2` (and so `self`) is alive until
+                // the bundle thread runs this.
+                unsafe {
+                    mini.enqueue_task_concurrent_with_extra_ctx::<Self, BundleV2<'static>>(
+                        this,
+                        |_, bv2| (*bv2).decrement_scan_counter(),
+                        core::mem::offset_of!(Self, returned),
+                    );
+                }
+            }
         }
     }
 }

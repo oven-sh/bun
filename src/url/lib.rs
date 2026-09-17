@@ -1846,6 +1846,63 @@ mod tests {
     }
 
     #[test]
+    fn the_authority_ends_where_new_url_ends_it() {
+        let url = URL::parse(br"http://u:p@first.example:8080\x@second.example/path");
+        assert_eq!((url.username, url.password), (&b"u"[..], &b"p"[..]));
+        assert_eq!(
+            (url.hostname, url.port),
+            (&b"first.example"[..], &b"8080"[..])
+        );
+
+        let url = URL::parse(b"HTTPS://u:p@first.example:8443#@second.example/");
+        assert_eq!((url.username, url.password), (&b"u"[..], &b"p"[..]));
+        assert_eq!(
+            (url.hostname, url.port),
+            (&b"first.example"[..], &b"8443"[..])
+        );
+
+        // In a scheme that is not special, a `\` is part of the userinfo, as for `new URL()`.
+        let url = URL::parse(br"socks5://u:p@first.example\x@second.example/");
+        assert_eq!(
+            (url.username, url.password),
+            (&b"u"[..], &br"p@first.example\x"[..])
+        );
+        assert_eq!(url.hostname, b"second.example");
+    }
+
+    #[test]
+    fn a_proxy_keeps_a_domain_login() {
+        let proxy = URL::parse_single_reader(br"http://DOMAIN\user:pass@proxy.example:8080");
+        assert_eq!(
+            (proxy.username, proxy.password),
+            (&br"DOMAIN\user"[..], &b"pass"[..])
+        );
+        assert_eq!(
+            (proxy.hostname, proxy.port),
+            (&b"proxy.example"[..], &b"8080"[..])
+        );
+        assert_eq!(
+            &*proxy.href_without_userinfo(),
+            b"http://proxy.example:8080"
+        );
+    }
+
+    #[test]
+    fn no_host_is_read_behind_a_second_scheme() {
+        let url = URL::parse(b"http:first.example://second.example/");
+        assert_eq!(url.protocol, b"http:first.example");
+        assert_eq!(url.hostname, b"http");
+
+        let url = URL::parse(b"blob:http://second.example/id");
+        assert_eq!(url.protocol, b"blob:http");
+        assert_eq!(url.hostname, b"blob");
+
+        let url = URL::parse(b"localhost:3000/api");
+        assert_eq!(url.protocol, b"");
+        assert_eq!((url.hostname, url.port), (&b"localhost"[..], &b"3000"[..]));
+    }
+
+    #[test]
     fn join_normalizes_the_path() {
         assert_eq!(
             join(b"_next/", b"/pages//", b"index", b".js"),

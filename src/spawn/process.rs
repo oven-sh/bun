@@ -3968,16 +3968,12 @@ mod spawn_process_body {
             }
         }
 
-        /// A parent that set SIGCHLD to `SIG_IGN` passes that through exec.
-        /// With that disposition the kernel reaps our child on exit, so
-        /// `wait4()` fails with ECHILD and the exit status is lost (and the
-        /// no-orphans loops never see a SIGCHLD). `SIG_DFL` discards the
-        /// signal the same way but keeps the child waitable. The waiter thread
-        /// installs its own handler; this only replaces an inherited `SIG_IGN`.
+        /// An inherited `SIG_IGN` on SIGCHLD makes the kernel reap the child
+        /// before `wait4()` runs (ECHILD). `SIG_DFL` keeps it waitable.
         #[cfg(unix)]
         fn keep_children_waitable() {
-            // SAFETY: zeroed sigaction is valid output for a query, and
-            // zeroed + SIG_DFL is a valid disposition.
+            // SAFETY: zeroed sigaction is valid for a query and, with SIG_DFL,
+            // a valid disposition.
             unsafe {
                 let mut current: libc::sigaction = bun_core::ffi::zeroed();
                 if libc::sigaction(libc::SIGCHLD, core::ptr::null(), &raw mut current) != 0

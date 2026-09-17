@@ -9,6 +9,7 @@ import {
   gc,
   isASAN,
   isDebug,
+  isLinux,
   isWindows,
   tempDir,
   tls as tlsCert,
@@ -1970,6 +1971,94 @@ describe("paused socket whose peer sends RST", () => {
       server.close();
     }
     expect(errors.map(e => e.code)).not.toContain("ENOEXEC");
+  });
+});
+
+// libuv cancels a write that is still in flight when its handle closes. Node gives
+// the callback UV_ECANCELED, after 'error' and before 'close'.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L86-L90
+describe.concurrent("socket torn down with a write still in flight", () => {
+  const shape = (err?: NodeJS.ErrnoException | null) =>
+    err ? [err.code, err.syscall].filter(Boolean).join(" ") : "ok";
+
+  // `holder` writes to a peer that never reads until the kernel stops taking the
+  // bytes, and queues one more write behind that one. Then `teardown` runs.
+  // Resolves with what `holder` reports from there on, in order, up to 'close'.
+  async function inFlightWriteEvents(side: "client" | "server", teardown: (holder: Socket, peer: Socket) => void) {
+    const accepted = Promise.withResolvers<Socket>();
+    const server = createServer(accepted.resolve);
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const client = connect((server.address() as import("node:net").AddressInfo).port, "127.0.0.1");
+    let serverSocket: Socket | undefined;
+    try {
+      [serverSocket] = await Promise.all([accepted.promise, once(client, "connect")]);
+      const [holder, peer] = side === "client" ? [client, serverSocket] : [serverSocket, client];
+      peer.on("error", () => {});
+      // A write made inside the 'connect' or 'connection' dispatch is flushed on another native path.
+      await new Promise(resolve => setImmediate(resolve));
+
+      const events: string[] = [];
+      const closed = Promise.withResolvers<void>();
+      holder.on("error", err => events.push(`error ${shape(err)}`));
+      // Node emits no 'end' here. One that ran before the write callback made node:http's
+      // client report 'socket hang up' first and drop the request's 'finish'.
+      holder.on("end", () => events.push("end"));
+      holder.on("close", hadError => {
+        events.push(`close ${hadError}`);
+        closed.resolve();
+      });
+      // A plain TCP write that the kernel takes whole is done when write() returns,
+      // so writableLength stays 0 until one write is left in flight: the last one.
+      const chunk = Buffer.alloc(1024 * 1024, "a");
+      let writes = 0;
+      while (writes < 256 && holder.writableLength === 0) {
+        const nth = ++writes;
+        holder.write(chunk, err => {
+          if (nth === writes) events.push(`write ${shape(err)}`);
+        });
+      }
+      expect(holder.writableLength).toBeGreaterThan(0);
+      holder.write("b", err => events.push(`queued ${shape(err)}`));
+      teardown(holder, peer);
+      await closed.promise;
+      return events;
+    } finally {
+      client.destroy();
+      serverSocket?.destroy();
+      server.close();
+    }
+  }
+
+  describe.each(["client", "server"] as const)("%s", side => {
+    // Which comes first, the reset or a writable event, is only known on Linux: a loopback RST
+    // arrives before the close() that sends it returns. On Windows the writable event wins and
+    // the write path settles the write.
+    it.skipIf(!isLinux)("peer reset", async () => {
+      expect(await inFlightWriteEvents(side, (_holder, peer) => peer.resetAndDestroy())).toEqual([
+        "error ECONNRESET read",
+        "write ECANCELED write",
+        "queued ECONNRESET read",
+        "close true",
+      ]);
+    });
+
+    it("destroy()", async () => {
+      expect(await inFlightWriteEvents(side, holder => holder.destroy())).toEqual([
+        "write ECANCELED write",
+        "queued ECANCELED write",
+        "close false",
+      ]);
+    });
+
+    it("destroy(err)", async () => {
+      const err = Object.assign(new Error("boom"), { code: "EBOOM" });
+      expect(await inFlightWriteEvents(side, holder => holder.destroy(err))).toEqual([
+        "error EBOOM",
+        "write ECANCELED write",
+        "queued EBOOM",
+        "close true",
+      ]);
+    });
   });
 });
 

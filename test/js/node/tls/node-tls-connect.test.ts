@@ -1747,6 +1747,46 @@ describe.concurrent("a client paused while connecting", () => {
   });
 });
 
+// The native TLS close can finish after 'close' was emitted, so the write that is
+// in flight cannot wait for it. Node cancels it with UV_ECANCELED before 'close'.
+it("destroy() cancels the write that is still in flight before 'close'", async () => {
+  const accepted = Promise.withResolvers<TLSSocket>();
+  const server = tls.createServer(COMMON_CERT_, accepted.resolve);
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const client = tls.connect({
+    port: (server.address() as AddressInfo).port,
+    host: "127.0.0.1",
+    rejectUnauthorized: false,
+  });
+  let peer: TLSSocket | undefined;
+  try {
+    [peer] = await Promise.all([accepted.promise, once(client, "secureConnect")]);
+    peer.on("error", () => {});
+    const events: string[] = [];
+    const closed = Promise.withResolvers<void>();
+    client.on("error", err => events.push(`error ${(err as NodeJS.ErrnoException).code}`));
+    client.on("end", () => events.push("end"));
+    client.on("close", hadError => {
+      events.push(`close ${hadError}`);
+      closed.resolve();
+    });
+    // The peer never reads, so the kernel cannot take all of this.
+    client.write(Buffer.alloc(64 * 1024 * 1024, "a"), (err?: NodeJS.ErrnoException | null) => {
+      events.push(`write ${err?.code} ${err?.syscall}`);
+    });
+    // A TLS write that the kernel took whole calls back on the next tick.
+    await new Promise(resolve => setImmediate(resolve));
+    expect(events).toEqual([]);
+    client.destroy();
+    await closed.promise;
+    expect(events).toEqual(["write ECANCELED write", "close false"]);
+  } finally {
+    client.destroy();
+    peer?.destroy();
+    server.close();
+  }
+});
+
 // #40653: a TLS 1.3 client must send its final handshake flight and the first
 // write issued from the 'secureConnect' callback in ONE TCP segment, like
 // Node does through its memory BIO. Two segments let a server that tears the

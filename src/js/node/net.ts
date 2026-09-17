@@ -253,6 +253,17 @@ function endNT(socket, callback, err) {
 function emitCloseNT(self, hasError) {
   self.emit("close", hasError);
 }
+// A write that waits for 'connect' or for the TLS handle still holds its chunk in _pendingData: the native handle never had it.
+function takeInFlightWrite(self) {
+  const callback = self[kwriteCallback];
+  if (!callback || self._pendingData != null) return null;
+  self[kwriteCallback] = null;
+  return callback;
+}
+// uv_close() fails a queued write with UV_ECANCELED: https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/stream.c#L464
+function cancelWriteNT(callback) {
+  callback(new ErrnoException(uv().UV_ECANCELED, "write"));
+}
 // Shared-fd TLS pair teardown: mirrors node's close ordering, where the
 // close-callbacks phase runs after the check phase (lib/net.js close path in
 // node v26.3.0), so destroy()-time setImmediates still see the pair alive.
@@ -2193,6 +2204,11 @@ Socket.prototype._destroy = function _destroy(err, callback) {
   $debug("Socket.prototype._destroy");
 
   this.connecting = false;
+  // Taken before anything closes the handle: the native close handler fails a write it still finds with ERR_SOCKET_CLOSED.
+  const canceledWrite = takeInFlightWrite(this);
+  // Node: after 'error', before 'close'. With no error it goes first, so the stream is errored before the EOF that the native close handler pushes can emit 'end'.
+  if (canceledWrite && !err) process.nextTick(cancelWriteNT, canceledWrite);
+
   // Tear down a wrapped generic duplex with this socket: the native handle's
   // close only flushes close_notify and lets the wrapper drain; without an
   // explicit destroy here a late RST on the underlying transport can surface
@@ -2266,8 +2282,10 @@ Socket.prototype._destroy = function _destroy(err, callback) {
       this._sockname = null;
     }
     callback(err);
+    if (canceledWrite && err) process.nextTick(cancelWriteNT, canceledWrite);
   } else {
     callback(err);
+    if (canceledWrite && err) process.nextTick(cancelWriteNT, canceledWrite);
     process.nextTick(emitCloseNT, this, err ? true : false);
   }
 

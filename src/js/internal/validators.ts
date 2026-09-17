@@ -85,18 +85,23 @@ function validateBoolean(value, name) {
   if (typeof value !== "boolean") throw $ERR_INVALID_ARG_TYPE(name, "boolean", value);
 }
 
-/** Validate a string-or-URL path and return it resolved to an absolute path string. */
+/**
+ * Validate a string-or-URL path and return it resolved to an absolute path string.
+ * Like node's getValidatedPath, null bytes are rejected before resolving so the
+ * error reports the path as the caller passed it.
+ */
 function getValidatedPath(p: any) {
-  if (p instanceof URL) return Bun.fileURLToPath(p as URL);
-  if (typeof p !== "string") throw $ERR_INVALID_ARG_TYPE("path", "string or URL", p);
-  if (p.startsWith("file:")) return Bun.fileURLToPath(p);
-  return require("node:path").resolve(p);
-}
-
-function throwIfNullBytesInFileName(filename: string) {
-  if (filename.indexOf("\u0000") !== -1) {
-    throw $ERR_INVALID_ARG_VALUE("path", "string without null bytes", filename);
+  if (p instanceof URL) {
+    p = Bun.fileURLToPath(p as URL);
+  } else if (typeof p !== "string") {
+    throw $ERR_INVALID_ARG_TYPE("path", "string or URL", p);
+  } else if (p.startsWith("file:")) {
+    p = Bun.fileURLToPath(p);
   }
+  if (p.indexOf("\u0000") !== -1) {
+    throw $ERR_INVALID_ARG_VALUE("path", p, "must be a string, Uint8Array, or URL without null bytes");
+  }
+  return require("node:path").resolve(p);
 }
 
 /**
@@ -123,7 +128,7 @@ function getValidatedFsPath(p: any, propName: string = "path") {
 
 hideFromStack(validateLinkHeaderValue);
 hideFromStack(validateString, validateFunction, validateBoolean);
-hideFromStack(getValidatedPath, getValidatedFsPath, throwIfNullBytesInFileName);
+hideFromStack(getValidatedPath, getValidatedFsPath);
 
 // Must match jsFunction_validateObject in NodeValidator.cpp. The values are node's:
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/validators.js#L224-L227
@@ -175,6 +180,4 @@ export default {
   /** `(path)` — accepts a string or file URL, returns it resolved to an absolute path string */
   getValidatedPath,
   getValidatedFsPath,
-  /** `(filename)` */
-  throwIfNullBytesInFileName,
 };

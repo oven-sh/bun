@@ -347,8 +347,7 @@ export default {
       validateInteger(lowest, "options.lowest", 1, Number.MAX_SAFE_INTEGER);
       validateInteger(highest, "options.highest", 2 * lowest, Number.MAX_SAFE_INTEGER);
     } else {
-      // Node v26.3.0 has no usable BigInt path: `2 * lowest` throws a TypeError unless both are
-      // a BigInt, and hdr_init() aborts for a bound outside int64. This is the validation of Node main:
+      // Node v26.3.0 throws a TypeError or aborts for most BigInt options. Node main validates them like this:
       // https://github.com/nodejs/node/blob/c327212373689b970425777b847a767ed6860494/lib/internal/histogram.js#L878-L900
       validateHistogramBound(lowest, "options.lowest");
       validateHistogramBound(highest, "options.highest");

@@ -634,8 +634,7 @@ impl ReadFile {
             return completion.complete(ReadFileResultType::NotReadable);
         }
         if let Some(err) = system_error {
-            // `fs.openAsBlob`: node reports every failure on a snapshot
-            // store, an open error included, as NotReadableError.
+            // Node: any failure on a snapshot store is NotReadableError.
             if has_snapshot {
                 return completion.complete(ReadFileResultType::NotReadable);
             }

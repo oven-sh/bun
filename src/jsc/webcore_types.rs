@@ -382,9 +382,7 @@ impl Blob {
     // pulling the whole `BlobExt` trait into scope.
     // ────────────────────────────────────────────────────────────────────
 
-    /// `Blob.hasContentTypeFromUser()` — `true` when the user set a type
-    /// explicitly *or* the store is file/S3-backed (whose mime is sniffed)
-    /// and the type is not empty (`fs.openAsBlob` sniffs nothing).
+    /// `Blob.hasContentTypeFromUser()`: an explicit type, or a sniffed non-empty one.
     #[inline]
     pub fn has_content_type_from_user(&self) -> bool {
         self.content_type_was_set.get()

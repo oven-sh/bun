@@ -3971,8 +3971,7 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
             .set(BlobContentType::Owned(std::sync::Arc::from(content_type)));
         blob.content_type_was_set.set(content_type_was_set);
     } else {
-        // The wire value is authoritative: an empty type (`fs.openAsBlob`)
-        // must not become the extension-sniffed default of the rebuilt store.
+        // The wire value wins over the rebuilt store's sniffed type.
         blob.content_type.set(BlobContentType::default());
         blob.content_type_was_set.set(false);
     }
@@ -5540,8 +5539,7 @@ pub(crate) fn construct_blob_for_open_as_blob(
         None => {}
     }
 
-    // Node never infers a type from the extension, and stores `options.type`
-    // verbatim (no lowercasing, no charset promotion).
+    // Node stores `options.type` verbatim and never sniffs one.
     blob.content_type.set(BlobContentType::default());
     blob.content_type_was_set.set(false);
     if let Some(file_type) = file_type {
@@ -5909,8 +5907,7 @@ fn apply_file_stat(file: &mut store::File, stat: &bun_sys::Stat) {
     file.last_modified = stat_to_js_mtime(stat);
 }
 
-/// `fs.openAsBlob`: `NotReadableError` if the descriptor a reader just opened
-/// no longer matches the store's `snapshot`, else `None`.
+/// `fs.openAsBlob`: `NotReadableError` if `fd` no longer matches the store's `snapshot`.
 pub(crate) fn open_as_blob_read_error_for_fd(
     blob: &Blob,
     fd: Fd,

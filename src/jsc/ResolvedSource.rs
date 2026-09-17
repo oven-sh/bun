@@ -45,7 +45,7 @@ pub struct ResolvedSource {
     pub origin_path: BunString,
 }
 
-/// `ResolvedSource.bytecode_cache`: C++ sees `{ uint8_t* ptr; size_t len; bool owned; bool persistent; }`
+/// `ResolvedSource.bytecode_cache`: C++ sees `{ uint8_t* ptr; size_t len; bool owned; bool persistent; bool trusted; }`
 /// (headers-handwritten.h flattens these into `ResolvedSource`; keep the two in step).
 /// When `owned`, `ptr` is a `heap::into_raw(Box<[u8]>)` freed on drop (or by
 /// the C++ consumer once it `std::exchange`s the pointer out); otherwise it is
@@ -57,6 +57,8 @@ pub struct Bytecode {
     owned: bool,
     /// The bytes outlive every VM (executable section, retired compile-cache blob), so JSC may alias them instead of copying.
     persistent: bool,
+    /// The bytes are part of the running executable: JSC uses their records without first checking them for damage.
+    trusted: bool,
 }
 
 impl Default for Bytecode {
@@ -66,6 +68,7 @@ impl Default for Bytecode {
             len: 0,
             owned: false,
             persistent: false,
+            trusted: false,
         }
     }
 }
@@ -80,6 +83,7 @@ impl Bytecode {
             len: bytes.len(),
             owned: false,
             persistent: false,
+            trusted: false,
         }
     }
     /// Borrowed from memory the caller guarantees is never freed or unmapped for the rest of the process
@@ -88,6 +92,13 @@ impl Bytecode {
         Self {
             persistent: !bytes.is_empty(),
             ..Self::borrowed(bytes)
+        }
+    }
+    /// `persistent`, and the bytes are a section of this executable (the standalone module graph).
+    pub fn embedded(bytes: &[u8]) -> Self {
+        Self {
+            trusted: !bytes.is_empty(),
+            ..Self::persistent(bytes)
         }
     }
     pub fn owned(bytes: Box<[u8]>) -> Self {
@@ -100,6 +111,7 @@ impl Bytecode {
             len,
             owned: true,
             persistent: false,
+            trusted: false,
         }
     }
 }
@@ -122,4 +134,4 @@ extern "C" fn ResolvedSource__freeBytecode(bytecode: *mut u8) {
 }
 
 bun_core::assert_ffi_layout!(ResolvedSource, 136, 8; is_prelinked_module @ 77, bytecode_cache @ 80, module_info @ 104);
-bun_core::assert_ffi_layout!(Bytecode, 24, 8; owned @ 16, persistent @ 17);
+bun_core::assert_ffi_layout!(Bytecode, 24, 8; owned @ 16, persistent @ 17, trusted @ 18);

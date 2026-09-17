@@ -144,13 +144,15 @@ typedef struct ResolvedSource {
     bool bytecode_cache_owned;
     // The bytes outlive every VM (executable section / retired compile-cache blob): JSC may alias them.
     bool bytecode_cache_persistent;
+    // The bytes are a section of this executable: JSC skips its damage checks.
+    bool bytecode_cache_trusted;
     // Owned; Zig::SourceProvider takes it (nulling the field).
     bun_ModuleInfoDeserialized* module_info;
     // File path whose file:// URL is the source origin (what import() resolves against, what a bytecode cache is
     // validated against). If empty, origin is derived from source_url.
     BunString origin_path;
 } ResolvedSource;
-static_assert(sizeof(ResolvedSource) == 136 && offsetof(ResolvedSource, is_prelinked_module) == 77 && offsetof(ResolvedSource, bytecode_cache) == 80 && offsetof(ResolvedSource, bytecode_cache_persistent) == 97 && offsetof(ResolvedSource, module_info) == 104, "ResolvedSource layout is mirrored in src/jsc/ResolvedSource.rs");
+static_assert(sizeof(ResolvedSource) == 136 && offsetof(ResolvedSource, is_prelinked_module) == 77 && offsetof(ResolvedSource, bytecode_cache) == 80 && offsetof(ResolvedSource, bytecode_cache_persistent) == 97 && offsetof(ResolvedSource, bytecode_cache_trusted) == 98 && offsetof(ResolvedSource, module_info) == 104, "ResolvedSource layout is mirrored in src/jsc/ResolvedSource.rs");
 inline constexpr uint32_t ResolvedSourceTagPackageJSONTypeModule = 1;
 typedef union ErrorableResolvedSourceResult {
     ResolvedSource value;

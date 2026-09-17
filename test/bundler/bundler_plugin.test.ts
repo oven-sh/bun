@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import path, { dirname, join, resolve } from "node:path";
 import { itBundled } from "./expectBundled";
 
@@ -565,6 +565,89 @@ describe("bundler", () => {
         stdout: "foo",
       },
     };
+  });
+  itBundled("plugin/ResolveDotDotInName", ({ root }) => {
+    return {
+      files: {
+        "index.ts": /* ts */ `
+          import a from "alias/real..v2.ts";
+          import b from "alias/v1..2/real.ts";
+          import c from "alias/pages/[...slug].ts";
+          import d from "alias/..real.ts";
+          console.log(a, b, c, d);
+        `,
+        "real..v2.ts": `export default "a";`,
+        "v1..2/real.ts": `export default "b";`,
+        "pages/[...slug].ts": `export default "c";`,
+        "..real.ts": `export default "d";`,
+      },
+      plugins(builder) {
+        builder.onResolve({ filter: /^alias\// }, args => {
+          return { path: root + args.path.slice("alias".length) };
+        });
+      },
+      run: {
+        stdout: "a b c d",
+      },
+    };
+  });
+  // On POSIX a backslash is a file name character, so "a\..\b.ts" has no ".." segment.
+  (isWindows ? itBundled.skip : itBundled)("plugin/ResolveDotDotInNamePosixBackslash", {
+    files: {
+      "index.ts": /* ts */ `
+        import v from "alias";
+        console.log(v);
+      `,
+      "a\\..\\b.ts": `export default "backslash";`,
+    },
+    plugins(builder) {
+      builder.onResolve({ filter: /^alias$/ }, args => {
+        return { path: dirname(args.importer) + "/a\\..\\b.ts" };
+      });
+    },
+    run: {
+      stdout: "backslash",
+    },
+  });
+  itBundled("plugin/ResolveDotDotSegment", ({ root }) => {
+    return {
+      files: {
+        "index.ts": /* ts */ `
+          import a from "alias/sub/../real.ts";
+          import b from "alias/sub/..";
+          import c from "native/sub/../real.ts";
+          console.log(a, b, c);
+        `,
+        "real.ts": `export default "real";`,
+        "sub/index.ts": `export default "sub";`,
+      },
+      plugins(builder) {
+        builder.onResolve({ filter: /^alias\// }, args => {
+          return { path: root + args.path.slice("alias".length) };
+        });
+        builder.onResolve({ filter: /^native\// }, args => {
+          return { path: root + args.path.slice("native".length).replaceAll("/", path.sep) };
+        });
+      },
+      bundleErrors: {
+        "/index.ts": [
+          `onResolve plugin "path" must not contain ".." segments when the namespace is "file"`,
+          `onResolve plugin "path" must not contain ".." segments when the namespace is "file"`,
+          `onResolve plugin "path" must not contain ".." segments when the namespace is "file"`,
+        ],
+      },
+    };
+  });
+  itBundled("plugin/ResolveRelativePath", {
+    files: resolveFixture,
+    plugins(builder) {
+      builder.onResolve({ filter: /\.magic$/ }, () => {
+        return { path: "../foo.ts" };
+      });
+    },
+    bundleErrors: {
+      "/index.ts": [`onResolve plugin "path" must be absolute when the namespace is "file"`],
+    },
   });
   itBundled("plugin/ResolveOnceWhenSameFile", ({ root }) => {
     let onResolveCount = 0;

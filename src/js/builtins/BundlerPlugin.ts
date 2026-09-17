@@ -454,14 +454,16 @@ export function runOnResolvePlugins(this: BundlerPlugin, specifier, inputNamespa
 
         if (!external) {
           if (userNamespace === "file") {
-            if (process.platform !== "win32") {
-              if (path[0] !== "/" || path.includes("..")) {
-                throw new TypeError('onResolve plugin "path" must be absolute when the namespace is "file"');
-              }
-            } else {
-              if (require("node:path").isAbsolute(path) === false || path.includes("..")) {
-                throw new TypeError('onResolve plugin "path" must be absolute when the namespace is "file"');
-              }
+            if (process.platform !== "win32" ? path[0] !== "/" : require("node:path").isAbsolute(path) === false) {
+              throw new TypeError('onResolve plugin "path" must be absolute when the namespace is "file"');
+            }
+            // ".." is refused as a path segment only: "[...slug].ts" is a file name.
+            // A backslash is a separator on Windows and a file name character on POSIX.
+            const slashed = process.platform !== "win32" ? path : path.replaceAll("\\", "/");
+            if (slashed.includes("/../") || slashed.endsWith("/..")) {
+              throw new TypeError(
+                'onResolve plugin "path" must not contain ".." segments when the namespace is "file"',
+              );
             }
           }
           if (userNamespace === "dataurl") {

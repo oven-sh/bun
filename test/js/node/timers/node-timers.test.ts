@@ -1,6 +1,7 @@
 import jsc from "bun:jsc";
 import { describe, expect, it, mock, test } from "bun:test";
 import { bunEnv, bunExe, bunRun, isWindows } from "harness";
+import { AsyncLocalStorage } from "node:async_hooks";
 import path from "node:path";
 import { clearInterval, clearTimeout, promises, setImmediate, setInterval, setTimeout } from "node:timers";
 import { promisify } from "util";
@@ -313,6 +314,91 @@ describe("_idleStart", () => {
     t1._idleStart = -Number.MAX_VALUE;
     expect(t1._idleStart).toBe(-Number.MAX_VALUE);
     clearTimeout(t1);
+  });
+});
+
+describe("_onTimeout", () => {
+  it("is the callback that was passed in", () => {
+    const fn = () => {};
+    const timeout = setTimeout(fn, 1000) as any;
+    const interval = setInterval(fn, 1000) as any;
+    try {
+      expect(timeout._onTimeout).toBe(fn);
+      expect(interval._onTimeout).toBe(fn);
+    } finally {
+      clearTimeout(timeout);
+      clearInterval(interval);
+    }
+  });
+
+  // The async context a timer captures must not show up in `_onTimeout`.
+  it("is the callback that was passed in, inside AsyncLocalStorage.run()", () => {
+    const als = new AsyncLocalStorage<string>();
+    const fn = () => {};
+    als.run("store", () => {
+      const timeout = setTimeout(fn, 1000) as any;
+      const interval = setInterval(fn, 1000) as any;
+      try {
+        expect(typeof timeout._onTimeout).toBe("function");
+        expect(timeout._onTimeout).toBe(fn);
+        expect(interval._onTimeout).toBe(fn);
+      } finally {
+        clearTimeout(timeout);
+        clearInterval(interval);
+      }
+    });
+  });
+
+  // Node binds the async context to the Timeout when it is created, so a
+  // replacement callback runs with the creation-time store no matter where
+  // the assignment happens, and no matter what was assigned before it.
+  it("a replaced callback keeps the creation-time async context", async () => {
+    const als = new AsyncLocalStorage<string>();
+    const seen: (string | undefined)[] = [];
+    const { promise, resolve } = Promise.withResolvers<void>();
+    const original = () => seen.push("original");
+
+    let replacedInside!: any;
+    let replacedAfterNull!: any;
+    let replacedOutside!: any;
+    als.run("creator", () => {
+      replacedInside = setTimeout(original, 1);
+      replacedAfterNull = setTimeout(original, 1);
+      replacedOutside = setTimeout(original, 1);
+    });
+    als.run("other", () => {
+      replacedInside._onTimeout = () => seen.push(als.getStore());
+      replacedAfterNull._onTimeout = null;
+      replacedAfterNull._onTimeout = () => seen.push(als.getStore());
+    });
+    replacedOutside._onTimeout = () => {
+      seen.push(als.getStore());
+      resolve();
+    };
+    expect(replacedInside._onTimeout).not.toBe(original);
+    expect(replacedAfterNull._onTimeout).not.toBe(original);
+    expect(replacedOutside._onTimeout).not.toBe(original);
+
+    await promise;
+    expect(seen).toEqual(["creator", "creator", "creator"]);
+  });
+
+  it("a null callback inside AsyncLocalStorage.run() disables the timer", async () => {
+    const als = new AsyncLocalStorage<string>();
+    const { promise, resolve } = Promise.withResolvers<void>();
+    let fired = false;
+    let timeout!: any;
+    als.run("store", () => {
+      timeout = setTimeout(() => {
+        fired = true;
+      }, 1);
+      timeout._onTimeout = null;
+    });
+    expect(timeout._onTimeout).toBeNull();
+    setTimeout(resolve, 5);
+    await promise;
+    expect(fired).toBeFalse();
+    expect(timeout._destroyed).toBeTrue();
   });
 });
 

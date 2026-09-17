@@ -796,8 +796,7 @@ impl Listener {
         Ok(JSValue::UNDEFINED)
     }
 
-    /// `tls.Server#setSecureContext()` while listening: later accepts use an
-    /// `SSL_CTX` built from `tls`, accepted sockets keep theirs.
+    /// `tls.Server#setSecureContext()` while listening. Accepted sockets keep their context.
     pub(crate) fn set_secure_context(
         this: &Self,
         global: &JSGlobalObject,

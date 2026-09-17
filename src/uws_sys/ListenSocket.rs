@@ -74,8 +74,7 @@ impl ListenSocket {
 
     /// Makes `ctx` the default `SSL_CTX` for sockets accepted from now on.
     pub fn set_default_ssl_ctx(&mut self, ctx: &OwnedSslCtx) {
-        // SAFETY: self is a live listen socket and `ctx` owns a reference to a
-        // live SSL_CTX, which C up-refs before it stores the pointer.
+        // SAFETY: `ctx` owns a live SSL_CTX, which C up-refs before it stores the pointer.
         unsafe { us_listen_socket_set_default_ssl_ctx(self, ctx.as_ptr()) }
     }
 

@@ -779,8 +779,7 @@ describe("async context passes through", () => {
     await promise;
     expect(value).toBe("value");
   });
-  // blocked by a bug with .cancel
-  test.todo("readable stream direct .cancel", async () => {
+  test("readable stream direct .cancel", async () => {
     const s = new AsyncLocalStorage<string>();
     let stream!: ReadableStream;
     let value: string | undefined;
@@ -795,7 +794,6 @@ describe("async context passes through", () => {
           controller.write("hello");
         },
         cancel(reason) {
-          console.log("1");
           value2 = s.getStore();
           resolve();
         },
@@ -805,7 +803,6 @@ describe("async context passes through", () => {
     const reader = stream.getReader();
     await reader.read();
     await reader.cancel();
-    await stream.cancel();
     await promise;
     expect(value).toBe("value");
     expect(value2).toBe("value");

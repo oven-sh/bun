@@ -150,10 +150,8 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
 
   // ─── Link executable ───
   // Uses response file because object lists get long (>32k args breaks on
-  // windows). Not in the console pool: that pool has depth 1, and the graph
-  // links several executables (bun, testFFI, JSC's LLInt extractors) whose
-  // links should overlap; lld's only output is diagnostics, which ninja
-  // shows when the edge finishes.
+  // windows). Not in the console pool: that pool has depth 1; lld's only
+  // output is diagnostics, which ninja shows when the edge finishes.
   //
   // Windows: -fuse-ld=lld forces lld-link (VS dev shell puts link.exe
   // first in PATH, clang-cl would default to it). /link separator —
@@ -170,20 +168,13 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
   // --ld-path= spelling, and `-fuse-ld=<abs path>` mangles the path with the
   // target triple.
   //
-  // $lazy (Windows): LinkOpts.lazyObjects as `/clang:-Wl,@<rsp>`. The rsp
-  // holds `/start-lib <objects> /end-lib`, which must reach lld-link as one
-  // positional group: behind /link the driver would expand the file itself
-  // and keep only its first token there; as a -Wl, value it is a linker
-  // *input*, rendered in order after the object inputs and left for
-  // lld-link to expand in place.
-  //
   // Darwin cross links append `&& macho-postlink $out ...` (the suffix is
   // empty everywhere else): ninja runs the whole command through `sh -c`,
   // so the fixup runs after the link succeeds and the declared output is
   // already the final, patched, re-signed artifact. See shims.ts.
   n.rule("link", {
     command: cfg.windows
-      ? `${cxx} /nologo -fuse-ld=lld ${q(`/clang:-B${dirname(cfg.ld)}`)} @$out.rsp $lazy /Fe$out /link $ldflags`
+      ? `${cxx} /nologo -fuse-ld=lld ${q(`/clang:-B${dirname(cfg.ld)}`)} @$out.rsp /Fe$out /link $ldflags`
       : `${cxx} @$out.rsp $ldflags -o $out${elfDebugCompressPostlinkCommand(cfg)}${machoPostlinkCommand(cfg)}`,
     description: "link $out",
     rspfile: "$out.rsp",
@@ -240,9 +231,10 @@ export interface CompileOpts {
  * E.g. src/jsc/bindings/foo.cpp → obj/src_jsc_bindings_foo.cpp.o
  */
 export function cxx(n: Ninja, cfg: Config, src: string, opts: CompileOpts): string {
-  // .mm: Objective-C++ (WTF's darwin/OSLogPrintStream.mm); clang picks the
-  // language from the extension, the flags are the C++ ones.
-  assert([".cpp", ".cc", ".cxx", ".mm"].includes(extname(src)), `cxx() expects .cpp/.cc/.cxx/.mm source, got: ${src}`);
+  assert(
+    extname(src) === ".cpp" || extname(src) === ".cc" || extname(src) === ".cxx",
+    `cxx() expects .cpp/.cc/.cxx source, got: ${src}`,
+  );
   return compile(n, cfg, src, opts, "cxx");
 }
 
@@ -365,8 +357,8 @@ export function pch(
      * libs (libJavaScriptCore.a etc.).
      *
      * Can't be order-only: the depfile tracks headers, but ninja stats at
-     * startup, and a prebuilt/cargo dep rewrites its headers MID-RUN as an
-     * undeclared side effect. At startup ninja sees old headers → thinks
+     * startup. Local WebKit headers live in buildDir and get regenerated
+     * by dep_build MID-RUN. At startup ninja sees old headers → thinks
      * PCH is fresh → cxx fails with "file modified since PCH was built"
      * → needs a second build. With these implicit, restat propagates the
      * lib change to PCH and it rebuilds in the same run.
@@ -446,18 +438,6 @@ export function pch(
 export interface LinkOpts {
   /** Static libraries to link (absolute paths). Included in $in. */
   libs: string[];
-  /**
-   * Objects the link may take or leave: each is pulled in only if it defines
-   * a symbol something else references — a static library's semantics, minus
-   * the archive (lld's `--start-lib … --end-lib` / `/start-lib … /end-lib`).
-   * bun.ts passes dependency objects here (lazyDepObjects). It matters on
-   * COFF, whose linkers discard unreferenced code only at COMDAT granularity:
-   * an assembler-produced object nothing calls (BoringSSL's AES-GCM-SIV asm,
-   * unused on Windows by design) would otherwise be linked whole. ELF and
-   * Mach-O dead-strip per section, so there these simply follow `objects` in
-   * `$in`.
-   */
-  lazyObjects?: string[];
   /** Linker flags. */
   flags: string[];
   /**
@@ -482,33 +462,22 @@ export function link(n: Ninja, cfg: Config, out: string, objects: string[], opts
   // Linker maps are implicit outputs (ninja tracks them but they're not in $out)
   const implicitOutputs = (opts.linkerMapOutputs ?? []).map(map => resolve(cfg.buildDir, map));
 
-  const lazy = opts.lazyObjects ?? [];
-  const implicitInputs = [...(opts.implicitInputs ?? [])];
-  const vars: Record<string, string> = { ldflags: opts.flags.join(" ") };
-  let inputs = [...objects, ...lazy, ...opts.libs];
-  if (cfg.windows && lazy.length > 0) {
-    // The group rides in a response file of its own (written now — the list
-    // is a configure-time constant); its objects stay ninja inputs of the
-    // edge as implicit inputs. See the link rule for why -Wl.
-    const rsp = absOut + ".lazy.rsp";
-    writeIfChanged(rsp, ["/start-lib", ...lazy.map(o => quote(n.rel(o), true)), "/end-lib"].join("\n") + "\n");
-    vars.lazy = quote(`/clang:-Wl,@${n.rel(rsp)}`, cfg.host.os === "windows");
-    inputs = [...objects, ...opts.libs];
-    // The rsp itself too: a member dropped from the group changes neither $in
-    // nor $lazy, only this file (writeIfChanged keeps its mtime otherwise).
-    implicitInputs.push(rsp, ...lazy);
-  }
-
   const node: BuildNode = {
     outputs: [absOut],
     rule: "link",
-    inputs,
-    vars,
+    inputs: [...objects, ...opts.libs],
+    vars: {
+      ldflags: opts.flags.join(" "),
+    },
   };
   if (implicitOutputs.length > 0) node.implicitOutputs = implicitOutputs;
-  if (implicitInputs.length > 0) {
-    node.implicitInputs = implicitInputs;
+  if (opts.implicitInputs !== undefined && opts.implicitInputs.length > 0) {
+    node.implicitInputs = opts.implicitInputs;
   }
+  // lld-link writes the exe's import library under obj/ (flags.ts /IMPLIB)
+  // and does not create the directory; link-only and rust-and-link compile
+  // no objects, so nothing else would have made it.
+  if (cfg.windows) node.orderOnlyInputs = [objectDirStamp(cfg)];
   if (opts.validations !== undefined && opts.validations.length > 0) node.validations = opts.validations;
   n.build(node);
 

@@ -277,6 +277,10 @@ static bool isRequestTimedOutImpl(us_socket_t* socket, uint64_t headersTimeoutMs
         // like Node freeing the parser for upgraded connections.
         return false;
     }
+    if (httpResponseData->requestTimeoutReported) {
+        // Report once per message, like Node's ConnectionsList::Expired().
+        return false;
+    }
     uint64_t start = httpResponseData->lastMessageStartMs;
     if (start == 0) {
         // Idle: no request message is currently being received.
@@ -284,13 +288,15 @@ static bool isRequestTimedOutImpl(us_socket_t* socket, uint64_t headersTimeoutMs
     }
     uint64_t now = uWS::nodeCompatMonotonicMs();
     uint64_t elapsed = now > start ? now - start : 0;
-    if (headersTimeoutMs > 0 && !httpResponseData->headersCompleted && elapsed > headersTimeoutMs) {
-        return true;
+    bool expired = (headersTimeoutMs > 0 && !httpResponseData->headersCompleted && elapsed > headersTimeoutMs)
+        || (requestTimeoutMs > 0 && elapsed > requestTimeoutMs);
+    if (expired) {
+        httpResponseData->requestTimeoutReported = true;
     }
-    return requestTimeoutMs > 0 && elapsed > requestTimeoutMs;
+    return expired;
 }
 
-bool JSNodeHTTPServerSocket::isRequestTimedOut(uint64_t headersTimeoutMs, uint64_t requestTimeoutMs) const
+bool JSNodeHTTPServerSocket::isRequestTimedOut(uint64_t headersTimeoutMs, uint64_t requestTimeoutMs)
 {
     if (!socket || upgraded || us_socket_is_closed(socket)) {
         return false;

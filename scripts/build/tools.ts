@@ -18,7 +18,7 @@ import { BuildError } from "./error.ts";
 // ───────────────────────────────────────────────────────────────────────────
 
 /**
- * Parse a version like "21.1.8" out of arbitrary text (tool --version output).
+ * Parse a version like "23.1.1" out of arbitrary text (tool --version output).
  * Returns the first X.Y.Z found, or undefined.
  */
 function parseVersion(text: string): string | undefined {
@@ -88,7 +88,7 @@ export interface ToolSpec {
   paths?: string[];
   /** Search only `paths`, never $PATH. */
   pathsOnly?: boolean;
-  /** Version constraint, e.g. `">=21.1.0 <22.0.0"`. */
+  /** Version constraint, e.g. `">=23.1.0 <24.0.0"`. */
   version?: string;
   /** How to get the version. `"--version"` (default) or `"version"` (go/zig style). */
   versionArg?: string;
@@ -278,10 +278,10 @@ export function findTool(spec: ToolSpec): FoundTool | undefined {
 
 /**
  * LLVM version constraint. Any version in the same major.minor range is
- * accepted (e.g. Alpine 3.23 ships 21.1.2 while we target 21.1.8).
+ * accepted (e.g. apt.llvm.org serves 23.1.2 snapshots while we target 23.1.1).
  */
-export const LLVM_VERSION = "21.1.8";
-const LLVM_MAJOR = "21";
+export const LLVM_VERSION = "23.1.1";
+const LLVM_MAJOR = "23";
 const LLVM_MINOR = "1";
 const LLVM_VERSION_RANGE = `>=${LLVM_MAJOR}.${LLVM_MINOR}.0 <${LLVM_MAJOR}.${LLVM_MINOR}.99`;
 
@@ -349,7 +349,7 @@ function llvmSearchPaths(os: OS, arch: Arch): string[] {
 }
 
 /**
- * Version-suffixed command names (e.g. clang-21, clang-21.1).
+ * Version-suffixed command names (e.g. clang-23, clang-23.1).
  * Unix distros often only ship these suffixed versions.
  */
 function llvmNameVariants(name: string): string[] {
@@ -421,6 +421,7 @@ export function resolveLlvmToolchain(
   | "hostCc"
   | "hostCxx"
   | "ar"
+  | "ranlib"
   | "ld"
   | "ld64Lld"
   | "rustLld"
@@ -434,6 +435,7 @@ export function resolveLlvmToolchain(
   | "dsymutil"
   | "ccache"
   | "rc"
+  | "mt"
   | "nasm"
   | "clangVersion"
   | "clangResourceDir"
@@ -479,15 +481,15 @@ export function resolveLlvmToolchain(
     }
   }
 
-  // Host compiler for build-time host tools (`host-exe` steps) and host-side
+  // Host compiler for build-time codegen tools (dep_host_cc) and host-side
   // cargo artifacts (.cargo/config.toml linker for the host triple). Normally
-  // the same as cc/cxx, but for a windows target cc/cxx are clang-cl, whose
-  // command line the host-tool rules (GNU-style -o/-MMD/-c, .S input) don't
-  // speak and which, on a unix host, can't drive an ELF link — host tools
-  // use the plain clang/clang++ drivers from the same LLVM install.
+  // the same as cc/cxx, but when cross-compiling for windows from a unix
+  // host, cc/cxx are clang-cl (which defaults to a *-windows-msvc triple,
+  // emits COFF, and can't drive an ELF link) — host tools must stay on plain
+  // clang/clang++.
   let hostCc: string | undefined;
   let hostCxx: string | undefined;
-  if (msvcTarget) {
+  if (msvcTarget && os !== "windows") {
     hostCc = findLlvmTool("clang", paths, os, { checkVersion: false, required: true })?.path;
     hostCxx = findLlvmTool("clang++", paths, os, { checkVersion: false, required: true })?.path;
   }
@@ -499,6 +501,17 @@ export function resolveLlvmToolchain(
     checkVersion: false,
     required: true,
   })?.path;
+
+  // ranlib: llvm-ranlib (unix hosts only — llvm-lib targets don't need it).
+  // Needed for nested cmake builds (CMAKE_RANLIB). llvm-ar's `s` flag does the
+  // same thing for our direct archives, but deps may call ranlib explicitly.
+  let ranlib: string | undefined;
+  if (os !== "windows") {
+    ranlib = findLlvmTool("llvm-ranlib", paths, os, {
+      checkVersion: false,
+      required: true,
+    })?.path;
+  }
 
   // ld: lld-link for windows targets, ld.lld on Linux (passed as --ld-path=).
   // On Darwin clang drives the system linker directly.
@@ -553,11 +566,18 @@ export function resolveLlvmToolchain(
     dsymutil = findLlvmTool("dsymutil", paths, os, { checkVersion: false, required: false })?.path;
   }
 
-  // rc: windows targets only — compiles windows-app-info.rc into the .res the
-  // final link embeds.
+  // rc/mt: windows targets only. Passed to nested cmake — when
+  // CMAKE_C_COMPILER is an explicit path, cmake's find_program for these
+  // may not search the compiler's directory, so we resolve them here and
+  // pass explicitly. rc is required (cmake's try_compile on windows uses
+  // it, and the final link embeds windows-app-info.res); mt is optional
+  // (not all LLVM distros ship it — source.ts sets
+  // CMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY as fallback).
   let rc: string | undefined;
+  let mt: string | undefined;
   if (msvcTarget) {
     rc = findLlvmTool("llvm-rc", paths, os, { checkVersion: false, required: true })?.path;
+    mt = findLlvmTool("llvm-mt", paths, os, { checkVersion: false, required: false })?.path;
   }
 
   // nasm: BoringSSL win-x64 and libjpeg-turbo x86_64 SIMD; compile.ts:nasm() asserts at the use site.
@@ -594,6 +614,7 @@ export function resolveLlvmToolchain(
     hostCc,
     hostCxx,
     ar,
+    ranlib,
     ld,
     ld64Lld,
     rustLld,
@@ -607,6 +628,7 @@ export function resolveLlvmToolchain(
     dsymutil,
     ccache,
     rc,
+    mt,
     nasm,
   };
 }
@@ -672,8 +694,8 @@ export function findRustLld(os: OS): {
   // installed there yet. `rustc --print sysroot` (a rustup proxy invocation)
   // would auto-install — but the download blows past a short spawnSync timeout
   // and the silent failure leaves `rustLld` undefined, which falls back to the
-  // system lld. With cross-language LTO that means lld 21 reading rust-emitted
-  // LLVM 22 bitcode → `Invalid record`. Pre-flight a `rustup toolchain
+  // system lld. With cross-language LTO that means an older lld reading newer
+  // rust-emitted bitcode → `Invalid record`. Pre-flight a `rustup toolchain
   // install` so the proxy resolves instantly: idempotent (~0.5s, it re-checks
   // the channel manifest) when already installed, downloads on a stale agent.
   // `-q` also hides the download progress, so say how long it took whenever

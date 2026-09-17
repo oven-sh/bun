@@ -32,7 +32,13 @@
     ]
   },
   "src/jsc/RuntimeTranspilerStore.rs": {
-    "WorkPool::schedule*": 1
+    "WorkPool::schedule*": 1,
+    "owned_task!": [
+      "TranspileRunner"
+    ],
+    "unsafe impl Send": [
+      "UnstartedJob"
+    ]
   },
   "src/jsc/TopExceptionScope.rs": {
     "unsafe impl Send": [

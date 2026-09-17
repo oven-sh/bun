@@ -369,11 +369,11 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                                     self.symbols[ref_.inner_index() as usize].original_name;
                                 // ImportScanner.recordExportedBinding → recordExport
                                 self.record_export(binding.loc, original_name.slice(), ref_)?;
+                                let key =
+                                    Expr::init(E::String::init(original_name.slice()), binding.loc);
                                 export_props.push(G::Property {
-                                    key: Some(Expr::init(
-                                        E::String::init(original_name.slice()),
-                                        binding.loc,
-                                    )),
+                                    flags: E::own_key_property_flags(&key),
+                                    key: Some(key),
                                     value: Some(Expr::init_identifier(ref_, binding.loc)),
                                     ..Default::default()
                                 });

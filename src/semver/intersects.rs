@@ -97,6 +97,15 @@ impl Query {
         None
     }
 
+    /// Whether this AND chain is `*` (a lone `>=0.0.0`), which every version satisfies.
+    fn admits_all(&self) -> bool {
+        let range = &self.range;
+        self.next.is_none()
+            && range.left.op == Op::Gte
+            && range.left.version.is_zero()
+            && !range.has_right()
+    }
+
     /// `Group::satisfies` for one AND chain, with the same prerelease rule.
     fn admits(&self, version: Version, query_buf: &[u8], version_buf: &[u8]) -> bool {
         if version.tag.has_pre() {
@@ -111,12 +120,15 @@ impl Query {
 impl Group {
     /// Whether some version satisfies both groups; an exact version goes through `satisfies`, two ranges compare bounds only.
     pub fn intersects(&self, self_buf: &[u8], other: &Group, other_buf: &[u8]) -> bool {
-        if self.is_star() || other.is_star() {
+        if other.has_branch_admitting_all() {
             return true;
         }
         let mut a = Some(&self.head);
         while let Some(list_a) = a {
             a = list_a.next.as_deref();
+            if list_a.head.admits_all() {
+                return true;
+            }
             if let Some(version) = list_a.head.exact_version() {
                 if other.satisfies(version, other_buf, self_buf) {
                     return true;
@@ -143,6 +155,17 @@ impl Group {
                     return true;
                 }
             }
+        }
+        false
+    }
+
+    fn has_branch_admitting_all(&self) -> bool {
+        let mut list = Some(&self.head);
+        while let Some(l) = list {
+            if l.head.admits_all() {
+                return true;
+            }
+            list = l.next.as_deref();
         }
         false
     }

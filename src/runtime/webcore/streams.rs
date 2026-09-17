@@ -2283,8 +2283,7 @@ pub struct NetworkSink {
     /// failure callback can reject with the original JS error (e.g. S3
     /// `NoSuchKey`) instead of the generic `UnknownError` passed to `fail()`.
     pub(crate) upstream_error: jsc::strong::Optional,
-    /// `s3file.writer()`: the upload failed while no `flush()`/`end()` promise
-    /// was pending to reject. The next `flush()`/`end()` rejects with it.
+    /// A `writer()` failure that found no `flush()`/`end()` promise. The next one rejects with it.
     pub(crate) unreported_failure: Option<UploadFailure>,
     pub(crate) ended: bool,
     pub(crate) done: bool,
@@ -2294,8 +2293,7 @@ pub struct NetworkSink {
     pub(crate) writer_holders: core::cell::Cell<u8>,
 }
 
-/// An owned `S3Error` plus the object path. Bytes, not a JS error: the upload
-/// can fail during VM teardown, and nobody may ever ask for it.
+/// An owned `S3Error` plus the path. Bytes, not a JS error: the upload can fail at VM teardown.
 pub(crate) struct UploadFailure {
     code: Box<[u8]>,
     message: Box<[u8]>,
@@ -2472,8 +2470,7 @@ impl NetworkSink {
         self.finalize();
     }
 
-    /// `s3file.writer()`: the upload failed and neither `flush_promise` nor
-    /// `end_promise` is pending to reject.
+    /// The `writer()` upload failed with neither `flush_promise` nor `end_promise` pending.
     pub(crate) fn fail_unreported(&mut self, err: &bun_s3_signing::error::S3Error<'_>) {
         self.unreported_failure = Some(UploadFailure {
             code: Box::from(err.code),
@@ -2483,8 +2480,7 @@ impl NetworkSink {
         self.abort();
     }
 
-    /// A rejected promise for `unreported_failure`, which it clears: the
-    /// failure is reported once, like one that found a promise pending.
+    /// A rejected promise for `unreported_failure`, which it clears: a failure is reported once.
     fn take_unreported_failure(&mut self, global_this: &JSGlobalObject) -> Option<JSValue> {
         let failure = self.unreported_failure.take()?;
         Some(JSPromise::rejected_promise(global_this, failure.to_js(global_this)).to_js())

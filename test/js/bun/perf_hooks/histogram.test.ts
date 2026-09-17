@@ -66,6 +66,150 @@ describe("Histogram", () => {
     assert.throws(() => h.record("invalid"), /must be of type number/);
   });
 
+  describe("record validation", () => {
+    const rangeError = (message: string) => ({ name: "RangeError", code: "ERR_OUT_OF_RANGE", message });
+    const typeError = (received: string) => ({
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_TYPE",
+      message: `The "val" argument must be of type number. Received ${received}`,
+    });
+
+    test("a number that is not an integer", () => {
+      const h = createHistogram();
+
+      for (const value of [1.5, 0.5, NaN, Infinity, -Infinity]) {
+        assert.throws(
+          () => h.record(value),
+          rangeError(`The value of "val" is out of range. It must be an integer. Received ${value}`),
+        );
+      }
+      assert.strictEqual(h.count, 0);
+    });
+
+    test("a number out of range", () => {
+      const h = createHistogram();
+
+      for (const [value, received] of [
+        [0, "0"],
+        [-1, "-1"],
+        [Number.MAX_SAFE_INTEGER + 1, "9_007_199_254_740_992"],
+      ] as const) {
+        assert.throws(
+          () => h.record(value),
+          rangeError(
+            `The value of "val" is out of range. It must be >= 1 && <= 9007199254740991. Received ${received}`,
+          ),
+        );
+      }
+      assert.strictEqual(h.count, 0);
+
+      h.record(1);
+      h.record(Number.MAX_SAFE_INTEGER);
+      assert.strictEqual(h.count, 2);
+    });
+
+    test("a value that is not a number or a bigint", () => {
+      const h: any = createHistogram();
+
+      for (const [value, received] of [
+        [false, "type boolean (false)"],
+        ["", "type string ('')"],
+        [{}, "an instance of Object"],
+        [undefined, "undefined"],
+        [null, "null"],
+      ] as const) {
+        assert.throws(() => h.record(value), typeError(received));
+      }
+      assert.throws(() => h.record(), typeError("undefined"));
+      assert.strictEqual(h.count, 0);
+    });
+
+    test("a bigint that is below 1 or does not fit in an int64", () => {
+      const h = createHistogram();
+
+      for (const value of [0n, -1n, 2n ** 63n, 2n ** 64n + 1n]) {
+        assert.throws(() => h.record(value), rangeError("value is out of range"));
+      }
+      assert.deepStrictEqual({ count: h.count, exceeds: h.exceeds }, { count: 0, exceeds: 0 });
+
+      h.record(1n);
+      // Fits in an int64, but is above the default `highest`.
+      h.record(2n ** 63n - 1n);
+      assert.deepStrictEqual({ count: h.count, exceeds: h.exceeds }, { count: 1, exceeds: 1 });
+    });
+
+    test("a rejected value leaves the histogram unchanged", () => {
+      const h = createHistogram();
+      for (const value of [55281, 433722, 100000, 200000]) h.record(value);
+
+      assert.throws(
+        () => h.record(1.5),
+        rangeError('The value of "val" is out of range. It must be an integer. Received 1.5'),
+      );
+      assert.deepStrictEqual({ count: h.count, min: h.min }, { count: 4, min: 55264 });
+    });
+  });
+
+  describe("min and max", () => {
+    const read = (h: ReturnType<typeof createHistogram>) => ({
+      count: h.count,
+      min: h.min,
+      minBigInt: h.minBigInt,
+      max: h.max,
+      maxBigInt: h.maxBigInt,
+    });
+    const empty = { min: 9223372036854776000, minBigInt: 9223372036854775807n, max: 0, maxBigInt: 0n };
+
+    // Node reports the bounds of the bucket that holds the value, the same as percentile().
+    test("are bucket-equivalent, like percentile()", () => {
+      const h = createHistogram();
+      for (const value of [55281, 433722, 100000, 200000]) h.record(value);
+
+      assert.deepStrictEqual(read(h), { count: 4, min: 55264, minBigInt: 55264n, max: 433919, maxBigInt: 433919n });
+      assert.deepStrictEqual(
+        { p1: h.percentile(1), p100: h.percentile(100), p100BigInt: h.percentileBigInt(100) },
+        { p1: 55295, p100: 433919, p100BigInt: 433919n },
+      );
+    });
+
+    test("stay bucket-equivalent through add() and reset()", () => {
+      const a = createHistogram();
+      const b = createHistogram();
+      for (const value of [55281, 433722]) a.record(value);
+      for (const value of [100000, 200000, 999999]) b.record(value);
+      const merged = { count: 5, min: 55264, minBigInt: 55264n, max: 1000447, maxBigInt: 1000447n };
+
+      a.add(b);
+      assert.deepStrictEqual(read(a), merged);
+
+      const c = createHistogram();
+      c.add(a);
+      assert.deepStrictEqual(read(c), merged);
+
+      c.reset();
+      assert.deepStrictEqual(read(c), { count: 0, ...empty });
+    });
+
+    test("ignore values that add() drops", () => {
+      const narrow = createHistogram({ lowest: 1, highest: 10, figures: 1 });
+      const wide = createHistogram();
+      wide.record(100000);
+
+      narrow.add(wide);
+      assert.deepStrictEqual(read(narrow), { count: 1, ...empty });
+    });
+
+    test("with a `lowest` above 1", () => {
+      const h = createHistogram({ lowest: 1000, highest: 1e6 });
+
+      h.record(5);
+      assert.deepStrictEqual(read(h), { count: 1, min: 0, minBigInt: 0n, max: 511, maxBigInt: 511n });
+
+      h.record(5000);
+      assert.deepStrictEqual(read(h), { count: 2, min: 0, minBigInt: 0n, max: 5119, maxBigInt: 5119n });
+    });
+  });
+
   test("histogram with custom options", () => {
     const h = createHistogram({ lowest: 1, highest: 11, figures: 1 });
 

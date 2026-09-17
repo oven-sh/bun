@@ -685,6 +685,35 @@ describe("bundler", () => {
       },
     };
   });
+  // A plugin that marks every bare specifier as external used to claim the runtime's
+  // "node:module" import too. That kept the import in the output when nothing used it.
+  for (const format of ["esm", "cjs"] as const) {
+    itBundled(`plugin/ResolveExternalDoesNotKeepUnusedRuntimeImport_${format}`, {
+      files: {
+        "index.mjs": /* js */ `
+          import dep from "./dep.cjs";
+          console.log(dep.v);
+        `,
+        "dep.cjs": /* js */ `
+          module.exports = { v: 1 };
+        `,
+      },
+      target: "node",
+      format,
+      plugins(builder) {
+        builder.onResolve({ filter: /^[^./]/ }, args => {
+          if (args.kind === "entry-point-build") return;
+          return { path: args.path, external: true };
+        });
+      },
+      run: {
+        stdout: "1",
+      },
+      onAfterBundle(api) {
+        api.expectFile("/out.js").not.toContain("node:module");
+      },
+    });
+  }
   itBundled("plugin/ManyFiles", ({ root }) => {
     const FILES = process.platform === "win32" ? 50 : 200; // windows is slower at this
     const create = (fn: (i: number) => string) => new Array(FILES).fill(0).map((_, i) => fn(i));

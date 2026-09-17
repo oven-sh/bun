@@ -496,6 +496,43 @@ describe("Bun.build", () => {
     expect(exitCode).toBe(0);
   });
 
+  // Runs in a child because the unfixed behavior was a process abort.
+  test.concurrent("a dependency's relative import past the filesystem root is a build error", async () => {
+    const specifier = Buffer.alloc(64 * 3, "../").toString() + "..";
+    using dir = tempDir("build-relative-import-past-root", {
+      "node_modules/dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+      "node_modules/dep/index.js": `import ${JSON.stringify(specifier)};`,
+      "entry.js": `import "dep";`,
+      "build.mjs": `
+        try {
+          await Bun.build({ entrypoints: ["./entry.js"], target: "browser" });
+          console.log("resolved");
+        } catch (e) {
+          console.log(JSON.stringify({
+            isAggregateError: e instanceof AggregateError,
+            errors: e.errors.map(error => error.message),
+          }));
+        }
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      isAggregateError: true,
+      errors: [`Could not resolve: "${specifier}"`],
+    });
+    expect(exitCode).toBe(0);
+  });
+
   test.concurrent("an entry point too long for a path buffer is reported like any other missing one", async () => {
     // Resolving it failed without logging anything, so the build went on
     // with the entry point silently dropped: a successful build when another

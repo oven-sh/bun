@@ -605,6 +605,17 @@ describe("bundler", () => {
       "/entry.js": [`Could not resolve: "net1". Maybe you need to "bun install"?`],
     },
   });
+  // backend "cli": the unfixed behavior was a process abort, and the api backend builds in this process.
+  const pastRoot = Buffer.alloc(64 * 3, "../").toString() + "..";
+  itBundled("browser/RelativeImportPastFilesystemRoot", {
+    backend: "cli",
+    files: {
+      "/entry.js": `import ${JSON.stringify(pastRoot)};`,
+    },
+    bundleErrors: {
+      "/entry.js": [`Could not resolve: "${pastRoot}"`],
+    },
+  });
   itBundled("browser/TargetNodeNonExistentBuiltinShouldBeExternal", {
     files: {
       "/entry.js": `

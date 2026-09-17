@@ -2061,7 +2061,8 @@ impl<'a> Resolver<'a> {
 
         // Check the "browser" map
         if self.care_about_browser_field {
-            let dirname = bun_paths::dirname(abs_path).expect("unreachable");
+            // `dirname` is `None` for a root ("/", "C:\\"). A root is its own directory.
+            let dirname = bun_paths::dirname(abs_path).unwrap_or(abs_path);
             if let Ok(Some(import_dir_info_outer)) = self.dir_info_cached(dirname) {
                 if let Some(import_dir_info) = import_dir_info_outer.get_enclosing_browser_scope() {
                     let pkg = import_dir_info.package_json().unwrap();

@@ -527,7 +527,9 @@ if (cluster.isPrimary) {
     const c = net.connect(port, "127.0.0.1");
     const done = outcome => {
       console.log(outcome);
-      process.kill(childPid);
+      try {
+        process.kill(childPid);
+      } catch {}
       process.exit(0);
     };
     c.on("connect", () => done("connected"));

@@ -45,6 +45,8 @@ test("spawn with an empty env passes nothing else on", async () => {
         ...["HOMEDRIVE", "HOMEPATH", "LOGONSERVER", "PATH", "SYSTEMDRIVE", "SYSTEMROOT"],
         ...["TEMP", "USERDOMAIN", "USERNAME", "USERPROFILE", "WINDIR"],
         ...["COMSPEC", "PATHEXT", "PROMPT"],
+        // Windows on ARM64 adds this one.
+        "PROCESSOR_ARCHITECTURE",
       ]
     : [];
   await using proc = spawn({

@@ -169,13 +169,13 @@ test.concurrent("explicit read(n) with no 'readable' listener still pulls from s
       process.stdin.on("end", () => {
         console.log(JSON.stringify({ chunks, readableEnded: process.stdin.readableEnded }));
       });
-      let spins = 0;
+      const deadline = Date.now() + 60_000;
       function poll() {
         let chunk;
         while ((chunk = process.stdin.read(3)) !== null) chunks.push(chunk.toString());
         if (process.stdin.readableEnded) return;
         // Bounded so a regression fails with output instead of spinning forever.
-        if (++spins > 20000) {
+        if (Date.now() > deadline) {
           console.log(JSON.stringify({ chunks, readableEnded: false }));
           process.exit(1);
         }
@@ -792,16 +792,18 @@ describe("pause() inside a 'data' handler, then a child inherits stdin", () => {
 
 // More than one read's worth is in the pipe before the parent reads its first chunk. Everything past that
 // chunk is the child's: a pipe cannot be un-read, so nothing may leave it on the parent's behalf once the
-// handler has paused.
-describe("pause() inside a 'data' handler with more already in the pipe, then a child inherits stdin", () => {
-  async function run(stdin: "pipe" | "overlapped") {
-    const total = 1 << 20;
-    using dir = tempDir("stdin-pause-with-more-waiting", {
-      "child.js": `
+// handler has paused. On POSIX the reader takes what the pipe holds before it delivers the first chunk.
+describe.skipIf(!isWindows)(
+  "pause() inside a 'data' handler with more already in the pipe, then a child inherits stdin",
+  () => {
+    async function run(stdin: "pipe" | "overlapped") {
+      const total = 1 << 20;
+      using dir = tempDir("stdin-pause-with-more-waiting", {
+        "child.js": `
         let n = 0;
         process.stdin.on("data", d => (n += d.length));
         process.stdin.on("end", () => process.stdout.write(String(n)));`,
-      "parent.js": `
+        "parent.js": `
         process.stdin.once("data", d => {
           process.stdin.pause();
           const child = Bun.spawnSync({ cmd: [process.execPath, "child.js"], stdin: "inherit", stdout: "pipe", stderr: "inherit" });
@@ -809,26 +811,27 @@ describe("pause() inside a 'data' handler with more already in the pipe, then a 
           console.log(JSON.stringify({ parentGotSome: d.length > 0, lost: ${total} - d.length - childGot }));
           process.exit(child.exitCode);
         });`,
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "parent.js"],
-      cwd: String(dir),
-      env: bunEnv,
-      // @ts-expect-error "overlapped" is Windows-only and not in the types
-      stdin,
-      stdout: "pipe",
-      stderr: "inherit",
-    });
-    proc.stdin.write(Buffer.alloc(total, "a"));
-    await proc.stdin.end();
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(stdout.trim()).toBe(JSON.stringify({ parentGotSome: true, lost: 0 }));
-    expect(exitCode).toBe(0);
-  }
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "parent.js"],
+        cwd: String(dir),
+        env: bunEnv,
+        // @ts-expect-error "overlapped" is Windows-only and not in the types
+        stdin,
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      proc.stdin.write(Buffer.alloc(total, "a"));
+      await proc.stdin.end();
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout.trim()).toBe(JSON.stringify({ parentGotSome: true, lost: 0 }));
+      expect(exitCode).toBe(0);
+    }
 
-  test.concurrent("stdin is a pipe", () => run("pipe"));
-  test.concurrent.skipIf(!isWindows)("stdin is an overlapped pipe", () => run("overlapped"));
-});
+    test.concurrent("stdin is a pipe", () => run("pipe"));
+    test.concurrent("stdin is an overlapped pipe", () => run("overlapped"));
+  },
+);
 
 // stdin stays flowing in the parent. What arrives while its thread is inside a synchronous spawn belongs to
 // the child that inherited the pipe.

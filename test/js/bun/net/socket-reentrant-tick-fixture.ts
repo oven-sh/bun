@@ -47,6 +47,7 @@ using server = Bun.listen({
 });
 
 let reentered = false;
+const handlerReturned = Promise.withResolvers<void>();
 // "ping" only if the handler really waited for the round trip before it returned.
 let echoedBeforeHandlerReturned: string | undefined;
 const received = Array.from({ length: connections }, () => "");
@@ -68,6 +69,7 @@ for (let i = 0; i < connections; i++) {
             // `.resolves` blocks until the promise settles by ticking the event loop from inside this callback.
             expect(roundTrip().then(value => (echoed = value))).resolves.toBe("ping");
             echoedBeforeHandlerReturned = echoed;
+            handlerReturned.resolve();
           }
           if (received.every(bytes => bytes.length === expectedLength)) roundDone.resolve();
         },
@@ -90,6 +92,9 @@ await roundDone.promise;
 
 // A completion posted from another thread still has to wake the loop.
 const source = await readFile(import.meta.path, "utf8");
+
+// Everything above can run from inside the handler's wait.
+await handlerReturned.promise;
 
 console.log(JSON.stringify({ echoedBeforeHandlerReturned, received, readFile: source.length > 0 }));
 for (const client of clients) client.end();

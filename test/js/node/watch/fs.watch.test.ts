@@ -210,7 +210,7 @@ describe("fs.watch", () => {
     },
   );
 
-  test("a burst of new files is reported without losing events", async () => {
+  test("a burst of new files is reported in full, or as lost", async () => {
     using dir = tempDir("watch-burst", {});
     const root = String(dir);
     const names = Array.from({ length: 300 }, (_, i) => `f${String(i).padStart(3, "0")}.txt`);
@@ -219,12 +219,13 @@ describe("fs.watch", () => {
     try {
       const failed = new Promise<never>((_, reject) => watcher.on("error", reject));
       const ready = Promise.withResolvers<void>();
-      const sawLast = Promise.withResolvers<void>();
+      const settled = Promise.withResolvers<void>();
       const seen = new Set<string | null>();
       watcher.on("change", (_, filename) => {
         seen.add(filename as string | null);
         if (filename === "ready.txt") ready.resolve();
-        if (filename === names.at(-1)) sawLast.resolve();
+        // A null filename is how a watcher reports that events were lost.
+        if (filename === names.at(-1) || filename === null) settled.resolve();
       });
       interval = repeat(() => fs.writeFileSync(path.join(root, "ready.txt"), "x"));
       await Promise.race([ready.promise, failed]);
@@ -232,12 +233,13 @@ describe("fs.watch", () => {
 
       // No event loop turn in between: nothing drains the events on this thread meanwhile.
       for (const name of names) fs.writeFileSync(path.join(root, name), "x");
-      await Promise.race([sawLast.promise, failed]);
+      await Promise.race([settled.promise, failed]);
 
-      // A null filename is how a watcher reports that events were lost.
-      expect(seen.has(null)).toBe(false);
+      // On Windows a burst that does not fit the request's buffer is reported as lost, as in
+      // Node. Nothing is lost without being reported.
+      if (!isWindows) expect(seen.has(null)).toBe(false);
       // FSEvents may report kFSEventStreamEventFlagMustScanSubDirs instead of every file.
-      if (!isMacOS) expect(names.filter(name => !seen.has(name))).toEqual([]);
+      if (!isMacOS && !seen.has(null)) expect(names.filter(name => !seen.has(name))).toEqual([]);
     } finally {
       clearInterval(interval);
       watcher.close();

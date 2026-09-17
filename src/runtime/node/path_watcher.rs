@@ -2059,8 +2059,15 @@ mod windows_impl {
                         return;
                     }
                     // The watched directory was deleted: a rename of its full
-                    // path, and nothing is left to ask for.
+                    // path, and nothing is left to ask for. Where deletes do
+                    // not have POSIX semantics the name stays taken while a
+                    // handle to the directory is open.
                     watcher.emit(WatchEventKind::Rename, watcher.path.as_bytes(), false);
+                    // SAFETY: caller contract; no request is outstanding on `dir`.
+                    unsafe {
+                        w::CloseHandle((*this).dir);
+                        (*this).dir = w::INVALID_HANDLE_VALUE;
+                    }
                     return;
                 }
             }

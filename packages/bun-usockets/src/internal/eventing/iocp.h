@@ -54,7 +54,7 @@ struct us_loop_t {
     /* Number of non-fallthrough polls in the loop */
     int num_polls;
 
-    /* Number of completion packets dequeued this iteration */
+    /* Number of completion packets in the batch being dispatched */
     int num_ready_polls;
 
     /* Current index in the list of dequeued packets */
@@ -81,8 +81,8 @@ struct us_loop_t {
     struct us_internal_afd_poll *afd_update_tail;
     /* Listening sockets with an AcceptEx outstanding. */
     struct us_internal_acceptor *acceptors;
-    /* A poll cancelled to widen its mask was dequeued and waits for the flush. */
-    unsigned char afd_saw_cancelled;
+    /* Polls whose cancellation has not been dequeued yet. */
+    unsigned int afd_cancelled_polls;
     /* us_loop_free is collecting what is still in flight: nothing is reported or re-armed. */
     unsigned char closing;
 

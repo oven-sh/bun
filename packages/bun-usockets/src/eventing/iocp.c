@@ -376,6 +376,7 @@ static void afd_poll_cancel(struct us_internal_afd_poll *poll) {
         return;
     }
     poll->state = AFD_POLL_STATE_CANCELLED;
+    poll->loop->afd_cancelled_polls++;
     /* The result says nothing reliable: the poll can still complete normally
      * after a successful cancel, and STATUS_NOT_FOUND means its packet is
      * already queued. Either way exactly one packet arrives. */
@@ -538,6 +539,9 @@ static void afd_poll_report(struct us_loop_t *loop, struct us_internal_afd_poll 
 static void afd_poll_complete(struct us_loop_t *loop, struct us_iocp_op *op, OVERLAPPED_ENTRY *entry) {
     (void) entry;
     struct us_internal_afd_poll *poll = (struct us_internal_afd_poll *) op;
+    if (poll->state == AFD_POLL_STATE_CANCELLED) {
+        loop->afd_cancelled_polls--;
+    }
     poll->state = AFD_POLL_STATE_IDLE;
 
     if (!poll->owner) {
@@ -547,8 +551,10 @@ static void afd_poll_complete(struct us_loop_t *loop, struct us_iocp_op *op, OVE
 
     NTSTATUS status = poll->iosb.Status;
     if (status == STATUS_CANCELLED) {
-        afd_poll_queue_update(poll);
-        loop->afd_saw_cancelled = 1;
+        /* Cancelled to widen its mask. */
+        if (loop->closing || afd_poll_submit(poll) != 0) {
+            afd_poll_queue_update(poll);
+        }
         return;
     }
     if (!NT_SUCCESS(status)) {
@@ -907,10 +913,24 @@ static void us_internal_resume_list_remove(struct us_loop_t *loop) {
     ReleaseSRWLockExclusive(&resume_lock);
 }
 
-/* Runs what is left of the dequeued batch. A dequeued packet exists nowhere
- * else, and a callback can re-enter the loop: the entry is copied and the
- * index moved past it first, so that the nested tick finishes this batch
- * before its own wait overwrites it. */
+/* A tick looks at the port before it runs its first callback and not again:
+ * whatever it delivers was there before anything it did, so none of it can be
+ * an answer to that. A caller that leaves the loop's callbacks and comes back
+ * (microtasks between ticks, a nested wait for a promise) relies on it. */
+
+/* A dequeued packet exists nowhere else, and a callback can re-enter the loop
+ * with part of its batch undispatched: the nested tick's batch begins with it. */
+static void us_internal_begin_batch(struct us_loop_t *loop) {
+    const int held = loop->num_ready_polls - loop->current_ready_poll;
+    if (held > 0 && loop->current_ready_poll > 0) {
+        memmove(loop->ready_polls, loop->ready_polls + loop->current_ready_poll, (size_t) held * sizeof(OVERLAPPED_ENTRY));
+    }
+    loop->num_ready_polls = held;
+    loop->current_ready_poll = 0;
+}
+
+/* The entry is copied and the index moved past it before its callback runs:
+ * a nested tick moves the rest of the batch. */
 static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
     while (loop->current_ready_poll < loop->num_ready_polls) {
         OVERLAPPED_ENTRY entry = loop->ready_polls[loop->current_ready_poll++];
@@ -928,9 +948,8 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
 }
 
 /* Completes the ops that were ready when the tick began; one that becomes ready
- * meanwhile is the next tick's, so the port is looked at in between. Each is
- * taken off the list before it runs: a callback can re-enter the loop, and the
- * nested tick carries on with the rest. */
+ * meanwhile is the next tick's. Each is taken off the list before it runs: a
+ * callback can re-enter the loop, and the nested tick carries on with the rest. */
 static void us_internal_complete_ready_ops(struct us_loop_t *loop) {
     for (unsigned int budget = loop->num_ready_ops; budget && loop->ready_ops_head; budget--) {
         struct us_iocp_op *op = loop->ready_ops_head;
@@ -946,13 +965,49 @@ static void us_internal_complete_ready_ops(struct us_loop_t *loop) {
     }
 }
 
+/* Adds what is on the port to the batch. */
 static void us_internal_iocp_dequeue(struct us_loop_t *loop, DWORD timeout_ms) {
+    const int room = US_IOCP_MAX_ENTRIES - loop->num_ready_polls;
+    if (room == 0) {
+        return;
+    }
     ULONG count = 0;
-    if (!GetQueuedCompletionStatusEx(loop->iocp, loop->ready_polls, US_IOCP_MAX_ENTRIES, &count, timeout_ms, FALSE)) {
+    if (!GetQueuedCompletionStatusEx(loop->iocp, loop->ready_polls + loop->num_ready_polls, (ULONG) room, &count, timeout_ms, FALSE)) {
         count = 0;
     }
-    loop->num_ready_polls = (int) count;
-    loop->current_ready_poll = 0;
+    loop->num_ready_polls += (int) count;
+}
+
+/* A poll cancelled to widen its mask goes back to the kernel as soon as its
+ * packet is dequeued, and the port is read once more behind it: what the wider
+ * poll already has to report is part of this batch. Returns the polls resubmitted
+ * among the entries from `from` on, which it takes out of the batch. */
+static int us_internal_resubmit_cancelled_polls(struct us_loop_t *loop, int from) {
+    int resubmitted = 0;
+    int kept = from;
+    for (int i = from; i < loop->num_ready_polls; i++) {
+        struct us_iocp_op *op = (struct us_iocp_op *) loop->ready_polls[i].lpOverlapped;
+        if (op && op->complete == afd_poll_complete) {
+            struct us_internal_afd_poll *poll = (struct us_internal_afd_poll *) op;
+            if (poll->owner && poll->state == AFD_POLL_STATE_CANCELLED && poll->iosb.Status == STATUS_CANCELLED) {
+                InterlockedDecrement((volatile LONG *) &loop->pending_ops);
+                afd_poll_complete(loop, op, &loop->ready_polls[i]);
+                resubmitted++;
+                continue;
+            }
+        }
+        loop->ready_polls[kept++] = loop->ready_polls[i];
+    }
+    loop->num_ready_polls = kept;
+    return resubmitted;
+}
+
+/* Ends the tick's look at the port. No callback has run yet. */
+static void us_internal_complete_batch(struct us_loop_t *loop, int from) {
+    while (loop->afd_cancelled_polls && us_internal_resubmit_cancelled_polls(loop, from)) {
+        from = loop->num_ready_polls;
+        us_internal_iocp_dequeue(loop, 0);
+    }
 }
 
 /* What has to happen before a wait, outside of it: see us_internal_iocp_wait. */
@@ -1035,20 +1090,6 @@ static long long us_internal_timespec_ns(const struct timespec *timeout) {
     return ns < 0 ? 0 : ns;
 }
 
-/* A tick dispatches one batch of packets: what runs between ticks (timers, the
- * loop's post handlers) waits for no more than that. A poll that was cancelled
- * to widen its mask is the exception: it goes back to the kernel and the port
- * is looked at once more, so the events asked for arrive in this tick. */
-static void us_internal_resubmit_cancelled_polls(struct us_loop_t *loop) {
-    if (!loop->afd_saw_cancelled || loop->num_polls <= 0) {
-        return;
-    }
-    loop->afd_saw_cancelled = 0;
-    afd_flush_updates(loop);
-    us_internal_iocp_dequeue(loop, 0);
-    us_internal_dispatch_ready_polls(loop);
-}
-
 /* Bound `timeout_ns` by the socket-timeout sweep deadline. */
 static long long us_internal_clamp_to_sweep(struct us_loop_t *loop, long long timeout_ns) {
     long long sweep_ns = us_internal_sweep_timeout_ns(loop);
@@ -1075,8 +1116,8 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec *timeout
     acceptors_retry_starved(loop);
 
     /* Only a tick entered from a completion callback has anything left here. */
-    us_internal_dispatch_ready_polls(loop);
-    us_internal_complete_ready_ops(loop);
+    us_internal_begin_batch(loop);
+    const int held_packets = loop->num_ready_polls;
 
     long long timeout_ns = us_internal_timespec_ns(timeout);
 
@@ -1093,12 +1134,12 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec *timeout
 
     timeout_ns = us_internal_clamp_to_sweep(loop, timeout_ns);
 
+    /* No packet stands behind either: nothing would end a wait for them. */
+    if (loop->ready_ops_head || held_packets)
+        timeout_ns = 0;
+
     if (timeout_ns != 0 && loop->data.jsc_vm)
         Bun__JSC_onBeforeWait(loop->data.jsc_vm);
-
-    /* No packet stands behind a ready op: nothing would end a wait for it. */
-    if (loop->ready_ops_head)
-        timeout_ns = 0;
 
     /* What follows prepares to park the thread. A tick that finds packets
      * waiting does not park, however long it would have been willing to.
@@ -1131,8 +1172,10 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec *timeout
     if (handed_off)
         mi_on_thread_idle_end();
 
+    us_internal_complete_batch(loop, held_packets);
+
+    us_internal_complete_ready_ops(loop);
     us_internal_dispatch_ready_polls(loop);
-    us_internal_resubmit_cancelled_polls(loop);
     us_internal_sweep_if_due(loop);
 
     us_internal_loop_post(loop);
@@ -1169,6 +1212,7 @@ void us_loop_free(struct us_loop_t *loop) {
         if (loop->pending_ops == 0) {
             break;
         }
+        us_internal_begin_batch(loop);
         us_internal_iocp_dequeue(loop, 16);
         us_internal_dispatch_ready_polls(loop);
     }

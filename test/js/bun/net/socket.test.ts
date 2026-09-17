@@ -2046,6 +2046,27 @@ it.concurrent("a data handler that re-enters the event loop does not lose the ot
   });
 });
 
+// A reply to something written during a tick cannot have been ready when that tick looked for
+// events, so it belongs to a later tick. Code that awaits between a write and the state its reply
+// needs relies on that whenever the ticks come from a synchronous wait, which runs microtasks only
+// between ticks.
+it.concurrent("a tick delivers only what was ready when it began, also when a socket's poll is replaced", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "socket-one-look-per-tick-fixture.ts")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const result = stdout.startsWith("{") ? JSON.parse(stdout) : stdout;
+  expect({ result, stderr, exitCode }).toEqual({
+    result: { rounds: 40, repliesBeforeCheckpoint: 0 },
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 it("reload() backs out cleanly when a handler getter closes the socket mid-reload", async () => {
   // socket.reload() reads the new callbacks off the user object property by
   // property, so a getter can run arbitrary JS — including terminating the

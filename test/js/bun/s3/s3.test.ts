@@ -2178,13 +2178,18 @@ describe("s3 writer upload failure", () => {
     expect(() => (writer as any).close()).toThrow(accessDenied);
   });
 
-  it("rejects the pending end() and throws from later write() and end()", async () => {
+  it("rejects the pending flush() and end() and throws from later write() and end()", async () => {
     const abortSeen = Promise.withResolvers<void>();
     await using server = failingS3(abortSeen);
     const client = new S3Client({ endpoint: server.url.href, accessKeyId: "a", secretAccessKey: "b", bucket: "bkt" });
     const writer = client.file("obj.bin").writer({ partSize: 5 * 1024 * 1024, retry: 0 });
     writer.write(new Uint8Array(5 * 1024 * 1024));
+    const pendingFlush = writer.flush().then(
+      () => "resolved",
+      e => e,
+    );
     await expect(writer.end()).rejects.toEqual(accessDenied);
+    expect(await pendingFlush).toEqual(accessDenied);
     await abortSeen.promise;
 
     expect(() => writer.write(new Uint8Array(1024))).toThrow(accessDenied);

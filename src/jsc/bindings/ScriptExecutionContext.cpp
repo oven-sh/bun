@@ -41,6 +41,11 @@ static ScriptExecutionContextIdentifier initialIdentifier()
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(ScriptExecutionContext);
 #endif
 
+// A context is made with its Rust half (`bun_jsc::ScriptExecutionContext`): a global's is its
+// VM's root context, a Bun.ModuleGraph's is its own.
+extern "C" void* Bun__VirtualMachine__rootContext(void* bunVM);
+extern "C" void* Bun__ScriptExecutionContext__create(void* bunVM, ScriptExecutionContext*, ScriptExecutionContextIdentifier);
+
 ScriptExecutionContext::ScriptExecutionContext(JSC::VM* vm, Zig::GlobalObject* globalObject)
     : m_vm(vm)
     , m_globalObject(globalObject)
@@ -48,6 +53,7 @@ ScriptExecutionContext::ScriptExecutionContext(JSC::VM* vm, Zig::GlobalObject* g
     , m_vmHandle(WebCore::clientData(*vm)->vmHandle)
     , m_identifier(initialIdentifier())
     , m_contextThreadUID(Thread::currentSingleton().uid())
+    , m_bunContext(Bun__VirtualMachine__rootContext(m_bunVM))
 {
     addToContextsMap();
 }
@@ -59,6 +65,7 @@ ScriptExecutionContext::ScriptExecutionContext(JSC::VM* vm, Zig::GlobalObject* g
     , m_vmHandle(WebCore::clientData(*vm)->vmHandle)
     , m_identifier(identifier == std::numeric_limits<int32_t>::max() ? ++lastUniqueIdentifier : identifier)
     , m_contextThreadUID(Thread::currentSingleton().uid())
+    , m_bunContext(Bun__VirtualMachine__rootContext(m_bunVM))
 {
     addToContextsMap();
 }
@@ -69,6 +76,7 @@ ScriptExecutionContext::ScriptExecutionContext(ScriptExecutionContext& parent)
     , m_identifier(++lastUniqueIdentifier)
     , m_contextThreadUID(parent.m_contextThreadUID)
     , m_parent(&parent)
+    , m_bunContext(Bun__ScriptExecutionContext__create(m_bunVM, this, m_identifier))
 {
     ASSERT(parent.isContextThread());
     ASSERT(!parent.m_parent);
@@ -76,7 +84,6 @@ ScriptExecutionContext::ScriptExecutionContext(ScriptExecutionContext& parent)
 }
 
 extern "C" void Bun__VM__queueTask(void* bunVM, EventLoopTask*);
-extern "C" void* Bun__ScriptExecutionContext__create(void* bunVM, ScriptExecutionContext*, ScriptExecutionContextIdentifier);
 extern "C" void Bun__ScriptExecutionContext__stop(void* bunVM, void* bunContext);
 extern "C" void Bun__ScriptExecutionContext__release(void* bunVM, void* bunContext);
 
@@ -87,9 +94,7 @@ void ScriptExecutionContext::setModuleGraph(JSC::JSObject* moduleGraph)
 
 Ref<ScriptExecutionContext> ScriptExecutionContext::createForModuleGraph(ScriptExecutionContext& parent)
 {
-    auto context = adoptRef(*new ScriptExecutionContext(parent));
-    context->m_bunContext = Bun__ScriptExecutionContext__create(context->m_bunVM, context.ptr(), context->identifier());
-    return context;
+    return adoptRef(*new ScriptExecutionContext(parent));
 }
 
 // VirtualMachine::stop_graph_context, when the realm or the VM goes (dispose() goes through stop()).
@@ -406,14 +411,11 @@ ScriptExecutionContextIdentifier ScriptExecutionContext::generateIdentifier()
     return ++lastUniqueIdentifier;
 }
 
-// The global's context and its VM's root context are the two halves of one context: the Rust
-// half learns the identifier here. Called for each global a VM makes (`bun test --isolate` makes
-// one per file, which inherits the identifier).
-extern "C" ScriptExecutionContextIdentifier Zig__GlobalObject__bindRootContext(Zig::GlobalObject* globalObject, void* rootContext)
+// The identifier of the VM's root context: its first global's, which every global
+// `bun test --isolate` makes afterwards inherits.
+extern "C" ScriptExecutionContextIdentifier Zig__GlobalObject__contextIdentifier(Zig::GlobalObject* globalObject)
 {
-    auto* context = globalObject->scriptExecutionContext();
-    context->bindBunContext(rootContext);
-    return context->identifier();
+    return globalObject->scriptExecutionContext()->identifier();
 }
 
 void ScriptExecutionContext::regenerateIdentifier()

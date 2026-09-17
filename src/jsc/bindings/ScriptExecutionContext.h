@@ -83,7 +83,6 @@ public:
     // The Rust half, `bun_jsc::ScriptExecutionContext`: it has this context's identifier. A
     // graph's context makes and frees its own; a global's is bound to its VM's root context.
     void* bunContext() const { return m_bunContext; }
-    void bindBunContext(void* bunContext) { m_bunContext = bunContext; }
     // The JSModuleGraph a graph's context was made for, until it is collected.
     JSC::JSObject* moduleGraph() const { return m_moduleGraph.get(); }
     // A graph's context stops everything it owns, for good. The global keeps running.
@@ -204,7 +203,7 @@ private:
     RefPtr<ScriptExecutionContext> m_parent;
     ScriptExecutionContext& realm() { return m_parent ? *m_parent : *this; }
     const ScriptExecutionContext& realm() const { return m_parent ? *m_parent : *this; }
-    void* m_bunContext { nullptr };
+    void* const m_bunContext;
     JSC::Weak<JSC::JSObject> m_moduleGraph;
 
     WeakHashSet<ActiveDOMObject> m_activeDOMObjects;

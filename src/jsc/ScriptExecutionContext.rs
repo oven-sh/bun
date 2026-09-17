@@ -92,14 +92,14 @@ impl ScriptExecutionContext {
         *self.id.get()
     }
 
-    /// `VirtualMachine::root_context`: the Rust half of the context of the VM's global object.
-    /// It has that context's identifier, which it learns when the global is made
-    /// ([`bind`](Self::bind)).
+    /// `VirtualMachine::root_context`: the Rust half of the context of every global the VM makes.
+    /// Its identifier is the first global's ([`bind`](Self::bind)), which does not change: the
+    /// globals `bun test --isolate` makes inherit it.
     pub(crate) fn root() -> Self {
         Self::default()
     }
 
-    /// The identifier of the `WebCore::ScriptExecutionContext` this is the Rust half of.
+    /// Once, when the VM's first global has been made.
     pub(crate) fn bind(&self, id: ContextId) {
         self.id.set(id);
     }
@@ -485,6 +485,19 @@ macro_rules! impl_abort_handle_owner {
 }
 
 // `WebCore::ScriptExecutionContext` owns the context of a `Bun.ModuleGraph`.
+
+/// A global's `WebCore::ScriptExecutionContext` is made with this as its Rust half.
+///
+/// # Safety
+/// `vm` is this thread's VM, whose `root_context` is written (the first global is made while
+/// the rest of the VM is still being initialised).
+#[unsafe(no_mangle)]
+unsafe extern "C" fn Bun__VirtualMachine__rootContext(
+    vm: *mut crate::VirtualMachineRef,
+) -> *const ScriptExecutionContext {
+    // SAFETY: fn contract; no reference to the VM is formed.
+    unsafe { ptr::addr_of!((*vm).root_context) }
+}
 
 /// # Safety
 /// `vm` is this thread's live VM.

@@ -358,7 +358,7 @@ pub struct VirtualMachine {
     pub initial_script_execution_context_identifier: i32,
 
     /// Owns what script running in this VM's global opens. `bun test --isolate`
-    /// stops it and renews its identity at every file swap.
+    /// stops it at every file swap.
     pub(crate) root_context: crate::ScriptExecutionContext,
     /// What native code continues on behalf of a context that is gone runs in: always stopped,
     /// so what it arms is closed at once.
@@ -423,13 +423,8 @@ unsafe extern "C" {
     safe fn Bun__currentGraphContext(
         global: &JSGlobalObject,
     ) -> *const crate::ScriptExecutionContext;
-    /// Binds the global's `WebCore::ScriptExecutionContext` to `root_context`, its Rust half,
-    /// and says which identifier it has.
-    #[allow(improper_ctypes)]
-    safe fn Zig__GlobalObject__bindRootContext(
-        global: &JSGlobalObject,
-        root_context: &crate::ScriptExecutionContext,
-    ) -> u32;
+    /// The identifier of the global's `WebCore::ScriptExecutionContext`.
+    safe fn Zig__GlobalObject__contextIdentifier(global: &JSGlobalObject) -> u32;
     /// ModuleGraph.cpp: make the graph of this `WebCore::ScriptExecutionContext` current;
     /// returns the async context to restore.
     /// (Empty: there was nothing to do.)
@@ -1126,7 +1121,7 @@ impl VirtualMachine {
             return &self.root_context;
         }
         // SAFETY: a graph's context outlives every async context frame that names it, and the
-        // realm's own is `root_context` (`bind_root_context`).
+        // realm's own is `root_context` (every global's context is made with it).
         unsafe { &*Bun__currentGraphContext(self.global()) }
     }
 
@@ -1341,13 +1336,6 @@ impl VirtualMachine {
             i += 1;
         }
         result
-    }
-
-    /// The realm's context is one context with the global's `WebCore::ScriptExecutionContext`: link
-    /// the two and take its identifier. For every global the VM makes.
-    fn bind_root_context(&self) {
-        let id = Zig__GlobalObject__bindRootContext(self.global(), &self.root_context);
-        self.root_context.bind(crate::ContextId::from_raw(id));
     }
 
     /// `WebCore::ScriptExecutionContext` for a `Bun.ModuleGraph`: the
@@ -3252,7 +3240,9 @@ impl VirtualMachine {
         // `*mut VM` directly (no `&VM` reborrow), preserving mutable provenance.
         let jsc_vm = unsafe {
             (*vm).global = global;
-            (*vm).bind_root_context();
+            (*vm).root_context.bind(crate::ContextId::from_raw(
+                Zig__GlobalObject__contextIdentifier(&*global),
+            ));
             (*vm).regular_event_loop.global = NonNull::new(global);
             let jsc_vm = (*global).vm_ptr();
             (*vm).jsc_vm = jsc_vm;
@@ -5765,7 +5755,6 @@ impl VirtualMachine {
             self.console.cast(),
         );
         self.global = new_global;
-        self.bind_root_context();
         VMHolder::set_cached_global_object(Some(new_global));
         self.regular_event_loop.global = NonNull::new(new_global);
         self.macro_event_loop.global = NonNull::new(new_global);

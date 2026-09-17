@@ -233,9 +233,10 @@ test("shallow nesting spanning @scope still compiles for old targets", () => {
   const src = nestedAcrossAtRule("@scope", ".a, .b", 2, 2);
   const out = minifyTest(src, "", OLD_TARGETS);
   expect(out.length).toBeLessThan(10_000);
-  // Inside @scope the inner rules resolve against `:scope`, not the outer chain.
-  expect(out).toContain(":scope");
-  expect(out).toContain("@scope");
+  // Inside @scope the inner rules are scoped rules: they resolve against the
+  // scoping root, not the outer chain, so the outer selectors never appear
+  // inside the block.
+  expect(out).toContain("@scope{:is(.a,.b) .a{color:red}:is(.a,.b) .b{color:red}}");
 });
 
 test("bun build does not hang on deeply nested multi-selector css spanning @starting-style", async () => {

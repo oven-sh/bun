@@ -835,7 +835,10 @@ fn parse_relative_selector<Impl: BunSelectorImpl>(
         None
     };
 
-    let scope: GenericComponent<Impl> = if nesting_requirement == NestingRequirement::Implicit {
+    let scope: GenericComponent<Impl> = if matches!(
+        nesting_requirement,
+        NestingRequirement::Implicit | NestingRequirement::Scoped
+    ) {
         GenericComponent::Nesting
     } else {
         GenericComponent::Scope
@@ -2766,6 +2769,8 @@ pub enum NestingRequirement {
     Prefixed,
     Contained,
     Implicit,
+    /// A scoped style rule (nested in `@scope`): a leading combinator is anchored to `&`, nothing else is added.
+    Scoped,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, strum::IntoStaticStr, CssHash)]

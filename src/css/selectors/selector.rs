@@ -1326,12 +1326,13 @@ pub(crate) mod serialize {
                 dest.write_char(b')')?;
             }
         } else {
-            // If there is no context, we are at the root if nesting is supported. This is equivalent to :scope.
-            // Otherwise, if nesting is supported, serialize the nesting selector directly.
-            if dest.targets.should_compile_same(Feature::Nesting) {
-                dest.write_str(b":scope")?;
-            } else {
+            // With no context, `&` is `:scope` at the root and `:where(:scope)` in `@scope` (css-cascade-6).
+            if !dest.targets.should_compile_same(Feature::Nesting) {
                 dest.write_char(b'&')?;
+            } else if dest.in_scope_rule {
+                dest.write_str(b":where(:scope)")?;
+            } else {
+                dest.write_str(b":scope")?;
             }
         }
         Ok(())

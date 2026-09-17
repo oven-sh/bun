@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import path from "path";
@@ -699,9 +699,10 @@ test("calls second", () => {
 });
 
 // JSC records coverage per SourceProvider, and a file has one for each time
-// it is loaded. In every case below one load of the subject runs the `if`
-// branch and another load runs the `return` after it.
-describe.concurrent("a file loaded more than once counts every load", () => {
+// it is loaded. Each case has a subject file of its own. Where a case loads
+// its subject twice, one load runs the `if` branch and the other runs the
+// `return` after it.
+describe("a file loaded more than once counts every load", () => {
   const esm = `export function covered(n: number): number {
   if (n > 5) {
     return n * 2;
@@ -716,141 +717,29 @@ describe.concurrent("a file loaded more than once counts every load", () => {
   return n + 1;
 };
 `;
+  const compiledText =
+    Buffer.alloc(12, "\n").toString() +
+    "exports.other = function other(n) {\n  if (n > 5) {\n    return 1;\n  }\n  return 2;\n};\nexports.other(1);\n";
 
-  async function coverageRow(files: Record<string, string>, env: Record<string, string> = {}) {
-    using dir = tempDir("cov-loaded-twice", files);
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", "--coverage", "./loads.test.ts"],
-      env: { ...bunEnv, ...env },
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return {
-      row: stderr.split("\n").find(line => line.startsWith(" subject.")),
-      pass: stderr.includes("1 pass"),
-      exitCode,
-    };
-  }
-
-  const cases: Record<string, Record<string, string>> = {
-    "by the host and by a Bun.ModuleGraph": {
-      "subject.ts": esm,
-      "loads.test.ts": `
-import { expect, test } from "bun:test";
-import { covered } from "./subject.ts";
-
-test("loads", async () => {
-  expect(covered(1)).toBe(2);
-  using graph = new Bun.ModuleGraph({});
-  const subject = await graph.import(import.meta.dir + "/subject.ts");
-  expect(graph.run(() => subject.covered(10))).toBe(20);
-});
+  const files = {
+    "host-and-graph.ts": esm,
+    "two-graphs.ts": esm,
+    "cjs-host-and-graph.cjs": cjs,
+    "query-strings.ts": esm,
+    "require-cache.cjs": cjs,
+    "functions.ts": `export function first() {
+  return 1;
+}
+export function second() {
+  return 2;
+}
+export function third() {
+  return 3;
+}
 `,
-    },
-    "by two Bun.ModuleGraphs": {
-      "subject.ts": esm,
-      "loads.test.ts": `
-import { expect, test } from "bun:test";
-
-test("loads", async () => {
-  using a = new Bun.ModuleGraph({});
-  using b = new Bun.ModuleGraph({});
-  const inA = await a.import(import.meta.dir + "/subject.ts");
-  const inB = await b.import(import.meta.dir + "/subject.ts");
-  expect(a.run(() => inA.covered(10))).toBe(20);
-  expect(b.run(() => inB.covered(1))).toBe(2);
-});
-`,
-    },
-    "CommonJS, by the host and by a Bun.ModuleGraph": {
-      "subject.cjs": cjs,
-      "loads.test.ts": `
-import { expect, test } from "bun:test";
-const { covered } = require("./subject.cjs");
-
-test("loads", async () => {
-  expect(covered(1)).toBe(2);
-  using graph = new Bun.ModuleGraph({});
-  const subject = await graph.import(import.meta.dir + "/subject.cjs");
-  expect(graph.run(() => subject.covered(10))).toBe(20);
-});
-`,
-    },
-    "under two query strings": {
-      "subject.ts": esm,
-      "loads.test.ts": `
-import { expect, test } from "bun:test";
-
-test("loads", async () => {
-  const a = await import("./subject.ts?a");
-  const b = await import("./subject.ts?b");
-  expect(a.covered).not.toBe(b.covered);
-  expect(a.covered(10)).toBe(20);
-  expect(b.covered(1)).toBe(2);
-});
-`,
-    },
-    "again after a require.cache delete": {
-      "subject.cjs": cjs,
-      "loads.test.ts": `
-import { expect, test } from "bun:test";
-
-test("loads", () => {
-  const first = require("./subject.cjs");
-  delete require.cache[require.resolve("./subject.cjs")];
-  const second = require("./subject.cjs");
-  expect(first.covered).not.toBe(second.covered);
-  expect(first.covered(10)).toBe(20);
-  expect(second.covered(1)).toBe(2);
-});
-`,
-    },
-  };
-
-  for (const [name, files] of Object.entries(cases)) {
-    test(name, async () => {
-      expect(await coverageRow(files)).toEqual({
-        row: expect.stringMatching(/^ subject\.\w+ +\| +100\.00 +\| +100\.00 +\| +$/),
-        pass: true,
-        exitCode: 0,
-      });
-    });
-  }
-
-  test("CommonJS, by a Bun.ModuleGraph alone, reports what the host alone reports", async () => {
-    const files = {
-      "subject.cjs": cjs,
-      "loads.test.ts": `
-import { expect, test } from "bun:test";
-
-test("loads", async () => {
-  if (process.env.IN_GRAPH) {
-    using graph = new Bun.ModuleGraph({});
-    const subject = await graph.import(import.meta.dir + "/subject.cjs");
-    expect(graph.run(() => subject.covered(10))).toBe(20);
-  } else {
-    expect(require("./subject.cjs").covered(10)).toBe(20);
-  }
-});
-`,
-    };
-    const [inGraph, inHost] = await Promise.all([coverageRow(files, { IN_GRAPH: "1" }), coverageRow(files)]);
-    expect(inHost.row).toMatch(/^ subject\.cjs +\| +100\.00 +\| +\d+\.\d+ +\| +\d/);
-    expect(inGraph).toEqual(inHost);
-  });
-
-  // module._compile() names a file and brings a text of its own, which no
-  // line table describes. In a graph it runs under a wrapping SourceProvider,
-  // like the graph's load of the file itself, and must not count as one.
-  test("module._compile() in a Bun.ModuleGraph does not count as a load of the file it names", async () => {
-    const compiledText =
-      Buffer.alloc(12, "\n").toString() +
-      "exports.other = function other(n) {\n  if (n > 5) {\n    return 1;\n  }\n  return 2;\n};\nexports.other(1);\n";
-    const files = {
-      "subject.cjs": cjs,
-      "compile.cjs": `
+    "cjs-graph-alone.cjs": cjs,
+    "compile-target.cjs": cjs,
+    "compile.cjs": `
 const Module = require("node:module");
 exports.compileAs = (filename, text) => {
   const module = new Module(filename);
@@ -859,87 +748,174 @@ exports.compileAs = (filename, text) => {
   return module.exports;
 };
 `,
-      "loads.test.ts": `
-import { expect, test } from "bun:test";
-const { covered } = require("./subject.cjs");
-
-test("loads", async () => {
-  expect(covered(1)).toBe(2);
-  if (process.env.COMPILE_IN_GRAPH) {
-    using graph = new Bun.ModuleGraph({});
-    const { compileAs } = await graph.import(import.meta.dir + "/compile.cjs");
-    const compiled = graph.run(() => compileAs(require.resolve("./subject.cjs"), ${JSON.stringify(compiledText)}));
-    expect(compiled.other(10)).toBe(1);
-  }
-});
-`,
-    };
-    const [compiled, control] = await Promise.all([coverageRow(files, { COMPILE_IN_GRAPH: "1" }), coverageRow(files)]);
-    expect(control.row).toMatch(/^ subject\.cjs +\| +100\.00 +\| +\d+\.\d+ +\| +\d/);
-    expect(compiled).toEqual(control);
-  });
-
-  // The line table and the source map on record describe one text, so a load
-  // of another text starts the file's coverage over.
-  test("a file that changed between two loads reports the last text alone", async () => {
-    const files = {
-      "loads.test.ts": `
-import { expect, test } from "bun:test";
-import { writeFileSync } from "node:fs";
-
-test("loads", async () => {
-  const file = import.meta.dir + "/subject.ts";
-  if (process.env.LOAD_FIRST_TEXT) {
-    writeFileSync(file, ${JSON.stringify(esm)});
-    const first = await import("./subject.ts?first");
-    expect(first.covered(10)).toBe(20);
-  }
-  writeFileSync(file, ${JSON.stringify("export function unused() {\n  return 0;\n}\n" + esm)});
-  const last = await import("./subject.ts?last");
-  expect(last.covered(1)).toBe(2);
-});
-`,
-    };
-    const [both, lastAlone] = await Promise.all([coverageRow(files, { LOAD_FIRST_TEXT: "1" }), coverageRow(files)]);
-    expect(lastAlone.row).toMatch(/^ subject\.ts +\| +50\.00 +\| +\d+\.\d+ +\| +\d/);
-    expect(both).toEqual(lastAlone);
-  });
-
-  test("bun:jsc codeCoverageForFile()", async () => {
-    using dir = tempDir("cov-loaded-twice-jsc", {
-      "subject.ts": esm,
-      "loads.test.ts": `
+    // With ONE_LOAD=1 the last three cases leave out the load under test, to compare against.
+    "loads.test.ts": `
 import { expect, test } from "bun:test";
 import { codeCoverageForFile } from "bun:jsc";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { covered } from "./subject.ts";
+import { covered as hostAndGraph } from "./host-and-graph.ts";
+import { first } from "./functions.ts";
+const cjsHostAndGraph = require("./cjs-host-and-graph.cjs");
+const compileTarget = require("./compile-target.cjs");
 
-test("loads", async () => {
-  // codeCoverageForFile() takes the path as the module loader spells it.
-  const file = join(import.meta.dir, "subject.ts");
-  expect(covered(1)).toBe(2);
-  const hostAlone = codeCoverageForFile(file, false);
+const oneLoad = !!process.env.ONE_LOAD;
+// codeCoverageForFile() takes the path as the module loader spells it.
+const here = name => join(import.meta.dir, name);
+
+test("host-and-graph.ts", async () => {
+  expect(hostAndGraph(1)).toBe(2);
+  const hostAlone = codeCoverageForFile(here("host-and-graph.ts"), false);
   using graph = new Bun.ModuleGraph({});
-  const subject = await graph.import(file);
+  const subject = await graph.import(here("host-and-graph.ts"));
   expect(graph.run(() => subject.covered(10))).toBe(20);
-  console.log(JSON.stringify({ hostAlone, both: codeCoverageForFile(file, false) }));
-  expect(() => codeCoverageForFile(file + ".never-loaded", false)).toThrow("No source for file");
+  console.log(JSON.stringify({ hostAlone, both: codeCoverageForFile(here("host-and-graph.ts"), false) }));
+  expect(() => codeCoverageForFile(here("never-loaded.ts"), false)).toThrow("No source for file");
+});
+
+test("two-graphs.ts", async () => {
+  using a = new Bun.ModuleGraph({});
+  using b = new Bun.ModuleGraph({});
+  const inA = await a.import(here("two-graphs.ts"));
+  const inB = await b.import(here("two-graphs.ts"));
+  expect(a.run(() => inA.covered(10))).toBe(20);
+  expect(b.run(() => inB.covered(1))).toBe(2);
+});
+
+test("cjs-host-and-graph.cjs", async () => {
+  expect(cjsHostAndGraph.covered(1)).toBe(2);
+  using graph = new Bun.ModuleGraph({});
+  const subject = await graph.import(here("cjs-host-and-graph.cjs"));
+  expect(graph.run(() => subject.covered(10))).toBe(20);
+});
+
+test("query-strings.ts", async () => {
+  const a = await import("./query-strings.ts?a");
+  const b = await import("./query-strings.ts?b");
+  expect(a.covered).not.toBe(b.covered);
+  expect(a.covered(10)).toBe(20);
+  expect(b.covered(1)).toBe(2);
+});
+
+test("require-cache.cjs", () => {
+  const a = require("./require-cache.cjs");
+  delete require.cache[require.resolve("./require-cache.cjs")];
+  const b = require("./require-cache.cjs");
+  expect(a.covered).not.toBe(b.covered);
+  expect(a.covered(10)).toBe(20);
+  expect(b.covered(1)).toBe(2);
+});
+
+test("functions.ts", async () => {
+  expect(first()).toBe(1);
+  using graph = new Bun.ModuleGraph({});
+  const subject = await graph.import(here("functions.ts"));
+  expect(graph.run(() => subject.second())).toBe(2);
+});
+
+test("cjs-graph-alone.cjs", async () => {
+  if (oneLoad) {
+    expect(require("./cjs-graph-alone.cjs").covered(10)).toBe(20);
+    return;
+  }
+  using graph = new Bun.ModuleGraph({});
+  const subject = await graph.import(here("cjs-graph-alone.cjs"));
+  expect(graph.run(() => subject.covered(10))).toBe(20);
+});
+
+test("compile-target.cjs", async () => {
+  expect(compileTarget.covered(1)).toBe(2);
+  if (oneLoad) return;
+  using graph = new Bun.ModuleGraph({});
+  const { compileAs } = await graph.import(here("compile.cjs"));
+  const compiled = graph.run(() => compileAs(here("compile-target.cjs"), ${JSON.stringify(compiledText)}));
+  expect(compiled.other(10)).toBe(1);
+});
+
+test("changed.ts", async () => {
+  if (!oneLoad) {
+    writeFileSync(here("changed.ts"), ${JSON.stringify(esm)});
+    const before = await import("./changed.ts?before");
+    expect(before.covered(10)).toBe(20);
+  }
+  writeFileSync(here("changed.ts"), ${JSON.stringify("export function unused() {\n  return 0;\n}\n" + esm)});
+  const after = await import("./changed.ts?after");
+  expect(after.covered(1)).toBe(2);
 });
 `,
-    });
+  };
+
+  type Row = { functions: string; lines: string; uncovered: string };
+  async function run(env: Record<string, string>) {
+    using dir = tempDir("cov-loaded-twice", files);
     await using proc = Bun.spawn({
       cmd: [bunExe(), "test", "--coverage", "./loads.test.ts"],
-      env: bunEnv,
+      env: { ...bunEnv, ...env },
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toContain("1 pass");
-    expect(JSON.parse(stdout.split("\n").find(line => line.startsWith("{"))!)).toEqual({
-      hostAlone: expect.stringMatching(/subject\.ts \| +100\.00 \| +80\.00 \| 3$/),
-      both: expect.stringMatching(/subject\.ts \| +100\.00 \| +100\.00 \| $/),
+    if (exitCode !== 0) throw new Error(stderr);
+    const rows: Record<string, Row> = {};
+    for (const line of stderr.split("\n")) {
+      const [file, functions, lines, uncovered] = line.split("|").map(column => column.trim());
+      if (uncovered !== undefined) rows[file] = { functions, lines, uncovered };
+    }
+    return { rows, stdout };
+  }
+
+  let loaded: Awaited<ReturnType<typeof run>>;
+  let oneLoad: Awaited<ReturnType<typeof run>>;
+  beforeAll(async () => {
+    [loaded, oneLoad] = await Promise.all([run({}), run({ ONE_LOAD: "1" })]);
+  });
+
+  const fullyCovered: Row = { functions: "100.00", lines: "100.00", uncovered: "" };
+
+  test.each([
+    ["by the host and by a Bun.ModuleGraph", "host-and-graph.ts"],
+    ["by two Bun.ModuleGraphs", "two-graphs.ts"],
+    ["CommonJS, by the host and by a Bun.ModuleGraph", "cjs-host-and-graph.cjs"],
+    ["under two query strings", "query-strings.ts"],
+    ["again after a require.cache delete", "require-cache.cjs"],
+  ])("%s", (_, file) => {
+    expect(loaded.rows[file]).toEqual(fullyCovered);
+  });
+
+  test("a function counts if any load ran it, and not if none did", () => {
+    // The host runs first(), a graph runs second(). third() spans lines 7 to 9.
+    expect(loaded.rows["functions.ts"]).toEqual({
+      functions: "66.67",
+      lines: expect.any(String),
+      uncovered: expect.stringMatching(/^[789](-[89])?$/),
     });
-    expect(exitCode).toBe(0);
+  });
+
+  test("CommonJS, by a Bun.ModuleGraph alone, reports what the host alone reports", () => {
+    expect(oneLoad.rows["cjs-graph-alone.cjs"].uncovered).not.toBe("");
+    expect(loaded.rows["cjs-graph-alone.cjs"]).toEqual(oneLoad.rows["cjs-graph-alone.cjs"]);
+  });
+
+  // module._compile() names a file and brings a text of its own, which no
+  // line table describes. In a graph it runs under a wrapping SourceProvider,
+  // like the graph's load of the file itself, and must not count as one.
+  test("module._compile() in a Bun.ModuleGraph does not count as a load of the file it names", () => {
+    expect(oneLoad.rows["compile-target.cjs"].uncovered).not.toBe("");
+    expect(loaded.rows["compile-target.cjs"]).toEqual(oneLoad.rows["compile-target.cjs"]);
+  });
+
+  // The line table and the source map on record describe one text, so a load
+  // of another text starts the file's coverage over.
+  test("a file that changed between two loads reports the last text alone", () => {
+    expect(oneLoad.rows["changed.ts"].functions).toBe("50.00");
+    expect(loaded.rows["changed.ts"]).toEqual(oneLoad.rows["changed.ts"]);
+  });
+
+  test("bun:jsc codeCoverageForFile()", () => {
+    expect(JSON.parse(loaded.stdout.split("\n").find(line => line.startsWith("{"))!)).toEqual({
+      hostAlone: expect.stringMatching(/host-and-graph\.ts \| +100\.00 \| +80\.00 \| 3$/),
+      both: expect.stringMatching(/host-and-graph\.ts \| +100\.00 \| +100\.00 \| $/),
+    });
   });
 });

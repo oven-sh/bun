@@ -103,66 +103,45 @@ impl<'a> Report<'a> {
         byte_range_mapping: &'a ByteRangeMapping,
         ignore_sourcemap_: bool,
     ) -> Option<Report<'a>> {
-        let mut reports = byte_range_mapping
-            .source_ids
-            .iter()
-            .filter_map(|&source_id| {
-                Self::generate_for_source_id(
-                    global_this,
-                    byte_range_mapping,
-                    source_id,
-                    ignore_sourcemap_,
-                )
-            });
-        let first = reports.next()?;
-        let Some(second) = reports.next() else {
-            return Some(first);
-        };
-        let mut merged = MergedReport::default();
-        bun_core::handle_oom(merged.add(&first));
-        bun_core::handle_oom(merged.add(&second));
-        for report in reports {
-            bun_core::handle_oom(merged.add(&report));
-        }
-        Some(bun_core::handle_oom(merged.finish()))
-    }
-
-    fn generate_for_source_id(
-        global_this: &JSGlobalObject,
-        byte_range_mapping: &'a ByteRangeMapping,
-        source_id: i32,
-        ignore_sourcemap_: bool,
-    ) -> Option<Report<'a>> {
         bun_jsc::mark_binding();
         // Use the raw `*mut VM` accessor instead of narrowing through `&VM` and
         // casting back to `*mut` — C++ mutates the VM (controlFlowProfiler /
         // functionHasExecutedCache), so we must preserve write provenance.
         let vm = global_this.vm_ptr();
 
-        let mut result: Option<Report<'a>> = None;
+        let mut generator = Generator::default();
 
-        let mut generator = Generator {
-            result: &mut result,
-            byte_range_mapping,
-        };
-
-        // SAFETY: `vm` is the live `*mut VM` owning `global_this`; Generator and the
-        // callback are kept alive for the duration of the FFI call;
-        // CodeCoverage__withBlocksAndFunctions invokes the callback synchronously.
-        let ok = unsafe {
-            CodeCoverage__withBlocksAndFunctions(
-                vm,
-                source_id,
-                (&raw mut generator).cast::<c_void>(),
-                ignore_sourcemap_,
-                Generator::do_,
-            )
-        };
-        if !ok {
-            return None;
+        for &source_id in &byte_range_mapping.source_ids {
+            // SAFETY: `vm` is the live VM of `global_this`; the callback runs before the call returns.
+            let ok = unsafe {
+                CodeCoverage__withBlocksAndFunctions(
+                    vm,
+                    source_id,
+                    (&raw mut generator).cast::<c_void>(),
+                    ignore_sourcemap_,
+                    Generator::do_,
+                )
+            };
+            if !ok {
+                return None;
+            }
         }
 
-        result
+        if generator.loads == 0 {
+            return None;
+        }
+        if generator.loads > 1 {
+            fold(&mut generator.blocks);
+            fold(&mut generator.function_blocks);
+        }
+
+        Some(bun_core::handle_oom(
+            byte_range_mapping.generate_report_from_blocks(
+                &generator.blocks,
+                &generator.function_blocks,
+                ignore_sourcemap_,
+            ),
+        ))
     }
 }
 
@@ -601,18 +580,22 @@ unsafe extern "C" {
     ) -> bool;
 }
 
-struct Generator<'a, 'r> {
-    byte_range_mapping: &'a ByteRangeMapping,
-    result: &'r mut Option<Report<'a>>,
+/// What JSC recorded for one file, under each of its SourceIDs.
+#[derive(Default)]
+struct Generator {
+    blocks: Vec<BasicBlockRange>,
+    function_blocks: Vec<BasicBlockRange>,
+    /// SourceIDs that had anything compiled.
+    loads: usize,
 }
 
-impl Generator<'_, '_> {
+impl Generator {
     extern "C" fn do_(
         this: &mut Generator,
         blocks_ptr: *const BasicBlockRange,
         blocks_len: usize,
         function_start_offset: usize,
-        ignore_sourcemap: bool,
+        _ignore_sourcemap: bool,
     ) {
         // The C++ side (CodeCoverage.cpp) invokes this callback with `(nullptr, 0, 0)` when
         // basicBlocks is empty. `core::slice::from_raw_parts` requires a non-null, aligned
@@ -633,14 +616,22 @@ impl Generator<'_, '_> {
             return;
         }
 
-        *this.result = Some(bun_core::handle_oom(
-            this.byte_range_mapping.generate_report_from_blocks(
-                blocks,
-                function_blocks,
-                ignore_sourcemap,
-            ),
-        ));
+        this.blocks.extend_from_slice(blocks);
+        this.function_blocks.extend_from_slice(function_blocks);
+        this.loads += 1;
     }
+}
+
+/// One range per `[start, end)`, executed if it executed under any SourceID.
+fn fold(ranges: &mut Vec<BasicBlockRange>) {
+    ranges.sort_unstable_by_key(|r| (r.start_offset, r.end_offset));
+    ranges.dedup_by(|next, kept| {
+        (next.start_offset, next.end_offset) == (kept.start_offset, kept.end_offset) && {
+            kept.has_executed |= next.has_executed;
+            kept.execution_count = kept.execution_count.saturating_add(next.execution_count);
+            true
+        }
+    });
 }
 
 #[repr(C)]

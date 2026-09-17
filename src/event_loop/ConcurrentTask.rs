@@ -146,6 +146,10 @@ impl ContextId {
     /// No script's context. Never handed out to one.
     pub const NONE: ContextId = ContextId(0);
 
+    /// `VirtualMachine::dead_context`'s, in every VM. Never handed out to another: the
+    /// identifiers contexts are given count up from 1.
+    pub const DEAD: ContextId = ContextId(u32::MAX);
+
     #[inline]
     pub const fn from_raw(raw: u32) -> ContextId {
         ContextId(raw)

@@ -105,9 +105,9 @@ impl ScriptExecutionContext {
     }
 
     /// `VirtualMachine::dead_context`: stopped from the start.
-    pub(crate) fn dead(id: ContextId) -> Self {
+    pub(crate) fn dead() -> Self {
         let context = Self::default();
-        context.id.set(id);
+        context.id.set(ContextId::DEAD);
         context.stopped.set(true);
         context
     }

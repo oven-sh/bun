@@ -406,12 +406,6 @@ ScriptExecutionContextIdentifier ScriptExecutionContext::generateIdentifier()
     return ++lastUniqueIdentifier;
 }
 
-// An identifier no context has or will have: `VirtualMachine::dead_context`'s.
-extern "C" ScriptExecutionContextIdentifier WebCore__ScriptExecutionContext__generateIdentifier()
-{
-    return ScriptExecutionContext::generateIdentifier();
-}
-
 // The global's context and its VM's root context are the two halves of one context: the Rust
 // half learns the identifier here. Called for each global a VM makes (`bun test --isolate` makes
 // one per file, which inherits the identifier).

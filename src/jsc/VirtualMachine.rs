@@ -423,7 +423,6 @@ unsafe extern "C" {
     safe fn Bun__currentGraphContext(
         global: &JSGlobalObject,
     ) -> *const crate::ScriptExecutionContext;
-    safe fn WebCore__ScriptExecutionContext__generateIdentifier() -> u32;
     /// Binds the global's `WebCore::ScriptExecutionContext` to `root_context`, its Rust half,
     /// and says which identifier it has.
     #[allow(improper_ctypes)]
@@ -3175,9 +3174,7 @@ impl VirtualMachine {
             addr_of_mut!((*vm).root_context).write(crate::ScriptExecutionContext::root());
             addr_of_mut!((*vm).graph_contexts).write(Default::default());
             addr_of_mut!((*vm).entered_context).write(Cell::new(None));
-            addr_of_mut!((*vm).dead_context).write(crate::ScriptExecutionContext::dead(
-                crate::ContextId::from_raw(WebCore__ScriptExecutionContext__generateIdentifier()),
-            ));
+            addr_of_mut!((*vm).dead_context).write(crate::ScriptExecutionContext::dead());
             addr_of_mut!((*vm).commonjs_custom_extensions).write(Default::default());
             addr_of_mut!((*vm).entry_point).write(Default::default());
             addr_of_mut!((*vm).origin).write(Default::default());

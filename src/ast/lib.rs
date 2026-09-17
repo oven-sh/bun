@@ -2855,7 +2855,7 @@ pub mod binding;
 pub mod char_freq;
 pub mod e;
 pub mod error;
-pub use error::{Error, Result};
+pub use error::{DeepCloneError, Error, Result};
 pub mod expr;
 pub mod fold_string_addition;
 pub mod g;

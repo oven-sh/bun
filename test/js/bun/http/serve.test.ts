@@ -5449,7 +5449,12 @@ const server = Bun.serve({
   hostname: "127.0.0.1",
   development: false,
   async fetch(req) {
-    if (new URL(req.url).pathname === "/ping") return new Response("pong");
+    const { pathname } = new URL(req.url);
+    if (pathname === "/ping") return new Response("pong");
+    if (pathname === "/stop") {
+      server.stop();
+      return new Response("bye");
+    }
     throw await req.json();
   },
 });
@@ -5462,7 +5467,7 @@ console.log(server.port);
     let line = "";
     while (!line.includes("\n")) {
       const { value, done } = await reader.read();
-      if (done) break;
+      if (done) throw new Error(`the server closed stdout before it printed a port: ${JSON.stringify(line)}`);
       line += decoder.decode(value, { stream: true });
     }
     reader.releaseLock();
@@ -5494,7 +5499,7 @@ console.log(server.port);
 
     const printed = readFileSync(errPath, "utf8");
     expect(printed.length).toBeLessThan(64 * 1024);
-    expect(printed).toContain("Array");
+    expect(printed).toContain("[Array ...]");
   });
 
   it("keeps serving when the body is too deep for the printer to walk", async () => {
@@ -5513,6 +5518,11 @@ console.log(server.port);
 
     const ping = await fetch(`http://127.0.0.1:${port}/ping`);
     expect(await ping.text()).toBe("pong");
+
+    const stop = await fetch(`http://127.0.0.1:${port}/stop`);
+    expect(await stop.text()).toBe("bye");
+    // 1, not 0: an error that reached the default handler sets the exit code.
+    expect(await proc.exited).toBe(1);
     expect(proc.signalCode).toBeNull();
   });
 });

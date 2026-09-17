@@ -62,6 +62,8 @@ pub struct ClientSession {
     /// checked by the coalescing path so a caller only multiplexes onto a
     /// session verified the way it would verify a fresh one.
     pub(crate) verification: PeerVerification,
+    /// The fetch session whose requests may multiplex onto this connection.
+    pub(crate) pool: crate::PoolOptions,
 
     /// Queued bytes for the socket; whole frames are written here and
     /// `flush()` drains as much as the socket accepts.
@@ -345,6 +347,7 @@ impl ClientSession {
             ssl_config: client.tls_props.clone(),
             did_have_handshaking_error: client.flags.did_have_handshaking_error,
             verification: client.socket_verification(),
+            pool: client.pool,
             write_buffer: bun_io::StreamBuffer::default(),
             read_buffer: Vec::new(),
             streams: ArrayHashMap::default(),
@@ -392,12 +395,16 @@ impl ClientSession {
         hostname: &[u8],
         port: u16,
         ssl_config: Option<*const ssl_config::SSLConfig>,
+        pool_id: u64,
     ) -> bool {
         let mine: Option<*const ssl_config::SSLConfig> = self
             .ssl_config
             .as_ref()
             .map(|p| std::ptr::from_ref(p.get()));
-        self.port == port && mine == ssl_config && strings::eql_long(&self.hostname, hostname, true)
+        self.port == port
+            && self.pool.id == pool_id
+            && mine == ssl_config
+            && strings::eql_long(&self.hostname, hostname, true)
     }
 
     fn adopt_client(&mut self, client: &mut HTTPClient) {
@@ -1072,6 +1079,7 @@ impl ClientSession {
                 0,
                 Some(self_ref),
                 b"",
+                self.pool,
             );
         } else {
             NewHTTPContext::<true>::close_socket(self.socket);

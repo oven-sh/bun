@@ -18,6 +18,7 @@ import {
   observe as directObserve,
   readerConsumers as directReaderConsumers,
   shapes as directShapes,
+  waitsForPullToReturn as directWaitsForPullToReturn,
 } from "./direct-stream-contract";
 
 it("TransformStream", async () => {
@@ -4122,7 +4123,11 @@ describe("direct stream contract", () => {
   const cannotSurfaceErrors = new Set(["Bun.spawn({ stdin: s })"]);
   describe.each(Object.keys(directShapes))("%s", shapeName => {
     const shape = directShapes[shapeName];
-    const cells = Object.keys(consumers).filter(name => !(shape.oneShotOnly && directReaderConsumers.has(name)));
+    const cells = Object.keys(consumers).filter(
+      name =>
+        !(shape.oneShotOnly && directReaderConsumers.has(name)) &&
+        !(shape.pullNeverReturns && directWaitsForPullToReturn.has(name)),
+    );
     test.concurrent.each(cells)("%s", async consumerName => {
       const got = await directObserve(shape, consumers[consumerName]);
       if ("error" in shape.expect && cannotSurfaceErrors.has(consumerName)) {

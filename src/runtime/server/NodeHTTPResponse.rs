@@ -764,10 +764,6 @@ impl NodeHTTPResponse {
             .with_mut(|c| c.preserve_web_socket_headers_if_needed());
     }
 
-    pub(crate) fn get_ended(&self, _global: &JSGlobalObject) -> JSValue {
-        JSValue::from(self.flags.get().contains(Flags::ENDED))
-    }
-
     pub(crate) fn get_finished(&self, _global: &JSGlobalObject) -> JSValue {
         JSValue::from(self.flags.get().contains(Flags::REQUEST_HAS_COMPLETED))
     }

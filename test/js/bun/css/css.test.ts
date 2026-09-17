@@ -5367,7 +5367,7 @@ describe("css tests", () => {
         });
       });
 
-      test.each([
+      describe.each([
         [".bar { &:nth-child(2 of & > .x) { color: red } }", ".bar:nth-child(2 of .bar>.x){color:red}"],
         [".foo { :nth-last-child(2n of .x &) { color: red } }", ":nth-last-child(2n of .x .foo){color:red}"],
         [".a, .b { :nth-child(1 of &) { color: red } }", ":nth-child(1 of :is(.a,.b)){color:red}"],
@@ -5381,7 +5381,9 @@ describe("css tests", () => {
         // At the top level `&` is `:scope`.
         [":nth-child(1 of &) { color: red }", ":nth-child(1 of :scope){color:red}"],
       ])("%s", (source, expected) => {
-        expect(minifyTest(source, "", chrome95)).toBe(expected);
+        test("nesting compiled away", () => {
+          expect(minifyTest(source, "", chrome95)).toBe(expected);
+        });
       });
 
       test("each & in the of-list counts against the nesting expansion budget", () => {

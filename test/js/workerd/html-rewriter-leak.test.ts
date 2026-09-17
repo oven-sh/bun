@@ -179,7 +179,7 @@ test.skipIf(isDebug)(
   "HTMLRewriter does not leak element/document handler allocations",
   async () => {
     const code = /* js */ `
-      const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+      const rss = process.memoryUsage.rss;
       const noop = { element() {}, comments() {}, text() {} };
       const docNoop = { doctype() {}, comments() {}, text() {}, end() {} };
 

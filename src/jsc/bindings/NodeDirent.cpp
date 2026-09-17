@@ -214,7 +214,7 @@ static inline int32_t getType(JSC::VM& vm, JSValue value, Zig::GlobalObject* glo
     }
 
     if (type.isAnyInt()) {
-        return type.toInt32(globalObject);
+        return JSC::toInt32(type.asNumber());
     }
 
     return std::numeric_limits<int32_t>::max();

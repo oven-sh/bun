@@ -1039,8 +1039,7 @@ pub(crate) mod formatters {
             // valid until it's copied into the StringBuilder.
             let fragment_utf8;
             let committish: Option<&[u8]> = if type_part.is_none() {
-                let fragment_str = url.fragment_identifier();
-                fragment_utf8 = fragment_str.to_utf8();
+                fragment_utf8 = url.fragment_identifier().into_utf8();
                 let fragment = fragment_utf8.slice();
                 if !fragment.is_empty() {
                     Some(fragment)

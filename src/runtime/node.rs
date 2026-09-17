@@ -17,7 +17,8 @@ pub mod assert {
 pub mod types;
 pub use types::{
     BlobOrStringOrBuffer, Dirent, Encoding, FileBlobs, Flavor, PathLike, PathOrBlob,
-    PathOrFileDescriptor, StringObjects, StringOrBuffer, mode_from_js,
+    PathOrFileDescriptor, StringObjects, StringOrBuffer, ThreadIsolated, ThreadIsolatedArg,
+    mode_from_js,
 };
 
 pub use bun_jsc::MarkedArrayBuffer as Buffer;

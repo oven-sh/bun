@@ -759,12 +759,14 @@ impl Connection {
                 }
             }
         }
-        let snapshot = self.remote_settings;
-        sink.on_remote_settings(&snapshot);
+        // §6.5.3: ACK first. on_remote_settings flushes DATA the enlarged window
+        // unblocked, and the peer enforces its old receive window until it sees the ACK.
         self.send_settings_ack(sink);
         if self.note_outbound_ack(sink) {
             return true;
         }
+        let snapshot = self.remote_settings;
+        sink.on_remote_settings(&snapshot);
         false
     }
 
@@ -805,10 +807,7 @@ impl Connection {
         echo.copy_from_slice(&payload[..8]);
         self.send_ping_ack(sink, &echo);
         sink.on_ping(&echo, false);
-        if self.note_outbound_ack(sink) {
-            return true;
-        }
-        false
+        self.note_outbound_ack(sink)
     }
 
     fn handle_go_away(&mut self, sink: &impl Sink, payload: &[u8]) -> bool {

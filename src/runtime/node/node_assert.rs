@@ -241,12 +241,12 @@ where
             let result = JSValue::create_empty_object(global, 2);
             result.put(
                 global,
-                BunString::static_(b"message"),
+                BunString::static_("message"),
                 C::to_bun_string(&out).into_js(global)?,
             );
             result.put(
                 global,
-                BunString::static_(b"skipped"),
+                BunString::static_("skipped"),
                 JSValue::from(skipped),
             );
             Ok(result)

@@ -20,6 +20,7 @@
 #include "ZigGlobalObject.h"
 #include "headers.h"
 #include "ErrorCode.h"
+#include "BunString.h"
 
 #include "GeneratedNodeModuleModule.h"
 #include "ZigGeneratedClasses.h"
@@ -181,9 +182,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleModuleConstructor,
     }
 
     out->putDirect(vm, JSC::Identifier::fromString(vm, "exports"_s),
-        JSC::constructEmptyObject(globalObject,
-            globalObject->objectPrototype(), 0),
-        0);
+        JSC::constructEmptyObject(globalObject), 0);
 
     return JSValue::encode(out);
 }
@@ -410,6 +409,9 @@ JSC_DEFINE_CUSTOM_GETTER(nodeModuleResolveFilename,
         PropertyName propertyName))
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    if (globalObject->hasOverriddenModuleResolveFilenameFunction) [[unlikely]] {
+        return JSValue::encode(globalObject->m_moduleResolveFilenameOverride.get());
+    }
     return JSValue::encode(
         globalObject->m_moduleResolveFilenameFunction.getInitializedOnMainThread(
             globalObject));
@@ -422,20 +424,24 @@ JSC_DEFINE_CUSTOM_SETTER(setNodeModuleResolveFilename,
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto value = JSValue::decode(encodedValue);
-    if (value.isCell()) {
-        bool isOriginal = false;
-        if (value.isCallable()) {
-            JSC::CallData callData = JSC::getCallData(value);
+    bool isOriginal = false;
+    if (value.isCallable()) {
+        JSC::CallData callData = JSC::getCallData(value);
 
-            if (callData.type == JSC::CallData::Type::Native) {
-                if (callData.native.function.untaggedPtr() == &jsFunctionResolveFileName) {
-                    isOriginal = true;
-                }
+        if (callData.type == JSC::CallData::Type::Native) {
+            if (callData.native.function.untaggedPtr() == &jsFunctionResolveFileName) {
+                isOriginal = true;
             }
         }
-        globalObject->hasOverriddenModuleResolveFilenameFunction = !isOriginal;
-        globalObject->m_moduleResolveFilenameFunction.set(
-            lexicalGlobalObject->vm(), globalObject, value.asCell());
+    }
+
+    if (isOriginal) {
+        globalObject->hasOverriddenModuleResolveFilenameFunction = false;
+        globalObject->m_moduleResolveFilenameOverride.clear();
+    } else {
+        globalObject->m_moduleResolveFilenameOverride.set(
+            lexicalGlobalObject->vm(), globalObject, value);
+        globalObject->hasOverriddenModuleResolveFilenameFunction = true;
     }
 
     return true;
@@ -481,9 +487,12 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveLookupPaths,
     String request = callFrame->argument(0).toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    auto utf8 = request.utf8();
-    if (ModuleLoader__isBuiltin(utf8.data(), utf8.length())) {
-        return JSC::JSValue::encode(JSC::jsNull());
+    // A builtin name is short, so a request whose UTF-8 form does not fit in a buffer is not one.
+    if (auto utf8 = UTF8View::tryCreate(request)) {
+        auto span = utf8->span();
+        if (ModuleLoader__isBuiltin(span.data(), span.size())) {
+            return JSC::JSValue::encode(JSC::jsNull());
+        }
     }
 
     PathResolveModule parent = getParent(vm, globalObject, callFrame->argument(1));
@@ -1136,7 +1145,7 @@ void addNodeModuleConstructorProperties(JSC::VM& vm,
         });
 
     globalObject->m_moduleResolveFilenameFunction.initLater(
-        [](const Zig::GlobalObject::Initializer<JSCell>& init) {
+        [](const Zig::GlobalObject::Initializer<JSFunction>& init) {
             JSFunction* resolveFilenameFunction = JSFunction::create(
                 init.vm, init.owner, 2, "_resolveFilename"_s,
                 jsFunctionResolveFileName, JSC::ImplementationVisibility::Public,

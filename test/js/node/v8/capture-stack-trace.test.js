@@ -2,6 +2,7 @@ import { nativeFrameForTesting } from "bun:internal-for-testing";
 import { noInline } from "bun:jsc";
 import { afterEach, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { totalmem } from "node:os";
 const origPrepareStackTrace = Error.prepareStackTrace;
 afterEach(() => {
   Error.prepareStackTrace = origPrepareStackTrace;
@@ -549,6 +550,270 @@ test("CallFrame.p.isNative", () => {
     return 0;
   });
   Error.prepareStackTrace = prevPrepareStackTrace;
+});
+
+// getFunction() must report undefined for a callee that user code could never
+// have called: a host function, a builtin, an async or generator body function,
+// a wasm frame, a program frame. A call to a body function crashed the process.
+// `...Caller=self` rows: a frame below one of those keeps its own function.
+// `...IsToplevel=false` rows: hiding a callee does not change isToplevel().
+// The fixture is CommonJS because a strict frame already reports undefined.
+test.concurrent("CallFrame.p.getFunction hides internal callees from sloppy code", async () => {
+  using dir = tempDir("callsite-internal-callee", {
+    "internal-callee-fixture.cjs": `
+      const { nativeFrameForTesting } = require("bun:internal-for-testing");
+      Error.prepareStackTrace = (e, sites) => sites;
+
+      const out = [];
+      const show = v => (typeof v === "function" ? "function/" + v.length : typeof v === "object" && v !== null ? "object" : String(v));
+      const named = (sites, name) => sites.find(s => s.getFunctionName() === name);
+
+      function sloppy() {
+        out.push("sloppy=" + (new Error().stack[0].getFunction() === sloppy ? "self" : "?"));
+      }
+      sloppy();
+
+      nativeFrameForTesting(function underNativeFrame() {
+        const sites = new Error().stack;
+        out.push("nativeIsNative=" + sites[1].isNative());
+        out.push("native=" + show(sites[1].getFunction()));
+        return 0;
+      });
+
+      function hostCaller() {
+        [0].map(function underHostFunction() {
+          const sites = new Error().stack;
+          const host = named(sites, "map");
+          out.push("hostFound=" + !!host);
+          out.push("host=" + show(host && host.getFunction()));
+          out.push("hostIsToplevel=" + (host && host.isToplevel()));
+          const caller = named(sites, "hostCaller");
+          out.push("hostCaller=" + (caller && caller.getFunction() === hostCaller ? "self" : show(caller && caller.getFunction())));
+        });
+      }
+      hostCaller();
+
+      // A program frame's callee is a JSCallee, not a function at all. Stock bun
+      // handed the JSCallee object itself to getFunction().
+      out.push("evalProgram=" + show(eval("new Error().stack")[0].getFunction()));
+
+      // A wasm frame has no JSFunction callee either, and merely reading
+      // getFunction() on one crashed stock bun.
+      const wasmBytes = new Uint8Array([0,0x61,0x73,0x6d,1,0,0,0, 1,4,1,0x60,0,0, 2,7,1,1,0x65,1,0x66,0,0, 3,2,1,0, 7,7,1,3,0x72,0x75,0x6e,0,1, 10,6,1,4,0,0x10,0,0x0b]);
+      function wasmCaller() {
+        const instance = new WebAssembly.Instance(new WebAssembly.Module(wasmBytes), {
+          e: {
+            f() {
+              const sites = new Error().stack;
+              const wasmFrames = sites.filter(s => s.getFileName() === "[wasm code]");
+              out.push("wasmFrames=" + (wasmFrames.length > 0));
+              out.push("wasm=" + [...new Set(wasmFrames.map(s => show(s.getFunction())))].join(","));
+              const caller = named(sites, "wasmCaller");
+              out.push("wasmCaller=" + (caller && caller.getFunction() === wasmCaller ? "self" : show(caller && caller.getFunction())));
+            },
+          },
+        });
+        instance.exports.run();
+      }
+      wasmCaller();
+
+      function asyncPrefixCaller() {
+        // Read the stack before the first await: JSC runs even the synchronous
+        // prefix of an async function in the body function.
+        return (async function af() {
+          const sites = new Error().stack;
+          out.push("asyncPrefix=" + show(sites[0].getFunction()));
+          out.push("asyncPrefixIsToplevel=" + sites[0].isToplevel());
+          const caller = named(sites, "asyncPrefixCaller");
+          out.push("asyncPrefixCaller=" + (caller && caller.getFunction() === asyncPrefixCaller ? "self" : show(caller && caller.getFunction())));
+          await 1;
+
+          const asyncBodySite = new Error().stack[0];
+          const asyncBody = asyncBodySite.getFunction();
+          out.push("asyncBody=" + show(asyncBody));
+          out.push("asyncBodyIsToplevel=" + asyncBodySite.isToplevel());
+          if (typeof asyncBody === "function") asyncBody();
+
+          function* gen() {
+            yield 1;
+            const generatorBodySite = new Error().stack[0];
+            const generatorBody = generatorBodySite.getFunction();
+            out.push("generatorBody=" + show(generatorBody));
+            out.push("generatorBodyIsToplevel=" + generatorBodySite.isToplevel());
+            if (typeof generatorBody === "function") generatorBody();
+          }
+          const it = gen();
+          it.next();
+          it.next();
+
+          console.log(out.join("\\n"));
+        })();
+      }
+      asyncPrefixCaller();
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "internal-callee-fixture.cjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout.trim().split("\n")).toEqual([
+    "sloppy=self",
+    "nativeIsNative=true",
+    "native=undefined",
+    "hostFound=true",
+    "host=undefined",
+    "hostIsToplevel=false",
+    "hostCaller=self",
+    "evalProgram=undefined",
+    "wasmFrames=true",
+    "wasm=undefined",
+    "wasmCaller=self",
+    "asyncPrefix=undefined",
+    "asyncPrefixIsToplevel=false",
+    "asyncPrefixCaller=self",
+    "asyncBody=undefined",
+    "asyncBodyIsToplevel=false",
+    "generatorBody=undefined",
+    "generatorBodyIsToplevel=false",
+  ]);
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});
+
+// Bun installs native promise reactions so that a pending user promise can
+// resume native work. Each reaction reads its trailing argument as a native
+// context, so each of the three below crashed the process when user code got
+// hold of it and called it. Every fixture keeps the nameless native function
+// that getFunction() reports and then calls it.
+const grabNativeReaction = `
+  let leaked;
+  let namelessNativeSites = 0;
+  function grabNativeReaction() {
+    const previous = Error.prepareStackTrace;
+    Error.prepareStackTrace = (e, sites) => sites;
+    for (const site of new Error().stack) {
+      if (site.isNative() && !site.getFunctionName()) namelessNativeSites++;
+      let fn;
+      try {
+        fn = site.getFunction();
+      } catch {}
+      if (typeof fn === "function" && site.isNative() && !fn.name) leaked = fn;
+    }
+    Error.prepareStackTrace = previous;
+  }
+  function reportAndCallLeaked() {
+    // The reaction frame has to be on the stack, or "leaked=undefined" would
+    // hold for a reason that has nothing to do with getFunction().
+    console.log("reactionFrameSeen=" + (namelessNativeSites > 0));
+    console.log("leaked=" + typeof leaked);
+    if (typeof leaked === "function") leaked({}, undefined);
+    console.log("survived");
+  }
+`;
+
+async function runNativeReactionFixture(prefix, files) {
+  using dir = tempDir(prefix, files);
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.cjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout.trim().split("\n")).toEqual(["reactionFrameSeen=true", "leaked=undefined", "survived"]);
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+}
+
+test.concurrent("CallFrame.p.getFunction does not expose the HTMLRewriter reaction", async () => {
+  await runNativeReactionFixture("callsite-rewriter-reaction", {
+    "fixture.cjs": `
+      ${grabNativeReaction}
+
+      new HTMLRewriter()
+        .on("p", {
+          element() {
+            grabNativeReaction();
+            // The rewriter suspends only while this promise is pending. The
+            // suspension installs the reaction whose frame the handler for the
+            // second <p> can see.
+            return new Promise(resolve => setTimeout(resolve, 1));
+          },
+        })
+        .transform(new Response("<p>a</p><p>b</p>"))
+        .text()
+        .then(reportAndCallLeaked);
+    `,
+  });
+});
+
+test.concurrent("CallFrame.p.getFunction does not expose the serve reject reaction", async () => {
+  await runNativeReactionFixture("callsite-serve-reaction", {
+    "fixture.cjs": `
+      ${grabNativeReaction}
+
+      // error() runs under the reaction that rejected the fetch() promise.
+      const server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch: () => new Promise((resolve, reject) => setTimeout(() => reject(new Error("x")), 1)),
+        error() {
+          grabNativeReaction();
+          return new Response("e");
+        },
+      });
+
+      fetch(server.url)
+        .then(response => response.text())
+        .then(async () => {
+          await server.stop(true);
+          reportAndCallLeaked();
+        });
+    `,
+  });
+});
+
+test.concurrent("CallFrame.p.getFunction does not expose the module loader reaction", async () => {
+  await runNativeReactionFixture("callsite-module-loader-reaction", {
+    "mod.xyzzy": "",
+    "fixture.cjs": `
+      ${grabNativeReaction}
+
+      // The reaction reads the plugin result object, so this getter runs under
+      // its frame.
+      Bun.plugin({
+        name: "x",
+        setup(build) {
+          build.onLoad({ filter: /\\.xyzzy$/ }, () =>
+            new Promise(resolve =>
+              setTimeout(
+                () =>
+                  resolve({
+                    get contents() {
+                      grabNativeReaction();
+                      return "export default 1";
+                    },
+                    loader: "js",
+                  }),
+                1,
+              ),
+            ),
+          );
+        },
+      });
+
+      import(require("path").join(__dirname, "mod.xyzzy")).then(reportAndCallLeaked);
+    `,
+  });
 });
 
 test("return non-strings from Error.prepareStackTrace", () => {
@@ -1122,6 +1387,80 @@ test("lazy error-info materialization does not store an empty stack value when t
   expect(exitCode).toBe(0);
 });
 
+// An error holds the functions in its trace weakly. These functions are strict, so the call sites do
+// not retain them either, and they are garbage by the time `.stack` is first read. The `finally`
+// blocks keep each `return` out of tail position, so every frame stays in the trace.
+const errorWithDeadFrames = `new Function('"use strict"; function inner() { try { return new Error("x"); } finally {} } try { return inner(); } finally {}')()`;
+test.concurrent.each([
+  [
+    "Bun.gc(true) in Error.prepareStackTrace",
+    `const e = ${errorWithDeadFrames};
+     Error.prepareStackTrace = (err, callSites) => { Bun.gc(true); return "formatted " + callSites[0].getFunctionName(); };
+     console.log(e.stack);`,
+    "formatted inner",
+  ],
+  [
+    "v8.getHeapStatistics() in Error.prepareStackTrace, error from an arrow that has returned",
+    `import v8 from "node:v8";
+     Error.prepareStackTrace = (err, callSites) => { v8.getHeapStatistics(); return "formatted " + callSites[1].getFunctionName(); };
+     async function handler() {
+       const e = (() => { try { return new Error("request failed"); } finally {} })();
+       await 1;
+       return e.stack;
+     }
+     console.log(await handler());`,
+    "formatted handler",
+  ],
+  [
+    "Bun.gc(true) in a message getter",
+    `const e = ${errorWithDeadFrames};
+     Object.defineProperty(e, "message", { get() { Bun.gc(true); return "from getter"; } });
+     Error.prepareStackTrace = (err, callSites) => err.stack.split("\\n")[0] + " | " + callSites[0].getFunctionName();
+     console.log(e.stack);`,
+    "Error: from getter | inner",
+  ],
+  [
+    "Bun.gc(true) in a node:vm Error.prepareStackTrace getter",
+    `import vm from "node:vm";
+     const context = vm.createContext({ collect: () => Bun.gc(true) });
+     const e = vm.runInContext(${JSON.stringify(errorWithDeadFrames)}, context);
+     vm.runInContext('Object.defineProperty(Error, "prepareStackTrace", { get() { collect(); } })', context);
+     console.log(e.stack.split("\\n")[0] + " | " + /at (\\w+)/.exec(e.stack)[1]);`,
+    "Error: x | inner",
+  ],
+  [
+    "Error.appendStackTrace onto the error being formatted, then Bun.gc(true)",
+    `const e = ${errorWithDeadFrames};
+     const other = ${errorWithDeadFrames};
+     Error.prepareStackTrace = (err, callSites) => { Error.appendStackTrace(other, err); Bun.gc(true); return "formatted " + callSites[0].getFunctionName(); };
+     console.log(e.stack);
+     Error.prepareStackTrace = undefined;
+     console.log(/at (\\w+)/.exec(other.stack)[1]);`,
+    "formatted inner\ninner",
+  ],
+  [
+    "a node:vm Error.prepareStackTrace getter reads the lazy .stack accessor of the same error",
+    `import vm from "node:vm";
+     let e, entered = false;
+     const context = vm.createContext({ readStack() { if (entered) return; entered = true; return e.stack; } });
+     e = vm.runInContext('new Error("x")', context);
+     (function capture() { Error.captureStackTrace(e); })();
+     vm.runInContext('Object.defineProperty(Error, "prepareStackTrace", { get() { readStack(); } })', context);
+     console.log(e.stack.split("\\n")[0] + " | " + /at (\\w+)/.exec(e.stack)?.[1]);`,
+    "Error: x | capture",
+  ],
+])("user JS that runs while .stack is being formatted cannot invalidate the trace: %s", async (_, source, expected) => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", source],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), signalCode: proc.signalCode }).toEqual({ stdout: expected, signalCode: null });
+  expect(exitCode).toBe(0);
+});
+
 test("Error.prepareStackTrace call sites keep their own file when a hidden frame is on the stack", async () => {
   // A bound function call is a frame with private implementation visibility. JSC omits it from the
   // trace unless showPrivateScriptsInStackTraces is on (debug builds turn it on); Bun then has to
@@ -1194,3 +1533,72 @@ test("Error.prepareStackTrace call sites keep their own file when a hidden frame
     { showPrivateScriptsInStackTraces: "1", callSites: expected, stderr: "", exitCode: 0 },
   ]);
 });
+
+// JSC skips an already-seen nested function body via its SourceProviderCache. After skipping a body whose last token
+// spans lines (a template literal ending an arrow's expression body) it used to resume on the line that token *started*
+// on, so every position after it in the enclosing function was reported lines too early. Positions must be the same
+// whether the body was skipped or parsed.
+test.concurrent.each([[{}], [{ BUN_JSC_useSourceProviderCache: "0" }]])(
+  "line numbers after a multi-line template literal ending an arrow body (%o)",
+  async env => {
+    const source = [
+      "function outer() {", // 1
+      "  const f = x => `a", // 2
+      "b", // 3
+      "c`;", // 4
+      '  return new Error("here").stack.split("\\n")[1];', // 5
+      "}",
+      "console.log(outer());",
+    ].join("\n");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", source],
+      env: { ...bunEnv, ...env },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toEndWith("[eval]:5:14)"); // 2:18 when the lexer resumed on the template literal's first line
+    expect(exitCode).toBe(0);
+  },
+);
+
+// The message and the frames of a stack trace come from JS. A trace past
+// `WTF::String::MaxLength` (2**31 - 1 characters) aborted the process (exit code
+// 134) while it was formatted. It now keeps the "name: message" header and drops
+// the frames. The length is what is under test, so the child needs a string of
+// about 2 GiB, and the test skips on small machines. The child touches about
+// 6 GB of pages, which takes longer than the default limit in a debug build.
+// `repeat` and not `Buffer.alloc(n, fill).toString()`: for one character at this
+// size it is faster in a debug build (1.6 s against 3.3 s), and it does not hold
+// a second 2 GiB.
+test.skipIf(totalmem() < 10 * 1024 ** 3)(
+  "a stack trace past the string length limit drops its frames instead of aborting the process",
+  async () => {
+    const length = 2 ** 31 - 10;
+    const src = `
+      const long = "q".repeat(${length});
+      const describe = stack => typeof stack + " " + stack.length + " " + JSON.stringify(stack.slice(0, 9));
+      console.log(".stack: " + describe(new Error(long).stack));
+      Bun.gc(true);
+      const frames = [{ toString: () => "frame" }];
+      console.log("default Error.prepareStackTrace: " + describe(Error.prepareStackTrace(new Error(long), frames)));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
+      stdout: [
+        `.stack: string ${"Error: ".length + length} "Error: qq"`,
+        `default Error.prepareStackTrace: string ${"Error: ".length + length} "Error: qq"`,
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+  30_000,
+);

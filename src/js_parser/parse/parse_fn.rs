@@ -166,9 +166,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         opts: FnOrArrowDataParse,
     ) -> Result<G::Fn, Error> {
         let p = self;
-        // if data.allowAwait and data.allowYield {
-        //     p.markSyntaxFeature(compat.AsyncGenerator, data.asyncRange)
-        // }
 
         let mut initial_flags = Flags::FunctionSet::empty();
         if opts.allow_await == AwaitOrYield::AllowExpr {

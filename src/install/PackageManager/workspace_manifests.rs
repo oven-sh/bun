@@ -1,9 +1,10 @@
 use bstr::BStr;
 use bun_collections::HashMap;
 use bun_core::{Global, Output};
+use bun_semver as Semver;
 
 use crate::dependency::{Behavior, Tag as DependencyTag};
-use crate::lockfile::{Lockfile, Package};
+use crate::lockfile::{self, Lockfile, Package};
 use crate::{Features, PackageNameHash};
 
 use super::PackageManager;
@@ -112,8 +113,6 @@ pub(crate) fn relation_graph(
         }
     }
 
-    let link_workspace_packages = manager.options.link_workspace_packages;
-    let workspace_versions = &scratch.lockfile.workspace_versions;
     let mut edges: Vec<(u32, u32)> = Vec::new();
     for (from, pkg) in &parsed {
         for dep in pkg.dependencies.get(dbuf) {
@@ -126,14 +125,17 @@ pub(crate) fn relation_graph(
                     .get(version.workspace().slice(sbuf))
                     .copied()
                     .or_else(|| index_by_hash.get(&dep.name_hash).copied()),
-                DependencyTag::Npm if link_workspace_packages && !version.npm().is_alias => {
-                    let range = &version.npm().version;
-                    (range.is_star()
-                        || workspace_versions
-                            .get(&dep.name_hash)
-                            .is_some_and(|ver| range.satisfies(*ver, sbuf, sbuf)))
-                    .then(|| index_by_hash.get(&dep.name_hash).copied())
-                    .flatten()
+                DependencyTag::Npm => {
+                    let npm = version.npm();
+                    lockfile::linked_workspace_path(
+                        manager.options.link_workspace_packages,
+                        &scratch.lockfile.workspace_paths,
+                        &scratch.lockfile.workspace_versions,
+                        Semver::string::Builder::string_hash(npm.name.slice(sbuf)),
+                        &npm.version,
+                        sbuf,
+                    )
+                    .and_then(|path| index_by_path.get(path.slice(sbuf)).copied())
                 }
                 _ => None,
             };

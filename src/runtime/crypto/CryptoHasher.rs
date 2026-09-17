@@ -3,6 +3,7 @@ use core::cell::Cell;
 use core::ffi::c_char;
 
 use bun_boringssl_sys as boring_ssl;
+use bun_jsc::bun_string_jsc;
 use bun_jsc::{
     ArrayBuffer, CallFrame, ErrorCode, JSGlobalObject, JSObject, JSValue, JsCell, JsClass as _,
     JsError, JsResult,
@@ -329,7 +330,7 @@ impl CryptoHasher {
                 None => return Err(Self::throw_hmac_consumed(global)),
             },
         };
-        bun_jsc::bun_string_jsc::create_utf8_for_js(global, tag)
+        bun_string_jsc::create_utf8_for_js(global, tag)
     }
 
     // `#[bun_jsc::host_fn]` (Free) emits a bare `fn_name(g, f)` call,
@@ -340,7 +341,7 @@ impl CryptoHasher {
         _: JSValue,
         _: PropertyName,
     ) -> JsResult<JSValue> {
-        bun_jsc::bun_string_jsc::to_js_array(global, evp::Algorithm::names())
+        bun_string_jsc::to_js_array(global, evp::Algorithm::names())
     }
 
     fn hash_to_encoding(

@@ -10,6 +10,7 @@ use core::mem;
 
 use bun_cares_sys::c_ares as ares;
 use bun_core::{String as BunString, ZStr, strings};
+use bun_jsc::bun_string_jsc;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsError, JsResult, StringJsc};
 use bun_ptr::JsCell;
 
@@ -246,7 +247,7 @@ impl SocketAddress {
             }
             SocketAddress {
                 _addr: sockaddr { sin6 },
-                _presentation: JsCell::new(BunString::dead()),
+                _presentation: JsCell::new(BunString::DEAD),
             }
         } else {
             let mut sin = inet::sockaddr_in {
@@ -260,7 +261,7 @@ impl SocketAddress {
             }
             SocketAddress {
                 _addr: sockaddr { sin },
-                _presentation: JsCell::new(BunString::dead()),
+                _presentation: JsCell::new(BunString::DEAD),
             }
         };
 
@@ -304,7 +305,7 @@ impl SocketAddress {
         if options_obj.is_undefined() {
             return Ok(SocketAddress::new(SocketAddress {
                 _addr: sockaddr::LOOPBACK_V4,
-                _presentation: JsCell::new(BunString::empty()),
+                _presentation: JsCell::new(BunString::EMPTY),
                 // ._presentation = WellKnownAddress::loopback_v4(),
             }));
         }
@@ -320,7 +321,7 @@ impl SocketAddress {
         {
             return Ok(SocketAddress::new(SocketAddress {
                 _addr: sockaddr::ANY_V6,
-                _presentation: JsCell::new(BunString::empty()),
+                _presentation: JsCell::new(BunString::EMPTY),
                 // ._presentation = WellKnownAddress::any_v6(),
             }));
         }
@@ -366,7 +367,7 @@ impl SocketAddress {
     }
 
     pub(crate) fn init_js(global: &JSGlobalObject, options: Options) -> JsResult<SocketAddress> {
-        let mut presentation: BunString = BunString::empty();
+        let mut presentation: BunString = BunString::EMPTY;
 
         // We need a zero-terminated cstring for `ares_inet_pton`, which forces us to
         // copy the string.
@@ -461,7 +462,7 @@ impl SocketAddress {
         // TODO: make sure casting doesn't swap byte order on us.
         SocketAddress {
             _addr: sockaddr::v4(port_.to_be(), u32::from_ne_bytes(addr)),
-            _presentation: JsCell::new(BunString::dead()),
+            _presentation: JsCell::new(BunString::DEAD),
         }
     }
 
@@ -478,22 +479,13 @@ impl SocketAddress {
     ) -> SocketAddress {
         SocketAddress {
             _addr: sockaddr::v6(port_.to_be(), addr, flowinfo, scope_id),
-            _presentation: JsCell::new(BunString::dead()),
+            _presentation: JsCell::new(BunString::DEAD),
         }
     }
 }
 
 // =============================================================================
 // ================================ DESTRUCTORS ================================
-// =============================================================================
-
-impl SocketAddress {
-    pub fn finalize(self: Box<Self>) {
-        bun_jsc::mark_binding!();
-        drop(self);
-    }
-}
-
 // =============================================================================
 
 impl SocketAddress {
@@ -538,7 +530,7 @@ impl SocketAddress {
 
         Ok(JSSocketAddressDTO__create(
             global_object,
-            bun_jsc::bun_string_jsc::create_utf8_for_js(global_object, addr_)?,
+            bun_string_jsc::create_utf8_for_js(global_object, addr_)?,
             port_,
             is_ipv6,
         ))
@@ -790,10 +782,10 @@ impl AF {
             } else {
                 // not full ignore-case since that would require converting
                 // utf16 -> latin1 and the allocation isn't worth it.
-                if fam_str.eql_comptime("ipv4") || fam_str.eql_comptime("IPv4") {
+                if fam_str.eq_ascii(b"ipv4") || fam_str.eq_ascii(b"IPv4") {
                     return Ok(AF::INET);
                 }
-                if fam_str.eql_comptime("ipv6") || fam_str.eql_comptime("IPv6") {
+                if fam_str.eq_ascii(b"ipv6") || fam_str.eq_ascii(b"IPv6") {
                     return Ok(AF::INET6);
                 }
                 Err(global.throw_invalid_argument_property_value(

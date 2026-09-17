@@ -1,32 +1,19 @@
-use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU16, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 
+#[cfg(unix)]
+use crate::VirtualMachineRef as VirtualMachine;
 use crate::event_loop::EventLoop;
-use crate::{JSGlobalObject, Task, VirtualMachineRef as VirtualMachine};
+use crate::{JSGlobalObject, Task};
 use bun_event_loop::{Taskable, task_tag};
+use bun_threading::SignalRing;
 
-bun_core::declare_scope!(PosixSignalHandle, hidden);
+const BUFFER_SIZE: usize = 8192;
 
-const BUFFER_SIZE: u16 = 8192;
-
+/// Signal numbers queued by signal handlers on any thread for the main loop.
+#[derive(Default)]
 pub struct PosixSignalHandle {
     #[allow(dead_code)]
-    signals: [AtomicU8; BUFFER_SIZE as usize],
-
-    /// Producer index (signal handler writes).
-    #[allow(dead_code)]
-    tail: AtomicU16,
-    /// Consumer index (main thread reads).
-    head: AtomicU16,
-}
-
-impl Default for PosixSignalHandle {
-    fn default() -> Self {
-        Self {
-            signals: [const { AtomicU8::new(0) }; BUFFER_SIZE as usize],
-            tail: AtomicU16::new(0),
-            head: AtomicU16::new(0),
-        }
-    }
+    ring: SignalRing<BUFFER_SIZE>,
 }
 
 impl PosixSignalHandle {
@@ -36,68 +23,17 @@ impl PosixSignalHandle {
         Box::new(init)
     }
 
-    /// Called by the signal handler (single producer).
-    /// Returns `true` if enqueued successfully, or `false` if the ring is full.
+    /// Returns `false` if the ring is full. The caller wakes the loop on `true`.
     #[allow(dead_code)]
     pub(crate) fn enqueue(&self, signal: u8) -> bool {
-        // Read the current tail and head (Acquire to ensure we have up-to-date values).
-        let old_tail = self.tail.load(Ordering::Acquire);
-        let head_val = self.head.load(Ordering::Acquire);
-
-        // Compute the next tail (wrapping around BUFFER_SIZE).
-        let next_tail = old_tail.wrapping_add(1) % BUFFER_SIZE;
-
-        // Check if the ring is full.
-        if next_tail == (head_val % BUFFER_SIZE) {
-            // The ring buffer is full.
-            // We cannot block or wait here (since we're in a signal handler).
-            // So we just drop the signal or log if desired.
-            bun_core::scoped_log!(PosixSignalHandle, "signal queue is full; dropping");
-            return false;
-        }
-
-        // Store the signal into the ring buffer slot (Release to ensure data is visible).
-        self.signals[(old_tail % BUFFER_SIZE) as usize].store(signal, Ordering::Release);
-
-        // Publish the new tail (Release so that the consumer sees the updated tail).
-        self.tail.store(old_tail.wrapping_add(1), Ordering::Release);
-
-        if let Some(vm) = VirtualMachine::get_main_thread_vm() {
-            // SAFETY: `event_loop()` returns the VM-owned EventLoop; live for VM lifetime.
-            unsafe { (*(*vm).event_loop()).wakeup() };
-        }
-
-        true
-    }
-
-    /// Called by the main thread (single consumer).
-    /// Returns `None` if the ring is empty, or the next signal otherwise.
-    #[allow(dead_code)]
-    pub(crate) fn dequeue(&self) -> Option<u8> {
-        // Read the current head and tail.
-        let old_head = self.head.load(Ordering::Acquire);
-        let tail_val = self.tail.load(Ordering::Acquire);
-
-        // If head == tail, the ring is empty.
-        if old_head == tail_val {
-            return None; // No available items
-        }
-
-        let slot_index = (old_head % BUFFER_SIZE) as usize;
-        // Acquire load of the stored signal to get the item.
-        let signal = self.signals[slot_index].swap(0, Ordering::AcqRel);
-
-        // Publish the updated head (Release).
-        self.head.store(old_head.wrapping_add(1), Ordering::Release);
-
-        Some(signal)
+        self.ring.enqueue(signal)
     }
 
     /// Drain as many signals as possible and enqueue them as tasks in the event loop.
-    /// Called by the main thread.
+    /// Called by the main thread, the ring's single consumer.
     #[allow(dead_code)]
     pub(crate) fn drain(&self, event_loop: &mut EventLoop) {
-        while let Some(signal) = self.dequeue() {
+        while let Some(signal) = self.ring.dequeue() {
             // `Task` is a plain `{ tag, ptr }` pair (no bitfield packing), so build it
             // directly — `bun_runtime::dispatch::run_task` unpacks `task.ptr as usize as u8`.
             let task = Task::new(
@@ -136,7 +72,15 @@ extern "C" fn Bun__onPosixSignal(number: i32) {
             // `BackRef::deref` is the centralised set-once-NonNull proof; the
             // pointee is all-atomic (`Sync`), so a `&PosixSignalHandle` from
             // async-signal context is sound.
-            let _ = handler.enqueue(u8::try_from(number).expect("int cast"));
+            // No panic path in a signal handler: drop a number outside 1..=255.
+            let Some(signal) = u8::try_from(number).ok().filter(|&s| s != 0) else {
+                return;
+            };
+            if handler.enqueue(signal) {
+                // SAFETY: same process-lifetime event loop as above; `wakeup`
+                // is one async-signal-safe write to the loop's wakeup fd.
+                unsafe { (*(*vm).event_loop()).wakeup() };
+            }
         }
     }
     #[cfg(not(unix))]

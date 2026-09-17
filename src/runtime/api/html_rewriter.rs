@@ -23,6 +23,7 @@ use bun_sys::Error as SysError;
 use crate::api::native_promise_context;
 use crate::generated_classes::{js_HTMLRewriterTransform, js_Response};
 use crate::webcore::blob::SizeType as BlobSizeType;
+use crate::webcore::response::HeadersRef;
 use crate::webcore::sink::JSSink;
 use crate::webcore::streams::{
     self, SourceHandle, Start, StartTag, StreamError, StreamResult, Writable, WritablePending,
@@ -970,6 +971,19 @@ impl RewriterPipe {
         original: &Response,
         sync_only_noun: Option<&'static str>,
     ) -> JsResult<JSValue> {
+        // Taken before `wire_input` consumes the body its Content-Type may derive from (#3334).
+        let mut init = original.clone_init(global)?;
+        // A string body is `text/plain` by itself; the Response overload's output body is not.
+        if sync_only_noun.is_none() && original.get_body_value().was_string() {
+            init.headers
+                .get_or_insert_with(HeadersRef::create_empty)
+                .put_default(
+                    jsc::HTTPHeaderName::ContentType,
+                    &BunString::ascii(&bun_http_types::MimeType::TEXT.value),
+                    global,
+                )?;
+        }
+
         let pipe = bun_core::heap::alloc_nn(RewriterPipe {
             global: GlobalRef::from(global),
             cell: Cell::new(JSValue::ZERO),
@@ -1030,10 +1044,7 @@ impl RewriterPipe {
         // the sink buffers into `output_buffer`, and `on_start_streaming`
         // hands that over as `DrainResult::Owned`.
         let result = bun_core::heap::alloc_nn(Response::init(
-            webcore::response::Init {
-                status_code: 200,
-                ..Default::default()
-            },
+            init,
             webcore::Body::new({
                 let mut pv = webcore::body::PendingValue::new(global);
                 pv.task = Some(pipe.cast::<c_void>());
@@ -1050,15 +1061,6 @@ impl RewriterPipe {
         // SAFETY: `result` is the live Response just allocated above.
         this.response
             .set(Some(unsafe { RefPtr::init_ref(result.as_ptr()) }));
-
-        result_ref.set_init(
-            original.get_method(),
-            original.get_init_status_code(),
-            original.get_init_status_text().clone(),
-        );
-
-        // https://github.com/oven-sh/bun/issues/3334
-        result_ref.set_init_headers(original.clone_init_headers(global)?);
 
         let response_js_value = result_ref.to_js(&this.global);
 

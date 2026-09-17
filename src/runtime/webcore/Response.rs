@@ -84,6 +84,24 @@ impl HeadersRef {
             .clone_this(global)?
             .map(|p| unsafe { Self::adopt(p) }))
     }
+
+    /// What a lazy `.headers` getter creates for `body`: its Blob's `Content-Type` (`Bun.file()` mime, `Blob.type`), or `None`.
+    pub(crate) fn for_body(body: &BodyValue, global: &JSGlobalObject) -> JsResult<Option<Self>> {
+        let BodyValue::Blob(blob) = body else {
+            return Ok(None);
+        };
+        let content_type = blob.content_type_slice();
+        if content_type.is_empty() {
+            return Ok(None);
+        }
+        let mut headers = Self::create_empty();
+        headers.put(
+            HTTPHeaderName::ContentType,
+            &BunString::ascii(content_type),
+            global,
+        )?;
+        Ok(Some(headers))
+    }
 }
 
 impl core::ops::Deref for HeadersRef {
@@ -325,31 +343,6 @@ impl Response {
     }
 
     #[inline]
-    pub(crate) fn set_init(&self, method: Method, status_code: u16, status_text: BunString) {
-        self.init.with_mut(|init| {
-            init.method = method;
-            init.status_code = status_code;
-            init.status_text = status_text;
-        });
-    }
-
-    #[inline]
-    pub(crate) fn set_init_headers(&self, headers: Option<HeadersRef>) {
-        // old headers dropped (HeadersRef::Drop derefs the C++ handle)
-        self.init.with_mut(|init| init.headers = headers);
-    }
-
-    #[inline]
-    pub(crate) fn get_init_status_code(&self) -> u16 {
-        self.init.get().status_code
-    }
-
-    #[inline]
-    pub(crate) fn get_init_status_text(&self) -> &BunString {
-        &self.init.get().status_text
-    }
-
-    #[inline]
     pub(crate) fn set_url(&self, url: BunString) {
         self.url.set(url);
     }
@@ -389,18 +382,23 @@ impl Response {
         self.init_mut().headers.as_deref_mut()
     }
 
-    /// Deep-copy this response's init headers (if any) into a fresh
-    /// `HeadersRef`. Centralises the `FetchHeaders::clone_this` +
-    /// `HeadersRef::adopt` pair so callers stay `unsafe`-free.
-    #[inline]
-    pub(crate) fn clone_init_headers(
-        &self,
-        global: &JSGlobalObject,
-    ) -> JsResult<Option<HeadersRef>> {
-        match self.init_mut().headers.as_ref() {
+    /// Deep copy of what the `.headers` getter would report, without materializing it on `self`.
+    pub(crate) fn clone_headers(&self, global: &JSGlobalObject) -> JsResult<Option<HeadersRef>> {
+        match self.init.get().headers.as_ref() {
             Some(headers) => headers.clone_this(global),
-            None => Ok(None),
+            None => HeadersRef::for_body(self.body.get().value.get(), global),
         }
+    }
+
+    /// Status and what `.headers` would report, for a Response that takes them over with a new body (`new Response(body, response)`, `HTMLRewriter`).
+    pub(crate) fn clone_init(&self, global: &JSGlobalObject) -> JsResult<Init> {
+        let init = self.init.get();
+        Ok(Init {
+            headers: self.clone_headers(global)?,
+            status_code: init.status_code,
+            status_text: init.status_text.clone(),
+            method: init.method,
+        })
     }
 
     #[inline]
@@ -589,26 +587,16 @@ impl Response {
         &self,
         global_this: &JSGlobalObject,
     ) -> JsResult<&mut HeadersRef> {
+        if self.init.get().headers.is_none() {
+            let headers = HeadersRef::for_body(self.body.get().value.get(), global_this)?
+                .unwrap_or_else(HeadersRef::create_empty);
+            self.init.with_mut(|init| init.headers = Some(headers));
+        }
+
         // R-2 escape hatch via `init_mut()` — the returned `&mut HeadersRef`
         // borrows `self.init`; callers (`get_headers`, `construct_*`) do not
         // hold the borrow across calls that re-enter Response host-fns.
-        let init = self.init_mut();
-        if init.headers.is_none() {
-            init.headers = Some(HeadersRef::create_empty());
-
-            if let BodyValue::Blob(blob) = self.body.get().value.get() {
-                let content_type = blob.content_type_slice();
-                if !content_type.is_empty() {
-                    init.headers.as_mut().unwrap().put(
-                        HTTPHeaderName::ContentType,
-                        &BunString::ascii(content_type),
-                        global_this,
-                    )?;
-                }
-            }
-        }
-
-        Ok(init.headers.as_mut().unwrap())
+        Ok(self.init_mut().headers.as_mut().unwrap())
     }
 
     pub(crate) fn get_headers(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
@@ -1248,16 +1236,20 @@ impl Init {
 
         if js_type == JSType::DOMWrapper {
             // fast path: it's a Request object or a Response object
-            // we can skip calling JS getters
+            // we can skip calling JS getters, but must report what they would
             if let Some(req) = response_init.as_direct::<Request>() {
                 // SAFETY: `as_direct` returned a live `*mut Request` owned by the
                 // JS wrapper cell; the wrapper is rooted by `response_init` for
                 // the duration of this call, so no GC can finalize it here.
                 // Everything touched is `&self`.
                 let req = unsafe { &*req };
-                if let Some(headers) = req.get_fetch_headers_unless_empty() {
-                    result.headers = headers.clone_this(global_this)?;
-                }
+                result.headers = match req.get_fetch_headers_unless_empty() {
+                    Some(headers) => headers.clone_this(global_this)?,
+                    None if !req.has_fetch_headers() => {
+                        HeadersRef::for_body(req.body_value(), global_this)?
+                    }
+                    None => None,
+                };
 
                 result.method = req.method;
                 return Ok(Some(result));
@@ -1267,7 +1259,7 @@ impl Init {
                 // SAFETY: `as_direct` returned a live `*mut Response` owned by the
                 // JS wrapper cell; rooted by `response_init` for this call.
                 let resp = unsafe { &*resp };
-                return Ok(Some(resp.init.get().clone(global_this)?));
+                return Ok(Some(resp.clone_init(global_this)?));
             }
         }
 

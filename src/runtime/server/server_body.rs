@@ -1759,8 +1759,7 @@ where
                             fetch_headers_to_use
                                 .fast_remove(HTTPHeaderName::SecWebSocketExtensions);
                         }
-                        // The option getters and the headers conversion run user
-                        // code, which may have ended the response.
+                        // Option getters and the headers conversion may have ended the response.
                         if is_ended_or_closed() {
                             return Ok(JSValue::FALSE);
                         }

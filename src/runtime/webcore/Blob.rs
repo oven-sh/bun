@@ -426,6 +426,10 @@ impl BlobExt for Blob {
     fn do_read_file<F: read_file::ReadFileToJs>(&self, global: &JSGlobalObject) -> JSValue {
         debug!("doReadFile");
 
+        if let Some(err) = open_as_blob_read_error(self, global) {
+            return JSPromise::rejected_promise(global, err).to_js();
+        }
+
         type Handler<'a, F> = read_file::NewReadFileHandler<'a, F>;
 
         // The callback may read context.content_type (e.g. to_form_data_with_bytes),
@@ -5416,6 +5420,86 @@ pub(crate) fn construct_bun_file(
     Ok(unsafe { BlobExt::to_js(&*ptr, global_object) })
 }
 
+/// `fs.openAsBlob(path, options)` (node:fs). Like `Bun.file`, the Blob reads
+/// the path lazily, but Node's contract differs in two ways: a path that
+/// cannot be stat'd throws `ERR_INVALID_ARG_VALUE` here, and the stat taken
+/// now is kept as the store's `snapshot`, so `size` is fixed and every later
+/// read fails with `NotReadableError` once the file changes.
+pub(crate) fn construct_blob_for_open_as_blob(
+    global_object: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    // SAFETY: bun_vm() never returns null for a Bun-owned global.
+    let vm = global_object.bun_vm();
+    let arguments_slice = callframe.arguments();
+    let mut args = jsc::ArgumentsSlice::init(vm, arguments_slice);
+
+    let Some(mut path) = PathOrFileDescriptor::from_js(global_object, &mut args)? else {
+        return Err(
+            global_object.throw_invalid_arguments(format_args!("Expected file path string"))
+        );
+    };
+    let file_type = arguments_slice.get(1).copied().filter(|v| v.is_string());
+
+    // Node copies the path out of a Buffer. The store must not keep a ref to
+    // the caller's Buffer either: its drop would unprotect the cell from a
+    // GC sweep.
+    if let PathOrFileDescriptor::Path(p) = &mut path {
+        if matches!(p, PathLike::Buffer(_)) {
+            *p = PathLike::owned(p.slice().to_vec());
+        }
+    }
+
+    let mut blob = Blob::find_or_create_file_from_path(&mut path, global_object, false);
+
+    // An embedded file in a compiled binary is a `Bytes` store: nothing to stat.
+    let stat = match blob.store.get().as_ref().map(|store| &store.data) {
+        Some(store::Data::File(file)) => Some(stat_file(file)),
+        _ => None,
+    };
+    match stat {
+        Some(Ok(stat)) => {
+            if let Some(store) = blob.store.get() {
+                if let store::Data::File(file) = Store::data_mut(store) {
+                    apply_file_stat(file, &stat);
+                    file.snapshot = Some(store::FileSnapshot::of(&stat));
+                }
+            }
+            blob.resolve_size();
+        }
+        Some(Err(_)) => {
+            blob.deinit();
+            return Err(global_object
+                .err(
+                    bun_jsc::ErrorCode::ERR_INVALID_ARG_VALUE,
+                    format_args!("Unable to open file as blob"),
+                )
+                .throw());
+        }
+        None => {}
+    }
+
+    // `options.type`, validated as a string by `src/js/node/fs.ts`.
+    if let Some(file_type) = file_type {
+        let str = file_type.to_utf8(global_object)?;
+        let slice = str.slice();
+        if !slice.is_empty() && is_valid_blob_type(slice) {
+            blob.content_type_was_set.set(true);
+            blob.content_type
+                .set(match global_object.bun_vm().as_mut().mime_type(slice) {
+                    Some(mime) => BlobContentType::from(mime),
+                    None => BlobContentType::from_lowercased(slice),
+                });
+        }
+    }
+
+    let ptr = Blob::new(blob);
+    // SAFETY: ptr was just produced by heap::alloc in Blob::new. Spelled
+    // `BlobExt::to_js(&*ptr, ..)` to pick the `&self` impl over the by-value
+    // `JsClass::to_js`.
+    Ok(unsafe { BlobExt::to_js(&*ptr, global_object) })
+}
+
 // `find_or_create_file_from_path`: canonical impl lives later in this file
 // (runtime `check_s3: bool` form). Const-generic duplicate removed here.
 
@@ -5737,38 +5821,52 @@ fn resolve_file_stat(store: &RefPtr<Store>) {
     // `RefPtr<Store>` liveness invariant; the caller holds the only ref across
     // this call, so an exclusive borrow is sound.
     let file = Store::data_mut(store).as_file_mut();
+    // the file may not exist yet. That's okay.
+    if let Ok(stat) = stat_file(file) {
+        apply_file_stat(file, &stat);
+    }
+}
+
+fn stat_file(file: &store::File) -> bun_sys::Result<bun_sys::Stat> {
     match &file.pathlike {
         PathOrFileDescriptor::Path(path) => {
             let mut buffer = bun_paths::path_buffer_pool::get();
-            match bun_sys::stat(path.slice_z(&mut buffer)) {
-                bun_sys::Result::Ok(stat) => {
-                    file.max_size = if bun_sys::S::ISREG(stat.st_mode as _) || stat.st_size > 0 {
-                        ((stat.st_size.max(0)) as u64) as SizeType
-                    } else {
-                        MAX_SIZE
-                    };
-                    file.mode = stat.st_mode as bun_sys::Mode;
-                    file.seekable = Some(bun_sys::S::ISREG(stat.st_mode as _));
-                    file.last_modified = stat_to_js_mtime(&stat);
-                }
-                // the file may not exist yet. That's okay.
-                _ => {}
-            }
+            bun_sys::stat(path.slice_z(&mut buffer))
         }
-        PathOrFileDescriptor::Fd(fd) => match bun_sys::fstat(*fd) {
-            bun_sys::Result::Ok(stat) => {
-                file.max_size = if bun_sys::S::ISREG(stat.st_mode as _) || stat.st_size > 0 {
-                    ((stat.st_size.max(0)) as u64) as SizeType
-                } else {
-                    MAX_SIZE
-                };
-                file.mode = stat.st_mode as bun_sys::Mode;
-                file.seekable = Some(bun_sys::S::ISREG(stat.st_mode as _));
-                file.last_modified = stat_to_js_mtime(&stat);
-            }
-            _ => {}
-        },
+        PathOrFileDescriptor::Fd(fd) => bun_sys::fstat(*fd),
     }
+}
+
+fn apply_file_stat(file: &mut store::File, stat: &bun_sys::Stat) {
+    file.max_size = if bun_sys::S::ISREG(stat.st_mode as _) || stat.st_size > 0 {
+        ((stat.st_size.max(0)) as u64) as SizeType
+    } else {
+        MAX_SIZE
+    };
+    file.mode = stat.st_mode as bun_sys::Mode;
+    file.seekable = Some(bun_sys::S::ISREG(stat.st_mode as _));
+    file.last_modified = stat_to_js_mtime(stat);
+}
+
+/// `fs.openAsBlob`: the `NotReadableError` a read must fail with when the
+/// file no longer matches the stat taken at creation, else `None`. Node
+/// stats the file synchronously before each read, so this does too. A file
+/// that cannot be stat'd any more (unlinked) counts as changed.
+pub(crate) fn open_as_blob_read_error(blob: &Blob, global: &JSGlobalObject) -> Option<JSValue> {
+    let store = blob.store.get().as_ref()?;
+    let store::Data::File(file) = &store.data else {
+        return None;
+    };
+    let snapshot = file.snapshot?;
+    if matches!(stat_file(file), Ok(stat) if store::FileSnapshot::of(&stat) == snapshot) {
+        return None;
+    }
+    Some(not_readable_error(global))
+}
+
+fn not_readable_error(global: &JSGlobalObject) -> JSValue {
+    EncodedSlice::latin1(b"The blob could not be read")
+        .to_dom_exception_instance(global, bun_jsc::DOMExceptionCode::NotReadableError)
 }
 
 /// Whether a second Blob over `store` reads the same bytes from the start.

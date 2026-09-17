@@ -1522,6 +1522,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         }
     }
     if body.needs_to_read_file() {
+        if let Some(err) = blob::open_as_blob_read_error(body.any_blob().blob(), global_this) {
+            body.detach();
+            return Ok(JSPromise::rejected_promise(global_this, err).to_js());
+        }
         'prepare_body: {
             // A local `PathBuffer` serves as NUL-termination scratch for
             // `path.slice_z()` (the `vm.node_fs()` accessor is gated behind a

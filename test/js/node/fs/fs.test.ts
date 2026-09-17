@@ -160,6 +160,71 @@ it("fs.openAsBlob", async () => {
   expect((await openAsBlob(import.meta.path)).size).toBe(statSync(import.meta.path).size);
 });
 
+describe.concurrent("fs.openAsBlob snapshots the file", () => {
+  const notReadable = expect.objectContaining({ name: "NotReadableError", message: "The blob could not be read" });
+
+  it("reads the file while it is unchanged", async () => {
+    using dir = tempDir("open-as-blob", { "a.txt": "hello" });
+    const blob = await openAsBlob(join(String(dir), "a.txt"));
+    expect(blob.size).toBe(5);
+    expect(await blob.text()).toBe("hello");
+    expect(await blob.text()).toBe("hello");
+    expect(await blob.slice(1, 4).text()).toBe("ell");
+    expect(await new Response(blob.stream()).text()).toBe("hello");
+  });
+
+  it("rejects every read with NotReadableError after the file changes", async () => {
+    using dir = tempDir("open-as-blob", { "a.txt": "hello" });
+    const file = join(String(dir), "a.txt");
+    const blob = await openAsBlob(file);
+    writeFileSync(file, "swapped!");
+
+    expect(blob.size).toBe(5);
+    await expect(blob.text()).rejects.toEqual(notReadable);
+    await expect(blob.text()).rejects.toBeInstanceOf(DOMException);
+    await expect(blob.arrayBuffer()).rejects.toEqual(notReadable);
+    await expect(blob.bytes()).rejects.toEqual(notReadable);
+    await expect(blob.slice(1, 4).text()).rejects.toEqual(notReadable);
+    await expect(new Response(blob).text()).rejects.toEqual(notReadable);
+    await expect(new Response(blob.stream()).text()).rejects.toEqual(notReadable);
+  });
+
+  it("rejects a read after the file is deleted", async () => {
+    using dir = tempDir("open-as-blob", { "a.txt": "hello" });
+    const file = join(String(dir), "a.txt");
+    const blob = await openAsBlob(file);
+    unlinkSync(file);
+    await expect(blob.text()).rejects.toEqual(notReadable);
+  });
+
+  it("rejects a fetch body after the file changes", async () => {
+    using dir = tempDir("open-as-blob", { "a.txt": "hello" });
+    const file = join(String(dir), "a.txt");
+    const blob = await openAsBlob(file);
+    await using server = Bun.serve({
+      port: 0,
+      fetch: async req => new Response(await req.text()),
+    });
+    expect(await (await fetch(server.url, { method: "POST", body: blob })).text()).toBe("hello");
+    writeFileSync(file, "hellp");
+    await expect(fetch(server.url, { method: "POST", body: blob })).rejects.toEqual(notReadable);
+  });
+
+  it("throws ERR_INVALID_ARG_VALUE for a path that cannot be opened", () => {
+    using dir = tempDir("open-as-blob", {});
+    expect(() => openAsBlob(join(String(dir), "missing.txt"))).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE", message: "Unable to open file as blob" }),
+    );
+  });
+
+  it("validates the arguments like node", () => {
+    const invalidArgType = expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" });
+    expect(() => openAsBlob(import.meta.path, null)).toThrow(invalidArgType);
+    expect(() => openAsBlob(import.meta.path, { type: 123 })).toThrow(invalidArgType);
+    expect(() => openAsBlob(123)).toThrow(invalidArgType);
+  });
+});
+
 it("writing to 1, 2 are possible", () => {
   expect(fs.writeSync(1, Buffer.from("\nhello-stdout-test\n"))).toBe(19);
   expect(fs.writeSync(2, Buffer.from("\nhello-stderr-test\n"))).toBe(19);

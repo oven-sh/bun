@@ -5,7 +5,10 @@ const {
   validateFunction,
   validateInteger,
   validateEncoding,
+  validateObject,
+  validateString,
   getValidatedPath,
+  getValidatedFsPath,
   throwIfNullBytesInFileName,
 } = require("internal/validators");
 
@@ -51,8 +54,15 @@ function nullcallback(callback) {
 }
 const FunctionPrototypeBind = nullcallback.bind;
 
-function openAsBlob(path, options) {
-  return Promise.$resolve(Bun.file(path, options));
+// Not `Bun.file`: node stats the file now and fails a read once it changes.
+const openAsBlobNative = $newRustFunction("node_fs_binding.rs", "open_as_blob", 2);
+
+function openAsBlob(path, options = kEmptyObject) {
+  validateObject(options, "options");
+  const type = options.type || "";
+  validateString(type, "options.type");
+  path = getValidatedFsPath(path);
+  return Promise.$resolve(openAsBlobNative(path, type));
 }
 
 var access = function access(path, mode, callback) {

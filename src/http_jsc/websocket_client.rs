@@ -105,12 +105,9 @@ pub struct WebSocket<const SSL: bool> {
 
     /// `pause()` is in effect: `handle_data` keeps what it gets in `held_data`.
     paused: Cell<bool>,
-    /// Received bytes the frame parser has not seen yet: the handshake
-    /// overflow, and what reached `handle_data` during a pause.
+    /// Unparsed bytes: the handshake overflow, and what reached `handle_data` during a pause.
     held_data: RefCell<Vec<u8>>,
-    /// The queued `HeldDataTask` until it runs or `handle_data` parses
-    /// `held_data` first; detached in `Drop` so a task that outlives us does
-    /// nothing.
+    /// The queued `HeldDataTask`, detached in `Drop` so a task that outlives us does nothing.
     pending_held_task: Cell<Option<BackRef<HeldDataTask<SSL>, Root>>>,
     pub(crate) deflate: RefCell<Option<Box<WebSocketDeflate>>>,
 
@@ -539,7 +536,7 @@ impl<const SSL: bool> WebSocket<SSL> {
 
         // Due to scheduling, it is possible for the websocket onData
         // handler to run with additional data before the microtask queue is
-        // drained. The held bytes are older than `data_`, so they go first.
+        // drained.
         if !this.paused.get() && !this.held_data.borrow().is_empty() {
             this.parse_held_data();
 
@@ -549,8 +546,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             }
         }
 
-        // The socket stopped reading, but these bytes were in user space
-        // already (the rest of a TLS read, the next chunk of a proxy tunnel).
+        // Already in user space: the rest of a TLS read, or a proxy tunnel's next chunk.
         if this.paused.get() {
             this.held_data.borrow_mut().extend_from_slice(data_);
             return;
@@ -559,11 +555,9 @@ impl<const SSL: bool> WebSocket<SSL> {
         this.handle_data_loop(data_);
     }
 
-    /// Callers decide whether `pause()` applies: a peer that ends the
-    /// connection gets its last bytes parsed, paused or not.
+    /// Callers check `paused`: a peer that ends the connection gets its last bytes parsed anyway.
     fn parse_held_data(&self) {
-        // A queued `HeldDataTask` must do nothing after this call. Its claim
-        // on the C++ `WebSocket` ends here, so `resume()` can queue a new one.
+        // Detach the queued task and drop its claim, so that `resume()` can queue a new one.
         let _pending_activity = self.pending_held_task.take().and_then(|task| {
             task.ws.set(None);
             task.pending_activity.replace(None)
@@ -586,8 +580,6 @@ impl<const SSL: bool> WebSocket<SSL> {
         // Use a higher-priority callback than the next socket read.
         let task = Box::new(HeldDataTask {
             ws: Cell::new(Some(BackRef::from(this))),
-            // We need to ref the outgoing websocket so that it doesn't get
-            // finalized before the held bytes are parsed.
             pending_activity: JsCell::new(Some(CppWebSocketRef::new(&outgoing))),
         });
         this.pending_held_task
@@ -1153,7 +1145,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
         if !self.has_tcp() {
             match dispatch_code {
-                // The peer's Close frame was read before the socket went away, so it still names the close code.
+                // The peer's Close frame still names the close code, although it cannot be echoed.
                 Some(code) if strings::is_valid_utf8(&body[..body_len]) => {
                     let reason = bun_core::String::clone_utf8(&body[..body_len]);
                     self.clear_data();
@@ -1892,8 +1884,7 @@ pub struct InitialData(pub Vec<u8>);
 
 /// Microtask that parses `held_data` ahead of fresh socket data.
 pub(crate) struct HeldDataTask<const SSL: bool> {
-    /// Detached by `WebSocket`'s `Drop` (or by `handle_data` parsing
-    /// `held_data` first) so a task that outlives its client does nothing.
+    /// Detached by `Drop` or `parse_held_data`, so a task that outlives its client does nothing.
     ws: Cell<Option<BackRef<WebSocket<SSL>, Root>>>,
     /// Keeps the C++ `WebSocket` alive until the held bytes are parsed.
     pending_activity: JsCell<Option<CppWebSocketRef>>,

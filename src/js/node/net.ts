@@ -3981,10 +3981,8 @@ Server.prototype[kRealListen] = function (
     });
   }
 
-  // A throw past this point stops the bound listener, like node's setupListenHandle.
   try {
-    // uv_pipe_chmod: relax the socket file's group/other bits. No file on Windows or abstract sockets.
-    // https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/lib/net.js#L1899
+    // uv_pipe_chmod: https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/lib/net.js#L1899
     if (path && (readableAll || writableAll) && process.platform !== "win32" && path.charCodeAt(0) !== 0) {
       let desired = 0;
       if (readableAll) desired |= 0o44; // S_IRGRP | S_IROTH

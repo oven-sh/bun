@@ -237,8 +237,8 @@ fn entry_ranges(
     while matches!(text.get(end), Some(b' ' | b'\t')) {
         end += 1;
     }
-    for after in [b';', b'\r', b'\n'] {
-        end += usize::from(text.get(end) == Some(&after));
+    for after in b";\r\n" {
+        end += usize::from(text.get(end) == Some(after));
     }
     let start = (stmt_start - blank_line).max(floor);
     Some((start..end, value_start..value_end))

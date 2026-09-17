@@ -138,6 +138,7 @@ pub(crate) fn new_detached_socket(global: &JSGlobalObject, frame: &CallFrame) ->
             socket: Cell::new(uws::NewSocketHandler::<SSL>::DETACHED),
             ref_count: bun_ptr::RefCount::init(),
             protos: JsCell::new(None),
+            alpn_refused: Cell::new(false),
             handlers: JsCell::new(None),
             local_binding: JsCell::new(None),
             // — defaults —

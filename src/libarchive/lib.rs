@@ -999,6 +999,33 @@ pub fn directory_mode(perm: bun_sys::Mode) -> bun_sys::Mode {
     mode
 }
 
+/// The permission bits `file_mode` grants on top of a regular-file entry's own.
+#[derive(Clone, Copy)]
+pub enum FileModeFloor {
+    /// Read and write for every user, npm's `fmode`: an installed package stays
+    /// readable whatever modes its tarball was packed with (#14467).
+    /// https://github.com/npm/cli/blob/feb54f7e9a39bd52519221bae4fafc8bc70f235e/node_modules/pacote/lib/fetcher.js#L402-L411
+    Everyone,
+    /// Read and write for the owner. Group and other get what the entry grants.
+    /// This is not a policy of its own: the extractors reopen an existing file
+    /// with `O_TRUNC`, and a file from an earlier extraction must allow that.
+    /// With an open that replaces the file it can be the entry's exact bits (#43132).
+    Owner,
+}
+
+/// `openat` mode for a regular-file entry. `& 0o777` keeps an archive from
+/// creating setuid, setgid or sticky files.
+pub fn file_mode(perm: bun_sys::Mode, floor: FileModeFloor) -> bun_sys::Mode {
+    let mode = perm & 0o777;
+    match floor {
+        FileModeFloor::Everyone => mode | 0o666,
+        // A mode of zero means the archive's writer left the field unset. Use
+        // the mode `Bun.Archive` gives the entries it writes.
+        FileModeFloor::Owner if mode == 0 => 0o644,
+        FileModeFloor::Owner => mode | 0o600,
+    }
+}
+
 /// Validates that a symlink target doesn't escape the extraction directory.
 /// Returns true if the symlink is safe (target stays within extraction dir),
 /// false if it would escape (e.g., via ../ traversal or absolute path).
@@ -1221,6 +1248,7 @@ pub mod archiver {
         pub close_handles: bool,
         pub log: bool,
         pub npm: bool,
+        pub file_mode_floor: FileModeFloor,
     }
 
     impl Default for ExtractOptions {
@@ -1230,6 +1258,7 @@ pub mod archiver {
                 close_handles: true,
                 log: false,
                 npm: false,
+                file_mode_floor: FileModeFloor::Everyone,
             }
         }
     }
@@ -1680,18 +1709,12 @@ impl Archiver {
                             }
                         }
                         bun_sys::FileKind::File => {
-                            // first https://github.com/npm/cli/blob/feb54f7e9a39bd52519221bae4fafc8bc70f235e/node_modules/pacote/lib/fetcher.js#L65-L66
-                            // this.fmode = opts.fmode || 0o666
-                            //
-                            // then https://github.com/npm/cli/blob/feb54f7e9a39bd52519221bae4fafc8bc70f235e/node_modules/pacote/lib/fetcher.js#L402-L411
-                            //
-                            // we simplify and turn it into `entry.mode || 0o666` because we aren't accepting a umask or fmask option.
                             #[cfg(not(windows))]
-                            let mode: bun_sys::Mode = bun_sys::Mode::try_from(
+                            let mode = file_mode(
                                 // SAFETY: entry valid
-                                (lib::Entry::opaque_ref(entry).perm() & 0o777) | 0o666,
-                            )
-                            .unwrap();
+                                lib::Entry::opaque_ref(entry).perm(),
+                                options.file_mode_floor,
+                            );
 
                             let flags = bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC;
 

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { existsSync, readdirSync, rmSync } from "node:fs";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
+import { chownSync, existsSync, readdirSync, rmSync } from "node:fs";
 import { join } from "path";
 
 // Minimal ustar tarball builder (pathnames must be <100 bytes). `name` accepts
@@ -640,6 +640,123 @@ describe("Bun.Archive", () => {
 
       expect(stderr).toBe("");
       expect(JSON.parse(stdout)).toEqual({ count: 3, dir: true, inner: "inner", top: "top" });
+      expect(exitCode).toBe(0);
+    });
+
+    // extract() runs one of two extractors: one without `glob`, one with it.
+    // Both fixtures below go through both. They run in a child process because
+    // the umask is process-wide.
+    const modeField = (mode: number) => Buffer.from(mode.toString(8).padStart(7, "0") + "\0");
+    const fileWithMode = (name: string, mode: number, data: string) => [
+      ustarHeader(name, data.length, "0", { mode: modeField(mode) }),
+      Buffer.concat([Buffer.from(data), Buffer.alloc(512 - data.length)]),
+    ];
+
+    test.skipIf(isWindows)("creates files with the archive's permission bits, with and without a glob", async () => {
+      const modes = [0o600, 0o640, 0o644, 0o700, 0o755, 0o666, 0o400, 0o444, 0o4755, 0o2755, 0o1755, 0];
+      const name = (mode: number) => "f" + mode.toString(8).padStart(4, "0");
+      using dir = tempDir("archive-extract-file-modes", {
+        "input.tar": Buffer.concat([
+          ...modes.flatMap(mode => fileWithMode(name(mode), mode, "x")),
+          // No directory entry comes first. The extractor without `glob` opens such
+          // a file a second time, after it creates the parent directory.
+          ...fileWithMode("new/dir/f0600", 0o600, "x"),
+          Buffer.alloc(1024),
+        ]),
+        "extract.ts": `
+          import { readdirSync, readFileSync, statSync } from "node:fs";
+          process.umask(0o022);
+          const tarball = readFileSync("input.tar");
+          const modes = (root: string) =>
+            Object.fromEntries(
+              readdirSync(root, { recursive: true })
+                .map(name => [String(name), statSync(root + "/" + name)] as const)
+                .filter(([, stat]) => stat.isFile())
+                .sort(([a], [b]) => (a < b ? -1 : 1))
+                .map(([name, stat]) => [name, (stat.mode & 0o7777).toString(8).padStart(4, "0")]),
+            );
+          await new Bun.Archive(tarball).extract("plain");
+          await new Bun.Archive(tarball).extract("glob", { glob: "**" });
+          console.log(JSON.stringify({ plain: modes("plain"), glob: modes("glob") }));
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "extract.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      const expected = {
+        f0000: "0644", // no permission bits at all: the mode Bun.Archive itself writes
+        f0400: "0600", // the owner can always read and write, see the next test
+        f0444: "0644",
+        f0600: "0600",
+        f0640: "0640",
+        f0644: "0644",
+        f0666: "0644", // the umask applies
+        f0700: "0700",
+        f0755: "0755",
+        f1755: "0755", // sticky, setgid and setuid are dropped
+        f2755: "0755",
+        f4755: "0755",
+        "new/dir/f0600": "0600",
+      };
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({ plain: expected, glob: expected });
+      expect(exitCode).toBe(0);
+    });
+
+    // Windows creates a file whose mode has no owner write bit as read-only.
+    // Permission bits do not bind root, so a root test run extracts as another user.
+    const isRoot = !isWindows && process.getuid?.() === 0;
+    test.skipIf(isRoot && !isLinux)("a second extract() overwrites a file the archive marks read-only", async () => {
+      const tarball = (data: string) =>
+        Buffer.concat([...fileWithMode("read-only.txt", 0o444, data), Buffer.alloc(1024)]);
+      using dir = tempDir("archive-extract-read-only", {
+        "v1.tar": tarball("v1"),
+        "v2.tar": tarball("v2"),
+        "extract.ts": `
+          import { readFileSync } from "node:fs";
+          process.umask(0o022);
+          const result: Record<string, unknown> = {};
+          for (const [dest, options] of [["plain", undefined], ["glob", { glob: "**" }]] as const) {
+            const counts: number[] = [];
+            for (const tar of ["v1.tar", "v2.tar"]) {
+              counts.push(await new Bun.Archive(readFileSync(tar)).extract(dest, options));
+            }
+            result[dest] = { counts, content: readFileSync(dest + "/read-only.txt", "utf8") };
+          }
+          console.log(JSON.stringify({ uid: process.getuid?.() ?? null, ...result }));
+        `,
+      });
+      const nobody = 65534;
+      if (isRoot) {
+        for (const entry of ["", "v1.tar", "v2.tar", "extract.ts"]) {
+          chownSync(join(String(dir), entry), nobody, nobody);
+        }
+      }
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "extract.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        ...(isRoot ? { uid: nobody, gid: nobody } : {}),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      const overwritten = { counts: [1, 1], content: "v2" };
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({
+        uid: isRoot ? nobody : (process.getuid?.() ?? null),
+        plain: overwritten,
+        glob: overwritten,
+      });
       expect(exitCode).toBe(0);
     });
   });

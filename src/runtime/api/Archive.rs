@@ -13,7 +13,7 @@ use bun_jsc::{
 use bun_jsc::{EncodedSliceJsc as _, StringJsc as _, SysErrorJsc as _};
 use bun_libarchive as libarchive;
 use bun_ptr::RefPtr;
-use bun_sys::{self, Fd, FdDirExt as _, FdExt as _, Mode};
+use bun_sys::{self, Fd, FdDirExt as _, FdExt as _};
 
 /// libarchive `AE_IFREG` (== `S_IFREG`). The Rust `bun_libarchive::lib` port
 /// does not yet expose `FileType`, so mirror the constant locally.
@@ -766,6 +766,7 @@ impl ExtractContext {
                 close_handles: true,
                 log: false,
                 npm: false,
+                file_mode_floor: libarchive::FileModeFloor::Owner,
             },
         ) {
             Ok(c) => c,
@@ -1381,13 +1382,8 @@ fn extract_to_disk_filtered(
             }
             bun_sys::FileKind::File => {
                 let size: usize = usize::try_from(entry_ref.size().max(0)).expect("int cast");
-                // Sanitize permissions: use entry perms masked to 0o777, or default 0o644
-                let entry_perm = entry_ref.perm();
-                let mode: Mode = if entry_perm != 0 {
-                    Mode::try_from(entry_perm & 0o777).expect("int cast")
-                } else {
-                    0o644
-                };
+                let mode =
+                    libarchive::file_mode(entry_ref.perm(), libarchive::FileModeFloor::Owner);
 
                 // Create parent directories if needed (ignore expected errors)
                 if let Some(parent_dir) = bun_core::dirname(pathname) {

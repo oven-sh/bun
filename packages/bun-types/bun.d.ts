@@ -10249,6 +10249,10 @@ declare module "bun" {
      * Creates the target directory and any necessary parent directories if they don't exist.
      * Existing files are overwritten.
      *
+     * On Linux and macOS, a file that `extract()` creates gets the permission bits stored in the
+     * archive (the process umask applies), plus read and write permission for its owner. The
+     * setuid, setgid, and sticky bits are not restored. A file that already exists keeps its mode.
+     *
      * @param path - The directory path to extract to
      * @param options - Optional extraction options
      * @param options.glob - Glob pattern(s) to filter entries (positive patterns include, negative patterns starting with `!` exclude)

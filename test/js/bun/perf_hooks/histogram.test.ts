@@ -408,6 +408,34 @@ describe("Histogram", () => {
         code: "ERR_OUT_OF_RANGE",
         message: 'The value of "options.highest" is out of range. It must be >= 4 && <= 9007199254740991. Received 3',
       });
+
+      // 2 * lowest is above Number.MAX_SAFE_INTEGER, so no number is a valid highest.
+      assert.throws(() => createHistogram({ lowest: 2 ** 52, highest: 2 ** 53, figures: 1 }), {
+        name: "RangeError",
+        code: "ERR_OUT_OF_RANGE",
+        message:
+          'The value of "options.highest" is out of range. It must be >= 9007199254740992 && <= 9007199254740991. Received 9_007_199_254_740_992',
+      });
+      assert.throws(() => createHistogram({ lowest: 2 ** 53 - 1 }), {
+        name: "RangeError",
+        code: "ERR_OUT_OF_RANGE",
+        message:
+          'The value of "options.highest" is out of range. It must be >= 18014398509481982 && <= 9007199254740991. Received 9_007_199_254_740_991',
+      });
+    });
+
+    // Node v26.3.0 aborts when hdr_init() rejects the options. Node v26.9.0 throws this error.
+    test("createHistogram with options that HdrHistogram rejects", { skip: !process.versions.bun }, () => {
+      for (const options of [
+        { lowest: 2 ** 51, highest: 2 ** 53 - 1, figures: 5 },
+        { lowest: 2n ** 60n, highest: 2n ** 63n - 1n, figures: 3 },
+      ]) {
+        assert.throws(() => createHistogram(options), {
+          name: "TypeError",
+          code: "ERR_INVALID_ARG_VALUE",
+          message: "Invalid histogram options",
+        });
+      }
     });
 
     test("createHistogram validates lowest, then highest, then figures", () => {

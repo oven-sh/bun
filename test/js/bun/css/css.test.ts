@@ -4,7 +4,7 @@
 
 import { cssInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 import {
   cssTest,
@@ -6023,6 +6023,72 @@ describe("css tests", () => {
         "input::file-selector-button { &:hover { .dark & { color: red } } }",
         ".dark input::file-selector-button:hover{color:red}",
       );
+    });
+
+    // Only pseudo-classes and pseudo-elements can follow a pseudo-element, so a
+    // parent selector with one goes in `:is()` when something else follows the `&`.
+    describe("what follows a `&` whose parent selector has a pseudo-element", () => {
+      lowered_nesting_test("input:after { a:after { color: red } }", ":is(input:after) a:after{color:red}");
+      lowered_nesting_test(".foo::before { > .bar { color: red } }", ":is(.foo:before)>.bar{color:red}");
+      lowered_nesting_test(".foo::before { + .bar { color: red } }", ":is(.foo:before)+.bar{color:red}");
+      lowered_nesting_test(".foo::before { ~ .bar { color: red } }", ":is(.foo:before)~.bar{color:red}");
+      lowered_nesting_test(".foo::before { &.bar { color: red } }", ":is(.foo:before).bar{color:red}");
+      lowered_nesting_test(".foo::before { &#bar { color: red } }", ":is(.foo:before)#bar{color:red}");
+      lowered_nesting_test(".foo::before { &[bar] { color: red } }", ":is(.foo:before)[bar]{color:red}");
+      lowered_nesting_test(".foo::before { &:hover .bar { color: red } }", ":is(.foo:before):hover .bar{color:red}");
+      lowered_nesting_test(".foo { &::before { .bar { color: red } } }", ":is(.foo:before) .bar{color:red}");
+      lowered_nesting_test(".foo::part(p) { .bar { color: red } }", ":is(.foo::part(p)) .bar{color:red}");
+      lowered_nesting_test("::slotted(.foo) { .bar { color: red } }", ":is(::slotted(.foo)) .bar{color:red}");
+      lowered_nesting_test(
+        ".foo::before { .bar, &:hover { color: red } }",
+        ":is(.foo:before) .bar,.foo:before:hover{color:red}",
+      );
+      lowered_nesting_test(
+        "@scope (.foo::before) to (& .bar) { .baz { color: red } }",
+        "@scope(.foo:before) to (:is(.foo:before) .bar){.baz{color:red}}",
+      );
+
+      // An unwrapped `:is()` puts its argument after the pseudo-element, or what follows it after the `&`.
+      lowered_nesting_test(".foo::before { &:is(.bar) { color: red } }", ":is(.foo:before).bar{color:red}");
+      lowered_nesting_test(".foo::before { :is(&) .bar { color: red } }", ":is(.foo:before) .bar{color:red}");
+
+      // What follows the parent selector `&:hover` or `&.bar` also follows its `&`.
+      lowered_nesting_test(
+        ".foo::before { &:hover { .bar { color: red } } }",
+        ":is(.foo:before):hover .bar{color:red}",
+      );
+      lowered_nesting_test(
+        ".foo::before { &:hover { .dark &.baz { color: red } } }",
+        ".dark :is(.foo:before):hover.baz{color:red}",
+      );
+      lowered_nesting_test(".foo::before { &.bar { .baz { color: red } } }", ":is(.foo:before).bar .baz{color:red}");
+
+      // Nothing, or only pseudo-classes and pseudo-elements, follows the `&`.
+      lowered_nesting_test(".foo::before { &:hover { color: red } }", ".foo:before:hover{color:red}");
+      lowered_nesting_test(".foo::before { :is(&):hover { color: red } }", ".foo:before:hover{color:red}");
+      lowered_nesting_test(
+        ".foo::before { color: blue; @media (min-width: 1px) { color: red } }",
+        ".foo:before{color:#00f}@media (min-width:1px){.foo:before{color:red}}",
+      );
+      lowered_nesting_test(
+        ".foo { &::before { &:hover { @media (hover: hover) { color: red } } } }",
+        "@media (hover:hover){.foo:before:hover{color:red}}",
+      );
+      lowered_nesting_test(".foo::part(p) { &::before { color: red } }", ".foo::part(p):before{color:red}");
+      lowered_nesting_test(".foo::part(p) { &:hover { color: red } }", ".foo::part(p):hover{color:red}");
+      lowered_nesting_test("::slotted(.foo) { &::before { color: red } }", "::slotted(.foo):before{color:red}");
+
+      test("the output of bun build builds again", async () => {
+        using dir = tempDir("css-nesting-pseudo-element", {
+          "in.css": "input:after { a:after { color: red } }",
+        });
+        const first = await Bun.build({ entrypoints: [join(String(dir), "in.css")] });
+        await Bun.write(join(String(dir), "again.css"), await first.outputs[0].text());
+
+        const second = await Bun.build({ entrypoints: [join(String(dir), "again.css")], throw: false });
+        expect(second.logs.map(String)).toEqual([]);
+        expect(second.success).toBe(true);
+      });
     });
 
     describe("the targets have nesting", () => {

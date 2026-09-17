@@ -583,14 +583,60 @@ pub(crate) mod serialize {
         MidCompound,
     }
 
-    /// Whether `selector` can take the place of a `&` at `position` as written.
-    fn fits_at(selector: &parser::Selector, position: NestingPosition) -> bool {
-        match position {
-            NestingPosition::SelectorStart => true,
-            NestingPosition::CompoundStart => is_simple(selector),
-            NestingPosition::MidCompound => {
-                !has_type_selector_past_nesting(selector) && is_simple(selector)
+    /// What prints after a `&`, to the end of the selector that it lands in.
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum NestingTail {
+        /// Nothing, or only what `can_follow_pseudo_element()`.
+        OnlyPseudos,
+        Other,
+    }
+
+    /// Whether `selector` can take the place of a `&` at `position` as written,
+    /// with `tail` after it.
+    fn fits_at(selector: &parser::Selector, position: NestingPosition, tail: NestingTail) -> bool {
+        (tail == NestingTail::OnlyPseudos || !has_pseudo_element(selector))
+            && match position {
+                NestingPosition::SelectorStart => true,
+                NestingPosition::CompoundStart => is_simple(selector),
+                NestingPosition::MidCompound => {
+                    !has_type_selector_past_nesting(selector) && is_simple(selector)
+                }
             }
+    }
+
+    /// Only pseudo-classes and pseudo-elements can come after a pseudo-element.
+    fn can_follow_pseudo_element(component: &parser::Component) -> bool {
+        match component {
+            // Prints without the `:is()`.
+            Component::Is(selectors)
+                if should_unwrap_is(selectors)
+                    && fits_at(
+                        &selectors[0],
+                        NestingPosition::MidCompound,
+                        NestingTail::OnlyPseudos,
+                    ) =>
+            {
+                selectors[0]
+                    .components
+                    .iter()
+                    .all(can_follow_pseudo_element)
+            }
+            Component::Negation(_)
+            | Component::Root
+            | Component::Empty
+            | Component::Scope
+            | Component::Nth(_)
+            | Component::NthOf(_)
+            | Component::NonTsPseudoClass(_)
+            | Component::Slotted(_)
+            | Component::Part(_)
+            | Component::Host(_)
+            | Component::Where(_)
+            | Component::Is(_)
+            | Component::Any { .. }
+            | Component::Has(_)
+            | Component::PseudoElement(_) => true,
+            _ => false,
         }
     }
 
@@ -607,7 +653,14 @@ pub(crate) mod serialize {
             NestingPosition::SelectorStart
         };
         dest.write_comma_separated(list, |d, sel| {
-            serialize_selector_impl(sel, d, context, is_relative, start)
+            serialize_selector_impl(
+                sel,
+                d,
+                context,
+                is_relative,
+                start,
+                NestingTail::OnlyPseudos,
+            )
         })
     }
 
@@ -623,16 +676,19 @@ pub(crate) mod serialize {
             context,
             is_relative,
             NestingPosition::SelectorStart,
+            NestingTail::OnlyPseudos,
         )
     }
 
-    /// `start` is where the first simple selector of `selector` lands.
+    /// `start` is where the first simple selector of `selector` lands, and
+    /// `tail` is what prints after `selector`.
     fn serialize_selector_impl(
         selector: &parser::Selector,
         dest: &mut Printer,
         context: Option<&StyleContext>,
         is_relative_: bool,
         start: NestingPosition,
+        tail: NestingTail,
     ) -> Result<(), PrintErr> {
         let mut is_relative = is_relative_;
 
@@ -746,6 +802,30 @@ pub(crate) mod serialize {
             };
             let mut perform_step_2 = true;
             let next_combinator = combinators.next();
+            // Only pseudos print after `compound[index]` when `index + 1` is in the
+            // run of pseudos that ends `compound`, and only pseudo-elements follow
+            // `compound`.
+            let pseudos_start = if tail == NestingTail::OnlyPseudos
+                && matches!(
+                    next_combinator,
+                    None | Some(
+                        parser::Combinator::PseudoElement
+                            | parser::Combinator::Part
+                            | parser::Combinator::SlotAssignment
+                    )
+                ) {
+                let pseudos = compound.iter().rev();
+                compound.len() - pseudos.take_while(|c| can_follow_pseudo_element(c)).count()
+            } else {
+                usize::MAX
+            };
+            let tail_after = |index: usize| {
+                if index + 1 >= pseudos_start {
+                    NestingTail::OnlyPseudos
+                } else {
+                    NestingTail::Other
+                }
+            };
             if first_non_namespace == compound.len() - 1 {
                 // We have to be careful here, because if there is a
                 // pseudo element "combinator" there isn't really just
@@ -774,11 +854,22 @@ pub(crate) mod serialize {
                     };
 
                     for simple in slice {
-                        serialize_component(simple, dest, context, NestingPosition::MidCompound)?;
+                        serialize_component(
+                            simple,
+                            dest,
+                            context,
+                            NestingPosition::MidCompound,
+                            NestingTail::Other,
+                        )?;
                     }
 
                     if swap_nesting {
-                        serialize_nesting(dest, context, NestingPosition::MidCompound)?;
+                        serialize_nesting(
+                            dest,
+                            context,
+                            NestingPosition::MidCompound,
+                            tail_after(compound.len() - 1),
+                        )?;
                     }
 
                     // Skip step 2, which is an "otherwise".
@@ -814,20 +905,38 @@ pub(crate) mod serialize {
                     i += 1;
                     let local = &iter[i];
                     i += 1;
-                    serialize_component(local, dest, context, NestingPosition::MidCompound)?;
+                    serialize_component(
+                        local,
+                        dest,
+                        context,
+                        NestingPosition::MidCompound,
+                        NestingTail::Other,
+                    )?;
 
                     // Also check the next item in case of namespaces.
                     if first_non_namespace > first_index {
                         let local2 = &iter[i];
                         i += 1;
-                        serialize_component(local2, dest, context, NestingPosition::MidCompound)?;
+                        serialize_component(
+                            local2,
+                            dest,
+                            context,
+                            NestingPosition::MidCompound,
+                            NestingTail::Other,
+                        )?;
                     }
 
-                    serialize_component(nesting, dest, context, NestingPosition::MidCompound)?;
+                    serialize_component(
+                        nesting,
+                        dest,
+                        context,
+                        NestingPosition::MidCompound,
+                        tail_after(i - 1),
+                    )?;
                 } else if has_leading_nesting && should_compile_nesting {
                     // Nesting selector may serialize differently if it is leading, due to type selectors.
                     i += 1;
-                    serialize_nesting(dest, context, compound_position)?;
+                    serialize_nesting(dest, context, compound_position, tail_after(0))?;
                 }
 
                 if i < compound.len() {
@@ -837,7 +946,7 @@ pub(crate) mod serialize {
                     } else {
                         NestingPosition::MidCompound
                     };
-                    for simple in &iter[i..] {
+                    for (offset, simple) in iter[i..].iter().enumerate() {
                         if matches!(simple, Component::ExplicitUniversalType) {
                             // Can't have a namespace followed by a pseudo-element
                             // selector followed by a universal selector in the same
@@ -847,7 +956,13 @@ pub(crate) mod serialize {
                                 continue;
                             }
                         }
-                        serialize_component(simple, dest, context, position)?;
+                        serialize_component(
+                            simple,
+                            dest,
+                            context,
+                            position,
+                            tail_after(i + offset),
+                        )?;
                         position = NestingPosition::MidCompound;
                     }
                 }
@@ -878,6 +993,7 @@ pub(crate) mod serialize {
         dest: &mut Printer,
         context: Option<&StyleContext>,
         position: NestingPosition,
+        tail: NestingTail,
     ) -> Result<(), PrintErr> {
         match component {
             Component::Combinator(c) => return serialize_combinator(*c, dest),
@@ -936,13 +1052,16 @@ pub(crate) mod serialize {
                     Component::Where(_) => dest.write_str(b":where(")?,
                     Component::Is(selectors) => {
                         // If there's only one simple selector, serialize it directly.
-                        if should_unwrap_is(selectors) && fits_at(&selectors[0], position) {
+                        if should_unwrap_is(selectors)
+                            && fits_at(&selectors[0], position, NestingTail::OnlyPseudos)
+                        {
                             return serialize_selector_impl(
                                 &selectors[0],
                                 dest,
                                 context,
                                 false,
                                 position,
+                                tail,
                             );
                         }
 
@@ -996,7 +1115,7 @@ pub(crate) mod serialize {
                 return serialize_pseudo_element(pseudo, dest, context);
             }
             Component::Nesting => {
-                return serialize_nesting(dest, context, position);
+                return serialize_nesting(dest, context, position, tail);
             }
             Component::Class(class) => {
                 dest.write_char(b'.')?;
@@ -1381,6 +1500,7 @@ pub(crate) mod serialize {
         dest: &mut Printer,
         context: Option<&StyleContext>,
         position: NestingPosition,
+        tail: NestingTail,
     ) -> Result<(), PrintErr> {
         if let Some(ctx) = context {
             dest.nesting_expansions += 1;
@@ -1394,9 +1514,19 @@ pub(crate) mod serialize {
             // Otherwise, use an :is() pseudo class.
             // Type selectors are only allowed at the start of a compound selector,
             // so use :is() if that is not the case.
-            if ctx.selectors.v.len() == 1 && fits_at(ctx.selectors.v.at(0), position) {
-                // A `&` that leads the parent selector lands where this `&` does.
-                serialize_selector_impl(ctx.selectors.v.at(0), dest, ctx.parent, false, position)?;
+            // Only pseudo-classes and pseudo-elements can follow a pseudo-element,
+            // so use :is() for a parent selector with one if something else follows.
+            if ctx.selectors.v.len() == 1 && fits_at(ctx.selectors.v.at(0), position, tail) {
+                // A `&` that leads the parent selector lands where this `&` does,
+                // with the same tail.
+                serialize_selector_impl(
+                    ctx.selectors.v.at(0),
+                    dest,
+                    ctx.parent,
+                    false,
+                    position,
+                    tail,
+                )?;
             } else {
                 dest.write_str(b":is(")?;
                 serialize_selector_list(ctx.selectors.v.slice(), dest, ctx.parent, false)?;

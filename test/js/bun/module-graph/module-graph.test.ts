@@ -2316,13 +2316,13 @@ describe("Bun.ModuleGraph — constructor / method contract", () => {
       "delete": "TypeError",
       callers: ["graph A", "graph B", "the host"],
     });
-    expect(exitCode).toBe(0);
     expect(Object.getOwnPropertyDescriptor(Bun.ModuleGraph, "current")).toEqual({
       get: expect.any(Function),
       set: undefined,
       enumerable: false,
       configurable: false,
     });
+    expect(exitCode).toBe(0);
   });
   test("re-entrancy: onExit/onError callbacks may create graphs, import, and dispose the calling graph", async () => {
     const d = fixture({

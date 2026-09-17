@@ -240,13 +240,10 @@ impl Request {
     /// If the headers are empty, it will look at request_context to get the headers.
     /// If the headers are empty and request_context is null, it will create an empty FetchHeaders object.
     #[allow(clippy::mut_from_ref)]
-    pub(crate) fn ensure_fetch_headers(
-        &self,
-        global_this: &JSGlobalObject,
-    ) -> JsResult<&mut HeadersRef> {
+    pub(crate) fn ensure_fetch_headers(&self) -> &mut HeadersRef {
         if self.headers.get().is_some() {
             // headers is already set
-            return Ok(self.headers_mut().as_mut().unwrap());
+            return self.headers_mut().as_mut().unwrap();
         }
 
         if let Some(req) = self.request_context.get_request() {
@@ -257,42 +254,9 @@ impl Request {
         } else {
             // we don't have a request context, so we need to create an empty headers object
             self.headers.set(Some(HeadersRef::create_empty()));
-            // Snapshot the pointer first; it stays valid across the field borrow.
-            let content_type: Option<*const [u8]> = match self.body_value() {
-                BodyValue::Blob(blob) => {
-                    Some(std::ptr::from_ref::<[u8]>(blob.content_type_slice()))
-                }
-                BodyValue::Locked(locked) => match locked.readable.get() {
-                    Some(readable) => match readable.ptr {
-                        crate::webcore::readable_stream::Source::Blob(blob) => {
-                            // SAFETY: `Source::Blob` holds a live `*mut ByteBlobLoader`
-                            // for as long as the readable stream exists; we only read
-                            // its `content_type` slice and immediately copy below.
-                            let ct: &[u8] = unsafe { (*blob).content_type.as_slice() };
-                            Some(std::ptr::from_ref::<[u8]>(ct))
-                        }
-                        _ => None,
-                    },
-                    None => None,
-                },
-                _ => None,
-            };
-
-            if let Some(content_type_) = content_type {
-                // SAFETY: the sources above are live for the duration of this
-                // call; the bytes are copied into the header map below.
-                let content_type_ = unsafe { &*content_type_ };
-                if !content_type_.is_empty() {
-                    self.headers_mut().as_mut().unwrap().put(
-                        HTTPHeaderName::ContentType,
-                        &BunString::ascii(content_type_),
-                        global_this,
-                    )?;
-                }
-            }
         }
 
-        Ok(self.headers_mut().as_mut().unwrap())
+        self.headers_mut().as_mut().unwrap()
     }
 
     #[allow(clippy::mut_from_ref)]
@@ -315,7 +279,7 @@ impl Request {
 
     /// This should only be called by the JS code. use getFetchHeaders to get the current headers or ensureFetchHeaders to get the headers and create them if they don't exist.
     pub(crate) fn get_headers(&self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(self.ensure_fetch_headers(global_this)?.to_js(global_this))
+        Ok(self.ensure_fetch_headers().to_js(global_this))
     }
 
     pub(crate) fn clone_headers(
@@ -413,14 +377,15 @@ impl Request {
 }
 
 impl Request {
-    /// TODO: do we need this?
+    /// The Request that `server.fetch(url, init)` hands to the handler.
     pub(crate) fn init2(
         url: BunString,
         headers: Option<HeadersRef>,
         body: BodyHiveHandle,
         method: Method,
-    ) -> Request {
-        Request {
+        global_this: &JSGlobalObject,
+    ) -> JsResult<Request> {
+        let mut request = Request {
             url: JsCell::new(url),
             headers: JsCell::new(headers),
             signal: JsCell::new(None),
@@ -431,7 +396,35 @@ impl Request {
             request_context: AnyRequestContext::NULL,
             weak_ptr_data: WeakPtrData::EMPTY,
             reported_estimated_size: Cell::new(0),
+        };
+        if let Err(err) = request.append_content_type_from_body(global_this) {
+            // SAFETY: `request` is dropped right after; this is the only release of its body.
+            unsafe { ManuallyDrop::drop(&mut request.body) };
+            return Err(err);
         }
+        Ok(request)
+    }
+
+    /// Fetch "extract a body": append a Blob body's MIME type unless a `Content-Type` is set.
+    fn append_content_type_from_body(&self, global_this: &JSGlobalObject) -> JsResult<()> {
+        let BodyValue::Blob(blob) = self.body_value() else {
+            return Ok(());
+        };
+        let content_type = blob.content_type_slice();
+        if content_type.is_empty() {
+            return Ok(());
+        }
+        let headers = self
+            .headers_mut()
+            .get_or_insert_with(HeadersRef::create_empty);
+        if headers.fast_has(HTTPHeaderName::ContentType) {
+            return Ok(());
+        }
+        headers.put(
+            HTTPHeaderName::ContentType,
+            &BunString::ascii(content_type),
+            global_this,
+        )
     }
 
     pub(crate) fn get_form_data_encoding(
@@ -1077,6 +1070,9 @@ impl Request {
         let values_to_try = &values_to_try_[0..((!is_first_argument_a_url) as usize
             + (arguments.len() > 1 && arguments[1].is_object()) as usize)];
 
+        // The body came from `init.body`, not from an input Request (whose header list comes along).
+        let mut body_extracted = false;
+
         for &value in values_to_try {
             let value_type = value.js_type();
             let explicit_check = values_to_try.len() == 2
@@ -1187,6 +1183,8 @@ impl Request {
                                 match response.clone_body_value_via_cached_stream(global_this) {
                                     Ok(v) => {
                                         *req.body_value_mut() = v;
+                                        // Bun extension: the Response's body stands in for `init.body`.
+                                        body_extracted = true;
                                     }
                                     Err(e) => bail!(Err(e)),
                                 }
@@ -1217,6 +1215,7 @@ impl Request {
                         match BodyValue::from_js(global_this, body_) {
                             Ok(v) => {
                                 *req.body_value_mut() = v;
+                                body_extracted = true;
                             }
                             Err(e) => bail!(Err(e)),
                         }
@@ -1398,28 +1397,10 @@ impl Request {
 
         req.url.set(href);
 
-        if matches!(req.body_value(), BodyValue::Blob(_)) && req.headers.get().is_some() {
-            if let BodyValue::Blob(blob) = req.body_value() {
-                let ct: &[u8] = blob.content_type_slice();
-                if !ct.is_empty()
-                    && !req
-                        .headers_mut()
-                        .as_mut()
-                        .unwrap()
-                        .fast_has(HTTPHeaderName::ContentType)
-                {
-                    // Reshaped for borrowck — split borrow of req.body and req.headers
-                    let ct_ptr: *const [u8] = ct;
-                    match req.headers_mut().as_mut().unwrap().put(
-                        HTTPHeaderName::ContentType,
-                        // SAFETY: ct_ptr borrows req.body which is not mutated here.
-                        &BunString::ascii(unsafe { &*ct_ptr }),
-                        global_this,
-                    ) {
-                        Ok(()) => {}
-                        Err(e) => bail!(Err(e)),
-                    }
-                }
+        if body_extracted {
+            match req.append_content_type_from_body(global_this) {
+                Ok(()) => {}
+                Err(e) => bail!(Err(e)),
             }
         }
 

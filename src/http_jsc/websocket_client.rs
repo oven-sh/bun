@@ -103,10 +103,15 @@ pub struct WebSocket<const SSL: bool> {
     pub(crate) payload_length_frame_bytes: Cell<[u8; 8]>,
     pub(crate) payload_length_frame_len: Cell<u8>,
 
-    /// The queued `InitialDataTask` (handshake-overflow bytes) until it runs or
-    /// `handle_data` drains it first; detached in `Drop` so a task that
-    /// outlives us does nothing.
-    pending_initial_task: Cell<Option<BackRef<InitialDataTask<SSL>, Root>>>,
+    /// `pause()` is in effect: `handle_data` keeps what it gets in `held_data`.
+    paused: Cell<bool>,
+    /// Received bytes the frame parser has not seen yet: the handshake
+    /// overflow, and what reached `handle_data` during a pause.
+    held_data: RefCell<Vec<u8>>,
+    /// The queued `HeldDataTask` until it runs or `handle_data` parses
+    /// `held_data` first; detached in `Drop` so a task that outlives us does
+    /// nothing.
+    pending_held_task: Cell<Option<BackRef<HeldDataTask<SSL>, Root>>>,
     pub(crate) deflate: RefCell<Option<Box<WebSocketDeflate>>>,
 
     /// Track if current message is compressed
@@ -177,6 +182,8 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.unref_keep_alive();
         self.clear_receive_buffers(true);
         self.clear_send_buffers(true);
+        self.paused.set(false);
+        self.held_data.take();
         self.control_frame_started.set(false);
         self.ping_len.set(0);
         self.close_dispatch_pending.take();
@@ -298,6 +305,8 @@ impl<const SSL: bool> WebSocket<SSL> {
             self.release_io_ref();
             return;
         }
+        // The peer ended the connection. What it sent before that still counts, paused or not.
+        self.parse_held_data();
         self.clear_data();
         self.detach_tcp();
 
@@ -530,14 +539,9 @@ impl<const SSL: bool> WebSocket<SSL> {
 
         // Due to scheduling, it is possible for the websocket onData
         // handler to run with additional data before the microtask queue is
-        // drained.
-        if let Some(task) = this.pending_initial_task.take() {
-            // Deliver the buffered bytes now (this calls `handle_data`); the
-            // queued `InitialDataTask` is detached and will do nothing.
-            task.ws.set(None);
-            if let Some(initial_data) = task.data.replace(None) {
-                initial_data.deliver(this);
-            }
+        // drained. The held bytes are older than `data_`, so they go first.
+        if !this.paused.get() && !this.held_data.borrow().is_empty() {
+            this.parse_held_data();
 
             // If we disconnected for any reason in the re-entrant case, we should just ignore the data
             if this.cpp_websocket().is_none() || !this.has_tcp() {
@@ -545,7 +549,49 @@ impl<const SSL: bool> WebSocket<SSL> {
             }
         }
 
+        // The socket stopped reading, but these bytes were in user space
+        // already (the rest of a TLS read, the next chunk of a proxy tunnel).
+        if this.paused.get() {
+            this.held_data.borrow_mut().extend_from_slice(data_);
+            return;
+        }
+
         this.handle_data_loop(data_);
+    }
+
+    /// Callers decide whether `pause()` applies: a peer that ends the
+    /// connection gets its last bytes parsed, paused or not.
+    fn parse_held_data(&self) {
+        // A queued `HeldDataTask` must do nothing after this call. Its claim
+        // on the C++ `WebSocket` ends here, so `resume()` can queue a new one.
+        let _pending_activity = self.pending_held_task.take().and_then(|task| {
+            task.ws.set(None);
+            task.pending_activity.replace(None)
+        });
+        let held = self.held_data.take();
+        if held.is_empty() || self.close_received.get() || self.cpp_websocket().is_none() {
+            return;
+        }
+        self.handle_data_loop(&held);
+    }
+
+    /// Queue the microtask that parses `held_data`, unless one is queued already.
+    fn schedule_held_data(this: ThisPtr<Self>) {
+        if this.held_data.borrow().is_empty() || this.pending_held_task.get().is_some() {
+            return;
+        }
+        let Some(outgoing) = this.cpp_websocket() else {
+            return;
+        };
+        // Use a higher-priority callback than the next socket read.
+        let task = Box::new(HeldDataTask {
+            ws: Cell::new(Some(BackRef::from(this))),
+            // We need to ref the outgoing websocket so that it doesn't get
+            // finalized before the held bytes are parsed.
+            pending_activity: JsCell::new(Some(CppWebSocketRef::new(&outgoing))),
+        });
+        this.pending_held_task
+            .set(Some(this.global_this.queue_microtask_boxed(task)));
     }
 
     fn handle_data_loop(&self, data: &[u8]) {
@@ -1106,8 +1152,18 @@ impl<const SSL: bool> WebSocket<SSL> {
             return;
         }
         if !self.has_tcp() {
-            self.dispatch_abrupt_close(ErrorCode::Ended);
-            self.clear_data();
+            match dispatch_code {
+                // The peer's Close frame was read before the socket went away, so it still names the close code.
+                Some(code) if strings::is_valid_utf8(&body[..body_len]) => {
+                    let reason = bun_core::String::clone_utf8(&body[..body_len]);
+                    self.clear_data();
+                    self.dispatch_close(code, reason);
+                }
+                _ => {
+                    self.dispatch_abrupt_close(ErrorCode::Ended);
+                    self.clear_data();
+                }
+            }
             return;
         }
         // shutdown_read/shutdown are deferred to shutdown_after_close_frame()
@@ -1242,17 +1298,31 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     pub(crate) fn pause(&self) -> bool {
-        if let Some(tunnel) = self.tunnel() {
-            return tunnel.pause_stream();
+        let paused = match self.tunnel() {
+            Some(tunnel) => tunnel.pause_stream(),
+            None => self.tcp.get().pause_stream(),
+        };
+        // Only a socket that stopped reading bounds what `held_data` can take.
+        if paused {
+            self.paused.set(true);
         }
-        self.tcp.get().pause_stream()
+        paused
     }
 
+    /// The socket half of `resume()`. `held_data` stays where it is.
     pub(crate) fn resume(&self) -> bool {
+        self.paused.set(false);
         if let Some(tunnel) = self.tunnel() {
             return tunnel.resume_stream();
         }
         self.tcp.get().resume_stream()
+    }
+
+    /// `resume()` from JS: the held bytes go first, in a microtask.
+    pub(crate) fn resume_and_parse_held_data(this: ThisPtr<Self>) -> bool {
+        let resumed = this.resume();
+        Self::schedule_held_data(this);
+        resumed
     }
 
     /// Frame small unbackpressured sends on the stack; else fall back to [`Self::send_data`].
@@ -1417,7 +1487,9 @@ impl<const SSL: bool> WebSocket<SSL> {
             header_fragment: Cell::new(None),
             payload_length_frame_bytes: Cell::new([0u8; 8]),
             payload_length_frame_len: Cell::new(0),
-            pending_initial_task: Cell::new(None),
+            paused: Cell::new(false),
+            held_data: RefCell::new(Vec::new()),
+            pending_held_task: Cell::new(None),
             deflate: RefCell::new(
                 deflate_params.and_then(|params| WebSocketDeflate::init(*params).ok()),
             ),
@@ -1453,19 +1525,9 @@ impl<const SSL: bool> WebSocket<SSL> {
             ws.poll_ref.set(poll_ref);
         }
 
-        if let Some(buffered_data) = buffered_data.filter(|b| !b.0.is_empty()) {
-            // Use a higher-priority callback for the initial onData handler.
-            let task = Box::new(InitialDataTask {
-                ws: Cell::new(Some(BackRef::from(ws))),
-                data: JsCell::new(Some(InitialDataHandler {
-                    slice: buffered_data.0,
-                    // We need to ref the outgoing websocket so that it doesn't get
-                    // finalized before the initial data handler is called.
-                    _pending_activity: CppWebSocketRef::new(outgoing),
-                })),
-            });
-            ws.pending_initial_task
-                .set(Some(global_this.queue_microtask_boxed(task)));
+        if let Some(buffered_data) = buffered_data {
+            ws.held_data.replace(buffered_data.0);
+            Self::schedule_held_data(ws);
         }
 
         ws.as_ptr()
@@ -1539,6 +1601,13 @@ impl<const SSL: bool> WebSocket<SSL> {
         Self::handle_data(this, data);
     }
 
+    /// Called by the WebSocketProxyTunnel when its TLS session ends.
+    pub(crate) fn handle_tunnel_close(&self) {
+        // The peer ended the connection. What it sent before that still counts, paused or not.
+        self.parse_held_data();
+        self.fail(ErrorCode::Ended);
+    }
+
     /// Called by the WebSocketProxyTunnel when the underlying socket drains.
     /// Flushes any buffered plaintext data through the tunnel.
     pub(crate) fn handle_tunnel_writable(this: ThisPtr<Self>) {
@@ -1589,6 +1658,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         let mut cost: usize = size_of::<Self>();
         cost += self.send_buffer.try_borrow().map_or(0, |b| b.capacity());
         cost += self.receive_buffer.try_borrow().map_or(0, |b| b.capacity());
+        cost += self.held_data.try_borrow().map_or(0, |b| b.capacity());
         // This is under-estimated a little, as we don't include usockets context.
         cost
     }
@@ -1599,14 +1669,14 @@ impl<const SSL: bool> Drop for WebSocket<SSL> {
         self.clear_data();
         // deflate already dropped in clear_data; this is defensive
         self.deflate.replace(None);
-        if let Some(task) = self.pending_initial_task.take() {
+        if let Some(task) = self.pending_held_task.take() {
             // Still queued (or abandoned with the VM's microtask queue); it
             // must not follow its back-reference to us.
             task.ws.set(None);
             if self.global_this.bun_vm().is_shutting_down() {
                 // The queue will never run it; release the C++ pending-activity
                 // ref it holds now.
-                task.data.set(None);
+                task.pending_activity.set(None);
             }
         }
         bun_core::scoped_log!(alloc, "destroy({}) = {:p}", Self::ALLOC_TYPE_NAME, self);
@@ -1659,8 +1729,10 @@ pub fn bun__websocketclient__pause(this: &crate::websocket_client::WebSocketClie
     this.pause()
 }
 // HOST_EXPORT(Bun__WebSocketClient__resume, c)
-pub fn bun__websocketclient__resume(this: &crate::websocket_client::WebSocketClient) -> bool {
-    this.resume()
+pub fn bun__websocketclient__resume(
+    this: ThisPtr<crate::websocket_client::WebSocketClient>,
+) -> bool {
+    WebSocketClient::resume_and_parse_held_data(this)
 }
 // HOST_EXPORT(Bun__WebSocketClient__close, c)
 pub fn bun__websocketclient__close(
@@ -1744,8 +1816,10 @@ pub fn bun__websocketclienttls__pause(this: &crate::websocket_client::WebSocketC
     this.pause()
 }
 // HOST_EXPORT(Bun__WebSocketClientTLS__resume, c)
-pub fn bun__websocketclienttls__resume(this: &crate::websocket_client::WebSocketClientTLS) -> bool {
-    this.resume()
+pub fn bun__websocketclienttls__resume(
+    this: ThisPtr<crate::websocket_client::WebSocketClientTLS>,
+) -> bool {
+    WebSocketClientTLS::resume_and_parse_held_data(this)
 }
 // HOST_EXPORT(Bun__WebSocketClientTLS__close, c)
 pub fn bun__websocketclienttls__close(
@@ -1809,50 +1883,35 @@ pub fn bun__websocketclienttls__write_string(
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// InitialDataHandler
+// HeldDataTask
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Bytes the upgrade client read past the end of the handshake response; boxed
 /// so they cross C++ (`WebSocket::didConnect*`) as one opaque pointer.
 pub struct InitialData(pub Vec<u8>);
 
-/// Handshake-overflow bytes plus the pending-activity ref that keeps the C++
-/// `WebSocket` alive until they are delivered.
-struct InitialDataHandler {
-    slice: Vec<u8>,
-    _pending_activity: CppWebSocketRef,
-}
-
-impl InitialDataHandler {
-    /// Feed the buffered bytes to `ws` as if they had just arrived.
-    fn deliver<const SSL: bool>(self, ws: ThisPtr<WebSocket<SSL>>) {
-        // For tunnel mode, tcp is detached but connection is still active through the tunnel
-        let is_connected = !ws.tcp.get().is_closed() || ws.tunnel().is_some();
-        if ws.cpp_websocket().is_some() && is_connected {
-            WebSocket::<SSL>::handle_data(ws, &self.slice);
-        }
-    }
-}
-
-/// Microtask that delivers [`InitialDataHandler`] ahead of fresh socket data.
-pub(crate) struct InitialDataTask<const SSL: bool> {
-    /// Detached by `WebSocket`'s `Drop` (or by `handle_data` draining `data`
-    /// first) so a task that outlives its client does nothing.
+/// Microtask that parses `held_data` ahead of fresh socket data.
+pub(crate) struct HeldDataTask<const SSL: bool> {
+    /// Detached by `WebSocket`'s `Drop` (or by `handle_data` parsing
+    /// `held_data` first) so a task that outlives its client does nothing.
     ws: Cell<Option<BackRef<WebSocket<SSL>, Root>>>,
-    data: JsCell<Option<InitialDataHandler>>,
+    /// Keeps the C++ `WebSocket` alive until the held bytes are parsed.
+    pending_activity: JsCell<Option<CppWebSocketRef>>,
 }
 
-impl<const SSL: bool> jsc::MicrotaskCallback for InitialDataTask<SSL> {
+impl<const SSL: bool> jsc::MicrotaskCallback for HeldDataTask<SSL> {
     fn run(self: Box<Self>) {
         let Some(ws) = self.ws.take() else {
             return;
         };
         let ws = ws.this_ptr();
-        ws.pending_initial_task.set(None);
-        if let Some(initial_data) = self.data.replace(None) {
-            let _guard = RefPtr::from_this(ws);
-            initial_data.deliver(ws);
+        ws.pending_held_task.set(None);
+        // `resume()` queues the next task.
+        if ws.paused.get() {
+            return;
         }
+        let _guard = RefPtr::from_this(ws);
+        ws.parse_held_data();
     }
 }
 

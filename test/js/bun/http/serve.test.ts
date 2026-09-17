@@ -5479,13 +5479,12 @@ console.log(server.port);
   }
 
   it("bounds what the default error printer writes", async () => {
-    using dir = tempDir("serve-throw-deep-array", { "server.js": serverSource });
     // A file, not a pipe: with no depth cap this one request writes about 8 MB.
+    using dir = tempDir("serve-throw-deep-array", {});
     const errPath = join(String(dir), "stderr.log");
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "server.js"],
+      cmd: [bunExe(), "-e", serverSource],
       env: bunEnv,
-      cwd: String(dir),
       stdout: "pipe",
       stderr: Bun.file(errPath),
     });
@@ -5503,11 +5502,9 @@ console.log(server.port);
   });
 
   it("keeps serving when the body is too deep for the printer to walk", async () => {
-    using dir = tempDir("serve-throw-deeper-array", { "server.js": serverSource });
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "server.js"],
+      cmd: [bunExe(), "-e", serverSource],
       env: bunEnv,
-      cwd: String(dir),
       stdout: "pipe",
       stderr: "ignore",
     });

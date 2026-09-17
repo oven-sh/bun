@@ -316,8 +316,7 @@ impl IOReader {
         self.set_reading(false);
         let s = self.state();
         s.raw_err = Some(err.clone());
-        // The error ends every registration. A child that restarts the
-        // reader registers again.
+        // The error ends every registration.
         let readers: Vec<ChildPtr> = core::mem::take(&mut s.readers);
         let interp = s.interp;
         for r in readers {
@@ -336,9 +335,7 @@ impl IOReader {
         let _keepalive = self.keepalive();
         self.set_reading(false);
         let s = self.state();
-        // EOF ends every registration. A later reader of the same stdin
-        // (`$(cat)` then `cat`) registers again and must not share the
-        // notification with a child that is already freed.
+        // EOF ends every registration. A later `cat` registers again.
         let readers: Vec<ChildPtr> = core::mem::take(&mut s.readers);
         let interp = s.interp;
         // `SystemError` isn't `Clone` yet, so we keep the source `sys::Error`

@@ -1437,6 +1437,55 @@ it("an asynchronous SNICallback resolving cb(null, null) still honors addContext
   await once(server, "close");
 });
 
+describe("addContext with a name of more than 10 labels", () => {
+  // The native SNI tree used to cap lookups and removals at 10 labels while
+  // accepting any number on insert, so such a name was registered but never
+  // selected at the handshake and could not be replaced.
+  const longName = "a.b.c.d.e.f.g.h.i.j.k.example";
+  const altCert = { key: rawKey, cert: cert };
+  const altFingerprint = new crypto.X509Certificate(cert).fingerprint256;
+
+  it.concurrent("selects the addContext certificate at the handshake", async () => {
+    const server: Server = createServer(COMMON_CERT, socket => socket.end());
+    server.addContext(longName, altCert);
+    server.on("tlsClientError", err => {
+      throw err;
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const port = (server.address() as AddressInfo).port;
+    const client = connect({ port, host: "127.0.0.1", servername: longName, rejectUnauthorized: false });
+    await once(client, "secureConnect");
+    expect(client.getPeerCertificate().fingerprint256).toBe(altFingerprint);
+    client.end();
+    await once(client, "close");
+    server.close();
+    await once(server, "close");
+  });
+
+  it.concurrent("a second addContext for the same name replaces the first", async () => {
+    // After listen() each addContext goes straight to the native tree, which
+    // removes the old entry and adds the new one. The removal used to miss,
+    // so the add saw a duplicate and addContext threw "Failed to register SNI".
+    const server: Server = createServer(COMMON_CERT, socket => socket.end());
+    server.on("tlsClientError", err => {
+      throw err;
+    });
+    server.listen(0);
+    await once(server, "listening");
+    server.addContext(longName, COMMON_CERT);
+    server.addContext(longName, altCert);
+    const port = (server.address() as AddressInfo).port;
+    const client = connect({ port, host: "127.0.0.1", servername: longName, rejectUnauthorized: false });
+    await once(client, "secureConnect");
+    expect(client.getPeerCertificate().fingerprint256).toBe(altFingerprint);
+    client.end();
+    await once(client, "close");
+    server.close();
+    await once(server, "close");
+  });
+});
+
 describe("tls.Server socket destroySoon", () => {
   // destroySoon() after end(big) must deliver every byte even when the TLS write
   // batcher's final flush spills (#31584). The spill/kernel-buffer race hits ~4% of

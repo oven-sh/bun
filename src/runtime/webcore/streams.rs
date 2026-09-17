@@ -2651,8 +2651,13 @@ impl NetworkSink {
         unsafe { crate::webcore::s3::client::S3UploadStreamWrapper::deref(wrapper) };
     }
 
-    pub(crate) fn end_from_js(&mut self, _cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
+    pub(crate) fn end_from_js(&mut self, cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
         let _ = self.end(None);
+        // A failure inside `end()` (the single PUT could not be signed)
+        // already ran the upload callback and detached the task.
+        if let Some(err) = self.pending_error.get() {
+            return bun_sys::Result::Ok(JSPromise::rejected_promise(cx.global(), err).to_js());
+        }
         if self.end_promise.has_value() {
             // we are already waiting for the end
             return bun_sys::Result::Ok(self.end_promise.value());

@@ -2133,7 +2133,7 @@ describe("s3 upload stream body error", () => {
   });
 });
 
-describe("s3 writer upload failure", () => {
+describe.concurrent("s3 writer upload failure", () => {
   // A mock S3 that answers 403 to every UploadPart. `abortSeen` settles when
   // AbortMultipartUpload arrives, which the upload sends after it reported the
   // failure to the sink.
@@ -2175,7 +2175,8 @@ describe("s3 writer upload failure", () => {
     expect(() => writer.write(new Uint8Array(1024))).toThrow(accessDenied);
     expect(() => writer.flush()).toThrow(accessDenied);
     expect(() => writer.end()).toThrow(accessDenied);
-    expect(() => (writer as any).close()).toThrow(accessDenied);
+    // close() is cleanup. It does not throw the error again.
+    expect((writer as any).close()).toBeUndefined();
   });
 
   it("rejects the pending flush() and end() and throws from later write() and end()", async () => {
@@ -2194,6 +2195,16 @@ describe("s3 writer upload failure", () => {
 
     expect(() => writer.write(new Uint8Array(1024))).toThrow(accessDenied);
     expect(() => writer.end()).toThrow(accessDenied);
+    expect((writer as any).close()).toBeUndefined();
+  });
+
+  it("rejects end() when the upload fails inside end() itself", async () => {
+    // Under partSize, end() signs and sends the single PUT. Without credentials
+    // the signing fails before any request, so the failure is synchronous.
+    const writer = new S3Client({ bucket: "bkt" }).file("obj.bin").writer();
+    writer.write("hello");
+    await expect(writer.end()).rejects.toEqual(expect.objectContaining({ code: "ERR_S3_MISSING_CREDENTIALS" }));
+    expect((writer as any).close()).toBeUndefined();
   });
 });
 

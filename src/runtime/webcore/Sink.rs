@@ -729,18 +729,10 @@ impl<T: JsSinkType> JSSink<T> {
         use bun_sys_jsc::ErrorJsc;
         bun_core::mark_binding!();
 
-        // SAFETY: caller contract; the borrow ends before `close_with_error`,
-        // which may re-enter or free the sink.
-        if let Some(err) = unsafe { (*this).get_pending_error() } {
-            // `throw_error` sets the pending JS exception and returns the
-            // `JsError` for `?`-propagation; this host fn returns bare
-            // `JSValue`, so report and return ZERO (caller checks exception).
-            let _ = global.vm().throw_error(global, err);
-            return JSValue::ZERO;
-        }
-
+        // `close()` is cleanup. It does not throw a stored failure that a
+        // `write()`, `flush()` or `end()` already reported.
         let result = if reason.is_empty() {
-            // SAFETY: as above; `end` does not free the sink.
+            // SAFETY: caller contract; `end` does not free the sink.
             unsafe { (*this).end(None) }
         } else {
             // SAFETY: caller contract.

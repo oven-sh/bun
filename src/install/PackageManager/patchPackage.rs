@@ -257,12 +257,18 @@ pub fn do_patch_commit(
             let (pkg_id, node_modules_relative_path) =
                 pkg_info_for_name_and_version(&lockfile, &mut iterator, argument, name, version);
 
-            let changes_dir = resolve_path::join_z_buf::<platform::Auto>(
+            let Some(changes_dir) = resolve_path::join_z_buf_checked::<platform::Auto>(
                 &mut pathbuf[..],
                 &[&node_modules_relative_path, name],
-            )
-            .as_bytes()
-            .to_vec();
+            ) else {
+                Output::err(
+                    "ENAMETOOLONG",
+                    "the path to the package folder of {f} is too long",
+                    (bun_fmt::quote(argument),),
+                );
+                Global::crash();
+            };
+            let changes_dir = changes_dir.as_bytes().to_vec();
             break 'brk (changes_dir, *lockfile.packages.get(pkg_id as usize));
         }
     };
@@ -967,27 +973,18 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
     }
 
     if not_in_workspace_root {
-        let mut bufn = bun_paths::path_buffer_pool::get();
+        let abs_module_folder = resolve_path::join::<platform::Posix>(&[
+            FileSystem::instance().top_level_dir_without_trailing_slash(),
+            module_folder,
+        ]);
         bun_core::pretty!(
             "\nTo patch <b>{}<r>, edit the following folder:\n\n  <cyan>{}<r>\n",
             bstr::BStr::new(pkg_name),
-            bstr::BStr::new(resolve_path::join_string_buf::<platform::Posix>(
-                &mut bufn[..],
-                &[
-                    FileSystem::instance().top_level_dir_without_trailing_slash(),
-                    module_folder
-                ]
-            )),
+            bstr::BStr::new(abs_module_folder),
         );
         bun_core::pretty!(
             "\nOnce you're done with your changes, run:\n\n  <cyan>bun patch --commit '{}'<r>\n",
-            bstr::BStr::new(resolve_path::join_string_buf::<platform::Posix>(
-                &mut bufn[..],
-                &[
-                    FileSystem::instance().top_level_dir_without_trailing_slash(),
-                    module_folder
-                ]
-            )),
+            bstr::BStr::new(abs_module_folder),
         );
     } else {
         bun_core::pretty!(

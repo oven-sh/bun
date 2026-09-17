@@ -2128,18 +2128,25 @@ fn enqueue_local_tarball(
     // other dependencies (e.g. `appendPackage` / `StringBuilder.allocate`
     // in `Package.fromNPM`).
     let mut abs_buf = bun_paths::path_buffer_pool::get();
-    let (tarball_path, normalize): (&[u8], bool) =
-        match local_tarball_base_dir(&this.lockfile, dependency_id, path) {
-            None => (path, true),
-            Some(base_dir) => (
-                Path::resolve_path::join_abs_string_buf::<Path::platform::Auto>(
-                    FileSystem::instance().top_level_dir(),
-                    &mut abs_buf,
-                    &[base_dir, path],
+    let tarball_path = match local_tarball_base_dir(&this.lockfile, dependency_id, path) {
+        None => Task::TarballPath::Url,
+        Some(base_dir) => {
+            match Path::resolve_path::join_abs_string_buf_checked::<Path::platform::Auto>(
+                FileSystem::instance().top_level_dir(),
+                &mut abs_buf[..],
+                &[base_dir, path],
+            ) {
+                None => Task::TarballPath::TooLong,
+                Some(joined) => Task::TarballPath::Absolute(
+                    StringOrTinyString::init_append_if_needed(
+                        joined,
+                        &mut crate::network_task::filename_store_appender(),
+                    )
+                    .expect("unreachable"),
                 ),
-                false,
-            ),
-        };
+            }
+        }
+    };
 
     // Build the `Task` value *before* claiming a hive slot — the `.expect()`s
     // below can unwind, and `Task` carries drop glue. See `enqueue_git_clone`.
@@ -2175,12 +2182,7 @@ fn enqueue_local_tarball(
                     in_trusted_dependencies: false,
                     github_resolved: StringOrTinyString::init(b""),
                 },
-                tarball_path: StringOrTinyString::init_append_if_needed(
-                    tarball_path,
-                    &mut crate::network_task::filename_store_appender(),
-                )
-                .expect("unreachable"),
-                normalize,
+                tarball_path,
             }),
         },
         id: task_id,
@@ -2662,6 +2664,12 @@ fn get_or_put_resolved_package(
                 }
             }
 
+            // A registry chooses the dependency names its manifests list, and the
+            // name becomes the cache folder name, which is printed unchecked.
+            if this.lockfile.str(&name).len() > dependency::MAX_INSTALL_FOLDER_NAME_LEN {
+                return Err(crate::Error::NameTooLong);
+            }
+
             // Resolve the version from the loaded NPM manifest
             // reshaped for borrowck — `name_str`/`manifest` borrow
             // `*this`; route through a raw root so the `&mut PackageManager`
@@ -2887,11 +2895,18 @@ fn get_or_put_resolved_package(
                     let folder_path_abs = if bun_paths::is_absolute(folder_path) {
                         folder_path
                     } else {
-                        Path::resolve_path::join_abs_string_buf::<Path::platform::Auto>(
+                        let Some(joined) = Path::resolve_path::join_abs_string_buf_checked::<
+                            Path::platform::Auto,
+                        >(
                             FileSystem::instance().top_level_dir(),
-                            &mut buf2,
+                            &mut buf2[..],
                             &[folder_path],
-                        )
+                        ) else {
+                            break 'res FolderResolutionValue::Err(crate::Error::Sys(
+                                bun_errno::SystemErrno::ENAMETOOLONG,
+                            ));
+                        };
+                        joined
                         // break :blk Path.joinAbsStringBuf(
                         //     strings.withoutSuffixComptime(this.original_package_json_path, "package.json"),
                         //     &buf2,
@@ -2992,11 +3007,12 @@ fn get_or_put_resolved_package(
             let workspace_path_u8 = if bun_paths::is_absolute(workspace_path) {
                 workspace_path
             } else {
-                Path::resolve_path::join_abs_string_buf::<Path::platform::Auto>(
+                Path::resolve_path::join_abs_string_buf_checked::<Path::platform::Auto>(
                     FileSystem::instance().top_level_dir(),
-                    &mut buf2,
+                    &mut buf2[..],
                     &[workspace_path],
                 )
+                .ok_or(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG))?
             };
 
             let res = FolderResolution::get_or_put(

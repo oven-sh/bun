@@ -317,7 +317,7 @@ pub use bun_install_types::NodeLinker::NodeLinker;
 
 // mkdir -p + open the dir. Callers store the raw `Fd` (`options.global_bin_dir: Fd`).
 pub fn open_global_dir(explicit_global_dir: &[u8]) -> crate::Result<bun_sys::Fd> {
-    use bun_paths::{platform, resolve_path::join_abs_string_buf};
+    use bun_paths::{platform, resolve_path::join_abs_string_buf_checked};
     use bun_sys::{Dir, OpenDirOptions};
 
     if let Some(home_dir) = env_var::BUN_INSTALL_GLOBAL_DIR.get() {
@@ -337,7 +337,8 @@ pub fn open_global_dir(explicit_global_dir: &[u8]) -> crate::Result<bun_sys::Fd>
     if let Some(home_dir) = env_var::BUN_INSTALL.get() {
         let mut buf = bun_paths::path_buffer_pool::get();
         let parts: [&[u8]; 2] = [b"install", b"global"];
-        let path = join_abs_string_buf::<platform::Auto>(home_dir, &mut buf.0, &parts);
+        let path = join_abs_string_buf_checked::<platform::Auto>(home_dir, &mut buf.0, &parts)
+            .ok_or(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG))?;
         return Dir::cwd()
             .make_open_path(path, OpenDirOptions::default())
             .map(|d| d.into_raw())
@@ -350,7 +351,8 @@ pub fn open_global_dir(explicit_global_dir: &[u8]) -> crate::Result<bun_sys::Fd>
     {
         let mut buf = bun_paths::path_buffer_pool::get();
         let parts: [&[u8]; 3] = [b".bun", b"install", b"global"];
-        let path = join_abs_string_buf::<platform::Auto>(home_dir, &mut buf.0, &parts);
+        let path = join_abs_string_buf_checked::<platform::Auto>(home_dir, &mut buf.0, &parts)
+            .ok_or(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG))?;
         return Dir::cwd()
             .make_open_path(path, OpenDirOptions::default())
             .map(|d| d.into_raw())
@@ -361,7 +363,7 @@ pub fn open_global_dir(explicit_global_dir: &[u8]) -> crate::Result<bun_sys::Fd>
 }
 
 pub(crate) fn open_global_bin_dir(opts_: Option<&Api::BunInstall>) -> crate::Result<bun_sys::Fd> {
-    use bun_paths::{platform, resolve_path::join_abs_string_buf};
+    use bun_paths::{platform, resolve_path::join_abs_string_buf_checked};
     use bun_sys::{Dir, OpenDirOptions};
 
     if let Some(home_dir) = env_var::BUN_INSTALL_BIN.get() {
@@ -385,7 +387,8 @@ pub(crate) fn open_global_bin_dir(opts_: Option<&Api::BunInstall>) -> crate::Res
     if let Some(home_dir) = env_var::BUN_INSTALL.get() {
         let mut buf = bun_paths::path_buffer_pool::get();
         let parts: [&[u8]; 1] = [b"bin"];
-        let path = join_abs_string_buf::<platform::Auto>(home_dir, &mut buf.0, &parts);
+        let path = join_abs_string_buf_checked::<platform::Auto>(home_dir, &mut buf.0, &parts)
+            .ok_or(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG))?;
         return Dir::cwd()
             .make_open_path(path, OpenDirOptions::default())
             .map(|d| d.into_raw())
@@ -398,7 +401,8 @@ pub(crate) fn open_global_bin_dir(opts_: Option<&Api::BunInstall>) -> crate::Res
     {
         let mut buf = bun_paths::path_buffer_pool::get();
         let parts: [&[u8]; 2] = [b".bun", b"bin"];
-        let path = join_abs_string_buf::<platform::Auto>(home_dir, &mut buf.0, &parts);
+        let path = join_abs_string_buf_checked::<platform::Auto>(home_dir, &mut buf.0, &parts)
+            .ok_or(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG))?;
         return Dir::cwd()
             .make_open_path(path, OpenDirOptions::default())
             .map(|d| d.into_raw())

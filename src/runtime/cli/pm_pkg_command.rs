@@ -122,12 +122,12 @@ impl PmPkgCommand {
         let mut current_dir = cwd;
 
         loop {
-            let pkg_path = path::resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
-                current_dir,
-                &mut path_buf,
-                &[b"package.json"],
-            );
-            if bun_sys::exists_z(pkg_path) {
+            // A candidate that does not fit cannot exist; a shorter one further up still can.
+            if let Some(pkg_path) = path::resolve_path::join_abs_string_buf_z_checked::<
+                path::platform::Auto,
+            >(current_dir, &mut path_buf[..], &[b"package.json"])
+                && bun_sys::exists_z(pkg_path)
+            {
                 return Ok(Box::<[u8]>::from(pkg_path.as_bytes()));
             }
 
@@ -413,9 +413,14 @@ impl PmPkgCommand {
                             pkg_dir = cwd;
                         }
                         let mut buf = bun_paths::path_buffer_pool::get();
-                        let full_path = path::resolve_path::join_abs_string_buf_z::<
+                        let Some(full_path) = path::resolve_path::join_abs_string_buf_z_checked::<
                             path::platform::Auto,
-                        >(pkg_dir, &mut buf, &[bin_path]);
+                        >(
+                            pkg_dir, &mut buf[..], &[bin_path]
+                        ) else {
+                            bun_core::warn!("bin path is too long: {}", bstr::BStr::new(bin_path));
+                            continue;
+                        };
 
                         if !bun_sys::exists_z(full_path) {
                             bun_core::warn!("No bin file found at {}", bstr::BStr::new(bin_path));

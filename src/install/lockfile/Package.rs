@@ -1864,11 +1864,18 @@ impl Package<u64> {
             dependency::version::Tag::Folder => {
                 let folder = *dependency_version.folder();
                 let mut folder_buf = bun_paths::path_buffer_pool::get();
-                let Some(joined) = resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
-                    FileSystem::instance().top_level_dir(),
-                    &mut folder_buf.0,
-                    &[source.path.name().dir, folder.slice(buf)],
-                ) else {
+                let Some(relative) =
+                    resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
+                        FileSystem::instance().top_level_dir(),
+                        &mut folder_buf.0,
+                        &[source.path.name().dir, folder.slice(buf)],
+                    )
+                    .map(|joined| {
+                        resolve_path::relative(FileSystem::instance().top_level_dir(), joined)
+                    })
+                    // `string_builder` reserved `MAX_PATH_BYTES` for this path.
+                    .filter(|relative| relative.len() <= MAX_PATH_BYTES)
+                else {
                     log.add_error_fmt(
                         source,
                         value_loc_of(source, key_loc),
@@ -1879,8 +1886,6 @@ impl Package<u64> {
                     );
                     return Err(crate::Error::InstallFailed);
                 };
-                let relative: &[u8] =
-                    resolve_path::relative(FileSystem::instance().top_level_dir(), joined);
                 #[cfg(windows)]
                 let relative: &[u8] = {
                     let len = relative.len();
@@ -1977,54 +1982,69 @@ impl Package<u64> {
                     // borrow has a named place to point at.
                     let workspace_str = *dependency_version.workspace();
                     let workspace = workspace_str.slice(buf);
-                    let path =
-                        string_builder.append::<String>(if workspace == b"*" {
-                            b"*"
-                        } else {
-                            'brk: {
-                                let mut buf2 = bun_paths::path_buffer_pool::get();
-                                let rel =
+                    let path = string_builder.append::<String>(if workspace == b"*" {
+                        b"*"
+                    } else {
+                        'brk: {
+                            let mut buf2 = bun_paths::path_buffer_pool::get();
+                            let Some(rel) =
+                                resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
+                                    FileSystem::instance().top_level_dir(),
+                                    &mut buf2.0,
+                                    &[source.path.name().dir, workspace],
+                                )
+                                .map(|joined| {
                                     resolve_path::relative_platform::<path::platform::Auto, false>(
                                         FileSystem::instance().top_level_dir(),
-                                        resolve_path::join_abs_string_buf::<path::platform::Auto>(
-                                            FileSystem::instance().top_level_dir(),
-                                            &mut buf2.0,
-                                            &[source.path.name().dir, workspace],
-                                        ),
-                                    );
-                                #[cfg(windows)]
-                                {
-                                    // With ALWAYS_COPY=false, `rel` may borrow
-                                    // RELATIVE_TO_BUF (resolve_path.rs early returns at L450/457/500/
-                                    // 522) or be `b""`. Re-deriving a slice of the common-path buf
-                                    // would yield stale bytes in those cases. Copy `rel` into the
-                                    // common-path scratch when it isn't already there, then convert
-                                    // and return that — returning `rel`'s bytes
-                                    // while avoiding aliasing UB.
-                                    let len = rel.len();
-                                    let common_raw = path::relative_to_common_path_buf();
-                                    // `PathBuffer` is `repr(transparent)` over `[u8; N]`, so the
-                                    // struct pointer equals `(&*common_raw).as_ptr()`.
-                                    let rel_is_common =
-                                        core::ptr::eq(rel.as_ptr(), common_raw.cast::<u8>());
-                                    // SAFETY: thread-local scratch; sole live mut borrow on this
-                                    // thread for the remainder of this block. When `rel` aliased
-                                    // it, its last use was the `.as_ptr()` above (NLL-dead);
-                                    // otherwise `rel` borrows a disjoint allocation.
-                                    let common = unsafe { &mut *common_raw };
-                                    if !rel_is_common {
-                                        // `rel` is into a disjoint thread-local (RELATIVE_TO_BUF)
-                                        // or `b""` (len==0 → no read).
-                                        common[..len].copy_from_slice(rel);
-                                    }
-                                    let s: &mut [u8] = &mut common[..len];
-                                    path::dangerously_convert_path_to_posix_in_place::<u8>(s);
-                                    break 'brk &*s;
+                                        joined,
+                                    )
+                                })
+                                // `string_builder` reserved `MAX_PATH_BYTES` for this path.
+                                .filter(|rel| rel.len() <= MAX_PATH_BYTES)
+                            else {
+                                log.add_error_fmt(
+                                    source,
+                                    value_loc_of(source, key_loc),
+                                    format_args!(
+                                        "Dependency \"{}\" has an unsafe workspace path",
+                                        bstr::BStr::new(external_alias.slice(buf)),
+                                    ),
+                                );
+                                return Err(crate::Error::InstallFailed);
+                            };
+                            #[cfg(windows)]
+                            {
+                                // With ALWAYS_COPY=false, `rel` may borrow
+                                // RELATIVE_TO_BUF (resolve_path.rs early returns at L450/457/500/
+                                // 522) or be `b""`. Re-deriving a slice of the common-path buf
+                                // would yield stale bytes in those cases. Copy `rel` into the
+                                // common-path scratch when it isn't already there, then convert
+                                // and return that — returning `rel`'s bytes
+                                // while avoiding aliasing UB.
+                                let len = rel.len();
+                                let common_raw = path::relative_to_common_path_buf();
+                                // `PathBuffer` is `repr(transparent)` over `[u8; N]`, so the
+                                // struct pointer equals `(&*common_raw).as_ptr()`.
+                                let rel_is_common =
+                                    core::ptr::eq(rel.as_ptr(), common_raw.cast::<u8>());
+                                // SAFETY: thread-local scratch; sole live mut borrow on this
+                                // thread for the remainder of this block. When `rel` aliased
+                                // it, its last use was the `.as_ptr()` above (NLL-dead);
+                                // otherwise `rel` borrows a disjoint allocation.
+                                let common = unsafe { &mut *common_raw };
+                                if !rel_is_common {
+                                    // `rel` is into a disjoint thread-local (RELATIVE_TO_BUF)
+                                    // or `b""` (len==0 → no read).
+                                    common[..len].copy_from_slice(rel);
                                 }
-                                #[cfg(not(windows))]
-                                break 'brk rel;
+                                let s: &mut [u8] = &mut common[..len];
+                                path::dangerously_convert_path_to_posix_in_place::<u8>(s);
+                                break 'brk &*s;
                             }
-                        });
+                            #[cfg(not(windows))]
+                            break 'brk rel;
+                        }
+                    });
                     debug_assert!(path.len() > 0);
                     debug_assert!(!bun_paths::is_absolute(path.slice(buf)));
                     dependency_version.value.workspace = path;

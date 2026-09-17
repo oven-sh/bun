@@ -1,7 +1,7 @@
 import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, expect, it } from "bun:test";
 import { copyFile, exists, open, rm, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, isWindows, runBunInstall, VerdaccioRegistry } from "harness";
+import { bunExe, bunEnv as env, isWindows, runBunInstall, tempDir, VerdaccioRegistry } from "harness";
 import { join } from "path";
 
 const registry = new VerdaccioRegistry();
@@ -80,6 +80,26 @@ it("should not print anything to stderr when running bun.lockb", async () => {
   expect(stderrOutput).toBe("");
 
   expect(await exited).toBe(0);
+});
+
+// A PathBuffer holds 98302 bytes on Windows; a command line cannot carry a path that long.
+it.skipIf(isWindows)("bun <lockfile> --hash reports a path longer than PATH_MAX instead of crashing", async () => {
+  // 4220 bytes of valid components; copying it into a fixed-size path buffer
+  // used to abort the process.
+  const lockfile = "./" + Array(21).fill(Buffer.alloc(200, "a").toString()).join("/") + ".lockb";
+  using dir = tempDir("lockb-hash-long-path", {});
+  await using proc = spawn({
+    cmd: [bunExe(), lockfile, "--hash"],
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("failed to open lockfile");
+  expect(stderr).toContain("ENAMETOOLONG");
+  expect(stdout).toBe("");
+  expect(exitCode).toBe(1);
 });
 
 it("should continue using a binary lockfile if it exists", async () => {

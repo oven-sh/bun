@@ -3,15 +3,16 @@ import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { exists, rm } from "fs/promises";
 import {
-  VerdaccioRegistry,
   bunExe,
   bunEnv as env,
   isLinux,
   isWindows,
+  MAX_PATH_BYTES,
   pack,
   runBunInstall,
   tempDir,
   tmpdirSync,
+  VerdaccioRegistry,
 } from "harness";
 import { delimiter, join } from "path";
 
@@ -551,6 +552,25 @@ test("can publish from a tarball", async () => {
   await runBunInstall(env, packageDir, { savesLockfile: false });
   expect(await file(join(packageDir, "node_modules", "publish-pkg-2", "package.json")).json()).toEqual(json);
 });
+// The tarball path is joined to the working directory before anything is read or sent.
+describe.concurrent("a tarball path that does not fit the path buffer", () => {
+  test.skipIf(isWindows).each([
+    ["relative", "./"],
+    ["absolute", "/"],
+  ])("%s: fails with ENAMETOOLONG", async (_, prefix) => {
+    using dir = tempDir("publish-long-tarball-path", {
+      "package.json": JSON.stringify({ name: "publish-long-tarball-path", version: "1.0.0" }),
+    });
+    const tarball = `${prefix}${Buffer.alloc(MAX_PATH_BYTES + 4, "t").toString()}.tgz`;
+
+    const { out, err, exitCode } = await publish(env, String(dir), tarball, "--dry-run");
+
+    expect(err).toContain(`ENAMETOOLONG: File name too long: failed to read tarball: '${tarball}'`);
+    expect(out).not.toContain("Total files");
+    expect(exitCode).toBe(1);
+  });
+});
+
 test("can publish scoped packages", async () => {
   const { packageDir, packageJson } = await registry.createTestDir();
   const bunfig = await registry.authBunfig("scoped-pkg");

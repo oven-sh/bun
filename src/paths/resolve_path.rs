@@ -1489,6 +1489,42 @@ pub fn normalize_buf_z<'a, P: PlatformT>(str: &[u8], buf: &'a mut [u8]) -> &'a m
     normalize_buf_z_checked::<P>(str, buf).unwrap_or_else(|| path_buffer_too_small(buf_len))
 }
 
+/// [`normalize_buf`] into `buf` when the result fits, otherwise into `spill`
+/// (grown as needed). `spill` is untouched in the common case.
+pub fn normalize_buf_spill<'a, P: PlatformT>(
+    buf: &'a mut [u8],
+    spill: &'a mut Vec<u8>,
+    str: &[u8],
+) -> &'a [u8] {
+    normalize_buf::<P>(str, normalize_buf_or_spill(buf, spill, str))
+}
+
+/// [`normalize_buf_z`] into `buf` when the result fits, otherwise into `spill`
+/// (grown as needed). `spill` is untouched in the common case.
+pub fn normalize_buf_z_spill<'a, P: PlatformT>(
+    buf: &'a mut [u8],
+    spill: &'a mut Vec<u8>,
+    str: &[u8],
+) -> &'a ZStr {
+    normalize_buf_z::<P>(str, normalize_buf_or_spill(buf, spill, str))
+}
+
+fn normalize_buf_or_spill<'a>(
+    buf: &'a mut [u8],
+    spill: &'a mut Vec<u8>,
+    str: &[u8],
+) -> &'a mut [u8] {
+    // Normalizing grows a path by at most one byte (see `normalize_string_generic_tz`), plus the NUL.
+    let needed = str.len() + 2;
+    if needed <= buf.len() {
+        return buf;
+    }
+    if spill.len() < needed {
+        spill.resize(needed, 0);
+    }
+    &mut spill[..]
+}
+
 /// `None` when the result does not fit `buf`.
 pub fn normalize_buf_t<'a, T: PathChar, P: PlatformT>(
     str: &[T],
@@ -3038,6 +3074,81 @@ mod tests {
             normalize_string_spill::<true, platform::Windows>(&mut spill, b"c:"),
             b"C:."
         );
+    }
+
+    #[test]
+    fn normalize_buf_spill_leaves_spill_untouched_when_the_input_fits() {
+        let mut buf = [0u8; 32];
+        let mut spill = Vec::new();
+        assert_eq!(
+            normalize_buf_spill::<platform::Posix>(&mut buf, &mut spill, b"./bins/../cli/./x.js"),
+            b"cli/x.js"
+        );
+        assert_eq!(
+            normalize_buf_z_spill::<platform::Posix>(&mut buf, &mut spill, b"./bins/").as_bytes(),
+            b"bins/"
+        );
+        assert!(spill.is_empty());
+    }
+
+    #[test]
+    fn normalize_buf_spill_spills_input_longer_than_buf() {
+        let mut buf = [0u8; 32];
+        let name = vec![b'b'; buf.len() * 3];
+        let mut input = b"./".to_vec();
+        input.extend_from_slice(&name);
+        input.extend_from_slice(b"/./x.js");
+        let mut expected = name;
+        expected.extend_from_slice(b"/x.js");
+
+        let mut spill = Vec::new();
+        assert_eq!(
+            normalize_buf_spill::<platform::Posix>(&mut buf, &mut spill, &input),
+            &expected[..]
+        );
+        expected.push(0);
+        assert_eq!(
+            normalize_buf_z_spill::<platform::Posix>(&mut buf, &mut spill, &input)
+                .as_bytes_with_nul(),
+            &expected[..]
+        );
+        assert!(!spill.is_empty());
+    }
+
+    #[test]
+    fn normalize_buf_z_spill_spills_input_exactly_as_long_as_buf() {
+        // The input normalizes to `buf.len()` bytes, leaving no room for the NUL.
+        let mut buf = [0u8; 32];
+        let input = vec![b'a'; buf.len()];
+        let mut expected = input.clone();
+        expected.push(0);
+
+        let mut spill = Vec::new();
+        assert_eq!(
+            normalize_buf_z_spill::<platform::Posix>(&mut buf, &mut spill, &input)
+                .as_bytes_with_nul(),
+            &expected[..]
+        );
+        assert!(!spill.is_empty());
+    }
+
+    #[test]
+    fn normalize_buf_spill_sizes_the_spill_for_the_empty_input_becoming_a_dot() {
+        let mut buf = [0u8; 1];
+
+        let mut spill = Vec::new();
+        assert_eq!(
+            normalize_buf_spill::<platform::Posix>(&mut buf, &mut spill, b""),
+            b"."
+        );
+        assert_eq!(spill.len(), 2);
+
+        let mut spill = Vec::new();
+        assert_eq!(
+            normalize_buf_z_spill::<platform::Posix>(&mut buf, &mut spill, b"").as_bytes_with_nul(),
+            b".\0"
+        );
+        assert_eq!(spill.len(), 2);
     }
 
     #[test]

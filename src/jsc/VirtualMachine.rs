@@ -217,6 +217,8 @@ pub struct VirtualMachine {
     /// pushed after this (a finalizer deferred from the final collection) would only leak.
     pub(crate) has_run_cleanup_hooks: bool,
     pub plugin_runner: Option<crate::plugin_runner::PluginRunner>,
+    /// How many `Bun.plugin()` onResolve callbacks are on the stack.
+    pub(crate) on_resolve_depth: u32,
     pub is_main_thread: bool,
     pub exit_handler: ExitHandler,
 
@@ -4521,6 +4523,10 @@ impl VirtualMachine {
         source: &[u8],
         is_esm: bool,
         is_a_file_path: bool,
+        // The specifier is an onResolve result. A miss is normal (the result is
+        // then the module key), so it must not reach the registry or re-read
+        // the directory.
+        from_plugin: bool,
     ) -> crate::CrateResult<()> {
         use bun_js_parser::Macro;
         use bun_resolver::{ResultUnion, node_fallbacks};
@@ -4609,14 +4615,18 @@ impl VirtualMachine {
         // A `loop`
         // returning the resolver result; `retry_on_not_found` is consumed on
         // the first miss.
-        let mut retry_on_not_found = bun_paths::is_absolute(source_to_use);
+        let mut retry_on_not_found = !from_plugin && bun_paths::is_absolute(source_to_use);
         let result: bun_resolver::Result = loop {
             let import_kind = if is_esm {
                 bun_ast::ImportKind::Stmt
             } else {
                 bun_ast::ImportKind::Require
             };
-            let global_cache = self.transpiler.resolver.opts.global_cache;
+            let global_cache = if from_plugin {
+                bun_resolver::GlobalCache::disable
+            } else {
+                self.transpiler.resolver.opts.global_cache
+            };
             match self.transpiler.resolver.resolve_and_auto_install(
                 source_to_use,
                 normalized_specifier,
@@ -4701,6 +4711,28 @@ impl VirtualMachine {
         Ok(())
     }
 
+    /// Whether onResolve also sees a bare or relative `specifier`, which the
+    /// `could_be_plugin` pre-filter skips. Only an import site in user code
+    /// qualifies, so that everything else resolves as it did before.
+    fn on_resolve_sees_skipped(&self, specifier: &[u8], source: &bun_core::String) -> bool {
+        !specifier.is_empty()
+            && !bun_paths::is_absolute(specifier)
+            // The loader resolves each module key once more, with no referrer.
+            && source.length() > 0
+            // A `require("pkg")` inside a callback would call the hook again without end.
+            && self.on_resolve_depth == 0
+            // `require.resolve(id, { paths })` keeps `paths` in the resolver,
+            // and a resolve inside a callback would use and clear them.
+            && self.transpiler.resolver.custom_dir_paths.is_none()
+            // A static import of a builtin (`fs`, `ws`) never reaches the hook.
+            && ModuleLoader::HardcodedModule::Alias::get(
+                specifier,
+                bun_ast::Target::Bun,
+                Default::default(),
+            )
+            .is_none()
+    }
+
     /// Module-resolution core: resolves `specifier` relative to `source`, with
     /// path-length checks when `IS_A_FILE_PATH`. `Ok(Err(value))` is a
     /// resolution failure to be thrown/rejected with `value`.
@@ -4759,27 +4791,50 @@ impl VirtualMachine {
             }
         }
 
-        let specifier_utf8 = specifier.to_utf8();
+        // An onResolve `path` that the resolver still has to complete. It
+        // replaces the specifier, and it is the module key when nothing is found.
+        let redirected: bun_core::String;
+        let mut is_redirected = false;
+        let mut specifier = specifier;
+        let mut specifier_utf8 = specifier.to_utf8();
         let source_utf8 = source.to_utf8();
 
         if jsc_vm.plugin_runner.is_some() {
             use bun_bundler::transpiler::PluginRunner;
-            let spec = specifier_utf8.slice();
-            if PluginRunner::could_be_plugin(spec) {
-                let namespace = PluginRunner::extract_namespace(spec);
-                let after_namespace = if namespace.is_empty() {
-                    spec
-                } else {
-                    &spec[namespace.len() + 1..]
+            let passes_pre_filter = PluginRunner::could_be_plugin(specifier_utf8.slice());
+            if passes_pre_filter || jsc_vm.on_resolve_sees_skipped(specifier_utf8.slice(), source) {
+                let plugin_result = {
+                    let spec = specifier_utf8.slice();
+                    let namespace = PluginRunner::extract_namespace(spec);
+                    let after_namespace = if namespace.is_empty() {
+                        spec
+                    } else {
+                        &spec[namespace.len() + 1..]
+                    };
+                    plugin_runner_on_resolve_jsc(
+                        global,
+                        &bun_core::String::from_bytes(namespace),
+                        &bun_core::String::borrow_utf8(after_namespace),
+                        source,
+                        crate::BunPluginTarget::Bun,
+                        !passes_pre_filter,
+                    )?
                 };
-                if let Some(resolved_path) = plugin_runner_on_resolve_jsc(
-                    global,
-                    &bun_core::String::from_bytes(namespace),
-                    &bun_core::String::borrow_utf8(after_namespace),
-                    source,
-                    crate::BunPluginTarget::Bun,
-                )? {
-                    return Ok(resolved_path);
+                match plugin_result {
+                    None => {}
+                    Some(Ok(path))
+                        if on_resolve_path_needs_resolver(
+                            &path,
+                            !passes_pre_filter,
+                            source_utf8.slice().len(),
+                        ) =>
+                    {
+                        redirected = path;
+                        is_redirected = true;
+                        specifier = &redirected;
+                        specifier_utf8 = specifier.to_utf8();
+                    }
+                    Some(resolved_path) => return Ok(resolved_path),
                 }
             }
         }
@@ -4867,8 +4922,12 @@ impl VirtualMachine {
             normalize_source(source_utf8.slice()),
             mode.is_esm(),
             IS_A_FILE_PATH,
+            is_redirected,
         );
         if let Err(err_) = resolve_result {
+            if is_redirected {
+                return Ok(Ok(specifier.clone()));
+            }
             let err = err_;
             let import_kind = mode.import_kind();
             // Find a `.resolve`-metadata msg if the log has one.
@@ -7077,6 +7136,31 @@ fn wrap_unhandled_rejection_error_for_uncaught_exception(
         .to_js())
 }
 
+/// Whether the resolver still has to complete an onResolve result. An absolute
+/// path with no extension does (`/src/store` is `/src/store.ts`): the loader
+/// already resolves the key of an `import()` once more, and `require()` and a
+/// static import must agree with it. A relative path or a bare name does too,
+/// for a specifier that the `could_be_plugin` pre-filter skips. For any other
+/// specifier such a result stays the module key, as before.
+fn on_resolve_path_needs_resolver(
+    path: &bun_core::String,
+    specifier_was_skipped: bool,
+    importer_len: usize,
+) -> bool {
+    let path = path.to_utf8();
+    let path = path.slice();
+    // The resolver joins the importer's directory, this path and an extension
+    // in one path buffer.
+    const LONGEST_EXTENSION: usize = 64;
+    if importer_len + path.len() + LONGEST_EXTENSION > bun_paths::MAX_PATH_BYTES {
+        return false;
+    }
+    if bun_paths::is_absolute(path) {
+        return bun_paths::extension(path).is_empty();
+    }
+    specifier_was_skipped && !bun_core::strings::contains_char(path, b':')
+}
+
 /// `None` when no `Bun.plugin()` `onResolve` callback claimed the specifier.
 pub(crate) fn plugin_runner_on_resolve_jsc(
     global: &JSGlobalObject,
@@ -7084,6 +7168,7 @@ pub(crate) fn plugin_runner_on_resolve_jsc(
     specifier: &bun_core::String,
     importer: &bun_core::String,
     target: crate::BunPluginTarget,
+    unchanged_path_claims_nothing: bool,
 ) -> JsResult<Option<Result<bun_core::String, JSValue>>> {
     let empty = bun_core::String::EMPTY;
     let Some(on_resolve_plugin) = global.run_on_resolve_plugins(
@@ -7120,14 +7205,6 @@ pub(crate) fn plugin_runner_on_resolve_jsc(
         return Ok(Some(Err(global.create_error_instance(format_args!(
             "Expected \"path\" to be a non-empty string in onResolve plugin"
         )))));
-    } else if file_path.eq_ascii(b".")
-        || file_path.eq_ascii(b"..")
-        || file_path.eq_ascii(b"...")
-        || file_path.eq_ascii(b" ")
-    {
-        return Ok(Some(Err(global.create_error_instance(format_args!(
-            "\"path\" is invalid in onResolve plugin"
-        )))));
     }
     let user_namespace: bun_core::String = 'brk: {
         if let Some(namespace_value) = on_resolve_plugin.get(global, b"namespace")? {
@@ -7154,11 +7231,31 @@ pub(crate) fn plugin_runner_on_resolve_jsc(
         }
         break 'brk bun_core::String::static_("file");
     };
+    let is_file_namespace = user_namespace.eq_ascii(b"file");
+
+    // A no-op hook (`args => ({ path: args.path })`) must stay transparent for
+    // a specifier that resolved without the hook before.
+    if unchanged_path_claims_nothing
+        && is_file_namespace
+        && file_path.to_utf8().slice() == specifier.to_utf8().slice()
+    {
+        return Ok(None);
+    }
+
+    if file_path.eq_ascii(b".")
+        || file_path.eq_ascii(b"..")
+        || file_path.eq_ascii(b"...")
+        || file_path.eq_ascii(b" ")
+    {
+        return Ok(Some(Err(global.create_error_instance(format_args!(
+            "\"path\" is invalid in onResolve plugin"
+        )))));
+    }
 
     // A `file`-namespace result (the default) is a filesystem path, not a new
     // specifier: hand it back unprefixed. Other namespaces keep the `ns:path`
     // form the module loader dispatches on.
-    if user_namespace.eq_ascii(b"file") {
+    if is_file_namespace {
         return Ok(Some(Ok(file_path)));
     }
 

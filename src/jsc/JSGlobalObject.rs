@@ -731,9 +731,12 @@ impl JSGlobalObject {
     ) -> JsResult<Option<JSValue>> {
         crate::mark_binding();
         let ns = (namespace_.length() > 0).then_some(namespace_);
+        self.bun_vm().as_mut().on_resolve_depth += 1;
         let result = crate::from_js_host_call(self, || {
             Bun__runOnResolvePlugins(self, ns, path, source, target)
-        })?;
+        });
+        self.bun_vm().as_mut().on_resolve_depth -= 1;
+        let result = result?;
         if result.is_undefined_or_null() {
             return Ok(None);
         }

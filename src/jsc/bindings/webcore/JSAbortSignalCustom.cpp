@@ -40,23 +40,23 @@ bool JSAbortSignalOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> ha
     }
 
     if (!abortSignal.aborted()) {
-        if (abortSignal.hasActiveTimeoutTimer() && abortSignal.hasTimeoutObserver()) {
+        if (abortSignal.hasActiveTimeoutTimer() && abortSignal.hasAbortObserver()) {
             if (reason) [[unlikely]]
                 *reason = "Has Observed Timeout"_s;
             return true;
         }
 
-        if (abortSignal.hasAbortEventListener()) {
-            if (abortSignal.isDependent()) {
-                // This runs on GC marker threads, so it must not mutate the signal:
-                // sourceSignals().isEmptyIgnoringNullReferences() prunes dead entries.
-                if (abortSignal.hasAliveSourceSignals()) {
-                    if (reason) [[unlikely]]
-                        *reason = "Has Source Signals And Abort Event Listener"_s;
-                    return true;
-                }
-            }
+        // https://dom.spec.whatwg.org/#abort-signal-garbage-collection: abort algorithms count,
+        // not only listeners (addEventListener's { signal } option registers an algorithm).
+        // This runs on GC marker threads, so it must not mutate the signal:
+        // sourceSignals().isEmptyIgnoringNullReferences() prunes dead entries.
+        if (abortSignal.isDependent() && abortSignal.hasAbortObserver() && abortSignal.hasAliveSourceSignals()) {
+            if (reason) [[unlikely]]
+                *reason = "Has Source Signals And Abort Observer"_s;
+            return true;
+        }
 
+        if (abortSignal.hasAbortEventListener()) {
             // https://github.com/oven-sh/bun/issues/4517
             if (abortSignal.hasPendingActivity()) {
                 if (reason) [[unlikely]]

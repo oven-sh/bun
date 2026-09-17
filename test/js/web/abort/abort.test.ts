@@ -100,6 +100,44 @@ describe("AbortSignal", () => {
     await testAny(1);
   });
 
+  // addEventListener's { signal } option registers an abort algorithm on the signal, not an
+  // abort listener, and holds the signal weakly.
+  describe("AbortSignal.any() that only a listener's { signal } option uses still removes the listener", () => {
+    async function collect() {
+      for (let i = 0; i < 5; i++) {
+        Bun.gc(true);
+        await new Promise<void>(resolve => setImmediate(resolve));
+      }
+    }
+
+    test.each([
+      ["any([controller.signal])", (signal: AbortSignal) => AbortSignal.any([signal])],
+      ["any([any([controller.signal])])", (signal: AbortSignal) => AbortSignal.any([AbortSignal.any([signal])])],
+    ])("%s", async (_, dependentOf) => {
+      const controller = new AbortController();
+      const target = new EventTarget();
+      let calls = 0;
+      (() => target.addEventListener("ping", () => calls++, { signal: dependentOf(controller.signal) }))();
+      await collect();
+      target.dispatchEvent(new Event("ping"));
+      controller.abort();
+      target.dispatchEvent(new Event("ping"));
+      expect(calls).toBe(1);
+    });
+
+    test("any([AbortSignal.timeout()])", async () => {
+      const target = new EventTarget();
+      let calls = 0;
+      (() => target.addEventListener("ping", () => calls++, { signal: AbortSignal.any([AbortSignal.timeout(30)]) }))();
+      await collect();
+      // Armed after the one under test, with a longer delay: it fires after that one had its turn.
+      const fence = AbortSignal.timeout(60);
+      await new Promise(resolve => fence.addEventListener("abort", resolve, { once: true }));
+      target.dispatchEvent(new Event("ping"));
+      expect(calls).toBe(0);
+    });
+  });
+
   function fmt(value: any) {
     const res = {};
     for (const key in value) {

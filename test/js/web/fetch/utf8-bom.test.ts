@@ -76,6 +76,7 @@ describe("UTF-8 BOM should be ignored", () => {
   describe("Request", () => {
     it("in text()", async () => {
       const request = new Request("https://example.com", {
+        method: "POST",
         body: Buffer.from("\uFEFFHello, World!"),
         headers: { "content-type": "text/plain" },
       });
@@ -84,6 +85,7 @@ describe("UTF-8 BOM should be ignored", () => {
 
     it("in json()", async () => {
       const request = new Request("https://example.com", {
+        method: "POST",
         body: Buffer.from('\uFEFF{"hello":"World"}'),
         headers: { "content-type": "application/json" },
       });
@@ -92,6 +94,7 @@ describe("UTF-8 BOM should be ignored", () => {
 
     it("in formData()", async () => {
       const request = new Request("https://example.com", {
+        method: "POST",
         body: Buffer.from("\uFEFFhello=world"),
         headers: { "content-type": "application/x-www-form-urlencoded" },
       });

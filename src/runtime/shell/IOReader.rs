@@ -129,6 +129,13 @@ impl IOReader {
         }
         #[cfg(windows)]
         {
+            // The shell owns `fd` and closes it in `Drop`. With CLOSE_HANDLE
+            // the reader would close it at EOF, and a later reader of the
+            // same stdin (a second `cat`, or a spawn after `$(cat)`) would
+            // find it gone.
+            reader
+                .flags
+                .remove(bun_io::pipe_reader::WindowsFlags::CLOSE_HANDLE);
             reader.set_source(bun_io::Source::File(bun_io::Source::open_file(fd)));
         }
         let this = std::sync::Arc::new_cyclic(|w| IOReader {
@@ -229,7 +236,13 @@ impl IOReader {
                 return Yield::suspended();
             }
             s.is_reading = true;
-            if let Err(e) = self.reader().start_with_current_pipe() {
+            let r = self.reader();
+            if r.source.is_none() {
+                // EOF took the previous `File` (`close_impl`). The fd is still
+                // open, so attach a new one for this read.
+                r.set_source(bun_io::Source::File(bun_io::Source::open_file(s.fd)));
+            }
+            if let Err(e) = r.start_with_current_pipe() {
                 self.on_reader_error(&e);
             }
             Yield::suspended()
@@ -387,9 +400,14 @@ impl Drop for IOReader {
         if s.fd != Fd::INVALID {
             #[cfg(windows)]
             {
-                // windows reader closes the file descriptor
-                if r.source.is_some() && !r.source.as_ref().is_some_and(|src| src.is_closed()) {
+                if r.source.as_ref().is_some_and(|src| !src.is_closed()) {
+                    // A `File` is attached, maybe with a read in flight. Let
+                    // it close the fd once that read completes.
+                    r.flags
+                        .insert(bun_io::pipe_reader::WindowsFlags::CLOSE_HANDLE);
                     r.close_impl::<false>();
+                } else {
+                    let _ = sys::close(s.fd);
                 }
             }
             #[cfg(not(windows))]

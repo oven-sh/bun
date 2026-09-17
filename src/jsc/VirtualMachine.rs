@@ -7132,6 +7132,9 @@ impl VirtualMachine {
             }
         } else if error_instance != JSValue::ZERO {
             // If you do `reportError([1,2,3])` we should still show something.
+            // An object that arrives inside the `JSC::Exception` it was thrown with is shown too.
+            let error_instance =
+                Self::thrown_object_to_show(error_instance).unwrap_or(error_instance);
             let tag = Tag::get_advanced(
                 error_instance,
                 global_ref,
@@ -7144,6 +7147,11 @@ impl VirtualMachine {
                     formatter.format::<false>(tag, writer, error_instance, global_ref)
                 };
                 writer.write_all(b"\n")?;
+                // What the value threw while it was printed is not what is reported here, and the
+                // frames of the throw are still to be printed.
+                if allow_side_effects && global_ref.has_exception() {
+                    global_ref.clear_exception();
+                }
             }
         }
 
@@ -7198,6 +7206,23 @@ impl VirtualMachine {
         }
 
         Ok(())
+    }
+
+    /// The object a `JSC::Exception` holds, when the name-and-message line does not already say all of it:
+    /// a primitive is that line, an `Error` is printed from the exception, and a `BuildMessage` or
+    /// `ResolveMessage` is its message.
+    fn thrown_object_to_show(exception: JSValue) -> Option<JSValue> {
+        let thrown = exception.to_error()?;
+        if !thrown.is_object() || thrown.is_error() {
+            return None;
+        }
+        if thrown.js_type() == jsc::JSType::DOMWrapper
+            && (thrown.as_class_ref::<crate::BuildMessage>().is_some()
+                || thrown.as_class_ref::<crate::ResolveMessage>().is_some())
+        {
+            return None;
+        }
+        Some(thrown)
     }
 
     fn print_error_name_and_message(

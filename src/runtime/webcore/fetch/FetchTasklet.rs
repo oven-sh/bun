@@ -1210,7 +1210,8 @@ impl FetchTasklet {
         };
 
         // > Returns <Error> object [...] on failure
-        if check_result.is_any_error() {
+        // Any object counts: a DOMException or a util.inherits() error is not an ErrorInstance cell.
+        if check_result.is_object() && check_result.as_any_promise().is_none() {
             return Err(Some(check_result));
         }
         // Like Node, fail on any other truthy value, a Promise included: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1671-L1688

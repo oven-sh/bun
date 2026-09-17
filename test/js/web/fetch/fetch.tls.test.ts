@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs";
 import net from "node:net";
 import { join } from "node:path";
 import tls from "node:tls";
+import { inherits } from "node:util";
 
 type TLSOptions = {
   cert: string;
@@ -670,7 +671,6 @@ describe.concurrent("fetch-tls", () => {
       "true": () => true,
       "1": () => 1,
       "string": () => "pin mismatch",
-      "object": () => ({}),
       "async, resolves to undefined": async () => undefined,
       "async, resolves to an Error": async () => new Error("pin mismatch"),
     };
@@ -692,7 +692,6 @@ describe.concurrent("fetch-tls", () => {
       "true": invalidReturnValue("type boolean (true)"),
       "1": invalidReturnValue("type number (1)"),
       "string": invalidReturnValue("type string ('pin mismatch')"),
-      "object": invalidReturnValue("an instance of Object"),
       "async, resolves to undefined": invalidReturnValue("an instance of Promise"),
       "async, resolves to an Error": invalidReturnValue("an instance of Promise"),
     });
@@ -702,6 +701,40 @@ describe.concurrent("fetch-tls", () => {
     // With `rejectUnauthorized: false` the callback runs and what it returns is ignored.
     const ignored = await request("ignored", { rejectUnauthorized: false, checkServerIdentity: () => true });
     expect(ignored).toEqual(approved);
+  });
+
+  // Node fails the connection with the value the callback returned. An Error
+  // need not be an ErrorInstance cell, so every object is handed back as it is.
+  it("fetch() rejects with the object that checkServerIdentity returns", async () => {
+    await createServer(CERT_LOCALHOST_IP, async port => {
+      function LegacyError(this: { message: string }, message: string) {
+        this.message = message;
+      }
+      inherits(LegacyError, Error);
+      const reasons: Record<string, object> = {
+        "Error": new Error("pin mismatch"),
+        "DOMException": new DOMException("pin mismatch", "SecurityError"),
+        "util.inherits() error": new (LegacyError as any)("pin mismatch"),
+        "plain object": { message: "pin mismatch" },
+      };
+      const sameObject: Record<string, boolean> = {};
+      for (const [label, reason] of Object.entries(reasons)) {
+        const rejection = await fetch(`https://localhost:${port}`, {
+          keepalive: false,
+          tls: { ca: validTls.cert, checkServerIdentity: () => reason } as any,
+        }).then(
+          () => "resolved",
+          e => e,
+        );
+        sameObject[label] = rejection === reason;
+      }
+      expect(sameObject).toEqual({
+        "Error": true,
+        "DOMException": true,
+        "util.inherits() error": true,
+        "plain object": true,
+      });
+    });
   });
 
   it("a session's checkServerIdentity approves the certificate only with a falsy return value", async () => {

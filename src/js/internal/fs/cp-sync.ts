@@ -442,8 +442,9 @@ function mkDirAndCopy(srcMode, src, dest, opts) {
 }
 
 function copyDir(src, dest, opts) {
-  for (const dirent of readdirSync(src, { withFileTypes: true })) {
-    const { name } = dirent;
+  const dirents = readdirSync(src, { withFileTypes: true });
+  for (let i = 0; i < dirents.length; i++) {
+    const { name } = dirents[i];
     const srcItem = join(src, name);
     const destItem = join(dest, name);
     const { destStat, skipped } = checkPathsSync(srcItem, destItem, opts);

@@ -92,10 +92,6 @@ public:
 
     static JSX509Certificate* create(
         JSC::VM& vm,
-        JSC::Structure* structure);
-
-    static JSX509Certificate* create(
-        JSC::VM& vm,
         JSC::Structure* structure,
         JSC::JSGlobalObject* globalObject,
         std::span<const uint8_t> data);
@@ -145,6 +141,10 @@ public:
     String toPEMString() const;
 
 private:
+    // Allocates the cell with no certificate. Private so that every instance
+    // JS can reach goes through an overload that sets m_x509.
+    static JSX509Certificate* create(JSC::VM& vm, JSC::Structure* structure);
+
     uint16_t m_extraMemorySizeForGC = 0;
 };
 

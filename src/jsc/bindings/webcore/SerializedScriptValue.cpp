@@ -3389,15 +3389,12 @@ private:
             return JSValue();
         }
 
-        if (buffer.size() == 0) {
-            auto* cert_obj = Bun::JSX509Certificate::create(m_lexicalGlobalObject->vm(), defaultGlobalObject(m_globalObject)->m_JSX509CertificateClassStructure.get(m_globalObject));
-            addTerminalToObjectPool(cert_obj);
-            return cert_obj;
-        }
         ncrypto::ClearErrorOnReturn clear_error_on_return;
         X509* ptr = nullptr;
         const uint8_t* data = buffer.begin();
 
+        // An empty DER fails to decode like any other malformed DER. The
+        // serializer never writes one, and a JSX509Certificate must own an X509.
         auto cert = d2i_X509(&ptr, &data, buffer.size());
         if (!cert) {
             fail();

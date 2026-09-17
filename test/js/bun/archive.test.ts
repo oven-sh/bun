@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
 import { mkfifo } from "mkfifo";
 import fs, { existsSync, readdirSync, rmSync } from "node:fs";
 import { join } from "path";
@@ -644,6 +644,21 @@ describe("Bun.Archive", () => {
       expect(exitCode).toBe(0);
     });
 
+    const isRoot = !isWindows && process.getuid?.() === 0;
+    const nobody = (() => {
+      if (!isRoot) return null;
+      // /etc/passwd format: name:x:uid:gid:gecos:home:shell
+      const line = fs
+        .readFileSync("/etc/passwd", "utf8")
+        .split("\n")
+        .find(l => l.startsWith("nobody:"));
+      if (!line) return null;
+      const [, , uid, gid] = line.split(":");
+      return Number.isInteger(+uid) && Number.isInteger(+gid) ? { uid: +uid, gid: +gid } : null;
+    })();
+    const lockedAsNobody = isLinux && isRoot && !!Bun.which("runuser") && nobody !== null;
+    const canLockDir = !isWindows && (!isRoot || lockedAsNobody);
+
     // GNU tar removes a file the destination already holds and creates a new
     // one. Writing into the old inode would reach every other name linked to it.
     describe.each([
@@ -694,99 +709,97 @@ describe("Bun.Archive", () => {
       });
 
       // The old name cannot be removed from a directory the user cannot write.
-      // The entry is then written in place, as before.
-      test.skipIf(isWindows || process.getuid?.() === 0)(
-        "writes in place when the old name cannot be removed",
-        async () => {
-          using dir = tempDir("archive-replace-in-place", {
-            "locked/a.txt": "old",
-          });
-          const locked = join(String(dir), "locked");
-          fs.chmodSync(locked, 0o555);
-          try {
-            const before = fs.statSync(join(locked, "a.txt")).ino;
-
-            const count = await new Bun.Archive({ "locked/a.txt": "new" }).extract(String(dir), options);
-
-            expect(count).toBe(1);
-            expect(fs.readFileSync(join(locked, "a.txt"), "utf8")).toBe("new");
-            expect(fs.statSync(join(locked, "a.txt")).ino).toBe(before);
-          } finally {
-            fs.chmodSync(locked, 0o755);
+      // Root bypasses that check, so as root on Linux the extraction runs in a
+      // child dropped to `nobody`, as in test/js/bun/resolve/resolve.test.ts.
+      async function extractInLockedDir(dir: string): Promise<{ count?: number; error?: string }> {
+        const locked = join(dir, "locked");
+        const fixture = join(dir, "fixture.js");
+        fs.writeFileSync(
+          fixture,
+          `const [dir, glob] = process.argv.slice(2);
+           new Bun.Archive({ "locked/a.txt": "new" })
+             .extract(dir, glob ? { glob } : undefined)
+             .then(count => console.log(JSON.stringify({ count })), e => console.log(JSON.stringify({ error: e.message })));`,
+        );
+        if (lockedAsNobody) {
+          for (const p of fs.readdirSync(dir, { recursive: true })) {
+            fs.lchownSync(join(dir, String(p)), nobody!.uid, nobody!.gid);
           }
-        },
-      );
-
-      test.skipIf(isWindows || process.getuid?.() === 0)(
-        "does not write through a symlink that cannot be removed",
-        async () => {
-          using dir = tempDir("archive-replace-locked-symlink", {
-            "target.txt": "old",
-            "locked/.keep": "",
-          });
-          const locked = join(String(dir), "locked");
-          fs.symlinkSync("../target.txt", join(locked, "a.txt"));
-          fs.chmodSync(locked, 0o555);
-          try {
-            const extracted = new Bun.Archive({ "locked/a.txt": "new" }).extract(String(dir), options);
-            if (options) {
-              expect(await extracted).toBe(0);
-            } else {
-              await expect(extracted).rejects.toThrow("ReadError");
-            }
-
-            expect(fs.readFileSync(join(String(dir), "target.txt"), "utf8")).toBe("old");
-          } finally {
-            fs.chmodSync(locked, 0o755);
-          }
-        },
-      );
-
-      test.skipIf(isWindows || process.getuid?.() === 0)(
-        "does not write through a hard link that cannot be removed",
-        async () => {
-          using dir = tempDir("archive-replace-locked-hardlink", {
-            "store/a.txt": "old",
-            "locked/.keep": "",
-          });
-          const locked = join(String(dir), "locked");
-          fs.linkSync(join(String(dir), "store/a.txt"), join(locked, "a.txt"));
-          fs.chmodSync(locked, 0o555);
-          try {
-            const extracted = new Bun.Archive({ "locked/a.txt": "new" }).extract(String(dir), options);
-            if (options) {
-              expect(await extracted).toBe(0);
-            } else {
-              await expect(extracted).rejects.toThrow("ReadError");
-            }
-
-            expect(fs.readFileSync(join(String(dir), "store/a.txt"), "utf8")).toBe("old");
-          } finally {
-            fs.chmodSync(locked, 0o755);
-          }
-        },
-      );
-
-      // Opening a FIFO for writing waits for a reader. The extraction must fail instead.
-      test.skipIf(isWindows || process.getuid?.() === 0)("does not wait on a FIFO that cannot be removed", async () => {
-        using dir = tempDir("archive-replace-locked-fifo", {
-          "locked/.keep": "",
-        });
-        const locked = join(String(dir), "locked");
-        mkfifo(join(locked, "a.txt"), 0o644);
+          fs.chownSync(dir, nobody!.uid, nobody!.gid);
+        }
         fs.chmodSync(locked, 0o555);
         try {
-          const extracted = new Bun.Archive({ "locked/a.txt": "new" }).extract(String(dir), options);
-          if (options) {
-            expect(await extracted).toBe(0);
-          } else {
-            await expect(extracted).rejects.toThrow("ReadError");
-          }
-
-          expect(fs.lstatSync(join(locked, "a.txt")).isFIFO()).toBe(true);
+          await using proc = Bun.spawn({
+            cmd: [
+              ...(lockedAsNobody ? ["runuser", "-u", "nobody", "--"] : []),
+              bunExe(),
+              fixture,
+              dir,
+              options?.glob ?? "",
+            ],
+            env: bunEnv,
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect(stderr).toBe("");
+          expect(exitCode).toBe(0);
+          return JSON.parse(stdout);
         } finally {
           fs.chmodSync(locked, 0o755);
         }
+      }
+
+      function expectLockedFailure(result: { count?: number; error?: string }) {
+        expect(result).toEqual(options ? { count: 0 } : { error: "ReadError" });
+      }
+
+      test.skipIf(!canLockDir)("writes in place when the old name cannot be removed", async () => {
+        using dir = tempDir("archive-replace-in-place", {
+          "locked/a.txt": "old",
+        });
+        const before = fs.statSync(join(String(dir), "locked/a.txt")).ino;
+
+        expect(await extractInLockedDir(String(dir))).toEqual({ count: 1 });
+
+        expect(fs.readFileSync(join(String(dir), "locked/a.txt"), "utf8")).toBe("new");
+        expect(fs.statSync(join(String(dir), "locked/a.txt")).ino).toBe(before);
+      });
+
+      test.skipIf(!canLockDir)("does not write through a symlink that cannot be removed", async () => {
+        using dir = tempDir("archive-replace-locked-symlink", {
+          "target.txt": "old",
+          "locked/.keep": "",
+        });
+        fs.symlinkSync("../target.txt", join(String(dir), "locked/a.txt"));
+
+        expectLockedFailure(await extractInLockedDir(String(dir)));
+
+        expect(fs.readFileSync(join(String(dir), "target.txt"), "utf8")).toBe("old");
+      });
+
+      test.skipIf(!canLockDir)("does not write through a hard link that cannot be removed", async () => {
+        using dir = tempDir("archive-replace-locked-hardlink", {
+          "store/a.txt": "old",
+          "locked/.keep": "",
+        });
+        fs.linkSync(join(String(dir), "store/a.txt"), join(String(dir), "locked/a.txt"));
+
+        expectLockedFailure(await extractInLockedDir(String(dir)));
+
+        expect(fs.readFileSync(join(String(dir), "store/a.txt"), "utf8")).toBe("old");
+      });
+
+      // Opening a FIFO for writing waits for a reader. The extraction must fail instead.
+      test.skipIf(!canLockDir)("does not wait on a FIFO that cannot be removed", async () => {
+        using dir = tempDir("archive-replace-locked-fifo", {
+          "locked/.keep": "",
+        });
+        mkfifo(join(String(dir), "locked/a.txt"), 0o644);
+
+        expectLockedFailure(await extractInLockedDir(String(dir)));
+
+        expect(fs.lstatSync(join(String(dir), "locked/a.txt")).isFIFO()).toBe(true);
       });
 
       test.skipIf(isWindows)("gives an existing file the mode of the entry", async () => {

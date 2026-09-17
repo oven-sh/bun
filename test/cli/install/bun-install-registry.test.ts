@@ -1718,6 +1718,189 @@ describe("bundledDependencies", () => {
     expect(stdout).toBe("bundled-file-dep\n");
     expect(exitCode).toBe(0);
   });
+
+  // bundled-file@4.0.0 has the shape of a package that `npm publish` makes from a
+  // monorepo: the `file:` path of its bundled dependency leaves the package, and
+  // the tarball ships only the bundled copy in its node_modules. The copy is the
+  // dependency. The install records the path in the lockfile and never follows it.
+  // bundled-file@5.0.0 also has `optionalDependencies` ("no-deps"). The bundled
+  // name is in `dependencies`, and the later group must not drop its bundled flag.
+  describe.each(["hoisted", "isolated"] as const)(
+    "(%s) bundled file: dependency with a path that leaves the package",
+    linker => {
+      test.each([
+        ["4.0.0", "1 package installed"],
+        ["5.0.0", "2 packages installed"],
+      ])("bundled-file@%s", async (version, installed) => {
+        await Promise.all([
+          registry.writeBunfig(packageDir, { saveTextLockfile: false, linker }),
+          write(
+            packageJson,
+            JSON.stringify({
+              name: "bundled-file-outside-root",
+              dependencies: {
+                "bundled-file": version,
+              },
+            }),
+          ),
+        ]);
+
+        const bundledDepDir = join(packageDir, "node_modules", "bundled-file", "node_modules", "bundled-file-dep");
+
+        async function check() {
+          const [pkgJsonStat, indexStat] = await Promise.all([
+            lstat(join(bundledDepDir, "package.json")),
+            lstat(join(bundledDepDir, "index.js")),
+          ]);
+          expect([pkgJsonStat.isFile(), indexStat.isFile()]).toEqual([true, true]);
+          // `../bundled-file-dep`, seen from the installed package
+          expect(await exists(join(packageDir, "node_modules", "bundled-file-dep"))).toBeFalse();
+
+          await using proc = spawn({
+            cmd: [bunExe(), "-e", `console.log(require("bundled-file"))`],
+            cwd: packageDir,
+            stdout: "pipe",
+            stderr: "pipe",
+            env,
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect(stderr).toBe("");
+          expect(stdout).toBe("bundled-file-dep\n");
+          expect(exitCode).toBe(0);
+        }
+
+        let { out } = await runBunInstall(env, packageDir, { saveTextLockfile: true });
+        expect(out).toContain(installed);
+        await check();
+
+        const lockfile = await file(join(packageDir, "bun.lock")).text();
+        expect(lockfile).toContain(
+          `"bundled-file/bundled-file-dep": ["bundled-file-dep@file:../bundled-file-dep", { "bundled": true }],`,
+        );
+
+        await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+        ({ out } = await runBunInstall(env, packageDir, { frozenLockfile: true }));
+        expect(out).toContain(installed);
+        await check();
+        expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfile);
+      });
+    },
+  );
+
+  // bundled-file@3.0.0 declares the same path and does not bundle the
+  // dependency. A registry package must not link a directory outside itself.
+  test("file: dependency with a path that leaves the package is refused when it is not bundled", async () => {
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "unbundled-file-outside-root",
+        dependencies: {
+          "bundled-file": "3.0.0",
+        },
+      }),
+    );
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--save-text-lockfile"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr.split(/\r?\n/).filter(line => line.startsWith("error:"))).toEqual([
+      `error: Could not find package.json for "file:../bundled-file-dep" dependency "bundled-file-dep"`,
+      "error: bundled-file-dep@file:../bundled-file-dep failed to resolve",
+    ]);
+    expect(stdout).not.toContain("installed");
+    expect(await exists(join(packageDir, "bun.lock"))).toBeFalse();
+    expect(exitCode).toBe(1);
+  });
+
+  // The path recorded for a bundled dependency must stay unread when another
+  // dependency resolves to the same package. "mid" is nested next to the bundled
+  // "inner" and has an optional peer on it, so the hoister binds that peer to the
+  // recorded `file:../inner`, which names a directory outside the project.
+  for (const linker of ["hoisted", "isolated"] as const) {
+    test(`(${linker}) the path of a bundled file: dependency is not followed for another dependent`, async () => {
+      const packages = [
+        {
+          json: {
+            name: "outer",
+            version: "1.0.0",
+            dependencies: { inner: "file:../inner", mid: "1.0.0" },
+            bundleDependencies: ["inner"],
+          },
+          files: { "package/node_modules/inner/package.json": JSON.stringify({ name: "inner", version: "1.0.0" }) },
+        },
+        {
+          json: {
+            name: "mid",
+            version: "1.0.0",
+            peerDependencies: { inner: "*" },
+            peerDependenciesMeta: { inner: { optional: true } },
+          },
+        },
+        // the root depends on this one, so mid@1.0.0 stays nested under "outer"
+        { json: { name: "mid", version: "2.0.0" } },
+      ];
+      const tarballs = new Map<string, Uint8Array>();
+      for (const { json, files } of packages) {
+        tarballs.set(
+          `/${json.name}-${json.version}.tgz`,
+          await new Bun.Archive(
+            { "package/package.json": JSON.stringify(json), ...files },
+            { compress: "gzip" },
+          ).bytes(),
+        );
+      }
+      using server = Bun.serve({
+        port: 0,
+        fetch(request) {
+          const { origin, pathname } = new URL(request.url);
+          const tarball = tarballs.get(pathname);
+          if (tarball) return new Response(tarball);
+          const versions = packages.filter(({ json }) => `/${json.name}` === pathname);
+          if (versions.length === 0) return new Response("not found", { status: 404 });
+          return Response.json({
+            name: versions[0].json.name,
+            "dist-tags": { latest: versions.at(-1)!.json.version },
+            versions: Object.fromEntries(
+              versions.map(({ json }) => [
+                json.version,
+                { ...json, dist: { tarball: `${origin}/${json.name}-${json.version}.tgz` } },
+              ]),
+            ),
+          });
+        },
+      });
+
+      using dir = tempDir("bundled-file-outside-peer", {
+        "inner/package.json": JSON.stringify({ name: "inner", version: "9.9.9" }),
+        "inner/outside.txt": "outside the project",
+        "project/package.json": JSON.stringify({ name: "app", dependencies: { outer: "1.0.0", mid: "2.0.0" } }),
+        "project/bunfig.toml": `[install]\nregistry = "${server.url.href}"\nlinker = "${linker}"\n`,
+      });
+      const projectDir = join(String(dir), "project");
+
+      await using proc = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: projectDir,
+        stdout: "ignore",
+        stderr: "pipe",
+        env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") },
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toContain(`error: refusing to install dependency inner with unsafe folder path "../inner"`);
+      expect([...new Bun.Glob("**/outside.txt").scanSync({ cwd: projectDir, dot: true, onlyFiles: false })]).toEqual(
+        [],
+      );
+      expect(exitCode).toBe(1);
+    });
+  }
 });
 
 describe("optionalDependencies", () => {

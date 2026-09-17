@@ -2,7 +2,7 @@
   "_id": "bundled-file",
   "name": "bundled-file",
   "dist-tags": {
-    "latest": "2.0.0"
+    "latest": "5.0.0"
   },
   "versions": {
     "1.0.0": {
@@ -32,6 +32,54 @@
         "integrity": "sha512-tFSzHwAOxEKDbBAHK/MY8RQEQ1KdQu6+bJYnW8/lZybGuZG2MoYWvksteDGjsWyXBimCSz7XWjo/ENEU9tsDNg==",
         "shasum": "cd4c6b205128b53321bad299e60d7c6afb1f6c0e",
         "tarball": "http://localhost:4873/bundled-file/-/bundled-file-2.0.0.tgz"
+      }
+    },
+    "3.0.0": {
+      "name": "bundled-file",
+      "version": "3.0.0",
+      "dependencies": {
+        "bundled-file-dep": "file:../bundled-file-dep"
+      },
+      "_id": "bundled-file@3.0.0",
+      "dist": {
+        "integrity": "sha512-gQMoo88Glz7mlN93q5VrcTwW7lGobaWASIYXAq+JJ1mVDpVawkKKOkfAkv9CaLlsd/96HhuavU516+ldQvsEig==",
+        "shasum": "acec9a255f909d6c07f07d0654150ec87594a181",
+        "tarball": "http://localhost:4873/bundled-file/-/bundled-file-3.0.0.tgz"
+      }
+    },
+    "4.0.0": {
+      "name": "bundled-file",
+      "version": "4.0.0",
+      "dependencies": {
+        "bundled-file-dep": "file:../bundled-file-dep"
+      },
+      "bundleDependencies": [
+        "bundled-file-dep"
+      ],
+      "_id": "bundled-file@4.0.0",
+      "dist": {
+        "integrity": "sha512-x18GKenWM1RFAs5LjQF6wyolc2UIuBjZHntGawm9XIaAjzVvKEVFmQZjZYb9QOrVLwGphMWVXVQKUPDnTzYubw==",
+        "shasum": "6a4539872405e60b6ca02a4f9ed7c69b9dae0a84",
+        "tarball": "http://localhost:4873/bundled-file/-/bundled-file-4.0.0.tgz"
+      }
+    },
+    "5.0.0": {
+      "name": "bundled-file",
+      "version": "5.0.0",
+      "dependencies": {
+        "bundled-file-dep": "file:../bundled-file-dep"
+      },
+      "optionalDependencies": {
+        "no-deps": "1.0.0"
+      },
+      "bundleDependencies": [
+        "bundled-file-dep"
+      ],
+      "_id": "bundled-file@5.0.0",
+      "dist": {
+        "integrity": "sha512-aOIi7rw4XaXuHYwHE0bvPGmC0lTpzdcSw5bS0BGxXVIDJkG3vW29IiWcTcQg539P7ZEQgZqqFpwC48ZDaHNiDA==",
+        "shasum": "29cb868fd9146c0c519ac07832aed444550d73a3",
+        "tarball": "http://localhost:4873/bundled-file/-/bundled-file-5.0.0.tgz"
       }
     }
   }

@@ -2908,8 +2908,12 @@ fn get_or_put_resolved_package(
                     );
                 }
 
-                // transitive folder dependencies do not have their dependencies resolved
-                if crate::bin::bin_target_escapes_package_dir(this.lockfile.str(&folder))
+                // transitive folder dependencies do not have their dependencies resolved.
+                // A bundled one is never installed (the parent's tarball ships the copy), so
+                // its path is only recorded. Every reader of a folder path refuses it
+                // (`is_trusted_folder_package`), because another dependency can bind to it.
+                if !behavior.is_bundled()
+                    && crate::bin::bin_target_escapes_package_dir(this.lockfile.str(&folder))
                     && !this.lockfile.is_trusted_folder_dependency(dependency_id)
                 {
                     break 'res FolderResolutionValue::Err(crate::Error::MissingPackageJSON);

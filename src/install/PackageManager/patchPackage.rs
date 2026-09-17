@@ -22,8 +22,8 @@ use crate::package_manager_real::package_manager_directories::{
     compute_cache_dir_and_subpath, get_temporary_directory,
 };
 use crate::{
-    BuntagHashBuf, DependencyID, Features, PackageID, Resolution, buntaghashbuf_make,
-    initialize_store, invalid_package_id,
+    BuntagHashBuf, DependencyID, Features, PackageID, Resolution, ResolutionTag,
+    buntaghashbuf_make, initialize_store, invalid_package_id,
 };
 
 #[inline]
@@ -44,6 +44,26 @@ fn print_resolution_label<'a>(
     write!(label, "{}", resolution.fmt(string_buf, PathSep::Posix))
         .expect("formatting into a Vec is infallible");
     label
+}
+
+/// `bun patch` copies a `file:` package out of its folder, and `--commit` diffs
+/// against it, so both refuse the folders the installers refuse.
+fn refuse_unsafe_folder_package(lockfile: &Lockfile, pkg: &Package) {
+    if pkg.resolution.tag != ResolutionTag::Folder {
+        return;
+    }
+    let folder = lockfile.str(pkg.resolution.folder());
+    if !crate::bin::bin_target_escapes_package_dir(folder)
+        || lockfile.is_trusted_folder_package(pkg.meta.id)
+    {
+        return;
+    }
+    bun_core::pretty_errorln!(
+        "<r><red>error<r>: refusing to patch <b>{}<r> with unsafe folder path \"{}\"",
+        bstr::BStr::new(lockfile.str(&pkg.name)),
+        bstr::BStr::new(folder),
+    );
+    Global::crash();
 }
 
 #[derive(Default)]
@@ -269,6 +289,7 @@ pub fn do_patch_commit(
 
     // `compute_cache_dir_and_subpath` resolves `pkg.resolution`'s strings against `manager.lockfile`.
     manager.lockfile = lockfile;
+    refuse_unsafe_folder_package(&manager.lockfile, &pkg);
     let name = manager.lockfile.str(&pkg.name).to_vec();
     let cache_result =
         compute_cache_dir_and_subpath(manager, &name, &pkg.resolution, &mut folder_path_buf, None);
@@ -833,6 +854,8 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
                     }
                 };
 
+                refuse_unsafe_folder_package(lockfile, &actual_package);
+
                 let name = lockfile.str(&package.name).to_vec();
                 let existing_patchfile_hash: Option<u64> = 'existing_patchfile_hash: {
                     let mut name_and_version = Vec::new();
@@ -889,6 +912,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
 
                 let strbuf = manager.lockfile.buffers.string_bytes.as_slice();
                 let pkg = *manager.lockfile.packages.get(pkg_id as usize);
+                refuse_unsafe_folder_package(&manager.lockfile, &pkg);
                 let pkg_name = pkg.name.slice(strbuf).to_vec();
 
                 let existing_patchfile_hash: Option<u64> = 'existing_patchfile_hash: {

@@ -354,8 +354,7 @@ pub fn do_patch_commit(
             }
         };
 
-        // `Global::crash()` skips the deferred restore below. From the renames on,
-        // a failure leaves `'brk` with `None` and the exit happens after the block.
+        // From here on a failure leaves `'brk`: `Global::crash()` would skip the deferred restore.
         let new_folder_handle =
             match Dir::cwd().open_dir(new_folder, sys::OpenDirOptions::default()) {
                 Ok(h) => h,
@@ -926,6 +925,15 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
     // meaning that changes to the folder will also change the package in the cache.
     //
     // So we will overwrite the folder by directly copying the package in cache into it
+    //
+    // With the isolated linker's global virtual store, `module_folder` is
+    // reached *through* a `node_modules/.bun/<storepath>` symlink that points
+    // into `<cache>/links/`. `deleteTree(module_folder)` would follow that
+    // symlink and wipe the shared global entry (and its dep symlinks)
+    // underneath every other project, then FileCopier would write the user's
+    // edits into the shared cache. Detach first: walk up `module_folder` to
+    // find the first symlink ancestor, replace it with a real directory, and
+    // recreate the path below it so the copy lands in a project-local tree.
     if let Err(e) =
         overwrite_package_in_node_modules_folder(cache_dir, cache_dir_subpath, module_folder)
     {
@@ -1114,9 +1122,7 @@ fn overwrite_package_in_node_modules_folder(
     cache_dir_subpath: &[u8],
     node_modules_folder_path: &[u8],
 ) -> Result<(), crate::Error> {
-    // Everything that can fail for the source runs before anything in
-    // node_modules is removed: when the source is missing, the installed
-    // package stays as it was.
+    // Open the source first: if it is missing, the installed package stays as it was.
     let cached_package_folder = Dir::borrow(&cache_dir).open_dir(
         cache_dir_subpath,
         sys::OpenDirOptions {
@@ -1176,16 +1182,7 @@ fn overwrite_package_in_node_modules_folder(
         ignore_directories,
     )?;
 
-    // With the isolated linker's global virtual store, `node_modules_folder_path`
-    // is reached *through* a `node_modules/.bun/<storepath>` symlink that points
-    // into `<cache>/links/`. `deleteTree(node_modules_folder_path)` would follow that
-    // symlink and wipe the shared global entry (and its dep symlinks)
-    // underneath every other project, then FileCopier would write the user's
-    // edits into the shared cache. Detach first: walk up `node_modules_folder_path` to
-    // find the first symlink ancestor, replace it with a real directory, and
-    // recreate the path below it so the copy lands in a project-local tree.
     detach_module_folder_from_shared_store(node_modules_folder_path);
-
     let _ = Fd::cwd().delete_tree(node_modules_folder_path);
 
     copier.copy()?;

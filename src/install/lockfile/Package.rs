@@ -2658,8 +2658,7 @@ impl Package<u64> {
         'bin: {
             if let Some(bin) = json.as_property(b"bin") {
                 if let Some(rows) = JsonObjectStringRows::new(&bin.expr, &bump) {
-                    // Like npm's normalize-package-bin: an entry whose value
-                    // is not a string is skipped, the others are kept.
+                    // npm (normalize-package-bin) skips an entry whose value is not a string.
                     let entries: Vec<(&[u8], &[u8])> =
                         rows.filter_map(|(k, v, _)| Some((k, v?))).collect();
                     match entries.as_slice() {

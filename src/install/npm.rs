@@ -2436,8 +2436,7 @@ impl PackageManifest {
                     if let Some(bin) = version_obj.and_then(|o| o.get(b"bin")) {
                         match bin {
                             JSON::E::JsonValue::Object(obj) => {
-                                // Like npm's normalize-package-bin: an entry whose
-                                // value is not a string is skipped, the others are kept.
+                                // npm (normalize-package-bin) skips an entry whose value is not a string.
                                 let entries: Vec<(&[u8], &[u8])> = obj
                                     .get()
                                     .properties()

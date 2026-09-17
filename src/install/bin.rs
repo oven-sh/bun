@@ -250,8 +250,7 @@ impl Bin {
         buf: &mut bun_semver::string::Buf,
         extern_strings: &mut Vec<ExternalString>,
     ) -> Result<Bin, AllocError> {
-        // Like npm's normalize-package-bin: an entry whose value is not a
-        // string is skipped, the others are kept.
+        // npm (normalize-package-bin) skips an entry whose value is not a string.
         let entries: Vec<(&[u8], &[u8])> = pairs.filter_map(|(k, v)| Some((k?, v?))).collect();
         match entries.as_slice() {
             [] => {}

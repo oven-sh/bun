@@ -60,16 +60,14 @@ JSC_DEFINE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncRecord, (JSGlob
         return {};
     }
 
-    // Node.js: a BigInt has to fit in an int64 and be >= 1, any other value goes through
-    // validateInteger(val, 'val', 1).
-    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/histogram.js#L284-L295
-    // https://github.com/nodejs/node/blob/v26.3.0/src/histogram.cc#L173-L185
+    // Same checks as Node.js: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/histogram.js#L284-L295
     JSValue arg = callFrame->argument(0);
     int64_t value;
     if (arg.isNumber() && arg.asNumber() >= 1 && JSC::isSafeInteger(arg.asNumber())) [[likely]] {
         // Hot path: a valid sample does not pay for the validateInteger call.
         value = static_cast<int64_t>(arg.asNumber());
     } else if (arg.isBigInt()) {
+        // It has to fit in an int64: https://github.com/nodejs/node/blob/v26.3.0/src/histogram.cc#L173-L185
         auto* bigInt = uncheckedDowncast<JSBigInt>(arg);
         if (JSBigInt::compare(bigInt, static_cast<int64_t>(1)) == JSBigInt::ComparisonResult::LessThan
             || JSBigInt::compare(bigInt, std::numeric_limits<int64_t>::max()) == JSBigInt::ComparisonResult::GreaterThan) {
@@ -146,8 +144,7 @@ JSC_DEFINE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncReset, (JSGloba
 
 static double toPercentile(JSC::ThrowScope& scope, JSGlobalObject* globalObject, JSValue value)
 {
-    // Node.js checks only the type here, so that every out-of-range value gets the "> 0 && <= 100" text below.
-    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/histogram.js#L189-L197
+    // Type check only, like Node.js: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/histogram.js#L189-L197
     Bun::V::validateNumber(scope, globalObject, value, "percentile"_s, jsUndefined(), jsUndefined());
     RETURN_IF_EXCEPTION(scope, {});
 

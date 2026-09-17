@@ -135,8 +135,7 @@ void JSNodePerformanceHooksHistogram::reset()
     m_histogramData.exceedsCount = 0;
 }
 
-// hdr_min/hdr_max round to the bucket bounds, as in Node.js (max == percentile(100)). Empty: INT64_MAX and 0.
-// https://github.com/nodejs/node/blob/v26.3.0/src/histogram-inl.h#L34-L42
+// Bucket bounds, not raw values, like Node.js: https://github.com/nodejs/node/blob/v26.3.0/src/histogram-inl.h#L34-L42
 int64_t JSNodePerformanceHooksHistogram::getMin() const
 {
     if (!m_histogramData.histogram) return std::numeric_limits<int64_t>::max();
@@ -203,8 +202,7 @@ void JSNodePerformanceHooksHistogram::getPercentiles(JSGlobalObject* globalObjec
 
     while (hdr_iter_next(&iter)) {
         double percentile = iter.specifics.percentiles.percentile;
-        // Node.js reports iter.value, the lowest value of the bucket, not what percentile() returns.
-        // https://github.com/nodejs/node/blob/v26.3.0/src/histogram-inl.h#L61-L70
+        // The lowest value of the bucket, like Node.js: https://github.com/nodejs/node/blob/v26.3.0/src/histogram-inl.h#L61-L70
         int64_t value = iter.value;
         JSValue jsKey = jsNumber(percentile);
         JSValue jsValue = jsNumber(static_cast<double>(value));

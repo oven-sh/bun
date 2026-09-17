@@ -792,6 +792,8 @@ where
             Output::enable_buffering();
             let writer = Output::error_writer();
 
+            // Inspecting `value` runs user code (`[inspect.custom]`, `toString`) that can throw.
+            let mut inspected: JsResult<()> = Ok(());
             if class_name == b"Response" {
                 bun_core::err_generic!(
                     "Expected a native Response object, but received a polyfilled Response object. Bun.serve() only supports native Response objects.",
@@ -799,10 +801,16 @@ where
             } else if !value.is_empty() && !global_this.has_exception() {
                 let mut formatter = jsc::ConsoleObject::Formatter::new(global_this);
                 formatter.quote_strings = true;
-                bun_core::err_generic!(
-                    "Expected a Response object, but received '{}'",
-                    jsc::console_object::formatter::ZigFormatter::new(&mut formatter, value),
-                );
+                let mut received: Vec<u8> = Vec::new();
+                inspected = formatter.format_value::<false>(value, &mut received);
+                if inspected.is_ok() {
+                    bun_core::err_generic!(
+                        "Expected a Response object, but received '{}'",
+                        bstr::BStr::new(&received),
+                    );
+                } else {
+                    bun_core::err_generic!("Expected a Response object");
+                }
                 // `formatter` drops here.
             } else {
                 bun_core::err_generic!("Expected a Response object");
@@ -813,6 +821,7 @@ where
                 jsc::ConsoleObject::write_trace(writer, global_this);
             }
             Output::flush();
+            crate::dispatch::fold(inspected);
         }
         // The formatter and `write_trace` above re-enter JS (getters, proxy
         // traps, Error.prepareStackTrace), which can synchronously abort or

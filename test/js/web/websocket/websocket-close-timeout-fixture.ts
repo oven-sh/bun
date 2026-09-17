@@ -43,14 +43,14 @@ function watchClientConnection(isTls: boolean) {
   return { end: isTls ? () => {} : gone, close: gone };
 }
 
-const server = Bun.listen<{ head: string; upgraded: boolean }>({
+const server = Bun.listen<{ head: string; upgraded: boolean; frames: Buffer }>({
   hostname: "127.0.0.1",
   port: 0,
   tls: secure ? tls : undefined,
   allowHalfOpen: true,
   socket: {
     open(socket) {
-      socket.data = { head: "", upgraded: false };
+      socket.data = { head: "", upgraded: false, frames: Buffer.alloc(0) };
     },
     data(socket, chunk) {
       const state = socket.data;
@@ -69,10 +69,14 @@ const server = Bun.listen<{ head: string; upgraded: boolean }>({
         return;
       }
       // The client sends nothing but Close frames: 2 header bytes, 4 mask bytes, a short payload.
-      for (let i = 0; i + 6 <= chunk.length; i += 6 + (chunk[i + 1] & 0x7f)) {
-        if ((chunk[i] & 0x0f) === 0x8) closeFramesFromClient++;
+      // A frame can arrive in pieces, so an incomplete tail stays buffered.
+      let frames = Buffer.concat([state.frames, chunk]);
+      while (frames.length >= 2 && frames.length >= 6 + (frames[1] & 0x7f)) {
+        const isClose = (frames[0] & 0x0f) === 0x8;
+        if (isClose && ++closeFramesFromClient === 1 && scenario === "client-closes") socket.write(CLOSE_1000);
+        frames = frames.subarray(6 + (frames[1] & 0x7f));
       }
-      if (scenario === "client-closes" && closeFramesFromClient === 1) socket.write(CLOSE_1000);
+      state.frames = frames;
     },
     // Through a proxy, the client's connection is the one the proxy accepted.
     ...(direct ? watchClientConnection(secure) : { end() {} }),

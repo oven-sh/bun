@@ -111,15 +111,22 @@ public:
     }
 
     /* node:http compat, called right after end(): when bytes of the response
-     * are still queued in the send buffer, arm the flushed notification
-     * (HttpContext::onWritable -> Bun__NodeHTTP__onOutgoingFlushed) and return
-     * true. False means every byte already reached the kernel, or the socket is
-     * gone and no writable event will ever report the flush. */
+     * are still queued in the send buffer (or, for TLS, in the spill slot),
+     * record the position of its last byte as a watermark and return true.
+     * HttpContext::onWritable reports through Bun__NodeHTTP__onOutgoingFlushed
+     * once the drain passes it. False means every byte already reached the
+     * kernel, or the socket is gone and no writable event will ever report the
+     * flush. Only a node:http connection carries the watermark vector. */
     bool awaitOutgoingFlush() {
         if (us_socket_is_closed((us_socket_t *) this) || ((AsyncSocket<SSL> *) this)->hasFullyDrained()) {
             return false;
         }
-        getHttpResponseData()->state |= HttpResponseData<SSL>::HTTP_NODE_FLUSH_PENDING;
+        auto *nodeHttpResponseData = (HttpResponseData<SSL, true> *) getHttpResponseData();
+        const BackPressure &buffer = nodeHttpResponseData->buffer;
+        nodeHttpResponseData->nodeHttpFlushWatermarks.append(buffer.drainedTotal() + buffer.length());
+        nodeHttpResponseData->state |= HttpResponseData<SSL>::HTTP_NODE_FLUSH_PENDING;
+        /* Not idle until the bytes are out: closeIdle() would drop them. */
+        nodeHttpResponseData->isIdle = false;
         return true;
     }
 

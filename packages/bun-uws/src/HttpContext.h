@@ -37,7 +37,7 @@
 
 
 extern "C" void Bun__NodeHTTP__onReadsResumable(int ssl, struct us_socket_t *s);
-extern "C" void Bun__NodeHTTP__onOutgoingFlushed(int ssl, struct us_socket_t *s);
+extern "C" void Bun__NodeHTTP__onOutgoingFlushed(int ssl, struct us_socket_t *s, size_t responseCount);
 
 namespace uWS {
 
@@ -774,6 +774,41 @@ private:
         return s;
     }
 
+    /* node:http compat: responses that ended with bytes still queued, whose
+     * 'finish' the JS layer holds until they are out. Every watermark the
+     * drain has passed (see HttpResponse::awaitOutgoingFlush) is in the kernel
+     * now: for TLS, the spill slot drained before this event was dispatched.
+     * A pinned write armed after them (onWritable's callback) belongs to a
+     * later response. The hook runs JS in place; a 'finish' listener can close
+     * the connection, so false means stop touching the socket. */
+    static bool reportNodeHttpFlushedResponses(us_socket_t *s) {
+        auto *httpResponseData = reinterpret_cast<HttpResponseData<SSL, true> *>(us_socket_ext(s));
+        if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_FLUSH_PENDING)) {
+            return true;
+        }
+        uint64_t drained = httpResponseData->buffer.drainedTotal();
+        auto &watermarks = httpResponseData->nodeHttpFlushWatermarks;
+        size_t passed = 0;
+        while (passed < watermarks.size() && watermarks[passed] <= drained) {
+            passed++;
+        }
+        if (passed == 0) {
+            return true;
+        }
+        watermarks.removeAt(0, passed);
+        if (watermarks.isEmpty()) {
+            httpResponseData->state &= ~HttpResponseData<SSL>::HTTP_NODE_FLUSH_PENDING;
+            /* The idle state markDone withheld while the flush was pending
+             * (closeIdle / HTTP_CLOSE_WHEN_IDLE act on it). */
+            httpResponseData->isIdle = !(httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING)
+                && httpResponseData->nodeHttpQueuedPipelinedCount == 0;
+        }
+        if (httpResponseData->socketData) {
+            Bun__NodeHTTP__onOutgoingFlushed(SSL, s, passed);
+        }
+        return !us_socket_is_closed(s);
+    }
+
     template <bool IsNodeHttp>
     static us_socket_t *onWritable(us_socket_t *s) {
         auto *asyncSocket = reinterpret_cast<AsyncSocket<SSL> *>(s);
@@ -784,6 +819,11 @@ private:
         if (bufferedAmount > 0) {
             /* Try to flush pending data from the socket's buffer to the network */
             size_t flushed = asyncSocket->flush();
+            if constexpr (IsNodeHttp) {
+                if (!reportNodeHttpFlushedResponses(s)) {
+                    return s;
+                }
+            }
             /* Check if there's still data waiting to be sent after flush attempt */
             if (asyncSocket->getBufferedAmount() > 0) {
                 /* onEnd deferred close for these bytes; a writable event that
@@ -807,27 +847,15 @@ private:
             /* If bufferedAmount is now 0, we've successfully flushed everything
             * and will fall through to the next section of code
             */
+        } else if constexpr (IsNodeHttp) {
+            /* A write() for a later response drained the buffer outside this
+             * event; the watermarks it passed are still owed. */
+            if (!reportNodeHttpFlushedResponses(s)) {
+                return s;
+            }
         }
 
         auto *httpContextData = getSocketContextDataS(s);
-
-        /* node:http compat: a response ended with bytes still queued and the JS
-         * layer holds its 'finish' until they are out. The send buffer is empty
-         * here, so everything queued before that end() is in the kernel (for TLS,
-         * the spill slot must have drained too). A pinned write armed after it
-         * (onWritable below) belongs to a later response. The hook runs JS in
-         * place; a 'finish' listener can close the connection. */
-        if constexpr (IsNodeHttp) {
-            if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_FLUSH_PENDING)
-                && httpResponseData->socketData
-                && asyncSocket->hasFullyDrained()) {
-                httpResponseData->state &= ~HttpResponseData<SSL>::HTTP_NODE_FLUSH_PENDING;
-                Bun__NodeHTTP__onOutgoingFlushed(SSL, s);
-                if (us_socket_is_closed(s)) {
-                    return s;
-                }
-            }
-        }
 
         if (httpResponseData->isConnectRequest && httpResponseData->socketData && httpContextData->onSocketDrain) {
             httpContextData->onSocketDrain(httpResponseData->socketData, SSL, (struct us_socket_t *) s);

@@ -315,20 +315,29 @@ describe("backpressure", () => {
   // most of a 32 MiB body sits in the server's send buffer when end() returns;
   // the callbacks must wait until the client drains it
   // (https://github.com/oven-sh/bun/issues/43155).
-  describe("end() callback and 'finish' wait for the backpressured body to flush", () => {
+  // Skipped on Windows: a non-blocking send() on a loopback socket there
+  // accepts the whole 32 MiB (and far more) into the kernel while the peer
+  // is paused, so nothing is ever left in the userspace send buffer.
+  const describeUnlessWindows = process.platform === "win32" ? describe.skip : describe;
+  describeUnlessWindows("end() callback and 'finish' wait for the backpressured body to flush", () => {
     const BODY = 32 * 1024 * 1024;
     const CHUNK = Buffer.alloc(256 * 1024, 1);
     const CHUNKS = BODY / CHUNK.byteLength;
 
-    it.each([
-      ["res.write() then res.end(cb)", false],
-      ["res.write() then res.end(chunk, cb)", true],
-    ])("%s", async (_name, endWithChunk) => {
+    const keysDir = path.join(import.meta.dirname, "..", "test", "fixtures", "keys");
+    const tlsOptions = {
+      cert: readFileSync(path.join(keysDir, "agent1-cert.pem")),
+      key: readFileSync(path.join(keysDir, "agent1-key.pem")),
+    };
+
+    // Serves one response: the body in CHUNK-sized writes (the last write
+    // carries a callback), then end(). Records every event in order.
+    async function serveOnce(tls: boolean, endWithChunk: boolean) {
       const events: string[] = [];
       const endReturned = Promise.withResolvers<void>();
       const callbackFired = Promise.withResolvers<void>();
       const closed = Promise.withResolvers<void>();
-      await using server = http.createServer((req, res) => {
+      const handler = (req: http.IncomingMessage, res: http.ServerResponse) => {
         res.writeHead(200, { "Content-Length": String(BODY) });
         res.on("finish", () => events.push("finish"));
         res.on("close", () => {
@@ -347,13 +356,15 @@ describe("backpressure", () => {
         else res.end(callback);
         events.push("end returned");
         endReturned.resolve();
-      });
+      };
+      const server = tls ? https.createServer(tlsOptions, handler) : http.createServer(handler);
       await once(server.listen(0, "127.0.0.1"), "listening");
       const port = (server.address() as AddressInfo).port;
-
-      const socket = net.connect(port, "127.0.0.1");
+      const socket = tls
+        ? nodeTls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false })
+        : net.connect(port, "127.0.0.1");
       socket.on("error", () => {});
-      await once(socket, "connect");
+      await once(socket, tls ? "secureConnect" : "connect");
       // Nothing reads the response: the kernel buffers fill and the rest backs
       // up in the server.
       socket.pause();
@@ -363,10 +374,93 @@ describe("backpressure", () => {
       // ticks run before checking that nothing fired.
       for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve));
       expect(events).toEqual(["end returned"]);
+      return { server, socket, events, callbackFired, closed };
+    }
 
+    it.each([
+      ["res.write() then res.end(cb)", false, false],
+      ["res.write() then res.end(chunk, cb)", false, true],
+      ["res.write() then res.end(chunk, cb) over TLS", true, true],
+    ])("%s", async (_name, tls, endWithChunk) => {
+      const { server, socket, events, callbackFired, closed } = await serveOnce(tls, endWithChunk);
+      try {
+        let received = 0;
+        let headerLength = -1;
+        let head = "";
+        socket.on("data", chunk => {
+          received += chunk.length;
+          if (headerLength < 0) {
+            head += chunk.toString("latin1");
+            const i = head.indexOf("\r\n\r\n");
+            if (i >= 0) headerLength = i + 4;
+          }
+        });
+        socket.resume();
+        await callbackFired.promise;
+        // 'close' follows the callback on the next tick, which may already have run.
+        expect(events.slice(0, 4)).toEqual(["end returned", "write callback", "finish", "end callback"]);
+        while (headerLength < 0 || received < headerLength + BODY) {
+          await once(socket, "data");
+        }
+        expect(received).toBe(headerLength + BODY);
+        socket.destroy();
+        await closed.promise;
+        expect(events).toEqual(["end returned", "write callback", "finish", "end callback", "close"]);
+      } finally {
+        server.close();
+      }
+    });
+
+    // The client goes away with most of the body still queued. Node's failed
+    // socket write still runs its callback and onFinish still emits 'finish',
+    // so the response completes in the same order, then closes.
+    it("a client that disconnects before the flush still completes the response", async () => {
+      const { server, socket, events, closed } = await serveOnce(false, true);
+      try {
+        socket.destroy();
+        await closed.promise;
+        expect(events).toEqual(["end returned", "write callback", "finish", "end callback", "close"]);
+      } finally {
+        server.close();
+      }
+    });
+
+    // Two pipelined requests, both answered with a backpressured body. The
+    // first response is done once its own bytes are out: its callback must
+    // not wait for the second response, which the client has not read yet.
+    it("a pipelined response behind it does not delay the first one's callback", async () => {
+      const events: string[] = [];
+      const bothEnded = Promise.withResolvers<void>();
+      const callbacks = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
+      let responses = 0;
+      await using server = http.createServer((req, res) => {
+        const id = responses++;
+        res.writeHead(200, { "Content-Length": String(BODY) });
+        for (let i = 0; i < CHUNKS - 1; i++) res.write(CHUNK);
+        res.end(CHUNK, () => {
+          events.push(`end callback ${id}`);
+          callbacks[id].resolve();
+        });
+        if (id === 1) bothEnded.resolve();
+      });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const port = (server.address() as AddressInfo).port;
+
+      const socket = net.connect(port, "127.0.0.1");
+      socket.on("error", () => {});
+      await once(socket, "connect");
+      socket.pause();
+      socket.write("GET /1 HTTP/1.1\r\nHost: localhost\r\n\r\nGET /2 HTTP/1.1\r\nHost: localhost\r\n\r\n");
+      await bothEnded.promise;
+      for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve));
+      expect(events).toEqual([]);
+
+      // Read the first response and its head, then stop again: the second
+      // response's tail stays behind.
       let received = 0;
       let headerLength = -1;
       let head = "";
+      let readFirst = false;
       socket.on("data", chunk => {
         received += chunk.length;
         if (headerLength < 0) {
@@ -374,18 +468,25 @@ describe("backpressure", () => {
           const i = head.indexOf("\r\n\r\n");
           if (i >= 0) headerLength = i + 4;
         }
+        if (!readFirst && headerLength >= 0 && received >= headerLength + BODY) {
+          readFirst = true;
+          socket.pause();
+        }
       });
       socket.resume();
-      await callbackFired.promise;
-      // 'close' follows the callback on the next tick, which may already have run.
-      expect(events.slice(0, 4)).toEqual(["end returned", "write callback", "finish", "end callback"]);
-      while (headerLength < 0 || received < headerLength + BODY) {
+      await callbacks[0].promise;
+      for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve));
+      expect(events).toEqual(["end callback 0"]);
+      expect(readFirst).toBe(true);
+
+      socket.resume();
+      await callbacks[1].promise;
+      expect(events).toEqual(["end callback 0", "end callback 1"]);
+      while (received < 2 * (headerLength + BODY)) {
         await once(socket, "data");
       }
-      expect(received).toBe(headerLength + BODY);
+      expect(received).toBe(2 * (headerLength + BODY));
       socket.destroy();
-      await closed.promise;
-      expect(events).toEqual(["end returned", "write callback", "finish", "end callback", "close"]);
     });
   });
 

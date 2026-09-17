@@ -34,9 +34,10 @@ namespace uWS {
 struct BackPressure {
     BackPressure() = default;
     BackPressure(BackPressure &&other) noexcept
-        : buf(other.buf), head(other.head), tail(other.tail), cap(other.cap) {
+        : buf(other.buf), head(other.head), tail(other.tail), cap(other.cap), drained(other.drained) {
         other.buf = nullptr;
         other.head = other.tail = other.cap = 0;
+        other.drained = 0;
     }
     BackPressure(const BackPressure &) = delete;
     BackPressure &operator=(const BackPressure &) = delete;
@@ -48,6 +49,11 @@ struct BackPressure {
     const char *data() const { return buf + head; }
     /* Allocation footprint for memoryCost / GC reporting. */
     size_t totalLength() const { return cap; }
+    /* Bytes erased over the buffer's lifetime. drainedTotal() + length() is the
+     * position of the next byte to be appended, so a producer can record it as
+     * a watermark and learn later, from drainedTotal() alone, whether
+     * everything it had queued by then is out (node:http end() callbacks). */
+    uint64_t drainedTotal() const { return drained; }
 
     void append(const char *src, size_t n) {
         if (!n) return;
@@ -57,6 +63,7 @@ struct BackPressure {
     }
 
     void erase(size_t n) {
+        drained += n;
         head += n;
         if (head >= tail) {
             /* Fully drained: next append writes at offset 0 with no memmove. */
@@ -68,11 +75,13 @@ struct BackPressure {
     /* erase() that keeps the allocation when fully drained, for buffers that
      * refill every event (HTTP/2 connection output). */
     void consume(size_t n) {
+        drained += n;
         head += n;
         if (head >= tail) head = tail = 0;
     }
 
     void clear() {
+        drained += tail - head;
         head = tail = 0;
         release();
     }
@@ -100,6 +109,7 @@ private:
     size_t head = 0;
     size_t tail = 0;
     size_t cap = 0;
+    uint64_t drained = 0;
 
     /* Ensure [tail, tail+n) is writable. Prefers compacting into the drained
      * head gap over growing so steady-state producer/consumer never reallocs. */

@@ -259,7 +259,10 @@ bool JSNodeHTTPServerSocket::isClosed() const
 template<bool SSL>
 static bool deferShutdownUntilResponseDrains(us_socket_t* socket)
 {
-    if (reinterpret_cast<uWS::AsyncSocket<SSL>*>(socket)->getBufferedAmount() == 0) {
+    /* Spill-aware: a TLS batch tail still in the loop's spill slot also has
+     * to go out first, and the writable event that drains it is what reports
+     * a pending flush (HTTP_NODE_FLUSH_PENDING) before the close gate runs. */
+    if (reinterpret_cast<uWS::AsyncSocket<SSL>*>(socket)->hasFullyDrained()) {
         return false;
     }
     /* HttpContext<SSL>::onWritable shuts the socket down once the buffered
@@ -757,10 +760,11 @@ void JSNodeHTTPServerSocket::onDrain()
 }
 
 // Called in place from HttpContext::onWritable, not posted like the other
-// callbacks: between a posted task and its run, a later response could end
-// with new backpressure and be taken for flushed. The JS side only records
-// which responses have flushed and defers their events to process.nextTick.
-void JSNodeHTTPServerSocket::onOutgoingFlushed()
+// callbacks: the count is for the responses parked in JS at this moment, and a
+// later end() could park another one before a posted task ran. The JS side
+// only records which responses have flushed and defers their events to
+// process.nextTick.
+void JSNodeHTTPServerSocket::onOutgoingFlushed(size_t responseCount)
 {
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(this->globalObject());
     auto* callbackObject = functionToCallOnFlush.get();
@@ -771,25 +775,25 @@ void JSNodeHTTPServerSocket::onOutgoingFlushed()
         return;
     }
     EnsureStillAliveScope ensureStillAlive(this);
-    Bun__EventLoop__runCallback2(globalObject, JSValue::encode(callbackObject), JSValue::encode(this), JSValue::encode(jsUndefined()), JSValue::encode(jsUndefined()));
+    Bun__EventLoop__runCallback2(globalObject, JSValue::encode(callbackObject), JSValue::encode(this), JSValue::encode(jsNumber(responseCount)), JSValue::encode(jsUndefined()));
 }
 
 template<bool SSL>
-static void onNodeHttpOutgoingFlushed(us_socket_t* socket)
+static void onNodeHttpOutgoingFlushed(us_socket_t* socket, size_t responseCount)
 {
     auto* httpResponseData = reinterpret_cast<uWS::HttpResponseData<SSL>*>(us_socket_ext(socket));
     auto* cell = reinterpret_cast<JSNodeHTTPServerSocket*>(httpResponseData->socketData);
     if (cell) {
-        cell->onOutgoingFlushed();
+        cell->onOutgoingFlushed(responseCount);
     }
 }
 
-extern "C" void Bun__NodeHTTP__onOutgoingFlushed(int ssl, us_socket_t* socket)
+extern "C" void Bun__NodeHTTP__onOutgoingFlushed(int ssl, us_socket_t* socket, size_t responseCount)
 {
     if (ssl) {
-        onNodeHttpOutgoingFlushed<true>(socket);
+        onNodeHttpOutgoingFlushed<true>(socket, responseCount);
     } else {
-        onNodeHttpOutgoingFlushed<false>(socket);
+        onNodeHttpOutgoingFlushed<false>(socket, responseCount);
     }
 }
 

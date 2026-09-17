@@ -1371,8 +1371,15 @@ const kDispatcherDetached = Symbol("kDispatcherDetached");
 const kTransportFinished = Symbol("kTransportFinished");
 const kFlushWaiters = Symbol("kFlushWaiters");
 const kFlushPending = Symbol("kFlushPending");
+// The socket a parked response waits on (res.socket is detached meanwhile) and
+// the async-context frame end() ran in, which its deferred events re-enter
+// like the ones end() schedules directly (Node's write completion is an
+// AsyncResource of the request).
+const kFlushSocket = Symbol("kFlushSocket");
+const kFlushAsyncContext = Symbol("kFlushAsyncContext");
 const kEndCallback = Symbol("kEndCallback");
 const kBoundOnFlush = Symbol("kBoundOnFlush");
+const runInFrame = require("internal/async_context_frame").run;
 
 // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_server.js (socketOnError)
 const badRequestResponse = Buffer.from(`HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n`, "latin1");
@@ -2422,6 +2429,8 @@ function holdFinishUntilFlushed(res, callback) {
   }
   res[kEndCallback] = callback;
   res[kFlushPending] = true;
+  res[kFlushSocket] = socket;
+  res[kFlushAsyncContext] = $getInternalField($asyncContext, 0);
   (socket[kFlushWaiters] ??= []).push(res);
   // Connection bookkeeping keeps its timing: the dispatcher can assign the
   // next request's response to this socket before the flush.
@@ -2429,21 +2438,32 @@ function holdFinishUntilFlushed(res, callback) {
   return true;
 }
 
-// Native callback: every byte queued on the socket so far reached the kernel,
-// so each parked response is fully sent. Runs inside the transport's writable
-// event, so only bookkeeping happens here and the events go to the next tick.
-function onSocketOutgoingFlushed(this: NodeHTTPServerSocket) {
+// Native callback: the last byte of each of the oldest `count` parked
+// responses reached the kernel (the native side keeps one send-buffer
+// watermark per parked response, in end() order). Runs inside the transport's
+// writable event, so only bookkeeping happens here and the events go to the
+// next tick.
+function onSocketOutgoingFlushed(this: NodeHTTPServerSocket, count: number) {
   const waiters = this[kFlushWaiters];
   if (waiters === undefined || waiters.length === 0) return;
-  this[kFlushWaiters] = undefined;
-  for (let i = 0; i < waiters.length; i++) {
-    process.nextTick(emitFlushedFinishNT, waiters[i]);
+  const released = count < waiters.length ? waiters.splice(0, count) : waiters;
+  if (released === waiters) this[kFlushWaiters] = undefined;
+  for (let i = 0; i < released.length; i++) {
+    scheduleFlushedFinish(released[i]);
   }
+}
+
+// nextTick captures the active async-context frame, so schedule inside the
+// frame end() ran in.
+function scheduleFlushedFinish(res) {
+  runInFrame(res[kFlushAsyncContext], process.nextTick, process, emitFlushedFinishNT, res);
 }
 
 function emitFlushedFinishNT(res) {
   res[kFlushPending] = false;
-  // destroy()ed or closed while the flush was pending: 'close' already ran.
+  res[kFlushSocket] = undefined;
+  res[kFlushAsyncContext] = undefined;
+  // destroy()ed while detached and parked: 'close' already ran.
   if (res._closed) return;
   const callback = res[kEndCallback];
   res[kEndCallback] = undefined;
@@ -2462,7 +2482,7 @@ function releaseFlushWaitersOnClose(socket) {
   if (waiters === undefined) return;
   socket[kFlushWaiters] = undefined;
   for (let i = 0; i < waiters.length; i++) {
-    process.nextTick(emitFlushedFinishNT, waiters[i]);
+    scheduleFlushedFinish(waiters[i]);
   }
 }
 
@@ -3739,7 +3759,11 @@ ServerResponse.prototype.destroy = function (err?: Error) {
   if (handle && this[kPipelinedQueuedState] === undefined) {
     handle.abort();
   }
-  const socket = this[kSocket];
+  // A response still flushing after end() is detached from res.socket but, as
+  // in Node (where it stays attached until 'finish'), destroying it tears
+  // down the connection. The socket close then completes it: callbacks,
+  // 'finish', 'close'.
+  const socket = this[kSocket] ?? this[kFlushSocket];
   if (socket) {
     socket.destroy(err);
   } else {

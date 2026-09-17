@@ -59,8 +59,12 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
 
         HttpResponseData<SSL> *httpResponseData = uwsRes->getHttpResponseData();
         /* A queued pipelined response (node:http) still owes output on this
-         * connection, so it is not idle between the responses. */
-        httpResponseData->isIdle = httpResponseData->nodeHttpQueuedPipelinedCount == 0;
+         * connection, so it is not idle between the responses; neither is a
+         * connection with an earlier response still flushing, whose close would
+         * drop the send buffer (HttpContext::reportNodeHttpFlushedResponses
+         * marks it idle again). */
+        httpResponseData->isIdle = httpResponseData->nodeHttpQueuedPipelinedCount == 0
+            && !(httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_FLUSH_PENDING);
     }
 
     /* Caller of onWritable. It is possible onWritable calls markDone so we need to borrow it. */
@@ -158,10 +162,11 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         /* node:http: a response ended while bytes of it still sat in the
          * socket's send buffer, and the JS layer holds its 'finish' event and
          * end()/write() callbacks until they have flushed (Node fires them from
-         * the socket write completion). onWritable reports through
-         * Bun__NodeHTTP__onOutgoingFlushed once the send buffer is empty.
-         * Connection-scoped: the next request on the connection can be
-         * dispatched before the flush. */
+         * the socket write completion). NodeHttpResponseData::
+         * nodeHttpFlushWatermarks holds one buffer position per such response;
+         * onWritable reports through Bun__NodeHTTP__onOutgoingFlushed as the
+         * drain passes them. Connection-scoped: the next request on the
+         * connection can be dispatched before the flush. */
         HTTP_NODE_FLUSH_PENDING = 1 << 19,
 
         /* Bits that describe the connection rather than the response in flight.
@@ -283,6 +288,12 @@ struct HttpResponseData<SSL, true> : HttpResponseData<SSL, false> {
     bool headersCompleted = false;
     /* Timeout sweep already reported this message; reset when it completes. */
     bool requestTimeoutReported = false;
+    /* One entry per response that ended with bytes still in the send buffer,
+     * in end() order: the buffer position (BackPressure::drainedTotal() +
+     * length() at that time) right after its last byte. HttpContext::onWritable
+     * pops the entries the drain has passed and reports their count to JS.
+     * Non-empty exactly when HTTP_NODE_FLUSH_PENDING is set. */
+    WTF::Vector<uint64_t, 2> nodeHttpFlushWatermarks;
 };
 
 /* Readable name for the IsNodeHttp=true specialization (used by the node:http

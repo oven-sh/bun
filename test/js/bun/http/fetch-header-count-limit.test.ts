@@ -76,17 +76,16 @@ test("fetch with exactly 250 custom headers sends all of them", async () => {
   expect(customCount).toBe(250);
 });
 
-test("user-supplied Host/User-Agent/Accept are sent alongside >250 other headers", async () => {
+test("user-supplied Host/User-Agent/Accept sent after >250 other headers keep their values", async () => {
   await using server = makeRawHttpServer().listen(0);
   await once(server, "listening");
   const port = (server.address() as any).port;
 
-  // "a-" prefixed headers sort before "accept", "host", "user-agent" in a
-  // Headers object, so the special headers land past the inline-scratch
-  // boundary and exercise the overflow path.
+  // fetch() writes headers in code-point order of their case-preserved names.
+  // "A-" sorts before "Accept", so Accept, Host and User-Agent come last.
   const headers = new Headers();
   for (let i = 0; i < 251; i++) {
-    headers.set(`a-${String(i).padStart(4, "0")}`, `v${i}`);
+    headers.set(`A-${String(i).padStart(4, "0")}`, `v${i}`);
   }
   headers.set("Host", "custom-host.example.com");
   headers.set("User-Agent", "custom-agent");
@@ -95,13 +94,22 @@ test("user-supplied Host/User-Agent/Accept are sent alongside >250 other headers
   const res = await fetch(`http://127.0.0.1:${port}/test`, { headers });
   expect(res.status).toBe(200);
 
-  const { headers: received } = await res.json();
+  const { headerNames, headers: received } = await res.json();
+  const count = (name: string) => headerNames.filter((n: string) => n === name).length;
 
   expect({
+    customCount: headerNames.filter((n: string) => n.startsWith("a-")).length,
+    hostLines: count("host"),
+    userAgentLines: count("user-agent"),
+    acceptLines: count("accept"),
     host: received.host,
     "user-agent": received["user-agent"],
     accept: received.accept,
   }).toEqual({
+    customCount: 251,
+    hostLines: 1,
+    userAgentLines: 1,
+    acceptLines: 1,
     host: "custom-host.example.com",
     "user-agent": "custom-agent",
     accept: "text/html",

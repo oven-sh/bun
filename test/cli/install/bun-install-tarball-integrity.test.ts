@@ -966,6 +966,9 @@ describe.concurrent("gzip trailer verification", () => {
     const { stdout, stderr, exitCode, installed, leftovers } = await install("gzip-trailer-crc-stream", badCrcTgz, {
       BUN_FEATURE_FLAG_NO_LIBDEFLATE: "1",
     });
+    // libdeflate logs this when it rejects the data, so its absence shows
+    // that libarchive's trailer check did.
+    expect(stderr).not.toContain("Corrupt gzip data");
     expect(stderr).toContain("extracting tarball from pkg");
     expect(stdout).not.toContain("1 package installed");
     expect(exitCode).toBe(1);
@@ -977,6 +980,9 @@ describe.concurrent("gzip trailer verification", () => {
     const { stdout, stderr, exitCode, installed, leftovers } = await install("gzip-trailer-aligned", badCrcAlignedTgz, {
       BUN_FEATURE_FLAG_NO_LIBDEFLATE: "1",
     });
+    // libdeflate logs this when it rejects the data, so its absence shows
+    // that libarchive's trailer check did.
+    expect(stderr).not.toContain("Corrupt gzip data");
     expect(stderr).toContain("extracting tarball from pkg");
     expect(stdout).not.toContain("1 package installed");
     expect(exitCode).toBe(1);
@@ -986,6 +992,9 @@ describe.concurrent("gzip trailer verification", () => {
 
   it("rejects an ISIZE mismatch", async () => {
     const { stdout, stderr, exitCode, installed, leftovers } = await install("gzip-trailer-isize", badIsizeTgz);
+    // libdeflate logs this when it rejects the data, so its absence shows
+    // that libarchive's trailer check did.
+    expect(stderr).not.toContain("Corrupt gzip data");
     expect(stderr).toContain("extracting tarball from pkg");
     expect(stdout).not.toContain("1 package installed");
     expect(exitCode).toBe(1);

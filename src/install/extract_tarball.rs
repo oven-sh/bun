@@ -284,16 +284,14 @@ impl ExtractTarball {
         // Windows cannot rename or delete a directory that still has an open handle.
         drop(extract_destination);
 
-        let resolved = match extracted {
-            Ok(resolved) => resolved,
-            Err(err) => {
-                // A failed extract leaves the temp directory populated.
-                let _ = tmpdir.delete_tree(tmpname.as_bytes());
-                return Err(err);
-            }
-        };
-
-        self.move_to_cache_directory(log, tmpname, name, basename, resolved)
+        let result = extracted.and_then(|resolved| {
+            self.move_to_cache_directory(log, tmpname, name, basename, resolved)
+        });
+        if result.is_err() {
+            // Still populated unless the rename into the cache already happened.
+            let _ = tmpdir.delete_tree(tmpname.as_bytes());
+        }
+        result
     }
 
     /// Decompress `tgz_bytes` and extract it into `extract_destination`.

@@ -566,17 +566,26 @@ impl StreamingDecoder {
         })
     }
 
-    /// Consume all of `input`, appending decompressed bytes to `out`
-    /// (growing in 4096-byte steps). Returns `ShortRead` when more input is
-    /// required and `is_done` is false.
+    /// Mid-stream: a further [`decompress`](Self::decompress) may emit more
+    /// output even with no new input.
+    #[inline]
+    pub fn is_inflating(&self) -> bool {
+        matches!(self.state, State::Inflating)
+    }
+
+    /// Decompress `input` into `out`, stopping once `out.len()` reaches
+    /// `max_output`. Returns input bytes consumed; any remainder is the
+    /// caller's to re-feed. Returns `ShortRead` when all input was consumed
+    /// but more is required and `is_done` is false.
     pub fn decompress(
         &mut self,
         input: &[u8],
         out: &mut Vec<u8>,
+        max_output: usize,
         is_done: bool,
-    ) -> core::result::Result<(), ZstdError> {
+    ) -> core::result::Result<usize, ZstdError> {
         if matches!(self.state, State::End | State::Error) {
-            return Ok(());
+            return Ok(input.len());
         }
 
         let mut total_in = 0usize;
@@ -594,7 +603,11 @@ impl StreamingDecoder {
                     }
                     self.state = State::End;
                 }
-                return Ok(());
+                return Ok(total_in);
+            }
+
+            if out.len() >= max_output {
+                return Ok(total_in);
             }
 
             let remaining_output = self.max_output_size.saturating_sub(out.len());
@@ -647,7 +660,7 @@ impl StreamingDecoder {
                     if is_done {
                         self.state = State::End;
                     }
-                    return Ok(());
+                    return Ok(total_in);
                 }
                 // More input available — reinitialize for the next frame.
                 // SAFETY: stream is a valid DStream.
@@ -668,7 +681,7 @@ impl StreamingDecoder {
                 return Err(ZstdError::ShortRead);
             }
         }
-        Ok(())
+        Ok(total_in)
     }
 }
 

@@ -84,6 +84,21 @@ impl Signals {
             .map(bun_ptr::BackRef::from)
             .is_some_and(|a| a.load(Ordering::Acquire) == BodyReceiveMode::Paused as u8)
     }
+
+    /// A consumer takes the body chunk by chunk (`Flowing`/`Paused`), so the
+    /// transport must not run ahead of its demand. False for `BufferAll`,
+    /// `Abandoned`, and an unwired slot.
+    #[inline]
+    pub(crate) fn is_demand_driven(self) -> bool {
+        self.body_receive_mode
+            .map(bun_ptr::BackRef::from)
+            .is_some_and(|a| {
+                matches!(
+                    BodyReceiveMode::from_u8(a.load(Ordering::Acquire)),
+                    BodyReceiveMode::Flowing | BodyReceiveMode::Paused
+                )
+            })
+    }
 }
 
 pub struct Store {

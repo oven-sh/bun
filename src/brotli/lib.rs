@@ -101,17 +101,28 @@ impl StreamingDecoder {
         unsafe { self.brotli.as_mut() }
     }
 
-    /// Consume all of `input`, appending decompressed bytes to `out`
-    /// (growing in 4096-byte steps). Returns `ShortRead` when more input is
-    /// required and `is_done` is false.
+    /// Mid-stream: a further [`decompress`](Self::decompress) may emit more
+    /// output even with no new input. Brotli buffers a decoded copy command
+    /// in its ring buffer, so this is routine when `max_output` stopped the
+    /// loop.
+    #[inline]
+    pub fn is_inflating(&self) -> bool {
+        matches!(self.state, ReaderState::Inflating)
+    }
+
+    /// Decompress `input` into `out`, stopping once `out.len()` reaches
+    /// `max_output`. Returns input bytes consumed; any remainder is the
+    /// caller's to re-feed. Returns `ShortRead` when all input was consumed
+    /// but more is required and `is_done` is false.
     pub fn decompress(
         &mut self,
         input: &[u8],
         out: &mut Vec<u8>,
+        max_output: usize,
         is_done: bool,
-    ) -> crate::Result<()> {
+    ) -> crate::Result<usize> {
         if matches!(self.state, ReaderState::End | ReaderState::Error) {
-            return Ok(());
+            return Ok(input.len());
         }
         debug_assert!(out.as_ptr() != input.as_ptr());
 
@@ -120,6 +131,9 @@ impl StreamingDecoder {
             self.state,
             ReaderState::Uninitialized | ReaderState::Inflating
         ) {
+            if out.len() >= max_output {
+                return Ok(total_in);
+            }
             if out.try_reserve(4096).is_err() {
                 self.state = ReaderState::Error;
                 return Err(crate::Error::OutOfMemory);
@@ -159,7 +173,7 @@ impl StreamingDecoder {
             match result {
                 c::BrotliDecoderResult::success => {
                     self.state = ReaderState::End;
-                    return Ok(());
+                    return Ok(total_in);
                 }
                 c::BrotliDecoderResult::err => {
                     self.state = ReaderState::Error;
@@ -192,7 +206,7 @@ impl StreamingDecoder {
                 }
             }
         }
-        Ok(())
+        Ok(total_in)
     }
 }
 

@@ -542,16 +542,7 @@ fn run_tasks_erased(
                             );
                         }
 
-                        if manager.subcommand != Subcommand::Remove {
-                            for request in manager.update_requests.iter_mut() {
-                                if strings::eql(request.name, name) {
-                                    request.failed = true;
-                                    manager.options.do_.remove(Do::SAVE_LOCKFILE);
-                                    manager.options.do_.remove(Do::SAVE_YARN_LOCK);
-                                    manager.options.do_.remove(Do::INSTALL_PACKAGES);
-                                }
-                            }
-                        }
+                        manager.fail_update_requests(name);
                     }
 
                     continue;
@@ -599,16 +590,7 @@ fn run_tasks_erased(
                             response.status_code,
                         );
                     }
-                    if manager.subcommand != Subcommand::Remove {
-                        for request in manager.update_requests.iter_mut() {
-                            if strings::eql(request.name, name) {
-                                request.failed = true;
-                                manager.options.do_.remove(Do::SAVE_LOCKFILE);
-                                manager.options.do_.remove(Do::SAVE_YARN_LOCK);
-                                manager.options.do_.remove(Do::INSTALL_PACKAGES);
-                            }
-                        }
-                    }
+                    manager.fail_update_requests(name);
 
                     continue;
                 }
@@ -853,16 +835,7 @@ fn run_tasks_erased(
                                 .fmt(&manager.lockfile.buffers.string_bytes, PathSep::Auto,),
                         );
                     }
-                    if manager.subcommand != Subcommand::Remove {
-                        for request in manager.update_requests.iter_mut() {
-                            if strings::eql(request.name, extract.name.slice()) {
-                                request.failed = true;
-                                manager.options.do_.remove(Do::SAVE_LOCKFILE);
-                                manager.options.do_.remove(Do::SAVE_YARN_LOCK);
-                                manager.options.do_.remove(Do::INSTALL_PACKAGES);
-                            }
-                        }
-                    }
+                    manager.fail_update_requests(extract.name.slice());
 
                     if let Some(removed) = manager.task_queue.remove(&task.task_id) {
                         drop(removed);
@@ -936,16 +909,7 @@ fn run_tasks_erased(
                             response.status_code,
                         );
                     }
-                    if manager.subcommand != Subcommand::Remove {
-                        for request in manager.update_requests.iter_mut() {
-                            if strings::eql(request.name, extract.name.slice()) {
-                                request.failed = true;
-                                manager.options.do_.remove(Do::SAVE_LOCKFILE);
-                                manager.options.do_.remove(Do::SAVE_YARN_LOCK);
-                                manager.options.do_.remove(Do::INSTALL_PACKAGES);
-                            }
-                        }
-                    }
+                    manager.fail_update_requests(extract.name.slice());
 
                     if let Some(removed) = manager.task_queue.remove(&task.task_id) {
                         drop(removed);
@@ -1416,14 +1380,25 @@ fn run_tasks_erased(
                         }
                     } else {
                         if log_level != Options::LogLevel::Silent {
-                            bun_ast::add_error_pretty!(
-                                manager.log_mut(),
-                                None,
-                                bun_ast::Loc::EMPTY,
-                                "{} cloning repository for <b>{}<r>",
-                                err.name(),
-                                bstr::BStr::new(name),
-                            );
+                            if manager.is_network_task_required(task.id) {
+                                bun_ast::add_error_pretty!(
+                                    manager.log_mut(),
+                                    None,
+                                    bun_ast::Loc::EMPTY,
+                                    "{} cloning repository for <b>{}<r>",
+                                    err.name(),
+                                    bstr::BStr::new(name),
+                                );
+                            } else {
+                                bun_ast::add_warning_pretty!(
+                                    manager.log_mut(),
+                                    None,
+                                    bun_ast::Loc::EMPTY,
+                                    "{} cloning repository for <b>{}<r>",
+                                    err.name(),
+                                    bstr::BStr::new(name),
+                                );
+                            }
                         }
                         manager.forget_failed_git_task(task.id);
                     }
@@ -1531,15 +1506,27 @@ fn run_tasks_erased(
                         let _ = manager.task_queue.remove(&task.id);
                         (cb.on_package_manifest_error)(extract_ctx, name, err, url);
                     } else {
-                        let _ = manager.log_mut().add_error_fmt(
-                            None,
-                            bun_ast::Loc::EMPTY,
-                            format_args!(
-                                "no commit matching \"{}\" found for \"{}\" (but repository exists)",
-                                bstr::BStr::new(commit.committish.slice()),
-                                bstr::BStr::new(name),
-                            ),
-                        );
+                        if manager.is_network_task_required(task.id) {
+                            let _ = manager.log_mut().add_error_fmt(
+                                None,
+                                bun_ast::Loc::EMPTY,
+                                format_args!(
+                                    "no commit matching \"{}\" found for \"{}\" (but repository exists)",
+                                    bstr::BStr::new(commit.committish.slice()),
+                                    bstr::BStr::new(name),
+                                ),
+                            );
+                        } else {
+                            manager.log_mut().add_warning_fmt(
+                                None,
+                                bun_ast::Loc::EMPTY,
+                                format_args!(
+                                    "no commit matching \"{}\" found for \"{}\" (but repository exists)",
+                                    bstr::BStr::new(commit.committish.slice()),
+                                    bstr::BStr::new(name),
+                                ),
+                            );
+                        }
                         manager.forget_failed_git_task(task.id);
                     }
                     continue;
@@ -1951,10 +1938,39 @@ pub(crate) fn network_task_has_failed(this: &PackageManager, task_id: Task::Id) 
         .is_some_and(|e| e.failed)
 }
 
+/// `bun add` / `bun update <name>` of a package that cannot be fetched exits 1 and saves nothing.
+pub(crate) fn fail_update_requests(this: &mut PackageManager, name: &[u8]) {
+    if this.subcommand == Subcommand::Remove {
+        return;
+    }
+    for request in this.update_requests.iter_mut() {
+        if strings::eql(request.name, name) {
+            request.failed = true;
+            this.options.do_.remove(Do::SAVE_LOCKFILE);
+            this.options.do_.remove(Do::SAVE_YARN_LOCK);
+            this.options.do_.remove(Do::INSTALL_PACKAGES);
+        }
+    }
+}
+
 /// A later dependency that joins an entry left in `task_queue` waits forever.
 pub(crate) fn forget_failed_git_task(this: &mut PackageManager, task_id: Task::Id) {
-    let _ = this.task_queue.remove(&task_id);
     let _ = this.network_dedupe_map.remove(&task_id);
+    let Some(waiters) = this.task_queue.remove(&task_id) else {
+        return;
+    };
+    // The task is named after its first waiter only.
+    for waiter in waiters.iter() {
+        let (bun_install::TaskCallbackContext::Dependency(id)
+        | bun_install::TaskCallbackContext::RootDependency(id)) = waiter
+        else {
+            continue;
+        };
+        let name = this
+            .lockfile
+            .str_detached(&this.lockfile.buffers.dependencies[*id as usize].name);
+        fail_update_requests(this, name);
+    }
 }
 
 /// The first failed download in a `run_tasks` pass halves the number of
@@ -2182,6 +2198,10 @@ impl PackageManager {
     #[inline]
     pub(crate) fn network_task_has_failed(&self, task_id: Task::Id) -> bool {
         network_task_has_failed(self, task_id)
+    }
+    #[inline]
+    pub(crate) fn fail_update_requests(&mut self, name: &[u8]) {
+        fail_update_requests(self, name)
     }
     #[inline]
     pub(crate) fn forget_failed_git_task(&mut self, task_id: Task::Id) {

@@ -194,14 +194,15 @@ function writeProject(
   return project;
 }
 
-async function runInstall(cwd: string, cacheDir: string, extraEnv: Record<string, string>, ...args: string[]) {
+// Runs `bun <command...>`, for example `bun update <name>`.
+async function runBun(cwd: string, cacheDir: string, extraEnv: Record<string, string>, ...command: string[]) {
   const env = { ...gitEnv, ...extraEnv, BUN_INSTALL_CACHE_DIR: cacheDir };
   // Set on ASAN CI lanes; it arms a subreaper around internal git spawns that
   // SIGKILLs concurrent clone tasks (see #33982). This test exercises install
   // task bookkeeping, not orphan reaping.
   delete env.BUN_FEATURE_FLAG_NO_ORPHANS;
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "install", ...args],
+    cmd: [bunExe(), ...command],
     cwd,
     env,
     stdout: "pipe",
@@ -209,6 +210,10 @@ async function runInstall(cwd: string, cacheDir: string, extraEnv: Record<string
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode };
+}
+
+function runInstall(cwd: string, cacheDir: string, extraEnv: Record<string, string>, ...args: string[]) {
+  return runBun(cwd, cacheDir, extraEnv, "install", ...args);
 }
 
 // What `bun install` printed, as lines: its version header, `+ <name>@<resolution>`
@@ -602,7 +607,180 @@ function diagnostics(stderr: string): string[] {
   return stderr.split(/\r?\n/).filter(line => /^(error|warn):/.test(line));
 }
 
-const gitFailed = expect.stringMatching(/^error: git failed with exit code \d+$/);
+const gitFailed = (kind: "error" | "warn") =>
+  expect.stringMatching(new RegExp(`^${kind}: git failed with exit code \\d+$`));
+
+// An optional git dependency that could not be resolved failed the whole
+// install (exit code 1, no lockfile), while an optional registry or tarball
+// dependency that cannot be fetched is skipped with a warning.
+test.concurrent.each([
+  {
+    // the static server answers 404 "not found", which git reports as a missing repository
+    what: "an http repository that does not exist",
+    spec: () => `git+http://localhost:${sharedServer.port}/no-such-repo.git`,
+    warnings: ['warn: "git clone" for "nope" failed', "warn: RepositoryNotFound cloning repository for nope"],
+  },
+  {
+    what: "a file repository that does not exist",
+    spec: (root: string) => `git+${pathToFileURL(join(root, "no-such-repo.git"))}`,
+    warnings: [
+      gitFailed("warn"),
+      'warn: "git clone" for "nope" failed',
+      "warn: InstallFailed cloning repository for nope",
+    ],
+  },
+  {
+    what: "a committish that does not exist",
+    spec: () => `${sharedRepoUrl}#no-such-branch`,
+    warnings: [gitFailed("warn"), 'warn: no commit matching "no-such-branch" found for "nope" (but repository exists)'],
+  },
+])("skips an optional git dependency on $what", async ({ spec, warnings }) => {
+  using dir = tempDir("git-dep-optional", {});
+  const root = String(dir);
+  const project = writeProject(
+    root,
+    { [nameOf("b")]: `${sharedRepoUrl}#pkg-b` },
+    { optionalDependencies: { nope: spec(root) } },
+  );
+  const { resolutions, locked } = expectedGitPackages(sharedRepoUrl, sharedCommits, ["b"]);
+
+  const { stdout, stderr, exitCode } = await runInstall(project, join(root, "cache"), {});
+  expect(diagnostics(stderr)).toEqual(warnings);
+  expectInstalled(stdout, resolutions);
+  expect(await installedVersions(project, [nameOf("b"), "nope"])).toEqual({ ...markers(["b"]), nope: null });
+  expect(await lockedPackages(project)).toEqual(locked);
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("skips an optional git dependency when git is not installed", async () => {
+  using dir = tempDir("git-dep-optional-no-git", {});
+  const root = String(dir);
+  const project = writeProject(root, {}, { optionalDependencies: { nope: `${sharedRepoUrl}#pkg-b` } });
+  const emptyPath = join(root, "empty-path");
+  mkdirSync(emptyPath);
+
+  // `Path` is how Windows spells it
+  const { stderr, exitCode } = await runInstall(project, join(root, "cache"), { PATH: emptyPath, Path: emptyPath });
+  expect(diagnostics(stderr)).toEqual([
+    'warn: "git" is not installed (needed for "nope")',
+    "warn: ENOENT cloning repository for nope",
+  ]);
+  expect(await lockedPackages(project)).toEqual({});
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("--silent prints nothing about optional git dependencies that cannot be resolved", async () => {
+  using dir = tempDir("git-dep-optional-silent", {});
+  const root = String(dir);
+  const project = writeProject(
+    root,
+    {},
+    {
+      optionalDependencies: {
+        "no-such-repo": `git+${pathToFileURL(join(root, "no-such-repo.git"))}`,
+        "no-such-branch": `${sharedRepoUrl}#no-such-branch`,
+      },
+    },
+  );
+
+  const { stdout, stderr, exitCode } = await runInstall(project, join(root, "cache"), {}, "--silent");
+  expect({ stdout, stderr }).toEqual({ stdout: "", stderr: "" });
+  expect(await lockedPackages(project)).toEqual({});
+  expect(exitCode).toBe(0);
+});
+
+// One clone serves every dependency on a repository. It stays an error when
+// any of them is not optional, also when an optional one started it (optional
+// dependencies are enqueued first, so the clone is named after `nope`).
+test.concurrent("fails when a required dependency shares the repository an optional one cannot clone", async () => {
+  using dir = tempDir("git-dep-optional-shared", {});
+  const root = String(dir);
+  const repoUrl = `git+${pathToFileURL(join(root, "no-such-repo.git"))}`;
+  const project = writeProject(
+    root,
+    { needed: `${repoUrl}#needed` },
+    { optionalDependencies: { nope: `${repoUrl}#nope` } },
+  );
+
+  const { stderr, exitCode } = await runInstall(project, join(root, "cache"), {});
+  expect(diagnostics(stderr)).toEqual([
+    gitFailed("error"),
+    'error: "git clone" for "nope" failed',
+    "error: InstallFailed cloning repository for nope",
+    `error: needed@${repoUrl}#needed failed to resolve`,
+  ]);
+  expect(existsSync(join(project, "bun.lock"))).toBe(false);
+  expect(exitCode).toBe(1);
+});
+
+// `bun update <name>` and `bun add` name a package. When it cannot be fetched
+// they exit 1 and save nothing, as they do for a registry package, also when
+// the dependency is optional.
+test.concurrent.each([
+  { what: "the clone is named after", otherNewDependency: false },
+  // `@scope/pkg-m` is new and sorts first, so the clone is named after it and `@scope/pkg-n` only waits for it
+  { what: "only waits for the clone of another dependency", otherNewDependency: true },
+])(
+  "bun update <name> fails and saves nothing when the optional git dependency that $what cannot be cloned",
+  async ({ otherNewDependency }) => {
+    using dir = tempDir("git-dep-optional-update", {});
+    const root = String(dir);
+    const bare = await makeSharedRepo(root, [
+      { name: nameOf("m"), branch: "pkg-m" },
+      { name: nameOf("n"), branch: "pkg-n" },
+    ]);
+    const repoUrl = `git+${pathToFileURL(bare)}`;
+    const optionalDependencies = { [nameOf("n")]: `${repoUrl}#pkg-n` };
+    const project = writeProject(root, {}, { optionalDependencies });
+
+    const warm = await runInstall(project, join(root, "cache-warm"), {});
+    expect(diagnostics(warm.stderr)).toEqual([]);
+    expect(warm.exitCode).toBe(0);
+
+    rmSync(bare, { recursive: true });
+    if (otherNewDependency) {
+      writeProject(root, {}, { optionalDependencies: { [nameOf("m")]: `${repoUrl}#pkg-m`, ...optionalDependencies } });
+    }
+    const saved = () => ({
+      packageJson: readFileSync(join(project, "package.json"), "utf8"),
+      lockfile: readFileSync(join(project, "bun.lock"), "utf8"),
+    });
+    const before = saved();
+    const cloneName = nameOf(otherNewDependency ? "m" : "n");
+
+    const { stderr, exitCode } = await runBun(project, join(root, "cache-cold"), {}, "update", nameOf("n"));
+    expect(diagnostics(stderr)).toEqual([
+      gitFailed("warn"),
+      `warn: "git clone" for "${cloneName}" failed`,
+      `warn: InstallFailed cloning repository for ${cloneName}`,
+    ]);
+    expect(saved()).toEqual(before);
+    expect(exitCode).toBe(1);
+  },
+  30_000,
+);
+
+test.concurrent(
+  "bun add --optional <git url> fails and saves nothing when the repository cannot be cloned",
+  async () => {
+    using dir = tempDir("git-dep-optional-add", {});
+    const root = String(dir);
+    const repoUrl = `git+${pathToFileURL(join(root, "no-such-repo.git"))}`;
+    const project = writeProject(root, {});
+    const packageJson = readFileSync(join(project, "package.json"), "utf8");
+
+    const { stderr, exitCode } = await runBun(project, join(root, "cache"), {}, "add", "--optional", repoUrl);
+    expect(diagnostics(stderr)).toEqual([
+      gitFailed("warn"),
+      `warn: "git clone" for "${repoUrl}" failed`,
+      `warn: InstallFailed cloning repository for ${repoUrl}`,
+      `error: Invalid dependency name "${repoUrl}"`,
+    ]);
+    expect(readFileSync(join(project, "package.json"), "utf8")).toBe(packageJson);
+    expect(existsSync(join(project, "bun.lock"))).toBe(false);
+    expect(exitCode).toBe(1);
+  },
+);
 
 // A clone or checkout that failed while the dependencies were resolved stayed
 // on record, and a locked dependency that needed the same one joined it when
@@ -635,11 +813,13 @@ for (const linker of ["hoisted", "isolated"] as const) {
         rmSync(join(project, "node_modules"), { recursive: true });
         writeProject(root, { [nameOf("m")]: `${repoUrl}#pkg-m` }, { [group]: { [nameOf("n")]: `${repoUrl}#pkg-n` } });
         const { stderr, exitCode } = await runInstall(project, join(root, "cache-cold"), {}, `--linker=${linker}`);
+        // only optional dependencies waited for the first clone
+        const kind = group === "optionalDependencies" ? "warn" : "error";
         expect(diagnostics(stderr)).toEqual([
-          gitFailed,
-          `error: "git clone" for "${nameOf("n")}" failed`,
-          `error: InstallFailed cloning repository for ${nameOf("n")}`,
-          gitFailed,
+          gitFailed(kind),
+          `${kind}: "git clone" for "${nameOf("n")}" failed`,
+          `${kind}: InstallFailed cloning repository for ${nameOf("n")}`,
+          gitFailed("error"),
           `error: "git clone" for "${nameOf("m")}" failed`,
           failedToInstall(nameOf("m"), `${repoUrl}#`, `error: InstallFailed cloning repository for ${nameOf("m")}`),
         ]);
@@ -687,10 +867,10 @@ exec '${Bun.which("git")}' "$@"
       );
       const { stderr, exitCode } = await runInstall(project, join(root, "cache-cold"), env, `--linker=${linker}`);
       expect(diagnostics(stderr)).toEqual([
-        gitFailed,
+        gitFailed("error"),
         'error: "git checkout" for "alias" failed',
         "error: InstallFailed checking out repository for alias",
-        gitFailed,
+        gitFailed("error"),
         `error: "git checkout" for "${nameOf("b")}" failed`,
         failedToInstall(
           nameOf("b"),
@@ -714,11 +894,11 @@ test.concurrent("looks the commit up again for a peer dependency after the looku
   const project = writeProject(root, {}, { optionalDependencies: { first: spec }, peerDependencies: { second: spec } });
 
   const { stderr, exitCode } = await runInstall(project, join(root, "cache"), {});
-  // git's own failures print at once, the errors about the packages after the resolve phase
+  // git's own failures print at once, the lines about the packages after the resolve phase
   expect(diagnostics(stderr)).toEqual([
-    gitFailed,
-    gitFailed,
-    'error: no commit matching "no-such-branch" found for "first" (but repository exists)',
+    gitFailed("warn"),
+    gitFailed("error"),
+    'warn: no commit matching "no-such-branch" found for "first" (but repository exists)',
     'error: no commit matching "no-such-branch" found for "second" (but repository exists)',
   ]);
   expect(exitCode).toBe(1);

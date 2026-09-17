@@ -445,6 +445,55 @@ test("node:net socket nothing references still connects when GC runs during the 
   }
 });
 
+// A named pipe does not go through `connect_finish`: the two pipe arms of
+// `connect_inner` (plain and TLS) start the attempt, so each has to hold the
+// handle itself. In a child: without that hold the collection finalizes every
+// handle mid-connect, and a debug build then segfaults.
+for (const mode of ["net", "tls"] as const) {
+  test.skipIf(!isWindows)(
+    `node:${mode} named-pipe socket nothing references still connects when GC runs during the attempt`,
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          const net = require("node:net");
+          const tls = require("node:tls");
+          const secure = process.env.MODE === "tls";
+          const N = 20;
+          let connected = 0;
+          const { promise, resolve, reject } = Promise.withResolvers();
+          const onConnection = connection => connection.end();
+          const server = secure
+            ? tls.createServer({ key: process.env.TLS_KEY, cert: process.env.TLS_CERT }, onConnection)
+            : net.createServer(onConnection);
+          const path = "\\\\\\\\.\\\\pipe\\\\bun-socket-retention-" + process.env.MODE + "-" + process.pid;
+          await new Promise(listening => server.listen(path, listening));
+          for (let i = 0; i < N; i++) {
+            (secure ? tls.connect({ path, rejectUnauthorized: false }) : net.connect(path))
+              .on(secure ? "secureConnect" : "connect", () => ++connected === N && resolve())
+              .on("error", reject);
+          }
+          // A pipe attempt starts inside connect(), so every attempt is in flight here.
+          process.nextTick(() => Bun.gc(true));
+          await promise;
+          server.close();
+          console.log(JSON.stringify({ connected }));
+        `,
+        ],
+        env: { ...bunEnv, MODE: mode, TLS_KEY: tlsCert.key, TLS_CERT: tlsCert.cert },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe('{"connected":20}');
+      expect(exitCode).toBe(0);
+    },
+  );
+}
+
 // Windows routes `unix:` through WindowsNamedPipeContext. A connect that fails
 // before libuv queues it (here: a TLS config that cannot build a context)
 // reports the error through `handle_connect_error` while the socket is still

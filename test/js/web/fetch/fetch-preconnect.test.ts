@@ -121,7 +121,7 @@ describe.concurrent.todoIf(isWindows)("fetch.preconnect", () => {
     });
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).not.toContain("preconnect URL must have a valid port");
+    expect(stderr).toBe("");
     expect(stdout).toBe("ok\n");
     expect(exitCode).toBe(0);
   });
@@ -243,6 +243,13 @@ describe.concurrent.todoIf(isWindows)("fetch.preconnect", () => {
     // The URL parser drops a default port, so all four reach the port check with no port.
     for (const url of ["http://localhost", "http://localhost:80", "https://localhost", "https://localhost:443"]) {
       expect(() => fetch.preconnect(url)).not.toThrow();
+    }
+  });
+
+  it("fetch.preconnect rejects an s3:// URL", () => {
+    // fetch() signs an s3:// URL into a request to the S3 endpoint. A preconnect would dial the bucket name.
+    for (const url of ["s3://bucket/key", "s3://bucket:9000/key"]) {
+      expect(() => fetch.preconnect(url)).toThrow("URL must be HTTP or HTTPS");
     }
   });
 

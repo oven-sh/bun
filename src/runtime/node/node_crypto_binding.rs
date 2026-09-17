@@ -232,6 +232,30 @@ pub mod random {
     };
     const MAX_RANGE: i64 = 0xffff_ffff_ffff;
 
+    // The "Received" value of ERR_OUT_OF_RANGE. Node adds "_" numerical
+    // separators to an integer whose magnitude exceeds 2^32
+    // (lib/internal/errors.js, addNumericalSeparator).
+    fn received_integer(value: i64) -> String {
+        let digits = value.to_string();
+        if value.unsigned_abs() <= 1 << 32 {
+            return digits;
+        }
+        let (sign, digits) = match digits.strip_prefix('-') {
+            Some(rest) => ("-", rest),
+            None => ("", digits.as_str()),
+        };
+        let mut out = String::with_capacity(digits.len() + digits.len() / 3 + 1);
+        out.push_str(sign);
+        let lead = digits.len() % 3;
+        for (i, ch) in digits.chars().enumerate() {
+            if i != 0 && (i + 3 - lead) % 3 == 0 {
+                out.push('_');
+            }
+            out.push(ch);
+        }
+        out
+    }
+
     impl JobContext for RandomFillJob {
         type OffThread = Self;
         type Js = RandomFillJs;
@@ -348,44 +372,24 @@ pub mod random {
             let max: i64 = max_value.as_number().trunc() as i64;
 
             if max <= min {
-                // Node renders the received value with util.inspect, which keeps the sign of -0.
-                let mut buf = [0u8; 124];
-                let received = bun_core::fmt::FormatDouble::dtoa_with_negative_zero(
-                    &mut buf,
-                    max_value.as_number(),
-                );
+                let received = if max_value.as_number().is_sign_negative() && max == 0 {
+                    String::from("-0")
+                } else {
+                    received_integer(max)
+                };
                 return Err(global
                 .err(
                     jsc::ErrorCode::OUT_OF_RANGE,
                     format_args!(
                         "The value of \"max\" is out of range. It must be greater than the value of \"min\" ({}). Received {}",
-                        min, bstr::BStr::new(received)
+                        min, received
                     ),
                 )
                 .throw());
             }
 
             if max - min > MAX_RANGE {
-                // Node's ERR_OUT_OF_RANGE adds "_" numerical separators to integer
-                // "Received" values whose magnitude exceeds 2^32
-                // (lib/internal/errors.js, addNumericalSeparator).
-                let received = {
-                    let digits = (max - min).to_string();
-                    let (sign, digits) = match digits.strip_prefix('-') {
-                        Some(rest) => ("-", rest),
-                        None => ("", digits.as_str()),
-                    };
-                    let mut out = String::with_capacity(digits.len() + digits.len() / 3 + 1);
-                    out.push_str(sign);
-                    let lead = digits.len() % 3;
-                    for (i, ch) in digits.chars().enumerate() {
-                        if i != 0 && (i + 3 - lead) % 3 == 0 {
-                            out.push('_');
-                        }
-                        out.push(ch);
-                    }
-                    out
-                };
+                let received = received_integer(max - min);
                 if min_specified {
                     return Err(global
                     .err(

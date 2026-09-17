@@ -86,6 +86,16 @@ test("%s codes render an object like util.format", () => {
     plainObject: capture(() => http.validateHeaderName({ a: 1 } as any)),
     nullPrototype: capture(() => http.validateHeaderName(Object.create(null))),
     builtinToString: capture(() => http.validateHeaderName(new Date(0) as any)),
+    ownBoundToString: capture(() => http.validateHeaderName({ toString: (() => "bound").bind(null) } as any)),
+    inheritedToString: capture(() => http.validateHeaderName(new (class extends Enc {})() as any)),
+    inheritedToPrimitive: capture(() => http.validateHeaderName({ __proto__: toPrimitive } as any)),
+    // Only the ECMAScript globals count as built-in constructors. Buffer, TypedArray and URL do not.
+    buffer: capture(() => http.validateHeaderName(Buffer.from("a") as any)),
+    uint8Array: capture(() => http.validateHeaderName(new Uint8Array([1]) as any)),
+    url: capture(() => http.validateHeaderName(new URL("http://x/") as any)),
+    toStringNotCallable: capture(() => http.validateHeaderName({ toString: 5 } as any)),
+    fn: capture(() => http.validateHeaderName(function foo() {} as any)),
+    notIterable: capture(() => ReadableStream.from(new Enc() as any)),
   }).toEqual({
     userToString: "ERR_UNKNOWN_ENCODING | TypeError | Unknown encoding: enc!",
     userToPrimitive: "ERR_UNKNOWN_ENCODING | TypeError | Unknown encoding: prim",
@@ -95,5 +105,30 @@ test("%s codes render an object like util.format", () => {
       'ERR_INVALID_HTTP_TOKEN | TypeError | Header name must be a valid HTTP token ["[Object: null prototype] {}"]',
     builtinToString:
       'ERR_INVALID_HTTP_TOKEN | TypeError | Header name must be a valid HTTP token ["1970-01-01T00:00:00.000Z"]',
+    ownBoundToString: 'ERR_INVALID_HTTP_TOKEN | TypeError | Header name must be a valid HTTP token ["bound"]',
+    inheritedToString: 'ERR_INVALID_HTTP_TOKEN | TypeError | Header name must be a valid HTTP token ["enc!"]',
+    inheritedToPrimitive: 'ERR_INVALID_HTTP_TOKEN | TypeError | Header name must be a valid HTTP token ["prim"]',
+    buffer: 'ERR_INVALID_HTTP_TOKEN | TypeError | Header name must be a valid HTTP token ["a"]',
+    uint8Array: 'ERR_INVALID_HTTP_TOKEN | TypeError | Header name must be a valid HTTP token ["1"]',
+    url: 'ERR_INVALID_HTTP_TOKEN | TypeError | Header name must be a valid HTTP token ["http://x/"]',
+    toStringNotCallable:
+      'ERR_INVALID_HTTP_TOKEN | TypeError | Header name must be a valid HTTP token ["{ toString: 5 }"]',
+    fn: 'ERR_INVALID_HTTP_TOKEN | TypeError | Header name must be a valid HTTP token ["function foo() {}"]',
+    notIterable: "ERR_ARG_NOT_ITERABLE | TypeError | enc! must be iterable",
+  });
+});
+
+test("randomInt renders a large received max with numerical separators like node", () => {
+  expect({
+    large: capture(() => crypto.randomInt(2 ** 40, 2 ** 40 - 1)),
+    negative: capture(() => crypto.randomInt(1, -5_000_000_000)),
+    bigintBuf: capture(() => http2.getUnpackedSettings(1n as any)),
+  }).toEqual({
+    large:
+      'ERR_OUT_OF_RANGE | RangeError | The value of "max" is out of range. It must be greater than the value of "min" (1099511627776). Received 1_099_511_627_775',
+    negative:
+      'ERR_OUT_OF_RANGE | RangeError | The value of "max" is out of range. It must be greater than the value of "min" (1). Received -5_000_000_000',
+    bigintBuf:
+      'ERR_INVALID_ARG_TYPE | TypeError | The "buf" argument must be an instance of Buffer or TypedArray. Received type bigint (1n)',
   });
 });

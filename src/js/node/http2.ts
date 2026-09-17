@@ -3853,6 +3853,7 @@ function receivedValueLabel(value) {
   if (typeof value === "string") return `type string ('${value}')`;
   if (typeof value === "symbol") return `type symbol (${String(value)})`;
   if (typeof value === "number") return `type number (${value === 0 && 1 / value < 0 ? "-0" : String(value)})`;
+  if (typeof value === "bigint") return `type bigint (${value}n)`;
   return `type ${typeof value} (${JSON.stringify(value)})`;
 }
 

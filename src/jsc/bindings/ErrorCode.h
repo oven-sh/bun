@@ -106,8 +106,8 @@ void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, Messa
 // stringified, everything else through util.inspect. `quotesLikeInspect` quotes strings.
 void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, MessageBuilder& builder, JSC::JSValue arg, bool quotesLikeInspect);
 
-// Appends the value the way util.format's `%s` renders it. Differs from JSValueToStringSafe
-// for an object whose toString or Symbol.toPrimitive is user code: that prints through String().
+// Appends the value the way util.format's `%s` renders it: a function and an object without a
+// built-in toString go through String(), any other object through util.inspect.
 void JSValueToStringLikeFormatS(JSC::JSGlobalObject* globalObject, MessageBuilder& builder, JSC::JSValue arg);
 
 enum Bound {

@@ -420,27 +420,103 @@ void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, MessageBuilder& buil
     builder.append(Bun__inspect_singleline(defaultGlobalObject(globalObject), arg).transferToWTFString());
 }
 
-// The inverse of hasBuiltInToString in node's lib/internal/util/inspect.js.
-static bool hasUserToString(JSC::JSGlobalObject* globalObject, JSC::JSObject* object)
+// The globals that util.format's %s counts as built-in constructors: the ECMAScript ones on
+// globalThis before node installs its own (lib/internal/util/inspect.js, builtInObjects).
+static bool isBuiltInObjectName(const WTF::String& name)
+{
+    static constexpr ASCIILiteral names[] = {
+        "AggregateError"_s, "Array"_s, "ArrayBuffer"_s, "Atomics"_s, "BigInt"_s, "BigInt64Array"_s,
+        "BigUint64Array"_s, "Boolean"_s, "DataView"_s, "Date"_s, "Error"_s, "EvalError"_s,
+        "FinalizationRegistry"_s, "Float32Array"_s, "Float64Array"_s, "Function"_s, "Infinity"_s,
+        "Int16Array"_s, "Int32Array"_s, "Int8Array"_s, "Intl"_s, "Iterator"_s, "JSON"_s, "Map"_s,
+        "Math"_s, "NaN"_s, "Number"_s, "Object"_s, "Promise"_s, "Proxy"_s, "RangeError"_s,
+        "ReferenceError"_s, "Reflect"_s, "RegExp"_s, "Set"_s, "String"_s, "Symbol"_s, "SyntaxError"_s,
+        "TypeError"_s, "URIError"_s, "Uint16Array"_s, "Uint32Array"_s, "Uint8Array"_s,
+        "Uint8ClampedArray"_s, "WeakMap"_s, "WeakRef"_s, "WeakSet"_s
+    };
+    for (const auto& candidate : names) {
+        if (name == candidate)
+            return true;
+    }
+    return false;
+}
+
+// hasBuiltInToString from node's lib/internal/util/inspect.js. When it is false, %s prints the
+// object through String().
+static bool hasBuiltInToString(JSC::JSGlobalObject* globalObject, JSC::JSObject* object)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     while (auto* proxy = dynamicDowncast<JSC::ProxyObject>(object)) {
         if (proxy->isRevoked())
-            return false;
+            return true;
         object = proxy->target();
     }
-    const JSC::Identifier* names[] = { &vm.propertyNames->toPrimitiveSymbol, &vm.propertyNames->toString };
-    for (const auto* name : names) {
-        JSValue method = object->get(globalObject, *name);
-        RETURN_IF_EXCEPTION(scope, false);
-        if (!method.isCell())
-            continue;
-        auto* function = dynamicDowncast<JSC::JSFunction>(method.asCell());
-        if (function && !function->isHostFunction())
+
+    const JSC::Identifier& toStringName = vm.propertyNames->toString;
+    const JSC::Identifier& toPrimitiveName = vm.propertyNames->toPrimitiveSymbol;
+    bool walkToString = true;
+    bool walkToPrimitive = true;
+
+    JSValue toString = object->get(globalObject, toStringName);
+    RETURN_IF_EXCEPTION(scope, true);
+    JSValue toPrimitive = object->get(globalObject, toPrimitiveName);
+    RETURN_IF_EXCEPTION(scope, true);
+    if (!toString.isCallable()) {
+        if (!toPrimitive.isCallable())
             return true;
+        walkToString = false;
+    } else {
+        bool ownToString = object->hasOwnProperty(globalObject, toStringName);
+        RETURN_IF_EXCEPTION(scope, true);
+        if (ownToString)
+            return false;
+        walkToPrimitive = toPrimitive.isCallable();
     }
-    return false;
+    if (walkToPrimitive) {
+        bool ownToPrimitive = object->hasOwnProperty(globalObject, toPrimitiveName);
+        RETURN_IF_EXCEPTION(scope, true);
+        if (ownToPrimitive)
+            return false;
+    }
+
+    // Find the prototype that owns the method, then ask whether its constructor is a built-in.
+    JSObject* pointer = object;
+    while (true) {
+        JSValue prototype = pointer->getPrototype(globalObject);
+        RETURN_IF_EXCEPTION(scope, true);
+        if (!prototype.isObject())
+            return true;
+        pointer = JSC::asObject(prototype);
+        bool owns = false;
+        if (walkToString) {
+            owns = pointer->hasOwnProperty(globalObject, toStringName);
+            RETURN_IF_EXCEPTION(scope, true);
+        }
+        if (!owns && walkToPrimitive) {
+            owns = pointer->hasOwnProperty(globalObject, toPrimitiveName);
+            RETURN_IF_EXCEPTION(scope, true);
+        }
+        if (owns)
+            break;
+    }
+
+    JSC::PropertySlot slot(pointer, JSC::PropertySlot::InternalMethodType::GetOwnProperty);
+    bool hasConstructor = pointer->getOwnPropertySlot(pointer, globalObject, vm.propertyNames->constructor, slot);
+    RETURN_IF_EXCEPTION(scope, true);
+    if (!hasConstructor || slot.isAccessor())
+        return false;
+    JSValue constructor = slot.getValue(globalObject, vm.propertyNames->constructor);
+    RETURN_IF_EXCEPTION(scope, true);
+    if (!constructor.isCallable())
+        return false;
+    JSValue name = constructor.get(globalObject, vm.propertyNames->name);
+    RETURN_IF_EXCEPTION(scope, true);
+    if (!name.isString())
+        return false;
+    auto nameString = name.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, true);
+    return isBuiltInObjectName(nameString);
 }
 
 void JSValueToStringLikeFormatS(JSC::JSGlobalObject* globalObject, MessageBuilder& builder, JSValue arg)
@@ -448,9 +524,13 @@ void JSValueToStringLikeFormatS(JSC::JSGlobalObject* globalObject, MessageBuilde
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (arg.isObject()) {
-        bool userToString = hasUserToString(globalObject, arg.getObject());
-        RETURN_IF_EXCEPTION(scope, );
-        if (userToString) {
+        // typeof "function" values go through String() in node, so a function prints its source.
+        bool stringify = arg.isCallable();
+        if (!stringify) {
+            stringify = !hasBuiltInToString(globalObject, arg.getObject());
+            RETURN_IF_EXCEPTION(scope, );
+        }
+        if (stringify) {
             auto string = arg.toWTFString(globalObject);
             RETURN_IF_EXCEPTION(scope, );
             builder.append(string);

@@ -21,6 +21,7 @@ use crate::hosted_git_info::{HostProvider, HostedGitInfo};
 use crate::integrity::Integrity;
 use crate::lockfile::{self, Lockfile, PackageListEntry};
 use crate::lockfile_real::package::PackageColumns as _;
+use crate::lockfile_real::package::folder_relative_to_top_level_dir;
 use crate::lockfile_real::package::workspace_map::WorkspaceMap;
 use crate::npm as Npm;
 use crate::repository::{Repository, RepositoryExt as _, is_safe_resolved_tag};
@@ -87,6 +88,14 @@ fn entry_object(entry: &E::PropertyJSON) -> &E::ObjectJSON {
     pkg
 }
 
+/// `npm install --install-links` installs a copy of a `file:` directory: no link, and `resolved` is `file:` plus the directory.
+fn resolved_folder(pkg: &E::ObjectJSON) -> Option<&[u8]> {
+    let resolved = pkg.get(b"resolved")?.as_str()?;
+    let dir = resolved.strip_prefix(b"file:")?;
+    // npm-package-arg tells a tarball from a directory by the extension too.
+    (DepTag::infer(resolved) == DepTag::Folder).then_some(dir)
+}
+
 fn parent_dir(dir: &[u8]) -> &[u8] {
     if let Some(i) = strings::last_index_of(dir, b"node_modules/") {
         let enclosing = &dir[..i];
@@ -109,6 +118,10 @@ struct Migrator<'a> {
     skipped_external: DynamicBitSet,
     /// Targets the root or a workspace depends on directly.
     local_declared: DynamicBitSet,
+    /// The directory of each copy (`resolved_folder`), as `folder_relative_to_top_level_dir` writes it.
+    copy_sources: Vec<Option<Box<[u8]>>>,
+    /// Copies of a directory that a trusted `file:` spec names.
+    vouched_copies: DynamicBitSet,
     entry_package_ids: Vec<PackageID>,
     queue: Vec<(u32, PackageID)>,
     probe: Vec<u8>,
@@ -144,6 +157,8 @@ pub(super) fn migrate_packages(
         shadowed: DynamicBitSet::init_empty(entry_count)?,
         skipped_external: DynamicBitSet::init_empty(entry_count)?,
         local_declared: DynamicBitSet::init_empty(entry_count)?,
+        copy_sources: vec![None; entry_count],
+        vouched_copies: DynamicBitSet::init_empty(entry_count)?,
         entry_package_ids: vec![INVALID_PACKAGE_ID; entry_count],
         queue: Vec::new(),
         probe: Vec::new(),
@@ -214,6 +229,10 @@ impl<'a> Migrator<'a> {
                 continue;
             }
             self.index.put(key, j as u32)?;
+            if let Some(dir) = resolved_folder(pkg) {
+                let source = folder_relative_to_top_level_dir(b"", dir);
+                self.copy_sources[j] = Some(source.ok_or(Error::InvalidNPMLockfile)?);
+            }
         }
 
         if self.link_entries.is_set(0) || self.index.get(&b""[..]).copied() != Some(0) {
@@ -482,6 +501,10 @@ impl<'a> Migrator<'a> {
             let path = self.this.string_buf().append(key)?;
             return Ok(Resolution::init(ResTagged::Workspace(path)));
         }
+        if let Some(source) = self.copy_sources[j as usize].as_deref() {
+            let path = self.this.string_buf().append(source)?;
+            return Ok(Resolution::init(ResTagged::Folder(path)));
+        }
 
         if let Some(resolved) = pkg.get(b"resolved") {
             let Some(r) = resolved.as_str() else {
@@ -733,14 +756,22 @@ impl<'a> Migrator<'a> {
                     && version_tag == DepTag::Folder
                     && self.local_declared.is_set(j as usize);
                 let mut found = self.find_target(key, name);
+                let trusts_spec = is_local || declares_folder;
+                // npm lets one copy satisfy every dependency of its name, whatever directory a `file:` spec names.
+                let copy_ok = match found {
+                    Some((t, _)) if self.copy_sources[t as usize].is_some() => {
+                        trusts_spec && self.vouches_for_copy(t, key, id, &version)
+                    }
+                    _ => true,
+                };
                 if let Some((t, _)) = found
                     && is_local
+                    && copy_ok
                 {
                     self.local_declared.set(t as usize);
                 }
                 if let Some((t, through_link)) = found
-                    && !is_local
-                    && !declares_folder
+                    && !(trusts_spec && copy_ok)
                     && self.is_external_folder(t, through_link)
                 {
                     self.skip_external(t, name);
@@ -881,16 +912,44 @@ impl<'a> Migrator<'a> {
             .filter(|&x| !self.link_entries.is_set(x as usize))
     }
 
+    /// Has a trusted `file:` spec, `version` included, named the directory that entry `t` is a copy of?
+    fn vouches_for_copy(
+        &mut self,
+        t: u32,
+        key: &[u8],
+        id: PackageID,
+        version: &DepVersion,
+    ) -> bool {
+        if version.tag == DepTag::Folder {
+            let buf = self.this.buffers.string_bytes.as_slice();
+            let declarer = &self.this.packages.items_resolution()[id as usize];
+            let dir = if declarer.tag == resolution::Tag::Folder {
+                declarer.folder().slice(buf)
+            } else {
+                key
+            };
+            let named = folder_relative_to_top_level_dir(dir, version.folder().slice(buf));
+            if named.is_some() && named == self.copy_sources[t as usize] {
+                self.vouched_copies.set(t as usize);
+            }
+        }
+        self.vouched_copies.is_set(t as usize)
+    }
+
     fn is_external_folder(&self, t: u32, through_link: bool) -> bool {
         let entry = &self.entries[t as usize];
         let key = entry.key.slice();
-        if !bin::bin_target_escapes_package_dir(key) {
+        let source = self.copy_sources[t as usize].as_deref();
+        if !bin::bin_target_escapes_package_dir(source.unwrap_or(key)) {
             return false;
         }
         let id = self.entry_package_ids[t as usize];
         if id != INVALID_PACKAGE_ID {
             return self.this.packages.items_resolution()[id as usize].tag
                 == resolution::Tag::Folder;
+        }
+        if source.is_some() {
+            return true;
         }
         let pkg = entry_object(entry);
         if pkg.get(b"resolved").is_some()
@@ -909,10 +968,11 @@ impl<'a> Migrator<'a> {
         }
         self.skipped_external.set(t as usize);
         if !self.silent {
+            let source = self.copy_sources[t as usize].as_deref();
             bun_core::warn!(
                 "skipped \"{}\" from package-lock.json: transitive folder dependency \"{}\" is outside the project",
                 bstr::BStr::new(name),
-                bstr::BStr::new(self.entries[t as usize].key.slice()),
+                bstr::BStr::new(source.unwrap_or(self.entries[t as usize].key.slice())),
             );
         }
         self.shadow(t);

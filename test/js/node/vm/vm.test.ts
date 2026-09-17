@@ -2555,8 +2555,10 @@ test.skipIf(memoryForLongStrings < 10 * 1024 ** 3)(
 // A FinalizationRegistry cleanup job is posted to the event loop for a context.
 // The context then dies and is swept before the job runs. ~JSGlobalObject only
 // cancels the job's ticket; the job must not reach the VM through the
-// ticket's destructed realm. On a debug build this was the assertion
-// `!isCancelled()` in DeferredWorkTimer::Ticket::scriptExecutionOwner().
+// ticket's destructed realm. Only a debug build observes that read: it trips
+// the assertion `!isCancelled()` in DeferredWorkTimer::Ticket::scriptExecutionOwner().
+// A release build reads the swept cell's block header, which still names the
+// right VM, so a green release run is not coverage for this read.
 test("a FinalizationRegistry cleanup job of a context that was destructed before it ran does not read the dead context", async () => {
   const fixture = `
     const vm = require("node:vm");

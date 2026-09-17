@@ -3,6 +3,7 @@
 
 use crate::shell::ast;
 use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnv, log};
+use crate::shell::io::IO;
 use crate::shell::states::base::Base;
 use crate::shell::states::expansion::Expansion;
 use crate::shell::yield_::Yield;
@@ -19,6 +20,9 @@ pub struct Assigns {
     /// Points into the AST arena, which outlives every state node — `RawSlice`
     /// invariant.
     pub node: bun_ptr::RawSlice<ast::Assign>,
+    /// IO of the enclosing command or statement. A `$(...)` in an
+    /// assignment value inherits its stdin and stderr.
+    pub(crate) io: IO,
     pub(crate) state: AssignsState,
     pub ctx: AssignCtx,
 }
@@ -39,12 +43,14 @@ impl Assigns {
         shell: *mut ShellExecEnv,
         node: &[ast::Assign],
         parent: NodeId,
+        io: IO,
         ctx: AssignCtx,
     ) -> NodeId {
         interp.alloc_node(Node::Assigns(Assigns {
             base: Base::new(parent, shell),
             // AST arena outlives every state node — `RawSlice` invariant.
             node: bun_ptr::RawSlice::new(node),
+            io,
             state: AssignsState::Idle,
             ctx,
         }))
@@ -72,7 +78,8 @@ impl Assigns {
                         continue;
                     }
                     let atom: *const ast::Atom = &raw const assigns[idx as usize].value;
-                    let child = Expansion::init(interp, shell, atom, this, true);
+                    let io = interp.as_assigns(this).io.clone();
+                    let child = Expansion::init(interp, shell, atom, this, io, true);
                     return Expansion::start(interp, child);
                 }
                 AssignsState::Done => {

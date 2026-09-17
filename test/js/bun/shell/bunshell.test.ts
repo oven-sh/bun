@@ -1497,6 +1497,27 @@ describe("deno_task", () => {
     TestBuilder.command`echo $(echo 1)`.stdout("1\n").runAsTest("nested echo cmd subst");
     TestBuilder.command`echo $(echo 1 && echo 2)`.stdout("1 2\n").runAsTest("nested echo cmd subst with conditional");
     // TODO Sleep tests
+
+    // A command substitution inherits the stdin of the command it expands in.
+    // Inside a pipeline that is the pipe, not the stdin of the bun process.
+    // Spawn a child with data on its stdin so the wrong stdin is visible.
+    test.concurrent.each([
+      ["in a pipeline command", String.raw`echo hi | echo "[$(cat)]"`],
+      ["in a pipeline subshell", String.raw`echo hi | (echo "[$(cat)]")`],
+      ["in an assignment inside a pipeline subshell", String.raw`echo hi | (A=$(cat); echo "[$A]")`],
+    ])("reads the pipe %s (#43052)", async (_, script) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", `const r = await Bun.$\`${script}\`.quiet(); process.stdout.write(r.stdout);`],
+        env: bunEnv,
+        stdin: new Blob(["FROM_PROCESS_STDIN\n"]),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("[hi]\n");
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("shell variables", async () => {

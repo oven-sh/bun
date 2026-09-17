@@ -17,6 +17,9 @@ use crate::shell::{ExitCode, ShellErr};
 pub struct Expansion {
     pub(crate) base: Base,
     pub node: bun_ptr::BackRef<ast::Atom>,
+    /// IO of the command this atom belongs to. A `$(...)` inherits its stdin
+    /// and stderr, so inside a pipeline the substitution reads the pipe.
+    pub(crate) io: IO,
     pub(crate) state: ExpansionState,
     /// Index of the next sub-atom to expand. For `Atom::Simple` this is 0/1;
     /// for `Atom::Compound` it walks `c.atoms`.
@@ -90,6 +93,7 @@ impl Expansion {
         shell: *mut ShellExecEnv,
         node: *const ast::Atom,
         parent: NodeId,
+        io: IO,
         assign_ctx: bool,
     ) -> NodeId {
         interp.alloc_node(Node::Expansion(Expansion {
@@ -100,6 +104,7 @@ impl Expansion {
             // BackRef invariant). Callers pass `&raw const` only to escape
             // borrowck across the `&Interpreter` reborrow.
             node: unsafe { bun_ptr::BackRef::from_raw(node as *mut ast::Atom) },
+            io,
             state: ExpansionState::Idle,
             word_idx: 0,
             out: ExpansionOut::default(),
@@ -202,9 +207,9 @@ impl Expansion {
                 me.cmd_subst_quoted = quoted;
 
                 let io = IO {
-                    stdin: interp.root_io().stdin.clone(),
+                    stdin: me.io.stdin.clone(),
                     stdout: OutKind::Pipe,
-                    stderr: interp.root_io().stderr.clone(),
+                    stderr: me.io.stderr.clone(),
                 };
                 // SAFETY: `shell_ptr` is a live env owned by the parent state
                 // node and outlives this expansion.

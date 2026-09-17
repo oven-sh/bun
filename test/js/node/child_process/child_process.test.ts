@@ -744,6 +744,20 @@ describe("spawnSync()", () => {
       signal: null,
     });
   });
+
+  // Node passes the timeout to a uint64 libuv timer, so unlike spawn() (which goes through
+  // setTimeout and its 2**31 - 1 clamp) a timeout of 2**31 ms or more is honored as written.
+  it.each([2 ** 31, 2 ** 32 + 1, Number.MAX_SAFE_INTEGER])(
+    "timeout: %d is honored instead of firing immediately",
+    timeout => {
+      const { stdout, status, signal, error } = spawnSync(bunExe(), ["-e", "console.log('ok')"], {
+        timeout,
+        encoding: "utf8",
+        env: bunEnv,
+      });
+      expect({ stdout, status, signal, error }).toEqual({ stdout: "ok\n", status: 0, signal: null, error: undefined });
+    },
+  );
 });
 
 describe("execFileSync()", () => {

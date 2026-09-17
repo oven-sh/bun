@@ -129,10 +129,7 @@ impl IOReader {
         }
         #[cfg(windows)]
         {
-            // The shell owns `fd` and closes it in `Drop`. With CLOSE_HANDLE
-            // the reader would close it at EOF, and a later reader of the
-            // same stdin (a second `cat`, or a spawn after `$(cat)`) would
-            // find it gone.
+            // The shell owns `fd` and closes it in `Drop`, not the reader at EOF.
             reader
                 .flags
                 .remove(bun_io::pipe_reader::WindowsFlags::CLOSE_HANDLE);
@@ -238,8 +235,7 @@ impl IOReader {
             s.is_reading = true;
             let r = self.reader();
             if r.source.is_none() {
-                // EOF took the previous `File` (`close_impl`). The fd is still
-                // open, so attach a new one for this read.
+                // EOF took the `File`. The fd is still open.
                 r.set_source(bun_io::Source::File(bun_io::Source::open_file(s.fd)));
             }
             if let Err(e) = r.start_with_current_pipe() {
@@ -401,8 +397,7 @@ impl Drop for IOReader {
             #[cfg(windows)]
             {
                 if r.source.as_ref().is_some_and(|src| !src.is_closed()) {
-                    // A `File` is attached, maybe with a read in flight. Let
-                    // it close the fd once that read completes.
+                    // The `File` closes the fd once any in-flight read completes.
                     r.flags
                         .insert(bun_io::pipe_reader::WindowsFlags::CLOSE_HANDLE);
                     r.close_impl::<false>();

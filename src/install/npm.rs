@@ -2125,14 +2125,18 @@ impl PackageManifest {
                 let parsed_version = Semver::Version::parse(sliced_version);
 
                 if !parsed_version.valid {
-                    log.add_error_fmt(
-                        Some(&source),
-                        prop.key_loc,
-                        format_args!(
-                            "Failed to parse dependency {}",
-                            bstr::BStr::new(version_name)
-                        ),
-                    );
+                    // Not an error: an error fails the install. npm skips such a key in silence.
+                    if PackageManager::verbose_install() {
+                        log.add_warning_fmt(
+                            Some(&source),
+                            prop.key_loc,
+                            format_args!(
+                                "Skipping version {} of {}: not a valid semver version",
+                                bun_fmt::quote(version_name),
+                                bun_fmt::quote(expected_name),
+                            ),
+                        );
+                    }
                     continue;
                 }
 

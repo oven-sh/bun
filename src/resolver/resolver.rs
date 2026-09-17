@@ -4062,19 +4062,14 @@ impl<'a> Resolver<'a> {
         Ok(Some(result))
     }
 
-    /// Parses every config that `config` extends, then appends them to `chain`
-    /// in merge order: the bases first, `config` itself last. An `extends`
-    /// array is walked left to right, so a later entry lands after (and
-    /// overrides) an earlier one, as in tsc. A parent that fails to parse is
-    /// logged and skipped.
+    /// Appends `config` and everything it extends to `chain` in merge order:
+    /// bases first, `config` last.
     fn collect_tsconfig_extends_chain(
         &mut self,
         config: Box<TSConfigJSON>,
         depth: usize,
         chain: &mut Vec<Box<TSConfigJSON>>,
     ) -> crate::CrateResult<()> {
-        // A cycle (`a` extends `a`) never reaches the push below, so bound
-        // the recursion.
         if depth >= MAX_TSCONFIG_EXTENDS_DEPTH {
             return Err(bun_core::bounded_array::OverflowError::Overflow.into());
         }
@@ -6530,7 +6525,6 @@ impl<'a> Resolver<'a> {
                 // it is always overwritten when parsed_tsconfig.is_some(), and DirInfo defaults
                 // tsconfig_json to None otherwise.
                 if let Some(tsconfig_json) = parsed_tsconfig {
-                    // Every config in the chain, base first and `tsconfig_json` last.
                     let mut chain: Vec<Box<TSConfigJSON>> = Vec::new();
                     self.collect_tsconfig_extends_chain(tsconfig_json, 0, &mut chain)?;
 
@@ -6579,9 +6573,6 @@ impl<'a> Resolver<'a> {
                             // JSON), so this is a no-op but documents the ownership.
                             // (Drop handles parent_config.paths.)
                         }
-                        // Every field we need has moved into merged_config. Free the
-                        // intermediate through `destroy` so the `.alloc` log pairs it
-                        // with its `new`.
                         TSConfigJSON::destroy(parent_config);
                     }
                     // `merged_config` is a leaked Box interned into DirInfo; outlives the resolver.

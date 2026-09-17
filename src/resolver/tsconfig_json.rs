@@ -144,9 +144,7 @@ pub struct TSConfigJSON {
     /// More info: https://github.com/microsoft/TypeScript/issues/31869
     pub(crate) base_url_for_paths: Box<[u8]>,
 
-    /// The verbatim "extends" entries, in source order. A string `extends` is
-    /// one entry. TypeScript 5.0 also accepts an array: `["a", "b"]` means `b`
-    /// extends `a`, and a later entry overrides an earlier one.
+    /// The "extends" entries in source order. A later entry overrides an earlier one.
     pub(crate) extends: Box<[Box<[u8]>]>,
     /// The verbatim values of "compilerOptions.paths". The keys are patterns to
     /// match and the values are arrays of fallback paths to search. Each key and

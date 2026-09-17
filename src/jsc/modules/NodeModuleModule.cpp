@@ -176,9 +176,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleModuleConstructor,
 
     auto* out = Bun::JSCommonJSModule::create(vm, structure, idString, jsNull(),
         dirname, SourceCode());
-    // A module a Bun.ModuleGraph's code makes is that graph's: what it requires and compiles loads
-    // into the graph, over the graph's `globals`.
-    out->setModuleGraph(vm, Bun::moduleGraphOfRunningCode(globalObject));
+    // A module made in a Bun.ModuleGraph's context is that graph's: what it requires and compiles
+    // loads into the graph, over the graph's `globals`.
+    out->setModuleGraph(vm, Bun::currentModuleGraph(defaultGlobalObject(globalObject)));
 
     if (!parentValue.isUndefined()) {
         out->putDirect(vm, JSC::Identifier::fromString(vm, "parent"_s), parentValue,
@@ -273,9 +273,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire,
         val = Bun__Node__Path_joinWTF(&lhs, "noop.js", sizeof("noop.js") - 1).transferToWTFString();
     }
 
-    // Called from a Bun.ModuleGraph's code: that graph's require().
+    // Called in a Bun.ModuleGraph's context: that graph's require().
     RELEASE_AND_RETURN(
-        scope, JSValue::encode(Bun::JSCommonJSModule::createBoundRequireFunction(vm, globalObject, val, Bun::moduleGraphOfRunningCode(globalObject))));
+        scope, JSValue::encode(Bun::JSCommonJSModule::createBoundRequireFunction(vm, globalObject, val, Bun::currentModuleGraph(defaultGlobalObject(globalObject)))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,

@@ -17,14 +17,11 @@
 #include <JavaScriptCore/IdentifierInlines.h>
 #include <JavaScriptCore/InternalFieldTuple.h>
 #include <JavaScriptCore/JSLexicalEnvironmentInlines.h>
-#include <JavaScriptCore/JSModuleEnvironment.h>
 #include <JavaScriptCore/JSObjectInlines.h>
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/LazyClassStructureInlines.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/PropertyNameArray.h>
-#include <JavaScriptCore/StackFrame.h>
-#include <JavaScriptCore/StackVisitor.h>
 #include <JavaScriptCore/SymbolTable.h>
 #include <wtf/Scope.h>
 #include <JavaScriptCore/WeakGCMapInlines.h>
@@ -160,86 +157,6 @@ JSModuleLoader* moduleLoaderOf(JSGlobalObject* globalObject, ThrowScope& scope, 
     return graph ? graph->loader() : globalObject->moduleLoader();
 }
 
-// Which graph's code a function, an error or a rejection belongs to. std::optional: nullopt =
-// this frame / stack does not say (plain global-scope code, natives), nullptr = the global
-// object's own module code, else the graph.
-
-// A frame of the global loader's CommonJS module code: no module environment on its scope
-// chain, unlike ES module code, but host module code all the same. (Function() and eval code
-// carry their creator's origin but no source URL of their own.)
-static bool isHostCommonJSModuleCode(JSFunction* function)
-{
-    if (function->isHostOrBuiltinFunction())
-        return false;
-    JSC::SourceProvider* provider = function->jsExecutable()->source().provider();
-    return provider && provider->sourceType() == SourceProviderSourceType::Program && !provider->sourceURL().isEmpty() && provider->sourceOrigin().url().protocolIsFile();
-}
-
-static std::optional<JSModuleGraph*> moduleGraphOwningScope(Zig::GlobalObject* globalObject, JSScope* scope)
-{
-    VM& vm = globalObject->vm();
-    JSScope* globalLexicalEnvironment = globalObject->globalLexicalEnvironment();
-    bool isModuleCode = false;
-    for (JSScope* cursor = scope; cursor && cursor != globalLexicalEnvironment; cursor = cursor->next()) {
-        // An overlay sits directly on the global lexical environment.
-        if (cursor->next() == globalLexicalEnvironment) {
-            if (JSModuleGraph* graph = moduleGraphOfOverlay(vm, cursor))
-                return graph;
-        }
-        isModuleCode |= cursor->type() == ModuleEnvironmentType;
-    }
-    return isModuleCode ? std::optional<JSModuleGraph*>(nullptr) : std::nullopt;
-}
-
-static std::optional<JSModuleGraph*> moduleGraphOwningFrame(Zig::GlobalObject* globalObject, JSCell* callee)
-{
-    if (auto* function = dynamicDowncast<JSFunction>(callee)) {
-        if (function->isHostFunction())
-            return std::nullopt;
-        auto owner = moduleGraphOwningScope(globalObject, function->scope());
-        if (!owner && isHostCommonJSModuleCode(function))
-            return nullptr;
-        return owner;
-    }
-    if (auto* code = dynamicDowncast<JSCallee>(callee)) // module / program / eval code
-        return moduleGraphOwningScope(globalObject, code->scope());
-    return std::nullopt;
-}
-
-// The code running now: the innermost frame on the stack (vm.topCallFrame) that says.
-static std::optional<JSModuleGraph*> moduleGraphOwningCurrentStack(Zig::GlobalObject* globalObject)
-{
-    VM& vm = globalObject->vm();
-    std::optional<JSModuleGraph*> found;
-    if (!vm.topCallFrame)
-        return found;
-    StackVisitor::visit(vm.topCallFrame, vm, [&](StackVisitor& visitor) {
-        if (visitor->codeType() == StackVisitor::Frame::CodeType::Native || visitor->codeType() == StackVisitor::Frame::CodeType::Wasm)
-            return IterationStatus::Continue;
-        found = moduleGraphOwningFrame(globalObject, visitor->callee().isCell() ? visitor->callee().asCell() : nullptr);
-        return found ? IterationStatus::Done : IterationStatus::Continue;
-    });
-    return found;
-}
-
-// The code that captured `frames` (a throw site, or where an Error was created).
-static std::optional<JSModuleGraph*> moduleGraphOwningFrames(Zig::GlobalObject* globalObject, const Vector<StackFrame>& frames)
-{
-    for (const StackFrame& frame : frames) {
-        if (auto found = moduleGraphOwningFrame(globalObject, frame.callee()))
-            return found;
-    }
-    return std::nullopt;
-}
-
-JSModuleGraph* moduleGraphOfRunningCode(JSGlobalObject* globalObject)
-{
-    auto* zigGlobal = defaultGlobalObject(globalObject);
-    if (!zigGlobal->hasModuleGraphs())
-        return nullptr;
-    return moduleGraphOwningCurrentStack(zigGlobal).value_or(nullptr);
-}
-
 // The graph whose onError is given the errors of `graph`'s code: a graph that was given no onError
 // is part of the program of the graph whose code made it. Null: the host's handlers.
 static JSModuleGraph* graphGivenErrorsOf(JSModuleGraph* graph)
@@ -249,33 +166,21 @@ static JSModuleGraph* graphGivenErrorsOf(JSModuleGraph* graph)
     return graph;
 }
 
-// The code rejecting `promise` is on the stack now — or nothing is (the runtime rejects an async
-// function's promise right after unwinding, and forwards a rejection to the promises derived
-// from it from bare jobs), and the exception the VM last saw thrown, if it is this rejection's
-// reason, carries the throw site: an error belongs to the graph whose code threw it, however
-// far the promises carried it before someone left it unhandled. That exception is good for the
-// turn it was thrown in (GlobalObject::drainMicrotasks clears it).
-JSModuleGraph* moduleGraphRejecting(Zig::GlobalObject* globalObject, JSPromise* promise)
+// An error belongs to the graph whose context it happened in: the one that is current when the
+// promise is rejected.
+JSModuleGraph* moduleGraphRejecting(Zig::GlobalObject* globalObject)
 {
-    if (!globalObject->hasModuleGraphs())
-        return nullptr;
-    VM& vm = globalObject->vm();
-    std::optional<JSModuleGraph*> owner = moduleGraphOwningCurrentStack(globalObject);
-    if (!owner) {
-        JSC::Exception* last = vm.lastException();
-        if (last && last->value() == promise->result())
-            owner = moduleGraphOwningFrames(globalObject, last->stack());
-    }
-    JSModuleGraph* graph = graphGivenErrorsOf(owner ? *owner : currentModuleGraph(globalObject));
-    return graph && !graph->inOnError() ? graph : nullptr;
+    return graphGivenErrorsOf(currentModuleGraph(globalObject));
 }
 
 // ─── onError ─────────────────────────────────────────────────────────────────────────
 
+static JSValue makeContextCurrent(Zig::GlobalObject*, JSModuleGraph*);
+
 static bool deliverToOnError(Zig::GlobalObject* globalObject, JSModuleGraph* graph, JSValue error, ASCIILiteral kind)
 {
     graph = graphGivenErrorsOf(graph);
-    if (!graph || graph->inOnError())
+    if (!graph)
         return false;
     VM& vm = globalObject->vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -283,19 +188,30 @@ static bool deliverToOnError(Zig::GlobalObject* globalObject, JSModuleGraph* gra
     MarkedArgumentBuffer args;
     args.append(error);
     args.append(jsString(vm, String(kind)));
-    // Until what onError itself threw has been reported, too.
-    graph->setInOnError(true);
-    auto leaveOnError = makeScopeExit([&] { graph->setInOnError(false); });
+    // The handler is its maker's: it runs in the context the graph was made in (the host's, or the
+    // enclosing graph's), so what it throws, rejects or starts is that context's.
+    JSValue previous = makeContextCurrent(globalObject, graph->maker());
+    auto leaveMakersContext = makeScopeExit([&] {
+        if (previous)
+            globalObject->m_asyncContextData.get()->putInternalField(vm, 0, previous);
+    });
     JSC::call(globalObject, onError, getCallData(onError), jsUndefined(), args);
     if (scope.exception()) [[unlikely]] {
         if (vm.hasPendingTerminationException())
             return true;
-        // onError itself threw: that is the host's error.
         auto* thrown = scope.exception();
         (void)scope.tryClearException();
         Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, thrown);
     }
     return true;
+}
+
+// VirtualMachine::unhandled_rejection, for a rejection native code reports as it happens (a
+// `Bun.cron()` tick's, a module's that failed to load): whose it is, as the tracker would decide now.
+extern "C" EncodedJSValue Bun__ModuleGraph__rejecting(JSGlobalObject* lexicalGlobalObject)
+{
+    JSModuleGraph* graph = moduleGraphRejecting(defaultGlobalObject(lexicalGlobalObject));
+    return JSValue::encode(graph ? JSValue(graph) : jsNull());
 }
 
 // VirtualMachine::unhandled_rejection, first: `owner` is what moduleGraphRejecting decided
@@ -306,25 +222,18 @@ extern "C" bool Bun__ModuleGraph__handleUnhandledRejection(JSGlobalObject* lexic
     return graph && deliverToOnError(defaultGlobalObject(lexicalGlobalObject), graph, JSValue::decode(reason), "unhandledRejection"_s);
 }
 
-// VirtualMachine::uncaught_exception, first: the throw site (the Exception's stack) decides.
-// Callers that caught the error in JS (the nextTick drain, node-style callback shims) report
-// the bare value; the exception they just caught is still the VM's last.
-extern "C" bool Bun__ModuleGraph__handleUncaughtException(JSGlobalObject* lexicalGlobalObject, EncodedJSValue encodedError)
+static JSModuleGraph* moduleGraphOfFrame(Zig::GlobalObject*, JSValue asyncContext, JSObject** enteredWith);
+
+// VirtualMachine::uncaught_exception, first. `asyncContext`: the one the exception was thrown in.
+extern "C" bool Bun__ModuleGraph__handleUncaughtException(JSGlobalObject* lexicalGlobalObject, EncodedJSValue encodedError, EncodedJSValue asyncContext)
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     if (!globalObject->hasModuleGraphs())
         return false;
-    VM& vm = globalObject->vm();
     JSValue error = JSValue::decode(encodedError);
-    auto* exception = error.isCell() ? dynamicDowncast<JSC::Exception>(error.asCell()) : nullptr;
-    if (!exception && vm.lastException() && vm.lastException()->value() == error)
-        exception = vm.lastException();
-    vm.clearLastException();
-    if (!exception)
-        return false;
-    auto owner = moduleGraphOwningFrames(globalObject, exception->stack());
-    JSModuleGraph* graph = owner ? *owner : currentModuleGraph(globalObject);
-    return deliverToOnError(globalObject, graph, exception->value(), "uncaughtException"_s);
+    if (auto* exception = error.isCell() ? dynamicDowncast<JSC::Exception>(error.asCell()) : nullptr)
+        error = exception->value();
+    return deliverToOnError(globalObject, moduleGraphOfFrame(globalObject, JSValue::decode(asyncContext), nullptr), error, "uncaughtException"_s);
 }
 
 // ─── The graph's context ─────────────────────────────────────────────────────────────
@@ -391,6 +300,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsFrameOfStoppedModuleGraph, (JSGlobalObject 
 
 JSModuleGraph* currentModuleGraph(Zig::GlobalObject* globalObject)
 {
+    if (!globalObject->hasModuleGraphs())
+        return nullptr;
     return moduleGraphOfFrame(globalObject, globalObject->m_asyncContextData.get()->getInternalField(0));
 }
 
@@ -461,7 +372,7 @@ JSValue moduleGraphAsyncContextAtEventLoop(Zig::GlobalObject* globalObject)
 // current (a completion of the host's run from an event-loop tick nested under a graph's script,
 // an event the graph's script dispatches to something of the host's). Returns the async context
 // to restore, or the empty value when already there.
-static JSValue enterContext(Zig::GlobalObject* globalObject, JSModuleGraph* graph)
+static JSValue makeContextCurrent(Zig::GlobalObject* globalObject, JSModuleGraph* graph)
 {
     if (currentModuleGraph(globalObject) == graph)
         return {};
@@ -472,7 +383,16 @@ static JSValue enterContext(Zig::GlobalObject* globalObject, JSModuleGraph* grap
     if (!frame || !frame.isObject())
         frame = createModuleGraphFrame(globalObject, graph, previous);
     asyncContextData->putInternalField(globalObject->vm(), 0, frame);
-    noteEnteredFromEventLoop(globalObject, frame);
+    return previous;
+}
+
+// As makeContextCurrent, for native code coming from the event loop: what it entered is what a
+// microtask checkpoint with no script on the stack resets the async context to.
+static JSValue enterContext(Zig::GlobalObject* globalObject, JSModuleGraph* graph)
+{
+    JSValue previous = makeContextCurrent(globalObject, graph);
+    if (previous)
+        noteEnteredFromEventLoop(globalObject, globalObject->m_asyncContextData.get()->getInternalField(0));
     return previous;
 }
 

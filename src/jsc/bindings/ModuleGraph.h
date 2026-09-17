@@ -55,10 +55,6 @@ public:
     // Key of the first module import()ed: import.meta.main / require.main. Undefined before.
     JSC::JSValue mainPath() const { return m_mainPath ? JSC::JSValue(m_mainPath.get()) : JSC::jsUndefined(); }
     bool disposed() const { return m_context->isStopped(); }
-    // Its onError is running. What that throws or rejects, and an error of this graph's code that it
-    // causes, is the host's: given to the graph, it would come straight back to the same onError.
-    bool inOnError() const { return m_inOnError; }
-    void setInOnError(bool inOnError) { m_inOnError = inOnError; }
     // The context that owns what the graph's script opens.
     WebCore::ScriptExecutionContext& context() const { return m_context.get(); }
 
@@ -80,7 +76,6 @@ private:
     JSC::WriteBarrier<JSC::JSObject> m_onError;
     JSC::WriteBarrier<JSModuleGraph> m_maker;
     JSC::WriteBarrier<JSC::JSString> m_mainPath;
-    bool m_inOnError { false };
     unsigned m_overlayShape { 0 };
 };
 
@@ -115,11 +110,9 @@ JSC::Structure* createModuleGraphFrameStructure(JSC::VM&, JSC::JSGlobalObject*);
 // ── Which graph ──────────────────────────────────────────────────────────────────────
 // The graph `loader` is the loader of; null for the global object's own.
 JSModuleGraph* moduleGraphOfLoader(JSC::JSGlobalObject*, JSC::JSModuleLoader*);
-// The graph whose module or CommonJS code is running (the innermost frame that says), or null.
-JSModuleGraph* moduleGraphOfRunningCode(JSC::JSGlobalObject*);
-// promiseRejectionTracker: the graph whose code is rejecting `promise` right now, or null.
-JSModuleGraph* moduleGraphRejecting(Zig::GlobalObject*, JSC::JSPromise*);
-// The innermost graph that the current async context is inside of.
+// promiseRejectionTracker: the graph whose onError a promise rejected now is reported to, or null.
+JSModuleGraph* moduleGraphRejecting(Zig::GlobalObject*);
+// The innermost graph that the current async context is inside of; null in the host's.
 JSModuleGraph* currentModuleGraph(Zig::GlobalObject*);
 
 // ── What a graph's require() and import() use ────────────────────────────────────────

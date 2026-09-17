@@ -1412,7 +1412,7 @@ extern "C" napi_status napi_fatal_exception(napi_env env,
     auto globalObject = toJS(env);
     JSValue value = toJS(err);
 
-    Bun__reportUnhandledError(globalObject, JSValue::encode(value));
+    Bun::reportUnhandledError(globalObject, value);
 
     NAPI_RETURN_SUCCESS_UNLESS_EXCEPTION(env);
 }

@@ -64,7 +64,9 @@ pub fn exit_during_uncaught_exception(this: &mut VirtualMachine) {
 // `do_send` — names the `bun_runtime::Listener` type; LAYERING).
 
 // HOST_EXPORT(Bun__reportUnhandledError, c)
-pub fn report_unhandled_error(global: &JSGlobalObject, value: JSValue) {
+/// `async_context`: the async context the error happened in (JavaScriptCore's `queueMicrotask` job
+/// has restored it by the time it reports, so the live one is no longer it).
+pub fn report_unhandled_error(global: &JSGlobalObject, value: JSValue, async_context: JSValue) {
     crate::mark_binding!();
 
     // A TerminationException is not an error to report, and not this frame's to take: it stays pending for
@@ -73,7 +75,7 @@ pub fn report_unhandled_error(global: &JSGlobalObject, value: JSValue) {
         let _ = global
             .bun_vm()
             .as_mut()
-            .uncaught_exception(global, value, false);
+            .uncaught_exception_in(global, value, false, async_context);
     }
 }
 

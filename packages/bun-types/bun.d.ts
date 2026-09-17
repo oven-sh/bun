@@ -5395,17 +5395,19 @@ declare module "bun" {
      */
     globals?: Record<string, unknown> | undefined;
     /**
-     * Called with uncaught exceptions and unhandled rejections of this graph's
-     * code instead of the process-wide `uncaughtException` /
-     * `unhandledRejection` handling. `kind` says which.
+     * Called with the uncaught exceptions and unhandled rejections that happen
+     * in this graph's context, instead of the process-wide
+     * `uncaughtException` / `unhandledRejection` handling. `kind` says which.
      *
-     * An error is the graph's when the graph's code threw it or rejected with
-     * it, including the promise {@link ModuleGraph.import} returned when a
-     * module of the graph threw while it was being evaluated. What the host
-     * caused takes the process-wide path: a specifier that does not resolve,
-     * an `import()` into a disposed graph, a rejection that reaches an
-     * unhandled promise only through the host's own `.then()`, and what
-     * `onError` itself throws or rejects.
+     * An error is the graph's when it happens in the graph's context, whoever
+     * wrote the code that threw: the graph's modules and what they start, and
+     * what the host calls through {@link ModuleGraph.run}. A function of the
+     * graph's that the host calls directly runs in the host's context, and
+     * its errors are the host's. The promise {@link ModuleGraph.import}
+     * returns is its caller's.
+     *
+     * The handler runs in the context the graph was made in, so what it throws
+     * or rejects is that context's: the host's, when the host made the graph.
      *
      * Without an `onError`, errors go to the `onError` of the graph in whose
      * context this graph was made, and to the process-wide path when the host

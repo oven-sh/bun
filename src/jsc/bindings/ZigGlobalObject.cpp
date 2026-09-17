@@ -972,6 +972,17 @@ String GlobalObject::agentClusterID() const
     return defaultAgentClusterID();
 }
 
+void Bun::reportUnhandledError(JSC::JSGlobalObject* globalObject, JSC::JSValue error)
+{
+    Bun__reportUnhandledError(globalObject, JSC::JSValue::encode(error), Bun__GlobalObject__asyncContext(globalObject));
+}
+
+// VirtualMachine::uncaught_exception: the async context that is current.
+extern "C" JSC::EncodedJSValue Bun__GlobalObject__asyncContext(JSC::JSGlobalObject* globalObject)
+{
+    return JSC::JSValue::encode(defaultGlobalObject(globalObject)->m_asyncContextData.get()->getInternalField(0));
+}
+
 namespace Zig {
 
 using namespace WebCore;
@@ -1156,7 +1167,7 @@ WebCore::ScriptExecutionContext* GlobalObject::currentScriptExecutionContext()
 void GlobalObject::reportUncaughtExceptionAtEventLoop(JSGlobalObject* globalObject,
     JSC::Exception* exception)
 {
-    Bun__reportUnhandledError(globalObject, JSValue::encode(JSValue(exception)));
+    Bun::reportUnhandledError(globalObject, exception);
 }
 
 extern "C" void Bun__handleHandledPromise(Zig::GlobalObject* JSGlobalObject, JSC::JSPromise* promise);
@@ -1169,8 +1180,8 @@ void GlobalObject::promiseRejectionTracker(JSGlobalObject* obj, JSC::JSPromise* 
     switch (operation) {
     case JSPromiseRejectionOperation::Reject:
         // Whose rejection this is (a Bun.ModuleGraph's or the global object's) is
-        // decided now, while the rejecting code is on the stack, and travels with it.
-        globalObj->m_aboutToBeNotifiedRejectedPromises.append(obj->vm(), globalObj, promise, Bun::moduleGraphRejecting(globalObj, promise));
+        // decided now, in the context it is rejected in, and travels with it.
+        globalObj->m_aboutToBeNotifiedRejectedPromises.append(obj->vm(), globalObj, promise, Bun::moduleGraphRejecting(globalObj));
         break;
     case JSPromiseRejectionOperation::Handle:
         bool removed = globalObj->m_aboutToBeNotifiedRejectedPromises.remove(globalObj, promise);
@@ -3141,11 +3152,6 @@ uint8_t GlobalObject::drainMicrotasks()
         (void)scope.tryClearException();
         this->reportUncaughtExceptionAtEventLoop(this, exception);
     }
-
-    // The last exception thrown says whose error a native rejection in the same turn carries
-    // (Bun::moduleGraphRejecting); past the turn it says nothing, and would keep its thrower alive.
-    if (m_moduleGraphs && !vm.entryScope)
-        vm.clearLastException();
 
     return 0;
 }

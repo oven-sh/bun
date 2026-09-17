@@ -39,7 +39,7 @@ static bool call(JSGlobalObject* globalObject, JSValue timerObject, JSValue call
     } else {
         auto callData = JSC::getCallData(callbackValue);
         if (callData.type == CallData::Type::None) {
-            Bun__reportUnhandledError(globalObject, JSValue::encode(createNotAFunctionError(globalObject, callbackValue)));
+            Bun::reportUnhandledError(globalObject, createNotAFunctionError(globalObject, callbackValue));
             return true;
         }
 
@@ -67,7 +67,7 @@ static bool call(JSGlobalObject* globalObject, JSValue timerObject, JSValue call
         if (vm.isTerminationException(exception))
             Bun__VM__takeTerminationOutsideScript(globalObject);
         else
-            Bun__reportUnhandledError(globalObject, JSValue::encode(exception));
+            Bun::reportUnhandledError(globalObject, exception);
         hadException = true;
     }
 

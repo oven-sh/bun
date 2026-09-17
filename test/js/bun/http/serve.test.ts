@@ -5380,23 +5380,55 @@ describe("requests pipelined in one read", () => {
       nodeTls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false }, onConnect);
     const close = { headers: { Connection: "close" } };
     const post = (path: string) => `POST ${path} HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhello`;
+    const lastChunk = "0\r\n\r\n";
+    // Larger than a socket buffer, so the first write leaves the response in flight.
+    const big = Buffer.alloc(8 * 1024 * 1024, "x");
+    big.write("END!", big.length - 4);
 
     // `payload` ends with the request whose response closes. Two more requests follow it.
+    // `end` is the end of that response: the client has to receive all of it.
     it.each([
-      { name: "at the start of the read", payload: get("/close"), ran: ["/close"] },
-      { name: "in the middle of the read", payload: get("/a") + get("/close"), ran: ["/a", "/close"] },
+      { name: "at the start of the read", payload: get("/close"), ran: ["/close"], end: "/close" },
+      { name: "in the middle of the read", payload: get("/a") + get("/close"), ran: ["/a", "/close"], end: "/close" },
       {
         name: "in the middle of the read, over TLS",
         payload: get("/a") + get("/close"),
         ran: ["/a", "/close"],
+        end: "/close",
         options: { tls },
         connect: secure,
       },
       // The paths below complete the response outside the request handler call.
-      { name: "completed by the request body", payload: get("/a") + post("/body"), ran: ["/a", "/body"] },
-      { name: "with a stream body", payload: get("/a") + get("/stream"), ran: ["/a", "/stream"] },
-      { name: "without a body", payload: get("/a") + get("/204"), ran: ["/a", "/204"] },
-    ])("$name", async ({ payload, ran: expected, options = {}, connect = plain }) => {
+      { name: "completed by the request body", payload: get("/a") + post("/body"), ran: ["/a", "/body"], end: "/body" },
+      { name: "with a stream body", payload: get("/a") + get("/stream"), ran: ["/a", "/stream"], end: "/stream" },
+      { name: "without a body", payload: get("/a") + get("/204"), ran: ["/a", "/204"], end: "\r\n\r\n" },
+      // The paths below are still in flight when the next request of the read is parsed.
+      { name: "still in flight", payload: get("/a") + get("/open"), ran: ["/a", "/open"], end: lastChunk },
+      {
+        name: "still in flight, no body byte yet",
+        payload: get("/a") + get("/pull"),
+        ran: ["/a", "/pull"],
+        end: lastChunk,
+      },
+      { name: "larger than the socket buffer", payload: get("/a") + get("/big"), ran: ["/a", "/big"], end: "END!" },
+      {
+        name: "a file larger than the socket buffer",
+        payload: get("/a") + get("/file"),
+        ran: ["/a", "/file"],
+        end: "END!",
+        file: true,
+      },
+      {
+        name: "a file larger than the socket buffer, over TLS",
+        payload: get("/a") + get("/file"),
+        ran: ["/a", "/file"],
+        end: "END!",
+        file: true,
+        options: { tls },
+        connect: secure,
+      },
+    ])("$name", async ({ payload, ran: expected, end, file = false, options = {}, connect = plain }) => {
+      using dir = file ? tempDir("serve-closing-file", { "big.bin": big }) : undefined;
       const ran: string[] = [];
       using server = Bun.serve({
         port: 0,
@@ -5422,19 +5454,54 @@ describe("requests pipelined in one read", () => {
               );
             case "/204":
               return new Response(null, { status: 204, ...close });
+            case "/open":
+              return new Response(
+                new ReadableStream({
+                  async start(controller) {
+                    controller.enqueue(pathname);
+                    // The body ends after the server parsed the rest of the read.
+                    await new Promise(resolve => setImmediate(resolve));
+                    controller.close();
+                  },
+                }),
+                close,
+              );
+            case "/pull": {
+              let pulls = 0;
+              return new Response(
+                new ReadableStream({
+                  async pull(controller) {
+                    // Both steps run after the server parsed the rest of the read.
+                    await new Promise(resolve => setImmediate(resolve));
+                    if (pulls++ === 0) controller.enqueue(pathname);
+                    else controller.close();
+                  },
+                }),
+                close,
+              );
+            }
+            case "/big":
+              return new Response(big, close);
+            case "/file":
+              return new Response(Bun.file(join(String(dir), "big.bin")), close);
             default:
               return new Response(pathname);
           }
         },
       });
       const responses = (reply: string) => reply.split("HTTP/1.1 ").length - 1;
-      // Resolves when the server closes. One response too many ends it early.
+      // Resolves when the server closes. One response too many ends it early (small replies only:
+      // a server that runs the requests behind a large body cuts that body short and closes).
       const reply = await exchange(
         connect(server.port),
         payload + get("/b") + get("/c"),
-        reply => responses(reply) > expected.length,
+        reply => reply.length < 4096 && responses(reply) > expected.length,
       );
-      expect({ ran, responses: responses(reply) }).toEqual({ ran: expected, responses: expected.length });
+      expect({ ran, responses: responses(reply), end: reply.slice(-end.length) }).toEqual({
+        ran: expected,
+        responses: expected.length,
+        end,
+      });
     });
   });
 });

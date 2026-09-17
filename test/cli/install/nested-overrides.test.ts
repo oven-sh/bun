@@ -679,6 +679,20 @@ describe.concurrent("version-scoped targets", () => {
     await installOk(dir, "--frozen-lockfile");
   });
 
+  // The key of #41371 is at the top level of `overrides`, and a dependency declares the ^ edge.
+  describe.concurrent.each([
+    { rule: { "no-deps@>=2.0.0-alpha.0 <3": "1.0.0" } },
+    { rule: { "no-deps@>=2.0.0-0": "1.0.0" } },
+  ])("a top-level selector with a prerelease bound %j", ({ rule }) => {
+    test("leaves a transitive ^ edge alone", async () => {
+      const dir = await project({ dependencies: { "one-range-dep": "1.0.0" }, overrides: rule });
+      const { err } = await installOk(dir);
+      expect(err).not.toContain("warn:");
+      expect(await versionSeenBy(dir, "one-range-dep", "no-deps")).toBe("1.1.0");
+      await installOk(dir, "--frozen-lockfile");
+    });
+  });
+
   test("pnpm key whose range contains > after ||", async () => {
     const dir = await project({
       dependencies: { "one-range-dep": "1.0.0", ofd2: twoParents.ofd2 },

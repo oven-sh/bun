@@ -1502,7 +1502,7 @@ describe("bundledDependencies", () => {
 
     async function shippedCopies() {
       await using proc = spawn({
-        cmd: [bunExe(), "-p", `JSON.stringify(require("bundled-unpublished"))`],
+        cmd: [bunExe(), "-e", `console.log(JSON.stringify(require("bundled-unpublished")))`],
         cwd: packageDir,
         stdout: "pipe",
         stderr: "pipe",

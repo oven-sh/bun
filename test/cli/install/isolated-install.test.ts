@@ -578,7 +578,7 @@ test("keeps a bundled dependency that the registry does not have", async () => {
     expect(await file(shipped).json()).toEqual({ name: "unpublished-dep", version: "1.0.0", main: "index.js" });
 
     await using proc = spawn({
-      cmd: [bunExe(), "-p", `JSON.stringify(require("bundled-unpublished"))`],
+      cmd: [bunExe(), "-e", `console.log(JSON.stringify(require("bundled-unpublished")))`],
       cwd: packageDir,
       env: bunEnv,
       stdout: "pipe",

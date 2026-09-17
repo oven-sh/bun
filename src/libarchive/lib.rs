@@ -1032,9 +1032,7 @@ pub fn create_entry_file(dir: Fd, path: &ZStr, mode: bun_sys::Mode) -> bun_sys::
     }
 }
 
-/// The in-place path for a file that cannot be removed (a parent the user
-/// cannot write, a mount point). Only a regular file with one name is
-/// truncated, so a symlink or a hard link is never written through.
+/// Truncates a file that cannot be removed, unless it is a symlink or has other names.
 #[cfg(not(windows))]
 fn truncate_entry_file(dir: Fd, path: &ZStr, unlink_err: bun_sys::Error) -> bun_sys::Maybe<Fd> {
     let fd = bun_sys::openat(dir, path, bun_sys::O::WRONLY | bun_sys::O::NOFOLLOW, 0)?;

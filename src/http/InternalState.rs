@@ -29,6 +29,9 @@ pub struct InternalState<'a> {
     /// (cap-bounded) after the callback returns.
     pub(crate) decoded_body: MutableString,
     pub(crate) compressed_body: MutableString,
+    /// How much of `compressed_body` the decoder has taken. A held body is not shifted down
+    /// after every pass.
+    compressed_body_consumed: usize,
     pub(crate) content_length: Option<usize>,
     pub(crate) total_body_received: usize,
     // Self-borrow into `original_request_body.bytes`; `RawSlice` carries the
@@ -80,9 +83,8 @@ pub struct InternalStateFlags {
     /// `reset()`/`init()` so each redirect/retry hop re-compresses from the
     /// original uncompressed `original_request_body`.
     pub(crate) body_compressed: bool,
-    /// `process_body_buffer` stopped at its `max_output` budget with either
-    /// unconsumed compressed input or a mid-stream decoder. The next
-    /// drain/`on_data` must pump again before the request can finalize.
+    /// Compressed input is held, or a decode stopped at its output budget: the body is not
+    /// complete until `HTTPClient::drain_response_body` has pumped it dry.
     pub(crate) decompress_output_pending: bool,
 }
 
@@ -118,6 +120,7 @@ impl Default for InternalState<'_> {
             stage: Stage::Pending,
             decoded_body: MutableString::init_empty(),
             compressed_body: MutableString::init_empty(),
+            compressed_body_consumed: 0,
             content_length: None,
             total_body_received: 0,
             request_body: bun_ptr::RawSlice::EMPTY,
@@ -213,11 +216,8 @@ impl<'a> InternalState<'a> {
         self.flags.received_last_chunk
     }
 
-    /// `process_body_buffer` stopped at its output budget with more to
-    /// deliver (unconsumed compressed input or a mid-stream decoder with
-    /// output buffered internally).
     #[inline]
-    pub fn has_pending_compressed(&self) -> bool {
+    pub(crate) fn has_pending_compressed(&self) -> bool {
         self.flags.decompress_output_pending
     }
 
@@ -225,6 +225,10 @@ impl<'a> InternalState<'a> {
     /// than failing it: chunked decoder already in the trailers state, or a
     /// close-delimited response (no Content-Length, no Transfer-Encoding).
     pub(crate) fn is_body_complete_on_close(&self) -> bool {
+        // Every byte arrived; only the decode is outstanding.
+        if self.flags.decompress_output_pending && self.is_done() {
+            return true;
+        }
         if self.is_chunked_encoding() {
             return bun_picohttp::phr_decode_chunked_is_in_trailers(&self.chunked_decoder) != 0;
         }
@@ -271,8 +275,8 @@ impl<'a> InternalState<'a> {
             'libdeflate: {
                 use bun_libdeflate_sys::libdeflate as bun_libdeflate;
                 if !(is_final_chunk
-                    && max_output == usize::MAX
                     && !self.flags.is_libdeflate_fast_path_disabled
+                    && matches!(self.decompressor, Decompressor::None)
                     && self.encoding.can_use_lib_deflate()
                     && self.is_done())
                 {
@@ -297,6 +301,12 @@ impl<'a> InternalState<'a> {
                             .try_into()
                             .expect("infallible: size matches"),
                     );
+                    // Under an output budget only `shared_buffer`'s worth may come out in one shot.
+                    if (estimated_size as usize) > deflater.shared_buffer.len()
+                        && max_output != usize::MAX
+                    {
+                        break 'libdeflate;
+                    }
                     // Since this is arbtirary input from the internet, let's set an upper bound of 32 MB for the allocation size.
                     if (estimated_size as usize) > deflater.shared_buffer.len()
                         && estimated_size < 32 * 1024 * 1024
@@ -373,7 +383,10 @@ impl<'a> InternalState<'a> {
                 let min = ((buffer.len() as f64) * 1.5)
                     .ceil()
                     .min(1024.0 * 1024.0 * 2.0);
-                if let Err(err) = self.decoded_body.grow_by((min as usize).max(32)) {
+                if let Err(err) = self
+                    .decoded_body
+                    .grow_by((min as usize).max(32).min(max_output))
+                {
                     self.compressed_body.reset();
                     return Err(err.into());
                 }
@@ -425,20 +438,22 @@ impl<'a> InternalState<'a> {
 
         match self.encoding {
             Encoding::Brotli | Encoding::Gzip | Encoding::Deflate | Encoding::Zstd => {
-                let consumed = self.decompress_bytes(&buffer, is_final_chunk, max_output)?;
-                if consumed < buffer.len() {
-                    // Output budget reached: keep unconsumed compressed input
-                    // for the next drain/on_data cycle.
+                let start = self.compressed_body_consumed;
+                let consumed =
+                    start + self.decompress_bytes(&buffer[start..], is_final_chunk, max_output)?;
+                let held = buffer.len() - consumed;
+                // A decoder can take all of its input and still hold output (a brotli copy
+                // command, zstd's flush window), so held input is not the only sign.
+                self.flags.decompress_output_pending = self.decoded_body.list.len() >= max_output
+                    && (held != 0 || self.decompressor.is_mid_stream());
+                // Shifting only once the taken prefix is the larger part moves each byte once.
+                if consumed >= held {
                     buffer.drain(..consumed);
+                    self.compressed_body_consumed = 0;
                 } else {
-                    // Retain capacity by returning the (cleared) allocation.
-                    buffer.clear();
+                    self.compressed_body_consumed = consumed;
                 }
-                // Decoder may still hold output internally even with no
-                // unconsumed input (brotli/zlib can read a whole command into
-                // their window and emit it across several calls).
-                self.flags.decompress_output_pending = max_output != usize::MAX
-                    && (!buffer.is_empty() || self.decompressor.is_mid_stream());
+                // Retain capacity by returning the allocation to compressed_body.
                 self.compressed_body.list = buffer;
             }
             _ => {

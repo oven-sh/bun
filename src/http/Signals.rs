@@ -85,9 +85,7 @@ impl Signals {
             .is_some_and(|a| a.load(Ordering::Acquire) == BodyReceiveMode::Paused as u8)
     }
 
-    /// A consumer takes the body chunk by chunk (`Flowing`/`Paused`), so the
-    /// transport must not run ahead of its demand. False for `BufferAll`,
-    /// `Abandoned`, and an unwired slot.
+    /// `Flowing` or `Paused`: a consumer takes the body piece by piece.
     #[inline]
     pub(crate) fn is_demand_driven(self) -> bool {
         self.body_receive_mode

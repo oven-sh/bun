@@ -19,9 +19,7 @@ impl Decompressor {
     // explicit `Drop` is unnecessary. Callers that want a mid-lifecycle reset
     // assign `*self = Decompressor::None`.
 
-    /// The underlying decoder has consumed input but not yet reached
-    /// stream-end: a further `decompress_chunk` call may emit more output
-    /// from its internal buffer even with empty input.
+    /// Inside a stream: another `decompress_chunk` may produce output with no new input.
     pub(crate) fn is_mid_stream(&self) -> bool {
         match self {
             Decompressor::Zlib(r) => r.is_inflating(),
@@ -61,11 +59,9 @@ impl Decompressor {
     }
 
     /// Feed one body chunk `buffer` through the decoder, appending the
-    /// decompressed output to `body_out_str`. Creates the decoder on first
-    /// call, stopping once `body_out_str` reaches `max_output` bytes.
-    /// Returns input bytes consumed; `buffer[n..]` is the caller's to keep.
-    /// Returns `ShortRead` when more input is needed and the stream is not
-    /// yet done.
+    /// decompressed output to `body_out_str` until it holds `max_output` bytes. Creates the
+    /// decoder on first call. Returns the input bytes consumed. Returns `ShortRead` when more
+    /// input is needed and the stream is not yet done.
     pub(crate) fn decompress_chunk(
         &mut self,
         encoding: Encoding,

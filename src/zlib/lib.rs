@@ -1003,8 +1003,6 @@ impl InflateDecoder {
         rc
     }
 
-    /// Mid-stream: a further [`decompress`](Self::decompress) may emit more
-    /// output even with no new input.
     #[inline]
     pub fn is_inflating(&self) -> bool {
         matches!(self.state, State::Inflating)
@@ -1022,13 +1020,10 @@ impl InflateDecoder {
         step(&mut self.strm, input, out, reserve, flush, inflate)
     }
 
-    /// Consume `input`, appending decompressed output to `out` (growing by
-    /// 4096-byte steps). Stops early once `out.len()` reaches `max_output`
-    /// and returns the number of input bytes consumed so the caller can
-    /// retain the remainder for the next call. The separate
-    /// [`max_output_size`](Self::max_output_size) field is the hard bomb
-    /// guard (exceeding it is an error). Returns `ShortRead` when all input
-    /// was consumed but more is required and `is_done` is false.
+    /// Append decompressed output to `out` (growing by 4096-byte steps, capped at
+    /// `max_output_size`) until `input` is consumed or `out.len()` reaches `max_output`.
+    /// Returns the input bytes consumed. Returns `ShortRead` when more input is required and
+    /// `is_done` is false.
     ///
     /// The stream state persists across calls so this can be driven one
     /// body chunk at a time.
@@ -1088,8 +1083,6 @@ impl InflateDecoder {
                         }
                         continue;
                     }
-                    // Trailing non-member bytes are tolerated garbage; report
-                    // them consumed so the caller does not re-feed them.
                     return Ok(input_len);
                 }
                 ReturnCode::MemError => {

@@ -551,6 +551,9 @@ pub struct StreamingDecoder {
     /// Decompression-bomb guard: `decompress` errors instead of growing the
     /// output past this many bytes. Defaults to unbounded.
     pub(crate) max_output_size: usize,
+    /// zstd filled its last output window, so it may hold decoded bytes that did not fit.
+    /// `max_output` can end a call like that, and the next call may bring no input.
+    output_full: bool,
 }
 
 impl StreamingDecoder {
@@ -563,20 +566,18 @@ impl StreamingDecoder {
             stream,
             state: State::Uninitialized,
             max_output_size: usize::MAX,
+            output_full: false,
         })
     }
 
-    /// Mid-stream: a further [`decompress`](Self::decompress) may emit more
-    /// output even with no new input.
     #[inline]
     pub fn is_inflating(&self) -> bool {
         matches!(self.state, State::Inflating)
     }
 
-    /// Decompress `input` into `out`, stopping once `out.len()` reaches
-    /// `max_output`. Returns input bytes consumed; any remainder is the
-    /// caller's to re-feed. Returns `ShortRead` when all input was consumed
-    /// but more is required and `is_done` is false.
+    /// Append decompressed bytes to `out` (growing in 4096-byte steps) until `input` is
+    /// consumed or `out.len()` reaches `max_output`. Returns the input bytes consumed.
+    /// Returns `ShortRead` when more input is required and `is_done` is false.
     pub fn decompress(
         &mut self,
         input: &[u8],
@@ -589,13 +590,11 @@ impl StreamingDecoder {
         }
 
         let mut total_in = 0usize;
-        // zstd may hold decoded bytes it could not fit into the last output
-        // window. Call it again with no input until it leaves the window short.
-        let mut output_full = false;
         while matches!(self.state, State::Uninitialized | State::Inflating) {
             let next_in = &input[total_in..];
 
-            if next_in.is_empty() && !output_full {
+            // Call zstd again with no input until it leaves the window short.
+            if next_in.is_empty() && !self.output_full {
                 if is_done {
                     if self.state == State::Inflating {
                         self.state = State::Error;
@@ -647,15 +646,16 @@ impl StreamingDecoder {
 
             let bytes_written = out_buf.pos;
             let bytes_read = in_buf.pos;
-            output_full = bytes_written == out_buf.size;
+            self.output_full = bytes_written == out_buf.size;
             // SAFETY: zstd wrote exactly `bytes_written` initialized bytes into
             // the spare capacity starting at the previous len.
             unsafe { bun_core::vec::commit_spare(out, bytes_written) };
             total_in += bytes_read;
 
             if rc == 0 {
-                // Frame complete.
+                // Frame complete, and fully flushed.
                 self.state = State::Uninitialized;
+                self.output_full = false;
                 if total_in >= input.len() {
                     if is_done {
                         self.state = State::End;
@@ -671,7 +671,7 @@ impl StreamingDecoder {
             self.state = State::Inflating;
 
             if bytes_read == next_in.len() {
-                if output_full {
+                if self.output_full {
                     continue;
                 }
                 if is_done {

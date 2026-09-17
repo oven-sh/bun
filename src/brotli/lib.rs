@@ -101,19 +101,14 @@ impl StreamingDecoder {
         unsafe { self.brotli.as_mut() }
     }
 
-    /// Mid-stream: a further [`decompress`](Self::decompress) may emit more
-    /// output even with no new input. Brotli buffers a decoded copy command
-    /// in its ring buffer, so this is routine when `max_output` stopped the
-    /// loop.
     #[inline]
     pub fn is_inflating(&self) -> bool {
         matches!(self.state, ReaderState::Inflating)
     }
 
-    /// Decompress `input` into `out`, stopping once `out.len()` reaches
-    /// `max_output`. Returns input bytes consumed; any remainder is the
-    /// caller's to re-feed. Returns `ShortRead` when all input was consumed
-    /// but more is required and `is_done` is false.
+    /// Append decompressed bytes to `out` (growing in 4096-byte steps) until `input` is
+    /// consumed or `out.len()` reaches `max_output`. Returns the input bytes consumed.
+    /// Returns `ShortRead` when more input is required and `is_done` is false.
     pub fn decompress(
         &mut self,
         input: &[u8],
@@ -173,7 +168,7 @@ impl StreamingDecoder {
             match result {
                 c::BrotliDecoderResult::success => {
                     self.state = ReaderState::End;
-                    return Ok(total_in);
+                    return Ok(input.len());
                 }
                 c::BrotliDecoderResult::err => {
                     self.state = ReaderState::Error;

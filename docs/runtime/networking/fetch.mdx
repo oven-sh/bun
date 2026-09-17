@@ -269,7 +269,7 @@ await fetch("https://example.com", {
 
 This option is similar to the one in Node's `tls` module. Bun calls it after the certificate chain verifies. With `rejectUnauthorized: false` Bun still calls it and ignores what it returns.
 
-The function replaces Bun's own hostname check. Return `undefined` to approve the certificate. To reject it, return an `Error` or throw one: the `fetch()` promise rejects with that error. As in Node, any other truthy return value also fails the request, here with an `ERR_INVALID_RETURN_VALUE` error. A `Promise` is truthy, so an `async` function approves no certificate. A falsy return value, `false` included, approves the certificate.
+The function replaces Bun's own hostname check. Return `undefined` to approve the certificate. To reject it, return an `Error` or throw one: the `fetch()` promise rejects with that error. As in Node, any other truthy return value also fails the request, here with an `ERR_INVALID_RETURN_VALUE` error. A `Promise` is truthy, so an `async` function approves no certificate. Every falsy return value approves the certificate, as in Node, so `false` does not reject it. For that reason the TypeScript type allows only `undefined` and `Error`.
 
 `checkServerIdentity` must be a function. `null` and `undefined` mean no function. For any other value, `fetch()` rejects with an `ERR_INVALID_ARG_TYPE` error.
 

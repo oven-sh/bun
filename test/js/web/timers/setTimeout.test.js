@@ -547,7 +547,14 @@ __attribute__((constructor)) static void arm(void) {
            process.exit(0);
          }, 200);`,
       ],
-      env: { ...bunEnv, ...extraEnv, LD_PRELOAD: soPath },
+      env: {
+        ...bunEnv,
+        ...extraEnv,
+        LD_PRELOAD: soPath,
+        // detect_leaks=0: at exit, LeakSanitizer (LLVM 22+) forks and calls waitpid() once with no
+        // EINTR retry. A SIGALRM there makes it print "ptrace appears to be blocked" to stderr.
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+      },
       stdout: "pipe",
       stderr: "pipe",
     });

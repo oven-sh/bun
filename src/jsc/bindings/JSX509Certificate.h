@@ -141,8 +141,7 @@ public:
     String toPEMString() const;
 
 private:
-    // Allocates the cell with no certificate. Private so that every instance
-    // JS can reach goes through an overload that sets m_x509.
+    // Leaves m_x509 null, so only the overloads that take a certificate are public.
     static JSX509Certificate* create(JSC::VM& vm, JSC::Structure* structure);
 
     uint16_t m_extraMemorySizeForGC = 0;

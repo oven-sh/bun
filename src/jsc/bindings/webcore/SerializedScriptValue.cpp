@@ -3393,8 +3393,6 @@ private:
         X509* ptr = nullptr;
         const uint8_t* data = buffer.begin();
 
-        // An empty DER fails to decode like any other malformed DER. The
-        // serializer never writes one, and a JSX509Certificate must own an X509.
         auto cert = d2i_X509(&ptr, &data, buffer.size());
         if (!cert) {
             fail();

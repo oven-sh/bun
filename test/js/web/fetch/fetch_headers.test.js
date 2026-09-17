@@ -97,9 +97,7 @@ describe("Headers", async () => {
   });
 
   it.each([251, 300])("sends every request header field on the wire (%i user headers)", async N => {
-    // build_request() previously capped user headers at 250 (256-slot scratch
-    // minus 6 defaults) and silently dropped the rest; the origin must receive
-    // every field.
+    // The origin must receive every field. There is no request-side count cap.
     const { promise: gotHead, resolve, reject } = Promise.withResolvers();
     const srv = net.createServer(s => {
       let b = Buffer.alloc(0);

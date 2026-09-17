@@ -57,7 +57,6 @@ _file_arguments() {
 
 _long_short_completion() {
     local wordlist="${1}"
-    local short_options="${2}"
 
     if [[ -z "${cur_word}" || "${cur_word}" == -* ]]; then
         _compgen_reply -W "${wordlist}" -- "${cur_word}"
@@ -68,7 +67,12 @@ _read_scripts_in_package_json() {
     local scripts
     scripts=$(bun getcompletes s 2>/dev/null)
     if [[ -n "${scripts}" ]]; then
-        _filter_words_reply "${scripts}"
+        local item
+        while IFS= read -r item || [[ -n "${item}" ]]; do
+            if [[ -n "${item}" && "${item}" == "${cur_word}"* ]]; then
+                COMPREPLY+=( "${item}" )
+            fi
+        done <<< "${scripts}"
         return 0
     fi
 
@@ -139,27 +143,19 @@ _extract_cwd() {
 _bun_completions_inner() {
     local SUBCOMMANDS="dev bun create run install add remove upgrade completions discord help init pm x test repl update audit dedupe prune outdated link unlink build"
 
-    local GLOBAL_OPTIONS_LONG="--use --cwd --bunfile --server-bunfile --config --disable-react-fast-refresh --disable-hmr --env-file --extension-order --jsx-factory --jsx-fragment --jsx-import-source --jsx-production --jsx-runtime --main-fields --no-summary --version --platform --public-dir --tsconfig-override --define --external --help --inject --loader --origin --port --dump-environment-variables --dump-limits --disable-bun-js"
-    local GLOBAL_OPTIONS_SHORT="-c -v -d -e -h -i -l -u -p"
+    local GLOBAL_OPTIONS="--use --cwd --bunfile --server-bunfile --config --disable-react-fast-refresh --disable-hmr --env-file --extension-order --jsx-factory --jsx-fragment --jsx-import-source --jsx-production --jsx-runtime --main-fields --no-summary --version --platform --public-dir --tsconfig-override --define --external --help --inject --loader --origin --port --dump-environment-variables --dump-limits --disable-bun-js -c -v -d -e -h -i -l -u -p"
 
-    local ADD_OPTIONS_LONG="--development --optional --peer --catalog --filter"
-    local ADD_OPTIONS_SHORT="-d -F"
-    local REMOVE_OPTIONS_LONG="--filter"
-    local REMOVE_OPTIONS_SHORT="-F"
-    local UPDATE_OPTIONS_LONG="--latest --interactive --recursive --filter --dev --development --prod --no-optional --exact"
-    local UPDATE_OPTIONS_SHORT="-L -i -r -F -d -D -P -E"
+    local ADD_OPTIONS="--development --optional --peer --catalog --filter -d -F --config --yarn --production --frozen-lockfile --no-save --dry-run --force --cache-dir --no-cache --silent --verbose --global --cwd --backend --link-native-bins --help -c -y -p -f -g"
+    local REMOVE_OPTIONS="--filter -F --config --yarn --production --frozen-lockfile --no-save --dry-run --force --cache-dir --no-cache --silent --verbose --global --cwd --backend --link-native-bins --help -c -y -p -f -g"
+    local UPDATE_OPTIONS="--latest --interactive --recursive --filter --dev --development --prod --no-optional --exact -L -i -r -F -d -D -P -E --config --yarn --production --frozen-lockfile --no-save --dry-run --force --cache-dir --no-cache --silent --verbose --global --cwd --backend --link-native-bins --help -c -y -p -f -g"
 
-    local SHARED_OPTIONS_LONG="--config --yarn --production --frozen-lockfile --no-save --dry-run --force --cache-dir --no-cache --silent --verbose --global --cwd --backend --link-native-bins --help"
-    local SHARED_OPTIONS_SHORT="-c -y -p -f -g"
+    local SHARED_OPTIONS="--config --yarn --production --frozen-lockfile --no-save --dry-run --force --cache-dir --no-cache --silent --verbose --global --cwd --backend --link-native-bins --help -c -y -p -f -g"
 
-    local DEDUPE_OPTIONS_LONG="--check"
-    local PRUNE_OPTIONS_LONG="--production --prod --omit --filter --dry-run --os --cpu --linker --silent --cwd --help"
-    local PRUNE_OPTIONS_SHORT="-p -P -F -h"
-    local AUDIT_OPTIONS_LONG="--json --audit-level --ignore --prod --production --omit --dry-run --latest --cwd --help"
-    local AUDIT_OPTIONS_SHORT="-L"
+    local DEDUPE_OPTIONS="--check --config --yarn --production --frozen-lockfile --no-save --dry-run --force --cache-dir --no-cache --silent --verbose --global --cwd --backend --link-native-bins --help -c -y -p -f -g"
+    local PRUNE_OPTIONS="--production --prod --omit --filter --dry-run --os --cpu --linker --silent --cwd --help -p -P -F -h"
+    local AUDIT_OPTIONS="--json --audit-level --ignore --prod --production --omit --dry-run --latest --cwd --help -L"
 
-    local PM_OPTIONS_LONG="--config --yarn --production --frozen-lockfile --no-save --dry-run --force --cache-dir --no-cache --silent --verbose --no-progress --no-summary --no-verify --ignore-scripts --global --cwd --backend --link-native-bins --json --help"
-    local PM_OPTIONS_SHORT="-c -y -p -f -g"
+    local PM_OPTIONS="--config --yarn --production --frozen-lockfile --no-save --dry-run --force --cache-dir --no-cache --silent --verbose --no-progress --no-summary --no-verify --ignore-scripts --global --cwd --backend --link-native-bins --json --help -c -y -p -f -g"
 
     local cur_word="${COMP_WORDS[${COMP_CWORD}]}"
     local prev=""
@@ -239,37 +235,25 @@ _bun_completions_inner() {
     case "${subcommand}" in
         help|completions) return ;;
         add|a)
-            _long_short_completion \
-                "${ADD_OPTIONS_LONG} ${ADD_OPTIONS_SHORT} ${SHARED_OPTIONS_LONG} ${SHARED_OPTIONS_SHORT}" \
-                "${ADD_OPTIONS_SHORT} ${SHARED_OPTIONS_SHORT}"
+            _long_short_completion "${ADD_OPTIONS}"
             return ;;
         remove|rm|i|install)
-            _long_short_completion \
-                "${REMOVE_OPTIONS_LONG} ${REMOVE_OPTIONS_SHORT} ${SHARED_OPTIONS_LONG} ${SHARED_OPTIONS_SHORT}" \
-                "${REMOVE_OPTIONS_SHORT} ${SHARED_OPTIONS_SHORT}"
+            _long_short_completion "${REMOVE_OPTIONS}"
             return ;;
         update|up)
-            _long_short_completion \
-                "${UPDATE_OPTIONS_LONG} ${UPDATE_OPTIONS_SHORT} ${SHARED_OPTIONS_LONG} ${SHARED_OPTIONS_SHORT}" \
-                "${UPDATE_OPTIONS_SHORT} ${SHARED_OPTIONS_SHORT}"
+            _long_short_completion "${UPDATE_OPTIONS}"
             return ;;
         link|unlink)
-            _long_short_completion \
-                "${SHARED_OPTIONS_LONG} ${SHARED_OPTIONS_SHORT}" \
-                "${SHARED_OPTIONS_SHORT}"
+            _long_short_completion "${SHARED_OPTIONS}"
             return ;;
         dedupe)
-            _long_short_completion \
-                "${DEDUPE_OPTIONS_LONG} ${SHARED_OPTIONS_LONG} ${SHARED_OPTIONS_SHORT}" \
-                "${SHARED_OPTIONS_SHORT}"
+            _long_short_completion "${DEDUPE_OPTIONS}"
             return ;;
         prune)
-            _long_short_completion \
-                "${PRUNE_OPTIONS_LONG} ${PRUNE_OPTIONS_SHORT}" \
-                "${PRUNE_OPTIONS_SHORT}"
+            _long_short_completion "${PRUNE_OPTIONS}"
             return ;;
         audit)
-            _compgen_reply -W "fix ${AUDIT_OPTIONS_LONG} ${AUDIT_OPTIONS_SHORT}" -- "${cur_word}"
+            _compgen_reply -W "fix ${AUDIT_OPTIONS}" -- "${cur_word}"
             return ;;
         create|c)
             _compgen_reply -W "--force --no-install --help --no-git --verbose --no-package-json --open next react" -- "${cur_word}"
@@ -288,18 +272,18 @@ _bun_completions_inner() {
                 _filter_words_reply "${bins}"
             fi
             _file_arguments "!*.@(js|ts|jsx|tsx|mjs|cjs)"
-            _long_short_completion "--version --cwd --help --silent -v -h" "-v -h"
+            _long_short_completion "--version --cwd --help --silent -v -h"
             return ;;
         test)
             _file_arguments "!*.@(js|ts|jsx|tsx|mjs|cjs)"
-            _long_short_completion "--bail --coverage --watch --timeout --todo --only --rerun-each --filter --help -b -t -h" "-b -t -h"
+            _long_short_completion "--bail --coverage --watch --timeout --todo --only --rerun-each --filter --help -b -t -h"
             return ;;
         build|b)
             _file_arguments "!*.@(js|ts|jsx|tsx|mjs|cjs|html)"
-            _long_short_completion "--outdir --outfile --target --format --minify --sourcemap --entry-naming --public-path --compile --bytecode --help -h" "-h"
+            _long_short_completion "--outdir --outfile --target --format --minify --sourcemap --entry-naming --public-path --compile --bytecode --help -h"
             return ;;
         pm)
-            _long_short_completion "${PM_OPTIONS_LONG} ${PM_OPTIONS_SHORT}"
+            _long_short_completion "${PM_OPTIONS}"
             _compgen_reply -W "bin ls licenses cache hash hash-print hash-string" -- "${cur_word}"
             return ;;
         x)
@@ -309,11 +293,11 @@ _bun_completions_inner() {
                 _filter_words_reply "${bins}"
             fi
             _file_arguments
-            _long_short_completion "--bun --install --help -h" "-h"
+            _long_short_completion "--bun --install --help -h"
             return ;;
         "")
             _compgen_reply -W "${SUBCOMMANDS}" -- "${cur_word}"
-            _long_short_completion "${GLOBAL_OPTIONS_LONG} ${GLOBAL_OPTIONS_SHORT}"
+            _long_short_completion "${GLOBAL_OPTIONS}"
             _read_scripts_in_package_json
             return ;;
         *)
@@ -323,6 +307,7 @@ _bun_completions_inner() {
 }
 
 _bun_completions() {
+    COMPREPLY=()
     local working_dir cwd_specified=0
     _extract_cwd
 
@@ -347,6 +332,7 @@ _bun_completions() {
 }
 
 _bunx_completions() {
+    COMPREPLY=()
     local working_dir cwd_specified=0
     _extract_cwd
 

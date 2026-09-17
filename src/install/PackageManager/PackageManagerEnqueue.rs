@@ -2417,11 +2417,11 @@ fn get_or_put_resolved_package_with_find_result(
     let this: &mut PackageManager = unsafe { &mut *guard.0 };
     // The scopeguard runs on ALL exits, never disarmed.
 
-    // The installers filter this package (`is_filtered_dependency_or_workspace`), and with it
-    // everything below. `remote_package_features` only lacks groups that no remote package has.
-    // The runtime auto-install has no installer: it loads every package from the cache.
+    // `remote_package_features` only lacks groups that no remote package has.
+    let placed = behavior.is_placed(this.options.local_package_features);
+    // `is_filtered_dependency_or_workspace` filters this package and everything below it.
     let unplaced = !this.options.runtime_auto_install
-        && (!behavior.is_placed(this.options.local_package_features)
+        && (!placed
             || package.is_disabled(this.options.cpu, this.options.os)
             || this.lockfile.is_in_unplaced_subtree(dependency_id));
     if unplaced {
@@ -2445,8 +2445,7 @@ fn get_or_put_resolved_package_with_find_result(
             is_first_time: true,
             task: None,
         }),
-        // No download and no patch task. When a dependency the installers do place resolves
-        // to the same package, the install phase fetches and patches it like any cache miss.
+        // If a placed dependency needs it too, the install phase fetches and patches it.
         _ if unplaced => Some(ResolvedPackageResult {
             package,
             is_first_time: true,

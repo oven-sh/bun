@@ -73,8 +73,7 @@ pub struct Options {
 
     pub(crate) lockfile_only: bool,
 
-    /// Set by `init_with_runtime`. The runtime auto-install has no install phase:
-    /// it loads packages from the cache, and only a resolve downloads them.
+    /// Set by `init_with_runtime`: no install phase, so only a resolve downloads a package.
     pub(crate) runtime_auto_install: bool,
 
     // `bun pm version` command options

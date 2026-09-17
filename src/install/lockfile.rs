@@ -2196,8 +2196,7 @@ impl Lockfile {
         self.exact_pinned.set(i);
     }
 
-    /// Record that `dependencies` belong to a package that the installers do not
-    /// place. See the `Scratch::unplaced_subtree` field doc.
+    /// See `Scratch::unplaced_subtree`.
     pub(crate) fn mark_unplaced_subtree(&mut self, dependencies: DependencySlice) {
         let range = bun_collections::bit_set::Range {
             start: dependencies.begin() as usize,
@@ -2560,10 +2559,7 @@ impl Lockfile {
 pub struct Scratch {
     pub(crate) duplicate_checker_map: DuplicateCheckerMap,
     pub(crate) dependency_list_queue: DependencyQueue,
-    /// `bit[dependency_id]` is set for the dependencies of a package that this resolve
-    /// first reached through a dependency the installers do not place
-    /// (`is_filtered_dependency_or_workspace`). They place nothing below it either, and
-    /// no flag on those dependencies says so. Sized lazily in `mark_unplaced_subtree`.
+    /// `bit[dependency_id]`: this resolve reached it below a dependency that the installers filter.
     pub(crate) unplaced_subtree: DynamicBitSet,
 }
 

@@ -260,9 +260,7 @@ impl Behavior {
             || (features.workspaces && self.is_workspace())
     }
 
-    /// Whether the installers place what this dependency resolves to. The tarball of
-    /// the parent ships a bundled dependency, and `--production` / `--omit` turn
-    /// whole groups off. Nothing below a dependency that is not placed is placed.
+    /// False when the installers filter the dependency, and with it everything below.
     #[inline]
     pub fn is_placed(self, features: Features) -> bool {
         !self.is_bundled() && self.is_enabled(features)

@@ -862,7 +862,7 @@ pub(crate) mod serialize {
                             return serialize_selector(&selectors[0], dest, context, false);
                         }
 
-                        let vp = dest.vendor_prefix;
+                        let vp = pass_prefix_for_is(dest);
                         if vp.contains(VendorPrefix::WEBKIT) || vp.contains(VendorPrefix::MOZ) {
                             dest.write_char(b':')?;
                             vp.to_css(dest)?;
@@ -875,7 +875,7 @@ pub(crate) mod serialize {
                         dest.write_str(b":not(")?;
                     }
                     Component::Any { vendor_prefix, .. } => {
-                        let vp = dest.vendor_prefix.or(*vendor_prefix);
+                        let vp = pass_prefix_for_is(dest).or(*vendor_prefix);
                         if vp.contains(VendorPrefix::WEBKIT) || vp.contains(VendorPrefix::MOZ) {
                             dest.write_char(b':')?;
                             vp.to_css(dest)?;
@@ -919,12 +919,11 @@ pub(crate) mod serialize {
                 nth_data.write_start(dest, true)?;
                 nth_data.write_affine(dest)?;
                 dest.write_str(b" of ")?;
-                // `get_prefix` does not see the of-list, so prefix passes do not apply to it.
-                let vendor_prefix =
-                    core::mem::replace(&mut dest.vendor_prefix, VendorPrefix::empty());
+                // `get_prefix` does not see the of-list, so `:is()` there keeps its spelling.
+                let outer = core::mem::replace(&mut dest.keep_is_unprefixed, true);
                 // Not a relative selector list: a leading `:scope` is explicit and stays.
                 let result = serialize_selector_list(&nth_of_data.selectors, dest, context, false);
-                dest.vendor_prefix = vendor_prefix;
+                dest.keep_is_unprefixed = outer;
                 result?;
                 return dest.write_char(b')');
             }
@@ -1359,21 +1358,11 @@ pub(crate) mod serialize {
                     None,
                 );
             }
-            // If there's only one simple selector, just serialize it directly.
-            // Otherwise, use an :is() pseudo class.
-            // Type selectors are only allowed at the start of a compound selector,
-            // so use :is() if that is not the case.
-            if ctx.selectors.v.len() == 1
-                && (first
-                    || (!has_type_selector(ctx.selectors.v.at(0))
-                        && is_simple(ctx.selectors.v.at(0))))
-            {
-                serialize_selector(ctx.selectors.v.at(0), dest, ctx.parent, false)?;
-            } else {
-                dest.write_str(b":is(")?;
-                serialize_selector_list(ctx.selectors.v.slice(), dest, ctx.parent, false)?;
-                dest.write_char(b')')?;
-            }
+            // The parent follows the prefix pass, also when `&` sits in an of-list.
+            let kept = core::mem::replace(&mut dest.keep_is_unprefixed, false);
+            let result = serialize_parent(dest, ctx, first);
+            dest.keep_is_unprefixed = kept;
+            result?;
         } else {
             // If there is no context, we are at the root if nesting is supported. This is equivalent to :scope.
             // Otherwise, if nesting is supported, serialize the nesting selector directly.
@@ -1384,6 +1373,35 @@ pub(crate) mod serialize {
             }
         }
         Ok(())
+    }
+
+    fn serialize_parent(
+        dest: &mut Printer,
+        ctx: &StyleContext,
+        first: bool,
+    ) -> Result<(), PrintErr> {
+        // If there's only one simple selector, just serialize it directly.
+        // Otherwise, use an :is() pseudo class.
+        // Type selectors are only allowed at the start of a compound selector,
+        // so use :is() if that is not the case.
+        if ctx.selectors.v.len() == 1
+            && (first
+                || (!has_type_selector(ctx.selectors.v.at(0)) && is_simple(ctx.selectors.v.at(0))))
+        {
+            serialize_selector(ctx.selectors.v.at(0), dest, ctx.parent, false)
+        } else {
+            dest.write_str(b":is(")?;
+            serialize_selector_list(ctx.selectors.v.slice(), dest, ctx.parent, false)?;
+            dest.write_char(b')')
+        }
+    }
+
+    fn pass_prefix_for_is(dest: &Printer) -> VendorPrefix {
+        if dest.keep_is_unprefixed {
+            VendorPrefix::empty()
+        } else {
+            dest.vendor_prefix
+        }
     }
 }
 

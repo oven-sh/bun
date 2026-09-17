@@ -5350,6 +5350,10 @@ describe("css tests", () => {
       "input:-webkit-autofill:nth-child(1 of :is(.a, .b)) {width: 20px}",
       "input:-webkit-autofill:nth-child(1 of :is(.a,.b)){width:20px}",
     );
+    minify_test(
+      "input:-moz-read-only:nth-child(1 of :-webkit-any(.a, .b)) {width: 20px}",
+      "input:-moz-read-only:nth-child(1 of :-webkit-any(.a,.b)){width:20px}",
+    );
 
     describe("& inside a functional pseudo", () => {
       // Chrome 95 has no CSS nesting, so `&` becomes the parent selector.
@@ -5397,6 +5401,34 @@ describe("css tests", () => {
         test("nesting compiled away", () => {
           expect(minifyTest(source, "", chrome95)).toBe(expected);
         });
+      });
+
+      // Safari 8 needs `:-webkit-full-screen`, so the parent rule prints once per prefix. The
+      // parent follows that prefix pass also when `&` sits in the of-list. `:is()` written in
+      // the of-list keeps its spelling.
+      describe.each([
+        [
+          ":fullscreen { :nth-child(1 of &) { color: red } }",
+          ":nth-child(1 of :-webkit-full-screen){color:red}:nth-child(1 of :fullscreen){color:red}",
+        ],
+        [
+          ":fullscreen { :nth-child(1 of & > :is(.a, .b)) { color: red } }",
+          ":nth-child(1 of :-webkit-full-screen>:is(.a,.b)){color:red}:nth-child(1 of :fullscreen>:is(.a,.b)){color:red}",
+        ],
+      ])("%s", (source, expected) => {
+        test("prefix passes", () => {
+          expect(minifyTest(source, "", { safari: 8 << 16 })).toBe(expected);
+        });
+      });
+
+      test("the parent's own :is() prints the same inside the of-list as outside it", () => {
+        const safari8 = { safari: 8 << 16 };
+        // Derived from a control on the same build, so this does not pin how `:is()` is downleveled.
+        const control = minifyTest(".p:is(.a, .b) { div { color: red } }", "", safari8);
+        expect(control).toContain(" div{");
+        expect(minifyTest(".p:is(.a, .b) { :nth-child(1 of &) { color: red } }", "", safari8)).toBe(
+          control.replace(/([^{}]+) div\{/g, ":nth-child(1 of $1){"),
+        );
       });
 
       test("each & in the of-list counts against the nesting expansion budget", () => {

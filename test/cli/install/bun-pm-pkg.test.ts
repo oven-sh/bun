@@ -959,8 +959,8 @@ describe.concurrent("bun pm pkg", () => {
 
       const { error, code } = await runPmPkg(["fix"], longBinDir);
       expect(error).toContain(`bin path is too long: ${binPath}`);
-      expect(code).toBe(0);
       expect((await readPkg(longBinDir)).name).toBe("long-bin-package");
+      expect(code).toBe(0);
     });
 
     it("should not crash on empty bin object", async () => {

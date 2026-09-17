@@ -837,8 +837,7 @@ impl IntermediateOutput {
                                 QueryKind::None | QueryKind::ChunkId => unreachable!(),
                             };
 
-                            // Normalize exactly like the write pass below, so
-                            // the counted and the written lengths agree.
+                            // Normalize like the write pass below so the counted length matches.
                             let file_path: &[u8] = {
                                 file_path_posix.clear();
                                 file_path_posix.extend_from_slice(file_path);
@@ -1031,9 +1030,7 @@ impl IntermediateOutput {
                                 _ => unreachable!(),
                             };
 
-                            // normalize windows paths to '/', in a scratch copy: the
-                            // source slices are only reachable through `&Graph` /
-                            // `&[Chunk]` here, so they cannot be normalized in place.
+                            // normalize windows paths to '/' in a copy, the source is behind `&`
                             let file_path: &[u8] = {
                                 file_path_posix.clear();
                                 file_path_posix.extend_from_slice(file_path);

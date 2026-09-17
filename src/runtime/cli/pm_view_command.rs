@@ -77,8 +77,7 @@ pub(crate) fn view(
 
     let scope = manager.scope_for_package_name(name);
 
-    // Always fetch the full registry manifest, not a specific version.
-    // The name is a command operand and the registry is configuration: neither has a length limit.
+    // Always fetch the full registry manifest, not a specific version
     let mut url_buf: Vec<u8> = Vec::new();
     let _ = write!(
         &mut url_buf,

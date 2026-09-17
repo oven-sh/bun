@@ -433,12 +433,11 @@ pub fn fetch_cache_directory_path(env: &mut DotEnvLoader, options: Option<&Optio
 
 /// Append-only cursor over a caller-owned `&mut [u8]`. All writers are
 /// infallible: the destination is always a `PathBuffer` (`MAX_PATH_BYTES`,
-/// asserted ≥ 1024 elsewhere) and the fixed part of the longest payload here —
-/// `@u64.u64.u64-16hex+16HEX@@@<ver>_patch_hash=16hex\0` plus an
-/// `@@host__16hex` scope suffix — is bounded well under that. The package
-/// name is not bounded here: callers validate it against
-/// `dependency::MAX_INSTALL_FOLDER_NAME_LEN` before it reaches this module,
-/// and a write past the buffer panics.
+/// asserted ≥ 1024 elsewhere) and the longest possible payload here —
+/// `name@u64.u64.u64-16hex+16HEX@@@<ver>_patch_hash=16hex\0` plus an
+/// `@@host__16hex` scope suffix — is bounded well under that. Debug builds
+/// keep the bounds check; release elides it so no panic-format code is
+/// reachable from this module.
 struct ByteCursor<'a> {
     buf: &'a mut [u8],
     at: usize,
@@ -454,8 +453,9 @@ impl<'a> ByteCursor<'a> {
     fn put(&mut self, bytes: &[u8]) {
         let end = self.at + bytes.len();
         // `buf` is a `PathBuffer`-sized slice; the maximum formatted length
-        // of a validated name (see type doc) cannot exceed it. Safe slice
-        // indexing replaces the raw `as_mut_ptr().add()` write.
+        // (see type doc) cannot exceed it. Safe slice indexing replaces the
+        // raw `as_mut_ptr().add()` write — the bounds check is statically
+        // unreachable and LLVM elides it after inlining the fixed-size callers.
         self.buf[self.at..end].copy_from_slice(bytes);
         self.at = end;
     }

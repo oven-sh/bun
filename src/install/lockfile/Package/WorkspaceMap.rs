@@ -231,8 +231,7 @@ fn workspace_dir_of(abs_package_json_path: &[u8]) -> &[u8] {
     )
 }
 
-/// `None` when the relative path does not fit `buf`: a workspace outside
-/// `root_dir` gains one `..` per directory of `root_dir`.
+/// `None` when the relative path does not fit `buf`.
 fn relative_workspace_path<'b>(
     buf: &'b mut [u8],
     root_dir: &[u8],

@@ -422,11 +422,7 @@ impl<'a> Task<'a> {
                     unreachable!("a commit lookup completes on the install thread (git_runner.rs)")
                 }
                 Tag::LocalTarball => {
-                    // `tarball_path` is computed on the main thread when the
-                    // task is enqueued. This callback runs on a ThreadPool worker and must not
-                    // read `manager.lockfile.packages` / `manager.lockfile.buffers.string_bytes`:
-                    // the main thread may reallocate those buffers concurrently while processing
-                    // other dependencies.
+                    // No lockfile reads on this worker. The main thread may reallocate its buffers.
 
                     // SAFETY: tag == LocalTarball discriminates the union
                     let req = unsafe { &*this.request.local_tarball };

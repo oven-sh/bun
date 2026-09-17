@@ -192,7 +192,6 @@ fn opt_box(s: &[u8]) -> Option<Box<[u8]>> {
 }
 
 /// Absolute, because the PE metadata operations need an absolute path.
-/// `Err` is the unresolved path, when it does not fit a path buffer.
 fn executable_path(
     config: &JSBundlerConfig,
     compile: &CompileOptions,
@@ -208,10 +207,14 @@ fn executable_path(
     } else {
         &[outdir_slice, outfile_slice]
     };
-    // An absolute outfile goes through the join too, so one bound holds for every branch.
-    let Some(joined) =
+    let joined: Option<&[u8]> = if outdir_slice.is_empty() && paths::is_absolute(outfile_slice) {
+        // Used as written: a lexical join would resolve `..` before a symlink does.
+        (outfile_slice.len() < paths::MAX_PATH_BYTES).then_some(outfile_slice)
+    } else {
         join_abs_string_buf_checked::<platform::Auto>(top_level_dir, &mut outbuf[..], parts)
-    else {
+    };
+    let Some(joined) = joined else {
+        // `Err` holds the unresolved path, for the caller's ENAMETOOLONG message.
         return Err(parts.join(&SEP));
     };
     Ok(

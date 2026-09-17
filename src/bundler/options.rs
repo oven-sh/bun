@@ -2471,14 +2471,10 @@ impl PathTemplate {
         )
     }
 
-    /// Longest output path the rest of the build can hold. Rendered paths are
-    /// copied into `PathBuffer`s (`resolve_path::z` before writing, the bytecode
-    /// `fdpath`), chunk paths also with a `.map` or `.jsc` sidecar extension
-    /// appended, and `PATH_MAX` counts the NUL.
+    /// Longest output path that fits a `PathBuffer` with a `.map` or `.jsc` suffix and the NUL.
     pub(crate) const MAX_OUTPUT_PATH_LEN: usize = bun_paths::MAX_PATH_BYTES - 1 - ".map".len();
 
-    /// Whether `output_path`, rendered from this template for `input`, is usable;
-    /// logs an error against the template when it is not.
+    /// Logs an error and returns `false` when `output_path` exceeds `MAX_OUTPUT_PATH_LEN`.
     pub(crate) fn check_output_path(
         &self,
         log: &mut bun_ast::Log,

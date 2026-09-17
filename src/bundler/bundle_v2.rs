@@ -7893,8 +7893,7 @@ pub mod bv2_impl {
             return Ok(*path);
         }
 
-        // `pretty` is a display path never handed to the filesystem, so it is
-        // not bounded by MAX_PATH_BYTES.
+        // `pretty` is only displayed, never opened, so MAX_PATH_BYTES does not bound it.
         let ssr_prefix: &[u8] = if target == options::Target::ServerComponentsSsr {
             b"ssr:"
         } else {

@@ -45,7 +45,12 @@ describe("fake node cli", () => {
       stderr: "pipe",
     });
     expect(stdout.toString()).toBe("");
-    expect(stderr.toString()).toContain(`error: Module not found '${join(String(temp), long)}'`);
+    // Where PATH_MAX is 1024 the resolver reports the length before it looks for the module.
+    const path = join(String(temp), long);
+    expect([
+      `error: Module not found '${path}'`,
+      `error: ENAMETOOLONG while resolving '${path}' from 'bun:main'`,
+    ]).toContain(stderr.toString().split("\n")[0]);
     expect(exitCode).toBe(1);
   });
   describe("entrypoint file extension picking", () => {

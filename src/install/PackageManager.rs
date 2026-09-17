@@ -1472,10 +1472,7 @@ fn overlay_bunfig_install(install: &mut Api::BunInstall, bunfig: Api::BunInstall
     );
 }
 
-/// The error for opening `dir`'s package.json when that path does not fit a path
-/// buffer, which a cwd the OS accepts can cause. `ENOENT` lets [`init`] keep
-/// walking up. A package.json that exists is `ENAMETOOLONG` instead: walking
-/// past it would let `bun add` create a new one over it.
+/// `ENAMETOOLONG` when `dir` has a package.json, else `ENOENT` so that `init` keeps walking up.
 fn unnameable_package_json_error(dir: &[u8]) -> bun_sys::Error {
     match bun_sys::Dir::open(dir) {
         Ok(dir) => bun_sys::Error::from_code(
@@ -1888,8 +1885,7 @@ pub fn init(
         // append the NUL ourselves so the static `&ZStr` invariant holds.
         let root_buf = &mut *ROOT_PACKAGE_JSON_PATH_BUF.get();
         let plen = if no_project {
-            // Where the file would be; nothing reads it in this mode, so a
-            // path that does not fit is left empty.
+            // Where the file would be; nothing reads it in this mode.
             let p = original_package_json_path.as_bytes();
             if p.len() < root_buf.len() {
                 root_buf[..p.len()].copy_from_slice(p);
@@ -1961,7 +1957,6 @@ pub fn init(
 
         // npm reads `$HOME/.npmrc` and ignores XDG_CONFIG_HOME; keep
         // `$XDG_CONFIG_HOME/.npmrc` only when that file actually exists.
-        // A candidate that does not fit `buf` could not be opened either, so it is skipped.
         let mut global_len: usize = 0;
         if let Some(xdg_dir) = bun_core::env_var::XDG_CONFIG_HOME.get_not_empty() {
             global_len = resolve_path::join_abs_string_buf_z_checked::<platform::Auto>(

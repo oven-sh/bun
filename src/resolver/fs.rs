@@ -427,8 +427,7 @@ impl DirEntry {
             | DK::EventPort => return Ok(()),
         };
 
-        // Nothing can open an entry whose path does not fit a path buffer, and the
-        // resolver joins `dir` and an entry name into one without a bounds check.
+        // The resolver joins `dir` and an entry name into a path buffer without a bounds check.
         if strings::without_trailing_slash(self.dir).len() + 1 + name_slice.len() >= MAX_PATH_BYTES
         {
             return Ok(());

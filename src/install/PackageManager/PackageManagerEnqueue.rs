@@ -2664,8 +2664,7 @@ fn get_or_put_resolved_package(
                 }
             }
 
-            // A registry chooses the dependency names its manifests list, and the
-            // name becomes the cache folder name, which is printed unchecked.
+            // The name comes from a registry manifest and becomes the cache folder name.
             if this.lockfile.str(&name).len() > dependency::MAX_INSTALL_FOLDER_NAME_LEN {
                 return Err(crate::Error::NameTooLong);
             }

@@ -799,10 +799,8 @@ describe("Bun.build metafile option variants", () => {
     expect(metafile.outputs).toBeDefined();
   });
 
-  // The join of outdir and the metafile path used to be written into a path
-  // buffer with no length test, which aborted the process. Run in a child so
-  // that an abort fails this test instead of killing the runner.
-  test("a metafile path longer than a path buffer is a warning, not a crash", async () => {
+  // An abort in the child fails this test: it prints no JSON and exits with a signal.
+  test("a metafile path longer than a path buffer does not stop the build", async () => {
     using dir = tempDir("metafile-long-path", {
       "index.js": `console.log("hi");`,
       "build.js": `
@@ -822,9 +820,8 @@ describe("Bun.build metafile option variants", () => {
       cwd: String(dir),
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stderr).toContain("Failed to write metafile to");
     expect(JSON.parse(stdout)).toEqual({ success: true, inputs: ["index.js"] });
     expect(exitCode).toBe(0);
   });

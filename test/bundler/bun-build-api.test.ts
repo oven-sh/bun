@@ -2289,8 +2289,10 @@ describe.concurrent("source whose path is close to or beyond the path buffer siz
     expect(sources).toEqual([relativePath]);
   });
 
-  // The output path is the source path without its root, so it still fits.
+  // The output path is the source path without its root, so it still fits. On Windows the
+  // `..` levels up to the drive root are kept as `_.._`, which puts it past the limit.
   test("as an in-memory entry point named with the default [dir] template", async () => {
+    if (isWindows) return expectOutputPathTooLong("entry-dir", "[dir]/[name].[ext]", "relativePath");
     const { inputs, sources, outputs, path: entryPath, relativePath } = await bundle("entry-dir");
     expect(inputs).toEqual([relativePath]);
     expect(sources).toHaveLength(1);
@@ -2336,6 +2338,7 @@ describe.concurrent("source whose path is close to or beyond the path buffer siz
   });
 
   test("as a dynamically imported in-memory module, with chunks named with a [dir] template", async () => {
+    if (isWindows) return expectOutputPathTooLong("chunk-dir", "./[dir]/[name]-[hash].[ext]", "path");
     const { outputs } = await bundle("chunk-dir");
     expect(outputs.map((output: string) => output.replaceAll("\\", "/"))).toEqual([
       "./entry.js",

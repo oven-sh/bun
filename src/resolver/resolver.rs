@@ -4030,8 +4030,7 @@ impl<'a> Resolver<'a> {
                 None => return Ok(None),
             };
 
-        // `baseUrl` is config text of any length. It is only ever the base of
-        // checked joins, so a value that does not fit a path buffer matches nothing.
+        // `baseUrl` can be any length, and as the base of checked joins a long one matches nothing.
         if result.has_base_url() {
             // this might leak
             if !bun_paths::is_absolute(&result.base_url) {

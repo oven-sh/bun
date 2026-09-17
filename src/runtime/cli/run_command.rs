@@ -2975,7 +2975,7 @@ impl RunCommand {
             // Note: write
             // `cwd_buf[cwd_len] = b'/'` (always `/`, NOT the
             // platform separator) and then run the result through
-            // `join_abs_string::<Loose>` to collapse `.`/`..`.
+            // `join_abs_string_buf::<Loose>` to collapse `.`/`..`.
             let mut cwd_buf = bun_paths::path_buffer_pool::get();
             let cwd = bun_core::getcwd_or_exe_dir(&mut cwd_buf);
             let cwd_len = cwd.as_bytes().len();
@@ -3439,8 +3439,7 @@ impl RunCommand {
                 Ok(n) => &cwd_buf[..n],
                 Err(_) => break 'blk path,
             };
-            // A file deep below a long cwd opens by its relative path while
-            // its absolute path does not fit; keep the relative one then.
+            // Below a long cwd the relative path still opens when the absolute one does not fit.
             paths::resolve_path::join_abs_string_buf_checked::<paths::platform::Auto>(
                 cwd,
                 &mut base_buf.0,

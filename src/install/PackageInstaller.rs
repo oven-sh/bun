@@ -371,9 +371,8 @@ fn abs_node_modules_path(
 /// A dependency alias becomes the install destination inside `node_modules`
 /// (the existing entry is renamed aside, deleted, and re-created). Reject
 /// anything that could escape `node_modules`: empty names, `.`/`..`
-/// components, absolute paths, drive letters, backslashes, NUL bytes, any
-/// separator other than the single `/` in a scoped name (`@scope/name`), and
-/// names longer than `MAX_INSTALL_FOLDER_NAME_LEN`.
+/// components, absolute paths, drive letters, backslashes, NUL bytes, and any
+/// separator other than the single `/` in a scoped name (`@scope/name`).
 pub(crate) fn alias_is_safe_install_target(alias: &[u8]) -> bool {
     if alias.is_empty()
         || alias.len() > crate::dependency::MAX_INSTALL_FOLDER_NAME_LEN
@@ -1262,13 +1261,12 @@ impl<'a> PackageInstaller<'a> {
 
         // The alias is used as a path relative to `node_modules` for delete,
         // rename, and create operations. Refuse anything that could escape it.
-        // An npm package's own name becomes the cache folder name, so it gets
-        // the same check no matter which lockfile or manifest it came from.
         let unsafe_name = if !alias_is_safe_install_target(alias.slice(string_buf!())) {
             Some(alias)
         } else if resolution.tag == resolution::Tag::Npm
             && !crate::dependency::is_safe_install_folder_name(pkg_name.slice(string_buf!()))
         {
+            // An npm package's own name becomes the cache folder name.
             Some(pkg_name)
         } else {
             None

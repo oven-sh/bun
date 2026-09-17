@@ -10823,6 +10823,19 @@ describe.concurrent.skipIf(isWindows)("cwd whose package.json path does not fit 
     // which is back in `staging` now.
     expect(await file(join(root, "staging", "package.json")).text()).toBe(packageJson);
   });
+
+  it("bun pm pkg set does not edit the package.json of an ancestor instead", async () => {
+    const ancestor = JSON.stringify({ name: "ancestor", version: "1.0.0" });
+    using dir = tempDir("pm-pkg-deep-package-json", { "package.json": ancestor });
+    const root = realpathSync(String(dir));
+    using deep = deepDirectory(root, { "package.json": JSON.stringify({ name: "deep", version: "1.0.0" }) });
+
+    const { err, exitCode } = await run(deep.path, ["pm", "pkg", "set", "name=changed"]);
+
+    expect(err).toContain("ENAMETOOLONG");
+    expect(await file(join(root, "package.json")).text()).toBe(ancestor);
+    expect(exitCode).toBe(1);
+  });
 });
 
 for (const field of ["resolutions", "overrides"]) {

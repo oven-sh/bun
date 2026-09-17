@@ -1126,25 +1126,29 @@ describe("relative tarballs", async () => {
     },
   );
 
-  test.concurrent("bun add of a tarball path longer than the path buffer fails with ENAMETOOLONG", async () => {
-    using ctx = await setupTest();
-    const { packageDir, packageJson, env } = ctx;
-    await write(packageJson, JSON.stringify({ name: "foo" }));
-    const tarball = "./" + Buffer.alloc(LONG_SPEC_BYTES, "a").toString() + ".tgz";
+  // A Windows command line cannot carry an argument this long.
+  test.concurrent.skipIf(isWindows)(
+    "bun add of a tarball path longer than the path buffer fails with ENAMETOOLONG",
+    async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
+      await write(packageJson, JSON.stringify({ name: "foo" }));
+      const tarball = "./" + Buffer.alloc(LONG_SPEC_BYTES, "a").toString() + ".tgz";
 
-    await using proc = spawn({
-      cmd: [bunExe(), "add", tarball],
-      cwd: packageDir,
-      stdout: "pipe",
-      stderr: "pipe",
-      env,
-    });
-    const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      await using proc = spawn({
+        cmd: [bunExe(), "add", tarball],
+        cwd: packageDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(err).toContain("error: ENAMETOOLONG extracting tarball from ./aaa");
-    expect(exitCode).toBe(1);
-    expect(await file(packageJson).json()).toEqual({ name: "foo" });
-  });
+      expect(err).toContain("error: ENAMETOOLONG extracting tarball from ./aaa");
+      expect(exitCode).toBe(1);
+      expect(await file(packageJson).json()).toEqual({ name: "foo" });
+    },
+  );
 });
 
 test.concurrent.each(["root", "workspace"] as const)(

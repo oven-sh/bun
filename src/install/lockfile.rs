@@ -1647,7 +1647,6 @@ impl<'a> Printer<'a> {
         format: PrinterFormat,
     ) -> Result<(), BunError> {
         // We truncate longer than allowed paths. We should probably throw an error instead.
-        // The last byte of a path buffer is kept for the NUL.
         let path = &input_lockfile_path[..input_lockfile_path.len().min(MAX_PATH_BYTES - 1)];
 
         let mut lockfile_path_buf1 = bun_paths::path_buffer_pool::get();

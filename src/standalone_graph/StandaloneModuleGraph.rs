@@ -2858,8 +2858,7 @@ pub fn to_executable(
     #[cfg(not(windows))]
     {
         let temp_posix = injected.temp_path;
-        // Not `resolve_path::z`: it turns a name that does not fit a `PathBuffer`
-        // into "", so the rename would report ENOENT instead of ENAMETOOLONG.
+        // `resolve_path::z` would turn a too-long name into "" and the rename would report ENOENT.
         let outfile_posix = bun_core::ZBox::from_bytes(bun_paths::basename(outfile));
 
         if let Err(e) =

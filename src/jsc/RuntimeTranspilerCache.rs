@@ -616,8 +616,8 @@ impl RuntimeTranspilerCache {
         Ok(ZStr::from_buf(&buf[..], total))
     }
 
-    /// Writes the resolved cache directory into `buf` (NUL-terminated) and returns
-    /// its byte length, or 0 when the cache is disabled or the directory does not fit.
+    /// Writes the resolved cache directory into `buf` (NUL-terminated) and
+    /// returns its byte length. Returns 0 to mean "cache disabled".
     fn really_get_cache_dir(buf: &mut PathBuffer) -> usize {
         #[cfg(bun_debug)]
         {

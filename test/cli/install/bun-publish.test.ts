@@ -668,17 +668,14 @@ describe("bin longer than the path buffer", () => {
     ["bin object key", { bin: { [long]: "cli.js" } }, null],
     ["directories.bin", { directories: { bin: long } }, "warn: bin directory '<long>' does not exist"],
   ])("tarball with a long %s", async (_, fields, warning) => {
-    const packageDir = tmpdirSync();
     const packageJson = JSON.stringify({ name: "publish-long-bin", version: "1.0.0", ...fields });
-    await Promise.all([
-      write(join(packageDir, "package.json"), packageJson),
-      write(join(packageDir, "cli.js"), ""),
-      Bun.Archive.write(
-        join(packageDir, "publish-long-bin-1.0.0.tgz"),
-        { "package/package.json": packageJson },
-        { compress: "gzip" },
-      ),
-    ]);
+    using dir = tempDir("publish-long-bin-tarball", { "package.json": packageJson, "cli.js": "" });
+    const packageDir = String(dir);
+    await Bun.Archive.write(
+      join(packageDir, "publish-long-bin-1.0.0.tgz"),
+      { "package/package.json": packageJson },
+      { compress: "gzip" },
+    );
 
     const { out, err, exitCode } = await publish(dryRunEnv, packageDir, "./publish-long-bin-1.0.0.tgz", "--dry-run");
     const stderr = err.replaceAll(long, "<long>");
@@ -689,13 +686,11 @@ describe("bin longer than the path buffer", () => {
   });
 
   test("directory with a long bin", async () => {
-    const packageDir = tmpdirSync();
-    await write(
-      join(packageDir, "package.json"),
-      JSON.stringify({ name: "publish-long-bin", version: "1.0.0", bin: long }),
-    );
+    using dir = tempDir("publish-long-bin-directory", {
+      "package.json": JSON.stringify({ name: "publish-long-bin", version: "1.0.0", bin: long }),
+    });
 
-    const { out, err, exitCode } = await publish(dryRunEnv, packageDir, "--dry-run");
+    const { out, err, exitCode } = await publish(dryRunEnv, String(dir), "--dry-run");
     expect(err).not.toContain("error:");
     expect(out).toContain("+ publish-long-bin@1.0.0 (dry-run)");
     expect(exitCode).toBe(0);

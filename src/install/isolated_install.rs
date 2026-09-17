@@ -2100,10 +2100,7 @@ pub(crate) fn install_isolated_packages(
             );
         }
 
-        // Validate every package name and dependency alias as a
-        // `node_modules/<name>` component before the first task starts. A
-        // running task builds the store paths of its dependencies on a worker
-        // thread, so a check inside the task-start loop below would race it.
+        // Validate names before any task starts. A check in the loop below would race a worker.
         for (entry_index, entry_deps) in entry_dependencies.iter().enumerate() {
             let node_id = entry_node_ids[entry_index];
             let pkg_id = node_pkg_ids[node_id.get() as usize];

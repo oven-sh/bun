@@ -122,7 +122,7 @@ impl PmPkgCommand {
         let mut current_dir = cwd;
 
         loop {
-            // A candidate that does not fit cannot exist; a shorter one further up still can.
+            // `PackageManager::init` already refused a package.json here whose path does not fit.
             if let Some(pkg_path) = path::resolve_path::join_abs_string_buf_z_checked::<
                 path::platform::Auto,
             >(current_dir, &mut path_buf[..], &[b"package.json"])

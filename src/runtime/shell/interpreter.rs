@@ -2322,9 +2322,7 @@ pub(crate) fn shell_dup(fd: Fd) -> bun_sys::Result<Fd> {
 /// Windows-only: rewrite shell paths so POSIX-absolute `/foo` resolves onto
 /// `dirfd`'s drive root, `/dev/null` maps to `NUL`, and relative paths are
 /// joined against `dirfd`'s real path. Returns a NUL-terminated slice that
-/// either borrows `buf` or is `to` itself. `to` is a command operand of any
-/// length; one whose rewritten path does not fit `buf` fails with the
-/// `ENAMETOOLONG` that `syscall` would report for it.
+/// either borrows `buf` or is `to` itself.
 #[cfg(windows)]
 fn shell_get_path<'a>(
     dirfd: Fd,
@@ -2344,7 +2342,7 @@ fn shell_get_path<'a>(
         };
         // `dirpath` already
         // occupies `buf[0..]` and the root is its prefix, so no copy is
-        // needed. Splice `to[1..]` after the root, leaving room for the NUL.
+        // needed. Splice `to[1..]` after the root.
         let to_tail = &to.as_bytes()[1..];
         let end = source_root_len + to_tail.len();
         if end >= buf.len() {

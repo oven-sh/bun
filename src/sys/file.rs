@@ -358,7 +358,6 @@ impl File {
     /// Normalize a
     /// user-provided relative path against the resolver's cached
     /// `top_level_dir` (NOT a fresh `getcwd()`), then `readFrom`.
-    /// Fails with `ENAMETOOLONG` when the normalized path does not fit a `PathBuffer`.
     ///
     /// The cached `top_level_dir` lives in `bun_resolver::fs` (T5), which
     /// `bun_sys` (T1) must not depend on, so callers pass it explicitly.

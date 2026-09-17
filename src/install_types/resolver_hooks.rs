@@ -228,10 +228,14 @@ impl Behavior {
     pub fn includes(self, rhs: Self) -> bool {
         self.intersects(rhs)
     }
-    /// Whether a failed lookup or download is an error. The parent's tarball ships a bundled one.
     #[inline]
     pub fn is_required(self) -> bool {
-        !self.is_optional() && !self.is_bundled()
+        !self.is_optional()
+    }
+    /// Is it an error that the dependency does not exist? A bundled one ships inside its parent.
+    #[inline]
+    pub fn must_exist(self) -> bool {
+        self.is_required() && !self.is_bundled()
     }
 
     #[inline]

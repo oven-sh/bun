@@ -123,7 +123,7 @@ pub fn enqueue_dependency_list(
                 },
             );
             let log = this.log_mut();
-            if !dependency.behavior.is_required() || dependency.behavior.is_peer() {
+            if dependency.behavior.is_optional() || dependency.behavior.is_peer() {
                 log.add_warning_with_note(
                     None,
                     bun_ast::Loc::default(),
@@ -919,7 +919,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                         Ok(v) => v,
                         Err(err) => {
                             if err == crate::Error::DistTagNotFound {
-                                if dependency.behavior.is_required() {
+                                if dependency.behavior.must_exist() {
                                     if let Some(fail) = fail_fn {
                                         fail(this, dependency, id, err);
                                     } else if dependency.behavior.is_peer() {
@@ -941,7 +941,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                 }
                                 return Ok(());
                             } else if err == crate::Error::NoMatchingVersion {
-                                if dependency.behavior.is_required() {
+                                if dependency.behavior.must_exist() {
                                     if let Some(fail) = fail_fn {
                                         fail(this, dependency, id, err);
                                     } else if dependency.behavior.is_peer() {
@@ -959,7 +959,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                 }
                                 return Ok(());
                             } else if err == crate::Error::TooRecentVersion {
-                                if dependency.behavior.is_required() {
+                                if dependency.behavior.must_exist() {
                                     if let Some(fail) = fail_fn {
                                         fail(this, dependency, id, err);
                                     } else {
@@ -994,7 +994,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                 }
                                 return Ok(());
                             } else if err == crate::Error::MissingPackageJSON {
-                                if dependency.behavior.is_required() {
+                                if dependency.behavior.must_exist() {
                                     if let Some(fail) = fail_fn {
                                         fail(this, dependency, id, err);
                                     } else if version.tag == dependency::version::Tag::Folder {
@@ -1655,7 +1655,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                         result.package.meta.id,
                     );
                 }
-            } else if dependency.behavior.is_required() {
+            } else if dependency.behavior.must_exist() {
                 if dependency_tag == dependency::version::Tag::Workspace {
                     bun_ast::add_error_pretty!(
                         this.log_mut(),

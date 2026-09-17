@@ -580,7 +580,10 @@ fn run_tasks_erased(
                         continue;
                     }
 
-                    if manager.is_network_task_required(task.task_id) {
+                    if manager.is_network_task_required(task.task_id)
+                        && (response.status_code != 404
+                            || is_not_found_an_error(manager, task.task_id))
+                    {
                         bun_ast::add_error_pretty!(
                             manager.log_mut(),
                             None,
@@ -879,7 +882,9 @@ fn run_tasks_erased(
                     // waiting on this failed one or re-downloading it. Runs
                     // before the callback branch so `Store.Installer` (which
                     // `continue`s from the callback) is covered too.
-                    let is_required = manager.is_network_task_required(task.task_id);
+                    let is_required = manager.is_network_task_required(task.task_id)
+                        && (response.status_code != 404
+                            || is_not_found_an_error(manager, task.task_id));
                     manager.mark_network_task_failed(task.task_id);
 
                     if cb.has_on_package_download_error {
@@ -1905,6 +1910,21 @@ pub fn alloc_github_url(this: &PackageManager, repository: &Repository) -> Vec<u
     )
     .expect("unreachable");
     out
+}
+
+/// A 404 for a lookup is an error only if a dependency that waits for it must exist.
+fn is_not_found_an_error(this: &PackageManager, task_id: Task::Id) -> bool {
+    this.task_queue.get(&task_id).is_none_or(|waiters| {
+        waiters.is_empty()
+            || waiters.iter().any(|waiter| match waiter {
+                bun_install::TaskCallbackContext::Dependency(id) => {
+                    this.lockfile.buffers.dependencies[*id as usize]
+                        .behavior
+                        .must_exist()
+                }
+                _ => true,
+            })
+    })
 }
 
 pub fn has_created_network_task(

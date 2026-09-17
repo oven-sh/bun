@@ -1735,6 +1735,114 @@ describe("bundledDependencies", () => {
     });
   }
 
+  test("a dependency that one package bundles and another one requires must exist", async () => {
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "bundled-unpublished-and-required",
+        dependencies: {
+          "bundled-unpublished": "1.0.0",
+          "unpublished-dep": "1.0.0",
+        },
+      }),
+    );
+
+    const { err } = await runBunInstall(env, packageDir, {
+      allowErrors: true,
+      savesLockfile: false,
+      expectedExitCode: 1,
+    });
+    expect(err).toContain(`error: GET ${registryUrl()}unpublished-dep - 404`);
+    expect(err).toContain("error: unpublished-dep@1.0.0 failed to resolve");
+    expect(await exists(join(packageDir, "bun.lockb"))).toBeFalse();
+  });
+
+  // Only "the registry does not have it" is tolerated. A lookup that fails for another reason
+  // fails the install, so that the next install can still record the bundled dependency.
+  describe("lookup of a bundled dependency answers", () => {
+    async function serveRegistry(status: { manifest: number; tarball: number }) {
+      const manifests: Record<string, object> = {
+        outer: { dependencies: { bd: "1.0.0" }, bundleDependencies: ["bd"] },
+        bd: {},
+      };
+      const tarballs: Record<string, Uint8Array> = {
+        "/outer-1.0.0.tgz": await new Bun.Archive(
+          {
+            "package/package.json": JSON.stringify({ name: "outer", version: "1.0.0", ...manifests.outer }),
+            "package/node_modules/bd/package.json": JSON.stringify({ name: "bd", version: "1.0.0" }),
+          },
+          { compress: "gzip" },
+        ).bytes(),
+        "/bd-1.0.0.tgz": await new Bun.Archive(
+          { "package/package.json": JSON.stringify({ name: "bd", version: "1.0.0" }) },
+          { compress: "gzip" },
+        ).bytes(),
+      };
+      return Bun.serve({
+        port: 0,
+        fetch(request) {
+          const { origin, pathname } = new URL(request.url);
+          if (pathname === "/bd" && status.manifest !== 200) return new Response("{}", { status: status.manifest });
+          if (pathname === "/bd-1.0.0.tgz" && status.tarball !== 200)
+            return new Response("", { status: status.tarball });
+          if (tarballs[pathname]) return new Response(tarballs[pathname]);
+          const name = pathname.slice(1);
+          if (!manifests[name]) return new Response("{}", { status: 404 });
+          const version = {
+            name,
+            version: "1.0.0",
+            dist: { tarball: `${origin}/${name}-1.0.0.tgz` },
+            ...manifests[name],
+          };
+          return Response.json({ name, versions: { "1.0.0": version }, "dist-tags": { latest: "1.0.0" } });
+        },
+      });
+    }
+
+    async function install(server: { url: URL }) {
+      await Promise.all([
+        write(packageJson, JSON.stringify({ name: "bundled-lookup", dependencies: { outer: "1.0.0" } })),
+        write(
+          join(packageDir, "bunfig.toml"),
+          Bun.TOML.stringify({
+            install: { cache: join(packageDir, ".bun-cache"), registry: server.url.href, saveTextLockfile: true },
+          }),
+        ),
+      ]);
+      await using proc = spawn({ cmd: [bunExe(), "install"], cwd: packageDir, stdout: "pipe", stderr: "pipe", env });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      const errors = stderr.split("\n").filter(line => /^(error|warn):/.test(line));
+      return { errors, exitCode, lockfile: await exists(join(packageDir, "bun.lock")) };
+    }
+
+    test("404 for the manifest: the install completes", async () => {
+      using server = await serveRegistry({ manifest: 404, tarball: 200 });
+      expect(await install(server)).toEqual({
+        errors: [`warn: GET ${server.url.href}bd - 404`],
+        exitCode: 0,
+        lockfile: true,
+      });
+    });
+
+    test("403 for the manifest: the install fails", async () => {
+      using server = await serveRegistry({ manifest: 403, tarball: 200 });
+      expect(await install(server)).toEqual({
+        errors: [`error: GET ${server.url.href}bd - 403`],
+        exitCode: 1,
+        lockfile: false,
+      });
+    });
+
+    test("403 for the tarball: the install fails", async () => {
+      using server = await serveRegistry({ manifest: 200, tarball: 403 });
+      expect(await install(server)).toEqual({
+        errors: [`error: GET ${server.url.href}bd-1.0.0.tgz - 403`],
+        exitCode: 1,
+        lockfile: false,
+      });
+    });
+  });
+
   // bundled-file@1.0.0 depends on "bundled-file-dep" through a `file:` spec and
   // bundles it. The tarball ships the bundled copy in its node_modules. The
   // install from bun.lock must keep treating the dependency as bundled and must

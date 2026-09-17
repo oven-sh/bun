@@ -1481,7 +1481,7 @@ fn add_dependency_error(manager: &mut PackageManager, dependency: &Dependency, e
     );
 
     let log = manager.log_mut();
-    if !dependency.behavior.is_required() || dependency.behavior.is_peer() {
+    if dependency.behavior.is_optional() || dependency.behavior.is_peer() {
         log.add_warning_with_note(
             None,
             Default::default(),

@@ -1019,8 +1019,7 @@ pub fn file_mode(perm: bun_sys::Mode, readers: FileReaders) -> bun_sys::Mode {
     }
 }
 
-/// Opens a regular file entry for writing. An existing file is removed first,
-/// as GNU tar does (#43132). If it cannot be removed, it is written in place.
+/// Opens a regular file entry for writing, replacing an existing file as GNU tar does (#43132).
 #[cfg(not(windows))]
 pub fn create_entry_file(dir: Fd, path: &ZStr, mode: bun_sys::Mode) -> bun_sys::Maybe<Fd> {
     let flags = bun_sys::O::WRONLY | bun_sys::O::CREAT;

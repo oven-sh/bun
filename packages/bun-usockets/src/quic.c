@@ -772,6 +772,7 @@ static const struct lsquic_hset_if us_quic_hset_if = {
     .hsi_flags = 0,
 };
 
+#ifdef BUN_DEBUG
 #include <stdio.h>
 static int us_quic_log_buf(void *ctx, const char *buf, size_t len) {
     (void) ctx;
@@ -780,16 +781,19 @@ static int us_quic_log_buf(void *ctx, const char *buf, size_t len) {
     return 0;
 }
 static const struct lsquic_logger_if us_quic_logger = { us_quic_log_buf };
+#endif
 
 /* lsquic_global_init is not idempotent: each call allocates a new SSL ex_data
  * index, and a session created under the previous index fails its handshake. */
 static int us_quic_global_init_rc = -1;
 static void us_quic_global_init_impl(void) {
     us_quic_global_init_rc = lsquic_global_init(LSQUIC_GLOBAL_SERVER | LSQUIC_GLOBAL_CLIENT);
+#ifdef BUN_DEBUG
     if (getenv("BUN_DEBUG_lsquic")) {
         lsquic_logger_init(&us_quic_logger, NULL, LLTS_HHMMSSUS);
         lsquic_set_log_level("debug");
     }
+#endif
 }
 
 #ifdef _WIN32

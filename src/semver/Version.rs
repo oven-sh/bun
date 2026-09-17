@@ -114,9 +114,7 @@ impl<T: VersionInt> VersionType<T> {
         Self::parse(SlicedString { buf: slice, slice })
     }
 
-    /// `input` with the leading `v`, `=` and whitespace removed, or `None`
-    /// when `input` is not one complete version (`1.0`, `1.0.0.1`, `1.x`,
-    /// `not-a-version`). `v1.0.0` gives `1.0.0`.
+    /// One complete version with the leading `v`, `=` and whitespace removed.
     pub fn clean(input: &[u8]) -> Option<&[u8]> {
         let input = input.trim_ascii();
         let parsed = Self::parse_utf8(input);
@@ -664,8 +662,6 @@ impl<T: VersionInt> VersionType<T> {
     }
 }
 
-/// Whitespace and the `v` and `=` separators that `parse` skips before the
-/// first version number.
 fn is_version_prefix_byte(c: u8) -> bool {
     matches!(c, b' ' | b'\t' | b'\n' | b'\r' | 0x0B | 0x0C | b'v' | b'=')
 }

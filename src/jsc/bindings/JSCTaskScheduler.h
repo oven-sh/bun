@@ -18,11 +18,8 @@ public:
     {
     }
 
-    // A posted job reaches its VM through here, never through its ticket. The
-    // realm that owns the ticket can be destructed before the job runs (a global
-    // that `bun test --isolate` retired, a dead node:vm context). ~JSGlobalObject
-    // only cancels the ticket; its scriptExecutionOwner() still points at the
-    // destructed realm.
+    // A job's ticket can outlive its realm; ~JSGlobalObject cancels the ticket
+    // but leaves scriptExecutionOwner() dangling. Jobs reach the VM through here.
     JSC::VM& vm() const { return m_vm; }
 
     static void onAddPendingWork(WebCore::JSVMClientData* clientData, Ref<JSC::DeferredWorkTimer::Ticket>&& ticket, JSC::DeferredWorkTimer::WorkType kind);

@@ -24,8 +24,6 @@ public:
     {
     }
 
-    // The ticket's realm can be dead by the time the job runs. The VM and the
-    // scheduler come from here, not from the ticket (JSCTaskScheduler::vm()).
     WebCore::JSVMClientData* clientData;
     Ref<Ticket> ticket;
     Task task;

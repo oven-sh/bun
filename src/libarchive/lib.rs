@@ -1040,8 +1040,7 @@ fn truncate_entry_file(
     mode: bun_sys::Mode,
     unlink_err: bun_sys::Error,
 ) -> bun_sys::Maybe<Fd> {
-    // O_CREAT keeps the kernel's sticky directory checks (fs.protected_regular).
-    // O_NONBLOCK makes a FIFO fail with ENXIO instead of waiting for a reader.
+    // O_CREAT keeps the kernel's sticky directory checks, O_NONBLOCK makes a FIFO fail with ENXIO.
     let flags =
         bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::NOFOLLOW | bun_sys::O::NONBLOCK;
     let fd = bun_sys::openat(dir, path, flags, mode)?;

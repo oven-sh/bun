@@ -2182,8 +2182,12 @@ impl PackageManifest {
                                 }
                             }
                             JSON::E::JsonValue::String(str_) => {
-                                string_builder.count(str_.slice());
-                                break 'bin;
+                                // The build pass reads `directories.bin` when `bin` is empty.
+                                let str_ = str_.slice();
+                                if !str_.is_empty() {
+                                    string_builder.count(str_);
+                                    break 'bin;
+                                }
                             }
                             _ => {}
                         }

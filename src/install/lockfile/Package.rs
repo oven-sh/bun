@@ -2263,8 +2263,11 @@ impl Package<u64> {
                 }
                 if bin.expr.is_string() {
                     if let Some(str_) = bin.expr.as_utf8(&bump) {
-                        string_builder.count(str_);
-                        break 'bin;
+                        // The build pass reads `directories.bin` when `bin` is empty.
+                        if !str_.is_empty() {
+                            string_builder.count(str_);
+                            break 'bin;
+                        }
                     }
                 }
             }

@@ -5956,6 +5956,11 @@ describe("css tests", () => {
       lowered_nesting_test(".a .b { .x:is(&) { color: red } }", ".x:is(.a .b){color:red}");
 
       lowered_nesting_test(".a { .x:is(&div) { color: red } }", ".x:is(div.a){color:red}");
+      lowered_nesting_test(".a { .x:is(&div.foo) { color: red } }", ".x:is(div.a.foo){color:red}");
+      lowered_nesting_test(
+        "@namespace svg url(http://www.w3.org/2000/svg); .a { .x:is(&svg|b.foo) { color: red } }",
+        '@namespace svg "http://www.w3.org/2000/svg";.x:is(svg|b.a.foo){color:red}',
+      );
 
       // One compound selector with no type selector needs no `:is()`.
       lowered_nesting_test(".a { &.b { .x& { color: red } } }", ".x.a.b{color:red}");

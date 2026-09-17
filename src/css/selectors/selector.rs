@@ -572,20 +572,26 @@ fn is_selector_unused(
 pub(crate) mod serialize {
     use super::*;
 
-    /// Where a `&`, or the argument of an unwrapped `:is()`, lands in the
-    /// output. It decides which parent selectors can take its place as written.
-    /// lightningcss has only the first and the last position (`first: bool`), see
-    /// https://github.com/parcel-bundler/lightningcss/issues/1073.
+    /// Where a `&` lands. lightningcss only has `first: bool` (parcel-bundler/lightningcss#1073).
     #[derive(Clone, Copy, PartialEq, Eq)]
     enum NestingPosition {
-        /// Nothing comes before it. Any single parent selector fits.
+        /// Nothing comes before it.
         SelectorStart,
-        /// A combinator comes before it. The parent selector must be one
-        /// compound selector.
+        /// A combinator comes before it.
         CompoundStart,
-        /// Simple selectors come before it. The parent selector must be one
-        /// compound selector with no type selector.
+        /// Simple selectors come before it.
         MidCompound,
+    }
+
+    /// Whether `selector` can take the place of a `&` at `position` as written.
+    fn fits_at(selector: &parser::Selector, position: NestingPosition) -> bool {
+        match position {
+            NestingPosition::SelectorStart => true,
+            NestingPosition::CompoundStart => is_simple(selector),
+            NestingPosition::MidCompound => {
+                !has_type_selector_past_nesting(selector) && is_simple(selector)
+            }
+        }
     }
 
     pub(crate) fn serialize_selector_list(
@@ -630,8 +636,7 @@ pub(crate) mod serialize {
     ) -> Result<(), PrintErr> {
         let mut is_relative = is_relative_;
 
-        // `:is()` cannot hold a pseudo-element. A parent selector that has one
-        // is printed as written when it replaces the `&` that leads `selector`.
+        // `:is()` cannot hold a pseudo-element, so a parent selector with one prints as written.
         let start = match context {
             Some(ctx)
                 if start != NestingPosition::SelectorStart
@@ -931,12 +936,7 @@ pub(crate) mod serialize {
                     Component::Where(_) => dest.write_str(b":where(")?,
                     Component::Is(selectors) => {
                         // If there's only one simple selector, serialize it directly.
-                        // `:is(&div)` stays wrapped after other simple selectors,
-                        // where its type selector cannot go.
-                        if should_unwrap_is(selectors)
-                            && !(position == NestingPosition::MidCompound
-                                && has_type_selector_past_nesting(&selectors[0]))
-                        {
+                        if should_unwrap_is(selectors) && fits_at(&selectors[0], position) {
                             return serialize_selector_impl(
                                 &selectors[0],
                                 dest,
@@ -1394,19 +1394,8 @@ pub(crate) mod serialize {
             // Otherwise, use an :is() pseudo class.
             // Type selectors are only allowed at the start of a compound selector,
             // so use :is() if that is not the case.
-            let fits = ctx.selectors.v.len() == 1 && {
-                let parent = ctx.selectors.v.at(0);
-                match position {
-                    NestingPosition::SelectorStart => true,
-                    NestingPosition::CompoundStart => is_simple(parent),
-                    NestingPosition::MidCompound => {
-                        !has_type_selector_past_nesting(parent) && is_simple(parent)
-                    }
-                }
-            };
-            if fits {
-                // The parent selector takes the place of this `&`, so a `&`
-                // that leads the parent selector lands where this one does.
+            if ctx.selectors.v.len() == 1 && fits_at(ctx.selectors.v.at(0), position) {
+                // A `&` that leads the parent selector lands where this `&` does.
                 serialize_selector_impl(ctx.selectors.v.at(0), dest, ctx.parent, false, position)?;
             } else {
                 dest.write_str(b":is(")?;

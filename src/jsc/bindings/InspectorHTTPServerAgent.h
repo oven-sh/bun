@@ -34,10 +34,6 @@ public:
     // HTTPServerBackendDispatcherHandler
     virtual Inspector::CommandResult<void> enable() final;
     virtual Inspector::CommandResult<void> disable() final;
-    virtual Inspector::CommandResult<void> startListening(int serverId) final;
-    virtual Inspector::CommandResult<void> stopListening(int serverId) final;
-    virtual Inspector::CommandResult<void> getRequestBody(int requestId, int serverId) final;
-    virtual Inspector::CommandResult<void> getResponseBody(int requestId, int serverId) final;
 
     // Events API
     void serverStarted(int serverId, const String& url, double startTime, AnyServerPtr serverInstance);

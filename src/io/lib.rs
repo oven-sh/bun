@@ -326,7 +326,7 @@ bun_dispatch::link_interface! {
             cb: Option<OpaqueCallback>,
             ctx: Option<core::ptr::NonNull<core::ffi::c_void>>,
         );
-        fn pipe_read_buffer() -> *mut [u8];
+        fn pipe_read_scratch() -> *const PipeReadScratch;
     }
 }
 
@@ -381,22 +381,11 @@ impl EventLoopCtx {
         // discipline above — see block comment.
         unsafe { &mut *self.file_polls_ptr() }
     }
-    /// Single nonnull-asref accessor for the per-loop pipe-read scratch
-    /// buffer. Same contract as [`loop_mut`]: `pub(crate)`, the buffer is a
-    /// per-thread set-once allocation owned by the VM/Mini loop, and the
-    /// event loop is single-threaded, so no second `&mut [u8]` to it can be
-    /// live. Every in-crate caller (`PipeReader::read_*`) uses it for one
-    /// blocking syscall and drops the borrow before re-entering the loop.
-    /// `'static` matches the unbounded lifetime the inline raw-ptr derefs at
-    /// the call sites already produced; collapses their N identical
-    /// `&mut *ctx.pipe_read_buffer()` derefs into this one block.
+    /// Claims the per-loop pipe-read scratch; `None` while a read further up the stack holds it.
     #[inline]
-    fn pipe_read_buffer_mut(&self) -> &'static mut [u8] {
-        // SAFETY: per-thread set-once scratch buffer (`BackRef`-shaped); the
-        // event loop is single-threaded so this is the sole live `&mut`, and
-        // every crate-internal caller drops the borrow before any path that
-        // could re-derive it — see doc comment above.
-        unsafe { &mut *self.pipe_read_buffer() }
+    fn claim_pipe_read_scratch(&self) -> Option<PipeReadScratchGuard<'static>> {
+        // SAFETY: per-thread scratch owned by the VM/Mini loop, which outlives every read.
+        unsafe { (*self.pipe_read_scratch()).claim() }
     }
     #[inline]
     pub(crate) fn loop_ref(&self) {
@@ -471,12 +460,14 @@ pub mod heap;
 pub mod max_buf;
 #[path = "openForWriting.rs"]
 pub mod open_for_writing_mod;
+pub mod pipe_read_scratch;
 #[path = "PipeReader.rs"]
 pub mod pipe_reader;
 #[path = "PipeWriter.rs"]
 pub mod pipe_writer;
 #[path = "pipes.rs"]
 pub mod pipes;
+pub use pipe_read_scratch::{PipeReadScratch, PipeReadScratchGuard};
 #[cfg(windows)]
 #[path = "source.rs"]
 pub mod source;
@@ -490,7 +481,7 @@ pub mod write;
 pub use write::{AsFmt, DiscardingWriter, FixedBufferStream, FmtAdapter, IntLe, Result, Write};
 
 pub use max_buf as MaxBuf;
-pub use pipes::{FileType, ReadState};
+pub use pipes::{Chunk, FileType, ReadState};
 
 // `BufferedReader` parent callback dispatch. Each variant's `link_impl_*!` (in
 // `bun_runtime`/`bun_install`) forwards to that type's `BufferedReaderParent`
@@ -509,10 +500,11 @@ bun_dispatch::link_interface! {
         MultiRunPipeReader,
         TestParallelWorkerPipe,
         LifecycleScript,
+        InstallGit,
         SecurityScan,
     ] {
         fn has_on_read_chunk() -> bool;
-        fn on_read_chunk(chunk: &[u8], has_more: pipes::ReadState) -> bool;
+        fn on_read_chunk(chunk: pipes::Chunk<'_>, has_more: pipes::ReadState) -> bool;
         fn on_reader_done();
         fn on_reader_error(err: bun_sys::Error);
         fn loop_ptr() -> *mut Loop;
@@ -595,7 +587,7 @@ macro_rules! __impl_buffered_reader_parent_body {
                 #[allow(unused_unsafe, clippy::macro_metavars_in_unsafe)]
                 unsafe fn on_read_chunk(
                     $rc_this: *mut Self,
-                    $rc_chunk: &[u8],
+                    $rc_chunk: $crate::Chunk<'_>,
                     $rc_more: $crate::ReadState,
                 ) -> bool {
                     unsafe { $rc }
@@ -1331,16 +1323,6 @@ macro_rules! intrusive_uv_fs {
     };
 }
 
-impl Default for Request {
-    fn default() -> Self {
-        Self {
-            next: bun_threading::Link::new(),
-            callback: |_| unreachable!(),
-            scheduled: false,
-        }
-    }
-}
-
 // Intrusive MPSC queue keyed on the `next` field.
 //
 // `next` is stored as `AtomicPtr<Request>`; the non-atomic accessor
@@ -1542,15 +1524,19 @@ impl Poll {
         );
 
         let one_shot_flag = libc::EV_ONESHOT;
-        let udata: usize = Pollable::init(tag, std::ptr::from_mut::<Poll>(poll)).ptr() as usize;
-        let (filter, flags_): (i16, u16) = match action {
-            ApplyAction::Readable => (libc::EVFILT_READ, libc::EV_ADD | one_shot_flag),
-            ApplyAction::Writable => (libc::EVFILT_WRITE, libc::EV_ADD | one_shot_flag),
+        let owner = Pollable::init(tag, std::ptr::from_mut::<Poll>(poll)).ptr() as usize;
+        // A cancel carries no udata: its owner is finished (`on_done` runs right
+        // after), EV_DELETE matches by (ident, filter) alone, and any receipt for it
+        // (knote already fired → ENOENT, fd closed → EBADF) must land on the
+        // `PollableTag::Empty` early return, not on the stale owner.
+        let (filter, flags_, udata): (i16, u16, usize) = match action {
+            ApplyAction::Readable => (libc::EVFILT_READ, libc::EV_ADD | one_shot_flag, owner),
+            ApplyAction::Writable => (libc::EVFILT_WRITE, libc::EV_ADD | one_shot_flag, owner),
             ApplyAction::Cancel => {
                 if poll.flags.contains(Flags::PollReadable) {
-                    (libc::EVFILT_READ, libc::EV_DELETE)
+                    (libc::EVFILT_READ, libc::EV_DELETE, 0)
                 } else if poll.flags.contains(Flags::PollWritable) {
-                    (libc::EVFILT_WRITE, libc::EV_DELETE)
+                    (libc::EVFILT_WRITE, libc::EV_DELETE, 0)
                 } else {
                     unreachable!()
                 }
@@ -1631,8 +1617,8 @@ impl Poll {
 
         let pollable = Pollable::from(event.udata as u64);
         let tag = pollable.tag();
-        // The waker is registered with udata=0 → tag=.empty. The wakeup exists
-        // only to unblock kevent() so the pending queue drains.
+        // The waker (whose event only exists to unblock kevent() so the pending
+        // queue drains) and cancels are submitted with udata=0 → tag=.empty.
         if tag == PollableTag::Empty {
             return;
         }
@@ -1640,7 +1626,10 @@ impl Poll {
         // CYCLEBREAK: owner (ReadFile/WriteFile) is T6; dispatch via link-time
         // `extern "Rust"` defined in `bun_runtime::dispatch`. The
         // container_of(io_poll) recovery happens there.
-        if event.flags == libc::EV_ERROR {
+        // A changelist entry the kernel could not apply comes back with EV_ERROR
+        // set (xnu ORs it into the action bits, FreeBSD replaces them) and the
+        // errno in `data`.
+        if (event.flags & libc::EV_ERROR) != 0 {
             log!("error({}) = {}", event.ident, event.data);
             // SAFETY: poll is the `io_poll` field of a live owner; link-time
             // extern body matches on `tag`.
@@ -2260,6 +2249,8 @@ pub mod closer {
     #[cfg(windows)]
     use crate::IntrusiveUvFs as _;
     #[cfg(windows)]
+    use bun_sys::ReturnCodeExt as _;
+    #[cfg(windows)]
     use bun_sys::windows::libuv as uv;
     #[cfg(windows)]
     use core::ffi::c_void;
@@ -2287,9 +2278,9 @@ pub mod closer {
                     fd.uv(),
                     Some(Self::on_close),
                 )
-                .err_enum()
+                .errno()
                 {
-                    bun_core::debug_warn!("libuv close() failed = {}", err);
+                    bun_core::debug_warn!("libuv close() failed = {:?}", err);
                     drop(bun_core::heap::take(closer));
                 }
             }
@@ -2309,8 +2300,8 @@ pub mod closer {
                 );
 
                 #[cfg(debug_assertions)]
-                if let Some(err) = (*closer).io_request.result.err_enum() {
-                    bun_core::debug_warn!("libuv close() failed = {}", err);
+                if let Some(err) = (*closer).io_request.result.errno() {
+                    bun_core::debug_warn!("libuv close() failed = {:?}", err);
                 }
 
                 (*req).deinit();

@@ -38,6 +38,8 @@ pub struct InternalState<'a> {
     pub(crate) original_request_body: HTTPRequestBody<'a>,
     pub(crate) request_sent_len: usize,
     pub(crate) fail: Option<Error>,
+    /// `errno` of the failed `connect(2)` when `fail` is `ConnectionRefused`; 0 otherwise.
+    pub(crate) connect_errno: i32,
     /// Raw `getaddrinfo(3)` return code when `fail` is `DNSResolveFailed`;
     /// 0 otherwise. The JS side turns it into the resolver error
     /// (`ENOTFOUND`, ...) with `syscall`/`hostname`, matching `node:dns`.
@@ -63,12 +65,6 @@ pub struct InternalStateFlags {
     pub(crate) is_redirect_pending: bool,
     pub(crate) is_libdeflate_fast_path_disabled: bool,
     pub(crate) resend_request_body_on_redirect: bool,
-    /// Cross-origin redirect: the per-request Host override must be dropped so
-    /// the follow-up connection re-derives SNI/Host from the redirect target.
-    /// The actual clear is deferred to `do_redirect`, after the old socket's
-    /// pool/close decision — that decision needs `hostname` still set to know
-    /// the handshake was verified against an override.
-    pub(crate) clear_hostname_on_redirect: bool,
     /// Set when the TLS handshake completed but the user-supplied JS
     /// `checkServerIdentity` callback has not yet approved the peer
     /// certificate. While set, `on_writable` must not write any HTTP
@@ -96,18 +92,10 @@ impl InternalStateFlags {
             is_redirect_pending: false,
             is_libdeflate_fast_path_disabled: false,
             resend_request_body_on_redirect: false,
-            clear_hostname_on_redirect: false,
             is_waiting_for_cert_check: false,
             receive_paused: false,
             body_compressed: false,
         }
-    }
-}
-
-impl Default for InternalStateFlags {
-    /// `allow_keepalive` defaults to true.
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -131,6 +119,7 @@ impl Default for InternalState<'_> {
             original_request_body: HTTPRequestBody::Bytes(b""),
             request_sent_len: 0,
             fail: None,
+            connect_errno: 0,
             dns_error: 0,
             dns_hostname: None,
             request_stage: HTTPStage::Pending,
@@ -224,8 +213,7 @@ impl<'a> InternalState<'a> {
     /// close-delimited response (no Content-Length, no Transfer-Encoding).
     pub(crate) fn is_body_complete_on_close(&self) -> bool {
         if self.is_chunked_encoding() {
-            // 4 = CHUNKED_IN_TRAILERS_LINE_HEAD, 5 = CHUNKED_IN_TRAILERS_LINE_MIDDLE
-            return matches!(self.chunked_decoder._state, 4 | 5);
+            return bun_picohttp::phr_decode_chunked_is_in_trailers(&self.chunked_decoder) != 0;
         }
         self.content_length.is_none() && self.response_stage == HTTPStage::Body
     }
@@ -296,10 +284,16 @@ impl<'a> InternalState<'a> {
                     if (estimated_size as usize) > deflater.shared_buffer.len()
                         && estimated_size < 32 * 1024 * 1024
                     {
-                        self.decoded_body.list.reserve_exact(
-                            (estimated_size as usize).saturating_sub(self.decoded_body.list.len()),
-                        );
                         self.decoded_body.list.clear();
+                        // A trailer can lie; the streaming path below allocates only what is really there.
+                        if self
+                            .decoded_body
+                            .list
+                            .try_reserve_exact(estimated_size as usize)
+                            .is_err()
+                        {
+                            break 'libdeflate;
+                        }
                         let result = deflater.decompressor_mut().decompress_to_vec(
                             buffer,
                             &mut self.decoded_body.list,
@@ -337,9 +331,15 @@ impl<'a> InternalState<'a> {
                 // libdeflate decodes a single member; unconsumed input means
                 // a multi-member gzip stream. Let the zlib path handle it.
                 if result.status == bun_libdeflate::Status::Success && result.read == buffer.len() {
-                    self.decoded_body
+                    if self
+                        .decoded_body
                         .list
-                        .reserve_exact(result.written.saturating_sub(self.decoded_body.list.len()));
+                        .try_reserve_exact(result.written)
+                        .is_err()
+                    {
+                        self.compressed_body.reset();
+                        return Err(bun_alloc::AllocError.into());
+                    }
                     self.decoded_body
                         .list
                         .extend_from_slice(&deflater.shared_buffer[0..result.written]);

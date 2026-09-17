@@ -117,7 +117,9 @@ async function main(): Promise<void> {
   if (isCI) {
     // CI: machine/env dump + collapsible groups + annotation-on-failure.
     printEnvironment();
-    const result = (await startGroup("Configure", () => configure(input))) as ConfigureResult;
+    const result = (await startGroup("Configure", () =>
+      configure(input, args.configFile !== undefined),
+    )) as ConfigureResult;
     if (args.configureOnly) return;
 
     // link-only: download cpp-only + rust-only artifacts before ninja.
@@ -145,7 +147,7 @@ async function main(): Promise<void> {
         env: ninjaEnv(result.cfg, result.env),
       });
 
-    // rust-and-link: build libbun_rust.a first so cargo overlaps with the
+    // rust-and-link: build libbun_runtime.a first so cargo overlaps with the
     // sibling build-cpp job, THEN poll for build-cpp's outcome + download
     // its archive, THEN link. link-only skips straight to the full build
     // (its artifacts were downloaded above).
@@ -200,7 +202,7 @@ async function main(): Promise<void> {
     }
   } else {
     // Local: configure, then spawn ninja.
-    const result = await configure(input);
+    const result = await configure(input, args.configFile !== undefined);
 
     // Quiet one-liner when configure was a no-op — the full banner only
     // prints when build.ninja changed. Timing matters: a regression here
@@ -459,6 +461,8 @@ function parseArgs(argv: string[]): CliArgs {
     "buildType",
     "mode",
     "webkit",
+    "localDeps",
+    "packageManager",
     "buildDir",
     "cacheDir",
     "nodejsVersion",
@@ -588,6 +592,10 @@ Options:
                           on/off/true/false/yes/no/1/0.
                           Fields: asan, lto, assertions, logs, baseline,
                                   canary, valgrind, webkit (prebuilt|local),
+                                  local-deps (name=path[,name=path] — build a
+                                  vendored dep from a local checkout),
+                                  package-manager (bun|npm, installs the
+                                  package.json files the build needs),
                                   buildDir, mode (full|cpp-only|link-only),
                                   unifiedSources, timeTrace, os, arch, abi,
                                   winsysroot (Windows cross-compile SDK root)
@@ -605,6 +613,7 @@ Examples:
   bun scripts/build.ts --profile=release --lto=off
   bun scripts/build.ts test foo.test.ts
   bun scripts/build.ts --profile=debug-local run script.ts
+  bun scripts/build.ts --local-deps=mimalloc=~/code/mimalloc test foo.test.ts
   bun scripts/build.ts --target=bun-rust
   bun scripts/build.ts --configure-only
 `;

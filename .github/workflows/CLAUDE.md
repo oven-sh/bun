@@ -6,7 +6,7 @@ This document provides guidance for maintaining the GitHub Actions workflows in 
 
 ### Overview
 
-The `format.yml` workflow runs code formatters (Prettier, clang-format, and `cargo fmt`) on pull requests and pushes to main. It's optimized for speed by running all formatters in parallel.
+The `format.yml` workflow runs code formatters (Prettier, clang-format, and `cargo fmt`) on pull requests and pushes to main. It's optimized for speed by running all formatters in parallel. It also regenerates the checked-in `*.generated.rs` string maps (`bun run codegen:string-maps`) before the formatters start: everything the step leaves modified, formatting or codegen, is what the autofix.ci action at the end of the job pushes back to the PR (failing the run when it had anything to push), so nothing that produces fixes may run after it, and nothing that only verifies should run before it.
 
 ### Key Components
 
@@ -38,9 +38,9 @@ The workflow runs all three formatters simultaneously:
 
 #### 3. Tool Installation
 
-##### Clang-format-21
+##### Clang-format-23
 
-- Installs ONLY `clang-format-21` package (not the entire LLVM toolchain)
+- Installs ONLY `clang-format-23` package (not the entire LLVM toolchain)
 - Uses `--no-install-recommends --no-install-suggests` to skip unnecessary packages
 - Quiet installation with `-qq` and `-o=Dpkg::Use-Pty=0`
 
@@ -55,7 +55,7 @@ The workflow runs all three formatters simultaneously:
 
 1. Bump `channel` in `rust-toolchain.toml` (and `Dockerfile`/`bootstrap.sh` to match).
 2. Bump `RUSTUP_TOOLCHAIN` in the `Format Code` step's `env:` block in `format.yml` to the same value.
-3. Bump `RUSTUP_TOOLCHAIN` in the workflow-level `env:` block in `clippy.yml`, `miri.yml`, and `lolhtml.yml` to the same value.
+3. Bump `RUSTUP_TOOLCHAIN` in the workflow-level `env:` block in `rust-lints.yml` to the same value.
 4. `cargo fmt` formatting can change between nightlies; run `cargo fmt --all` locally on the new toolchain and include the resulting diff in the same PR.
 
 #### To update clang-format version:
@@ -97,7 +97,7 @@ The workflow runs all three formatters simultaneously:
 
 ```bash
 # Test the clang-format script
-export LLVM_VERSION_MAJOR=19
+export LLVM_VERSION_MAJOR=23
 ./scripts/run-clang-format.sh format
 
 # Test with check mode (no modifications)
@@ -113,3 +113,28 @@ export LLVM_VERSION_MAJOR=19
 - The script defaults to **format** mode (modifies files)
 - Always test locally before pushing workflow changes
 - Keep the exclusion list updated as new third-party code is added
+
+## rust-lints.yml Workflow
+
+Four independent jobs that each run one cargo command over the Rust workspace. They share `.github/actions/rust-lint-setup`, a composite action that installs LLVM from apt.llvm.org (configure resolves a clang even though nothing here compiles C++), Bun, optionally a pinned Rust toolchain plus components, runs `bun install`, then `bun scripts/build.ts --configure-only` and the ninja targets a job asks for: `clone-lolhtml clone-rust-argon2` (cargo cannot resolve the workspace until the vendored `lol_html` and `rust-argon2` path dependencies exist) and, for jobs that check `bun_runtime`/`bun_jsc`/`bun_core`, `codegen` (their `include!()`d sources under `build/debug/codegen`).
+
+| Job       | Check name            | Runs                                         | Blocking                     |
+| --------- | --------------------- | -------------------------------------------- | ---------------------------- |
+| `clippy`  | `cargo clippy`        | `bun run rust:clippy`                        | yes                          |
+| `miri`    | `cargo miri test`     | `bun run rust:miri` (`scripts/rust-miri.ts`) | yes                          |
+| `lolhtml` | `lol-html cargo test` | `cargo test` in `vendor/lolhtml`             | yes                          |
+| `mordant` | `mordant`             | `cargo dylint --all --workspace`             | off (`if: false`), see below |
+
+- `clippy`, `miri` and `lolhtml` pin `RUSTUP_TOOLCHAIN` at the workflow level (kept in sync with `channel` in `rust-toolchain.toml`) so rustup does not install that file's cross-target list; the action installs the toolchain with `--profile minimal` plus the components the job names (`clippy`, `miri rust-src`, none).
+- `lolhtml` exists because the vendored lol-html is a fork (oven-sh/lol-html, `bun` branch) whose own test suite is the only thing guarding the fork's invariants. It used to trigger only on `scripts/build/deps/lolhtml.ts`; it now shares the workflow's wider path filter.
+- `mordant` is **currently off (`if: false`)** and `bun run rust:mordant` fails locally for the same reasons: its pinned nightly (2026-05-28) predates the `core::mem::type_info` API `multi_array_list.rs` uses, so it cannot compile the workspace, and dylint-driver 6.0.x passes rustc `--env-set`, which rustc has since removed, so no dylint release runs on a current nightly. To turn it back on: a dylint release without `--env-set`, mordant moved to a nightly that compiles this workspace (2026-09-01 does), its `rev` bumped in `Cargo.toml`, and the job's `if:` restored to `github.event_name != 'merge_group'`.
+- When on, `mordant` runs the [mordant](https://github.com/scarletindustries/mordant) dylint pack as an advisory (`continue-on-error`) job. It sets `RUSTUP_TOOLCHAIN: stable` instead: mordant is built with, and lints us using, the nightly named in its own rust-toolchain file, which dylint fetches on demand, so the outer cargo only needs to exist. Because that nightly is older than ours, the job passes `-A unknown_lints` through `DYLINT_RUSTFLAGS`. Two caches cover the slow parts: `~/.cargo/bin/{cargo-dylint,dylint-link}` keyed on `DYLINT_VERSION`, and `~/.dylint_drivers` + `target/dylint/libraries` keyed on `DYLINT_VERSION` plus the pinned mordant rev read out of `Cargo.toml`. It is skipped on `merge_group`.
+
+### mordant: pin, baseline, disabled lints
+
+- The pack is pinned by commit in `Cargo.toml` under `[workspace.metadata.dylint]`. A bump can also fail if this workspace stops compiling on mordant's nightly.
+- `dylint.toml`'s `[mordant]` table points `baseline` at `mordant-baseline.toml` (per-(lint, file) counts of the findings that predate the job) and lists the lints this repo has switched off under `disabled`, each with its reason.
+- In baseline mode mordant prints findings over the baseline as warnings and writes them to `target/mordant/over-baseline.txt` (relative to the workspace root). The job deletes that file, runs dylint, and fails if the file is non-empty; absent or empty means clean. Fixing baselined findings needs no baseline update.
+- Locally, `bun run rust:mordant` is the same dylint invocation and `bun run rust:mordant:baseline` regenerates the baseline (`MORDANT_BASELINE_WRITE=1`). Both need `cargo install cargo-dylint dylint-link` once, and expect `build/debug/codegen`, `vendor/lolhtml` and `vendor/rust-argon2` to exist, which any normal `bun bd` leaves behind.
+
+To bump mordant: change the `rev` in `Cargo.toml`, run `bun run rust:mordant`, fix what the new revision reports or regenerate `mordant-baseline.toml` with `bun run rust:mordant:baseline`, and put the triage in the PR description.

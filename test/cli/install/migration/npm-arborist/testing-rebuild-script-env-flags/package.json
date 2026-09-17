@@ -1,0 +1,8 @@
+{
+  "devDependencies": {
+    "devdep": "1.0.0"
+  },
+  "optionalDependencies": {
+    "optdep": "1.0.0"
+  }
+}

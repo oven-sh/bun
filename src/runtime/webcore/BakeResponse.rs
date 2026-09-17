@@ -70,11 +70,15 @@ bun_jsc::jsc_host_abi! {
         match constructor(global_object, call_frame, bake_ssr_has_jsx, js_this) {
             Ok(response) => response.cast::<c_void>(),
             Err(JsError::Thrown) => core::ptr::null_mut(),
+            Err(JsError::Terminated) => {
+                // A constructor runs beneath script: rethrow so the caller keeps unwinding.
+                let _ = bun_jsc::Stopped.throw(global_object);
+                core::ptr::null_mut()
+            }
             Err(JsError::OutOfMemory) => {
                 let _ = global_object.throw_out_of_memory();
                 core::ptr::null_mut()
             }
-            Err(JsError::Terminated) => core::ptr::null_mut(),
         }
     }
 }
@@ -183,7 +187,7 @@ fn construct_render(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsRe
     }
 
     // Get the path string
-    let path_str = bun_core::OwnedString::new(path_arg.to_bun_string(global_this)?);
+    let path_str = path_arg.to_bun_string(global_this)?;
 
     // Create a Response with Render body
     let response = Box::new(Response::init(
@@ -197,7 +201,7 @@ fn construct_render(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsRe
             ..Default::default()
         },
         crate::webcore::Body::new(crate::webcore::BodyValue::Empty),
-        BunString::empty(),
+        BunString::EMPTY,
         false,
     ));
 

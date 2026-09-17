@@ -29,9 +29,6 @@
     macro("node:process"_s, NodeProcess) \
     macro("bun"_s, BunObject)
 
-#define BUN_FOREACH_CJS_NATIVE_MODULE(macro) \
-    BUN_FOREACH_ESM_AND_CJS_NATIVE_MODULE(macro)
-
 namespace Zig {
 // Slot index into GlobalObject::m_nativeModuleDefaults. The generator runs once per
 // registry (ESM vs CJS); INIT_NATIVE_MODULE reads/writes this slot so both see one object.

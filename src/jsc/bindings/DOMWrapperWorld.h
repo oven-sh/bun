@@ -27,8 +27,6 @@
 
 namespace WebCore {
 
-DOMWrapperWorld& normalWorld(JSC::VM&);
-
 DOMWrapperWorld& currentWorld(JSC::JSGlobalObject&);
 DOMWrapperWorld& worldForDOMObject(JSC::JSObject&);
 

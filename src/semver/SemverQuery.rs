@@ -560,6 +560,24 @@ impl Group {
             self.head.satisfies(version, group_buf, version_buf)
         }
     }
+
+    /// True when `parse` found no comparator at all (e.g. the input was only unrecognised words).
+    pub fn is_empty(&self) -> bool {
+        self.head.next.is_none()
+            && self.head.head.next.is_none()
+            && !self.head.head.range.has_left()
+    }
+
+    /// npm's `includePrerelease`: a prerelease only has to satisfy the comparators.
+    #[inline]
+    pub fn satisfies_including_prerelease(
+        &self,
+        version: Version,
+        group_buf: &[u8],
+        version_buf: &[u8],
+    ) -> bool {
+        self.head.satisfies(version, group_buf, version_buf)
+    }
 }
 
 #[derive(Clone, Copy, Default)]

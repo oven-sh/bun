@@ -37,6 +37,13 @@ typedef struct ExternColumnIdentifier {
     bool isIndexedColumn() const { return tag == 1; }
     bool isNamedColumn() const { return tag == 2; }
     bool isDuplicateColumn() const { return tag == 0; }
+
+    Identifier propertyName(VM& vm) const
+    {
+        ASSERT(isNamedColumn());
+        // NonNull: a column named "" is the empty BunString, and Identifier::fromString cannot take a null String.
+        return Identifier::fromString(vm, name.toWTFString(BunString::NonNull));
+    }
 } ExternColumnIdentifier;
 
 typedef struct DataCellArray {
@@ -303,7 +310,7 @@ static JSC::JSValue toJS(JSC::Structure* structure, DataCell* cells, uint32_t co
     case BunResultMode::Objects: // objects
 
     {
-        auto* object = structure ? JSC::constructEmptyObject(vm, structure) : JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 0);
+        auto* object = structure ? JSC::constructEmptyObject(vm, structure) : JSC::constructEmptyObject(globalObject);
 
         // cells[i] corresponds to fields[i]: the slow path below advances
         // structureOffsetIndex only on named cells, so it visits them in the
@@ -319,8 +326,7 @@ static JSC::JSValue toJS(JSC::Structure* structure, DataCell* cells, uint32_t co
                 ASSERT(!cell.isIndexedColumn());
                 ASSERT(cell.isNamedColumn());
                 if (names.has_value()) {
-                    auto name = names.value()[i];
-                    object->putDirect(vm, Identifier::fromString(vm, name.name.toWTFString()), value);
+                    object->putDirect(vm, names.value()[i].propertyName(vm), value);
                 } else {
                     // CachedStructure::build_from_columns guarantees one offset
                     // per column on this path; never drop a value silently.
@@ -373,8 +379,7 @@ static JSC::JSValue toJS(JSC::Structure* structure, DataCell* cells, uint32_t co
                             structureOffsetIndex++;
                         }
                         if (structureOffsetIndex < namesCount) {
-                            auto name = names.value()[structureOffsetIndex++];
-                            object->putDirect(vm, Identifier::fromString(vm, name.name.toWTFString()), value);
+                            object->putDirect(vm, names.value()[structureOffsetIndex++].propertyName(vm), value);
                         }
                     } else {
                         // JSC__createStructure added one offset per named
@@ -456,7 +461,7 @@ extern "C" EncodedJSValue JSC__createStructure(JSC::JSGlobalObject* globalObject
     for (uint32_t i = 0; i < capacity; i++) {
         ExternColumnIdentifier& name = names[i];
         if (name.isNamedColumn()) {
-            propertyNames.add(Identifier::fromString(vm, name.name.toWTFString()));
+            propertyNames.add(name.propertyName(vm));
         }
         nonDuplicateCount += !name.isDuplicateColumn();
         if (nonDuplicateCount == JSFinalObject::maxInlineCapacity) {

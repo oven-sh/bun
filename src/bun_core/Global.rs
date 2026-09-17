@@ -48,6 +48,17 @@ pub fn top_level_dir() -> &'static [u8] {
 /// the crash signals need resetting to `SIG_DFL` before re-raising.
 pub static CRASH_HANDLER_INSTALLED: AtomicBool = AtomicBool::new(false);
 
+/// What `bun_crash_handler` catches. SIGABRT and SIGTRAP cover abort() and traps (#34771).
+#[cfg(unix)]
+pub const CRASH_HANDLER_SIGNALS: [c_int; 6] = [
+    libc::SIGSEGV,
+    libc::SIGILL,
+    libc::SIGBUS,
+    libc::SIGFPE,
+    libc::SIGABRT,
+    libc::SIGTRAP,
+];
+
 /// VEH handle returned by `AddVectoredExceptionHandler`, written by
 /// `bun_crash_handler::init()` on Windows. `raise_ignoring_panic_handler`
 /// removes it before re-raising so the signal goes to the OS default.
@@ -328,7 +339,7 @@ impl SignalCode {
         #[cfg(not(unix))]
         {
             // Windows numbering: CRT <signal.h> plus libuv's synthetic SIGHUP/SIGQUIT/SIGKILL/
-            // SIGWINCH (src/jsc/bindings/libuv/uv/win.h). The enum discriminants are Linux numbers
+            // SIGWINCH (vendor/libuv/include/uv/win.h). The enum discriminants are Linux numbers
             // and must not leak here (SIGABRT is 22 on Windows, not 6).
             use SignalCode as S;
             match self {
@@ -718,7 +729,13 @@ pub fn exit(code: u32) -> ! {
     }
     #[cfg(windows)]
     {
+        // c-bindings.cpp: no WTF thread may hold this one suspended when ExitProcess
+        // kills it. No args, no preconditions: `safe fn`.
+        unsafe extern "C" {
+            safe fn Bun__lockThreadSuspensionForExit();
+        }
         Bun__onExit();
+        Bun__lockThreadSuspensionForExit();
         // `ExitProcess` is `safe fn` (no preconditions; never returns).
         crate::windows_sys::kernel32::ExitProcess(code)
     }
@@ -754,14 +771,7 @@ pub fn raise_ignoring_panic_handler_raw(sig: c_int) -> ! {
             let mut act: libc::sigaction = crate::ffi::zeroed();
             act.sa_sigaction = libc::SIG_DFL;
             libc::sigemptyset(&raw mut act.sa_mask);
-            for &s in &[
-                libc::SIGSEGV,
-                libc::SIGBUS,
-                libc::SIGILL,
-                libc::SIGFPE,
-                libc::SIGABRT,
-                libc::SIGTRAP,
-            ] {
+            for s in CRASH_HANDLER_SIGNALS {
                 let _ = libc::sigaction(s, &raw const act, core::ptr::null_mut());
             }
         }
@@ -831,7 +841,7 @@ pub fn crash() -> ! {
     exit(1);
 }
 
-// `BunInfo` (struct + `generate()`) lives at `bun_runtime::server::BunInfo`
+// `BunInfo` (struct + `generate()`) lives in `bun_runtime`'s server module
 // because it depends on analytics/js_parser/interchange — all higher-tier. Only the version constants below
 // are needed at this tier.
 

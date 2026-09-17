@@ -3301,6 +3301,67 @@ it("clientError after a kept-alive request reuses the connection's socket and un
   }
 });
 
+describe("a 'clientError' listener's socket.write() reaches the client once a request was dispatched", () => {
+  const badRequest = "HTTP/1.1 400 Bad Request\r\nContent-Length: 3\r\n\r\nbad";
+  const get = "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n";
+  it.each([
+    [
+      "parse error in the request body",
+      {},
+      ["POST / HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\nZZ\r\n"],
+      { codes: ["HPE_INVALID_CHUNK_SIZE"], statuses: ["400"] },
+    ],
+    [
+      "requestTimeout while the request body stalls",
+      { headersTimeout: 100, requestTimeout: 200, connectionsCheckingInterval: 50 },
+      ["POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 10\r\n\r\nabc"],
+      { codes: ["ERR_HTTP_REQUEST_TIMEOUT"], statuses: ["400"] },
+    ],
+    [
+      "parse error on the next kept-alive request",
+      {},
+      [get, "GET / HTTP/9.9\r\nHost: localhost\r\n\r\n"],
+      { codes: ["HPE_INVALID_VERSION"], statuses: ["200", "400"] },
+    ],
+  ])("%s", async (_name, options, writes, expected) => {
+    const codes: string[] = [];
+    const server = createServer(options, (req, res) => {
+      req.on("error", () => {});
+      req.on("end", () => res.end("ok"));
+      req.resume();
+    });
+    // write(), not end(): Writable.end() force-uncorks, so it cannot tell a corked socket apart.
+    server.on("clientError", (err: any, s) => {
+      codes.push(err.code);
+      s.write(badRequest);
+    });
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+
+      const socket = connect(port, "127.0.0.1");
+      socket.on("error", () => {});
+      await once(socket, "connect");
+      let wire = "";
+      let sent = 0;
+      socket.write(writes[sent++]);
+      for await (const chunk of socket) {
+        wire += chunk;
+        const responses = wire.match(/\r\n\r\n(ok|bad)/g)?.length ?? 0;
+        if (responses === writes.length) break;
+        if (responses === sent) socket.write(writes[sent++]);
+      }
+      socket.destroy();
+
+      expect({ codes, statuses: Array.from(wire.matchAll(/HTTP\/1\.1 (\d{3})/g), m => m[1]) }).toEqual(expected);
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  });
+});
+
 describe("malformed request line reaches 'connection' and 'clientError' with a writable socket", () => {
   it.each([
     ["method token followed by CRLF", "BOGUS\r\n\r\n"],

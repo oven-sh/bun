@@ -503,32 +503,23 @@ it.skipIf(!isLinux)("epoll_pwait fallback does not busy-spin on sub-ms timers", 
 // assert a 200 ms setTimeout still fires roughly on time.
 // https://man7.org/linux/man-pages/man7/signal.7.html (epoll_*wait is never
 // restarted by SA_RESTART)
+// The handler has SA_RESTART so that only such calls see EINTR. LeakSanitizer
+// (LLVM 22+) calls waitpid() once at exit with no EINTR retry, and an
+// interrupted one prints "ptrace appears to be blocked" to stderr.
 describe.skipIf(!isLinux)("epoll EINTR retry accounts for elapsed time", () => {
   const src = `
-#define _GNU_SOURCE
-#include <dlfcn.h>
 #include <signal.h>
-#include <stdlib.h>
 #include <string.h>
 #include <sys/time.h>
 static void noop(int s) { (void) s; }
 __attribute__((constructor)) static void arm(void) {
     struct sigaction sa; memset(&sa, 0, sizeof sa);
-    sa.sa_handler = noop; sigemptyset(&sa.sa_mask); sa.sa_flags = 0;
+    sa.sa_handler = noop; sigemptyset(&sa.sa_mask); sa.sa_flags = SA_RESTART;
     sigaction(SIGALRM, &sa, 0);
     struct itimerval itv;
     itv.it_interval.tv_sec = 0; itv.it_interval.tv_usec = 20000;
     itv.it_value = itv.it_interval;
     setitimer(ITIMER_REAL, &itv, 0);
-}
-// ASAN builds leave through exit(). LeakSanitizer (LLVM 22+) then forks and calls waitpid() once
-// with no EINTR retry, and a SIGALRM there makes it print "ptrace appears to be blocked" to
-// stderr. Stop the timer first. An atexit() handler is too late: the leak check runs before it.
-void exit(int status) {
-    struct itimerval off; memset(&off, 0, sizeof off);
-    setitimer(ITIMER_REAL, &off, 0);
-    ((void (*)(int)) dlsym(RTLD_NEXT, "exit"))(status);
-    abort();
 }`;
   let soPath = "";
   let built = false;

@@ -1,5 +1,5 @@
-import { describe, expect, it, test } from "bun:test";
 import { dlopen, FFIType, ptr } from "bun:ffi";
+import { describe, expect, it, test } from "bun:test";
 import fs, { mkdirSync } from "fs";
 import {
   bunEnv,

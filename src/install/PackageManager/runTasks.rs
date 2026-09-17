@@ -1951,8 +1951,7 @@ pub(crate) fn network_task_has_failed(this: &PackageManager, task_id: Task::Id) 
         .is_some_and(|e| e.failed)
 }
 
-/// The next dependency that needs this clone or checkout runs git again.
-/// `enqueue_git_for_checkout` would otherwise join the finished task and wait forever.
+/// A later dependency that joins an entry left in `task_queue` waits forever.
 pub(crate) fn forget_failed_git_task(this: &mut PackageManager, task_id: Task::Id) {
     let _ = this.task_queue.remove(&task_id);
     let _ = this.network_dedupe_map.remove(&task_id);

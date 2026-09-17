@@ -94,13 +94,9 @@ struct PicoHeaders {
 /// The two copies the Fetch standard makes of a `Headers` object.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HeadersCopy {
-    /// The header list as is: `clone()`, and a Request given as the `input` of the
-    /// Request constructor.
+    /// As is: `clone()`, and a Request that is the Request constructor's `input`.
     List,
-    /// The object is a `HeadersInit`: the `headers` member of an init dictionary, or
-    /// of a Request/Response used as one. The standard reads it through its iterator
-    /// and appends each pair, so a combined value is normalized again: `"1, "` (from
-    /// `"1"` and `""`) becomes `"1,"`.
+    /// As a `HeadersInit`: iterated and appended again, so `"1, "` becomes `"1,"`.
     AsInit,
 }
 

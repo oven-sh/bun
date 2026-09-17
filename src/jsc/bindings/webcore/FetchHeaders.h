@@ -57,10 +57,7 @@ public:
 
     static Ref<FetchHeaders> create(Guard guard = Guard::None, HTTPHeaderMap&& headers = {}) { return adoptRef(*new FetchHeaders { guard, WTF::move(headers) }); }
 
-    // Copies a Headers object that was given as a HeadersInit. Web IDL reads it through its
-    // iterator and https://fetch.spec.whatwg.org/#concept-headers-fill appends each pair, so a
-    // combined value is normalized again: "1, " (from "1" and "") becomes "1,".
-    // fill(const FetchHeaders&) is the other copy. It keeps the header list as is.
+    // For a Headers object given as a HeadersInit, which is iterated and appended again: "1, " becomes "1,".
     static Ref<FetchHeaders> createFromHeadersInit(const FetchHeaders& init)
     {
         auto headers = adoptRef(*new FetchHeaders { init });

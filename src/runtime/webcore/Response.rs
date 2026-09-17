@@ -1238,8 +1238,7 @@ impl Init {
         })
     }
 
-    /// `headers_copy` is `AsInit` unless `response_init` is the Request given as
-    /// the `input` of the Request constructor.
+    /// `headers_copy` is `List` only for a Request that is the Request constructor's `input`.
     pub(crate) fn init(
         global_this: &JSGlobalObject,
         response_init: JSValue,

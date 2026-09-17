@@ -233,9 +233,7 @@ public:
     void addUncommonHeader(const String& name, const String& value);
     void addUncommonHeaderCloneName(const StringView name, const String& value);
 
-    // Set once a join leaves HTTP whitespace at the end of a combined value: "1, " from "1"
-    // and "". The flag stays set, and a copy of the map carries it. A copy made entry by
-    // entry has to set it.
+    // Set once a join leaves trailing HTTP whitespace ("1, " from "1" and ""). A copy made entry by entry has to set it.
     bool mayHaveTrailingSpace() const { return m_mayHaveTrailingSpace; }
     void setMayHaveTrailingSpace() { m_mayHaveTrailingSpace = true; }
     // https://fetch.spec.whatwg.org/#concept-header-value-normalize on every combined value.

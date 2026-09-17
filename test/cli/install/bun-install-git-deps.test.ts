@@ -474,6 +474,8 @@ test.concurrent(
       e: ["github:scope/pkg-e#100%25", "/repos/scope/pkg-e/tarball/100%25"],
       f: ["github:sc%6Fpe/pkg-f#main", "/repos/sc%6Fpe/pkg-f/tarball/main"],
       g: ["github:scope/pkg%2Dg#main", "/repos/scope/pkg%2Dg/tarball/main"],
+      // the decoded committish is also the text in front of the `#`, written with no escape
+      h: ["github:scope/pkg-h#scope%2Fpkg-h", "/repos/scope/pkg-h/tarball/scope%2Fpkg-h"],
     };
     const letters = Object.keys(cases);
     const tarballs = await packageTarballs(letters, {}, l => `scope-pkg-${l}-0000000`);
@@ -499,7 +501,7 @@ test.concurrent(
     expect(requests.sort()).toEqual(letters.map(l => cases[l][1]).sort());
     expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
       "Resolving dependencies
-      Resolved, downloaded and extracted [14]
+      Resolved, downloaded and extracted [16]
       Saved lockfile"
     `);
     expect(await installedVersions(project, letters.map(nameOf))).toEqual(markers(letters));

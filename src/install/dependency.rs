@@ -1277,23 +1277,23 @@ pub(crate) fn parse_with_tag(
 
             // `info` is percent-decoded, but a `String` can only point into `dependency`, so each
             // part keeps its escapes. The tarball URL takes them as written.
-            let span_of = |decoded: &[u8]| {
-                if decoded.is_empty() {
-                    return Some(String::default());
-                }
-                // No span (the URL parser drops tabs and newlines): an empty committish would
-                // install the default branch.
-                let span = index_of_percent_encoded(dependency, decoded)?;
-                Some(sliced.sub(&dependency[span]).value())
-            };
+            let (before_fragment, fragment) =
+                strings::split_once_char(dependency, b'#').unwrap_or((dependency, b""));
+            let owner = info.user().unwrap_or(b"");
+            let committish = info.committish().unwrap_or(b"");
 
             Some(Version {
                 literal: sliced.value(),
                 value: Value {
                     github: ManuallyDrop::new(Repository {
-                        owner: span_of(info.user().unwrap_or(b""))?,
-                        repo: span_of(info.project())?,
-                        committish: span_of(info.committish().unwrap_or(b""))?,
+                        owner: percent_encoded_part(*sliced, &[before_fragment], owner)?,
+                        repo: percent_encoded_part(*sliced, &[before_fragment], info.project())?,
+                        // A `/tree/<committish>` URL has the committish in its path.
+                        committish: percent_encoded_part(
+                            *sliced,
+                            &[fragment, before_fragment],
+                            committish,
+                        )?,
                         ..Default::default()
                     }),
                 },
@@ -1553,6 +1553,23 @@ fn hgi_to_tag(info: &hosted_git_info::HostedGitInfo) -> Tag {
         | hosted_git_info::HostProvider::Gist
         | hosted_git_info::HostProvider::Sourcehut => Tag::Git,
     }
+}
+
+/// The first span of `regions` that percent-decodes to `decoded`. A part that is not empty and
+/// has no span is `None` (the URL parser drops tabs and newlines): an empty committish would
+/// install the default branch.
+fn percent_encoded_part<'a>(
+    sliced: SlicedString<'a>,
+    regions: &[&'a [u8]],
+    decoded: &[u8],
+) -> Option<String> {
+    if decoded.is_empty() {
+        return Some(String::default());
+    }
+    regions.iter().find_map(|region| {
+        let span = index_of_percent_encoded(region, decoded)?;
+        Some(sliced.sub(&region[span]).value())
+    })
 }
 
 /// The first span of `haystack` that percent-decodes to `decoded`.

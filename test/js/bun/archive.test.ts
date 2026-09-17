@@ -684,22 +684,22 @@ describe("Bun.Archive", () => {
       "creates files with the archive's read and execute bits, with and without a glob",
       async () => {
         const members = [
-          // mode in the archive, mode on disk under umask 022, under umask 002
+          // mode in the archive, mode on disk under umask 022, under umask 000
           [0o600, "0600", "0600"],
           [0o640, "0640", "0660"],
-          [0o644, "0644", "0664"],
+          [0o644, "0644", "0666"],
           [0o700, "0700", "0700"],
-          [0o755, "0755", "0775"],
-          [0o666, "0644", "0664"],
+          [0o755, "0755", "0777"],
+          [0o666, "0644", "0666"],
           // The owner can always read and write. See the next test.
           [0o400, "0600", "0600"],
-          [0o444, "0644", "0664"],
+          [0o444, "0644", "0666"],
           // setuid, setgid and sticky are dropped.
-          [0o4755, "0755", "0775"],
-          [0o2755, "0755", "0775"],
-          [0o1755, "0755", "0775"],
+          [0o4755, "0755", "0777"],
+          [0o2755, "0755", "0777"],
+          [0o1755, "0755", "0777"],
           // No permission bits at all: the mode Bun.Archive itself writes.
-          [0, "0644", "0664"],
+          [0, "0644", "0666"],
         ] as const;
         const name = (mode: number) => "f" + mode.toString(8).padStart(4, "0");
         using dir = tempDir("archive-extract-file-modes", {
@@ -722,7 +722,7 @@ describe("Bun.Archive", () => {
                 .map(([name, stat]) => [name, (stat.mode & 0o7777).toString(8).padStart(4, "0")]),
             );
           const result: Record<string, unknown> = {};
-          for (const umask of ["022", "002"]) {
+          for (const umask of ["022", "000"]) {
             process.umask(parseInt(umask, 8));
             await new Bun.Archive(tarball).extract("plain-" + umask);
             await new Bun.Archive(tarball).extract("glob-" + umask, { glob: "**" });
@@ -742,7 +742,7 @@ describe("Bun.Archive", () => {
           return { plain: modes, glob: modes };
         };
         expect(stderr).toBe("");
-        expect(JSON.parse(stdout)).toEqual({ "022": expected(1), "002": expected(2) });
+        expect(JSON.parse(stdout)).toEqual({ "022": expected(1), "000": expected(2) });
         expect(exitCode).toBe(0);
       },
     );

@@ -7,8 +7,6 @@ export type Shape = {
   expect: { body: string } | { error: string };
   /** pull() returns or resolves without closing: a reader would call it again for the next read, so only one-shot consumers run this shape. */
   oneShotOnly?: true;
-  /** pull() keeps running after its own end()/close(error). The stream is over at that call: a consumer does not wait for pull() to return. */
-  pullNeverReturns?: true;
   make(t: Tally): ReadableStream;
 };
 
@@ -155,8 +153,8 @@ export const shapes: Record<string, Shape> = {
         Promise.resolve(new Error("not a failure")).then(v => (c.end as any)(v));
       }),
   },
+  // pull() keeps running after its own end()/close(error). The stream is over at that call: no consumer waits for pull() to return.
   "async pull: write, await, write, end(), then never returns": {
-    pullNeverReturns: true,
     expect: { body: "hello world" },
     make: t =>
       direct(t, async c => {
@@ -168,7 +166,6 @@ export const shapes: Record<string, Shape> = {
       }),
   },
   "async pull: write, end(), then never returns": {
-    pullNeverReturns: true,
     expect: { body: "hello world" },
     make: t =>
       direct(t, async c => {
@@ -178,7 +175,6 @@ export const shapes: Record<string, Shape> = {
       }),
   },
   "async pull: write, await, close(error), then never returns": {
-    pullNeverReturns: true,
     expect: { error: "source failed" },
     make: t =>
       direct(t, async c => {
@@ -299,13 +295,6 @@ export const consumers: Record<string, (s: ReadableStream) => Promise<string>> =
     return ta;
   },
 };
-
-/** These collect the body into one ArrayBuffer (`consumeDirectStreamToArrayBuffer`), which settles when pull() returns and not at end()/close(): they do not run the `pullNeverReturns` shapes. */
-export const waitsForPullToReturn = new Set([
-  "new Response(s).bytes()",
-  "Bun.readableStreamToBytes",
-  "Bun.readableStreamToArrayBuffer",
-]);
 
 /** Consumers that read through a reader: pull() is their demand signal. */
 export const readerConsumers = new Set([

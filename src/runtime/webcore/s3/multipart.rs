@@ -781,7 +781,7 @@ impl MultiPartUpload {
                 Ok(())
             }
             // Any other 404 can come from a proxy in front of the store.
-            S3DeleteResult::NotFound(_) | S3DeleteResult::Failure(_) => {
+            S3DeleteResult::NotFound(_err) | S3DeleteResult::Failure(_err) => {
                 let mut options = self_.options.get();
                 if options.retry > 0 {
                     options.retry -= 1;

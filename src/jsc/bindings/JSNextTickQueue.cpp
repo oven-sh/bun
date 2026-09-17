@@ -13,6 +13,8 @@
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
 #include "BunClientData.h"
+#include "ZigGlobalObject.h"
+#include <JavaScriptCore/TopExceptionScope.h>
 
 namespace Bun {
 
@@ -77,21 +79,33 @@ void JSNextTickQueue::discard(JSC::VM& vm)
 
 void JSNextTickQueue::drain(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     if (isEmpty()) {
-        RETURN_IF_EXCEPTION(throwScope, );
+        RETURN_IF_EXCEPTION(scope, );
         vm.drainMicrotasks();
-        RETURN_IF_EXCEPTION(throwScope, );
+        RETURN_IF_EXCEPTION(scope, );
     }
 
-    if (!isEmpty()) {
-        RETURN_IF_EXCEPTION(throwScope, );
+    if (isEmpty())
+        return;
+
+    // processTicksAndRejections does not catch: a tick that throws ends that call with the
+    // exception as it was thrown. It is reported here, and the call is made again for the ticks
+    // queued after it.
+    for (;;) {
+        RETURN_IF_EXCEPTION(scope, );
         auto* drainFn = internalField(2).get().getObject();
         if (!drainFn)
             return; // discarded at teardown
         MarkedArgumentBuffer drainArgs;
         JSC::call(globalObject, drainFn, drainArgs, "Failed to drain next tick queue"_s);
-        RETURN_IF_EXCEPTION(throwScope, );
+        auto* exception = scope.exception();
+        if (!exception)
+            return;
+        // A termination stays pending for the caller.
+        if (!scope.tryClearException())
+            return;
+        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
     }
 }
 

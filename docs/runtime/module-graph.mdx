@@ -109,6 +109,10 @@ Uncaught exceptions and unhandled rejections go to the `onError` of the graph in
 
 Whose code threw does not matter, only where it ran. A function of the graph's that the host calls directly runs in the host's context, so what it throws later is the host's; call it through `run()` for the graph to get it. A host function that the graph's code calls runs in the graph's context, so what it throws there is the graph's.
 
+`run()` rethrows to its caller what the function throws. If the caller does not catch it either, it is still the graph's: it was thrown in the graph's context, whatever it unwound through afterwards.
+
+An error that no code threw belongs to whoever opened the thing it happened to. A socket the graph opened that fails with no `error` handler reports to the graph's `onError`.
+
 `graph.import()` returns its promise to whoever called it. If a module throws while it is evaluated the promise rejects, and if nobody handles that promise it is the caller's unhandled rejection, like a specifier that does not resolve or an `import()` into a disposed graph.
 
 `onError` itself runs in the context the graph was made in: the host's, or the enclosing graph's for a graph that a graph's code made. What it throws, rejects or starts is that context's, so an error the handler lets escape again goes on to the host and does not come back to the same handler.

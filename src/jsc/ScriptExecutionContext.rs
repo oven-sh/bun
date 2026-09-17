@@ -318,6 +318,12 @@ impl AbortHandle {
         self.context_stopped.get()
     }
 
+    /// The context the owner is in while armed: what its events are dispatched inside.
+    #[inline]
+    pub fn context_id(&self) -> Option<ContextId> {
+        self.context().map(ScriptExecutionContext::id)
+    }
+
     #[inline]
     fn context(&self) -> Option<&ScriptExecutionContext> {
         // SAFETY: a context outlives the handles linked into it (it unlinks
@@ -497,6 +503,23 @@ unsafe extern "C" fn Bun__VirtualMachine__rootContext(
 ) -> *const ScriptExecutionContext {
     // SAFETY: fn contract; no reference to the VM is formed.
     unsafe { ptr::addr_of!((*vm).root_context) }
+}
+
+/// ModuleGraph.cpp's `ErrorHandlerContextScope`: the context native code entered becomes
+/// `context` ([`ContextId::NONE`]: none). Returns the one to put back.
+///
+/// # Safety
+/// `vm` is this thread's live VM.
+#[unsafe(no_mangle)]
+unsafe extern "C" fn Bun__VirtualMachine__replaceEnteredContext(
+    vm: *mut crate::VirtualMachineRef,
+    context: ContextId,
+) -> ContextId {
+    // SAFETY: fn contract.
+    let vm = unsafe { &*vm };
+    vm.entered_context
+        .replace((context != ContextId::NONE).then_some(context))
+        .unwrap_or(ContextId::NONE)
 }
 
 /// # Safety

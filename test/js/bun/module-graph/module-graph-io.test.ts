@@ -785,3 +785,251 @@ describe.concurrent("ModuleGraph: what a graph opens is the graph's", () => {
     expect(await served).toBe("chunkchunkchunk");
   });
 });
+
+// An uncaught error is the graph's in whose context it happened. Native code that calls the
+// graph's handler has left that context by the time it reports what the handler threw, so the
+// exception itself says where it was thrown; and an error no script threw (a socket's) is
+// reported from inside the context of the script that opened the socket.
+describe.concurrent("ModuleGraph: an error in what a graph opened is the graph's", () => {
+  async function run(dir: string): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(dir, "main.mjs")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  // The host's side of each case: something for the graph's listener to hear from.
+  const hostHelpers = `
+    import dgram from "node:dgram";
+    import { AsyncResource } from "node:async_hooks";
+    const hostResource = new AsyncResource("host");
+    export const host = {
+      inHostScope: fn => hostResource.runInAsyncScope(fn),
+      async connectAndWrite(port) {
+        await Bun.connect({ hostname: "127.0.0.1", port, socket: { open(s) { s.write("hello"); }, data() {}, error() {}, close() {} } });
+      },
+      echoServer: () => Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { open(s) { s.write("welcome"); }, data(s, d) { s.write(d); }, error() {} } }).port,
+      httpServer: () => Bun.serve({ port: 0, fetch: () => new Response("ok") }).port,
+      wsEchoServer: () => Bun.serve({
+        port: 0,
+        fetch(req, server) { if (server.upgrade(req)) return; return new Response("no"); },
+        websocket: { message(ws, m) { ws.send(m); } },
+      }).port,
+      wsConnectAndSend(port) {
+        const ws = new WebSocket("ws://127.0.0.1:" + port + "/");
+        ws.onopen = () => ws.send("hi");
+        ws.onerror = () => {};
+      },
+      fetch(port) { fetch("http://127.0.0.1:" + port + "/").then(r => r.text(), () => {}); },
+      fetchAndClose(port) { fetch("http://127.0.0.1:" + port + "/", { headers: { connection: "close" } }).then(r => r.text(), () => {}); },
+      post(port) { fetch("http://127.0.0.1:" + port + "/", { method: "POST", body: "hello" }).then(r => r.text(), () => {}); },
+      udpSend(port) { const s = dgram.createSocket("udp4"); s.send("hi", port, "127.0.0.1", () => s.close()); },
+      async http2Get(port) {
+        const http2 = await import("node:http2");
+        const c = http2.connect("http://127.0.0.1:" + port);
+        c.on("error", () => {});
+        const r = c.request({ ":path": "/" });
+        r.on("error", () => {});
+        r.end();
+      },
+      async closedUdpPort() {
+        const s = dgram.createSocket("udp4");
+        await new Promise(r => s.bind(0, "127.0.0.1", r));
+        const port = s.address().port;
+        await new Promise(r => s.close(r));
+        return port;
+      },
+    };
+  `;
+
+  test("what a listener of the graph's throws, for every kind of thing it can listen to", async () => {
+    const dir = fixture({
+      "host.mjs": hostHelpers,
+      "tenant.mjs": `
+        import { EventEmitter } from "node:events";
+        import { AsyncLocalStorage } from "node:async_hooks";
+        import net from "node:net";
+        import http from "node:http";
+        import http2 from "node:http2";
+        import dgram from "node:dgram";
+        import fs from "node:fs";
+        import path from "node:path";
+        import zlib from "node:zlib";
+        import crypto from "node:crypto";
+        import readline from "node:readline";
+        import { Readable } from "node:stream";
+        import { Worker, MessageChannel } from "node:worker_threads";
+
+        // Each case arranges for boom(name) to be called by the thing it names, with nobody to catch it.
+        export const cases = {
+          "setTimeout": boom => setTimeout(boom, 1),
+          "setImmediate": boom => setImmediate(boom),
+          "process.nextTick": boom => process.nextTick(boom),
+          "queueMicrotask": boom => queueMicrotask(boom),
+          "queueMicrotask, after AsyncLocalStorage.enterWith()": boom => queueMicrotask(() => { new AsyncLocalStorage().enterWith({}); boom(); }),
+          "AsyncLocalStorage.run() in a timer": boom => setTimeout(() => new AsyncLocalStorage().run({}, boom), 1),
+          "an EventEmitter listener": boom => { const e = new EventEmitter(); e.on("x", boom); setTimeout(() => e.emit("x"), 1); },
+          "an EventTarget listener": boom => { const t = new EventTarget(); t.addEventListener("x", boom); setTimeout(() => t.dispatchEvent(new Event("x")), 1); },
+          "an AbortSignal listener": boom => AbortSignal.timeout(1).addEventListener("abort", boom),
+          "Bun.listen: data": (boom, host) => host.connectAndWrite(Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data: boom } }).port),
+          "Bun.listen: open": (boom, host) => host.connectAndWrite(Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { open: boom, data() {} } }).port),
+          "Bun.listen: the error handler itself": (boom, host) =>
+            host.connectAndWrite(Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() { throw new Error("first"); }, error: boom } }).port),
+          "Bun.connect: data": (boom, host) => { Bun.connect({ hostname: "127.0.0.1", port: host.echoServer(), socket: { open(s) { s.write("hi"); }, data: boom } }); },
+          "Bun.connect: open": (boom, host) => { Bun.connect({ hostname: "127.0.0.1", port: host.echoServer(), socket: { open: boom, data() {} } }).catch(() => {}); },
+          "Bun.serve: websocket message": (boom, host) =>
+            host.wsConnectAndSend(Bun.serve({ port: 0, fetch(req, server) { if (server.upgrade(req)) return; return new Response("no"); }, websocket: { message: boom } }).port),
+          "Bun.serve: websocket open": (boom, host) =>
+            host.wsConnectAndSend(Bun.serve({ port: 0, fetch(req, server) { if (server.upgrade(req)) return; return new Response("no"); }, websocket: { open: boom, message() {} } }).port),
+          "Bun.udpSocket: data": async (boom, host) => host.udpSend((await Bun.udpSocket({ hostname: "127.0.0.1", port: 0, socket: { data: boom } })).port),
+          "node:net server: 'connection'": (boom, host) => { const s = net.createServer(boom); s.listen(0, "127.0.0.1", () => host.connectAndWrite(s.address().port)); },
+          "node:net server socket: 'data'": (boom, host) => { const s = net.createServer(c => c.on("data", boom)); s.listen(0, "127.0.0.1", () => host.connectAndWrite(s.address().port)); },
+          "node:net client: 'data'": (boom, host) => { const c = net.connect(host.echoServer(), "127.0.0.1", () => c.write("hi")); c.on("data", boom); },
+          "node:http server: 'request'": (boom, host) => { const s = http.createServer(boom); s.listen(0, "127.0.0.1", () => host.fetch(s.address().port)); },
+          "node:http server: an async 'request' listener": (boom, host) => { const s = http.createServer(async () => { await 1; boom(); }); s.listen(0, "127.0.0.1", () => host.fetch(s.address().port)); },
+          "node:http server: the request's 'data'": (boom, host) => { const s = http.createServer(req => req.on("data", boom)); s.listen(0, "127.0.0.1", () => host.post(s.address().port)); },
+          "node:http server: the request's socket's 'close'": (boom, host) => {
+            const s = http.createServer((req, res) => { req.socket.on("close", boom); res.end("ok"); });
+            s.listen(0, "127.0.0.1", () => host.fetchAndClose(s.address().port));
+          },
+          "node:http server: the response's 'close'": (boom, host) => {
+            const s = http.createServer((req, res) => { res.on("close", boom); res.end("ok"); });
+            s.listen(0, "127.0.0.1", () => host.fetchAndClose(s.address().port));
+          },
+          "node:http client: the response callback": (boom, host) => { http.get({ port: host.httpServer(), host: "127.0.0.1", agent: new http.Agent() }, boom); },
+          "node:http2 server: 'stream'": (boom, host) => { const s = http2.createServer(); s.on("stream", boom); s.listen(0, "127.0.0.1", () => host.http2Get(s.address().port)); },
+          "node:dgram: 'message'": (boom, host) => { const s = dgram.createSocket("udp4"); s.on("message", boom); s.bind(0, "127.0.0.1", () => host.udpSend(s.address().port)); },
+          "WebSocket client: onmessage": (boom, host) => { const ws = new WebSocket("ws://127.0.0.1:" + host.wsEchoServer() + "/"); ws.onopen = () => ws.send("hi"); ws.onmessage = boom; },
+          "fetch().then()": (boom, host) => { fetch("http://127.0.0.1:" + host.httpServer() + "/").then(boom); },
+          "fs.readFile callback": boom => fs.readFile(import.meta.filename, boom),
+          "fs.watch listener": boom => {
+            const dir = path.join(import.meta.dirname, "watched");
+            fs.mkdirSync(dir);
+            const w = fs.watch(dir, () => { w.close(); boom(); });
+            fs.writeFileSync(path.join(dir, "f"), "x");
+          },
+          "a read stream's 'data'": boom => { fs.createReadStream(import.meta.filename).on("data", boom); },
+          "a zlib stream's 'data'": boom => { const z = zlib.createGzip(); z.on("data", boom); z.end("hello"); },
+          "zlib.gzip callback": boom => zlib.gzip("x", boom),
+          "crypto.randomBytes callback": boom => crypto.randomBytes(8, boom),
+          "crypto.pbkdf2 callback": boom => crypto.pbkdf2("a", "b", 1, 8, "sha1", boom),
+          "readline 'line'": boom => { readline.createInterface({ input: Readable.from(["a\\n"]) }).on("line", boom); },
+          "Bun.spawn onExit": boom => { Bun.spawn({ cmd: [process.execPath, "-e", "1"], onExit: boom }); },
+          "a Worker's 'message'": boom => { new Worker("postMessage(1)", { eval: true }).on("message", boom); },
+          "a MessagePort's 'message'": boom => { const { port1, port2 } = new MessageChannel(); port1.on("message", boom); port2.postMessage(1); },
+          "a BroadcastChannel's onmessage": boom => { const a = new BroadcastChannel("module-graph-errors"); const b = new BroadcastChannel("module-graph-errors"); a.onmessage = boom; b.postMessage(1); },
+          "a ReadableStream's pull()": boom => { new ReadableStream({ pull: boom }).getReader().read(); },
+          // The context the throw happens in is not the graph's: a closure of the graph's run inside
+          // something the host made.
+          "a closure of the graph's that a host AsyncResource runs": (boom, host) => setTimeout(() => host.inHostScope(boom), 1),
+        };
+        export const throws = message => { throw new Error(message); };
+      `,
+      "main.mjs": `
+        import { host } from "./host.mjs";
+        let told;
+        const tell = who => error => { if (error?.message === told?.expecting) told.resolve(who); };
+        process.on("uncaughtException", tell("host"));
+        process.on("unhandledRejection", tell("host"));
+        const graph = new Bun.ModuleGraph({ onError: tell("graph") });
+        const { cases, throws } = await graph.import(import.meta.dir + "/tenant.mjs");
+        const out = {};
+        const expect = async (name, start) => {
+          told = { expecting: name, ...Promise.withResolvers() };
+          const nobody = setTimeout(told.resolve, 10_000, "nobody was told within 10 seconds");
+          await start(() => throws(name));
+          out[name] = await told.promise;
+          clearTimeout(nobody);
+        };
+        for (const [name, start] of Object.entries(cases)) await expect(name, boom => graph.run(() => start(boom, host)));
+        // What run() calls throws synchronously and the host that called run() does not catch it.
+        await expect("run() from a timer of the host's", boom => { setTimeout(() => graph.run(boom), 1); });
+        await expect("run() from a microtask of the host's", boom => { queueMicrotask(() => graph.run(boom)); });
+        await expect("run() from a tick of the host's", boom => { process.nextTick(() => graph.run(boom)); });
+        // A function of the graph's that the host calls directly, or listens with, runs in the host's context.
+        await expect("a function of the graph's the host calls from its timer", boom => { setTimeout(boom, 1); });
+        await expect("a function of the graph's listening on a host EventEmitter", async boom => {
+          const { EventEmitter } = await import("node:events");
+          const e = new EventEmitter();
+          e.on("x", boom);
+          setTimeout(() => e.emit("x"), 1);
+        });
+        console.log(JSON.stringify(out, null, 1));
+        process.exit(0);
+      `,
+    });
+    const { stdout, exitCode } = await run(dir);
+    const out = JSON.parse(stdout);
+    const hosts = [
+      "a closure of the graph's that a host AsyncResource runs",
+      "a function of the graph's the host calls from its timer",
+      "a function of the graph's listening on a host EventEmitter",
+    ];
+    expect(Object.keys(out).length).toBeGreaterThan(40);
+    expect(out).toEqual(
+      Object.fromEntries(Object.keys(out).map(name => [name, hosts.includes(name) ? "host" : "graph"])),
+    );
+    expect(hosts.every(name => name in out)).toBe(true);
+    expect(exitCode).toBe(0);
+    // One process walks every case in turn (a Worker, a child process, an HTTP/2 session among them).
+  }, 60_000);
+
+  // Nothing throws here: the kernel refuses the datagram and the socket has no error handler.
+  test.skipIf(process.platform === "win32")("an error of the graph's socket that no script threw", async () => {
+    const dir = fixture({
+      "host.mjs": hostHelpers,
+      "tenant.mjs": `
+        const socket = await Bun.udpSocket({ connect: { hostname: "127.0.0.1", port: closedPort }, socket: { data() {} } });
+        const send = () => { try { socket.send("x"); } catch {} };
+        send();
+        const again = setInterval(send, 5);
+        export const stop = () => clearInterval(again);
+      `,
+      "main.mjs": `
+        import { host } from "./host.mjs";
+        const { promise, resolve } = Promise.withResolvers();
+        process.on("uncaughtException", error => resolve("host: " + error.code));
+        const graph = new Bun.ModuleGraph({ globals: { closedPort: await host.closedUdpPort() }, onError: error => resolve("graph: " + error.code) });
+        const { stop } = await graph.import(import.meta.dir + "/tenant.mjs");
+        console.log(await promise);
+        stop();
+        process.exit(0);
+      `,
+    });
+    expect(await run(dir)).toEqual({ stdout: "graph: ECONNREFUSED\n", stderr: "", exitCode: 0 });
+  });
+
+  test("two graphs on either end of one connection each get what their own handler throws", async () => {
+    const dir = fixture({
+      "server.mjs": `
+        ready(Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { open(s) { s.write("from the server"); }, data() { throw new Error("the server's data handler"); } } }).port);
+      `,
+      "client.mjs": `
+        Bun.connect({ hostname: "127.0.0.1", port, socket: { open(s) { s.write("from the client"); }, data() { throw new Error("the client's data handler"); } } });
+      `,
+      "main.mjs": `
+        const told = [];
+        const done = Promise.withResolvers();
+        const tell = who => error => { told.push(who + ": " + error.message); if (told.length === 2) done.resolve(); };
+        process.on("uncaughtException", tell("host"));
+        const listening = Promise.withResolvers();
+        const server = new Bun.ModuleGraph({ globals: { ready: listening.resolve }, onError: tell("server graph") });
+        await server.import(import.meta.dir + "/server.mjs");
+        const client = new Bun.ModuleGraph({ globals: { port: await listening.promise }, onError: tell("client graph") });
+        await client.import(import.meta.dir + "/client.mjs");
+        await done.promise;
+        console.log(told.sort().join("\\n"));
+        process.exit(0);
+      `,
+    });
+    expect(await run(dir)).toEqual({
+      stdout: "client graph: the client's data handler\nserver graph: the server's data handler\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});

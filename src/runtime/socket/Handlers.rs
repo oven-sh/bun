@@ -48,6 +48,8 @@ pub struct Handlers {
 
     pub(crate) vm: &'static VirtualMachine,
     pub(crate) global_object: GlobalRef,
+    /// The context of the script that gave these handlers: a socket event is dispatched inside it.
+    context: bun_jsc::ContextId,
     /// Live sockets plus in-flight callback [`Scope`]s. Drives the listener's
     /// idle release; ownership itself is the `Rc`.
     pub(crate) active_connections: Cell<u32>,
@@ -205,9 +207,11 @@ impl Handlers {
     #[inline]
     pub(crate) fn enter(self: &Rc<Self>) -> Scope {
         self.mark_active();
+        let context = self.vm.enter_context(self.context);
         self.vm.event_loop_ref().enter();
         Scope {
             handlers: Rc::clone(self),
+            _context: context,
         }
     }
 
@@ -327,6 +331,7 @@ impl Handlers {
             // VM outlives every `Handlers` (process-lifetime singleton).
             vm: global_object.bun_vm(),
             global_object: GlobalRef::from(global_object),
+            context: global_object.bun_vm().context_of_caller_no_frame().id(),
             active_connections: Cell::new(0),
             mode,
             listener: Cell::new(None),
@@ -422,6 +427,7 @@ impl Handlers {
 /// to invoke outlive a `close()` from inside them.
 pub(crate) struct Scope {
     pub(crate) handlers: Rc<Handlers>,
+    _context: bun_jsc::virtual_machine::ContextScope<'static>,
 }
 
 impl Scope {

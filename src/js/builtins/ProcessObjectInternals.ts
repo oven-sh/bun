@@ -340,18 +340,12 @@ export function getStdinStream(
 
   return stream;
 }
-export function initializeNextTickQueue(
-  process: typeof globalThis.process,
-  nextTickQueue,
-  drainMicrotasksFn,
-  reportUncaughtExceptionFn,
-) {
+export function initializeNextTickQueue(process: typeof globalThis.process, nextTickQueue, drainMicrotasksFn) {
   var queue;
   var tickInitHooks;
   var process;
   var nextTickQueue = nextTickQueue;
   var drainMicrotasks = drainMicrotasksFn;
-  var reportUncaughtException = reportUncaughtExceptionFn;
 
   const { validateFunction } = require("internal/validators");
 
@@ -370,6 +364,9 @@ export function initializeNextTickQueue(
           var frame = tock.frame;
           var restore = $getInternalField($asyncContext, 0);
           $putInternalField($asyncContext, 0, frame);
+          // No catch: what a tick throws leaves this function as it was thrown, and
+          // JSNextTickQueue::drain reports it and calls back in for the ticks after it (node's
+          // processTicksAndRejections does the same).
           try {
             if (args === undefined) {
               callback();
@@ -392,8 +389,6 @@ export function initializeNextTickQueue(
                   break;
               }
             }
-          } catch (e) {
-            reportUncaughtException(e);
           } finally {
             $putInternalField($asyncContext, 0, restore);
           }

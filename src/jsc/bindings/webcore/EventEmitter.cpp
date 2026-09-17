@@ -197,7 +197,7 @@ bool EventEmitter::fireEventListeners(const Identifier& eventType, const MarkedA
             if (!thisObject)
                 return false;
 
-            Bun::reportUnhandledError(thisObject->globalObject(), arguments.at(0));
+            Bun__reportUnhandledError(thisObject->globalObject(), JSValue::encode(arguments.at(0)));
             return false;
         }
         return false;
@@ -265,7 +265,7 @@ bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
             auto hasErrorListener = this->hasActiveEventListeners(errorIdentifier);
             if (!hasErrorListener || eventType == errorIdentifier) {
                 // If the event type is error, report the exception to the console.
-                Bun::reportUnhandledError(lexicalGlobalObject, exception);
+                Bun__reportUnhandledError(lexicalGlobalObject, JSValue::encode(exception));
             } else if (hasErrorListener) {
                 MarkedArgumentBuffer expcep;
                 JSValue errorValue = exception->value();

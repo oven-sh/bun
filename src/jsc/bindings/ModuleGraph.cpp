@@ -218,16 +218,23 @@ extern "C" bool Bun__ModuleGraph__handleUnhandledRejection(JSGlobalObject* lexic
 
 static JSModuleGraph* moduleGraphOfFrame(Zig::GlobalObject*, JSValue asyncContext, JSObject** enteredWith);
 
-// VirtualMachine::uncaught_exception, first. `asyncContext`: the one the exception was thrown in.
-extern "C" bool Bun__ModuleGraph__handleUncaughtException(JSGlobalObject* lexicalGlobalObject, EncodedJSValue encodedError, EncodedJSValue asyncContext)
+// VirtualMachine::uncaught_exception, first. An exception is the graph's whose context it was thrown
+// in (the engine notes it on the Exception: by the time it is reported, whoever entered that context
+// to call the script has left it). A value nobody threw is reported as it happens: the current one.
+extern "C" bool Bun__ModuleGraph__handleUncaughtException(JSGlobalObject* lexicalGlobalObject, EncodedJSValue encodedError)
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     if (!globalObject->hasModuleGraphs())
         return false;
     JSValue error = JSValue::decode(encodedError);
-    if (auto* exception = error.isCell() ? dynamicDowncast<JSC::Exception>(error.asCell()) : nullptr)
+    JSValue asyncContext;
+    if (auto* exception = error.isCell() ? dynamicDowncast<JSC::Exception>(error.asCell()) : nullptr) {
         error = exception->value();
-    return deliverToOnError(globalObject, moduleGraphOfFrame(globalObject, JSValue::decode(asyncContext), nullptr), error, "uncaughtException"_s);
+        asyncContext = exception->asyncContext();
+    }
+    if (!asyncContext)
+        asyncContext = globalObject->m_asyncContextData.get()->getInternalField(0);
+    return deliverToOnError(globalObject, moduleGraphOfFrame(globalObject, asyncContext, nullptr), error, "uncaughtException"_s);
 }
 
 // ─── The graph's context ─────────────────────────────────────────────────────────────
@@ -380,14 +387,20 @@ static JSValue makeContextCurrent(Zig::GlobalObject* globalObject, JSModuleGraph
     return previous;
 }
 
+// VirtualMachine::entered_context: makes `context` the one native code entered (0: none) and
+// returns the one to put back.
+extern "C" uint32_t Bun__VirtualMachine__replaceEnteredContext(void* bunVM, uint32_t context);
+
 ErrorHandlerContextScope::ErrorHandlerContextScope(Zig::GlobalObject* globalObject, JSModuleGraph* owner)
     : m_globalObject(globalObject)
     , m_previous(makeContextCurrent(globalObject, owner))
+    , m_previousEntered(Bun__VirtualMachine__replaceEnteredContext(globalObject->bunVM(), (owner ? owner->context() : *globalObject->scriptExecutionContext()).identifier()))
 {
 }
 
 ErrorHandlerContextScope::~ErrorHandlerContextScope()
 {
+    Bun__VirtualMachine__replaceEnteredContext(m_globalObject->bunVM(), m_previousEntered);
     if (m_previous)
         m_globalObject->m_asyncContextData.get()->putInternalField(m_globalObject->vm(), 0, m_previous);
 }

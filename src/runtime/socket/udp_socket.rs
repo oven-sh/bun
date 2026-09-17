@@ -101,6 +101,7 @@ extern "C" fn on_recv_error(socket: *mut uws::udp::Socket, errno: c_int, is_errq
     // ICMP error (so_error) arrives. node:dgram must drop only the former on
     // unconnected sockets, and the errno namespaces overlap.
     let this: &UDPSocket = UDPSocket::from_uws(socket);
+    let _context = this.enter_owners_context();
     let sys_err = bun_sys::Error::from_code_int(errno, bun_sys::Tag::recv);
     let global_this = this.global_this.get();
     // A callback earlier in the same poll dispatch may have left a
@@ -121,6 +122,7 @@ extern "C" fn on_recv_error(socket: *mut uws::udp::Socket, errno: c_int, is_errq
 
 extern "C" fn on_drain(socket: *mut uws::udp::Socket) {
     let this: &UDPSocket = UDPSocket::from_uws(socket);
+    let _context = this.enter_owners_context();
     let Some(this_value) = this.this_value.get().try_get() else {
         return;
     };
@@ -153,6 +155,7 @@ extern "C" fn on_data(
     packets: c_int,
 ) {
     let udp_socket: &UDPSocket = UDPSocket::from_uws(socket);
+    let _context = udp_socket.enter_owners_context();
     let Some(this_value) = udp_socket.this_value.get().try_get() else {
         return;
     };
@@ -556,6 +559,15 @@ bun_jsc::impl_abort_handle_owner!(UDPSocket, abort_handle, |this, _cause| {
 });
 
 impl UDPSocket {
+    /// A socket event is dispatched inside the context of the script that opened the socket (the
+    /// one it is armed in): what a handler throws, and what the socket reports with no `error`
+    /// handler, is that context's. `None`: closed (it left its context in `on_close`), and no
+    /// event follows that one.
+    fn enter_owners_context(&self) -> Option<bun_jsc::virtual_machine::ContextScope<'_>> {
+        let context = self.abort_handle.context_id()?;
+        Some(self.global_this.get().bun_vm().enter_context(context))
+    }
+
     pub(crate) fn new(init: Self) -> *mut Self {
         bun_core::heap::into_raw(Box::new(init))
     }

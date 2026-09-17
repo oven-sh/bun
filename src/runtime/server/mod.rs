@@ -1280,6 +1280,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         );
         let vm = this_ref.vm_mut();
         let _entered = this_ref.vm().enter_event_loop_scope_without_checkpoint();
+        // The listener and what it starts continue the script that made the server.
+        let _context = this_ref.vm().enter_context(this_ref.context.get());
         req.set_yield(false);
         resp.timeout(this_ref.config.idle_timeout);
 

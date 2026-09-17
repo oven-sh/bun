@@ -87,14 +87,7 @@ class EventTarget;
 }
 
 extern "C" void Bun__reportError(JSC::JSGlobalObject*, JSC::EncodedJSValue);
-// asyncContext: the async context the error happened in. JavaScriptCore's queueMicrotask job reports
-// after it has restored the context, so it hands over the one that was current at the throw.
-extern "C" void Bun__reportUnhandledError(JSC::JSGlobalObject*, JSC::EncodedJSValue, JSC::EncodedJSValue asyncContext);
-extern "C" JSC::EncodedJSValue Bun__GlobalObject__asyncContext(JSC::JSGlobalObject*);
-namespace Bun {
-// For a caller that reports from inside the async context the error happened in.
-void reportUnhandledError(JSC::JSGlobalObject*, JSC::JSValue);
-}
+extern "C" void Bun__reportUnhandledError(JSC::JSGlobalObject*, JSC::EncodedJSValue);
 
 extern "C" bool Bun__VirtualMachine__isShuttingDown(void* /* BunVM */);
 

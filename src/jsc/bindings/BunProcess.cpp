@@ -4424,7 +4424,7 @@ static JSValue constructMemoryUsage(VM& vm, JSObject* processObject)
 JSC_DEFINE_HOST_FUNCTION(jsFunctionReportUncaughtException, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSValue arg0 = callFrame->argument(0);
-    Bun::reportUnhandledError(globalObject, arg0);
+    Bun__reportUnhandledError(globalObject, JSValue::encode(arg0));
     return JSValue::encode(jsUndefined());
 }
 
@@ -4573,7 +4573,6 @@ JSValue Process::constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObjec
     args.append(this);
     args.append(nextTickQueueObject);
     args.append(JSC::JSFunction::create(vm, globalObject, 1, String(), jsFunctionDrainMicrotaskQueue, ImplementationVisibility::Private));
-    args.append(JSC::JSFunction::create(vm, globalObject, 1, String(), jsFunctionReportUncaughtException, ImplementationVisibility::Private));
 
     // Lazy property builder: exceptions must not propagate into
     // reifyStaticProperty, which performs no exception check.

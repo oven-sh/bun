@@ -972,17 +972,6 @@ String GlobalObject::agentClusterID() const
     return defaultAgentClusterID();
 }
 
-void Bun::reportUnhandledError(JSC::JSGlobalObject* globalObject, JSC::JSValue error)
-{
-    Bun__reportUnhandledError(globalObject, JSC::JSValue::encode(error), Bun__GlobalObject__asyncContext(globalObject));
-}
-
-// VirtualMachine::uncaught_exception: the async context that is current.
-extern "C" JSC::EncodedJSValue Bun__GlobalObject__asyncContext(JSC::JSGlobalObject* globalObject)
-{
-    return JSC::JSValue::encode(defaultGlobalObject(globalObject)->m_asyncContextData.get()->getInternalField(0));
-}
-
 namespace Zig {
 
 using namespace WebCore;
@@ -1167,7 +1156,7 @@ WebCore::ScriptExecutionContext* GlobalObject::currentScriptExecutionContext()
 void GlobalObject::reportUncaughtExceptionAtEventLoop(JSGlobalObject* globalObject,
     JSC::Exception* exception)
 {
-    Bun::reportUnhandledError(globalObject, exception);
+    Bun__reportUnhandledError(globalObject, JSValue::encode(exception));
 }
 
 extern "C" void Bun__handleHandledPromise(Zig::GlobalObject* JSGlobalObject, JSC::JSPromise* promise);

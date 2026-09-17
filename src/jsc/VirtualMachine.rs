@@ -435,18 +435,15 @@ unsafe extern "C" {
     ) -> JSValue;
     safe fn Bun__ModuleGraph__enterRootContext(global: &JSGlobalObject) -> JSValue;
     safe fn Bun__ModuleGraph__leaveContext(global: &JSGlobalObject, previous: JSValue);
-    /// ModuleGraph.cpp: deliver an uncaught exception thrown by a `Bun.ModuleGraph`'s
-    /// module code (the Exception's throw site decides), or an unhandled rejection whose
-    /// owner promiseRejectionTracker decided, to that graph's `onError`. true: delivered
-    /// (no test failure, exit code or `--unhandled-rejections` policy); false: not a
+    /// ModuleGraph.cpp: deliver an uncaught exception to the `onError` of the `Bun.ModuleGraph` in
+    /// whose context it was thrown (the `Exception` carries it; a bare value: the context that is
+    /// current), or an unhandled rejection whose owner promiseRejectionTracker decided. true:
+    /// delivered (no test failure, exit code or `--unhandled-rejections` policy); false: not a
     /// graph's, continue with the normal thread-wide handling.
     safe fn Bun__ModuleGraph__handleUncaughtException(
         global: &JSGlobalObject,
         exception: JSValue,
-        async_context: JSValue,
     ) -> bool;
-    /// The async context that is current.
-    safe fn Bun__GlobalObject__asyncContext(global: &JSGlobalObject) -> JSValue;
     /// The `Bun.ModuleGraph` a promise rejected now is reported to (its context is current and it, or
     /// a graph that made it, has an `onError`), or null.
     safe fn Bun__ModuleGraph__rejecting(global: &JSGlobalObject) -> JSValue;
@@ -2118,24 +2115,11 @@ impl VirtualMachine {
         bun_core::env_var::feature_flag::BUN_DESTRUCT_VM_ON_EXIT::get().unwrap_or(false)
     }
 
-    /// Reported from inside the async context the error happened in.
     pub fn uncaught_exception(
         &mut self,
         global_object: &JSGlobalObject,
         err: JSValue,
         is_rejection: bool,
-    ) -> bool {
-        let async_context = Bun__GlobalObject__asyncContext(global_object);
-        self.uncaught_exception_in(global_object, err, is_rejection, async_context)
-    }
-
-    /// `async_context`: the async context the error happened in, which says whose it is.
-    pub fn uncaught_exception_in(
-        &mut self,
-        global_object: &JSGlobalObject,
-        err: JSValue,
-        is_rejection: bool,
-        async_context: JSValue,
     ) -> bool {
         // A VM that has stopped (or is being torn down) has nobody to report to; and what a caller took
         // to be an error may be its termination.
@@ -2146,9 +2130,7 @@ impl VirtualMachine {
         // An exception thrown by a Bun.ModuleGraph's module code is that graph's to
         // handle, ahead of the test runner and the thread-wide path. (A rejection
         // re-entering here under --unhandled-rejections=strict/throw was already judged.)
-        if !is_rejection
-            && Bun__ModuleGraph__handleUncaughtException(global_object, err, async_context)
-        {
+        if !is_rejection && Bun__ModuleGraph__handleUncaughtException(global_object, err) {
             return true;
         }
 

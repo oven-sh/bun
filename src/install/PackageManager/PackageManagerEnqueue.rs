@@ -146,6 +146,8 @@ pub fn enqueue_dependency_list(
     this.drain_dependency_list();
 }
 
+/// `is_required`: whether the install fails if this download fails. A linker asks once for
+/// every dependency on the package, so it passes `RequiredPackages::contains`.
 pub fn enqueue_tarball_for_download(
     this: &mut PackageManager,
     dependency_id: DependencyID,
@@ -153,15 +155,13 @@ pub fn enqueue_tarball_for_download(
     url: &[u8],
     task_context: TaskCallbackContext,
     patch_name_and_version_hash: Option<u64>,
+    is_required: bool,
 ) -> Result<(), EnqueueTarballForDownloadError> {
     let task_id = Task::Id::for_tarball(url);
-    if this.network_task_has_failed(task_id) {
+    if download_already_failed(this, task_id, is_required) {
         return Err(EnqueueTarballForDownloadError::AlreadyFailed);
     }
     if this.options.offline == crate::package_manager_real::options::OfflineMode::Offline {
-        let is_required = this.lockfile.buffers.dependencies[dependency_id as usize]
-            .behavior
-            .is_required();
         let name = this
             .lockfile
             .str(&this.lockfile.packages.get(package_id as usize).name)
@@ -181,9 +181,6 @@ pub fn enqueue_tarball_for_download(
         return Ok(());
     }
 
-    let is_required = this.lockfile.buffers.dependencies[dependency_id as usize]
-        .behavior
-        .is_required();
     let package = *this.lockfile.packages.get(package_id as usize);
     if let Some(task) = run_tasks::generate_network_task_for_tarball(
         this,
@@ -340,6 +337,32 @@ pub fn enqueue_git_for_checkout(
     GitEnqueueResult::Queued
 }
 
+/// Whether the download `task_id` already failed for an install-phase request from a
+/// dependency with `is_required`. `run_tasks` reports a failed download as an error only
+/// if a required dependency had asked for it. So a required request raises a running
+/// download to required, and it does not accept a failure that only optional
+/// dependencies had asked for: it forgets that failure and downloads again.
+fn download_already_failed(
+    this: &mut PackageManager,
+    task_id: Task::Id,
+    is_required: bool,
+) -> bool {
+    let Some(entry) = this.network_dedupe_map.get_mut(&task_id) else {
+        return false;
+    };
+    if !entry.failed {
+        entry.is_required |= is_required;
+        return false;
+    }
+    if entry.is_required || !is_required {
+        return true;
+    }
+    let _ = this.network_dedupe_map.remove(&task_id);
+    // No task runs for this id, so nothing would call the callbacks left in its queue.
+    let _ = this.task_queue.remove(&task_id);
+    false
+}
+
 /// Under `--offline`, an install-phase request for a package that is not in the cache
 /// (these helpers are only reached after the cache lookup missed): report it once if
 /// required, skip if optional, and never register a task nobody will complete.
@@ -452,6 +475,7 @@ pub unsafe fn enqueue_parse_npm_package(
     unsafe { &raw mut (*task.as_ptr()).threadpool_task }
 }
 
+/// `is_required`: see `enqueue_tarball_for_download`.
 pub fn enqueue_package_for_download(
     this: &mut PackageManager,
     name: &[u8],
@@ -461,18 +485,14 @@ pub fn enqueue_package_for_download(
     url: &[u8],
     task_context: TaskCallbackContext,
     patch_name_and_version_hash: Option<u64>,
+    is_required: bool,
 ) -> Result<(), EnqueuePackageForDownloadError> {
     let task_id = Task::Id::for_npm_package(name, version);
-    if this.network_task_has_failed(task_id) {
+    if download_already_failed(this, task_id, is_required) {
         return Err(EnqueuePackageForDownloadError::AlreadyFailed);
     }
-    {
-        let is_required = this.lockfile.buffers.dependencies[dependency_id as usize]
-            .behavior
-            .is_required();
-        if offline_tarball_miss(this, task_id, name, is_required) {
-            return Err(EnqueuePackageForDownloadError::Offline);
-        }
+    if offline_tarball_miss(this, task_id, name, is_required) {
+        return Err(EnqueuePackageForDownloadError::Offline);
     }
     let task_queue = this.task_queue.get_or_put(task_id)?;
     if !task_queue.found_existing {
@@ -485,9 +505,6 @@ pub fn enqueue_package_for_download(
         return Ok(());
     }
 
-    let is_required = this.lockfile.buffers.dependencies[dependency_id as usize]
-        .behavior
-        .is_required();
     let package = *this.lockfile.packages.get(package_id as usize);
 
     if let Some(task) = run_tasks::generate_network_task_for_tarball(
@@ -3201,6 +3218,7 @@ impl PackageManager {
         url: &[u8],
         task_context: TaskCallbackContext,
         patch_name_and_version_hash: Option<u64>,
+        is_required: bool,
     ) -> Result<(), EnqueueTarballForDownloadError> {
         enqueue_tarball_for_download(
             self,
@@ -3209,6 +3227,7 @@ impl PackageManager {
             url,
             task_context,
             patch_name_and_version_hash,
+            is_required,
         )
     }
 
@@ -3260,6 +3279,7 @@ impl PackageManager {
         url: &[u8],
         task_context: TaskCallbackContext,
         patch_name_and_version_hash: Option<u64>,
+        is_required: bool,
     ) -> Result<(), EnqueuePackageForDownloadError> {
         enqueue_package_for_download(
             self,
@@ -3270,6 +3290,7 @@ impl PackageManager {
             url,
             task_context,
             patch_name_and_version_hash,
+            is_required,
         )
     }
 }

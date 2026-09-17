@@ -384,6 +384,11 @@ pub(crate) fn install_hoisted_packages(
                 summary: &mut summary,
                 force_install,
                 successfully_installed: Bitset::init_empty(pkg_len)?,
+                required_packages: tree::RequiredPackages::new(
+                    workspace_filters,
+                    install_root_dependencies,
+                    packages_to_install,
+                ),
                 command_ctx: ctx,
                 tree_ids_to_trees_the_id_depends_on,
                 completed_trees,

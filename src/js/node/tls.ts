@@ -552,11 +552,21 @@ function normalizePemKeyOption(key, ctxPassphrase) {
 
 const SSL_OP_CIPHER_SERVER_PREFERENCE = 0x00400000;
 
+// The native layer keeps the name as a C string and refuses one with a NUL. As in Node.js, SNI gets
+// the name up to the NUL, and checkServerIdentity() gets the whole `servername`.
+function sniName(servername) {
+  if (typeof servername !== "string") return servername;
+  const nul = StringPrototypeIndexOf.$call(servername, "\0");
+  return nul === -1 ? servername : StringPrototypeSlice.$call(servername, 0, nul);
+}
+
 function newNativeSecureContext(options, cached = false) {
   maybeWarnAboutExtraCACerts();
   // tls.createSecureContext() with no options still goes through the version
   // translation below so the module-level DEFAULT_MIN/MAX_VERSION apply.
   options = options == null ? {} : processPfxOptions(options);
+  const servername = options.servername;
+  if (sniName(servername) !== servername) options = { ...options, servername: sniName(servername) };
   // PKCS#12-embedded CAs extend the trust set after the context is built; a
   // mutated context must not be the shared cached one.
   const pfxExtraCAs = options._pfxExtraCACerts;
@@ -1152,6 +1162,7 @@ TLSSocket.prototype[buntls] = function (port, host) {
     // of rebuilding from raw cert/key bytes.
     secureContext: ctx?.context,
     servername,
+    serverName: sniName(servername),
   };
 };
 
@@ -1460,7 +1471,7 @@ function Server(options, secureConnectionListener): void {
   this[buntls] = function (port, host, isClient) {
     return [
       {
-        serverName: this.servername || host || "localhost",
+        serverName: sniName(this.servername || host || "localhost"),
         key: normalizePemKeyOption(this.key, this.passphrase),
         cert: this.cert,
         ca: this.ca,

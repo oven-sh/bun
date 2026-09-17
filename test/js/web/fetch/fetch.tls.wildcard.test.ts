@@ -649,9 +649,9 @@ describe("TLS certificate name matching: fetch() / checkServerIdentity / checkHo
   });
 
   // tls.serverName is a C string in the native TLS configuration. SNI and the
-  // native matcher would see "exact.test" for "exact.test\0.wild.test", so the
-  // option is refused. tls.checkServerIdentity gets the JS string and matches
-  // it as typed.
+  // native matcher would see "exact.test" for "exact.test\0.wild.test", so
+  // fetch and Bun.connect refuse the option. node:tls does what Node.js does:
+  // SNI ends at the NUL, and checkServerIdentity gets the whole name.
   describe.concurrent("a NUL in the server name", () => {
     const message = '"serverName" must not contain null bytes';
     async function expectRefused(open: () => Promise<() => void>) {
@@ -682,11 +682,17 @@ describe("TLS certificate name matching: fetch() / checkServerIdentity / checkHo
         });
         return () => socket.end();
       });
-      await expectRefused(async () => {
-        const socket = tls.connect({ host: "127.0.0.1", port: server.port, ca: wild.cert, servername: serverName });
-        socket.on("error", () => {});
-        return () => socket.destroy();
-      });
+      for (const trust of [{ ca: wild.cert }, { secureContext: tls.createSecureContext({ ca: wild.cert }) }]) {
+        const { promise, resolve } = Promise.withResolvers<unknown>();
+        const socket = tls.connect({ host: "127.0.0.1", port: server.port, servername: serverName, ...trust });
+        socket.on("secureConnect", () => resolve({ authorized: socket.authorized }));
+        socket.on("error", resolve);
+        try {
+          expect(await promise).toMatchObject({ code: "ERR_TLS_CERT_ALTNAME_INVALID", host: serverName });
+        } finally {
+          socket.destroy();
+        }
+      }
     });
   });
 

@@ -12,7 +12,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "fs";
-import { bunEnv, bunExe, bunRun, isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, bunRun, isWindows, MAX_PATH_BYTES, tmpdirSync } from "harness";
 import { mkfifo } from "mkfifo";
 import { join } from "path";
 
@@ -209,6 +209,41 @@ describe("transpiler cache", () => {
     // A per-user cache location still works.
     expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("no-tmpdir-cache");
     expect(newCacheCount()).toBe(1);
+  });
+  test("disables the cache when the cache directory does not fit in a path buffer", async () => {
+    writeFileSync(join(temp_dir, "a.js"), dummyFile((50 * 1024 * 1.5) | 0, "1", "long-cache-dir"));
+
+    // The cache directory is derived from environment variables, which can be
+    // longer than PATH_MAX (4096 on Linux, 1024 on macOS). Joining such a value
+    // into the fixed-size path buffer used to panic while loading the first
+    // file large enough for the cache. 4095 is the longest value that still
+    // fits on its own, but leaves no room for a cache file name behind it;
+    // 4200 does not fit at all. (On Windows, where the buffer is 98 KB, they
+    // fit and creating the directory fails instead.) Windows reads HOME from
+    // USERPROFILE, so both are set.
+    //
+    // The first two lengths are the ones where the directory, a separator and
+    // the cache file name (hex hash + ".pile", or ".debug.pile" in a debug
+    // build) fill the buffer exactly, which left no room for the NUL. A Windows
+    // environment variable cannot hold a value that long.
+    const exactFit = isWindows ? [] : [MAX_PATH_BYTES - 28, MAX_PATH_BYTES - 22];
+    const variants: Record<string, string | undefined>[] = [];
+    for (const length of [...exactFit, 4095, 4200]) {
+      const dir = "/" + Buffer.alloc(length - 1, "h").toString();
+      variants.push(
+        { BUN_RUNTIME_TRANSPILER_CACHE_PATH: undefined, XDG_CACHE_HOME: undefined, HOME: dir, USERPROFILE: dir },
+        { BUN_RUNTIME_TRANSPILER_CACHE_PATH: undefined, XDG_CACHE_HOME: dir },
+        { BUN_RUNTIME_TRANSPILER_CACHE_PATH: dir },
+      );
+    }
+
+    const results = await Promise.all(variants.map(vars => bunRun(join(temp_dir, "a.js"), { ...env, ...vars })));
+    for (const result of results) {
+      expect(result).toSpawn("long-cache-dir");
+    }
+    // Every variant overrode the cache location from `env`, so none of the runs
+    // exercised that one instead of its over-long value.
+    expect(existsSync(cache_dir)).toBeFalse();
   });
   test("works if the cache is not user-readable", async () => {
     mkdirSync(cache_dir, { recursive: true });

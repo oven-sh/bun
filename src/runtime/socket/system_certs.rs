@@ -216,7 +216,10 @@ extern "C" fn us_load_system_certificates_posix() -> *mut boringssl::X509_LAZY_C
     });
     if env_var::SSL_CERT_FILE::get().is_none() {
         for path in WELL_KNOWN_BUNDLES {
-            loader.load_file(ZBox::from_bytes(path).as_zstr());
+            // `default_file` is in this list, and a FIFO there cannot be opened a second time.
+            if *path != default_file.as_bytes() {
+                loader.load_file(ZBox::from_bytes(path).as_zstr());
+            }
         }
     }
 

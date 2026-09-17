@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
 import { mkfifo } from "mkfifo";
 import { X509Certificate } from "node:crypto";
-import { existsSync, readFileSync, symlinkSync } from "node:fs";
+import { closeSync, constants, existsSync, openSync, readFileSync, symlinkSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import { rootCertificates } from "node:tls";
 
@@ -246,6 +246,75 @@ describe.concurrent.skipIf(!isLinux)("SSL_CERT_FILE that can be read only once",
     expect(JSON.parse(stdout)).toEqual(expected);
     expect(exitCode).toBe(0);
     expect(await writer.exited).toBe(0);
+  });
+
+  // fetch builds the default store on the HTTP thread. The JS thread asks for the system store while the HTTP thread
+  // still reads the FIFO, so it has to wait for that read and must not start a second one.
+  test("a FIFO that one writer serves, read from two threads at once", async () => {
+    using dir = tempDir("ssl-cert-file-fifo-threads", {});
+    const fifo = join(String(dir), "ca.fifo");
+    mkfifo(fifo);
+    // The server is in this process, because a TLS server with no `ca` builds the default store too.
+    await using server = Bun.serve({
+      port: 0,
+      tls: {
+        key: readFileSync(join(keys, "agent1-key.pem"), "utf8"),
+        cert: readFileSync(join(keys, "agent1-cert.pem"), "utf8"),
+      },
+      fetch: () => new Response("ok"),
+    });
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const tls = require("tls"), fs = require("fs"), { X509Certificate } = require("crypto");
+         const fetched = fetch("https://127.0.0.1:${server.port}/", { tls: { checkServerIdentity: () => undefined } }).then(r => r.text(), e => e.code);
+         await new Promise(resolve => process.stdin.once("data", resolve));
+         fs.writeSync(1, "listing\\n");
+         const listed = tls.getCACertificates("system").map(pem => new X509Certificate(pem).fingerprint256);
+         console.log(JSON.stringify({ fetched: await fetched, listed }));`,
+      ],
+      env: { ...bunEnv, SSL_CERT_FILE: fifo, SSL_CERT_DIR: "", NODE_USE_SYSTEM_CA: undefined },
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    // A non-blocking open for writing fails with ENXIO until a reader waits in open(2). The JS thread has not asked
+    // for certificates yet, so that reader is the HTTP thread.
+    let fd: number;
+    while (true) {
+      try {
+        fd = openSync(fifo, constants.O_WRONLY | constants.O_NONBLOCK);
+        break;
+      } catch (e: any) {
+        if (e.code !== "ENXIO" || proc.exitCode !== null) throw e;
+        await Bun.sleep(1);
+      }
+    }
+    // The HTTP thread now waits in read(2). Let the JS thread ask, and write only after it says it is about to.
+    proc.stdin.write("go\n");
+    await proc.stdin.end();
+    const reader = proc.stdout.getReader();
+    const decoder = new TextDecoder();
+    let stdout = "";
+    while (!stdout.includes("listing\n")) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      stdout += decoder.decode(value, { stream: true });
+    }
+    writeSync(fd, readFileSync(ca1));
+    closeSync(fd);
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      stdout += decoder.decode(value, { stream: true });
+    }
+
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("listing\n" + JSON.stringify({ fetched: "ok", listed: expected.listed }) + "\n");
+    expect(exitCode).toBe(0);
   });
 });
 

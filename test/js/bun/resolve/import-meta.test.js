@@ -6,6 +6,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import Module from "node:module";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
+import { SourceTextModule } from "node:vm";
 import sync from "./require-json.json";
 
 const { path, dir, dirname, filename } = import.meta;
@@ -269,6 +270,118 @@ it("import.meta.filename", () => {
 
 it("import.meta.path", () => {
   expect(path).toEndWith(ospath("/test/js/bun/resolve/import-meta.test.js"));
+});
+
+// https://github.com/oven-sh/bun/issues/32246
+it("import.meta members are own, discoverable properties", () => {
+  const names = Object.getOwnPropertyNames(import.meta);
+
+  // Node exposes url/dirname/filename/resolve/main as own properties; Bun adds
+  // dir/file/path/require/resolveSync/env. Before the fix these lived on a hidden
+  // prototype, so getOwnPropertyNames / ownKeys / getOwnPropertyDescriptor missed them.
+  for (const key of ["url", "dirname", "filename", "resolve", "main", "dir", "file", "path", "require"]) {
+    expect(names).toContain(key);
+    expect(key in import.meta).toBe(true);
+    // Like Node, the members are configurable own properties, so a module can
+    // redefine or delete them (they used to be DontDelete on a shared prototype).
+    expect(Object.getOwnPropertyDescriptor(import.meta, key)).toMatchObject({ configurable: true });
+  }
+
+  // Reflect.ownKeys agrees with getOwnPropertyNames (no hidden/symbol-only members).
+  expect(Reflect.ownKeys(import.meta)).toEqual(names);
+
+  // The Node-compatible members are enumerable (matching Node's Object.keys);
+  // the Bun-only extras are discoverable but not enumerable, so they stay out of
+  // Object.keys / spread / console.log (e.g. import.meta.env would dump process.env).
+  const enumerable = Object.keys(import.meta).sort();
+  expect(enumerable).toEqual(["dirname", "filename", "main", "resolve", "url"]);
+  for (const extra of ["dir", "file", "path", "require", "resolveSync", "env"]) {
+    expect(names).toContain(extra);
+    expect(enumerable).not.toContain(extra);
+  }
+
+  // The discoverable url resolves to the actual module url.
+  expect(import.meta.url).toBe(Object.getOwnPropertyDescriptor(import.meta, "url").get.call(import.meta));
+  expect(import.meta.url).toStartWith("file://");
+
+  // import.meta keeps a null prototype, matching Node.
+  expect(Object.getPrototypeOf(import.meta)).toBe(null);
+});
+
+// A context-less vm.SourceTextModule links through the main global. Like Node, its
+// import.meta starts empty: only initializeImportMeta adds members, and the Bun
+// members (url, dir, ...) must not appear.
+it("vm.SourceTextModule import.meta has no default members", async () => {
+  const m = new SourceTextModule("globalThis.__vmMeta = import.meta;", {
+    initializeImportMeta(meta) {
+      meta.prop = 42;
+    },
+  });
+  await m.link(() => {
+    throw new Error("no imports expected");
+  });
+  await m.evaluate();
+  const meta = globalThis.__vmMeta;
+  delete globalThis.__vmMeta;
+
+  expect(Object.getPrototypeOf(meta)).toBe(null);
+  expect(meta.url).toBeUndefined();
+  expect(Reflect.ownKeys(meta)).toEqual(["prop"]);
+  expect(meta.prop).toBe(42);
+});
+
+// https://github.com/oven-sh/bun/issues/32246
+it("import.meta is discoverable in a standalone module", async () => {
+  using dir = tempDir("import-meta-32246", {
+    "mod.mjs": `console.log(
+      JSON.stringify({
+        names: Object.getOwnPropertyNames(import.meta).sort(),
+        ownKeys: Reflect.ownKeys(import.meta).sort(),
+        urlDescriptorDefined: Object.getOwnPropertyDescriptor(import.meta, "url") !== undefined,
+        prototypeIsNull: Object.getPrototypeOf(import.meta) === null,
+      }),
+    );`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "mod.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // Parse defensively so a crash or non-JSON output surfaces stdout/stderr/exitCode
+  // instead of an opaque JSON.parse error. stderr content is not asserted because
+  // debug/ASAN lanes can emit benign noise.
+  let parsed;
+  try {
+    parsed = JSON.parse(stdout);
+  } catch {
+    throw new Error(`child did not print JSON (exit ${exitCode})\nstdout: ${stdout}\nstderr: ${stderr}`);
+  }
+
+  const keys = [
+    "dir",
+    "dirname",
+    "env",
+    "file",
+    "filename",
+    "main",
+    "path",
+    "require",
+    "resolve",
+    "resolveSync",
+    "url",
+  ];
+  expect(parsed).toEqual({
+    names: keys,
+    ownKeys: keys,
+    urlDescriptorDefined: true,
+    prototypeIsNull: true,
+  });
+  expect(exitCode).toBe(0);
 });
 
 it('require("bun") works', () => {

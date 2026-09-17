@@ -255,7 +255,10 @@ describe("fork() IPC", () => {
         // node never emits 'close' after subprocess.disconnect(), so wait for 'exit'.
         const exited = once(child, "exit");
         const stdout = readAll(child.stdout!);
-        await once(child, "message");
+        await Promise.race([
+          once(child, "message"),
+          exited.then(([code, signal]) => Promise.reject(new Error(`child exited before "ready": ${code} ${signal}`))),
+        ]);
         child.disconnect();
         const afterDisconnectCall = child.channel;
         expect({ afterDisconnectCall, child: JSON.parse(await stdout), exit: await exited }).toEqual({
@@ -298,6 +301,46 @@ describe("fork() IPC", () => {
         child.kill("SIGKILL");
       }
     });
+
+    // On Windows the handle write is asynchronous, so process.disconnect() runs before the handle waits for its ack.
+    it.concurrent.skipIf(isWindows)(
+      "process.channel stays while process.disconnect() waits for a sent handle's ack",
+      async () => {
+        using dir = tempDir("ipc-channel-null-ack-window", {
+          "child.js": `
+            ${show}
+            const server = require("node:net").createServer();
+            server.listen(0, "127.0.0.1", () => {
+              const seen = {};
+              process.on("disconnect", () => {
+                seen.atDisconnect = show(process.channel);
+                console.log(JSON.stringify(seen));
+                process.exit(0);
+              });
+              process.send("handle", server);
+              process.disconnect();
+              seen.afterDisconnectCall = show(process.channel);
+              seen.connected = process.connected;
+            });
+          `,
+        });
+        const child = fork(path.join(String(dir), "child.js"), {
+          env: bunEnv,
+          stdio: ["ignore", "pipe", "inherit", "ipc"],
+        });
+        try {
+          child.on("message", (_message, handle) => handle?.close());
+          const exited = once(child, "exit");
+          const stdout = readAll(child.stdout!);
+          expect({ child: JSON.parse(await stdout), exit: await exited }).toEqual({
+            child: { afterDisconnectCall: "object", connected: false, atDisconnect: null },
+            exit: [0, null],
+          });
+        } finally {
+          child.kill("SIGKILL");
+        }
+      },
+    );
   });
 });
 

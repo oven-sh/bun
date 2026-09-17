@@ -267,6 +267,18 @@ Bun.serve({
 
 ---
 
+## Connection: close
+
+`Bun.serve` keeps an HTTP/1.1 connection open for the next request. It closes the connection after the response in these cases:
+
+- The request has a `Connection: close` header.
+- The request is HTTP/1.0.
+- The `Response` that your handler returns has a `Connection: close` header.
+
+A client can send more requests on the same connection before it reads the first response (HTTP pipelining). Bun does not run the requests that follow one of these cases. It sends the response and closes the connection, as [RFC 9112](https://www.rfc-editor.org/rfc/rfc9112#section-9.6) requires.
+
+---
+
 ## export default syntax
 
 Instead of passing the server options into `Bun.serve`, you can `export default` them.

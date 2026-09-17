@@ -12,6 +12,7 @@
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/JSMap.h>
 #include <JavaScriptCore/JSMapInlines.h>
+#include <JavaScriptCore/MathCommon.h>
 
 namespace Bun {
 
@@ -65,7 +66,10 @@ JSC_DEFINE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncRecord, (JSGlob
     // https://github.com/nodejs/node/blob/v26.3.0/src/histogram.cc#L173-L185
     JSValue arg = callFrame->argument(0);
     int64_t value;
-    if (arg.isBigInt()) {
+    if (arg.isNumber() && arg.asNumber() >= 1 && JSC::isSafeInteger(arg.asNumber())) [[likely]] {
+        // Hot path: a valid sample does not pay for the validateInteger call.
+        value = static_cast<int64_t>(arg.asNumber());
+    } else if (arg.isBigInt()) {
         auto* bigInt = uncheckedDowncast<JSBigInt>(arg);
         if (JSBigInt::compare(bigInt, static_cast<int64_t>(1)) == JSBigInt::ComparisonResult::LessThan
             || JSBigInt::compare(bigInt, std::numeric_limits<int64_t>::max()) == JSBigInt::ComparisonResult::GreaterThan) {

@@ -1762,21 +1762,22 @@ test.skipIf(!isLinux)("sendfile serves an intact >=1MB file over a unix socket l
 test("Bun.file() route drops Transfer-Encoding and Content-Length from the Response headers", async () => {
   using dir = tempDir("serve-file-framing", { "a.txt": "file-body" });
   const file = Bun.file(join(String(dir), "a.txt"));
+  const both = new Response(file, {
+    headers: { "Transfer-Encoding": "chunked", "Content-Length": "3", "X-Kept": "yes" },
+  });
   await using server = Bun.serve({
     port: 0,
     hostname: "127.0.0.1",
     routes: {
       "/file-te": new Response(file, { headers: { "Transfer-Encoding": "chunked" } }),
       "/file-cl": new Response(file, { headers: { "Content-Length": "3" } }),
-      "/file-both": new Response(file, {
-        headers: { "Transfer-Encoding": "chunked", "Content-Length": "3", "X-Kept": "yes" },
-      }),
+      "/file-both": both,
     },
     fetch: () => new Response("fallback"),
   });
 
   async function raw(pathname: string) {
-    const { promise, resolve } = Promise.withResolvers<string>();
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
     let wire = "";
     await Bun.connect({
       hostname: "127.0.0.1",
@@ -1791,8 +1792,11 @@ test("Bun.file() route drops Transfer-Encoding and Content-Length from the Respo
         close() {
           resolve(wire);
         },
-        error() {
-          resolve(wire);
+        error(_s, e) {
+          reject(e);
+        },
+        connectError(_s, e) {
+          reject(e);
         },
       },
     });
@@ -1817,4 +1821,11 @@ test("Bun.file() route drops Transfer-Encoding and Content-Length from the Respo
     cl: { status: "HTTP/1.1 200 OK", framing: ["content-length: 9"], body: "file-body" },
     both: { status: "HTTP/1.1 200 OK", framing: ["content-length: 9", "x-kept: yes"], body: "file-body" },
   });
+
+  // The route takes a snapshot. The Response the user registered is unchanged.
+  expect({
+    te: both.headers.get("transfer-encoding"),
+    cl: both.headers.get("content-length"),
+    kept: both.headers.get("x-kept"),
+  }).toEqual({ te: "chunked", cl: "3", kept: "yes" });
 });

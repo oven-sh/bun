@@ -16,7 +16,6 @@ use bun_uws::{AnyRequest, AnyResponse};
 use crate::node::types::PathOrFileDescriptor;
 use crate::server::file_response_stream::{StartOptions as FileResponseStreamOptions, StreamOwner};
 use crate::server::jsc::{JSGlobalObject, JSValue, JsResult, VirtualMachine};
-use bun_jsc::HTTPHeaderName;
 use bun_jsc::bun_string_jsc;
 
 use crate::server::{AnyServer, FileResponseStream, HTTPStatusText, RangeRequest};
@@ -37,7 +36,6 @@ pub struct FileRoute {
     // event loop.
     stat_hash: Cell<StatHash>,
     has_last_modified_header: bool,
-    has_content_length_header: bool,
     has_content_range_header: bool,
     has_date_header: bool,
 }
@@ -50,9 +48,14 @@ pub struct InitOptions<'a> {
 
 use crate::webcore::headers_ref::blob_content_type;
 
-#[inline]
+/// The route frames the body from the file size on each request, so a
+/// user-supplied length or transfer coding is dropped from the snapshot.
 fn headers_from(fetch_headers: Option<&FetchHeaders>, blob: &Blob) -> Headers {
-    bun_http_jsc::headers_jsc::from_fetch_headers(fetch_headers, blob_content_type(blob))
+    let mut headers =
+        bun_http_jsc::headers_jsc::from_fetch_headers(fetch_headers, blob_content_type(blob));
+    headers.remove(b"transfer-encoding");
+    headers.remove(b"content-length");
+    headers
 }
 
 #[inline]
@@ -115,7 +118,6 @@ impl FileRoute {
             ref_count: Cell::new(1),
             server: Cell::new(server),
             has_last_modified_header: headers.get(b"last-modified").is_some(),
-            has_content_length_header: headers.get(b"content-length").is_some(),
             has_content_range_header: headers.get(b"content-range").is_some(),
             has_date_header: headers.get(b"date").is_some(),
             blob,
@@ -166,13 +168,6 @@ impl FileRoute {
                     "expected blob not to be heap-allocated"
                 );
                 *body_value = BodyValue::Blob(blob.dupe());
-
-                // The route frames the body from the file size on each request.
-                if let Some(h) = response.get_init_headers_mut() {
-                    h.fast_remove(HTTPHeaderName::TransferEncoding);
-                    h.fast_remove(HTTPHeaderName::ContentLength);
-                }
-
                 let headers = headers_from(response.get_init_headers(), &blob);
                 let status_code = response.status_code();
 
@@ -226,10 +221,6 @@ impl FileRoute {
                 resp.write_header(b"last-modified", last_modified);
             }
             self.stat_hash.set(sh);
-        }
-
-        if self.has_content_length_header {
-            resp.mark_wrote_content_length_header();
         }
     }
 

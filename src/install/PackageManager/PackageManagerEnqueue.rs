@@ -2909,19 +2909,10 @@ fn get_or_put_resolved_package(
                 }
 
                 // transitive folder dependencies do not have their dependencies resolved
-                if crate::bin::bin_target_escapes_package_dir(this.lockfile.str(&folder)) {
-                    // overrides/resolutions are only ever parsed from the root
-                    // package.json, so a folder path that reached here via an
-                    // override was written by the user and is trusted the same
-                    // as a direct dependency of the root.
-                    let buf = this.lockfile.buffers.string_bytes.as_slice();
-                    if !this.lockfile.overrides.contains_name(
-                        dependency.name_hash,
-                        dependency.name.slice(buf),
-                        buf,
-                    ) {
-                        break 'res FolderResolutionValue::Err(crate::Error::MissingPackageJSON);
-                    }
+                if crate::bin::bin_target_escapes_package_dir(this.lockfile.str(&folder))
+                    && !this.lockfile.is_trusted_folder_dependency(dependency_id)
+                {
+                    break 'res FolderResolutionValue::Err(crate::Error::MissingPackageJSON);
                 }
 
                 let mut package = Package::default();

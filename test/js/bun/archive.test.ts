@@ -677,8 +677,9 @@ describe("Bun.Archive", () => {
         expect(fs.readFileSync(join(String(dir), "target.txt"), "utf8")).toBe("old");
       });
 
-      // root can open a read-only file for writing, so the old open succeeds there.
-      test.skipIf(isWindows || process.getuid?.() === 0)("replaces a read-only file", async () => {
+      // root can open a read-only file for writing. A write into the old
+      // file keeps its 0444, the new file has the mode of the entry.
+      test.skipIf(isWindows)("replaces a read-only file", async () => {
         using dir = tempDir("archive-replace-readonly", {
           "a.txt": "old",
         });
@@ -688,6 +689,7 @@ describe("Bun.Archive", () => {
 
         expect(count).toBe(1);
         expect(fs.readFileSync(join(String(dir), "a.txt"), "utf8")).toBe("new");
+        expect(fs.statSync(join(String(dir), "a.txt")).mode & 0o777).toBe(0o644 & ~process.umask());
       });
 
       // The old name cannot be removed from a directory the user cannot write.
@@ -733,6 +735,31 @@ describe("Bun.Archive", () => {
             }
 
             expect(fs.readFileSync(join(String(dir), "target.txt"), "utf8")).toBe("old");
+          } finally {
+            fs.chmodSync(locked, 0o755);
+          }
+        },
+      );
+
+      test.skipIf(isWindows || process.getuid?.() === 0)(
+        "does not write through a hard link that cannot be removed",
+        async () => {
+          using dir = tempDir("archive-replace-locked-hardlink", {
+            "store/a.txt": "old",
+            "locked/.keep": "",
+          });
+          const locked = join(String(dir), "locked");
+          fs.linkSync(join(String(dir), "store/a.txt"), join(locked, "a.txt"));
+          fs.chmodSync(locked, 0o555);
+          try {
+            const extracted = new Bun.Archive({ "locked/a.txt": "new" }).extract(String(dir), options);
+            if (options) {
+              expect(await extracted).toBe(0);
+            } else {
+              await expect(extracted).rejects.toThrow("ReadError");
+            }
+
+            expect(fs.readFileSync(join(String(dir), "store/a.txt"), "utf8")).toBe("old");
           } finally {
             fs.chmodSync(locked, 0o755);
           }

@@ -1022,19 +1022,29 @@ pub fn file_mode(perm: bun_sys::Mode, readers: FileReaders) -> bun_sys::Mode {
 /// Opens a regular file entry for writing, replacing an existing file as GNU tar does (#43132).
 #[cfg(not(windows))]
 pub fn create_entry_file(dir: Fd, path: &ZStr, mode: bun_sys::Mode) -> bun_sys::Maybe<Fd> {
-    let flags = bun_sys::O::WRONLY | bun_sys::O::CREAT;
-    match bun_sys::openat(dir, path, flags | bun_sys::O::EXCL, mode) {
+    let flags = bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::EXCL;
+    match bun_sys::openat(dir, path, flags, mode) {
         Err(err) if err.get_errno() == bun_sys::E::EEXIST => match bun_sys::unlinkat(dir, path) {
-            Ok(()) => bun_sys::openat(dir, path, flags | bun_sys::O::EXCL, mode),
-            Err(_) => bun_sys::openat(
-                dir,
-                path,
-                flags | bun_sys::O::TRUNC | bun_sys::O::NOFOLLOW,
-                mode,
-            ),
+            Ok(()) => bun_sys::openat(dir, path, flags, mode),
+            Err(unlink_err) => truncate_entry_file(dir, path, unlink_err),
         },
         result => result,
     }
+}
+
+/// The in-place path for a file that cannot be removed (a parent the user
+/// cannot write, a mount point). Only a regular file with one name is
+/// truncated, so a symlink or a hard link is never written through.
+#[cfg(not(windows))]
+fn truncate_entry_file(dir: Fd, path: &ZStr, unlink_err: bun_sys::Error) -> bun_sys::Maybe<Fd> {
+    let fd = bun_sys::openat(dir, path, bun_sys::O::WRONLY | bun_sys::O::NOFOLLOW, 0)?;
+    let guard = scopeguard::guard(fd, |fd| fd.close());
+    let stat = bun_sys::fstat(fd)?;
+    if !bun_sys::is_regular_file(stat.st_mode as bun_sys::Mode) || stat.st_nlink != 1 {
+        return Err(unlink_err);
+    }
+    bun_sys::ftruncate(fd, 0)?;
+    Ok(scopeguard::ScopeGuard::into_inner(guard))
 }
 
 /// Validates that a symlink target doesn't escape the extraction directory.

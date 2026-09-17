@@ -250,9 +250,7 @@ pub fn load_config_with_cmd_args(
     load_config(cmd, args.option(b"--config"), ctx)
 }
 
-/// `./bunfig.toml` for the entry points that argument parsing leaves without a config:
-/// `bun run`, `bun repl`, the `node` shim and compiled executables. Does nothing when a
-/// config is already loaded. A file that does not parse ends the process, as in `load_config`.
+/// `bun run`, `bun repl`, the `node` shim and compiled executables load `./bunfig.toml` here.
 pub fn load_cwd_config_or_exit(ctx: Context<'_>) {
     if ctx.debug.loaded_bunfig {
         return;

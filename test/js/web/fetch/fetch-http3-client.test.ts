@@ -1,8 +1,9 @@
 import { gunzipSync, gzipSync, type Server } from "bun";
 import { fetchH3Internals } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir, tls } from "harness";
+import { bunEnv, bunExe, isLinux, tempDir, tls } from "harness";
 import { createPrivateKey } from "node:crypto";
+import { join } from "node:path";
 import { listen } from "node:quic";
 
 // In-process server with `http1: false` so the build under test binds UDP only.
@@ -874,6 +875,126 @@ test("retries on a fresh session when a pooled session is stale (port reuse)", a
   } finally {
     void b.stop(true);
   }
+});
+
+// Same retry, but the reconnect fails inside `connect()` itself. A QUIC
+// connect to a resolved hostname probes each address with a throwaway UDP
+// `connect(2)` (quic.c, us_quic_connect_result) and gives up when no entry is
+// reachable. The shim lets the first probe through and refuses every later
+// one, so the handshake failure below retries onto a connect that fails
+// before it returns. On that path the request must be failed once, by the
+// retry, and the session `connect()` opened for it must take nothing with it.
+const PROBE_SHIM_C = /* c */ `
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <errno.h>
+#include <netinet/in.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/socket.h>
+
+static int (*real_connect)(int, const struct sockaddr *, socklen_t);
+static int origin_port;
+static int allow;
+static int seen;
+
+static void init(void) {
+    if (real_connect) return;
+    real_connect = dlsym(RTLD_NEXT, "connect");
+    const char *p = getenv("H3_ORIGIN_PORT");
+    origin_port = p ? atoi(p) : 0;
+    const char *a = getenv("H3_ALLOW_PROBES");
+    allow = a ? atoi(a) : 1;
+}
+
+static int is_udp(int fd) {
+    int type = 0; socklen_t len = sizeof(type);
+    if (getsockopt(fd, SOL_SOCKET, SO_TYPE, &type, &len) != 0) return 0;
+    return type == SOCK_DGRAM;
+}
+
+int connect(int fd, const struct sockaddr *addr, socklen_t len) {
+    init();
+    if (origin_port && addr && is_udp(fd)) {
+        /* Refuse an IPv6 entry for the origin the way a host without an IPv6
+         * route does. The listener is dual-stack, so this only pins which
+         * resolved address both connects use: the IPv4 one, which the counter
+         * below governs whatever order /etc/hosts gives. */
+        if (addr->sa_family == AF_INET6
+                && ntohs(((const struct sockaddr_in6 *) addr)->sin6_port) == origin_port) {
+            errno = EHOSTUNREACH;
+            return -1;
+        }
+        if (addr->sa_family == AF_INET
+                && ntohs(((const struct sockaddr_in *) addr)->sin_port) == origin_port) {
+            int n = __atomic_fetch_add(&seen, 1, __ATOMIC_RELAXED);
+            if (n >= allow) {
+                fprintf(stderr, "[shim] probe %d refused\\n", n);
+                errno = EACCES;
+                return -1;
+            }
+            fprintf(stderr, "[shim] probe %d allowed\\n", n);
+        }
+    }
+    return real_connect(fd, addr, len);
+}
+`;
+
+const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
+
+test.skipIf(!isLinux || !cc)("a retry whose reconnect fails before it returns rejects once", async () => {
+  // rejectUnauthorized with the self-signed cert fails the handshake, so the
+  // request's stream closes before any response header: the retry trigger.
+  // The hostname (not an IP literal) is what makes both connects take the
+  // resolver path, where the refused probe makes `connect()` fail at once.
+  // `localhost` answers from `is_localhost_name` without the resolver, as
+  // `[::1, 127.0.0.1]` reported as a cache hit, so neither connect waits for
+  // DNS and the shim below decides both.
+  const fixture = /* js */ `
+    const url = "https://localhost:" + process.env.H3_ORIGIN_PORT + "/hello";
+    const opts = { protocol: "http3", tls: { rejectUnauthorized: true } };
+    const reason = e => e?.code ?? e?.name ?? String(e);
+    const first = await fetch(url, opts).then(r => "status " + r.status, reason);
+    // A second request proves the client still works after the failed retry,
+    // and keeps the process alive past the point where it used to crash.
+    const second = await fetch(url, opts).then(r => "status " + r.status, reason);
+    console.log(JSON.stringify({ first, second }));
+  `;
+  using dir = tempDir("h3-retry-connect", { "shim.c": PROBE_SHIM_C, "fixture.ts": fixture });
+  const shim = join(String(dir), "shim.so");
+  await using build = Bun.spawn({
+    cmd: [cc!, "-shared", "-fPIC", "-O1", "-o", shim, join(String(dir), "shim.c"), "-ldl"],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [buildErr, buildExit] = await Promise.all([build.stderr.text(), build.exited]);
+  if (buildExit !== 0) throw new Error("shim compile failed: " + buildErr);
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.ts"],
+    cwd: String(dir),
+    env: {
+      ...bunEnv,
+      LD_PRELOAD: bunEnv.LD_PRELOAD ? `${shim}:${bunEnv.LD_PRELOAD}` : shim,
+      H3_ORIGIN_PORT: String(server.port),
+      H3_ALLOW_PROBES: "1",
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const probes = stderr.split("\n").filter(line => line.startsWith("[shim] probe"));
+  // The first connect reaches the origin; the retry's connect does not.
+  expect(probes.slice(0, 2)).toEqual(["[shim] probe 0 allowed", "[shim] probe 1 refused"]);
+  // The retried request keeps the error of the stream that closed, and the
+  // next request reports its own connect error. Without the fix `connect()`
+  // fails the retried request itself, which frees the client the retry still
+  // holds, and the process aborts with nothing on stdout.
+  expect({ stdout: stdout.trim(), signal: proc.signalCode, exitCode }).toEqual({
+    stdout: '{"first":"HTTP3HandshakeFailed","second":"ECONNREFUSED"}',
+    signal: null,
+    exitCode: 0,
+  });
 });
 
 // Subprocess so the experimental flag is process-scoped and the in-process

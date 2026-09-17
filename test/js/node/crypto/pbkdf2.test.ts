@@ -218,6 +218,15 @@ test("keylen=0 fails async via callback", async () => {
   });
 });
 
+// At the limits the range check passes and the digest check, which runs after it, throws instead.
+test("iterations and keylen at the limits pass the range check", () => {
+  const digestError = expect.objectContaining({ code: "ERR_CRYPTO_INVALID_DIGEST" });
+  expect(() => crypto.pbkdf2Sync("password", "salt", 1, 8, "md55")).toThrow(digestError);
+  expect(() => crypto.pbkdf2Sync("password", "salt", 2147483647, 8, "md55")).toThrow(digestError);
+  expect(() => crypto.pbkdf2Sync("password", "salt", 1, 0, "md55")).toThrow(digestError);
+  expect(() => crypto.pbkdf2Sync("password", "salt", 1, 2147483647, "md55")).toThrow(digestError);
+});
+
 [0, -1, 2147483648].forEach(input => {
   test(`${input} iterations out of range`, () => {
     const message = `The value of "iterations" is out of range. It must be >= 1 && <= 2147483647. Received ${input}`;

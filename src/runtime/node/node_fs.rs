@@ -13,18 +13,18 @@ use bun_core::Environment;
 use bun_core::{String as BunString, Utf8WithString, ZStr};
 use bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
 use bun_io::KeepAlive;
-use bun_jsc::AbortSignal;
 use bun_jsc::debugger::AsyncTaskTracker;
 use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::AbortSignal;
 use bun_jsc::{
     ArrayBuffer, EventLoopHandle, JSGlobalObject, JSValue, JsResult, PinnedArrayBuffer,
     StringJsc as _,
 };
 use bun_paths::{self as paths, OSPathBuffer, OSPathChar, OSPathSliceZ, PathBuffer};
 use bun_sys::FdExt as _;
-use bun_sys::{self as sys, E, Fd as FD, Maybe, Mode, SystemErrno};
-use bun_threading::UnboundedQueue;
+use bun_sys::{self as sys, Fd as FD, Maybe, Mode, SystemErrno, E};
 use bun_threading::work_pool::{IntrusiveWorkTask as _, Task as WorkPoolTask, WorkPool};
+use bun_threading::UnboundedQueue;
 
 // ──────────────────────────────────────────────────────────────────────────
 // `Maybe(T)` shim — `crate::node::Maybe` is the same `Result<T, Error>` alias
@@ -227,8 +227,8 @@ use bun_resolver::fs::FileSystem;
 // here so misuse is a compile error, not a silent null.
 #[cfg(windows)]
 use bun_sys::{
-    ReturnCodeExt as _,
     windows::{self, libuv as uv},
+    ReturnCodeExt as _,
 };
 
 // Syscall = `bun_sys::sys_uv` on Windows, `bun_sys` otherwise
@@ -2593,9 +2593,9 @@ mod _async_tasks {
     }
 } // mod _async_tasks
 pub use _async_tasks::{
-    AsyncCpTask, AsyncFSTask, AsyncReaddirRecursiveTask, CpSingleTask, FsArgument, FsReturn,
-    IntoResultListEntry, NewAsyncCpTask, ResultListEntry, ResultListEntryValue, ShellAsyncCpTask,
-    UVFSRequest, async_,
+    async_, AsyncCpTask, AsyncFSTask, AsyncReaddirRecursiveTask, CpSingleTask, FsArgument,
+    FsReturn, IntoResultListEntry, NewAsyncCpTask, ResultListEntry, ResultListEntryValue,
+    ShellAsyncCpTask, UVFSRequest,
 };
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -3864,13 +3864,16 @@ pub mod args {
                 if position.order(-1i64) == core::cmp::Ordering::Less
                     || position.order(max_position) == core::cmp::Ordering::Greater
                 {
-                    let position_bytes = position.to_string(ctx)?.to_owned_slice();
+                    // Node spells this range with "&&" and inspects the bigint with an
+                    // "n" suffix (lib/internal/fs/utils.js validatePosition).
+                    let range = format!(">= -1 && <= {max_position}");
+                    let mut received = position.to_string(ctx)?.to_owned_slice();
+                    received.push(b'n');
                     return Err(ctx.throw_range_error(
-                        &position_bytes[..],
+                        &received[..],
                         bun_jsc::RangeErrorOptions {
                             field_name: b"position",
-                            min: -1,
-                            max: max_position,
+                            msg: range.as_bytes(),
                             ..Default::default()
                         },
                     ));

@@ -536,6 +536,42 @@ describe("frames, a Ping and a Close frame that arrive with the 101, and then th
   }
 });
 
+describe("close() from a handler while a peer-ended connection delivers its held frames", () => {
+  for (const mode of MODES) {
+    it(`reports the code and the reason of that close() (${mode.name})`, async () => {
+      const proxy = mode.proxy ? await pipingConnectProxy(mode.proxy === "https") : undefined;
+      try {
+        using peer = await rawPeer(mode.secure, { withResponse: [frame("m1"), frame("m2")], end: true });
+        using echo = echoServer();
+        const clock = new WebSocket(`ws://localhost:${echo.port}`);
+        await open(clock);
+        const ws = new WebSocket(peer.url, {
+          tls: { rejectUnauthorized: false },
+          ...(proxy ? { proxy: `${mode.proxy}://127.0.0.1:${proxy.port}` } : {}),
+        });
+        expect(ws.pause()).toBe(true);
+        const received: string[] = [];
+        ws.onmessage = ({ data }) => {
+          received.push(data);
+          ws.close(4000, "bye");
+        };
+        const closed = new Promise<CloseEvent>(resolve => (ws.onclose = resolve));
+        await closedOrResumed(ws, clock, closed);
+        const { code, reason, wasClean } = await closed;
+        expect({ received, code, reason, wasClean }).toEqual({
+          received: ["m1"],
+          code: 4000,
+          reason: "bye",
+          wasClean: true,
+        });
+        clock.close();
+      } finally {
+        proxy?.close();
+      }
+    });
+  }
+});
+
 describe("ws package", () => {
   it("pause() inside the open handler holds the frames that arrive with the 101", async () => {
     const MESSAGES = ["m1", "m2", "m3"];

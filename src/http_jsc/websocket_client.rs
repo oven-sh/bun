@@ -1153,19 +1153,21 @@ impl<const SSL: bool> WebSocket<SSL> {
             // backpressure); don't enqueue a second close frame on top of it.
             return;
         }
-        if !self.has_tcp() || self.peer_ended.get() {
-            match dispatch_code {
-                // The peer's Close frame still names the close code, although it cannot be echoed.
-                Some(code) if strings::is_valid_utf8(&body[..body_len]) => {
-                    let reason = bun_core::String::clone_utf8(&body[..body_len]);
-                    self.clear_data();
-                    self.dispatch_close(code, reason);
-                }
-                _ => {
-                    self.dispatch_abrupt_close(ErrorCode::Ended);
-                    self.clear_data();
-                }
+        if self.peer_ended.get() {
+            // Nothing goes out any more, but the peer's Close frame or a handler's `close()` still names the code.
+            let body = &body[..body_len];
+            if !strings::is_valid_utf8(body) {
+                self.terminate(ErrorCode::InvalidUtf8);
+                return;
             }
+            let reason = bun_core::String::clone_utf8(body);
+            self.clear_data();
+            self.dispatch_close(dispatch_code.unwrap_or(code), reason);
+            return;
+        }
+        if !self.has_tcp() {
+            self.dispatch_abrupt_close(ErrorCode::Ended);
+            self.clear_data();
             return;
         }
         // shutdown_read/shutdown are deferred to shutdown_after_close_frame()
@@ -1463,7 +1465,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         // before send_close_with_body's own clear_data/dispatch_close run.
         let _guard = RefPtr::from_this(this);
 
-        if !this.has_tcp() {
+        if !this.has_tcp() && !this.peer_ended.get() {
             return;
         }
         let mut reason_buf = [0u8; MAX_CONTROL_PAYLOAD];

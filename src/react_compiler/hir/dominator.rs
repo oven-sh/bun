@@ -181,15 +181,28 @@ fn dfs_postorder(
     visited: &mut HashSet<BlockId>,
     postorder: &mut Vec<BlockId>,
 ) {
+    // The walk keeps its own stack: its depth follows the length of the CFG.
+    let successors = |id: BlockId| -> std::vec::IntoIter<BlockId> {
+        let succs: Vec<BlockId> = nodes
+            .get(id)
+            .map(|node| node.succs.iter().copied().collect())
+            .unwrap_or_default();
+        succs.into_iter()
+    };
     if !visited.insert(id) {
         return;
     }
-    if let Some(node) = nodes.get(id) {
-        for &succ in &node.succs {
-            dfs_postorder(succ, nodes, visited, postorder);
+    let mut stack: Vec<(BlockId, std::vec::IntoIter<BlockId>)> = vec![(id, successors(id))];
+    while let Some((id, succs)) = stack.last_mut() {
+        if let Some(succ) = succs.next() {
+            if visited.insert(succ) {
+                stack.push((succ, successors(succ)));
+            }
+        } else {
+            postorder.push(*id);
+            stack.pop();
         }
     }
-    postorder.push(id);
 }
 
 // =============================================================================

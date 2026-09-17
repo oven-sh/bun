@@ -41,6 +41,7 @@ pub(crate) fn analyse_functions<F>(
 where
     F: FnMut(&HirFunction, &Environment),
 {
+    crate::stack_guard::check()?;
     // Collect FunctionIds from FunctionExpression/ObjectMethod instructions.
     // We collect first to avoid borrow conflicts with env.functions.
     let mut inner_func_ids: Vec<FunctionId> = Vec::new();

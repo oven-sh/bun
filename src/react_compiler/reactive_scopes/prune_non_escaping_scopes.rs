@@ -353,6 +353,9 @@ impl<'a> CollectDependenciesVisitor<'a> {
         lvalue: Option<IdentifierId>,
         state: &mut CollectState,
     ) -> (Vec<LValueMemoization>, Vec<(IdentifierId, EvaluationOrder)>) {
+        if !crate::stack_guard::is_safe_to_recurse() {
+            return (Vec::new(), Vec::new());
+        }
         match value {
             ReactiveValue::ConditionalExpression {
                 consequent,
@@ -1130,6 +1133,7 @@ fn compute_memoized_identifiers(
         scope_nodes: &mut IdMap<ScopeId, (Vec<DeclarationId>, bool)>,
         memoized: &mut HashSet<DeclarationId>,
     ) -> Result<bool, CompilerError> {
+        crate::stack_guard::check()?;
         let Some(&(level, _, _, _, seen)) = identifier_nodes.get(id) else {
             return Ok(false);
         };

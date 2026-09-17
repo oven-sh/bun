@@ -98,7 +98,7 @@ fn ensure_timing_dump_registered() {
 pub(crate) fn ensure_timing_dump_registered() {}
 
 #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
-macro_rules! timed {
+macro_rules! time_pass {
     ($name:literal, $body:expr) => {{
         if timing::enabled() {
             let t0 = std::time::Instant::now();
@@ -111,10 +111,21 @@ macro_rules! timed {
     }};
 }
 #[cfg(not(any(debug_assertions, bun_asan, feature = "fixtures")))]
-macro_rules! timed {
+macro_rules! time_pass {
     ($name:literal, $body:expr) => {
         $body
     };
+}
+
+/// Run one pass. A pass that ran out of stack stopped part way, so the compile fails here (see `stack_guard`).
+macro_rules! timed {
+    ($name:literal, $body:expr) => {{
+        let result = time_pass!($name, $body);
+        if crate::stack_guard::overflowed() {
+            return Err(crate::stack_guard::error());
+        }
+        result
+    }};
 }
 
 /// Run the compilation pipeline on a single function.
@@ -235,6 +246,11 @@ pub(crate) fn compile_fn(
         compiled_outlined.push(o);
     }
 
+    #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
+    if crate::stack_guard::overflowed() {
+        return Err(crate::stack_guard::error());
+    }
+
     if let Some(uid_names) = env.take_uid_known_names() {
         context.merge_uid_known_names(
             &uid_names
@@ -308,7 +324,10 @@ pub(crate) fn compile_outlined_fn(
     };
 
     let func_node = FunctionNode::Function(&outlined_decl);
-    let mut hir = lowering::lower(&func_node, fn_name, &*host, &mut env, import_bindings)?;
+    let mut hir = timed!(
+        "Lowering",
+        lowering::lower(&func_node, fn_name, &*host, &mut env, import_bindings)
+    )?;
 
     if env.has_errors() {
         return Err(env.take_errors());
@@ -317,8 +336,10 @@ pub(crate) fn compile_outlined_fn(
     let (reactive_fn, unique_identifiers) = run_hir_passes(&mut hir, &mut env, context)?;
 
     let mut cg = Codegen::new(host, arena);
-    let mut codegen_result =
-        codegen::codegen_function(&reactive_fn, &mut env, &mut cg, context, unique_identifiers)?;
+    let mut codegen_result = timed!(
+        "Codegen",
+        codegen::codegen_function(&reactive_fn, &mut env, &mut cg, context, unique_identifiers)
+    )?;
 
     if env.has_errors() {
         return Err(env.take_errors());
@@ -626,7 +647,7 @@ fn run_hir_passes(
     timed!(
         "PruneNonReactiveDependencies",
         crate::reactive_scopes::prune_non_reactive_dependencies(&mut reactive_fn, env)
-    );
+    )?;
     timed!(
         "PruneUnusedScopes",
         crate::reactive_scopes::prune_unused_scopes(&mut reactive_fn, env)

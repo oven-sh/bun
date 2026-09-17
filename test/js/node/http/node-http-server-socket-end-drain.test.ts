@@ -1,5 +1,10 @@
-import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tls as tlsCert } from "harness";
+import { once } from "node:events";
+import http, { type IncomingMessage, type ServerResponse } from "node:http";
+import https from "node:https";
+import net from "node:net";
+import tls from "node:tls";
 
 // res.socket.end() half-closes the connection; the server must still release the
 // socket (drain the unconsumed body on epoll, or take kqueue's EVFILT_WRITE
@@ -56,4 +61,73 @@ test("server.close() completes after res.socket.end() with a 2 MB upload in flig
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, stderr, exitCode }).toEqual({ stdout: "closed destroyed=true\n", stderr: "", exitCode: 0 });
+});
+
+// In Node the response and the raw socket share one net.Socket Writable, so the
+// FIN of socket.end() / destroySoon() follows every byte the response wrote.
+describe.each(["http", "https"] as const)("%s: the raw socket's FIN follows the bytes the response wrote", protocol => {
+  type Handler = (req: IncomingMessage, res: ServerResponse) => void;
+  const cases: [string, Handler, string][] = [
+    [
+      "res.write() then req.socket.destroySoon()",
+      (req, res) => {
+        res.write("PART1");
+        req.socket.destroySoon();
+      },
+      "5\r\nPART1\r\n",
+    ],
+    [
+      "res.write() then res.socket.end()",
+      (req, res) => {
+        res.write("PART1");
+        res.socket!.end();
+      },
+      "5\r\nPART1\r\n",
+    ],
+    [
+      "res.write() then res.socket.end() from a microtask",
+      (req, res) => {
+        res.write("PART1");
+        queueMicrotask(() => res.socket!.end());
+      },
+      "5\r\nPART1\r\n",
+    ],
+    [
+      "res.flushHeaders() then res.socket.end()",
+      (req, res) => {
+        res.flushHeaders();
+        res.socket!.end();
+      },
+      "",
+    ],
+  ];
+
+  test.concurrent.each(cases)("%s", async (_name, respond, body) => {
+    const onRequest: Handler = (req, res) => {
+      res.writeHead(200, { "Content-Type": "text/plain" });
+      respond(req, res);
+    };
+    await using server = protocol === "https" ? https.createServer(tlsCert, onRequest) : http.createServer(onRequest);
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as net.AddressInfo;
+
+    const client =
+      protocol === "https"
+        ? tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false })
+        : net.connect(port, "127.0.0.1");
+    const chunks: Buffer[] = [];
+    client.on("data", chunk => chunks.push(chunk));
+    // The server can close before the client's own FIN lands; only the bytes matter here.
+    client.on("error", () => {});
+    const closed = new Promise(resolve => client.once("close", resolve));
+    client.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+    await closed;
+
+    const received = Buffer.concat(chunks).toString("latin1");
+    const headEnd = received.indexOf("\r\n\r\n");
+    expect({
+      statusLine: received.slice(0, received.indexOf("\r\n")),
+      body: headEnd === -1 ? null : received.slice(headEnd + 4),
+    }).toEqual({ statusLine: "HTTP/1.1 200 OK", body });
+  });
 });

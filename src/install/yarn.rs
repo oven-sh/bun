@@ -166,8 +166,15 @@ impl<'a> Entry<'a> {
         let path = host_and_path
             .strip_prefix(b"registry.npmjs.org/")
             .or_else(|| host_and_path.strip_prefix(b"registry.yarnpkg.com/"))?;
-        let name = &path[..strings::index_of(path, b"/-/")?];
-        (!name.is_empty()).then_some(name)
+        // `-` is a valid package name, so the first "/-/" can be inside `@scope/-`.
+        let scope_len = if path.starts_with(b"@") {
+            strings::index_of_char_usize(path, b'/')? + 1
+        } else {
+            0
+        };
+        let name_len = scope_len + strings::index_of_char_usize(&path[scope_len..], b'/')?;
+        let (name, rest) = path.split_at(name_len);
+        (rest.starts_with(b"/-/") && strings::is_npm_package_name(name)).then_some(name)
     }
 
     pub(crate) fn parse_git_url(

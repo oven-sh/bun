@@ -904,26 +904,37 @@ needs-node-types@1.0.0:
   });
 
   test("package names are only read from the path of default registry tarball URLs", async () => {
-    // Dependencies declared as tarball URLs. A tarball on registry.npmjs.org / registry.yarnpkg.com
-    // is named after the path segment(s) before "/-/"; every other URL keeps the dependency's name.
-    const tarballs = {
-      "host-after-separator": "https://evil.example/-/registry.npmjs.org/x.tgz",
-      "nothing-before-separator": "https://registry.npmjs.org/-/y.tgz",
-      "empty-segment-before-separator": "https://registry.npmjs.org//-/z.tgz",
-      "mirror-with-registry-in-path": "https://registry.mirror.example/registry.npmjs.org/other/-/other-1.0.0.tgz",
-      "dash-package": "https://registry.npmjs.org/-/-/--0.0.1.tgz",
-      "scoped-npmjs-https": "https://registry.npmjs.org/@scope/real/-/real-1.0.0.tgz",
-      "npmjs-http": "http://registry.npmjs.org/real-a/-/real-a-1.0.0.tgz",
-      "yarnpkg-https": "https://registry.yarnpkg.com/real-b/-/real-b-1.0.0.tgz",
-      "yarnpkg-http": "http://registry.yarnpkg.com/real-c/-/real-c-1.0.0.tgz",
+    // Dependencies declared as tarball URLs: dependency name -> [url, package name in bun.lock].
+    // The migrator reads the package name from "<default registry>/<name>/-/<file>" when <name>
+    // is a valid package name. Every other URL keeps the name of the dependency.
+    const rows: Record<string, [url: string, packageName: string]> = {
+      "host-after-separator": ["https://evil.example/-/registry.npmjs.org/x.tgz", "host-after-separator"],
+      "mirror-with-registry-in-path": [
+        "https://registry.mirror.example/registry.npmjs.org/other/-/other-1.0.0.tgz",
+        "mirror-with-registry-in-path",
+      ],
+      "no-separator": ["https://registry.npmjs.org/w.tgz", "no-separator"],
+      "nothing-before-separator": ["https://registry.npmjs.org/-/y.tgz", "nothing-before-separator"],
+      "scope-before-separator": ["https://registry.npmjs.org/@scope/-/y.tgz", "scope-before-separator"],
+      "empty-segment-before-separator": ["https://registry.npmjs.org//-/z.tgz", "empty-segment-before-separator"],
+      "empty-segment-after-scope": ["https://registry.npmjs.org/@scope//-/z.tgz", "empty-segment-after-scope"],
+      "extra-path-segment": ["https://registry.npmjs.org/a/b/-/b-1.0.0.tgz", "extra-path-segment"],
+      "dot-dot-before-separator": ["https://registry.npmjs.org/../-/x-1.0.0.tgz", "dot-dot-before-separator"],
+      "dash-package": ["https://registry.npmjs.org/-/-/--0.0.1.tgz", "-"],
+      "scoped-dash-package": ["https://registry.npmjs.org/@scope/-/-/--0.0.1.tgz", "@scope/-"],
+      "scoped-npmjs-https": ["https://registry.npmjs.org/@scope/real/-/real-1.0.0.tgz", "@scope/real"],
+      "npmjs-http": ["http://registry.npmjs.org/real-a/-/real-a-1.0.0.tgz", "real-a"],
+      "yarnpkg-https": ["https://registry.yarnpkg.com/real-b/-/real-b-1.0.0.tgz", "real-b"],
+      "yarnpkg-http": ["http://registry.yarnpkg.com/real-c/-/real-c-1.0.0.tgz", "real-c"],
     };
+    const dependencies = Object.fromEntries(Object.entries(rows).map(([dependency, [url]]) => [dependency, url]));
 
     await using tmpDir = tempDir("yarn-migration-tarball-names", {
-      "package.json": JSON.stringify({ name: "tarball-names-test", version: "1.0.0", dependencies: tarballs }, null, 2),
+      "package.json": JSON.stringify({ name: "tarball-names-test", version: "1.0.0", dependencies }, null, 2),
       "yarn.lock":
         "# yarn lockfile v1\n\n\n" +
-        Object.entries(tarballs)
-          .map(([name, url]) => `"${name}@${url}":\n  version "1.0.0"\n  resolved "${url}"\n`)
+        Object.entries(dependencies)
+          .map(([dependency, url]) => `"${dependency}@${url}":\n  version "1.0.0"\n  resolved "${url}"\n`)
           .join("\n"),
     });
 
@@ -951,23 +962,17 @@ needs-node-types@1.0.0:
     });
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(exitCode, stdout + stderr).toBe(0);
+
+    expect(stdout).toBe("");
+    expect(stderr).toContain("migrated lockfile from yarn.lock");
+    expect(exitCode).toBe(0);
 
     const lock = Bun.JSONC.parse(await Bun.file(join(tmpDir, "bun.lock")).text()) as { packages: unknown };
-    expect(lock.packages).toStrictEqual({
-      "host-after-separator": [`host-after-separator@${tarballs["host-after-separator"]}`, {}],
-      "nothing-before-separator": [`nothing-before-separator@${tarballs["nothing-before-separator"]}`, {}],
-      "empty-segment-before-separator": [
-        `empty-segment-before-separator@${tarballs["empty-segment-before-separator"]}`,
-        {},
-      ],
-      "mirror-with-registry-in-path": [`mirror-with-registry-in-path@${tarballs["mirror-with-registry-in-path"]}`, {}],
-      "dash-package": [`-@${tarballs["dash-package"]}`, {}],
-      "scoped-npmjs-https": [`@scope/real@${tarballs["scoped-npmjs-https"]}`, {}],
-      "npmjs-http": [`real-a@${tarballs["npmjs-http"]}`, {}],
-      "yarnpkg-https": [`real-b@${tarballs["yarnpkg-https"]}`, {}],
-      "yarnpkg-http": [`real-c@${tarballs["yarnpkg-http"]}`, {}],
-    });
+    expect(lock.packages).toStrictEqual(
+      Object.fromEntries(
+        Object.entries(rows).map(([dependency, [url, packageName]]) => [dependency, [`${packageName}@${url}`, {}]]),
+      ),
+    );
     expect(registryRequests).toStrictEqual([]);
   });
 

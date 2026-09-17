@@ -177,6 +177,68 @@ describe("packages whose label is longer than 1024 bytes", () => {
   });
 });
 
+// bundled-file@4.0.0 bundles a `file:../bundled-file-dep` dependency. The lockfile
+// records that path and the install never reads it: the copy in the tarball is
+// the dependency. `bun patch` takes a `file:` package from its folder, which for
+// this path is a directory outside the project, so it has to refuse.
+describe("a bundled file: dependency with a path that leaves the package", () => {
+  const registry = new VerdaccioRegistry();
+
+  beforeAll(async () => {
+    await registry.start();
+  });
+
+  afterAll(() => {
+    registry.stop();
+  });
+
+  const bundledCopy = "node_modules/bundled-file/node_modules/bundled-file-dep";
+
+  test.concurrent.each([
+    ["bun patch <name>", ["bundled-file-dep"]],
+    ["bun patch <path>", [bundledCopy]],
+    ["bun patch --commit <path>", ["--commit", bundledCopy]],
+  ])("%s", async (_, args) => {
+    const packageJson = { name: "app", dependencies: { "bundled-file": "4.0.0" } };
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: {
+        "bundled-file-dep/package.json": JSON.stringify({ name: "bundled-file-dep", version: "9.9.9" }),
+        "bundled-file-dep/index.js": `module.exports = "outside the project";\n`,
+        "project/package.json": JSON.stringify(packageJson),
+      },
+    });
+    const projectDir = join(packageDir, "project");
+    await registry.writeBunfig(projectDir, { linker: "hoisted" });
+
+    async function runBun(...cmd: string[]) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...cmd],
+        cwd: projectDir,
+        env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache") },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+
+    const install = await runBun("install");
+    expect(install.stderr).not.toContain("error:");
+    expect(install.exitCode).toBe(0);
+
+    const patch = await runBun("patch", ...args);
+    expect(patch.stderr).toContain(
+      `error: refusing to patch bundled-file-dep with unsafe folder path "../bundled-file-dep"`,
+    );
+    expect(patch.exitCode).toBe(1);
+    expect(await Bun.file(join(projectDir, bundledCopy, "index.js")).text()).toBe(
+      `module.exports = "bundled-file-dep";\n`,
+    );
+    expect(await Bun.file(join(projectDir, "package.json")).json()).toEqual(packageJson);
+  });
+});
+
 describe("bun patch <pkg>", async () => {
   describe("workspace interactions", async () => {
     /**

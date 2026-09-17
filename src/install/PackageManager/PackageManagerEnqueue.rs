@@ -2909,7 +2909,9 @@ fn get_or_put_resolved_package(
                 }
 
                 // transitive folder dependencies do not have their dependencies resolved
-                if crate::bin::bin_target_escapes_package_dir(this.lockfile.str(&folder))
+                // Nothing installs a bundled one, and every reader of the recorded path refuses it.
+                if !behavior.is_bundled()
+                    && crate::bin::bin_target_escapes_package_dir(this.lockfile.str(&folder))
                     && !this.lockfile.is_trusted_folder_dependency(dependency_id)
                 {
                     break 'res FolderResolutionValue::Err(crate::Error::MissingPackageJSON);

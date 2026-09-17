@@ -415,11 +415,13 @@ for (const mode of MODES) {
           ...(proxy ? { proxy: `${mode.proxy}://127.0.0.1:${proxy.port}` } : {}),
         });
         const received: string[] = [];
-        const { promise: done, resolve: resolveDone } = Promise.withResolvers<void>();
+        const { promise: done, resolve: resolveDone, reject } = Promise.withResolvers<void>();
         ws.onmessage = ({ data }) => {
           received.push(data);
           if (received.length === WITH_101.length + LATER.length) resolveDone();
         };
+        ws.onerror = () => reject(new Error("unexpected error event"));
+        ws.onclose = ({ code }) => reject(new Error(`unexpected close ${code}`));
         if (where === "while CONNECTING") expect(ws.pause()).toBe(true);
         await new Promise<void>(resolve => {
           ws.onopen = () => {
@@ -438,6 +440,7 @@ for (const mode of MODES) {
         expect(ws.resume()).toBe(true);
         await done;
         expect(received).toEqual([...WITH_101, ...LATER]);
+        ws.onclose = null;
         ws.close();
         clock.close();
       } finally {
@@ -489,36 +492,47 @@ describe.each([false, true])("WebSocket.pause() and a peer that ends the connect
   });
 });
 
-describe("WebSocket.pause() and a Close frame in the held bytes", () => {
-  for (const mode of MODES.filter(mode => mode.secure)) {
-    // The 101, two frames, a Close frame and the end of the TLS session are one
-    // flight. A TLS client sees the end of the session also while it is paused.
-    it(`the held frames and the Close frame count when the TLS session ends behind them (${mode.name})`, async () => {
-      const proxy = mode.proxy ? await pipingConnectProxy(mode.proxy === "https") : undefined;
-      try {
-        using peer = await rawPeer(true, { withResponse: [frame("m1"), frame("m2"), closeFrame(4001)], end: true });
-        using echo = echoServer();
-        const clock = new WebSocket(`ws://localhost:${echo.port}`);
-        await open(clock);
-        const ws = new WebSocket(peer.url, {
-          tls: { rejectUnauthorized: false },
-          ...(proxy ? { proxy: `${mode.proxy}://127.0.0.1:${proxy.port}` } : {}),
-        });
-        expect(ws.pause()).toBe(true);
-        const received: string[] = [];
-        ws.onmessage = ({ data }) => received.push(data);
-        const closed = new Promise<CloseEvent>(resolve => (ws.onclose = resolve));
-        await closedOrResumed(ws, clock, closed);
-        const { code, wasClean } = await closed;
-        expect(received).toEqual(["m1", "m2"]);
-        // A proxy tunnel cannot echo a Close frame once its TLS session ended,
-        // paused or not, and reports 1006 for it.
-        if (!mode.proxy) expect({ code, wasClean }).toEqual({ code: 4001, wasClean: true });
-        clock.close();
-      } finally {
-        proxy?.close();
-      }
-    });
+describe("frames, a Ping and a Close frame that arrive with the 101, and then the end of the connection", () => {
+  const PING = frame("ping", 9);
+
+  for (const mode of MODES) {
+    for (const paused of [true, false]) {
+      // A proxy tunnel answers the peer's close_notify before it delivers the last bytes, so an
+      // unpaused client there can no longer write the Pong. That is not part of this behaviour.
+      if (!paused && mode.secure && mode.proxy) continue;
+
+      // A paused TLS client still sees the end of the session when it shares a read with the 101.
+      // Then the held bytes are parsed with no socket left: no Pong, no echo, no reply goes out.
+      it(`every frame and the close code count (${mode.name}, ${paused ? "paused" : "not paused"})`, async () => {
+        const proxy = mode.proxy ? await pipingConnectProxy(mode.proxy === "https") : undefined;
+        try {
+          using peer = await rawPeer(mode.secure, {
+            withResponse: [frame("m1"), PING, frame("m2"), closeFrame(4001)],
+            end: true,
+          });
+          using echo = echoServer();
+          const clock = new WebSocket(`ws://localhost:${echo.port}`);
+          await open(clock);
+          const ws = new WebSocket(peer.url, {
+            tls: { rejectUnauthorized: false },
+            ...(proxy ? { proxy: `${mode.proxy}://127.0.0.1:${proxy.port}` } : {}),
+          });
+          if (paused) expect(ws.pause()).toBe(true);
+          const received: string[] = [];
+          ws.onmessage = ({ data }) => {
+            received.push(data);
+            ws.send(`reply to ${data}`);
+          };
+          const closed = new Promise<CloseEvent>(resolve => (ws.onclose = resolve));
+          await closedOrResumed(ws, clock, closed);
+          const { code, wasClean } = await closed;
+          expect({ received, code, wasClean }).toEqual({ received: ["m1", "m2"], code: 4001, wasClean: true });
+          clock.close();
+        } finally {
+          proxy?.close();
+        }
+      });
+    }
   }
 });
 
@@ -530,11 +544,13 @@ describe("ws package", () => {
 
     const ws = new WsWebSocket(peer.url);
     const received: string[] = [];
-    const { promise: done, resolve: resolveDone } = Promise.withResolvers<void>();
+    const { promise: done, resolve: resolveDone, reject } = Promise.withResolvers<void>();
     ws.on("message", data => {
       received.push(String(data));
       if (received.length === MESSAGES.length) resolveDone();
     });
+    ws.on("error", reject);
+    ws.on("close", code => reject(new Error(`unexpected close ${code}`)));
     await new Promise<void>(resolve => {
       ws.once("open", () => {
         ws.pause();
@@ -549,6 +565,7 @@ describe("ws package", () => {
     ws.resume();
     await done;
     expect(received).toEqual(MESSAGES);
+    ws.removeAllListeners("close");
     ws.close();
     clock.close();
   });

@@ -107,6 +107,8 @@ pub struct WebSocket<const SSL: bool> {
     paused: Cell<bool>,
     /// Unparsed bytes: the handshake overflow, and what reached `handle_data` during a pause.
     held_data: RefCell<Vec<u8>>,
+    /// The peer ended the connection and `held_data` is being parsed: nothing can be written back.
+    peer_ended: Cell<bool>,
     /// The queued `HeldDataTask`, detached in `Drop` so a task that outlives us does nothing.
     pending_held_task: Cell<Option<BackRef<HeldDataTask<SSL>, Root>>>,
     pub(crate) deflate: RefCell<Option<Box<WebSocketDeflate>>>,
@@ -302,8 +304,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             self.release_io_ref();
             return;
         }
-        // The peer ended the connection. What it sent before that still counts, paused or not.
-        self.parse_held_data();
+        self.parse_held_data_at_end();
         self.clear_data();
         self.detach_tcp();
 
@@ -567,6 +568,12 @@ impl<const SSL: bool> WebSocket<SSL> {
             return;
         }
         self.handle_data_loop(&held);
+    }
+
+    /// The peer ended the connection. What it sent before that still counts, paused or not.
+    fn parse_held_data_at_end(&self) {
+        self.peer_ended.set(true);
+        self.parse_held_data();
     }
 
     /// Queue the microtask that parses `held_data`, unless one is queued already.
@@ -1104,6 +1111,9 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     fn send_pong(&self) -> bool {
+        if self.peer_ended.get() {
+            return false;
+        }
         if !self.has_tcp() {
             self.dispatch_abrupt_close(ErrorCode::Ended);
             return false;
@@ -1143,7 +1153,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             // backpressure); don't enqueue a second close frame on top of it.
             return;
         }
-        if !self.has_tcp() {
+        if !self.has_tcp() || self.peer_ended.get() {
             match dispatch_code {
                 // The peer's Close frame still names the close code, although it cannot be echoed.
                 Some(code) if strings::is_valid_utf8(&body[..body_len]) => {
@@ -1257,6 +1267,13 @@ impl<const SSL: bool> WebSocket<SSL> {
             // terminate → fail → cancel(Failure).
             return;
         }
+        if !self.held_data.borrow().is_empty() {
+            // The peer closed only its side, so a Pong or a Close echo for these bytes still goes out.
+            self.parse_held_data();
+            if self.cpp_websocket().is_none() {
+                return;
+            }
+        }
         self.terminate(ErrorCode::Ended);
     }
 
@@ -1312,6 +1329,8 @@ impl<const SSL: bool> WebSocket<SSL> {
 
     /// `resume()` from JS: the held bytes go first, in a microtask.
     pub(crate) fn resume_and_parse_held_data(this: ThisPtr<Self>) -> bool {
+        // A resume that cannot re-arm the poll closes the socket, which can free `this`.
+        let _guard = RefPtr::from_this(this);
         let resumed = this.resume();
         Self::schedule_held_data(this);
         resumed
@@ -1334,6 +1353,9 @@ impl<const SSL: bool> WebSocket<SSL> {
         // before the catch block in enqueue_encoded_bytes/send_buffer runs.
         let _guard = RefPtr::from_this(this);
 
+        if this.peer_ended.get() {
+            return;
+        }
         if !this.has_tcp() || op > 0xF {
             this.dispatch_abrupt_close(ErrorCode::Ended);
             return;
@@ -1375,6 +1397,9 @@ impl<const SSL: bool> WebSocket<SSL> {
         // See write_binary_data() — tunnel.write() can re-enter fail().
         let _guard = RefPtr::from_this(this);
 
+        if this.peer_ended.get() {
+            return;
+        }
         if !this.has_tcp() {
             this.dispatch_abrupt_close(ErrorCode::Ended);
             return;
@@ -1481,6 +1506,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             payload_length_frame_len: Cell::new(0),
             paused: Cell::new(false),
             held_data: RefCell::new(Vec::new()),
+            peer_ended: Cell::new(false),
             pending_held_task: Cell::new(None),
             deflate: RefCell::new(
                 deflate_params.and_then(|params| WebSocketDeflate::init(*params).ok()),
@@ -1595,8 +1621,7 @@ impl<const SSL: bool> WebSocket<SSL> {
 
     /// Called by the WebSocketProxyTunnel when its TLS session ends.
     pub(crate) fn handle_tunnel_close(&self) {
-        // The peer ended the connection. What it sent before that still counts, paused or not.
-        self.parse_held_data();
+        self.parse_held_data_at_end();
         self.fail(ErrorCode::Ended);
     }
 

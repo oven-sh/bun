@@ -1013,9 +1013,12 @@ it.concurrent("a catch-all onResolve that returns args.path unchanged is transpa
         },
       });
     `,
+    "node_modules/dotted.pkg/package.json": `{ "name": "dotted.pkg", "main": "index.js" }`,
+    "node_modules/dotted.pkg/index.js": `module.exports = { value: "dotted.pkg" };`,
     "app/dep.js": `export const value = "dep";`,
     "app/index.js": `module.exports = { value: "index" };`,
     "app/lib/parent.js": `module.exports = require("..");`,
+    "app/config.local/index.js": `module.exports = { value: "config.local" };`,
     "app/entry.js": `
       import pkg from "dep-pkg";
       import { value } from "./dep";
@@ -1029,6 +1032,9 @@ it.concurrent("a catch-all onResolve that returns args.path unchanged is transpa
           // The common CommonJS shape require(path.join(__dirname, "dep")).
           requireAbsoluteWithoutExtension: require(import.meta.dir + "/dep").value,
           requireParentDirectory: require("./lib/parent").value,
+          // A dot in the last segment passes the pre-filter, so the hook saw these before too.
+          requireDottedBare: require(["dotted", "pkg"].join(".")).value,
+          requireDottedRelativeDirectory: require("./config.local/index").value,
         }),
       );
     `,
@@ -1050,6 +1056,58 @@ it.concurrent("a catch-all onResolve that returns args.path unchanged is transpa
     requireBuiltin: "function",
     requireAbsoluteWithoutExtension: "dep",
     requireParentDirectory: "index",
+    requireDottedBare: "dotted.pkg",
+    requireDottedRelativeDirectory: "config.local",
+  });
+  expect(exitCode).toBe(0);
+});
+
+it.concurrent("an unchanged onResolve result stays the module key when nothing is on disk", async () => {
+  using dir = tempDir("plugin-onresolve-file-namespace-virtual", {
+    "gen/cfg.js": `export const value = "disk file";`,
+    "preload.js": `
+      const { join } = require("node:path");
+      Bun.plugin({
+        name: "file-namespace-virtual",
+        setup(build) {
+          // Nothing on disk: the unchanged specifier is the module key and onLoad serves it.
+          build.onResolve({ filter: /^\\.\\/virtual\\.cfg$/ }, args => ({ path: args.path }));
+          // An absolute path without an extension is completed from disk, as before.
+          build.onResolve({ filter: /^app\\.cfg$/ }, () => ({ path: join(process.cwd(), "gen", "cfg") }));
+          build.onLoad({ filter: /virtual\\.cfg$/ }, args => ({
+            contents: "export const value = " + JSON.stringify("virtual:" + args.path.split(/[\\\\/]/).pop()) + ";",
+            loader: "js",
+          }));
+        },
+      });
+    `,
+    "entry.js": `
+      import { value as staticRelative } from "./virtual.cfg";
+      import { value as staticAbsolute } from "app.cfg";
+      console.log(
+        JSON.stringify({
+          staticRelative,
+          dynamicRelative: (await import("./virtual.cfg")).value,
+          staticAbsolute,
+          requireAbsolute: require("app.cfg").value,
+        }),
+      );
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--no-install", "--preload", "./preload.js", "entry.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout.trim() ? JSON.parse(stdout) : { crashed: stderr }).toEqual({
+    staticRelative: "virtual:virtual.cfg",
+    dynamicRelative: "virtual:virtual.cfg",
+    staticAbsolute: "disk file",
+    requireAbsolute: "disk file",
   });
   expect(exitCode).toBe(0);
 });

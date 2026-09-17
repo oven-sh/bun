@@ -4820,6 +4820,8 @@ impl VirtualMachine {
                         if on_resolve_path_needs_resolver(
                             &path,
                             !passes_pre_filter,
+                            PluginRunner::extract_namespace(specifier_utf8.slice()).is_empty()
+                                && path.to_utf8().slice() == specifier_utf8.slice(),
                             source_utf8.slice().len(),
                         ) =>
                     {
@@ -7130,10 +7132,11 @@ fn wrap_unhandled_rejection_error_for_uncaught_exception(
         .to_js())
 }
 
-/// Whether the resolver completes an onResolve `path`: an extension-less absolute path (`/src/store` is `/src/store.ts`, as the loader's re-resolve of an `import()` key sees it), or a relative or bare path for a specifier that `could_be_plugin` skipped.
+/// Whether the resolver completes an onResolve `path`: an extension-less absolute path (`/src/store` is `/src/store.ts`, as the loader's re-resolve of an `import()` key sees it), the unchanged specifier (a no-op hook), or a relative or bare path for a specifier that `could_be_plugin` skipped.
 fn on_resolve_path_needs_resolver(
     path: &bun_core::String,
     specifier_was_skipped: bool,
+    path_is_unchanged: bool,
     importer_len: usize,
 ) -> bool {
     let path = path.to_utf8();
@@ -7142,6 +7145,9 @@ fn on_resolve_path_needs_resolver(
     const LONGEST_EXTENSION: usize = 64;
     if importer_len + path.len() + LONGEST_EXTENSION > bun_paths::MAX_PATH_BYTES {
         return false;
+    }
+    if path_is_unchanged {
+        return true;
     }
     if bun_paths::is_absolute(path) {
         return bun_paths::extension(path).is_empty();

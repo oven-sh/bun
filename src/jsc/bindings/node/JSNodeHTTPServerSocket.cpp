@@ -246,9 +246,7 @@ template<bool SSL>
 static bool deferShutdownUntilResponseDrains(us_socket_t* socket)
 {
     auto* asyncSocket = reinterpret_cast<uWS::AsyncSocket<SSL>*>(socket);
-    /* Inside the request handler the socket is corked and the response's bytes
-     * are in the loop's cork buffer, which getBufferedAmount() does not count.
-     * Send them first, or the FIN goes out ahead of them. */
+    // getBufferedAmount() does not count bytes that are still in the cork buffer.
     asyncSocket->uncork();
     if (asyncSocket->getBufferedAmount() == 0) {
         return false;

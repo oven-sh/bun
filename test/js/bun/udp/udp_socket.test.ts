@@ -725,6 +725,56 @@ test("sendMany() sends every packet of a larger-than-one-batch call", async () =
   }
 });
 
+// A short count tells the caller to wait for `drain` and resend the rest, so
+// every path that returns one has to arm the writable poll. An unsendable
+// datagram at the start of a later ~204-message batch fails that whole batch
+// outright; the earlier batches came back as a short count with nothing armed,
+// and the caller waited for a drain that never fired. Index 1 is the control:
+// a failure inside a batch has always armed drain.
+test.each([1, 204, 408])(
+  "sendMany() follows a short count with drain when the packet at index %i cannot be sent",
+  async bad => {
+    const server = await udpSocket({ socket: { data() {} } });
+    let drained = Promise.withResolvers<void>();
+    const client = await udpSocket({
+      connect: { port: server.port, hostname: "127.0.0.1" },
+      socket: { drain: () => drained.resolve() },
+    });
+    try {
+      // Creating the socket arms the writable poll once. Wait that drain out so
+      // the ones awaited below can only have been armed by sendMany().
+      await drained.promise;
+
+      // 70000 bytes is over the 65507-byte UDP maximum: EMSGSIZE, every time.
+      const packets = Array.from({ length: bad + 2 }, (_, i) => (i === bad ? Buffer.alloc(70000) : "x"));
+
+      let offset = 0;
+      let error: any;
+      while (offset < packets.length) {
+        drained = Promise.withResolvers<void>();
+        try {
+          offset += client.sendMany(packets.slice(offset));
+        } catch (e) {
+          error = e;
+          break;
+        }
+        if (offset < packets.length) await drained.promise;
+      }
+
+      // sendMany() only throws for the first datagram of a call, so everything
+      // ahead of the unsendable one was reported as sent before the errno surfaced.
+      expect({ code: error?.code, syscall: error?.syscall, offset }).toEqual({
+        code: "EMSGSIZE",
+        syscall: "send",
+        offset: bad,
+      });
+    } finally {
+      client.close();
+      server.close();
+    }
+  },
+);
+
 test("udpSocket({ hostname }) does not leak the hostname", async () => {
   const code = /* js */ `
     const base = Buffer.alloc(200 * 1024, "a").toString();

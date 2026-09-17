@@ -107,7 +107,7 @@ extern "C" fn Bun__Chrome__retire() {
     chrome.retired = true;
     #[cfg(windows)]
     {
-        // Queued events from this Chrome carry its generation; `QueuedEvent::deliver` drops them.
+        // Queued events from this Chrome carry its generation; `QueuedEvent::run` drops them.
         GENERATION.fetch_add(1, Ordering::Relaxed);
         chrome.pipes.close();
     }
@@ -931,36 +931,31 @@ struct QueuedEvent {
 #[cfg(windows)]
 impl PipeEvent {
     fn post(self, generation: u32) {
-        let queued = bun_core::heap::into_raw(Box::new(QueuedEvent {
+        let queued = Box::new(QueuedEvent {
             generation,
             event: self,
-        }));
+        });
         // Not dispatched from the read callback: C++ runs JS that may spin a nested event loop (bun:test does), and libuv re-arms the read only after the callback returns.
         VirtualMachine::get()
             .as_mut()
-            .enqueue_task(bun_jsc::ManagedTask::ManagedTask::new_owned(
-                queued,
-                QueuedEvent::deliver,
-            ));
+            .enqueue_task(bun_jsc::ManagedTask::ManagedTask::new_boxed(queued));
     }
 }
 
 #[cfg(windows)]
-impl QueuedEvent {
-    fn deliver(this: *mut QueuedEvent) -> bun_jsc::JsResult<()> {
-        // SAFETY: the box leaked by `post`; ManagedTask hands it over once.
-        let queued = unsafe { bun_core::heap::take(this) };
-        if queued.generation != GENERATION.load(Ordering::Relaxed) {
+impl bun_event_loop::ManagedTask::RunOnce for QueuedEvent {
+    fn run(self) -> bun_jsc::JsResult<()> {
+        if self.generation != GENERATION.load(Ordering::Relaxed) {
             scoped_log!(
                 Chrome,
                 "dropping event from replaced chrome (generation {})",
-                queued.generation
+                self.generation
             );
             return Ok(());
         }
         // SAFETY: plain FFI; onData copies `bytes` before returning.
         unsafe {
-            match queued.event {
+            match self.event {
                 PipeEvent::Data(bytes) => Bun__Chrome__onPipeData(bytes.as_ptr(), bytes.len()),
                 PipeEvent::Closed => Bun__Chrome__onPipeClosed(),
                 PipeEvent::Exited { signo } => Bun__Chrome__died(signo),

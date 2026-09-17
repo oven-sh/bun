@@ -39,7 +39,7 @@ bun_core::declare_scope!(h3_client, hidden);
 
 pub(crate) use client_context::ClientContext;
 pub use client_session::ClientSession;
-pub use pending_connect::PendingConnect;
+pub use pending_connect::{DnsPendingConnect, PendingConnect};
 pub use stream::Stream;
 
 /// Live-object counters for the leak test in fetch-http3-client.test.ts.

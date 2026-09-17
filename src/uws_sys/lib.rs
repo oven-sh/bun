@@ -378,6 +378,8 @@ impl WindowsNamedPipe {
 pub mod error;
 pub use error::{Error, Result};
 
+#[path = "addrinfo.rs"]
+pub mod addrinfo;
 #[path = "App.rs"]
 pub mod app;
 #[path = "BodyReaderMixin.rs"]

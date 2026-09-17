@@ -70,12 +70,19 @@ function medianSlopePerCall(samples: number[]): number {
   return median(slopes) / callsPerRound;
 }
 
-// The median of what each round adds. A call that leaks adds to every round,
-// and a step in the level adds to one. A leak that only some rounds show does
-// not move it.
+// The median of what one round adds, over the samples that are one and two
+// rounds apart. A call that leaks adds to every round, and a step in the level
+// adds to three of these 33 differences. A level that goes up and down cannot
+// move it either, even every round: of three samples in a row on two levels,
+// two are equal, so a third of the differences are 0. A leak that only a few
+// rounds show does not move it.
 function medianRoundPerCall(samples: number[]): number {
   const measured = measuredSamples(samples);
-  return median(measured.slice(1).map((sample, i) => sample - measured[i])) / callsPerRound;
+  const growth: number[] = [];
+  for (const apart of [1, 2]) {
+    for (let i = apart; i < measured.length; i++) growth.push((measured[i] - measured[i - apart]) / apart);
+  }
+  return median(growth) / callsPerRound;
 }
 
 describe("zlib compression does not leak memory", () => {
@@ -113,7 +120,7 @@ describe("zlib compression does not leak memory", () => {
         roundTrip: true,
       });
       // The heap has two checks. Each round is exact for a leak on every call.
-      // The whole run also sees a leak that only some rounds show, and it has
+      // The whole run also sees a leak that only a few rounds show, and it has
       // one step of slack.
       expect(medianRoundPerCall(heap), `heap samples: ${heap}`).toBeLessThan(maxHeapBytesPerCall);
       expect(medianSlopePerCall(heap), `heap samples: ${heap}`).toBeLessThan(

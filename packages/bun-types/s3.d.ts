@@ -91,8 +91,9 @@ declare module "bun" {
      * @param error Pass the error if the data is incomplete because its source
      * failed. The value must be `instanceof Error`. With any other value,
      * `end()` completes the upload as it does without an argument. With an
-     * error, the upload is not completed, and nothing is stored under the key:
-     * the parts that wait in the queue are cancelled, and
+     * error, the upload is not completed, so the object under the key is not
+     * created or replaced. An object that is already under the key stays as it
+     * is. The parts that wait in the queue are cancelled, and
      * `AbortMultipartUpload` is sent if S3 has already returned an upload id.
      * The returned Promise and a pending `flush()` reject with `error`. These
      * rejections count as handled, so you do not have to await them. After an
@@ -109,7 +110,7 @@ declare module "bun" {
      *     await writer.flush();
      *   }
      * } catch (error) {
-     *   // Discard the incomplete upload: nothing is stored under "backup.tar"
+     *   // Discard the incomplete upload: "backup.tar" is not created or replaced
      *   writer.end(error instanceof Error ? error : new Error("The source failed", { cause: error }));
      *   throw error;
      * }

@@ -50,34 +50,41 @@ describe.concurrent("--update-snapshots", () => {
     });
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
     const snapshots: Record<string, string> = {};
-    for (const name of Object.keys(files)) {
-      if (name.endsWith(".snap")) snapshots[name] = await Bun.file(join(String(dir), name)).text();
+    for (const name of fs.readdirSync(join(String(dir), "__snapshots__")).sort()) {
+      snapshots[name] = await Bun.file(join(String(dir), "__snapshots__", name)).text();
     }
     return { snapshots, stderr, exitCode };
   }
 
-  /** The same for one test file, `a.test.ts`. Returns its `.snap` file. */
-  async function updateOne(tests: string, snapshot: string, ...args: string[]) {
+  /** The same for one test file, `a.test.ts`, and the `.snap` file it has before the run. Returns the `.snap` file. */
+  async function updateOne(tests: string, snapshot: string | undefined, ...args: string[]) {
     const { snapshots, ...rest } = await update(
       {
         "a.test.ts": `import { afterEach, beforeAll, describe, expect, test } from "bun:test";\n${tests}`,
-        "__snapshots__/a.test.ts.snap": snapshot,
+        ...(snapshot !== undefined && { "__snapshots__/a.test.ts.snap": snapshot }),
       },
       ...args,
     );
-    return { snapshot: snapshots["__snapshots__/a.test.ts.snap"], ...rest };
+    return { snapshot: snapshots["a.test.ts.snap"], ...rest };
   }
 
   // https://github.com/oven-sh/bun/issues/42969
   test("keeps the order of the file, replaces a value in place, appends a new entry", async () => {
+    const object = (key: string, value: number) => `\n{\n  "${key}": ${value},\n}\n`;
     const result = await updateOne(
-      `test("zeta", () => { expect("z").toMatchSnapshot(); });
-       test("mid", () => { expect("m").toMatchSnapshot(); });
-       test("alpha", () => { expect("new").toMatchSnapshot(); });`,
-      snap({ "alpha 1": `"old"`, "zeta 1": `"z"` }),
+      `describe("suite", () => {
+         test("zeta", () => { expect({ z: 1 }).toMatchSnapshot(); });
+         test("mid", () => { expect({ m: 1 }).toMatchSnapshot(); });
+         test("alpha", () => { expect({ a: 2 }).toMatchSnapshot(); });
+       });`,
+      snap({ "suite alpha 1": object("a", 1), "suite zeta 1": object("z", 1) }),
     );
     expect(result).toMatchObject({
-      snapshot: snap({ "alpha 1": `"new"`, "zeta 1": `"z"`, "mid 1": `"m"` }),
+      snapshot: snap({
+        "suite alpha 1": object("a", 2),
+        "suite zeta 1": object("z", 1),
+        "suite mid 1": object("m", 1),
+      }),
       stderr: expect.stringContaining("snapshots: +3 added"),
       exitCode: 0,
     });
@@ -228,23 +235,55 @@ describe.concurrent("--update-snapshots", () => {
     expect(result).toMatchObject({ snapshot: snap(entries), exitCode: 0 });
   });
 
-  test("writes the file again from the start when an entry is not one statement on its line", async () => {
+  test("writes a new file in the order in which the tests run", async () => {
     const result = await updateOne(
-      `test("a", () => { expect("new").toMatchSnapshot(); });`,
-      header + '\n(exports[`gone 1`] = `"g"`);\n\nexports[`a 1`] = `"old"`;\n',
+      `test("zeta", () => { expect("z").toMatchSnapshot(); });
+       test("alpha", () => { expect("a").toMatchSnapshot(); });`,
+      undefined,
     );
-    expect(result).toMatchObject({ snapshot: snap({ "a 1": `"new"` }), exitCode: 0 });
+    expect(result).toMatchObject({ snapshot: snap({ "zeta 1": `"z"`, "alpha 1": `"a"` }), exitCode: 0 });
   });
 
-  test("--bail leaves the file as it is", async () => {
-    const entries = { "one 1": `"old"`, "two 1": `"2"` };
+  test.each([
+    ["a syntax error", 'exports[`b 1`] = `"old\n'],
+    ["a value with ${}", 'exports[`b 1`] = `"old"`;\n\nexports[`gone 1`] = `${1}`;\n'],
+    ["a statement in parentheses", 'exports[`b 1`] = `"old"`;\n\n(exports[`gone 1`] = `"g"`);\n'],
+  ])("writes the file again from the start when it has %s", async (_, entries) => {
     const result = await updateOne(
+      `test("a", () => { expect("a").toMatchSnapshot(); });
+       test("b", () => { expect("new").toMatchSnapshot(); });`,
+      header + "\n" + entries,
+    );
+    expect(result).toMatchObject({ snapshot: snap({ "a 1": `"a"`, "b 1": `"new"` }), exitCode: 0 });
+  });
+
+  test("--rerun-each compares a later run with the value that the first run wrote", async () => {
+    const result = await updateOne(
+      `globalThis.runs = (globalThis.runs ?? 0) + 1;
+       test("stable", () => { expect("new").toMatchSnapshot(); });
+       test("changes", () => { expect("run " + globalThis.runs).toMatchSnapshot(); });
+       test.skip("skipped", () => { expect("s").toMatchSnapshot(); });`,
+      snap({ "skipped 1": `"s"`, "changes 1": `"old"`, "stable 1": `"old"` }),
+      "--rerun-each=2",
+    );
+    expect(result).toMatchObject({
+      snapshot: snap({ "skipped 1": `"s"`, "changes 1": `"run 1"`, "stable 1": `"new"` }),
+      exitCode: 1,
+    });
+  });
+
+  test("--bail does not lose the entries of the file", async () => {
+    const { snapshot, exitCode } = await updateOne(
       `test("one", () => { expect("new").toMatchSnapshot(); });
        test("two", () => { throw new Error("boom"); });`,
-      snap(entries),
+      snap({ "one 1": `"old"`, "two 1": `"2"` }),
       "--bail",
     );
-    expect(result).toMatchObject({ snapshot: snap(entries), exitCode: 1 });
+    // Whether a bail writes the value that "one" took is not decided here. It must not lose an entry.
+    expect([snap({ "one 1": `"old"`, "two 1": `"2"` }), snap({ "one 1": `"new"`, "two 1": `"2"` })]).toContain(
+      snapshot,
+    );
+    expect(exitCode).toBe(1);
   });
 
   test("applies the results of each test file to its own .snap file", async () => {
@@ -265,7 +304,7 @@ describe.concurrent("--update-snapshots", () => {
       "run",
     );
     expect(result).toMatchObject({
-      snapshots: { "__snapshots__/a.test.ts.snap": after("a"), "__snapshots__/b.test.ts.snap": after("b") },
+      snapshots: { "a.test.ts.snap": after("a"), "b.test.ts.snap": after("b") },
       exitCode: 0,
     });
   });

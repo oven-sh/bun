@@ -390,7 +390,7 @@ impl Snapshots {
             _ => return Err(crate::Error::ParseError),
         };
 
-        if ast.exports_ref.is_empty() {
+        if ast.exports_ref.is_empty() && !self.update_snapshots {
             return Ok(());
         }
         let exports_ref = ast.exports_ref;
@@ -398,11 +398,18 @@ impl Snapshots {
         // TODO: when common js transform changes, keep this updated or add flag to support this version
 
         let mut found: Vec<(Box<[u8]>, bun_ast::Loc, bun_ast::Loc)> = Vec::new();
+        let mut statements = 0usize;
         for part in ast.parts.as_mut_slice() {
             // `part.stmts` is an arena-owned `StoreSlice<Stmt>`; arena outlives this
             // loop and `ast` is owned here, so unique access is upheld.
             for stmt in part.stmts.slice_mut() {
                 let stmt_loc = stmt.loc;
+                statements += usize::from(!matches!(
+                    stmt.data,
+                    bun_ast::StmtData::SComment(_)
+                        | bun_ast::StmtData::SDirective(_)
+                        | bun_ast::StmtData::SEmpty(_)
+                ));
                 match &mut stmt.data {
                     bun_ast::StmtData::SExpr(expr) => {
                         if let bun_ast::ExprData::EBinary(e_binary) = &mut expr.value.data {
@@ -452,6 +459,10 @@ impl Snapshots {
         }
 
         let _ = &mut ast;
+        // `--update-snapshots` cannot place a statement that is not an entry, for example a value with `${}`.
+        if self.update_snapshots && found.len() != statements {
+            return Err(crate::Error::ParseError);
+        }
         for (key, stmt_loc, value_loc) in found {
             self.note_existing(key, stmt_loc, value_loc)?;
         }

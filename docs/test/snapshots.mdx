@@ -50,6 +50,8 @@ bun test --update-snapshots
 
 Do this when you've intentionally changed the output. In CI environments, Bun does not write new snapshots unless you pass this flag.
 
+`--update-snapshots` keeps the order of the entries in the `.snap` file. It replaces the values that changed and adds new entries at the end. It removes an entry that no test takes any more. It keeps the entries of a test that did not run or did not pass, for example a test that `-t`, `test.only`, or `test.skip` leaves out.
+
 ## Inline Snapshots
 
 For smaller values, use `.toMatchInlineSnapshot()`. Bun stores inline snapshots directly in your test file:

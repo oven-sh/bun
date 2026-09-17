@@ -579,8 +579,7 @@ pub(crate) fn decode_header_block(session: &mut ClientSession, stream: &mut Stre
     let mut status: u32 = 0;
     let mut bounds: Vec<[u32; 3]> = Vec::new();
     let start_len = stream.decoded_bytes.len();
-    // `decoded_bytes.len()` as it would be without the trim. The size cap
-    // charges a value as decoded, so a value that trims to nothing is not free.
+    // The size cap counts a value before the trim, so whitespace is not free.
     let mut untrimmed_len = start_len;
     let mut seen_regular = false;
     let mut seen_status = false;
@@ -793,10 +792,7 @@ pub(crate) fn is_malformed_response_value(value: &[u8]) -> bool {
     bun_core::strings::contains_any(value, b"\0\r\n")
 }
 
-/// RFC 9110 §5.5: a field value has no leading or trailing SP / HTAB, and a
-/// parser must exclude them. The HTTP/1.1 parser strips them as OWS. HPACK and
-/// QPACK carry them verbatim, so strip them at decode time, before
-/// `handle_response_metadata` and `Headers` read the value.
+/// RFC 9110 §5.5: a parser strips leading and trailing SP / HTAB. HPACK and QPACK do not.
 pub(crate) fn trim_response_value(value: &[u8]) -> &[u8] {
     bun_core::strings::trim(value, b" \t")
 }

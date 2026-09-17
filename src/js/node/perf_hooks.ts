@@ -18,6 +18,7 @@ const cppCreateHistogram = $newCppFunction("JSNodePerformanceHooksHistogram.cpp"
 // hdr_init() takes int64_t bounds.
 const kMaxInt64 = 9223372036854775807n;
 
+// https://github.com/nodejs/node/blob/c327212373689b970425777b847a767ed6860494/lib/internal/histogram.js#L878-L900
 function validateHistogramBound(value: number | bigint, name: string) {
   if (typeof value !== "bigint") {
     validateInteger(value, name, 1, Number.MAX_SAFE_INTEGER);
@@ -347,8 +348,7 @@ export default {
       validateInteger(lowest, "options.lowest", 1, Number.MAX_SAFE_INTEGER);
       validateInteger(highest, "options.highest", 2 * lowest, Number.MAX_SAFE_INTEGER);
     } else {
-      // Node v26.3.0 throws a TypeError or aborts for most BigInt options. Node main validates them like this:
-      // https://github.com/nodejs/node/blob/c327212373689b970425777b847a767ed6860494/lib/internal/histogram.js#L878-L900
+      // Node v26.3.0 throws a TypeError or aborts for most BigInt options, so this branch follows Node main.
       validateHistogramBound(lowest, "options.lowest");
       validateHistogramBound(highest, "options.highest");
       const minimumHighest = typeof lowest === "bigint" ? 2n * lowest : 2 * lowest;

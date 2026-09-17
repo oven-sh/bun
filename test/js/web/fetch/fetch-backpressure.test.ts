@@ -813,7 +813,7 @@ describe.concurrent("fetch() receive backpressure — the decompressor does not 
     const BUFFER = /* js */ `
       const bytes = await (await fetch(url, opts)).bytes();
       const digest = new Bun.CryptoHasher("md5").update(bytes).digest("hex");
-      process.stdout.write(JSON.stringify({ total: bytes.byteLength, several: true, digest }));
+      process.stdout.write(JSON.stringify({ total: bytes.byteLength, digest }));
     `;
 
     const cases: [Kind, boolean][] = [
@@ -826,18 +826,18 @@ describe.concurrent("fetch() receive backpressure — the decompressor does not 
       ["zstd", true],
     ];
     describe.each(cases)("%s chunked=%p", (kind, chunked) => {
+      // `several`: the budget split the decode across pulls instead of one SIZE-byte chunk.
       test.each([
-        ["a streaming reader", STREAM],
-        ["res.bytes()", BUFFER],
-      ])("%s", async (_, script) => {
+        ["a streaming reader", STREAM, { several: true }],
+        ["res.bytes()", BUFFER, {}],
+      ])("%s", async (_, script, seen) => {
         await using server = await serveBody(kind, chunked);
-        const { total, several, digest: got, stderr, exitCode } = await runClient(server.url, {}, script);
+        const { stderr, exitCode, ...result } = await runClient(server.url, {}, script);
         expect(stderr).toBe("");
-        // `several`: the budget split the decode across pulls instead of one SIZE-byte chunk.
-        expect({ total, several, digest: got }).toEqual({
+        expect(result).toEqual({
           total: SIZE,
-          several: true,
           digest: kind === "br-hq" ? md5(Buffer.alloc(SIZE)) : digest,
+          ...seen,
         });
         expect(exitCode).toBe(0);
       });

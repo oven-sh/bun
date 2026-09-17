@@ -343,6 +343,10 @@ impl bun_event_loop::Taskable for crate::shell::dispatch_tasks::ShellCondExprSta
             drop(bun_core::heap::take(this));
         }
     }
+    /// See [`ShellTaskCtx`](crate::shell::interpreter::ShellTaskCtx): a step of a shell script always runs.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
+    }
 }
 
 impl crate::shell::interpreter::ShellTaskCtx

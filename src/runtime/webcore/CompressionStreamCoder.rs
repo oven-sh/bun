@@ -141,6 +141,9 @@ pub struct CompressionStreamCoder {
     high_water_mark: usize,
     /// Set while a chunk's transform spans steps; `None` between chunks.
     pending: Option<Pending>,
+    /// The context of the script that made the stream: its off-thread steps belong to it, also
+    /// the ones a native sink asks for.
+    context: bun_jsc::ContextId,
 }
 
 // SAFETY: the z_stream / Brotli*Instance / ZSTD_*Ctx handles are single-owner
@@ -293,6 +296,9 @@ impl CompressionStreamCoder {
             zstd_head_len: 0,
             high_water_mark,
             pending: None,
+            context: bun_jsc::virtual_machine::VirtualMachine::get()
+                .context_of_caller_no_frame()
+                .id(),
         }))
     }
 
@@ -920,7 +926,7 @@ pub extern "C" fn CompressionStreamCoder__transformInto(
                     .write(&crate::webcore::streams::Result::Temporary(
                         bun_ptr::RawSlice::new(&out),
                     ))
-                    .to_js(global)
+                    .to_js(&global.js_thread_of_caller_no_frame())
             }
         }
         Err(e) => {
@@ -1037,7 +1043,19 @@ pub extern "C" fn CompressionStreamCoder__transformAsync(
         unsafe { core::slice::from_raw_parts(input, input_len) }
     };
     let (input, pin) = AsyncInput::new(global, chunk, fallback);
-    let cx = global.js_thread();
+    // Called by script, the step is that script's; asked for by a native sink, it is the
+    // stream's maker's.
+    let vm = global.bun_vm();
+    let entered = if vm.jsc_vm().is_entered() {
+        None
+    } else {
+        // SAFETY: `this` is the live coder owned by the calling JS cell.
+        Some(vm.enter_context(unsafe { (*this).context }))
+    };
+    let cx = global.js_thread(match &entered {
+        Some(scope) => scope.context(),
+        None => vm.context_of_caller_no_frame(),
+    });
     bun_jsc::Job::<CompressionAsyncCtx>::schedule(
         &cx,
         CompressionAsyncCtx {

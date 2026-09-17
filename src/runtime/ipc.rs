@@ -98,7 +98,13 @@ impl InternalMsgHolder {
 
         let event_loop = global.bun_vm().event_loop_mut();
 
-        event_loop.run_callback(cb, global, worker, &[message, handle]);
+        event_loop.run_callback(
+            bun_event_loop::ContextId::NONE,
+            cb,
+            global,
+            worker,
+            &[message, handle],
+        );
         Ok(())
     }
 
@@ -1950,6 +1956,10 @@ impl bun_event_loop::Taskable for SendQueue {
     unsafe fn release_unrun(this: *mut Self) {
         // SAFETY: fn contract — the SendQueue root queued with a held ref.
         unsafe { SendQueue::release_deferred_unrun(this) }
+    }
+    /// The channel's own close hop.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
     }
 }
 

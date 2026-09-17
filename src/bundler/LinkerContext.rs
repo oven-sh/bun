@@ -2531,6 +2531,7 @@ impl<'a> LinkerContext<'a> {
         was_unwrapped_require: bool,
     ) -> js_printer::RequireOrImportMeta {
         let flags = self.graph.meta.items_flags()[source_index as usize];
+        let wrapper_ref = self.graph.ast.items_wrapper_ref()[source_index as usize];
         js_printer::RequireOrImportMeta {
             exports_ref: if flags.wrap == WrapKind::Esm
                 || (was_unwrapped_require
@@ -2541,8 +2542,8 @@ impl<'a> LinkerContext<'a> {
             } else {
                 Ref::NONE
             },
-            is_wrapper_async: flags.is_async_or_has_async_dependency,
-            wrapper_ref: self.graph.ast.items_wrapper_ref()[source_index as usize],
+            is_wrapper_async: flags.is_async_or_has_async_dependency && wrapper_ref.is_valid(),
+            wrapper_ref,
 
             was_unwrapped_require: was_unwrapped_require
                 && self.graph.ast.items_flags()[source_index as usize]

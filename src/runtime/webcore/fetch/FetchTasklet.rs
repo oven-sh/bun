@@ -57,6 +57,10 @@ impl Taskable for FetchTaskletDeinitHop {
         // SAFETY: fn contract.
         unsafe { Self::run(this) }
     }
+    /// Frees a tasklet; calls no script.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
+    }
 }
 impl FetchTaskletDeinitHop {
     /// # Safety
@@ -75,6 +79,11 @@ impl Taskable for FetchTasklet {
     /// it is done with it, and this runs on the JS thread with the heap alive.
     unsafe fn release_unrun(this: *mut Self) {
         FetchTasklet::deref(this);
+    }
+    /// `on_progress_update` decides: a fetch whose context stopped reports nothing, and what is left
+    /// of it is released there.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
     }
 }
 
@@ -129,7 +138,10 @@ pub struct FetchTasklet {
     /// We always clone url and proxy (if informed)
     pub(crate) url_proxy_buffer: Box<[u8]>,
 
-    pub(crate) signal: Option<AbortSignalRef>,
+    /// The context whose script called `fetch()`, and its `signal` option.
+    pub(crate) abort_handle: jsc::AbortHandle,
+    /// That context's id: the handle forgets its context once that stops.
+    pub(crate) context: jsc::ContextId,
     pub(crate) signals: Signals,
     pub(crate) signal_store: http::signals::Store,
     pub(crate) has_schedule_callback: AtomicBool,
@@ -206,12 +218,13 @@ impl HTTPRequestBody {
         }
     }
 
-    pub fn from_js(global_this: &JSGlobalObject, value: JSValue) -> JsResult<HTTPRequestBody> {
-        let mut body_value = BodyValue::from_js(global_this, value)?;
+    pub fn from_js(cx: &bun_jsc::JsThread<'_>, value: JSValue) -> JsResult<HTTPRequestBody> {
+        let mut body_value = BodyValue::from_js(cx.global(), value)?;
         if matches!(body_value, BodyValue::Used)
-            || (matches!(&body_value, BodyValue::Locked(l) if !l.action.is_none() || l.is_disturbed2(global_this)))
+            || (matches!(&body_value, BodyValue::Locked(l) if !l.action.is_none() || l.is_disturbed2(cx.global())))
         {
-            return Err(global_this
+            return Err(cx
+                .global()
                 .err(
                     jsc::ErrorCode::BODY_ALREADY_USED,
                     format_args!("body already used"),
@@ -231,7 +244,7 @@ impl HTTPRequestBody {
             }
         }
         if matches!(&body_value, BodyValue::Locked(_)) {
-            let readable = body_value.to_readable_stream(global_this)?;
+            let readable = body_value.to_readable_stream(cx)?;
             if !readable.is_empty_or_undefined_or_null() {
                 if let BodyValue::Locked(l) = &mut body_value {
                     if l.readable.has() {
@@ -283,12 +296,20 @@ impl HTTPRequestBody {
     }
 }
 
+jsc::impl_abort_handle_owner!(FetchTasklet, abort_handle, |this, cause| {
+    // SAFETY: trait contract — `this` is live; JS thread.
+    unsafe {
+        match cause {
+            jsc::AbortCause::Signal(reason) => (*this).abort_listener(reason),
+            jsc::AbortCause::ContextStopped(_) => (*this).abort_task(),
+        }
+    }
+});
+
 impl Drop for FetchTasklet {
     fn drop(&mut self) {
         bun_output::scoped_log!(FetchTasklet, "deinit");
         self.ref_count.assert_no_refs();
-        // JS thread: no longer something the VM must abort at teardown.
-        crate::jsc_hooks::ActiveHandle::Fetch(NonNull::from(&mut *self)).unregister();
         self.clear_data();
     }
 }
@@ -357,12 +378,9 @@ impl FetchTasklet {
         }
     }
 
-    /// `Some(&AbortSignal)` while we hold a strong ref on the C++-owned
-    /// `WebCore::AbortSignal*` (taken in `queue`, released in
-    /// `clear_abort_signal`).
     #[inline]
     fn abort_signal(&self) -> Option<&AbortSignal> {
-        self.signal.as_deref()
+        self.abort_handle.signal()
     }
 
     /// True iff an attached AbortSignal has fired.
@@ -500,18 +518,6 @@ impl FetchTasklet {
         self.clear_abort_signal();
         // Clear the sink only after the requested ended otherwise we would potentialy lose the last chunk
         self.clear_sink();
-    }
-
-    /// VM teardown's stop phase (JS thread): abort the transport. The HTTP
-    /// thread then fails the request promptly — started or still queued — and
-    /// hands the tasklet back through its final callback, which teardown
-    /// waits for before the handle closes.
-    ///
-    /// # Safety
-    /// `this` is live (registered ⇒ not yet deinit'd); JS thread.
-    pub(crate) unsafe fn stop_for_vm_teardown(this: *mut FetchTasklet) {
-        // SAFETY: fn contract.
-        unsafe { (*this).abort_task() };
     }
 
     /// `HTTPClientResultCallback::release_at_shutdown` for `FetchTasklet`.
@@ -880,7 +886,13 @@ impl FetchTasklet {
                     // SAFETY: `body` points into `response.body`, disjoint from `headers`
                     // (response.init); both live for this block.
                     let body = unsafe { &mut *body };
-                    BodyValue::resolve(&mut old, body, &self.global_this, headers)?;
+                    let context = self.global_this.bun_vm().context_of(self.context);
+                    BodyValue::resolve(
+                        &mut old,
+                        body,
+                        &self.global_this.js_thread(context),
+                        headers,
+                    )?;
                 }
             }
         }
@@ -895,6 +907,8 @@ impl FetchTasklet {
         let is_done = !self.result.has_more;
 
         let vm = self.global_this.bun_vm();
+        // The response, the upload's pump and what they settle continue the script that fetched.
+        let _context = vm.enter_context(self.context);
         // teardown forbade script: we cannot touch JS
         if !vm.script_allowed() {
             // The certificate will never be checked; release the parked
@@ -1150,6 +1164,7 @@ impl FetchTasklet {
             promise: self.promise.take(),
             global_object: global_this,
             success,
+            context: self.context,
         });
         // SAFETY: `vm.event_loop()` is the live JS-thread loop.
         unsafe {
@@ -1279,13 +1294,7 @@ impl FetchTasklet {
     }
 
     fn clear_abort_signal(&mut self) {
-        let Some(signal) = self.signal.take() else {
-            return;
-        };
-        // Order matters: cleanNativeBindings first, then pending_activity_unref
-        // and (dropping `signal`) unref.
-        signal.clean_native_bindings(std::ptr::from_mut(self).cast::<c_void>());
-        signal.pending_activity_unref();
+        self.abort_handle.unfollow();
     }
 
     fn on_reject(&mut self) -> BodyValueError {
@@ -1918,13 +1927,13 @@ impl FetchTasklet {
         // Response-owned listener so abort still errors the body after this tasklet detaches its own.
         if let Some(signal) = self.abort_signal() {
             // SAFETY: `response` is the live heap allocation owned by JSC.
-            unsafe { Response::attach_abort_signal(response, &global_this, signal) };
+            unsafe { Response::attach_abort_signal(response, &global_this, signal, self.context) };
         }
         response_js
     }
 
     fn get(
-        global_this: &JSGlobalObject,
+        cx: &bun_jsc::JsThread<'_>,
         fetch_options: FetchOptions,
         promise: jsc::JSPromiseStrong,
     ) -> crate::Result<*mut FetchTasklet> {
@@ -1936,7 +1945,7 @@ impl FetchTasklet {
             result: HTTPClientResult::default(),
             metadata: None,
             http_ticket: None,
-            global_this: GlobalRef::from(global_this),
+            global_this: GlobalRef::from(cx.global()),
             request_body: fetch_options.body,
             request_body_streaming_buffer: None,
             scheduled_response_buffer: MutableString::default(),
@@ -1949,7 +1958,8 @@ impl FetchTasklet {
             poll_ref: JsCell::new(KeepAlive::default()),
             body_size: http::BodySize::Unknown,
             url_proxy_buffer: fetch_options.url_proxy_buffer,
-            signal: fetch_options.signal,
+            abort_handle: jsc::AbortHandle::for_owner::<FetchTasklet>(),
+            context: cx.context().id(),
             signals: Signals::default(),
             signal_store: http::signals::Store::default(),
             has_schedule_callback: AtomicBool::new(false),
@@ -1966,13 +1976,13 @@ impl FetchTasklet {
             mutex: Mutex::new(),
             // SAFETY: jsc_vm derived from FFI ptr above; AsyncTaskTracker::init only
             // bumps a counter on the VM.
-            tracker: AsyncTaskTracker::init(global_this.bun_vm().as_mut()),
+            tracker: AsyncTaskTracker::init(cx.vm().as_mut()),
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
         });
 
         fetch_tasklet.signals = fetch_tasklet.signal_store.to_with_backpressure();
 
-        fetch_tasklet.tracker.did_schedule(global_this);
+        fetch_tasklet.tracker.did_schedule(cx.global());
 
         // `body` is *moved* through `FetchOptions` into `request_body` (no
         // shallow alias, no post-queue detach), so the RefPtr<Store> already carries
@@ -1981,7 +1991,7 @@ impl FetchTasklet {
         // `clear_data() → request_body.detach()` releases it.
 
         let url = fetch_options.url;
-        let env = global_this.bun_vm().as_mut().transpiler.env_mut();
+        let env = cx.vm().as_mut().transpiler.env_mut();
         // Capture the proxy env so the HTTP thread can re-resolve per redirect
         // hop (`HTTPClient::reevaluate_proxy_for_redirect`). `ProxySettings`
         // owns copies of the env values, so a later `process.env.HTTP_PROXY =
@@ -2150,14 +2160,13 @@ impl FetchTasklet {
                 http::HTTPRequestBody::Sendfile(*sendfile);
         }
 
-        if let Some(signal) = &fetch_tasklet.signal {
-            signal.pending_activity_ref();
-            signal.add_listener(fetch_tasklet_ptr.cast::<c_void>(), Self::__abort_listener_c);
+        if let Some(signal) = fetch_options.signal {
+            // SAFETY: the tasklet is heap-allocated and drops its handle with itself.
+            unsafe { jsc::AbortHandle::follow_owner(fetch_tasklet_ptr, signal) };
         }
         Ok(fetch_tasklet_ptr)
     }
 
-    #[bun_uws::uws_callback]
     pub(crate) fn abort_listener(&mut self, reason: JSValue) {
         bun_output::scoped_log!(FetchTasklet, "abortListener");
         let this = self;
@@ -2393,12 +2402,12 @@ impl FetchTasklet {
     }
 
     pub(crate) fn queue(
-        global: &JSGlobalObject,
+        cx: &bun_jsc::JsThread<'_>,
         fetch_options: FetchOptions,
         promise: jsc::JSPromiseStrong,
     ) -> crate::Result<*mut FetchTasklet> {
         http::http_thread::init(&http::http_thread::InitOpts::default());
-        let node = Self::get(global, fetch_options, promise)?;
+        let node = Self::get(cx, fetch_options, promise)?;
 
         let node_ref = Self::from_raw_mut(node);
         let mut batch = bun_threading::thread_pool::Batch::default();
@@ -2409,10 +2418,11 @@ impl FetchTasklet {
 
         // increment ref so we can keep it alive until the http client is done
         node_ref.ref_();
-        // Out on the HTTP thread from here until its final callback: the VM
-        // aborts it at teardown (registry) and waits for it (the ticket).
-        node_ref.http_ticket = Some(global.bun_vm().ticket());
-        crate::jsc_hooks::ActiveHandle::Fetch(NonNull::new(node).expect("tasklet")).register();
+        // Out on the HTTP thread from here until its final callback: its context
+        // aborts it when it stops, and the VM waits for it (the ticket).
+        node_ref.http_ticket = Some(cx.vm().ticket());
+        // SAFETY: as in `get`.
+        unsafe { jsc::AbortHandle::arm_owner(node, cx.context()) };
         http::HTTPThread::schedule(batch);
 
         Ok(node)
@@ -2721,6 +2731,8 @@ pub(crate) struct FetchTaskletPromiseSettle {
     promise: jsc::JSPromiseStrong,
     global_object: GlobalRef,
     success: bool,
+    /// The context of the script that fetched.
+    context: jsc::ContextId,
 }
 
 impl FetchTaskletPromiseSettle {
@@ -2746,5 +2758,10 @@ impl bun_event_loop::Taskable for FetchTaskletPromiseSettle {
     unsafe fn release_unrun(this: *mut Self) {
         // SAFETY: fn contract — the box the completion queued.
         drop(unsafe { bun_core::heap::take(this) });
+    }
+    /// The fetch() promise is settled for the script that fetched.
+    unsafe fn context(this: *const Self) -> bun_event_loop::ContextId {
+        // SAFETY: fn contract — the box the completion queued.
+        unsafe { (*this).context }
     }
 }

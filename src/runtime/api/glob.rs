@@ -607,7 +607,7 @@ impl Glob {
                 Ok(Some(gw)) => gw,
             };
 
-        let cx = global_this.js_thread();
+        let cx = global_this.js_thread_of_caller(callframe);
         let promise = JSPromiseStrong::init(global_this);
         let value = promise.value();
         Job::<WalkTask>::schedule(

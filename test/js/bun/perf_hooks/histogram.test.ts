@@ -422,6 +422,26 @@ describe("Histogram", () => {
       }
     });
 
+    test("percentiles holds numbers and percentilesBigInt holds bigints", () => {
+      const h = createHistogram();
+      h.record(1);
+
+      assert.deepStrictEqual(
+        h.percentiles,
+        new Map([
+          [0, 1],
+          [100, 1],
+        ]),
+      );
+      assert.deepStrictEqual(
+        h.percentilesBigInt,
+        new Map([
+          [0, 1n],
+          [100, 1n],
+        ]),
+      );
+    });
+
     // Node fills both maps with the lowest value of each bucket. percentile() returns the highest.
     test("percentiles and percentilesBigInt hold the lowest value of each bucket", () => {
       const h = createHistogram();
@@ -438,14 +458,14 @@ describe("Histogram", () => {
         ]),
       );
       assert.deepStrictEqual(
-        Array.from(h.percentiles, ([key, value]) => [key, Number(value)]),
-        [
+        h.percentiles,
+        new Map([
           [0, 55264],
           [50, 99968],
           [75, 199936],
           [87.5, 433664],
           [100, 433664],
-        ],
+        ]),
       );
       assert.deepStrictEqual(
         [50, 75, 87.5, 100].map(percentile => h.percentile(percentile)),
@@ -670,28 +690,31 @@ describe("Histogram", () => {
       }
 
       const percentiles = h.percentiles;
-      const percentilesBigInt = h.percentilesBigInt;
 
       assert.ok(typeof percentiles.size === "number");
       assert.ok(typeof percentiles.has === "function");
       assert.ok(typeof percentiles.get === "function");
       assert.ok(typeof percentiles[Symbol.iterator] === "function");
 
+      // Node returns one Map from both getters and refills it on each access, so copy the entries first.
+      const entries = [...percentiles];
+      const percentilesBigInt = h.percentilesBigInt;
+
       assert.ok(typeof percentilesBigInt.size === "number");
       assert.ok(typeof percentilesBigInt.has === "function");
       assert.ok(typeof percentilesBigInt.get === "function");
       assert.ok(typeof percentilesBigInt[Symbol.iterator] === "function");
 
-      assert.strictEqual(percentiles.size, percentilesBigInt.size);
+      assert.strictEqual(entries.length, percentilesBigInt.size);
 
-      for (const [key, value] of percentiles) {
+      for (const [key, value] of entries) {
         assert.strictEqual(typeof key, "number");
-        assert.strictEqual(typeof value, "bigint");
+        assert.strictEqual(typeof value, "number");
 
         assert.ok(percentilesBigInt.has(key));
         const bigIntValue = percentilesBigInt.get(key);
         assert.strictEqual(typeof bigIntValue, "bigint");
-        assert.strictEqual(value, bigIntValue);
+        assert.strictEqual(BigInt(value), bigIntValue);
       }
     });
 

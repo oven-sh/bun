@@ -207,8 +207,7 @@ void JSNodePerformanceHooksHistogram::getPercentiles(JSGlobalObject* globalObjec
         // https://github.com/nodejs/node/blob/v26.3.0/src/histogram-inl.h#L61-L70
         int64_t value = iter.value;
         JSValue jsKey = jsNumber(percentile);
-        JSValue jsValue = JSBigInt::createFrom(globalObject, value);
-        RETURN_IF_EXCEPTION(scope, );
+        JSValue jsValue = jsNumber(static_cast<double>(value));
         map->set(globalObject, jsKey, jsValue);
         RETURN_IF_EXCEPTION(scope, void());
     }

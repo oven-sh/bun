@@ -1,10 +1,9 @@
-//! 1 arg  => returns absolute path of the arg (not found becomes exit code 1)
+//! Prints the absolute path of each arg on stdout, one per line.
 //!
-//! N args => returns absolute path of each separated by newline, if any path
-//! is not found, exit code becomes 1, but continues execution until all args
-//! are processed.
+//! An arg that is not found gets a `which: <arg> not found` line on stderr and
+//! makes the exit code 1. The remaining args are still processed.
 
-use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
+use crate::shell::builtin::{Builtin, BuiltinIO, BuiltinState, IoKind, Kind};
 use crate::shell::env_str::EnvStr;
 use crate::shell::interpreter::{Interpreter, NodeId};
 use crate::shell::io_writer::{ChildPtr, WriterTag};
@@ -15,16 +14,19 @@ pub struct Which {
     pub(crate) state: State,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone, Copy)]
 pub enum State {
     #[default]
     Idle,
     /// Called with no args: queued a single "\n" and waiting for the write.
     OneArg,
+    /// Queued one line of a call with args and waiting for the write.
     MultiArgs {
+        /// The stream the line went to.
+        stream: IoKind,
+        /// The next arg to resolve.
         arg_idx: usize,
         had_not_found: bool,
-        waiting_write: bool,
     },
 }
 
@@ -43,133 +45,63 @@ impl Which {
             return Builtin::done(interp, cmd, 1);
         }
 
-        if Builtin::of(interp, cmd).stdout.needs_io().is_none() {
-            // Synchronous path: resolve every arg, write straight to the
-            // captured buffer, then finish.
-            let search = SearchEnv::load(interp, cmd);
-            let mut had_not_found = false;
-            for i in 0..argc {
-                let arg = Self::arg(interp, cmd, i);
-                match search.resolve(&arg) {
-                    Some(resolved) => {
-                        let buf = Builtin::fmt_error_arena(
-                            interp,
-                            cmd,
-                            None,
-                            format_args!("{}\n", bstr::BStr::new(&resolved)),
-                        )
-                        .to_vec();
-                        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
-                    }
-                    None => {
-                        had_not_found = true;
-                        let buf = Builtin::fmt_error_arena(
+        Self::next(interp, cmd, 0, false)
+    }
+
+    /// Resolves args from `arg_idx` on until a line has to wait for an
+    /// IOWriter, or none are left. stdout and stderr can each be an fd or a
+    /// captured buffer, so each line checks its own stream.
+    fn next(
+        interp: &Interpreter,
+        cmd: NodeId,
+        mut arg_idx: usize,
+        mut had_not_found: bool,
+    ) -> Yield {
+        let argc = Builtin::of(interp, cmd).args_slice().len();
+        let search = SearchEnv::load(interp, cmd);
+
+        while arg_idx < argc {
+            let arg = Self::arg(interp, cmd, arg_idx);
+            arg_idx += 1;
+            let (stream, line) = match search.resolve(&arg) {
+                Some(resolved) => (
+                    IoKind::Stdout,
+                    Builtin::fmt_error_arena(
+                        interp,
+                        cmd,
+                        None,
+                        format_args!("{}\n", bstr::BStr::new(&resolved)),
+                    )
+                    .to_vec(),
+                ),
+                None => {
+                    had_not_found = true;
+                    (
+                        IoKind::Stderr,
+                        Builtin::fmt_error_arena(
                             interp,
                             cmd,
                             Some(Kind::Which),
                             format_args!("{} not found\n", bstr::BStr::new(&arg)),
                         )
-                        .to_vec();
-                        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
-                    }
+                        .to_vec(),
+                    )
                 }
-            }
-            return Builtin::done(interp, cmd, if had_not_found { 1 } else { 0 });
-        }
+            };
 
-        Self::state_mut(interp, cmd).state = State::MultiArgs {
-            arg_idx: 0,
-            had_not_found: false,
-            waiting_write: false,
-        };
-        Self::next(interp, cmd)
-    }
-
-    fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
-        let argc = Builtin::of(interp, cmd).args_slice().len();
-        let (arg_idx, had_not_found) = match &Self::state_mut(interp, cmd).state {
-            State::MultiArgs {
+            let Some(safeguard) = Self::out(interp, cmd, stream).needs_io() else {
+                let _ = Builtin::write_no_io(interp, cmd, stream, &line);
+                continue;
+            };
+            Self::state_mut(interp, cmd).state = State::MultiArgs {
+                stream,
                 arg_idx,
                 had_not_found,
-                ..
-            } => (*arg_idx, *had_not_found),
-            _ => unreachable!(),
-        };
-        if arg_idx >= argc {
-            return Builtin::done(interp, cmd, if had_not_found { 1 } else { 0 });
+            };
+            let child = ChildPtr::new(cmd, WriterTag::Builtin);
+            return Self::out(interp, cmd, stream).enqueue(child, &line, safeguard);
         }
-
-        let arg = Self::arg(interp, cmd, arg_idx);
-        let resolved = SearchEnv::load(interp, cmd).resolve(&arg);
-
-        let child = ChildPtr::new(cmd, WriterTag::Builtin);
-        match resolved {
-            None => {
-                if let State::MultiArgs {
-                    had_not_found,
-                    waiting_write,
-                    ..
-                } = &mut Self::state_mut(interp, cmd).state
-                {
-                    *had_not_found = true;
-                    *waiting_write = true;
-                }
-                if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
-                    return Builtin::of_mut(interp, cmd).stdout.enqueue_fmt(
-                        child,
-                        None,
-                        format_args!("{} not found\n", bstr::BStr::new(&arg)),
-                        safeguard,
-                    );
-                }
-                let buf = Builtin::fmt_error_arena(
-                    interp,
-                    cmd,
-                    None,
-                    format_args!("{} not found\n", bstr::BStr::new(&arg)),
-                )
-                .to_vec();
-                let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
-                Self::arg_complete(interp, cmd)
-            }
-            Some(resolved) => {
-                if let State::MultiArgs { waiting_write, .. } =
-                    &mut Self::state_mut(interp, cmd).state
-                {
-                    *waiting_write = true;
-                }
-                if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
-                    return Builtin::of_mut(interp, cmd).stdout.enqueue_fmt(
-                        child,
-                        None,
-                        format_args!("{}\n", bstr::BStr::new(&resolved)),
-                        safeguard,
-                    );
-                }
-                let buf = Builtin::fmt_error_arena(
-                    interp,
-                    cmd,
-                    None,
-                    format_args!("{}\n", bstr::BStr::new(&resolved)),
-                )
-                .to_vec();
-                let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
-                Self::arg_complete(interp, cmd)
-            }
-        }
-    }
-
-    fn arg_complete(interp: &Interpreter, cmd: NodeId) -> Yield {
-        if let State::MultiArgs {
-            arg_idx,
-            waiting_write,
-            ..
-        } = &mut Self::state_mut(interp, cmd).state
-        {
-            *arg_idx += 1;
-            *waiting_write = false;
-        }
-        Self::next(interp, cmd)
+        Builtin::done(interp, cmd, if had_not_found { 1 } else { 0 })
     }
 
     pub(crate) fn on_io_writer_chunk(
@@ -178,13 +110,29 @@ impl Which {
         _: usize,
         e: Option<bun_sys::SystemError>,
     ) -> Yield {
+        let state = Self::state_mut(interp, cmd).state;
         if let Some(err) = e {
-            return Builtin::done(interp, cmd, err.errno as crate::shell::ExitCode);
+            // A not-found line that cannot be written does not stop the
+            // listing. The exit code is already 1.
+            let is_not_found_line = matches!(
+                state,
+                State::MultiArgs {
+                    stream: IoKind::Stderr,
+                    ..
+                }
+            );
+            if !is_not_found_line {
+                return Builtin::done(interp, cmd, err.errno as crate::shell::ExitCode);
+            }
         }
-        match Self::state_mut(interp, cmd).state {
+        match state {
             State::OneArg => Builtin::done(interp, cmd, 1),
-            State::MultiArgs { .. } => Self::arg_complete(interp, cmd),
-            _ => Builtin::done(interp, cmd, 0),
+            State::MultiArgs {
+                arg_idx,
+                had_not_found,
+                ..
+            } => Self::next(interp, cmd, arg_idx, had_not_found),
+            State::Idle => Builtin::done(interp, cmd, 0),
         }
     }
 
@@ -192,6 +140,14 @@ impl Which {
 
     fn arg(interp: &Interpreter, cmd: NodeId, idx: usize) -> Vec<u8> {
         Builtin::of(interp, cmd).arg_bytes(idx).to_vec()
+    }
+
+    fn out(interp: &Interpreter, cmd: NodeId, stream: IoKind) -> &mut BuiltinIO {
+        let bltn = Builtin::of_mut(interp, cmd);
+        match stream {
+            IoKind::Stdout => &mut bltn.stdout,
+            IoKind::Stderr => &mut bltn.stderr,
+        }
     }
 }
 

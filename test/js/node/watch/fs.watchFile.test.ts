@@ -75,25 +75,38 @@ describe("fs.watchFile", () => {
     }
 
     try {
+      // The initial stat runs on a pool thread after watchFile() returns. Grow
+      // the file until the watcher reports the last size, so the initial stat
+      // and every poll up to here saw a real file.
+      let size = 5;
+      const grow = setInterval(() => {
+        size++;
+        updateFile(file, Buffer.alloc(size, "x").toString());
+      }, 20);
+      await callCount(1);
+      clearInterval(grow);
+      while (calls.at(-1)!.curr !== size) await called;
+      const synced = calls.length;
+
       // stat() fails with ENOENT
       fs.rmSync(dir, { recursive: true });
-      expect(await callCount(1)).toBe(1);
-      expect(calls[0]).toEqual({ curr: 0, prev: 5 });
+      expect(await callCount(synced + 1)).toBe(synced + 1);
+      expect(calls[synced]).toEqual({ curr: 0, prev: size });
 
       // stat() fails with ENOTDIR: a different error code, so node calls back
       fs.writeFileSync(dir, "x");
-      expect(await callCount(2)).toBe(2);
-      expect(calls[1].curr).toBe(0);
+      expect(await callCount(synced + 2)).toBe(synced + 2);
+      expect(calls[synced + 1].curr).toBe(0);
 
       // back to ENOENT
       fs.rmSync(dir);
-      expect(await callCount(3)).toBe(3);
-      expect(calls[2].curr).toBe(0);
+      expect(await callCount(synced + 3)).toBe(synced + 3);
+      expect(calls[synced + 2].curr).toBe(0);
 
       fs.mkdirSync(dir);
-      fs.writeFileSync(file, "hi");
-      expect(await callCount(4)).toBe(4);
-      expect(calls[3].curr).toBe(2);
+      updateFile(file, "hi");
+      expect(await callCount(synced + 4)).toBe(synced + 4);
+      expect(calls[synced + 3].curr).toBe(2);
     } finally {
       fs.unwatchFile(file);
     }

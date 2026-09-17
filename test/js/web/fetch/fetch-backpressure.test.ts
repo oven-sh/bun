@@ -705,11 +705,7 @@ describe("fetch() receive backpressure — the decompressor does not run ahead o
           stdout: "pipe",
           stderr: "pipe",
         });
-        const [stdout, stderr, exitCode] = await Promise.all([
-          proc.stdout.text(),
-          proc.stderr.text(),
-          proc.exited,
-        ]);
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
         expect(stderr).toBe("");
         // Several chunks: the cap split the decode across pulls instead of one SIZE-byte blob.
         const { total, chunks, digest } = JSON.parse(stdout);

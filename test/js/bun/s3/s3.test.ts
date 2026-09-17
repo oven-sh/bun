@@ -2133,6 +2133,106 @@ describe("s3 upload stream body error", () => {
   });
 });
 
+describe("s3 multipart upload abort with parts in flight", () => {
+  // S3 keeps a part that lands after AbortMultipartUpload. So the writer
+  // sends the abort only once every part that was in flight when the upload
+  // failed has reported back.
+  //
+  // The stub fails part 1 at once. It reads the bodies of parts 2 to 4 and
+  // holds their answers. Once end() has rejected and all three are held, the
+  // script asks the stub to release them with a GET /release. The HTTP thread
+  // sends the requests of one process in order, so an abort that went out at
+  // the failure reaches the stub before that GET. The stub records the abort
+  // with the number of parts it has answered by then.
+  it("sends AbortMultipartUpload after the last part in flight reports back", async () => {
+    const fixture = `
+      const PARTS = 4;
+      const requests = [];
+      const held = [];
+      let answered = 0;
+      const { promise: allHeld, resolve: onAllHeld } = Promise.withResolvers();
+      const server = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          const url = new URL(req.url);
+          if (req.method === "POST" && url.searchParams.has("uploads")) {
+            requests.push("initiate");
+            return new Response(
+              "<InitiateMultipartUploadResult><Bucket>my_bucket</Bucket><Key>obj</Key><UploadId>upload-1</UploadId></InitiateMultipartUploadResult>",
+              { headers: { "Content-Type": "application/xml" } },
+            );
+          }
+          if (req.method === "PUT" && url.searchParams.has("partNumber")) {
+            const n = url.searchParams.get("partNumber");
+            await req.arrayBuffer();
+            if (n === "1") {
+              requests.push("part 1 failed");
+              return new Response(
+                "<Error><Code>InternalError</Code><Message>We encountered an internal error. Please try again.</Message></Error>",
+                { status: 500, headers: { "Content-Type": "application/xml" } },
+              );
+            }
+            await new Promise(release => {
+              held.push(release);
+              if (held.length === PARTS - 1) onAllHeld();
+            });
+            answered++;
+            requests.push("part " + n + " stored");
+            return new Response(null, { status: 200, headers: { ETag: '"etag-' + n + '"' } });
+          }
+          if (req.method === "DELETE" && url.searchParams.get("uploadId") === "upload-1") {
+            requests.push("abort after " + answered + " parts stored");
+            return new Response(null, { status: 204 });
+          }
+          if (req.method === "GET" && url.pathname === "/release") {
+            requests.push("release");
+            for (const release of held.splice(0)) release();
+            return new Response(null, { status: 200 });
+          }
+          requests.push(req.method + " " + url.pathname + url.search);
+          return new Response(null, { status: 400 });
+        },
+      });
+      // Only the upload may keep the child alive.
+      server.unref();
+
+      const client = new Bun.S3Client({
+        accessKeyId: "test",
+        secretAccessKey: "test",
+        region: "eu-west-3",
+        bucket: "my_bucket",
+        endpoint: \`http://127.0.0.1:\${server.port}\`,
+      });
+      const writer = client.file("obj").writer({ partSize: 5 * 1024 * 1024, queueSize: PARTS, retry: 0 });
+      const part = new Uint8Array(5 * 1024 * 1024);
+      for (let i = 0; i < PARTS; i++) writer.write(part);
+      const outcome = await writer.end().then(
+        () => "resolved",
+        e => "rejected " + e.code,
+      );
+      await allHeld;
+      await fetch(\`http://127.0.0.1:\${server.port}/release\`);
+      process.on("exit", () => console.log(JSON.stringify({ outcome, requests })));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      // The S3 client honors the proxy environment; the stub is on loopback.
+      env: { ...bunEnv, HTTP_PROXY: undefined, HTTPS_PROXY: undefined, http_proxy: undefined, https_proxy: undefined },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const { outcome, requests } = JSON.parse(stdout.trim());
+    expect(outcome).toBe("rejected InternalError");
+    expect(requests.slice(0, 3)).toEqual(["initiate", "part 1 failed", "release"]);
+    // Parts 2 to 4 answer in the order the stub received them.
+    expect(requests.slice(3, 6).toSorted()).toEqual(["part 2 stored", "part 3 stored", "part 4 stored"]);
+    expect(requests.slice(6)).toEqual(["abort after 3 parts stored"]);
+    expect(exitCode).toBe(0);
+  });
+});
+
 describe("presigned url signature", () => {
   function verifyPresignedUrl(presigned: string, credentials: { secretAccessKey: string; region: string }) {
     const url = new URL(presigned);

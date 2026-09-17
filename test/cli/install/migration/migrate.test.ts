@@ -1955,8 +1955,8 @@ describe("package-lock.json migration fixes", () => {
 
     // With --install-links npm lets one copy satisfy every dependency of its name. In the next
     // three tests the copy is of a directory that only the package `evil` names, and a package
-    // bun trusts depends on the same name. That package does not make the copy trusted. Its
-    // dependency is dropped with the warning, because the lockfile has no entry for another copy.
+    // bun trusts depends on the same name. No trusted `file:` spec names that directory, so the
+    // trusted package cannot use the copy. Its dependency is dropped with a warning.
     const evilTarball = {
       version: "1.0.0",
       resolved: "file:../t/evil-1.0.0.tgz",
@@ -1969,6 +1969,8 @@ describe("package-lock.json migration fixes", () => {
     };
     const skippedSecret =
       'skipped "loot" from package-lock.json: transitive folder dependency "../t/secret" is outside the project';
+    const unvouchedSecret =
+      'skipped "loot" from package-lock.json: it is a copy of "../t/secret", and no local package names that directory';
 
     test.concurrent("a file: spec does not vouch for a copy of another directory", async () => {
       const dependencies = { evil: "file:../t/evil-1.0.0.tgz", z: "file:../packages/z" };
@@ -1990,6 +1992,7 @@ describe("package-lock.json migration fixes", () => {
 
       const { stderr, text, lock } = await migrate(dir);
       expect(stderr).toContain(skippedSecret);
+      expect(stderr).toContain(unvouchedSecret);
       expect(Object.keys(lock.packages)).toStrictEqual(["evil", "z"]);
       expect(lock.packages.z).toStrictEqual(["z@file:../packages/z", {}]);
       expect(text).not.toContain("secret");
@@ -2016,14 +2019,15 @@ describe("package-lock.json migration fixes", () => {
 
       const { stderr, text, lock } = await migrate(dir);
       expect(stderr).toContain(skippedSecret);
+      expect(stderr).toContain(unvouchedSecret);
       expect(Object.keys(lock.packages)).toStrictEqual(["app", "evil"]);
       expect(text).not.toContain("secret");
     });
 
-    // Written by hand. The copy is of a directory inside the registry package `evil`, so it
-    // migrates. The root depends on its name, but that does not make the copy's own `file:`
-    // specs the root's.
-    test.concurrent("a copy that the root does not name cannot declare a directory outside the project", async () => {
+    // Written by hand. The copy is of a directory inside the registry package `evil`. The root
+    // depends on the same name, but no trusted `file:` spec names that directory. The root does
+    // not get the copy, and the copy's own `file:` specs are not the root's.
+    test.concurrent("the root cannot use a copy of a directory inside a registry package", async () => {
       const dependencies = { evil: "1.0.0", loot: "file:../packages/loot-good" };
       using copy = tempDir("npm-migrate-install-links-unnamed-copy", {
         "root/package.json": JSON.stringify({ name: "root", dependencies }),
@@ -2050,10 +2054,50 @@ describe("package-lock.json migration fixes", () => {
 
       const { stderr, text, lock } = await migrate(dir);
       expect(stderr).toContain(
+        'skipped "loot" from package-lock.json: it is a copy of "node_modules/evil/inner", and no local package names that directory',
+      );
+      expect(stderr).toContain(
         'skipped "secret" from package-lock.json: transitive folder dependency "../secret" is outside the project',
       );
-      expect(lock.packages.loot).toStrictEqual(["loot@file:node_modules/evil/inner", {}]);
+      expect(Object.keys(lock.packages)).toStrictEqual(["evil", "evil/loot"]);
+      // The next `bun install` resolves the root's `loot` from its `file:` spec.
+      expect(lock.workspaces[""].dependencies).toStrictEqual({ evil: "1.0.0" });
       expect(text).not.toContain("../secret");
+    });
+
+    // npm places workspaces by path and bun visits them by name, so bun reaches the ranges of the
+    // root and of `alpha` before the `file:` spec of `zeta` that names the directory of the copy.
+    test.concurrent("a range can use a copy that a workspace visited later names", async () => {
+      const root = { name: "root", workspaces: ["packages/*"], dependencies: { lib: "^1.0.0" } };
+      const zeta = { name: "zeta", version: "1.0.0", dependencies: { lib: "file:../../../lib" } };
+      const alpha = { name: "alpha", version: "1.0.0", dependencies: { lib: "^1.0.0" } };
+      using copy = tempDir("npm-migrate-install-links-order", {
+        "root/package.json": JSON.stringify(root),
+        "root/package-lock.json": npmLock("root", {
+          "": root,
+          "node_modules/alpha": { resolved: "packages/b", link: true },
+          "node_modules/lib": { version: "1.2.0", resolved: "file:../lib" },
+          "node_modules/zeta": { resolved: "packages/a", link: true },
+          "packages/a": zeta,
+          "packages/b": alpha,
+        }),
+        "root/packages/a/package.json": JSON.stringify(zeta),
+        "root/packages/b/package.json": JSON.stringify(alpha),
+        "lib/package.json": JSON.stringify({ name: "lib", version: "1.2.0" }),
+      });
+      const dir = join(String(copy), "root");
+      writeExtra(dir, {});
+
+      const { stderr, lock } = await migrate(dir);
+      expect(stderr).not.toContain("skipped");
+      expect(lock.packages).toStrictEqual({
+        alpha: ["alpha@workspace:packages/b"],
+        "alpha/lib": ["lib@file:../lib", {}],
+        lib: ["lib@file:../lib", {}],
+        zeta: ["zeta@workspace:packages/a"],
+        "zeta/lib": ["lib@file:../lib", {}],
+      });
+      await frozen(dir);
     });
   });
 

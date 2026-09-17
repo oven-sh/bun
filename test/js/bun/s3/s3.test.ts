@@ -1802,6 +1802,158 @@ describe("s3 multipart upload id validation", () => {
   }, 60_000);
 });
 
+// The store can keep a part that it receives after AbortMultipartUpload, and
+// nothing aborts the upload a second time. So the abort of a failed upload goes
+// out when every part request that was in flight has its answer.
+describe.concurrent("s3 multipart upload that fails while parts are in flight", () => {
+  const partSize = 5 * 1024 * 1024;
+
+  // A local S3 that logs every request, the parts in the order of their
+  // numbers. `holds(part, attempt)` says what an UploadPart gets: true holds the
+  // answer until the test calls `answerPart(part)`, false refuses the part.
+  function mockS3(holds: (part: number, attempt: number) => boolean) {
+    const requests: string[] = [];
+    const gates = new Map<string, PromiseWithResolvers<void>>();
+    const gate = (name: string) => {
+      if (!gates.has(name)) gates.set(name, Promise.withResolvers<void>());
+      return gates.get(name)!;
+    };
+    const attempts = new Map<number, number>();
+    const server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        const { searchParams } = new URL(req.url);
+        if (req.method === "POST" && searchParams.has("uploads")) {
+          requests.push("CreateMultipartUpload");
+          return new Response(
+            "<InitiateMultipartUploadResult><Bucket>my_bucket</Bucket><Key>obj</Key><UploadId>upload-1</UploadId></InitiateMultipartUploadResult>",
+            { headers: { "Content-Type": "application/xml" } },
+          );
+        }
+        if (req.method === "PUT" && searchParams.has("partNumber")) {
+          const part = Number(searchParams.get("partNumber"));
+          const attempt = (attempts.get(part) ?? 0) + 1;
+          attempts.set(part, attempt);
+          await req.arrayBuffer();
+          if (part > 1) await gate(`logged ${part - 1}`).promise;
+          if (!holds(part, attempt)) {
+            requests.push(`UploadPart ${part} refused`);
+            gate(`logged ${part}`).resolve();
+            return new Response("<Error><Code>AccessDenied</Code><Message>Access Denied</Message></Error>", {
+              status: 403,
+              headers: { "Content-Type": "application/xml" },
+            });
+          }
+          requests.push(`UploadPart ${part}`);
+          gate(`logged ${part}`).resolve();
+          gate(`held ${part}`).resolve();
+          await gate(`answer ${part}`).promise;
+          requests.push(`UploadPart ${part} answered`);
+          return new Response(undefined, { headers: { ETag: '"etag"' } });
+        }
+        if (req.method === "DELETE" && searchParams.has("uploadId")) {
+          requests.push("AbortMultipartUpload");
+          gate("aborted").resolve();
+          return new Response(undefined, { status: 204 });
+        }
+        return new Response("ok");
+      },
+    });
+    const client = new S3Client({
+      accessKeyId: "test",
+      secretAccessKey: "test",
+      region: "eu-west-3",
+      bucket: "my_bucket",
+      endpoint: server.url.href,
+    });
+    return {
+      server,
+      client,
+      requests,
+      partHeld: (part: number) => gate(`held ${part}`).promise,
+      answerPart: (part: number) => gate(`answer ${part}`).resolve(),
+      aborted: gate("aborted").promise,
+      // Two requests in a row through the HTTP thread of the client and this
+      // server. The client sends its requests in the order it makes them, so a
+      // request that it made before this call is in the log when this resolves.
+      async roundTrips() {
+        for (let i = 0; i < 2; i++) await (await fetch(server.url)).text();
+      },
+    };
+  }
+
+  it("a part fails with no retry left", async () => {
+    const { server, client, requests, answerPart, aborted, roundTrips } = mockS3(part => part <= 2);
+    using _ = server;
+
+    const writer = client.file("obj").writer({ partSize, retry: 0 });
+    writer.write(Buffer.alloc(partSize * 2, "a"));
+    writer.write("tail");
+    // The store refuses part 3 and still holds the answers to parts 1 and 2.
+    await expect(writer.end()).rejects.toMatchObject({ code: "AccessDenied" });
+    await roundTrips();
+    answerPart(1);
+    // The client has the answer to part 1 after the first call. An abort that
+    // it made at that moment is in the log after the second call.
+    await roundTrips();
+    await roundTrips();
+    answerPart(2);
+    await aborted;
+    expect(requests).toEqual([
+      "CreateMultipartUpload",
+      "UploadPart 1",
+      "UploadPart 2",
+      "UploadPart 3 refused",
+      "UploadPart 1 answered",
+      "UploadPart 2 answered",
+      "AbortMultipartUpload",
+    ]);
+  });
+
+  it.each([
+    ["the first attempt", 0],
+    ["a retry", 1],
+  ])("the source stream fails while %s of a part is in flight", async (_name, refusedAttempts) => {
+    const { server, client, requests, partHeld, answerPart, aborted, roundTrips } = mockS3(
+      (_part, attempt) => attempt > refusedAttempts,
+    );
+    using _ = server;
+
+    let pulls = 0;
+    const source = new ReadableStream({
+      async pull(controller) {
+        if (pulls++ === 0) return controller.enqueue(new Uint8Array(partSize));
+        await partHeld(1);
+        controller.error(new Error("the source failed"));
+      },
+    });
+    await expect(client.write("obj", source, { partSize, retry: refusedAttempts })).rejects.toThrow(
+      "the source failed",
+    );
+    await roundTrips();
+    answerPart(1);
+    await aborted;
+    expect(requests).toEqual([
+      "CreateMultipartUpload",
+      ...Array(refusedAttempts).fill("UploadPart 1 refused"),
+      "UploadPart 1",
+      "UploadPart 1 answered",
+      "AbortMultipartUpload",
+    ]);
+  });
+
+  it("sends the abort at once when no part is in flight", async () => {
+    const { server, client, requests, aborted } = mockS3(() => false);
+    using _ = server;
+
+    const writer = client.file("obj").writer({ partSize, retry: 0 });
+    writer.write(Buffer.alloc(partSize, "a"));
+    await expect(writer.end()).rejects.toMatchObject({ code: "AccessDenied" });
+    await aborted;
+    expect(requests).toEqual(["CreateMultipartUpload", "UploadPart 1 refused", "AbortMultipartUpload"]);
+  });
+});
+
 describe("s3 upload stream body error", () => {
   // The readStreamIntoSink abrupt path dispatches a single-file PUT before
   // the pump promise rejects; the PUT's response callback must not read a

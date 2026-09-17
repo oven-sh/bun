@@ -521,6 +521,7 @@ pub(crate) fn writable_stream(
         multipart_etags: JsCell::new(Vec::new()),
         multipart_upload_list: JsCell::new(Vec::new()),
         state: Cell::new(MultiPartUploadState::NotStarted),
+        rollback_pending: Cell::new(false),
         callback: wrapper_callback_thunk,
         on_writable: Some(on_writable_thunk),
         callback_context: Cell::new(core::ptr::null_mut()), // assigned below
@@ -940,6 +941,7 @@ pub(crate) fn upload_stream(
         multipart_etags: JsCell::new(Vec::new()),
         multipart_upload_list: JsCell::new(Vec::new()),
         state: Cell::new(MultiPartUploadState::WaitStreamCheck),
+        rollback_pending: Cell::new(false),
         callback: resolve_thunk,
         on_writable: Some(on_writable_thunk),
         callback_context: Cell::new(core::ptr::null_mut()), // assigned below

@@ -6,7 +6,7 @@
 // Each part maintains a reference to MultiPartUpload until completion.
 // If a part is canceled or fails early, the allocated slice is freed, and the reference is removed. If a part completes successfully, an etag is received, the allocated slice is deallocated, and the etag is appended to multipart_etags. If a part request fails, it retries until the maximum retry count is reached. If it still fails, MultiPartUpload is marked as failed and its reference is removed.
 // If all parts succeed, a complete request is sent.
-// If any part fails, a rollback request deletes the uploaded parts. Rollback and commit requests do not increase the reference count of MultiPartUpload, as they are the final step. Once commit or rollback finishes, the reference count is decremented, and MultiPartUpload is freed. These requests retry up to the maximum retry count on a best-effort basis.
+// If any part fails, a rollback request deletes the uploaded parts. It is sent after every part request in flight has reported back. Rollback and commit requests do not increase the reference count of MultiPartUpload, as they are the final step. Once commit or rollback finishes, the reference count is decremented, and MultiPartUpload is freed. These requests retry up to the maximum retry count on a best-effort basis.
 
 //                Start Upload
 //                       │
@@ -163,6 +163,9 @@ pub struct MultiPartUpload {
     pub(crate) multipart_upload_list: JsCell<Vec<u8>>, // was bun.Vec<u8>
 
     pub(crate) state: Cell<State>,
+    /// `fail()` owes the store an AbortMultipartUpload. It goes out when no part request is in
+    /// flight: the store can keep a part that lands after the abort, and nothing aborts again.
+    pub(crate) rollback_pending: Cell<bool>,
 
     /// Completion. The upload is passed so `uploaded_bytes` can be read by a callee that no
     /// longer holds a ref to it (a `writer()` sink whose JS wrapper was collected).
@@ -241,6 +244,7 @@ pub enum PartState {
     Pending = 1,
     Started = 2,
     Completed = 3,
+    /// The upload failed while the request of this part was in flight.
     Canceled = 4,
 }
 
@@ -294,8 +298,11 @@ impl UploadPart {
         if this.state.get() == PartState::Canceled || ctx.state.get() == State::Finished {
             scoped_log!(S3MultiPartUpload, "onPartResponse {} canceled", part_number);
             this.free_allocated_slice();
+            this.state.set(PartState::NotAssigned);
+            // The ctx deref must run after the rollback is sent:
+            let r = ctx.rollback_if_no_part_in_flight();
             MultiPartUpload::deref_(ctx_ptr);
-            return Ok(());
+            return r;
         }
 
         this.state.set(PartState::Completed);
@@ -386,14 +393,15 @@ impl UploadPart {
     }
 
     fn cancel(&self) {
-        let state = self.state.replace(PartState::Canceled);
-
-        match state {
+        match self.state.get() {
+            // Not sent, so nothing reports back for it.
             PartState::Pending => {
                 self.free_allocated_slice();
+                self.state.set(PartState::NotAssigned);
             }
-            // if is not pending we will free later or is already freed
-            _ => {}
+            // In flight (`Completed`: its retry is). `on_part_response` frees the buffer.
+            PartState::Started | PartState::Completed => self.state.set(PartState::Canceled),
+            PartState::NotAssigned | PartState::Canceled => {}
         }
     }
 }
@@ -603,8 +611,9 @@ impl MultiPartUpload {
                 S3UploadResult::Failure(err),
                 self.callback_context.get(),
             )?;
-            // Nothing more is expected for this upload (a rollback request keeps the loop alive
-            // itself), and whoever still holds a ref may hold it for as long as the collector likes.
+            // Nothing more is expected for this upload (a part request in flight and the rollback
+            // request keep the loop alive themselves), and whoever still holds a ref may hold it for
+            // as long as the collector likes.
             self.poll_ref.with_mut(|poll_ref| {
                 poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(
                     bun_io::AllocatorType::Js,
@@ -614,13 +623,31 @@ impl MultiPartUpload {
             if old_state == State::MultipartCompleted {
                 // we are a multipart upload so we need to rollback
                 // will deref after rollback
-                self.rollback_multi_part_request()?;
+                self.rollback_pending.set(true);
+                self.rollback_if_no_part_in_flight()?;
             } else {
                 // single file upload no need to rollback
                 MultiPartUpload::deref_(self.root_ptr());
             }
         }
         Ok(())
+    }
+
+    /// Sends the rollback that `fail()` owes, once the last canceled part has reported back.
+    fn rollback_if_no_part_in_flight(&self) -> bun_jsc::JsResult<()> {
+        if !self.rollback_pending.get() {
+            return Ok(());
+        }
+        let part_in_flight = self.queue.get().as_deref().is_some_and(|queue| {
+            queue
+                .iter()
+                .any(|part| part.state.get() == PartState::Canceled)
+        });
+        if part_in_flight {
+            return Ok(());
+        }
+        self.rollback_pending.set(false);
+        self.rollback_multi_part_request()
     }
 
     fn done(&self) -> bun_jsc::JsResult<()> {

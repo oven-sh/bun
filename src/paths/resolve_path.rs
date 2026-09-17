@@ -18,10 +18,37 @@ thread_local! {
     static PARSER_BUFFER: UnsafeCell<[u8; PARSER_BUFFER_LEN]> =
         const { UnsafeCell::new([0u8; PARSER_BUFFER_LEN]) };
     // Results of the wrappers above each fixed buffer that did not fit it; see `spill_out`.
-    static PARSER_JOIN_INPUT_SPILL: UnsafeCell<Vec<u8>> = const { UnsafeCell::new(Vec::new()) };
-    static PARSER_SPILL: UnsafeCell<Vec<u8>> = const { UnsafeCell::new(Vec::new()) };
-    static JOIN_SPILL: UnsafeCell<Vec<u8>> = const { UnsafeCell::new(Vec::new()) };
-    static RELATIVE_SPILL: UnsafeCell<Vec<u8>> = const { UnsafeCell::new(Vec::new()) };
+    static PARSER_JOIN_INPUT_SPILL: UnsafeCell<SpillStore> = const { UnsafeCell::new(SpillStore::new()) };
+    static PARSER_SPILL: UnsafeCell<SpillStore> = const { UnsafeCell::new(SpillStore::new()) };
+    static JOIN_SPILL: UnsafeCell<SpillStore> = const { UnsafeCell::new(SpillStore::new()) };
+    static RELATIVE_SPILL: UnsafeCell<SpillStore> = const { UnsafeCell::new(SpillStore::new()) };
+}
+
+/// Heap storage for one family of thread-local results, reused like its fixed buffer.
+struct SpillStore {
+    current: Vec<u8>,
+    // Outgrown blocks stay allocated until the thread exits, so an old result is stale, never freed.
+    outgrown: Vec<Vec<u8>>,
+}
+
+impl SpillStore {
+    const fn new() -> Self {
+        Self {
+            current: Vec::new(),
+            outgrown: Vec::new(),
+        }
+    }
+
+    fn keep(&mut self, result: &[u8]) -> &[u8] {
+        if self.current.len() < result.len() {
+            // Doubling bounds the outgrown blocks by the size of the current one.
+            let grown = vec![0u8; result.len().max(self.current.len() * 2)];
+            self.outgrown
+                .push(core::mem::replace(&mut self.current, grown));
+        }
+        self.current[..result.len()].copy_from_slice(result);
+        &self.current[..result.len()]
+    }
 }
 
 /// Fixed capacity of [`join_abs_string`]'s output; longer results spill to the heap.
@@ -30,31 +57,20 @@ const PARSER_JOIN_INPUT_BUFFER_LEN: usize = 4096;
 /// Fixed capacity of [`normalize_string`]'s output; longer results spill to the heap.
 const PARSER_BUFFER_LEN: usize = 1024;
 
-/// The previous spill is freed only after `op` returns because `op` may read it.
+/// `op` writes to a scratch buffer because one of its inputs may be the result `spill` holds.
 fn spill_out<'r>(
-    spill: &'static std::thread::LocalKey<UnsafeCell<Vec<u8>>>,
+    spill: &'static std::thread::LocalKey<UnsafeCell<SpillStore>>,
     len: usize,
     op: impl FnOnce(&'r mut [u8]) -> &'r [u8],
 ) -> &'static [u8] {
     let mut out = vec![0u8; len];
-    let out_start = out.as_mut_ptr();
     // SAFETY: `out` holds `len` initialized bytes that nothing else touches until `op` returns.
-    let buf: &'r mut [u8] = unsafe { core::slice::from_raw_parts_mut(out_start, len) };
+    let buf: &'r mut [u8] = unsafe { core::slice::from_raw_parts_mut(out.as_mut_ptr(), len) };
     let result = op(buf);
-    let result_len = result.len();
-    let (out_start, result_start) = (out_start as usize, result.as_ptr() as usize);
-    let (start, to_store) =
-        if result_start >= out_start && result_start + result_len <= out_start + len {
-            (result_start - out_start, out)
-        } else {
-            // An input returned as the result (`join_abs_string` with no parts returns the cwd).
-            (0, result.to_vec())
-        };
     spill.with(|cell| {
-        // SAFETY: sole accessor on this thread, and `op` returned so nothing reads the old spill.
-        let stored: &'static mut Vec<u8> = unsafe { &mut *cell.get() };
-        *stored = to_store;
-        &stored[start..start + result_len]
+        // SAFETY: sole accessor on this thread, and `op` returned so nothing reads the old result.
+        let store: &'static mut SpillStore = unsafe { &mut *cell.get() };
+        store.keep(result)
     })
 }
 
@@ -3595,6 +3611,16 @@ mod tests {
         let mut expected = long.clone();
         expected.extend_from_slice(b"/b");
         assert_eq!(join::<platform::Posix>(&[previous, b"b"]), &expected[..]);
+    }
+
+    #[test]
+    fn an_outgrown_spilled_result_is_stale_but_never_freed() {
+        let long = vec![b'a'; JOIN_BUF_LEN];
+        let first = join::<platform::Posix>(&[&long]);
+        let longer = vec![b'b'; 4 * JOIN_BUF_LEN];
+        assert_eq!(join::<platform::Posix>(&[&longer]), &longer[..]);
+        // Under Miri or ASAN this read fails if the second call freed the first result.
+        assert_eq!(first, &long[..]);
     }
 
     #[test]

@@ -10,12 +10,16 @@ class JSVMClientData;
 namespace Bun {
 
 class JSCTaskScheduler {
+    WTF_MAKE_NONCOPYABLE(JSCTaskScheduler);
+
 public:
-    JSCTaskScheduler()
-        : m_pendingTicketsKeepingEventLoopAlive()
-        , m_pendingTicketsOther()
+    explicit JSCTaskScheduler(JSC::VM& vm)
+        : m_vm(vm)
     {
     }
+
+    // Jobs take the VM from here, not from their ticket's scriptExecutionOwner().
+    JSC::VM& vm() const { return m_vm; }
 
     static void onAddPendingWork(WebCore::JSVMClientData* clientData, Ref<JSC::DeferredWorkTimer::Ticket>&& ticket, JSC::DeferredWorkTimer::WorkType kind);
     static void onScheduleWorkSoon(WebCore::JSVMClientData* clientData, Ref<JSC::DeferredWorkTimer::Ticket>&& ticket, JSC::DeferredWorkTimer::Task&& task);
@@ -38,6 +42,9 @@ public:
     // Value: the loop that was current when JSC registered the work; its completion is posted there.
     UncheckedKeyHashMap<Ref<JSC::DeferredWorkTimer::Ticket>, BunLoopKind> m_pendingTicketsKeepingEventLoopAlive;
     UncheckedKeyHashMap<Ref<JSC::DeferredWorkTimer::Ticket>, BunLoopKind> m_pendingTicketsOther;
+
+private:
+    JSC::VM& m_vm;
 };
 
 }

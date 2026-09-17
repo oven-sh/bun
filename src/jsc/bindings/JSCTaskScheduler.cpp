@@ -17,19 +17,16 @@ extern "C" void Bun__queueJSCDeferredWorkTaskConcurrently(const ::BunVmHandleRef
 
 class JSCDeferredWorkTask {
 public:
-    JSCDeferredWorkTask(Ref<Ticket> ticket, Task&& task)
-        : ticket(WTF::move(ticket))
+    JSCDeferredWorkTask(WebCore::JSVMClientData* clientData, Ref<Ticket> ticket, Task&& task)
+        : clientData(clientData)
+        , ticket(WTF::move(ticket))
         , task(WTF::move(task))
     {
     }
 
+    WebCore::JSVMClientData* clientData;
     Ref<Ticket> ticket;
     Task task;
-    ~JSCDeferredWorkTask()
-    {
-    }
-
-    JSC::VM& vm() const { return ticket->scriptExecutionOwner()->vm(); }
 
     WTF_MAKE_TZONE_ALLOCATED(JSCDeferredWorkTask);
 };
@@ -88,7 +85,7 @@ void JSCTaskScheduler::onScheduleWorkSoon(WebCore::JSVMClientData* clientData, R
     // Outside m_lock (markShuttingDown, on the VM's thread, needs it): a post that
     // still races the shutdown lands on the VM handle, which either queues it for
     // the teardown to release unrun or refuses it and runs the job's release path.
-    auto* job = new JSCDeferredWorkTask(WTF::move(ticket), WTF::move(task));
+    auto* job = new JSCDeferredWorkTask(clientData, WTF::move(ticket), WTF::move(task));
     Bun__queueJSCDeferredWorkTaskConcurrently(clientData->vmHandle, job, loopKind);
 }
 
@@ -104,8 +101,12 @@ void JSCTaskScheduler::onCancelPendingWork(WebCore::JSVMClientData* clientData, 
         Bun__VmHandle__refKeepAlive(vmHandle, BunLoopKind::Regular, -1);
 }
 
-static void runPendingWork(const ::BunVmHandleRef* vmHandle, Bun::JSCTaskScheduler& scheduler, JSCDeferredWorkTask* job)
+static void runPendingWork(JSCDeferredWorkTask* job)
 {
+    auto* clientData = job->clientData;
+    auto* vmHandle = clientData->vmHandle;
+    auto& scheduler = clientData->deferredWorkTimer;
+
     Locker<Lock> holder { scheduler.m_lock };
     bool wasPending = scheduler.m_pendingTicketsKeepingEventLoopAlive.remove(job->ticket.ptr());
     if (!wasPending) {
@@ -120,7 +121,7 @@ static void runPendingWork(const ::BunVmHandleRef* vmHandle, Bun::JSCTaskSchedul
     // event-loop callback boundary, an exception a task lets escape is
     // reported as uncaught here rather than left on the VM for the next entry.
     if (wasPending && !job->ticket->isCancelled() && Bun__VmHandle__scriptAllowed(vmHandle)) {
-        auto& vm = job->vm();
+        auto& vm = scheduler.vm();
         auto* globalObject = job->ticket->target()->globalObject();
         // The realm's own status, as DeferredWorkTimer::doWork asks it before it runs a
         // task. A realm that `bun test --isolate` retired reports Stopped, so the
@@ -143,10 +144,7 @@ static void runPendingWork(const ::BunVmHandleRef* vmHandle, Bun::JSCTaskSchedul
 
 extern "C" void Bun__runDeferredWork(Bun::JSCDeferredWorkTask* job)
 {
-    auto& vm = job->vm();
-    auto clientData = WebCore::clientData(vm);
-
-    runPendingWork(clientData->vmHandle, clientData->deferredWorkTimer, job);
+    runPendingWork(job);
 }
 
 // Reclaim a queued-but-never-dispatched job during shutdown. Called while the
@@ -155,14 +153,13 @@ extern "C" void Bun__runDeferredWork(Bun::JSCDeferredWorkTask* job)
 // ticket take() so the pending set and event-loop ref stay balanced.
 extern "C" void Bun__deleteDeferredWorkTask(Bun::JSCDeferredWorkTask* job)
 {
-    if (auto* clientData = WebCore::clientData(job->vm())) {
-        auto& scheduler = clientData->deferredWorkTimer;
-        Locker<Lock> holder { scheduler.m_lock };
-        bool wasKeepingAlive = dropPendingTicketLocked(scheduler, job->ticket.ptr());
-        holder.unlockEarly();
-        if (wasKeepingAlive)
-            Bun__VmHandle__refKeepAlive(clientData->vmHandle, BunLoopKind::Regular, -1);
-    }
+    auto* clientData = job->clientData;
+    auto& scheduler = clientData->deferredWorkTimer;
+    Locker<Lock> holder { scheduler.m_lock };
+    bool wasKeepingAlive = dropPendingTicketLocked(scheduler, job->ticket.ptr());
+    holder.unlockEarly();
+    if (wasKeepingAlive)
+        Bun__VmHandle__refKeepAlive(clientData->vmHandle, BunLoopKind::Regular, -1);
     delete job;
 }
 

@@ -55,6 +55,7 @@ JSHeapData::~JSHeapData() = default;
 
 JSVMClientData::JSVMClientData(VM& vm, RefPtr<JSC::SourceProvider> sourceProvider)
     : commonStrings(vm)
+    , deferredWorkTimer(vm)
     , m_builtinNames(vm)
     , m_builtinFunctions(makeUnique<JSBuiltinFunctions>(vm, sourceProvider, m_builtinNames))
     , m_heapData(JSHeapData::ensureHeapData(vm.heap))

@@ -6471,6 +6471,55 @@ const after = name => ({ size: fs.statSync(name).size, json: (() => { try { JSON
   expect(exitCode).toBe(0);
 });
 
+// The Windows arm of the same bug, with a natural trigger: while another
+// process holds a mapped view of the file, the shrink fails with
+// STATUS_USER_MAPPED_FILE. git maps work-tree files while it diffs them.
+it.skipIf(!isWindows)("writeFile fails when another process maps the file and the shrink fails (#42598)", async () => {
+  using dir = tempDir("writefile-mapped-view", {});
+  const file = path.join(String(dir), "data.json");
+  const longer = JSON.stringify({ status: "longer", pad: Buffer.alloc(4000, "x").toString() });
+  const shorter = JSON.stringify({ status: "short", pad: Buffer.alloc(4000, "x").toString() });
+  const outcome = async (fn: () => unknown) => {
+    try {
+      await fn();
+      return "resolved";
+    } catch (e: any) {
+      return { code: e.code, syscall: e.syscall, path: path.basename(e.path) };
+    }
+  };
+
+  const out: Record<string, unknown> = {};
+  for (const [label, write] of [
+    ["sync", () => fs.writeFileSync(file, shorter)],
+    ["promise", () => fs.promises.writeFile(file, shorter)],
+  ] as const) {
+    fs.writeFileSync(file, longer);
+    await using child = Bun.spawn({
+      cmd: [bunExe(), path.join(import.meta.dir, "fs-mapped-view-fixture.ts"), file],
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const reader = child.stdout.getReader();
+    const { value } = await reader.read();
+    reader.releaseLock();
+    expect(new TextDecoder().decode(value)).toBe("mapped\n");
+    out[label] = await outcome(write);
+    out[`${label}Size`] = fs.statSync(file).size;
+    child.stdin.end();
+    expect(await child.exited).toBe(0);
+  }
+
+  // `longer` is 4028 bytes, `shorter` is 4027. The failed shrink leaves the old tail in place.
+  const failed = { code: "EUNKNOWN", syscall: "ftruncate", path: "data.json" };
+  expect(out).toEqual({ sync: failed, syncSize: 4028, promise: failed, promiseSize: 4028 });
+
+  // Once the view is gone, the same write shrinks the file.
+  fs.writeFileSync(file, shorter);
+  expect(fs.statSync(file).size).toBe(4027);
+});
+
 it("fs.Stat constructor", () => {
   expect(new Stats()).toMatchObject({
     "atimeMs": undefined,

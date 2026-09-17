@@ -140,6 +140,47 @@ devTest("a file with a failed import is imported again in the same bundle", {
     await c.expectMessage("lib", "c");
   },
 });
+devTest("a file with a handled failed import requires itself", {
+  // A require() in a try block that does not resolve inserts "index.ts" as
+  // stale too, and the later imports of "index.ts" are still resolved. The
+  // self require then asks the graph whether "index.ts" is cached.
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      let missing = "not found";
+      try {
+        missing = require("./missing");
+      } catch {}
+      exports.value = "self";
+      console.log(missing + " " + require("./index").value);
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("not found self");
+  },
+});
+devTest("importing node:crypto on the client", {
+  // The "crypto" polyfill is such a file. Its require("vm") in a try block has
+  // no polyfill, and it requires "crypto" after that.
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import crypto from "node:crypto";
+      console.log(typeof crypto);
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("object");
+  },
+});
 devTest("default export same-scope handling", {
   files: {
     "index.html": emptyHtmlFile({

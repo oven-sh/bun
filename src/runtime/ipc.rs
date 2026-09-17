@@ -1187,8 +1187,7 @@ impl SendQueue {
                         behind_handle = true;
                         item.complete(&global);
                     }
-                    // node calls back each write it submitted, with null even if the close cancels it: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L868-L874
-                    // Sends parked behind an unacknowledged handle were never submitted, so their callbacks never run: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L818-L853
+                    // As node: a submitted write calls back with null even if the close cancels it, a send parked behind an unacked handle never does. https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L818-L874
                     for item in sq.queue.with_mut(std::mem::take) {
                         if behind_handle {
                             item.abort_unsent(&global);

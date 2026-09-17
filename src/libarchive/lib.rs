@@ -1002,28 +1002,22 @@ pub fn directory_mode(perm: bun_sys::Mode) -> bun_sys::Mode {
 /// Who can read a regular file that an extractor creates.
 #[derive(Clone, Copy)]
 pub enum FileReaders {
-    /// Every user, whatever the entry says. This is npm's `fmode`: an installed
-    /// package stays readable whatever modes its tarball was packed with (#14467).
-    /// https://github.com/npm/cli/blob/feb54f7e9a39bd52519221bae4fafc8bc70f235e/node_modules/pacote/lib/fetcher.js#L402-L411
+    /// Every user: npm's `fmode` (#14467), https://github.com/npm/cli/blob/feb54f7e9a39bd52519221bae4fafc8bc70f235e/node_modules/pacote/lib/fetcher.js#L402-L411
     Everyone,
-    /// The owner, and the group and others where the entry lets them.
+    /// The owner, plus the group and others where the entry lets them.
     FromEntry,
 }
 
-/// `openat` mode for a regular-file entry. `& 0o777` keeps an archive from
-/// creating setuid, setgid or sticky files.
+/// `openat` mode for a regular-file entry, without setuid, setgid and sticky.
 pub fn file_mode(perm: bun_sys::Mode, readers: FileReaders) -> bun_sys::Mode {
     let mut mode = perm & 0o777;
     match readers {
         FileReaders::Everyone => mode |= 0o444,
-        // A mode of zero means the archive's writer left the field unset. Use
-        // the mode `Bun.Archive` gives the entries it writes.
+        // An unset mode field gets the mode `Bun.Archive` writes.
         FileReaders::FromEntry if mode == 0 => mode = 0o644,
         FileReaders::FromEntry => mode |= 0o400,
     }
-    // Whoever can read the file can write it when the umask allows, as with
-    // any new file. The extractors reopen an existing file with `O_TRUNC`, so
-    // a later extraction by the same users needs these bits (#43132).
+    // The umask decides which readers can write: an existing file is reopened with `O_TRUNC` (#43132).
     mode |= 0o200;
     if (mode & 0o40) != 0 {
         mode |= 0o20;

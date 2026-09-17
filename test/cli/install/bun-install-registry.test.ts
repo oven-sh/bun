@@ -1613,8 +1613,8 @@ describe.concurrent("tarballs of a fresh resolve", () => {
       "node_modules/tr/package.json": packageJsonOf("tr"),
       "node_modules/tr/index.js": `module.exports = "bundled tr";`,
     },
-    "bd": { "index.js": `module.exports = "registry bd, " + require("tr");` },
-    "tr": { "index.js": `module.exports = "registry tr";` },
+    "bd": { "index.js": `module.exports = "registry bd, " + require("tr");\n` },
+    "tr": { "index.js": `module.exports = "registry tr";\n` },
     "uses-tr": { "index.js": `module.exports = require("tr");` },
   };
   const tarballs: Record<string, Uint8Array> = {};
@@ -1627,8 +1627,10 @@ describe.concurrent("tarballs of a fresh resolve", () => {
     }
   });
 
-  /** Serves the packages above and records the tarballs it is asked for. `holdManifest` can delay a manifest. */
-  function serveRegistry(tarballRequests: string[], holdManifest: (name: string) => Promise<void> | void = () => {}) {
+  type Requests = { tarballs: string[]; manifests: Set<string> };
+
+  /** Serves the packages above and records what it is asked for. `holdManifest` can delay a manifest. */
+  function serveRegistry(requests: Requests, holdManifest: (name: string) => Promise<void> | void = () => {}) {
     return Bun.serve({
       port: 0,
       async fetch(request) {
@@ -1637,9 +1639,10 @@ describe.concurrent("tarballs of a fresh resolve", () => {
         const name = tarballOf ?? pathname.slice(1);
         if (!(name in packages)) return new Response("not found", { status: 404 });
         if (tarballOf) {
-          tarballRequests.push(name);
+          requests.tarballs.push(name);
           return new Response(tarballs[name]);
         }
+        requests.manifests.add(name);
         await holdManifest(name);
         const integrity = "sha512-" + new Bun.CryptoHasher("sha512").update(tarballs[name]).digest("base64");
         return Response.json({
@@ -1665,6 +1668,7 @@ describe.concurrent("tarballs of a fresh resolve", () => {
 
   type Project = {
     manifest: object;
+    files?: Record<string, string>;
     args?: string[];
     /** The tarballs that the installers need, sorted. */
     tarballs: string[];
@@ -1675,30 +1679,49 @@ describe.concurrent("tarballs of a fresh resolve", () => {
   };
 
   /**
-   * Installs the project twice with a cold cache: a fresh resolve, then again
-   * from the lockfile that the fresh resolve saved (--production saves none
-   * and resolves again).
+   * Installs the project three times. A fresh resolve with a cold cache takes
+   * its manifests from the registry. A fresh resolve that finds the manifests
+   * in the cache resolves before anything else can finish, a patch hash for
+   * one. The last install reads the lockfile, with a cold cache (--production
+   * saves no lockfile and resolves again).
    */
-  async function installTwice(linker: string, project: Project) {
+  async function installEachWay(linker: string, project: Project) {
     const trRequested = Promise.withResolvers<void>();
-    const tarballRequests: string[] = [];
-    await using registry = serveRegistry(tarballRequests, name => {
+    const requests: Requests = { tarballs: [], manifests: new Set() };
+    await using registry = serveRegistry(requests, name => {
       if (name === "tr") trRequested.resolve();
       if (name === "uses-tr" && project.usesTrResolvesLast) return trRequested.promise;
     });
     using dir = tempDir("fresh-resolve-tarballs", {
+      ...project.files,
       "package.json": JSON.stringify({ name: "foo", ...project.manifest }),
       "bunfig.toml": Bun.TOML.stringify({ install: { registry: registry.url.href, linker } }),
     });
     const cwd = String(dir);
+    const cache = join(cwd, ".bun-cache");
 
     const asked: Record<string, string[]> = {};
-    for (const phase of ["fresh resolve", "from the lockfile"]) {
-      await Promise.all([
-        rm(join(cwd, "node_modules"), { recursive: true, force: true }),
-        rm(join(cwd, ".bun-cache"), { recursive: true, force: true }),
-      ]);
-      tarballRequests.length = 0;
+    for (const phase of ["fresh resolve", "fresh resolve, manifests in the cache", "from the lockfile"]) {
+      await rm(join(cwd, "node_modules"), { recursive: true, force: true });
+      if (phase === "fresh resolve, manifests in the cache") {
+        // bun install does not wait for the manifest cache writes before it exits.
+        const deadline = Date.now() + 5_000;
+        let entries = await readdirSorted(cache);
+        while (
+          entries.filter(entry => entry.endsWith(".npm")).length < requests.manifests.size &&
+          Date.now() < deadline
+        ) {
+          await Bun.sleep(10);
+          entries = await readdirSorted(cache);
+        }
+        await Promise.all([
+          rm(join(cwd, "bun.lock"), { force: true }),
+          ...entries.filter(entry => !entry.endsWith(".npm")).map(entry => rm(join(cache, entry), { recursive: true })),
+        ]);
+      } else {
+        await rm(cache, { recursive: true, force: true });
+      }
+      requests.tarballs.length = 0;
       await using proc = spawn({
         cmd: [bunExe(), "install", ...(project.args ?? [])],
         cwd,
@@ -1709,9 +1732,13 @@ describe.concurrent("tarballs of a fresh resolve", () => {
       const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
       expect(stderr).not.toContain("error:");
       expect(exitCode).toBe(0);
-      asked[phase] = tarballRequests.toSorted();
+      asked[phase] = requests.tarballs.toSorted();
     }
-    expect(asked).toEqual({ "fresh resolve": project.tarballs, "from the lockfile": project.tarballs });
+    expect(asked).toEqual({
+      "fresh resolve": project.tarballs,
+      "fresh resolve, manifests in the cache": project.tarballs,
+      "from the lockfile": project.tarballs,
+    });
 
     const names = Object.keys(project.requires ?? {});
     if (names.length === 0) return;
@@ -1727,6 +1754,14 @@ describe.concurrent("tarballs of a fresh resolve", () => {
     expect(JSON.parse(stdout)).toEqual(Object.values(project.requires!));
     expect(exitCode).toBe(0);
   }
+
+  /** A patch for the index.js that the registry copy of `name` has. */
+  const patchOf = (name: string) => `diff --git a/index.js b/index.js
+index 0000000..1111111 100644
+--- a/index.js
++++ b/index.js
+@@ -1 +1 @@
+-${files[name]["index.js"]}+${files[name]["index.js"].replace("registry", "patched")}`;
 
   const projects: Record<string, Project> = {
     "below a bundled dependency": {
@@ -1779,19 +1814,37 @@ describe.concurrent("tarballs of a fresh resolve", () => {
       requires: { "uses-tr": "registry tr" },
       usesTrResolvesLast: true,
     },
+    // A package with a patch takes other arms of the resolve: it waits for
+    // the hash of the patch, then it downloads.
+    "with a patch, below a bundled dependency": {
+      manifest: { dependencies: { outer: "1.0.0" }, patchedDependencies: { "bd@1.0.0": "patches/bd.patch" } },
+      files: { "patches/bd.patch": patchOf("bd") },
+      tarballs: ["outer"],
+      requires: { outer: "bundled bd, bundled tr" },
+    },
+    "with a patch, first below a bundled dependency, then needed": {
+      manifest: {
+        dependencies: { outer: "1.0.0", "uses-tr": "1.0.0" },
+        patchedDependencies: { "tr@1.0.0": "patches/tr.patch" },
+      },
+      files: { "patches/tr.patch": patchOf("tr") },
+      tarballs: ["outer", "tr", "uses-tr"],
+      requires: { outer: "bundled bd, bundled tr", "uses-tr": "patched tr" },
+      usesTrResolvesLast: true,
+    },
   };
 
   for (const linker of ["hoisted", "isolated"]) {
     for (const [name, project] of Object.entries(projects)) {
-      test(`(${linker}) ${name}`, () => installTwice(linker, project));
+      test(`(${linker}) ${name}`, () => installEachWay(linker, project));
     }
   }
 
   // The runtime has no install phase. With --install=force it loads every
   // package from the cache, a bundled dependency too.
   test("the runtime auto-install downloads a bundled dependency", async () => {
-    const tarballRequests: string[] = [];
-    await using registry = serveRegistry(tarballRequests);
+    const requests: Requests = { tarballs: [], manifests: new Set() };
+    await using registry = serveRegistry(requests);
     using dir = tempDir("fresh-resolve-tarballs", {
       "bunfig.toml": Bun.TOML.stringify({ install: { registry: registry.url.href } }),
     });
@@ -1806,7 +1859,7 @@ describe.concurrent("tarballs of a fresh resolve", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(stdout).toBe("registry bd, registry tr\n");
-    expect(tarballRequests.toSorted()).toEqual(["bd", "outer", "tr"]);
+    expect(requests.tarballs.toSorted()).toEqual(["bd", "outer", "tr"]);
     expect(exitCode).toBe(0);
   });
 });

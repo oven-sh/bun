@@ -2445,16 +2445,20 @@ fn get_or_put_resolved_package_with_find_result(
             is_first_time: true,
             task: None,
         }),
+        // No download and no patch task. When a dependency the installers do place resolves
+        // to the same package, the install phase fetches and patches it like any cache miss.
+        _ if unplaced => Some(ResolvedPackageResult {
+            package,
+            is_first_time: true,
+            task: None,
+        }),
         // Do we need to download the tarball?
         install::PreinstallState::Extract => 'extract: {
-            // Skip tarball download when prefetch_resolved_tarballs is disabled (e.g., --lockfile-only),
-            // and for a package the installers do not place. When a dependency they do place
-            // resolves to the same package, the install phase downloads it like any other cache miss.
-            if unplaced
-                || !this
-                    .options
-                    .do_
-                    .contains(crate::package_manager_real::options::Do::PREFETCH_RESOLVED_TARBALLS)
+            // Skip tarball download when prefetch_resolved_tarballs is disabled (e.g., --lockfile-only)
+            if !this
+                .options
+                .do_
+                .contains(crate::package_manager_real::options::Do::PREFETCH_RESOLVED_TARBALLS)
             {
                 break 'extract Some(ResolvedPackageResult {
                     package,

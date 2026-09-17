@@ -1922,9 +1922,9 @@ pub(crate) fn network_task_has_failed(this: &PackageManager, task_id: Task::Id) 
 
 /// `bun add` / `bun update <name>` of a package that cannot be fetched exits 1 and saves nothing.
 /// A request names its dependency, which an `npm:` alias or an override spells differently from
-/// `package_name`, so it is also matched against the dependencies the download was for: the
-/// task's waiters, and for an npm tarball (it has no waiters) every dependency resolved to the
-/// package of `tarball_dependency_id`.
+/// `package_name`. So it also fails when the download was for a dependency that
+/// `Lockfile::bind_update_requests` would bind it to: a waiter of the task, or, for an npm tarball
+/// (it has no waiters), a dependency resolved to the package of `tarball_dependency_id`.
 fn fail_update_requests(
     this: &mut PackageManager,
     task_id: Task::Id,
@@ -1934,33 +1934,43 @@ fn fail_update_requests(
     if this.subcommand == Subcommand::Remove {
         return;
     }
-    let buffers = &this.lockfile.buffers;
-    let string_buf = buffers.string_bytes.as_slice();
-    let dependencies = buffers.dependencies.as_slice();
-    let resolutions = buffers.resolutions.as_slice();
+    let lockfile = &*this.lockfile;
+    let string_buf = lockfile.buffers.string_bytes.as_slice();
+    let dependencies = lockfile.buffers.dependencies.as_slice();
+    let resolutions = lockfile.buffers.resolutions.as_slice();
     let waiters = this.task_queue.get(&task_id).map_or(&[][..], Vec::as_slice);
     let package_id = tarball_dependency_id
         .and_then(|id| resolutions.get(id as usize).copied())
         .filter(|&package_id| package_id != INVALID_PACKAGE_ID);
+    let was_for = |id: DependencyID| {
+        package_id.is_some_and(|package_id| resolutions.get(id as usize) == Some(&package_id))
+            || waiters.iter().any(|waiter| {
+                matches!(
+                    waiter,
+                    bun_install::TaskCallbackContext::Dependency(waiting)
+                    | bun_install::TaskCallbackContext::RootDependency(waiting) if *waiting == id
+                )
+            })
+    };
+    let pending = this.pending_filtered_write.as_deref();
 
     let mut any_failed = false;
     for request in this.update_requests.iter_mut() {
-        let waits = waiters.iter().any(|waiter| match waiter {
-            bun_install::TaskCallbackContext::Dependency(id)
-            | bun_install::TaskCallbackContext::RootDependency(id) => dependencies
-                .get(*id as usize)
-                .is_some_and(|dependency| request.matches(dependency, string_buf)),
-            _ => false,
-        });
-        let resolved = package_id.is_some_and(|package_id| {
-            resolutions
-                .iter()
-                .zip(dependencies)
-                .any(|(&resolution, dependency)| {
-                    resolution == package_id && request.matches(dependency, string_buf)
+        let names_its_dependency = lockfile
+            .workspaces_of_update_request(pending, this.workspace_name_hash, request)
+            .into_iter()
+            .any(|workspace_id| {
+                let lists = lockfile.packages.items_dependencies();
+                lists.get(workspace_id as usize).is_some_and(|list| {
+                    (list.off..list.off + list.len).any(|id| {
+                        dependencies
+                            .get(id as usize)
+                            .is_some_and(|dependency| request.matches(dependency, string_buf))
+                            && was_for(id)
+                    })
                 })
-        });
-        if waits || resolved || strings::eql(request.name, package_name) {
+            });
+        if names_its_dependency || strings::eql(request.name, package_name) {
             request.failed = true;
             any_failed = true;
         }

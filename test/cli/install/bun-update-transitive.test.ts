@@ -1,6 +1,6 @@
 import { file, write } from "bun";
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { exists } from "fs/promises";
+import { exists, rm } from "fs/promises";
 import { VerdaccioRegistry, bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
@@ -1960,23 +1960,70 @@ test.concurrent("a 404 for the tarball fails the request for a second alias of t
   expect(exitCode).toBe(1);
 });
 
-test.concurrent.each(["leaf", "aliased@npm:leaf@^1.0.0"])(
-  "a 404 for the manifest fails `bun add --optional %s` and writes nothing",
-  async spec => {
-    const knobs: RegistryKnobs = { status: { leaf: 404 } };
-    using server = await serveRegistry(LEAF_ONLY, {}, knobs);
-    const packageJson = stringify({ name: "foo" });
-    const dir = String(tempDir("add-failed-download-", { "package.json": packageJson }));
-    await servedBunfig(server, dir);
+// The failed download is the only message: a warning for an optional dependency, an error otherwise. A request that is not failed goes on to a second error, "<spec> failed to resolve".
+test.concurrent.each([
+  ["warn", ["--optional", "leaf"]],
+  ["warn", ["--optional", "aliased@npm:leaf@^1.0.0"]],
+  ["error", ["leaf"]],
+  ["error", ["aliased@npm:leaf@^1.0.0"]],
+])("a 404 for the manifest is the one %s of `bun add %p`, which writes nothing", async (level, args) => {
+  const knobs: RegistryKnobs = { status: { leaf: 404 } };
+  using server = await serveRegistry(LEAF_ONLY, {}, knobs);
+  const packageJson = stringify({ name: "foo" });
+  const dir = String(tempDir("add-failed-download-", { "package.json": packageJson }));
+  await servedBunfig(server, dir);
 
-    const { stderr, exitCode } = await run(dir, "add", "--optional", spec);
-    expect(warningLines(stderr)).toStrictEqual([`warn: ${manifestFailure(server, 404)}`]);
-    expect(errorLines(stderr)).toStrictEqual([]);
-    expect(await packageJsonText(dir)).toBe(packageJson);
-    expect(await exists(join(dir, "bun.lock"))).toBe(false);
-    expect(exitCode).toBe(1);
-  },
-);
+  const { stderr, exitCode } = await run(dir, "add", ...args);
+  expect([...warningLines(stderr), ...errorLines(stderr)]).toStrictEqual([`${level}: ${manifestFailure(server, 404)}`]);
+  expect(await packageJsonText(dir)).toBe(packageJson);
+  expect(await exists(join(dir, "bun.lock"))).toBe(false);
+  expect(exitCode).toBe(1);
+});
+
+// A version that bun.lock already holds gets no download while it resolves. The install phase downloads it, after the package.json entry was rewritten in memory.
+test.concurrent.each([
+  ["a plain entry", "leaf", ""],
+  ["an npm: alias", "aliased", "npm:leaf@"],
+])("a 404 for a tarball that the install phase downloads fails `bun update <name>` for %s", async (_, key, target) => {
+  const knobs: RegistryKnobs = { status: {} };
+  using server = await serveRegistry(LEAF_ONLY, {}, knobs);
+  const packageJson = { name: "foo", optionalDependencies: { [key]: `${target}^1.0.0` } };
+  const dir = await installServed(server, "update-failed-install-download-", packageJson);
+  expect(await installedVersion(dir, key)).toBe("1.1.0");
+  await Promise.all(["node_modules", ".bun-cache"].map(name => rm(join(dir, name), { recursive: true, force: true })));
+  const before = { packageJson: await packageJsonText(dir), lock: await lockText(dir) };
+
+  knobs.status!["leaf-1.1.0.tgz"] = 404;
+  const { stderr, exitCode } = await run(dir, "update", key);
+  expect(warningLines(stderr)).toStrictEqual([`warn: GET ${server.url.origin}/leaf-1.1.0.tgz - 404`]);
+  expect(errorLines(stderr)).toStrictEqual([]);
+  expect(await packageJsonText(dir)).toBe(before.packageJson);
+  expect(await lockText(dir)).toBe(before.lock);
+  expect(exitCode).toBe(1);
+});
+
+// pkg2's optional `leaf` is an alias of a package the registry does not have. It has the key of the request, but the request is for pkg1's entry. The alias range must not admit pkg1's range, or bun resolves pkg1's `leaf` through the alias too.
+test.concurrent("a failed download for the same key in another workspace does not fail the request", async () => {
+  using server = await serveRegistry(LEAF_ONLY);
+  const pkg2 = { name: "pkg2", version: "1.0.0", optionalDependencies: { leaf: "npm:missing@^9.0.0" } };
+  const dir = String(
+    tempDir("update-failed-download-elsewhere-", {
+      "package.json": stringify(ROOT),
+      "packages/pkg1/package.json": stringify(member("pkg1", { leaf: "^1.0.0" })),
+      "packages/pkg2/package.json": stringify(pkg2),
+    }),
+  );
+  await servedBunfig(server, dir);
+
+  const { stderr, exitCode } = await runIn(dir, "packages/pkg1", "update", "leaf");
+  expect(warningLines(stderr)).toStrictEqual([`warn: GET ${server.url.origin}/missing - 404`]);
+  expect(errorLines(stderr)).toStrictEqual([]);
+  expect(stderr).toContain("Saved lockfile");
+  expect(await packageJsonOf(dir, "packages/pkg1")).toStrictEqual(member("pkg1", { leaf: "^1.1.0" }));
+  expect(await packageJsonOf(dir, "packages/pkg2")).toStrictEqual(pkg2);
+  expect(await installedVersion(dir, "leaf")).toBe("1.1.0");
+  expect(exitCode).toBe(0);
+});
 
 test.concurrent("`bun update <name>` from a member leaves a sibling's own entry alone but lets it follow", async () => {
   const { dir, pkg2Text } = await staleMembers("~1.0.0", "^1.0.0");

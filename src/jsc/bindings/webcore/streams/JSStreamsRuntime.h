@@ -203,7 +203,9 @@ namespace WebCore {
 //   onBufferedFastPath*: context = the JSReadableStream (the fast path's catch/finally pair).
 //   onReadableStreamTo*Fulfilled: the generic-path promise chains
 //     (toArrayBuffer/toBytes/toBlob: value = the chunk array; toJSON: value = the text;
+//      toBlob: context = the contentType JSString or undefined;
 //      toFormData: value = the Blob, context = the contentType JSString).
+//   onReadableStreamToBlobSetContentType: value = the fast path's Blob, context = the contentType JSString.
 //   onIntoArrayReadMany*: readableStreamIntoArray's readMany() continuation (readMany may
 //     return a Promise); context = an InternalFieldTuple{reader, resultArray}.
 //   onDirectConsumeLoopRead*: the readableStreamTo{Text,Array}Direct read loop;
@@ -219,6 +221,7 @@ namespace WebCore {
     V(onReadableStreamToTextChunksFulfilled)                                                                 \
     V(onReadableStreamToJSONFulfilled)                                                                       \
     V(onReadableStreamToBlobFulfilled)                                                                       \
+    V(onReadableStreamToBlobSetContentType)                                                                  \
     V(onReadableStreamToFormDataFulfilled)                                                                   \
     V(onIntoArrayReadManyFulfilled) /* append value; !done => readMany() again; done => release + resolve */ \
     V(onIntoArrayReadManyRejected) /* release the reader, reject the result promise */                       \

@@ -43,6 +43,9 @@
 #include <wtf/Vector.h>
 #include <wtf/text/StringBuilder.h>
 
+// Blob.rs: types a JSBlob with a body owner's Content-Type header value.
+extern "C" void Blob__setContentTypeFromHeader(JSC::EncodedJSValue blob, const BunString* contentType);
+
 namespace WebCore {
 
 using namespace JSC;
@@ -1288,16 +1291,29 @@ JSValue readableStreamToJSON(JSGlobalObject* globalObject, WebCore::JSReadableSt
     return derived;
 }
 
-JSValue readableStreamToBlob(JSGlobalObject* globalObject, WebCore::JSReadableStream* stream)
+JSValue readableStreamToBlob(JSGlobalObject* globalObject, WebCore::JSReadableStream* stream, JSValue contentType)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (auto* error = unusableStreamError(globalObject, stream))
         RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, error));
+    if (!contentType || !contentType.isString())
+        contentType = jsUndefined();
+    auto* runtime = JSStreamsRuntime::from(globalObject);
     JSValue fastPath = tryUseReadableStreamBufferedFastPath(globalObject, stream, builtinNames(vm).blobPublicName());
     RETURN_IF_EXCEPTION(scope, {});
-    if (fastPath)
-        return fastPath;
+    if (fastPath) {
+        if (contentType.isUndefined())
+            return fastPath;
+        auto* blobPromise = dynamicDowncast<JSPromise>(fastPath);
+        if (!blobPromise) [[unlikely]] {
+            blobPromise = promiseFulfilledWith(globalObject, fastPath);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+        auto* derived = JSPromise::create(vm, globalObject->promiseStructure());
+        blobPromise->performPromiseThenWithContext(vm, globalObject, runtime->onReadableStreamToBlobSetContentType(), jsUndefined(), derived, contentType);
+        return derived;
+    }
     JSValue arrayResult = readableStreamToArray(globalObject, stream);
     RETURN_IF_EXCEPTION(scope, {});
     auto* arrayPromise = dynamicDowncast<JSPromise>(arrayResult);
@@ -1305,9 +1321,8 @@ JSValue readableStreamToBlob(JSGlobalObject* globalObject, WebCore::JSReadableSt
         arrayPromise = promiseFulfilledWith(globalObject, arrayResult);
         RETURN_IF_EXCEPTION(scope, {});
     }
-    auto* runtime = JSStreamsRuntime::from(globalObject);
     auto* derived = JSPromise::create(vm, globalObject->promiseStructure());
-    arrayPromise->performPromiseThenWithContext(vm, globalObject, runtime->onReadableStreamToBlobFulfilled(), jsUndefined(), derived, jsUndefined());
+    arrayPromise->performPromiseThenWithContext(vm, globalObject, runtime->onReadableStreamToBlobFulfilled(), jsUndefined(), derived, contentType);
     return derived;
 }
 
@@ -1501,6 +1516,19 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onReadableStreamToJSONFulfilled, (J
     RELEASE_AND_RETURN(scope, JSValue::encode(JSONParseWithException(globalObject, text)));
 }
 
+// contentType is the JSString readableStreamToBlob() was given, or undefined.
+static void setBlobContentTypeFromHeader(JSGlobalObject* globalObject, JSValue blob, JSValue contentType)
+{
+    if (!contentType || !contentType.isString())
+        return;
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    WTF::String value = contentType.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, );
+    BunString header = Bun::toString(value);
+    Blob__setContentTypeFromHeader(JSValue::encode(blob), &header);
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onReadableStreamToBlobFulfilled, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = getVM(globalObject);
@@ -1510,6 +1538,18 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onReadableStreamToBlobFulfilled, (J
     JSObject* blob = JSC::construct(globalObject, defaultGlobalObject(globalObject)->JSBlobConstructor(), arguments, "Blob is not constructible"_s);
     RETURN_IF_EXCEPTION(scope, {});
     Bun::WebStreams::releaseInternalChunkArray(globalObject, callFrame->argument(0));
+    RETURN_IF_EXCEPTION(scope, {});
+    setBlobContentTypeFromHeader(globalObject, blob, callFrame->argument(1));
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(blob);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onReadableStreamToBlobSetContentType, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue blob = callFrame->argument(0);
+    setBlobContentTypeFromHeader(globalObject, blob, callFrame->argument(1));
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(blob);
 }

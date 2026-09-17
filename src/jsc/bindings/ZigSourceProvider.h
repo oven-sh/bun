@@ -22,9 +22,7 @@ namespace Zig {
 
 class GlobalObject;
 
-// `provider` wraps another provider and runs its text under a SourceID of its own. Under
-// `bun test --coverage`, what JSC records for that SourceID is the file's coverage too,
-// if the text is the one on record for the file (module._compile() brings its own).
+// A provider that wraps another one has a SourceID of its own, which `bun test --coverage` has to learn of.
 void addCodeCoverageSourceID(JSC::VM&, JSC::SourceProvider& provider);
 JSC::SourceOrigin toSourceOrigin(const String& sourceURL, bool isBuiltin);
 class SourceProvider final : public JSC::SourceProvider {

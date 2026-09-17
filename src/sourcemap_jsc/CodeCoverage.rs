@@ -98,8 +98,6 @@ impl<'a> Report<'a> {
         }
     }
 
-    /// The file's coverage: what JSC recorded for every `SourceProvider` that
-    /// loaded it, merged the way `--parallel` merges the workers' reports.
     pub fn generate(
         global_this: &JSGlobalObject,
         byte_range_mapping: &'a ByteRangeMapping,
@@ -656,9 +654,7 @@ pub struct BasicBlockRange {
 
 pub struct ByteRangeMapping {
     pub(crate) line_offset_table: line_offset_table::List,
-    /// JSC records coverage per `SourceProvider`, and a file has one for each
-    /// time it was loaded: by the host and by each `Bun.ModuleGraph`, again
-    /// after a `require.cache` delete, or under another query string.
+    /// JSC records coverage per `SourceProvider`, and each load of the file makes one.
     pub(crate) source_ids: Vec<i32>,
     /// Of the text `line_offset_table` was built from.
     source_hash: u64,
@@ -1079,9 +1075,7 @@ extern "C" fn ByteRangeMapping__generate(
     let source_contents = source_contents_str.to_utf8();
     let source_hash = bun_wyhash::hash(source_contents.slice());
 
-    // The same text again is one more instance of the file. Another text
-    // replaces it: the line table, like the source map `SavedSourceMap` keeps
-    // for the path, can only describe the latest.
+    // Another text replaces the entry: the line table and the saved source map describe one text.
     if let Some(existing) = map.get_mut(&hash)
         && existing.source_hash == source_hash
     {
@@ -1094,9 +1088,7 @@ extern "C" fn ByteRangeMapping__generate(
     map.insert(hash, new_value);
 }
 
-/// For a provider that wraps another one. It is one more instance of
-/// `source_url` only if it carries the text on record: `module._compile()`
-/// names a file and brings a text of its own, which no line table describes.
+/// For a provider that wraps another one. `module._compile()` wraps a text of its own.
 #[unsafe(no_mangle)]
 extern "C" fn ByteRangeMapping__addSourceID(
     source_url: &bun_core::String,
@@ -1124,8 +1116,7 @@ fn find(path: &bun_core::String) -> Option<NonNull<ByteRangeMapping>> {
     Some(NonNull::from(entry))
 }
 
-/// The text table's row for `source_url`, `undefined` if nothing of the file
-/// has been compiled yet, `null` if the file is not instrumented.
+/// The table row of `source_url`. `undefined`: nothing compiled yet. `null`: not instrumented.
 #[unsafe(no_mangle)]
 extern "C" fn ByteRangeMapping__findExecutedLines(
     global_this: &JSGlobalObject,

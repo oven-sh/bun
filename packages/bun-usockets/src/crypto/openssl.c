@@ -1775,6 +1775,11 @@ void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,
     SSL_set_renegotiate_mode(ssl, ssl_renegotiate_explicit);
     SSL_set_connect_state(ssl);
     if (sni) SSL_set_tlsext_host_name(ssl, sni);
+    /* The CTX's session id context partitions a server's sessions by context
+     * configuration (create_ssl_context_with_digest). A client fails its
+     * handshake when a resumed session's id differs from its own, so clients
+     * keep none: a `session` stays usable under any client options. */
+    SSL_set_session_id_context(ssl, NULL, 0);
     /* The CTX is mode-neutral and may have verify_mode == NONE (no
      * ca/requestCert in options). Clients must always run verification so
      * verify_error is populated for the JS rejectUnauthorized check — but

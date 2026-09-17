@@ -86,21 +86,46 @@ impl<'a> Interval<'a> {
     }
 }
 
-impl Group {
-    /// Whether some version satisfies both groups. A group that is one exact version intersects
-    /// the other group only when that version satisfies it (`Group::satisfies`, with its
-    /// prerelease rule). Between two ranges the prerelease rule is not modelled, comparators
-    /// are compared directly.
-    pub fn intersects(&self, self_buf: &[u8], other: &Group, other_buf: &[u8]) -> bool {
-        if let Some(version) = self.get_exact_version() {
-            return other.satisfies(version, other_buf, self_buf);
+impl Query {
+    /// The version when this AND chain is one `=version` comparator.
+    fn exact_version(&self) -> Option<Version> {
+        let range = &self.range;
+        if self.next.is_none() && range.has_left() && range.left.op == Op::Eql && !range.has_right()
+        {
+            return Some(range.left.version);
         }
-        if let Some(version) = other.get_exact_version() {
-            return self.satisfies(version, self_buf, other_buf);
+        None
+    }
+
+    /// `Group::satisfies` for one AND chain, with the same prerelease rule.
+    fn admits(&self, version: Version, query_buf: &[u8], version_buf: &[u8]) -> bool {
+        if version.tag.has_pre() {
+            let mut pre_matched = false;
+            self.satisfies_pre(version, query_buf, version_buf, &mut pre_matched) && pre_matched
+        } else {
+            self.satisfies(version, query_buf, version_buf)
+        }
+    }
+}
+
+impl Group {
+    /// Whether some version satisfies both groups. `*` meets everything. An OR branch that is
+    /// one exact version meets the other group only when that version satisfies it, with the
+    /// prerelease rule of `Group::satisfies`. Between two ranges the prerelease rule is not
+    /// modelled, comparators are compared directly.
+    pub fn intersects(&self, self_buf: &[u8], other: &Group, other_buf: &[u8]) -> bool {
+        if self.is_star() || other.is_star() {
+            return true;
         }
         let mut a = Some(&self.head);
         while let Some(list_a) = a {
             a = list_a.next.as_deref();
+            if let Some(version) = list_a.head.exact_version() {
+                if other.satisfies(version, other_buf, self_buf) {
+                    return true;
+                }
+                continue;
+            }
             let mut base = Interval::default();
             base.and_query(&list_a.head, self_buf);
             if !base.is_non_empty() {
@@ -109,6 +134,12 @@ impl Group {
             let mut b = Some(&other.head);
             while let Some(list_b) = b {
                 b = list_b.next.as_deref();
+                if let Some(version) = list_b.head.exact_version() {
+                    if list_a.head.admits(version, self_buf, other_buf) {
+                        return true;
+                    }
+                    continue;
+                }
                 let mut i = base;
                 i.and_query(&list_b.head, other_buf);
                 if i.is_non_empty() {

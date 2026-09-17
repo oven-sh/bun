@@ -813,9 +813,10 @@ describe("Bun.semver.satisfies()", () => {
 });
 
 // `Group::intersects` (src/semver/intersects.rs) decides whether a ranged `overrides` key applies to a dependency edge.
-// Between two ranges it compares the bounds by semver order and does not model the prerelease rule, so the
-// rows here avoid a prerelease bound on both sides. When one side is an exact version the answer is
-// `satisfies`, which the table below this one checks against `Bun.semver.satisfies` (#43138).
+// `*` (which `>=0.0.0` also parses to) meets everything. Between two ranges it compares the bounds by semver
+// order and does not model the prerelease rule, so the rows here avoid a prerelease bound on both sides. An
+// exact version, alone or as one `||` branch, meets a range when it satisfies it. The table below this one
+// checks that against `Bun.semver.satisfies` (#43138).
 describe("range intersection", () => {
   const cases: [string, string, boolean][] = [
     // exact versions
@@ -886,9 +887,9 @@ describe("range intersection", () => {
     [">1.0.0 <=1.0.1", "1.0.1", true],
     [">1.0.0 <1.0.1", "1.0.0", false],
     [">1.0.0 <1.0.1", "1.0.1", false],
-    [">=1.0.0 <1.0.0", "*", false],
+    [">=1.0.0 <1.0.0", "*", true],
     [">=1.0.0 <1.0.0", "1.0.0", false],
-    ["<1.0.0 >=1.0.0", ">=0.0.0", false],
+    ["<1.0.0 >=1.0.0", ">=0.0.0", true],
 
     // partial versions after a comparator: `>3` is `>3.MAX.MAX`, `<=1` is `<=1.MAX.MAX`
     [">3", "3.5.0", false],
@@ -920,6 +921,9 @@ describe("range intersection", () => {
     ["*", "1.0.0", true],
     ["*", "^3.0.0", true],
     ["*", "*", true],
+    ["*", "2.0.0-0", true],
+    [">=0.0.0", "2.0.0-0", true],
+    [">=0.0.0-0", "1.0.0-rc.1", true],
     ["x", "2.x", true],
     ["1.X", "1.2.3", true],
     ["1.*", "2.0.0", false],
@@ -965,8 +969,8 @@ describe("range intersection", () => {
     ["1.0.0-rc.1", "^1.0.0-rc.0", true],
     ["1.0.0-rc.1", "^1.0.0-rc.2", false],
     ["1.0.0-rc.1", "^0.9.0", false],
-    ["1.0.0-rc.1", "*", false],
-    ["1.0.0-rc.1", ">=0.0.0", false],
+    ["1.0.0-rc.1", "*", true],
+    ["1.0.0-rc.1", ">=0.0.0", true],
     ["2.0.0-beta", "^2.0.0", false],
     ["2.0.0-beta", "^2.0.0-alpha", true],
     ["2.0.0-beta", "^1.0.0 || ^2.0.0-alpha", true],
@@ -975,6 +979,16 @@ describe("range intersection", () => {
     ["1.0.0-alpha.3", "1.0.0-alpha.1 || 1.0.0-alpha.2", false],
     ["1.0.0-alpha", "1.0.0-alpha.1", false],
     ["1.0.0-alpha", ">=1.0.0-alpha <1.0.0-alpha.1", true],
+
+    // an exact version inside a || list is held to the same rule as a lone one
+    ["9.0.0-beta.0 || 9.0.0-beta.1", "<9.0.0", false],
+    ["9.0.0-beta.0 || 9.0.0", "<9.0.1", true],
+    ["1.0.0-rc.1 || 1.0.0", ">=1.0.0-0 <1.0.0", true],
+    ["^1.0.0 || 2.0.0-beta", "<2.0.0", true],
+    ["^2.0.0 || 1.0.0-rc.1", ">=0.9.0 <1.0.0", false],
+    ["^2.0.0 || 1.0.0-rc.1", ">=1.0.0-rc.0 <1.0.0", true],
+    ["3.0.0-pre || ^1.0.0", "^3.0.0 || ^4.0.0", false],
+    ["3.0.0-pre || ^1.0.0", "^3.0.0-0 || ^4.0.0", true],
   ];
 
   test.each(cases)("%s and %s: %p", (left, right, expected) => {
@@ -983,10 +997,11 @@ describe("range intersection", () => {
   });
 
   // An exact version is a range with one member, so intersecting it with a range is `satisfies`. A prerelease
-  // version therefore satisfies `*`, `<x` or `>=x` only through a comparator that names a prerelease of
-  // its own major.minor.patch. node-semver tests an exact version against each comparator on its own, which
-  // differs for a key like `>=1.0.0-0 <1.0.0`: `satisfies` admits `1.0.0-rc.1`, node-semver's `intersects`
-  // does not. Bun follows `satisfies` so that an override key means what `Bun.semver.satisfies` says.
+  // version therefore satisfies `<x` or `>=x` only through a comparator that names a prerelease of its own
+  // major.minor.patch. node-semver tests an exact version against each comparator on its own, which differs
+  // for a key like `>=1.0.0-0 <1.0.0`: `satisfies` admits `1.0.0-rc.1`, node-semver's `intersects` does not.
+  // Bun follows `satisfies` so that an override key means what `Bun.semver.satisfies` says. `*` is not in
+  // this list: it meets every version, and `satisfies` rejects a prerelease against it.
   const versions = [
     "0.0.0",
     "0.0.1",
@@ -1011,7 +1026,6 @@ describe("range intersection", () => {
     "3.0.0-pre",
   ];
   const ranges = [
-    "*",
     "1",
     "1.2",
     "1.x",

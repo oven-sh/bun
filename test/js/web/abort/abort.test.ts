@@ -100,6 +100,70 @@ describe("AbortSignal", () => {
     await testAny(1);
   });
 
+  test("AbortSignal.any() dependent whose abort listener holds its source's controller is collected", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const { heapStats } = require("bun:jsc");
+          for (let i = 0; i < 100; i++) {
+            const controller = new AbortController();
+            AbortSignal.any([controller.signal]).addEventListener("abort", () => controller.abort());
+          }
+          let counts;
+          for (let i = 0; i < 10; i++) {
+            Bun.gc(true);
+            await new Promise(resolve => setImmediate(resolve));
+            counts = heapStats().objectTypeCounts;
+            if ((counts.AbortSignal ?? 0) <= 2) break;
+          }
+          console.log(JSON.stringify({ AbortSignal: counts.AbortSignal ?? 0, AbortController: counts.AbortController ?? 0 }));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const counts = JSON.parse(stdout.trim());
+    // Each count includes the class's prototype and constructor. Leaked: 202 and 102.
+    expect(counts.AbortSignal).toBeLessThanOrEqual(2);
+    expect(counts.AbortController).toBeLessThanOrEqual(2);
+    expect(exitCode).toBe(0);
+  });
+
+  test("AbortSignal.any() unreferenced dependent with a listener still fires through a reachable controller", async () => {
+    const controller = new AbortController();
+    let fired = 0;
+    (() => {
+      AbortSignal.any([AbortSignal.any([controller.signal])]).addEventListener("abort", () => {
+        fired++;
+      });
+    })();
+    for (let i = 0; i < 5; i++) {
+      Bun.gc(true);
+      await new Promise<void>(resolve => setImmediate(resolve));
+    }
+    controller.abort();
+    expect(fired).toBe(1);
+  });
+
+  test("AbortSignal.any() unreferenced dependent with a listener still fires through AbortSignal.timeout()", async () => {
+    const { promise, resolve } = Promise.withResolvers<string>();
+    (() => {
+      AbortSignal.any([AbortSignal.timeout(50)]).addEventListener("abort", event => {
+        resolve((event.target as AbortSignal).reason.name);
+      });
+    })();
+    for (let i = 0; i < 5; i++) {
+      Bun.gc(true);
+      await new Promise<void>(resolve => setImmediate(resolve));
+    }
+    expect(await promise).toBe("TimeoutError");
+  });
+
   function fmt(value: any) {
     const res = {};
     for (const key in value) {

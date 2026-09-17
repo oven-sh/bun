@@ -48,12 +48,17 @@ bool JSAbortSignalOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> ha
 
         if (abortSignal.hasAbortEventListener()) {
             if (abortSignal.isDependent()) {
-                // This runs on GC marker threads, so it must not mutate the signal:
-                // sourceSignals().isEmptyIgnoringNullReferences() prunes dead entries.
-                if (abortSignal.hasAliveSourceSignals()) {
-                    if (reason) [[unlikely]]
-                        *reason = "Has Source Signals And Abort Event Listener"_s;
-                    return true;
+                // Only a source that can still abort keeps the listeners: its controller is reachable
+                // (JSAbortController adds the signal as an opaque root), its timeout is armed, or native
+                // code holds it. A source that merely exists may be held by these listeners alone.
+                // This runs on GC marker threads, so the set is only read:
+                // isEmptyIgnoringNullReferences() would prune dead entries.
+                for (auto& source : std::as_const(abortSignal).sourceSignals()) {
+                    if (source.isFiringEventListeners() || source.hasActiveTimeoutTimer() || source.hasPendingActivity() || visitor.containsOpaqueRoot(&source)) {
+                        if (reason) [[unlikely]]
+                            *reason = "Has Source Signal That Can Abort And Abort Event Listener"_s;
+                        return true;
+                    }
                 }
             }
 

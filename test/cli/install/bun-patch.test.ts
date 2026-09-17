@@ -1328,3 +1328,177 @@ describe("a step that fails leaves node_modules as it was", () => {
     expect(exitCode).toBe(1);
   });
 });
+
+// A bundled dependency ships inside the tarball of the package that bundles it, and bun does
+// not install it on its own:
+// - bundled-1@1.0.0 bundles no-deps@1.0.0.
+// - bundled-file@1.0.0 bundles "bundled-file-dep": "file:vendor/bundled-file-dep".
+// - bundled-transitive@1.0.0 bundles no-deps@1.0.0 and also depends on one-dep@1.0.0.
+// `bun patch` used to replace a bundled copy with the registry's package of the same name,
+// and it used to remove the bundled copies when the package that bundles them was patched.
+describe("bundled dependencies", () => {
+  const registry = new VerdaccioRegistry();
+
+  beforeAll(async () => {
+    await registry.start();
+  });
+
+  afterAll(() => {
+    registry.stop();
+  });
+
+  const bundledError = (name: string, bundler: string) =>
+    `error: cannot patch ${name}: it is a bundled dependency of ${bundler}, which ships it in its own tarball\n` +
+    `note: to change it, run bun patch ${bundler} and edit its copy in the node_modules folder of that package\n`;
+
+  // CI exports BUN_INSTALL_CACHE_DIR, which overrides the harness bunfig's per-test `cache`.
+  async function runBun(cwd: string, ...args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd,
+      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  async function installedProject(linker: "hoisted" | "isolated", dependencies: Record<string, string>) {
+    const packageJson = { name: "foo", dependencies };
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker },
+      files: { "package.json": JSON.stringify(packageJson) },
+    });
+    const { stderr, exitCode } = await runBun(packageDir, "install");
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    return { packageDir, packageJson };
+  }
+
+  // The bundled copy and the registry's no-deps@1.0.0 have the same files, so a file that
+  // only this copy has shows whether `bun patch` replaced the folder.
+  async function markBundledCopy(packageDir: string) {
+    const bundledCopy = join(packageDir, "node_modules", "bundled-1", "node_modules", "no-deps");
+    expect(await Bun.file(join(bundledCopy, "package.json")).json()).toEqual({ name: "no-deps", version: "1.0.0" });
+    const marker = Bun.file(join(bundledCopy, "only-in-the-bundled-copy.txt"));
+    await Bun.write(marker, "bundled");
+    return marker;
+  }
+
+  describe.each(["hoisted", "isolated"] as const)("%s linker", linker => {
+    test.concurrent.each(["no-deps", "no-deps@1.0.0", "node_modules/bundled-1/node_modules/no-deps"])(
+      "bun patch %s is refused",
+      async arg => {
+        const { packageDir } = await installedProject(linker, { "bundled-1": "1.0.0" });
+        const marker = await markBundledCopy(packageDir);
+
+        const { stderr, exitCode } = await runBun(packageDir, "patch", arg);
+        expect(stderr).toEndWith(bundledError(arg.startsWith("node_modules") ? "no-deps" : arg, "bundled-1"));
+        expect(await marker.exists()).toBe(true);
+        expect(exitCode).toBe(1);
+      },
+    );
+
+    test.concurrent.each(["no-deps", "node_modules/bundled-1/node_modules/no-deps"])(
+      "bun patch --commit %s is refused",
+      async arg => {
+        const { packageDir, packageJson } = await installedProject(linker, { "bundled-1": "1.0.0" });
+        await markBundledCopy(packageDir);
+
+        const { stderr, exitCode } = await runBun(packageDir, "patch", "--commit", arg);
+        expect(stderr).toEndWith(bundledError("no-deps", "bundled-1"));
+        expect({
+          packageJson: await Bun.file(join(packageDir, "package.json")).json(),
+          patches: await Bun.file(join(packageDir, "patches", "no-deps@1.0.0.patch")).exists(),
+        }).toEqual({ packageJson, patches: false });
+        expect(exitCode).toBe(1);
+      },
+    );
+
+    test.concurrent("bun patch finds the copy that bun installed when the same package is also bundled", async () => {
+      const { packageDir } = await installedProject(linker, { "bundled-1": "1.0.0", "no-deps": "1.0.0" });
+      const marker = await markBundledCopy(packageDir);
+
+      const byPath = await runBun(packageDir, "patch", "node_modules/bundled-1/node_modules/no-deps");
+      expect(byPath.stderr).toEndWith(bundledError("no-deps", "bundled-1"));
+      expect(byPath.exitCode).toBe(1);
+
+      const byName = await runBun(packageDir, "patch", "no-deps");
+      expect(byName.stderr).not.toContain("error:");
+      expect(byName.stdout).toContain("To patch no-deps, edit the following folder:\n\n  node_modules/no-deps\n");
+      expect(await marker.exists()).toBe(true);
+      expect(byName.exitCode).toBe(0);
+    });
+
+    test.concurrent.each(["bundled-file-dep", "node_modules/bundled-file/node_modules/bundled-file-dep"])(
+      "bun patch %s is refused for a bundled file: dependency",
+      async arg => {
+        const { packageDir } = await installedProject(linker, { "bundled-file": "1.0.0" });
+        const installed = Bun.file(
+          join(packageDir, "node_modules", "bundled-file", "node_modules", "bundled-file-dep", "index.js"),
+        );
+        expect(await installed.text()).toBe('module.exports = "bundled-file-dep";\n');
+
+        const { stderr, exitCode } = await runBun(packageDir, "patch", arg);
+        expect(stderr).toEndWith(bundledError("bundled-file-dep", "bundled-file"));
+        expect(await installed.text()).toBe('module.exports = "bundled-file-dep";\n');
+        expect(exitCode).toBe(1);
+      },
+    );
+
+    // The root alias takes the name `one-dep`, so the hoisted linker nests one-dep@1.0.0
+    // under bundled-transitive, next to the bundled no-deps.
+    test.concurrent("bun patch of the package that bundles keeps and patches the bundled copy", async () => {
+      const { packageDir } = await installedProject(linker, {
+        "bundled-transitive": "1.0.0",
+        "one-dep": "npm:no-deps@2.0.0",
+      });
+      const patched = join(packageDir, "node_modules", "bundled-transitive");
+      const bundled = join(patched, "node_modules", "no-deps");
+      const nested = Bun.file(join(patched, "node_modules", "one-dep", "package.json"));
+      const nestedIsInstalled = linker === "hoisted";
+      expect(await nested.exists()).toBe(nestedIsInstalled);
+
+      const prepare = await runBun(packageDir, "patch", "bundled-transitive");
+      expect(prepare.stderr).not.toContain("error:");
+      expect(prepare.exitCode).toBe(0);
+      expect({
+        bundled: await Bun.file(join(bundled, "package.json")).json(),
+        nested: await nested.exists(),
+      }).toEqual({ bundled: { name: "no-deps", version: "1.0.0" }, nested: nestedIsInstalled });
+
+      await Bun.write(join(patched, "added.js"), "module.exports = 'added';\n");
+      await Bun.write(join(bundled, "index.js"), "module.exports = 'patched bundled copy';\n");
+
+      const commit = await runBun(packageDir, "patch", "--commit", "node_modules/bundled-transitive");
+      expect(commit.stderr).not.toContain("error:");
+      expect(commit.exitCode).toBe(0);
+
+      const patch = await Bun.file(join(packageDir, "patches", "bundled-transitive@1.0.0.patch")).text();
+      expect(patch.split("\n").filter(line => line.startsWith("diff --git ") || line.startsWith("deleted "))).toEqual([
+        expect.stringMatching(/ b\/added\.js$/),
+        "diff --git a/node_modules/no-deps/index.js b/node_modules/no-deps/index.js",
+      ]);
+      expect(patch).toContain("+module.exports = 'patched bundled copy';");
+
+      const installedState = async () => ({
+        added: await Bun.file(join(patched, "added.js")).text(),
+        bundled: await Bun.file(join(bundled, "index.js")).text(),
+        nested: await nested.exists(),
+      });
+      const patchedState = {
+        added: "module.exports = 'added';\n",
+        bundled: "module.exports = 'patched bundled copy';\n",
+        nested: nestedIsInstalled,
+      };
+      expect(await installedState()).toEqual(patchedState);
+
+      await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+      const reinstall = await runBun(packageDir, "install");
+      expect(reinstall.stderr).not.toContain("error:");
+      expect(reinstall.exitCode).toBe(0);
+      expect(await installedState()).toEqual(patchedState);
+    });
+  });
+});

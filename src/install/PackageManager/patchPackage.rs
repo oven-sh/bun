@@ -7,15 +7,15 @@ use bun_core::{ZStr, strings};
 use bun_paths::platform;
 use bun_paths::resolve_path;
 use bun_paths::{PathBuffer, Platform, SEP};
-use bun_sys::{self as sys, Dir, Fd, FdDirExt as _, FdExt as _};
+use bun_sys::{self as sys, Dir, Fd, FdDirExt as _};
 
 use crate::bun_fs::FileSystem;
 use crate::bun_json as JSON;
 use crate::dependency::{Dependency, DependencyExt as _};
 use crate::isolated_install::FileCopier;
 use crate::lockfile_real::package::{Package, PackageColumns as _};
-use crate::lockfile_real::tree;
 use crate::lockfile_real::{self as lockfile, Lockfile, PackageIndexEntry};
+use crate::lockfile_real::{reachable, tree};
 use crate::package_manager_real::PackageManager;
 use crate::package_manager_real::options::{LogLevel, PatchFeatures};
 use crate::package_manager_real::package_manager_directories::{
@@ -250,6 +250,13 @@ pub fn do_patch_commit(
                 }
             };
 
+            crash_if_bundled_path(
+                &lockfile,
+                argument,
+                actual_package.meta.id,
+                lockfile.str(&actual_package.name),
+            );
+
             break 'result (argument.to_vec(), actual_package);
         }
         PatchArgKind::NameAndVersion => 'brk: {
@@ -368,12 +375,48 @@ pub fn do_patch_commit(
                 }
             };
 
+        let shipped_dependencies = Dir::borrow(&cache_dir)
+            .open_dir(cache_dir_subpath.as_bytes(), sys::OpenDirOptions::default())
+            .map(|cache_entry| node_modules_entries(cache_entry.fd))
+            .unwrap_or_default();
+        // Bundled dependencies stay in the diff. Only what bun installed next to them is hidden.
+        let hidden_dependencies: Vec<(Vec<u8>, Vec<u8>)> =
+            node_modules_entries(new_folder_handle.fd)
+                .into_iter()
+                .filter(|entry| {
+                    !shipped_dependencies.is_empty() && !shipped_dependencies.contains(entry)
+                })
+                .map(|entry| {
+                    (
+                        entry_path(b"node_modules", &entry),
+                        entry_path(random_tempdir.as_bytes(), &entry),
+                    )
+                })
+                .filter(|(installed_at, hidden_at)| {
+                    let _ = root_node_modules
+                        .make_path(resolve_path::dirname::<platform::Auto>(hidden_at));
+                    sys::renameat_concurrently_a(
+                        new_folder_handle.fd,
+                        installed_at,
+                        root_node_modules.fd,
+                        hidden_at,
+                        sys::RenameOptions {
+                            move_fallback: true,
+                        },
+                    )
+                    .is_ok()
+                })
+                .collect();
+
         // If the package has nested a node_modules folder, we don't want this to
         // appear in the patch file when we run git diff.
         //
         // There isn't an option to exclude it with `git diff --no-index`, so we
         // will `rename()` it out and back again.
         let has_nested_node_modules: bool = 'has_nested_node_modules: {
+            if !shipped_dependencies.is_empty() {
+                break 'has_nested_node_modules false;
+            }
             if sys::renameat_concurrently_a(
                 new_folder_handle.fd,
                 b"node_modules",
@@ -424,6 +467,20 @@ pub fn do_patch_commit(
         // deferred restore — one-off rename-back logic on every exit
         // path of `'brk`. Captures borrow into stack buffers.
         scopeguard::defer! {
+            for (installed_at, hidden_at) in &hidden_dependencies {
+                if let Err(e) = sys::renameat_concurrently_a(
+                    root_node_modules.fd,
+                    hidden_at,
+                    new_folder_handle.fd,
+                    installed_at,
+                    sys::RenameOptions { move_fallback: true },
+                ) {
+                    bun_core::warn!("failed renaming nested node_modules folder, this may cause issues: {}", e);
+                }
+            }
+            if !hidden_dependencies.is_empty() {
+                let _ = root_node_modules.delete_tree(random_tempdir.as_bytes());
+            }
             if has_nested_node_modules || bun_patch_tag.is_some() {
                 if has_nested_node_modules {
                     if let Err(e) = sys::renameat_concurrently_a(
@@ -712,6 +769,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
         argument
     };
 
+    let source_is_cache_entry: bool;
     let (cache_dir, cache_dir_subpath, module_folder, pkg_name): (Fd, &[u8], Vec<u8>, Vec<u8>) =
         match arg_kind {
             PatchArgKind::Path => 'brk: {
@@ -814,6 +872,9 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
                 };
 
                 let name = lockfile.str(&package.name).to_vec();
+                crash_if_bundled_path(lockfile, argument, actual_package.meta.id, &name);
+                source_is_cache_entry = actual_package.resolution.tag.can_enqueue_install_task();
+
                 let existing_patchfile_hash: Option<u64> = 'existing_patchfile_hash: {
                     let mut name_and_version = Vec::new();
                     write!(
@@ -894,6 +955,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
                 };
 
                 let pkg_resolution = pkg.resolution;
+                source_is_cache_entry = pkg_resolution.tag.can_enqueue_install_task();
                 let cache_result = compute_cache_dir_and_subpath(
                     manager,
                     &pkg_name,
@@ -934,9 +996,12 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
     // edits into the shared cache. Detach first: walk up `module_folder` to
     // find the first symlink ancestor, replace it with a real directory, and
     // recreate the path below it so the copy lands in a project-local tree.
-    if let Err(e) =
-        overwrite_package_in_node_modules_folder(cache_dir, cache_dir_subpath, module_folder)
-    {
+    if let Err(e) = overwrite_package_in_node_modules_folder(
+        cache_dir,
+        cache_dir_subpath,
+        module_folder,
+        source_is_cache_entry,
+    ) {
         bun_core::pretty_error!(
             "<r><red>error<r>: error overwriting folder in node_modules: {}\n<r>",
             e.name(),
@@ -1121,6 +1186,7 @@ fn overwrite_package_in_node_modules_folder(
     cache_dir: Fd,
     cache_dir_subpath: &[u8],
     node_modules_folder_path: &[u8],
+    source_is_cache_entry: bool,
 ) -> Result<(), crate::Error> {
     // Open the source first: if it is missing, the installed package stays as it was.
     let cached_package_folder = Dir::borrow(&cache_dir).open_dir(
@@ -1169,11 +1235,21 @@ fn overwrite_package_in_node_modules_folder(
         }
     };
 
-    let ignore_directories: &[&bun_paths::OSPathSlice] = &[
-        bun_paths::os_path_literal!("node_modules"),
-        bun_paths::os_path_literal!(".git"),
-        bun_paths::os_path_literal!("CMakeFiles"),
-    ];
+    // A cache entry is what the tarball shipped. Its node_modules holds the bundled dependencies.
+    let ignore_directories: &[&bun_paths::OSPathSlice] = if source_is_cache_entry {
+        &[]
+    } else {
+        &[
+            bun_paths::os_path_literal!("node_modules"),
+            bun_paths::os_path_literal!(".git"),
+            bun_paths::os_path_literal!("CMakeFiles"),
+        ]
+    };
+    let shipped_dependencies = if source_is_cache_entry {
+        node_modules_entries(cached_package_folder.fd)
+    } else {
+        Vec::new()
+    };
 
     let mut copier: FileCopier = FileCopier::init(
         cached_package_folder.fd,
@@ -1183,10 +1259,78 @@ fn overwrite_package_in_node_modules_folder(
     )?;
 
     detach_module_folder_from_shared_store(node_modules_folder_path);
-    let _ = Fd::cwd().delete_tree(node_modules_folder_path);
+    delete_package_files(node_modules_folder_path, &shipped_dependencies);
 
     copier.copy()?;
     Ok(())
+}
+
+/// The entries of `<package_dir>/node_modules`, as `name` or `@scope/name`.
+fn node_modules_entries(package_dir: Fd) -> Vec<Vec<u8>> {
+    fn names(dir: &Dir) -> Vec<Vec<u8>> {
+        let mut names = Vec::new();
+        let mut iter = sys::iterate_dir(dir.fd);
+        while let Ok(Some(entry)) = iter.next() {
+            names.push(entry.name.slice_u8().to_vec());
+        }
+        names
+    }
+
+    let options = sys::OpenDirOptions {
+        iterate: true,
+        ..Default::default()
+    };
+    let Ok(node_modules) = Dir::borrow(&package_dir).open_dir(b"node_modules", options) else {
+        return Vec::new();
+    };
+    let mut entries = Vec::new();
+    for name in names(&node_modules) {
+        let scope = name
+            .starts_with(b"@")
+            .then(|| node_modules.open_dir(&name, options).ok())
+            .flatten();
+        match scope {
+            Some(scope) => entries.extend(
+                names(&scope)
+                    .iter()
+                    .map(|scoped| [&name[..], b"/", &scoped[..]].concat()),
+            ),
+            None => entries.push(name),
+        }
+    }
+    entries
+}
+
+/// `<base>/<entry>` with the separators of the platform. `entry` is `name` or `@scope/name`.
+fn entry_path(base: &[u8], entry: &[u8]) -> Vec<u8> {
+    let mut path = [base, b"/", entry].concat();
+    resolve_path::posix_to_platform_in_place::<u8>(&mut path);
+    path
+}
+
+/// Deletes the package's own files. The nested dependencies that bun installed stay.
+fn delete_package_files(package_folder: &[u8], shipped_dependencies: &[Vec<u8>]) {
+    let options = sys::OpenDirOptions {
+        iterate: true,
+        ..Default::default()
+    };
+    let Ok(package_dir) = Dir::cwd().open_dir(package_folder, options) else {
+        return;
+    };
+    let mut names = Vec::new();
+    let mut iter = sys::iterate_dir(package_dir.fd);
+    while let Ok(Some(entry)) = iter.next() {
+        names.push(entry.name.slice_u8().to_vec());
+    }
+    for name in names
+        .iter()
+        .filter(|name| name.as_slice() != b"node_modules")
+    {
+        let _ = package_dir.delete_tree(name);
+    }
+    for entry in shipped_dependencies {
+        let _ = package_dir.delete_tree(&entry_path(b"node_modules", entry));
+    }
 }
 
 type NodeModulesIterator<'a> = tree::Iterator<'a, { tree::IteratorPathStyle::NodeModules }>;
@@ -1229,6 +1373,144 @@ fn node_modules_folder_for_dependency_id(
     }
 }
 
+/// For each package that only bundled dependencies reach: the package whose tarball ships it.
+struct BundledPackages(Vec<PackageID>);
+
+impl BundledPackages {
+    fn new(lockfile: &Lockfile) -> Self {
+        let resolutions = lockfile.buffers.resolutions.as_slice();
+        let dependencies = lockfile.buffers.dependencies.as_slice();
+        let dependency_lists = lockfile.packages.items_dependencies();
+        let installed = reachable::packages(
+            lockfile,
+            resolutions,
+            reachable::Options {
+                bundled: false,
+                ..reachable::Options::all(0)
+            },
+        );
+
+        let mut bundler_of = vec![invalid_package_id; dependency_lists.len()];
+        let mut queue: Vec<(PackageID, PackageID)> = Vec::new();
+        for (pkg_id, list) in dependency_lists.iter().enumerate() {
+            for dep_id in list.begin() as usize..list.end() as usize {
+                if dependencies[dep_id].behavior.is_bundled() {
+                    queue.push((resolutions[dep_id], pkg_id as PackageID));
+                }
+            }
+        }
+        while let Some((pkg_id, bundler)) = queue.pop() {
+            let Some(slot) = bundler_of.get_mut(pkg_id as usize) else {
+                continue;
+            };
+            if *slot != invalid_package_id || installed.is_set(pkg_id as usize) {
+                continue;
+            }
+            *slot = bundler;
+            let list = dependency_lists[pkg_id as usize];
+            for dep_id in list.begin() as usize..list.end() as usize {
+                queue.push((resolutions[dep_id], bundler));
+            }
+        }
+        Self(bundler_of)
+    }
+
+    fn bundler_of_package(&self, pkg_id: PackageID) -> Option<PackageID> {
+        self.0
+            .get(pkg_id as usize)
+            .copied()
+            .filter(|&bundler| bundler != invalid_package_id)
+    }
+
+    /// The package whose tarball ships what `dep_id` installs, so that bun does not install it.
+    fn bundler_of_dependency(
+        &self,
+        lockfile: &Lockfile,
+        dep_id: DependencyID,
+    ) -> Option<PackageID> {
+        let parent_id = lockfile.get_parent_pkg_of_dependency(dep_id)?;
+        if lockfile.buffers.dependencies[dep_id as usize]
+            .behavior
+            .is_bundled()
+        {
+            return Some(parent_id);
+        }
+        self.bundler_of_package(parent_id)
+    }
+
+    /// The first bundled dependency on `node_modules/a/node_modules/b`, found in the lockfile's tree.
+    fn bundler_on_path(&self, lockfile: &Lockfile, path: &[u8]) -> Option<PackageID> {
+        let top_level_dir = FileSystem::instance().top_level_dir();
+        let mut abs_buf = bun_paths::path_buffer_pool::get();
+        let abs = resolve_path::join_abs_string_buf_checked::<platform::Auto>(
+            top_level_dir,
+            &mut abs_buf[..],
+            &[path],
+        )?;
+        let mut components =
+            strings::tokenize_any(resolve_path::relative(top_level_dir, abs), b"/\\");
+
+        let string_buf = lockfile.buffers.string_bytes.as_slice();
+        let dependencies = lockfile.buffers.dependencies.as_slice();
+        let trees = lockfile.buffers.trees.as_slice();
+        let mut tree = trees.first()?;
+        let mut alias: Vec<u8> = Vec::new();
+        loop {
+            if components.next()? != b"node_modules" {
+                return None;
+            }
+            alias.clear();
+            alias.extend_from_slice(components.next()?);
+            if alias.starts_with(b"@") {
+                alias.push(b'/');
+                alias.extend_from_slice(components.next()?);
+            }
+            let has_alias = |dep_id: DependencyID| {
+                dependencies
+                    .get(dep_id as usize)
+                    .is_some_and(|dep| dep.name.slice(string_buf) == alias)
+            };
+            let dep_id = tree
+                .dependencies
+                .get(lockfile.buffers.hoisted_dependencies.as_slice())
+                .iter()
+                .copied()
+                .find(|&dep_id| has_alias(dep_id))?;
+            if let Some(bundler) = self.bundler_of_dependency(lockfile, dep_id) {
+                return Some(bundler);
+            }
+            tree = trees
+                .iter()
+                .find(|child| child.parent == tree.id && has_alias(child.dependency_id))?;
+        }
+    }
+}
+
+fn crash_bundled(lockfile: &Lockfile, name: &[u8], bundler: PackageID) -> ! {
+    let bundler = lockfile.str(&lockfile.packages.items_name()[bundler as usize]);
+    bun_core::pretty_errorln!(
+        "<r><red>error<r>: cannot patch <b>{}<r>: it is a bundled dependency of <b>{}<r>, which ships it in its own tarball",
+        bstr::BStr::new(name),
+        bstr::BStr::new(bundler),
+    );
+    bun_core::note!(
+        "to change it, run <cyan>bun patch {}<r> and edit its copy in the node_modules folder of that package",
+        bstr::BStr::new(bundler),
+    );
+    Global::crash();
+}
+
+/// Exits when `path` is inside a bundled dependency, or when `pkg_id` is only ever bundled.
+fn crash_if_bundled_path(lockfile: &Lockfile, path: &[u8], pkg_id: PackageID, name: &[u8]) {
+    let bundled = BundledPackages::new(lockfile);
+    if let Some(bundler) = bundled
+        .bundler_on_path(lockfile, path)
+        .or_else(|| bundled.bundler_of_package(pkg_id))
+    {
+        crash_bundled(lockfile, name, bundler);
+    }
+}
+
 type IdPair = (DependencyID, PackageID);
 
 fn pkg_info_for_name_and_version(
@@ -1247,6 +1529,9 @@ fn pkg_info_for_name_and_version(
     let mut resolution_label = Vec::new();
     let dependencies = lockfile.buffers.dependencies.as_slice();
 
+    let bundled = BundledPackages::new(lockfile);
+    let mut bundler: Option<PackageID> = None;
+
     for (dep_id, dep) in dependencies.iter().enumerate() {
         if dep.name_hash != name_hash {
             continue;
@@ -1257,15 +1542,21 @@ fn pkg_info_for_name_and_version(
         }
         let pkg = *lockfile.packages.get(pkg_id as usize);
         if let Some(v) = version {
-            if print_resolution_label(&mut resolution_label, &pkg.resolution, strbuf) == v {
-                pairs.push((dep_id as DependencyID, pkg_id));
+            if print_resolution_label(&mut resolution_label, &pkg.resolution, strbuf) != v {
+                continue;
             }
-        } else {
-            pairs.push((dep_id as DependencyID, pkg_id));
         }
+        if let Some(by) = bundled.bundler_of_dependency(lockfile, dep_id as DependencyID) {
+            bundler.get_or_insert(by);
+            continue;
+        }
+        pairs.push((dep_id as DependencyID, pkg_id));
     }
 
     if pairs.is_empty() {
+        if let Some(bundler) = bundler {
+            crash_bundled(lockfile, pkg_maybe_version_to_patch, bundler);
+        }
         bun_core::pretty_errorln!(
             "\n<r><red>error<r>: package <b>{}<r> not found<r>",
             bstr::BStr::new(pkg_maybe_version_to_patch)

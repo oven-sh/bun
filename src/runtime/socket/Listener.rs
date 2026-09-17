@@ -825,7 +825,7 @@ impl Listener {
         match this.listener.get() {
             ListenerType::Uws(ls) => {
                 // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
-                bun_opaque::opaque_deref_mut(ls).set_default_ssl_ctx(ctx.as_ptr());
+                bun_opaque::opaque_deref_mut(ls).set_default_ssl_ctx(&ctx);
                 this.secure_ctx.set(Some(ctx));
             }
             #[cfg(windows)]

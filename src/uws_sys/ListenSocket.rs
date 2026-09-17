@@ -1,5 +1,7 @@
 use core::ffi::{c_char, c_int, c_void};
 
+use bun_boringssl_sys::OwnedSslCtx;
+
 use crate::{SocketGroup, SslCtx, us_socket_t};
 
 bun_opaque::opaque_ffi! {
@@ -72,11 +74,11 @@ impl ListenSocket {
 
     /// Swap the default `SSL_CTX` for newly accepted sockets
     /// (`tls.Server#setSecureContext`). C up_refs `ctx`; caller keeps its own
-    /// ref. Raw `*mut` for the same shared-ownership reason as [`add_server_name`].
-    pub fn set_default_ssl_ctx(&mut self, ctx: *mut SslCtx) {
-        // SAFETY: self is a live listen socket; caller guarantees `ctx` points
-        // at a live SSL_CTX (C up-refs and stores it).
-        unsafe { us_listen_socket_set_default_ssl_ctx(self, ctx) }
+    /// ref.
+    pub fn set_default_ssl_ctx(&mut self, ctx: &OwnedSslCtx) {
+        // SAFETY: self is a live listen socket and `ctx` owns a reference to a
+        // live SSL_CTX, which C up-refs before it stores the pointer.
+        unsafe { us_listen_socket_set_default_ssl_ctx(self, ctx.as_ptr()) }
     }
 
     pub fn on_server_name(

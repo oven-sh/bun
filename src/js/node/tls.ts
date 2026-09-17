@@ -1423,7 +1423,8 @@ function Server(options, secureConnectionListener): void {
         if (!tls.requestCert) tls.rejectUnauthorized = false;
         setListenerSecureContext(handle, tls);
       }
-      if (next.ALPNProtocols !== undefined) this.ALPNProtocols = next.ALPNProtocols;
+      const { ALPNProtocols } = next;
+      if (ALPNProtocols !== undefined) this.ALPNProtocols = ALPNProtocols;
       this.cert = next.cert;
       this.key = next.key;
       this.ca = next.ca;

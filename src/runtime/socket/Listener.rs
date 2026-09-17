@@ -2107,8 +2107,8 @@ fn decode_sni_result(result: JSValue, abort_handshake: *mut core::ffi::c_int) ->
 /// returned `SSL_CTX*` applies to the in-flight handshake only - the caller
 /// installs it with `SSL_set_SSL_CTX`, which takes its own reference, and
 /// nothing is cached in the SNI tree, so the callback runs per-connection the
-/// way Node's does. A null return falls back to the static tree (bind
-/// hostname + addContext entries), then the default context. An asynchronous
+/// way Node's does. A null return falls back to the static tree
+/// (addContext entries), then the default context. An asynchronous
 /// SNICallback sets `*abort_handshake = 2` instead: the handshake suspends
 /// (select-certificate retry) until the JS resolution calls
 /// `handle.resumeSNI(...)` -> `us_socket_sni_resolve()`.

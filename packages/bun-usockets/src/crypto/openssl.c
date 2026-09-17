@@ -3236,8 +3236,8 @@ static enum ssl_select_cert_result_t us_select_cert_cb(const SSL_CLIENT_HELLO *h
     return ssl_select_cert_success;
   }
 
-  /* No dynamic selection: fall back to the static SNI tree (the bind
-   * hostname and addContext() entries). An adopted socket has no tree. */
+  /* No dynamic selection: fall back to the static SNI tree (the
+   * addContext() entries). An adopted socket has no tree. */
   if (ls) {
     struct sni_node_t *node = resolve_listener_ctx(ls, hostname);
     if (node) {

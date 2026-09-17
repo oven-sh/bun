@@ -3760,6 +3760,8 @@ impl VirtualMachine {
             self.hide_bun_stackframes = false;
         }
 
+        bun_uws::root_certs::load_env(map.get(b"NODE_EXTRA_CA_CERTS"));
+
         if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER::get()
             .unwrap_or(false)
         {

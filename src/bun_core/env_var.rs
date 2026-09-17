@@ -172,6 +172,7 @@ new!(pub NODE_DISABLE_COMPILE_CACHE: string, "NODE_DISABLE_COMPILE_CACHE", {});
 // C++ Bun__WebView__hostMain. Never returns — no JSC, no VM.
 new!(pub BUN_INTERNAL_WEBVIEW_HOST: string, "BUN_INTERNAL_WEBVIEW_HOST", {});
 new!(pub NODE_PENDING_DEPRECATION: string, "NODE_PENDING_DEPRECATION", {});
+new!(pub NODE_EXTRA_CA_CERTS: string, "NODE_EXTRA_CA_CERTS", {});
 new!(pub NODE_PRESERVE_SYMLINKS_MAIN: boolean, "NODE_PRESERVE_SYMLINKS_MAIN", { default: false });
 new!(pub NODE_USE_SYSTEM_CA: boolean, "NODE_USE_SYSTEM_CA", { default: false });
 new!(pub npm_lifecycle_event: string, "npm_lifecycle_event", {});

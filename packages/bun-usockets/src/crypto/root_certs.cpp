@@ -172,11 +172,15 @@ extern "C" size_t us_bundled_root_certs_der(const uint8_t *const **out_certs, co
   return roots.certs.size();
 }
 
+// src/uws/root_certs.rs: NODE_EXTRA_CA_CERTS from Bun's env map (which has the .env files in it), read once per
+// process. Null when unset or empty.
+extern "C" const char *Bun__Node__extraCACertsPath();
+
 // std::call_once, not a flag: concurrent Workers must block until the list is
 // fully parsed rather than observe a half-built STACK_OF(X509).
 STACK_OF(X509) *us_get_root_extra_cert_instances() {
-  const char *extra_certs = getenv("NODE_EXTRA_CA_CERTS");
-  if (!extra_certs || !extra_certs[0]) return nullptr;
+  const char *extra_certs = Bun__Node__extraCACertsPath();
+  if (!extra_certs) return nullptr;
   static STACK_OF(X509) *root_extra_cert_instances = nullptr;
   static std::once_flag once;
   std::call_once(once, [&]() {

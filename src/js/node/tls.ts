@@ -1724,11 +1724,12 @@ function cacheDefaultCACertificates() {
     }
   }
 
-  if (process.env.NODE_EXTRA_CA_CERTS) {
-    const extra = cacheExtraCACertificates();
-    for (let i = 0; i < extra.length; ++i) {
-      ArrayPrototypePush.$call(defaultCACertificates, extra[i]);
-    }
+  // The native store reads NODE_EXTRA_CA_CERTS once at startup, as Node does.
+  // The list is empty when the variable is unset. Reading process.env here
+  // would disagree with the store after a runtime write.
+  const extra = cacheExtraCACertificates();
+  for (let i = 0; i < extra.length; ++i) {
+    ArrayPrototypePush.$call(defaultCACertificates, extra[i]);
   }
 
   ObjectFreeze(defaultCACertificates);

@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir, tls } from "harness";
 import { join } from "path";
 
 describe("NODE_EXTRA_CA_CERTS", () => {
@@ -169,4 +169,107 @@ test("explicit ca option replaces the default trust store instead of appending t
   expect(stdout).toContain("pinned-to-issuer connected");
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);
+});
+
+// Node reads NODE_EXTRA_CA_CERTS once at startup. Bun loads .env files into
+// process.env, so a value set there must reach the native trust store the
+// same way a value from the real environment does.
+describe("NODE_EXTRA_CA_CERTS from a .env file", () => {
+  const script = `
+    const tls = require("node:tls");
+    const server = Bun.serve({
+      port: 0,
+      tls: { cert: Bun.file("cert.pem"), key: Bun.file("key.pem") },
+      fetch: () => new Response("ok"),
+    });
+    const extra = tls.getCACertificates("extra").length;
+    const defaultHasExtra =
+      tls.getCACertificates("default").length === tls.getCACertificates("bundled").length + extra;
+    let fetched;
+    try {
+      fetched = await (await fetch("https://localhost:" + server.port + "/")).text();
+    } catch (e) {
+      fetched = e.code ?? e.message;
+    }
+    server.stop(true);
+    console.log(JSON.stringify({ env: process.env.NODE_EXTRA_CA_CERTS, extra, defaultHasExtra, fetched }));
+  `;
+
+  test("the native trust store and tls.getCACertificates see the file", async () => {
+    await using dir = tempDir("extra-ca-dotenv", {
+      "cert.pem": tls.cert,
+      "key.pem": tls.key,
+      "main.js": script,
+    });
+    const certPath = join(String(dir), "cert.pem");
+    await Bun.write(join(String(dir), ".env"), `NODE_EXTRA_CA_CERTS=${certPath}\n`);
+
+    const { NODE_EXTRA_CA_CERTS: _unused, ...env } = bunEnv;
+    await using proc = spawn({
+      cmd: [bunExe(), "main.js"],
+      env,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(JSON.parse(stdout)).toEqual({ env: certPath, extra: 1, defaultHasExtra: true, fetched: "ok" });
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test("the real environment wins over the .env file", async () => {
+    await using dir = tempDir("extra-ca-dotenv-override", {
+      "cert.pem": tls.cert,
+      "key.pem": tls.key,
+      ".env": "NODE_EXTRA_CA_CERTS=./does-not-exist.pem\n",
+      "main.js": script,
+    });
+    const certPath = join(String(dir), "cert.pem");
+
+    await using proc = spawn({
+      cmd: [bunExe(), "main.js"],
+      env: { ...bunEnv, NODE_EXTRA_CA_CERTS: certPath },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(JSON.parse(stdout)).toEqual({ env: certPath, extra: 1, defaultHasExtra: true, fetched: "ok" });
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test("a runtime write to process.env does not change the trust store", async () => {
+    await using dir = tempDir("extra-ca-runtime-write", {
+      "cert.pem": tls.cert,
+      "key.pem": tls.key,
+      "main.js": `
+        const tls = require("node:tls");
+        delete process.env.NODE_EXTRA_CA_CERTS;
+        const extra = tls.getCACertificates("extra").length;
+        const defaultLen = tls.getCACertificates("default").length;
+        const bundledLen = tls.getCACertificates("bundled").length;
+        console.log(JSON.stringify({ extra, defaultHasExtra: defaultLen === bundledLen + extra }));
+      `,
+    });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "main.js"],
+      env: { ...bunEnv, NODE_EXTRA_CA_CERTS: join(String(dir), "cert.pem") },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(JSON.parse(stdout)).toEqual({ extra: 1, defaultHasExtra: true });
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
 });

@@ -3062,6 +3062,37 @@ describe("Bun.ModuleGraph — generators, iterators, WeakRef/FinalizationRegistr
     expect([wr.deref(), tokens]).toEqual([undefined, ["token-F"]]);
     void fr;
   });
+  test("a FinalizationRegistry made in a graph's context runs its cleanup in that context", async () => {
+    const g = ModuleGraph({ env: { T: "G" } });
+    const m = await g.import(join(dir, "g.mjs"));
+    const seen: unknown[] = [];
+    const fr = g.run(() => m.registry((t: string) => seen.push(t, Bun.ModuleGraph.current === g)));
+    for (let i = 0; i < 50 && !seen.length; i++) {
+      Bun.gc(true);
+      await new Promise<void>(r => setTimeout(r, 0));
+    }
+    expect(seen).toEqual(["token-G", true]);
+    void fr;
+  });
+  test("a FinalizationRegistry made in a graph's context does not run its cleanup once the graph is disposed", async () => {
+    const g = ModuleGraph({ env: { T: "D" } });
+    const m = await g.import(join(dir, "g.mjs"));
+    const tokens: string[] = [];
+    const ofTheHost = m.registry((t: string) => tokens.push("host's " + t));
+    const ofTheGraph = g.run(() => m.registry((t: string) => tokens.push("graph's " + t)));
+    g.dispose();
+    for (let i = 0; i < 50 && !tokens.length; i++) {
+      Bun.gc(true);
+      await new Promise<void>(r => setTimeout(r, 0));
+    }
+    // The host's ran: a collection found both registries' objects. A few more turns for the graph's.
+    for (let i = 0; i < 5; i++) {
+      Bun.gc(true);
+      await new Promise<void>(r => setTimeout(r, 0));
+    }
+    expect(tokens).toEqual(["host's token-D"]);
+    void [ofTheHost, ofTheGraph];
+  });
   test("Atomics on a SharedArrayBuffer shared between host and graph", async () => {
     const m = await ModuleGraph().import(join(dir, "g.mjs"));
     const sab = new SharedArrayBuffer(4);

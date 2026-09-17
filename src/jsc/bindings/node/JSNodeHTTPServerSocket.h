@@ -131,6 +131,9 @@ public:
     mutable JSC::WriteBarrier<JSC::JSObject> functionToCallOnClose;
     mutable JSC::WriteBarrier<JSC::JSObject> functionToCallOnDrain;
     mutable JSC::WriteBarrier<JSC::JSObject> functionToCallOnData;
+    /* onflush: every byte queued before a response's end() has reached the
+     * kernel (HttpResponseData::HTTP_NODE_FLUSH_PENDING). */
+    mutable JSC::WriteBarrier<JSC::JSObject> functionToCallOnFlush;
     mutable JSC::WriteBarrier<WebCore::JSNodeHTTPResponse> currentResponseObject;
     mutable JSC::WriteBarrier<JSC::JSObject> m_remoteAddress;
     mutable JSC::WriteBarrier<JSC::JSObject> m_localAddress;
@@ -158,6 +161,7 @@ public:
     void syncPeerCertificateVerification();
     void onClose();
     void onDrain();
+    void onOutgoingFlushed();
     void onData(const char* data, int length, bool last);
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject);

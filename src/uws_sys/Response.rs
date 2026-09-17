@@ -289,6 +289,13 @@ impl<const SSL: bool> Response<SSL> {
         c::uws_res_get_buffered_amount(Self::ssl_flag(), self.as_raw())
     }
 
+    /// node:http, right after `end()`: true when bytes of the response are
+    /// still queued in the send buffer. The socket then reports once through
+    /// `Bun__NodeHTTP__onOutgoingFlushed` when they have reached the kernel.
+    pub(crate) fn await_outgoing_flush(&mut self) -> bool {
+        c::uws_res_await_outgoing_flush(Self::ssl_flag(), self.as_raw())
+    }
+
     pub(crate) fn write(&mut self, data: &[u8]) -> WriteResult {
         let mut len: usize = data.len();
         // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
@@ -815,6 +822,16 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.get_buffered_amount())
     }
 
+    /// See `Response::await_outgoing_flush`. HTTP/1 only: node:http never
+    /// runs on the H2/H3 transports.
+    pub fn await_outgoing_flush(self) -> bool {
+        match self {
+            AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).await_outgoing_flush(),
+            AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).await_outgoing_flush(),
+            AnyResponse::H3(_) | AnyResponse::H2(_) => false,
+        }
+    }
+
     pub fn write_continue(self) {
         any_dispatch!(self, |r| r.write_continue())
     }
@@ -1245,6 +1262,7 @@ pub mod c {
         pub(crate) safe fn uws_res_reset_timeout(ssl: i32, res: &mut uws_res);
         pub(crate) safe fn uws_res_close_if_done_and_marked(ssl: i32, res: &mut uws_res);
         pub(crate) safe fn uws_res_get_buffered_amount(ssl: i32, res: &mut uws_res) -> u64;
+        pub(crate) safe fn uws_res_await_outgoing_flush(ssl: i32, res: &mut uws_res) -> bool;
         pub(crate) fn uws_res_write(
             ssl: i32,
             res: *mut uws_res,

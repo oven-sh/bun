@@ -1309,6 +1309,16 @@ extern "C"
     }
   }
 
+  bool uws_res_await_outgoing_flush(int ssl, uws_res_r res) {
+    if (ssl) {
+      uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+      return uwsRes->awaitOutgoingFlush();
+    } else {
+      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+      return uwsRes->awaitOutgoingFlush();
+    }
+  }
+
   void uws_res_on_aborted(int ssl, uws_res_r res,
                           void (*handler)(uws_res_r res, void *optional_data),
                           void *optional_data)

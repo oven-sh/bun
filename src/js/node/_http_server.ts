@@ -1361,6 +1361,18 @@ const kStopParsingOnCloseListener = Symbol("kStopParsingOnCloseListener");
 // Set when the dispatcher already detached a synchronously-finished response,
 // so the 'finish' listener does not detach/advance the pipeline a second time.
 const kDispatcherDetached = Symbol("kDispatcherDetached");
+// A response that end()ed with bytes still in the transport's send buffer
+// (handle.end / writeHeadAndEnd returned a negative count). Its connection
+// bookkeeping (emitResponseFinish) still runs on the next tick, but the
+// user-visible 'finish', the end() callback, the parked write() callbacks and
+// 'close' wait until the socket reports the flush (handle.onflush), like Node,
+// where 'finish' fires from the last write's completion. Until then the
+// response sits in its socket's kFlushWaiters.
+const kTransportFinished = Symbol("kTransportFinished");
+const kFlushWaiters = Symbol("kFlushWaiters");
+const kFlushPending = Symbol("kFlushPending");
+const kEndCallback = Symbol("kEndCallback");
+const kBoundOnFlush = Symbol("kBoundOnFlush");
 
 // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_server.js (socketOnError)
 const badRequestResponse = Buffer.from(`HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n`, "latin1");
@@ -1661,10 +1673,14 @@ function getNodeHTTPServerSocket() {
 
       // A response that was still attached to this socket (it had not finished
       // when the connection died) must emit 'close' too, exactly like Node.js's
-      // onServerResponseClose socket listener does.
-      if (message && !message._closed) {
+      // onServerResponseClose socket listener does. One still waiting for its
+      // flush gets 'close' after 'finish' from releaseFlushWaitersOnClose.
+      if (message && !message._closed && !message[kFlushPending]) {
         process.nextTick(emitCloseNT, message);
       }
+
+      // Responses that ended but whose bytes never fully left the send buffer.
+      releaseFlushWaitersOnClose(this);
 
       // Pipelined responses (and their requests) that were still queued behind
       // the in-flight response are aborted, like Node.js's socketOnClose
@@ -2366,6 +2382,9 @@ function stopServerResponsePerf(this: any) {
 // arm keep-alive) runs first because onResponseFinishHandleSocket's guards
 // read pre-detach state, then detach the socket and advance the pipeline.
 function emitResponseFinish() {
+  // Already ran from finishTransportNT for a response whose 'finish' waited
+  // on the transport flush.
+  if (this[kTransportFinished]) return;
   // req.socket is nulled by the stream destroyer (pipeline/compose cleanup);
   // the response's own socket (set by assignSocket, cleared only by
   // detachSocket) still references the connection then.
@@ -2376,6 +2395,75 @@ function emitResponseFinish() {
   if (this[kDispatcherDetached]) return;
   if (socket != null) this.detachSocket(socket);
   advanceResponsePipeline(socket?.server, socket);
+}
+
+function finishTransportNT(res) {
+  emitResponseFinish.$call(res);
+  res[kTransportFinished] = true;
+}
+
+// end() accepted the last chunk but part of the response still sits in the
+// transport's send buffer: park the response on its socket until the native
+// side reports the flush. Returns false when there is no native socket to
+// report it, in which case end() finishes on the next tick as usual.
+function holdFinishUntilFlushed(res, callback) {
+  // The storage, not the `socket` getter (which auto-creates a FakeSocket).
+  const socket = res[fakeSocketSymbol];
+  if (!(NodeHTTPServerSocket && socket instanceof NodeHTTPServerSocket)) {
+    return false;
+  }
+  const socketHandle = socket[kHandle];
+  if (!socketHandle) {
+    return false;
+  }
+  if (socket[kBoundOnFlush] === undefined) {
+    socket[kBoundOnFlush] = onSocketOutgoingFlushed.bind(socket);
+    socketHandle.onflush = socket[kBoundOnFlush];
+  }
+  res[kEndCallback] = callback;
+  res[kFlushPending] = true;
+  (socket[kFlushWaiters] ??= []).push(res);
+  // Connection bookkeeping keeps its timing: the dispatcher can assign the
+  // next request's response to this socket before the flush.
+  process.nextTick(finishTransportNT, res);
+  return true;
+}
+
+// Native callback: every byte queued on the socket so far reached the kernel,
+// so each parked response is fully sent. Runs inside the transport's writable
+// event, so only bookkeeping happens here and the events go to the next tick.
+function onSocketOutgoingFlushed(this: NodeHTTPServerSocket) {
+  const waiters = this[kFlushWaiters];
+  if (waiters === undefined || waiters.length === 0) return;
+  this[kFlushWaiters] = undefined;
+  for (let i = 0; i < waiters.length; i++) {
+    process.nextTick(emitFlushedFinishNT, waiters[i]);
+  }
+}
+
+function emitFlushedFinishNT(res) {
+  res[kFlushPending] = false;
+  // destroy()ed or closed while the flush was pending: 'close' already ran.
+  if (res._closed) return;
+  const callback = res[kEndCallback];
+  res[kEndCallback] = undefined;
+  // Same order as the immediate path in end(): the parked write() callbacks
+  // (queued on the tick queue here) run before 'finish'.
+  res._callPendingCallbacks();
+  process.nextTick(emitFinishNT, callback, res);
+}
+
+// The connection died with responses still waiting for their flush. Node
+// completes them anyway (the failed socket write still runs its callback, and
+// onFinish emits 'finish' unless the socket reported an error), so they get
+// their callbacks, 'finish' and then 'close', in that order.
+function releaseFlushWaitersOnClose(socket) {
+  const waiters = socket[kFlushWaiters];
+  if (waiters === undefined) return;
+  socket[kFlushWaiters] = undefined;
+  for (let i = 0; i < waiters.length; i++) {
+    process.nextTick(emitFlushedFinishNT, waiters[i]);
+  }
 }
 
 // Runs when a response has finished, like the transport-related half of
@@ -3194,13 +3282,17 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
     return true;
   }
   const sentState = NodeHTTPHeaderState.sent;
+  // handle.end / handle.writeHeadAndEnd return the chunk's byte count, or
+  // `-count - 1` when part of the response is still in the transport's send
+  // buffer (like write()'s negative result; the offset covers a 0-byte end).
+  let endResult = 0;
   if (headerState !== sentState) {
     {
       const renderedHeaders = renderNativeHeaders(this);
       try {
         // One native crossing for cork + writeHead + end (writeHeadAndEnd
         // corks natively around both phases).
-        this._contentLength = handle.writeHeadAndEnd(
+        endResult = handle.writeHeadAndEnd(
           this[kSnapshotStatusCode] ?? this.statusCode,
           this[kSnapshotStatusMessage] ?? this.statusMessage,
           renderedHeaders,
@@ -3230,6 +3322,7 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
       }
       releaseRenderedHeaders(renderedHeaders);
       this[headerStateSymbol] = sentState;
+      this._contentLength = endResult < 0 ? -endResult - 1 : endResult;
     }
   } else {
     // If there's no data but you already called end, then you're done.
@@ -3237,7 +3330,7 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
     // (no native call in between can change it), so reuse its bits instead of
     // paying two more native getter crossings.
     if (!(!chunk && flags & NodeHTTPResponseFlags.ended) && !(flags & NodeHTTPResponseFlags.socket_closed)) {
-      handle.end(chunk, encoding, undefined, strictContentLength(this));
+      endResult = handle.end(chunk, encoding, undefined, strictContentLength(this));
     }
   }
   this._header = " ";
@@ -3252,37 +3345,32 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
   this.finished = true;
   process.nextTick(markResponseEndedNT, this);
   this.emit("prefinish");
+  if (endResult < 0 && holdFinishUntilFlushed(this, callback)) {
+    return this;
+  }
   this._callPendingCallbacks();
 
   // Deferring the 'finish' emit to nextTick is load-bearing: the dispatcher
   // sets kDispatcherDetached only after a sync-finished handler returns, so
   // an emit before that would detach and advance the pipeline twice.
-  if (callback) {
-    process.nextTick(
-      function (callback, self) {
-        // In Node.js, the "finish" event triggers the "close" event.
-        // So it shouldn't become closed === true until after "finish" is emitted and the callback is called.
-        self.emit("finish");
-        try {
-          callback();
-        } catch (err) {
-          self.emit("error", err);
-        }
-
-        process.nextTick(emitCloseNT, self);
-      },
-      callback,
-      this,
-    );
-  } else {
-    process.nextTick(function (self) {
-      self.emit("finish");
-      process.nextTick(emitCloseNT, self);
-    }, this);
-  }
+  process.nextTick(emitFinishNT, callback, this);
 
   return this;
 };
+
+function emitFinishNT(callback, self) {
+  // In Node.js, the "finish" event triggers the "close" event.
+  // So it shouldn't become closed === true until after "finish" is emitted and the callback is called.
+  self.emit("finish");
+  if (callback) {
+    try {
+      callback();
+    } catch (err) {
+      self.emit("error", err);
+    }
+  }
+  process.nextTick(emitCloseNT, self);
+}
 
 Object.defineProperty(ServerResponse.prototype, "writable", {
   // Node.js's OutgoingMessage assigns `this.writable = true` in the
@@ -3509,7 +3597,9 @@ Object.defineProperty(ServerResponse.prototype, "writableNeedDrain", {
 
 Object.defineProperty(ServerResponse.prototype, "writableFinished", {
   get() {
-    return !!(this.finished && (!this[kHandle] || this[kHandle].finished));
+    // Node: finished, nothing buffered on the message, and nothing left in the
+    // socket's write queue.
+    return !!(this.finished && !this[kFlushPending] && (!this[kHandle] || this[kHandle].finished));
   },
 });
 

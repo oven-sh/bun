@@ -155,13 +155,22 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
          * that runs after it (microtasks, the request body callback) can block,
          * reset the connection or end the process. */
         HTTP_SEND_WHEN_COMPLETE = 1 << 18,
+        /* node:http: a response ended while bytes of it still sat in the
+         * socket's send buffer, and the JS layer holds its 'finish' event and
+         * end()/write() callbacks until they have flushed (Node fires them from
+         * the socket write completion). onWritable reports through
+         * Bun__NodeHTTP__onOutgoingFlushed once the send buffer is empty.
+         * Connection-scoped: the next request on the connection can be
+         * dispatched before the flush. */
+        HTTP_NODE_FLUSH_PENDING = 1 << 19,
 
         /* Bits that describe the connection rather than the response in flight.
          * There is one HttpResponseData per socket, reused by every request on a
          * keep-alive connection, so starting a new response clears the rest of the
          * word (resetResponseState) - these have to survive that. */
         HTTP_CONNECTION_SCOPED = HTTP_NODE_PARSING_STOPPED | HTTP_NODE_READS_PAUSED
-            | HTTP_NODE_TUNNEL_AFTER_BODY | HTTP_NODE_RECEIVED_FIN | HTTP_CLOSE_WHEN_IDLE,
+            | HTTP_NODE_TUNNEL_AFTER_BODY | HTTP_NODE_RECEIVED_FIN | HTTP_CLOSE_WHEN_IDLE
+            | HTTP_NODE_FLUSH_PENDING,
     };
 
     /* Begin a new response on this connection. Clearing the word in one go is

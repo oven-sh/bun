@@ -2032,9 +2032,18 @@ impl NodeHTTPResponse {
             } else {
                 raw_response.end_stream(state.is_http_connection_close());
             }
+            // Like write()'s negative result: the chunk was accepted but part
+            // of the response still sits in the send buffer. JS decodes
+            // `-n - 1` (end() can queue 0 body bytes, the terminating chunk)
+            // and holds 'finish' until the socket reports the flush.
+            let flush_pending = raw_response.await_outgoing_flush();
             self.on_request_complete();
 
-            Ok(JSValue::js_number_from_uint64(bytes.len() as u64))
+            Ok(if flush_pending {
+                JSValue::js_number(-(bytes.len() as f64) - 1.0)
+            } else {
+                JSValue::js_number_from_uint64(bytes.len() as u64)
+            })
         } else {
             let raw_response = self.raw_response.get().unwrap();
 

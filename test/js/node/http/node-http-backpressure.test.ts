@@ -309,6 +309,86 @@ describe("backpressure", () => {
     });
   });
 
+  // Node fires 'finish', the end() callback and the parked write() callbacks
+  // from the completion of the last socket write, so a handler that treats the
+  // end() callback as "response sent" is right. With the client not reading,
+  // most of a 32 MiB body sits in the server's send buffer when end() returns;
+  // the callbacks must wait until the client drains it
+  // (https://github.com/oven-sh/bun/issues/43155).
+  describe("end() callback and 'finish' wait for the backpressured body to flush", () => {
+    const BODY = 32 * 1024 * 1024;
+    const CHUNK = Buffer.alloc(256 * 1024, 1);
+    const CHUNKS = BODY / CHUNK.byteLength;
+
+    it.each([
+      ["res.write() then res.end(cb)", false],
+      ["res.write() then res.end(chunk, cb)", true],
+    ])("%s", async (_name, endWithChunk) => {
+      const events: string[] = [];
+      const endReturned = Promise.withResolvers<void>();
+      const callbackFired = Promise.withResolvers<void>();
+      const closed = Promise.withResolvers<void>();
+      await using server = http.createServer((req, res) => {
+        res.writeHead(200, { "Content-Length": String(BODY) });
+        res.on("finish", () => events.push("finish"));
+        res.on("close", () => {
+          events.push("close");
+          closed.resolve();
+        });
+        const writes = endWithChunk ? CHUNKS - 1 : CHUNKS;
+        for (let i = 0; i < writes; i++) {
+          res.write(CHUNK, i === writes - 1 ? () => events.push("write callback") : undefined);
+        }
+        const callback = () => {
+          events.push("end callback");
+          callbackFired.resolve();
+        };
+        if (endWithChunk) res.end(CHUNK, callback);
+        else res.end(callback);
+        events.push("end returned");
+        endReturned.resolve();
+      });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const port = (server.address() as AddressInfo).port;
+
+      const socket = net.connect(port, "127.0.0.1");
+      socket.on("error", () => {});
+      await once(socket, "connect");
+      // Nothing reads the response: the kernel buffers fill and the rest backs
+      // up in the server.
+      socket.pause();
+      socket.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+      await endReturned.promise;
+      // The old behavior fired everything on the tick after end(); let those
+      // ticks run before checking that nothing fired.
+      for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve));
+      expect(events).toEqual(["end returned"]);
+
+      let received = 0;
+      let headerLength = -1;
+      let head = "";
+      socket.on("data", chunk => {
+        received += chunk.length;
+        if (headerLength < 0) {
+          head += chunk.toString("latin1");
+          const i = head.indexOf("\r\n\r\n");
+          if (i >= 0) headerLength = i + 4;
+        }
+      });
+      socket.resume();
+      await callbackFired.promise;
+      // 'close' follows the callback on the next tick, which may already have run.
+      expect(events.slice(0, 4)).toEqual(["end returned", "write callback", "finish", "end callback"]);
+      while (headerLength < 0 || received < headerLength + BODY) {
+        await once(socket, "data");
+      }
+      expect(received).toBe(headerLength + BODY);
+      socket.destroy();
+      await closed.promise;
+      expect(events).toEqual(["end returned", "write callback", "finish", "end callback", "close"]);
+    });
+  });
+
   // Request-body direction: once the handler stops reading the body (req.pause(),
   // or nobody consuming the IncomingMessage), the connection's kernel reads must
   // stop too, so the upload stalls on TCP backpressure instead of the unread

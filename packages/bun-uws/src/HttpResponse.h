@@ -110,6 +110,19 @@ public:
         return false;
     }
 
+    /* node:http compat, called right after end(): when bytes of the response
+     * are still queued in the send buffer, arm the flushed notification
+     * (HttpContext::onWritable -> Bun__NodeHTTP__onOutgoingFlushed) and return
+     * true. False means every byte already reached the kernel, or the socket is
+     * gone and no writable event will ever report the flush. */
+    bool awaitOutgoingFlush() {
+        if (us_socket_is_closed((us_socket_t *) this) || ((AsyncSocket<SSL> *) this)->hasFullyDrained()) {
+            return false;
+        }
+        getHttpResponseData()->state |= HttpResponseData<SSL>::HTTP_NODE_FLUSH_PENDING;
+        return true;
+    }
+
     /* Called when a response completes on a corked socket. Returns true when the
      * caller has to run the close gate now, false when onData runs it.
      *

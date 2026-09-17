@@ -23,6 +23,7 @@ extern "C" uint64_t uws_res_get_local_address_info(void* res, const char** dest,
 extern "C" EncodedJSValue us_socket_buffered_js_write(void* socket, bool is_ssl, bool ended, us_socket_stream_buffer_t* streamBuffer, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue data, JSC::EncodedJSValue encoding);
 extern "C" int us_socket_is_ssl_handshake_finished(struct us_socket_t* s);
 extern "C" int us_socket_ssl_handshake_callback_has_fired(struct us_socket_t* s);
+extern "C" void Bun__EventLoop__runCallback2(JSC::JSGlobalObject* global, JSC::EncodedJSValue callback, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue arg1, JSC::EncodedJSValue arg2);
 
 namespace Bun {
 
@@ -755,6 +756,43 @@ void JSNodeHTTPServerSocket::onDrain()
     }
 }
 
+// Called in place from HttpContext::onWritable, not posted like the other
+// callbacks: between a posted task and its run, a later response could end
+// with new backpressure and be taken for flushed. The JS side only records
+// which responses have flushed and defers their events to process.nextTick.
+void JSNodeHTTPServerSocket::onOutgoingFlushed()
+{
+    Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(this->globalObject());
+    auto* callbackObject = functionToCallOnFlush.get();
+    if (!callbackObject) {
+        return;
+    }
+    if (globalObject->scriptExecutionStatus(globalObject, this) != ScriptExecutionStatus::Running) {
+        return;
+    }
+    EnsureStillAliveScope ensureStillAlive(this);
+    Bun__EventLoop__runCallback2(globalObject, JSValue::encode(callbackObject), JSValue::encode(this), JSValue::encode(jsUndefined()), JSValue::encode(jsUndefined()));
+}
+
+template<bool SSL>
+static void onNodeHttpOutgoingFlushed(us_socket_t* socket)
+{
+    auto* httpResponseData = reinterpret_cast<uWS::HttpResponseData<SSL>*>(us_socket_ext(socket));
+    auto* cell = reinterpret_cast<JSNodeHTTPServerSocket*>(httpResponseData->socketData);
+    if (cell) {
+        cell->onOutgoingFlushed();
+    }
+}
+
+extern "C" void Bun__NodeHTTP__onOutgoingFlushed(int ssl, us_socket_t* socket)
+{
+    if (ssl) {
+        onNodeHttpOutgoingFlushed<true>(socket);
+    } else {
+        onNodeHttpOutgoingFlushed<false>(socket);
+    }
+}
+
 void JSNodeHTTPServerSocket::onData(const char* data, int length, bool last)
 {
     // This function can be called during GC!
@@ -820,6 +858,7 @@ void JSNodeHTTPServerSocket::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(fn->functionToCallOnClose);
     visitor.append(fn->functionToCallOnDrain);
     visitor.append(fn->functionToCallOnData);
+    visitor.append(fn->functionToCallOnFlush);
     visitor.append(fn->m_remoteAddress);
     visitor.append(fn->m_localAddress);
     visitor.append(fn->m_duplex);

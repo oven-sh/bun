@@ -37,6 +37,7 @@
 
 
 extern "C" void Bun__NodeHTTP__onReadsResumable(int ssl, struct us_socket_t *s);
+extern "C" void Bun__NodeHTTP__onOutgoingFlushed(int ssl, struct us_socket_t *s);
 
 namespace uWS {
 
@@ -810,6 +811,23 @@ private:
 
         auto *httpContextData = getSocketContextDataS(s);
 
+        /* node:http compat: a response ended with bytes still queued and the JS
+         * layer holds its 'finish' until they are out. The send buffer is empty
+         * here, so everything queued before that end() is in the kernel (for TLS,
+         * the spill slot must have drained too). A pinned write armed after it
+         * (onWritable below) belongs to a later response. The hook runs JS in
+         * place; a 'finish' listener can close the connection. */
+        if constexpr (IsNodeHttp) {
+            if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_FLUSH_PENDING)
+                && httpResponseData->socketData
+                && asyncSocket->hasFullyDrained()) {
+                httpResponseData->state &= ~HttpResponseData<SSL>::HTTP_NODE_FLUSH_PENDING;
+                Bun__NodeHTTP__onOutgoingFlushed(SSL, s);
+                if (us_socket_is_closed(s)) {
+                    return s;
+                }
+            }
+        }
 
         if (httpResponseData->isConnectRequest && httpResponseData->socketData && httpContextData->onSocketDrain) {
             httpContextData->onSocketDrain(httpResponseData->socketData, SSL, (struct us_socket_t *) s);

@@ -3190,12 +3190,11 @@ static enum ssl_select_cert_result_t us_select_cert_cb(const SSL_CLIENT_HELLO *h
 
   /* The dynamic resolver (the user's SNICallback) runs FIRST, matching Node
    * where a user-provided SNICallback replaces the default SNI handling
-   * entirely - including for the bind hostname, which Listener.rs always
-   * registers in the static tree (so tree-first would shadow the callback
-   * for the most-requested name and break per-connection cert rotation).
-   * The static tree (bind hostname + addContext entries) is the fallback
-   * when the resolver selects nothing, which is also the no-user-callback
-   * path: the JS dispatch returns undefined immediately in that case. */
+   * entirely (tree-first would shadow the callback for every name that also
+   * has an addContext entry). The static tree (addContext entries) is the
+   * fallback when the resolver selects nothing, which is also the
+   * no-user-callback path: the JS dispatch returns undefined immediately in
+   * that case. */
 
   /* The socket processing this ClientHello - the JS resolver needs it as the
    * resume handle for an asynchronous SNICallback. */
@@ -3260,9 +3259,8 @@ static int sni_cb(SSL *ssl, int *al, void *arg) {
     /* A dynamic resolver (user SNICallback) exists: us_select_cert_cb already
      * ran it - and the static-tree fallback - at the earlier
      * select-certificate stage. Consulting the tree again here would
-     * OVERWRITE the resolver's per-connection selection with the tree entry
-     * (the bind hostname is always registered there), undoing the
-     * SNICallback-takes-precedence contract. */
+     * OVERWRITE the resolver's per-connection selection with the tree entry,
+     * undoing the SNICallback-takes-precedence contract. */
     return SSL_TLSEXT_ERR_OK;
   }
   const char *hostname = SSL_get_servername(ssl, TLSEXT_NAMETYPE_host_name);

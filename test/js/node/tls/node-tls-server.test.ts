@@ -1322,9 +1322,11 @@ it("SNICallback runs even when the requested servername matches the bind hostnam
   });
   server.listen(0, "localhost");
   await once(server, "listening");
-  const port = (server.address() as AddressInfo).port;
-  // host: "localhost" defaults servername to "localhost" - the bind hostname.
-  const client = connect({ port, host: "localhost", rejectUnauthorized: false });
+  const { port, address } = server.address() as AddressInfo;
+  // Dial the address listen() bound: "localhost" has both an A and an AAAA
+  // record on a dual-stack host and connect() need not pick the same one.
+  // servername stays "localhost" - the bind hostname.
+  const client = connect({ port, host: address, servername: "localhost", rejectUnauthorized: false });
   await once(client, "secureConnect");
   expect(sniCalls).toBe(1);
   // The peer certificate must be the SNICallback's RSA cert, not COMMON_CERT.
@@ -1352,6 +1354,29 @@ it("setSecureContext() clears omitted options instead of keeping stale values", 
   expect((server as any).ciphers).toBeUndefined();
   expect((server as any).cert).toBe(COMMON_CERT.cert);
   expect((server as any).key).toBe(COMMON_CERT.key);
+});
+
+it("an addContext() wildcard covers the hostname the server is bound to", async () => {
+  // node matches every SNI name against the addContext() entries. Nothing is
+  // registered for the bind hostname itself, which would shadow a wildcard.
+  const fixture = (name: string) => readFileSync(join(import.meta.dir, "fixtures", name), "utf8");
+  const server: Server = createServer({ key: fixture("agent1-key.pem"), cert: fixture("agent1-cert.pem") });
+  try {
+    server.listen(0, "localhost");
+    await once(server, "listening");
+    const { port, address } = server.address() as AddressInfo;
+    server.addContext("*", { key: fixture("agent2-key.pem"), cert: fixture("agent2-cert.pem") });
+
+    const client = connect({ port, host: address, servername: "localhost", rejectUnauthorized: false });
+    try {
+      await once(client, "secureConnect");
+      expect((client.getPeerCertificate() as PeerCertificate).subject.CN).toBe("agent2");
+    } finally {
+      client.destroy();
+    }
+  } finally {
+    server.close();
+  }
 });
 
 it("SNICallback rejecting with a non-Error value drops the connection (no hang)", async () => {

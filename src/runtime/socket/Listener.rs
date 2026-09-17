@@ -557,35 +557,15 @@ impl Listener {
                 .set(Strong::create(default_data, global));
         }
 
-        if let Some(ssl_config) = ssl_cfg_taken.as_ref() {
-            // `ssl_enabled` ⇒ `createSSLContext` succeeded above ⇒ `secure_ctx` set.
-            let secure = this_ref
-                .secure_ctx
-                .get()
-                .as_ref()
-                .expect("unreachable")
-                .as_ptr();
-            if let Some(server_name) = ssl_config.server_name_cstr() {
-                if !server_name.to_bytes().is_empty() {
-                    // Registering the default cert under its own server_name is a
-                    // hint for sni_cb, not load-bearing — sni_find() miss falls
-                    // through to the default SSL_CTX anyway.
-                    // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
-                    let _ = bun_opaque::opaque_deref_mut(listen_socket).add_server_name(
-                        server_name,
-                        secure,
-                        core::ptr::null_mut(),
-                    );
-                }
-            }
+        if ssl_enabled {
             // Register the dynamic SNI dispatch when the JS config provided a
             // `serverName` handler - `us_select_cert_cb` invokes it FIRST for
             // every ClientHello carrying a servername (the user callback takes
             // precedence over the static SNI tree, Node semantics) and
             // installs whichever context it returns on the in-flight SSL. A
-            // null return falls back to the static tree (bind hostname +
-            // addContext entries), then the default context; an asynchronous
-            // resolution suspends the handshake until resumeSNI.
+            // null return falls back to the static tree (addContext entries),
+            // then the default context; an asynchronous resolution suspends
+            // the handshake until resumeSNI.
             if !this_ref.handlers.on_server_name().is_empty() {
                 // S008: `ListenSocket` is an `opaque_ffi!` ZST - safe deref.
                 bun_opaque::opaque_deref_mut(listen_socket).on_server_name(us_dispatch_server_name);

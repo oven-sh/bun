@@ -36,13 +36,16 @@ class WeakReference<T extends WeakKey> extends WeakRef<T> {
 // Can't delete when weakref count reaches 0 as it could increment again.
 // Only GC can be used as a valid time to clean up the channels map.
 class WeakRefMap extends SafeMap {
-  #finalizers = new SafeFinalizationRegistry(key => {
-    this.delete(key);
+  // A finalizer runs some time after its channel died. By then a new channel
+  // may own the same key, so only delete the entry the dead channel created.
+  #finalizers = new SafeFinalizationRegistry(({ key, ref }) => {
+    if (super.get(key) === ref) this.delete(key);
   });
 
   set(key, value) {
-    this.#finalizers.register(value, key);
-    return super.set(key, new WeakReference(value));
+    const ref = new WeakReference(value);
+    this.#finalizers.register(value, { key, ref });
+    return super.set(key, ref);
   }
 
   get(key) {

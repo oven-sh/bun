@@ -1,5 +1,6 @@
 import { gc } from "bun";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { channel, Channel, hasSubscribers, subscribe, unsubscribe } from "node:diagnostics_channel";
 
@@ -351,6 +352,34 @@ describe("Channel", () => {
     // all 1000 alive.
     const alive = refs.filter(ref => ref.deref() !== undefined).length;
     expect(alive).toBeLessThan(refs.length / 10);
+  });
+
+  // https://github.com/oven-sh/bun/issues/43086
+  // The finalizer of a collected channel must not remove a newer channel that
+  // was created under the same name before the finalizer ran.
+  test("finalizer of a dead channel keeps the live channel of the same name", async () => {
+    const script = `
+      const dc = require("node:diagnostics_channel");
+      const name = "gc.finalizer.evt";
+      (function () { dc.channel(name); })();
+      await Bun.sleep(0);
+      Bun.gc(true);
+      Bun.gc(true);
+      const held = dc.channel(name);
+      held.subscribe(() => {});
+      // Let the pending finalizer of the first channel run.
+      for (let i = 0; i < 20; i++) await Bun.sleep(0);
+      console.log(JSON.stringify({
+        sameObject: dc.channel(name) === held,
+        hasSubscribers: dc.hasSubscribers(name),
+        heldHasSubscribers: held.hasSubscribers,
+      }));
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ sameObject: true, hasSubscribers: true, heldHasSubscribers: true });
+    expect(exitCode).toBe(0);
   });
 });
 

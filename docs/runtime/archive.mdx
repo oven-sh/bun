@@ -140,7 +140,7 @@ console.log(`Extracted ${count} entries`);
 
 `extract()` creates the target directory if it doesn't exist and overwrites existing files. The returned count includes files, directories, and symlinks (on POSIX systems).
 
-On Linux and macOS, a file that `extract()` creates gets the permission bits stored in the archive, plus read and write permission for its owner. The process umask applies. Bun does not restore the setuid, setgid, and sticky bits. A file whose entry has no permission bits gets `0o644`. A file that already exists keeps its mode.
+On Linux and macOS, a file that `extract()` creates gets its read and execute permissions from the archive. Its owner can also read and write it. The group and others can write the file only if they can read it and the process umask allows it, as with any new file. Bun does not restore the setuid, setgid, and sticky bits. An entry with no permission bits counts as `0o644`. A file that already exists keeps its mode.
 
 **Note**: On Windows, Bun always skips symbolic links during extraction, regardless of privilege level. On Linux and macOS, Bun extracts symlinks normally.
 

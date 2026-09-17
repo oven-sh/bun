@@ -766,7 +766,7 @@ impl ExtractContext {
                 close_handles: true,
                 log: false,
                 npm: false,
-                file_mode_floor: libarchive::FileModeFloor::Owner,
+                file_readers: libarchive::FileReaders::FromEntry,
             },
         ) {
             Ok(c) => c,
@@ -1383,7 +1383,7 @@ fn extract_to_disk_filtered(
             bun_sys::FileKind::File => {
                 let size: usize = usize::try_from(entry_ref.size().max(0)).expect("int cast");
                 let mode =
-                    libarchive::file_mode(entry_ref.perm(), libarchive::FileModeFloor::Owner);
+                    libarchive::file_mode(entry_ref.perm(), libarchive::FileReaders::FromEntry);
 
                 // Create parent directories if needed (ignore expected errors)
                 if let Some(parent_dir) = bun_core::dirname(pathname) {

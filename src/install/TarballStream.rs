@@ -881,10 +881,8 @@ impl TarballStream {
                 #[cfg(windows)]
                 let mode: Mode = 0;
                 #[cfg(not(windows))]
-                let mode = bun_libarchive::file_mode(
-                    entry.perm(),
-                    bun_libarchive::FileModeFloor::Everyone,
-                );
+                let mode =
+                    bun_libarchive::file_mode(entry.perm(), bun_libarchive::FileReaders::Everyone);
                 let fd = open_output_file(dest, path, path_slice, mode)?;
                 self.entry_count += 1;
 

@@ -999,31 +999,39 @@ pub fn directory_mode(perm: bun_sys::Mode) -> bun_sys::Mode {
     mode
 }
 
-/// The permission bits `file_mode` grants on top of a regular-file entry's own.
+/// Who can read a regular file that an extractor creates.
 #[derive(Clone, Copy)]
-pub enum FileModeFloor {
-    /// Read and write for every user, npm's `fmode`: an installed package stays
-    /// readable whatever modes its tarball was packed with (#14467).
+pub enum FileReaders {
+    /// Every user, whatever the entry says. This is npm's `fmode`: an installed
+    /// package stays readable whatever modes its tarball was packed with (#14467).
     /// https://github.com/npm/cli/blob/feb54f7e9a39bd52519221bae4fafc8bc70f235e/node_modules/pacote/lib/fetcher.js#L402-L411
     Everyone,
-    /// Read and write for the owner. Group and other get what the entry grants.
-    /// This is not a policy of its own: the extractors reopen an existing file
-    /// with `O_TRUNC`, and a file from an earlier extraction must allow that.
-    /// With an open that replaces the file it can be the entry's exact bits (#43132).
-    Owner,
+    /// The owner, and the group and others where the entry lets them.
+    FromEntry,
 }
 
 /// `openat` mode for a regular-file entry. `& 0o777` keeps an archive from
 /// creating setuid, setgid or sticky files.
-pub fn file_mode(perm: bun_sys::Mode, floor: FileModeFloor) -> bun_sys::Mode {
-    let mode = perm & 0o777;
-    match floor {
-        FileModeFloor::Everyone => mode | 0o666,
+pub fn file_mode(perm: bun_sys::Mode, readers: FileReaders) -> bun_sys::Mode {
+    let mut mode = perm & 0o777;
+    match readers {
+        FileReaders::Everyone => mode |= 0o444,
         // A mode of zero means the archive's writer left the field unset. Use
         // the mode `Bun.Archive` gives the entries it writes.
-        FileModeFloor::Owner if mode == 0 => 0o644,
-        FileModeFloor::Owner => mode | 0o600,
+        FileReaders::FromEntry if mode == 0 => mode = 0o644,
+        FileReaders::FromEntry => mode |= 0o400,
     }
+    // Whoever can read the file can write it when the umask allows, as with
+    // any new file. The extractors reopen an existing file with `O_TRUNC`, so
+    // a later extraction by the same users needs these bits (#43132).
+    mode |= 0o200;
+    if (mode & 0o40) != 0 {
+        mode |= 0o20;
+    }
+    if (mode & 0o4) != 0 {
+        mode |= 0o2;
+    }
+    mode
 }
 
 /// Validates that a symlink target doesn't escape the extraction directory.
@@ -1248,7 +1256,7 @@ pub mod archiver {
         pub close_handles: bool,
         pub log: bool,
         pub npm: bool,
-        pub file_mode_floor: FileModeFloor,
+        pub file_readers: FileReaders,
     }
 
     impl Default for ExtractOptions {
@@ -1258,7 +1266,7 @@ pub mod archiver {
                 close_handles: true,
                 log: false,
                 npm: false,
-                file_mode_floor: FileModeFloor::Everyone,
+                file_readers: FileReaders::Everyone,
             }
         }
     }
@@ -1713,7 +1721,7 @@ impl Archiver {
                             let mode = file_mode(
                                 // SAFETY: entry valid
                                 lib::Entry::opaque_ref(entry).perm(),
-                                options.file_mode_floor,
+                                options.file_readers,
                             );
 
                             let flags = bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC;

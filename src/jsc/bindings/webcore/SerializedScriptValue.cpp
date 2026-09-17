@@ -3384,19 +3384,11 @@ private:
     {
         Vector<uint8_t> buffer;
 
-        if (!read(buffer)) {
+        if (!read(buffer) || buffer.isEmpty()) {
             fail();
             return JSValue();
         }
 
-        // The serializer never writes an empty DER: it returns false when i2d_X509
-        // reports a size of 0 or less, which raises DataCloneError before the tag is
-        // written. So an empty record is crafted input. Reject it like any other
-        // undecodable DER instead of building a certificate that holds no X509.
-        if (buffer.size() == 0) {
-            fail();
-            return JSValue();
-        }
         ncrypto::ClearErrorOnReturn clear_error_on_return;
         X509* ptr = nullptr;
         const uint8_t* data = buffer.begin();

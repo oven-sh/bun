@@ -141,8 +141,6 @@ private:
     {
     }
 
-    // Leaves m_x509 null. Only the public create() overloads call it, and each
-    // sets m_x509 before it returns.
     static JSX509Certificate* create(JSC::VM& vm, JSC::Structure* structure);
 
     uint16_t m_extraMemorySizeForGC = 0;

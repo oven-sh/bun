@@ -1121,14 +1121,11 @@ describe("string constant pool entries survive GC during deserialization", () =>
 });
 
 describe("X509Certificate payloads that carry no certificate are rejected", () => {
-  // The reader must enforce what the constructor enforces. An X509Certificate record
-  // with a zero-length DER used to build a certificate object that holds no X509, a
-  // state `new X509Certificate(...)` cannot reach. `.publicKey` on it wraps a null
-  // EVP_PKEY, and `equals()` hands that pointer to EVP_PKEY_cmp.
+  // A record with a zero-length DER used to build a certificate that holds no X509.
+  // `.publicKey` on it wraps a null EVP_PKEY, and `equals()` reads through that pointer.
   //
-  // The header and the tag byte come from a real serialize(). The last test feeds a real
-  // DER through the same framing. If the wire layout changes, that test fails, so the two
-  // rejections cannot pass for an unrelated reason.
+  // recordPrefix is the wire header plus the X509Certificate tag, taken from a real
+  // serialize(). The last test proves that this framing still reaches the reader.
   const recordPrefix = Array.from(new Uint8Array(serialize(new X509Certificate(tls.cert))).slice(0, 5));
   const x509Record = (der: number[]) => {
     const length = Buffer.alloc(4);

@@ -943,7 +943,7 @@ struct HttpResponseData;
         }
 
         /* The HTTP parser recognizes "\ra" as invalid "\r\n" scan and breaks. */
-        static HttpParserResult getHeaders(char *postPaddedBuffer, char *end, struct HttpRequest::Header *headers, bool &isAncientHTTP, bool &isConnectRequest, bool useStrictMethodValidation, bool useInsecureHTTPParser, uint64_t maxHeaderSize) {
+        static HttpParserResult getHeaders(char *postPaddedBuffer, char *end, struct HttpRequest::Header *headers, bool &isAncientHTTP, bool &isConnectRequestLine, bool useStrictMethodValidation, bool useInsecureHTTPParser, uint64_t maxHeaderSize) {
             char *preliminaryKey, *preliminaryValue, *start = postPaddedBuffer;
 
             /* It is critical for fallback buffering logic that we only return with success
@@ -977,12 +977,9 @@ struct HttpResponseData;
             /* Written unconditionally (not just on true): ancientHttp is per-request and
              * the caller re-enters this function for each pipelined request in the same
              * recv buffer without clearing it, so a stale true from a prior HTTP/1.0
-             * request would mis-classify a following HTTP/1.1 request. isConnectRequest
-             * below is deliberately latched (tunnel mode persists across the loop). */
+             * request would mis-classify a following HTTP/1.1 request. */
             isAncientHTTP = requestLineResult.isAncientHTTP;
-            if(requestLineResult.isConnect) {
-                isConnectRequest = true;
-            }
+            isConnectRequestLine = requestLineResult.isConnect;
             /* Mirror llhttp's TrackHeader: accumulate URL + name + value lengths only (llhttp
              * never charges method/separators/CRLF) and fail at maxHeaderSize. The fallback
              * buffer keeps its own raw bound (maxBufferedHeaderSize). github.com/nodejs/llhttp */
@@ -1184,7 +1181,8 @@ struct HttpResponseData;
                 }
                 return HttpParserResult::success(consumedTotal + length, user);
             }
-            auto result = getHeaders(data, data + length, req->headers, req->ancientHttp, isConnectRequest, useStrictMethodValidation, useInsecureHTTPParser, maxHeaderSize);
+            bool isConnectRequestLine = false;
+            auto result = getHeaders(data, data + length, req->headers, req->ancientHttp, isConnectRequestLine, useStrictMethodValidation, useInsecureHTTPParser, maxHeaderSize);
             if(result.isError()) {
                 return result;
             }
@@ -1302,7 +1300,7 @@ struct HttpResponseData;
              * post-completion check, so on doubly-invalid input the framing error wins (Node
              * reports e.g. HPE_INVALID_TRANSFER_ENCODING for such requests). */
             if (!req->ancientHttp && requireHostHeader && !req->getHeader("host").data()
-                && !isConnectRequest && !req->getHeader("upgrade").data()) {
+                && !isConnectRequestLine && !req->getHeader("upgrade").data()) {
                 return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_MISSING_HOST_HEADER);
             }
 
@@ -1331,6 +1329,14 @@ struct HttpResponseData;
             /* Same verdict that selects chunked framing below, so the handler's
              * has-body decision cannot disagree with how the body is consumed. */
             req->hasTransferEncoding = transferEncoding.has;
+            /* Latched (tunnel mode persists across the loop and across reads), and only
+             * for a CONNECT that is dispatched. A request line whose header block is
+             * still to come, or a head that failed a check above, must not leave a
+             * tunnel with no socket behind: the tunnel check at the top of this loop,
+             * the timeout sweep and onEnd all stand down for one. The handler reads it. */
+            if (isConnectRequestLine) {
+                isConnectRequest = true;
+            }
             void *returnedUser = requestHandler(user, req);
             if (returnedUser != user) {
                 /* We are upgraded to WebSocket or otherwise broken */

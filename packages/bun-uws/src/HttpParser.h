@@ -1191,13 +1191,6 @@ struct HttpResponseData;
             if(!consumed) {
                 return HttpParserResult::success(consumedTotal, user);
             }
-            /* Latched (tunnel mode persists across the loop and across reads), and only
-             * now that the whole head is here: a CONNECT request line can arrive in an
-             * earlier read than its header block, and the tunnel check at the top of
-             * this loop would hand the rest of that head to the data handler. */
-            if (isConnectRequestLine) {
-                isConnectRequest = true;
-            }
             data += consumed;
             length -= consumed;
             consumedTotal += consumed;
@@ -1307,7 +1300,7 @@ struct HttpResponseData;
              * post-completion check, so on doubly-invalid input the framing error wins (Node
              * reports e.g. HPE_INVALID_TRANSFER_ENCODING for such requests). */
             if (!req->ancientHttp && requireHostHeader && !req->getHeader("host").data()
-                && !isConnectRequest && !req->getHeader("upgrade").data()) {
+                && !isConnectRequestLine && !req->getHeader("upgrade").data()) {
                 return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_MISSING_HOST_HEADER);
             }
 
@@ -1336,6 +1329,14 @@ struct HttpResponseData;
             /* Same verdict that selects chunked framing below, so the handler's
              * has-body decision cannot disagree with how the body is consumed. */
             req->hasTransferEncoding = transferEncoding.has;
+            /* Latched (tunnel mode persists across the loop and across reads), and only
+             * for a CONNECT that is dispatched. A request line whose header block is
+             * still to come, or a head that failed a check above, must not leave a
+             * tunnel with no socket behind: the tunnel check at the top of this loop,
+             * the timeout sweep and onEnd all stand down for one. The handler reads it. */
+            if (isConnectRequestLine) {
+                isConnectRequest = true;
+            }
             void *returnedUser = requestHandler(user, req);
             if (returnedUser != user) {
                 /* We are upgraded to WebSocket or otherwise broken */

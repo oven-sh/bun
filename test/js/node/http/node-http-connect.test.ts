@@ -492,10 +492,11 @@ describe("HTTP server CONNECT", () => {
     expect(requestUrls).toEqual([]);
   });
 
-  // The request line and the header block of a CONNECT can reach the parser in separate reads:
-  // a client that writes them separately, or a network that splits the segment. The connection
-  // is a tunnel only once the whole head is parsed. Every expectation below is Node v26.3.0's.
-  describe("head split after the request line", () => {
+  // A connection is a tunnel once its CONNECT is dispatched, not before. Until then the bytes are
+  // HTTP. The request line and the header block can reach the parser in separate reads (a client
+  // that writes them separately, or a network that splits the segment), and the head can time
+  // out, end early, or fail a check. Every expectation below is Node v26.3.0's.
+  describe("before the CONNECT is dispatched", () => {
     test("should emit 'connect' when the header block arrives in a later read", async () => {
       await using proxyServer = http.createServer((req, res) => res.end());
       const { promise: connected, resolve: resolveConnected } = Promise.withResolvers<object>();
@@ -524,7 +525,7 @@ describe("HTTP server CONNECT", () => {
       expect(await clientReceived).toBe("HTTP/1.1 200 Connection established\r\n\r\n");
     });
 
-    test("should emit 'connect' when the CONNECT follows a request on the same connection", async () => {
+    test("should emit 'connect' when a split CONNECT follows a request on the same connection", async () => {
       await using proxyServer = http.createServer((req, res) => res.end("first"));
       const { promise: connected, resolve: resolveConnected } = Promise.withResolvers<object>();
       proxyServer.on("connect", (req, socket, head) => {
@@ -554,7 +555,7 @@ describe("HTTP server CONNECT", () => {
       expect(await clientReceived).toEndWith("firstHTTP/1.1 200 Connection established\r\n\r\n");
     });
 
-    test("should close the connection when nothing listens for 'connect'", async () => {
+    test("should close a split CONNECT when nothing listens for 'connect'", async () => {
       const requestUrls: string[] = [];
       await using proxyServer = http.createServer((req, res) => {
         requestUrls.push(req.url ?? "");
@@ -630,6 +631,36 @@ describe("HTTP server CONNECT", () => {
 
       expect(await clientReceived).toBe("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
       expect({ clientErrors, connectEvents }).toEqual({ clientErrors: ["HPE_INVALID_EOF_STATE"], connectEvents: 0 });
+    });
+
+    test("should close on the client's FIN after a complete head that failed a framing check", async () => {
+      await using proxyServer = http.createServer();
+      let connectEvents = 0;
+      proxyServer.on("connect", (req, socket) => {
+        connectEvents++;
+        socket.end();
+      });
+      // This listener leaves the socket alone, so the server itself has to answer the FIN.
+      const { promise: clientError, resolve: resolveClientError } = Promise.withResolvers<string | undefined>();
+      proxyServer.on("clientError", (err: NodeJS.ErrnoException) => resolveClientError(err.code));
+      await once(proxyServer.listen(0, "127.0.0.1"), "listening");
+      const proxyAddress = proxyServer.address() as AddressInfo;
+
+      const { promise: clientReceived, resolve, reject } = Promise.withResolvers<string>();
+      const received: string[] = [];
+      const client = net.connect(proxyAddress.port, proxyAddress.address, () => {
+        client.write(
+          "CONNECT example.com:80 HTTP/1.1\r\nHost: example.com:80\r\nContent-Length: 1\r\nContent-Length: 2\r\n\r\n",
+        );
+      });
+      client.on("data", data => received.push(data.toString()));
+      client.on("error", reject);
+      client.on("close", () => resolve(received.join("")));
+
+      expect(await clientError).toBe("HPE_UNEXPECTED_CONTENT_LENGTH");
+      client.end();
+      expect(await clientReceived).toBe("");
+      expect(connectEvents).toBe(0);
     });
   });
 

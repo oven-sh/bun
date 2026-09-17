@@ -71,6 +71,25 @@ describe("ChildProcess class shape", () => {
     expect(child.killed).toBe(false);
     expect(child.kill()).toBe(false);
   });
+
+  it("materializes stdio as own properties after spawn", async () => {
+    const child = spawn(bunExe(), ["-e", ""], { env: bunEnv, stdio: "pipe" });
+    const closed = once(child, "close");
+    await once(child, "spawn");
+
+    expect(child.stdio[0]).toBe(child.stdin);
+    expect(child.stdio[1]).toBe(child.stdout);
+    expect(child.stdio[2]).toBe(child.stderr);
+    for (const name of ["stdin", "stdout", "stderr", "stdio"] as const) {
+      expect(Object.getOwnPropertyDescriptor(child, name)).toMatchObject({
+        configurable: true,
+        enumerable: true,
+        writable: true,
+      });
+    }
+
+    await closed;
+  });
 });
 
 describe("ChildProcess.spawn()", () => {

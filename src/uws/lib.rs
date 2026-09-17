@@ -105,9 +105,6 @@ pub struct SocketAddress {
 
 pub use bun_uws_sys::loop_::free_thread_loop;
 
-/// The only `NODE_EXTRA_CA_CERTS` warning, worded as Node's crypto_context.cc words it. The load that reports here
-/// runs once per process (`us_get_root_extra_cert_instances`), on whichever thread first needs the list.
-///
 /// # Safety
 /// `filename` and `error_msg` must be valid NUL-terminated C strings.
 #[unsafe(no_mangle)]
@@ -119,6 +116,7 @@ unsafe extern "C" fn BUN__warn__extra_ca_load_failed(
     let filename = unsafe { bun_core::ffi::cstr(filename) };
     // SAFETY: caller contract guarantees valid NUL-terminated strings.
     let error_msg = unsafe { bun_core::ffi::cstr(error_msg) };
+    // Node's wording (crypto_context.cc), not `warn:`. Node's test-tls-env-bad-extra-ca.js matches on it.
     bun_core::pretty_errorln!(
         "Warning: Ignoring extra certs from `{}`, load failed: {}",
         bstr::BStr::new(filename.to_bytes()),

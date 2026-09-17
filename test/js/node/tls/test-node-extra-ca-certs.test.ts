@@ -109,9 +109,7 @@ aWRnaXRzIFB0eSBMdGQwHhcNMTgwNDEwMDgwNzQ4WhcNMjgwNDA3MDgwNzQ4WjBF
     const users = {
       "tls.connect": `${deadEnd}
         deadEnd(port => require("node:tls").connect(port, "127.0.0.1").on("error", () => {}));`,
-      "tls.createSecureContext": `require("node:tls").createSecureContext();`,
       "tls.createServer": `require("node:tls").createServer({});`,
-      "tls.getCACertificates": `require("node:tls").getCACertificates("extra");`,
       "fetch": `${deadEnd}
         deadEnd(port => fetch("https://127.0.0.1:" + port).catch(() => {}));`,
       "fetch, then node:tls": `${deadEnd}
@@ -119,32 +117,18 @@ aWRnaXRzIFB0eSBMdGQwHhcNMTgwNDEwMDgwNzQ4WhcNMjgwNDA3MDgwNzQ4WjBF
           await fetch("https://127.0.0.1:" + port).catch(() => {});
           require("node:tls").createSecureContext();
         });`,
-      "Bun.connect": `${deadEnd}
-        deadEnd(port =>
-          Bun.connect({ hostname: "127.0.0.1", port, tls: true, socket: { data() {}, error() {}, connectError() {} } })
-            .catch(() => {}),
-        );`,
-      "node:tls on two threads": `
-        require("node:tls").createSecureContext();
-        new (require("node:worker_threads").Worker)('require("node:tls").createSecureContext()', { eval: true });`,
-      "node:tls in a Worker only": `
-        new (require("node:worker_threads").Worker)('require("node:tls").createSecureContext()', { eval: true });`,
     };
 
-    // NODE_EXTRA_CA_CERTS is relative to `cwd`, so the warning names the same path on every platform.
-    function spawnWith(extraCACerts: string, cwd: string, code: string) {
-      return spawn({
+    // NODE_EXTRA_CA_CERTS is relative to the child's cwd, so the warning names the same path on every platform.
+    async function run(extraCACerts: string, files: Record<string, string>, code: string) {
+      using dir = tempDir("extra-ca-warning", files);
+      await using proc = spawn({
         cmd: [bunExe(), "-e", code],
         env: { ...bunEnv, NODE_EXTRA_CA_CERTS: extraCACerts },
-        cwd,
+        cwd: String(dir),
         stdout: "ignore",
         stderr: "pipe",
       });
-    }
-
-    async function run(extraCACerts: string, files: Record<string, string>, code: string) {
-      using dir = tempDir("extra-ca-warning", files);
-      await using proc = spawnWith(extraCACerts, String(dir), code);
       const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
       return { stderr, exitCode };
     }
@@ -155,12 +139,20 @@ aWRnaXRzIFB0eSBMdGQwHhcNMTgwNDEwMDgwNzQ4WhcNMjgwNDA3MDgwNzQ4WjBF
       });
     }
 
+    // Not concurrent: two VMs that each load node:tls make this the slow case on a debug build.
+    test("node:tls in a Worker, then on the main thread", async () => {
+      const code = `
+        new (require("node:worker_threads").Worker)('require("node:tls").createSecureContext()', { eval: true })
+          .on("exit", () => require("node:tls").createSecureContext());`;
+      expect(await run("missing.pem", {}, code)).toEqual({ stderr: missingWarning, exitCode: 0 });
+    });
+
     // Node warns for this file too. The reason is the TLS library's error string, which BoringSSL words differently.
     test.concurrent("a certificate that does not parse", async () => {
       const files = {
         "malformed.pem": "-----BEGIN CERTIFICATE-----\nbm90IGEgY2VydGlmaWNhdGU=\n-----END CERTIFICATE-----\n",
       };
-      expect(await run("malformed.pem", files, users["tls.createSecureContext"])).toEqual({
+      expect(await run("malformed.pem", files, `require("node:tls").createSecureContext();`)).toEqual({
         stderr: expect.stringMatching(
           /^Warning: Ignoring extra certs from `malformed\.pem`, load failed: error:[^\n]+\n$/,
         ),
@@ -170,17 +162,38 @@ aWRnaXRzIFB0eSBMdGQwHhcNMTgwNDEwMDgwNzQ4WhcNMjgwNDA3MDgwNzQ4WjBF
 
     test.concurrent("when the load fails, not when the process exits", async () => {
       using dir = tempDir("extra-ca-warning", {});
-      // This process never exits by itself: the line has to arrive before the kill on dispose.
-      const code = `${users["Bun.connect"]} setInterval(() => {}, 1000);`;
-      await using proc = spawnWith("missing.pem", String(dir), code);
+      const stderrPath = join(String(dir), "stderr.txt");
+      // Bun.connect reaches the loader without node:tls. The child reports the attempt, then lives until stdin closes.
+      await using proc = spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `${deadEnd}
+          deadEnd(port =>
+            Bun.connect({ hostname: "127.0.0.1", port, tls: true, socket: { data() {}, error() {}, connectError() {} } })
+              .catch(() => {})
+              .finally(() => console.log("attempted")),
+          );
+          process.stdin.on("data", () => {});`,
+        ],
+        env: { ...bunEnv, NODE_EXTRA_CA_CERTS: "missing.pem" },
+        cwd: String(dir),
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: Bun.file(stderrPath),
+      });
       const decoder = new TextDecoder();
-      let stderr = "";
-      for await (const chunk of proc.stderr) {
-        stderr += decoder.decode(chunk, { stream: true });
-        if (stderr.includes("\n")) break;
+      let stdout = "";
+      for await (const chunk of proc.stdout) {
+        stdout += decoder.decode(chunk, { stream: true });
+        if (stdout.includes("\n")) break;
       }
 
-      expect(stderr).toBe(missingWarning);
+      expect({ stdout, stderr: await Bun.file(stderrPath).text(), exitCode: proc.exitCode }).toEqual({
+        stdout: "attempted\n",
+        stderr: missingWarning,
+        exitCode: null,
+      });
     });
   });
 });

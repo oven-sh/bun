@@ -65,8 +65,7 @@ JSC_DEFINE_HOST_FUNCTION(getBundledRootCertificates, (JSC::JSGlobalObject * glob
     RELEASE_AND_RETURN(scope, JSValue::encode(JSC::objectConstructorFreeze(globalObject, rootCertificates)));
 }
 
-// Runs the once-per-process NODE_EXTRA_CA_CERTS load, which warns on stderr if it fails, without building the PEM
-// list getExtraCACertificates returns.
+// Runs the once-per-process NODE_EXTRA_CA_CERTS load, which warns on stderr when it fails.
 JSC_DEFINE_HOST_FUNCTION(loadExtraCACertificates, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     us_get_root_extra_cert_instances();

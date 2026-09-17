@@ -1749,14 +1749,7 @@ function cacheExtraCACertificates(): string[] {
 }
 
 let loadedExtraCACerts = false;
-/**
- * Match Node's crypto_context.cc: a NODE_EXTRA_CA_CERTS file that cannot be
- * loaded is ignored with a one-time warning on stderr - emitted when the
- * first secure context is created, not at startup - rather than failing the
- * process. The native loader prints that warning, once per process, because
- * fetch() and Bun.connect() reach it without this module. So run the load
- * here instead of leaving it to the first handshake that verifies a peer.
- */
+// Node warns about a NODE_EXTRA_CA_CERTS file it cannot load at the first secure context. The native load prints it.
 function maybeWarnAboutExtraCACerts() {
   if (loadedExtraCACerts) return;
   loadedExtraCACerts = true;

@@ -4062,10 +4062,8 @@ impl<'a> Resolver<'a> {
         Ok(Some(result))
     }
 
-    /// Appends `config` and everything it extends to `chain` in merge order:
-    /// bases first, `config` last. `visiting` holds the paths of the configs
-    /// on the current recursion path. An entry that is already on it (a cycle)
-    /// is skipped.
+    /// Appends `config` and everything it extends to `chain`, bases first.
+    /// `visiting` holds the paths on the recursion path, to skip a cycle.
     fn collect_tsconfig_extends_chain(
         &mut self,
         config: Box<TSConfigJSON>,

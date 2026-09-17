@@ -19,6 +19,17 @@ function updateFile(filepath: string, data: string) {
   fs.writeFileSync(tmp, data);
   fs.renameSync(tmp, filepath);
 }
+// relatime (the Linux default) updates atime on a read when atime <= mtime.
+// A noatime mount, and NTFS with last-access updates off, do not.
+const atimeMovesOnRead = (() => {
+  using dir = tempDir("watch-atime", { "f.txt": "abc" });
+  const f = path.join(String(dir), "f.txt");
+  const old = new Date(Date.now() - 3600_000);
+  fs.utimesSync(f, old, old);
+  const before = fs.statSync(f);
+  fs.readFileSync(f);
+  return fs.statSync(f).atimeMs !== before.atimeMs;
+})();
 const encodingFileName = `新建文夹件.txt`;
 let testDir = "";
 beforeEach(() => {
@@ -135,6 +146,199 @@ describe("fs.watchFile", () => {
     await Bun.sleep(100);
     fs.unwatchFile(file);
     expect(called).toBe(false);
+  });
+
+  // libuv saves the stat of every successful poll as the next `previous`, also
+  // when nothing changed and no listener ran (`ctx->statbuf = *statbuf`):
+  // https://github.com/libuv/libuv/blob/5152db2cbfeb5582e9c27c5ea1dba2cd9e10759b/src/fs-poll.c#L211-L218
+  // A read moves only atime, which fires no listener. The next `previous` has
+  // to carry the moved atime anyway.
+  test.skipIf(!atimeMovesOnRead)("previous has the atime of the last poll, not of the last callback", async () => {
+    const file = path.join(testDir, "atime.txt");
+    // A second watched file, polled by the same scheduler pass. Two of its
+    // callbacks after the read prove that the pass polled `file` after it.
+    const clock = path.join(testDir, "clock.txt");
+    fs.writeFileSync(file, "abc");
+    fs.writeFileSync(clock, "0");
+    const old = new Date(Date.now() - 3600_000);
+    fs.utimesSync(file, old, old);
+
+    const fileCalls: { curr: fs.Stats; prev: fs.Stats }[] = [];
+    let clockCalls = 0;
+    let wake = () => {};
+    fs.watchFile(file, { interval: 20 }, (curr, prev) => {
+      fileCalls.push({ curr, prev });
+      wake();
+    });
+    fs.watchFile(clock, { interval: 20 }, () => {
+      clockCalls++;
+      wake();
+    });
+    async function until(cond: () => boolean) {
+      while (!cond()) {
+        const { promise, resolve } = Promise.withResolvers<void>();
+        wake = resolve;
+        await promise;
+      }
+    }
+
+    try {
+      // The first change proves that `file` is polled. mtime is now newer
+      // than atime, so relatime updates atime on the next read.
+      fs.appendFileSync(file, "d");
+      await until(() => fileCalls.length >= 1);
+
+      const before = fs.statSync(file);
+      fs.readFileSync(file);
+      const afterRead = fs.statSync(file);
+      expect(afterRead.atimeMs).not.toBe(before.atimeMs);
+
+      updateFile(clock, "1");
+      await until(() => clockCalls >= 1);
+      updateFile(clock, "2");
+      await until(() => clockCalls >= 2);
+
+      updateFile(file, "abcdef");
+      await until(() => fileCalls.length >= 2);
+
+      const { curr, prev } = fileCalls[1];
+      expect({ currSize: curr.size, prevAtimeMs: prev.atimeMs }).toEqual({
+        currSize: 6,
+        prevAtimeMs: afterRead.atimeMs,
+      });
+    } finally {
+      fs.unwatchFile(file);
+      fs.unwatchFile(clock);
+    }
+  });
+
+  // https://nodejs.org/api/fs.html#fswatchfilefilename-options-listener
+  // "When a file being watched by fs.watchFile() disappears and reappears, then
+  // the contents of previous in the second callback event (the file's
+  // reappearance) will be the same as the contents of previous in the first
+  // callback event (its disappearance)."
+  test.each([false, true])(
+    "previous is the last real stat when a deleted file reappears (bigint: %p)",
+    async bigint => {
+      const pick = (stats: fs.Stats | fs.BigIntStats) => ({
+        ino: Number(stats.ino),
+        size: Number(stats.size),
+        mtimeMs: Number(stats.mtimeMs),
+      });
+      const zeroed = { ino: 0, size: 0, mtimeMs: 0 };
+
+      const file = path.join(testDir, "reappear.txt");
+      const clock = path.join(testDir, "clock.txt");
+      fs.writeFileSync(clock, "0");
+      const calls: { curr: ReturnType<typeof pick>; prev: ReturnType<typeof pick> }[] = [];
+      let clockCalls = 0;
+      let wake = () => {};
+      fs.watchFile(file, { interval: 20, bigint }, (curr, prev) => {
+        calls.push({ curr: pick(curr), prev: pick(prev) });
+        wake();
+      });
+      fs.watchFile(clock, { interval: 20 }, () => {
+        clockCalls++;
+        wake();
+      });
+      async function until(cond: () => boolean) {
+        while (!cond()) {
+          const { promise, resolve } = Promise.withResolvers<void>();
+          wake = resolve;
+          await promise;
+        }
+      }
+      // Resolves with the index of the next callback whose `curr` has this size.
+      let cursor = 0;
+      async function nextCallWithSize(size: number) {
+        for (;;) {
+          for (; cursor < calls.length; cursor++) {
+            if (calls[cursor].curr.size === size) return cursor++;
+          }
+          await until(() => cursor < calls.length);
+        }
+      }
+
+      try {
+        // The file does not exist yet: the first callback has two zeroed stats.
+        expect(calls[await nextCallWithSize(0)]).toEqual({ curr: zeroed, prev: zeroed });
+
+        // It never had a real stat, so `previous` is still zeroed when it appears.
+        updateFile(file, "aaa");
+        expect(calls[await nextCallWithSize(3)].prev).toEqual(zeroed);
+
+        fs.unlinkSync(file);
+        const goneIndex = await nextCallWithSize(0);
+        const lastReal = calls[goneIndex - 1].curr;
+        expect(lastReal.size).toBe(3);
+        expect(calls[goneIndex]).toEqual({ curr: zeroed, prev: lastReal });
+
+        // A file that stays missing does not call back again. Two clock
+        // callbacks prove that the scheduler polled `file` again.
+        updateFile(clock, "1");
+        await until(() => clockCalls >= 1);
+        updateFile(clock, "2");
+        await until(() => clockCalls >= 2);
+        expect(calls.length).toBe(goneIndex + 1);
+
+        updateFile(file, "bb");
+        expect(calls[await nextCallWithSize(2)].prev).toEqual(lastReal);
+      } finally {
+        fs.unwatchFile(file);
+        fs.unwatchFile(clock);
+      }
+    },
+  );
+
+  // libuv calls back again while the file stays missing when the error code
+  // of the failed stat() changes (`busy_polling != req->result` in poll_cb):
+  // https://github.com/libuv/libuv/blob/5152db2cbfeb5582e9c27c5ea1dba2cd9e10759b/src/fs-poll.c#L200-L208
+  // Windows reports a file in the middle of the path as ENOENT, not ENOTDIR,
+  // so the error code never changes there.
+  test.skipIf(isWindows)("calls back when the stat error code changes while the file is missing", async () => {
+    const dir = path.join(testDir, "d");
+    const file = path.join(dir, "f.txt");
+    fs.mkdirSync(dir);
+    fs.writeFileSync(file, "hello");
+
+    const calls: { curr: number; prev: number }[] = [];
+    let wake = () => {};
+    fs.watchFile(file, { interval: 20 }, (curr, prev) => {
+      calls.push({ curr: curr.size, prev: prev.size });
+      wake();
+    });
+    async function callCount(count: number) {
+      while (calls.length < count) {
+        const { promise, resolve } = Promise.withResolvers<void>();
+        wake = resolve;
+        await promise;
+      }
+      return calls.length;
+    }
+
+    try {
+      // stat() fails with ENOENT
+      fs.rmSync(dir, { recursive: true });
+      expect(await callCount(1)).toBe(1);
+      expect(calls[0]).toEqual({ curr: 0, prev: 5 });
+
+      // stat() fails with ENOTDIR: a different error code, so node calls back
+      fs.writeFileSync(dir, "x");
+      expect(await callCount(2)).toBe(2);
+      expect(calls[1]).toEqual({ curr: 0, prev: 5 });
+
+      // back to ENOENT
+      fs.rmSync(dir);
+      expect(await callCount(3)).toBe(3);
+      expect(calls[2]).toEqual({ curr: 0, prev: 5 });
+
+      fs.mkdirSync(dir);
+      fs.writeFileSync(file, "hi");
+      expect(await callCount(4)).toBe(4);
+      expect(calls[3]).toEqual({ curr: 2, prev: 5 });
+    } finally {
+      fs.unwatchFile(file);
+    }
   });
 
   test("should work with file: URL string containing percent-encoded spaces", async () => {

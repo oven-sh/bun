@@ -81,6 +81,12 @@ const ONE_OPTIONAL_PEER_DEP_1_0_2_INTEGRITY =
   "sha512-S25U8/QXGIKfn/AWtsce1aVMnDjDL+ykFtAufpsuKGad32NlsCpi9TDuXvzoTQ+MdaZpGV3c4xghUZUsNeMp4A==";
 const LOCAL_TARBALL_INTEGRITY =
   "sha512-HP/5Rgt3pVFLzjmN9qJJ6vZMgCwoCIl/m2bPndYT283CUqnmFiMx0GeeIJ7SyK6TYoJM78SEvFEOQie++caHqw==";
+const BUNDLED_1_1_0_0_INTEGRITY =
+  "sha512-YQ/maWZliKQyp1VIdYnPBH6qBHLCQ8Iy6G5vRZFXUHVXufiXT5aTjPVnLQ7xpVAgURFrzd/Fu1113ROLlaJBkQ==";
+const BUNDLED_TRANSITIVE_1_0_0_INTEGRITY =
+  "sha512-1CC+XKeBwsdseQEm4yOpfBzom2zEyrXQcgb6N4t83pL2DalEunEFO80yUpkzylsQYIH1uxGLI8G+4jhwvyH1bQ==";
+const BUNDLED_TRUE_1_0_0_INTEGRITY =
+  "sha512-VRh+fxqRwtIsAn8P8EH8sETvUD8Yh5zMwujrjISki+37DHQr7jfj8tZW0LaE5rGZW49BeT83zqddRoI237zA/Q==";
 
 function registryLockfileWithTarball(tarball: string) {
   return `lockfileVersion: '9.0'
@@ -1241,6 +1247,222 @@ snapshots:
         expect(existsSync(join(String(dir), "bun.lock"))).toBe(false);
       },
     );
+  });
+
+  // pnpm resolves nothing for a dependency a tarball bundles: the `packages:` entry names it and no snapshot has an edge for it.
+  describe("bundledDependencies", () => {
+    test("a bundled dependency stays bundled, so bun prune keeps the copy the tarball ships", async () => {
+      // real pnpm output: bundled-transitive ships no-deps@1.0.0 in its own node_modules; one-dep resolves no-deps to 1.0.1
+      const registry = verdaccio.registryUrl();
+      const { packageDir } = await verdaccio.createTestDir({
+        bunfigOpts: { linker: "hoisted" },
+        files: {
+          "package.json": JSON.stringify({ name: "bundled", dependencies: { "bundled-transitive": "1.0.0" } }),
+          "pnpm-lock.yaml": `lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    dependencies:
+      bundled-transitive:
+        specifier: 1.0.0
+        version: 1.0.0
+
+packages:
+
+  bundled-transitive@1.0.0:
+    resolution: {integrity: ${BUNDLED_TRANSITIVE_1_0_0_INTEGRITY}}
+    bundledDependencies:
+      - no-deps
+
+  no-deps@1.0.1:
+    resolution: {integrity: ${NO_DEPS_1_0_1_INTEGRITY}}
+
+  one-dep@1.0.0:
+    resolution: {integrity: ${ONE_DEP_1_0_0_INTEGRITY}}
+
+snapshots:
+
+  bundled-transitive@1.0.0:
+    dependencies:
+      one-dep: 1.0.0
+
+  no-deps@1.0.1: {}
+
+  one-dep@1.0.0:
+    dependencies:
+      no-deps: 1.0.1
+`,
+        },
+      });
+
+      const install = await run(packageDir, "install");
+
+      expect(install.stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(install.stderr).not.toContain("error:");
+      expect(install.exitCode).toBe(0);
+
+      const bunLock = await bunLockOf(packageDir);
+      expect(bunLock).toContain(
+        `"bundled-transitive": ["bundled-transitive@1.0.0", "${registry}bundled-transitive/-/bundled-transitive-1.0.0.tgz", { "dependencies": { "no-deps": "*", "one-dep": "1.0.0" }, "bundledDependencies": ["no-deps"] }, "${BUNDLED_TRANSITIVE_1_0_0_INTEGRITY}"]`,
+      );
+      expect(bunLock).toContain(`"no-deps": ["no-deps@1.0.1"`);
+      expect(bunLock).not.toContain(`"bundled-transitive/no-deps"`);
+
+      const shipped = Bun.file(join(packageDir, "node_modules/bundled-transitive/node_modules/no-deps/package.json"));
+      expect(await shipped.json()).toMatchObject({ name: "no-deps", version: "1.0.0" });
+      expect(await installedPackageJson(packageDir, "", "no-deps")).toMatchObject({ version: "1.0.1" });
+
+      const prune = await run(packageDir, "prune");
+
+      expect(prune.stdout).toContain("Checked 3 installed packages across 1 folder (nothing to prune)");
+      expect(prune.exitCode).toBe(0);
+      expect(await shipped.exists()).toBe(true);
+
+      const again = await run(packageDir, "install");
+
+      expect(again.stderr).not.toContain("Saved lockfile");
+      expect(again.stderr).not.toContain("error:");
+      expect(again.exitCode).toBe(0);
+      expect(await bunLockOf(packageDir)).toBe(bunLock);
+    });
+
+    test("`true` and entries that are not a node_modules folder name add no edge", async () => {
+      // pnpm copies the manifest's value as written: `true` names nothing, and nothing validates a list item
+      const registry = verdaccio.registryUrl();
+      const { packageDir } = await verdaccio.createTestDir({
+        bunfigOpts: { linker: "hoisted" },
+        files: {
+          "package.json": JSON.stringify({
+            name: "bundled-unnamed",
+            dependencies: { "bundled-1": "1.0.0", "bundled-true": "1.0.0" },
+          }),
+          "pnpm-lock.yaml": `lockfileVersion: '9.0'
+
+importers:
+
+  .:
+    dependencies:
+      bundled-1:
+        specifier: 1.0.0
+        version: 1.0.0
+      bundled-true:
+        specifier: 1.0.0
+        version: 1.0.0
+
+packages:
+
+  bundled-1@1.0.0:
+    resolution: {integrity: ${BUNDLED_1_1_0_0_INTEGRITY}}
+    bundledDependencies:
+      - no-deps
+      - ./vendor/no-deps
+      - 1
+
+  bundled-true@1.0.0:
+    resolution: {integrity: ${BUNDLED_TRUE_1_0_0_INTEGRITY}}
+    bundledDependencies: true
+
+snapshots:
+
+  bundled-1@1.0.0: {}
+
+  bundled-true@1.0.0: {}
+`,
+        },
+      });
+
+      const { stderr, exitCode } = await migrate(packageDir);
+
+      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(exitCode).toBe(0);
+
+      const bunLock = await bunLockOf(packageDir);
+      expect(bunLock).toContain(
+        `"bundled-1": ["bundled-1@1.0.0", "${registry}bundled-1/-/bundled-1-1.0.0.tgz", { "dependencies": { "no-deps": "*" }, "bundledDependencies": ["no-deps"] }, "${BUNDLED_1_1_0_0_INTEGRITY}"]`,
+      );
+      expect(bunLock).toContain(
+        `"bundled-true": ["bundled-true@1.0.0", "${registry}bundled-true/-/bundled-true-1.0.0.tgz", {}, "${BUNDLED_TRUE_1_0_0_INTEGRITY}"]`,
+      );
+
+      const install = await run(packageDir, "install");
+
+      expect(install.stderr).not.toContain("Saved lockfile");
+      expect(install.stderr).not.toContain("error:");
+      expect(install.exitCode).toBe(0);
+      expect(await bunLockOf(packageDir)).toBe(bunLock);
+    });
+
+    test("a bundled name the snapshot resolves as a peer keeps its one edge", async () => {
+      // pnpm lists an auto-installed peer under the snapshot's dependencies, so this bundled name already has an edge
+      const registry = verdaccio.registryUrl();
+      const { packageDir } = await verdaccio.createTestDir({
+        bunfigOpts: { linker: "hoisted" },
+        files: {
+          "package.json": JSON.stringify({
+            name: "bundled-peer",
+            dependencies: { "no-deps": "1.0.1", "peer-deps-fixed": "1.0.0" },
+          }),
+          "pnpm-lock.yaml": `lockfileVersion: '9.0'
+
+importers:
+
+  .:
+    dependencies:
+      no-deps:
+        specifier: 1.0.1
+        version: 1.0.1
+      peer-deps-fixed:
+        specifier: 1.0.0
+        version: 1.0.0(no-deps@1.0.1)
+
+packages:
+
+  no-deps@1.0.1:
+    resolution: {integrity: ${NO_DEPS_1_0_1_INTEGRITY}}
+
+  peer-deps-fixed@1.0.0:
+    resolution: {integrity: ${PEER_DEPS_FIXED_1_0_0_INTEGRITY}}
+    peerDependencies:
+      no-deps: ^1.0.0
+    bundledDependencies:
+      - no-deps
+
+snapshots:
+
+  no-deps@1.0.1: {}
+
+  peer-deps-fixed@1.0.0(no-deps@1.0.1):
+    dependencies:
+      no-deps: 1.0.1
+`,
+        },
+      });
+
+      const { stderr, exitCode } = await migrate(packageDir);
+
+      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(exitCode).toBe(0);
+
+      const bunLock = await bunLockOf(packageDir);
+      expect(bunLock).toContain(
+        `"peer-deps-fixed": ["peer-deps-fixed@1.0.0", "${registry}peer-deps-fixed/-/peer-deps-fixed-1.0.0.tgz", { "peerDependencies": { "no-deps": "^1.0.0" } }, "${PEER_DEPS_FIXED_1_0_0_INTEGRITY}"]`,
+      );
+      expect(bunLock).toContain(
+        `"peer-deps-fixed/no-deps": ["no-deps@1.0.1", "${registry}no-deps/-/no-deps-1.0.1.tgz", { "bundled": true }, "${NO_DEPS_1_0_1_INTEGRITY}"]`,
+      );
+
+      const install = await run(packageDir, "install");
+
+      expect(install.stderr).not.toContain("Saved lockfile");
+      expect(install.stderr).not.toContain("error:");
+      expect(install.exitCode).toBe(0);
+      expect(await bunLockOf(packageDir)).toBe(bunLock);
+    });
   });
 
   describe("peer dependencies", () => {

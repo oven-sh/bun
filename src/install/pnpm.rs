@@ -1600,6 +1600,10 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
             }
 
             let Some(res_pkg_id) = pkg_map.get(&res_buf) else {
+                // `append_bundled_dependencies`: pnpm has no package entry for a bundled dependency.
+                if dep.behavior.is_bundled() {
+                    continue;
+                }
                 let pkg_name = lockfile.packages.items_name()[pkg_id as usize].slice(string_buf);
                 return Err(missing_package_entry(
                     log,
@@ -1777,6 +1781,66 @@ fn declared_package_peers(
     Ok(peers)
 }
 
+/// pnpm resolves nothing for a dependency the tarball bundles: the `packages:` entry names it and no
+/// snapshot has an edge for it. The edge stays unresolved, with `*` for the range pnpm does not record.
+fn append_bundled_dependencies(
+    lockfile: &mut Lockfile,
+    package_obj: &Expr,
+    off: usize,
+) -> Result<(), AllocError> {
+    let Some(mut names) = package_obj
+        .get(b"bundledDependencies")
+        .and_then(|bundled| bundled.as_array())
+    else {
+        return Ok(());
+    };
+
+    while let Some(item) = names.next() {
+        // pnpm copies the manifest's list as written. Only a `node_modules` folder name can be a shipped copy.
+        let Some(name_str) =
+            as_string(&item).filter(|name| dependency::is_safe_install_folder_name(name))
+        else {
+            continue;
+        };
+        let name_hash = semver::string::Builder::string_hash(name_str);
+
+        // A declared peer already has an edge under this name.
+        let mut has_edge = false;
+        for dep in lockfile.buffers.dependencies[off..]
+            .iter_mut()
+            .filter(|dep| dep.name_hash == name_hash)
+        {
+            dep.behavior.insert(dependency::Behavior::BUNDLED);
+            has_edge = true;
+        }
+        if has_edge {
+            continue;
+        }
+
+        let name = sbuf!(lockfile).append_external_with_hash(name_str, name_hash)?;
+        let range = sbuf!(lockfile).append(b"*")?;
+        let range_sliced = range.sliced(string_bytes!(lockfile));
+        let Some(version) = Dependency::parse(
+            name.value,
+            name.hash,
+            range_sliced.slice,
+            &range_sliced,
+            None,
+            None,
+        ) else {
+            continue;
+        };
+        lockfile.buffers.dependencies.push(Dependency {
+            name: name.value,
+            name_hash: name.hash,
+            behavior: dependency::Behavior::PROD | dependency::Behavior::BUNDLED,
+            version,
+        });
+    }
+
+    Ok(())
+}
+
 fn parse_append_package_dependencies(
     lockfile: &mut Lockfile,
     package_obj: &Expr,
@@ -1913,6 +1977,8 @@ fn parse_append_package_dependencies(
         });
         has_unbound_peers = true;
     }
+
+    append_bundled_dependencies(lockfile, package_obj, off)?;
 
     let end = lockfile.buffers.dependencies.len();
 

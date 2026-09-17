@@ -136,6 +136,23 @@ test("spawnSync AbortSignal works as timeout", async () => {
   expect(end - start).toBeLessThan(100);
 });
 
+test("spawn AbortSignal that nothing else references still kills the child after GC", async () => {
+  const subprocess = Bun.spawn({
+    cmd: [bunExe(), "--eval", "await Bun.sleep(100000)"],
+    env: bunEnv,
+    stdout: "inherit",
+    stderr: "inherit",
+    stdin: "inherit",
+    signal: AbortSignal.timeout(100),
+  });
+  for (let i = 0; i < 5; i++) {
+    Bun.gc(true);
+    await new Promise<void>(resolve => setImmediate(resolve));
+  }
+  await subprocess.exited;
+  expect(subprocess.signalCode).toBe("SIGTERM");
+});
+
 describe("Bun.spawn option validation", () => {
   const spawners = [
     ["Bun.spawn", (opts: any) => Bun.spawn(opts)],

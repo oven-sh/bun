@@ -210,6 +210,29 @@ test.concurrent("abort() errors a fully-buffered fetch response body", async () 
   }
 });
 
+test.concurrent("abort reaches an in-flight fetch whose signal nothing else references, after GC", async () => {
+  const response = Promise.withResolvers<Response>();
+  await using server = Bun.serve({ port: 0, fetch: () => response.promise });
+  const name = (promise: Promise<unknown>) =>
+    promise.then(
+      () => "resolved",
+      error => (error as Error).name,
+    );
+  const controller = new AbortController();
+  const results = [
+    name(fetch(server.url, { signal: AbortSignal.timeout(100) })),
+    name(fetch(server.url, { signal: AbortSignal.any([AbortSignal.timeout(100)]) })),
+    name(fetch(server.url, { signal: AbortSignal.any([controller.signal]) })),
+  ];
+  for (let i = 0; i < 5; i++) {
+    Bun.gc(true);
+    await new Promise<void>(resolve => setImmediate(resolve));
+  }
+  controller.abort();
+  expect(await Promise.all(results)).toEqual(["TimeoutError", "TimeoutError", "AbortError"]);
+  response.resolve(new Response());
+});
+
 // Aborting a fetch that is uploading a large body must close the connection
 // in a way the server can observe from its read side. Bun aborts with an
 // SO_LINGER{1,0} RST; on macOS that RST's sequence number (snd_nxt, with body

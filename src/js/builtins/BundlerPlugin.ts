@@ -458,8 +458,8 @@ export function runOnResolvePlugins(this: BundlerPlugin, specifier, inputNamespa
               throw new TypeError('onResolve plugin "path" must be absolute when the namespace is "file"');
             }
             // ".." is refused as a path segment only: "[...slug].ts" is a file name.
-            // A backslash is a separator on Windows and a file name character on POSIX.
-            const slashed = process.platform !== "win32" ? path : path.replaceAll("\\", "/");
+            // "\" is a separator on POSIX too: the bundler derives the pretty path with platform::Loose.
+            const slashed = path.replaceAll("\\", "/");
             if (slashed.includes("/../") || slashed.endsWith("/..")) {
               throw new TypeError(
                 'onResolve plugin "path" must not contain ".." segments when the namespace is "file"',

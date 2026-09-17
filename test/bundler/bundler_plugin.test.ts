@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import path, { dirname, join, resolve } from "node:path";
 import { itBundled } from "./expectBundled";
 
@@ -591,31 +591,13 @@ describe("bundler", () => {
       },
     };
   });
-  // On POSIX a backslash is a file name character, so "a\..\b.ts" has no ".." segment.
-  (isWindows ? itBundled.skip : itBundled)("plugin/ResolveDotDotInNamePosixBackslash", {
-    files: {
-      "index.ts": /* ts */ `
-        import v from "alias";
-        console.log(v);
-      `,
-      "a\\..\\b.ts": `export default "backslash";`,
-    },
-    plugins(builder) {
-      builder.onResolve({ filter: /^alias$/ }, args => {
-        return { path: dirname(args.importer) + "/a\\..\\b.ts" };
-      });
-    },
-    run: {
-      stdout: "backslash",
-    },
-  });
   itBundled("plugin/ResolveDotDotSegment", ({ root }) => {
     return {
       files: {
         "index.ts": /* ts */ `
           import a from "alias/sub/../real.ts";
           import b from "alias/sub/..";
-          import c from "native/sub/../real.ts";
+          import c from "backslash/sub/../real.ts";
           console.log(a, b, c);
         `,
         "real.ts": `export default "real";`,
@@ -625,8 +607,9 @@ describe("bundler", () => {
         builder.onResolve({ filter: /^alias\// }, args => {
           return { path: root + args.path.slice("alias".length) };
         });
-        builder.onResolve({ filter: /^native\// }, args => {
-          return { path: root + args.path.slice("native".length).replaceAll("/", path.sep) };
+        // The bundler treats "\" as a separator on POSIX too, so "\..\" is a ".." segment on every platform.
+        builder.onResolve({ filter: /^backslash\// }, args => {
+          return { path: root + args.path.slice("backslash".length).replaceAll("/", "\\") };
         });
       },
       bundleErrors: {

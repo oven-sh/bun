@@ -24,7 +24,7 @@ use bun_ptr::BackRef;
 use bun_resolve_builtins::{Alias as HardcodedAlias, Cfg as HardcodedAliasCfg};
 use bun_resolver::fs as Fs;
 use bun_resolver::node_fallbacks;
-use bun_resolver::package_json::{MacroMap as MacroRemap, PackageJSON};
+use bun_resolver::package_json::MacroMap as MacroRemap;
 use bun_sys::{self, Dir, Fd, FdExt as _, File, OpenDirOptions};
 use bun_threading::Guarded;
 use bun_threading::unbounded_queue::{self, UnboundedQueue};
@@ -318,7 +318,7 @@ impl RuntimeTranspilerStore {
         path: &Fs::Path<'_>,
         referrer: String,
         loader: Loader,
-        package_json: Option<&PackageJSON>,
+        module_type: ModuleType,
     ) -> *mut c_void {
         // The path text is heap-duplicated here and freed in `reset_for_pool` via
         // heap::take on `path.text`.
@@ -332,15 +332,13 @@ impl RuntimeTranspilerStore {
         // NOTE: DirInfo should already be cached since module loading happens
         // after module resolution, so this should be cheap
         let mut resolved_source = ResolvedSource::default();
-        if let Some(pkg) = package_json {
-            match pkg.module_type {
-                ModuleType::Cjs => {
-                    resolved_source.tag = ResolvedSourceTag::PackageJsonTypeCommonjs;
-                    resolved_source.is_commonjs_module = true;
-                }
-                ModuleType::Esm => resolved_source.tag = ResolvedSourceTag::PackageJsonTypeModule,
-                ModuleType::Unknown => {}
+        match module_type {
+            ModuleType::Cjs => {
+                resolved_source.tag = ResolvedSourceTag::PackageJsonTypeCommonjs;
+                resolved_source.is_commonjs_module = true;
             }
+            ModuleType::Esm => resolved_source.tag = ResolvedSourceTag::PackageJsonTypeModule,
+            ModuleType::Unknown => {}
         }
 
         // Build the job by value and `get_init` it into the hive — the `Box`

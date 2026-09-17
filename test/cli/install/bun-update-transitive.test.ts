@@ -1235,7 +1235,12 @@ type Manifests = Record<string, Record<string, { dependencies?: Record<string, s
 type Tags = Record<string, Record<string, string>>;
 
 // Serves one manifest per name from memory; verdaccio has no parent whose newer version keeps a range on the same child, and its dist-tags cannot move mid-test. `tags` is read per request, so a test can move a tag after installing.
-type RegistryKnobs = { times?: Record<string, Record<string, string>>; status?: Record<string, number> };
+// `status` is keyed by package name or by tarball file name ("leaf-1.1.0.tgz"); `tarballOrigin` replaces this server's origin in every `dist.tarball`.
+type RegistryKnobs = {
+  times?: Record<string, Record<string, string>>;
+  status?: Record<string, number>;
+  tarballOrigin?: string;
+};
 
 async function serveRegistry(manifests: Manifests, tags: Tags = {}, knobs: RegistryKnobs = {}) {
   const tarballs = new Map<string, Uint8Array>();
@@ -1252,16 +1257,17 @@ async function serveRegistry(manifests: Manifests, tags: Tags = {}, knobs: Regis
     port: 0,
     fetch(request) {
       const { origin, pathname } = new URL(request.url);
-      const tarball = tarballs.get(pathname);
-      if (tarball) return new Response(tarball);
       const name = pathname.slice(1);
-      const entry = manifests[name];
       const status = knobs.status?.[name];
       if (status) return new Response("registry says no", { status });
+      const tarball = tarballs.get(pathname);
+      if (tarball) return new Response(tarball);
+      const entry = manifests[name];
       if (!entry) return new Response("not found", { status: 404 });
+      const tarballOrigin = knobs.tarballOrigin ?? origin;
       const versions: Json = {};
       for (const [version, extra] of Object.entries(entry)) {
-        versions[version] = { name, version, dist: { tarball: `${origin}/${name}-${version}.tgz` }, ...extra };
+        versions[version] = { name, version, dist: { tarball: `${tarballOrigin}/${name}-${version}.tgz` }, ...extra };
       }
       const latest = Object.keys(entry).sort(Bun.semver.order).at(-1);
       const time = knobs.times?.[name];
@@ -1856,6 +1862,118 @@ test.concurrent(
     expectHeaderOnly(stdout, "update --interactive");
     expect(errorLines(stderr)).toStrictEqual([`error: ${manifestFailure(server, 502)}`]);
     expect(await lockText(dir)).toBe(before);
+    expect(exitCode).toBe(1);
+  },
+);
+
+// A named request whose download fails exits 1 and writes nothing, also when the failure is only a warning (an optional dependency). The request names the package.json key; the failed download reports the registry name, which an `npm:` alias spells differently.
+const LEAF_ONLY: Manifests = { leaf: { "1.0.0": {}, "1.1.0": {} } };
+const warningLines = (stderr: string) => stderr.split("\n").filter(line => line.startsWith("warn:"));
+
+// A host that closes every connection before it answers. It keeps its port for the whole test; the port of a stopped server could go to another test's registry.
+const hangUp = () =>
+  Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { open: socket => void socket.end(), data() {} } });
+
+// Breaks the download of leaf's manifest or of leaf@1.1.0's tarball; `down` is the origin of a `hangUp()` host. Returns the one warning to expect and the flags the update needs.
+type Outage = (server: Bun.Server, knobs: RegistryKnobs, down: string) => { warning: unknown; flags?: string[] };
+const OUTAGES: Record<string, Outage> = {
+  "a 404 for the manifest": (server, knobs) => {
+    knobs.status!.leaf = 404;
+    return { warning: `warn: ${manifestFailure(server, 404)}` };
+  },
+  "a registry that hangs up": (_server, _knobs, down) => ({
+    warning: expect.stringMatching(/^warn: \w+ downloading package manifest leaf$/),
+    flags: ["--registry", `${down}/`],
+  }),
+  "a 404 for the tarball": (server, knobs) => {
+    knobs.status!["leaf-1.1.0.tgz"] = 404;
+    return { warning: `warn: GET ${server.url.origin}/leaf-1.1.0.tgz - 404` };
+  },
+  "a tarball host that hangs up": (_server, knobs, down) => {
+    knobs.tarballOrigin = down;
+    return { warning: expect.stringMatching(/^warn: \w+ downloading tarball leaf@1\.1\.0$/) };
+  },
+};
+
+// [label, the package.json key that reaches leaf, the fields that declare it with `range` on leaf, the update's arguments]
+const aliasedLeaf = (range: string) => ({ optionalDependencies: { aliased: `npm:leaf@${range}` } });
+const OPTIONAL_LEAF_ENTRIES: [string, string, (range: string) => Json, string[]][] = [
+  ["a plain entry", "leaf", range => ({ optionalDependencies: { leaf: range } }), ["leaf"]],
+  ["an npm: alias named by its key", "aliased", aliasedLeaf, ["aliased"]],
+  ["an npm: alias named by its key with --latest", "aliased", aliasedLeaf, ["aliased", "--latest"]],
+  ["an npm: alias named by its target", "aliased", aliasedLeaf, ["leaf"]],
+  [
+    "an entry that an override renames",
+    "renamed",
+    range => ({ optionalDependencies: { renamed: "*" }, overrides: { renamed: `npm:leaf@${range}` } }),
+    ["renamed"],
+  ],
+  [
+    "a catalog: entry that is an npm: alias",
+    "cataloged",
+    range => ({
+      workspaces: { catalog: { cataloged: `npm:leaf@${range}` } },
+      optionalDependencies: { cataloged: "catalog:" },
+    }),
+    ["cataloged"],
+  ],
+];
+
+test.concurrent.each(
+  Object.keys(OUTAGES).flatMap(outage => OPTIONAL_LEAF_ENTRIES.map(entry => [outage, ...entry] as const)),
+)("%s fails `bun update <name>` for %s and writes nothing", async (outage, _, key, fields, args) => {
+  const knobs: RegistryKnobs = { status: {} };
+  using server = await serveRegistry(LEAF_ONLY, {}, knobs);
+  using down = hangUp();
+  const optional = (range: string) => ({ name: "foo", ...fields(range) });
+  const dir = await setupServed(server, "update-failed-download-", optional("1.0.0"), optional("^1.0.0"));
+  expect(await installedVersion(dir, key)).toBe("1.0.0");
+  const before = { packageJson: await packageJsonText(dir), lock: await lockText(dir) };
+
+  const { warning, flags = [] } = OUTAGES[outage](server, knobs, `http://127.0.0.1:${down.port}`);
+  const { stderr, exitCode } = await run(dir, "update", ...args, ...flags);
+  expect(warningLines(stderr)).toStrictEqual([warning]);
+  expect(errorLines(stderr)).toStrictEqual([]);
+  expect(stderr).not.toContain("Saved lockfile");
+  expect(await packageJsonText(dir)).toBe(before.packageJson);
+  expect(await lockText(dir)).toBe(before.lock);
+  expect(await installedVersion(dir, key)).toBe("1.0.0");
+  expect(exitCode).toBe(1);
+});
+
+// An npm tarball is downloaded once for every entry that resolves to it, on behalf of the first one.
+test.concurrent("a 404 for the tarball fails the request for a second alias of the same package", async () => {
+  const knobs: RegistryKnobs = { status: { "leaf-1.1.0.tgz": 404 } };
+  using server = await serveRegistry(LEAF_ONLY, {}, knobs);
+  const packageJson = stringify({
+    name: "foo",
+    optionalDependencies: { first: "npm:leaf@^1.0.0", second: "npm:leaf@^1.0.0" },
+  });
+  const dir = String(tempDir("update-failed-shared-tarball-", { "package.json": packageJson }));
+  await servedBunfig(server, dir);
+
+  const { stderr, exitCode } = await run(dir, "update", "second");
+  expect(warningLines(stderr)).toStrictEqual([`warn: GET ${server.url.origin}/leaf-1.1.0.tgz - 404`]);
+  expect(errorLines(stderr)).toStrictEqual([]);
+  expect(await packageJsonText(dir)).toBe(packageJson);
+  expect(await exists(join(dir, "bun.lock"))).toBe(false);
+  expect(exitCode).toBe(1);
+});
+
+test.concurrent.each(["leaf", "aliased@npm:leaf@^1.0.0"])(
+  "a 404 for the manifest fails `bun add --optional %s` and writes nothing",
+  async spec => {
+    const knobs: RegistryKnobs = { status: { leaf: 404 } };
+    using server = await serveRegistry(LEAF_ONLY, {}, knobs);
+    const packageJson = stringify({ name: "foo" });
+    const dir = String(tempDir("add-failed-download-", { "package.json": packageJson }));
+    await servedBunfig(server, dir);
+
+    const { stderr, exitCode } = await run(dir, "add", "--optional", spec);
+    expect(warningLines(stderr)).toStrictEqual([`warn: ${manifestFailure(server, 404)}`]);
+    expect(errorLines(stderr)).toStrictEqual([]);
+    expect(await packageJsonText(dir)).toBe(packageJson);
+    expect(await exists(join(dir, "bun.lock"))).toBe(false);
     expect(exitCode).toBe(1);
   },
 );

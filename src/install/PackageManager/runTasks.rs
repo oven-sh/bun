@@ -542,16 +542,7 @@ fn run_tasks_erased(
                             );
                         }
 
-                        if manager.subcommand != Subcommand::Remove {
-                            for request in manager.update_requests.iter_mut() {
-                                if strings::eql(request.name, name) {
-                                    request.failed = true;
-                                    manager.options.do_.remove(Do::SAVE_LOCKFILE);
-                                    manager.options.do_.remove(Do::SAVE_YARN_LOCK);
-                                    manager.options.do_.remove(Do::INSTALL_PACKAGES);
-                                }
-                            }
-                        }
+                        fail_update_requests(manager, task.task_id, name, None);
                     }
 
                     continue;
@@ -599,16 +590,7 @@ fn run_tasks_erased(
                             response.status_code,
                         );
                     }
-                    if manager.subcommand != Subcommand::Remove {
-                        for request in manager.update_requests.iter_mut() {
-                            if strings::eql(request.name, name) {
-                                request.failed = true;
-                                manager.options.do_.remove(Do::SAVE_LOCKFILE);
-                                manager.options.do_.remove(Do::SAVE_YARN_LOCK);
-                                manager.options.do_.remove(Do::INSTALL_PACKAGES);
-                            }
-                        }
-                    }
+                    fail_update_requests(manager, task.task_id, name, None);
 
                     continue;
                 }
@@ -853,16 +835,12 @@ fn run_tasks_erased(
                                 .fmt(&manager.lockfile.buffers.string_bytes, PathSep::Auto,),
                         );
                     }
-                    if manager.subcommand != Subcommand::Remove {
-                        for request in manager.update_requests.iter_mut() {
-                            if strings::eql(request.name, extract.name.slice()) {
-                                request.failed = true;
-                                manager.options.do_.remove(Do::SAVE_LOCKFILE);
-                                manager.options.do_.remove(Do::SAVE_YARN_LOCK);
-                                manager.options.do_.remove(Do::INSTALL_PACKAGES);
-                            }
-                        }
-                    }
+                    fail_update_requests(
+                        manager,
+                        task.task_id,
+                        extract.name.slice(),
+                        Some(extract.dependency_id),
+                    );
 
                     if let Some(removed) = manager.task_queue.remove(&task.task_id) {
                         drop(removed);
@@ -936,16 +914,12 @@ fn run_tasks_erased(
                             response.status_code,
                         );
                     }
-                    if manager.subcommand != Subcommand::Remove {
-                        for request in manager.update_requests.iter_mut() {
-                            if strings::eql(request.name, extract.name.slice()) {
-                                request.failed = true;
-                                manager.options.do_.remove(Do::SAVE_LOCKFILE);
-                                manager.options.do_.remove(Do::SAVE_YARN_LOCK);
-                                manager.options.do_.remove(Do::INSTALL_PACKAGES);
-                            }
-                        }
-                    }
+                    fail_update_requests(
+                        manager,
+                        task.task_id,
+                        extract.name.slice(),
+                        Some(extract.dependency_id),
+                    );
 
                     if let Some(removed) = manager.task_queue.remove(&task.task_id) {
                         drop(removed);
@@ -1944,6 +1918,58 @@ pub(crate) fn network_task_has_failed(this: &PackageManager, task_id: Task::Id) 
     this.network_dedupe_map
         .get(&task_id)
         .is_some_and(|e| e.failed)
+}
+
+/// `bun add` / `bun update <name>` of a package that cannot be fetched exits 1 and saves nothing.
+/// A request names its dependency, which an `npm:` alias or an override spells differently from
+/// `package_name`, so it is also matched against the dependencies the download was for: the
+/// task's waiters, and for an npm tarball (it has no waiters) every dependency resolved to the
+/// package of `tarball_dependency_id`.
+fn fail_update_requests(
+    this: &mut PackageManager,
+    task_id: Task::Id,
+    package_name: &[u8],
+    tarball_dependency_id: Option<DependencyID>,
+) {
+    if this.subcommand == Subcommand::Remove {
+        return;
+    }
+    let buffers = &this.lockfile.buffers;
+    let string_buf = buffers.string_bytes.as_slice();
+    let dependencies = buffers.dependencies.as_slice();
+    let resolutions = buffers.resolutions.as_slice();
+    let waiters = this.task_queue.get(&task_id).map_or(&[][..], Vec::as_slice);
+    let package_id = tarball_dependency_id
+        .and_then(|id| resolutions.get(id as usize).copied())
+        .filter(|&package_id| package_id != INVALID_PACKAGE_ID);
+
+    let mut any_failed = false;
+    for request in this.update_requests.iter_mut() {
+        let waits = waiters.iter().any(|waiter| match waiter {
+            bun_install::TaskCallbackContext::Dependency(id)
+            | bun_install::TaskCallbackContext::RootDependency(id) => dependencies
+                .get(*id as usize)
+                .is_some_and(|dependency| request.matches(dependency, string_buf)),
+            _ => false,
+        });
+        let resolved = package_id.is_some_and(|package_id| {
+            resolutions
+                .iter()
+                .zip(dependencies)
+                .any(|(&resolution, dependency)| {
+                    resolution == package_id && request.matches(dependency, string_buf)
+                })
+        });
+        if waits || resolved || strings::eql(request.name, package_name) {
+            request.failed = true;
+            any_failed = true;
+        }
+    }
+    if any_failed {
+        this.options
+            .do_
+            .remove(Do::SAVE_LOCKFILE | Do::SAVE_YARN_LOCK | Do::INSTALL_PACKAGES);
+    }
 }
 
 /// The first failed download in a `run_tasks` pass halves the number of

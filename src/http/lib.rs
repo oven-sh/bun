@@ -2187,8 +2187,7 @@ impl<'a> HTTPClient<'a> {
         if self.flags.disable_timeout {
             return;
         }
-        // Every byte arrived and the consumer has not taken it all yet: nothing more is expected
-        // from the socket. A tunnelled socket is never paused, so its timer is still armed.
+        // A fully received body that waits on its consumer expects nothing from the socket.
         if self.state.has_pending_compressed() && self.state.is_done() {
             socket.set_timeout(0);
             return;
@@ -4088,8 +4087,7 @@ impl<'a> HTTPClient<'a> {
         socket.set_timeout(self.effective_idle_timeout_seconds());
     }
 
-    /// What one decode pass may produce. Pausing the socket bounds compressed bytes, not decoded
-    /// ones. h2/h3 detach the stream before held input could be drained, so they are unbounded.
+    /// Output budget of one decode pass. h1 only: h2/h3 detach before held input could drain.
     #[inline]
     fn decompress_output_cap(&self) -> usize {
         if self.flags.protocol == Protocol::Http1_1 && self.signals.is_demand_driven() {
@@ -4099,12 +4097,10 @@ impl<'a> HTTPClient<'a> {
         }
     }
 
-    /// `process_body_buffer` on what has arrived, under the consumer's budget. Returns whether
-    /// there are decoded bytes to report.
+    /// Decodes what has arrived under the consumer's budget. Returns whether to report bytes.
     fn process_received_body(&mut self, is_final_chunk: bool) -> crate::Result<bool> {
         let max_output = self.decompress_output_cap();
-        // A paused consumer gets nothing decoded for it; its next pull does that
-        // (`drain_response_body`). A tunnelled socket keeps reading while paused.
+        // Nothing is decoded for a paused consumer (a tunnelled socket keeps reading anyway).
         if max_output != usize::MAX
             && self.state.encoding.is_compressed()
             && self.signals.is_receive_paused()
@@ -4170,8 +4166,7 @@ impl<'a> HTTPClient<'a> {
             return;
         }
 
-        // The consumer's pull is what decodes the next piece of a held body. Whoever unpauses
-        // schedules another resume, so a consumer that paused again in between loses nothing.
+        // A consumer that paused again gets another resume when it unpauses.
         let pumped = self.state.has_pending_compressed() && !self.signals.is_receive_paused();
         if pumped {
             let is_final = self.state.is_done();
@@ -4314,8 +4309,7 @@ impl<'a> HTTPClient<'a> {
                 self.state.decoded_body = decoded_body;
             }
             self.maybe_pause_receive(socket);
-            // Only a paused consumer asks for the rest of a held body. One that turned to
-            // `BufferAll` while this pass ran under a budget never will.
+            // A consumer that left `Flowing` during this pass never paused, so never asks.
             if self.state.has_pending_compressed() && !self.signals.is_receive_paused() {
                 self.drain_response_body::<IS_SSL>(socket);
             }

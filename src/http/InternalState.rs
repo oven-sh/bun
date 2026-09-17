@@ -29,8 +29,7 @@ pub struct InternalState<'a> {
     /// (cap-bounded) after the callback returns.
     pub(crate) decoded_body: MutableString,
     pub(crate) compressed_body: MutableString,
-    /// How much of `compressed_body` the decoder has taken. A held body is not shifted down
-    /// after every pass.
+    /// Prefix of `compressed_body` the decoder has already taken.
     compressed_body_consumed: usize,
     pub(crate) content_length: Option<usize>,
     pub(crate) total_body_received: usize,
@@ -83,8 +82,7 @@ pub struct InternalStateFlags {
     /// `reset()`/`init()` so each redirect/retry hop re-compresses from the
     /// original uncompressed `original_request_body`.
     pub(crate) body_compressed: bool,
-    /// Compressed input is held, or a decode stopped at its output budget: the body is not
-    /// complete until `HTTPClient::drain_response_body` has pumped it dry.
+    /// Held input or buffered decoder output remains for `HTTPClient::drain_response_body`.
     pub(crate) decompress_output_pending: bool,
 }
 
@@ -442,8 +440,7 @@ impl<'a> InternalState<'a> {
                 let consumed =
                     start + self.decompress_bytes(&buffer[start..], is_final_chunk, max_output)?;
                 let held = buffer.len() - consumed;
-                // A decoder can take all of its input and still hold output (a brotli copy
-                // command, zstd's flush window), so held input is not the only sign.
+                // A decoder can hold output with no input left (brotli copy command, zstd flush).
                 self.flags.decompress_output_pending = self.decoded_body.list.len() >= max_output
                     && (held != 0 || self.decompressor.is_mid_stream());
                 // Shifting only once the taken prefix is the larger part moves each byte once.

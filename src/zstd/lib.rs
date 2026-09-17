@@ -551,8 +551,7 @@ pub struct StreamingDecoder {
     /// Decompression-bomb guard: `decompress` errors instead of growing the
     /// output past this many bytes. Defaults to unbounded.
     pub(crate) max_output_size: usize,
-    /// zstd filled its last output window, so it may hold decoded bytes that did not fit.
-    /// `max_output` can end a call like that, and the next call may bring no input.
+    /// zstd filled its last window and may hold more. `max_output` can end a call there.
     output_full: bool,
 }
 

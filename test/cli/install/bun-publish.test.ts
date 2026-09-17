@@ -1366,16 +1366,14 @@ describe.concurrent("package.json version", () => {
     return {
       bodies,
       url: `http://localhost:${server.port}/`,
-      // The token in the url is the credential. Without one, `bun publish` fails before it validates the package.
+      // The token in the url is the credential that lets a valid package reach the PUT.
       registry: `http://:t@localhost:${server.port}/`,
       [Symbol.dispose]: () => server.stop(true),
     };
   }
 
-  async function packageDirFor(name: string, version: string) {
-    const packageDir = tmpdirSync();
-    await write(join(packageDir, "package.json"), JSON.stringify({ name, version }));
-    return packageDir;
+  function packageDirFor(name: string, version: string) {
+    return tempDir("publish-version", { "package.json": JSON.stringify({ name, version }) });
   }
 
   const invalid = ["1.0.0.1", "not-a-version", "1.0", "1.0.0-beta_1", "1.x.0"];
@@ -1383,9 +1381,9 @@ describe.concurrent("package.json version", () => {
   for (const version of invalid) {
     test(`refuses ${JSON.stringify(version)} before sending a request`, async () => {
       using mock = registryMock();
-      const packageDir = await packageDirFor("invalid-version-pkg", version);
+      using packageDir = packageDirFor("invalid-version-pkg", version);
 
-      const { err, exitCode } = await publish(env, packageDir, "--registry", mock.registry);
+      const { err, exitCode } = await publish(env, String(packageDir), "--registry", mock.registry);
       expect(err).toBe("error: package.json `version` is not a valid semver version\n");
       expect(mock.bodies).toEqual([]);
       expect(exitCode).toBe(1);
@@ -1393,12 +1391,12 @@ describe.concurrent("package.json version", () => {
 
     test(`refuses ${JSON.stringify(version)} in a tarball before sending a request`, async () => {
       using mock = registryMock();
-      const packageDir = await packageDirFor("invalid-version-tarball-pkg", version);
-      await pack(packageDir, env);
+      using packageDir = packageDirFor("invalid-version-tarball-pkg", version);
+      await pack(String(packageDir), env);
 
       const { err, exitCode } = await publish(
         env,
-        packageDir,
+        String(packageDir),
         `./invalid-version-tarball-pkg-${version}.tgz`,
         "--registry",
         mock.registry,
@@ -1411,26 +1409,30 @@ describe.concurrent("package.json version", () => {
 
   test("publishes v1.0.0 as 1.0.0", async () => {
     using mock = registryMock();
-    const packageDir = await packageDirFor("v-prefix-pkg", "v1.0.0");
+    using packageDir = packageDirFor("v-prefix-pkg", "v1.0.0");
 
-    const { out, err, exitCode } = await publish(env, packageDir, "--registry", mock.registry);
+    const { out, err, exitCode } = await publish(env, String(packageDir), "--registry", mock.registry);
     expect(err).not.toContain("error:");
     expect(out).toContain(" + v-prefix-pkg@1.0.0\n");
     expect(mock.bodies).toHaveLength(1);
-    expect(Object.keys(mock.bodies[0].versions)).toEqual(["1.0.0"]);
     expect(mock.bodies[0]["dist-tags"]).toEqual({ latest: "1.0.0" });
-    expect(mock.bodies[0].versions["1.0.0"].dist.tarball).toBe(`${mock.url}v-prefix-pkg/-/v-prefix-pkg-1.0.0.tgz`);
+    expect(Object.keys(mock.bodies[0].versions)).toEqual(["1.0.0"]);
+    expect(mock.bodies[0].versions["1.0.0"]).toMatchObject({
+      _id: "v-prefix-pkg@1.0.0",
+      version: "1.0.0",
+      dist: { tarball: `${mock.url}v-prefix-pkg/-/v-prefix-pkg-1.0.0.tgz` },
+    });
     expect(exitCode).toBe(0);
   });
 
   test("publishes v1.0.0 in a tarball as 1.0.0", async () => {
     using mock = registryMock();
-    const packageDir = await packageDirFor("v-prefix-tarball-pkg", "v1.0.0");
-    await pack(packageDir, env);
+    using packageDir = packageDirFor("v-prefix-tarball-pkg", "v1.0.0");
+    await pack(String(packageDir), env);
 
     const { out, err, exitCode } = await publish(
       env,
-      packageDir,
+      String(packageDir),
       "./v-prefix-tarball-pkg-v1.0.0.tgz",
       "--registry",
       mock.registry,
@@ -1438,8 +1440,12 @@ describe.concurrent("package.json version", () => {
     expect(err).not.toContain("error:");
     expect(out).toContain(" + v-prefix-tarball-pkg@1.0.0\n");
     expect(mock.bodies).toHaveLength(1);
-    expect(Object.keys(mock.bodies[0].versions)).toEqual(["1.0.0"]);
     expect(mock.bodies[0]["dist-tags"]).toEqual({ latest: "1.0.0" });
+    expect(Object.keys(mock.bodies[0].versions)).toEqual(["1.0.0"]);
+    expect(mock.bodies[0].versions["1.0.0"]).toMatchObject({
+      _id: "v-prefix-tarball-pkg@1.0.0",
+      version: "1.0.0",
+    });
     expect(exitCode).toBe(0);
   });
 });

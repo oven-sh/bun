@@ -125,9 +125,7 @@ impl<T: VersionInt> VersionType<T> {
             return None;
         }
         let mut start = 0;
-        while start < input.len()
-            && (matches!(input[start], b'v' | b'=') || input[start].is_ascii_whitespace())
-        {
+        while start < input.len() && is_version_prefix_byte(input[start]) {
             start += 1;
         }
         Some(&input[start..])
@@ -495,22 +493,9 @@ impl<T: VersionInt> VersionType<T> {
         let mut i: usize = input.len();
 
         for c in 0..input.len() {
-            match input[c] {
-                // newlines & whitespace
-                b' '
-                | b'\t'
-                | b'\n'
-                | b'\r'
-                | 0x0B // vertical tab
-                | 0x0C // form feed
-
-                // version separators
-                | b'v'
-                | b'=' => {}
-                _ => {
-                    i = c;
-                    break;
-                }
+            if !is_version_prefix_byte(input[c]) {
+                i = c;
+                break;
             }
         }
 
@@ -677,6 +662,12 @@ impl<T: VersionInt> VersionType<T> {
         debug_assert!(!input.is_empty() && input.iter().all(u8::is_ascii_digit));
         Some(T::parse_ascii(input).unwrap_or(T::ZERO))
     }
+}
+
+/// Whitespace and the `v` and `=` separators that `parse` skips before the
+/// first version number.
+fn is_version_prefix_byte(c: u8) -> bool {
+    matches!(c, b' ' | b'\t' | b'\n' | b'\r' | 0x0B | 0x0C | b'v' | b'=')
 }
 
 fn valid_pre_or_build_tag_character(c: u8) -> bool {
@@ -1265,6 +1256,7 @@ mod tests {
             (b"v1.0.0", b"1.0.0"),
             (b"=1.0.0", b"1.0.0"),
             (b" v 1.0.0\n", b"1.0.0"),
+            (b"\x0b1.0.0", b"1.0.0"),
             (b"1.0.0-beta.1+build.5", b"1.0.0-beta.1+build.5"),
             (b"1.0.0 ", b"1.0.0"),
         ] {

@@ -1414,6 +1414,10 @@ impl PublishCommand {
 
         let version_without_build_tag = dependency::without_build_tag(package_version);
 
+        // package.json can say `v1.0.0`. The `versions` key, `dist-tags` and
+        // `_id` use the cleaned version, so `version` has to agree with them.
+        Expr::set_string(json, &bump, b"version", leak!(version_without_build_tag))?;
+
         let integrity_fmt = {
             let mut v = Vec::new();
             write!(&mut v, "{}", bun_fmt::integrity::<false>(integrity)).map_err(|_| AllocError)?;

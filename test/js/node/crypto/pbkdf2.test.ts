@@ -129,7 +129,7 @@ describe("invalid inputs", () => {
       });
       expect(() => {
         crypto.pbkdf2("password", "salt", 1, input, "sha256", outer);
-      }).toThrow(`The value of "keylen" is out of range. It must be >= 0 and <= 2147483647. Received ${input}`);
+      }).toThrow(`The value of "keylen" is out of range. It must be >= 0 && <= 2147483647. Received ${input}`);
       expect(outer).not.toHaveBeenCalled();
     });
   });
@@ -213,7 +213,19 @@ test("keylen=0 fails async via callback", async () => {
 [-1, 2147483648, 4294967296, 2 ** 52].forEach(input => {
   test(`${input} keylen`, () => {
     expect(() => crypto.pbkdf2("password", "salt", 1, input, "sha256")).toThrow(
-      `The value of "keylen" is out of range. It must be >= 0 and <= 2147483647. Received ${input}`,
+      `The value of "keylen" is out of range. It must be >= 0 && <= 2147483647. Received ${input}`,
+    );
+  });
+});
+
+[0, -1, 2147483648].forEach(input => {
+  test(`${input} iterations out of range`, () => {
+    const message = `The value of "iterations" is out of range. It must be >= 1 && <= 2147483647. Received ${input}`;
+    expect(() => crypto.pbkdf2("password", "salt", input, 8, "sha256", () => {})).toThrow(
+      expect.objectContaining({ name: "RangeError", code: "ERR_OUT_OF_RANGE", message }),
+    );
+    expect(() => crypto.pbkdf2Sync("password", "salt", input, 8, "sha256")).toThrow(
+      expect.objectContaining({ name: "RangeError", code: "ERR_OUT_OF_RANGE", message }),
     );
   });
 });

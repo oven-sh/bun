@@ -1296,6 +1296,112 @@ test("errored pipeline releases the compression coder eagerly", async () => {
   expect(exitCode).toBe(0);
 }, 60_000);
 
+// The `level` member of the second argument (a Bun extension, next to
+// highWaterMark) selects the compression level; absent keeps each format's
+// default (zlib default, brotli 11, zstd 3). Issue #40098.
+describe("CompressionStream level option", () => {
+  // Deterministic semi-random text: enough entropy that the level changes the output.
+  let seed = 42;
+  const rand = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+  let text = "";
+  for (let i = 0; text.length < 64_000; i++) {
+    text += `<section id="s${i}"><p>${rand().toString(36).slice(2)} lorem ipsum ${((i * 2654435761) >>> 0).toString(36)}</p></section>`;
+  }
+  const input = Buffer.from(text);
+
+  async function compress(
+    format: "gzip" | "deflate-raw" | "brotli" | "zstd",
+    options?: { level?: number; highWaterMark?: number },
+  ): Promise<Buffer> {
+    const cs = new CompressionStream(format, options);
+    const writer = cs.writable.getWriter();
+    const written = (async () => {
+      await writer.write(input);
+      await writer.close();
+    })();
+    const pieces = await Array.fromAsync(cs.readable);
+    await written;
+    return Buffer.concat(pieces);
+  }
+
+  test("brotli honors level as the quality", async () => {
+    const [q1, q11, dflt] = await Promise.all([
+      compress("brotli", { level: 1 }),
+      compress("brotli", { level: 11 }),
+      compress("brotli"),
+    ]);
+    expect(q1.length).toBeGreaterThan(q11.length);
+    // The default stays quality 11.
+    expect(dflt.equals(q11)).toBe(true);
+    expect(zlib.brotliDecompressSync(q1).equals(input)).toBe(true);
+    expect(zlib.brotliDecompressSync(q11).equals(input)).toBe(true);
+  });
+
+  test("gzip honors level", async () => {
+    const [stored, best] = await Promise.all([compress("gzip", { level: 0 }), compress("gzip", { level: 9 })]);
+    // Level 0 stores the input, so the output is larger than the input.
+    expect(stored.length).toBeGreaterThan(input.length);
+    expect(best.length).toBeLessThan(input.length);
+    expect(zlib.gunzipSync(stored).equals(input)).toBe(true);
+    expect(zlib.gunzipSync(best).equals(input)).toBe(true);
+  });
+
+  test("deflate-raw honors level", async () => {
+    const [stored, best] = await Promise.all([
+      compress("deflate-raw", { level: 0 }),
+      compress("deflate-raw", { level: 9 }),
+    ]);
+    expect(stored.length).toBeGreaterThan(input.length);
+    expect(best.length).toBeLessThan(input.length);
+    expect(zlib.inflateRawSync(stored).equals(input)).toBe(true);
+    expect(zlib.inflateRawSync(best).equals(input)).toBe(true);
+  });
+
+  test("zstd honors level", async () => {
+    const [z1, z19] = await Promise.all([compress("zstd", { level: 1 }), compress("zstd", { level: 19 })]);
+    expect(z1.length).toBeGreaterThan(z19.length);
+    expect(zlib.zstdDecompressSync(z1).equals(input)).toBe(true);
+    expect(zlib.zstdDecompressSync(z19).equals(input)).toBe(true);
+  });
+
+  test("level combines with highWaterMark", async () => {
+    const highWaterMark = 1024;
+    const [out, q1, dflt] = await Promise.all([
+      compress("brotli", { level: 1, highWaterMark }),
+      compress("brotli", { level: 1 }),
+      compress("brotli"),
+    ]);
+    // The level took effect (quality 1 output is larger than the quality 11 default)...
+    expect(out.length).toBeGreaterThan(dflt.length);
+    // ...and highWaterMark only bounds the pieces, it does not change the bytes.
+    expect(out.equals(q1)).toBe(true);
+    expect(zlib.brotliDecompressSync(out).equals(input)).toBe(true);
+  });
+
+  test("an out-of-range or non-integer level throws RangeError", () => {
+    expect(() => new CompressionStream("brotli", { level: 12 })).toThrow(
+      new RangeError("The compression level must be an integer between 0 and 11 for brotli"),
+    );
+    expect(() => new CompressionStream("brotli", { level: -1 })).toThrow(RangeError);
+    expect(() => new CompressionStream("brotli", { level: 4.5 })).toThrow(RangeError);
+    expect(() => new CompressionStream("brotli", { level: NaN })).toThrow(RangeError);
+    expect(() => new CompressionStream("gzip", { level: 10 })).toThrow(
+      new RangeError("The compression level must be an integer between 0 and 9 for gzip"),
+    );
+    expect(() => new CompressionStream("zstd", { level: 0 })).toThrow(
+      new RangeError("The compression level must be an integer between 1 and 22 for zstd"),
+    );
+    expect(() => new CompressionStream("zstd", { level: 23 })).toThrow(RangeError);
+    // An explicit undefined means "absent", like every WebIDL dictionary member.
+    expect(new CompressionStream("brotli", { level: undefined })).toBeInstanceOf(CompressionStream);
+  });
+
+  test("DecompressionStream ignores level", () => {
+    // Out of range for every format: proves the member is ignored, not validated.
+    expect(new DecompressionStream("brotli", { level: 99 } as any)).toBeInstanceOf(DecompressionStream);
+  });
+});
+
 // Chunks > 128 KiB run the codec on a WorkPool thread. VM teardown
 // (Heap::lastChanceToFinalize) runs the cell's CFinalizer even while that
 // transform is mid-flight — it must release the cell's reference, not free

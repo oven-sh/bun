@@ -840,9 +840,8 @@ inline JSValue constructJSStatsObject(JSC::JSGlobalObject* lexicalGlobalObject, 
     JSObject* newTarget = asObject(callFrame->newTarget());
 
     if (constructor != newTarget) {
-        auto* functionGlobalObject = static_cast<Zig::GlobalObject*>(
-            // ShadowRealm functions belong to a different global object.
-            getFunctionRealm(lexicalGlobalObject, newTarget));
+        // ShadowRealm functions belong to a different global object.
+        auto* functionGlobalObject = defaultGlobalObject(getFunctionRealm(lexicalGlobalObject, newTarget));
         RETURN_IF_EXCEPTION(scope, {});
         structure = InternalFunction::createSubclassStructure(lexicalGlobalObject, newTarget, getStructure<isBigInt>(functionGlobalObject));
         RETURN_IF_EXCEPTION(scope, {});

@@ -2385,10 +2385,12 @@ __attribute__((minsize)) static JSValue constructReportObjectComplete(VM& vm, Zi
         };
 
         for (size_t i = 0; i < std::size(resourceLimits); i++) {
+            // Node leaves out a limit it cannot read.
+            struct rlimit limit;
+            if (getrlimit(resourceLimits[i], &limit) != 0)
+                continue;
             JSC::JSObject* limitObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
             RETURN_IF_EXCEPTION(scope, {});
-            struct rlimit limit;
-            getrlimit(resourceLimits[i], &limit);
 
             JSValue soft = limit.rlim_cur == RLIM_INFINITY ? JSC::jsString(vm, String("unlimited"_s)) : JSC::jsNumber(limit.rlim_cur);
 

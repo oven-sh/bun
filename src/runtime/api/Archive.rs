@@ -1134,7 +1134,7 @@ impl TaskContext for FilesContext {
                     let blob = unsafe { &mut *blob_ptr };
                     blob.is_jsdom_file.set(true);
                     blob.name.set(bun_core::String::clone_utf8(&entry.path));
-                    blob.last_modified.set((entry.mtime * 1000) as f64);
+                    blob.last_modified.set(entry.mtime as f64 * 1000.0);
 
                     let name_js = blob.name.get().to_js(global)?;
                     let blob_js = blob.to_js(global);

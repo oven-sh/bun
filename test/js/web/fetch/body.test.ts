@@ -2,7 +2,9 @@ import { file, spawn, version, type Socket } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, exampleSite, tempDir } from "harness";
 import net from "net";
-import { Readable } from "node:stream";
+import { join } from "node:path";
+import { isDisturbed, isErrored, isReadable, Readable } from "node:stream";
+import { finished } from "node:stream/promises";
 
 const exampleServer = exampleSite("http");
 
@@ -1575,6 +1577,13 @@ describe("body stream bookkeeping does not depend on the body's source", () => {
     }
   };
   const settled = (p: Promise<unknown>) => p.then(String, e => (e as Error).constructor.name);
+  const streamState = (stream: ReadableStream) => ({
+    readable: isReadable(stream),
+    errored: isErrored(stream),
+    disturbed: isDisturbed(stream),
+    locked: stream.locked,
+  });
+  const consumedState = { readable: false, errored: false, disturbed: true, locked: true };
 
   for (const [ownerName, make] of owners) {
     describe(ownerName, () => {
@@ -1670,6 +1679,110 @@ describe("body stream bookkeeping does not depend on the body's source", () => {
             getReader: errorName(() => stream.getReader()),
           }).toEqual({ locked: true, bodyUsed: true, getReader: "TypeError" });
         });
+      });
+
+      // That reader ran the stream to its end, so the stream is closed. node:stream's
+      // helpers read the stream's own state, and finished() waits for it to close.
+      describe("a consumed body's stream is closed", () => {
+        for (const [name, init] of sources) {
+          const methods = ["text", "json", "arrayBuffer", "bytes", "blob"] as const;
+          for (const method of name === "URLSearchParams" ? ([...methods, "formData"] as const) : methods) {
+            test(`${name} .body then ${method}()`, async () => {
+              const owner = make(init());
+              const stream = owner.body!;
+              await owner[method]().catch(() => {});
+              expect(streamState(stream)).toEqual(consumedState);
+              await finished(stream);
+            });
+          }
+        }
+        for (const method of ["text", "json", "arrayBuffer", "bytes", "blob"] as const) {
+          test(`${method}() then .body`, async () => {
+            const owner = make("[1]");
+            await owner[method]();
+            const stream = owner.body!;
+            expect(streamState(stream)).toEqual(consumedState);
+            await finished(stream);
+          });
+        }
+        test("clone() takes an unread native stream's content", async () => {
+          const owner = make("payload");
+          const stream = owner.body!;
+          const clone = owner.clone();
+          expect(owner.body).not.toBe(stream);
+          expect(streamState(stream)).toEqual(consumedState);
+          await finished(stream);
+          expect([await owner.text(), await clone.text()]).toEqual(["payload", "payload"]);
+        });
+      });
+
+      // Bun.serve(), fetch() and Bun.write() read a body in native code. They consume it like a
+      // mixin method does: the stream ends up used, closed and locked, whatever backs the body.
+      describe("a native consumer leaves a body's stream consumed and locked", () => {
+        const consumers: [string, (owner: Request | Response) => Promise<string>][] = [
+          ownerName === "Response"
+            ? [
+                "Bun.serve() sends it",
+                async owner => {
+                  await using server = Bun.serve({ port: 0, fetch: () => owner as Response });
+                  return await (await fetch(server.url)).text();
+                },
+              ]
+            : [
+                "fetch(url, request) uploads it",
+                async owner => {
+                  await using echo = Bun.serve({ port: 0, fetch: async req => new Response(await req.text()) });
+                  return await (await fetch(echo.url, owner as RequestInit)).text();
+                },
+              ],
+          [
+            "Bun.write() writes it",
+            async owner => {
+              using dir = tempDir("body-native-consumer", {});
+              await Bun.write(join(String(dir), "out"), owner);
+              return await file(join(String(dir), "out")).text();
+            },
+          ],
+        ];
+        // An async iterable body is a type: "direct" stream underneath, which the consumer's sink pumps itself.
+        const iterables: typeof sources = [
+          [
+            "async generator",
+            () =>
+              (async function* () {
+                yield new TextEncoder().encode("payload");
+              })() as unknown as BodyInit,
+            "payload",
+          ],
+          ["node:stream Readable", () => Readable.from([Buffer.from("payload")]) as unknown as BodyInit, "payload"],
+        ];
+        for (const [name, init, content] of [...sources, ...iterables]) {
+          for (const [consumer, consume] of consumers) {
+            test(`${name} .body then ${consumer}`, async () => {
+              const owner = make(init());
+              const stream = owner.body!;
+              expect(await consume(owner)).toBe(content);
+              expect({
+                same: owner.body === stream,
+                ...streamState(stream),
+                bodyUsed: owner.bodyUsed,
+                getReader: errorName(() => stream.getReader()),
+                rewrap: errorName(() => make(stream)),
+                again: await settled(owner.text()),
+                clone: errorName(() => owner.clone()),
+              }).toEqual({
+                same: true,
+                ...consumedState,
+                bodyUsed: true,
+                getReader: "TypeError",
+                rewrap: "TypeError",
+                again: "TypeError",
+                clone: "TypeError",
+              });
+              await finished(stream);
+            });
+          }
+        }
       });
 
       // A zero-length body is a body: reading it, through a mixin method or
@@ -1837,5 +1950,95 @@ describe("body stream bookkeeping does not depend on the body's source", () => {
       expect(response.toLowerCase()).not.toContain("transfer-encoding");
       expect(response.endsWith(`\r\n\r\n${expected}`)).toBe(true);
     }
+  });
+
+  // Lifting the payload back out of an unread native stream is not a read through
+  // a reader, so the stream has nothing left to close it: whoever lifts it does.
+  describe("lifting the payload out of an unread native stream closes it", () => {
+    const expectClosed = async (stream: ReadableStream) => {
+      expect(streamState(stream)).toEqual(consumedState);
+      await finished(stream);
+    };
+
+    test("Blob.stream() behind a new Response", async () => {
+      const stream = new Blob(["payload"]).stream();
+      // Registered first, so the lift has a pending promise to settle.
+      const closed = finished(stream);
+      expect(await new Response(stream).bytes()).toEqual(new TextEncoder().encode("payload"));
+      expect(streamState(stream)).toEqual(consumedState);
+      await closed;
+    });
+
+    test("a Bun.file() stream", async () => {
+      using dir = tempDir("body-stream-closed", { "payload.txt": "payload" });
+      const path = join(String(dir), "payload.txt");
+
+      const stream = file(path).stream();
+      expect((await new Response(stream).arrayBuffer()).byteLength).toBe(7);
+      await expectClosed(stream);
+
+      const response = new Response(file(path));
+      const body = response.body!;
+      expect((await response.blob()).size).toBe(7);
+      await expectClosed(body);
+    });
+
+    test("Bun.serve sending a Response whose .body was accessed", async () => {
+      let body!: ReadableStream;
+      await using server = Bun.serve({
+        port: 0,
+        fetch() {
+          const response = new Response("payload");
+          body = response.body!;
+          return response;
+        },
+      });
+      expect(await (await fetch(server.url)).text()).toBe("payload");
+      await expectClosed(body);
+    });
+
+    test("fetch() uploading it and Bun.write() writing it", async () => {
+      using dir = tempDir("body-stream-closed", {});
+      await using server = Bun.serve({ port: 0, fetch: async req => new Response(await req.text()) });
+
+      const uploaded = new Blob(["payload"]).stream();
+      expect(await (await fetch(server.url, { method: "POST", body: uploaded })).text()).toBe("payload");
+      await expectClosed(uploaded);
+
+      const response = new Response("payload");
+      const written = response.body!;
+      expect(await Bun.write(join(String(dir), "out.txt"), response)).toBe(7);
+      await expectClosed(written);
+    });
+  });
+
+  // While a consumer still reads a body that never had a stream, .body is a locked
+  // stand-in that nothing updates. It must not report the end of a read that can still fail.
+  test(".body of a body that is still being read is not closed", async () => {
+    const { promise: released, resolve: release } = Promise.withResolvers<void>();
+    await using server = Bun.serve({
+      port: 0,
+      fetch: () =>
+        new Response(
+          new ReadableStream({
+            async pull(controller) {
+              controller.enqueue(new TextEncoder().encode("pay"));
+              await released;
+              controller.enqueue(new TextEncoder().encode("load"));
+              controller.close();
+            },
+          }),
+        ),
+    });
+    const response = await fetch(server.url);
+    const text = response.text();
+    const body = response.body!;
+    expect({ readable: isReadable(body), locked: body.locked, bodyUsed: response.bodyUsed }).toEqual({
+      readable: true,
+      locked: true,
+      bodyUsed: true,
+    });
+    release();
+    expect(await text).toBe("payload");
   });
 });

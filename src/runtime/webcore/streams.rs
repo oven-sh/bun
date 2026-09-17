@@ -1170,15 +1170,13 @@ pub struct HTTPServerWritable<const SSL: bool> {
     pub(crate) source_pending_pull: bool,
     pub(crate) end_len: usize,
     /// This sink fully ended the uWS response (`res.end()` / a completed
-    /// `res.try_end()`). On HTTP/1 uWS `markDone()` drops `onAborted` at that
-    /// point, so the owning `RequestContext` is never told if the peer closes
-    /// afterwards and its `resp` must not be dereferenced again: by the time
-    /// the parked stream-resolution microtask runs, uSockets may already have
-    /// freed the socket (`us_internal_free_closed_sockets`) or recycled it
-    /// onto the next keep-alive request. `handle_resolve_stream` /
-    /// `handle_reject_stream` consult this instead of reading the response's
-    /// state. HTTP/1 only; see `end_already_responded_stream` for why
-    /// `Http3Response::markDone()` makes the H3 `resp` still safe to use.
+    /// `res.try_end()`). On HTTP/1 that drops `onAborted`, so the owning
+    /// `RequestContext` is never told the peer went away and must not
+    /// dereference `resp` again: uSockets may have freed or recycled the
+    /// socket by the time the stream reaction runs. `handle_resolve_stream` /
+    /// `handle_reject_stream` read this instead of the response state, and
+    /// act on it only for HTTP/1. An H2/H3 `resp` is still alive there, and
+    /// `on_abort` ends those requests when the transport frees the stream.
     pub(crate) ended_response: bool,
 
     pub(crate) on_first_write: Option<fn(Option<*mut c_void>)>,
@@ -1498,7 +1496,8 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
                 uws::WriteResult::Backpressure(_)
             );
         }
-        self.handle_wrote(buf_len);
+        // uWS took the `from` bytes in an earlier partial `try_end`; it now owns the whole slice.
+        self.handle_wrote(from + buf_len);
         bun_core::scoped_log!(
             HTTPServerWritableLog,
             "send: {} bytes (backpressure: {})",

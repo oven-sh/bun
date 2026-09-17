@@ -748,8 +748,7 @@ impl BlobExt for Blob {
                 self.resolve_size();
                 store.serialize(writer)?;
 
-                // Version 5: the `fs.openAsBlob` snapshot, so a clone fails
-                // reads like the original once the file changes.
+                // Version 5: the `fs.openAsBlob` snapshot.
                 let snapshot = Store::data_mut(store).as_file().snapshot;
                 writer.write_int_le::<u8>(snapshot.is_some() as u8)?;
                 if let Some(snapshot) = snapshot {

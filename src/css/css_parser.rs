@@ -1024,9 +1024,7 @@ pub struct NestedRuleParser<'a, T: CustomAtRuleParser> {
     // todo_stuff.think_mem_mgmt
     pub(crate) rules: &'a mut CssRuleList<T::AtRule>,
     pub(crate) is_in_style_rule: bool,
-    /// The nearest enclosing style rule or `@scope` rule is an `@scope`. Its
-    /// style rules are scoped rules: they take relative selectors and get no
-    /// implicit `&` prefix, because `&` inside `@scope` is the scoping root.
+    /// The nearest enclosing style rule or `@scope` is an `@scope`: its style rules are scoped rules.
     pub(crate) is_in_scope_rule: bool,
     pub(crate) allow_declarations: bool,
 
@@ -1432,8 +1430,6 @@ mod rule_parsers {
                 rules: &mut rules,
                 is_in_style_rule: self.is_in_style_rule || is_style_rule,
                 is_in_scope_rule: is_scope_rule || (self.is_in_scope_rule && !is_style_rule),
-                // Declarations directly in `@scope` apply to the scoping root.
-                // https://github.com/w3c/csswg-drafts/issues/10389
                 allow_declarations: self.allow_declarations
                     || self.is_in_style_rule
                     || is_style_rule
@@ -1495,8 +1491,7 @@ mod rule_parsers {
             self.parse_style_block_impl(input, false)
         }
 
-        /// Parses the block of an `@scope` rule. Its style rules are scoped
-        /// rules, and its declarations apply to the scoping root.
+        /// Parses the block of an `@scope` rule: scoped style rules, and declarations for the scoping root.
         pub(crate) fn parse_scope_block(
             &mut self,
             input: &mut Parser,
@@ -1516,9 +1511,7 @@ mod rule_parsers {
                 column: srcloc.column,
             };
 
-            // Declarations can be immediately within @media and @supports blocks
-            // that are nested within a parent style rule, and within @scope.
-            // These act the same way as if they were nested within a `& { ... }` block.
+            // Declarations directly in a nested @media, @supports or @scope block act as a `& { ... }` rule.
             let (declarations, mut rules) = self.parse_nested(input, false, is_scope_rule)?;
 
             if declarations.len() > 0 {
@@ -1632,11 +1625,7 @@ mod rule_parsers {
                             is_nesting_allowed: true,
                             options: this.options,
                         };
-                        // Inside a style rule, <scope-start> is relative to the
-                        // parent rule, like a nested style rule's selector.
-                        // Inside another @scope it is a scoped selector, like the
-                        // style rules next to it.
-                        // https://drafts.csswg.org/css-cascade-6/#scope-nesting
+                        // <scope-start> nests like a style rule selector: https://drafts.csswg.org/css-cascade-6/#scope-nesting
                         let scope_start_nesting = if this.is_in_scope_rule {
                             selector_parser::NestingRequirement::Scoped
                         } else if this.is_in_style_rule {
@@ -1644,9 +1633,7 @@ mod rule_parsers {
                         } else {
                             selector_parser::NestingRequirement::None
                         };
-                        // Both selector lists are unforgiving: one invalid
-                        // selector invalidates the whole rule.
-                        // https://github.com/w3c/csswg-drafts/issues/10042
+                        // Both selector lists are unforgiving (w3c/csswg-drafts#10042).
                         let scope_start = if input.try_parse(|p| p.expect_parenthesis_block()).is_ok() {
                             Some(input.parse_nested_block(|input2| {
                                 SelectorList::parse_relative(
@@ -1995,7 +1982,6 @@ mod rule_parsers {
             };
             if this.is_in_scope_rule {
                 // Scoped style rules take a <relative-selector-list>.
-                // https://drafts.csswg.org/css-cascade-6/#scoped-rules
                 SelectorList::parse_relative(
                     &mut selector_parser,
                     input,

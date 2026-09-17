@@ -147,10 +147,7 @@ pub struct Printer<'a> {
     /// `serialize::serialize_nesting` so deeply nested rules with multiple
     /// `&` references per level cannot expand exponentially.
     pub(crate) nesting_expansions: u32,
-    /// True while the rules nested in an `@scope` block are serialized with no
-    /// `ctx`. There `&` means the scoping root, which compiles to
-    /// `:where(:scope)`, and not `:scope` as at the top level of a stylesheet.
-    /// https://drafts.csswg.org/css-cascade-6/#scoped-rules
+    /// Inside an `@scope` rule, where a context-less `&` is the scoping root and compiles to `:where(:scope)`.
     pub(crate) in_scope_rule: bool,
     /// Running total of bytes emitted by duplicate vendor-prefix passes. A rule
     /// whose selector list carries more than one vendor prefix (e.g. a list

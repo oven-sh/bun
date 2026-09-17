@@ -2769,10 +2769,7 @@ pub enum NestingRequirement {
     Prefixed,
     Contained,
     Implicit,
-    /// A scoped style rule (a rule nested in `@scope`). A leading combinator is
-    /// anchored to `&` (the scoping root), but a selector without one gets no
-    /// implicit prefix: scoped rules already match within the scope.
-    /// https://drafts.csswg.org/css-cascade-6/#scoped-rules
+    /// A scoped style rule (nested in `@scope`): a leading combinator is anchored to `&`, nothing else is added.
     Scoped,
 }
 

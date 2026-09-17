@@ -5837,8 +5837,7 @@ pub mod bv2_impl {
             import_record_index: u32,
             original_target: options::Target,
         ) -> bool {
-            // The runtime's import (`node:module`, for `__require` when the target
-            // is node) is Bun's, not the project's.
+            // Plugins see the project's imports, not the runtime's own `node:module`.
             if source_index == Index::RUNTIME.get() {
                 return false;
             }

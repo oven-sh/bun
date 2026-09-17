@@ -2175,6 +2175,7 @@ describe("s3 writer upload failure", () => {
     expect(() => writer.write(new Uint8Array(1024))).toThrow(accessDenied);
     expect(() => writer.flush()).toThrow(accessDenied);
     expect(() => writer.end()).toThrow(accessDenied);
+    expect(() => (writer as any).close()).toThrow(accessDenied);
   });
 
   it("rejects the pending end() and throws from later write() and end()", async () => {

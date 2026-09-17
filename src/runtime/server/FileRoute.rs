@@ -16,6 +16,7 @@ use bun_uws::{AnyRequest, AnyResponse};
 use crate::node::types::PathOrFileDescriptor;
 use crate::server::file_response_stream::{StartOptions as FileResponseStreamOptions, StreamOwner};
 use crate::server::jsc::{JSGlobalObject, JSValue, JsResult, VirtualMachine};
+use bun_jsc::HTTPHeaderName;
 use bun_jsc::bun_string_jsc;
 
 use crate::server::{AnyServer, FileResponseStream, HTTPStatusText, RangeRequest};
@@ -165,6 +166,13 @@ impl FileRoute {
                     "expected blob not to be heap-allocated"
                 );
                 *body_value = BodyValue::Blob(blob.dupe());
+
+                // The route frames the body from the file size on each request.
+                if let Some(h) = response.get_init_headers_mut() {
+                    h.fast_remove(HTTPHeaderName::TransferEncoding);
+                    h.fast_remove(HTTPHeaderName::ContentLength);
+                }
+
                 let headers = headers_from(response.get_init_headers(), &blob);
                 let status_code = response.status_code();
 

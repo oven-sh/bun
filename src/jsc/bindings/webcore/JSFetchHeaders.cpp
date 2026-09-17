@@ -704,12 +704,10 @@ FetchHeaders* JSFetchHeaders::toWrappedAsInit(JSC::JSValue value)
     if (!wrapper)
         return nullptr;
 
-    // The [[Get]] of Symbol.iterator, with no call into user code. Every
-    // `new Response(body, { headers })` runs this, and PropertySlot::VMInquiry measured twice as slow.
-    // An object that can answer from outside its Structure (a Proxy, for example) ends the walk,
-    // and the generic conversion does the real [[Get]].
+    // A [[Get]] of Symbol.iterator that runs no user code. PropertySlot::VMInquiry measured twice as slow on this path.
     auto& vm = wrapper->vm();
     for (JSObject* object = wrapper;;) {
+        // A Proxy, or any object that answers from outside its Structure: the generic conversion does the real [[Get]].
         if (TypeInfo::overridesGetOwnPropertySlot(object->inlineTypeFlags()) || TypeInfo::hasStaticPropertyTable(object->inlineTypeFlags()) || object->structure()->typeInfo().overridesGetPrototype())
             return nullptr;
         if (JSValue method = object->getDirect(vm, vm.propertyNames->iteratorSymbol)) {

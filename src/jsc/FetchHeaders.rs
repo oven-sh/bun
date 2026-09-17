@@ -245,9 +245,7 @@ impl FetchHeaders {
         NonNull::new(WebCore__FetchHeaders__cast_(value, vm))
     }
 
-    /// [`Self::cast_`] for a HeadersInit conversion. Web IDL converts a HeadersInit through its
-    /// `Symbol.iterator` method, so this returns `None` unless that method is still
-    /// `Headers.prototype.entries`, and the caller runs [`Self::create_from_js`]. Runs no user code.
+    /// [`Self::cast_`] for a HeadersInit: `None` unless `Symbol.iterator` is still `Headers.prototype.entries`.
     pub fn cast_as_init(value: JSValue) -> Option<NonNull<FetchHeaders>> {
         NonNull::new(WebCore__FetchHeaders__castAsInit(value))
     }

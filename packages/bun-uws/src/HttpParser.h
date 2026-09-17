@@ -1127,6 +1127,54 @@ struct HttpResponseData;
             return HttpParserResult::error(HTTP_ERROR_431_REQUEST_HEADER_FIELDS_TOO_LARGE, HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE);
         }
 
+        /* llhttp's F_CONNECTION_UPGRADE for one Connection field value from getHeaders(): "upgrade"
+         * is a whole token of the list. llhttp skips SP and HTAB before a token but only SP after
+         * it, so a tab after the token hides it. getHeaders() trimmed the value: the whitespace it
+         * dropped still follows the value in the buffer, up to the CR.
+         * https://github.com/nodejs/llhttp/blob/v9.4.1/src/llhttp/http.ts#L794-L820 */
+        static bool hasConnectionUpgradeToken(std::string_view value) {
+            const char *p = value.data(), *end = p + value.length();
+            while (p < end) {
+                while (p < end && isHTTPHeaderValueWhitespace((unsigned char) *p)) {
+                    p++;
+                }
+                if (end - p >= 7 && !strncasecmp(p, "upgrade", 7)) {
+                    const char *after = p + 7;
+                    while (*after == ' ') {
+                        after++;
+                    }
+                    if (*after == ',' || *after == '\r') {
+                        return true;
+                    }
+                }
+                while (p < end && *p != ',') {
+                    p++;
+                }
+                if (p < end) {
+                    p++;
+                }
+            }
+            return false;
+        }
+
+        /* llhttp's `upgrade` flag for a request that is not a CONNECT: F_CONNECTION_UPGRADE, and
+         * F_UPGRADE, an Upgrade field with a non-empty value. An empty field sets no flag, a later
+         * field can. */
+        static bool isUpgrade(HttpRequest *req) {
+            if (!req->bf.mightHave("upgrade") || !req->bf.mightHave("connection")) {
+                return false;
+            }
+            bool hasUpgradeValue = false, hasConnectionUpgrade = false;
+            for (HttpRequest::Header *h = req->headers; (++h)->key.length();) {
+                if (h->key.length() == 7 && !strncasecmp(h->key.data(), "upgrade", 7)) {
+                    hasUpgradeValue = hasUpgradeValue || h->value.length();
+                } else if (h->key.length() == 10 && !strncasecmp(h->key.data(), "connection", 10)) {
+                    hasConnectionUpgrade = hasConnectionUpgrade || hasConnectionUpgradeToken(h->value);
+                }
+            }
+            return hasUpgradeValue && hasConnectionUpgrade;
+        }
+
     /* This is the only caller of getHeaders and is thus the deepest part of the parser. */
     template <bool ConsumeMinimally, bool IsNodeHttp>
     HttpParserResult fenceAndConsumePostPadded(uint64_t maxHeaderSize, bool& isConnectRequest, bool requireHostHeader, bool useStrictMethodValidation, bool useInsecureHTTPParser, bool useLenientTransferEncoding, std::string *nodeHttpRequestTrailers, uint64_t *chunkedExtensionsByteCount, char *data, unsigned int length, void *user, HttpRequest *req, MoveOnlyFunction<void *(void *, HttpRequest *)> &requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &dataHandler) {
@@ -1277,6 +1325,15 @@ struct HttpResponseData;
              * after the request handler below; no body data is ever emitted. */
             bool deferredTransferEncodingError = IsNodeHttp && transferEncoding.has
                 && !transferEncoding.invalid && !transferEncoding.chunked && !contentLengthStringLen;
+
+            /* llhttp__after_headers_complete returns its upgrade verdict before that check: a
+             * CONNECT or an upgrade with no chunked coding and no Content-Length ends at its
+             * head, whether or not the server accepts it. The header is treated as absent.
+             * https://github.com/nodejs/llhttp/blob/v9.4.1/src/native/http.c#L41-L50 */
+            if (deferredTransferEncodingError && (req->getCaseSensitiveMethod() == "CONNECT" || isUpgrade(req))) [[unlikely]] {
+                transferEncoding = {};
+                deferredTransferEncodingError = false;
+            }
 
             /* llhttp LENIENT_TRANSFER_ENCODING (kLenientAll / "insecure", never "relaxed")
              * accepts chunked with another value after it. It does not relax the TE+CL

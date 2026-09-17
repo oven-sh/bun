@@ -5,6 +5,8 @@ import { createServer, request } from "http";
 import { createServer as createHttpsServer } from "https";
 import { AddressInfo, connect, Server } from "net";
 import { connect as tlsConnect } from "tls";
+// The llhttp binding. It has no type declarations, like in node-http-parser.test.ts.
+const { HTTPParser } = require("node:_http_common");
 
 const fixture = "node-http-transfer-encoding-fixture.ts";
 test(`should not duplicate transfer-encoding header in request`, async () => {
@@ -243,6 +245,239 @@ test("comma-only Transfer-Encoding value still fires clientError like node", asy
   socket.destroy();
   expect(err.code).toBe("HPE_INVALID_TRANSFER_ENCODING");
   expect(urls).toEqual(["/a"]);
+});
+
+// llhttp flags a request as an upgrade when it is a CONNECT, or when it has an Upgrade header and
+// the "upgrade" token in Connection. It takes that verdict before it checks Transfer-Encoding, so
+// such a request with no chunked coding and no Content-Length ends at its head. Node raises no
+// HPE_INVALID_TRANSFER_ENCODING for it, whether or not the server accepts the upgrade.
+// Every expectation below is Node v26.3.0's.
+describe("Transfer-Encoding without chunked on a CONNECT or Upgrade request", () => {
+  const connectHead = (te: string) =>
+    `CONNECT example.com:80 HTTP/1.1\r\nHost: example.com:80\r\nTransfer-Encoding: ${te}\r\n\r\n`;
+  const upgradeHead = (te: string, connection: string, upgrade = "Upgrade: x") =>
+    `GET /a HTTP/1.1\r\nHost: x\r\nConnection: ${connection}\r\n${upgrade}\r\nTransfer-Encoding: ${te}\r\n\r\n`;
+
+  // llhttp's own verdict on a head, so that each table below is checked against the parser it
+  // mirrors: the upgrade flag that llhttp passes to kOnHeadersComplete, and the error of execute().
+  function llhttpVerdict(head: string, insecureHTTPParser = false) {
+    const parser = new HTTPParser();
+    parser.initialize(HTTPParser.REQUEST, {}, 0, insecureHTTPParser ? HTTPParser.kLenientAll : HTTPParser.kLenientNone);
+    let upgrade: boolean | undefined;
+    parser[HTTPParser.kOnHeadersComplete] = (...args: unknown[]) => {
+      upgrade = args[7] as boolean;
+      return 0;
+    };
+    const result = parser.execute(Buffer.from(head, "latin1"));
+    parser.close();
+    return { upgrade, error: result instanceof Error ? (result as NodeJS.ErrnoException).code : undefined };
+  }
+
+  test.concurrent.each([
+    { name: "CONNECT, gzip", event: "connect", head: connectHead("gzip") },
+    { name: "CONNECT, identity", event: "connect", head: connectHead("identity") },
+    { name: "CONNECT, two codings", event: "connect", head: connectHead("gzip, deflate") },
+    {
+      name: "CONNECT, gzip, insecureHTTPParser",
+      event: "connect",
+      head: connectHead("gzip"),
+      insecureHTTPParser: true,
+    },
+    { name: "Upgrade, gzip", event: "upgrade", head: upgradeHead("gzip", "Upgrade") },
+    {
+      name: "Upgrade, identity, Connection list",
+      event: "upgrade",
+      head: upgradeHead("identity", "keep-alive, Upgrade"),
+    },
+    { name: "Upgrade, comma-only value", event: "upgrade", head: upgradeHead(",", "upgrade") },
+    {
+      name: "Upgrade, empty field before the value",
+      event: "upgrade",
+      head: upgradeHead("gzip", "Upgrade", "Upgrade:\r\nUpgrade: x"),
+    },
+    {
+      name: "Upgrade, tab before the Connection token",
+      event: "upgrade",
+      head: upgradeHead("gzip", "keep-alive,\tUpgrade"),
+    },
+    {
+      name: "Upgrade, space after the Connection token",
+      event: "upgrade",
+      head: upgradeHead("gzip", "Upgrade "),
+    },
+    {
+      name: "Upgrade, gzip, insecureHTTPParser",
+      event: "upgrade",
+      head: upgradeHead("gzip", "Upgrade"),
+      insecureHTTPParser: true,
+    },
+  ])(
+    "$name: the listener gets the head and a working socket, no clientError",
+    async ({ event, head, insecureHTTPParser }) => {
+      expect(llhttpVerdict(head, insecureHTTPParser)).toEqual({ upgrade: true, error: undefined });
+
+      const events: string[] = [];
+      await using server = createServer({ insecureHTTPParser }, (req, res) => {
+        events.push(`request ${req.url}`);
+        res.end("ok");
+      });
+      server.on("clientError", (err: any, socket) => {
+        events.push(`clientError ${err.code}`);
+        socket.destroy();
+      });
+      const accepted =
+        event === "connect"
+          ? "HTTP/1.1 200 Connection established\r\n\r\n"
+          : "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: x\r\n\r\n";
+      const afterAccepted = "sent after the response";
+      let tunneled = "";
+      server.on(event, (req, socket, head) => {
+        events.push(`${event} head=${head}`);
+        socket.on("data", chunk => {
+          tunneled += chunk;
+          if (tunneled.length >= afterAccepted.length) socket.end();
+        });
+        socket.on("error", () => {});
+        socket.write(accepted);
+      });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const { port } = server.address() as AddressInfo;
+
+      // Every outcome closes the client: the handed-over socket ends once it has all the bytes,
+      // and a 'clientError' destroys it.
+      const { promise, resolve } = Promise.withResolvers<string>();
+      let raw = "";
+      const socket = connect(port, "127.0.0.1", () => {
+        socket.write(head + "sent with the head");
+      });
+      socket.on("data", chunk => {
+        raw += chunk;
+        if (raw === accepted) socket.write(afterAccepted);
+      });
+      socket.on("error", () => {});
+      socket.on("end", () => socket.end());
+      socket.on("close", () => resolve(raw));
+
+      expect({ raw: await promise, tunneled, events }).toEqual({
+        raw: accepted,
+        tunneled: afterAccepted,
+        events: [`${event} head=sent with the head`],
+      });
+    },
+  );
+
+  test.concurrent("a declined upgrade is a request with no body and the connection stays open", async () => {
+    const events: string[] = [];
+    // No 'upgrade' listener: the request goes to 'request'.
+    await using server = createServer((req, res) => {
+      let body = "";
+      req.on("data", d => (body += d));
+      req.on("end", () => {
+        events.push(`request ${req.url} body=${body}`);
+        res.end(`answer ${req.url}`);
+      });
+    });
+    server.on("clientError", (err: any, socket) => {
+      events.push(`clientError ${err.code}`);
+      socket.destroy();
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const { promise, resolve } = Promise.withResolvers<string>();
+    let raw = "";
+    const socket = connect(port, "127.0.0.1", () => {
+      socket.write(upgradeHead("gzip", "Upgrade"));
+    });
+    socket.on("data", chunk => {
+      raw += chunk;
+      // Sent once /a is answered, not pipelined: node drops the rest of the read that holds a
+      // declined upgrade.
+      if (raw.endsWith("answer /a")) {
+        socket.write("GET /b HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+      }
+    });
+    socket.on("error", () => {});
+    socket.on("close", () => resolve(raw));
+
+    expect(await promise).toEndWith("answer /b");
+    expect(events).toEqual(["request /a body=", "request /b body="]);
+  });
+
+  // The boundary. llhttp does not flag these heads as upgrades, so node dispatches 'request' and
+  // then fails the framing. A coding after chunked fails before any dispatch.
+  const dispatched = ["request /a", "clientError HPE_INVALID_TRANSFER_ENCODING"];
+  const notUpgrades = [
+    { name: "an Upgrade header without the Connection token", head: upgradeHead("gzip", "keep-alive") },
+    {
+      name: "the Connection token without an Upgrade header",
+      head: "GET /a HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nTransfer-Encoding: gzip\r\n\r\n",
+    },
+    {
+      name: "a CONNECT that names a coding after chunked",
+      head: connectHead("chunked, gzip"),
+      expected: ["clientError HPE_INVALID_TRANSFER_ENCODING"],
+    },
+    // Bun's dispatcher has its own upgrade test and takes the heads below as upgrades, with or
+    // without a Transfer-Encoding: https://github.com/oven-sh/bun/issues/43297
+    { name: "an Upgrade header with an empty value", head: upgradeHead("gzip", "Upgrade", "Upgrade:"), todo: true },
+    { name: "a tab after the Connection token", head: upgradeHead("gzip", "Upgrade\t"), todo: true },
+    { name: "a tab after the token inside a list", head: upgradeHead("gzip", "Upgrade\t, keep-alive"), todo: true },
+    { name: "the Connection token inside a longer token", head: upgradeHead("gzip", "upgrade-x"), todo: true },
+    { name: "the Connection token after another word", head: upgradeHead("gzip", "foo upgrade"), todo: true },
+  ];
+
+  async function eventsFor(head: string, withListeners: boolean) {
+    const events: string[] = [];
+    await using server = createServer((req, res) => {
+      events.push(`request ${req.url}`);
+      res.end("ok");
+    });
+    for (const event of withListeners ? ["connect", "upgrade"] : []) {
+      server.on(event, (req, socket) => {
+        events.push(event);
+        socket.destroy();
+      });
+    }
+    server.on("clientError", (err: any, socket) => {
+      events.push(`clientError ${err.code}`);
+      socket.destroy();
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+
+    // Every outcome closes the client. If the header is wrongly ignored, the pipelined /b is
+    // served with Connection: close, and a listener or the server destroys a handed-over socket.
+    const { promise: closed, resolve: resolveClosed } = Promise.withResolvers<void>();
+    const socket = connect(port, "127.0.0.1", () => {
+      socket.write(head + "GET /b HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+    });
+    socket.resume();
+    socket.on("error", () => {});
+    socket.on("close", () => resolveClosed());
+    await closed;
+    return events;
+  }
+
+  test.concurrent.each(notUpgrades)("still fires clientError with $name", async ({ head, expected = dispatched }) => {
+    expect(llhttpVerdict(head).error).toBe("HPE_INVALID_TRANSFER_ENCODING");
+    expect(await eventsFor(head, false)).toEqual(expected);
+  });
+
+  test.concurrent.each(notUpgrades.filter(row => !row.todo))(
+    "still fires clientError with $name, with 'connect' and 'upgrade' listeners",
+    async ({ head, expected = dispatched }) => {
+      expect(await eventsFor(head, true)).toEqual(expected);
+    },
+  );
+
+  // Observed: ["upgrade"]. See the issue above.
+  test.todo.each(notUpgrades.filter(row => row.todo))(
+    "still fires clientError with $name, with 'connect' and 'upgrade' listeners",
+    async ({ head, expected = dispatched }) => {
+      expect(await eventsFor(head, true)).toEqual(expected);
+    },
+  );
 });
 
 // Value lengths landing parseTrailerFields' 8-byte field-value scan on the

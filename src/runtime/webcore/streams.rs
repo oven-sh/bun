@@ -65,6 +65,8 @@ pub type FileSinkOptions = crate::webcore::file_sink::Options;
 pub enum Start {
     Empty,
     Err(SysError),
+    /// A JS error the source built itself (a `DOMException`).
+    Exception(JSValue),
     ChunkSize(BlobSizeType),
     ArrayBufferSink {
         chunk_size: BlobSizeType,
@@ -94,6 +96,7 @@ impl Start {
             Start::Empty | Start::Ready => Ok(JSValue::UNDEFINED),
             Start::ChunkSize(chunk) => Ok(JSValue::from(chunk)),
             Start::Err(err) => Err(err.throw(global_this)),
+            Start::Exception(value) => Err(global_this.throw_value(value)),
             Start::OwnedAndDone(list) => {
                 // The allocation is handed to JSC (no-copy +
                 // MarkedArrayBuffer_deallocator). `list` is an owned Vec whose Drop would

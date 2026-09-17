@@ -206,8 +206,57 @@ describe.concurrent("fs.openAsBlob snapshots the file", () => {
       fetch: async req => new Response(await req.text()),
     });
     expect(await (await fetch(server.url, { method: "POST", body: blob })).text()).toBe("hello");
-    writeFileSync(file, "hellp");
+    writeFileSync(file, "swapped!");
     await expect(fetch(server.url, { method: "POST", body: blob })).rejects.toEqual(notReadable);
+  });
+
+  it("rejects a FormData body after the file changes", async () => {
+    using dir = tempDir("open-as-blob", { "a.txt": "hello" });
+    const file = join(String(dir), "a.txt");
+    const blob = await openAsBlob(file);
+    const form = new FormData();
+    form.append("f", blob, "a.txt");
+    expect((await new Response(form).formData()).get("f")).toBeInstanceOf(Blob);
+    writeFileSync(file, "swapped!");
+    expect(() => new Response(form)).toThrow(notReadable);
+  });
+
+  it("rejects a stream created before the file changed", async () => {
+    using dir = tempDir("open-as-blob", { "a.txt": "hello" });
+    const file = join(String(dir), "a.txt");
+    const blob = await openAsBlob(file);
+    const stream = blob.stream();
+    writeFileSync(file, "swapped!");
+    let error;
+    try {
+      await new Response(stream).text();
+    } catch (e) {
+      error = e;
+    }
+    expect(error).toEqual(notReadable);
+  });
+
+  it("keeps the snapshot through structuredClone", async () => {
+    using dir = tempDir("open-as-blob", { "a.txt": "hello" });
+    const file = join(String(dir), "a.txt");
+    const clone = structuredClone(await openAsBlob(file));
+    expect(await clone.text()).toBe("hello");
+    writeFileSync(file, "swapped!");
+    expect(clone.size).toBe(5);
+    await expect(clone.text()).rejects.toEqual(notReadable);
+  });
+
+  it("accepts Buffer and URL paths", async () => {
+    using dir = tempDir("open-as-blob", { "a.txt": "hello" });
+    const file = join(String(dir), "a.txt");
+    const fromBuffer = await openAsBlob(Buffer.from(file));
+    const fromUrl = await openAsBlob(Bun.pathToFileURL(file));
+    Bun.gc(true);
+    expect(await fromBuffer.text()).toBe("hello");
+    expect(await fromUrl.text()).toBe("hello");
+    writeFileSync(file, "swapped!");
+    await expect(fromBuffer.text()).rejects.toEqual(notReadable);
+    await expect(fromUrl.text()).rejects.toEqual(notReadable);
   });
 
   it("throws ERR_INVALID_ARG_VALUE for a path that cannot be opened", () => {

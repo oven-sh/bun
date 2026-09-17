@@ -369,9 +369,13 @@ impl ReadableStream {
         if let Some(file_reader) = self.ptr.file() {
             if !file_reader.done.get() && file_reader.sink.get().is_none() {
                 match file_reader.start_for_sink(global) {
-                    Some(Start::Err(e)) => {
+                    Some(start @ (Start::Err(_) | Start::Exception(_))) => {
                         use bun_sys_jsc::SystemErrorJsc;
-                        let err_js = e.to_system_error().to_error_instance(global);
+                        let err_js = match start {
+                            Start::Err(e) => e.to_system_error().to_error_instance(global),
+                            Start::Exception(value) => value,
+                            _ => unreachable!(),
+                        };
                         err_js.ensure_still_alive();
                         let err =
                             StreamError::JSValue(jsc::strong::Optional::create(err_js, global));

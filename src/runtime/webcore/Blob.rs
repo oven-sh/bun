@@ -112,7 +112,7 @@ pub use bun_jsc::webcore_types::{Blob, BlobContentType, ClosingState, MAX_SIZE, 
 /// 3: Added File name serialization for File objects (when is_jsdom_file is true)
 /// 4: Added the blob's `size` to file-backed stores so a sliced Bun.file()
 ///    keeps its window's end across structuredClone/postMessage
-const SERIALIZATION_VERSION: u8 = 4;
+const SERIALIZATION_VERSION: u8 = 5;
 
 pub use bun_jsc::generated::JSBlob as js;
 
@@ -747,6 +747,16 @@ impl BlobExt for Blob {
                 writer.write_int_le::<u64>(self.size.get())?;
                 self.resolve_size();
                 store.serialize(writer)?;
+
+                // Version 5: the `fs.openAsBlob` snapshot, so a clone fails
+                // reads like the original once the file changes.
+                let snapshot = Store::data_mut(store).as_file().snapshot;
+                writer.write_int_le::<u8>(snapshot.is_some() as u8)?;
+                if let Some(snapshot) = snapshot {
+                    writer.write_int_le::<i64>(snapshot.size)?;
+                    writer.write_int_le::<i64>(snapshot.mtime_sec)?;
+                    writer.write_int_le::<i64>(snapshot.mtime_nsec)?;
+                }
             }
         }
 
@@ -3639,6 +3649,11 @@ impl FormDataContext<'_> {
                             // we need to make this async and use download/downloadSlice
                         }
                         store::Data::File(file) => {
+                            if let Some(err) = open_as_blob_read_error(blob, global_this) {
+                                self.failed = true;
+                                let _ = global_this.throw_value(err);
+                                return;
+                            }
                             // TODO: make this async + lazy
                             // Use a fresh stack
                             // `NodeFS` (it is stateless aside from a path scratch
@@ -3846,6 +3861,24 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
         }
         store::SerializeTag::Empty => Blob::new(Blob::init_empty(global_this)),
     };
+    // Version 5: the `fs.openAsBlob` snapshot (see the serializer).
+    if version >= 5 && matches!(store_tag, store::SerializeTag::File) {
+        let snapshot = if reader.read_int_le::<u8>()? != 0 {
+            Some(store::FileSnapshot {
+                size: reader.read_int_le::<i64>()?,
+                mtime_sec: reader.read_int_le::<i64>()?,
+                mtime_nsec: reader.read_int_le::<i64>()?,
+            })
+        } else {
+            None
+        };
+        // SAFETY: `blob` is the fresh heap pointer from `Blob::new` above.
+        if let Some(store) = unsafe { &*blob }.store.get() {
+            if let store::Data::File(file) = Store::data_mut(store) {
+                file.snapshot = snapshot;
+            }
+        }
+    }
     // `blob` is heap-allocated past this point; on any remaining error
     // (truncated trailer fields) tear down both the heap object and its
     // store. `content_type` is handled by its own Drop above since it
@@ -5855,7 +5888,7 @@ pub(crate) fn open_as_blob_read_error(blob: &Blob, global: &JSGlobalObject) -> O
     Some(not_readable_error(global))
 }
 
-fn not_readable_error(global: &JSGlobalObject) -> JSValue {
+pub(crate) fn not_readable_error(global: &JSGlobalObject) -> JSValue {
     EncodedSlice::latin1(b"The blob could not be read")
         .to_dom_exception_instance(global, bun_jsc::DOMExceptionCode::NotReadableError)
 }

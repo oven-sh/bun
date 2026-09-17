@@ -628,9 +628,7 @@ impl MultiPartUpload {
                 // we are a multipart upload so we need to rollback
                 // will deref after rollback
                 if in_flight > 0 {
-                    // This abort frees what is stored now, also when the process exits before
-                    // the parts in flight report back. The last of them sends the final abort,
-                    // whose callback releases the root ref. This one takes its own.
+                    // The last part in flight sends the final abort, which releases the root ref.
                     self.parts_in_flight.set(in_flight);
                     self.ref_();
                 }

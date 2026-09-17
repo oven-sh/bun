@@ -17,8 +17,7 @@ use crate::shell::{ExitCode, ShellErr};
 pub struct Expansion {
     pub(crate) base: Base,
     pub node: bun_ptr::BackRef<ast::Atom>,
-    /// IO of the command this atom belongs to. A `$(...)` inherits its stdin
-    /// and stderr, so inside a pipeline the substitution reads the pipe.
+    /// IO of the enclosing command: a `$(...)` inherits its stdin and stderr.
     pub(crate) io: IO,
     pub(crate) state: ExpansionState,
     /// Index of the next sub-atom to expand. For `Atom::Simple` this is 0/1;

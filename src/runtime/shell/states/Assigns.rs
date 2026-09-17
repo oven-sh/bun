@@ -20,8 +20,6 @@ pub struct Assigns {
     /// Points into the AST arena, which outlives every state node — `RawSlice`
     /// invariant.
     pub node: bun_ptr::RawSlice<ast::Assign>,
-    /// IO of the enclosing command or statement. A `$(...)` in an
-    /// assignment value inherits its stdin and stderr.
     pub(crate) io: IO,
     pub(crate) state: AssignsState,
     pub ctx: AssignCtx,

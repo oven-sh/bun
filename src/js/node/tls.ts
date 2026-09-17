@@ -5,7 +5,7 @@ const Duplex = require("internal/streams/duplex");
 const EventEmitter = require("node:events");
 const addServerName = $newRustFunction("Listener.rs", "jsAddServerName", 3);
 const { throwNotImplemented } = require("internal/shared");
-const { domainToASCII } = require("internal/url");
+const { idnaToASCII } = require("internal/url");
 const {
   throwOnInvalidTLSArray,
   tlsStringToProtocolVersion,
@@ -454,8 +454,12 @@ function checkServerIdentity(hostname, cert) {
   const ips = [];
 
   hostname = "" + hostname;
-  // CVE-2026-48618, https://github.com/nodejs/node/commit/1efb4ff51a: IDNA maps "。" to ".".
-  const hostnameASCII = domainToASCII(hostname);
+  // CVE-2026-48618: IDNA maps "。" to ".", so a non-ASCII host is matched on its UTS #46 form.
+  // Not url.domainToASCII(), which Node.js calls here: that parses a URL host, so it cuts the name at
+  // "/", "?", "#" and "\", drops tab, CR and LF, and decodes "%xx". An ASCII host stays as typed, as in
+  // the native matcher.
+  const hostnameASCII =
+    RegExpPrototypeExec.$call(/[^\u0000-\u007F]/, hostname) === null ? hostname : idnaToASCII(hostname);
 
   // Remove trailing dots for error messages and matching.
   hostname = unfqdn(hostname);
@@ -477,7 +481,7 @@ function checkServerIdentity(hostname, cert) {
   let valid = false;
   let reason = "Unknown reason";
 
-  // https://github.com/nodejs/node/commit/1d87a24050: domainToASCII("::1") is "", so IP hosts stay as typed.
+  // As in Node.js (https://github.com/nodejs/node/commit/1d87a24050), a host is an IP address only as typed.
   if (net.isIP(hostname)) {
     valid = ArrayPrototypeIncludes.$call(ips, canonicalizeIP(hostname));
     if (!valid) reason = `IP: ${hostname} is not in the cert's list: ` + ArrayPrototypeJoin.$call(ips, ", ");

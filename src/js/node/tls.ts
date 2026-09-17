@@ -1238,9 +1238,7 @@ function Server(options, secureConnectionListener): void {
   this.ALPNProtocols = undefined;
   this._sharedCreds = undefined;
 
-  // Every addContext() entry in call order, like node's `_contexts`:
-  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1571-L1611
-  // A native listener only knows the entries it was given, so each listen() loads these.
+  // Every addContext() entry in call order (node's `_contexts`). listen() loads them into each new native listener.
   const contexts = new Map<string, InstanceType<typeof InternalSecureContext>>();
 
   this.addContext = function (hostname, context) {
@@ -1256,10 +1254,8 @@ function Server(options, secureConnectionListener): void {
       // the native side detects it via SecureContext.fromJS and up_refs.
       addServerName(handle, hostname, context.context);
     }
-    // Recorded only after the live listener took it: listen() replays every entry,
-    // and one that addServerName() rejects would fail every later listen().
-    // Delete first: a re-added name moves to the end, which keeps call order.
-    contexts.$delete(hostname);
+    // Only after the live listener accepted the entry: listen() replays every recorded entry.
+    contexts.$delete(hostname); // a re-added name moves to the end, which keeps call order
     contexts.$set(hostname, context);
   };
 

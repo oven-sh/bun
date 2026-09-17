@@ -194,7 +194,21 @@ pub struct ShellSubprocess {
     pub closed: EnumSet<StdioKind>,
 
     ctrl_c_child: Option<bun_spawn::ctrl_c::Child>,
+
+    /// A child a `Bun.ModuleGraph`'s script started with `Bun.$` is killed with the graph.
+    abort_handle: jsc::AbortHandle,
 }
+
+jsc::impl_abort_handle_owner!(ShellSubprocess, abort_handle, |this, cause| {
+    // A child outlives the VM that spawned it, as one `Bun.spawn` started does.
+    if !matches!(
+        cause,
+        jsc::AbortCause::ContextStopped(jsc::StopReason::VmTeardown)
+    ) {
+        // SAFETY: trait contract — `this` is live.
+        let _ = unsafe { (*this).try_kill(SignalCode::SIGKILL as i32) };
+    }
+});
 
 pub(crate) type SignalCode = bun_core::SignalCode;
 
@@ -788,6 +802,7 @@ impl ShellSubprocess {
                 cmd_parent,
                 closed: EnumSet::empty(),
                 ctrl_c_child,
+                abort_handle: jsc::AbortHandle::for_owner::<ShellSubprocess>(),
             });
         }
         // Ownership of the now-initialised Box is released as a raw pointer
@@ -809,6 +824,13 @@ impl ShellSubprocess {
                 ));
         }
         let _ = scopeguard::ScopeGuard::into_inner(stdio_guard);
+        if let Some(id) = cmd_parent.interp.context.get() {
+            // Freed already (the graph was collected): `interrupted()` ends the script.
+            if let Some(context) = jsc::virtual_machine::VirtualMachine::get().graph_context(id) {
+                // SAFETY: `subprocess` is the live heap allocation; its handle is disarmed on drop.
+                unsafe { jsc::AbortHandle::arm_owner(subprocess, context) };
+            }
+        }
 
         // Wire the FileSink's close-signal back to the enclosing `Writable` so
         // `Writable::on_close` (drops the `Arc<FileSink>`) runs when the sink

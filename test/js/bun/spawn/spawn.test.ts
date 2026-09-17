@@ -1845,24 +1845,22 @@ it.if(parentThp() === "1")("spawned children keep the system THP policy", async 
 // An ignored SIGCHLD survives exec. On Linux the kernel then reaps a child as
 // soon as it exits, so waitpid() fails with ECHILD unless bun resets the
 // disposition before it spawns.
-it.skipIf(isWindows)("spawn and spawnSync report exit codes when the parent ignores SIGCHLD", async () => {
-  const script = `
-    const { spawnSync: cpSpawnSync } = require("node:child_process");
-    const p = Bun.spawn(["sh", "-c", "exit 3"]);
-    console.log(JSON.stringify({
-      spawn: await p.exited,
-      spawnSync: Bun.spawnSync(["sh", "-c", "exit 4"]).exitCode,
-      child_process: cpSpawnSync("sh", ["-c", "exit 5"]).status,
-    }));
-  `;
-  await using proc = spawn({
-    cmd: ["bash", "-c", 'trap "" CHLD; exec "$0" "$@"', bunExe(), "-e", script],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
+// The reset happens once per process, so each API gets its own bun process.
+describe.concurrent("when the parent ignores SIGCHLD", () => {
+  it.skipIf(isWindows).each([
+    ["Bun.spawn", `console.log(await Bun.spawn(["sh", "-c", "exit 3"]).exited)`],
+    ["Bun.spawnSync", `console.log(Bun.spawnSync(["sh", "-c", "exit 3"]).exitCode)`],
+    ["child_process.spawnSync", `console.log(require("node:child_process").spawnSync("sh", ["-c", "exit 3"]).status)`],
+  ])("%s reports the exit code", async (_, script) => {
+    await using proc = spawn({
+      cmd: ["bash", "-c", 'trap "" CHLD; exec "$0" "$@"', bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("3\n");
+    expect(exitCode).toBe(0);
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(JSON.parse(stdout)).toEqual({ spawn: 3, spawnSync: 4, child_process: 5 });
-  expect(exitCode).toBe(0);
 });

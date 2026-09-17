@@ -5,9 +5,7 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 use crate::server::{DebugHTTPSServer, DebugHTTPServer, HTTPSServer, HTTPServer, ServerWebSocket};
 
-/// `unshiftWebSocketData(ws, chunk)`: parses `chunk` on the `ServerWebSocket`
-/// `ws` as if the peer had just sent it. The `ws` shim uses it for frames that
-/// arrived before `handleUpgrade()` handed the connection over.
+/// `unshiftWebSocketData(ws, chunk)`: the `ws` shim's entry to `ServerWebSocket::unshift_data`.
 pub(crate) fn unshift_web_socket_data(
     global: &JSGlobalObject,
     frame: &CallFrame,
@@ -24,9 +22,7 @@ pub(crate) fn unshift_web_socket_data(
         ));
     };
     // SAFETY: `as_` returns a pointer to the live JS-owned `ServerWebSocket`,
-    // rooted by the caller's argument for this synchronous call. Shared: its
-    // state is interior-mutable and the parser's re-entrant callbacks only
-    // take `&self`.
+    // rooted by the caller's argument for this synchronous call.
     let ws = unsafe { &*ws };
     Ok(JSValue::js_boolean(ws.unshift_data(chunk.slice())))
 }

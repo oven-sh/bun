@@ -1086,7 +1086,10 @@ class BunWebSocketMocked extends EventEmitter {
   // Bytes the client sent before the 101 reached it (see completeUpgrade).
   [kUnshiftData](chunk) {
     const ws = this.#ws;
-    if (ws) unshiftWebSocketData(ws, chunk);
+    if (!ws) return;
+    // npm ws takes `head` through socket.unshift(), which accepts a string too.
+    if (!$isTypedArrayView(chunk)) chunk = Buffer.from(chunk);
+    unshiftWebSocketData(ws, chunk);
   }
 
   #drain(ws) {
@@ -1577,11 +1580,7 @@ class WebSocketServer extends EventEmitter {
     const headers = ["HTTP/1.1 101 Switching Protocols", "Upgrade: websocket", "Connection: Upgrade"];
     this.emit("headers", headers, request);
 
-    // Frames a client sent before it had the 101: the head of the 'upgrade'
-    // event, then whatever net.Socket buffered while handleUpgrade() waited.
-    // npm ws unshifts them into the socket stream it parses. Here the native
-    // parser takes over at server.upgrade(), so they are handed to it after
-    // cb() has attached the 'message' listeners.
+    // Frames sent before the 101 (npm ws: socket.unshift(head)). Replayed after cb() attached the listeners.
     const early = head?.length ? [head] : [];
     let chunk;
     while ((chunk = socket.read()) !== null) early.push(chunk);
@@ -1605,8 +1604,7 @@ class WebSocketServer extends EventEmitter {
       }
       cb(ws, request);
       if (early.length) process.nextTick(unshiftEarlyData, ws, early);
-      // A chunk the socket read before the handoff can still be in flight to
-      // net.Socket; it belongs to the WebSocket too.
+      // A chunk from before the handoff that is still in flight to net.Socket.
       socket.on("data", ws[kUnshiftData].bind(ws));
     } else {
       abortHandshake(socket, 500);

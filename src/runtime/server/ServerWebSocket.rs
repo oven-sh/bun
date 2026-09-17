@@ -1406,12 +1406,8 @@ impl ServerWebSocket {
         Ok(JSValue::UNDEFINED)
     }
 
-    /// Runs `data` through this socket's frame parser as if the loop had just
-    /// read it. For bytes the peer sent before the handshake completed: the
-    /// node:http `ws` shim feeds the `head` of the 'upgrade' event and what
-    /// `net.Socket` buffered while a deferred `handleUpgrade()` waited.
-    ///
-    /// Returns false when the socket is not open.
+    /// Parses `data` as if the loop had just read it (bytes the peer sent
+    /// before the handshake completed). Returns false when the socket is not open.
     pub(crate) fn unshift_data(&self, data: &[u8]) -> bool {
         let socket: *mut bun_uws_sys::us_socket_t = self.websocket().raw().cast();
         if socket.is_null() || self.is_closed() {
@@ -1420,21 +1416,16 @@ impl ServerWebSocket {
         if data.is_empty() {
             return true;
         }
-        // `WebSocketProtocol::consume` unmasks in place and touches a few bytes
-        // past both ends of what it is given (`CONSUME_PRE_PADDING` /
-        // `CONSUME_POST_PADDING`), which the loop's receive buffer allows for.
+        // `WebSocketProtocol::consume` unmasks in place and reads past both ends of its input.
         const PADDING: usize = bun_uws_sys::LIBUS_RECV_BUFFER_PADDING;
         let Ok(len) = core::ffi::c_int::try_from(data.len()) else {
             return false;
         };
         let mut buf = vec![0u8; data.len() + 2 * PADDING];
         buf[PADDING..PADDING + data.len()].copy_from_slice(data);
-        // SAFETY: `socket` is the live uWS socket behind this open
-        // `ServerWebSocket` (`is_closed()` is false, and `on_close` sets it
-        // before uWS frees the socket). `buf` outlives the synchronous
-        // dispatch and has `PADDING` writable bytes on each side of `data`.
-        // The returned socket is dropped: the parser may close the socket,
-        // and `on_close` already updated this object's flags in that case.
+        // SAFETY: `socket` is live (`on_close` sets the closed flag before uWS
+        // frees it). `buf` outlives the synchronous dispatch and has `PADDING`
+        // writable bytes on each side of `data`.
         unsafe {
             let _ = crate::socket::uws_dispatch::us_dispatch_data(
                 socket,

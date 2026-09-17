@@ -129,10 +129,8 @@ macro_rules! us_dispatch_shims {
             = $lookup:ident.$field:ident($($call:expr),* $(,)?) or $default:expr;
     )*) => {$(
         /// # Safety
-        /// The caller (`loop.c`, or Rust that replays bytes into a socket the
-        /// way `ServerWebSocket::unshift_data` does) must pass a live, non-null
-        /// socket pointer (and any data/len buffer must be valid for the
-        /// duration of the call).
+        /// The caller (`loop.c`, or a Rust replay such as `unshift_data`) must
+        /// pass a live, non-null socket and a data/len buffer valid for the call.
         #[unsafe(no_mangle)]
         #[allow(clippy::unused_unit)]
         pub unsafe extern "C" fn $name($recv: *mut $Recv $(, $a: $t)*) -> $ret {

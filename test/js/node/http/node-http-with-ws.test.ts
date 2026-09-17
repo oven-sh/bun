@@ -179,8 +179,11 @@ describe.concurrent("frames the client sends before the 101", () => {
   const text = (payload: string) => maskedFrame(0x1, payload);
   const ping = (payload: string) => maskedFrame(0x9, payload);
 
-  type Mode = "in-event" | "deferred" | "verifyClient" | "later-read";
-  const modes: Mode[] = ["in-event", "deferred", "verifyClient", "later-read"];
+  // 'pushed-after-handoff': the server pushes the early bytes into the socket
+  // right after handleUpgrade() returns, like the task that delivers a chunk
+  // net.Socket read just before the handoff.
+  type Mode = "in-event" | "deferred" | "verifyClient" | "later-read" | "pushed-after-handoff";
+  const modes: Mode[] = ["in-event", "deferred", "verifyClient", "later-read", "pushed-after-handoff"];
 
   // Runs one connection. `early` goes out before the 101, `afterUpgrade` right
   // after it. Resolves with what the server's 'message' listener saw and the
@@ -216,7 +219,10 @@ describe.concurrent("frames the client sends before the 101", () => {
         const upgrade = () => wss.handleUpgrade(req, socket, head, onConnection);
         if (mode === "in-event") upgrade();
         else if (mode === "deferred") setImmediate(upgrade);
-        else {
+        else if (mode === "pushed-after-handoff") {
+          upgrade();
+          socket.push(early);
+        } else {
           socket.once("readable", () => setImmediate(upgrade));
           gotRequest.resolve();
         }
@@ -235,6 +241,8 @@ describe.concurrent("frames the client sends before the 101", () => {
       client.write(upgradeRequest);
       await gotRequest.promise;
       client.write(early);
+    } else if (mode === "pushed-after-handoff") {
+      client.write(upgradeRequest);
     } else {
       client.write(Buffer.concat([Buffer.from(upgradeRequest), early]));
     }

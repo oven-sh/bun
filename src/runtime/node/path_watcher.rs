@@ -1018,14 +1018,9 @@ impl Linux {
                 };
 
                 let is_dir_child = ev.mask & IN::ISDIR != 0;
-                let is_structural = ev.mask
-                    & (IN::CREATE
-                        | IN::DELETE
-                        | IN::DELETE_SELF
-                        | IN::MOVE_SELF
-                        | IN::MOVED_FROM
-                        | IN::MOVED_TO)
-                    != 0;
+                // Create, delete, move, and IN_UNMOUNT, which the kernel sends
+                // whether subscribed or not.
+                let is_structural = ev.mask & !(IN::ATTRIB | IN::MODIFY | IN::ISDIR) != 0;
 
                 // Dispatch to every owner of this wd. The recursive branch below calls
                 // `addOne`/`walkAndAdd`, which insert into `wd_map` via `getOrPut` and

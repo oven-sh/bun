@@ -4761,8 +4761,6 @@ impl VirtualMachine {
 
         let source_utf8 = source.to_utf8();
 
-        // A plugin `onResolve` answer in the `file` namespace replaces the
-        // specifier and is resolved below like one the source wrote.
         let mut plugin_file_path: Option<bun_core::String> = None;
         if jsc_vm.plugin_runner.is_some() {
             use bun_bundler::transpiler::PluginRunner;
@@ -7085,14 +7083,11 @@ fn wrap_unhandled_rejection_error_for_uncaught_exception(
         .to_js())
 }
 
-/// What a `Bun.plugin()` `onResolve` callback answered for a specifier.
+/// A `Bun.plugin()` `onResolve` answer.
 pub(crate) enum PluginResolved {
-    /// A path in the `file` namespace. It is a filesystem path that the
-    /// resolver still has to resolve relative to the importer (it may be
-    /// relative, have no extension, or name a directory).
+    /// A `file` namespace path. The resolver still resolves it relative to the importer.
     File(bun_core::String),
-    /// A `namespace:path` key for a custom namespace. The module loader
-    /// dispatches on it as-is.
+    /// A `namespace:path` key. The module loader dispatches on it as-is.
     Namespaced(bun_core::String),
 }
 

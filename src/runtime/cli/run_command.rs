@@ -919,12 +919,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         mini.top_level_dir = Box::<[u8]>::from(top_level_dir);
 
         // `initAndRunFromFile`: read source then hand off to the interpreter.
-        let mut path_buf = bun_paths::path_buffer_pool::get();
-        path_buf[..entry_path.len()].copy_from_slice(entry_path);
-        path_buf[entry_path.len()] = 0;
-        // SAFETY: NUL-terminated above; `path_buf` outlives the call.
-        let path_z = ZStr::from_buf(&path_buf[..], entry_path.len());
-        let src = sys::File::read_from(Fd::cwd(), path_z)?;
+        let src = sys::File::read_from(Fd::cwd(), entry_path)?;
 
         crate::shell::Interpreter::init_and_run_from_file(ctx, mini, entry_path, &src)
     }
@@ -2764,11 +2759,13 @@ impl RunCommand {
             };
             let cwd_len = cwd.as_bytes().len();
             cwd_buf[cwd_len] = paths::SEP;
-            let joined = paths::resolve_path::join_abs_string_buf::<paths::platform::Auto>(
-                &cwd_buf[..cwd_len + 1],
-                &mut script_name_buf.0,
-                &[target],
-            );
+            let Some(joined) = paths::resolve_path::join_abs_string_buf_z_checked::<
+                paths::platform::Auto,
+            >(
+                &cwd_buf[..cwd_len + 1], &mut script_name_buf.0, &[target]
+            ) else {
+                return false;
+            };
             if joined.is_empty() {
                 return false;
             }
@@ -2978,15 +2975,13 @@ impl RunCommand {
             // Note: write
             // `cwd_buf[cwd_len] = b'/'` (always `/`, NOT the
             // platform separator) and then run the result through
-            // `join_abs_string_buf::<Loose>` to collapse `.`/`..`.
+            // `join_abs_string::<Loose>` to collapse `.`/`..`.
             let mut cwd_buf = bun_paths::path_buffer_pool::get();
             let cwd = bun_core::getcwd_or_exe_dir(&mut cwd_buf);
             let cwd_len = cwd.as_bytes().len();
             cwd_buf[cwd_len] = b'/';
-            let mut out_buf = bun_paths::path_buffer_pool::get();
-            let joined = paths::resolve_path::join_abs_string_buf::<paths::platform::Loose>(
+            let joined = paths::resolve_path::join_abs_string::<paths::platform::Loose>(
                 &cwd_buf[..cwd_len + 1],
-                &mut out_buf.0,
                 &[&filename],
             );
             joined.to_vec().into_boxed_slice()
@@ -3444,11 +3439,14 @@ impl RunCommand {
                 Ok(n) => &cwd_buf[..n],
                 Err(_) => break 'blk path,
             };
-            paths::resolve_path::join_abs_string_buf::<paths::platform::Auto>(
+            // A file deep below a long cwd opens by its relative path while
+            // its absolute path does not fit; keep the relative one then.
+            paths::resolve_path::join_abs_string_buf_checked::<paths::platform::Auto>(
                 cwd,
                 &mut base_buf.0,
                 &[path],
             )
+            .unwrap_or(path)
         };
         let dir = paths::resolve_path::dirname::<paths::platform::Auto>(abs_md_path);
         // When dirname returns empty (bare filename + getcwd failed), fall

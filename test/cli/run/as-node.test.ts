@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "path";
-import { bunEnv, bunExe, fakeNodeRun, tempDir } from "../../harness";
+import { bunEnv, bunExe, fakeNodeRun, isWindows, tempDir } from "../../harness";
 
 describe("fake node cli", () => {
   test("the node cli actually works", () => {
@@ -30,6 +30,23 @@ describe("fake node cli", () => {
       "node_modules/run/index.js": "console.log('fail')",
     });
     expect(fakeNodeRun(temp, "run").stdout).toBe("pass");
+  });
+  // A PathBuffer holds 98302 bytes on Windows; a command line cannot carry a path that long.
+  test.skipIf(isWindows)("a relative script path longer than PATH_MAX is a module-not-found error", () => {
+    // 4220 bytes of valid components. Joining it with the cwd into a
+    // fixed-size path buffer used to abort the process.
+    const long = Array(21).fill(Buffer.alloc(200, "a").toString()).join("/") + ".js";
+    using temp = tempDir("fake-node-long", {});
+    const { exitCode, stdout, stderr } = Bun.spawnSync({
+      cmd: [bunExe(), "--bun", "node", long],
+      cwd: String(temp),
+      env: { ...bunEnv, NODE_ENV: undefined },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(stdout.toString()).toBe("");
+    expect(stderr.toString()).toContain(`error: Module not found '${join(String(temp), long)}'`);
+    expect(exitCode).toBe(1);
   });
   describe("entrypoint file extension picking", () => {
     // Bun supports JSX and TS, and node doesnt, so our behavior here differs a bit

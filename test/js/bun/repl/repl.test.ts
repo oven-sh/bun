@@ -449,6 +449,18 @@ describe.concurrent("Bun REPL", () => {
       expect(exitCode).toBe(0);
     });
 
+    // A PathBuffer holds 98302 bytes on Windows, so this name fits one there.
+    test.skipIf(isWindows)(".load with a filename longer than PATH_MAX shows ENAMETOOLONG", async () => {
+      // 4220 bytes of valid components. The name used to go through a helper
+      // that panics in a debug build, and stands for "" in a release build,
+      // when it does not fit a path buffer.
+      const long = "./" + Array(21).fill(Buffer.alloc(200, "a").toString()).join("/") + ".js";
+      const { outputs, stderr, exitCode } = await runRepl([`.load ${long}`, "1 + 1", ".exit"]);
+      expect(outputs).toEqual([expect.stringMatching(/^ENAMETOOLONG: /), "2"]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
     test(".load and .save without a filename show their usage", async () => {
       const { outputs, stderr, exitCode } = await runRepl([".load", ".save", ".exit"]);
       expect(outputs).toEqual(["Usage: .load <filename>", "Usage: .save <filename>"]);
@@ -1862,6 +1874,17 @@ describe.skipIf(isWindows).concurrent("REPL history file permissions", () => {
     expect(await Bun.file(historyPath).text()).toBe(`1 + 1\n${secret}\n`);
     expect(statSync(historyPath).mode & 0o777).toBe(0o600);
   });
+});
+
+test("skips the history file when $HOME is longer than PATH_MAX", async () => {
+  // 4220 bytes, each component short enough to be a valid name. The directory
+  // does not exist; the REPL used to abort while joining `$HOME/.bun_repl_history`
+  // into a fixed-size path buffer.
+  const home = "/" + Array(21).fill(Buffer.alloc(200, "a").toString()).join("/");
+  const { outputs, stderr, exitCode } = await runRepl(["1 + 1", ".exit"], { home });
+  expect(outputs).toEqual(["2"]);
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
 });
 
 // `bun --interactive` boots the full node:repl + readline + acorn stack; on a

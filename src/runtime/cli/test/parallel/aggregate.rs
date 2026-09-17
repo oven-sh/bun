@@ -57,7 +57,11 @@ pub(crate) fn write_coverage_report(coord: &mut Coordinator, opts: &mut CodeCove
     }
     reports.sort_unstable_by(|a, b| a.source_url.cmp(&b.source_url));
     if let Err(err) = print_coverage_reports(opts, &reports) {
-        Output::err(err, "Failed to write lcov.info", ());
+        Output::err(
+            err,
+            "Failed to write lcov.info to {}",
+            (bstr::BStr::new(&opts.reports_directory),),
+        );
         coord.aborted.get_or_insert(1);
     }
 }

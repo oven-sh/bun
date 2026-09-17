@@ -1405,10 +1405,14 @@ pub struct CronJob {
 }
 
 bun_event_loop::impl_timer_owner!(CronJob; from_timer_ptr => event_loop_timer);
-bun_jsc::impl_abort_handle_owner!(CronJob, abort_handle, |this, _cause| {
+bun_jsc::impl_abort_handle_owner!(CronJob, abort_handle, |this, cause| {
     // SAFETY: trait contract — `this` is live (armed ⇒ not yet stopped).
     let job = unsafe { &*this };
-    CronJob::stop_with_its_context(job.self_ref.get().this_ptr(), job.global.bun_vm())
+    let vm_is_going = matches!(
+        cause,
+        bun_jsc::AbortCause::ContextStopped(bun_jsc::StopReason::VmTeardown)
+    );
+    CronJob::stop_with_its_context(job.self_ref.get().this_ptr(), job.global.bun_vm(), vm_is_going)
 });
 
 pub mod js {
@@ -1522,14 +1526,21 @@ impl CronJob {
     /// may still settle (the host, or another graph, may hold it): its reactions' cell keeps the
     /// job until then, or until the promise is collected. Nothing else of the job is kept. With
     /// the tick's callback on the stack (it disposed its own graph) `on_timer_fire` finishes the
-    /// stop when the callback returns. May free `this`.
-    fn stop_with_its_context(this: ThisPtr<Self>, vm: &VirtualMachine) {
+    /// stop when the callback returns. `vm_is_going`: the promise will not settle on this VM, so
+    /// the claim is taken back now (the job leaves the list here, where
+    /// `clear_all_for_vm::<Teardown>` would have found it). May free `this`.
+    fn stop_with_its_context(this: ThisPtr<Self>, vm: &VirtualMachine, vm_is_going: bool) {
         if this.in_fire.get() {
             return Self::self_stop(this, vm);
         }
+        // `remove_from_list` and `reclaim_tick_claim` may each drop the last ref.
+        let _guard = RefPtr::from_this(this);
         this.stop_internal(vm);
         this.let_go_of_wrapper();
         Self::remove_from_list(this);
+        if vm_is_going {
+            Self::reclaim_tick_claim(this);
+        }
     }
 
     /// May free `this`.

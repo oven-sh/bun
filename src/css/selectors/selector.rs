@@ -919,8 +919,7 @@ pub(crate) mod serialize {
                 nth_data.write_start(dest, true)?;
                 nth_data.write_affine(dest)?;
                 dest.write_str(b" of ")?;
-                // `get_prefix` and `downlevel_selectors` do not look inside the of-list, so a
-                // vendor prefix pass must not rewrite `:is()` there.
+                // `get_prefix` does not see the of-list, so prefix passes do not apply to it.
                 let vendor_prefix =
                     core::mem::replace(&mut dest.vendor_prefix, VendorPrefix::empty());
                 // Not a relative selector list: a leading `:scope` is explicit and stays.

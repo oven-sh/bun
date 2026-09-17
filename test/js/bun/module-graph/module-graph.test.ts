@@ -7,6 +7,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { renameSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { createRequire } from "node:module";
+import vm from "node:vm";
 import { join } from "path";
 
 type ModuleGraphOptions = Bun.ModuleGraphOptions;
@@ -2097,6 +2098,36 @@ describe("Bun.ModuleGraph — a CommonJS file compiled for a graph and for the h
       expect(exitCode).toBe(0);
     });
   }
+  test("graphs whose globals have the same names share the file's compiled code", async () => {
+    const { stdout, exitCode } = await runBun(
+      [
+        "-e",
+        `
+        const { heapStats } = require("bun:jsc");
+        const compiled = () => {
+          Bun.gc(true);
+          const counts = heapStats().objectTypeCounts;
+          return (counts.UnlinkedProgramCodeBlock ?? 0) + (counts.UnlinkedFunctionCodeBlock ?? 0);
+        };
+        const instances = [];
+        const load = async i => {
+          const forms = (await new Bun.ModuleGraph({ globals: { shared: i, sharedFunction: () => i } }).import(${JSON.stringify(join(dir, "forms.cjs"))})).default;
+          instances.push(forms, forms.read(10), forms.nested(10), forms.strict(10));
+        };
+        await load(0);
+        const afterOne = compiled();
+        for (let i = 1; i <= 20; i++) await load(i);
+        console.log(JSON.stringify({ more: compiled() - afterOne, instances: instances.length / 4 }));
+        `,
+      ],
+      { cwd: dir },
+    );
+    // Not shared, every instance would add the file's program and the three functions it ran.
+    const { more, instances } = JSON.parse(stdout);
+    expect(instances).toBe(21);
+    expect(more).toBeLessThan(20);
+    expect(exitCode).toBe(0);
+  });
 });
 
 describe("Bun.ModuleGraph — concurrency", () => {
@@ -2201,6 +2232,35 @@ describe("Bun.ModuleGraph — nested graphs, stack traces, misc host integration
     expect((await ModuleGraph().import(join(dir, "structured.mjs"))).clone()).toEqual([true, 2, true, true]);
     const i = await ModuleGraph().import(join(dir, "intl.mjs"));
     expect([i.fmt, i.url, i.enc, i.b64, i.perf]).toEqual(["1,234.5", "http://h/x", "ok", "aGk=", "number"]);
+  });
+  test("an Agent and a perf_hooks observer made in a graph do not keep the AsyncLocalStorage store the graph was entered under", async () => {
+    expect(
+      await runBun([
+        "-e",
+        `
+        const { AsyncLocalStorage } = require("node:async_hooks");
+        const http = require("node:http");
+        const { PerformanceObserver } = require("node:perf_hooks");
+        const als = new AsyncLocalStorage();
+        const graph = new Bun.ModuleGraph();
+        const kept = [], stores = [];
+        for (let i = 0; i < 20; i++) {
+          const store = { i };
+          stores.push(new WeakRef(store));
+          als.run(store, () => graph.run(() => {
+            kept.push(new http.Agent({ keepAlive: true }));
+            const observer = new PerformanceObserver(() => {});
+            observer.observe({ entryTypes: ["http"] });
+            kept.push(observer);
+          }));
+        }
+        const alive = () => stores.filter(ref => ref.deref() !== undefined).length;
+        for (let i = 0; i < 50 && alive() > 0; i++) { Bun.gc(true); await new Promise(resolve => setImmediate(resolve)); }
+        console.log(JSON.stringify({ kept: kept.length, stores: alive() }));
+        process.exit(0);
+      `,
+      ]),
+    ).toMatchObject({ stdout: `{"kept":40,"stores":0}`, exitCode: 0 });
   });
   test("constructing many graphs without importing anything is cheap and they are collectable", async () => {
     const ok = await collected(register => {
@@ -3093,6 +3153,28 @@ describe("Bun.ModuleGraph — generators, iterators, WeakRef/FinalizationRegistr
     expect(tokens).toEqual(["host's token-D"]);
     void [ofTheHost, ofTheGraph];
   });
+  test("a FinalizationRegistry made in a node:vm context belongs to the graph whose script made it", async () => {
+    const g = ModuleGraph({ env: { T: "V" } });
+    const tokens: string[] = [];
+    const make = (who: string) =>
+      vm.runInNewContext(`const fr = new FinalizationRegistry(report); (() => { fr.register({}, who) })(); fr`, {
+        report: (t: string) => tokens.push(t),
+        who,
+      });
+    const ofTheHost = make("host's");
+    const ofTheGraph = g.run(() => make("graph's"));
+    g.dispose();
+    for (let i = 0; i < 50 && !tokens.length; i++) {
+      Bun.gc(true);
+      await new Promise<void>(r => setTimeout(r, 0));
+    }
+    for (let i = 0; i < 5; i++) {
+      Bun.gc(true);
+      await new Promise<void>(r => setTimeout(r, 0));
+    }
+    expect(tokens).toEqual(["host's"]);
+    void [ofTheHost, ofTheGraph];
+  });
   test("Atomics on a SharedArrayBuffer shared between host and graph", async () => {
     const m = await ModuleGraph().import(join(dir, "g.mjs"));
     const sab = new SharedArrayBuffer(4);
@@ -3916,32 +3998,6 @@ describe("Bun.ModuleGraph — what a program that makes no graph sees of node:ht
             observer.observe({ entryTypes: ["http"] });
             kept.push(observer);
           });
-        }
-        const alive = () => stores.filter(ref => ref.deref() !== undefined).length;
-        for (let i = 0; i < 50 && alive() > 0; i++) { Bun.gc(true); await new Promise(resolve => setImmediate(resolve)); }
-        console.log(JSON.stringify({ kept: kept.length, stores: alive() }));
-        process.exit(0);
-      `),
-    ).toEqual({ stdout: `{"kept":40,"stores":0}`, exitCode: 0 });
-  });
-  test("an Agent and a perf_hooks observer made in a graph do not keep the AsyncLocalStorage store the graph was entered under", async () => {
-    expect(
-      await run(`
-        const { AsyncLocalStorage } = require("node:async_hooks");
-        const http = require("node:http");
-        const { PerformanceObserver } = require("node:perf_hooks");
-        const als = new AsyncLocalStorage();
-        const graph = new Bun.ModuleGraph();
-        const kept = [], stores = [];
-        for (let i = 0; i < 20; i++) {
-          const store = { i };
-          stores.push(new WeakRef(store));
-          als.run(store, () => graph.run(() => {
-            kept.push(new http.Agent({ keepAlive: true }));
-            const observer = new PerformanceObserver(() => {});
-            observer.observe({ entryTypes: ["http"] });
-            kept.push(observer);
-          }));
         }
         const alive = () => stores.filter(ref => ref.deref() !== undefined).length;
         for (let i = 0; i < 50 && alive() > 0; i++) { Bun.gc(true); await new Promise(resolve => setImmediate(resolve)); }

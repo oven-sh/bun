@@ -109,9 +109,9 @@ function clearClientContext(req) {
 }
 
 /** Calls `listener` on `socket` in the context of the request the socket is serving (none: the host's). */
-function runInClientContext(socket, listener, ...args) {
+function runInClientContext(socket, listener, arg?) {
   const req = socket._httpMessage;
-  return runInContext(req?.[kClientAsyncContext], req?.[kClientGraph], listener, socket, ...args);
+  return runInContext(req?.[kClientAsyncContext], req?.[kClientGraph], listener, socket, arg);
 }
 
 function closeRequest(req) {

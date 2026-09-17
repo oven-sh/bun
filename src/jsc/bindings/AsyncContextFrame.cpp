@@ -121,21 +121,6 @@ extern "C" JSC::EncodedJSValue AsyncContextFrame__callbackOf(JSC::EncodedJSValue
     return stored;
 }
 
-#define ASYNCCONTEXTFRAME_CALL_IMPL(...)                                                      \
-    if (!functionObject.isCell())                                                             \
-        return jsUndefined();                                                                 \
-    auto& vm = global->vm();                                                                  \
-    if (WebCore::clientData(vm)->isStoppingOrStopped(vm)) [[unlikely]]                        \
-        return jsUndefined();                                                                 \
-    std::optional<AsyncContextSwapScope> asyncContextScope;                                   \
-    if (auto* wrapper = dynamicDowncast<AsyncContextFrame>(functionObject)) {                 \
-        if (Bun::shouldDropCallbackOfStoppedModuleGraph(wrapper->context.get())) [[unlikely]] \
-            return jsUndefined();                                                             \
-        functionObject = uncheckedDowncast<JSC::JSObject>(wrapper->callback.get());           \
-        asyncContextScope.emplace(vm, global, wrapper->context.get());                        \
-    }                                                                                         \
-    return JSC::profiledCall(__VA_ARGS__);
-
 JSValue AsyncContextFrame::call(JSGlobalObject* global, JSValue functionObject, JSValue thisValue, const ArgList& args)
 {
 #if ASSERT_ENABLED
@@ -148,10 +133,21 @@ JSValue AsyncContextFrame::call(JSGlobalObject* global, JSValue functionObject, 
         return JSC::profiledCall(global, ProfilingReason::API, functionObject, JSC::getCallData(functionObject), thisValue, args);
     }
 
-    ASYNCCONTEXTFRAME_CALL_IMPL(global, ProfilingReason::API, functionObject, JSC::getCallData(functionObject), thisValue, args);
+    if (!functionObject.isCell())
+        return jsUndefined();
+    auto& vm = global->vm();
+    if (WebCore::clientData(vm)->isStoppingOrStopped(vm)) [[unlikely]]
+        return jsUndefined();
+    std::optional<AsyncContextSwapScope> asyncContextScope;
+    if (auto* wrapper = dynamicDowncast<AsyncContextFrame>(functionObject)) {
+        if (Bun::shouldDropCallbackOfStoppedModuleGraph(wrapper->context.get())) [[unlikely]]
+            return jsUndefined();
+        functionObject = uncheckedDowncast<JSC::JSObject>(wrapper->callback.get());
+        asyncContextScope.emplace(vm, global, wrapper->context.get());
+    }
+    return JSC::profiledCall(global, ProfilingReason::API, functionObject, JSC::getCallData(functionObject), thisValue, args);
 }
 JSValue AsyncContextFrame::profiledCall(JSGlobalObject* global, JSValue functionObject, JSValue thisValue, const ArgList& args)
 {
     return AsyncContextFrame::call(global, functionObject, thisValue, args);
 }
-#undef ASYNCCONTEXTFRAME_CALL_IMPL

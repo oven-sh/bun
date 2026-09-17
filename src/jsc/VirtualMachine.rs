@@ -371,7 +371,8 @@ pub struct VirtualMachine {
     /// left: whose script the native code that is running continues. `None` when nothing is
     /// entered, which is how script mostly runs. The dead context's, for one entered as gone (its
     /// graph has been collected; its context may not have been stopped yet: that is queued from
-    /// the finalizer). Not the current context: that is what the async context says.
+    /// the finalizer). Not the current context: that is the `Bun.ModuleGraph` that is current next
+    /// to the async context.
     pub(crate) entered_context: Cell<Option<crate::ContextId>>,
     pub test_isolation_enabled: bool,
     /// Counts `bun test --isolate` file swaps. The realm's context keeps its identifier across
@@ -416,8 +417,8 @@ unsafe extern "C" {
         promise: JSValue,
     ) -> c_int;
     safe fn Bun__emitHandledPromiseEvent(global: &JSGlobalObject, promise: JSValue) -> bool;
-    /// ModuleGraph.cpp: the context of the innermost `Bun.ModuleGraph` the
-    /// current async context is inside of, or null.
+    /// ModuleGraph.cpp: the context of the `Bun.ModuleGraph` whose context is current, else the
+    /// realm's.
     // Round-tripped opaquely through C++ (from `Bun__ScriptExecutionContext__create`).
     #[allow(improper_ctypes)]
     safe fn Bun__currentGraphContext(
@@ -426,7 +427,7 @@ unsafe extern "C" {
     /// The identifier of the global's `WebCore::ScriptExecutionContext`.
     safe fn Zig__GlobalObject__contextIdentifier(global: &JSGlobalObject) -> u32;
     /// ModuleGraph.cpp: make the graph of this `WebCore::ScriptExecutionContext` current;
-    /// returns the async context to restore.
+    /// returns the graph (or undefined) to go back to.
     /// (Empty: there was nothing to do.)
     fn Bun__ModuleGraph__enterContext(
         dom_context: *mut c_void,
@@ -1112,7 +1113,8 @@ impl VirtualMachine {
         &self.root_context
     }
 
-    /// What the running script's async context, or the [`ContextScope`] native code entered, says.
+    /// The context of the `Bun.ModuleGraph` that is current (it travels next to the async context),
+    /// or what the [`ContextScope`] native code entered says.
     /// With no script on the stack and no context entered it is nobody's in particular, so the
     /// realm's. The VM's own: everything else is handed a context (`context_of_caller`,
     /// [`ContextScope::context`]).

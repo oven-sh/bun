@@ -364,8 +364,9 @@ export function initializeNextTickQueue(process: typeof globalThis.process, next
           // The tick runs in the async context and the Bun.ModuleGraph context it was queued in.
           var restoreFrame = $getInternalField($asyncContext, 0);
           var restoreGraph = $getInternalField($asyncContext, 1);
+          var graph = tock.graph;
           $putInternalField($asyncContext, 0, tock.frame);
-          $putInternalField($asyncContext, 1, tock.graph);
+          if (graph !== restoreGraph) $putInternalField($asyncContext, 1, graph);
           // No catch and no finally: what a tick throws leaves this function as it was thrown, with
           // the tick's context still current. JSNextTickQueue::drain reports it there (so an
           // uncaughtException handler reads the tick's AsyncLocalStorage stores, as in node), puts the
@@ -392,7 +393,7 @@ export function initializeNextTickQueue(process: typeof globalThis.process, next
             }
           }
           $putInternalField($asyncContext, 0, restoreFrame);
-          $putInternalField($asyncContext, 1, restoreGraph);
+          if (graph !== restoreGraph) $putInternalField($asyncContext, 1, restoreGraph);
         }
 
         drainMicrotasks();

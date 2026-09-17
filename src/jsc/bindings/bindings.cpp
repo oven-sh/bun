@@ -178,7 +178,6 @@
 #include "AsyncContextFrame.h"
 #include "ModuleGraph.h"
 #include "JavaScriptCore/AsyncContextSwapScope.h"
-#include "JavaScriptCore/InternalFieldTuple.h"
 #include "JavaScriptCore/JSAsyncFunctionGenerator.h"
 #include "JavaScriptCore/JSGenerator.h"
 #include "JavaScriptCore/JSPromiseReaction.h"
@@ -3308,7 +3307,6 @@ extern "C" JSC::EncodedJSValue Bun__JSValue__call(JSC::JSGlobalObject* globalObj
     }
 
     auto result = JSC::profiledCall(globalObject, ProfilingReason::API, jsObject, callData, jsThisObject, argList);
-    asyncContextScope.reset();
 
     RETURN_IF_EXCEPTION(scope, {});
     return JSC::JSValue::encode(result);

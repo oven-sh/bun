@@ -186,8 +186,8 @@ impl PipeReader {
     }
 
     // pub const toJS = toReadableStream;
-    pub(crate) fn to_js(&mut self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
-        self.to_readable_stream(global_object)
+    pub(crate) fn to_js(&mut self, cx: &bun_jsc::JsThread<'_>) -> JsResult<JSValue> {
+        self.to_readable_stream(cx)
     }
 
     fn on_reader_done(&mut self) {
@@ -247,7 +247,7 @@ impl PipeReader {
         }
     }
 
-    fn to_readable_stream(&mut self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+    fn to_readable_stream(&mut self, cx: &bun_jsc::JsThread<'_>) -> JsResult<JSValue> {
         // detach() at scope exit = clear `process` backref + deref. The deref
         // may drop the last ref, so it must run after the result is computed; the backref
         // clear must also wait (from_pipe hands `&mut self.reader` to JS, which may
@@ -264,7 +264,7 @@ impl PipeReader {
             State::Pending => {
                 // `_parent` is unused in `from_pipe`; pass the raw ptr instead
                 // of `self` so borrowck allows `&mut self.reader` alongside it.
-                let stream = ReadableStream::from_pipe(global_object, this_ptr, &mut self.reader);
+                let stream = ReadableStream::from_pipe(cx, this_ptr, &mut self.reader);
                 self.state = State::Done(Vec::new());
                 stream
             }
@@ -276,7 +276,7 @@ impl PipeReader {
                 else {
                     unreachable!()
                 };
-                ReadableStream::from_owned_slice(global_object, bytes, 0)
+                ReadableStream::from_owned_slice(cx, bytes, 0)
             }
             State::Err(..) => {
                 let State::Err(bytes, err) =
@@ -284,7 +284,7 @@ impl PipeReader {
                 else {
                     unreachable!()
                 };
-                ReadableStream::from_bytes_then_error(global_object, bytes, err)
+                ReadableStream::from_bytes_then_error(cx, bytes, err)
             }
         }
     }

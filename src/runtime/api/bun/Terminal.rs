@@ -1680,6 +1680,7 @@ impl Terminal {
             if let Some(callback) = js::gc::get(js::GcValue::Drain, this_jsvalue) {
                 let global_this = self.global();
                 global_this.bun_vm().event_loop_mut().run_callback(
+                    bun_event_loop::ContextId::NONE,
                     callback,
                     global_this,
                     this_jsvalue,
@@ -1816,6 +1817,7 @@ impl Terminal {
         };
 
         global_this.bun_vm().event_loop_mut().run_callback(
+            bun_event_loop::ContextId::NONE,
             callback,
             global_this,
             this_jsvalue,
@@ -1876,6 +1878,7 @@ impl Terminal {
         // Each chunk's `data` callback is its own top-level call: reported and
         // reading continues, as a stream 'data' listener that throws does.
         global_this.bun_vm().event_loop_mut().run_callback(
+            bun_event_loop::ContextId::NONE,
             callback,
             global_this,
             this_jsvalue,

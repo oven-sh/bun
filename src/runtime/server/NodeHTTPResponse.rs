@@ -1259,6 +1259,7 @@ impl NodeHTTPResponse {
                 let event_loop = vm.event_loop_ref();
 
                 event_loop.run_callback(
+                    bun_event_loop::ContextId::NONE,
                     on_aborted,
                     global_this,
                     js_this,
@@ -1661,6 +1662,7 @@ impl NodeHTTPResponse {
                 let bytes = self.get_bytes(global_this, chunk);
 
                 event_loop.run_callback(
+                    bun_event_loop::ContextId::NONE,
                     callback,
                     global_this,
                     JSValue::UNDEFINED,
@@ -1789,6 +1791,7 @@ impl NodeHTTPResponse {
         js::on_writable_set_cached(this_value, global_this, JSValue::ZERO);
 
         vm.event_loop_ref().run_callback(
+            bun_event_loop::ContextId::NONE,
             on_writable,
             global_this,
             JSValue::UNDEFINED,

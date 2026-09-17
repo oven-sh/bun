@@ -298,6 +298,9 @@ pub struct Interpreter {
 
     pub(crate) has_pending_activity: AtomicU32,
     pub(crate) keep_alive: JsCell<bun_io::KeepAlive>,
+    /// The `Bun.ModuleGraph` context whose script started this (`run_from_js`), if any. Every
+    /// child the script spawns belongs to it, and once it stops the script runs no further.
+    pub(crate) context: Cell<Option<bun_jsc::ContextId>>,
 
     pub(crate) async_commands_executing: Cell<u32>,
 
@@ -580,6 +583,7 @@ impl Interpreter {
             io_writers: JsCell::new(Vec::new()),
             has_pending_activity: AtomicU32::new(0),
             keep_alive: JsCell::new(bun_io::KeepAlive::default()),
+            context: Cell::new(None),
             async_commands_executing: Cell::new(0),
             global_this: Cell::new(core::ptr::null_mut()),
             flags: Cell::new(InterpreterFlags::default()),
@@ -949,7 +953,25 @@ impl Interpreter {
 
     /// A sequencing state stops early: Ctrl+C cut the member short, or the script failed.
     pub(crate) fn interrupted(&self, id: NodeId) -> bool {
-        self.failed() || self.node(id).base().is_some_and(|b| b.interrupted)
+        self.context_stopped()
+            || self.failed()
+            || self.node(id).base().is_some_and(|b| b.interrupted)
+    }
+
+    /// Whose script the shell's completion continues: the one that started it (a `Bun.ModuleGraph`'s),
+    /// if it has one.
+    fn task_context(&self) -> bun_jsc::ContextId {
+        match self.context.get() {
+            Some(context) => context,
+            None => bun_jsc::ContextId::NONE,
+        }
+    }
+
+    /// The `Bun.ModuleGraph` whose script started this was disposed (or its realm is going).
+    pub(crate) fn context_stopped(&self) -> bool {
+        self.context
+            .get()
+            .is_some_and(|id| !bun_jsc::virtual_machine::VirtualMachine::get().is_context_live(id))
     }
 
     /// Some ancestor is a member of a multi-command pipeline.
@@ -1309,6 +1331,7 @@ impl Interpreter {
                     let event_loop = global_this.bun_vm().event_loop_mut();
                     match buffers {
                         Ok((buffered_stdout, buffered_stderr)) => event_loop.run_callback(
+                            self.task_context(),
                             resolve,
                             global_this,
                             JSValue::UNDEFINED,
@@ -1324,6 +1347,7 @@ impl Interpreter {
                                 JSShellInterpreter::reject_get_cached(this_jsvalue)
                             {
                                 event_loop.run_callback(
+                                    self.task_context(),
                                     reject,
                                     global_this,
                                     JSValue::UNDEFINED,
@@ -1382,6 +1406,7 @@ impl Interpreter {
                 .expect("take_failure returned a rejection on the Js path");
             let _entered = self.event_loop.entered();
             global_this.bun_vm().event_loop_mut().run_callback(
+                self.task_context(),
                 reject,
                 global_this,
                 crate::jsc::JSValue::UNDEFINED,
@@ -1438,7 +1463,7 @@ impl Interpreter {
     pub(crate) fn run_from_js(
         &self,
         global_this: &crate::jsc::JSGlobalObject,
-        _callframe: &crate::jsc::CallFrame,
+        callframe: &crate::jsc::CallFrame,
     ) -> crate::jsc::JsResult<crate::jsc::JSValue> {
         log!(
             "Interpreter(0x{:x}) runFromJS",
@@ -1455,6 +1480,11 @@ impl Interpreter {
             ));
         }
         Self::incr_pending_activity_flag(&self.has_pending_activity);
+        let vm = global_this.bun_vm();
+        self.context.set(
+            vm.as_graph_context(vm.context_of_caller(callframe))
+                .map(bun_jsc::ScriptExecutionContext::id),
+        );
 
         let shell = self.root_shell.as_ptr();
         let ast = &raw const self.args.get().script_ast;
@@ -2685,6 +2715,9 @@ impl<P: OutputTaskVTable> OutputTask<P> {
 ///
 /// `Taskable` is a supertrait so [`ShellTask::on_finish`] can build the
 /// JS-side `ConcurrentTask`.
+/// Its `Taskable::context` is `ContextId::NONE`: a step is what its interpreter is waiting for, and the
+/// interpreter checks its own context before anything reaches script (`Interpreter::interrupted`,
+/// `finish`, `fail`).
 pub trait ShellTaskCtx: Sized + bun_event_loop::Taskable {
     /// Byte offset of the embedded `task: ShellTask` field within `Self`.
     /// Implementors define this as `core::mem::offset_of!(Self, task)`.

@@ -10,7 +10,7 @@ use crate::socket::windows_named_pipe::{Handlers as NamedPipeHandlers, WindowsNa
 use bun_boringssl_sys as boringssl;
 use bun_event_loop::Task;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{GlobalRef, JSGlobalObject, SysErrorJsc};
+use bun_jsc::{GlobalRef, SysErrorJsc};
 use bun_sys::{self, Error as SysError, Fd, SystemErrno};
 use bun_uws::{self as uws, us_bun_verify_error_t};
 
@@ -39,7 +39,16 @@ pub struct WindowsNamedPipeContext {
     vm: &'static VirtualMachine,
     global_this: GlobalRef,
     is_open: bool,
+    /// A socket over a Windows named pipe is in no uSockets group: the context
+    /// that opened it closes it through this owner when it stops.
+    abort_handle: bun_jsc::AbortHandle,
 }
+
+bun_jsc::impl_abort_handle_owner!(WindowsNamedPipeContext, abort_handle, |this, _cause| {
+    // SAFETY: trait contract — `this` is live; `close` re-enters `on_close`,
+    // which may free `this`.
+    unsafe { (*ptr::addr_of_mut!((*this).named_pipe)).close() }
+});
 
 /// Reached from `on_close` → `Self::deref` while `WindowsNamedPipe::on_close`
 /// still holds `&(*this).named_pipe`, so project raw fields only, as the `on_*`
@@ -193,16 +202,6 @@ impl WindowsNamedPipeContext {
         ));
     }
 
-    /// VM stop phase: close the pipe now (its socket's close/error handlers run
-    /// while script is still allowed) instead of during the final collection.
-    ///
-    /// # Safety
-    /// `this` is a registered live context (see `create`).
-    pub(crate) unsafe fn stop_for_vm_teardown(this: *mut Self) {
-        // SAFETY: fn contract; the call re-enters `on_close`, which may free `this`.
-        unsafe { (*ptr::addr_of_mut!((*this).named_pipe)).close() };
-    }
-
     fn on_error(this: *mut Self, err: &SysError) {
         // SAFETY: see `on_open`. `is_open`/`socket` are Copy field reads.
         let (is_open, socket) = unsafe { ((*this).is_open, (*this).socket) };
@@ -273,11 +272,6 @@ impl WindowsNamedPipeContext {
     /// # Safety
     /// `this` is the live queued pointer; the call frees it.
     pub(crate) unsafe fn run_event(this: *mut Self) {
-        // SAFETY: `this` is the live allocation registered in create().
-        crate::jsc_hooks::ActiveHandle::WindowsNamedPipe(unsafe {
-            core::ptr::NonNull::new_unchecked(this)
-        })
-        .unregister();
         // SAFETY: `this` was allocated via heap::alloc in create(); refcount hit zero
         // and this deferred task is the sole remaining owner. Drop runs field destructors.
         drop(unsafe { bun_core::heap::take(this) });
@@ -299,10 +293,10 @@ impl WindowsNamedPipeContext {
     }
 
     pub(crate) fn create(
-        global_this: &JSGlobalObject,
+        cx: &bun_jsc::JsThread<'_>,
         socket: SocketType,
     ) -> *mut WindowsNamedPipeContext {
-        let global_this = GlobalRef::from(global_this);
+        let global_this = GlobalRef::from(cx.global());
         let vm: &'static VirtualMachine = global_this.bun_vm();
         let this: *mut WindowsNamedPipeContext = bun_core::heap::into_raw(Box::<
             core::mem::MaybeUninit<WindowsNamedPipeContext>,
@@ -344,6 +338,7 @@ impl WindowsNamedPipeContext {
                     vm,
                     global_this,
                     is_open: false,
+                    abort_handle: bun_jsc::AbortHandle::for_owner::<WindowsNamedPipeContext>(),
                 },
             );
             (*ptr::addr_of_mut!((*this).named_pipe))
@@ -358,13 +353,8 @@ impl WindowsNamedPipeContext {
             Ok(())
         });
 
-        // A socket over a Windows named pipe is in no uSockets group: the VM's
-        // stop phase closes it through this owner (unregistered when freed).
-        // SAFETY: non-null, fully initialised above.
-        crate::jsc_hooks::ActiveHandle::WindowsNamedPipe(unsafe {
-            core::ptr::NonNull::new_unchecked(this)
-        })
-        .register();
+        // SAFETY: non-null, fully initialised above, heap-pinned; disarmed when freed.
+        unsafe { bun_jsc::AbortHandle::arm_owner(this, cx.context()) };
 
         this
     }
@@ -374,7 +364,7 @@ impl WindowsNamedPipeContext {
     /// on this branch `[buntls]` returns `{secureContext}` only, so `ssl_config`
     /// alone would be empty. `created_here`: see [`WindowsNamedPipe::open`].
     pub(crate) fn open(
-        global_this: &JSGlobalObject,
+        cx: &bun_jsc::JsThread<'_>,
         fd: Fd,
         created_here: bool,
         ssl_config: Option<SSLConfig>,
@@ -383,7 +373,7 @@ impl WindowsNamedPipeContext {
     ) -> Result<*mut WindowsNamedPipe, crate::Error> {
         // TODO: reuse the same context for multiple connections when possibles
 
-        let this = WindowsNamedPipeContext::create(global_this, socket);
+        let this = WindowsNamedPipeContext::create(cx, socket);
 
         // The guard reaches `socket` through `this`: `create()` moved it there.
         let mut guard = Self::armed(this);
@@ -402,7 +392,7 @@ impl WindowsNamedPipeContext {
 
     /// See `open` for `owned_ctx` ownership.
     pub(crate) fn connect(
-        global_this: &JSGlobalObject,
+        cx: &bun_jsc::JsThread<'_>,
         path: &[u8],
         ssl_config: Option<SSLConfig>,
         owned_ctx: Option<boringssl::OwnedSslCtx>,
@@ -410,7 +400,7 @@ impl WindowsNamedPipeContext {
     ) -> Result<*mut WindowsNamedPipe, crate::Error> {
         // TODO: reuse the same context for multiple connections when possibles
 
-        let this = WindowsNamedPipeContext::create(global_this, socket);
+        let this = WindowsNamedPipeContext::create(cx, socket);
         let mut guard = Self::armed(this);
 
         // SAFETY: `this` is live and exclusively accessed here
@@ -450,5 +440,9 @@ impl bun_event_loop::Taskable for WindowsNamedPipeContext {
     unsafe fn release_unrun(this: *mut Self) {
         // SAFETY: fn contract.
         unsafe { Self::run_event(this) }
+    }
+    /// A socket's own hop; its handlers carry their context.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
     }
 }

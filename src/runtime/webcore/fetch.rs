@@ -389,6 +389,12 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // `session.fetch()`: the session, which a `session` in the init does not replace.
     bound_session: Option<JSValue>,
 ) -> JsResult<JSValue> {
+    let context = ctx.bun_vm().context_of_caller(callframe);
+    // What script of a disposed `Bun.ModuleGraph` starts does not start, and reports nothing: no
+    // connection goes out, and the promise stays pending.
+    if context.is_stopped() {
+        return Ok(JSPromise::create(ctx).to_js());
+    }
     jsc::mark_binding();
     let global_this = ctx;
     bun_core::analytics::Features::FETCH.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
@@ -1038,7 +1044,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         if let Some(options) = options_object {
             if let Some(body__) = options.fast_get(global_this, jsc::BuiltinName::Body)? {
                 if !body__.is_undefined() {
-                    break 'extract_body Some(HTTPRequestBody::from_js(ctx, body__)?);
+                    break 'extract_body Some(HTTPRequestBody::from_js(
+                        &ctx.js_thread(context),
+                        body__,
+                    )?);
                 }
             }
         }
@@ -1088,7 +1097,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                         ));
                     }
                 }
-                let readable = body_value.to_readable_stream(global_this)?;
+                let readable = body_value.to_readable_stream(&global_this.js_thread(context))?;
                 if !readable.is_empty_or_undefined_or_null() {
                     if let BodyValue::Locked(locked) = body_value {
                         if locked.readable.has() {
@@ -1111,7 +1120,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         if let Some(req) = request_init_object {
             if let Some(body__) = req.fast_get(global_this, jsc::BuiltinName::Body)? {
                 if !body__.is_undefined() {
-                    break 'extract_body Some(HTTPRequestBody::from_js(ctx, body__)?);
+                    break 'extract_body Some(HTTPRequestBody::from_js(
+                        &ctx.js_thread(context),
+                        body__,
+                    )?);
                 }
             }
         }
@@ -1492,7 +1504,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
             if let Some(stream) = ReadableStream::from_js(
                 ReadableStream::from_blob_copy_ref(
-                    global_this,
+                    &global_this.js_thread(context),
                     body.any_blob().blob(),
                     s3::MultiPartUploadOptions::DEFAULT_PART_SIZE as crate::webcore::blob::SizeType,
                 )?,
@@ -1782,7 +1794,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 credentials_with_options.credentials.dupe(),
                 s3_path,
                 readable_stream.get().unwrap(),
-                global_this,
+                &global_this.js_thread(context),
                 credentials_with_options.options,
                 credentials_with_options.acl,
                 credentials_with_options.storage_class,
@@ -1938,7 +1950,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     };
 
     let _ = FetchTasklet::queue(
-        global_this,
+        &global_this.js_thread(context),
         fetch_options,
         // Pass the Strong value instead of creating a new one, or else we
         // will leak it

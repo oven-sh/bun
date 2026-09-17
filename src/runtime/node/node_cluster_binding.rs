@@ -233,6 +233,7 @@ pub(crate) fn handle_internal_message_primary(
             });
             if let Some((cb, worker)) = entry {
                 event_loop.run_callback(
+                    subprocess.context,
                     cb,
                     global,
                     worker,
@@ -250,6 +251,7 @@ pub(crate) fn handle_internal_message_primary(
         (q.cb.get().unwrap(), q.worker.get().unwrap())
     };
     event_loop.run_callback(
+        subprocess.context,
         cb,
         global,
         worker,

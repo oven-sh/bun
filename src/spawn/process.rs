@@ -1188,6 +1188,11 @@ pub mod waiter_thread_posix {
                 T::release_ref_from_waiter_thread(t.subprocess);
             }
         }
+        /// A child's exit is delivered to its `Process` whatever became of the script that spawned it
+        /// (the child is reaped); what reaches script is the exit handler's to decide.
+        unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+            bun_event_loop::ContextId::NONE
+        }
     }
 
     impl<T: ProcessLike> ResultTask<T> {

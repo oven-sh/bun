@@ -1,6 +1,6 @@
 // A direct call of RegExp.prototype[Symbol.replace], next to String.prototype.replace with the
-// same RegExp. The node-ported builtins make the direct call through a primordial. The last
-// group has three of their call sites.
+// same RegExp. The node-ported builtins make the direct call through a primordial, as node's
+// own lib does. The last group has three of the call sites that node has too.
 import { Console } from "node:console";
 import { Writable } from "node:stream";
 import { inspect } from "node:util";
@@ -48,8 +48,8 @@ group("call sites in the builtins", () => {
     Buffer.alloc(240, "a line of text with 'quotes', a \"tab\"\t and a \\ ").toString(),
     Buffer.alloc(240, "a line of text with 'quotes', one \"tab\"\t and a \\ ").toString(),
   ];
-  // formatArrayBuffer(): /(.{2})/g over the hex string.
-  const buffers = [new ArrayBuffer(64), new ArrayBuffer(48)];
+  // formatProperty() of a symbol key: the escape RegExp over the description.
+  const symbolKeys = [{ [Symbol("first\nkey")]: 1 }, { [Symbol("second\nkey")]: 1 }];
   // console.log() inside console.group(): /\n/g over each message.
   const sink = new Console(new Writable({ write: (chunk, encoding, callback) => callback() }));
   sink.group();
@@ -57,7 +57,7 @@ group("call sites in the builtins", () => {
 
   let i = 0;
   bench("util.inspect(string with escapes, 240 chars)", () => inspect(escaped[i++ & 1]));
-  bench("util.inspect(ArrayBuffer)", () => inspect(buffers[i++ & 1]));
+  bench("util.inspect(object with a symbol key)", () => inspect(symbolKeys[i++ & 1]));
   bench("console.log(3 lines) in a group", () => sink.log(messages[i++ & 1]));
 });
 

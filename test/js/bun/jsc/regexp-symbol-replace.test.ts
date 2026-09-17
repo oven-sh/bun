@@ -1,9 +1,9 @@
 // RegExp.prototype[Symbol.replace] called directly used to take the generic path of
-// JavaScriptCore always: one call of "exec" and one match array per match, about 7 times
+// JavaScriptCore always: one call of "exec" and one match array per match, about 6 times
 // slower than String.prototype.replace with the same RegExp. It now takes the fast path of
-// String.prototype.replace when nothing can observe the difference (oven-sh/WebKit#682).
-// The node-ported builtins call it through the RegExpPrototypeSymbolReplace primordial
-// (util.inspect, console.group, node:repl, node:tls).
+// String.prototype.replace (oven-sh/WebKit#682). The node-ported builtins call it through
+// the RegExpPrototypeSymbolReplace primordial (util.inspect, console.group, node:repl), as
+// node's own lib does.
 //
 // The fixture runs in a child process, because it ends with a replaced RegExp.prototype.exec.
 // That turns the fast path off for the rest of a process.
@@ -37,8 +37,7 @@ describe("RegExp.prototype[Symbol.replace] called directly", () => {
   });
 
   test("gives the result and the lastIndex of the generic path", () => {
-    expect(report.matrix.mismatches).toEqual([]);
-    expect(report.matrix.compared).toBeGreaterThan(9000);
+    expect(report.matrix).toEqual({ compared: 1260, mismatches: [] });
   });
 
   test("converts each argument once, the string first", () => {
@@ -64,6 +63,13 @@ describe("RegExp.prototype[Symbol.replace] called directly", () => {
       frozenGlobal: "throw:TypeError:Attempted to assign to readonly property.",
       frozenSingle: "value:baa",
       otherRealm: "he[ll]o wor[l]d",
+    });
+    // [RegExp.lastMatch of this realm, RegExp.lastMatch of the other realm] after the call.
+    expect(report.otherRealmStatics).toEqual({
+      sameRealm: ["a1", "there"],
+      functionOfOtherRealm: ["a1", "there"],
+      regExpOfOtherRealm: ["here", "a1"],
+      regExpOfOtherRealmWithFunction: ["here", "a1"],
     });
   });
 

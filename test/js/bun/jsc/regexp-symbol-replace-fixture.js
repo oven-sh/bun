@@ -24,83 +24,76 @@ function generic(source, flags) {
 
 const report = {};
 
-// 1. The fast path and the generic path agree on the result and on lastIndex.
+// 1. The fast path and the generic path agree on the result and on lastIndex. This is a sample.
+// JSTests/stress/regexp-prototype-symbol-replace-fast-path.js in oven-sh/WebKit has the large
+// matrix. A debug build needs about 0.3 ms for each call here.
 {
   const patterns = [
     ["\\d+", "g"],
     ["\\d+", ""],
     ["(\\d)(\\w)?", "g"],
-    ["a|(b)", "g"],
     ["(?<year>\\d{4})-(?<month>\\d{2})", "g"],
-    ["(?<year>\\d{4})-(?<month>\\d{2})", ""],
-    ["(?<a>x)|(?<a>y)", "g"],
-    ["(?:)", "g"],
+    ["(?<first>x)|(?<second>y)", "g"],
     ["(?:)", "gu"],
-    ["x*", "g"],
-    ["^", "gm"],
-    ["\\u{1F600}", "gu"],
     ["b", "y"],
     ["b", "gy"],
-    ["(?:)", "y"],
     ["B", "gi"],
     ["nomatch", "g"],
   ];
-  const inputs = [
-    "",
-    "abc 123 def 456 ghi",
-    "2024-01-15 and 2025-12-31",
-    "a\u{1F600}b\u{1F600}",
-    "xxyyxx",
-    "l1\nl2\n",
-    "bbab",
-  ];
+  const inputs = ["", "abc 123 def 456 ghi", "2024-01-15 and 2025-12-31", "a\u{1F600}b xxyy", "bbab"];
+  // What a replacer function is called with: the number of arguments, undefined captures as
+  // such, and the groups object with its prototype, extensibility, key order and attributes.
+  function describeArgument(value) {
+    if (value === undefined) return "<undefined>";
+    if (typeof value !== "object" || value === null) return value;
+    return {
+      prototype: Object.getPrototypeOf(value) === null ? "null" : "an object",
+      extensible: Object.isExtensible(value),
+      properties: Reflect.ownKeys(value).map(key => {
+        const descriptor = Object.getOwnPropertyDescriptor(value, key);
+        const attributes =
+          (descriptor.writable ? "w" : "-") +
+          (descriptor.enumerable ? "e" : "-") +
+          (descriptor.configurable ? "c" : "-");
+        return [String(key), "value" in descriptor ? describeArgument(descriptor.value) : "<accessor>", attributes];
+      }),
+    };
+  }
   const collect = function () {
-    return "<" + JSON.stringify(Array.prototype.slice.call(arguments)) + ">";
+    return "<" + JSON.stringify([arguments.length, Array.prototype.map.call(arguments, describeArgument)]) + ">";
   };
   const replacements = [
     "-",
     "",
-    "$&$&",
-    "[$1|$2]",
-    "$<year>/$<month>",
-    "$<nope>",
-    "$`|$'",
-    "$$",
+    "[$1|$2]$&",
+    "$<year>/$<month>$<nope>",
+    "$`|$'$$",
     undefined,
-    42,
     { toString: () => "[$&]" },
     collect,
-    m => m.toUpperCase(),
-    () => undefined,
-    Symbol("replacement"),
     () => {
       throw new RangeError("from the replacer");
     },
-    {
-      toString() {
-        throw new SyntaxError("from toString");
-      },
-    },
   ];
 
+  const calls = {
+    "re[Symbol.replace](str, v)": (re, str, v) => re[Symbol.replace](str, v),
+    "str.replace(re, v)": (re, str, v) => str.replace(re, v),
+  };
   const mismatches = [];
   let compared = 0;
   for (const [source, flags] of patterns) {
     // Only a sticky RegExp starts at lastIndex. The others reset it (global) or leave it alone.
-    const lastIndices = flags.includes("y") ? [0, 1, 3, 1000] : [3];
+    const lastIndices = flags.includes("y") ? [0, 1, 3] : [3];
+    // One RegExp per path. Every call sets lastIndex first.
+    const fast = new RegExp(source, flags);
+    const slow = generic(source, flags);
     for (const input of inputs) {
       for (let i = 0; i < replacements.length; i++) {
         for (const lastIndex of lastIndices) {
-          const calls = {
-            "re[Symbol.replace](str, v)": (re, str, v) => re[Symbol.replace](str, v),
-            "uncurryThis(RegExp.prototype[Symbol.replace])(re, str, v)": (re, str, v) => uncurried(re, str, v),
-            "str.replace(re, v)": (re, str, v) => str.replace(re, v),
-          };
-          const slow = generic(source, flags);
           slow.lastIndex = lastIndex;
           const expected = [outcome(() => symbolReplace.call(slow, input, replacements[i])), slow.lastIndex];
           for (const name in calls) {
-            const fast = new RegExp(source, flags);
             fast.lastIndex = lastIndex;
             const actual = [outcome(() => calls[name](fast, input, replacements[i])), fast.lastIndex];
             compared++;
@@ -218,6 +211,22 @@ const report = {};
     frozenGlobal: outcome(() => Object.freeze(/a/g)[Symbol.replace]("aaa", "b")),
     frozenSingle: outcome(() => Object.freeze(/a/)[Symbol.replace]("aaa", "b")),
     otherRealm: symbolReplace.call(runInNewContext("/(l+)/g"), "hello world", "[$1]"),
+  };
+
+  // A RegExp of another realm takes the generic path: its "exec" updates the legacy static
+  // properties of the realm of the RegExp, not of the realm of the function that was called.
+  const OtherRegExp = runInNewContext("RegExp");
+  const lastMatches = call => {
+    /here/.exec("here");
+    OtherRegExp.prototype.exec.call(new OtherRegExp("there"), "there");
+    call();
+    return [RegExp.lastMatch, OtherRegExp.lastMatch];
+  };
+  report.otherRealmStatics = {
+    sameRealm: lastMatches(() => symbolReplace.call(/a1/, "a1", "-")),
+    functionOfOtherRealm: lastMatches(() => OtherRegExp.prototype[Symbol.replace].call(/a1/, "a1", "-")),
+    regExpOfOtherRealm: lastMatches(() => symbolReplace.call(new OtherRegExp("a1"), "a1", "-")),
+    regExpOfOtherRealmWithFunction: lastMatches(() => symbolReplace.call(new OtherRegExp("a1", "g"), "a1", () => "-")),
   };
 }
 

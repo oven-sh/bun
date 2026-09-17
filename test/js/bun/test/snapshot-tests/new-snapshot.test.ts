@@ -194,6 +194,12 @@ describe.concurrent("--update-snapshots", () => {
       header + 'exports[\'a 1\'] = `"new"`;  exports[`b 1`] = `"b"`\n',
     ],
     [
+      "a comment after an entry on its line",
+      header +
+        '\nexports[`a 1`] = `"old"`; // about a\n\nexports[`gone 1`] = `"g"`; // about gone\n\nexports[`b 1`] = `"b"`;\n',
+      header + '\nexports[`a 1`] = `"new"`; // about a\n\nexports[`b 1`] = `"b"`;\n',
+    ],
+    [
       "no header and a key that is there twice",
       'exports[`a 1`] = `"first"`;\nexports[`a 1`] = `"old"`;\nexports[`b 1`] = `"b"`;\n',
       'exports[`a 1`] = `"new"`;\nexports[`b 1`] = `"b"`;\n',

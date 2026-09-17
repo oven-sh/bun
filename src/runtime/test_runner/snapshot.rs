@@ -237,8 +237,12 @@ fn entry_ranges(
     while matches!(text.get(end), Some(b' ' | b'\t')) {
         end += 1;
     }
-    for after in b";\r\n" {
-        end += usize::from(text.get(end) == Some(after));
+    end += usize::from(text.get(end) == Some(&b';'));
+    let line_end = strings::index_of_char_usize(&text[end..], b'\n')
+        .map_or(text.len(), |line_break| end + line_break + 1);
+    // A comment after the entry on its line goes with it, unless the next statement starts on this line.
+    if line_end <= next_stmt_start && is_between_statements(&text[end..line_end]) {
+        end = line_end;
     }
     let start = (stmt_start - blank_line).max(floor);
     Some((start..end, value_start..value_end))

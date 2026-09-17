@@ -1,0 +1,86 @@
+--- a/src/liblsquic/lsquic_stream.c
++++ b/src/liblsquic/lsquic_stream.c
+@@ -53,6 +53,7 @@
+ #include "lsquic_ev_log.h"
+ #include "lsquic_enc_sess.h"
+ #include "lsqpack.h"
++#include "lsxpack_header.h"
+ #include "lsquic_frab_list.h"
+ #include "lsquic_http1x_if.h"
+ #include "lsquic_qdec_hdl.h"
+@@ -4113,9 +4114,28 @@ stream_write_buf (struct lsquic_stream *stream, const void *buf, size_t sz)
+ }
+ 
+ 
+-/* This limits the cumulative size of the compressed header fields */
++/* Compressed header blocks up to this size are encoded on the stack.  Larger
++ * ones go through a heap buffer sized from the header list.
++ */
+ #define MAX_HEADERS_SIZE (64 * 1024)
+ 
++/* bun: upper bound on the size of the compressed header block.  QPACK picks
++ * Huffman only when it is shorter than the literal, so a field line is at
++ * most its name and value plus one prefix byte and one integer for each.
++ */
++static size_t
++headers_max_encoded_size (const struct lsquic_http_headers *headers)
++{
++    size_t size = 0;
++    int i;
++
++    for (i = 0; i < headers->count; ++i)
++        if (headers->headers[i].buf)
++            size += 2 * LSQPACK_UINT64_ENC_SZ + headers->headers[i].name_len
++                                                + headers->headers[i].val_len;
++    return size;
++}
++
+ static int
+ send_headers_ietf (struct lsquic_stream *stream,
+                             const struct lsquic_http_headers *headers, int eos)
+@@ -4132,7 +4152,11 @@ send_headers_ietf (struct lsquic_stream *stream,
+     unsigned char *header_block;
+     enum lsqpack_enc_header_flags hflags;
+     int rv;
+-    const size_t buf_sz = max_push_size + max_prefix_size + MAX_HEADERS_SIZE;
++    const size_t max_headers_size = headers_max_encoded_size(headers);
++    const size_t buf_sz = max_push_size + max_prefix_size
++        + (max_headers_size > MAX_HEADERS_SIZE ? max_headers_size
++                                               : MAX_HEADERS_SIZE);
++    unsigned char *buf;
+ 
+     if (stream->sm_send_headers_state != SSHS_BEGIN || stream->sm_header_block)
+     {
+@@ -4141,9 +4165,20 @@ send_headers_ietf (struct lsquic_stream *stream,
+         return -1;
+     }
+ #ifndef WIN32
+-    unsigned char buf[buf_sz];
++    unsigned char stack_buf[max_push_size + max_prefix_size + MAX_HEADERS_SIZE];
++    if (max_headers_size > MAX_HEADERS_SIZE)
++    {
++        buf = malloc(buf_sz);
++        if (!buf)
++        {
++            LSQ_WARN("cannot allocate %zu bytes for header block", buf_sz);
++            return -1;
++        }
++    }
++    else
++        buf = stack_buf;
+ #else
+-    unsigned char *buf = _malloca(buf_sz);
++    buf = _malloca(buf_sz);
+     if (!buf)
+         return -1;
+ #endif
+@@ -4234,6 +4269,9 @@ send_headers_ietf (struct lsquic_stream *stream,
+   clean:
+ #ifdef WIN32
+     _freea(buf);
++#else
++    if (buf != stack_buf)
++        free(buf);
+ #endif
+     return rv;
+ 

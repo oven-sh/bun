@@ -134,6 +134,11 @@ export const lsquic: Dependency = {
     // H3_CLOSED_CRITICAL_STREAM and closes the connection, which kills the
     // requests the graceful stop was draining. Reject only request streams.
     "patches/lsquic/goaway-accept-uni-streams.patch",
+    // send_headers_ietf() encoded the header block into a fixed 64 KB stack
+    // buffer and failed with QWH_ENOBUF for a larger block, so a response
+    // with more than 64 KB of headers never went out. Size the buffer from
+    // the header list and use the heap above 64 KB.
+    "patches/lsquic/large-header-block.patch",
   ],
 
   fetchDeps: ["zlib", "lshpack", "lsqpack", "boringssl"],

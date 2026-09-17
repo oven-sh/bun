@@ -529,14 +529,16 @@ static struct lsxpack_header *us_quic_hsi_prepare(void *hset_p, struct lsxpack_h
         h->buf = nb;
         h->cap = ncap;
     }
+    /* lsxpack offsets are 16-bit, so the field's buf starts at its own slice
+     * (h->buf + h->len) and its offsets count from there, not from h->buf. */
     if (hdr == NULL) {
         hdr = &h->scratch;
-        lsxpack_header_prepare_decode(hdr, h->buf, h->len, space);
+        lsxpack_header_prepare_decode(hdr, h->buf + h->len, 0, space);
     } else {
         /* Resize: lsqpack already wrote part of name/value into the previous
          * buffer; only the storage may move. Preserve offsets, repoint buf,
          * and report the larger window via val_len. */
-        hdr->buf = h->buf;
+        hdr->buf = h->buf + h->len;
         hdr->val_len = (lsxpack_strlen_t) space;
     }
     return hdr;
@@ -557,13 +559,13 @@ static int us_quic_hsi_process(void *hset_p, struct lsxpack_header *hdr) {
     /* lsxpack wrote name+value into h->buf at h->len; record offsets, then
      * advance len so the next header lands after this one. We store offsets
      * (cast to pointer-sized) and resolve them after the buffer stops moving. */
-    h->headers[h->count].name = (const char *)(uintptr_t) hdr->name_offset;
+    h->headers[h->count].name = (const char *)(uintptr_t) (h->len + hdr->name_offset);
     h->headers[h->count].name_len = hdr->name_len;
-    h->headers[h->count].value = (const char *)(uintptr_t) hdr->val_offset;
+    h->headers[h->count].value = (const char *)(uintptr_t) (h->len + hdr->val_offset);
     h->headers[h->count].value_len = hdr->val_len;
     h->headers[h->count].qpack_index = -1;
     h->count++;
-    h->len = (unsigned int) hdr->val_offset + hdr->val_len + hdr->dec_overhead;
+    h->len += (unsigned int) hdr->val_offset + hdr->val_len + hdr->dec_overhead;
     return 0;
 }
 
@@ -1169,8 +1171,13 @@ int us_quic_stream_send_headers(us_quic_stream_t *s,
      * so each pair has to be contiguous. The caller hands us arbitrary
      * pointers, so flatten here. */
     size_t total = 0;
-    for (unsigned int i = 0; i < count; i++)
+    for (unsigned int i = 0; i < count; i++) {
+        /* lsxpack_header stores each length in 16 bits; a longer one would
+         * go out truncated. */
+        if (headers[i].name_len > LSXPACK_MAX_STRLEN || headers[i].value_len > LSXPACK_MAX_STRLEN)
+            return -1;
         total += headers[i].name_len + headers[i].value_len;
+    }
 
     char stackbuf[1024];
     char *buf = total <= sizeof(stackbuf) ? stackbuf : (char *) us_malloc(total);
@@ -1186,10 +1193,13 @@ int us_quic_stream_send_headers(us_quic_stream_t *s,
     size_t off = 0;
     for (unsigned int i = 0; i < count; i++) {
         const struct us_quic_header_t *h = &headers[i];
-        memcpy(buf + off, h->name, h->name_len);
-        memcpy(buf + off + h->name_len, h->value, h->value_len);
-        lsxpack_header_set_offset2(&xh[i], buf, off, h->name_len,
-            off + h->name_len, h->value_len);
+        char *pair = buf + off;
+        memcpy(pair, h->name, h->name_len);
+        memcpy(pair + h->name_len, h->value, h->value_len);
+        /* Offsets are relative to this pair, not to buf: lsxpack asserts
+         * that an offset fits 16 bits, and `total` can be larger. */
+        lsxpack_header_set_offset2(&xh[i], pair, 0, h->name_len,
+            h->name_len, h->value_len);
         if (h->qpack_index >= 0) {
             xh[i].qpack_index = (uint8_t) h->qpack_index;
             xh[i].flags = LSXPACK_QPACK_IDX;

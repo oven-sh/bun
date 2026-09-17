@@ -11800,7 +11800,7 @@ describe.concurrent("registry manifest with an unexpected shape", () => {
   }
 
   // Serves `manifests[name]` for a package and the fixture tarball of the same file name for a `.tgz` URL.
-  async function installFrom(ctx: TestContext, manifests: Record<string, object>) {
+  async function installFrom(ctx: TestContext, manifests: Record<string, object>, args = ["install"]) {
     const urls: string[] = [];
     setContextHandler(ctx, request => {
       urls.push(request.url);
@@ -11816,7 +11816,7 @@ describe.concurrent("registry manifest with an unexpected shape", () => {
       JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { bar: "0.0.2" } }),
     );
     await using proc = spawn({
-      cmd: [bunExe(), "install"],
+      cmd: [bunExe(), ...args],
       cwd: ctx.package_dir,
       stdout: "ignore",
       stderr: "pipe",
@@ -11866,15 +11866,32 @@ describe.concurrent("registry manifest with an unexpected shape", () => {
     });
   });
 
-  it("reports a versions key that is not a version and installs the version that is", async () => {
+  // `Version::parse` rejects each of these keys. npm skips such a key and prints nothing.
+  const invalidVersionKeys = ["not-a-version", "1.0.0.1", "", "latest"];
+  const skipWarnings = invalidVersionKeys.map(
+    key => `warn: Skipping version ${JSON.stringify(key)} of "bar": not a valid semver version`,
+  );
+
+  it.each<[string, string, string[]]>([
+    ["install", "nothing", []],
+    ["add bar", "nothing", []],
+    ["install --verbose", "a warning for each key", skipWarnings],
+  ])("bun %s skips versions keys that are not versions and logs %s", async (command, _logs, logged) => {
     await withContext(defaultOpts, async ctx => {
       const manifest = manifestOf(ctx, "bar", "0.0.2");
-      manifest.versions["not-a-version"] = manifest.versions["0.0.2"];
-      const { err, exitCode, urls, installed } = await installFrom(ctx, { bar: manifest });
-      expect(err).toContain("error: Failed to parse dependency not-a-version");
-      expect(urls).toEqual([`${ctx.registry_url}bar`, `${ctx.registry_url}bar-0.0.2.tgz`]);
-      expect(installed).toEqual(["bar"]);
-      expect(exitCode).toBe(1);
+      for (const key of invalidVersionKeys) manifest.versions[key] = manifest.versions["0.0.2"];
+      const { err, exitCode, urls, installed } = await installFrom(ctx, { bar: manifest }, command.split(" "));
+      expect({
+        logged: err.split(/\r?\n/).filter(line => /^(error|warn): /.test(line)),
+        urls,
+        installed,
+        exitCode,
+      }).toEqual({
+        logged,
+        urls: [`${ctx.registry_url}bar`, `${ctx.registry_url}bar-0.0.2.tgz`],
+        installed: ["bar"],
+        exitCode: 0,
+      });
     });
   });
 

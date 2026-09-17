@@ -1,3 +1,4 @@
+import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isPosix, tempDir } from "harness";
 import { existsSync } from "node:fs";
@@ -21,18 +22,64 @@ describe.if(isPosix)("IOWriter epipe", () => {
       expect(result).toBe("y\ny\ny\ny\ny\ny\ny\ny\ny\ny\n");
     }
   });
+});
 
-  // `ls -R` writes the listing of each directory to the pipe separately. Once
-  // the reader is gone, every write that is still queued fails, and ls only
-  // finishes after it has seen all of them fail.
-  test("ls -R finishes when the pipe reader exits without reading", async () => {
-    using dir = tempDir(
-      "shell-epipe-ls-recursive",
-      Object.fromEntries(Array.from({ length: 1000 }, (_, i) => [`dir${i}`, {}])),
-    );
-    const { stdout, exitCode } = await Bun.$`ls -R . | true`.cwd(String(dir)).quiet().nothrow();
-    expect(stdout.toString()).toBe("");
-    expect(exitCode).toBe(0);
+function existing(dir: string, names: string[]): string[] {
+  return names.filter(name => existsSync(join(dir, name)));
+}
+
+// The pipe between two stages of a pipeline is an IOWriter too. A stage loses
+// its reader when the next stage exits without reading its stdin. `ls`,
+// `mkdir -v` and `rm -v` queue one chunk per directory or operand, and finish
+// only after every chunk they queued has completed or failed.
+describe("pipeline stage whose reader exits without reading", () => {
+  const names = Array.from({ length: 64 }, (_, i) => `entry${i}`);
+  const operands = names.join(" ");
+  const files = Object.fromEntries(names.map(name => [name, ""]));
+  const tree = Object.fromEntries(Array.from({ length: 300 }, (_, i) => [`dir${i}`, {}]));
+
+  async function run(dir: string, pipeline: string) {
+    const { stdout, exitCode } = await $`${{ raw: pipeline }}`.cwd(dir).quiet().nothrow();
+    return { stdout: stdout.toString(), exitCode };
+  }
+
+  test.concurrent("ls with several operands", async () => {
+    using dir = tempDir("shell-pipe-ls", files);
+    expect(await run(String(dir), `ls -d ${operands} | true`)).toEqual({ stdout: "", exitCode: 0 });
+  });
+
+  test.concurrent("mkdir -v with several operands", async () => {
+    using dir = tempDir("shell-pipe-mkdir", {});
+    expect(await run(String(dir), `mkdir -v ${operands} | true`)).toEqual({ stdout: "", exitCode: 0 });
+    expect(existing(String(dir), names)).toEqual(names);
+  });
+
+  test.concurrent("rm -v with several operands", async () => {
+    using dir = tempDir("shell-pipe-rm", files);
+    expect(await run(String(dir), `rm -v ${operands} | true`)).toEqual({ stdout: "", exitCode: 0 });
+    expect(existing(String(dir), names)).toEqual([]);
+  });
+
+  test.concurrent("ls -R into a builtin", async () => {
+    using dir = tempDir("shell-pipe-ls-recursive", tree);
+    expect(await run(String(dir), "ls -R . | true")).toEqual({ stdout: "", exitCode: 0 });
+  });
+
+  test.concurrent("ls -R into a stage in the middle", async () => {
+    using dir = tempDir("shell-pipe-ls-recursive-middle", tree);
+    expect(await run(String(dir), "ls -R . | true | cat")).toEqual({ stdout: "", exitCode: 0 });
+  });
+
+  test.concurrent.if(isPosix)("ls -R into a command that exits at once", async () => {
+    using dir = tempDir("shell-pipe-ls-recursive-exit", tree);
+    expect(await run(String(dir), "ls -R . | sh -c 'exit 0'")).toEqual({ stdout: "", exitCode: 0 });
+  });
+
+  // `head` exits after the first line, while ls still has chunks queued.
+  test.concurrent.if(isPosix)("ls -R into head -n 1", async () => {
+    using dir = tempDir("shell-pipe-ls-recursive-head", tree);
+    const { stdout, exitCode } = await run(String(dir), "ls -R . | head -n 1");
+    expect({ lines: stdout.split("\n").length - 1, exitCode }).toEqual({ lines: 1, exitCode: 0 });
   });
 });
 
@@ -88,10 +135,6 @@ console.error("settled");
     expect(exitCode).toBe(0);
   }
 
-  function existing(dir: string): string[] {
-    return names.filter(name => existsSync(join(dir, name)));
-  }
-
   test.concurrent("ls with several arguments", async () => {
     using dir = tempDir("shell-epipe-ls", {
       "fixture.ts": fixture(`ls -d ${args}`),
@@ -103,7 +146,7 @@ console.error("settled");
   test.concurrent("mkdir -v with several arguments", async () => {
     using dir = tempDir("shell-epipe-mkdir", { "fixture.ts": fixture(`mkdir -v ${args}`) });
     await expectFixtureToSettle(String(dir));
-    expect(existing(String(dir))).toEqual(names);
+    expect(existing(String(dir), names)).toEqual(names);
   });
 
   test.concurrent("rm -v with several arguments", async () => {
@@ -112,7 +155,7 @@ console.error("settled");
       ...Object.fromEntries(names.map(name => [name, ""])),
     });
     await expectFixtureToSettle(String(dir));
-    expect(existing(String(dir))).toEqual([]);
+    expect(existing(String(dir), names)).toEqual([]);
   });
 
   // A subprocess's output is relayed to stdout through the same writer, one

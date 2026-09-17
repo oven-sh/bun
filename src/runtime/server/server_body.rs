@@ -1203,20 +1203,14 @@ fn fetch_headers_from_js(value: JSValue, global: &JSGlobalObject) -> Option<*mut
     FetchHeaders::cast_(value, global.vm()).map(|p| p.as_ptr())
 }
 
-/// Per-process latch for the dev-mode idle-timeout warning. The warning is
-/// process-global by intent: it prints at most once no matter how many
-/// servers run or which protocol (HTTP/1, HTTP/2, HTTP/3) timed out, so every
-/// `NewServer<SSL, DEBUG>` instantiation and every `RespLike` impl share this
-/// one flag.
+/// Process-wide once latch for the dev-mode idle-timeout warning, shared by all protocols.
 #[inline]
 pub(super) fn did_send_idletimeout_warning_once() -> &'static core::sync::atomic::AtomicBool {
     static FLAG: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
     &FLAG
 }
 
-/// Emits the once-only dev-mode warning. The one handler for all protocols.
-/// A free fn so the `RespLike::on_timeout_warn` closures (which cannot name
-/// `NewServer<SSL,DEBUG>`) can call it.
+/// The one idle-timeout warning handler for HTTP/1, HTTP/2 and HTTP/3.
 pub(super) fn on_timeout_for_idle_warn() {
     if !did_send_idletimeout_warning_once().swap(true, core::sync::atomic::Ordering::Relaxed)
         && !crate::cli::Command::get().debug.silent

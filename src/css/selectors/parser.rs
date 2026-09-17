@@ -7,7 +7,6 @@ use bun_alloc::{Arena as Bump, ArenaPtr};
 use bun_core::strings;
 use bun_css as css;
 use bun_css::css_values::ident::{CustomIdent, Ident};
-use bun_css::selector::serialize;
 use bun_css::{
     CSSStringFns, IdentFns, Parser as CssParser, ParserOptions, PrintErr, Printer, SmallList,
     Token, TokenList,
@@ -1042,13 +1041,6 @@ impl PseudoClass {
             return true;
         }
         self.eql(other)
-    }
-
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        // A buffered intermediate `Printer` would only matter for
-        // length-dependent minification decisions made by callers (none
-        // here), so write directly to `dest`.
-        serialize::serialize_pseudo_class(self, dest, None)
     }
 
     // eql / hash — provided by `#[derive(CssEql, CssHash)]` (variant-wise; the
@@ -3087,12 +3079,6 @@ impl PseudoElement {
                 | PE::ViewTransitionOld { .. }
                 | PE::ViewTransitionGroupChildren { .. }
         )
-    }
-
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        // See PseudoClass::to_css — write directly to `dest`; no caller makes
-        // length-dependent minification decisions here.
-        serialize::serialize_pseudo_element(self, dest, None)
     }
 }
 

@@ -1392,6 +1392,43 @@ describe("handleUpgrade on a node:http upgrade socket", () => {
     expect(await upgrade.received("\r\n\r\n")).toStartWith("HTTP/1.1 101 Switching Protocols\r\n");
   });
 
+  // An upgrade from the request's body handler left the HTTP context marked as
+  // upgraded. The next request on any other connection of the server then
+  // stopped the parser, and requests pipelined behind it got no answer (#43163).
+  for (const [where, request, body] of [
+    ["in the same read as the head", upgradeRequest({ body: "hello" }), ""],
+    ["in a read of its own", upgradeRequest({ body: "hello" }).slice(0, -"hello".length), "hello"],
+  ] as const) {
+    it(`upgrades from the body handler with the body ${where}, and the next connection still pipelines`, async () => {
+      const server = createServer((req, res) => res.end(req.url));
+      const wss = new WebSocketServer({ noServer: true });
+      const upgraded = Promise.withResolvers<void>();
+      // Registered before the request arrives, so 'end' is armed while the
+      // parser still runs and handleUpgrade() runs from inside it.
+      server.on("upgrade", (req, socket, head) => {
+        req.on("end", () => wss.handleUpgrade(req, socket, head, () => upgraded.resolve()));
+        req.resume();
+      });
+      await using upgrade = await receiveUpgrade(request, server);
+      if (body) upgrade.client.write(body);
+      await upgraded.promise;
+      expect(await upgrade.received("\r\n\r\n")).toStartWith("HTTP/1.1 101 Switching Protocols\r\n");
+
+      // Two requests in one write on a second connection. Both get a response,
+      // and the server closes the connection after the second.
+      const other = connect((server.address() as AddressInfo).port, "127.0.0.1");
+      other.on("error", () => {});
+      let data = "";
+      other.on("data", chunk => (data += chunk.toString("latin1")));
+      const closed = new Promise<void>(resolve => other.once("close", resolve));
+      await once(other, "connect");
+      other.write("GET /one HTTP/1.1\r\nHost: x\r\n\r\nGET /two HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+      await closed;
+      expect(data.match(/\/(one|two)/g)).toEqual(["/one", "/two"]);
+      wss.close();
+    });
+  }
+
   it("leaves a connection alone that another WebSocketServer on the same http.Server took", async () => {
     const server = createServer();
     // Registered first, so it sees the socket before either WebSocketServer does.

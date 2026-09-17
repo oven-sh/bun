@@ -1418,15 +1418,16 @@ struct HttpResponseData;
                 if constexpr (!ConsumeMinimally) {
                     unsigned int emittable = (unsigned int) std::min<uint64_t>(remainingStreamingBytes, length);
                     void *returnedUser = dataHandler(user, std::string_view(data, emittable), emittable == remainingStreamingBytes);
+                    if (returnedUser != user) {
+                        /* The handler closed, shut down or upgraded the socket. This
+                         * parser lives in its HttpResponseData, which is gone with it. */
+                        return HttpParserResult::success(consumedTotal + emittable, returnedUser);
+                    }
                     remainingStreamingBytes -= emittable;
 
                     data += emittable;
                     length -= emittable;
                     consumedTotal += emittable;
-
-                    if (returnedUser != user) {
-                        return HttpParserResult::success(consumedTotal, returnedUser);
-                    }
                 }
             } else {
                 /* If we came here without a body; emit an empty data chunk to signal no data */
@@ -1497,19 +1498,24 @@ public:
                 // todo: refactor this
                 if (remainingStreamingBytes >= length) {
                     void *returnedUser = dataHandler(user, std::string_view(data, length), remainingStreamingBytes == length);
+                    if (returnedUser != user) {
+                        /* The handler closed, shut down or upgraded the socket. This
+                         * parser lives in its HttpResponseData, which is gone with it. */
+                        return HttpParserResult::success(0, returnedUser);
+                    }
                     remainingStreamingBytes -= length;
-                    return HttpParserResult::success(0, returnedUser);
+                    return HttpParserResult::success(0, user);
                 } else {
-                    void *returnedUser = dataHandler(user, std::string_view(data, remainingStreamingBytes), true);
-
-                    data += (unsigned int) remainingStreamingBytes;
-                    length -= (unsigned int) remainingStreamingBytes;
-
-                    remainingStreamingBytes = 0;
-
+                    unsigned int emittable = (unsigned int) remainingStreamingBytes;
+                    void *returnedUser = dataHandler(user, std::string_view(data, emittable), true);
                     if (returnedUser != user) {
                         return HttpParserResult::success(0, returnedUser);
                     }
+
+                    data += emittable;
+                    length -= emittable;
+
+                    remainingStreamingBytes = 0;
                 }
             }
 
@@ -1580,19 +1586,22 @@ public:
                         // this is exactly the same as above!
                         if (remainingStreamingBytes >= (unsigned int) length) {
                             void *returnedUser = dataHandler(user, std::string_view(data, length), remainingStreamingBytes == (unsigned int) length);
-                            remainingStreamingBytes -= length;
-                            return HttpParserResult::success(0, returnedUser);
-                        } else {
-                            void *returnedUser = dataHandler(user, std::string_view(data, remainingStreamingBytes), true);
-
-                            data += (unsigned int) remainingStreamingBytes;
-                            length -= (unsigned int) remainingStreamingBytes;
-
-                            remainingStreamingBytes = 0;
-
                             if (returnedUser != user) {
                                 return HttpParserResult::success(0, returnedUser);
                             }
+                            remainingStreamingBytes -= length;
+                            return HttpParserResult::success(0, user);
+                        } else {
+                            unsigned int emittable = (unsigned int) remainingStreamingBytes;
+                            void *returnedUser = dataHandler(user, std::string_view(data, emittable), true);
+                            if (returnedUser != user) {
+                                return HttpParserResult::success(0, returnedUser);
+                            }
+
+                            data += emittable;
+                            length -= emittable;
+
+                            remainingStreamingBytes = 0;
                         }
                     }
                 }

@@ -109,10 +109,8 @@ impl Query {
 }
 
 impl Group {
-    /// Whether some version satisfies both groups. `*` meets everything. An OR branch that is
-    /// one exact version meets the other group only when that version satisfies it, with the
-    /// prerelease rule of `Group::satisfies`. Between two ranges the prerelease rule is not
-    /// modelled, comparators are compared directly.
+    /// Whether some version satisfies both groups. An exact version is checked with `satisfies`
+    /// (prerelease rule included); two ranges are compared by their bounds only.
     pub fn intersects(&self, self_buf: &[u8], other: &Group, other_buf: &[u8]) -> bool {
         if self.is_star() || other.is_star() {
             return true;

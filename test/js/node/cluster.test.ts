@@ -853,7 +853,7 @@ if (cluster.isPrimary) {
   expect(stdout).toContain("reply: echo:hi");
 }, 30_000);
 
-test("TLS cluster worker whose listen() fails while it loads addContext() entries ends up closed", async () => {
+test("TLS cluster worker whose listen() fails after it adopts the shared fd ends up closed", async () => {
   const dir = tempDirWithFiles("bun-test", {
     "cert.pem": tlsCerts.cert,
     "key.pem": tlsCerts.key,
@@ -890,11 +890,13 @@ if (cluster.isPrimary) {
   });
 } else {
   const bad = tls.createServer({ key, cert }, socket => socket.end());
-  // Two names with more than 10 labels land on one node of the native SNI tree
-  // (#43092), so listen() rejects the second one as a duplicate after the bind.
-  const name = "a.b.c.d.e.f.g.h.i.j.k.example";
-  bad.addContext(name, { key, cert });
-  bad.addContext(name + ".", { key, cert });
+  // address() is the first step after the native listener adopts the fd that a
+  // test can make throw. It stands in for an addContext() entry the listener rejects.
+  const realAddress = bad.address;
+  bad.address = function () {
+    bad.address = realAddress;
+    throw new Error("address() failed after the adopt");
+  };
   bad.on("listening", () => process.send({ listeningEvent: true }));
   bad.on("error", err => {
     process.send({ error: err.message, listening: bad.listening, address: bad.address() });
@@ -908,7 +910,7 @@ if (cluster.isPrimary) {
   });
   const { stdout } = await bunRun(joinP(dir, "main.ts"), bunEnv);
   expect(stdout).toContain(
-    'after failed listen: {"error":"Failed to register SNI for \'a.b.c.d.e.f.g.h.i.j.k.example.\'","listening":false,"address":null}',
+    'after failed listen: {"error":"address() failed after the adopt","listening":false,"address":null}',
   );
   expect(stdout).not.toContain("listeningEvent");
   expect(stdout).toContain("reply: ok");

@@ -137,8 +137,14 @@ test.concurrent.each([
     "catchReject",
     "thenResolveRejectResult",
     "catchRejectResult",
+    "catchRejectResultLongChain",
+    "catchRejectResultManyTargets",
   ];
-  const frames = Object.fromEntries(shapes.map(shape => [shape, [shape, "asyncFramesOf"]]));
+  const frames = {
+    ...Object.fromEntries(shapes.map(shape => [shape, [shape, "asyncFramesOf"]])),
+    // One frame for worker(), although the chain leads back to it.
+    failFastWorker: ["worker", "failFastWorker", "asyncFramesOf"],
+  };
   expect({ result: stdout && JSON.parse(stdout), stderr }).toEqual({
     result: {
       "before": frames,

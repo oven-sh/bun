@@ -125,22 +125,23 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
     //    payloadCell() and the handler in m_slot.
     //  - As a heap-allocated JSPromiseReaction list once a second handler is
     //    attached, headed at payloadCell().
-    auto walkReactions = [&](JSC::JSPromise* p, unsigned& hops, WTF::Vector<JSC::JSPromise*, 4>& fallbacks) -> JSC::JSAsyncFunctionGenerator* {
+    auto walkReactions = [&](JSC::JSPromise* p, WTF::Vector<JSC::JSPromise*, 4>* fallbacks) -> JSC::JSAsyncFunctionGenerator* {
         // Moves `p` along a then() reaction. Where a reject function says the
-        // rejection goes (see rejectionTargetOf) comes first. `derived`, the
-        // promise then() returned, is the fallback if nothing awaits that.
+        // rejection goes (see rejectionTargetOf) comes first, and `derived`, the
+        // promise then() returned, goes to `fallbacks` for when nothing awaits
+        // that. Without `fallbacks` the walk knows `derived` only.
         auto followThen = [&](JSC::JSValue rejectHandler, JSC::JSPromise* derived) -> JSC::JSAsyncFunctionGenerator* {
-            JSC::JSValue target = rejectionTargetOf(rejectHandler);
+            JSC::JSValue target = fallbacks ? rejectionTargetOf(rejectHandler) : JSC::JSValue();
             if (auto* generator = unwrapGeneratorFromContext(target))
                 return generator;
             JSC::JSPromise* next = nullptr;
             if (dynamicCastValue(target, &next) && derived)
-                fallbacks.append(derived);
+                fallbacks->append(derived);
             p = next ? next : derived;
             return nullptr;
         };
 
-        for (; p && hops < 32; hops++) {
+        for (unsigned hops = 0; p && hops < 32; hops++) {
             if (p->status() != JSC::JSPromise::Status::Pending)
                 return nullptr;
             switch (p->inlineReactionKind()) {
@@ -184,15 +185,23 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
         return nullptr;
     };
 
-    // Every walk of one search draws on the same 32 hops.
+    // The generators that the loop below has visited. A chain that leads back to
+    // one is a cycle.
+    WTF::HashSet<JSC::JSAsyncFunctionGenerator*> seen;
+    auto unlessSeen = [&](JSC::JSAsyncFunctionGenerator* generator) {
+        return generator && seen.contains(generator) ? nullptr : generator;
+    };
+
     auto getAwaitingGenerator = [&](JSC::JSPromise* start) -> JSC::JSAsyncFunctionGenerator* {
-        unsigned hops = 0;
+        // A walk that finds nothing continues at the fallback that was saved last.
         WTF::Vector<JSC::JSPromise*, 4> fallbacks { start };
-        while (!fallbacks.isEmpty()) {
-            if (auto* generator = walkReactions(fallbacks.takeLast(), hops, fallbacks))
+        for (unsigned walks = 0; walks < 8 && !fallbacks.isEmpty(); walks++) {
+            if (auto* generator = unlessSeen(walkReactions(fallbacks.takeLast(), &fallbacks)))
                 return generator;
         }
-        return nullptr;
+        // Fallbacks remain only if the limit ended the search. One walk without
+        // reject functions then covers what the search found before it knew them.
+        return fallbacks.isEmpty() ? nullptr : unlessSeen(walkReactions(start, nullptr));
     };
 
     auto computeBytecodeIndex = [&](JSC::CodeBlock* codeBlock, JSC::JSAsyncFunctionGenerator* generator) -> JSC::BytecodeIndex {
@@ -232,6 +241,7 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
     JSC::JSAsyncFunctionGenerator* gen = getAwaitingGenerator(promise);
     while (gen && results.size() < maxStackSize) {
         appendFrame(gen);
+        seen.add(gen);
         JSC::JSPromise* returnPromise = nullptr;
         if (!dynamicCastValue(gen->context(), &returnPromise))
             break;

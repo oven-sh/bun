@@ -2011,8 +2011,8 @@ fn console_print_runtime_object_inner<const C: bool>(
 
     // `write_format` cannot return a `JsError`: a JS exception comes back as a plain error and
     // stays pending on the VM. A sink error has no exception behind it and is still ignored.
-    fn formatted<E>(global: &JSGlobalObject, result: Result<(), E>) -> JsResult<bool> {
-        if result.is_err() && global.has_exception() {
+    fn formatted(global: &JSGlobalObject, failed: bool) -> JsResult<bool> {
+        if failed && global.has_exception() {
             return Err(bun_jsc::JsError::Thrown);
         }
         Ok(true)
@@ -2027,38 +2027,38 @@ fn console_print_runtime_object_inner<const C: bool>(
         // SAFETY: `as_` returned a non-null `*mut Response` to the live native
         // wrapper backing `value`; `value` is on-stack so GC keeps it alive.
         let result = unsafe { &mut *response }.write_format::<_, _, C>(formatter, &mut w);
-        return formatted(global, result);
+        return formatted(global, result.is_err());
     }
     if let Some(request) = value.as_::<Request>() {
         let mut w = AsFmt::new(writer_);
         // SAFETY: `as_` returned a non-null `*mut Request` to the live native
         // wrapper backing `value`; `value` is on-stack so GC keeps it alive.
         let result = unsafe { &mut *request }.write_format::<_, _, C>(value, formatter, &mut w);
-        return formatted(global, result);
+        return formatted(global, result.is_err());
     }
     if let Some(build) = value.as_::<BuildArtifact>() {
         let mut w = AsFmt::new(writer_);
         // SAFETY: `as_` returned a non-null `*mut BuildArtifact` to the live
         // native wrapper backing `value`; GC keeps it alive (see above).
         let result = unsafe { &*build }.write_format::<_, _, C>(value, formatter, &mut w);
-        return formatted(global, result);
+        return formatted(global, result.is_err());
     }
     if let Some(blob) = value.as_::<Blob>() {
         let mut w = AsFmt::new(writer_);
         // SAFETY: `as_` returned a non-null `*mut Blob` to the live native
         // wrapper backing `value`; GC keeps it alive (see above).
         let result = unsafe { &mut *blob }.write_format::<_, _, C>(formatter, &mut w);
-        return formatted(global, result);
+        return formatted(global, result.is_err());
     }
     if let Some(s3client) = value.as_class_ref::<S3Client>() {
         let mut w = AsFmt::new(writer_);
         let result = s3client.write_format::<_, _, C>(formatter, &mut w);
-        return formatted(global, result);
+        return formatted(global, result.is_err());
     }
     if let Some(archive) = value.as_class_ref::<Archive>() {
         let mut w = AsFmt::new(writer_);
         let result = archive.write_format::<_, _, C>(formatter, &mut w);
-        return formatted(global, result);
+        return formatted(global, result.is_err());
     }
     if bun_jsc::FetchHeaders::cast_(value, formatter.global_this.vm()).is_some() {
         if let Some(to_json_function) = value.get(formatter.global_this, "toJSON")? {

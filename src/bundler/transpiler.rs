@@ -737,8 +737,10 @@ impl<'a> Transpiler<'a> {
                     if self.options.transform_options.jsx.is_none() {
                         self.options.jsx = jsx_pragma_from_resolver(&tsconfig.jsx);
                     }
-                    self.options.emit_decorator_metadata = tsconfig.emit_decorator_metadata;
-                    self.options.experimental_decorators = tsconfig.experimental_decorators;
+                    self.options.emit_decorator_metadata =
+                        tsconfig.emit_decorator_metadata == Some(true);
+                    self.options.experimental_decorators =
+                        tsconfig.experimental_decorators == Some(true);
                     if let Some(v) = tsconfig.use_define_for_class_fields {
                         self.options.use_define_for_class_fields = v;
                     }

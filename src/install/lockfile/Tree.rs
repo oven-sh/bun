@@ -224,7 +224,7 @@ impl<'a, const PATH_STYLE: IteratorPathStyle> Iterator<'a, PATH_STYLE> {
             hoisted_dependencies,
             dependencies,
             string_bytes,
-            path_buf: PathBuffer::uninit(),
+            path_buf: PathBuffer::ZEROED,
             depth_stack: depth_buf_uninit(),
         };
         if PATH_STYLE == IteratorPathStyle::NodeModules {
@@ -594,11 +594,10 @@ pub(crate) fn is_filtered_dependency_or_workspace(
         return true;
     }
 
-    let dep_features = match parent_res.tag {
-        crate::resolution::Tag::Root
-        | crate::resolution::Tag::Workspace
-        | crate::resolution::Tag::Folder => manager.options.local_package_features,
-        _ => manager.options.remote_package_features,
+    let dep_features = if parent_res.tag.is_local_package() {
+        manager.options.local_package_features
+    } else {
+        manager.options.remote_package_features
     };
 
     if !dep.behavior.is_enabled(dep_features) {

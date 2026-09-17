@@ -6,10 +6,9 @@
 use crate::ipc::{
     self as IPC, DecodedIPCMessage, Handle, IsInternal, SendQueue, SerializeAndSendResult,
 };
-use bun_core::String as BunString;
 #[cfg(windows)]
 use bun_jsc::bun_string_jsc;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc as _};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult};
 use bun_ptr::RefPtr;
 
 use crate::api::bun::subprocess::Subprocess;
@@ -285,11 +284,15 @@ pub(crate) fn do_send(
 
     if status == SerializeAndSendResult::Failure {
         close_detached(global_object, pause_target)?;
+        // The serializer rejected the message (cyclic JSON, uncloneable value): that is the error.
+        if global_object.has_exception() {
+            return Err(bun_jsc::JsError::Thrown);
+        }
         let ex = global_object.create_type_error_instance(format_args!("process.send() failed"));
         ex.put(
             global_object,
             b"syscall",
-            BunString::static_("write").to_js(global_object)?,
+            global_object.common_strings().write(),
         );
         return do_send_err(global_object, callback, ex, from);
     }

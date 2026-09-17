@@ -37,8 +37,7 @@ mod _impl {
     use bun_core::strings;
     use bun_core::{env_var, fmt as bun_fmt};
     use bun_jsc::{CallFrame, JSArray, StringJsc as _, SysErrorJsc as _, SystemError};
-    #[cfg(windows)]
-    use bun_paths::PathBuffer;
+
     #[cfg(windows)]
     use bun_sys::ReturnCodeExt as _;
     #[cfg(not(windows))]
@@ -659,7 +658,7 @@ mod _impl {
         // In Node.js, this is a wrapper around uv_os_homedir.
         #[cfg(windows)]
         {
-            let mut out = PathBuffer::uninit();
+            let mut out = bun_paths::path_buffer_pool::get();
             let mut size: usize = out.len();
             // SAFETY: valid buffer + size out-param
             if let Some(err) = unsafe { libuv::uv_os_homedir(out.as_mut_ptr(), &mut size) }

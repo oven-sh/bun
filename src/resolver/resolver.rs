@@ -413,15 +413,14 @@ fn bufs_storage_get() -> *mut Bufs {
 
 #[cold]
 fn bufs_storage_init() -> *mut Bufs {
-    // SAFETY: every field of `Bufs` is a byte/integer array
-    // (`PathBuffer` = `[u8; N]`, `[FD; 256]` where `Fd` is a
-    // `#[repr(C)]` integer newtype, `[MaybeUninit<_>; 256]` which has
-    // no validity requirement, `()`), so EVERY bit-pattern — not just
-    // all-zero — is a valid `Bufs`. Each
-    // field is scratch (write-then-read within a single resolve call,
-    // including `open_dirs` which is bounded by `open_dir_count`), so
-    // there is no need to pay for zero-filling ~100 KiB on first use.
-    let p: *mut Bufs = Box::leak(unsafe { Box::<Bufs>::new_uninit().assume_init() });
+    // SAFETY: every field of `Bufs` is a byte/integer array (`PathBuffer` =
+    // `[u8; N]`, `[u8; 512]`, `[FD; 256]` where `Fd` is a `#[repr(transparent)]`
+    // integer newtype with no niche) or `[MaybeUninit<_>; 256]`, so the
+    // all-zero bit-pattern is a valid `Bufs`. `new_zeroed` (not `new_uninit`)
+    // because integers must be initialized: a never-written `[u8; N]` is UB
+    // even though every bit pattern is a valid `u8`. Runs once per thread;
+    // `alloc_zeroed` of ~100 KiB is usually fresh OS-zeroed pages.
+    let p: *mut Bufs = Box::leak(unsafe { Box::<Bufs>::new_zeroed().assume_init() });
     BUFS_PTR.with(|s| s.0.set(p));
     p
 }
@@ -1520,11 +1519,21 @@ impl<'a> Resolver<'a> {
 
         let mut iter = result.path_pair.iter();
         let mut module_type = result.module_type;
+        let mut is_primary = true;
         while let Some(path) = iter.next() {
             let name = path.name();
+            let primary = core::mem::take(&mut is_primary);
             let Ok(Some(dir)) = self.read_dir_info(name.dir) else {
                 continue;
             };
+
+            // Node reads "type" from the nearest package.json, named or not.
+            if primary && !kind.is_from_css() && module_type == options::ModuleType::Unknown {
+                if let Some(pkg) = dir.package_json_for_module_type {
+                    module_type = pkg.module_type;
+                }
+            }
+
             let mut needs_side_effects = true;
             if let Some(existing) = Result::deref_package_json(result.package_json) {
                 // if we don't have it here, they might put it in a sideEfffects
@@ -1568,17 +1577,6 @@ impl<'a> Resolver<'a> {
                 }
             }
 
-            // If you use mjs or mts, then you're using esm
-            // If you use cjs or cts, then you're using cjs
-            // This should win out over the module type from package.json
-            if !kind.is_from_css()
-                && module_type == options::ModuleType::Unknown
-                && name.ext.len() == 4
-            {
-                module_type =
-                    module_type_from_ext(name.ext).unwrap_or(options::ModuleType::Unknown);
-            }
-
             // Probe the listing in one `entries_mutex` critical section: a
             // concurrent resolver at a newer generation rewrites this `DirEntry`'s
             // map in place under that lock. The entry pointer stays valid after
@@ -1603,7 +1601,7 @@ impl<'a> Resolver<'a> {
                 } else if !dir.abs_real_path.is_empty() {
                     // When the directory is a symlink, we don't need to call getFdPath.
                     let parts = [dir.abs_real_path, query.entry().base()];
-                    let mut buf = bun_paths::PathBuffer::uninit();
+                    let mut buf = bun_paths::path_buffer_pool::get();
 
                     // NOTE: `abs_buf` returns a borrow of `buf`; capture only the
                     // length so `buf` can be re-borrowed for null-termination below.
@@ -1676,9 +1674,10 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        if !kind.is_from_css() && module_type == options::ModuleType::Unknown {
-            if let Some(pkg) = result.package_json_ref() {
-                module_type = pkg.module_type;
+        // The extension wins over a package.json "type".
+        if !kind.is_from_css() {
+            if let Some(from_ext) = module_type_from_ext(result.path_pair.primary.name().ext) {
+                module_type = from_ext;
             }
         }
 
@@ -2624,7 +2623,6 @@ impl<'a> Resolver<'a> {
                             if let Some(package_json) = pkg_dir_info.package_json() {
                                 if let Some(exports_map) = package_json.exports.as_ref() {
                                     // The condition set is determined by the kind of import
-                                    let mut module_type = package_json.module_type;
                                     // NOTE: keeping a single
                                     // `ESModule` (which holds `&mut self.debug_logs`) alive across a
                                     // `&mut self` call is aliased-&mut UB. Build a fresh short-lived
@@ -2650,7 +2648,6 @@ impl<'a> Resolver<'a> {
                                                 _ => &self.opts.conditions.import,
                                             },
                                             debug_logs: self.debug_logs.as_mut(),
-                                            module_type: &mut module_type,
                                         }
                                         .resolve(b"/", esm.subpath, &exports_map.root);
                                         // ESModule temporary dropped here; `self` is unborrowed.
@@ -2667,7 +2664,6 @@ impl<'a> Resolver<'a> {
                                             .is_success()
                                         {
                                             out.is_node_module = true;
-                                            out.module_type = module_type;
                                             self.extension_order = prev_extension_order;
                                             if let Some(d) = self.debug_logs.as_mut() {
                                                 d.decrease_indent();
@@ -2707,7 +2703,6 @@ impl<'a> Resolver<'a> {
                                                 _ => &self.opts.conditions.import,
                                             },
                                             debug_logs: self.debug_logs.as_mut(),
-                                            module_type: &mut module_type,
                                         }
                                         .resolve(
                                             b"/",
@@ -2726,7 +2721,6 @@ impl<'a> Resolver<'a> {
                                             .is_success()
                                         {
                                             out.is_node_module = true;
-                                            out.module_type = module_type;
                                             self.extension_order = prev_extension_order;
                                             if let Some(d) = self.debug_logs.as_mut() {
                                                 d.decrease_indent();
@@ -3124,7 +3118,6 @@ impl<'a> Resolver<'a> {
                     Ok(dir_info_to_use_) => {
                         if let Some(pkg_dir_info) = dir_info_to_use_ {
                             let abs_package_path = pkg_dir_info.abs_path;
-                            let mut module_type = options::ModuleType::Unknown;
                             if let Some(package_json) = pkg_dir_info.package_json() {
                                 if let Some(exports_map) = package_json.exports.as_ref() {
                                     // The condition set is determined by the kind of import
@@ -3145,7 +3138,6 @@ impl<'a> Resolver<'a> {
                                                 _ => &self.opts.conditions.import,
                                             },
                                             debug_logs: self.debug_logs.as_mut(),
-                                            module_type: &mut module_type,
                                         }
                                         .resolve(b"/", esm.subpath, &exports_map.root);
 
@@ -3184,7 +3176,6 @@ impl<'a> Resolver<'a> {
                                                 _ => &self.opts.conditions.import,
                                             },
                                             debug_logs: self.debug_logs.as_mut(),
-                                            module_type: &mut module_type,
                                         }
                                         .resolve(
                                             b"/",
@@ -4983,7 +4974,6 @@ impl<'a> Resolver<'a> {
             }
             return MatchStatus::NotFound;
         }
-        let mut module_type = options::ModuleType::Unknown;
 
         // NOTE: keeping the `ESModule`'s borrow of `self.debug_logs` alive
         // across the subsequent `&mut self` calls would be aliased-&mut UB, so
@@ -4997,10 +4987,8 @@ impl<'a> Resolver<'a> {
                 _ => &self.opts.conditions.import,
             },
             debug_logs: self.debug_logs.as_mut(),
-            module_type: &mut module_type,
         }
         .resolve_imports(import_path, &imports_map.root);
-        let _ = module_type;
 
         if esm_resolution.status == crate::package_json::Status::PackageResolve {
             // https://github.com/oven-sh/bun/issues/4972
@@ -6393,6 +6381,10 @@ impl<'a> Resolver<'a> {
             }
         }
 
+        info.package_json_for_module_type = info
+            .package_json()
+            .or_else(|| parent.and_then(|parent_| parent_.package_json_for_module_type));
+
         // Record if this directory has a tsconfig.json or jsconfig.json file
         if self.opts.load_tsconfig_json {
             let mut tsconfig_path: Option<&[u8]> = None;
@@ -6742,8 +6734,9 @@ bun_core::comptime_string_map! {
     };
 }
 
+/// `.mjs`/`.mts` are ESM, `.cjs`/`.cts` are CommonJS, anything else is `None`.
 #[inline]
-fn module_type_from_ext(ext: &[u8]) -> Option<options::ModuleType> {
+pub fn module_type_from_ext(ext: &[u8]) -> Option<options::ModuleType> {
     MODULE_TYPE_FROM_EXT.get(ext).copied()
 }
 

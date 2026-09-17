@@ -575,6 +575,85 @@ test.concurrent("workspaces: prunes workspace folders, keeps workspace links, ru
   expect(existsSync(join(nm, "a-dep"))).toBeFalse();
 });
 
+// https://github.com/oven-sh/bun/issues/40393: each spec resolves to the sibling workspace;
+// reloading bun.lock and reparsing package.json must yield the same edge, or bun prune refuses.
+// An alias installs a third link, node_modules/aliased.
+test.concurrent.each([
+  {
+    spec: "* on a versionless workspace",
+    app1: { dependencies: { package1: "*" } },
+    pkg1: {},
+    checked: 2,
+  },
+  {
+    spec: "* on a prerelease workspace",
+    app1: { dependencies: { package1: "*" } },
+    pkg1: { version: "1.0.0-alpha" },
+    checked: 2,
+  },
+  {
+    spec: "npm:@* on a versionless workspace",
+    app1: { dependencies: { aliased: "npm:package1@*" } },
+    pkg1: {},
+    checked: 3,
+  },
+  {
+    spec: "catalog: on a workspace",
+    app1: { dependencies: { package1: "catalog:" } },
+    pkg1: { version: "1.0.0" },
+    checked: 2,
+  },
+  {
+    spec: "workspace: alias of a workspace",
+    app1: { dependencies: { aliased: "workspace:package1@*" } },
+    pkg1: {},
+    checked: 3,
+  },
+  {
+    spec: "workspace:* in dev and ^1 in peer",
+    app1: { devDependencies: { package1: "workspace:*" }, peerDependencies: { package1: "^1.0.0" } },
+    pkg1: { version: "1.0.0" },
+    checked: 2,
+  },
+])("workspaces: $spec is in sync", async ({ app1, pkg1, checked }) => {
+  const { packageDir: dir, packageJson } = await registry.createTestDir();
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({ name: "root", workspaces: { packages: ["app1", "package1"], catalog: { package1: "^1.0.0" } } }),
+    ),
+    write(join(dir, "app1", "package.json"), JSON.stringify({ name: "app1", ...app1 })),
+    write(join(dir, "package1", "package.json"), JSON.stringify({ name: "package1", ...pkg1 })),
+  ]);
+  await runBunInstall(installEnv(dir), dir);
+
+  const { stdout, stderr, exitCode } = await prune(dir);
+  expect(stderr).toBe("");
+  expect(out(stdout)).toBe(`${BANNER}\n\n${NOTHING(checked, 1)}`);
+  expect(exitCode).toBe(0);
+});
+
+// The link is to a path: relocating the workspace changes the edge until bun install rewrites bun.lock.
+test.concurrent("workspaces: * on a relocated versionless workspace is out of sync", async () => {
+  const { packageDir: dir, packageJson } = await registry.createTestDir();
+  await Promise.all([
+    write(packageJson, JSON.stringify({ name: "root", workspaces: ["app1", "package1"] })),
+    write(join(dir, "app1", "package.json"), JSON.stringify({ name: "app1", dependencies: { package1: "*" } })),
+    write(join(dir, "package1", "package.json"), JSON.stringify({ name: "package1" })),
+  ]);
+  await runBunInstall(installEnv(dir), dir);
+
+  renameSync(join(dir, "package1"), join(dir, "moved"));
+  await write(packageJson, JSON.stringify({ name: "root", workspaces: ["app1", "moved"] }));
+  expectRefused(await prune(dir));
+
+  await runBunInstall(installEnv(dir), dir);
+  const { stdout, stderr, exitCode } = await prune(dir);
+  expect(stderr).toBe("");
+  expect(out(stdout)).toBe(`${BANNER}\n\n${NOTHING(2, 1)}`);
+  expect(exitCode).toBe(0);
+});
+
 test.concurrent("keeps dependencies bundled inside a package", async () => {
   const dir = await setup({ name: "foo", dependencies: { "bundled-transitive": "1.0.0" } });
   const bundled = join(dir, "node_modules", "bundled-transitive", "node_modules", "no-deps", "package.json");

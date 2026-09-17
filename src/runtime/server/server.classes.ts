@@ -1,4 +1,4 @@
-import { define } from "../../codegen/class-definitions";
+import { define } from "../../codegen/class-definitions.ts";
 
 function generate(name) {
   return define({
@@ -185,11 +185,6 @@ export default [
         fn: "writeHeadAndEnd",
         length: 8,
       },
-      dumpRequestBody: {
-        fn: "dumpRequestBody",
-        length: 0,
-        passThis: true,
-      },
       resume: {
         fn: "doResume",
         length: 0,
@@ -208,9 +203,6 @@ export default [
       },
       hasBody: {
         getter: "getHasBody",
-      },
-      ended: {
-        getter: "getEnded",
       },
       ondata: {
         getter: "getOnData",

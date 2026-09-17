@@ -963,15 +963,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
                 &package.dir,
                 run_in_bun,
             )?;
-            let pkg_name: Box<[u8]> = if !package.json.name.is_empty() {
-                Box::<[u8]>::from(&package.json.name[..])
-            } else {
-                // Fallback: use relative path from workspace root
-                Box::from(bun_paths::resolve_path::relative_platform::<
-                    bun_paths::resolve_path::platform::Posix,
-                    false,
-                >(resolve_root, &package.dir))
-            };
+            let pkg_name = package.display_name(resolve_root);
 
             matched_packages.push(MatchedPackage {
                 name: pkg_name,
@@ -1040,20 +1032,8 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
             if ctx.if_present {
                 Global::exit(0);
             }
-            if ctx.workspaces {
-                bun_core::pretty_errorln!(
-                    "<r><red>error<r>: No workspace packages have matching scripts"
-                );
-            } else {
-                let patterns: Vec<&[u8]> = ctx.filters.iter().map(|f| &**f).collect();
-                Output::err_generic(
-                    "{}",
-                    (bstr::BStr::new(&workspace_selection::unmatched_message(
-                        &patterns,
-                    )),),
-                );
-            }
-            Global::exit(1);
+            let names: Vec<&[u8]> = script_names.iter().map(|n| &**n).collect();
+            selected.error_script_not_found(ctx, &workspace_selection::quote_patterns(&names));
         }
     } else {
         // Single-package mode: use the root package.json

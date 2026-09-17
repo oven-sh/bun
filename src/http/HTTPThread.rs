@@ -3,6 +3,7 @@ use core::ptr::NonNull;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
+use bun_boringssl_sys::OwnedSslCtx;
 use bun_collections::ArrayHashMap;
 use bun_core::{self, Output};
 use bun_ptr::RefPtr;
@@ -75,7 +76,7 @@ pub struct HttpThread {
     /// no explicit CA config, `on_start` defers
     /// `https_context.init_with_thread_opts` (which calls
     /// `us_ssl_ctx_from_options` → `us_get_default_ca_store`) until the first
-    /// SSL connect actually arrives via [`HttpThread::connect`]`::<true>`. A
+    /// use, in [`HttpThread::ensure_https_context_init`]. A
     /// fully-cached `bun install` never makes one, so the cost is skipped
     /// entirely. If `--cafile` / `--ca` *was* passed, `on_start` still runs
     /// init eagerly so a bad CA file crashes at thread start (the long-standing
@@ -102,15 +103,23 @@ pub struct HttpThread {
     pub(crate) queued_writes: Vec<WriteMessage>,
     pub(crate) queued_receive_resumes: Vec<u32>,
     pub(crate) queued_cert_check_resumes: Vec<CertCheckResumeMessage>,
+    /// `PoolOptions::id`s whose idle connections to close. Rare:
+    /// `has_queued_pool_closes` lets a tick skip the lock.
+    pub(crate) queued_pool_closes: Vec<u64>,
+    pub(crate) has_queued_pool_closes: AtomicBool,
 
     pub(crate) queued_shutdowns_lock: Mutex,
     pub(crate) queued_writes_lock: Mutex,
     pub(crate) queued_receive_resumes_lock: Mutex,
     pub(crate) queued_cert_check_resumes_lock: Mutex,
+    pub(crate) queued_pool_closes_lock: Mutex,
 
     /// Refs released on the next loop tick rather than inside the socket
     /// callback that gave them up.
     pub(crate) queued_threadlocal_proxy_derefs: Vec<RefPtr<ProxyTunnel>>,
+    /// Custom TLS contexts with no ref left, see
+    /// `HTTPContext::destroy_between_ticks`.
+    pub(crate) dead_ssl_contexts: Vec<NonNull<NewHttpContext<true>>>,
 
     pub(crate) has_awoken: AtomicBool,
     pub(crate) timer: Instant,
@@ -164,11 +173,15 @@ impl HttpThread {
             queued_writes: Vec::new(),
             queued_receive_resumes: Vec::new(),
             queued_cert_check_resumes: Vec::new(),
+            queued_pool_closes: Vec::new(),
+            has_queued_pool_closes: AtomicBool::new(false),
             queued_shutdowns_lock: Mutex::new(),
             queued_writes_lock: Mutex::new(),
             queued_receive_resumes_lock: Mutex::new(),
             queued_cert_check_resumes_lock: Mutex::new(),
+            queued_pool_closes_lock: Mutex::new(),
             queued_threadlocal_proxy_derefs: Vec::new(),
+            dead_ssl_contexts: Vec::new(),
             has_awoken: AtomicBool::new(false),
             timer: Instant::now(),
             lazy_libdeflater: None,
@@ -366,7 +379,7 @@ impl HttpThread {
 
     /// One-shot lazy init of the default HTTPS context. See
     /// [`HttpThread::lazy_https_init`] for rationale. Called on the HTTP
-    /// thread from [`HttpThread::connect`]`::<true>` only; the `Option::take`
+    /// thread by `connect::<true>` and `default_ssl_ctx`; the `Option::take`
     /// is the once-guard. On failure, `on_init_error` diverges.
     #[inline]
     fn ensure_https_context_init(&mut self) {
@@ -382,6 +395,15 @@ impl HttpThread {
         }
     }
 
+    /// A new reference to the default HTTPS context's `SSL_CTX`, which holds the CA options of [`InitOpts`].
+    pub(crate) fn default_ssl_ctx(&mut self) -> OwnedSslCtx {
+        self.ensure_https_context_init();
+        self.https_context
+            .secure
+            .clone()
+            .expect("init_with_thread_opts sets `secure` or diverges")
+    }
+
     pub(crate) fn connect<const IS_SSL: bool>(
         &mut self,
         client: &mut HttpClient,
@@ -389,7 +411,7 @@ impl HttpThread {
         if IS_SSL {
             // First SSL connect: materialize the default HTTPS `SSL_CTX` +
             // socket group now (deferred from `on_start`). Runs once; every
-            // SSL request — including unix-socket and proxy paths below —
+            // SSL socket — including unix-socket and proxy paths below —
             // funnels through here before touching `https_context.{group,secure}`.
             self.ensure_https_context_init();
 
@@ -703,6 +725,28 @@ impl HttpThread {
         }
     }
 
+    fn drain_queued_pool_closes(&mut self) {
+        // Read before writing so an idle tick leaves the cache line shared. The
+        // flag is a hint: the queue is published by its lock, and the producer
+        // wakes the loop after raising the flag.
+        while self.has_queued_pool_closes.load(Ordering::Relaxed)
+            && self.has_queued_pool_closes.swap(false, Ordering::Acquire)
+        {
+            let queued = {
+                let _guard = self.queued_pool_closes_lock.lock_guard();
+                core::mem::take(&mut self.queued_pool_closes)
+            };
+            for pool_id in queued {
+                self.http_context.close_idle_sockets(pool_id);
+                self.https_context.close_idle_sockets(pool_id);
+                for entry in custom_ssl_context_map().values_mut() {
+                    entry.ctx_mut().close_idle_sockets(pool_id);
+                }
+                h3::ClientContext::close_idle_sessions(pool_id);
+            }
+        }
+    }
+
     fn drain_queued_receive_resumes(&mut self) {
         loop {
             let queued = {
@@ -760,6 +804,7 @@ impl HttpThread {
         // turn removes the abort-tracker entry first, so the resume becomes a
         // no-op and the request is never transmitted after a same-tick abort.
         self.drain_queued_cert_check_resumes();
+        self.drain_queued_pool_closes();
         h3::PendingConnect::drain_resolved();
 
         self.queued_threadlocal_proxy_derefs.clear();
@@ -887,6 +932,16 @@ impl HttpThread {
         self.wakeup();
     }
 
+    /// Close the idle keep-alive connections of fetch session `pool_id`.
+    pub fn schedule_pool_close(&mut self, pool_id: u64) {
+        {
+            let _guard = self.queued_pool_closes_lock.lock_guard();
+            self.queued_pool_closes.push(pool_id);
+        }
+        self.has_queued_pool_closes.store(true, Ordering::Release);
+        self.wakeup();
+    }
+
     pub fn schedule_request_write(&mut self, http: &AsyncHttp, kind: WriteMessageType) {
         {
             let _guard = self.queued_writes_lock.lock_guard();
@@ -902,6 +957,19 @@ impl HttpThread {
         // this is always called on the http thread,
         self.queued_threadlocal_proxy_derefs.push(proxy);
         self.wakeup();
+    }
+
+    /// Everything this thread runs is inside `drain_events` or `tick`, and
+    /// this runs between the two, so no socket callback is on the stack.
+    fn free_dead_ssl_contexts(&mut self) {
+        // One at a time: a context's `Drop` closes its sockets, and a close
+        // handler is free to drop the last ref of another context.
+        while let Some(ctx) = self.dead_ssl_contexts.pop() {
+            // SAFETY: `HTTPContext::destroy_between_ticks` pushed it at
+            // refcount zero, so this is the sole owner of the `RefPtr::new`
+            // allocation.
+            unsafe { bun_core::heap::destroy(ctx.as_ptr()) };
+        }
     }
 
     /// Called from [`crate::shutdown_for_exit`] on the HTTP thread once
@@ -1217,7 +1285,7 @@ mod _event_loop_draft {
         // `SSL_CTX` and the default root-CA store (`us_get_default_ca_store`),
         // which reads the OpenSSL default cert file/dir where present, whether
         // or not an HTTPS request ever happens. When there is no user-supplied
-        // CA config we stash `opts` and let the first `connect::<true>` call
+        // CA config we stash `opts` and let the first use of the context
         // run it (see `HttpThread::lazy_https_init`) — a fully-cached
         // `bun install` (which makes zero network requests) then skips the
         // cost entirely.
@@ -1270,6 +1338,7 @@ mod _event_loop_draft {
                     }
                 }
                 self.drain_events();
+                self.free_dead_ssl_contexts();
                 assert_abort_tracker_sockets_alive();
                 Output::flush();
 
@@ -1301,6 +1370,11 @@ static SHUTDOWN_DONE: (bun_threading::Guarded<bool>, bun_threading::Condvar) = (
     bun_threading::Guarded::new(false),
     bun_threading::Condvar::new(),
 );
+
+/// Whether [`init`] has run; [`crate::http_thread`] panics before that.
+pub fn is_initialized() -> bool {
+    crate::HTTP_THREAD_INIT.load(Ordering::Acquire)
+}
 
 /// Called from `bun_jsc::VirtualMachine::global_exit()` on the JS thread,
 /// before `~VM`. Asks the HTTP daemon thread to reclaim every in-flight

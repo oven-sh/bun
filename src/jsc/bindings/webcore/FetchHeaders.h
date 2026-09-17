@@ -56,7 +56,14 @@ public:
     static ExceptionOr<Ref<FetchHeaders>> create(std::optional<Init>&&);
 
     static Ref<FetchHeaders> create(Guard guard = Guard::None, HTTPHeaderMap&& headers = {}) { return adoptRef(*new FetchHeaders { guard, WTF::move(headers) }); }
-    static Ref<FetchHeaders> create(const FetchHeaders& headers) { return adoptRef(*new FetchHeaders { headers }); }
+
+    // For a Headers object given as a HeadersInit, which is iterated and appended again: "1, " becomes "1,".
+    static Ref<FetchHeaders> createFromHeadersInit(const FetchHeaders& init)
+    {
+        auto headers = adoptRef(*new FetchHeaders { init });
+        headers->m_headers.normalizeValues();
+        return headers;
+    }
 
     ExceptionOr<void> append(const String& name, const String& value);
     ExceptionOr<void> remove(const StringView);

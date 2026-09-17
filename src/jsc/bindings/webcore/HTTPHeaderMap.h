@@ -233,12 +233,26 @@ public:
     void addUncommonHeader(const String& name, const String& value);
     void addUncommonHeaderCloneName(const StringView name, const String& value);
 
+    // Set once a join leaves trailing HTTP whitespace ("1, " from "1" and ""). A copy made entry by entry has to set it.
+    bool mayHaveTrailingSpace() const { return m_mayHaveTrailingSpace; }
+    void setMayHaveTrailingSpace() { m_mayHaveTrailingSpace = true; }
+    // https://fetch.spec.whatwg.org/#concept-header-value-normalize on every combined value.
+    void normalizeValues()
+    {
+        if (m_mayHaveTrailingSpace) [[unlikely]]
+            normalizeValuesSlow();
+    }
+
 private:
     WEBCORE_EXPORT String getUncommonHeader(const StringView name) const;
+    void join(String& combined, ASCIILiteral separator, const String& value);
+    void didJoin(const String& combined);
+    void normalizeValuesSlow();
 
     CommonHeadersVector m_commonHeaders;
     UncommonHeadersVector m_uncommonHeaders;
     Vector<String, 0> m_setCookieHeaders;
+    bool m_mayHaveTrailingSpace { false };
 };
 
 } // namespace WebCore

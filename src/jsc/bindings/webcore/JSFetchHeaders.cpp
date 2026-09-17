@@ -134,7 +134,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSFetchHeadersDOMConstru
 
     if (argument0.value() && !argument0.value().isUndefined()) {
         if (auto* existingJsFetchHeaders = dynamicDowncast<JSFetchHeaders>(argument0.value())) {
-            auto newHeaders = FetchHeaders::create(existingJsFetchHeaders->wrapped());
+            auto newHeaders = FetchHeaders::createFromHeadersInit(existingJsFetchHeaders->wrapped());
             auto jsValue = toJSNewlyCreated<IDLInterface<FetchHeaders>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTF::move(newHeaders));
             if constexpr (IsExceptionOr<decltype(jsValue)>)
                 RETURN_IF_EXCEPTION(throwScope, {});

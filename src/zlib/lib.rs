@@ -938,7 +938,15 @@ impl DeflateEncoder {
         reserve: usize,
         flush: FlushValue,
     ) -> (usize, ReturnCode) {
-        step(&mut self.strm, input, out, reserve, flush, deflate)
+        step(
+            &mut self.strm,
+            input,
+            out,
+            reserve,
+            usize::MAX,
+            flush,
+            deflate,
+        )
     }
 }
 
@@ -1017,7 +1025,15 @@ impl InflateDecoder {
         reserve: usize,
         flush: FlushValue,
     ) -> (usize, ReturnCode) {
-        step(&mut self.strm, input, out, reserve, flush, inflate)
+        step(
+            &mut self.strm,
+            input,
+            out,
+            reserve,
+            usize::MAX,
+            flush,
+            inflate,
+        )
     }
 
     /// Append decompressed output to `out` (growing by 4096-byte steps, capped at
@@ -1061,8 +1077,17 @@ impl InflateDecoder {
                 self.state = State::Error;
                 return Err(ZlibError::ZlibError);
             }
-            let reserve = remaining.min(4096);
-            let (consumed, rc) = self.step(input, out, reserve, FlushValue::NoFlush);
+            let budget = max_output - out.len();
+            let reserve = remaining.min(4096).min(budget);
+            let (consumed, rc) = step(
+                &mut self.strm,
+                input,
+                out,
+                reserve,
+                budget,
+                FlushValue::NoFlush,
+                inflate,
+            );
             input = &input[consumed..];
             self.state = State::Inflating;
             if out.len() > self.max_output_size {
@@ -1152,6 +1177,7 @@ fn step(
     input: &[u8],
     out: &mut Vec<u8>,
     reserve: usize,
+    limit: usize,
     flush: FlushValue,
     op: unsafe extern "C" fn(*mut zStream_struct, FlushValue) -> ReturnCode,
 ) -> (usize, ReturnCode) {
@@ -1164,7 +1190,7 @@ fn step(
     strm.avail_in = in_len as uInt;
 
     let spare = out.spare_capacity_mut();
-    let out_len = spare.len().min(u32::MAX as usize);
+    let out_len = spare.len().min(limit).min(u32::MAX as usize);
     strm.next_out = spare.as_mut_ptr().cast::<u8>();
     strm.avail_out = out_len as uInt;
 

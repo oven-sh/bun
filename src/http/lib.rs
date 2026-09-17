@@ -4148,22 +4148,30 @@ impl<'a> HTTPClient<'a> {
     }
 
     pub(crate) fn drain_response_body<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {
+        if self.pump_held_body::<IS_SSL>(socket) {
+            let ctx = self.get_ssl_ctx::<IS_SSL>();
+            self.send_progress_update_without_stage_check::<IS_SSL>(ctx, socket);
+        }
+    }
+
+    /// Decodes the next piece of a held body. Returns whether there is an update to send.
+    fn pump_held_body<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) -> bool {
         // Find out if we should not send any update.
         match self.state.stage {
-            Stage::Done | Stage::Fail => return,
+            Stage::Done | Stage::Fail => return false,
             _ => {}
         }
 
         if self.state.fail.is_some() {
             // If there's any error at all, do not drain.
-            return;
+            return false;
         }
 
         // If there's a pending redirect, then don't bother to send a response body
         // as that wouldn't make sense and I want to defensively avoid edgecases
         // from that.
         if self.state.flags.is_redirect_pending {
-            return;
+            return false;
         }
 
         // A consumer that paused again gets another resume when it unpauses.
@@ -4172,18 +4180,13 @@ impl<'a> HTTPClient<'a> {
             let is_final = self.state.is_done();
             if let Err(err) = self.process_received_body(is_final) {
                 self.close_and_fail::<IS_SSL>(err, socket);
-                return;
+                return false;
             }
         }
 
         // A pump that ends the body has to say so even with no bytes (a stream trailer alone).
         let ended = pumped && self.state.is_done() && !self.state.has_pending_compressed();
-        if self.state.decoded_body.list.is_empty() && !ended {
-            return;
-        }
-
-        let ctx = self.get_ssl_ctx::<IS_SSL>();
-        self.send_progress_update_without_stage_check::<IS_SSL>(ctx, socket);
+        !self.state.decoded_body.list.is_empty() || ended
     }
 
     fn send_progress_update_without_stage_check<const IS_SSL: bool>(
@@ -4194,6 +4197,19 @@ impl<'a> HTTPClient<'a> {
         if self.flags.protocol != Protocol::Http1_1 {
             return self.send_progress_update_multiplexed();
         }
+        // A loop, not a call back into `drain_response_body`: a consumer that never pauses
+        // (`BufferAll`, or an S3 error body that is collected whole) takes one pass per turn.
+        while self.send_one_progress_update::<IS_SSL>(ctx, socket)
+            && self.pump_held_body::<IS_SSL>(socket)
+        {}
+    }
+
+    /// Returns whether a held body is left that its consumer will not ask for.
+    fn send_one_progress_update<const IS_SSL: bool>(
+        &mut self,
+        ctx: *mut GenHttpContext<IS_SSL>,
+        socket: HttpSocket<IS_SSL>,
+    ) -> bool {
         let callback = self.result_callback;
 
         let mut result = self.to_result();
@@ -4309,13 +4325,12 @@ impl<'a> HTTPClient<'a> {
                 self.state.decoded_body = decoded_body;
             }
             self.maybe_pause_receive(socket);
-            // A consumer that left `Flowing` during this pass never paused, so never asks.
-            if self.state.has_pending_compressed() && !self.signals.is_receive_paused() {
-                self.drain_response_body::<IS_SSL>(socket);
-            }
+            // Only a paused consumer asks for the rest.
+            self.state.has_pending_compressed() && !self.signals.is_receive_paused()
         } else {
             result.body_owned = decoded_body.list;
             callback.run(parent, result);
+            false
         }
     }
 

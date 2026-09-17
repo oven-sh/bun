@@ -133,8 +133,9 @@ impl StreamingDecoder {
                 self.state = ReaderState::Error;
                 return Err(crate::Error::OutOfMemory);
             }
+            let budget = max_output - out.len();
             let spare = out.spare_capacity_mut();
-            let out_len = spare.len();
+            let out_len = spare.len().min(budget);
             let mut next_out: *mut u8 = spare.as_mut_ptr().cast::<u8>();
 
             let next_in = &input[total_in..];

@@ -618,6 +618,7 @@ impl StreamingDecoder {
                 self.state = State::Error;
                 return Err(ZstdError::OutOfMemory);
             }
+            let budget = max_output - out.len();
             let spare = out.spare_capacity_mut();
             let mut in_buf = c::ZSTD_inBuffer {
                 src: next_in.as_ptr().cast::<c_void>(),
@@ -626,7 +627,7 @@ impl StreamingDecoder {
             };
             let mut out_buf = c::ZSTD_outBuffer {
                 dst: spare.as_mut_ptr().cast::<c_void>(),
-                size: spare.len().min(remaining_output),
+                size: spare.len().min(remaining_output).min(budget),
                 pos: 0,
             };
 

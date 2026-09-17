@@ -7,6 +7,7 @@
 import { heapStats } from "bun:jsc";
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tls as tlsCert } from "harness";
+import net from "node:net";
 
 test("socket.data setter works inside connectError", async () => {
   // Before the JSRef migration, handleConnectError reset the cached raw
@@ -357,6 +358,22 @@ test("node:net handle whose socket never starts connecting is collectable", asyn
           untilClosed(s);
           ac.abort();
         }
+        // A name lookup that fails: the handle exists and the connect never starts.
+        const failingLookup = (host, opts, cb) =>
+          process.nextTick(cb, Object.assign(new Error("getaddrinfo ENOTFOUND " + host), { code: "ENOTFOUND" }));
+        for (let i = 0; i < N; i++) {
+          const s = net.connect({ port, host: "does-not-exist.invalid", lookup: failingLookup });
+          s.on("error", () => {});
+          untilClosed(s);
+        }
+        // An address the socket's blockList rejects.
+        const blockList = new net.BlockList();
+        blockList.addAddress("127.0.0.1");
+        for (let i = 0; i < N; i++) {
+          const s = net.connect({ port, host: "127.0.0.1", blockList });
+          s.on("error", () => {});
+          untilClosed(s);
+        }
         // connect() that throws after the handle exists; nothing ever closes it.
         let thrown = 0;
         for (let i = 0; i < N; i++) {
@@ -395,14 +412,38 @@ test("node:net handle whose socket never starts connecting is collectable", asyn
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
   const { closed, thrown, TCPSocket, TLSSocket, pinned } = JSON.parse(stdout.trim().split("\n").pop()!);
-  expect({ closed, thrown }).toEqual({ closed: 100, thrown: 25 });
-  // Strong-held cells: a handle created strong shows up here, 100 and 25.
+  expect({ closed, thrown }).toEqual({ closed: 150, thrown: 25 });
+  // Strong-held cells: a handle created strong shows up here, 150 and 25.
   expect(pinned).toEqual({ TCPSocket: 0, TLSSocket: 0 });
-  // Pinned handles leave 100 TCPSocket and 25 TLSSocket, one per handle.
+  // Pinned handles leave 150 TCPSocket and 25 TLSSocket, one per handle.
   expect(TCPSocket).toBeLessThanOrEqual(3);
   expect(TLSSocket).toBeLessThanOrEqual(3);
   expect(exitCode).toBe(0);
-}, 30_000);
+});
+
+test("node:net socket nothing references still connects when GC runs during the attempt", async () => {
+  // The handle is weak until the attempt starts; the attempt has to hold it, or a collection
+  // here finalizes the socket and it never emits 'connect', 'error' or 'close'.
+  const N = 50;
+  let connected = 0;
+  const { promise, resolve, reject } = Promise.withResolvers<void>();
+  const server = net.createServer(connection => connection.end());
+  await new Promise<void>(listening => server.listen(0, "127.0.0.1", listening));
+  try {
+    const { port } = server.address() as net.AddressInfo;
+    for (let i = 0; i < N; i++) {
+      net
+        .connect(port, "127.0.0.1")
+        .on("connectionAttempt", () => process.nextTick(() => Bun.gc(true)))
+        .on("connect", () => ++connected === N && resolve())
+        .on("error", reject);
+    }
+    await promise;
+    expect(connected).toBe(N);
+  } finally {
+    server.close();
+  }
+});
 
 // Windows routes `unix:` through WindowsNamedPipeContext. A connect that fails
 // before libuv queues it (here: a TLS config that cannot build a context)

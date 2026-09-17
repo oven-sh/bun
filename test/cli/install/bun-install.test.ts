@@ -10608,8 +10608,9 @@ for (const linker of ["hoisted", "isolated"] as const) {
     const locks: string[] = [];
 
     // The first pass resolves from the package.json files, the second installs
-    // what the first one recorded in bun.lock.
-    for (const args of [["install"], ["install", "--frozen-lockfile"]]) {
+    // what the first one recorded in bun.lock, and the third is free to rewrite
+    // bun.lock but must not.
+    for (const args of [["install"], ["install", "--frozen-lockfile"], ["install"]]) {
       await rm(join(projectDir, "node_modules"), { recursive: true, force: true });
 
       await using proc = spawn({
@@ -10647,7 +10648,7 @@ for (const linker of ["hoisted", "isolated"] as const) {
       }
     }
 
-    expect(locks[1]).toBe(locks[0]);
+    expect(locks[2]).toBe(locks[0]);
     // On Windows the stored folder path uses backslashes, JSON-escaped in the lockfile.
     expect(normalizeBunSnapshot(locks[0].replaceAll("\\\\", "/"), projectDir)).toMatchInlineSnapshot(`
       "{
@@ -11343,8 +11344,9 @@ for (const [linker, libNodeModules, toolNodeModules, toolNodeModulesEntries] of 
     }
 
     // The first pass resolves from the package.json files, the second installs
-    // what the first one recorded in bun.lock.
-    for (const args of [["install"], ["install", "--frozen-lockfile"]]) {
+    // what the first one recorded in bun.lock, and the third is free to rewrite
+    // bun.lock but must not.
+    for (const args of [["install"], ["install", "--frozen-lockfile"], ["install"]]) {
       await rm(join(projectDir, "node_modules"), { recursive: true, force: true });
 
       await using proc = spawn({
@@ -11391,7 +11393,7 @@ for (const [linker, libNodeModules, toolNodeModules, toolNodeModulesEntries] of 
       }
     }
 
-    expect(locks[1]).toBe(locks[0]);
+    expect(locks[2]).toBe(locks[0]);
     expect(normalizeBunSnapshot(locks[0], projectDir)).toMatchInlineSnapshot(`
       "{
         "lockfileVersion": 2,

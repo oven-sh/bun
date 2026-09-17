@@ -970,6 +970,10 @@ impl RewriterPipe {
         original: &Response,
         sync_only_noun: Option<&'static str>,
     ) -> JsResult<JSValue> {
+        // Inherit status and headers (#3334); `finalize_without_stream` reads `get_fetch_headers()`, so materialize.
+        let mut init = original.clone_init(global)?;
+        init.materialize_headers(global)?;
+
         let pipe = bun_core::heap::alloc_nn(RewriterPipe {
             global: GlobalRef::from(global),
             cell: Cell::new(JSValue::ZERO),
@@ -1030,10 +1034,7 @@ impl RewriterPipe {
         // the sink buffers into `output_buffer`, and `on_start_streaming`
         // hands that over as `DrainResult::Owned`.
         let result = bun_core::heap::alloc_nn(Response::init(
-            webcore::response::Init {
-                status_code: 200,
-                ..Default::default()
-            },
+            init,
             webcore::Body::new({
                 let mut pv = webcore::body::PendingValue::new(global);
                 pv.task = Some(pipe.cast::<c_void>());
@@ -1050,15 +1051,6 @@ impl RewriterPipe {
         // SAFETY: `result` is the live Response just allocated above.
         this.response
             .set(Some(unsafe { RefPtr::init_ref(result.as_ptr()) }));
-
-        result_ref.set_init(
-            original.get_method(),
-            original.get_init_status_code(),
-            original.get_init_status_text().clone(),
-        );
-
-        // https://github.com/oven-sh/bun/issues/3334
-        result_ref.set_init_headers(original.clone_init_headers(global)?);
 
         let response_js_value = result_ref.to_js(&this.global);
 

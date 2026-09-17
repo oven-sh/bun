@@ -226,7 +226,7 @@ bun --console-depth=4 console.ts
 }
 ```
 
-The depth applies to arrays, `Map` objects, and `Set` objects too. Past the depth, Bun prints them as `[Array ...]`, `[Map ...]`, and `[Set ...]`.
+The depth applies to arrays, `Map` objects, and `Set` objects too. Past the depth, Bun prints them as `[Array ...]`, `[Map ...]`, and `[Set ...]`. An empty array, `Map`, or `Set` prints as `[]`, `Map {}`, or `Set {}` at any depth.
 
 ## `bun run --smol`
 

@@ -48,8 +48,7 @@ pub struct InitOptions<'a> {
 
 use crate::webcore::headers_ref::blob_content_type;
 
-/// The route frames the body from the file size on each request, so a
-/// user-supplied length or transfer coding is dropped from the snapshot.
+/// The route frames the body from the file size on each request.
 fn headers_from(fetch_headers: Option<&FetchHeaders>, blob: &Blob) -> Headers {
     let mut headers =
         bun_http_jsc::headers_jsc::from_fetch_headers(fetch_headers, blob_content_type(blob));

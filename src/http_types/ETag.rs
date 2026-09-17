@@ -253,8 +253,7 @@ impl Headers {
         None
     }
 
-    /// Remove every entry named `name` (ASCII case-insensitive). The bytes
-    /// stay in `buf`; only the entries shrink.
+    /// Remove every entry named `name` (ASCII case-insensitive).
     pub fn remove(&mut self, name: &[u8]) {
         let mut i = 0;
         while i < self.entries.len() {

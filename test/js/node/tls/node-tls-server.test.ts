@@ -1445,20 +1445,26 @@ describe("addContext with a name of more than 10 labels", () => {
   const altCert = { key: rawKey, cert: cert };
   const altFingerprint = new crypto.X509Certificate(cert).fingerprint256;
 
+  // Connects with the long servername and returns the certificate the server
+  // presented. A server-side handshake failure rejects instead of throwing
+  // from the event callback.
+  async function peerFingerprint(server: Server): Promise<string> {
+    const port = (server.address() as AddressInfo).port;
+    const serverError = new Promise<never>((_, reject) => server.once("tlsClientError", reject));
+    const client = connect({ port, host: "127.0.0.1", servername: longName, rejectUnauthorized: false });
+    await Promise.race([once(client, "secureConnect"), serverError]);
+    const fingerprint = client.getPeerCertificate().fingerprint256;
+    client.end();
+    await once(client, "close");
+    return fingerprint;
+  }
+
   it.concurrent("selects the addContext certificate at the handshake", async () => {
     const server: Server = createServer(COMMON_CERT, socket => socket.end());
     server.addContext(longName, altCert);
-    server.on("tlsClientError", err => {
-      throw err;
-    });
     server.listen(0);
     await once(server, "listening");
-    const port = (server.address() as AddressInfo).port;
-    const client = connect({ port, host: "127.0.0.1", servername: longName, rejectUnauthorized: false });
-    await once(client, "secureConnect");
-    expect(client.getPeerCertificate().fingerprint256).toBe(altFingerprint);
-    client.end();
-    await once(client, "close");
+    expect(await peerFingerprint(server)).toBe(altFingerprint);
     server.close();
     await once(server, "close");
   });
@@ -1468,19 +1474,11 @@ describe("addContext with a name of more than 10 labels", () => {
     // removes the old entry and adds the new one. The removal used to miss,
     // so the add saw a duplicate and addContext threw "Failed to register SNI".
     const server: Server = createServer(COMMON_CERT, socket => socket.end());
-    server.on("tlsClientError", err => {
-      throw err;
-    });
     server.listen(0);
     await once(server, "listening");
     server.addContext(longName, COMMON_CERT);
     server.addContext(longName, altCert);
-    const port = (server.address() as AddressInfo).port;
-    const client = connect({ port, host: "127.0.0.1", servername: longName, rejectUnauthorized: false });
-    await once(client, "secureConnect");
-    expect(client.getPeerCertificate().fingerprint256).toBe(altFingerprint);
-    client.end();
-    await once(client, "close");
+    expect(await peerFingerprint(server)).toBe(altFingerprint);
     server.close();
     await once(server, "close");
   });

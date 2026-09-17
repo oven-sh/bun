@@ -42,6 +42,19 @@ struct sni_node {
     std::map<std::string_view, std::unique_ptr<sni_node>> children;
 
     ~sni_node() {
+        /* A name from JS can have any number of labels, so tear the subtree down
+         * with an explicit stack instead of one destructor frame per label */
+        std::vector<std::unique_ptr<sni_node>> pending;
+        releaseChildren(pending);
+        while (!pending.empty()) {
+            std::unique_ptr<sni_node> node = std::move(pending.back());
+            pending.pop_back();
+            node->releaseChildren(pending);
+        }
+    }
+
+    /* Frees what this node owns in its children and moves the child nodes out to `pending` */
+    void releaseChildren(std::vector<std::unique_ptr<sni_node>> &pending) {
         for (auto &p : children) {
             /* The data of our string_views are managed by us_malloc */
             us_free((void *) p.first.data());
@@ -51,7 +64,10 @@ struct sni_node {
             if (p.second.get()->user) {
                 sni_free_cb(p.second.get()->user);
             }
+
+            pending.push_back(std::move(p.second));
         }
+        children.clear();
     }
 };
 
@@ -121,6 +137,11 @@ void *getUser(struct sni_node *root, std::string_view rest) {
         void *user = getUser(it->second.get(), rest);
         if (user) {
             return user;
+        }
+
+        /* A literal "*" label already searched the wildcard child above */
+        if (label == "*") {
+            return nullptr;
         }
     }
 

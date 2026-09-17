@@ -3,7 +3,7 @@ import { CString, dlopen, ptr } from "bun:ffi";
 import { memoryUsage as jscMemoryUsage } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import { familySync } from "detect-libc";
-import { bunEnv, bunExe, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
 import { basename, join, resolve } from "path";
 import { getHeapStatistics } from "v8";
 
@@ -1832,6 +1832,96 @@ describe.concurrent(() => {
     expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
   });
 
+  // Pins which events fire, and in what order, for every way the queue of
+  // unreported rejections finds and drops a handled promise: a hole left in the
+  // middle, compaction, a pop from the back, a short queue, and the batch that
+  // is being reported. The "handling N rejected promises is O(N)" tests below
+  // cover the cost of that lookup.
+  it("reports exactly the rejections that stay unhandled, in order, whatever order the others are handled in", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const noop = () => {};
+          const drain = async () => { for (let i = 0; i < 3; i++) await new Promise(r => setImmediate(r)); };
+          let seen = [];
+          let rejectionHandled = 0;
+          let onUnhandled = noop;
+          process.on("unhandledRejection", reason => { seen.push(reason); onUnhandled(reason); });
+          process.on("rejectionHandled", () => rejectionHandled++);
+          const result = {};
+
+          // Every 7th promise stays unhandled. Each of the others is handled one
+          // step late, when it is no longer the newest rejection.
+          let previous;
+          for (let i = 0; i < 1000; i++) {
+            const promise = Promise.reject(i);
+            if (i % 7 === 0) continue;
+            previous?.catch(noop);
+            previous = promise;
+          }
+          previous.catch(noop);
+          await drain();
+          result.oneStepLate = { seen, rejectionHandled };
+
+          // Handled newest first. The oldest and one in the middle stay unhandled.
+          seen = [];
+          const newestFirst = [];
+          for (let i = 0; i < 100; i++) newestFirst.push(Promise.reject("n" + i));
+          for (let i = 99; i > 0; i--) if (i !== 50) newestFirst[i].catch(noop);
+          await drain();
+          result.newestFirst = { seen, rejectionHandled };
+
+          // A few rejections, handled in no particular order.
+          seen = [];
+          const few = [];
+          for (let i = 0; i < 8; i++) few.push(Promise.reject("f" + i));
+          for (const i of [3, 0, 7, 6, 4]) few[i].catch(noop);
+          await drain();
+          result.few = { seen, rejectionHandled };
+
+          // The listener for the first rejection handles every odd one after it.
+          // Their 'unhandledRejection' has not fired, so they get neither event.
+          // b2 is handled after this batch reported it: one 'rejectionHandled'.
+          seen = [];
+          const batch = [];
+          onUnhandled = reason => {
+            if (reason === "b0") for (let i = 1; i < 100; i += 2) batch[i].catch(noop);
+            if (reason === "b4") batch[2].catch(noop);
+          };
+          for (let i = 0; i < 100; i++) batch.push(Promise.reject("b" + i));
+          await drain();
+          result.handledByListener = { seen, rejectionHandled };
+
+          // Handled after the report, while other rejections wait in the queue:
+          // one 'rejectionHandled' each (b2 already had its own).
+          seen = [];
+          onUnhandled = noop;
+          for (let i = 0; i < 20; i++) Promise.reject("q" + i);
+          for (let i = 0; i < 100; i += 2) batch[i].catch(noop);
+          await drain();
+          result.handledAfterReport = { seen, rejectionHandled };
+
+          console.log(JSON.stringify(result));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      oneStepLate: { seen: Array.from({ length: Math.ceil(1000 / 7) }, (_, i) => i * 7), rejectionHandled: 0 },
+      newestFirst: { seen: ["n0", "n50"], rejectionHandled: 0 },
+      few: { seen: ["f1", "f2", "f5"], rejectionHandled: 0 },
+      handledByListener: { seen: Array.from({ length: 50 }, (_, i) => "b" + i * 2), rejectionHandled: 1 },
+      handledAfterReport: { seen: Array.from({ length: 20 }, (_, i) => "q" + i), rejectionHandled: 50 },
+    });
+    expect(exitCode).toBe(0);
+  });
+
   it("aborts when the uncaughtException handler throws", async () => {
     const proc = Bun.spawn([bunExe(), join(import.meta.dir, "process-onUncaughtExceptionAbort.js")], {
       stderr: "pipe",
@@ -1855,6 +1945,88 @@ it("process.hasUncaughtExceptionCaptureCallback", () => {
   process.setUncaughtExceptionCaptureCallback(() => {});
   expect(process.hasUncaughtExceptionCaptureCallback()).toBe(true);
   process.setUncaughtExceptionCaptureCallback(null);
+});
+
+// Attaching a handler to a rejected promise used to search the rejections that
+// were not reported yet one by one (and shift the ones behind the hit), so
+// handling N of them cost O(N^2). Not concurrent: these measure time.
+describe("handling N rejected promises is O(N)", () => {
+  const N = 100_000;
+  // Measured for N = 100,000 (first test / second test):
+  //   before: release 23,900 / 4,600 ms, debug+ASAN ~55,000 / ~85,000 ms
+  //   after:  release 25 / 20 ms, debug+ASAN 700 / 440 ms
+  const limit = isDebug || isASAN ? 5_000 : 1_000;
+  // A debug build needs about 2 s to start and make the promises, too close to
+  // the 5 s default. The spawn timeout turns a quadratic run into a failure.
+  const timeout = 30_000;
+
+  async function run(script) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: {
+        ...bunEnv,
+        // The ASAN lane sets these. They slow every promise call several times over.
+        BUN_JSC_validateExceptionChecks: undefined,
+        BUN_JSC_dumpSimulatedThrows: undefined,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 20_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode, signalCode: proc.signalCode }).toEqual({ stderr: "", exitCode: 0, signalCode: null });
+    return JSON.parse(stdout);
+  }
+
+  it(
+    "while they wait to be reported, oldest first (the order Promise.allSettled attaches handlers)",
+    async () => {
+      const { ms, ...events } = await run(`
+      const noop = () => {};
+      const events = { unhandledRejection: 0, rejectionHandled: 0 };
+      process.on("unhandledRejection", () => events.unhandledRejection++);
+      process.on("rejectionHandled", () => events.rejectionHandled++);
+      const promises = [];
+      for (let i = 0; i < ${N}; i++) promises.push(Promise.reject(i));
+      const start = performance.now();
+      for (const promise of promises) promise.catch(noop);
+      const ms = performance.now() - start;
+      for (let i = 0; i < 3; i++) await new Promise(r => setImmediate(r));
+      console.log(JSON.stringify({ ms, ...events }));
+    `);
+      expect(events).toEqual({ unhandledRejection: 0, rejectionHandled: 0 });
+      expect(ms).toBeLessThan(limit);
+    },
+    timeout,
+  );
+
+  it(
+    "while they are being reported, from the 'unhandledRejection' listener",
+    async () => {
+      const { ms, ...events } = await run(`
+      const noop = () => {};
+      const events = { unhandledRejection: 0, rejectionHandled: 0 };
+      const promises = [];
+      let ms;
+      process.on("unhandledRejection", () => {
+        if (++events.unhandledRejection > 1) return;
+        // The first report. The other N - 1 promises are in the batch being
+        // reported. Newest first was the longest walk of that batch.
+        const start = performance.now();
+        for (let i = ${N} - 1; i > 0; i--) promises[i].catch(noop);
+        ms = performance.now() - start;
+      });
+      process.on("rejectionHandled", () => events.rejectionHandled++);
+      for (let i = 0; i < ${N}; i++) promises.push(Promise.reject(i));
+      for (let i = 0; i < 3; i++) await new Promise(r => setImmediate(r));
+      console.log(JSON.stringify({ ms, ...events }));
+    `);
+      expect(events).toEqual({ unhandledRejection: 1, rejectionHandled: 0 });
+      expect(ms).toBeLessThan(limit);
+    },
+    timeout,
+  );
 });
 
 it("process.execArgv", async () => {

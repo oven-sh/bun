@@ -17,7 +17,7 @@
 use crate::collections::{FxHashMap as HashMap, IdMap};
 
 use crate::diagnostics::CompilerDiagnostic;
-use crate::hir::dominator::post_dominator_frontier;
+use crate::hir::dominator::post_dominator_frontiers;
 use crate::hir::environment::Environment;
 use crate::hir::object_shape::HookKind;
 use crate::hir::visitors;
@@ -61,11 +61,11 @@ pub(crate) fn infer_reactive_places(
     // The post-dominator frontier (and thus the set of control-test identifiers
     // per block) is a function of the CFG only, so compute it once here instead
     // of inside the fixpoint loop.
+    let frontiers = post_dominator_frontiers(func, &post_dominators);
     let mut control_tests: IdMap<BlockId, Vec<IdentifierId>> = IdMap::new();
     for &block_id in &block_ids {
-        let frontier = post_dominator_frontier(func, &post_dominators, block_id);
         let mut tests = Vec::new();
-        for frontier_block_id in &frontier {
+        for frontier_block_id in &frontiers[&block_id] {
             let control_block = func.body.blocks.get(frontier_block_id).unwrap();
             match &control_block.terminal {
                 Terminal::If { test, .. } | Terminal::Branch { test, .. } => {

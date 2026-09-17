@@ -17,7 +17,7 @@ use std::collections::{HashMap, HashSet};
 use crate::diagnostics::{
     CompilerDiagnostic, CompilerDiagnosticDetail, CompilerError, ErrorCategory,
 };
-use crate::hir::dominator::{compute_post_dominator_tree, post_dominator_frontier};
+use crate::hir::dominator::{compute_post_dominator_tree, post_dominator_frontiers};
 use crate::hir::environment::Environment;
 use crate::hir::{
     BlockId, HirFunction, Identifier, IdentifierId, IdentifierName, InstructionValue,
@@ -303,13 +303,13 @@ fn create_ref_controlled_block_checker(
     types: &[Type],
 ) -> Result<HashMap<BlockId, bool>, CompilerDiagnostic> {
     let post_dominators = compute_post_dominator_tree(func, next_block_id_counter, false)?;
+    let frontiers = post_dominator_frontiers(func, &post_dominators);
     let mut cache: HashMap<BlockId, bool> = HashMap::new();
 
     for (block_id, _block) in &func.body.blocks {
-        let frontier = post_dominator_frontier(func, &post_dominators, *block_id);
         let mut is_controlled = false;
 
-        for frontier_block_id in &frontier {
+        for frontier_block_id in &frontiers[block_id] {
             let control_block = &func.body.blocks[frontier_block_id];
             match &control_block.terminal {
                 Terminal::If { test, .. } | Terminal::Branch { test, .. } => {

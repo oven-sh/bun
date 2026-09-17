@@ -491,18 +491,24 @@ it("logs the invalid-response diagnostic when a synchronous fetch handler return
 });
 
 // The invalid-response diagnostic inspects the returned value, and that runs
-// user code. An exception from it must be reported once, for that request.
-describe("a fetch handler returns a non-Response value whose inspection throws", () => {
+// user code. An exception from it belongs to that request, like a throw in the handler.
+describe.concurrent("a fetch handler returns a non-Response value whose inspection throws", () => {
   const prelude = `
     import { inspect } from "node:util";
     const events = [];
-    process.on("uncaughtException", err => events.push("uncaughtException: " + err.message));
     const throwsOnInspect = message => ({ [inspect.custom]() { throw new Error(message); } });
+    const error = err => {
+      events.push("error(): " + err.message);
+      return new Response("error(): " + err.message, { status: 500 });
+    };
+  `;
+  const uncaughtListener = `
+    process.on("uncaughtException", err => events.push("uncaughtException: " + err.message));
   `;
 
   async function run(script: string) {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", prelude + script],
+      cmd: [bunExe(), "-e", prelude + uncaughtListener + script],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -511,7 +517,7 @@ describe("a fetch handler returns a non-Response value whose inspection throws",
     return { stdout: stdout.trim().startsWith("{") ? JSON.parse(stdout) : stdout, stderr, exitCode };
   }
 
-  it("prints the short diagnostic and reports the error as uncaught", async () => {
+  it("prints the short diagnostic and passes the error to error()", async () => {
     const { stdout, stderr, exitCode } = await run(`
       async function hit(label, firstResult) {
         let calls = 0;
@@ -519,6 +525,7 @@ describe("a fetch handler returns a non-Response value whose inspection throws",
           port: 0,
           development: false,
           routes: { "/:id": req => (calls++ === 0 ? firstResult(req) : new Response("ok")) },
+          error,
         });
         for (let i = 0; i < 2; i++) {
           const res = await fetch(new URL("/1", server.url));
@@ -546,8 +553,8 @@ describe("a fetch handler returns a non-Response value whose inspection throws",
     }).toEqual({
       stdout: {
         events: ["sync", "settled promise", "pending promise", "request"].flatMap(label => [
-          `uncaughtException: ${label} inspect`,
-          `${label}: 204 ""`,
+          `error(): ${label} inspect`,
+          `${label}: 500 "error(): ${label} inspect"`,
           `${label}: 200 "ok"`,
         ]),
       },
@@ -556,26 +563,24 @@ describe("a fetch handler returns a non-Response value whose inspection throws",
     });
   });
 
-  it("does not leak the error into a request on another connection", async () => {
-    // Both requests reach the server in one event loop turn. Whichever the server takes first returns the value.
+  it("does not pass the error to a request on another connection", async () => {
+    // Both requests reach the server in one event loop turn.
     const { stdout, exitCode } = await run(`
       import net from "node:net";
-      let calls = 0;
       await using server = Bun.serve({
         port: 0,
         hostname: "127.0.0.1",
         development: false,
-        fetch() {
-          events.push("fetch");
-          return calls++ === 0 ? throwsOnInspect("inspect") : new Response("ok");
+        fetch(req) {
+          const { pathname } = new URL(req.url);
+          events.push("fetch " + pathname);
+          return pathname === "/bad" ? throwsOnInspect("inspect " + pathname) : new Response("ok");
         },
-        error(err) {
-          events.push("error(): " + err.message);
-          return new Response("error(): " + err.message, { status: 500 });
-        },
+        error,
       });
+      const paths = ["/bad", "/good"];
       const sockets = await Promise.all(
-        [0, 1].map(() => {
+        paths.map(() => {
           const { promise, resolve, reject } = Promise.withResolvers();
           const socket = net.connect(server.port, "127.0.0.1", () => resolve(socket));
           socket.on("error", reject);
@@ -587,15 +592,18 @@ describe("a fetch handler returns a non-Response value whose inspection throws",
         socket.on("data", chunk => (reply += chunk));
         return new Promise(resolve => socket.on("close", () => resolve(reply)));
       });
-      for (const socket of sockets) socket.write("GET / HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n");
-      const statusLines = (await Promise.all(replies)).map(reply => reply.split("\\r\\n")[0]).sort();
-      console.log(JSON.stringify({ statusLines, events }));
+      sockets.forEach((socket, i) =>
+        socket.write("GET " + paths[i] + " HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n"),
+      );
+      const statusLines = (await Promise.all(replies)).map(reply => reply.split("\\r\\n")[0]);
+      const byPath = Object.fromEntries(paths.map((path, i) => [path, statusLines[i]]));
+      console.log(JSON.stringify({ statusLines: byPath, events: events.sort() }));
     `);
 
     expect({ stdout, exitCode }).toEqual({
       stdout: {
-        statusLines: ["HTTP/1.1 200 OK", "HTTP/1.1 204 No Content"],
-        events: ["fetch", "uncaughtException: inspect", "fetch"],
+        statusLines: { "/bad": "HTTP/1.1 500 Internal Server Error", "/good": "HTTP/1.1 200 OK" },
+        events: ["error(): inspect /bad", "fetch /bad", "fetch /good"],
       },
       exitCode: 0,
     });
@@ -603,6 +611,7 @@ describe("a fetch handler returns a non-Response value whose inspection throws",
 
   it("does not crash the server when the next JavaScript to run is a new timer callback", async () => {
     // The client is this process, so the timer callback is the first JavaScript the server runs after the request.
+    // The server has no "uncaughtException" listener.
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -625,6 +634,7 @@ describe("a fetch handler returns a non-Response value whose inspection throws",
               }, 1);
               return throwsOnInspect("inspect");
             },
+            error,
           });
           console.log(server.port);
         `,
@@ -663,9 +673,9 @@ describe("a fetch handler returns a non-Response value whose inspection throws",
       exitCode,
       signalCode: proc.signalCode,
     }).toEqual({
-      bad: { status: 204, body: "" },
+      bad: { status: 500, body: "error(): inspect" },
       timerLine: "timer",
-      events: { status: 200, body: JSON.stringify(["uncaughtException: inspect", "timer"]) },
+      events: { status: 200, body: JSON.stringify(["error(): inspect", "timer"]) },
       diagnostics: ["error: Expected a Response object"],
       exitCode: 0,
       signalCode: null,

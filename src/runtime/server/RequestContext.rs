@@ -784,6 +784,8 @@ where
 
     fn render_missing_invalid_response(&self, value: JSValue) {
         let class_name = value.get_class_info_name().unwrap_or(b"");
+        // Inspecting `value` runs user code (`[inspect.custom]`, `toString`) that can throw.
+        let mut inspect_error: Option<JSValue> = None;
 
         if let Some(server) = self.server.get() {
             // server is a BACKREF — valid while this RequestContext is alive
@@ -792,8 +794,6 @@ where
             Output::enable_buffering();
             let writer = Output::error_writer();
 
-            // Inspecting `value` runs user code (`[inspect.custom]`, `toString`) that can throw.
-            let mut inspected: JsResult<()> = Ok(());
             if class_name == b"Response" {
                 bun_core::err_generic!(
                     "Expected a native Response object, but received a polyfilled Response object. Bun.serve() only supports native Response objects.",
@@ -802,14 +802,15 @@ where
                 let mut formatter = jsc::ConsoleObject::Formatter::new(global_this);
                 formatter.quote_strings = true;
                 let mut received: Vec<u8> = Vec::new();
-                inspected = formatter.format_value::<false>(value, &mut received);
-                if inspected.is_ok() {
-                    bun_core::err_generic!(
+                match formatter.format_value::<false>(value, &mut received) {
+                    Ok(()) => bun_core::err_generic!(
                         "Expected a Response object, but received '{}'",
                         bstr::BStr::new(&received),
-                    );
-                } else {
-                    bun_core::err_generic!("Expected a Response object");
+                    ),
+                    Err(err) => {
+                        bun_core::err_generic!("Expected a Response object");
+                        inspect_error = Some(global_this.take_error(err));
+                    }
                 }
                 // `formatter` drops here.
             } else {
@@ -821,7 +822,6 @@ where
                 jsc::ConsoleObject::write_trace(writer, global_this);
             }
             Output::flush();
-            crate::dispatch::fold(inspected);
         }
         // The formatter and `write_trace` above re-enter JS (getters, proxy
         // traps, Error.prepareStackTrace), which can synchronously abort or
@@ -830,6 +830,11 @@ where
         // allocation alive across the re-entry; re-check the request state so
         // we never render onto a response that was ended underneath us.
         if self.is_aborted_or_ended() {
+            return;
+        }
+        if let Some(error) = inspect_error {
+            // Report it like an error the handler threw.
+            self.run_error_handler(error);
             return;
         }
         self.render_missing();

@@ -45,10 +45,7 @@ impl<R> ScopeRule<R> {
                 dest.write_char(b' ')?;
             }
             dest.write_str("to (")?;
-            // `&` in <scope-end> is the scoping root, not <scope-start>, so it gets no
-            // parent context (lightningcss gives it <scope-start>). Without a `&` or
-            // `:scope`, the selector is relative to the scoping root: `.a > .b` means
-            // `:scope .a > .b`, not `& > .b`.
+            // `&` in <scope-end> is the scoping root, not <scope-start>.
             // https://drafts.csswg.org/css-cascade-6/#scope-limits
             dest.with_cleared_context(scope_end, |scope_end, d: &mut Printer| {
                 serialize_selector_list(scope_end.v.slice(), d, None, false)

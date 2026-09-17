@@ -1209,6 +1209,7 @@ impl<'a> SelectorParser<'a> {
         &mut self,
         name: Str,
         input: &mut CssParser,
+        state: &mut SelectorParsingState,
     ) -> CResult<PseudoElement> {
         // This lookup is intentionally CASE-SENSITIVE: `::CUE(..)` /
         // `::View-Transition-Group(..)` fall through to `CustomFunction`,
@@ -1225,7 +1226,7 @@ impl<'a> SelectorParser<'a> {
         match name.len() {
             3 if name == b"cue" => {
                 return Ok(PseudoElement::CueFunction {
-                    selector: Box::new(Selector::parse(self, input)?),
+                    selector: Box::new(Selector::parse_inner(self, input, state)?),
                 });
             }
             6 if name == b"picker" => {
@@ -1235,7 +1236,7 @@ impl<'a> SelectorParser<'a> {
             }
             10 if name == b"cue-region" => {
                 return Ok(PseudoElement::CueRegionFunction {
-                    selector: Box::new(Selector::parse(self, input)?),
+                    selector: Box::new(Selector::parse_inner(self, input, state)?),
                 });
             }
             19 => match name {
@@ -1814,6 +1815,21 @@ impl<Impl: BunSelectorImpl> GenericSelector<Impl> {
     pub fn parse(parser: &mut SelectorParser, input: &mut CssParser) -> CResult<Self> {
         let mut state = SelectorParsingState::empty();
         parse_selector::<Impl>(parser, input, &mut state, NestingRequirement::None)
+    }
+
+    /// Like `parse`, for the argument of a functional pseudo in another selector:
+    /// `&` in the argument counts as `&` in the selector that holds it.
+    pub(crate) fn parse_inner(
+        parser: &mut SelectorParser,
+        input: &mut CssParser,
+        outer_state: &mut SelectorParsingState,
+    ) -> CResult<Self> {
+        let mut state = SelectorParsingState::empty();
+        let selector = parse_selector::<Impl>(parser, input, &mut state, NestingRequirement::None)?;
+        if state.contains(SelectorParsingState::AFTER_NESTING) {
+            outer_state.insert(SelectorParsingState::AFTER_NESTING);
+        }
+        Ok(selector)
     }
 
     pub(crate) fn append(&mut self, component: GenericComponent<Impl>) {
@@ -3348,7 +3364,7 @@ pub(crate) fn parse_one_simple_selector<Impl: BunSelectorImpl>(
                     }
 
                     input.parse_nested_block(|i: &mut CssParser| {
-                        parser.parse_functional_pseudo_element(name, i)
+                        parser.parse_functional_pseudo_element(name, i, state)
                     })?
                 } else {
                     parser.parse_pseudo_element(location, name)?

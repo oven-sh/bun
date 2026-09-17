@@ -10,7 +10,6 @@ import {
   indoc,
   minify_error_test_with_options,
   minify_test,
-  minify_test_with_targets,
   minifyTest,
   minifyTestWithOptions as minify_test_with_options,
   ParserFlags,
@@ -5336,24 +5335,39 @@ describe("css tests", () => {
     // The of-list prints like the lists in :is() and :not().
     minify_test(":nth-child(2 of .a > .b, .c ~ .d) {width: 20px}", ":nth-child(2 of .a>.b,.c~.d){width:20px}");
     minify_test(':nth-child(2 of [foo="bar"]) {width: 20px}', ":nth-child(2 of [foo=bar]){width:20px}");
-    minify_test_with_targets(
-      ".x:is(.a, .b):nth-child(1 of :is(.a, .b)) {width: 20px}",
-      ".x:-webkit-any(.a,.b):nth-child(1 of :-webkit-any(.a,.b)){width:20px}.x:is(.a,.b):nth-child(1 of :is(.a,.b)){width:20px}",
-      { safari: 9 << 16 },
-    );
     // The of-list is not a relative selector list, so a leading `:scope` stays.
     minify_test(":nth-child(2 of :scope > .a) {width: 20px}", ":nth-child(2 of :scope>.a){width:20px}");
 
-    describe("& in the :nth-child() of-list", () => {
-      // A nested selector with `&` in the of-list contains the nesting selector,
-      // so it gets no implicit `& ` prefix.
-      minify_test(".foo { :nth-child(1 of &) { color: red } }", ".foo{:nth-child(1 of &){color:red}}");
-      minify_test(".foo { :nth-child(1 of .x) { color: red } }", ".foo{& :nth-child(1 of .x){color:red}}");
-
+    describe("& inside a functional pseudo", () => {
       // Chrome 95 has no CSS nesting, so `&` becomes the parent selector.
       const chrome95 = { chrome: 95 << 16 };
-      for (const [source, expected] of [
-        [".foo { :nth-child(1 of &) { color: red } }", ":nth-child(1 of .foo){color:red}"],
+
+      // A nested selector that holds `&` only inside a functional pseudo contains the nesting
+      // selector: it gets no implicit `& ` prefix, and `@nest` accepts it.
+      describe.each([
+        [":nth-child(1 of &)", ":nth-child(1 of .foo)"],
+        [":nth-last-child(1 of &)", ":nth-last-child(1 of .foo)"],
+        ["::cue(&)", "::cue(.foo)"],
+        ["video::cue-region(& b)", "video::cue-region(.foo b)"],
+        [":host(&)", ":host(.foo)"],
+        ["::slotted(&)", "::slotted(.foo)"],
+        [":is(&,.x)", ":is(.foo,.x)"],
+        [":where(&)", ":where(.foo)"],
+        [":not(&)", ":not(.foo)"],
+        [":has(&)", ":has(.foo)"],
+      ])("%s", (selector, lowered) => {
+        test("nesting kept", () => {
+          expect(minifyTest(`.foo { ${selector} { color: red } }`, "")).toBe(`.foo{${selector}{color:red}}`);
+        });
+        test("nesting compiled away", () => {
+          expect(minifyTest(`.foo { ${selector} { color: red } }`, "", chrome95)).toBe(`${lowered}{color:red}`);
+        });
+        test("@nest", () => {
+          expect(minifyTest(`.foo { @nest ${selector} { color: red } }`, "", chrome95)).toBe(`${lowered}{color:red}`);
+        });
+      });
+
+      test.each([
         [".bar { &:nth-child(2 of & > .x) { color: red } }", ".bar:nth-child(2 of .bar>.x){color:red}"],
         [".foo { :nth-last-child(2n of .x &) { color: red } }", ":nth-last-child(2n of .x .foo){color:red}"],
         [".a, .b { :nth-child(1 of &) { color: red } }", ":nth-child(1 of :is(.a,.b)){color:red}"],
@@ -5361,12 +5375,14 @@ describe("css tests", () => {
         ["div { :nth-child(1 of &.x) { color: red } }", ":nth-child(1 of div.x){color:red}"],
         [".foo { :nth-child(1 of :not(&)) { color: red } }", ":nth-child(1 of :not(.foo)){color:red}"],
         [".foo { :is(:nth-child(1 of &), .x) { color: red } }", ":is(:nth-child(1 of .foo),.x){color:red}"],
-        [".foo { @nest :nth-child(1 of &) { color: red } }", ":nth-child(1 of .foo){color:red}"],
+        // Without `&` the implicit `& ` prefix stays.
         [".foo { :nth-child(1 of .x) { color: red } }", ".foo :nth-child(1 of .x){color:red}"],
+        [".foo { ::cue(b) { color: red } }", ".foo ::cue(b){color:red}"],
+        // At the top level `&` is `:scope`.
         [":nth-child(1 of &) { color: red }", ":nth-child(1 of :scope){color:red}"],
-      ]) {
-        minify_test_with_targets(source, expected, chrome95);
-      }
+      ])("%s", (source, expected) => {
+        expect(minifyTest(source, "", chrome95)).toBe(expected);
+      });
 
       test("each & in the of-list counts against the nesting expansion budget", () => {
         const depth = 12;

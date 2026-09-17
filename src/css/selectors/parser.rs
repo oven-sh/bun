@@ -1817,8 +1817,7 @@ impl<Impl: BunSelectorImpl> GenericSelector<Impl> {
         parse_selector::<Impl>(parser, input, &mut state, NestingRequirement::None)
     }
 
-    /// Like `parse`, for the argument of a functional pseudo in another selector:
-    /// `&` in the argument counts as `&` in the selector that holds it.
+    /// `&` in the parsed selector counts as `&` in the selector that holds it.
     pub(crate) fn parse_inner(
         parser: &mut SelectorParser,
         input: &mut CssParser,

@@ -194,6 +194,211 @@ it("--offline skips an optional dependency that is not in the cache", async () =
   expect(await readdirSorted(join(dir, "node_modules"))).toContain("baz");
 });
 
+// The install phase can also meet an optional dependency that is not in the cache: the lockfile
+// resolves it, but no earlier install placed it (it is for another platform), or the cache lost it.
+// --offline leaves it out, and with it everything below it. Only a package that something
+// installed requires is an error.
+describe.concurrent("--offline with an optional dependency that is not in the cache", () => {
+  const otherCpu = process.arch === "arm64" ? "x64" : "arm64";
+  const packages: Record<string, object> = {
+    "host": { optionalDependencies: { native: "1.0.0" } },
+    "native": { dependencies: { leaf: "1.0.0" } },
+    "host-other-cpu": { optionalDependencies: { "native-other-cpu": "1.0.0" } },
+    "native-other-cpu": { cpu: [otherCpu], dependencies: { leaf: "1.0.0" } },
+    "uses-leaf": { dependencies: { leaf: "1.0.0" } },
+    "uses-native": { dependencies: { native: "1.0.0" } },
+    "leaf": {},
+    "plain": {},
+  };
+  const tarballs: Record<string, Uint8Array> = {};
+  // A git dependency that depends on leaf.
+  const hasGit = !!Bun.which("git");
+  let gitDir: ReturnType<typeof tempDir> | undefined;
+  let gitNative = "";
+
+  beforeAll(async () => {
+    for (const name of Object.keys(packages)) {
+      const manifest = JSON.stringify({ name, version: "1.0.0", ...packages[name] });
+      tarballs[name] = await new Bun.Archive({ "package/package.json": manifest }, { compress: "gzip" }).bytes();
+    }
+    if (!hasGit) return;
+    gitDir = tempDir("offline-optional-git", {
+      work: {
+        "package.json": JSON.stringify({ name: "git-native", version: "1.0.0", dependencies: { leaf: "1.0.0" } }),
+      },
+    });
+    const bare = join(String(gitDir), "repo.git");
+    for (const cmd of [
+      ["init", "-q"],
+      ["add", "-A"],
+      ["commit", "-q", "-m", "init", "--no-gpg-sign"],
+      ["clone", "-q", "--bare", ".", bare],
+    ]) {
+      await using p = spawn({
+        cmd: ["git", ...cmd],
+        cwd: join(String(gitDir), "work"),
+        env: gitEnv,
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [gitErr, gitCode] = await Promise.all([p.stderr.text(), p.exited]);
+      expect(gitErr).not.toContain("fatal:");
+      expect(gitCode).toBe(0);
+    }
+    gitNative = `git+${pathToFileURL(bare)}`;
+  });
+  afterAll(() => gitDir?.[Symbol.dispose]());
+
+  function serveRegistry(requests: string[]) {
+    return Bun.serve({
+      port: 0,
+      fetch(request) {
+        const { origin, pathname } = new URL(request.url);
+        requests.push(pathname);
+        const tarballOf = pathname.match(/^\/(.+)-1\.0\.0\.tgz$/)?.[1];
+        const name = tarballOf ?? pathname.slice(1);
+        if (!(name in packages)) return new Response("not found", { status: 404 });
+        if (tarballOf) return new Response(tarballs[name]);
+        return Response.json({
+          name,
+          "dist-tags": { latest: "1.0.0" },
+          versions: {
+            "1.0.0": { name, version: "1.0.0", ...packages[name], dist: { tarball: `${origin}/${name}-1.0.0.tgz` } },
+          },
+        });
+      },
+    });
+  }
+
+  /** The names of the packages in node_modules, whatever the linker. */
+  async function installedPackages(cwd: string, linker: "hoisted" | "isolated") {
+    if (linker === "hoisted") {
+      return (await readdirSorted(join(cwd, "node_modules"))).filter(entry => !entry.startsWith("."));
+    }
+    return (await readdirSorted(join(cwd, "node_modules", ".bun")))
+      .filter(entry => entry !== "node_modules")
+      .map(entry => entry.slice(0, entry.lastIndexOf("@")));
+  }
+
+  const cacheEntriesOf =
+    (...names: string[]) =>
+    (entry: string) =>
+      names.some(name => entry === name || entry.startsWith(name + "@"));
+  const gitCacheEntries = (entry: string) => entry.endsWith(".git") || entry.startsWith("@G@");
+
+  /** Installs online, removes the `evict` entries from the cache, then installs again with --offline and no node_modules. */
+  async function installOfflineAfterOnline(
+    linker: "hoisted" | "isolated",
+    project: { manifest: object; evict?: (cacheEntry: string) => boolean; offlineArgs?: string[] },
+  ) {
+    const requests: string[] = [];
+    await using registry = serveRegistry(requests);
+    using dir = tempDir("offline-optional", {
+      "package.json": JSON.stringify({ name: "app", version: "1.0.0", ...project.manifest }),
+    });
+    const cwd = String(dir);
+    const cache = join(cwd, ".cache");
+    await writeFile(
+      join(cwd, "bunfig.toml"),
+      Bun.TOML.stringify({
+        install: { cache: { dir: cache }, registry: registry.url.href, saveTextLockfile: true, linker },
+      }),
+    );
+
+    const online = await install(cwd, []);
+    expect(online.err).not.toContain("error:");
+    expect(online.code).toBe(0);
+    const lockfile = await Bun.file(join(cwd, "bun.lock")).text();
+
+    for (const entry of await readdirSorted(cache)) {
+      if (project.evict?.(entry)) await rm(join(cache, entry), { recursive: true, force: true });
+    }
+    await rm(join(cwd, "node_modules"), { recursive: true, force: true });
+
+    const before = requests.length;
+    const offline = await install(cwd, ["--offline", ...(project.offlineArgs ?? [])]);
+    return {
+      err: offline.err,
+      code: offline.code,
+      installed: await installedPackages(cwd, linker),
+      requests: requests.slice(before),
+      lockfileChanged: lockfile !== (await Bun.file(join(cwd, "bun.lock")).text()),
+    };
+  }
+
+  describe.each(["hoisted", "isolated"] as const)("%s linker", linker => {
+    it("installs from the cache of an install for another cpu", async () => {
+      // The online install does not place native-other-cpu, so it caches neither that package nor leaf.
+      const { err, code, ...result } = await installOfflineAfterOnline(linker, {
+        manifest: { dependencies: { "host-other-cpu": "1.0.0" } },
+        offlineArgs: [`--cpu=${otherCpu}`],
+      });
+      expect(err).not.toContain("error:");
+      expect(result).toEqual({ installed: ["host-other-cpu"], requests: [], lockfileChanged: false });
+      expect(code).toBe(0);
+    });
+
+    it("leaves out the optional dependency and everything below it", async () => {
+      const { err, code, ...result } = await installOfflineAfterOnline(linker, {
+        manifest: { dependencies: { host: "1.0.0" } },
+        evict: cacheEntriesOf("native", "leaf"),
+      });
+      expect(err).not.toContain("error:");
+      expect(result).toEqual({ installed: ["host"], requests: [], lockfileChanged: false });
+      expect(code).toBe(0);
+    });
+
+    it.skipIf(!hasGit)("leaves out an optional git dependency and everything below it", async () => {
+      const { err, code, ...result } = await installOfflineAfterOnline(linker, {
+        manifest: { dependencies: { plain: "1.0.0" }, optionalDependencies: { "git-native": gitNative } },
+        evict: entry => gitCacheEntries(entry) || cacheEntriesOf("leaf")(entry),
+      });
+      expect(err).not.toContain("error:");
+      expect(result).toEqual({ installed: ["plain"], requests: [], lockfileChanged: false });
+      expect(code).toBe(0);
+    });
+
+    it.skipIf(!hasGit)("checks out an optional git dependency from the clone in the cache", async () => {
+      const { err, code, ...result } = await installOfflineAfterOnline(linker, {
+        manifest: { dependencies: { plain: "1.0.0" }, optionalDependencies: { "git-native": gitNative } },
+        evict: entry => entry.startsWith("@G@"),
+      });
+      expect(err).not.toContain("error:");
+      expect(result).toEqual({ installed: ["git-native", "leaf", "plain"], requests: [], lockfileChanged: false });
+      expect(code).toBe(0);
+    });
+
+    it.each([
+      {
+        title: "below it that another installed package requires",
+        dependencies: { host: "1.0.0", "uses-leaf": "1.0.0" },
+        evict: ["native", "leaf"],
+        missing: "leaf",
+      },
+      {
+        title: "below it when the optional dependency itself is in the cache",
+        dependencies: { host: "1.0.0" },
+        evict: ["leaf"],
+        missing: "leaf",
+      },
+      {
+        title: "that is optional for one installed package and required by another",
+        dependencies: { host: "1.0.0", "uses-native": "1.0.0" },
+        evict: ["native"],
+        missing: "native",
+      },
+    ])("still reports a package $title", async ({ dependencies, evict, missing }) => {
+      const r = await installOfflineAfterOnline(linker, {
+        manifest: { dependencies },
+        evict: cacheEntriesOf(...evict),
+      });
+      expect(r.err).toContain(`error: --offline: "${missing}" is not in the cache`);
+      expect(r.requests).toEqual([]);
+      expect(r.code).toBe(1);
+    });
+  });
+});
+
 it("--offline refuses an uncached git dependency without running git", async () => {
   const dir = await newProject({ dep: `git+${pathToFileURL(join(cache_dir, "no-such-repo.git"))}#deadbeef` });
   const r = await install(dir, ["--offline"]);

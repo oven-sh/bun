@@ -1141,6 +1141,8 @@ pub(crate) fn install_isolated_packages(
 ) -> Result<crate::package_install::Summary, AllocError> {
     analytics::features::isolated_bun_install.fetch_add(1, Ordering::Relaxed);
 
+    manager.offline_uncached = package_manager::enqueue::offline_uncached_packages(manager);
+
     // Take a raw pointer so column borrows below don't tie up `&mut manager`
     // (which owns the lockfile).
     let lockfile: *mut Lockfile = &raw mut *manager.lockfile;
@@ -1154,14 +1156,16 @@ pub(crate) fn install_isolated_packages(
     } else {
         Timings::Quiet
     };
-    let store: Store = build_store(
+    let store = build_store(
         &*manager,
         &*lockfile,
         install_root_dependencies,
         workspace_filters,
         packages_to_install,
         timings,
-    )?;
+    );
+    manager.offline_uncached = None;
+    let store: Store = store?;
 
     let global_store_path: Option<Vec<u8>> = if manager.options.enable.global_virtual_store() {
         'global_store_path: {

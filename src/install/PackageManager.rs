@@ -439,6 +439,9 @@ pub struct PackageManager {
     // `bun update <name>`: packages reachable from the workspaces in scope, see update_scope::plan_named.
     pub(crate) named_update_reachable: Option<bun_collections::DynamicBitSet>,
 
+    // --offline, and only while an installer lays out node_modules: see enqueue::offline_uncached_packages.
+    pub(crate) offline_uncached: Option<bun_collections::DynamicBitSet>,
+
     // bun update: patched packages a move was held back for; drained by update_transitive::print_kept_patched.
     pub(crate) kept_patched: Vec<PackageID>,
     pub kept_patched_text: Vec<u8>,
@@ -2139,6 +2142,7 @@ pub fn init(
         wr!(updating_catalogs, Vec::new());
         wr!(update_target_workspaces, None);
         wr!(named_update_reachable, None);
+        wr!(offline_uncached, None);
         wr!(kept_patched, Vec::new());
         wr!(kept_patched_text, Vec::new());
         wr!(dedupe_report, None);
@@ -2607,6 +2611,7 @@ fn init_with_runtime_once(
         wr!(updating_catalogs, Vec::new());
         wr!(update_target_workspaces, None);
         wr!(named_update_reachable, None);
+        wr!(offline_uncached, None);
         wr!(kept_patched, Vec::new());
         wr!(kept_patched_text, Vec::new());
         wr!(dedupe_report, None);

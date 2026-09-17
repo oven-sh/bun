@@ -5,6 +5,7 @@ use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
 use crate::bun_fs::FileSystem;
+use bun_collections::DynamicBitSet;
 use bun_core::{Output, UnwrapOrOom, fmt as bun_fmt};
 use bun_core::{StringOrTinyString, strings};
 use bun_paths as Path;
@@ -380,19 +381,7 @@ fn offline_git_miss(
     if this.options.offline != crate::package_manager_real::options::OfflineMode::Offline {
         return false;
     }
-    let mut folder = Vec::with_capacity(24);
-    {
-        use std::io::Write;
-        let _ = write!(
-            folder,
-            "{}.git",
-            bun_core::fmt::hex_int_lower::<16>(clone_id.get())
-        );
-    }
-    let cache_dir = package_manager_real::get_cache_directory(this);
-    let cached = bun_sys::directory_exists_at(cache_dir, &bun_core::ZBox::from_bytes(&folder))
-        .unwrap_or(false);
-    if cached {
+    if is_git_clone_in_cache(this, clone_id) {
         return false;
     }
     if is_required {
@@ -414,6 +403,86 @@ fn offline_git_miss(
         let _ = this.network_dedupe_map.remove(&clone_id);
     }
     true
+}
+
+fn is_git_clone_in_cache(this: &mut PackageManager, clone_id: Task::Id) -> bool {
+    let mut folder = Vec::with_capacity(24);
+    {
+        use std::io::Write;
+        let _ = write!(
+            folder,
+            "{}.git",
+            bun_core::fmt::hex_int_lower::<16>(clone_id.get())
+        );
+    }
+    let cache_dir = package_manager_real::get_cache_directory(this);
+    bun_sys::directory_exists_at(cache_dir, &bun_core::ZBox::from_bytes(&folder)).unwrap_or(false)
+}
+
+/// `--offline`: `bit[package_id]` is set for a package that an optional dependency resolves to and
+/// that the install phase would have to fetch. `None` when the network is allowed.
+///
+/// `is_filtered_dependency_or_workspace` leaves such a dependency out, with everything below it,
+/// like a package for another platform. `offline_tarball_miss` alone skips the package, but still
+/// reports the dependencies below it, which nothing installed requires.
+pub(crate) fn offline_uncached_packages(this: &mut PackageManager) -> Option<DynamicBitSet> {
+    if this.options.offline != crate::package_manager_real::options::OfflineMode::Offline {
+        return None;
+    }
+    let package_count = this.lockfile.packages.len();
+    let mut checked = DynamicBitSet::init_empty(package_count).unwrap_or_oom();
+    let mut uncached = DynamicBitSet::init_empty(package_count).unwrap_or_oom();
+    let mut folder_path_buf = Path::path_buffer_pool::get();
+    for dependency_id in 0..this.lockfile.buffers.dependencies.len() {
+        if this.lockfile.buffers.dependencies[dependency_id]
+            .behavior
+            .is_required()
+        {
+            continue;
+        }
+        let Some(&package_id) = this.lockfile.buffers.resolutions.get(dependency_id) else {
+            break;
+        };
+        let package_id = package_id as usize;
+        if package_id >= package_count || checked.is_set(package_id) {
+            continue;
+        }
+        checked.set(package_id);
+
+        let package = *this.lockfile.packages.get(package_id);
+        if package.is_disabled(this.options.cpu, this.options.os) {
+            continue;
+        }
+        match package.resolution.tag {
+            ResolutionTag::Npm | ResolutionTag::Github | ResolutionTag::RemoteTarball => {}
+            // `offline_git_miss`: a checkout can come from the clone in the cache.
+            ResolutionTag::Git => {
+                let clone_id =
+                    Task::Id::for_git_clone(this.lockfile.str(&package.resolution.git().repo));
+                if is_git_clone_in_cache(this, clone_id) {
+                    continue;
+                }
+            }
+            // Everything else is already on disk.
+            _ => continue,
+        }
+        let name = this.lockfile.str(&package.name).to_vec();
+        let cached = package_manager_real::compute_cache_dir_and_subpath(
+            this,
+            &name,
+            &package.resolution,
+            &mut folder_path_buf,
+            None,
+        );
+        if !package_manager_real::directories::is_package_in_cache_at(
+            cached.cache_dir,
+            cached.cache_dir_subpath,
+            package.resolution.tag,
+        ) {
+            uncached.set(package_id);
+        }
+    }
+    Some(uncached)
 }
 
 /// # Safety

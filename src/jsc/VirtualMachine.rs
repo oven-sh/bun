@@ -4868,6 +4868,13 @@ impl VirtualMachine {
             mode.is_esm(),
             IS_A_FILE_PATH,
         );
+        // Both passes of `_resolve` share one failed registry lookup; the next resolve asks again.
+        if let Some(pm) = jsc_vm.transpiler.resolver.package_manager {
+            // SAFETY: sole `dyn AutoInstaller` impl is `PackageManager`.
+            unsafe {
+                (*pm.cast::<bun_install::PackageManager>().as_ptr()).forget_failed_manifest_tasks();
+            }
+        }
         if let Err(err_) = resolve_result {
             let err = err_;
             let import_kind = mode.import_kind();

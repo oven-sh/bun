@@ -453,9 +453,9 @@ fn run_tasks_erased(
                 // pointer (`StringOrTinyString` is self-referential and not
                 // `Clone`) so the loop body can read `name` after the
                 // `&mut task.callback` borrow ends.
-                // SAFETY: `name` lives in `task.callback` which outlives this
-                // match arm (the task is only `put` back to the pool by a later
-                // resolve-task pass, never inside this loop iteration).
+                // SAFETY: `name` lives in `task.callback`. The task goes back to
+                // the pool in a later resolve-task pass, or at a failure exit of
+                // this arm, which does so after its last use of `name`.
                 let name = unsafe { bun_ptr::detach_lifetime(name.slice()) };
                 let is_extended_manifest = *is_extended_manifest;
                 if log_level.show_progress() {
@@ -554,6 +554,10 @@ fn run_tasks_erased(
                         }
                     }
 
+                    manifest_task_failed(manager, task.task_id);
+                    // SAFETY: the request ran and will not be retried; nothing uses the
+                    // task, or `name`, after this.
+                    unsafe { release_network_task(&manager.preallocated_network_tasks, task_ptr) };
                     continue;
                 };
                 let response = &metadata.response;
@@ -577,6 +581,12 @@ fn run_tasks_erased(
                             &task.url_buf,
                         );
 
+                        manifest_task_failed(manager, task.task_id);
+                        // SAFETY: the request ran and will not be retried; nothing uses the
+                        // task, or `name`, after this.
+                        unsafe {
+                            release_network_task(&manager.preallocated_network_tasks, task_ptr)
+                        };
                         continue;
                     }
 
@@ -610,6 +620,10 @@ fn run_tasks_erased(
                         }
                     }
 
+                    manifest_task_failed(manager, task.task_id);
+                    // SAFETY: the request ran and will not be retried; nothing uses the
+                    // task, or `name`, after this.
+                    unsafe { release_network_task(&manager.preallocated_network_tasks, task_ptr) };
                     continue;
                 }
 
@@ -1042,15 +1056,7 @@ fn run_tasks_erased(
                     // SAFETY: see the put-task `defer!` above — `manager_ptr` is the
                     // function-scope provenance root; `net_ptr` is the network task
                     // owned by this resolve task and is returned to the pool here.
-                    // `unsafe_http_client` is `MaybeUninit` so `put()`'s
-                    // `drop_in_place<NetworkTask>` skips it — drop manually
-                    // (HTTP completed, so it IS init) so the inner
-                    // `AsyncHTTP.{request,response}_headers: EntryList` don't
-                    // leak per put/get cycle.
-                    unsafe {
-                        (*net_ptr).unsafe_http_client.assume_init_drop();
-                        (*manager_ptr).preallocated_network_tasks.put(net_ptr);
-                    }
+                    unsafe { release_network_task(&(*manager_ptr).preallocated_network_tasks, net_ptr) };
                 };
                 if task.status == Task::Status::Fail {
                     let req = task.request_package_manifest();
@@ -1075,6 +1081,7 @@ fn run_tasks_erased(
                         );
                     }
 
+                    manifest_task_failed(manager, task.id);
                     continue;
                 }
                 debug_assert!(task.tag == Task::Tag::PackageManifest);
@@ -1135,12 +1142,7 @@ fn run_tasks_erased(
                         // SAFETY: see the put-task `defer!` above — `manager_ptr` is the
                         // function-scope provenance root; `net_ptr` (checked non-null) is
                         // the network task owned by this resolve task.
-                        // `unsafe_http_client` is `MaybeUninit` so `put()`'s drop
-                        // skips it — drop manually so headers don't leak.
-                        unsafe {
-                            (*net_ptr).unsafe_http_client.assume_init_drop();
-                            (*manager_ptr).preallocated_network_tasks.put(net_ptr);
-                        }
+                        unsafe { release_network_task(&(*manager_ptr).preallocated_network_tasks, net_ptr) };
                     }
                 };
 
@@ -1946,6 +1948,35 @@ pub(crate) fn network_task_has_failed(this: &PackageManager, task_id: Task::Id) 
         .is_some_and(|e| e.failed)
 }
 
+/// Its waiters never run. `bun install` keeps the `network_dedupe_map` entry to ask once per run.
+fn manifest_task_failed(this: &mut PackageManager, task_id: Task::Id) {
+    let _ = this.task_queue.remove(&task_id);
+    this.failed_manifest_tasks.push(task_id);
+}
+
+/// `put()` skips the `MaybeUninit` HTTP client, so drop it first or its header lists leak.
+/// SAFETY: the request ran, which initialized the client, and nothing uses `task` after this.
+unsafe fn release_network_task(pool: &super::PreallocatedNetworkTasks, task: *mut NetworkTask) {
+    // SAFETY: fn contract.
+    unsafe {
+        (*task).unsafe_http_client.assume_init_drop();
+        pool.put(task);
+    }
+}
+
+/// For the runtime, whose manager outlives a resolve: the next resolve asks the registry again.
+pub(crate) fn forget_failed_manifest_tasks(this: &mut PackageManager) {
+    // A resolve nested in a lookup's wait ends first; the waiting lookup's second pass needs its record.
+    if this.root_lookups_waiting > 0 {
+        return;
+    }
+    for task_id in this.failed_manifest_tasks.drain(..) {
+        let _ = this.network_dedupe_map.remove(&task_id);
+        // A resolver pass that ran after the failure queued its waiter again.
+        let _ = this.task_queue.remove(&task_id);
+    }
+}
+
 /// The first failed download in a `run_tasks` pass halves the number of
 /// concurrent requests (down to the configured minimum).
 fn throttle_after_network_error(manager: &PackageManager, has_network_error: &mut bool) {
@@ -2171,6 +2202,10 @@ impl PackageManager {
     #[inline]
     pub(crate) fn network_task_has_failed(&self, task_id: Task::Id) -> bool {
         network_task_has_failed(self, task_id)
+    }
+    #[inline]
+    pub fn forget_failed_manifest_tasks(&mut self) {
+        forget_failed_manifest_tasks(self)
     }
     #[inline]
     pub(crate) fn get_network_task(&mut self) -> *mut NetworkTask {

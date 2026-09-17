@@ -903,17 +903,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         called
     }
 
-    /// `internal_flush` reported a fatal send errno under an event-loop
-    /// dispatch. On POSIX that signal is trustworthy:
-    /// us_socket_write_check_error only reports an errno that is either known
-    /// peer-gone or persisted across its bounded unclassified-errno retry
-    /// window. internal_flush already dropped the undeliverable buffer and the
-    /// writable poll is no longer re-armed, so the dispatch is the last place
-    /// the errno is visible - swallowing it acknowledged the bytes to JS, and
-    /// the peer saw a stream with those bytes missing. Deliver it like a failed
-    /// write (syscall "write", same shape as net.ts failWrite) and close the
-    /// socket so 'error' is followed by 'close'. The caller holds the handlers
-    /// scope.
+    /// Reports the fatal send errno that `internal_flush` returned as a failed
+    /// write, then closes. The buffer is already dropped, so this dispatch is
+    /// the only place JS can learn of it. The caller holds the handlers scope.
     #[cfg(not(windows))]
     fn fail_fatal_flush(
         &self,
@@ -927,9 +919,8 @@ impl<const SSL: bool> NewSocket<SSL> {
             &global,
         );
         handlers.call_error_handler(this_value, &[this_value, err_value])?;
-        // The error handler can destroy the socket itself; only close a
-        // still-attached socket. Close without detaching so on_close runs
-        // and JS observes 'close' (mirrors h2's dead-transport close).
+        // The error handler can detach the socket. Close without detaching, so
+        // on_close runs and JS observes 'close'.
         if !self.socket.get().is_detached() {
             self.socket.get().close(uws::CloseCode::Normal);
         }
@@ -1633,9 +1624,8 @@ impl<const SSL: bool> NewSocket<SSL> {
             // the do_socket_write backpressure arms the normal writable
             // subscription.
             let fatal_send_errno = this.internal_flush();
-            // A fatal flush also leaves the buffer empty (it drops the bytes),
-            // so the drain below would complete that write as delivered.
-            // Windows keeps the legacy contract, as in on_writable.
+            // A fatal flush empties the buffer too: the drain below would
+            // complete that write as delivered.
             #[cfg(not(windows))]
             if fatal_send_errno != 0 {
                 return this.fail_fatal_flush(&handlers, this_value, fatal_send_errno);
@@ -3001,8 +2991,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         log!("writeOrEnd {}", bytes.len());
         let wrote = self.write_maybe_corked(bytes);
         let uwrote: usize = usize::try_from(wrote.max(0)).expect("int cast");
-        // `wrote < -1` is a fatal send: JS fails that write, so its bytes must
-        // not stay queued for a later flush to retry.
+        // JS fails a fatal send (`wrote < -1`): do not queue its bytes.
         if buffer_unwritten_data && wrote >= -1 {
             let remaining = &bytes[uwrote..];
             if !remaining.is_empty() {
@@ -3042,13 +3031,10 @@ impl<const SSL: bool> NewSocket<SSL> {
     }
 
     /// Flushes the node:net buffered tail. Returns 0, or the positive errno of
-    /// a fatal send error (buffer dropped, writable not re-armed).
-    /// On POSIX, the event-loop callers (`on_writable` and the tail of
-    /// `on_open`) consume the errno through `fail_fatal_flush`: it dispatches
-    /// the error handler and closes the socket. On Windows the errno is still
-    /// ignored (the drain callback is dispatched regardless) - skipping the
-    /// drain on fatal made Windows servers reset FIN-terminated responses (see
-    /// a5e7ba5905) - until the Windows fatal-write detection is verified.
+    /// a fatal send error (buffer dropped, writable not re-armed). On POSIX the
+    /// event-loop callers report it through `fail_fatal_flush`. Windows still
+    /// ignores it: skipping the drain on fatal made Windows servers reset
+    /// FIN-terminated responses (a5e7ba5905).
     fn internal_flush(&self) -> i32 {
         // A TLS socket whose handshake was rejected has no usable transport:
         // never push the buffered tail at it, and report no error (the

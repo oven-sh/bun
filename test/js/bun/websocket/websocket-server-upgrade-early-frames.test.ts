@@ -227,6 +227,39 @@ describe.concurrent("frames in the same read as the upgrade request", () => {
     expect(events).toEqual(["open", "message:early", "ping:p", "message:later"]);
   });
 
+  // server.upgrade() does not read a body that the upgrade request declares.
+  // The body is not frames either: it is dropped, and the WebSocket works.
+  it.each([
+    ["Content-Length", 'Content-Length: 17\r\n\r\n{"hello":"world"}'],
+    ["chunked", 'Transfer-Encoding: chunked\r\n\r\n11\r\n{"hello":"world"}\r\n0\r\n\r\n'],
+  ])("a %s body in the same read as the upgrade request is not parsed as frames", async (_, framedBody) => {
+    const events: string[] = [];
+    using server = echoServer(events);
+    using client = await rawClient(server.port);
+
+    client.socket.write(upgradeRequest.slice(0, -2) + framedBody);
+    expect(await client.status()).toBe("HTTP/1.1 101 Switching Protocols");
+    client.socket.write(text("later"));
+
+    expect(await client.framesUntil("text:echo:later")).toEqual(["text:echo:later"]);
+    expect(events).toEqual(["open", "message:later"]);
+  });
+
+  it("a body is not parsed as frames when the request head spans two reads", async () => {
+    const events: string[] = [];
+    using server = echoServer(events);
+    using client = await rawClient(server.port);
+
+    client.socket.write("GET /plain HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n" + upgradeRequest.slice(0, 40));
+    expect(await client.status("plain".length)).toBe("HTTP/1.1 200 OK");
+    client.socket.write(upgradeRequest.slice(40, -2) + 'Content-Length: 17\r\n\r\n{"hello":"world"}');
+    expect(await client.status()).toBe("HTTP/1.1 101 Switching Protocols");
+    client.socket.write(text("later"));
+
+    expect(await client.framesUntil("text:echo:later")).toEqual(["text:echo:later"]);
+    expect(events).toEqual(["open", "message:later"]);
+  });
+
   // A server.upgrade() in a later turn of the event loop runs when the read is
   // over. By then the HTTP parser has read the frame as the start of the next
   // request and rejected it: the client gets a 400 and a closed connection.

@@ -355,6 +355,7 @@ describe("WebSocketServer", () => {
     });
     wss.on("connection", ws => {
       ws.on("message", (data, isBinary) => resolve({ data, isBinary }));
+      ws.on("close", code => reject(new Error(`closed with ${code} before the message`)));
     });
 
     try {
@@ -1457,15 +1458,19 @@ describe("handleUpgrade on a node:http upgrade socket", () => {
       Buffer.concat([Buffer.from([0x81, 0x80 | payload.length, 0, 0, 0, 0]), Buffer.from(payload)]);
     const requestAndEarlyFrame = () => Buffer.concat([Buffer.from(upgradeRequest()), text("early")]);
 
-    // Every message the connections of `wss` received, up to "later".
+    // Every message the connections of `wss` received, up to "later". Rejects
+    // if a connection closes first.
     function messagesOf(wss: WebSocketServer) {
       const messages: string[] = [];
-      const { promise, resolve } = Promise.withResolvers<string[]>();
+      const { promise, resolve, reject } = Promise.withResolvers<string[]>();
+      // A test that fails before it awaits this must not add an unhandled rejection.
+      promise.catch(() => {});
       wss.on("connection", ws => {
         ws.on("message", data => {
           messages.push(String(data));
           if (String(data) === "later") resolve(messages);
         });
+        ws.on("close", code => reject(new Error(`closed with ${code} after ${JSON.stringify(messages)}`)));
       });
       return promise;
     }
@@ -1485,6 +1490,19 @@ describe("handleUpgrade on a node:http upgrade socket", () => {
       await using upgrade = await receiveUpgrade(requestAndEarlyFrame(), server);
 
       expect(await sendLater(upgrade, messages)).toEqual(["early", "later"]);
+      wss.close();
+    });
+
+    // node:http on Node reads a body that the upgrade request declares as the
+    // request's body. Here the body is dropped. It is never frames.
+    it("are not taken from a body of the upgrade request", async () => {
+      const server = createServer();
+      const wss = new WebSocketServer({ server });
+      const messages = messagesOf(wss);
+
+      await using upgrade = await receiveUpgrade(upgradeRequest({ body: '{"hello":"world"}' }), server);
+
+      expect(await sendLater(upgrade, messages)).toEqual(["later"]);
       wss.close();
     });
 

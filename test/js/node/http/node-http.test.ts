@@ -176,6 +176,64 @@ describe("node:http", () => {
       expect({ order, listeningAtOnce }).toEqual({ order: ["listening", "nextTick"], listeningAtOnce: true });
     });
 
+    describe.each([
+      ["http", () => createServer()],
+      ["https", () => createHttpsServer({ key: tlsCert.key, cert: tlsCert.cert })],
+    ])("%s host-based listen state", (_protocol, create) => {
+      it("stays pending until dns.lookup completes", async () => {
+        const server = create();
+        const { promise: started, resolve, reject } = Promise.withResolvers<void>();
+        let listenCallbacks = 0;
+        let closeCallbacks = 0;
+        server.on("error", reject);
+        server.listen(0, "127.0.0.1", () => {
+          listenCallbacks++;
+          server.close(err => {
+            closeCallbacks++;
+            if (err) reject(err);
+            else resolve();
+          });
+        });
+
+        const listeningAtOnce = server.listening;
+        const addressAtOnce = server.address();
+        // A stop path can close only an already-listening server. If host lookup reports true early,
+        // that guard cancels the callback which settles startup.
+        if (listeningAtOnce) server.close();
+        if (listeningAtOnce) await once(server, "close");
+        else await started;
+
+        expect({ listeningAtOnce, addressAtOnce, listenCallbacks, closeCallbacks }).toEqual({
+          listeningAtOnce: false,
+          addressAtOnce: null,
+          listenCallbacks: 1,
+          closeCallbacks: 1,
+        });
+      });
+
+      it("carries a pending listen callback into a later listen", async () => {
+        const server = create();
+        const callbacks: string[] = [];
+        server.listen(0, "127.0.0.1", () => callbacks.push("stale"));
+
+        const closeError = await new Promise<Error>(resolve => server.close(resolve));
+        expect(closeError).toMatchObject({ code: "ERR_SERVER_NOT_RUNNING" });
+
+        const { promise: started, resolve, reject } = Promise.withResolvers<void>();
+        server.on("error", reject);
+        server.listen(0, "127.0.0.1", () => {
+          callbacks.push("active");
+          server.close(err => {
+            if (err) reject(err);
+            else resolve();
+          });
+        });
+        await started;
+
+        expect(callbacks).toEqual(["stale", "active"]);
+      });
+    });
+
     it("emits a listen() error on the next tick, before the event loop polls", async () => {
       const occupant = createServer();
       occupant.listen(0);

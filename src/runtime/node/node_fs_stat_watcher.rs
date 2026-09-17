@@ -458,8 +458,7 @@ pub struct StatWatcher {
     poll_ref: JsCell<KeepAlive>,
 
     last_stat: Guarded<PosixStat>,
-    /// The errno of the last `stat()`, 0 when it succeeded. libuv calls the
-    /// listener again when the error code changes while the stat keeps failing.
+    /// errno of the last `stat()`, 0 when it succeeded.
     last_errno: AtomicU16,
 
     scheduler: RefPtr<StatWatcherScheduler>,

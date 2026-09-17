@@ -2760,12 +2760,7 @@ impl TestCommand {
                         reporter.jest.default_timeout_override = u32::MAX;
                         Global::mimalloc_cleanup(false);
                         if isolate {
-                            crate::jsc_hooks::stop_active_handles_for_test_isolation(vm);
-                            vm.swap_global_for_test_isolation();
-                            reporter
-                                .jest
-                                .bun_test_root
-                                .reset_hook_scope_for_test_isolation();
+                            TestCommand::swap_global_for_test_isolation(reporter, vm);
                         }
                     }
                 }
@@ -2804,6 +2799,21 @@ impl TestCommand {
         // SAFETY: `vm_ptr` was derived from `vm_` above; `ctx` holds the unique
         // `&mut VirtualMachine` and `run_with_api_lock(&self)` only acquires the JSC lock.
         unsafe { (*vm_ptr).run_with_api_lock(|| ctx.begin()) };
+    }
+
+    /// The `--isolate` boundary after one run of a test file: stops what the
+    /// run left open, replaces the global, and drops the preload-level hooks
+    /// registered in the old global.
+    pub(crate) fn swap_global_for_test_isolation(
+        reporter: &mut CommandLineReporter,
+        vm: &mut VirtualMachine,
+    ) {
+        crate::jsc_hooks::stop_active_handles_for_test_isolation(vm);
+        vm.swap_global_for_test_isolation();
+        reporter
+            .jest
+            .bun_test_root
+            .reset_hook_scope_for_test_isolation();
     }
 
     pub(crate) fn run(
@@ -2869,11 +2879,18 @@ impl TestCommand {
         vm.on_unhandled_rejection = jest::on_unhandled_rejection::on_unhandled_rejection;
 
         while repeat_index < repeat_count {
-            // Clear the module cache before re-running (except for the first run)
             if repeat_index > 0 {
-                vm.clear_entry_point()?;
-                let entry = EncodedSlice::from_bytes(file_path);
-                vm.global().delete_module_registry_entry(&entry)?;
+                if vm.test_isolation_enabled {
+                    // Under --isolate a rerun starts the way the next file does. The preloads run
+                    // again in the new global, so a preload's setDefaultTimeout() is set again.
+                    Self::swap_global_for_test_isolation(reporter, vm);
+                    reporter.jest.default_timeout_override = u32::MAX;
+                } else {
+                    // Clear the module cache before re-running
+                    vm.clear_entry_point()?;
+                    let entry = EncodedSlice::from_bytes(file_path);
+                    vm.global().delete_module_registry_entry(&entry)?;
+                }
                 // Reset per-test snapshot counters so rerun N matches the same
                 // snapshot keys as run 1 instead of looking for "test name 2", etc.
                 reporter.jest.snapshots.reset_counts();

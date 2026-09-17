@@ -583,12 +583,7 @@ impl<'a> WorkerLoop<'a> {
                 test_command::handle_top_level_test_error_before_javascript_start(&err);
             }
             if vm.test_isolation_enabled {
-                crate::jsc_hooks::stop_active_handles_for_test_isolation(vm);
-                vm.swap_global_for_test_isolation();
-                self.reporter
-                    .jest
-                    .bun_test_root
-                    .reset_hook_scope_for_test_isolation();
+                TestCommand::swap_global_for_test_isolation(self.reporter, vm);
             } else {
                 Global::mimalloc_cleanup(false);
             }

@@ -1,7 +1,7 @@
 import { $ } from "bun";
 import { describe, expect, it } from "bun:test";
 import { chmodSync } from "fs";
-import { bunEnv as bunEnv_, bunExe, isLinux, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv as bunEnv_, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
 import { basename, join } from "path";
 
 const bunEnv = {
@@ -1325,39 +1325,48 @@ describe.concurrent("bun run", () => {
       expect(stdout).toBe("");
       expect(exitCode).toBe(1);
     });
+  });
 
-    // Linux only. On macOS an ignored SIGCHLD survives exec too, but the child
-    // stays waitable there, so waitpid() does not fail.
-    it.skipIf(!isLinux)("waiting for the shell fails, --silent", async () => {
-      using dir = prePostScripts();
+  // An ignored SIGCHLD survives exec. On Linux the kernel then reaps the shell
+  // as soon as it exits, so waitpid() fails with ECHILD and the exit status is
+  // lost unless bun resets the disposition before it spawns the shell.
+  describe.skipIf(isWindows)("--shell=system when the parent ignores SIGCHLD", () => {
+    async function runWithSigchldIgnored(script: string) {
+      using dir = tempDir("bun-run-sigchld-ignored", {
+        "package.json": JSON.stringify({
+          name: "sigchld-ignored",
+          scripts: {
+            prehi: "echo pre",
+            hi: "echo hi",
+            posthi: "echo post",
+            bad: "exit 3",
+          },
+        }),
+      });
 
-      // With SIGCHLD ignored (inherited through exec), the kernel reaps the shell
-      // as soon as it exits and waitpid() fails with ECHILD, so the shell runs
-      // (stdout gets "pre") but bun never learns how it exited.
       await using proc = Bun.spawn({
-        cmd: ["bash", "-c", 'trap "" CHLD; exec "$0" "$@"', bunExe(), "run", "--silent", "--shell=system", "hi"],
+        cmd: ["bash", "-c", 'trap "" CHLD; exec "$0" "$@"', bunExe(), "run", "--shell=system", script],
         cwd: String(dir),
-        env: {
-          ...bunEnv,
-          // The ASAN lanes export this flag. The no-orphans wait loop does not
-          // return once the kernel has reaped the child, so use the plain one.
-          BUN_FEATURE_FLAG_NO_ORPHANS: undefined,
-          // LeakSanitizer forks a ptrace probe at exit. Its waitpid() fails the
-          // same way and it prints a warning to stderr.
-          ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
-        },
+        env: bunEnv,
         stdout: "pipe",
         stderr: "pipe",
       });
 
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).toMatchInlineSnapshot(`
-        "error: Failed to run script prehi due to error:
-        ECHILD: No child processes (waitpid())
-        "
-      `);
-      expect(stdout).toBe("pre\n");
-      expect(exitCode).toBe(1);
+      return await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    }
+
+    it("still runs every lifecycle script", async () => {
+      const [stdout, stderr, exitCode] = await runWithSigchldIgnored("hi");
+      expect(stderr).toBe("$ echo pre\n$ echo hi\n$ echo post\n");
+      expect(stdout).toBe("pre\nhi\npost\n");
+      expect(exitCode).toBe(0);
+    });
+
+    it("still reports the exit code of the script", async () => {
+      const [stdout, stderr, exitCode] = await runWithSigchldIgnored("bad");
+      expect(stderr).toBe('$ exit 3\nerror: script "bad" exited with code 3\n');
+      expect(stdout).toBe("");
+      expect(exitCode).toBe(3);
     });
   });
 
@@ -1367,7 +1376,9 @@ describe.concurrent("bun run", () => {
     using dir = tempDir("bun-run-bun-shell-failure", {
       "package.json": JSON.stringify({
         name: "bun-shell-failure",
-        scripts: { deep: "echo " + "$(".repeat(200) + "echo x" + ")".repeat(200) },
+        scripts: {
+          deep: "echo " + Buffer.alloc(400, "$(").toString() + "echo x" + Buffer.alloc(200, ")").toString(),
+        },
       }),
     });
 

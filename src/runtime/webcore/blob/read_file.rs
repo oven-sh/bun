@@ -12,7 +12,7 @@ use crate::webcore::Lifetime;
 use crate::webcore::blob::ClosingState;
 #[cfg(windows)]
 use crate::webcore::blob::store::Bytes as ByteStore;
-use crate::webcore::blob::store::{Data, File as FileStore};
+use crate::webcore::blob::store::{Data, File as FileStore, FileSnapshot};
 use crate::webcore::blob::{Blob, FileCloser, FileOpener, MAX_SIZE, SizeType, Store};
 use crate::webcore::node_types::PathOrFileDescriptor;
 #[cfg(windows)]
@@ -132,6 +132,11 @@ impl<'a, F: ReadFileToJs> ReadFileCompletion for NewReadFileHandler<'a, F> {
                 let val = err.to_error_instance_with_async_stack(global_this, promise);
                 promise.reject(global_this, Ok(val))?;
             }
+            ReadFileResultType::NotReadable => {
+                // SAFETY: as for `Err`.
+                let promise = unsafe { &mut *promise };
+                promise.reject(global_this, Ok(super::not_readable_error(global_this)))?;
+            }
         }
         Ok(())
     }
@@ -208,6 +213,8 @@ pub struct ReadFileRead {
 pub enum ReadFileResultType {
     Result(ReadFileRead),
     Err(SystemError),
+    /// `fs.openAsBlob`: the file no longer matches the store's snapshot.
+    NotReadable,
 }
 
 /// The completion token a `ReadFile` keeps across its async I/O.
@@ -287,6 +294,7 @@ pub struct ReadFile {
     pub task: WorkPoolTask,
     pub(crate) system_error: Option<SystemError>,
     pub(crate) errno: Option<Error>,
+    pub(crate) not_readable: bool,
     #[cfg(not(windows))]
     pub(crate) io_task: Option<ReadFileTask>,
     pub(crate) io_poll: io::Poll,
@@ -380,6 +388,7 @@ impl ReadFile {
             },
             system_error: None,
             errno: None,
+            not_readable: false,
             io_task: None,
             io_poll: io::Poll::default(),
             io_request: io::Request {
@@ -617,9 +626,19 @@ impl ReadFile {
 
         // `_store` is dropped at end of scope (= store.deref()).
         let system_error = this.system_error.take();
+        let not_readable = this.not_readable;
+        let has_snapshot = this.file_store.snapshot.is_some();
         drop(this);
 
+        if not_readable {
+            return completion.complete(ReadFileResultType::NotReadable);
+        }
         if let Some(err) = system_error {
+            // `fs.openAsBlob`: node reports every failure on a snapshot
+            // store, an open error included, as NotReadableError.
+            if has_snapshot {
+                return completion.complete(ReadFileResultType::NotReadable);
+            }
             return completion.complete(ReadFileResultType::Err(err));
         }
 
@@ -693,6 +712,13 @@ impl ReadFile {
             if let Data::File(file) = Store::data_mut(store) {
                 let mtime = bun_sys::PosixStat::init(&stat).mtime();
                 file.last_modified = jsc::to_js_time(mtime.sec as isize, mtime.nsec as isize);
+                if let Some(snapshot) = file.snapshot {
+                    if FileSnapshot::of(&stat) != snapshot {
+                        self.not_readable = true;
+                        self.errno = Some(crate::Error::Sys(bun_errno::SystemErrno::EIO));
+                        return;
+                    }
+                }
             }
         }
 
@@ -940,6 +966,7 @@ pub struct ReadFileUV<'a> {
     pub(crate) buffer: Vec<u8>,
     pub(crate) system_error: Option<SystemError>,
     pub(crate) errno: Option<Error>,
+    pub(crate) not_readable: bool,
     /// `Some` until the read completes; a `ReadFileUV` dropped before that cancels it.
     pub(crate) completion: Option<ReadFileCompletionFns>,
     pub(crate) is_regular_file: bool,
@@ -1073,6 +1100,7 @@ impl<'a> ReadFileUV<'a> {
             buffer: Vec::new(),
             system_error: None,
             errno: None,
+            not_readable: false,
             completion: Some(completion),
             is_regular_file: false,
             req: bun_core::ffi::zeroed(),
@@ -1098,8 +1126,15 @@ impl<'a> ReadFileUV<'a> {
             .take()
             .expect("a ReadFileUV completes once");
 
-        let result = if let Some(err) = this_box.system_error.take() {
-            ReadFileResultType::Err(err)
+        let result = if this_box.not_readable {
+            ReadFileResultType::NotReadable
+        } else if let Some(err) = this_box.system_error.take() {
+            // See `ReadFile::then`.
+            if this_box.file_store.snapshot.is_some() {
+                ReadFileResultType::NotReadable
+            } else {
+                ReadFileResultType::Err(err)
+            }
         } else {
             // Move byte_store out so dropping `this_box` below does not free the
             // buffer we hand to the callback. Normalize to `Box<[u8]>` so the
@@ -1208,6 +1243,13 @@ impl<'a> ReadFileUV<'a> {
             // platform-width `isize` `to_js_time` expects.
             file.last_modified =
                 jsc::to_js_time(stat.mtime().sec as isize, stat.mtime().nsec as isize);
+            if let Some(snapshot) = file.snapshot {
+                if snapshot != FileSnapshot::of(&stat) {
+                    this.not_readable = true;
+                    this.on_finish();
+                    return;
+                }
+            }
         }
 
         if bun_sys::S::ISDIR(u32::try_from(stat.mode()).expect("int cast")) {

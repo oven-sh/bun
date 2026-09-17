@@ -1545,7 +1545,12 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
             let opened_fd = match opened_fd_res {
                 Err(err) => {
-                    let err_js = err.to_js(global_this);
+                    let has_snapshot = body.any_blob().blob().open_as_blob_snapshot().is_some();
+                    let err_js = if has_snapshot {
+                        blob::not_readable_error(global_this)
+                    } else {
+                        err.to_js(global_this)
+                    };
                     let rejected_value = JSPromise::rejected_promise(global_this, err_js).to_js();
                     return Ok(rejected_value);
                 }

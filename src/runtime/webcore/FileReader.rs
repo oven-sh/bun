@@ -328,15 +328,18 @@ impl FileReader {
                     match open_result {
                         Err(err) => {
                             self.fd.set(Fd::INVALID);
+                            if snapshot.is_some() {
+                                return streams::Start::Exception(blob::not_readable_error(
+                                    self.parent_global().get(),
+                                ));
+                            }
                             return streams::Start::Err(err);
                         }
                         Ok(opened) => {
                             debug_assert!(opened.fd.is_valid());
                             // `fs.openAsBlob`: the file may have changed since `stream()`.
                             if let Some(snapshot) = snapshot {
-                                let unchanged = matches!(sys::fstat(opened.fd), Ok(stat)
-                                    if blob::store::FileSnapshot::of(&stat) == snapshot);
-                                if !unchanged {
+                                if !snapshot.matches_fd(opened.fd) {
                                     opened.fd.close();
                                     self.fd.set(Fd::INVALID);
                                     return streams::Start::Exception(blob::not_readable_error(

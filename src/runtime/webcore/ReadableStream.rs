@@ -537,9 +537,6 @@ impl ReadableStream {
                 reader.to_readable_stream(global_this)
             }
             webcore::blob::store::Data::File(_) => {
-                if let Some(err) = webcore::blob::open_as_blob_read_error(blob, global_this) {
-                    return ReadableStream::errored(global_this, err);
-                }
                 let reader = NewSource::<FileReader>::new_mut(NewSource {
                     global_this: Some(bun_ptr::BackRef::new(global_this)),
                     context: FileReader {

@@ -1784,9 +1784,12 @@ where
             ) {
                 bun_sys::Result::Ok(fd_) => fd_,
                 bun_sys::Result::Err(err) => {
-                    let js_err = err
-                        .with_path(file.pathlike.path().slice())
-                        .to_js(global_this);
+                    let js_err = if file.snapshot.is_some() {
+                        crate::webcore::blob::not_readable_error(global_this)
+                    } else {
+                        err.with_path(file.pathlike.path().slice())
+                            .to_js(global_this)
+                    };
                     return self.run_error_handler(js_err);
                 }
             }
@@ -1810,6 +1813,17 @@ where
                 return self.run_error_handler(js_err);
             }
         };
+
+        // `fs.openAsBlob`: the file must still match its snapshot.
+        if let Some(snapshot) = file.snapshot {
+            if crate::webcore::blob::store::FileSnapshot::of(&stat) != snapshot {
+                if auto_close {
+                    fd.close();
+                }
+                return self
+                    .run_error_handler(crate::webcore::blob::not_readable_error(global_this));
+            }
+        }
 
         let mode = stat.st_mode as bun_sys::Mode;
         let is_regular = bun_sys::S::ISREG(mode);

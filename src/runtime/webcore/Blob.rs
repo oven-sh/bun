@@ -79,6 +79,8 @@ pub enum ReadBytesResult {
     /// global-allocator-owned by the callback.
     Ok(Vec<u8>),
     Err(Box<bun_jsc::SystemError>),
+    /// `fs.openAsBlob`: the file no longer matches the store's snapshot.
+    NotReadable,
 }
 
 /// Handler trait for `read_bytes_to_handler` — the body only requires
@@ -426,10 +428,6 @@ impl BlobExt for Blob {
     fn do_read_file<F: read_file::ReadFileToJs>(&self, global: &JSGlobalObject) -> JSValue {
         debug!("doReadFile");
 
-        if let Some(err) = open_as_blob_read_error(self, global) {
-            return JSPromise::rejected_promise(global, err).to_js();
-        }
-
         type Handler<'a, F> = read_file::NewReadFileHandler<'a, F>;
 
         // The callback may read context.content_type (e.g. to_form_data_with_bytes),
@@ -524,6 +522,7 @@ impl BlobExt for Blob {
                             ReadBytesResult::Ok(buf.into_vec())
                         }
                         read_file::ReadFileResultType::Err(e) => ReadBytesResult::Err(Box::new(e)),
+                        read_file::ReadFileResultType::NotReadable => ReadBytesResult::NotReadable,
                     };
                     // SAFETY: `c` is the `ctx` handed to `read_bytes_to_handler`,
                     // and the read completion fires exactly once (`call` or
@@ -3971,6 +3970,11 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
         blob.content_type
             .set(BlobContentType::Owned(std::sync::Arc::from(content_type)));
         blob.content_type_was_set.set(content_type_was_set);
+    } else {
+        // The wire value is authoritative: an empty type (`fs.openAsBlob`)
+        // must not become the extension-sniffed default of the rebuilt store.
+        blob.content_type.set(BlobContentType::default());
+        blob.content_type_was_set.set(false);
     }
 
     let blob_ptr = scopeguard::ScopeGuard::into_inner(blob_guard);
@@ -5523,29 +5527,30 @@ pub(crate) fn construct_blob_for_open_as_blob(
             }
             blob.resolve_size();
         }
-        Some(Err(_)) => {
+        Some(Err(err)) => {
+            // Node throws the stat error itself: `ENOENT: ..., stat '<path>'`.
+            let err = match blob.store().and_then(|s| s.get_path()) {
+                Some(path) => err.with_path(path),
+                None => err,
+            };
+            let err_js = err.to_js(global_object);
             blob.deinit();
-            return Err(global_object
-                .err(
-                    bun_jsc::ErrorCode::ERR_INVALID_ARG_VALUE,
-                    format_args!("Unable to open file as blob"),
-                )
-                .throw());
+            return Err(global_object.throw_value(err_js));
         }
         None => {}
     }
 
-    // `options.type`, validated as a string by `src/js/node/fs.ts`.
+    // Node never infers a type from the extension, and stores `options.type`
+    // verbatim (no lowercasing, no charset promotion).
+    blob.content_type.set(BlobContentType::default());
+    blob.content_type_was_set.set(false);
     if let Some(file_type) = file_type {
         let str = file_type.to_utf8(global_object)?;
         let slice = str.slice();
         if !slice.is_empty() && is_valid_blob_type(slice) {
             blob.content_type_was_set.set(true);
             blob.content_type
-                .set(match global_object.bun_vm().as_mut().mime_type(slice) {
-                    Some(mime) => BlobContentType::from(mime),
-                    None => BlobContentType::from_lowercased(slice),
-                });
+                .set(BlobContentType::Owned(std::sync::Arc::from(slice)));
         }
     }
 
@@ -5904,31 +5909,14 @@ fn apply_file_stat(file: &mut store::File, stat: &bun_sys::Stat) {
     file.last_modified = stat_to_js_mtime(stat);
 }
 
-/// `fs.openAsBlob`: `NotReadableError` if the file no longer matches its `snapshot`.
-pub(crate) fn open_as_blob_read_error(blob: &Blob, global: &JSGlobalObject) -> Option<JSValue> {
-    let store = blob.store.get().as_ref()?;
-    let store::Data::File(file) = &store.data else {
-        return None;
-    };
-    let snapshot = file.snapshot?;
-    if matches!(stat_file(file), Ok(stat) if store::FileSnapshot::of(&stat) == snapshot) {
-        return None;
-    }
-    Some(not_readable_error(global))
-}
-
-/// Same as [`open_as_blob_read_error`], against the descriptor a reader just opened.
+/// `fs.openAsBlob`: `NotReadableError` if the descriptor a reader just opened
+/// no longer matches the store's `snapshot`, else `None`.
 pub(crate) fn open_as_blob_read_error_for_fd(
     blob: &Blob,
     fd: Fd,
     global: &JSGlobalObject,
 ) -> Option<JSValue> {
-    let store = blob.store.get().as_ref()?;
-    let store::Data::File(file) = &store.data else {
-        return None;
-    };
-    let snapshot = file.snapshot?;
-    if matches!(bun_sys::fstat(fd), Ok(stat) if store::FileSnapshot::of(&stat) == snapshot) {
+    if blob.open_as_blob_snapshot()?.matches_fd(fd) {
         return None;
     }
     Some(not_readable_error(global))

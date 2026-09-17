@@ -383,14 +383,16 @@ impl Blob {
     // ────────────────────────────────────────────────────────────────────
 
     /// `Blob.hasContentTypeFromUser()` — `true` when the user set a type
-    /// explicitly *or* the store is file/S3-backed (whose mime is sniffed).
+    /// explicitly *or* the store is file/S3-backed (whose mime is sniffed)
+    /// and the type is not empty (`fs.openAsBlob` sniffs nothing).
     #[inline]
     pub fn has_content_type_from_user(&self) -> bool {
         self.content_type_was_set.get()
-            || self
-                .store()
-                .map(|s| matches!(s.data, store::Data::File(_) | store::Data::S3(_)))
-                .unwrap_or(false)
+            || (!self.content_type_slice().is_empty()
+                && self
+                    .store()
+                    .map(|s| matches!(s.data, store::Data::File(_) | store::Data::S3(_)))
+                    .unwrap_or(false))
     }
 
     /// `Blob.contentTypeOrMimeType()` — explicit `content_type` if set, else
@@ -419,6 +421,14 @@ impl Blob {
     #[inline]
     pub fn needs_to_read_file(&self) -> bool {
         matches!(self.store.get().as_deref(), Some(s) if matches!(s.data, store::Data::File(_)))
+    }
+
+    /// `fs.openAsBlob`: the stat this file store was created with, if any.
+    pub fn open_as_blob_snapshot(&self) -> Option<store::FileSnapshot> {
+        match &self.store.get().as_deref()?.data {
+            store::Data::File(file) => file.snapshot,
+            _ => None,
+        }
     }
 
     /// A usable filename: a non-empty `name`, else [`store_path`]. (`file.name`
@@ -823,6 +833,11 @@ pub mod store {
     }
 
     impl FileSnapshot {
+        /// Does the open file behind `fd` still match this snapshot?
+        pub fn matches_fd(self, fd: bun_sys::Fd) -> bool {
+            matches!(bun_sys::fstat(fd), Ok(stat) if Self::of(&stat) == self)
+        }
+
         pub fn of(stat: &bun_sys::Stat) -> Self {
             #[cfg(not(windows))]
             {

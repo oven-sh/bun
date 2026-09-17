@@ -1350,6 +1350,10 @@ impl<'a> BlobReadChain<'a> {
                 drop(deliver);
                 outer.reject(global, Ok(e.to_error_instance(global)))
             }
+            ReadBytesResult::NotReadable => {
+                drop(deliver);
+                outer.reject(global, Ok(crate::webcore::blob::not_readable_error(global)))
+            }
         }
     }
 }

@@ -1493,6 +1493,246 @@ describe("bundledDependencies", () => {
 
       await check();
     });
+
+    // `bundled-unpublished` bundles dependencies that the registry cannot provide
+    // (create-bundled-unpublished-packages.ts). Its tarball ships the only copy of
+    // each. `require("bundled-unpublished")` maps each bundled folder to what the
+    // copy in that folder exports.
+    const lockfileName = textLockfile ? "bun.lock" : "bun.lockb";
+
+    async function shippedCopies() {
+      await using proc = spawn({
+        cmd: [bunExe(), "-p", `JSON.stringify(require("bundled-unpublished"))`],
+        cwd: packageDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      return JSON.parse(stdout);
+    }
+
+    // `[name, resolved version (null when unresolved), behavior]` of every dependency of
+    // `bundled-unpublished`, read back from the lockfile on disk.
+    function bundledUnpublishedEdges() {
+      const lockfile = parseLockfile(packageDir);
+      const { dependencies } = lockfile.packages.find(pkg => pkg.name === "bundled-unpublished");
+      return dependencies.map(id => {
+        const { name, package_id, behavior } = lockfile.dependencies[id];
+        return [name, package_id === null ? null : lockfile.packages[package_id].resolution.value, behavior];
+      });
+    }
+
+    async function installFromLockfile() {
+      const lockfile = await file(join(packageDir, lockfileName)).bytes();
+      await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+      // No warning: the lockfile loads, and the registry is not asked again.
+      await runBunInstall(env, packageDir, { frozenLockfile: true });
+      await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+      await runBunInstall(env, packageDir, { savesLockfile: false });
+      expect(await file(join(packageDir, lockfileName)).bytes()).toEqual(lockfile);
+    }
+
+    test(`(${lockfileName}) a bundled dependency that the registry does not have`, async () => {
+      await write(
+        packageJson,
+        JSON.stringify({
+          name: "bundled-unpublished-root",
+          dependencies: {
+            "bundled-unpublished": "1.0.0",
+          },
+        }),
+      );
+
+      const { out, err } = await runBunInstall(env, packageDir, {
+        saveTextLockfile: textLockfile,
+        allowWarnings: true,
+      });
+      expect(err).toContain(`warn: GET ${registryUrl()}unpublished-dep - 404`);
+      expect(out).toContain("1 package installed");
+
+      const shipped = { "unpublished-dep": "unpublished-dep@1.0.0 shipped in bundled-unpublished" };
+      const edges = [["unpublished-dep", null, { prod: true, bundled: true }]];
+      expect(await shippedCopies()).toEqual(shipped);
+      expect(bundledUnpublishedEdges()).toEqual(edges);
+
+      if (textLockfile) {
+        const { packages } = Bun.JSONC.parse(await file(join(packageDir, "bun.lock")).text());
+        expect(Object.keys(packages)).toEqual(["bundled-unpublished"]);
+        expect(packages["bundled-unpublished"][2]).toEqual({
+          dependencies: { "unpublished-dep": "1.0.0" },
+          bundledDependencies: ["unpublished-dep"],
+        });
+      }
+
+      await installFromLockfile();
+      expect(await shippedCopies()).toEqual(shipped);
+      expect(bundledUnpublishedEdges()).toEqual(edges);
+    });
+
+    // https://github.com/oven-sh/bun/issues/27418
+    test(`(${lockfileName}) a local tarball with a bundled dependency that the registry does not have`, async () => {
+      const tarball = "bundled-unpublished-1.0.0.tgz";
+      await Promise.all([
+        write(packageJson, JSON.stringify({ name: "bundled-unpublished-tarball-root" })),
+        cp(join(import.meta.dir, "registry", "packages", "bundled-unpublished", tarball), join(packageDir, tarball)),
+      ]);
+
+      const { out, err } = await runBunInstall(env, packageDir, {
+        packages: [tarball],
+        saveTextLockfile: textLockfile,
+        allowWarnings: true,
+      });
+      expect(err).toContain(`warn: GET ${registryUrl()}unpublished-dep - 404`);
+      expect(out).toContain(`installed bundled-unpublished@${tarball}`);
+
+      const shipped = { "unpublished-dep": "unpublished-dep@1.0.0 shipped in bundled-unpublished" };
+      const edges = [["unpublished-dep", null, { prod: true, bundled: true }]];
+      expect(await shippedCopies()).toEqual(shipped);
+      expect(bundledUnpublishedEdges()).toEqual(edges);
+
+      if (textLockfile) {
+        const { packages } = Bun.JSONC.parse(await file(join(packageDir, "bun.lock")).text());
+        expect(Object.keys(packages)).toEqual(["bundled-unpublished"]);
+        expect(packages["bundled-unpublished"][1]).toEqual({
+          dependencies: { "unpublished-dep": "1.0.0" },
+          bundledDependencies: ["unpublished-dep"],
+        });
+      }
+
+      await installFromLockfile();
+      expect(await shippedCopies()).toEqual(shipped);
+      expect(bundledUnpublishedEdges()).toEqual(edges);
+    });
+
+    test(`(${lockfileName}) bundledDependencies === true with dependencies that the registry does not have`, async () => {
+      await write(
+        packageJson,
+        JSON.stringify({
+          name: "bundled-unpublished-true-root",
+          dependencies: {
+            "bundled-unpublished": "2.0.0",
+          },
+        }),
+      );
+
+      const { out, err } = await runBunInstall(env, packageDir, {
+        saveTextLockfile: textLockfile,
+        allowWarnings: true,
+      });
+      expect(err).toContain(`warn: GET ${registryUrl()}unpublished-dep - 404`);
+      expect(err).toContain(`warn: GET ${registryUrl()}unpublished-tag - 404`);
+      expect(out).toContain("1 package installed");
+
+      const shipped = {
+        "a-dep": "a-dep@1.0.1 shipped in bundled-unpublished",
+        "no-deps": "no-deps@9.9.9 shipped in bundled-unpublished",
+        "unpublished-alias": "unpublished-dep@1.0.0 shipped in bundled-unpublished",
+        "unpublished-catalog": "unpublished-catalog@1.0.0 shipped in bundled-unpublished",
+        "unpublished-dep": "unpublished-dep@1.0.0 shipped in bundled-unpublished",
+        "unpublished-tag": "unpublished-tag@1.0.0 shipped in bundled-unpublished",
+        "unpublished-workspace": "unpublished-workspace@1.0.0 shipped in bundled-unpublished",
+      };
+      // The registry has a-dep@1.0.1, so that edge resolves. It has no-deps, but not 9.9.9.
+      const edges = [
+        ["a-dep", "1.0.1", { prod: true, bundled: true }],
+        ["no-deps", null, { prod: true, bundled: true }],
+        ["unpublished-alias", null, { prod: true, bundled: true }],
+        ["unpublished-catalog", null, { prod: true, bundled: true }],
+        ["unpublished-dep", null, { prod: true, bundled: true }],
+        ["unpublished-tag", null, { prod: true, bundled: true }],
+        ["unpublished-workspace", null, { prod: true, bundled: true }],
+      ];
+      expect(await shippedCopies()).toEqual(shipped);
+      expect(bundledUnpublishedEdges()).toEqual(edges);
+      expect(await exists(join(packageDir, "node_modules", "a-dep"))).toBeFalse();
+
+      if (textLockfile) {
+        const { packages } = Bun.JSONC.parse(await file(join(packageDir, "bun.lock")).text());
+        expect(Object.keys(packages)).toEqual(["bundled-unpublished", "bundled-unpublished/a-dep"]);
+        expect(packages["bundled-unpublished"][2]).toEqual({
+          dependencies: {
+            "a-dep": "1.0.1",
+            "no-deps": "9.9.9",
+            "unpublished-alias": "npm:unpublished-dep@1.0.0",
+            "unpublished-catalog": "catalog:",
+            "unpublished-dep": "^1.0.0",
+            "unpublished-tag": "nightly",
+            "unpublished-workspace": "workspace:*",
+          },
+          bundledDependencies: [
+            "no-deps",
+            "unpublished-alias",
+            "unpublished-catalog",
+            "unpublished-dep",
+            "unpublished-tag",
+            "unpublished-workspace",
+          ],
+        });
+        expect(packages["bundled-unpublished/a-dep"][2]).toEqual({ bundled: true });
+      }
+
+      await installFromLockfile();
+      expect(await shippedCopies()).toEqual(shipped);
+      expect(bundledUnpublishedEdges()).toEqual(edges);
+      expect(await exists(join(packageDir, "node_modules", "a-dep"))).toBeFalse();
+    });
+
+    test(`(${lockfileName}) an unresolved bundled dependency keeps its folder`, async () => {
+      // bundled-unpublished@3.0.0 bundles no-deps@9.9.9, which the registry does not
+      // have, and depends on one-dep, which needs no-deps@1.0.1. The root aliases
+      // keep both out of the root node_modules. The published no-deps must not take
+      // the folder of the bundled copy.
+      await write(
+        packageJson,
+        JSON.stringify({
+          name: "bundled-unpublished-collision",
+          dependencies: {
+            "bundled-unpublished": "3.0.0",
+            "no-deps": "npm:a-dep@1.0.2",
+            "one-dep": "npm:a-dep@1.0.3",
+          },
+        }),
+      );
+
+      async function check() {
+        const nested = join(packageDir, "node_modules", "bundled-unpublished", "node_modules");
+        expect(
+          await Promise.all([
+            file(join(packageDir, "node_modules", "no-deps", "package.json")).json(),
+            file(join(nested, "no-deps", "package.json")).json(),
+            file(join(nested, "one-dep", "node_modules", "no-deps", "package.json")).json(),
+          ]),
+        ).toEqual([
+          { name: "a-dep", version: "1.0.2" },
+          { name: "no-deps", version: "9.9.9", main: "index.js" },
+          { name: "no-deps", version: "1.0.1" },
+        ]);
+        expect(await shippedCopies()).toEqual({ "no-deps": "no-deps@9.9.9 shipped in bundled-unpublished" });
+        expect(bundledUnpublishedEdges()).toEqual([
+          ["no-deps", null, { prod: true, bundled: true }],
+          ["one-dep", "1.0.0", { prod: true }],
+        ]);
+      }
+
+      await runBunInstall(env, packageDir, { saveTextLockfile: textLockfile });
+      await check();
+
+      if (textLockfile) {
+        const { packages } = Bun.JSONC.parse(await file(join(packageDir, "bun.lock")).text());
+        expect(Object.keys(packages)).toEqual([
+          "bundled-unpublished",
+          "no-deps",
+          "one-dep",
+          "bundled-unpublished/one-dep",
+          "bundled-unpublished/one-dep/no-deps",
+        ]);
+      }
+
+      await installFromLockfile();
+      await check();
+    });
   }
 
   // bundled-file@1.0.0 depends on "bundled-file-dep" through a `file:` spec and

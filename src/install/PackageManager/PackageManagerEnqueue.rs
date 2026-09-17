@@ -123,7 +123,7 @@ pub fn enqueue_dependency_list(
                 },
             );
             let log = this.log_mut();
-            if dependency.behavior.is_optional() || dependency.behavior.is_peer() {
+            if !dependency.behavior.is_required() || dependency.behavior.is_peer() {
                 log.add_warning_with_note(
                     None,
                     bun_ast::Loc::default(),

@@ -440,6 +440,9 @@ macro_rules! bufs {
 static RESOLVER_MUTEX: Mutex = Mutex::new();
 
 type BinFolderArray = BoundedArray<&'static [u8], 128>;
+
+const MAX_TSCONFIG_EXTENDS_CHAIN: usize = 64;
+type TSConfigExtendsChain = BoundedArray<*mut TSConfigJSON, MAX_TSCONFIG_EXTENDS_CHAIN>;
 // `BoundedArray` has no const constructor; init lazily under
 // `BIN_FOLDERS_LOADED`.
 static BIN_FOLDERS: bun_core::RacyCell<core::mem::MaybeUninit<BinFolderArray>> =
@@ -4059,6 +4062,59 @@ impl<'a> Resolver<'a> {
         Ok(Some(result))
     }
 
+    /// Parses every config that `config` extends, then appends them to `chain`
+    /// in merge order: the bases first, `config` itself last. An `extends`
+    /// array is walked left to right, so a later entry lands after (and
+    /// overrides) an earlier one, as in tsc. A parent that fails to parse is
+    /// logged and skipped.
+    ///
+    /// `config` and every pointer pushed to `chain` are heap `TSConfigJSON`
+    /// allocations from `parse_tsconfig`. The caller owns them.
+    fn collect_tsconfig_extends_chain(
+        &mut self,
+        config: *mut TSConfigJSON,
+        depth: usize,
+        chain: &mut TSConfigExtendsChain,
+    ) -> crate::CrateResult<()> {
+        // A cycle (`a` extends `a`) never reaches the append below, so bound
+        // the recursion by the chain's capacity.
+        if depth >= MAX_TSCONFIG_EXTENDS_CHAIN {
+            return Err(bun_core::bounded_array::OverflowError::Overflow.into());
+        }
+        // SAFETY: `config` is a live heap allocation owned by the caller, and
+        // nothing below writes through it.
+        let current = unsafe { &*config };
+        let ts_dir_name = Dirname::dirname(&current.abs_path);
+        for extends in current.extends.iter() {
+            let abs_path = ResolvePath::join_abs_string_buf(
+                ts_dir_name,
+                bufs!(tsconfig_path_abs),
+                &[ts_dir_name, extends],
+                bun_paths::Platform::AUTO,
+            );
+            match self.parse_tsconfig(abs_path, FD::INVALID) {
+                Ok(Some(parent_config)) => {
+                    let parent_config = bun_core::heap::into_raw(parent_config);
+                    self.collect_tsconfig_extends_chain(parent_config, depth + 1, chain)?;
+                }
+                Ok(None) => {}
+                Err(err) => {
+                    let _ = self.log_mut().add_debug_fmt(
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        format_args!(
+                            "{} loading tsconfig.json extends {}",
+                            bstr::BStr::new(err.name()),
+                            bun_core::fmt::quote(abs_path)
+                        ),
+                    );
+                }
+            }
+        }
+        chain.append(config)?;
+        Ok(())
+    }
+
     pub fn bin_dirs(&self) -> &[&'static [u8]] {
         if !BIN_FOLDERS_LOADED.load(core::sync::atomic::Ordering::Acquire) {
             return &[];
@@ -6481,58 +6537,20 @@ impl<'a> Resolver<'a> {
                 // it is always overwritten when parsed_tsconfig.is_some(), and DirInfo defaults
                 // tsconfig_json to None otherwise.
                 if let Some(tsconfig_json) = parsed_tsconfig {
-                    let mut parent_configs: BoundedArray<*mut TSConfigJSON, 64> =
-                        BoundedArray::default();
-                    parent_configs.append(tsconfig_json)?;
-                    // `current`/`parent_config_ptr`/`merged_config` are heap TSConfigJSON
-                    // allocations from `parse_tsconfig` (heap::alloc); uniquely owned by
-                    // this extends-chain walk and freed via heap::take below. Hold as
-                    // `BackRef` (pointee outlives holder) so the loop body reads via safe
-                    // `Deref` instead of three open-coded raw-ptr derefs.
-                    let mut current = bun_ptr::BackRef::from(
-                        core::ptr::NonNull::new(tsconfig_json).expect("heap alloc"),
-                    );
-                    while !current.extends.is_empty() {
-                        let ts_dir_name = Dirname::dirname(&current.abs_path);
-                        let abs_path = ResolvePath::join_abs_string_buf(
-                            ts_dir_name,
-                            bufs!(tsconfig_path_abs),
-                            &[ts_dir_name, &current.extends],
-                            bun_paths::Platform::AUTO,
-                        );
-                        let parent_config_maybe: Option<*mut TSConfigJSON> =
-                            match self.parse_tsconfig(abs_path, FD::INVALID) {
-                                Ok(v) => v.map(bun_core::heap::into_raw),
-                                Err(err) => {
-                                    let _ = self.log_mut().add_debug_fmt(
-                                        None,
-                                        bun_ast::Loc::EMPTY,
-                                        format_args!(
-                                            "{} loading tsconfig.json extends {}",
-                                            bstr::BStr::new(err.name()),
-                                            bun_core::fmt::quote(abs_path)
-                                        ),
-                                    );
-                                    break;
-                                }
-                            };
-                        if let Some(parent_config) = parent_config_maybe {
-                            parent_configs.append(parent_config)?;
-                            current = bun_ptr::BackRef::from(
-                                core::ptr::NonNull::new(parent_config).expect("heap alloc"),
-                            );
-                        } else {
-                            break;
-                        }
-                    }
+                    // Every config in the chain, base first and `tsconfig_json` last.
+                    // Each pointer is a heap TSConfigJSON from `parse_tsconfig`,
+                    // uniquely owned by this walk and freed via heap::take below.
+                    let mut chain = TSConfigExtendsChain::default();
+                    self.collect_tsconfig_extends_chain(tsconfig_json, 0, &mut chain)?;
 
-                    let merged_config = parent_configs.pop().unwrap();
-                    // starting from the base config (end of the list)
-                    // successively apply the inheritable attributes to the next config
-                    while let Some(parent_config_ptr) = parent_configs.pop() {
-                        // SAFETY: see loop-wide note above.
+                    let mut chain = chain.as_slice().iter().copied();
+                    let merged_config = chain.next().expect("the leaf config is in the chain");
+                    // starting from the base config
+                    // successively apply the inheritable attributes of the next config
+                    for parent_config_ptr in chain {
+                        // SAFETY: see the note on `chain` above.
                         let parent_config = unsafe { &mut *parent_config_ptr };
-                        // SAFETY: see loop-wide note above.
+                        // SAFETY: see the note on `chain` above.
                         let mc = unsafe { &mut *merged_config };
                         if let Some(v) = parent_config.emit_decorator_metadata {
                             mc.emit_decorator_metadata = Some(v);

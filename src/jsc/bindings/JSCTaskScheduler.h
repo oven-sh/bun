@@ -18,8 +18,7 @@ public:
     {
     }
 
-    // A job's ticket can outlive its realm; ~JSGlobalObject cancels the ticket
-    // but leaves scriptExecutionOwner() dangling. Jobs reach the VM through here.
+    // Jobs take the VM from here, not from their ticket's scriptExecutionOwner().
     JSC::VM& vm() const { return m_vm; }
 
     static void onAddPendingWork(WebCore::JSVMClientData* clientData, Ref<JSC::DeferredWorkTimer::Ticket>&& ticket, JSC::DeferredWorkTimer::WorkType kind);

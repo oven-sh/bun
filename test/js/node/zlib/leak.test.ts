@@ -28,9 +28,9 @@ const cases = [
 // codec state is 320 KB or more, and one input or output is 50,000 bytes. The
 // bound is a fifth of that buffer.
 const maxResidentBytesPerCall = 10_000;
-// A smaller leak is a leak of JS objects, and the JS heap is exact. A run with
-// no leak measures 2 bytes for each call at most. One retained closure
-// measures 25, and one retained stream 17,000.
+// A smaller leak is a leak of JS objects, and the JS heap counts them to the
+// byte. A run with no leak measures 0 bytes for each call at most. One retained
+// closure measures 32, and one retained stream 117,000 with its buffers.
 const maxHeapBytesPerCall = 256;
 // ASAN builds are slower, so they make fewer calls. They can: mimalloc needs
 // about 400 zstd calls to settle, and an ASAN build does not use mimalloc.
@@ -39,17 +39,38 @@ const rounds = 20;
 const warmupRounds = 2;
 
 // `samples` has one value for each round, taken after the full GC that ends
-// it. The growth for each round is the median slope over every pair of samples
-// (Theil-Sen). A few stray samples cannot move it, and they do happen: with no
-// leak, a sample of the resident memory can sit 0.5 MB above the ones around it.
-function growthPerCall(samples: number[]): number {
+// it. Each estimate below is a median, in bytes for each call.
+function median(values: number[]): number {
+  return values.sort((a, b) => a - b)[values.length >> 1];
+}
+
+function measuredSamples(samples: number[]): number[] {
   expect(samples).toHaveLength(rounds);
-  const measured = samples.slice(warmupRounds);
+  return samples.slice(warmupRounds);
+}
+
+// Resident memory is noisy around a level that does not move: with no leak, a
+// sample can sit 0.5 MB above the ones around it. The median slope over every
+// pair of samples (Theil-Sen) ignores a few such samples.
+function residentGrowthPerCall(samples: number[]): number {
+  const measured = measuredSamples(samples);
   const slopes: number[] = [];
   for (let i = 0; i < measured.length; i++) {
     for (let j = i + 1; j < measured.length; j++) slopes.push((measured[j] - measured[i]) / (j - i));
   }
-  return slopes.sort((a, b) => a - b)[slopes.length >> 1] / callsPerRound;
+  return median(slopes) / callsPerRound;
+}
+
+// The JS heap has no such noise, but its level moves. The GC scans the stack
+// conservatively. So the 117 KB that one call leaves behind (the stream, its
+// input, its output chunks) stay alive for as long as a stale stack word
+// points at them, and such a word can appear or go away in the middle of a
+// run. To the median slope, one such step in 17 rounds of 25 calls is 275
+// bytes for each call. So the heap takes the median of what each round adds: a
+// call that leaks adds to every round, and a step adds to one.
+function heapGrowthPerCall(samples: number[]): number {
+  const measured = measuredSamples(samples);
+  return median(measured.slice(1).map((sample, i) => sample - measured[i])) / callsPerRound;
 }
 
 describe("zlib compression does not leak memory", () => {
@@ -86,8 +107,8 @@ describe("zlib compression does not leak memory", () => {
         mismatches: 0,
         roundTrip: true,
       });
-      expect(growthPerCall(heap)).toBeLessThan(maxHeapBytesPerCall);
-      expect(growthPerCall(resident)).toBeLessThan(maxResidentBytesPerCall);
+      expect(heapGrowthPerCall(heap), `heap samples: ${heap}`).toBeLessThan(maxHeapBytesPerCall);
+      expect(residentGrowthPerCall(resident), `resident samples: ${resident}`).toBeLessThan(maxResidentBytesPerCall);
       expect(exitCode).toBe(0);
     },
     // Only a debug build needs more than the default: its slowest method takes

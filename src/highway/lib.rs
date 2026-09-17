@@ -98,6 +98,8 @@ unsafe extern "C" {
         skip_mask: bool,
     );
 
+    fn highway_constant_time_eq(a: *const u8, b: *const u8, len: usize) -> bool;
+
     fn highway_copy_u16_to_u8(input: *const u16, count: usize, output: *mut u8);
 
     fn highway_copy_ascii_prefix(src: *const u8, len: usize, dst: *mut u8) -> usize;
@@ -726,6 +728,27 @@ pub fn fill_with_skip_mask_inplace(mask: [u8; 4], buf: &mut [u8], skip_mask: boo
             skip_mask,
         );
     }
+}
+
+/// Below this length (one AVX-512 vector) [`constant_time_eq`] cannot beat a
+/// plain byte loop such as BoringSSL `CRYPTO_memcmp`: the dispatch call costs
+/// more than the few vector operations save.
+pub const CONSTANT_TIME_EQ_MIN_LEN: usize = 64;
+
+/// Constant-time byte-slice equality. Every byte pair is XORed into an
+/// accumulator that is tested once, after the last load, so the time depends
+/// on the length only, not on where the slices differ.
+///
+/// Returns `false` when the lengths differ. That check is not constant-time:
+/// the length is not a secret.
+#[inline(always)]
+pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    // SAFETY: both slices are readable for `a.len()` bytes (the lengths are
+    // equal); the kernel only reads, so `a` and `b` may overlap.
+    unsafe { highway_constant_time_eq(a.as_ptr(), b.as_ptr(), a.len()) }
 }
 
 /// Useful for single-line JavaScript comments.

@@ -2277,6 +2277,40 @@ void FillWithSkipMaskImpl(const uint8_t* HWY_RESTRICT mask, size_t mask_len, uin
     }
 }
 
+// Constant-time equality for crypto.timingSafeEqual. The number of loads
+// depends on `len` only: every byte pair is XORed into an accumulator, and the
+// accumulators are tested once, after the last load. Do not add an early exit.
+// `a` and `b` may be the same buffer.
+bool ConstantTimeEqualImpl(const uint8_t* a, const uint8_t* b, size_t len)
+{
+    D8 d;
+    const size_t N = hn::Lanes(d);
+    if (HWY_UNLIKELY(len < N)) {
+        return hn::AllBits0(d, hn::Xor(hn::LoadN(d, a, len), hn::LoadN(d, b, len)));
+    }
+
+    // Four vectors per iteration so that the 128-bit targets keep up with a
+    // compiler-vectorized scalar loop.
+    auto diff0 = hn::Zero(d);
+    auto diff1 = hn::Zero(d);
+    auto diff2 = hn::Zero(d);
+    auto diff3 = hn::Zero(d);
+    size_t i = 0;
+    for (; i + 4 * N <= len; i += 4 * N) {
+        diff0 = hn::Or(diff0, hn::Xor(hn::LoadU(d, a + i), hn::LoadU(d, b + i)));
+        diff1 = hn::Or(diff1, hn::Xor(hn::LoadU(d, a + i + N), hn::LoadU(d, b + i + N)));
+        diff2 = hn::Or(diff2, hn::Xor(hn::LoadU(d, a + i + 2 * N), hn::LoadU(d, b + i + 2 * N)));
+        diff3 = hn::Or(diff3, hn::Xor(hn::LoadU(d, a + i + 3 * N), hn::LoadU(d, b + i + 3 * N)));
+    }
+    for (; i + N <= len; i += N) {
+        diff0 = hn::Or(diff0, hn::Xor(hn::LoadU(d, a + i), hn::LoadU(d, b + i)));
+    }
+    // The last vector overlaps bytes that are already folded in, which cannot
+    // change the result.
+    diff1 = hn::Or(diff1, hn::Xor(hn::LoadU(d, a + len - N), hn::LoadU(d, b + len - N)));
+    return hn::AllBits0(d, hn::Or(hn::Or(diff0, diff1), hn::Or(diff2, diff3)));
+}
+
 } // namespace HWY_NAMESPACE
 } // namespace bun
 HWY_AFTER_NAMESPACE();
@@ -2292,6 +2326,7 @@ namespace bun {
 HWY_EXPORT(BSwap16Impl);
 HWY_EXPORT(BSwap32Impl);
 HWY_EXPORT(BSwap64Impl);
+HWY_EXPORT(ConstantTimeEqualImpl);
 HWY_EXPORT(ContainsNewlineOrNonASCIIOrQuoteImpl);
 HWY_EXPORT(CopyAsciiPrefixImpl);
 HWY_EXPORT(CopyU16ToU8Impl);
@@ -2521,6 +2556,11 @@ void highway_fill_with_skip_mask(
     bool skip_mask) // Whether to skip masking
 {
     BUN_HWY_DISPATCH(FillWithSkipMaskImpl)(mask, mask_len, output, input, length, skip_mask);
+}
+
+bool highway_constant_time_eq(const uint8_t* a, const uint8_t* b, size_t len)
+{
+    return BUN_HWY_DISPATCH(ConstantTimeEqualImpl)(a, b, len);
 }
 
 void highway_bswap16(uint8_t* data, size_t len)

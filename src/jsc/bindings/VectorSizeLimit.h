@@ -9,13 +9,14 @@ extern "C" size_t Bun__stringSyntheticAllocationLimit;
 namespace Bun {
 
 // The most elements a Vector<T> can hold, lowered by Bun__stringSyntheticAllocationLimit so tests reach it cheaply.
+// The size in bytes fits in an unsigned, and the capacity in the 31 bits that the borrow bit leaves.
 template<typename T>
 size_t maxVectorSize()
 {
-    constexpr size_t maxBytes = std::numeric_limits<unsigned>::max() >> 1;
-    static_assert(WTF::isValidCapacityForVector<T>(maxBytes / sizeof(T)));
-    static_assert(!WTF::isValidCapacityForVector<T>(maxBytes / sizeof(T) + 1));
-    return std::min(maxBytes, Bun__stringSyntheticAllocationLimit) / sizeof(T);
+    constexpr size_t maxCapacity = std::min<size_t>(std::numeric_limits<unsigned>::max() / sizeof(T), std::numeric_limits<unsigned>::max() >> 1);
+    static_assert(WTF::isValidCapacityForVector<T>(maxCapacity));
+    static_assert(!WTF::isValidCapacityForVector<T>(maxCapacity + 1));
+    return std::min(maxCapacity, Bun__stringSyntheticAllocationLimit / sizeof(T));
 }
 
 // A Deque's capacity is a power of two within the Vector bound, and the ring keeps one slot empty.

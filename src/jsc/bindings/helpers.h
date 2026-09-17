@@ -74,7 +74,7 @@ static void free_global_string(void* str, void* ptr, unsigned len)
 
 static WTF::String convertUTF8ToString(std::span<const unsigned char> bytes)
 {
-    // fromUTF8ReplacingInvalidSequences returns a null string past a ~2^30-byte input
+    // fromUTF8ReplacingInvalidSequences CRASH()es past a ~2^31-byte input
     // (it sizes an intermediate Vector<char16_t> by byte count).
     if (WTF::isValidCapacityForVector<char16_t>(bytes.size())) [[likely]]
         return WTF::String::fromUTF8ReplacingInvalidSequences(bytes);

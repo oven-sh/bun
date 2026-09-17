@@ -63,58 +63,37 @@ describe("fileURLToPath", () => {
     expect(fileURLToPath(import.meta.url)).toBe(import.meta.path);
   });
 
-  // WTF::String::fromUTF8 converts into a buffer of one UTF-16 code unit for each byte. It sized that buffer with a
-  // Vector constructor, which aborts the process when the allocation fails or is past 2**30 - 1 code units:
-  // `panic(main thread): abort() called`, exit code 134. WTF::URL::fileSystemPath() decodes the path through it. The
-  // conversion now fails instead, so the path does not decode, like a path that is not UTF-8.
-  describe("a path too long to decode", () => {
-    // A URL with a host is a UNC path on Windows. A path that did not decode must not give the UNC root there.
-    const roots = isWindows ? ["file:///C:/", "file://server/share/"] : ["file:///"];
-    // fileURLToPath wants an absolute path on Windows, and a path that did not decode is not one.
-    const doesNotDecode = isWindows ? "ERR_INVALID_FILE_URL_PATH" : '""';
-
-    async function fileURLToPathInChild(urlRoots, pathLength, env = {}) {
-      const script = `
-        import { fileURLToPath } from "node:url";
-        // U+4E00 keeps the decoded path from being all ASCII, which converts with no UTF-16 buffer.
-        // repeat() makes a rope, so the child holds the long path once.
-        const path = "%E4%B8%80" + "q".repeat(${pathLength});
-        for (const root of ${JSON.stringify(urlRoots)}) {
-          try {
-            console.log(JSON.stringify(fileURLToPath(root + path)));
-          } catch (e) {
-            console.log(e.code);
-          }
-        }
-      `;
+  // WTF::String::fromUTF8 converts into a Vector<char16_t> of one code unit for each byte, and WTF::URL::fileSystemPath()
+  // decodes the path through it. WebKit 310668@main halved the capacity of every Vector whose element is wider than a
+  // byte, so a decoded path of 2**30 bytes aborted the process: `panic(main thread): abort() called`, exit code 134.
+  // Bun 1.3.12 returns the path. A debug build takes minutes to parse a URL of this size, and the child peaks at 7 GiB.
+  it.skipIf(isDebug || isASAN || totalmem() < 12 * 1024 ** 3)(
+    "decodes a path of 2**30 bytes",
+    async () => {
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "-e", script],
-        env: { ...bunEnv, ...env },
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            import { fileURLToPath } from "node:url";
+            // U+4E00 keeps the decoded path from being all ASCII, which converts with no UTF-16 buffer.
+            // repeat() makes a rope, so the child holds the long URL once.
+            const path = fileURLToPath(${JSON.stringify(isWindows ? "file:///C:/" : "file:///")} + "%E4%B8%80" + "q".repeat(2 ** 30));
+            console.log(JSON.stringify({ length: path.length, head: path.slice(0, 5), tail: path.slice(-2) }));
+          `,
+        ],
+        env: bunEnv,
         stdout: "pipe",
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      return { stdout: stdout.trim().split("\n"), stderr, exitCode };
-    }
-
-    // `BUN_JSC_maxSingleAllocationSize` exists in a debug WTF only. A fallible allocation above it fails and an
-    // infallible one asserts. The decoded path is 2.5 MiB, so its UTF-16 buffer is 5 MiB, and every other allocation
-    // stays below the 4 MiB cap.
-    it.skipIf(!isDebug)("because the UTF-16 buffer cannot be allocated", async () => {
-      const result = await fileURLToPathInChild(roots, 2.5 * 1024 ** 2, {
-        BUN_JSC_maxSingleAllocationSize: String(4 * 1024 ** 2),
+      const root = isWindows ? "C:\\" : "/";
+      expect({ stdout: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+        stdout: { length: root.length + 1 + 2 ** 30, head: (root + "\u4e00qqq").slice(0, 5), tail: "qq" },
+        stderr: "",
+        exitCode: 0,
       });
-      expect(result).toEqual({ stdout: roots.map(() => doesNotDecode), stderr: "", exitCode: 0 });
-    });
-
-    // A debug build takes minutes to parse a URL of this size. The child peaks at 3 GiB.
-    it.skipIf(isDebug || isASAN || totalmem() < 6 * 1024 ** 3)(
-      "because the UTF-16 buffer is past the Vector limit",
-      async () => {
-        const result = await fileURLToPathInChild(roots.slice(0, 1), 2 ** 30);
-        expect(result).toEqual({ stdout: [doesNotDecode], stderr: "", exitCode: 0 });
-      },
-      30_000,
-    );
-  });
+    },
+    60_000,
+  );
 });

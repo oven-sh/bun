@@ -243,8 +243,6 @@ function failWrite(self, negErrno, callback) {
   }
 }
 
-// Native error dispatch for a plain TCP socket, like Node's onWriteComplete.
-// destroy() owns the single 'error' emission; callback(error) may have already destroyed.
 function failPendingWriteAndDestroy(self, error) {
   const callback = self[kwriteCallback];
   if (callback) {

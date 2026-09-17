@@ -41,10 +41,15 @@ describe.concurrent("--update-snapshots", () => {
   /** Runs `bun test --update-snapshots` on the files. Returns every `.snap` file as it is after the run. */
   async function update(files: Record<string, string>, ...args: string[]) {
     using dir = tempDir("update-snapshots", files);
+    const env: Record<string, string | undefined> = { ...bunEnv, CI: "false" };
+    if (args.includes("--bail")) {
+      // `--bail` exits with a bare exit(1). It skips the VM teardown, so LeakSanitizer aborts the child with 134 (#32183).
+      env.ASAN_OPTIONS = [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":");
+    }
     await using proc = Bun.spawn({
       cmd: [bunExe(), "test", "--update-snapshots", ...args],
       cwd: String(dir),
-      env: { ...bunEnv, CI: "false" },
+      env,
       stdout: "ignore",
       stderr: "pipe",
     });

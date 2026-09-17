@@ -420,8 +420,7 @@ void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, MessageBuilder& buil
     builder.append(Bun__inspect_singleline(defaultGlobalObject(globalObject), arg).transferToWTFString());
 }
 
-// The globals that util.format's %s counts as built-in constructors: the ECMAScript ones on
-// globalThis before node installs its own (lib/internal/util/inspect.js, builtInObjects).
+// builtInObjects in node's lib/internal/util/inspect.js: the ECMAScript globals only.
 static bool isBuiltInObjectName(const WTF::String& name)
 {
     static constexpr ASCIILiteral names[] = {
@@ -441,8 +440,7 @@ static bool isBuiltInObjectName(const WTF::String& name)
     return false;
 }
 
-// hasBuiltInToString from node's lib/internal/util/inspect.js. When it is false, %s prints the
-// object through String().
+// hasBuiltInToString in node's lib/internal/util/inspect.js.
 static bool hasBuiltInToString(JSC::JSGlobalObject* globalObject, JSC::JSObject* object)
 {
     auto& vm = JSC::getVM(globalObject);

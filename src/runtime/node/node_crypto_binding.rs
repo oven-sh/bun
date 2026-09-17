@@ -232,9 +232,7 @@ pub mod random {
     };
     const MAX_RANGE: i64 = 0xffff_ffff_ffff;
 
-    // The "Received" value of ERR_OUT_OF_RANGE. Node adds "_" numerical
-    // separators to an integer whose magnitude exceeds 2^32
-    // (lib/internal/errors.js, addNumericalSeparator).
+    // addNumericalSeparator in node's lib/internal/errors.js, applied past 2^32.
     fn received_integer(value: i64) -> String {
         let digits = value.to_string();
         if value.unsigned_abs() <= 1 << 32 {

@@ -98,6 +98,15 @@ extern "C" JSC::EncodedJSValue AsyncContextFrame__withAsyncContextIfNeeded(JSGlo
     return JSValue::encode(AsyncContextFrame::withAsyncContextIfNeeded(globalObject, JSValue::decode(callback)));
 }
 
+// The function withAsyncContextIfNeeded() was given: what a getter hands back to script.
+extern "C" JSC::EncodedJSValue AsyncContextFrame__callbackOf(JSC::EncodedJSValue stored)
+{
+    JSValue value = JSValue::decode(stored);
+    if (auto* wrapper = dynamicDowncast<AsyncContextFrame>(value))
+        return JSValue::encode(wrapper->callback.get());
+    return stored;
+}
+
 #define ASYNCCONTEXTFRAME_CALL_IMPL(...)                                                                                   \
     if (!functionObject.isCell())                                                                                          \
         return jsUndefined();                                                                                              \

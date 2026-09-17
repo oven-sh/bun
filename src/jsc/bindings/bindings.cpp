@@ -5786,6 +5786,12 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskJob(JSC::JSGlobalObject* arg0
         JSValue::decode(JSValue4)
     };
 
+    // A callback stored with its async context: the job runs the function in that context.
+    if (auto* wrapper = dynamicDowncast<AsyncContextFrame>(microtaskArgs[0])) {
+        microtaskArgs[1] = wrapper->context.get();
+        microtaskArgs[0] = wrapper->callback.get();
+    }
+
     if (microtaskArgs[1].isEmpty()) {
         microtaskArgs[1] = jsUndefined();
     }

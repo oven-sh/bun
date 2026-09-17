@@ -836,6 +836,24 @@ describe.concurrent("ModuleGraph: an error in what a graph opened is the graph's
         r.on("error", () => {});
         r.end();
       },
+      // Speaks enough RESP3 for a RedisClient to connect; dropRedisConnections() hangs up on them.
+      redisConnections: [],
+      redisServer() {
+        return Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
+          socket: {
+            open: socket => void host.redisConnections.push(socket),
+            data(socket, data) {
+              if (/HELLO/i.test(String(data))) socket.write("%2\\r\\n$6\\r\\nserver\\r\\n$5\\r\\nredis\\r\\n$5\\r\\nproto\\r\\n:3\\r\\n");
+            },
+            error() {},
+          },
+        }).port;
+      },
+      dropRedisConnections() {
+        for (const socket of host.redisConnections.splice(0)) socket.end();
+      },
       async closedUdpPort() {
         const s = dgram.createSocket("udp4");
         await new Promise(r => s.bind(0, "127.0.0.1", r));
@@ -903,6 +921,16 @@ describe.concurrent("ModuleGraph: an error in what a graph opened is the graph's
           "node:http client: the response callback": (boom, host) => { http.get({ port: host.httpServer(), host: "127.0.0.1", agent: new http.Agent() }, boom); },
           "node:http2 server: 'stream'": (boom, host) => { const s = http2.createServer(); s.on("stream", boom); s.listen(0, "127.0.0.1", () => host.http2Get(s.address().port)); },
           "node:dgram: 'message'": (boom, host) => { const s = dgram.createSocket("udp4"); s.on("message", boom); s.bind(0, "127.0.0.1", () => host.udpSend(s.address().port)); },
+          "RedisClient: onconnect": (boom, host) => {
+            const client = new Bun.RedisClient("redis://127.0.0.1:" + host.redisServer(), { autoReconnect: false });
+            client.onconnect = boom;
+            client.connect().catch(() => {});
+          },
+          "RedisClient: onclose": (boom, host) => {
+            const client = new Bun.RedisClient("redis://127.0.0.1:" + host.redisServer(), { autoReconnect: false });
+            client.onclose = boom;
+            client.connect().then(host.dropRedisConnections, () => {});
+          },
           "WebSocket client: onmessage": (boom, host) => { const ws = new WebSocket("ws://127.0.0.1:" + host.wsEchoServer() + "/"); ws.onopen = () => ws.send("hi"); ws.onmessage = boom; },
           "fetch().then()": (boom, host) => { fetch("http://127.0.0.1:" + host.httpServer() + "/").then(boom); },
           "fs.readFile callback": boom => fs.readFile(import.meta.filename, boom),

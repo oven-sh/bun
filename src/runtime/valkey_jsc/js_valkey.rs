@@ -1046,10 +1046,40 @@ impl JSValkeyClient {
     // the extern "C" shim lives in generated_classes.rs. Setter now returns
     // `()` — `IntoHostSetterReturn for ()` ⇒ `true` at the ABI, identical to
     // the old `-> bool { true }`.
-    bun_jsc::cached_prop_hostfns! {
-        crate::generated_classes::js_RedisClient;
-        (get_on_connect, set_on_connect => onconnect_get_cached, onconnect_set_cached),
-        (get_on_close,   set_on_close   => onclose_get_cached, onclose_set_cached),
+    //
+    // Both are stored with the async context of the script that set them: the connection's
+    // events continue that script, whoever's turn of the loop they arrive in.
+    pub fn get_on_connect(_this: &Self, this_value: JSValue, _global: &JSGlobalObject) -> JSValue {
+        Js::onconnect_get_cached(this_value)
+            .map_or(JSValue::UNDEFINED, JSValue::without_async_context)
+    }
+    pub fn set_on_connect(
+        _this: &Self,
+        this_value: JSValue,
+        global: &JSGlobalObject,
+        value: JSValue,
+    ) {
+        Js::onconnect_set_cached(
+            this_value,
+            global,
+            value.with_async_context_if_needed(global),
+        );
+    }
+    pub fn get_on_close(_this: &Self, this_value: JSValue, _global: &JSGlobalObject) -> JSValue {
+        Js::onclose_get_cached(this_value)
+            .map_or(JSValue::UNDEFINED, JSValue::without_async_context)
+    }
+    pub fn set_on_close(
+        _this: &Self,
+        this_value: JSValue,
+        global: &JSGlobalObject,
+        value: JSValue,
+    ) {
+        Js::onclose_set_cached(
+            this_value,
+            global,
+            value.with_async_context_if_needed(global),
+        );
     }
 
     fn reset_connection_timeout(&self) {

@@ -5,27 +5,27 @@
 //! tier-0 callers declare the C symbol directly — no `bun_jsc` crate
 //! dependency is required to reference it.
 //!
-//! Source of truth: `src/jsc/bindings/wtf-bindings.cpp` (`WTF__parseES5Date`),
-//! which forwards to `WTF::parseES5Date` in
-//! vendor/WebKit `Source/WTF/wtf/DateMath.{h,cpp}`.
+//! Source of truth: `src/jsc/bindings/wtf-bindings.cpp` (`Bun__parseDateTimeString`),
+//! which forwards to `v8::ParseDateTimeString` in
+//! vendor/WebKit `Source/JavaScriptCore/runtime/JSDateMath-v8.{h,cpp}`, the
+//! parser behind JS `Date.parse`.
 //!
-//! Note: WTF's `parseES5Date` sets an `isLocalTime` out-param so the JS
-//! `Date` constructor can later apply the VM's tz offset. The C shim discards
-//! it, so local-time inputs return their naive
-//! UTC value here too.
+//! Note: the parser sets a `local` out-param so the JS `Date` constructor can
+//! later apply the VM's tz offset. The C shim discards it, so local-time
+//! inputs return their naive UTC value here.
 
 unsafe extern "C" {
     // src/jsc/bindings/wtf-bindings.cpp:
-    //   extern "C" double WTF__parseES5Date(const Latin1Character* string, size_t length)
-    fn WTF__parseES5Date(bytes: *const u8, length: usize) -> f64;
+    //   extern "C" double Bun__parseDateTimeString(const Latin1Character* string, size_t length)
+    fn Bun__parseDateTimeString(bytes: *const u8, length: usize) -> f64;
 }
 
-/// Direct call to `WTF::parseES5Date`. Returns NaN for any input the WTF
-/// parser rejects. `s` is treated as Latin-1.
+/// Direct call to the parser. Returns NaN for any input `Date.parse` rejects.
+/// `s` is treated as Latin-1.
 #[inline]
-pub(crate) fn parse_es5_date_raw(s: &[u8]) -> f64 {
+pub(crate) fn parse_date_raw(s: &[u8]) -> f64 {
     // SAFETY: s.as_ptr() is valid for s.len() bytes.
-    unsafe { WTF__parseES5Date(s.as_ptr(), s.len()) }
+    unsafe { Bun__parseDateTimeString(s.as_ptr(), s.len()) }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,13 +38,13 @@ impl core::fmt::Display for InvalidDate {
 }
 impl core::error::Error for InvalidDate {}
 
-/// `bun.jsc.wtf.parseES5Date` shape — `Err` on empty input or non-finite result.
+/// What JS `Date.parse` returns for `buf`, without a VM. `Err` where `Date.parse` returns NaN.
 /// `2000-01-01T00:00:00.000Z` → `Ok(946684800000.0)`.
-pub fn parse_es5_date(buf: &[u8]) -> Result<f64, InvalidDate> {
+pub fn parse_date(buf: &[u8]) -> Result<f64, InvalidDate> {
     if buf.is_empty() {
         return Err(InvalidDate);
     }
-    let ms = parse_es5_date_raw(buf);
+    let ms = parse_date_raw(buf);
     if ms.is_finite() {
         Ok(ms)
     } else {

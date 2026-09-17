@@ -7,6 +7,7 @@
 #include <wtf/dtoa.h>
 #include <wtf/DateMath.h>
 #include <wtf/NumberOfCores.h>
+#include <JavaScriptCore/JSDateMath-v8.h>
 #include <atomic>
 #include <cassert>
 
@@ -237,10 +238,12 @@ extern "C" size_t WTF__base64URLEncode(const char* __restrict inputDataBuffer, s
     return simdutf::binary_to_base64(inputDataBuffer, inputDataBufferSize, destinationDataBuffer, simdutf::base64_url);
 }
 
-extern "C" double WTF__parseES5Date(const Latin1Character* string, size_t length)
+// `Date.parse` without a VM: the V8 date parser that JSC runs for Bun (JSC::Options::useV8DateParser).
+// A date-time with no time zone reads as UTC.
+extern "C" double Bun__parseDateTimeString(const Latin1Character* string, size_t length)
 {
-    bool isLocalTime;
-    return WTF::parseES5Date({ string, length }, isLocalTime);
+    bool isLocalTime = false;
+    return v8::TimeClip(v8::ParseDateTimeString(string, length, isLocalTime));
 }
 
 namespace Bun {

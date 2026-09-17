@@ -739,7 +739,8 @@ pub struct PackageVersion {
     pub(crate) has_install_script: bool,
     pub(crate) _padding_tail: [u8; 2],
 
-    /// Unix timestamp when this version was published (0 if unknown)
+    /// Unix timestamp when this version was published. 0 when the registry gives none,
+    /// infinity when it gives one that is not a date (see `publish_timestamp_ms_from_json`).
     pub(crate) publish_timestamp_ms: f64,
 }
 
@@ -774,6 +775,11 @@ impl Default for PackageVersion {
 impl PackageVersion {
     pub(crate) fn all_dependencies_bundled(&self) -> bool {
         self.bundled_dependencies.is_invalid()
+    }
+
+    /// The registry gave a publish time that is not a date, so minimum-release-age cannot tell the age.
+    pub(crate) fn has_unreadable_publish_time(&self) -> bool {
+        self.publish_timestamp_ms.is_infinite()
     }
 
     /// Used by `Package.fromNPM` to walk dependency groups by name.
@@ -933,8 +939,9 @@ pub mod package_manifest {
         // - v0.0.5: added bundled dependencies
         // - v0.0.6: changed semver major/minor/patch to each use u64 instead of u32
         // - v0.0.7: added version publish times and extended manifest flag for minimum release age
+        // - v0.0.8: publish times are read like `Date.parse`; one that is not a date is infinity, not 0
         const HEADER_BYTES: &'static str =
-            concat!("#!/usr/bin/env bun\n", "bun-npm-manifest-cache-v0.0.7\n");
+            concat!("#!/usr/bin/env bun\n", "bun-npm-manifest-cache-v0.0.8\n");
 
         // Field order is hardcoded (descending alignment). Re-verify if the
         // layout changes.
@@ -1573,6 +1580,10 @@ impl PackageManifest {
         package_version: &PackageVersion,
         minimum_release_age_ms: f64,
     ) -> bool {
+        // `--minimum-release-age=0` turns the gate off, also for a version whose age is unknown.
+        if minimum_release_age_ms <= 0.0 {
+            return false;
+        }
         let current_timestamp_ms: f64 =
             (bun_core::start_time() / bun_core::time::NS_PER_MS as i128) as f64;
         package_version.publish_timestamp_ms > current_timestamp_ms - minimum_release_age_ms
@@ -1655,8 +1666,14 @@ impl PackageManifest {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum FindVersionError {
     NotFound,
-    TooRecent,
-    AllVersionsTooRecent,
+    /// `unreadable_publish_time`: minimum-release-age blocked the newest candidate because the
+    /// registry's publish time for it is not a date, and not because the version is new.
+    TooRecent {
+        unreadable_publish_time: bool,
+    },
+    AllVersionsTooRecent {
+        unreadable_publish_time: bool,
+    },
 }
 
 pub enum FindVersionResult<'a> {
@@ -1682,7 +1699,9 @@ impl<'a> FindVersionResult<'a> {
             FindVersionResult::FoundWithFilter {
                 newest_filtered, ..
             } => newest_filtered.is_some(),
-            FindVersionResult::Err(err) => *err == FindVersionError::AllVersionsTooRecent,
+            FindVersionResult::Err(err) => {
+                matches!(err, FindVersionError::AllVersionsTooRecent { .. })
+            }
             // .err.too_recent is only for direct version checks which doesn't prove there was a later version that could have been chosen
             _ => false,
         }
@@ -1813,7 +1832,9 @@ impl PackageManifest {
             };
         }
 
-        FindVersionResult::Err(FindVersionError::AllVersionsTooRecent)
+        FindVersionResult::Err(FindVersionError::AllVersionsTooRecent {
+            unreadable_publish_time: dist_result.package.has_unreadable_publish_time(),
+        })
     }
 
     pub fn find_best_version_with_filter(
@@ -1845,7 +1866,9 @@ impl PackageManifest {
             let result = self.find_by_version(left.version);
             if let Some(r) = result {
                 if Self::is_package_version_too_recent(r.package, min_age_ms) {
-                    return FindVersionResult::Err(FindVersionError::TooRecent);
+                    return FindVersionResult::Err(FindVersionError::TooRecent {
+                        unreadable_publish_time: r.package.has_unreadable_publish_time(),
+                    });
                 }
                 return FindVersionResult::Found(r);
             }
@@ -1897,8 +1920,12 @@ impl PackageManifest {
             }
         }
 
-        if newest_filtered.is_some() {
-            return FindVersionResult::Err(FindVersionError::AllVersionsTooRecent);
+        if let Some(newest) = newest_filtered {
+            return FindVersionResult::Err(FindVersionError::AllVersionsTooRecent {
+                unreadable_publish_time: self
+                    .find_by_version(newest)
+                    .is_some_and(|r| r.package.has_unreadable_publish_time()),
+            });
         }
 
         FindVersionResult::Err(FindVersionError::NotFound)
@@ -1969,6 +1996,22 @@ impl PackageManifest {
         }
 
         None
+    }
+}
+
+/// A version's entry in the packument's `time` object, as `PackageVersion::publish_timestamp_ms`.
+/// Follows npm's `!time[v] || Date.parse(time[v]) <= before`: a falsy entry is no publish time
+/// (0, passes minimum-release-age like a missing entry), and what is not a date never passes
+/// (infinity). Stricter than npm in one place: only a string is read as a date, so `2020` or
+/// `["2020-01-01"]`, which `Date.parse` stringifies into dates, do not pass.
+fn publish_timestamp_ms_from_json(entry: &JSON::E::JsonValue) -> f64 {
+    use JSON::E::JsonValue;
+    match entry {
+        JsonValue::Null | JsonValue::Boolean(false) => 0.0,
+        JsonValue::Number(n) if n.value() == 0.0 => 0.0,
+        JsonValue::String(s) if s.slice().is_empty() => 0.0,
+        JsonValue::String(s) => bun_core::wtf::parse_date(s.slice()).unwrap_or(f64::INFINITY),
+        _ => f64::INFINITY,
     }
 }
 
@@ -2951,10 +2994,9 @@ impl PackageManifest {
                         // result matches the previous `ObjectJSON::get` exactly.
                         time_props.iter().find(|p| p.key.slice() == version_name)
                     };
-                    if let Some(publish_time_str) = entry.and_then(|p| p.value.as_str()) {
-                        if let Ok(ms) = bun_core::wtf::parse_es5_date(publish_time_str) {
-                            package_version.publish_timestamp_ms = ms;
-                        }
+                    if let Some(entry) = entry {
+                        package_version.publish_timestamp_ms =
+                            publish_timestamp_ms_from_json(&entry.value);
                     }
                 }
 

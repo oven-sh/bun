@@ -377,9 +377,12 @@ describe("Channel", () => {
       held.subscribe(() => {});
       for (let i = 0; i < 100 && !firstFinalized; i++) await Bun.sleep(0);
       if (!firstFinalized) throw new Error("the finalizer of the first channel did not run");
-      // The module's own finalizer for the first channel runs in the same pass
-      // or shortly after. Give it a few more turns.
-      for (let i = 0; i < 5; i++) await Bun.sleep(0);
+      // The module's own finalizer has no ordering guarantee against the one
+      // above. Keep checking the entry for a while after it.
+      for (let i = 0; i < 100; i++) {
+        await Bun.sleep(0);
+        if (dc.channel(name) !== held) throw new Error("the finalizer removed the live channel");
+      }
       console.log(JSON.stringify({
         sameObject: dc.channel(name) === held,
         hasSubscribers: dc.hasSubscribers(name),

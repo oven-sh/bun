@@ -412,12 +412,28 @@ private:
 
         auto result = httpResponseData->template consumePostPadded<IsNodeHttp>(httpContextData->maxHeaderSize, httpResponseData->isConnectRequest, httpContextData->flags.requireHostHeader,httpContextData->flags.useStrictMethodValidation, httpContextData->flags.useInsecureHTTPParser, httpContextData->flags.useLenientTransferEncoding, nodeHttpRequestTrailers, &httpResponseData->chunkedExtensionsByteCount, data, (unsigned int) length, s, [httpContextData](void *s, HttpRequest *httpRequest) -> void * {
 
+            HttpResponseData<SSL> *httpResponseData = (HttpResponseData<SSL> *) us_socket_ext((us_socket_t *) s);
+
+            /* Bun.serve, RFC 9112 9.6: a complete response marked this connection close
+             * and sawConnectionClose did not see it (a Connection: close response
+             * header). Run onData's tail now: resetResponseState() below drops the mark.
+             * Latch first: a socket that has not drained stays open, and the parser
+             * holds this request's framing, so later bytes must not reach it. Before
+             * the timeout reset, so that socket still times out. */
+            if constexpr (!IsNodeHttp) {
+                constexpr uint32_t closeOrPending = HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE | HttpResponseData<SSL>::HTTP_RESPONSE_PENDING;
+                if ((httpResponseData->state & closeOrPending) == HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE) [[unlikely]] {
+                    httpResponseData->sawConnectionClose = true;
+                    us_socket_unref((us_socket_t *) s);
+                    ((AsyncSocket<SSL> *) s)->uncork();
+                    ((HttpResponse<SSL> *) s)->closeIfDoneAndMarked(httpResponseData);
+                    return nullptr;
+                }
+            }
 
             /* For every request we reset the timeout and hang until user makes action */
             /* Warning: if we are in shutdown state, resetting the timer is a security issue! */
             us_socket_timeout((us_socket_t *) s, 0);
-
-            HttpResponseData<SSL> *httpResponseData = (HttpResponseData<SSL> *) us_socket_ext((us_socket_t *) s);
 
             /* node:http compat: the JS layer stopped HTTP processing on this
              * connection (the user emitted 'close' on the socket - Node frees

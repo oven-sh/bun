@@ -2067,6 +2067,14 @@ export async function readdirSorted(path: string): Promise<string[]> {
 }
 
 /**
+ * `readdirSorted` for bun's install cache directory: ignores bookkeeping entries that
+ * are not cached packages (currently the `.install-state` fingerprint dir).
+ */
+export async function readdirCacheSorted(path: string): Promise<string[]> {
+  return (await readdirSorted(path)).filter(e => e !== ".install-state");
+}
+
+/**
  * Helper function for making automatically lazily-executed promises.
  *
  * The difference is that the promise has not already started to be evaluated when it is created,

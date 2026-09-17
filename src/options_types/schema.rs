@@ -262,6 +262,8 @@ pub mod api {
         pub hoist: Option<bool>,
         /// `offline = true`: `bun install` never touches the network.
         pub offline: Option<bool>,
+        /// `stateFile = false` disables the whole-install fingerprint fast path.
+        pub install_state: Option<bool>,
     }
 
     #[repr(u8)]

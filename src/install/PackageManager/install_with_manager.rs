@@ -55,6 +55,47 @@ pub fn install_with_manager(
 ) -> crate::Result<()> {
     let log_level = manager.options.log_level;
 
+    // Fast path: nothing that determines node_modules has changed since the last
+    // successful install (see install_state.rs) — skip lockfile parsing, hoisting and
+    // the per-package verification walk entirely.
+    let state_root: Vec<u8> = strings::without_trailing_slash(
+        crate::package_manager_real::FileSystem::instance().top_level_dir(),
+    )
+    .to_vec();
+    if crate::install_state::applicable(manager) {
+        if let Some(s) = crate::install_state::is_up_to_date(manager, &state_root) {
+            if manager.options.do_.summary() {
+                // Same wording as the regular no-op path so scripts/tests keying on it keep working.
+                bun_core::pretty!("\n");
+                if s.packages != s.entries {
+                    bun_core::pretty!(
+                        "Checked <green>{} install{}<r> across {} package{} <d>(no changes)<r> ",
+                        s.entries,
+                        if s.entries == 1 { "" } else { "s" },
+                        s.packages,
+                        if s.packages == 1 { "" } else { "s" },
+                    );
+                } else {
+                    bun_core::pretty!(
+                        "<r><green>Done<r>! Checked {} package{}<r> <d>(no changes)<r> ",
+                        s.entries,
+                        if s.entries == 1 { "" } else { "s" },
+                    );
+                }
+                Output::print_start_end_stdout(ctx.start_time, bun_core::time::nano_timestamp());
+                bun_core::pretty!("\n");
+                Output::flush();
+            }
+            return Ok(());
+        }
+    }
+    // We are about to do real work (or were told to with --force / add / remove /
+    // update): never leave a stale "clean" marker behind if this install dies half way.
+    // Runs that cannot touch node_modules (--dry-run, --lockfile-only) keep it.
+    if !manager.options.dry_run && !manager.options.lockfile_only {
+        crate::install_state::invalidate(manager, &state_root);
+    }
+
     // Start resolving DNS for the default registry immediately.
     // Unless you're behind a proxy.
     if !manager.env().has_http_proxy()
@@ -994,6 +1035,10 @@ pub fn install_with_manager(
 
     if install_summary.fail > 0 {
         manager.any_failed_to_install = true;
+    } else if !manager.log_mut().has_errors() {
+        let entries = u64::from(install_summary.success) + u64::from(install_summary.skipped);
+        let packages = manager.lockfile.packages.len() as u64;
+        crate::install_state::save(manager, &state_root, entries, packages);
     }
 
     Output::flush();

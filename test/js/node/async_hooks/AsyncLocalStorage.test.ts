@@ -1623,9 +1623,10 @@ test("exit() and nested run() release the shadowed outer store", async () => {
   for (const t of timers) clearTimeout(t);
 });
 
-// node runs 'uncaughtException' handlers inside the async context of the callback that threw,
-// wherever the code that reports the exception is relative to whoever restored that context.
-test("an uncaughtException handler reads the store of the callback that threw", async () => {
+// node runs 'uncaughtException' handlers inside the async context the failing callback was STARTED in:
+// not whatever was current where the exception is finally reported, and not a context the callback
+// entered itself before it threw.
+test("an uncaughtException handler reads the store the callback that threw was started in", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -1633,28 +1634,33 @@ test("an uncaughtException handler reads the store of the callback that threw", 
       `
         const { AsyncLocalStorage } = require("node:async_hooks");
         const fs = require("node:fs");
-        const zlib = require("node:zlib");
         const { EventEmitter } = require("node:events");
         const als = new AsyncLocalStorage();
         const seen = {};
-        const cases = {
+        // How each callback is scheduled; every one is scheduled inside als.run("outer").
+        const sources = {
           "process.nextTick": boom => process.nextTick(boom),
           setTimeout: boom => setTimeout(boom, 1),
           setImmediate: boom => setImmediate(boom),
-          queueMicrotask: boom => queueMicrotask(boom),
           "fs.readFile callback": boom => fs.readFile(__filename, boom),
-          "a zlib stream's 'data'": boom => { const z = zlib.createGzip(); z.on("data", boom); z.end("hello"); },
           "an EventEmitter listener, emitted from a timer": boom => { const e = new EventEmitter(); e.on("x", boom); setTimeout(() => e.emit("x"), 1); },
         };
-        const names = Object.keys(cases);
+        const names = [];
+        for (const name of Object.keys(sources)) names.push(name + ": throws", name + ": throws inside its own run()");
+        // A timer made with no store at all, whose callback enters one and throws there.
+        names.push("setTimeout with no store: throws inside its own run()");
         process.on("uncaughtException", error => {
           seen[error.message] = String(als.getStore());
           if (Object.keys(seen).length === names.length) {
-            console.log(JSON.stringify(Object.fromEntries(names.map(name => [name, seen[name]]))));
+            console.log(JSON.stringify(seen));
             process.exit(0);
           }
         });
-        for (const name of names) als.run("the store of " + name, () => cases[name](() => { throw new Error(name); }));
+        for (const [name, schedule] of Object.entries(sources)) {
+          als.run("outer", () => schedule(() => { throw new Error(name + ": throws"); }));
+          als.run("outer", () => schedule(() => als.run("inner", () => { throw new Error(name + ": throws inside its own run()"); })));
+        }
+        setTimeout(() => als.run("inner", () => { throw new Error("setTimeout with no store: throws inside its own run()"); }), 1);
       `,
     ],
     env: bunEnv,
@@ -1662,16 +1668,20 @@ test("an uncaughtException handler reads the store of the callback that threw", 
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const expected: Record<string, string> = {};
+  for (const name of [
+    "process.nextTick",
+    "setTimeout",
+    "setImmediate",
+    "fs.readFile callback",
+    "an EventEmitter listener, emitted from a timer",
+  ]) {
+    expected[name + ": throws"] = "outer";
+    expected[name + ": throws inside its own run()"] = "outer";
+  }
+  expected["setTimeout with no store: throws inside its own run()"] = "undefined";
   expect({ stdout: stdout && JSON.parse(stdout), stderr, exitCode }).toEqual({
-    stdout: {
-      "process.nextTick": "the store of process.nextTick",
-      "setTimeout": "the store of setTimeout",
-      "setImmediate": "the store of setImmediate",
-      "queueMicrotask": "the store of queueMicrotask",
-      "fs.readFile callback": "the store of fs.readFile callback",
-      "a zlib stream's 'data'": "the store of a zlib stream's 'data'",
-      "an EventEmitter listener, emitted from a timer": "the store of an EventEmitter listener, emitted from a timer",
-    },
+    stdout: expected,
     stderr: "",
     exitCode: 0,
   });

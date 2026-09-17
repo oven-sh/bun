@@ -1333,15 +1333,8 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
     auto& vm = JSC::getVM(globalObject);
     if (vm.hasPendingTerminationException()) [[unlikely]]
         return true;
-    // Handed the Exception: the handlers are given what was thrown, and run on top of the async
-    // context it was thrown in.
-    JSValue thrownIn;
-    if (auto* thrown = dynamicDowncast<JSC::Exception>(exception)) {
-        thrownIn = thrown->asyncContext();
-        exception = thrown->value();
-    }
     // The process's handlers are the realm's: they run as it, whichever Bun.ModuleGraph's error this is.
-    Bun::ErrorHandlerContextScope inRealmsContext(globalObject, nullptr, thrownIn);
+    Bun::ErrorHandlerContextScope inRealmsContext(globalObject, nullptr);
 
     // Node exits with code 6 (InvalidFatalExceptionMonkeyPatching) when process._fatalException
     // is replaced with a non-callable. Top exception scope: no caller declares a ThrowScope
@@ -1496,8 +1489,8 @@ extern "C" int Bun__handleUnhandledRejection(JSC::JSGlobalObject* lexicalGlobalO
     if (vm.hasPendingTerminationException()) [[unlikely]]
         return true;
     auto* process = globalObject->processObject();
-    // As in Bun__handleUncaughtException; a rejection is reported in the context it was rejected in.
-    Bun::ErrorHandlerContextScope inRealmsContext(globalObject, nullptr, JSValue());
+    // As in Bun__handleUncaughtException.
+    Bun::ErrorHandlerContextScope inRealmsContext(globalObject, nullptr);
 
     auto eventType = Identifier::fromString(vm, "unhandledRejection"_s);
     auto& wrapped = process->wrapped();

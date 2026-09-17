@@ -2159,9 +2159,11 @@ impl VirtualMachine {
             panic!("Uncaught exception while handling uncaught exception");
         }
         self.is_handling_uncaught_exception = true;
-        // (Handed the Exception as it is: it says which async context the handlers run on top of.)
-        let handled =
-            Bun__handleUncaughtException(global_object, err, if is_rejection { 1 } else { 0 }) > 0;
+        let handled = Bun__handleUncaughtException(
+            global_object,
+            err.to_error().unwrap_or(err),
+            if is_rejection { 1 } else { 0 },
+        ) > 0;
         if !handled {
             // `beforeExit` has already been dispatched, so the run is winding
             // down and there is no loop turn left to defer to: print the error

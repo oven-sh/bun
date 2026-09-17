@@ -135,16 +135,16 @@ void disposeModuleGraphOfContext(WebCore::ScriptExecutionContext&);
 // Both halves of "the context that is current" are swapped: the async context, and the context
 // native code entered (VirtualMachine::entered_context), so a handler called from inside a
 // stopped graph's dispatch is not itself called for nobody.
-// `thrownIn`: the async context the error happened in (an Exception's asyncContext(); empty: the
-// one that is current). The handler runs on top of it, so it reads the AsyncLocalStorage stores of
-// the callback that failed, as node's handlers do, wherever the reporter is relative to whoever
-// restored that callback's context.
+// It runs on top of the async context that is current where the error is reported: a reporter
+// that reports before it restores the failing callback's context (timers, the tick queue) shows
+// the handler that callback's AsyncLocalStorage stores, as node does. What the handler leaves in
+// the async context (enterWith()) ends with it.
 class ErrorHandlerContextScope {
     WTF_MAKE_NONCOPYABLE(ErrorHandlerContextScope);
     WTF_FORBID_HEAP_ALLOCATION;
 
 public:
-    ErrorHandlerContextScope(Zig::GlobalObject*, JSModuleGraph* owner, JSC::JSValue thrownIn);
+    ErrorHandlerContextScope(Zig::GlobalObject*, JSModuleGraph* owner);
     ~ErrorHandlerContextScope();
 
 private:

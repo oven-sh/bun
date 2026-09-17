@@ -364,34 +364,32 @@ export function initializeNextTickQueue(process: typeof globalThis.process, next
           var frame = tock.frame;
           var restore = $getInternalField($asyncContext, 0);
           $putInternalField($asyncContext, 0, frame);
-          // No catch: what a tick throws leaves this function as it was thrown, and
-          // JSNextTickQueue::drain reports it and calls back in for the ticks after it (node's
-          // processTicksAndRejections does the same).
-          try {
-            if (args === undefined) {
-              callback();
-            } else {
-              switch (args.length) {
-                case 1:
-                  callback(args[0]);
-                  break;
-                case 2:
-                  callback(args[0], args[1]);
-                  break;
-                case 3:
-                  callback(args[0], args[1], args[2]);
-                  break;
-                case 4:
-                  callback(args[0], args[1], args[2], args[3]);
-                  break;
-                default:
-                  callback(...args);
-                  break;
-              }
+          // No catch and no finally: what a tick throws leaves this function as it was thrown, with
+          // the tick's frame still current. JSNextTickQueue::drain reports it there (so an
+          // uncaughtException handler reads the tick's AsyncLocalStorage stores, as in node), puts the
+          // async context back, and calls in again for the ticks after it.
+          if (args === undefined) {
+            callback();
+          } else {
+            switch (args.length) {
+              case 1:
+                callback(args[0]);
+                break;
+              case 2:
+                callback(args[0], args[1]);
+                break;
+              case 3:
+                callback(args[0], args[1], args[2]);
+                break;
+              case 4:
+                callback(args[0], args[1], args[2], args[3]);
+                break;
+              default:
+                callback(...args);
+                break;
             }
-          } finally {
-            $putInternalField($asyncContext, 0, restore);
           }
+          $putInternalField($asyncContext, 0, restore);
         }
 
         drainMicrotasks();

@@ -771,7 +771,17 @@ impl MultiPartUpload {
             BStr::new(self_.upload_id.get())
         );
         match result {
-            S3DeleteResult::Failure(_err) => {
+            // NoSuchUpload: the upload id is already gone, a retry cannot change that.
+            S3DeleteResult::Success
+            | S3DeleteResult::NotFound(S3Error {
+                code: b"NoSuchUpload",
+                ..
+            }) => {
+                MultiPartUpload::deref_(this);
+                Ok(())
+            }
+            // Any other 404 can come from a proxy in front of the store.
+            S3DeleteResult::NotFound(_) | S3DeleteResult::Failure(_) => {
                 let mut options = self_.options.get();
                 if options.retry > 0 {
                     options.retry -= 1;
@@ -780,11 +790,6 @@ impl MultiPartUpload {
                     self_.rollback_multi_part_request()?;
                     return Ok(());
                 }
-                MultiPartUpload::deref_(this);
-                Ok(())
-            }
-            // NotFound: the upload id is already gone, a retry cannot change that.
-            S3DeleteResult::Success | S3DeleteResult::NotFound(_) => {
                 MultiPartUpload::deref_(this);
                 Ok(())
             }

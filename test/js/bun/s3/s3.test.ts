@@ -1834,7 +1834,7 @@ describe.concurrent("s3 multipart upload rollback", () => {
           }
           if (req.method === "DELETE" && url.searchParams.get("uploadId") === "upload-1") {
             requests.push("abort");
-            return new Response(abort.body, { status: abort.status, headers: { "Content-Type": "application/xml" } });
+            return new Response(abort.body, { status: abort.status });
           }
           requests.push(req.method + " " + url.pathname + url.search);
           return new Response(null, { status: 400 });
@@ -1873,6 +1873,9 @@ describe.concurrent("s3 multipart upload rollback", () => {
         body: "<Error><Code>NoSuchUpload</Code><Message>The specified upload does not exist.</Message></Error>",
       },
     ],
+    // A 404 without that code can come from a proxy in front of the store. It
+    // says nothing about the upload, so the rollback retries.
+    ["404 from a proxy", 4, { status: 404, body: "404 page not found" }],
     // A real failure: the best-effort rollback still retries, 1 + retry times.
     [
       "500 InternalError",

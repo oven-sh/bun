@@ -1716,6 +1716,7 @@ pub fn diff_post_process(
     }
 
     bun_core::scoped_log!(Patch, "Before postprocess: {}\n", bstr::BStr::new(&stdout));
+    remove_nested_node_modules_sections(&mut stdout, old_folder);
     git_diff_postprocess(&mut stdout, old_folder, new_folder)?;
     Ok(Ok(stdout))
 }
@@ -1989,6 +1990,44 @@ fn git_diff_postprocess(
     }
 
     Ok(())
+}
+
+/// Drops every file section of the raw `git diff` output whose old side is
+/// under `<old_folder>/node_modules/`. The old side is the cache entry, which
+/// ships the bundled dependencies of the package, while the nested
+/// `node_modules` of the patched folder is hidden from `git diff`. Without
+/// this, every bundled file is recorded as deleted. `git diff --no-index`
+/// takes no pathspec, so the sections are cut here, before the folder
+/// prefixes are stripped.
+fn remove_nested_node_modules_sections(stdout: &mut Vec<u8>, old_folder: &[u8]) {
+    const HEADER: &[u8] = b"diff --git ";
+
+    let old_folder_trimmed = strings::trim(old_folder, b"/");
+    let mut nested: Vec<u8> = Vec::with_capacity(HEADER.len() + old_folder_trimmed.len() + 16);
+    nested.extend_from_slice(HEADER);
+    nested.extend_from_slice(b"a/");
+    nested.extend_from_slice(old_folder_trimmed);
+    nested.extend_from_slice(b"/node_modules/");
+
+    let mut out: Vec<u8> = Vec::with_capacity(stdout.len());
+    let mut keep = true;
+    let mut cursor: usize = 0;
+    while cursor < stdout.len() {
+        let rest = &stdout[cursor..];
+        let line_len = match strings::index_of_char_usize(rest, b'\n') {
+            Some(i) => i + 1,
+            None => rest.len(),
+        };
+        let line = &rest[..line_len];
+        if line.starts_with(HEADER) {
+            keep = !line.starts_with(&nested);
+        }
+        if keep {
+            out.extend_from_slice(line);
+        }
+        cursor += line_len;
+    }
+    *stdout = out;
 }
 
 /// We need to remove occurrences of "a/" and "b/" and "$old_folder/" and

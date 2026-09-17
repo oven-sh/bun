@@ -1058,6 +1058,99 @@ module.exports = function isOdd() {
   });
 });
 
+// `bun patch <pkg>` replaces `node_modules/<pkg>` with a copy of the cache
+// entry. That copy skipped every `node_modules` folder, so the dependencies
+// the package bundles in its tarball and the dependencies bun nested under it
+// were gone. `bun patch --commit` then diffed against a cache entry that
+// still had the bundled files and recorded them as deleted.
+describe.concurrent("bun patch keeps the nested node_modules of the package", () => {
+  const registry = new VerdaccioRegistry();
+
+  beforeAll(async () => {
+    await registry.start();
+  });
+
+  afterAll(() => {
+    registry.stop();
+  });
+
+  async function runBun(cwd: string, ...args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd,
+      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  async function installedVersion(dir: string, ...segments: string[]) {
+    const file = Bun.file(join(dir, "node_modules", ...segments, "package.json"));
+    return (await file.exists()) ? (await file.json()).version : undefined;
+  }
+
+  test("bundled dependencies survive bun patch and stay out of the committed patch", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: {
+        "package.json": JSON.stringify({ name: "foo", dependencies: { "bundled-1": "1.0.0" } }),
+      },
+    });
+
+    const install = await runBun(packageDir, "install");
+    expect(install.stderr).not.toContain("error:");
+    expect(install.exitCode).toBe(0);
+    expect(await installedVersion(packageDir, "bundled-1", "node_modules", "no-deps")).toBe("1.0.0");
+
+    const patch = await runBun(packageDir, "patch", "bundled-1");
+    expect(patch.stderr).not.toContain("error:");
+    expect(patch.exitCode).toBe(0);
+    expect(await installedVersion(packageDir, "bundled-1", "node_modules", "no-deps")).toBe("1.0.0");
+
+    await Bun.write(join(packageDir, "node_modules", "bundled-1", "index.js"), `module.exports = "patched";\n`);
+
+    const commit = await runBun(packageDir, "patch", "--commit", "node_modules/bundled-1");
+    expect(commit.stderr).not.toContain("error:");
+    expect(commit.exitCode).toBe(0);
+
+    const patchContents = await Bun.file(join(packageDir, "patches", "bundled-1@1.0.0.patch")).text();
+    expect(patchContents).toContain(`+module.exports = "patched";`);
+    expect(patchContents).not.toContain("no-deps");
+    expect(patchContents).not.toContain("deleted file");
+
+    // the commit flow reinstalls with the patch applied
+    expect(await Bun.file(join(packageDir, "node_modules", "bundled-1", "index.js")).text()).toBe(
+      `module.exports = "patched";\n`,
+    );
+    expect(await installedVersion(packageDir, "bundled-1", "node_modules", "no-deps")).toBe("1.0.0");
+  });
+
+  test("dependencies bun nested under the package survive bun patch", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: {
+        "package.json": JSON.stringify({
+          name: "foo",
+          dependencies: { "one-dep": "1.0.0", "no-deps": "2.0.0" },
+        }),
+      },
+    });
+
+    const install = await runBun(packageDir, "install");
+    expect(install.stderr).not.toContain("error:");
+    expect(install.exitCode).toBe(0);
+    expect(await installedVersion(packageDir, "no-deps")).toBe("2.0.0");
+    expect(await installedVersion(packageDir, "one-dep", "node_modules", "no-deps")).toBe("1.0.1");
+
+    const patch = await runBun(packageDir, "patch", "one-dep");
+    expect(patch.stderr).not.toContain("error:");
+    expect(patch.exitCode).toBe(0);
+    expect(await installedVersion(packageDir, "one-dep", "node_modules", "no-deps")).toBe("1.0.1");
+  });
+});
+
 // `bun patch --commit` derives the pristine copy's cache folder from the
 // package's resolution. For non-registry resolutions (git, github, tarball)
 // the resolution strings live in the lockfile's string buffer; resolving them

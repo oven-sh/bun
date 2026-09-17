@@ -1139,11 +1139,103 @@ fn detach_module_folder_from_shared_store(module_folder: &[u8]) {
     }
 }
 
+/// Moves `<pkg>/node_modules` to a sibling of `<pkg>` so `delete_tree` on the
+/// package leaves it alone. Returns the new path, or `None` when there is no
+/// nested `node_modules`.
+fn stash_nested_node_modules(
+    node_modules_folder_path: &[u8],
+) -> Result<Option<Vec<u8>>, crate::Error> {
+    let mut tmpbuf = bun_paths::path_buffer_pool::get();
+    let tmpname = bun_paths::fs::FileSystem::tmpname(
+        b"node_modules_tmp",
+        &mut tmpbuf[..],
+        bun_core::fast_random(),
+    )?;
+    let parent = resolve_path::dirname::<platform::Auto>(node_modules_folder_path);
+    let stash_path = resolve_path::join::<platform::Auto>(&[parent, tmpname.as_bytes()]).to_vec();
+    let nested = resolve_path::join::<platform::Auto>(&[node_modules_folder_path, b"node_modules"]);
+    match sys::renameat_concurrently_a(
+        Fd::cwd(),
+        nested,
+        Fd::cwd(),
+        &stash_path,
+        sys::RenameOptions {
+            move_fallback: true,
+        },
+    ) {
+        Ok(()) => Ok(Some(stash_path)),
+        Err(e) if e.get_errno() == sys::E::ENOENT => Ok(None),
+        Err(e) => Err(e.into()),
+    }
+}
+
+/// Moves every entry of `from` that `to` does not have into `to`. A scope
+/// folder (`@scope`) that exists on both sides is merged one level down.
+fn move_missing_entries(from: &Dir, to: &Dir, merge_scopes: bool) -> sys::Result<()> {
+    use bun_paths::path_options::AssumeOk as _;
+
+    let mut iter = sys::iterate_dir(from.fd);
+    while let Some(entry) = iter.next()? {
+        let mut name = bun_paths::AutoRelPath::from(entry.name.slice()).assume_ok();
+        let name_z = name.slice_z();
+        match sys::exists_at_type(to.fd, name_z) {
+            Err(e) if e.get_errno() == sys::E::ENOENT => {
+                sys::renameat(from.fd, name_z, to.fd, name_z)?;
+            }
+            Err(e) => return Err(e),
+            Ok(sys::ExistsAtType::Directory)
+                if merge_scopes && bun_core::starts_with_char(name_z.as_bytes(), b'@') =>
+            {
+                let from_scope = Dir::borrow(&from.fd).open_dir(
+                    name_z.as_bytes(),
+                    sys::OpenDirOptions {
+                        iterate: true,
+                        ..Default::default()
+                    },
+                )?;
+                let to_scope = Dir::borrow(&to.fd)
+                    .open_dir(name_z.as_bytes(), sys::OpenDirOptions::default())?;
+                move_missing_entries(&from_scope, &to_scope, false)?;
+            }
+            Ok(_) => {}
+        }
+    }
+    Ok(())
+}
+
+/// Puts back the nested dependencies that `stash_nested_node_modules` kept
+/// aside. The fresh copy of the cache entry wins for every name it already
+/// has (the bundled dependencies), so only the packages bun installed under
+/// `<pkg>` move back.
+fn restore_nested_node_modules(
+    node_modules_folder_path: &[u8],
+    stash_path: &[u8],
+) -> Result<(), crate::Error> {
+    let nested = resolve_path::join::<platform::Auto>(&[node_modules_folder_path, b"node_modules"]);
+    let dest = Fd::cwd().make_open_path(nested)?;
+    let stash = Dir::cwd().open_dir(
+        stash_path,
+        sys::OpenDirOptions {
+            iterate: true,
+            ..Default::default()
+        },
+    )?;
+    move_missing_entries(&stash, &dest, true)?;
+    drop(stash);
+    drop(dest);
+    Fd::cwd().delete_tree(stash_path)?;
+    Ok(())
+}
+
 fn overwrite_package_in_node_modules_folder(
     cache_dir: Fd,
     cache_dir_subpath: &[u8],
     node_modules_folder_path: &[u8],
 ) -> Result<(), crate::Error> {
+    // The cache entry has the bundled dependencies of the package, but not the
+    // dependencies bun installed under it (hoisted linker, version conflict).
+    // Keep those across the delete and copy.
+    let stash_path = stash_nested_node_modules(node_modules_folder_path)?;
     let _ = Fd::cwd().delete_tree(node_modules_folder_path);
 
     // FileCopier's path fields are `.unit = .os` (u16 on Windows). `Path::from`
@@ -1193,7 +1285,6 @@ fn overwrite_package_in_node_modules_folder(
     )?;
 
     let ignore_directories: &[&bun_paths::OSPathSlice] = &[
-        bun_paths::os_path_literal!("node_modules"),
         bun_paths::os_path_literal!(".git"),
         bun_paths::os_path_literal!("CMakeFiles"),
     ];
@@ -1206,6 +1297,10 @@ fn overwrite_package_in_node_modules_folder(
     )?;
 
     copier.copy()?;
+
+    if let Some(stash_path) = stash_path {
+        restore_nested_node_modules(node_modules_folder_path, &stash_path)?;
+    }
     Ok(())
 }
 

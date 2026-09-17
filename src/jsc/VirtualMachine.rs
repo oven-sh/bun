@@ -4523,9 +4523,7 @@ impl VirtualMachine {
         source: &[u8],
         is_esm: bool,
         is_a_file_path: bool,
-        // The specifier is an onResolve result. A miss is normal (the result is
-        // then the module key), so it must not reach the registry or re-read
-        // the directory.
+        // `specifier` is an onResolve result: a miss is the module key, so no registry and no directory retry.
         from_plugin: bool,
     ) -> crate::CrateResult<()> {
         use bun_js_parser::Macro;
@@ -4711,18 +4709,15 @@ impl VirtualMachine {
         Ok(())
     }
 
-    /// Whether onResolve also sees a bare or relative `specifier`, which the
-    /// `could_be_plugin` pre-filter skips. Only an import site in user code
-    /// qualifies, so that everything else resolves as it did before.
+    /// Whether onResolve sees a bare or relative `specifier` that `could_be_plugin` skips: only an import site in user code.
     fn on_resolve_sees_skipped(&self, specifier: &[u8], source: &bun_core::String) -> bool {
         !specifier.is_empty()
             && !bun_paths::is_absolute(specifier)
-            // The loader resolves each module key once more, with no referrer.
+            // The loader re-resolves each module key with no referrer.
             && source.length() > 0
-            // A `require("pkg")` inside a callback would call the hook again without end.
+            // A `require("pkg")` inside a callback must not recurse into the hook.
             && self.on_resolve_depth == 0
-            // `require.resolve(id, { paths })` keeps `paths` in the resolver,
-            // and a resolve inside a callback would use and clear them.
+            // A resolve inside a callback would consume `require.resolve(id, { paths })`.
             && self.transpiler.resolver.custom_dir_paths.is_none()
             // A static import of a builtin (`fs`, `ws`) never reaches the hook.
             && ModuleLoader::HardcodedModule::Alias::get(
@@ -4791,8 +4786,7 @@ impl VirtualMachine {
             }
         }
 
-        // An onResolve `path` that the resolver still has to complete. It
-        // replaces the specifier, and it is the module key when nothing is found.
+        // An onResolve `path` the resolver still completes. It is the module key when nothing is found.
         let redirected: bun_core::String;
         let mut is_redirected = false;
         let mut specifier = specifier;
@@ -7136,12 +7130,7 @@ fn wrap_unhandled_rejection_error_for_uncaught_exception(
         .to_js())
 }
 
-/// Whether the resolver still has to complete an onResolve result. An absolute
-/// path with no extension does (`/src/store` is `/src/store.ts`): the loader
-/// already resolves the key of an `import()` once more, and `require()` and a
-/// static import must agree with it. A relative path or a bare name does too,
-/// for a specifier that the `could_be_plugin` pre-filter skips. For any other
-/// specifier such a result stays the module key, as before.
+/// Whether the resolver completes an onResolve `path`: an extension-less absolute path (`/src/store` is `/src/store.ts`, as the loader's re-resolve of an `import()` key sees it), or a relative or bare path for a specifier that `could_be_plugin` skipped.
 fn on_resolve_path_needs_resolver(
     path: &bun_core::String,
     specifier_was_skipped: bool,
@@ -7149,8 +7138,7 @@ fn on_resolve_path_needs_resolver(
 ) -> bool {
     let path = path.to_utf8();
     let path = path.slice();
-    // The resolver joins the importer's directory, this path and an extension
-    // in one path buffer.
+    // The resolver joins the importer's directory, `path` and an extension in one path buffer.
     const LONGEST_EXTENSION: usize = 64;
     if importer_len + path.len() + LONGEST_EXTENSION > bun_paths::MAX_PATH_BYTES {
         return false;
@@ -7233,8 +7221,7 @@ pub(crate) fn plugin_runner_on_resolve_jsc(
     };
     let is_file_namespace = user_namespace.eq_ascii(b"file");
 
-    // A no-op hook (`args => ({ path: args.path })`) must stay transparent for
-    // a specifier that resolved without the hook before.
+    // A no-op hook (`args => ({ path: args.path })`) stays transparent.
     if unchanged_path_claims_nothing
         && is_file_namespace
         && file_path.to_utf8().slice() == specifier.to_utf8().slice()

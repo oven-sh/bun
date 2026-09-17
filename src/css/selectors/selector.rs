@@ -621,6 +621,10 @@ pub(crate) mod serialize {
                     .iter()
                     .all(can_follow_pseudo_element)
             }
+            // Prints as its argument.
+            Component::NonTsPseudoClass(
+                PseudoClass::Local { selector } | PseudoClass::Global { selector },
+            ) => selector.components.iter().all(can_follow_pseudo_element),
             Component::Negation(_)
             | Component::Root
             | Component::Empty
@@ -692,12 +696,20 @@ pub(crate) mod serialize {
     ) -> Result<(), PrintErr> {
         let mut is_relative = is_relative_;
 
-        // `:is()` cannot hold a pseudo-element, so a parent selector with one prints as written.
+        // `:is()` cannot hold a pseudo-element, so the pseudo-element of a parent
+        // selector does not keep it from `start`. `fits_at` still looks at `tail`.
         let start = match context {
             Some(ctx)
-                if start != NestingPosition::SelectorStart
-                    && ctx.selectors.v.len() == 1
-                    && has_pseudo_element(ctx.selectors.v.at(0)) =>
+                if ctx.selectors.v.len() == 1
+                    && has_pseudo_element(ctx.selectors.v.at(0))
+                    && match start {
+                        NestingPosition::SelectorStart => false,
+                        NestingPosition::CompoundStart => true,
+                        NestingPosition::MidCompound => {
+                            !has_type_selector_past_nesting(ctx.selectors.v.at(0))
+                                && !ctx.selectors.v.at(0).has_combinator()
+                        }
+                    } =>
             {
                 NestingPosition::SelectorStart
             }
@@ -1888,11 +1900,15 @@ fn has_type_selector(selector: &parser::Selector) -> bool {
 
 /// Also true for `&div`, which prints as `div&`.
 fn has_type_selector_past_nesting(selector: &parser::Selector) -> bool {
-    let mut iter = selector.iter_raw_match_order();
-    if matches!(selector.components.first(), Some(Component::Nesting)) {
-        iter.next();
+    // A pseudo-element is in a compound selector of its own, after this one.
+    let compound = CompoundSelectorIter {
+        sel: selector,
+        i: 0,
     }
-    leads_with_type_selector(iter)
+    .next()
+    .unwrap_or_default();
+    let past_nesting = usize::from(matches!(compound.first(), Some(Component::Nesting)));
+    leads_with_type_selector(compound[past_nesting..].iter())
 }
 
 fn leads_with_type_selector<'a>(mut iter: impl Iterator<Item = &'a parser::Component>) -> bool {
@@ -1929,11 +1945,13 @@ fn is_type_selector(component: Option<&parser::Component>) -> bool {
 }
 
 fn has_pseudo_element(selector: &parser::Selector) -> bool {
-    selector.components.iter().any(|component| {
-        matches!(
-            component,
-            Component::PseudoElement(_) | Component::Part(_) | Component::Slotted(_)
-        )
+    selector.components.iter().any(|component| match component {
+        Component::PseudoElement(_) | Component::Part(_) | Component::Slotted(_) => true,
+        // Prints as its argument.
+        Component::NonTsPseudoClass(
+            PseudoClass::Local { selector } | PseudoClass::Global { selector },
+        ) => has_pseudo_element(selector),
+        _ => false,
     })
 }
 

@@ -6063,6 +6063,14 @@ describe("css tests", () => {
       );
       lowered_nesting_test(".foo::before { &.bar { .baz { color: red } } }", ":is(.foo:before).bar .baz{color:red}");
 
+      // After other simple selectors, a type selector or a combinator still keeps the parent selector out.
+      lowered_nesting_test("div::before { &:hover { .x& { color: red } } }", ".x:is(div:before):hover{color:red}");
+      lowered_nesting_test("div::before { &:hover { &* { color: red } } }", "*:is(div:before):hover{color:red}");
+      lowered_nesting_test("div::before { .x:is(&) { color: red } }", ".x:is(div:before){color:red}");
+      lowered_nesting_test(".a .b::before { &:hover { .x& { color: red } } }", ".x:is(.a .b:before):hover{color:red}");
+      lowered_nesting_test("div::before { &:hover { .dark & { color: red } } }", ".dark div:before:hover{color:red}");
+      lowered_nesting_test(".a::before { &:hover { .x& { color: red } } }", ".x.a:before:hover{color:red}");
+
       // Nothing, or only pseudo-classes and pseudo-elements, follows the `&`.
       lowered_nesting_test(".foo::before { &:hover { color: red } }", ".foo:before:hover{color:red}");
       lowered_nesting_test(".foo::before { :is(&):hover { color: red } }", ".foo:before:hover{color:red}");
@@ -6077,6 +6085,25 @@ describe("css tests", () => {
       lowered_nesting_test(".foo::part(p) { &::before { color: red } }", ".foo::part(p):before{color:red}");
       lowered_nesting_test(".foo::part(p) { &:hover { color: red } }", ".foo::part(p):hover{color:red}");
       lowered_nesting_test("::slotted(.foo) { &::before { color: red } }", "::slotted(.foo):before{color:red}");
+
+      test("`:global()` and `:local()` print as their argument", async () => {
+        using dir = tempDir("css-nesting-pseudo-element-modules", {
+          "in.module.css": `
+            :global(.foo)::before { &:global(.bar) { color: red } }
+            :global(.foo)::before { &:local(.baz) { color: green } }
+            :global(.foo::before) { :global(.bar) { color: blue } }
+            :global(.foo)::before { &:global(:hover) { color: teal } }
+          `,
+        });
+        const result = await Bun.build({ entrypoints: [join(String(dir), "in.module.css")], minify: true });
+        const css = (await result.outputs[0].text()).replace(/baz_[\w-]+/, "baz_HASH");
+        expect(css.trim()).toBe(
+          ":is(.foo:before).bar{color:red}" +
+            ":is(.foo:before).baz_HASH{color:green}" +
+            ":is(.foo:before) .bar{color:#00f}" +
+            ".foo:before:hover{color:teal}",
+        );
+      });
 
       test("the output of bun build builds again", async () => {
         using dir = tempDir("css-nesting-pseudo-element", {

@@ -1238,7 +1238,10 @@ function Server(options, secureConnectionListener): void {
   this.ALPNProtocols = undefined;
   this._sharedCreds = undefined;
 
-  let contexts: Map<string, typeof InternalSecureContext> | null = null;
+  // Every addContext() entry in call order, like node's `_contexts`:
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1571-L1611
+  // A native listener only knows the entries it was given, so each listen() loads these.
+  const contexts = new Map<string, InstanceType<typeof InternalSecureContext>>();
 
   this.addContext = function (hostname, context) {
     if (typeof hostname !== "string") {
@@ -1252,10 +1255,12 @@ function Server(options, secureConnectionListener): void {
       // Pass the native SSL_CTX wrapper, not the JS InternalSecureContext —
       // the native side detects it via SecureContext.fromJS and up_refs.
       addServerName(handle, hostname, context.context);
-    } else {
-      if (!contexts) contexts = new Map();
-      contexts.set(hostname, context);
     }
+    // Recorded only after the live listener took it: listen() replays every entry,
+    // and one that addServerName() rejects would fail every later listen().
+    // Delete first: a re-added name moves to the end, which keeps call order.
+    contexts.delete(hostname);
+    contexts.set(hostname, context);
   };
 
   this.setSecureContext = function (options) {

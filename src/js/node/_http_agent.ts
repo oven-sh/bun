@@ -16,11 +16,11 @@ const { kDestroyOnRead } = require("internal/net/symbols");
 const kOnKeylog = Symbol("onkeylog");
 const kRequestOptions = Symbol("requestOptions");
 const kRequestAsyncResource = Symbol("requestAsyncResource");
-// The frame of the Bun.ModuleGraph an Agent was made in, if any. Its sockets are opened in that
+// The Bun.ModuleGraph an Agent was made in, if any. Its sockets are opened in that
 // graph's context (or the host's), not in that of whichever request needed one: a disposed graph's
 // sockets close without a word, and an agent of the host's that a graph had used would wait on
 // them for ever.
-const kOwnerFrame = Symbol("ownerFrame");
+const kOwnerGraph = Symbol("ownerGraph");
 const AsyncContextFrame = require("internal/async_context_frame");
 const ObjectDefineProperty = Object.defineProperty;
 
@@ -39,8 +39,8 @@ function Agent(options): void {
 
   this.options = { __proto__: null, ...options };
   // (Only an Agent made inside a graph has one.)
-  const ownerFrame = AsyncContextFrame.currentGraphFrame();
-  if (ownerFrame !== undefined) ObjectDefineProperty(this, kOwnerFrame, { __proto__: null, value: ownerFrame });
+  const ownerGraph = AsyncContextFrame.currentGraph();
+  if (ownerGraph !== undefined) ObjectDefineProperty(this, kOwnerGraph, { __proto__: null, value: ownerGraph });
 
   this.defaultPort = this.options.defaultPort || 80;
   this.protocol = this.options.protocol || "http:";
@@ -334,13 +334,13 @@ Agent.prototype.createSocket = function createSocket(req, options, cb) {
   // The socket is opened as the Agent's owner (below), but the request that is waiting for it is
   // its requester's: a proxy tunnel answers from the proxy connection's callbacks, which run as
   // the owner. When that is another Bun.ModuleGraph's context than the requester's (or the host's),
-  // what follows runs in the requester's frame; otherwise wherever the answer came in, as in node.
+  // what follows runs in the requester's context; otherwise wherever the answer came in, as in node.
   const requesterFrame = AsyncContextFrame.current();
   const requesterGraph = AsyncContextFrame.currentGraph();
   const oncreate = once((err, s) =>
     requesterGraph === AsyncContextFrame.currentGraph()
       ? onSocketReady.$call(this, err, s)
-      : AsyncContextFrame.run(requesterFrame, onSocketReady, this, err, s),
+      : AsyncContextFrame.runInContext(requesterFrame, requesterGraph, onSocketReady, this, err, s),
   );
   function onSocketReady(err, s) {
     // `cb` is onSocketCreated.bind(this, req); release it from this closure's
@@ -365,11 +365,7 @@ Agent.prototype.createSocket = function createSocket(req, options, cb) {
     options.keepAliveInitialDelay = this.keepAliveMsecs;
   }
 
-  const ownerFrame = this[kOwnerFrame];
-  const newSocket =
-    AsyncContextFrame.graphOf(ownerFrame) === AsyncContextFrame.currentGraph()
-      ? this.createConnection(options, oncreate)
-      : AsyncContextFrame.run(ownerFrame, this.createConnection, this, options, oncreate);
+  const newSocket = AsyncContextFrame.runInGraph(this[kOwnerGraph], this.createConnection, this, options, oncreate);
   if (newSocket && !newSocket[kWaitForProxyTunnel]) oncreate(null, newSocket);
 };
 

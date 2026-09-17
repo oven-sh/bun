@@ -3924,4 +3924,30 @@ describe("Bun.ModuleGraph — what a program that makes no graph sees of node:ht
       `),
     ).toEqual({ stdout: `{"kept":40,"stores":0}`, exitCode: 0 });
   });
+  test("an Agent and a perf_hooks observer made in a graph do not keep the AsyncLocalStorage store the graph was entered under", async () => {
+    expect(
+      await run(`
+        const { AsyncLocalStorage } = require("node:async_hooks");
+        const http = require("node:http");
+        const { PerformanceObserver } = require("node:perf_hooks");
+        const als = new AsyncLocalStorage();
+        const graph = new Bun.ModuleGraph();
+        const kept = [], stores = [];
+        for (let i = 0; i < 20; i++) {
+          const store = { i };
+          stores.push(new WeakRef(store));
+          als.run(store, () => graph.run(() => {
+            kept.push(new http.Agent({ keepAlive: true }));
+            const observer = new PerformanceObserver(() => {});
+            observer.observe({ entryTypes: ["http"] });
+            kept.push(observer);
+          }));
+        }
+        const alive = () => stores.filter(ref => ref.deref() !== undefined).length;
+        for (let i = 0; i < 50 && alive() > 0; i++) { Bun.gc(true); await new Promise(resolve => setImmediate(resolve)); }
+        console.log(JSON.stringify({ kept: kept.length, stores: alive() }));
+        process.exit(0);
+      `),
+    ).toEqual({ stdout: `{"kept":40,"stores":0}`, exitCode: 0 });
+  });
 });

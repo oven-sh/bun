@@ -361,13 +361,15 @@ export function initializeNextTickQueue(process: typeof globalThis.process, next
         while ((tock = queue.shift()) !== null) {
           var callback = tock.callback;
           var args = tock.args;
-          var frame = tock.frame;
-          var restore = $getInternalField($asyncContext, 0);
-          $putInternalField($asyncContext, 0, frame);
+          // The tick runs in the async context and the Bun.ModuleGraph context it was queued in.
+          var restoreFrame = $getInternalField($asyncContext, 0);
+          var restoreGraph = $getInternalField($asyncContext, 1);
+          $putInternalField($asyncContext, 0, tock.frame);
+          $putInternalField($asyncContext, 1, tock.graph);
           // No catch and no finally: what a tick throws leaves this function as it was thrown, with
-          // the tick's frame still current. JSNextTickQueue::drain reports it there (so an
+          // the tick's context still current. JSNextTickQueue::drain reports it there (so an
           // uncaughtException handler reads the tick's AsyncLocalStorage stores, as in node), puts the
-          // async context back, and calls in again for the ticks after it.
+          // context back, and calls in again for the ticks after it.
           if (args === undefined) {
             callback();
           } else {
@@ -389,7 +391,8 @@ export function initializeNextTickQueue(process: typeof globalThis.process, next
                 break;
             }
           }
-          $putInternalField($asyncContext, 0, restore);
+          $putInternalField($asyncContext, 0, restoreFrame);
+          $putInternalField($asyncContext, 1, restoreGraph);
         }
 
         drainMicrotasks();
@@ -416,6 +419,7 @@ export function initializeNextTickQueue(process: typeof globalThis.process, next
       // a waste of memory and Array.prototype.slice shows up in profiling.
       args: $argumentCount() > 1 ? args : undefined,
       frame: $getInternalField($asyncContext, 0),
+      graph: $getInternalField($asyncContext, 1),
     };
     if (tickInitHooks.length !== 0) {
       // node fires one TickObject init per process.nextTick() call, at

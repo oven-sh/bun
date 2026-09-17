@@ -1123,7 +1123,7 @@ impl VirtualMachine {
         if self.graph_contexts.count() == 0 {
             return &self.root_context;
         }
-        // SAFETY: a graph's context outlives every async context frame that names it, and the
+        // SAFETY: a graph's context lives as long as the graph, which is current, and the
         // realm's own is `root_context` (every global's context is made with it).
         unsafe { &*Bun__currentGraphContext(self.global()) }
     }
@@ -7628,8 +7628,8 @@ pub struct ContextScope<'a> {
     vm: &'a VirtualMachine,
     /// The context entered: the dead one's, for a context that is gone.
     context: crate::ContextId,
-    /// The async context to restore; empty when entering changed nothing. (On the stack: kept
-    /// alive by the conservative scan.)
+    /// The graph (or undefined) whose context to go back to; empty when entering changed
+    /// nothing. (On the stack: kept alive by the conservative scan.)
     previous: JSValue,
     /// The realm `previous` is restored in: the one that was entered. (On the stack, as `previous`.)
     entered: *const JSGlobalObject,

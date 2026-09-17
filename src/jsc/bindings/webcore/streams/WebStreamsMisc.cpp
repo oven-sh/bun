@@ -367,24 +367,11 @@ QueuingStrategyDict convertQueuingStrategyDict(JSGlobalObject* globalObject, JSV
 // For values that are provably not thenables (undefined, internal arrays/objects we
 // created): fulfill directly instead of running the observable resolve machinery.
 StreamAsyncContextScope::StreamAsyncContextScope(JSGlobalObject* globalObject, JSReadableStream* stream)
-    : m_vm(globalObject->vm())
 {
     JSValue snapshot = stream->m_asyncContext.get();
     if (!snapshot || snapshot.isUndefinedOrNull())
         return;
-    auto* asyncContextData = globalObject->m_asyncContextData.get();
-    JSValue current = asyncContextData->getInternalField(0);
-    m_asyncContextData = asyncContextData;
-    m_previous = current;
-    if (snapshot == current)
-        return;
-    asyncContextData->putInternalField(m_vm, 0, snapshot);
-}
-
-StreamAsyncContextScope::~StreamAsyncContextScope()
-{
-    if (m_asyncContextData)
-        m_asyncContextData->putInternalField(m_vm, 0, m_previous);
+    m_scope.emplace(globalObject->vm(), globalObject, snapshot);
 }
 
 // obj.name(args...) with obj as |this|; the EMPTY value if `name` is not callable.

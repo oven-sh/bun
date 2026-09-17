@@ -12,6 +12,7 @@
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
 
+#include <JavaScriptCore/AsyncContextSwapScope.h>
 #include <JavaScriptCore/BuiltinNames.h>
 #include <JavaScriptCore/Exception.h>
 #include <JavaScriptCore/IdentifierInlines.h>
@@ -198,7 +199,7 @@ static bool deliverToOnError(Zig::GlobalObject* globalObject, JSModuleGraph* gra
         // What the handler lets escape is its own error, wherever inside it that was thrown: it goes on
         // to the handler's owner and does not come back here (an onError that re-enters its graph with
         // `run()` and throws there would otherwise be handed its own throw, without end).
-        thrown->setAsyncContext(vm, globalObject->m_asyncContextData.get()->getInternalField(0));
+        thrown->setAsyncContext(vm, AsyncContextSwapScope::current(vm, globalObject));
         Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, thrown);
     }
     return true;
@@ -220,8 +221,6 @@ extern "C" bool Bun__ModuleGraph__handleUnhandledRejection(JSGlobalObject* lexic
     return graph && deliverToOnError(defaultGlobalObject(lexicalGlobalObject), graph, JSValue::decode(reason), "unhandledRejection"_s);
 }
 
-static JSModuleGraph* moduleGraphOfFrame(Zig::GlobalObject*, JSValue asyncContext, JSObject** enteredWith);
-
 // VirtualMachine::uncaught_exception, first. An exception is the graph's whose context it was thrown
 // in (the engine notes it on the Exception: by the time it is reported, whoever entered that context
 // to call the script has left it). A value nobody threw is reported as it happens: the current one.
@@ -236,87 +235,25 @@ extern "C" bool Bun__ModuleGraph__handleUncaughtException(JSGlobalObject* lexica
         error = exception->value();
         asyncContext = exception->asyncContext();
     }
-    if (!asyncContext)
-        asyncContext = globalObject->m_asyncContextData.get()->getInternalField(0);
-    return deliverToOnError(globalObject, moduleGraphOfFrame(globalObject, asyncContext, nullptr), error, "uncaughtException"_s);
+    JSModuleGraph* graph = asyncContext ? moduleGraphOfCapturedContext(asyncContext) : currentModuleGraph(globalObject);
+    return deliverToOnError(globalObject, graph, error, "uncaughtException"_s);
 }
 
 // ─── The graph's context ─────────────────────────────────────────────────────────────
 //
-// A graph's context rides the async context (what AsyncLocalStorage uses): entering it pushes
-// a frame shaped like async_hooks.ts's `Frame` whose `storage` is the graph — no
-// AsyncLocalStorage ever matches it, so run()/exit()/enterWith() copy or share it like any
-// other storage's frame and never drop it. The frames AsyncLocalStorage pushes on top are its
-// own, unchanged: the current context is the first such frame from the head down.
-
-// The graph whose context the frame chain headed by `asyncContext` is inside of, and the frame
-// that entered it. A frame whose storage is the global object left the context the frames below
-// are in, for the realm's own (createModuleGraphFrame). Only asked once a graph has been made.
-static JSModuleGraph* moduleGraphOfFrame(Zig::GlobalObject* globalObject, JSValue asyncContext, JSObject** enteredWith = nullptr)
-{
-    VM& vm = globalObject->vm();
-    auto& names = WebCore::builtinNames(vm);
-    for (JSObject* frame = asyncContext.getObject(); frame;) {
-        JSValue storage = frame->getDirect(vm, names.storagePublicName());
-        if (!storage)
-            return nullptr;
-        if (auto* graph = dynamicDowncast<JSModuleGraph>(storage)) {
-            if (enteredWith)
-                *enteredWith = frame;
-            return graph;
-        }
-        if (storage == globalObject)
-            return nullptr;
-        JSValue previous = frame->getDirect(vm, names.prevPublicName());
-        frame = previous ? previous.getObject() : nullptr;
-    }
-    return nullptr;
-}
-
-// For built-ins that keep something long-lived of whoever made it (an http.Agent, a Bun.SQL, a
-// PerformanceObserver), given the async context they are in: the Bun.ModuleGraph it is inside
-// of, and the frame that entered that graph's context (what they `run()` their later work in,
-// without keeping the AsyncLocalStorage stores of whoever made them).
-JSC_DEFINE_HOST_FUNCTION(jsFunctionModuleGraphOfFrame, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    auto* global = defaultGlobalObject(globalObject);
-    if (!global->m_moduleGraphs)
-        return JSValue::encode(jsUndefined());
-    JSModuleGraph* graph = moduleGraphOfFrame(global, callFrame->argument(0));
-    return JSValue::encode(graph ? JSValue(graph) : jsUndefined());
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsFunctionModuleGraphFrameOfFrame, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    auto* global = defaultGlobalObject(globalObject);
-    if (!global->m_moduleGraphs)
-        return JSValue::encode(jsUndefined());
-    JSObject* enteredWith = nullptr;
-    moduleGraphOfFrame(global, callFrame->argument(0), &enteredWith);
-    return JSValue::encode(enteredWith ? JSValue(enteredWith) : jsUndefined());
-}
-
-// For built-ins that keep something of a graph's in a registry of the realm's (node:perf_hooks'
-// observers): whether `frame`, the async context it was made in, is of a disposed graph.
-JSC_DEFINE_HOST_FUNCTION(jsFunctionIsFrameOfStoppedModuleGraph, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    return JSValue::encode(jsBoolean(shouldDropCallbackOfStoppedModuleGraph(defaultGlobalObject(globalObject), callFrame->argument(0))));
-}
+// A graph's context travels next to the async context (what AsyncLocalStorage uses), as the
+// script execution owner in JSGlobalObject::m_asyncContextData: JSC captures the two together
+// at every then / await / microtask and restores them together (AsyncContextSwapScope), and so
+// does Bun where it captures the async context for a callback. No owner: the realm's own.
 
 JSModuleGraph* currentModuleGraph(Zig::GlobalObject* globalObject)
 {
-    if (!globalObject->hasModuleGraphs())
-        return nullptr;
-    return moduleGraphOfFrame(globalObject, globalObject->m_asyncContextData.get()->getInternalField(0));
+    return dynamicDowncast<JSModuleGraph>(globalObject->m_asyncContextData->getInternalField(1));
 }
 
-JSObject* currentModuleGraphFrame(Zig::GlobalObject* globalObject)
+JSModuleGraph* moduleGraphOfCapturedContext(JSValue captured)
 {
-    if (!globalObject->hasModuleGraphs())
-        return nullptr;
-    JSObject* enteredWith = nullptr;
-    moduleGraphOfFrame(globalObject, globalObject->m_asyncContextData.get()->getInternalField(0), &enteredWith);
-    return enteredWith;
+    return dynamicDowncast<JSModuleGraph>(AsyncContextSwapScope::scriptExecutionOwnerOf(captured));
 }
 
 // VirtualMachine::current_context (only asked once a graph has been made).
@@ -325,78 +262,26 @@ extern "C" void* Bun__currentGraphContext(JSGlobalObject* globalObject)
     return defaultGlobalObject(globalObject)->currentScriptExecutionContext()->bunContext();
 }
 
-// The frame's properties, in the order async_hooks.ts's Frame declares them, at fixed offsets.
-enum ModuleGraphFrameOffset : PropertyOffset { FrameStorage,
-    FrameValue,
-    FramePrev,
-    FrameMasked,
-    NumberOfFrameProperties };
-
-Structure* createModuleGraphFrameStructure(VM& vm, JSGlobalObject* globalObject)
+// For built-ins that keep something of a graph's in a registry of the realm's (node:perf_hooks'
+// observers): whether `graph`, the one it was made in (undefined: the host), is disposed.
+JSC_DEFINE_HOST_FUNCTION(jsFunctionIsDisposedModuleGraph, (JSGlobalObject*, CallFrame* callFrame))
 {
-    auto& names = WebCore::builtinNames(vm);
-    Structure* structure = JSFinalObject::createStructure(vm, globalObject, jsNull(), NumberOfFrameProperties);
-    const Identifier properties[] = { names.storagePublicName(), vm.propertyNames->value, names.prevPublicName(), names.maskedPublicName() };
-    for (PropertyOffset expected = 0; expected < NumberOfFrameProperties; expected++) {
-        PropertyOffset offset;
-        structure = Structure::addPropertyTransition(vm, structure, properties[expected], 0, offset);
-        RELEASE_ASSERT(offset == expected);
-    }
-    return structure;
-}
-
-// `graph` null: a frame that leaves the graph's context the frames below are in, keeping their
-// AsyncLocalStorage stores.
-static JSObject* createModuleGraphFrame(Zig::GlobalObject* globalObject, JSModuleGraph* graph, JSValue previous)
-{
-    VM& vm = globalObject->vm();
-    JSObject* frame = constructEmptyObject(vm, globalObject->moduleGraphFrameStructure());
-    // No AsyncLocalStorage is ever this frame's storage: the graph, or the global object for the
-    // realm's own context. (Not the frame: AsyncLocalStorage copies frames, and a copy is another object.)
-    frame->putDirectOffset(vm, FrameStorage, graph ? static_cast<JSObject*>(graph) : static_cast<JSObject*>(globalObject));
-    frame->putDirectOffset(vm, FrameValue, jsUndefined());
-    frame->putDirectOffset(vm, FramePrev, previous);
-    // What disable()d AsyncLocalStorages the frame below masks, frames above it mask too.
-    JSValue masked = previous.isObject() ? asObject(previous)->getDirect(vm, WebCore::builtinNames(vm).maskedPublicName()) : JSValue();
-    frame->putDirectOffset(vm, FrameMasked, masked ? masked : jsUndefined());
-    return frame;
-}
-
-// With no script on the stack, a microtask checkpoint resets the async context
-// (GlobalObject::drainMicrotasks): inside a scope native code entered, to what it entered.
-static void noteEnteredFromEventLoop(Zig::GlobalObject* globalObject, JSValue asyncContext)
-{
-    VM& vm = globalObject->vm();
-    if (vm.entryScope || !globalObject->m_moduleGraphs)
-        return;
-    auto& entered = globalObject->m_moduleGraphs->enteredFromEventLoop;
-    if (asyncContext.isObject())
-        entered.set(vm, asyncContext);
-    else
-        entered.clear();
-}
-
-JSValue moduleGraphAsyncContextAtEventLoop(Zig::GlobalObject* globalObject)
-{
-    auto* state = globalObject->m_moduleGraphs.get();
-    return state && state->enteredFromEventLoop ? state->enteredFromEventLoop.get() : jsUndefined();
+    auto* graph = dynamicDowncast<JSModuleGraph>(callFrame->argument(0));
+    return JSValue::encode(jsBoolean(graph && graph->disposed()));
 }
 
 // Makes `graph`'s context current; null: the realm's own, out of whatever graph's context is
 // current (a completion of the host's run from an event-loop tick nested under a graph's script,
-// an event the graph's script dispatches to something of the host's). Returns the async context
-// to restore, or the empty value when already there.
+// an event the graph's script dispatches to something of the host's). Returns the owner to
+// restore, or the empty value when already there.
 static JSValue makeContextCurrent(Zig::GlobalObject* globalObject, JSModuleGraph* graph)
 {
-    if (currentModuleGraph(globalObject) == graph)
-        return {};
     auto* asyncContextData = globalObject->m_asyncContextData.get();
-    JSValue previous = asyncContextData->getInternalField(0);
-    // From the top of the event loop: the frame the graph's loader runs its modules in.
-    JSValue frame = graph && previous.isUndefinedOrNull() ? graph->loader()->asyncContext() : JSValue();
-    if (!frame || !frame.isObject())
-        frame = createModuleGraphFrame(globalObject, graph, previous);
-    asyncContextData->putInternalField(globalObject->vm(), 0, frame);
+    JSValue previous = asyncContextData->getInternalField(1);
+    JSValue owner = graph ? JSValue(graph) : jsUndefined();
+    if (previous == owner)
+        return {};
+    asyncContextData->putInternalField(globalObject->vm(), 1, owner);
     return previous;
 }
 
@@ -406,7 +291,8 @@ extern "C" uint32_t Bun__VirtualMachine__replaceEnteredContext(void* bunVM, uint
 
 ErrorHandlerContextScope::ErrorHandlerContextScope(Zig::GlobalObject* globalObject, JSModuleGraph* owner)
     : m_globalObject(globalObject)
-    , m_previous(globalObject->m_asyncContextData.get()->getInternalField(0))
+    , m_previousAsyncContext(globalObject->m_asyncContextData->getInternalField(0))
+    , m_previousOwner(globalObject->m_asyncContextData->getInternalField(1))
     , m_previousEntered(Bun__VirtualMachine__replaceEnteredContext(globalObject->bunVM(), (owner ? owner->context() : *globalObject->scriptExecutionContext()).identifier()))
 {
     makeContextCurrent(globalObject, owner);
@@ -415,23 +301,15 @@ ErrorHandlerContextScope::ErrorHandlerContextScope(Zig::GlobalObject* globalObje
 ErrorHandlerContextScope::~ErrorHandlerContextScope()
 {
     Bun__VirtualMachine__replaceEnteredContext(m_globalObject->bunVM(), m_previousEntered);
-    m_globalObject->m_asyncContextData.get()->putInternalField(m_globalObject->vm(), 0, m_previous);
-}
-
-// As makeContextCurrent, for native code coming from the event loop: what it entered is what a
-// microtask checkpoint with no script on the stack resets the async context to.
-static JSValue enterContext(Zig::GlobalObject* globalObject, JSModuleGraph* graph)
-{
-    JSValue previous = makeContextCurrent(globalObject, graph);
-    if (previous)
-        noteEnteredFromEventLoop(globalObject, globalObject->m_asyncContextData.get()->getInternalField(0));
-    return previous;
+    auto* asyncContextData = m_globalObject->m_asyncContextData.get();
+    asyncContextData->putInternalField(m_globalObject->vm(), 0, m_previousAsyncContext);
+    asyncContextData->putInternalField(m_globalObject->vm(), 1, m_previousOwner);
 }
 
 ModuleGraphContextScope::ModuleGraphContextScope(Zig::GlobalObject* globalObject, JSModuleGraph* graph)
 {
     if (graph)
-        m_previous = enterContext(globalObject, graph);
+        m_previous = makeContextCurrent(globalObject, graph);
     if (m_previous)
         m_globalObject = globalObject;
 }
@@ -440,29 +318,23 @@ ModuleGraphContextScope::ModuleGraphContextScope(WebCore::ScriptExecutionContext
 {
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(context.jsGlobalObject());
     if (auto* graph = dynamicDowncast<JSModuleGraph>(context.moduleGraph()))
-        m_previous = enterContext(globalObject, graph);
-    else if (!context.isForModuleGraph() && globalObject && globalObject->hasModuleGraphs())
-        m_previous = enterContext(globalObject, nullptr);
+        m_previous = makeContextCurrent(globalObject, graph);
+    else if (!context.isForModuleGraph() && globalObject)
+        m_previous = makeContextCurrent(globalObject, nullptr);
     if (m_previous)
         m_globalObject = globalObject;
-}
-
-static void leaveModuleGraphContext(Zig::GlobalObject* globalObject, JSValue previous)
-{
-    globalObject->m_asyncContextData.get()->putInternalField(globalObject->vm(), 0, previous);
-    noteEnteredFromEventLoop(globalObject, previous);
 }
 
 ModuleGraphContextScope::~ModuleGraphContextScope()
 {
     if (m_globalObject)
-        leaveModuleGraphContext(m_globalObject, m_previous);
+        m_globalObject->m_asyncContextData->putInternalField(m_globalObject->vm(), 1, m_previous);
 }
 
 // VirtualMachine::enter_context: native code about to run a completion of something a graph's script
-// started. Returns the async context to restore.
+// started. Returns the owner to restore.
 // `gone`: the graph was collected (its context is about to stop). Empty: nothing to do.
-// `entered` is the realm whose async context was changed, which is where it is restored: a graph
+// `entered` is the realm whose owner was changed, which is where it is restored: a graph
 // outlives the realm `bun test --isolate` retired, and the VM's global is the next file's by then.
 extern "C" EncodedJSValue Bun__ModuleGraph__enterContext(WebCore::ScriptExecutionContext* context, bool* gone, JSGlobalObject** entered)
 {
@@ -471,26 +343,23 @@ extern "C" EncodedJSValue Bun__ModuleGraph__enterContext(WebCore::ScriptExecutio
     if (!graph)
         return JSValue::encode(JSValue());
     *entered = context->jsGlobalObject();
-    return JSValue::encode(enterContext(uncheckedDowncast<Zig::GlobalObject>(*entered), graph));
+    return JSValue::encode(makeContextCurrent(uncheckedDowncast<Zig::GlobalObject>(*entered), graph));
 }
 
 extern "C" EncodedJSValue Bun__ModuleGraph__enterRootContext(JSGlobalObject* lexicalGlobalObject)
 {
-    return JSValue::encode(enterContext(defaultGlobalObject(lexicalGlobalObject), nullptr));
+    return JSValue::encode(makeContextCurrent(defaultGlobalObject(lexicalGlobalObject), nullptr));
 }
 
 extern "C" void Bun__ModuleGraph__leaveContext(JSGlobalObject* lexicalGlobalObject, EncodedJSValue previous)
 {
-    leaveModuleGraphContext(defaultGlobalObject(lexicalGlobalObject), JSValue::decode(previous));
+    defaultGlobalObject(lexicalGlobalObject)->m_asyncContextData->putInternalField(lexicalGlobalObject->vm(), 1, JSValue::decode(previous));
 }
 
-bool shouldDropCallbackOfStoppedModuleGraph(Zig::GlobalObject* globalObject, JSValue asyncContext)
+bool shouldDropCallbackOfStoppedModuleGraph(JSValue capturedContext)
 {
-    auto* state = globalObject->m_moduleGraphs.get();
-    if (!state)
-        return false;
-    JSModuleGraph* graph = moduleGraphOfFrame(globalObject, asyncContext);
-    return graph && graph->context().isStopped();
+    JSModuleGraph* graph = moduleGraphOfCapturedContext(capturedContext);
+    return graph && graph->disposed();
 }
 
 // ─── JSModuleGraph ───────────────────────────────────────────────────────────────────
@@ -549,9 +418,8 @@ void JSModuleGraph::finishCreation(VM& vm, JSGlobalObject* globalObject)
     m_context->setModuleGraph(this);
     // The graph's context travels with the async context: the top-level code of the graph's
     // modules runs in it however their evaluation is reached, and run() enters it.
-    auto* zigGlobal = defaultGlobalObject(globalObject);
-    zigGlobal->setAsyncContextTrackingEnabled(true);
-    m_loader->setAsyncContext(vm, createModuleGraphFrame(zigGlobal, this, jsUndefined()));
+    globalObject->setAsyncContextTrackingEnabled(true);
+    m_loader->setAsyncContext(vm, AsyncContextSwapScope::captured(vm, globalObject, jsUndefined(), this));
 }
 
 JSLexicalEnvironment* JSModuleGraph::overlay() const

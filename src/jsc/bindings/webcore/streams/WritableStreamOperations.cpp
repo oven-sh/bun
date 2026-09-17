@@ -73,7 +73,7 @@ static void reactToWritableControllerStart(JSC::VM& vm, JSGlobalObject* globalOb
         startPromise->performPromiseThenWithContext(vm, globalObject, runtime->onWSControllerStartFulfilled(), runtime->onWSControllerStartRejected(), jsUndefined(), controller);
         return;
     }
-    QueuedTask task { nullptr, InternalMicrotask::BunPerformMicrotaskJob, 0, globalObject, runtime->onWSControllerStartFulfilled(), globalObject->m_asyncContextData.get()->getInternalField(0), startResult, controller };
+    QueuedTask task { nullptr, InternalMicrotask::BunPerformMicrotaskJob, 0, globalObject, runtime->onWSControllerStartFulfilled(), AsyncContextSwapScope::current(vm, globalObject), startResult, controller };
     vm.queueMicrotask(WTF::move(task));
 }
 

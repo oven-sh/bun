@@ -448,9 +448,9 @@ static bool hasUserToString(JSC::JSGlobalObject* globalObject, JSC::JSObject* ob
 
 void JSValueToStringLikeFormatS(JSC::JSGlobalObject* globalObject, MessageBuilder& builder, JSValue arg)
 {
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     if (arg.isObject()) {
-        auto& vm = JSC::getVM(globalObject);
-        auto scope = DECLARE_THROW_SCOPE(vm);
         bool userToString = hasUserToString(globalObject, arg.getObject());
         RETURN_IF_EXCEPTION(scope, );
         if (userToString) {
@@ -460,7 +460,7 @@ void JSValueToStringLikeFormatS(JSC::JSGlobalObject* globalObject, MessageBuilde
             return;
         }
     }
-    JSValueToStringSafe(globalObject, builder, arg);
+    RELEASE_AND_RETURN(scope, JSValueToStringSafe(globalObject, builder, arg));
 }
 
 void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, MessageBuilder& builder, JSValue value)

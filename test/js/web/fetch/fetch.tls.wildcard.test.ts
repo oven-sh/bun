@@ -648,6 +648,48 @@ describe("TLS certificate name matching: fetch() / checkServerIdentity / checkHo
     });
   });
 
+  // tls.serverName is a C string in the native TLS configuration. SNI and the
+  // native matcher would see "exact.test" for "exact.test\0.wild.test", so the
+  // option is refused. tls.checkServerIdentity gets the JS string and matches
+  // it as typed.
+  describe.concurrent("a NUL in the server name", () => {
+    const message = '"serverName" must not contain null bytes';
+    async function expectRefused(open: () => Promise<() => void>) {
+      let close: (() => void) | undefined;
+      try {
+        await expect((async () => void (close = await open()))()).rejects.toThrow(message);
+      } finally {
+        close?.();
+      }
+    }
+
+    it.each(["exact.test\0.wild.test", "exact.test\0", "\uff45xact.test\0.wild.test"])("%j", async serverName => {
+      await using server = Bun.serve({ port: 0, tls: wild, fetch: () => new Response("ok") });
+      const tlsOptions = { ca: wild.cert, serverName };
+
+      expect(csi(wild.x509, serverName)).toBe(false);
+      await expectRefused(async () => {
+        // @ts-expect-error Bun extension
+        await (await fetch(`https://127.0.0.1:${server.port}/`, { tls: tlsOptions, keepalive: false })).text();
+        return () => {};
+      });
+      await expectRefused(async () => {
+        const socket = await Bun.connect({
+          hostname: "127.0.0.1",
+          port: server.port,
+          tls: tlsOptions,
+          socket: { data() {} },
+        });
+        return () => socket.end();
+      });
+      await expectRefused(async () => {
+        const socket = tls.connect({ host: "127.0.0.1", port: server.port, ca: wild.cert, servername: serverName });
+        socket.on("error", () => {});
+        return () => socket.destroy();
+      });
+    });
+  });
+
   // Rejections Node's check() applies to the pattern that the native matcher
   // must not relax. The checkHost column is Node/OpenSSL's verdict; where that
   // falls through to equal_nocase (a..b.test) it matches even though Node's

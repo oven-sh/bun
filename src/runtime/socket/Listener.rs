@@ -796,9 +796,8 @@ impl Listener {
         Ok(JSValue::UNDEFINED)
     }
 
-    /// `tls.Server#setSecureContext()` on a listening server: builds an
-    /// `SSL_CTX` from `tls` and makes it the default for every later accept.
-    /// Sockets already accepted keep the context they handshook with.
+    /// `tls.Server#setSecureContext()` while listening: later accepts use an
+    /// `SSL_CTX` built from `tls`, accepted sockets keep theirs.
     pub(crate) fn set_secure_context(
         this: &Self,
         global: &JSGlobalObject,
@@ -1759,8 +1758,7 @@ pub(crate) fn js_set_secure_context(
             frame.arguments_count() as usize,
         ));
     }
-    // A cluster worker's `_handle` is the primary's proxy, not a `Listener`:
-    // its connections are wrapped in JS from the server's own credentials.
+    // A cluster worker's `_handle` is no `Listener`: JS wraps its connections.
     match listener.as_class_ref::<Listener>() {
         Some(this) => Listener::set_secure_context(this, global, tls),
         None => Ok(JSValue::UNDEFINED),

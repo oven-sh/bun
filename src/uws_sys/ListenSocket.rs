@@ -72,9 +72,7 @@ impl ListenSocket {
         unsafe { us_listen_socket_remove_server_name(self, hostname.as_ptr()) }
     }
 
-    /// Swap the default `SSL_CTX` for newly accepted sockets
-    /// (`tls.Server#setSecureContext`). C up_refs `ctx`; caller keeps its own
-    /// ref.
+    /// Makes `ctx` the default `SSL_CTX` for sockets accepted from now on.
     pub fn set_default_ssl_ctx(&mut self, ctx: &OwnedSslCtx) {
         // SAFETY: self is a live listen socket and `ctx` owns a reference to a
         // live SSL_CTX, which C up-refs before it stores the pointer.

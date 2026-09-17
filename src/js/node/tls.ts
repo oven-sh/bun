@@ -1270,9 +1270,7 @@ function Server(options, secureConnectionListener): void {
       options = processPfxOptions(options);
       const { ALPNProtocols } = options;
 
-      // Unlike the fields below, an omitted ALPNProtocols keeps the server's
-      // list: node assigns it in the Server constructor only.
-      // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1381-L1382
+      // Kept when omitted, unlike the fields below: node only assigns it in the constructor.
       if (ALPNProtocols) convertALPNProtocols(ALPNProtocols, next);
 
       let cert = options.cert;
@@ -1291,12 +1289,11 @@ function Server(options, secureConnectionListener): void {
       next.key = key;
 
       // BoringSSL rejects a mixed EC/RSA multi-identity configuration while
-      // loading the chain. Before listen() no native context is built, so
-      // surface the most common mismatch synchronously here: a key whose
+      // loading the chain. The native context is built lazily at listen time,
+      // so surface the most common mismatch synchronously here: a key whose
       // type differs from its own index-paired certificate. This is a
-      // best-effort check - the native loader (listen(), or the rebuild below
-      // on a listening server) remains the authority and still rejects
-      // configurations that pass it.
+      // best-effort check - the native loader at listen time remains the
+      // authority and still rejects configurations that pass it.
       const keyLength = Array.isArray(key) ? key.length : 0;
       if (keyLength > 1 && cert) {
         const certs = Array.isArray(cert) ? cert : [cert];
@@ -1410,13 +1407,10 @@ function Server(options, secureConnectionListener): void {
       next.maxVersion = options.maxVersion;
     }
     if (options) {
-      // A listening server built its native context from these fields in
-      // listen(), so it is rebuilt here. It throws on material BoringSSL
-      // rejects, hence before any field is assigned.
+      // Throws on material BoringSSL rejects, so it runs before the fields change.
       const handle = this._handle;
       if (handle && !(serverTLSOptions instanceof InternalSecureContext)) {
-        // [buntls] reads the credential fields off its receiver: these are the
-        // staged ones, everything else is inherited from the server.
+        // [buntls] reads its receiver: the staged fields over the server's own.
         const staged = { __proto__: this, ...next };
         const tls = staged[buntls](0, undefined, false)[0];
         // The clamp net.ts applies before Bun.listen().

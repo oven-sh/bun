@@ -11639,6 +11639,90 @@ it.concurrent("fails to install a lockfile's transitive file: dependency whose f
   expect(exitCode).toBe(1);
 });
 
+for (const linker of ["hoisted", "isolated"] as const) {
+  it.concurrent(`${linker}: trustedDependencies unblocks the scripts of a nested file: package`, async () => {
+    const fixture = (root: object, libDependencies: object = {}, files: Record<string, Buffer> = {}) => ({
+      "package.json": JSON.stringify({
+        name: "my-app",
+        version: "1.0.0",
+        dependencies: { lib: "file:./vendor/lib" },
+        ...root,
+      }),
+      "vendor/lib/package.json": JSON.stringify({
+        name: "lib",
+        version: "1.0.0",
+        dependencies: { tool: "file:../tool", ...libDependencies },
+      }),
+      ...files,
+      "vendor/tool/package.json": JSON.stringify({
+        name: "tool",
+        version: "1.0.0",
+        scripts: { postinstall: [bunExe(), "postinstall.js"].join(" ") },
+      }),
+      // The script runs in the installed copy of `tool`, whose location depends
+      // on the linker, so it writes to a path the test hands it.
+      "vendor/tool/postinstall.js": `require("fs").writeFileSync(process.env.TOOL_MARKER, "ran");`,
+    });
+
+    async function install(projectDir: string, args: string[], packageCount = 2) {
+      const marker = join(projectDir, "tool-postinstall.txt");
+      await Promise.all([
+        rm(join(projectDir, "node_modules"), { recursive: true, force: true }),
+        rm(marker, { force: true }),
+      ]);
+      await using proc = spawn({
+        cmd: [bunExe(), "install", `--linker=${linker}`, ...args],
+        cwd: projectDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: { ...env, TOOL_MARKER: marker },
+      });
+      const [err, out, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      expect(err).not.toContain("error:");
+      expect(out).toContain(`${packageCount} packages installed`);
+      expect(exitCode).toBe(0);
+      return { out, ran: await exists(marker) };
+    }
+
+    {
+      // Not trusted: the script is recorded and blocked, like any dependency's.
+      // Only the hoisted linker prints the count of blocked scripts.
+      using dir = tempDir("nested-file-dep-scripts-blocked", fixture({}));
+      const { out, ran } = await install(String(dir), []);
+      if (linker === "hoisted") expect(out).toContain("Blocked 1 postinstall");
+      expect(ran).toBe(false);
+    }
+
+    {
+      // Trusted by name in the root package.json: the script runs on a fresh
+      // resolve, again from the lockfile, and again with --frozen-lockfile.
+      using dir = tempDir("nested-file-dep-scripts-trusted", fixture({ trustedDependencies: ["tool"] }));
+      for (const args of [[], [], ["--frozen-lockfile"]]) {
+        const { out, ran } = await install(String(dir), args);
+        expect(out).not.toContain("Blocked");
+        expect(ran).toBe(true);
+      }
+    }
+
+    {
+      // A trusted name only reaches a file: package through the chain. The
+      // tarball `lib` declares under a trusted name has an install script, and it
+      // stays blocked because the root did not name it itself.
+      using dir = tempDir(
+        "nested-file-dep-scripts-tarball",
+        fixture(
+          { trustedDependencies: ["tool", "qux"] },
+          { qux: "file:./qux-0.0.2.tgz" },
+          { "vendor/lib/qux-0.0.2.tgz": readFileSync(join(import.meta.dir, "qux-0.0.2.tgz")) },
+        ),
+      );
+      const { out, ran } = await install(String(dir), [], 3);
+      if (linker === "hoisted") expect(out).toContain("Blocked 1 postinstall");
+      expect(ran).toBe(true);
+    }
+  });
+}
+
 describe.concurrent("file: tarball declared by a file: folder dependency", () => {
   // `bar-0.0.2.tgz` is planted at the path the declaration means and
   // `baz-0.0.3.tgz` at the other candidate path, so reading the tarball

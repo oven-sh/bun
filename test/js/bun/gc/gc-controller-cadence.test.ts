@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { closeSync, fsyncSync, openSync, readFileSync, realpathSync, statfsSync } from "fs";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, tempDir } from "harness";
+import { tmpdir } from "os";
+import { join } from "path";
 
 // Bun's GarbageCollectionController used to sample `blockBytesAllocated +
 // extraMemorySize` on every event-loop tick and arm a 16 ms one-shot whenever
@@ -194,6 +197,104 @@ describe("idle release", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+// A standalone executable's embedded module graph is clean file-backed memory: the kernel drops such pages by itself,
+// for free, when it needs the memory. The second idle collection used to MADV_PAGEOUT them, which only lowered the
+// process's RSS and had the next thing the program did read them back from the disk, a major fault at a time. The
+// program here reads a 3 MB embedded file once it is running (so that the graph is resident), says so, and sits there
+// past both idle collections of "1,1"; it is the test that looks, at /proc/<pid>/smaps. Pages that have just been read
+// are the first the kernel takes when memory is short, which says nothing: a run in which the graph went is repeated,
+// and a page-out that should not be there takes it every time. tmpfs pages are not file-backed; debug and ASAN
+// executables are too big.
+const TMPFS_MAGIC = 0x01021994;
+(!isLinux || isDebug || isASAN || statfsSync(tmpdir()).type === TMPFS_MAGIC ? test.skip : test.concurrent)(
+  "the idle collections leave a standalone executable's module graph resident",
+  async () => {
+    using dir = tempDir("idle-module-graph", {
+      "app.js": `
+        import embedded from "./embedded.bin" with { type: "file" };
+        setTimeout(() => {
+          globalThis.read = require("fs").readFileSync(embedded).length;
+          console.log("READY");
+        }, 300);
+        // A requested collection proceeds at the mutator's safepoints, and a request that finds one still open is folded
+        // into it: enter JS often enough for each idle collection to be one of its own.
+        setInterval(() => {}, 50);
+        setTimeout(() => process.exit(0), 15_000);
+        process.stdin.once("data", () => process.exit(0));
+      `,
+      "embedded.bin": Buffer.alloc(3 * 1024 * 1024, "x"),
+    });
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", "--outfile", "app", "app.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [buildOut, buildErr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    expect(buildExit, buildOut + buildErr).toBe(0);
+    const exe = realpathSync(join(String(dir), "app"));
+    const fd = openSync(exe, "r+");
+    fsyncSync(fd); // MADV_PAGEOUT skips dirty pages
+    closeSync(fd);
+
+    // Resident KB of the mapping that holds the module graph: the executable's last writable one.
+    const graphKB = (pid: number) =>
+      readFileSync(`/proc/${pid}/smaps`, "utf8")
+        .split(/\n(?=[0-9a-f]+-[0-9a-f]+ )/)
+        .filter(m => m.split("\n")[0].endsWith(exe) && m.split(" ")[1] === "rw-p")
+        .map(m => Number(/^Rss:\s+(\d+) kB/m.exec(m)![1]))
+        .at(-1)!;
+
+    async function once() {
+      await using proc = Bun.spawn({
+        cmd: [exe],
+        env: {
+          ...bunEnv,
+          BUN_IDLE_GC_SECONDS: "1,1",
+          BUN_JSC_logGC: "1",
+          BUN_GC_TIMER_DISABLE: undefined,
+          BUN_GC_TIMER_INTERVAL: undefined,
+          BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE: undefined,
+        },
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      let log = "";
+      const reading = (async () => {
+        const decoder = new TextDecoder();
+        for await (const chunk of proc.stderr) log += decoder.decode(chunk, { stream: true });
+      })();
+      const ready = await proc.stdout.getReader().read();
+      expect(new TextDecoder().decode(ready.value)).toContain("READY");
+      const readyAt = log.length;
+      const had = graphKB(proc.pid);
+      // Until both idle collections have been logged and another second has passed (the page-out came with the second).
+      let least = had;
+      let seenAt = 0;
+      const deadline = performance.now() + 12_000;
+      while (performance.now() < deadline && !(seenAt && performance.now() > seenAt + 1000)) {
+        await Bun.sleep(50);
+        least = Math.min(least, graphKB(proc.pid));
+        if (!seenAt && (log.slice(readyAt).match(/FullCollection/g) ?? []).length >= 2) seenAt = performance.now();
+      }
+      proc.stdin.write("exit\n");
+      await proc.stdin.flush();
+      const [exitCode] = await Promise.all([proc.exited, reading]);
+      return { had, least, collections: (log.slice(readyAt).match(/FullCollection/g) ?? []).length, exitCode };
+    }
+
+    let result = await once();
+    for (let attempt = 2; attempt <= 3 && result.least * 2 < result.had; attempt++) result = await once();
+    expect(result.had).toBeGreaterThan(3 * 1024);
+    expect(result.collections).toBeGreaterThanOrEqual(2);
+    expect(result.least * 2).toBeGreaterThan(result.had);
+    expect(result.exitCode).toBe(0);
+  },
+  90_000, // It writes an executable of 100 MB and more, and waits out two idle collections.
+);
 
 // Those idle full collections are tagged (GCRequest::isIdle) so JSC may also let idle FTL code — which has no execution
 // counter of its own and pins every baseline CodeBlock it inlined — age out in them, and only in them: a program that

@@ -1,4 +1,4 @@
-//! Idle GC timer: JSC's own `GCActivityCallback` (via `WTFTimer`) paces eden/full against allocation rate; this adds a 1 s / 30 s idle `collect_async()` so a process that stops allocating still releases memory, and once the heap has been quiet for `BUN_IDLE_GC_SECONDS` (default "10,65,65": first after 10 s of quiet, then one per CodeBlock-aging lease; 0 = off; main thread only) full collections so JSC can age out code that no longer runs, plus a page-out of a standalone executable's embedded module graph. Knobs: `BUN_GC_TIMER_INTERVAL` (ms), `BUN_GC_TIMER_DISABLE`. One per JS thread, not thread-safe.
+//! Idle GC timer: JSC's own `GCActivityCallback` (via `WTFTimer`) paces eden/full against allocation rate; this adds a 1 s / 30 s idle `collect_async()` so a process that stops allocating still releases memory, and once the heap has been quiet for `BUN_IDLE_GC_SECONDS` (default "10,65,65": first after 10 s of quiet, then one per CodeBlock-aging lease; 0 = off; main thread only) full collections so JSC can age out code that no longer runs. Knobs: `BUN_GC_TIMER_INTERVAL` (ms), `BUN_GC_TIMER_DISABLE`. One per JS thread, not thread-safe.
 
 use core::cell::Cell;
 use core::ffi::c_int;
@@ -114,10 +114,9 @@ impl GarbageCollectionController {
 
     /// Decides whether this tick's collection should be a full one. After the first `BUN_IDLE_GC_SECONDS` entry (main
     /// thread only) of ticks in which the heap did not grow, the tick's collection is made Full (it collects what the
-    /// last burst left and lets JSC snapshot which code is still running), and again after each further entry of quiet
-    /// (the second also pages out a standalone executable's embedded module graph): JSC drops code that has not run since the
-    /// previous one, and each round makes a little more releasable (code whose last owner died in that collection,
-    /// pages it emptied). Returns (full, ms until the next such tick is due).
+    /// last burst left and lets JSC snapshot which code is still running), and again after each further entry of quiet:
+    /// JSC drops code that has not run since the previous one, and each round makes a little more releasable (code whose
+    /// last owner died in that collection, pages it emptied). Returns (full, ms until the next such tick is due).
     fn idle_tick(&self, vm: &VirtualMachine, grew: bool, interval_ms: i32) -> (bool, Option<u32>) {
         let dues = self.idle_gc_at_ms.get();
         if dues[0] == 0 || vm.is_inspector_enabled() {
@@ -132,22 +131,6 @@ impl GarbageCollectionController {
         self.idle_quiet_ms.set(quiet);
         let dues = dues.into_iter().filter(|&due| due != 0);
         let crossed = |due: u32| before < due && quiet >= due;
-        // The module-graph page-out goes with the second collection (or the only one): after a pause of a few seconds
-        // the user is likely to come straight back, and those file-backed pages would just fault in again.
-        #[cfg(target_os = "linux")]
-        {
-            let at = self.idle_gc_at_ms.get();
-            if let Some(graph) = vm
-                .standalone_module_graph
-                .filter(|_| crossed(if at[1] != 0 { at[1] } else { at[0] }))
-            {
-                // SAFETY: VM-free — `graph` is the process-lifetime, immutable embedded module graph; the thread only
-                // madvise()s its pages and touches no VM or JS state.
-                let _ = std::thread::Builder::new()
-                    .name("idle page-out".into())
-                    .spawn(move || graph.page_out());
-            }
-        }
         let full = dues.clone().any(crossed);
         (
             full,

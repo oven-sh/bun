@@ -77,6 +77,11 @@ pub struct Flags {
     pub(crate) binary: bool,
     pub(crate) bigint: bool,
     pub(crate) simple: bool,
+    /// Set by [`PostgresSQLQuery::on_undecodable_row`]: the query is already
+    /// rejected, but the server is still answering it. It stays in flight at
+    /// the queue head, and the rest of its response is skipped, until its
+    /// `ReadyForQuery`.
+    pub(crate) discard_response: bool,
     /// Which connection counter this request's dispatch incremented; reset to
     /// `None` when `finish_request` consumes that contribution, so the
     /// decrement is idempotent across its call sites.
@@ -100,6 +105,7 @@ impl Default for Flags {
             binary: false,
             bigint: false,
             simple: false,
+            discard_response: false,
             counter: RequestCounter::None,
             result_mode: PostgresSQLQueryResultMode::Objects,
         }
@@ -215,9 +221,28 @@ impl PostgresSQLQuery {
     }
 
     pub(crate) fn on_js_error(&self, err: JSValue, global_object: &JSGlobalObject) {
+        self.status.set(Status::Fail);
+        self.reject(err, global_object);
+    }
+
+    /// The client cannot decode a row of this query's result. Reject the query
+    /// now, but leave `status` in flight: the server is still answering, so the
+    /// connection keeps the query current and skips the rest of its response
+    /// (`Flags::discard_response`) until `ReadyForQuery`.
+    pub(crate) fn on_undecodable_row(&self, err: JSValue, global_object: &JSGlobalObject) {
+        self.update_flags(|f| f.discard_response = true);
+        self.reject(err, global_object);
+    }
+
+    /// The query is already rejected, so nothing more of the server's response
+    /// to it is delivered.
+    pub(crate) fn is_rejected(&self) -> bool {
+        self.status.get() == Status::Fail || self.flags.get().discard_response
+    }
+
+    fn reject(&self, err: JSValue, global_object: &JSGlobalObject) {
         // R-2: see `on_write_fail` — `&self` + Cell/JsCell, RefPtr brackets re-entry.
         let _guard = self.ref_guard();
-        self.status.set(Status::Fail);
         let Some(this_value) = self.this_value.get().try_get() else {
             return;
         };

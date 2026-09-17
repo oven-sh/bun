@@ -1764,6 +1764,22 @@ impl PostgresSQLConnection {
         }
     }
 
+    /// What a request rejects with when the client cannot turn one of its
+    /// `DataRow`s into a JS value. The frame is read whole and the stream is
+    /// still in step, so that fails the request alone, not the connection and
+    /// the requests queued behind it. A `JSError` has its exception taken here.
+    /// A VM that is stopping fails the connection instead.
+    fn undecodable_row_error(&self, err: AnyPostgresError) -> Result<JSValue, AnyPostgresError> {
+        if self.global().has_pending_termination_exception() {
+            return Err(err);
+        }
+        Ok(postgres_error_to_js(
+            self.global(),
+            Some(b"Failed to read data"),
+            err,
+        ))
+    }
+
     pub(crate) fn can_prepare_query(&self) -> bool {
         let flags = self.flags.get();
         flags.contains(ConnectionFlags::IS_READY_FOR_QUERY)
@@ -2317,9 +2333,9 @@ impl PostgresSQLConnection {
         match message_type {
             MessageType::DataRow => {
                 let request = self.current().ok_or(AnyPostgresError::ExpectedRequest)?;
-                if request.status.get() == QueryStatus::Fail {
-                    // ErrorResponse already rejected this request and dropped
-                    // its GC protection; consume and discard until ReadyForQuery.
+                if request.is_rejected() {
+                    // This request is already rejected and its GC protection
+                    // dropped; consume and discard until ReadyForQuery.
                     return reader.skip_message();
                 }
 
@@ -2383,11 +2399,27 @@ impl PostgresSQLConnection {
                 // `DataRow::decode`'s callback is `FnMut`, so capture `&mut putter`
                 // directly instead of laundering it through a raw `*mut` context —
                 // the by-value `C: Copy` slot is unused (`()`).
-                let decode_result = if request_flags.result_mode == SQLQueryResultMode::Raw {
-                    protocol::DataRow::decode((), &mut reader, |(), i, b| putter.put_raw(i, b))
-                } else {
-                    protocol::DataRow::decode((), &mut reader, |(), i, b| putter.put(i, b))
-                };
+                //
+                // A cell this client cannot decode is kept in `undecodable` instead
+                // of failing `decode`, which then reads past the rest of the row:
+                // the frame is consumed whole and `decode_result` is a framing
+                // error only.
+                let raw = request_flags.result_mode == SQLQueryResultMode::Raw;
+                let mut undecodable: Option<AnyPostgresError> = None;
+                let decode_result = protocol::DataRow::decode((), &mut reader, |(), i, b| {
+                    if undecodable.is_some() {
+                        return Ok(true);
+                    }
+                    let put = if raw {
+                        putter.put_raw(i, b)
+                    } else {
+                        putter.put(i, b)
+                    };
+                    put.or_else(|err| {
+                        undecodable = Some(err);
+                        Ok(true)
+                    })
+                });
                 // Cell cleanup (deinit each cell, then free the buffer)
                 // runs on ALL exits (decode error, to_js error, success). `putter.count` is final
                 // after `decode` (the only writer is `Putter::put_impl`, and `to_js` does not
@@ -2407,7 +2439,16 @@ impl PostgresSQLConnection {
                     }
                     // `if free_cells free(cells)`: heap_cells Vec drops at scope end.
                 };
+                // Before `decode_result` can return: a `JSError` cell left its
+                // exception pending.
+                let undecodable = undecodable
+                    .map(|err| self.undecodable_row_error(err))
+                    .transpose()?;
                 decode_result?;
+                if let Some(js_err) = undecodable {
+                    request.on_undecodable_row(js_err, self.global());
+                    return Ok(());
+                }
 
                 let Some(this_value) = request.this_value.get().try_get() else {
                     debug_assert!(false, "query value was freed earlier than expected");
@@ -2416,7 +2457,7 @@ impl PostgresSQLConnection {
                 let pending_value = postgres_sql_query::js::pending_value_get_cached(this_value)
                     .unwrap_or_default();
                 pending_value.ensure_still_alive();
-                let result = putter.to_js(
+                let result = match putter.to_js(
                     self.global(),
                     pending_value,
                     structure,
@@ -2425,7 +2466,14 @@ impl PostgresSQLConnection {
                     // `ParentRef::Deref` recovers `&CachedStructure`; statement
                     // outlives this call (held via `request.statement` ref).
                     cached_structure.as_deref(),
-                )?;
+                ) {
+                    Ok(result) => result,
+                    Err(err) => {
+                        let js_err = self.undecodable_row_error(err)?;
+                        request.on_undecodable_row(js_err, self.global());
+                        return Ok(());
+                    }
+                };
 
                 if pending_value.is_empty() {
                     postgres_sql_query::js::pending_value_set_cached(
@@ -2472,7 +2520,12 @@ impl PostgresSQLConnection {
                 self.socket.get().set_timeout(300);
 
                 if let Some(request) = self.current() {
-                    if request.status.get() == QueryStatus::PartialResponse {
+                    if request.flags.get().discard_response {
+                        // Rejected for an undecodable row and kept in flight
+                        // until now, the end of its response.
+                        self.finish_request(&request);
+                        request.status.set(QueryStatus::Fail);
+                    } else if request.status.get() == QueryStatus::PartialResponse {
                         self.finish_request(&request);
                         // if is a partial response, just signal that the query is now complete
                         request.on_result(
@@ -2490,7 +2543,7 @@ impl PostgresSQLConnection {
             }
             MessageType::CommandComplete => {
                 let request = self.current().ok_or(AnyPostgresError::ExpectedRequest)?;
-                if request.status.get() == QueryStatus::Fail {
+                if request.is_rejected() {
                     return reader.skip_message();
                 }
 
@@ -2969,7 +3022,7 @@ impl PostgresSQLConnection {
             MessageType::CloseComplete => {
                 reader.eat_message(&protocol::CLOSE_COMPLETE)?;
                 let request = self.current().ok_or(AnyPostgresError::ExpectedRequest)?;
-                if request.status.get() == QueryStatus::Fail {
+                if request.is_rejected() {
                     return Ok(());
                 }
                 request.on_result(
@@ -2996,7 +3049,7 @@ impl PostgresSQLConnection {
             MessageType::EmptyQueryResponse => {
                 reader.eat_message(&protocol::EMPTY_QUERY_RESPONSE)?;
                 let request = self.current().ok_or(AnyPostgresError::ExpectedRequest)?;
-                if request.status.get() == QueryStatus::Fail {
+                if request.is_rejected() {
                     return Ok(());
                 }
                 request.on_result(b"", self.global(), self.js_value.get().get(), false);

@@ -246,6 +246,25 @@ export function pgReadFrontendMessages(buffered: Buffer, onMessage: (type: numbe
   return buffered;
 }
 
+// PostgreSQL FE/BE protocol §55.7 Bind (frontend) body: String(portal) String(statement) Int16(nformats) Int16[nformats]
+//   Int16(nparams) per param: Int32(byteLen | -1) Byte[len], then the result-column format codes (not read here)
+/** The parameter values of a frontend Bind message body, for a mock that answers with what was bound. */
+export function pgBindParameters(body: Buffer): (Buffer | null)[] {
+  let o = body.indexOf(0) + 1; // portal name
+  o = body.indexOf(0, o) + 1; // statement name
+  o += 2 + 2 * body.readUInt16BE(o); // parameter format codes
+  const params: (Buffer | null)[] = [];
+  const count = body.readUInt16BE(o);
+  o += 2;
+  for (let i = 0; i < count; i++) {
+    const len = body.readInt32BE(o);
+    o += 4;
+    params.push(len < 0 ? null : body.subarray(o, o + len));
+    if (len > 0) o += len;
+  }
+  return params;
+}
+
 // PostgreSQL FE/BE protocol §55.7 DataRow: Byte1('D') Int32(len) Int16(ncols) per col: Int32(byteLen | -1) Byte[len]
 export function pgDataRow(cols: (Buffer | null)[]): Buffer {
   const parts: Buffer[] = [Buffer.alloc(2)];

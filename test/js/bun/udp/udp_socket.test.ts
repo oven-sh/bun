@@ -727,11 +727,15 @@ test("sendMany() sends every packet of a larger-than-one-batch call", async () =
 
 // A short count tells the caller to wait for `drain` and resend the rest, so
 // every path that returns one has to arm the writable poll. An unsendable
-// datagram at the start of a later ~204-message batch fails that whole batch
-// outright; the earlier batches came back as a short count with nothing armed,
-// and the caller waited for a drain that never fired. Index 1 is the control:
-// a failure inside a batch has always armed drain.
-test.each([1, 204, 408])(
+// datagram that is the first one of a later pass fails that whole pass
+// outright; the earlier passes came back as a short count with nothing armed,
+// and the caller waited for a drain that never fired.
+//
+// A pass holds (LIBUS_SEND_BUFFER_LENGTH - 8) / (sizeof(mmsghdr) + sizeof(iovec))
+// datagrams (bsd.c): 204 on Linux (64 + 16), 227 on macOS (56 + 16). Windows
+// sends the batch in one pass. So 204/408 start a pass on Linux and 227/454 on
+// macOS; every other index lands inside a pass, which has always armed drain.
+test.each([1, 204, 227, 408, 454])(
   "sendMany() follows a short count with drain when the packet at index %i cannot be sent",
   async bad => {
     const server = await udpSocket({ socket: { data() {} } });

@@ -2140,21 +2140,22 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
             indexStack.last()++;
             goto objectStartVisitMember;
         }
-        mapStartState: {
-            ASSERT(inValue.isObject());
-            if (inputObjectStack.size() > maximumFilterRecursion)
-                return SerializationReturnCode::StackOverflowError;
-            JSMap* inMap = uncheckedDowncast<JSMap>(inValue);
-            if (!startMap(inMap))
-                break;
-            JSMapIterator* iterator = JSMapIterator::create(vm, m_lexicalGlobalObject->mapIteratorStructure(), inMap, IterationKind::Entries);
-            RETURN_IF_EXCEPTION(scope, SerializationReturnCode::ExistingExceptionError);
-            m_gcBuffer.appendWithCrashOnOverflow(inMap);
-            m_gcBuffer.appendWithCrashOnOverflow(iterator);
-            mapIteratorStack.append(iterator);
-            inputObjectStack.append(inMap);
-            goto mapDataStartVisitEntry;
-        }
+        mapStartState:
+            {
+                ASSERT(inValue.isObject());
+                if (inputObjectStack.size() > maximumFilterRecursion)
+                    return SerializationReturnCode::StackOverflowError;
+                JSMap* inMap = uncheckedDowncast<JSMap>(inValue);
+                if (!startMap(inMap))
+                    break;
+                JSMapIterator* iterator = JSMapIterator::create(vm, m_lexicalGlobalObject->mapIteratorStructure(), inMap, IterationKind::Entries);
+                RETURN_IF_EXCEPTION(scope, SerializationReturnCode::ExistingExceptionError);
+                m_gcBuffer.appendWithCrashOnOverflow(inMap);
+                m_gcBuffer.appendWithCrashOnOverflow(iterator);
+                mapIteratorStack.append(iterator);
+                inputObjectStack.append(inMap);
+                goto mapDataStartVisitEntry;
+            }
         mapDataStartVisitEntry:
         case MapDataStartVisitEntry: {
             JSMapIterator* iterator = mapIteratorStack.last();
@@ -2186,21 +2187,22 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
             goto mapDataStartVisitEntry;
         }
 
-        setStartState: {
-            ASSERT(inValue.isObject());
-            if (inputObjectStack.size() > maximumFilterRecursion)
-                return SerializationReturnCode::StackOverflowError;
-            JSSet* inSet = uncheckedDowncast<JSSet>(inValue);
-            if (!startSet(inSet))
-                break;
-            JSSetIterator* iterator = JSSetIterator::create(vm, m_lexicalGlobalObject->setIteratorStructure(), inSet, IterationKind::Keys);
-            RETURN_IF_EXCEPTION(scope, SerializationReturnCode::ExistingExceptionError);
-            m_gcBuffer.appendWithCrashOnOverflow(inSet);
-            m_gcBuffer.appendWithCrashOnOverflow(iterator);
-            setIteratorStack.append(iterator);
-            inputObjectStack.append(inSet);
-            goto setDataStartVisitEntry;
-        }
+        setStartState:
+            {
+                ASSERT(inValue.isObject());
+                if (inputObjectStack.size() > maximumFilterRecursion)
+                    return SerializationReturnCode::StackOverflowError;
+                JSSet* inSet = uncheckedDowncast<JSSet>(inValue);
+                if (!startSet(inSet))
+                    break;
+                JSSetIterator* iterator = JSSetIterator::create(vm, m_lexicalGlobalObject->setIteratorStructure(), inSet, IterationKind::Keys);
+                RETURN_IF_EXCEPTION(scope, SerializationReturnCode::ExistingExceptionError);
+                m_gcBuffer.appendWithCrashOnOverflow(inSet);
+                m_gcBuffer.appendWithCrashOnOverflow(iterator);
+                setIteratorStack.append(iterator);
+                inputObjectStack.append(inSet);
+                goto setDataStartVisitEntry;
+            }
         setDataStartVisitEntry:
         case SetDataStartVisitEntry: {
             JSSetIterator* iterator = setIteratorStack.last();
@@ -4088,15 +4090,16 @@ DeserializationResult CloneDeserializer::deserialize()
             propertyNameStack.removeLast();
             goto objectStartVisitMember;
         }
-        mapObjectStartState: {
-            if (outputObjectStack.size() > maximumFilterRecursion)
-                return std::make_pair(JSValue(), SerializationReturnCode::StackOverflowError);
-            JSMap* map = JSMap::create(m_lexicalGlobalObject->vm(), m_globalObject->mapStructure());
-            addToObjectPool(map);
-            outputObjectStack.append(map);
-            mapStack.append(map);
-            goto mapDataStartVisitEntry;
-        }
+        mapObjectStartState:
+            {
+                if (outputObjectStack.size() > maximumFilterRecursion)
+                    return std::make_pair(JSValue(), SerializationReturnCode::StackOverflowError);
+                JSMap* map = JSMap::create(m_lexicalGlobalObject->vm(), m_globalObject->mapStructure());
+                addToObjectPool(map);
+                outputObjectStack.append(map);
+                mapStack.append(map);
+                goto mapDataStartVisitEntry;
+            }
         mapDataStartVisitEntry:
         case MapDataStartVisitEntry: {
             if (consumeCollectionDataTerminationIfPossible<NonMapPropertiesTag>()) {
@@ -4120,15 +4123,16 @@ DeserializationResult CloneDeserializer::deserialize()
             goto mapDataStartVisitEntry;
         }
 
-        setObjectStartState: {
-            if (outputObjectStack.size() > maximumFilterRecursion)
-                return std::make_pair(JSValue(), SerializationReturnCode::StackOverflowError);
-            JSSet* set = JSSet::create(m_lexicalGlobalObject->vm(), m_globalObject->setStructure());
-            addToObjectPool(set);
-            outputObjectStack.append(set);
-            setStack.append(set);
-            goto setDataStartVisitEntry;
-        }
+        setObjectStartState:
+            {
+                if (outputObjectStack.size() > maximumFilterRecursion)
+                    return std::make_pair(JSValue(), SerializationReturnCode::StackOverflowError);
+                JSSet* set = JSSet::create(m_lexicalGlobalObject->vm(), m_globalObject->setStructure());
+                addToObjectPool(set);
+                outputObjectStack.append(set);
+                setStack.append(set);
+                goto setDataStartVisitEntry;
+            }
         setDataStartVisitEntry:
         case SetDataStartVisitEntry: {
             if (consumeCollectionDataTerminationIfPossible<NonSetPropertiesTag>()) {

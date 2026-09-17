@@ -861,6 +861,50 @@ impl Lockfile {
         0
     }
 
+    /// Does the root or a workspace depend on package `id` directly?
+    pub(crate) fn is_workspace_declared_package(&self, id: PackageID) -> bool {
+        let packages = self.packages.slice();
+        let resolutions = self.buffers.resolutions.as_slice();
+        for (pkg_id, res_list) in packages.items_resolutions().iter().enumerate() {
+            let tag = packages.items_resolution()[pkg_id].tag;
+            if tag != ResolutionTag::Workspace && tag != ResolutionTag::Root {
+                continue;
+            }
+            if res_list.get(resolutions).contains(&id) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Is dependency `id` declared by the root, a workspace, or a `file:` package
+    /// one of them depends on directly? Checked, not assumed: a migrated lockfile
+    /// can carry dependencies for a folder that a registry package shipped.
+    pub(crate) fn is_dependency_of_local_package(&self, id: DependencyID) -> bool {
+        let Some(parent_id) = self.get_parent_pkg_of_dependency(id) else {
+            return false;
+        };
+        match self.packages.items_resolution()[parent_id as usize].tag {
+            ResolutionTag::Root | ResolutionTag::Workspace => true,
+            ResolutionTag::Folder => self.is_workspace_declared_package(parent_id),
+            _ => false,
+        }
+    }
+
+    /// May the folder path of dependency `id` leave its package directory? Yes
+    /// when a local package declares the dependency, or when a plain override or
+    /// resolution supplies the path (those are only ever parsed from the root
+    /// package.json). Both are user authored, like a root `file:` dependency.
+    pub(crate) fn is_trusted_folder_dependency(&self, id: DependencyID) -> bool {
+        if self.is_dependency_of_local_package(id) {
+            return true;
+        }
+        let buf = self.buffers.string_bytes.as_slice();
+        let dep = &self.buffers.dependencies[id as usize];
+        self.overrides
+            .contains_name(dep.name_hash, dep.name.slice(buf), buf)
+    }
+
     /// Does this tree id belong to a workspace (including workspace root)?
     /// TODO(dylan-conway) fix!
     pub(crate) fn is_workspace_tree_id(&self, id: tree::Id) -> bool {

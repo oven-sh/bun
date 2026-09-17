@@ -90,7 +90,6 @@
 "generic_body_not_generic:src/runtime/bake/dev_server/incremental_graph.rs" = 2
 "generic_body_not_generic:src/runtime/cli/create_command.rs" = 1
 "generic_body_not_generic:src/runtime/cli/multi_run.rs" = 1
-"generic_body_not_generic:src/runtime/cli/outdated_command.rs" = 1
 "generic_body_not_generic:src/runtime/cli/pack_command.rs" = 1
 "generic_body_not_generic:src/runtime/cli/pm_diff_normalize.rs" = 1
 "generic_body_not_generic:src/runtime/cli/publish_command.rs" = 2

@@ -7,6 +7,7 @@ const WebHeaders: typeof globalThis.Headers = bindings[3];
 const FormData: typeof globalThis.FormData = bindings[4];
 const File: typeof globalThis.File = bindings[5];
 const nativeFetch = Bun.fetch;
+const JSONParse = JSON.parse;
 
 // node-fetch extends from URLSearchParams in their implementation...
 // https://github.com/node-fetch/node-fetch/blob/8b3320d2a7c07bce4afc6b2bf6c3bbddda85b01f/src/headers.js#L44
@@ -64,7 +65,7 @@ class Response extends WebResponse {
         if (!this[kFetched]) return null;
         web = new ReadableStream({ start: closeEmptyBody });
       }
-      body = this[kBody] = new (require("internal/webstreams_adapters")._ReadableFromWeb)({}, web);
+      body = this[kBody] = new (require("internal/webstreams_adapters")._ReadableFromWeb)({ responseBody: true }, web);
     }
 
     return body;
@@ -76,46 +77,23 @@ class Response extends WebResponse {
 
   clone() {
     const cloned = Object.setPrototypeOf(super.clone(this), ResponsePrototype);
+    // clone() moved the body to a new web stream, so `body` gets a new node stream, as in node-fetch.
+    this[kBody] = undefined;
     if (this[kFetched]) cloned[kFetched] = true;
     return cloned;
   }
 
-  async arrayBuffer() {
-    // load the getter
-    void this.body;
-    return await super.arrayBuffer();
-  }
-
-  async blob() {
-    // load the getter
-    void this.body;
-    return await super.blob();
-  }
-
-  async formData() {
-    // load the getter
-    void this.body;
-    return await super.formData();
-  }
-
+  // node-fetch parses the text, so an empty body rejects:
+  // https://github.com/node-fetch/node-fetch/blob/8b3320d2a7c07bce4afc6b2bf6c3bbddda85b01f/src/body.js#L147-L150
+  // The inherited json() resolves null for an empty fetched body (#24955).
   async json() {
-    // load the getter
-    void this.body;
-    return await super.json();
+    return JSONParse(await super.text());
   }
 
   // This is a deprecated function in node-fetch
   // but is still used by some libraries and frameworks (like Astro)
   async buffer() {
-    // load the getter
-    void this.body;
     return new $Buffer(await super.arrayBuffer());
-  }
-
-  async text() {
-    // load the getter
-    void this.body;
-    return await super.text();
   }
 
   get type() {

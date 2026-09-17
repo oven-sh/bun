@@ -1800,7 +1800,7 @@ impl<'a> PackageInstall<'a> {
                                 }
 
                                 let _ = sys::unlinkat(destination_dir, entry.path);
-                                sys::symlinkat(entry.basename, destination_dir.fd(), entry.path)?;
+                                sys::symlinkat(target, destination_dir.fd(), entry.path)?;
                             }
                         }
                         _ => {}
@@ -1850,6 +1850,12 @@ impl<'a> PackageInstall<'a> {
                         }
                         EntryKind::File => match sys::symlink_w(dest, src, Default::default()) {
                             Err(err) => {
+                                if err.get_errno() == sys::E::EEXIST {
+                                    let _ = sys::unlink_w(dest);
+                                    sys::symlink_w(dest, src, Default::default())?;
+                                    continue;
+                                }
+
                                 if let Some(entry_dirname) =
                                     bun_paths::Dirname::dirname_u16(entry.path.as_slice())
                                 {

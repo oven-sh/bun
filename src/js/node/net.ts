@@ -35,6 +35,7 @@ const {
   hasObserver,
   startPerf,
   stopPerf,
+  isStoppedModuleGraphRunning,
 } = require("internal/shared");
 import type { Socket, SocketHandler, SocketListener } from "bun";
 import type { Server as NetServer, Socket as NetSocket, ServerOpts } from "node:net";
@@ -356,8 +357,11 @@ function onClientHandshake(self, socket, success, verifyError) {
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1107
   try {
     // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1662-L1673
+    // Unlike Node, don't gate on !isSessionReused(): BoringSSL keeps the peer
+    // chain on a resumed SSL_SESSION, so re-check it against this servername.
+    // The gate alone is the cross-servername resume of CVE-2026-48934.
     const { checkServerIdentity } = self[bunTLSConnectOptions];
-    if (!verifyError && !self.isSessionReused() && typeof checkServerIdentity === "function") {
+    if (!verifyError && typeof checkServerIdentity === "function") {
       const options = self[kConnectOptions];
       const hostname = self.servername || options?.host || options?.socket?._host || self._host || "localhost";
       const cert = self.getPeerCertificate(true);
@@ -449,6 +453,8 @@ function tlsHandshakeError(verifyError) {
 
 // Node reports a throwing 'data' listener as uncaughtException and keeps reading.
 function pushDataToSocket(self, socket, buffer) {
+  // TLS took over the fd; the wrapped socket reads nothing: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L723-L727
+  if (socket[kAdoptedTLSRaw]) return;
   if (self[kDestroyOnRead]) {
     $debug("DATA on a socket that must receive nothing - destroying it");
     self.destroy();
@@ -1777,6 +1783,7 @@ function Socket(options?) {
         const { self } = socket.data;
         if (!self) return;
         self._unrefTimer();
+        if (socket[kAdoptedTLSRaw]) return;
         const tail = self[kOnreadTail];
         if (tail !== undefined) {
           self[kOnreadTail] = Buffer.concat([tail, buffer]);
@@ -2360,7 +2367,8 @@ Socket.prototype.resume = function resume() {
   // override sets handle.reading synchronously for the same reason.
   const ret = Duplex.prototype.resume.$call(this);
   // An ended readable side (EOF emitted, or `readable: false`) never restarts the handle: node reaches readStart only from _read.
-  if (this.readableEnded) return ret;
+  // An onread socket is the exception: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L830-L845
+  if (this.readableEnded && this[kOnreadBuffer] === undefined) return ret;
   if (!this.connecting && !drainOnreadTail(this)) {
     this._handle?.resume?.();
   }
@@ -2464,7 +2472,7 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
 
 Socket.prototype.read = function read(size) {
   // See resume(): an ended readable side never restarts the handle.
-  if (!this.readableEnded && !this.connecting && !drainOnreadTail(this, true)) {
+  if ((!this.readableEnded || this[kOnreadBuffer] !== undefined) && !this.connecting && !drainOnreadTail(this, true)) {
     this._handle?.resume?.();
     restorePausedHold(this, this._handle);
   }
@@ -3413,7 +3421,7 @@ function afterConnect(status, handle, req, readable, writable) {
 
     // Ours already reads, Node's starts at read(): stop a paused plain socket now, and after the listeners unless one asked for a read.
     // A socket built with `readable: false` never reads: read() cannot reach _read once the readable side has ended.
-    const pausedBeforeConnect = self.isPaused() || self.readableEnded;
+    const pausedBeforeConnect = self.isPaused() || (self.readableEnded && self[kOnreadBuffer] === undefined);
     if (pausedBeforeConnect && !self.encrypted) readStop(self, self._handle);
 
     self.emit("connect");
@@ -4055,7 +4063,8 @@ function addServerAbortSignalOption(self, options) {
 }
 
 function emitListeningNextTick(self) {
-  if (!self._handle) return;
+  // (Or the Bun.ModuleGraph whose script listened has been disposed: its listener was closed with it.)
+  if (!self._handle || isStoppedModuleGraphRunning()) return;
   self.emit("listening");
 }
 

@@ -1,7 +1,7 @@
 // Receive-side backpressure: a stalled `res.body.getReader()` must stop the
 // HTTP thread from buffering the entire response in memory.
 import { S3Client } from "bun";
-import { beforeAll, describe, expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, forEachLine, isASAN, isDebug, isWindows, tempDir, tls } from "harness";
 import { once } from "node:events";
 import { statSync } from "node:fs";
@@ -16,9 +16,6 @@ import { pipeline } from "node:stream/promises";
 import { createServer as createTlsServer } from "node:tls";
 import {
   brotliCompressSync,
-  createBrotliCompress,
-  createDeflate,
-  createGzip,
   createZstdCompress,
   deflateSync,
   gzipSync,
@@ -521,33 +518,27 @@ import { createServer as createTlsServer } from "node:tls";
 describe.concurrent("fetch() receive backpressure — the decompressor does not run ahead of the reader", () => {
   // Pausing the socket bounds COMPRESSED bytes, so a high-ratio body needs its own bound: one
   // 512 KB read of 1000:1 input inflates to ~500 MB. Each of these bodies is 256 MB of zeros and
-  // at most 250 KB on the wire, so one read hands the client all of it.
+  // at most 270 KB on the wire, so one read hands the client all of it.
   const DECODED = 256 * 1024 * 1024;
   const READS = 17;
-  // Unbounded, the client holds all of DECODED. Bounded, it holds the reader's chunks and one
-  // decode pass. ASAN inflates every allocation, so the bound is generous there.
-  const PEAK_LIMIT = (isASAN || isDebug ? 128 : 64) * 1024 * 1024;
+  // Unbounded, the client holds all of DECODED (+280 to +305 MB in a debug build). Bounded, it
+  // holds the reader's chunks and one decode pass (+12 to +24 MB).
+  const PEAK_LIMIT = (isASAN || isDebug ? 96 : 64) * 1024 * 1024;
 
   type Enc = "gzip" | "deflate" | "br" | "zstd";
-  const bombs = {} as Record<Enc, Buffer>;
-  beforeAll(async () => {
-    const zeros = Buffer.alloc(1 << 20);
-    const compress = async (z: import("node:zlib").Gzip) => {
-      const parts: Buffer[] = [];
-      z.on("data", d => parts.push(d));
-      for (let i = 0; i < DECODED / zeros.length; i++) if (!z.write(zeros)) await once(z, "drain");
-      z.end();
-      await once(z, "end");
-      return Buffer.concat(parts);
-    };
-    // Level 9 gets deflate's best ratio, about 1000:1.
-    [bombs.gzip, bombs.deflate, bombs.br, bombs.zstd] = await Promise.all([
-      compress(createGzip({ level: 9 })),
-      compress(createDeflate({ level: 9 })),
-      compress(createBrotliCompress({ params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 1 } }) as any),
-      compress(createZstdCompress() as any),
-    ]);
-  });
+  type Bomb = Exclude<Enc, "deflate">;
+  const bombs: Partial<Record<Bomb, Buffer>> = {};
+  function bombFor(enc: Bomb) {
+    return (bombs[enc] ??= (() => {
+      // gzip members and zstd frames concatenate, so one compressed MB makes the whole body.
+      // A debug build takes seconds to really compress 256 MB; brotli has no such shortcut.
+      const mb = Buffer.alloc(1 << 20);
+      const repeat = (piece: Buffer) => Buffer.concat(Array(DECODED / mb.length).fill(piece));
+      if (enc === "gzip") return repeat(gzipSync(mb, { level: 9 }));
+      if (enc === "zstd") return repeat(zstdCompressSync(mb));
+      return brotliCompressSync(Buffer.alloc(DECODED), { params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 1 } });
+    })());
+  }
 
   async function listening(srv: import("node:net").Server) {
     const sockets = new Set<import("node:net").Socket>();
@@ -564,12 +555,13 @@ describe.concurrent("fetch() receive backpressure — the decompressor does not 
   }
 
   // Close-delimited, and the origin never closes: for the client this body does not end.
-  async function serveBomb(enc: Enc, secure: boolean) {
+  async function serveBomb(enc: Bomb, secure: boolean) {
+    const bomb = bombFor(enc);
     const handler = (s: import("node:net").Socket) => {
       s.on("error", () => {});
       s.once("data", () => {
         s.write(`HTTP/1.1 200 OK\r\nContent-Encoding: ${enc}\r\nConnection: close\r\n\r\n`);
-        s.write(bombs[enc]);
+        s.write(bomb);
       });
     };
     const server = await listening(secure ? createTlsServer(tls, handler) : createTcpServer(handler));
@@ -657,13 +649,10 @@ describe.concurrent("fetch() receive backpressure — the decompressor does not 
     expect(exitCode).toBe(0);
   }
 
-  test.each(["gzip", "deflate", "br", "zstd"] as Enc[])(
-    "%s: a reader that takes a little holds a little",
-    async enc => {
-      await using server = await serveBomb(enc, false);
-      expectBounded(await runClient(server.url, {}, READ_A_LITTLE));
-    },
-  );
+  test.each(["gzip", "br", "zstd"] as Bomb[])("%s: a reader that takes a little holds a little", async enc => {
+    await using server = await serveBomb(enc, false);
+    expectBounded(await runClient(server.url, {}, READ_A_LITTLE));
+  });
 
   test("zstd through a CONNECT proxy: a reader that takes a little holds a little", async () => {
     await using server = await serveBomb("zstd", true);

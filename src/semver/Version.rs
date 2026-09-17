@@ -934,8 +934,7 @@ pub struct Tag {
 // TODO: support multiple tags
 
 impl Tag {
-    /// `-0`, the lowest prerelease. node-semver puts it on every exclusive upper bound it
-    /// derives (`^1.2.3` is `>=1.2.3 <2.0.0-0`) so no prerelease of that bound is below it.
+    /// `-0`, the lowest prerelease. node-semver's `^1.2.3` is `>=1.2.3 <2.0.0-0`.
     pub(crate) fn zero_pre() -> Tag {
         let zero: &[u8] = b"0";
         Tag {

@@ -257,9 +257,7 @@ impl Comparator {
         }
     }
 
-    /// The boundary as a version to test against another range. A `<X.Y.Z-0` bound stands
-    /// for "below X.Y.Z", so it yields the release `X.Y.Z`: `Group::satisfies` would apply
-    /// its prerelease rule to `X.Y.Z-0`.
+    /// The bound as a candidate version: `X.Y.Z` for a derived `<X.Y.Z-0`.
     pub fn boundary_version(self) -> Version {
         let mut version = self.version;
         if self.op == Op::Lt && version.tag.eql(Tag::zero_pre()) {

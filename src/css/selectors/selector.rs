@@ -919,8 +919,14 @@ pub(crate) mod serialize {
                 nth_data.write_start(dest, true)?;
                 nth_data.write_affine(dest)?;
                 dest.write_str(b" of ")?;
+                // `get_prefix` and `downlevel_selectors` do not look inside the of-list, so a
+                // vendor prefix pass must not rewrite `:is()` there.
+                let vendor_prefix =
+                    core::mem::replace(&mut dest.vendor_prefix, VendorPrefix::empty());
                 // Not a relative selector list: a leading `:scope` is explicit and stays.
-                serialize_selector_list(&nth_of_data.selectors, dest, context, false)?;
+                let result = serialize_selector_list(&nth_of_data.selectors, dest, context, false);
+                dest.vendor_prefix = vendor_prefix;
+                result?;
                 return dest.write_char(b')');
             }
             Component::NonTsPseudoClass(pseudo) => {

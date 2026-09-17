@@ -5337,6 +5337,19 @@ describe("css tests", () => {
     minify_test(':nth-child(2 of [foo="bar"]) {width: 20px}', ":nth-child(2 of [foo=bar]){width:20px}");
     // The of-list is not a relative selector list, so a leading `:scope` stays.
     minify_test(":nth-child(2 of :scope > .a) {width: 20px}", ":nth-child(2 of :scope>.a){width:20px}");
+    // Vendor prefix passes do not look inside the of-list, so `:is()` there stays `:is()`.
+    minify_test(
+      "input:-webkit-autofill:nth-child(1 of :is(.a > .b)) {width: 20px}",
+      "input:-webkit-autofill:nth-child(1 of :is(.a>.b)){width:20px}",
+    );
+    minify_test(
+      "input:nth-child(1 of :is(.a > .b)):-webkit-autofill {width: 20px}",
+      "input:nth-child(1 of :is(.a>.b)):-webkit-autofill{width:20px}",
+    );
+    minify_test(
+      "input:-webkit-autofill:nth-child(1 of :is(.a, .b)) {width: 20px}",
+      "input:-webkit-autofill:nth-child(1 of :is(.a,.b)){width:20px}",
+    );
 
     describe("& inside a functional pseudo", () => {
       // Chrome 95 has no CSS nesting, so `&` becomes the parent selector.

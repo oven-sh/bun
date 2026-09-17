@@ -590,6 +590,10 @@ impl HttpThread {
                     if self.abort_pending_h2_waiter(http.async_http_id) {
                         continue;
                     }
+                    if let Some(client) = crate::socketless_body(http.async_http_id) {
+                        client.abort_socketless_body();
+                        continue;
+                    }
                     // Or it's on an HTTP/3 session, which has no TCP socket to
                     // register in the tracker.
                     if h3::ClientContext::abort_by_http_id(http.async_http_id) {
@@ -788,6 +792,8 @@ impl HttpThread {
                             }
                         }
                     }
+                } else if let Some(client) = crate::socketless_body(id) {
+                    client.drain_socketless_body();
                 } else {
                     h3::ClientContext::resume_receive_by_http_id(id);
                 }

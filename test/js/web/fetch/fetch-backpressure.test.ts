@@ -559,14 +559,26 @@ describe.concurrent("fetch() receive backpressure — the decompressor does not 
     };
   }
 
-  // Close-delimited, and the origin never closes: for the client this body does not end.
-  async function serveBomb(enc: Enc, secure: boolean) {
+  // How the origin ends the body. "never": close-delimited and the origin never closes, so for
+  // the client this body does not end. The others send the whole body and close at once, so the
+  // end of the transport reaches a client that still holds nearly all of the body undecoded.
+  type Ending = "never" | "content-length" | "chunked" | "close-delimited";
+  async function serveBomb(enc: Enc, secure: boolean, ending: Ending = "never") {
     const bomb = bombFor(enc);
+    const framing =
+      ending === "content-length"
+        ? `Content-Length: ${bomb.length}\r\n`
+        : ending === "chunked"
+          ? "Transfer-Encoding: chunked\r\n"
+          : "";
     const handler = (s: import("node:net").Socket) => {
       s.on("error", () => {});
       s.once("data", () => {
-        s.write(`HTTP/1.1 200 OK\r\nContent-Encoding: ${enc}\r\nConnection: close\r\n\r\n`);
+        s.write(`HTTP/1.1 200 OK\r\nContent-Encoding: ${enc}\r\n${framing}Connection: close\r\n\r\n`);
+        if (ending === "chunked") s.write(`${bomb.length.toString(16)}\r\n`);
         s.write(bomb);
+        if (ending === "chunked") s.write("\r\n0\r\n\r\n");
+        if (ending !== "never") s.end();
       });
     };
     const server = await listening(secure ? createTlsServer(tls, handler) : createTcpServer(handler));
@@ -576,13 +588,15 @@ describe.concurrent("fetch() receive backpressure — the decompressor does not 
   // A CONNECT proxy that pipes both ways. bun does not pause a tunnelled socket, so the origin's
   // bytes keep arriving while the reader is paused.
   async function serveConnectProxy() {
+    let connects = 0;
     const server = await listening(
       createTcpServer(client => {
         let upstream: import("node:net").Socket | undefined;
         client.on("error", () => upstream?.destroy());
         client.on("close", () => upstream?.destroy());
         client.once("data", head => {
-          const [, target] = head.toString("latin1").split(" ");
+          const [method, target] = head.toString("latin1").split(" ");
+          if (method === "CONNECT") connects++;
           const colon = target.lastIndexOf(":");
           upstream = connect(Number(target.slice(colon + 1)), target.slice(0, colon), () => {
             client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
@@ -594,7 +608,7 @@ describe.concurrent("fetch() receive backpressure — the decompressor does not 
         });
       }),
     );
-    return { ...server, url: `http://127.0.0.1:${server.port}` };
+    return { ...server, url: `http://127.0.0.1:${server.port}`, connects: () => connects };
   }
 
   // Takes one chunk, lets the client's memory settle, takes a few more, and reports the largest
@@ -623,10 +637,17 @@ describe.concurrent("fetch() receive backpressure — the decompressor does not 
     process.stdout.write(JSON.stringify({ got, peak, zeros }));
   `;
 
+  // An ambient NO_PROXY that lists 127.0.0.1 makes fetch() ignore its `proxy` option.
+  const clientEnv = { ...bunEnv };
+  for (const key of ["NO_PROXY", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"]) {
+    delete clientEnv[key];
+    delete clientEnv[key.toLowerCase()];
+  }
+
   async function runClient(url: string, opts: object, script: string) {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", `const url=${JSON.stringify(url)};const opts=${JSON.stringify(opts)};${script}`],
-      env: bunEnv,
+      env: clientEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -662,11 +683,25 @@ describe.concurrent("fetch() receive backpressure — the decompressor does not 
     },
   );
 
-  test("zstd through a CONNECT proxy: a reader that takes a little holds a little", async () => {
-    await using server = await serveBomb("zstd", true);
-    await using proxy = await serveConnectProxy();
-    const opts = { proxy: proxy.url, tls: { rejectUnauthorized: false } };
-    expectBounded(await runClient(server.url, opts, READ_A_LITTLE));
+  // bun does not pause a tunnelled socket, so all of the body and then the origin's close reach
+  // the client at once. The end of the transport must not decode what the reader has not asked
+  // for: the client outlives its socket until the reader has pulled the rest, or cancels.
+  test.each(["never", "content-length", "chunked", "close-delimited"] as Ending[])(
+    "zstd through a CONNECT proxy, body ending %s: a reader that takes a little holds a little",
+    async ending => {
+      await using server = await serveBomb("zstd", true, ending);
+      await using proxy = await serveConnectProxy();
+      const opts = { proxy: proxy.url, tls: { rejectUnauthorized: false } };
+      expectBounded(await runClient(server.url, opts, READ_A_LITTLE));
+      expect(proxy.connects()).toBe(1);
+    },
+  );
+
+  // Without a tunnel the socket is paused, which defers a FIN but not a TLS close_notify that
+  // came in with the body.
+  test.each([false, true])("gzip, origin closes after the body (tls: %p)", async secure => {
+    await using server = await serveBomb("gzip", secure, "content-length");
+    expectBounded(await runClient(server.url, { tls: { rejectUnauthorized: false } }, READ_A_LITTLE));
   });
 
   // A live stream: two flushed messages in one packet, then the origin goes quiet with the frame

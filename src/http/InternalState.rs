@@ -84,6 +84,9 @@ pub struct InternalStateFlags {
     pub(crate) body_compressed: bool,
     /// Held input or buffered decoder output remains for `HTTPClient::drain_response_body`.
     pub(crate) decompress_output_pending: bool,
+    /// The socket is gone and the consumer still pulls held input: the client is in
+    /// `socketless_bodies`, which is how a resume or an abort finds it.
+    pub(crate) body_outlived_socket: bool,
 }
 
 impl InternalStateFlags {
@@ -100,6 +103,7 @@ impl InternalStateFlags {
             receive_paused: false,
             body_compressed: false,
             decompress_output_pending: false,
+            body_outlived_socket: false,
         }
     }
 }

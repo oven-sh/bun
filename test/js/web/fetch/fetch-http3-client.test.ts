@@ -459,7 +459,7 @@ describe("fetch protocol: http3", () => {
     const res = await fetch(`${base}/headers-echo`, { ...h3, headers: sent });
     expect(res.status).toBe(200);
     const got: Record<string, string> = await res.json();
-    expect(Object.keys(got).filter(name => name.startsWith("x-")).length).toBe(300);
+    expect(Object.fromEntries(Object.entries(got).filter(([name]) => name.startsWith("x-")))).toEqual(sent);
   });
 
   test("response consumed as blob / bytes", async () => {

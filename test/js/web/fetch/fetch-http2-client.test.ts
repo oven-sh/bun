@@ -863,10 +863,12 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
   });
 
   test("a request with more than 250 headers sends every header", async () => {
-    let seen: string[] = [];
+    const sent: Record<string, string> = {};
+    for (let i = 0; i < 300; i++) sent["x-" + String(i).padStart(4, "0")] = "v";
+    let seen: Record<string, unknown> = {};
     const server = makeH2Server({ maxHeaderListPairs: 1000 });
     server.on("stream", (stream, headers) => {
-      seen = Object.keys(headers).filter(k => k.startsWith("x-"));
+      seen = Object.fromEntries(Object.entries(headers).filter(([k]) => k.startsWith("x-")));
       stream.respond({ ":status": 200 });
       stream.end();
     });
@@ -875,15 +877,14 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
     const { port } = server.address() as import("node:net").AddressInfo;
     try {
       await using proc = await spawnFetch(`
-        const headers = {};
-        for (let i = 0; i < 300; i++) headers["x-" + String(i).padStart(4, "0")] = "v";
+        const headers = ${JSON.stringify(sent)};
         const r = await fetch("https://localhost:${port}", { headers, tls: { rejectUnauthorized: false } });
         console.log(r.status);
       `);
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toBe("");
       expect(stdout.trim()).toBe("200");
-      expect(seen.length).toBe(300);
+      expect(seen).toEqual(sent);
       expect(exitCode).toBe(0);
     } finally {
       server.close();

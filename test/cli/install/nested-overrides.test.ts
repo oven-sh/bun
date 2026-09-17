@@ -826,11 +826,13 @@ describe.concurrent("version-scoped targets", () => {
 
   // #43138. An edge pinned at an exact prerelease matches a ranged selector only when the
   // prerelease satisfies it, which needs a comparator with a prerelease of the same
-  // major.minor.patch. `<1.0.0` and `>=0.0.0` have none, so the rule leaves the edge alone.
-  // npm's `semver.intersects` answers the same.
+  // major.minor.patch. `<1.0.0`, `>=0.0.0` and `*` have none, so the rule leaves the edge
+  // alone. npm answers the same for the first two. `>=1.0.0-0 <1.0.0` applies because
+  // `Bun.semver.satisfies` admits the prerelease (npm tests each comparator alone and does not).
   describe.concurrent.each([
     { declared: "1.0.0-rc.1", selector: "<1.0.0", applies: false },
     { declared: "1.0.0-rc.1", selector: ">=0.0.0", applies: false },
+    { declared: "1.0.0-rc.1", selector: "*", applies: false },
     { declared: "1.0.0-rc.1", selector: ">=1.0.0-0 <1.0.0", applies: true },
     { declared: "1.0.0-rc.1", selector: "1.0.0-rc.1", applies: true },
   ])("an exact prerelease edge and a ranged selector %j", ({ declared, selector, applies }) => {

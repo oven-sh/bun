@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { mkfifo } from "mkfifo";
 import fs, { existsSync, readdirSync, rmSync } from "node:fs";
-import { join } from "path";
+import { dirname, join } from "path";
 
 // Minimal ustar tarball builder (pathnames must be <100 bytes). `name` accepts
 // a Buffer so tests can put raw, non-UTF-8 byte sequences into the name field.
@@ -647,14 +647,18 @@ describe("Bun.Archive", () => {
     const isRoot = !isWindows && process.getuid?.() === 0;
     const nobody = (() => {
       if (!isRoot) return null;
-      // /etc/passwd format: name:x:uid:gid:gecos:home:shell
-      const line = fs
-        .readFileSync("/etc/passwd", "utf8")
-        .split("\n")
-        .find(l => l.startsWith("nobody:"));
+      // /etc/passwd format: name:x:uid:gid:gecos:home:shell. macOS lists
+      // nobody as -2, which chown does not take.
+      let passwd: string;
+      try {
+        passwd = fs.readFileSync("/etc/passwd", "utf8");
+      } catch {
+        return null;
+      }
+      const line = passwd.split("\n").find(l => l.startsWith("nobody:"));
       if (!line) return null;
-      const [, , uid, gid] = line.split(":");
-      return Number.isInteger(+uid) && Number.isInteger(+gid) ? { uid: +uid, gid: +gid } : null;
+      const [, , uid, gid] = line.split(":").map(Number);
+      return Number.isInteger(uid) && Number.isInteger(gid) && uid >= 0 && gid >= 0 ? { uid, gid } : null;
     })();
     const canLockDir = !isWindows && (!isRoot || nobody !== null);
 
@@ -725,6 +729,11 @@ describe("Bun.Archive", () => {
             fs.lchownSync(join(dir, String(p)), nobody.uid, nobody.gid);
           }
           fs.chownSync(dir, nobody.uid, nobody.gid);
+          // The test runner puts TMPDIR in a 0700 directory. `nobody` must reach the fixture.
+          for (let p = dirname(dir); p !== dirname(p); p = dirname(p)) {
+            const mode = fs.statSync(p).mode;
+            if ((mode & 0o011) !== 0o011) fs.chmodSync(p, mode | 0o011);
+          }
         }
         fs.chmodSync(locked, 0o555);
         try {
@@ -748,7 +757,7 @@ describe("Bun.Archive", () => {
         expect(result).toEqual(options ? { count: 0 } : { error: "ReadError" });
       }
 
-      test.skipIf(!canLockDir)("writes in place when the old name cannot be removed", async () => {
+      test.concurrent.skipIf(!canLockDir)("writes in place when the old name cannot be removed", async () => {
         using dir = tempDir("archive-replace-in-place", {
           "locked/a.txt": "old",
         });
@@ -760,7 +769,7 @@ describe("Bun.Archive", () => {
         expect(fs.statSync(join(String(dir), "locked/a.txt")).ino).toBe(before);
       });
 
-      test.skipIf(!canLockDir)("does not write through a symlink that cannot be removed", async () => {
+      test.concurrent.skipIf(!canLockDir)("does not write through a symlink that cannot be removed", async () => {
         using dir = tempDir("archive-replace-locked-symlink", {
           "target.txt": "old",
           "locked/.keep": "",
@@ -772,7 +781,7 @@ describe("Bun.Archive", () => {
         expect(fs.readFileSync(join(String(dir), "target.txt"), "utf8")).toBe("old");
       });
 
-      test.skipIf(!canLockDir)("does not write through a hard link that cannot be removed", async () => {
+      test.concurrent.skipIf(!canLockDir)("does not write through a hard link that cannot be removed", async () => {
         using dir = tempDir("archive-replace-locked-hardlink", {
           "store/a.txt": "old",
           "locked/.keep": "",
@@ -785,7 +794,7 @@ describe("Bun.Archive", () => {
       });
 
       // Opening a FIFO for writing waits for a reader. The extraction must fail instead.
-      test.skipIf(!canLockDir)("does not wait on a FIFO that cannot be removed", async () => {
+      test.concurrent.skipIf(!canLockDir)("does not wait on a FIFO that cannot be removed", async () => {
         using dir = tempDir("archive-replace-locked-fifo", {
           "locked/.keep": "",
         });

@@ -1026,7 +1026,12 @@ pub fn create_entry_file(dir: Fd, path: &ZStr, mode: bun_sys::Mode) -> bun_sys::
     match bun_sys::openat(dir, path, flags | bun_sys::O::EXCL, mode) {
         Err(err) if err.get_errno() == bun_sys::E::EEXIST => match bun_sys::unlinkat(dir, path) {
             Ok(()) => bun_sys::openat(dir, path, flags | bun_sys::O::EXCL, mode),
-            Err(_) => bun_sys::openat(dir, path, flags | bun_sys::O::TRUNC, mode),
+            Err(_) => bun_sys::openat(
+                dir,
+                path,
+                flags | bun_sys::O::TRUNC | bun_sys::O::NOFOLLOW,
+                mode,
+            ),
         },
         result => result,
     }

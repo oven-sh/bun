@@ -714,6 +714,32 @@ describe("Bun.Archive", () => {
         },
       );
 
+      test.skipIf(isWindows || process.getuid?.() === 0)(
+        "does not write through a symlink that cannot be removed",
+        async () => {
+          using dir = tempDir("archive-replace-locked-symlink", {
+            "target.txt": "old",
+            "locked/.keep": "",
+          });
+          const locked = join(String(dir), "locked");
+          fs.symlinkSync("../target.txt", join(locked, "a.txt"));
+          fs.chmodSync(locked, 0o555);
+          try {
+            const archive = new Bun.Archive({ "locked/a.txt": "new" });
+            const extracted = archive.extract(String(dir), options);
+            if (options) {
+              expect(await extracted).toBe(0);
+            } else {
+              expect(extracted).rejects.toThrow();
+            }
+
+            expect(fs.readFileSync(join(String(dir), "target.txt"), "utf8")).toBe("old");
+          } finally {
+            fs.chmodSync(locked, 0o755);
+          }
+        },
+      );
+
       test.skipIf(isWindows)("gives an existing file the mode of the entry", async () => {
         const tarball = Buffer.concat([
           ustarHeader("secret.txt", 3, "0", { mode: Buffer.from("0000600\0") }),

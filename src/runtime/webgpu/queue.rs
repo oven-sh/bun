@@ -73,7 +73,7 @@ impl GPUQueue {
     pub(crate) fn on_submitted_work_done(
         &self,
         global: &JSGlobalObject,
-        _callframe: &CallFrame,
+        callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         let promise = JSPromiseStrong::init(global);
         let value = promise.value();
@@ -85,7 +85,8 @@ impl GPUQueue {
                 Box::new(move || slot.fill(())),
             );
         }
-        wait::wait::<WorkDone>(&self.device, &global.js_thread(), slot, promise);
+        let cx = global.js_thread_of_caller(callframe);
+        wait::wait::<WorkDone>(&self.device, &cx, slot, promise);
         Ok(value)
     }
 

@@ -149,7 +149,7 @@ impl Waiter for MapWait {
         }
         if let Some(queued) = buffer.queued.take() {
             if buffer.is_current(&queued) {
-                buffer.issue(global, this_value, queued)?;
+                buffer.issue(cx, this_value, queued)?;
             }
         }
         Ok(())
@@ -335,7 +335,7 @@ impl GPUBuffer {
         if self.in_flight.get() {
             self.queued.set(Some(request));
         } else {
-            self.issue(global, this_value, request)?;
+            self.issue(&global.js_thread_of_caller(callframe), this_value, request)?;
         }
         Ok(promise)
     }
@@ -368,12 +368,8 @@ impl GPUBuffer {
     }
 
     /// Hands `request` to wgpu-core. Only called with nothing in flight.
-    fn issue(
-        &self,
-        global: &JSGlobalObject,
-        this_value: JSValue,
-        request: MapRequest,
-    ) -> JsResult<()> {
+    fn issue(&self, cx: &JsThread<'_>, this_value: JSValue, request: MapRequest) -> JsResult<()> {
+        let global = cx.global();
         debug_assert!(!self.in_flight.get());
         let slot = self.device.waits.slot::<MapResult>();
         let callback = {
@@ -403,7 +399,7 @@ impl GPUBuffer {
         self.in_flight.set(true);
         wait::wait::<MapWait>(
             &self.device,
-            &global.js_thread(),
+            cx,
             slot,
             MapWaitJs {
                 buffer: Strong::create(this_value, global),

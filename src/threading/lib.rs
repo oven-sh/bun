@@ -18,7 +18,7 @@ pub mod thread_pool;
 pub mod work_pool;
 
 pub mod guarded;
-pub mod signal_ring;
+pub mod pending_signals;
 pub mod unbounded_queue;
 #[path = "WaitGroup.rs"]
 pub mod wait_group;
@@ -32,10 +32,10 @@ pub use condition::{Condition, Condvar};
 pub use futex as Futex;
 pub use guarded::{Guarded, GuardedLock};
 pub use mutex::{Mutex, MutexGuard};
+pub use pending_signals::PendingSignals;
 pub use reset_event::ResetEvent;
 pub use rwlock::RwLock;
 pub use semaphore::Semaphore;
-pub use signal_ring::SignalRing;
 pub use thread_pool::ThreadPool;
 pub use unbounded_queue::{Link, Linked, UnboundedQueue};
 pub use wait_group::WaitGroup;

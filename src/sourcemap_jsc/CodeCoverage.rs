@@ -98,9 +98,41 @@ impl<'a> Report<'a> {
         }
     }
 
+    /// The file's coverage: what JSC recorded for every `SourceProvider` that
+    /// loaded it, merged the way `--parallel` merges the workers' reports.
     pub fn generate(
         global_this: &JSGlobalObject,
         byte_range_mapping: &'a ByteRangeMapping,
+        ignore_sourcemap_: bool,
+    ) -> Option<Report<'a>> {
+        let mut reports = byte_range_mapping
+            .source_ids
+            .iter()
+            .filter_map(|&source_id| {
+                Self::generate_for_source_id(
+                    global_this,
+                    byte_range_mapping,
+                    source_id,
+                    ignore_sourcemap_,
+                )
+            });
+        let first = reports.next()?;
+        let Some(second) = reports.next() else {
+            return Some(first);
+        };
+        let mut merged = MergedReport::default();
+        bun_core::handle_oom(merged.add(&first));
+        bun_core::handle_oom(merged.add(&second));
+        for report in reports {
+            bun_core::handle_oom(merged.add(&report));
+        }
+        Some(bun_core::handle_oom(merged.finish()))
+    }
+
+    fn generate_for_source_id(
+        global_this: &JSGlobalObject,
+        byte_range_mapping: &'a ByteRangeMapping,
+        source_id: i32,
         ignore_sourcemap_: bool,
     ) -> Option<Report<'a>> {
         bun_jsc::mark_binding();
@@ -122,7 +154,7 @@ impl<'a> Report<'a> {
         let ok = unsafe {
             CodeCoverage__withBlocksAndFunctions(
                 vm,
-                generator.byte_range_mapping.source_id,
+                source_id,
                 (&raw mut generator).cast::<c_void>(),
                 ignore_sourcemap_,
                 Generator::do_,
@@ -621,12 +653,17 @@ pub struct BasicBlockRange {
 
 pub struct ByteRangeMapping {
     pub(crate) line_offset_table: line_offset_table::List,
-    pub(crate) source_id: i32,
+    /// JSC records coverage per `SourceProvider`, and a file has one for each
+    /// time it was loaded: by the host and by each `Bun.ModuleGraph`, again
+    /// after a `require.cache` delete, or under another query string.
+    pub(crate) source_ids: Vec<i32>,
+    /// Of the text `line_offset_table` was built from.
+    source_hash: u64,
     pub source_url: Utf8Bytes<'static>,
 }
 
 // Keys are already wyhashes (`bun_wyhash::hash` of the source URL — see
-// `ByteRangeMapping__find`), so use the identity context instead of
+// `find`), so use the identity context instead of
 // re-hashing them.
 pub type ByteRangeMappingHashMap =
     bun_collections::HashMap<u64, ByteRangeMapping, bun_collections::IdentityContext<u64>>;
@@ -1009,13 +1046,15 @@ impl ByteRangeMapping {
 
     pub(crate) fn compute(
         source_contents: &[u8],
+        source_hash: u64,
         source_id: i32,
         source_url: Utf8Bytes<'static>,
     ) -> ByteRangeMapping {
         ByteRangeMapping {
             line_offset_table: LineOffsetTable::generate(source_contents, 0)
                 .unwrap_or_else(|_| bun_alloc::out_of_memory()),
-            source_id,
+            source_ids: vec![source_id],
+            source_hash,
             source_url,
         }
     }
@@ -1035,18 +1074,34 @@ extern "C" fn ByteRangeMapping__generate(
     let source_url = str_.clone().into_utf8();
     let hash = bun_wyhash::hash(source_url.slice());
     let source_contents = source_contents_str.to_utf8();
+    let source_hash = bun_wyhash::hash(source_contents.slice());
 
-    let new_value = ByteRangeMapping::compute(source_contents.slice(), source_id, source_url);
+    // The same text again is one more instance of the file. Another text
+    // replaces it: the line table, like the source map `SavedSourceMap` keeps
+    // for the path, can only describe the latest.
+    if let Some(existing) = map.get_mut(&hash)
+        && existing.source_hash == source_hash
+    {
+        existing.source_ids.push(source_id);
+        return;
+    }
+
+    let new_value =
+        ByteRangeMapping::compute(source_contents.slice(), source_hash, source_id, source_url);
     map.insert(hash, new_value);
 }
 
+/// `source_id` runs the text already on record for `source_url` (a provider
+/// that wraps the one `ByteRangeMapping__generate` was given).
 #[unsafe(no_mangle)]
-extern "C" fn ByteRangeMapping__getSourceID(this: &ByteRangeMapping) -> i32 {
-    this.source_id
+extern "C" fn ByteRangeMapping__addSourceID(source_url: &bun_core::String, source_id: i32) {
+    if let Some(mut this) = find(source_url) {
+        // SAFETY: pointer into the thread-local map, valid for this call.
+        unsafe { this.as_mut() }.source_ids.push(source_id);
+    }
 }
 
-#[unsafe(no_mangle)]
-extern "C" fn ByteRangeMapping__find(path: &bun_core::String) -> Option<NonNull<ByteRangeMapping>> {
+fn find(path: &bun_core::String) -> Option<NonNull<ByteRangeMapping>> {
     let slice = path.to_utf8();
 
     let map_ptr = thread_map_opt()?;
@@ -1057,31 +1112,22 @@ extern "C" fn ByteRangeMapping__find(path: &bun_core::String) -> Option<NonNull<
     Some(NonNull::from(entry))
 }
 
+/// The text table's row for `source_url`, `undefined` if nothing of the file
+/// has been compiled yet, `null` if the file is not instrumented.
 #[unsafe(no_mangle)]
 extern "C" fn ByteRangeMapping__findExecutedLines(
     global_this: &JSGlobalObject,
     source_url: &bun_core::String,
-    blocks_ptr: NonNull<BasicBlockRange>,
-    blocks_len: usize,
-    function_start_offset: usize,
     ignore_sourcemap: bool,
 ) -> JSValue {
-    let Some(this_ptr) = ByteRangeMapping__find(source_url) else {
+    let Some(this_ptr) = find(source_url) else {
         return JSValue::NULL;
     };
     // SAFETY: pointer into the thread-local map, valid for this call.
     let this = unsafe { &*this_ptr.as_ptr() };
 
-    // SAFETY: blocks_ptr[0..blocks_len] is a valid contiguous C array from JSC.
-    let all = unsafe { core::slice::from_raw_parts(blocks_ptr.as_ptr(), blocks_len) };
-    let blocks: &[BasicBlockRange] = &all[0..function_start_offset];
-    let mut function_blocks: &[BasicBlockRange] = &all[function_start_offset..blocks_len];
-    if function_blocks.len() > 1 {
-        function_blocks = &function_blocks[1..];
-    }
-    let report = match this.generate_report_from_blocks(blocks, function_blocks, ignore_sourcemap) {
-        Ok(r) => r,
-        Err(_) => return global_this.throw_out_of_memory_value(),
+    let Some(report) = Report::generate(global_this, this, ignore_sourcemap) else {
+        return JSValue::UNDEFINED;
     };
 
     let thresholds = Fraction::default();

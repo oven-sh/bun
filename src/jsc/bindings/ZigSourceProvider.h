@@ -22,7 +22,9 @@ namespace Zig {
 
 class GlobalObject;
 
-JSC::SourceID sourceIDForSourceURL(const WTF::String& sourceURL);
+// `provider` wraps a Zig::SourceProvider and runs its text under a SourceID of its own:
+// under `bun test --coverage`, what JSC records for that SourceID is the file's coverage too.
+void addCodeCoverageSourceID(JSC::VM&, JSC::SourceProvider& provider);
 JSC::SourceOrigin toSourceOrigin(const String& sourceURL, bool isBuiltin);
 class SourceProvider final : public JSC::SourceProvider {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(SourceProvider);

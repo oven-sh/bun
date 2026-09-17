@@ -1673,15 +1673,13 @@ where
             // SAFETY: from_js returns a live *mut NodeHTTPResponse; shared —
             // its mutable state is `Cell`/`JsCell` and `upgrade` takes `&self`.
             let node_http_response = unsafe { &*node_http_response };
-            if node_http_response
-                .flags
-                .get()
-                .contains(NodeHTTPResponseFlags::ENDED)
-                || node_http_response
+            let is_ended_or_closed = || {
+                node_http_response
                     .flags
                     .get()
-                    .contains(NodeHTTPResponseFlags::SOCKET_CLOSED)
-            {
+                    .intersects(NodeHTTPResponseFlags::ENDED | NodeHTTPResponseFlags::SOCKET_CLOSED)
+            };
+            if is_ended_or_closed() {
                 return Ok(JSValue::FALSE);
             }
 
@@ -1760,6 +1758,11 @@ where
                             // Remove from headers so it's not written twice (once here and once by upgrade())
                             fetch_headers_to_use
                                 .fast_remove(HTTPHeaderName::SecWebSocketExtensions);
+                        }
+                        // The option getters and the headers conversion run user
+                        // code, which may have ended the response.
+                        if is_ended_or_closed() {
+                            return Ok(JSValue::FALSE);
                         }
                         if let Some(raw_response) = node_http_response.raw_response.get() {
                             // we must write the status first so that 200 OK isn't written

@@ -90,9 +90,16 @@ function Remove-BunTempFiles {
       return
     }
 
+    # Device paths can bypass GetFullPath normalization. Invalid path characters
+    # also need an explicit check on the .NET runtime used by PowerShell 7.
+    if ($TempDir -match '^[\\/]{2}[?.][\\/]' -or
+        ($TempDir -replace '^[A-Za-z]:', '') -match '[\x00-\x1f<>:"|?*]') {
+      return
+    }
+
     # IsPathRooted also accepts root-relative and drive-relative paths.
     $TempRoot = [IO.Path]::GetPathRoot($TempDir)
-    if ($TempRoot -eq "\" -or $TempRoot -match '^[A-Za-z]:$') {
+    if ($TempRoot -eq "\" -or $TempRoot -eq "/" -or $TempRoot -match '^[A-Za-z]:$') {
       return
     }
 
@@ -103,14 +110,25 @@ function Remove-BunTempFiles {
     if ($TempDirWithoutTrailingSeparator -eq $TempRootWithoutTrailingSeparator) {
       return
     }
+    if (-not (Test-Path -LiteralPath $TempDir -PathType Container -ErrorAction Stop)) {
+      return
+    }
   } catch {
     return
   }
 
-  $EscapedTempDir = [Management.Automation.WildcardPattern]::Escape($TempDir)
+  # Interpret TEMP and each returned filename literally, including brackets and
+  # backticks. Only the leaf-name filter should contain wildcards.
   foreach ($Pattern in @("bun-*", "bunx-*")) {
     try {
-      Remove-Item (Join-Path $EscapedTempDir $Pattern) -Recurse -Force
+      Get-ChildItem -LiteralPath $TempDir -Filter $Pattern -Force -ErrorAction Stop | ForEach-Object {
+        # The provider filter may also match a short (8.3) alias.
+        if ($_.Name -like $Pattern) {
+          try {
+            Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction Stop
+          } catch {}
+        }
+      }
     } catch {}
   }
 }

@@ -3191,7 +3191,6 @@ mod spawn_process_body {
 
             Bun__currentSyncPID.store(0, core::sync::atomic::Ordering::Relaxed);
             let _signals = SignalForwarding::register();
-            keep_children_waitable();
 
             // SAFETY: caller-built argv/envp are null-terminated C-string
             // arrays with argv[0] non-null; valid for this call.
@@ -3965,26 +3964,6 @@ mod spawn_process_body {
                         }
                     }
                 }
-            }
-        }
-
-        /// An inherited `SIG_IGN` on SIGCHLD makes the kernel reap the child
-        /// before `wait4()` runs (ECHILD). `SIG_DFL` keeps it waitable.
-        #[cfg(unix)]
-        fn keep_children_waitable() {
-            // SAFETY: zeroed sigaction is valid for a query and, with SIG_DFL,
-            // a valid disposition.
-            unsafe {
-                let mut current: libc::sigaction = bun_core::ffi::zeroed();
-                if libc::sigaction(libc::SIGCHLD, core::ptr::null(), &raw mut current) != 0
-                    || current.sa_sigaction != libc::SIG_IGN
-                {
-                    return;
-                }
-                let mut sa: libc::sigaction = bun_core::ffi::zeroed();
-                sa.sa_sigaction = libc::SIG_DFL;
-                libc::sigemptyset(&raw mut sa.sa_mask);
-                let _ = libc::sigaction(libc::SIGCHLD, &raw const sa, core::ptr::null_mut());
             }
         }
 

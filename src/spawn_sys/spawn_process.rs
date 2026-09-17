@@ -613,6 +613,29 @@ impl Drop for PosixSpawnFdGuard {
     }
 }
 
+/// An inherited `SIG_IGN` on SIGCHLD makes the kernel reap the child before
+/// `wait4()` runs (ECHILD). `SIG_DFL` keeps it waitable.
+#[cfg(unix)]
+fn keep_children_waitable() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        // SAFETY: zeroed sigaction is valid for a query and, with SIG_DFL, a
+        // valid disposition.
+        unsafe {
+            let mut current: libc::sigaction = bun_core::ffi::zeroed();
+            if libc::sigaction(libc::SIGCHLD, core::ptr::null(), &raw mut current) != 0
+                || current.sa_sigaction != libc::SIG_IGN
+            {
+                return;
+            }
+            let mut sa: libc::sigaction = bun_core::ffi::zeroed();
+            sa.sa_sigaction = libc::SIG_DFL;
+            libc::sigemptyset(&raw mut sa.sa_mask);
+            let _ = libc::sigaction(libc::SIGCHLD, &raw const sa, core::ptr::null_mut());
+        }
+    });
+}
+
 /// # Safety
 /// `argv` must point to a null-terminated array of NUL-terminated C strings
 /// with at least one non-null element (`argv[0]`); `envp` must point to a
@@ -625,6 +648,7 @@ pub unsafe fn spawn_process_posix(
     envp: Envp,
 ) -> crate::Result<bun_sys::Result<PosixSpawnResult>> {
     bun_analytics::features::spawn.fetch_add(1, Ordering::Relaxed);
+    keep_children_waitable();
     let mut actions = PosixSpawnActions::init()?;
 
     let mut attr = PosixSpawnAttr::init()?;

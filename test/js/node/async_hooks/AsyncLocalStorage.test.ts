@@ -1622,3 +1622,28 @@ test("exit() and nested run() release the shadowed outer store", async () => {
   for (const n of alive()) expect(n).toBeLessThanOrEqual(N / 2);
   for (const t of timers) clearTimeout(t);
 });
+
+test("cleared timers release their callback async context", async () => {
+  const handles: Array<ReturnType<typeof setTimeout> | ReturnType<typeof setImmediate>> = [];
+  const references = [setTimeout, setInterval, setImmediate].map(setTimer => {
+    let store: object | undefined = { setTimer: setTimer.name };
+    const reference = new WeakRef(store);
+    const storage = new AsyncLocalStorage<object>();
+    const handle = storage.run(store, () => setTimer(() => {}, 60_000));
+    if (setTimer === setImmediate) {
+      clearImmediate(handle as ReturnType<typeof setImmediate>);
+    } else {
+      clearTimeout(handle as ReturnType<typeof setTimeout>);
+    }
+    handles.push(handle);
+    store = undefined;
+    return reference;
+  });
+
+  for (let pass = 0; pass < 8; pass++) {
+    Bun.gc(true);
+    await Promise.resolve();
+  }
+  expect(references.map(reference => reference.deref())).toEqual([undefined, undefined, undefined]);
+  expect(handles.map(handle => handle._destroyed)).toEqual([true, true, true]);
+});

@@ -1182,12 +1182,20 @@ impl SendQueue {
                 log!("SendQueue#_onAfterIPCClosed");
                 if !sq.close_event_sent.replace(true) {
                     let global = sq.get_global_this();
+                    let mut behind_handle = false;
                     if let Some(item) = sq.waiting_for_ack.with_mut(|w| w.take()) {
+                        behind_handle = true;
                         item.complete(&global);
                     }
-                    // on_write_complete already dequeued everything fully written; the rest was never delivered.
+                    // node calls back each write it submitted, with null even if the close cancels it: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L868-L874
+                    // Sends parked behind an unacknowledged handle were never submitted, so their callbacks never run: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L818-L853
                     for item in sq.queue.with_mut(std::mem::take) {
-                        item.abort_unsent(&global);
+                        if behind_handle {
+                            item.abort_unsent(&global);
+                        } else {
+                            behind_handle = item.handle.is_some();
+                            item.complete(&global);
+                        }
                     }
                     if let Some(owner) = sq.owner.get() {
                         owner.handle_ipc_close();

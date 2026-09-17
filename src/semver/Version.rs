@@ -114,6 +114,25 @@ impl<T: VersionInt> VersionType<T> {
         Self::parse(SlicedString { buf: slice, slice })
     }
 
+    /// `input` with the leading `v`, `=` and whitespace removed, or `None`
+    /// when `input` is not one complete version (`1.0`, `1.0.0.1`, `1.x`,
+    /// `not-a-version`). `v1.0.0` gives `1.0.0`.
+    pub fn clean(input: &[u8]) -> Option<&[u8]> {
+        let input = input.trim_ascii();
+        let parsed = Self::parse_utf8(input);
+        if !parsed.valid || parsed.wildcard != Wildcard::None || parsed.len as usize != input.len()
+        {
+            return None;
+        }
+        let mut start = 0;
+        while start < input.len()
+            && (matches!(input[start], b'v' | b'=') || input[start].is_ascii_whitespace())
+        {
+            start += 1;
+        }
+        Some(&input[start..])
+    }
+
     /// Copies the tag strings into `buf` at `*offset` (advancing it); the
     /// returned version's strings are offsets into the whole of `buf`.
     pub fn clone_into(self, slice: &[u8], buf: &mut [u8], offset: &mut usize) -> Self {
@@ -1237,5 +1256,39 @@ mod tests {
         assert_eq!(a2.tag.build.slice(&buf), b"build.aaaaaaaa");
         assert_eq!(b2.tag.pre.slice(&buf), b"canary.20240315");
         assert_eq!(b2.tag.build.slice(&buf), b"build.bbbbbbbb");
+    }
+
+    #[test]
+    fn clean_keeps_one_complete_version() {
+        for (input, expected) in [
+            (&b"1.0.0"[..], &b"1.0.0"[..]),
+            (b"v1.0.0", b"1.0.0"),
+            (b"=1.0.0", b"1.0.0"),
+            (b" v 1.0.0\n", b"1.0.0"),
+            (b"1.0.0-beta.1+build.5", b"1.0.0-beta.1+build.5"),
+            (b"1.0.0 ", b"1.0.0"),
+        ] {
+            assert_eq!(Version::clean(input), Some(expected), "{input:?}");
+        }
+    }
+
+    #[test]
+    fn clean_rejects_anything_else() {
+        for input in [
+            &b""[..],
+            b"v",
+            b"1",
+            b"1.0",
+            b"1.0.0.1",
+            b"1.x.0",
+            b"*",
+            b"^1.0.0",
+            b"1.0.0 || 2.0.0",
+            b"not-a-version",
+            b"1.0.0-beta_1",
+            b"1.0.0 beta",
+        ] {
+            assert_eq!(Version::clean(input), None, "{input:?}");
+        }
     }
 }

@@ -124,6 +124,8 @@ pub enum FromTarballError {
     InvalidPackageName,
     #[error("InvalidPackageVersion")]
     InvalidPackageVersion,
+    #[error("NotSemverVersion")]
+    NotSemverVersion,
     #[error("PrivatePackage")]
     PrivatePackage,
     #[error("RestrictedUnscopedPackage")]
@@ -387,12 +389,14 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
                 }
             }
 
-            let version: Box<[u8]> = json_get_string_cloned(&json, &bump, b"version")?
-                .ok_or(FromTarballError::MissingPackageVersion)?
-                .into();
+            let version = json_get_string_cloned(&json, &bump, b"version")?
+                .ok_or(FromTarballError::MissingPackageVersion)?;
             if version.is_empty() {
                 return Err(FromTarballError::InvalidPackageVersion);
             }
+            let version: Box<[u8]> = bun_semver::Version::clean(version)
+                .ok_or(FromTarballError::NotSemverVersion)?
+                .into();
 
             (name, version, json, source)
         };
@@ -575,6 +579,12 @@ impl PublishCommand {
                                 (),
                             );
                         }
+                        FromTarballError::NotSemverVersion => {
+                            Output::err_generic(
+                                "package.json `version` is not a valid semver version",
+                                (),
+                            );
+                        }
                         FromTarballError::MissingPackageJSON => {
                             Output::err_generic(
                                 "failed to find package.json in tarball '{}'",
@@ -634,6 +644,12 @@ impl PublishCommand {
                     PackError::InvalidPackageName | PackError::InvalidPackageVersion => {
                         Output::err_generic(
                             "package.json `name` and `version` fields must be non-empty strings",
+                            (),
+                        );
+                    }
+                    PackError::NotSemverVersion => {
+                        Output::err_generic(
+                            "package.json `version` is not a valid semver version",
                             (),
                         );
                     }

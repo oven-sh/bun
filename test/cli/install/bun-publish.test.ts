@@ -1352,6 +1352,98 @@ test("dist.tarball in the published manifest does not include userinfo from the 
   expect(exitCode).toBe(0);
 });
 
+describe.concurrent("package.json version", () => {
+  // Records every PUT body, so a test can assert what `bun publish` sent (or that it sent nothing).
+  function registryMock() {
+    const bodies: any[] = [];
+    const server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        if (req.method === "PUT") bodies.push(await req.json());
+        return new Response("OK", { status: 200 });
+      },
+    });
+    return {
+      bodies,
+      url: `http://localhost:${server.port}/`,
+      // The token in the url is the credential. Without one, `bun publish` fails before it validates the package.
+      registry: `http://:t@localhost:${server.port}/`,
+      [Symbol.dispose]: () => server.stop(true),
+    };
+  }
+
+  async function packageDirFor(name: string, version: string) {
+    const packageDir = tmpdirSync();
+    await write(join(packageDir, "package.json"), JSON.stringify({ name, version }));
+    return packageDir;
+  }
+
+  const invalid = ["1.0.0.1", "not-a-version", "1.0", "1.0.0-beta_1", "1.x.0"];
+
+  for (const version of invalid) {
+    test(`refuses ${JSON.stringify(version)} before sending a request`, async () => {
+      using mock = registryMock();
+      const packageDir = await packageDirFor("invalid-version-pkg", version);
+
+      const { err, exitCode } = await publish(env, packageDir, "--registry", mock.registry);
+      expect(err).toBe("error: package.json `version` is not a valid semver version\n");
+      expect(mock.bodies).toEqual([]);
+      expect(exitCode).toBe(1);
+    });
+
+    test(`refuses ${JSON.stringify(version)} in a tarball before sending a request`, async () => {
+      using mock = registryMock();
+      const packageDir = await packageDirFor("invalid-version-tarball-pkg", version);
+      await pack(packageDir, env);
+
+      const { err, exitCode } = await publish(
+        env,
+        packageDir,
+        `./invalid-version-tarball-pkg-${version}.tgz`,
+        "--registry",
+        mock.registry,
+      );
+      expect(err).toBe("error: package.json `version` is not a valid semver version\n");
+      expect(mock.bodies).toEqual([]);
+      expect(exitCode).toBe(1);
+    });
+  }
+
+  test("publishes v1.0.0 as 1.0.0", async () => {
+    using mock = registryMock();
+    const packageDir = await packageDirFor("v-prefix-pkg", "v1.0.0");
+
+    const { out, err, exitCode } = await publish(env, packageDir, "--registry", mock.registry);
+    expect(err).not.toContain("error:");
+    expect(out).toContain(" + v-prefix-pkg@1.0.0\n");
+    expect(mock.bodies).toHaveLength(1);
+    expect(Object.keys(mock.bodies[0].versions)).toEqual(["1.0.0"]);
+    expect(mock.bodies[0]["dist-tags"]).toEqual({ latest: "1.0.0" });
+    expect(mock.bodies[0].versions["1.0.0"].dist.tarball).toBe(`${mock.url}v-prefix-pkg/-/v-prefix-pkg-1.0.0.tgz`);
+    expect(exitCode).toBe(0);
+  });
+
+  test("publishes v1.0.0 in a tarball as 1.0.0", async () => {
+    using mock = registryMock();
+    const packageDir = await packageDirFor("v-prefix-tarball-pkg", "v1.0.0");
+    await pack(packageDir, env);
+
+    const { out, err, exitCode } = await publish(
+      env,
+      packageDir,
+      "./v-prefix-tarball-pkg-v1.0.0.tgz",
+      "--registry",
+      mock.registry,
+    );
+    expect(err).not.toContain("error:");
+    expect(out).toContain(" + v-prefix-tarball-pkg@1.0.0\n");
+    expect(mock.bodies).toHaveLength(1);
+    expect(Object.keys(mock.bodies[0].versions)).toEqual(["1.0.0"]);
+    expect(mock.bodies[0]["dist-tags"]).toEqual({ latest: "1.0.0" });
+    expect(exitCode).toBe(0);
+  });
+});
+
 describe("--tolerate-republish", async () => {
   test("republishing normally fails", async () => {
     const { packageDir, packageJson } = await registry.createTestDir();

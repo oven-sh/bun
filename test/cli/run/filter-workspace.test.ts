@@ -317,6 +317,42 @@ describe("bun", () => {
     });
   });
 
+  test.each([
+    ["--filter", ["--filter", "a"]],
+    ["--workspaces", ["--workspaces"]],
+  ])("forward arguments to the script, not to its pre and post scripts (%s)", async (_label, selector) => {
+    using dir = tempDir("testworkspace", {
+      "package.json": JSON.stringify({ name: "root", private: true, workspaces: ["packages/*"] }),
+      "packages/a/argv.js": "console.log(JSON.stringify(process.argv.slice(2)));",
+      "packages/a/package.json": JSON.stringify({
+        name: "a",
+        scripts: {
+          prescript: `${bunExe()} argv.js pre`,
+          script: `${bunExe()} argv.js main`,
+          postscript: `${bunExe()} argv.js post`,
+        },
+      }),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", ...selector, "script", "--", "--coverage", "b c"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.split("\n").filter(Boolean)).toEqual([
+      'a prescript: ["pre"]',
+      "a prescript: Exited with code 0",
+      'a script: ["main","--coverage","b c"]',
+      "a script: Exited with code 0",
+      'a postscript: ["post"]',
+      "a postscript: Exited with code 0",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
   test("respect dependency order", () => {
     using dir = tempDir("testworkspace", {
       dep0: {

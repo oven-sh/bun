@@ -111,6 +111,7 @@ public:
         JSValue exportsObject, bool hasEvaluated, JSValue parent);
 
     static JSObject* createBoundRequireFunction(VM& vm, JSGlobalObject* lexicalGlobalObject, const WTF::String& pathString);
+    static JSObject* createBoundRequireFunction(VM& vm, JSGlobalObject* lexicalGlobalObject, JSString* filename);
 
     void toSyntheticSource(JSC::JSGlobalObject* globalObject,
         const JSC::Identifier& moduleKey,

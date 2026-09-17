@@ -129,12 +129,47 @@ describe("AbortSignal", () => {
       const target = new EventTarget();
       let calls = 0;
       (() => target.addEventListener("ping", () => calls++, { signal: AbortSignal.any([AbortSignal.timeout(30)]) }))();
+      target.dispatchEvent(new Event("ping"));
       await collect();
       // Armed after the one under test, with a longer delay: it fires after that one had its turn.
       const fence = AbortSignal.timeout(60);
       await new Promise(resolve => fence.addEventListener("abort", resolve, { once: true }));
       target.dispatchEvent(new Event("ping"));
-      expect(calls).toBe(0);
+      expect(calls).toBe(1);
+    });
+
+    test("the signal goes with its listener's target while the source lives on", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const { heapStats } = require("bun:jsc");
+            const controller = new AbortController();
+            for (let i = 0; i < 200; i++) {
+              new EventTarget().addEventListener("ping", () => {}, { signal: AbortSignal.any([controller.signal]) });
+            }
+            let signals;
+            for (let i = 0; i < 10; i++) {
+              Bun.gc(true);
+              await new Promise(resolve => setImmediate(resolve));
+              signals = heapStats().objectTypeCounts.AbortSignal ?? 0;
+              if (signals <= 3) break;
+            }
+            console.log(JSON.stringify({ signals, aborted: controller.signal.aborted }));
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      const { signals, aborted } = JSON.parse(stdout.trim());
+      // The controller's signal, plus the class's prototype and constructor. Pinned: 203.
+      expect(signals).toBeLessThanOrEqual(3);
+      expect(aborted).toBe(false);
+      expect(exitCode).toBe(0);
     });
   });
 

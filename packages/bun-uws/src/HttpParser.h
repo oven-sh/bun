@@ -1446,8 +1446,13 @@ struct HttpResponseData;
     }
 
 public:
+    /* When requestHandler returns something other than user (it upgraded or closed
+     * the socket), parsing stops right after that request's head and consumedBytes()
+     * of the result is the offset of the next byte in data. The caller owns the bytes
+     * from there on. The handler may have destroyed this parser by then. */
     template <bool IsNodeHttp>
     HttpParserResult consumePostPadded(uint64_t maxHeaderSize, bool& isConnectRequest, bool requireHostHeader, bool useStrictMethodValidation, bool useInsecureHTTPParser, bool useLenientTransferEncoding, std::string *nodeHttpRequestTrailers, uint64_t *chunkedExtensionsByteCount, char *data, unsigned int length, void *user, MoveOnlyFunction<void *(void *, HttpRequest *)> &&requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &&dataHandler) {
+        char *const readStart = data;
         /* The fallback buffer may not exceed the configured per-request header
          * limit (per-server maxHeaderSize can raise it above the default). */
         const size_t maxFallbackSize = maxHeaderSize ? (size_t) (maxHeaderSize + MAX_HEADER_FRAMING_SLACK) : MAX_FALLBACK_SIZE;
@@ -1526,6 +1531,11 @@ public:
             HttpParserResult consumed = fenceAndConsumePostPadded<true, IsNodeHttp>(maxHeaderSize, isConnectRequest, requireHostHeader, useStrictMethodValidation, useInsecureHTTPParser, useLenientTransferEncoding, nodeHttpRequestTrailers, chunkedExtensionsByteCount, fallback.data(), (unsigned int) fallback.length(), user, &req, requestHandler, dataHandler);
             /* Return data will be different than user if we are upgraded to WebSocket or have an error */
             if (consumed.returnedData != user) {
+                /* The count is in fallback bytes, and the first `had` of them came from
+                 * earlier reads. The head ends past them: those reads did not complete it. */
+                if (!consumed.isError()) {
+                    consumed.errorStatusCodeOrConsumedBytes -= had;
+                }
                 return consumed;
             }
             /* safe to call consumed.consumedBytes() because consumed.returnedData == user */
@@ -1608,6 +1618,10 @@ public:
         HttpParserResult consumed = fenceAndConsumePostPadded<false, IsNodeHttp>(maxHeaderSize, isConnectRequest, requireHostHeader, useStrictMethodValidation, useInsecureHTTPParser, useLenientTransferEncoding, nodeHttpRequestTrailers, chunkedExtensionsByteCount, data, length, user, &req, requestHandler, dataHandler);
         /* Return data will be different than user if we are upgraded to WebSocket or have an error */
         if (consumed.returnedData != user) {
+            /* A body or a fallback head ahead of this request moved data forward. */
+            if (!consumed.isError()) {
+                consumed.errorStatusCodeOrConsumedBytes += (unsigned int) (data - readStart);
+            }
             return consumed;
         }
         /* safe to call consumed.consumedBytes() because consumed.returnedData == user */

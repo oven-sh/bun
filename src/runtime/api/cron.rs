@@ -1412,7 +1412,11 @@ bun_jsc::impl_abort_handle_owner!(CronJob, abort_handle, |this, cause| {
         cause,
         bun_jsc::AbortCause::ContextStopped(bun_jsc::StopReason::VmTeardown)
     );
-    CronJob::stop_with_its_context(job.self_ref.get().this_ptr(), job.global.bun_vm(), vm_is_going)
+    CronJob::stop_with_its_context(
+        job.self_ref.get().this_ptr(),
+        job.global.bun_vm(),
+        vm_is_going,
+    )
 });
 
 pub mod js {

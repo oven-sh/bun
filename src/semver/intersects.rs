@@ -109,8 +109,7 @@ impl Query {
 }
 
 impl Group {
-    /// Whether some version satisfies both groups. An exact version is checked with `satisfies`
-    /// (prerelease rule included); two ranges are compared by their bounds only.
+    /// Whether some version satisfies both groups; an exact version goes through `satisfies`, two ranges compare bounds only.
     pub fn intersects(&self, self_buf: &[u8], other: &Group, other_buf: &[u8]) -> bool {
         if self.is_star() || other.is_star() {
             return true;

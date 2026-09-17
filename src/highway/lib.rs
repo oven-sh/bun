@@ -730,17 +730,10 @@ pub fn fill_with_skip_mask_inplace(mask: [u8; 4], buf: &mut [u8], skip_mask: boo
     }
 }
 
-/// Below this length (one AVX-512 vector) [`constant_time_eq`] cannot beat a
-/// plain byte loop such as BoringSSL `CRYPTO_memcmp`: the dispatch call costs
-/// more than the few vector operations save.
+/// Below one AVX-512 vector, the dispatch call of [`constant_time_eq`] costs more than a byte loop.
 pub const CONSTANT_TIME_EQ_MIN_LEN: usize = 64;
 
-/// Constant-time byte-slice equality. Every byte pair is XORed into an
-/// accumulator that is tested once, after the last load, so the time depends
-/// on the length only, not on where the slices differ.
-///
-/// Returns `false` when the lengths differ. That check is not constant-time:
-/// the length is not a secret.
+/// Constant-time equality: the time depends on the length only. Different lengths compare unequal.
 #[inline(always)]
 pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {

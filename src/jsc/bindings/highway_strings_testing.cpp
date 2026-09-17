@@ -32,8 +32,8 @@ namespace Bun {
 // `arg` is the byte for the *Char ops and the needle / char-set view for the
 // others. Returns exactly what the kernel returns: an index (with
 // `haystack.length` meaning "not found" for the index_of family), a count, or
-// for memmem/memrmem the match offset with -1 for "not found". constantTimeEq
-// compares `haystack` with an `arg` view of the same length: 1 = equal.
+// for memmem/memrmem the match offset with -1 for "not found".
+// constantTimeEq compares `haystack` with an `arg` view of the same length: 1 = equal.
 BUN_DEFINE_HOST_FUNCTION(Bun__highwayStringsForTesting, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);

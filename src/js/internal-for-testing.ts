@@ -27,8 +27,7 @@ export const xxHash3ForTesting: (view: ArrayBufferView, seed?: number | bigint) 
 // behind `bun_core::strings`, driven directly so tests can sweep lengths and
 // alignments. Returns the kernel's raw result: an index (`haystack.length` =
 // not found), a count, or for memmem/memrmem the offset with -1 = not found.
-// constantTimeEq (the kernel behind `crypto.timingSafeEqual` from 64 bytes)
-// compares `haystack` with an `arg` view of the same length: 1 = equal.
+// constantTimeEq (behind `crypto.timingSafeEqual` from 64 bytes): `haystack` and `arg` of one length, 1 = equal.
 export const highwayStringsForTesting: (
   op:
     | "indexOfChar"

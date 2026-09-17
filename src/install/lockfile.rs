@@ -905,11 +905,7 @@ impl Lockfile {
             .contains_name(dep.name_hash, dep.name.slice(buf), buf)
     }
 
-    /// May the path of folder package `id` leave the project? Yes when a trusted
-    /// dependency resolves to it. Every dependency in the lockfile counts, also one
-    /// that this install filters out (`--production`, `--filter`): the user wrote
-    /// the path either way. For the isolated linker, which links a folder package
-    /// once for all of its dependents.
+    /// Does a trusted dependency, installed or filtered out, resolve to folder package `id`?
     pub(crate) fn is_trusted_folder_package(&self, id: PackageID) -> bool {
         self.buffers
             .resolutions

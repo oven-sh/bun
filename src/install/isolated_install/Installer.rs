@@ -912,9 +912,7 @@ impl Task {
                                 ResolutionTag::Root => b".",
                                 _ => unreachable!(),
                             };
-                            // `path` is opened relative to the project. The resolver refuses a
-                            // path that leaves it unless the user wrote it, but a lockfile can
-                            // still carry one (the hoisted installer has the same check).
+                            // A lockfile can carry a path that the resolver refuses.
                             if pkg_res.tag == ResolutionTag::Folder
                                 && bin::bin_target_escapes_package_dir(path)
                                 && !lockfile.is_trusted_folder_package(pkg_id)

@@ -2203,35 +2203,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // (since-moved) stack slot. On Err, the `Box<Self>` drop frees the
         // half-built server.
         // SAFETY: `server` is the freshly-boxed `*mut Self`; uniquely owned here.
-        if let Some(bake_options) = unsafe { &mut (*server).config.bake } {
-            // SAFETY: `server` is the freshly-boxed `*mut Self`; uniquely owned here.
-            let broadcast = unsafe {
-                (*server)
-                    .config
-                    .broadcast_console_log_from_browser_to_server_for_bake
-            };
-            let dev = match crate::bake::DevServer::init(crate::bake::DevServer::Options {
-                arena: &bake_options.arena,
-                root: bake_options.root,
-                // SAFETY: per-thread VM singleton; STATIC lifetime.
-                vm: jsc::VirtualMachine::get(),
-                // LAYERING: `UserOptions` carries the `bake_body` shapes;
-                // `DevServer::Options` consumes the keystone shapes;
-                // `From` impls in `bake/mod.rs` bridge
-                // until the duplicates are collapsed.
-                framework: core::mem::take(&mut bake_options.framework).into(),
-                bundler_options: core::mem::take(&mut bake_options.bundler_options).into(),
-                broadcast_console_log_from_browser_to_server: broadcast,
-            }) {
-                Ok(d) => d,
-                Err(e) => {
-                    // SAFETY: paired with heap::alloc above.
-                    drop(unsafe { bun_core::heap::take(server) });
-                    return Err(e);
-                }
-            };
-            // SAFETY: `server` is uniquely owned here.
-            unsafe { (*server).dev_server = Some(dev) };
+        if let Err(e) = unsafe { (*server).init_dev_server() } {
+            // SAFETY: paired with heap::alloc above.
+            drop(unsafe { bun_core::heap::take(server) });
+            return Err(e);
         }
 
         if SSL {
@@ -2241,6 +2216,29 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
 
         Ok(server)
+    }
+
+    /// Creates the DevServer from `self.config.bake`, which must be at its final heap address.
+    pub(super) fn init_dev_server(&mut self) -> JsResult<()> {
+        let Some(bake_options) = &mut self.config.bake else {
+            return Ok(());
+        };
+        let mut dev = crate::bake::DevServer::init(crate::bake::DevServer::Options {
+            arena: &bake_options.arena,
+            root: bake_options.root,
+            // SAFETY: per-thread VM singleton; STATIC lifetime.
+            vm: jsc::VirtualMachine::get(),
+            // LAYERING: the `From` impls in `bake/mod.rs` bridge `bake_body` shapes to the keystone shapes.
+            framework: core::mem::take(&mut bake_options.framework).into(),
+            bundler_options: core::mem::take(&mut bake_options.bundler_options).into(),
+            broadcast_console_log_from_browser_to_server: self
+                .config
+                .broadcast_console_log_from_browser_to_server_for_bake,
+        })?;
+        // Set already when a reload gets here. `set_inspector_server_id` covers the other order.
+        dev.inspector_server_id = self.inspector_server_id;
+        self.dev_server = Some(dev);
+        Ok(())
     }
 
     // ─── set_routes ──────────────────────────────────────────────────────────

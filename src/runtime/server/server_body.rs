@@ -2061,6 +2061,34 @@ where
         Ok(JSValue::TRUE)
     }
 
+    /// `init()` creates the DevServer for a first config with an html route. A reload that brings the first one creates it here.
+    fn init_dev_server_for_reload(
+        &mut self,
+        new_config: &mut ServerConfig,
+        global: &JSGlobalObject,
+    ) -> JsResult<()> {
+        // The DevServer is HTTP/1-only: with it, an html route answers HTTP/2 and HTTP/3 with a 503.
+        if self.dev_server.is_some()
+            || !self.config.development.is_hmr_enabled()
+            || self.h2_app.is_some()
+            || self.h3_app.is_some()
+            || !self.has_listener()
+        {
+            return Ok(());
+        }
+        if !self
+            .config
+            .take_dev_server_options_from(new_config, global)?
+        {
+            return Ok(());
+        }
+        if let Err(err) = self.init_dev_server() {
+            self.config.drop_dev_server_options();
+            return Err(err);
+        }
+        Ok(())
+    }
+
     /// Swaps the live server's mutable
     /// configuration (handlers, websocket, routes) with `new_config` and
     /// re-registers routes on the uws app(s). Ownership of moved-in fields
@@ -2072,8 +2100,11 @@ where
         &mut self,
         new_config: &mut ServerConfig,
         global: &JSGlobalObject,
-    ) {
+    ) -> JsResult<()> {
         httplog!("onReload");
+
+        // Before anything is swapped, so that a failure leaves the server as it was.
+        self.init_dev_server_for_reload(new_config, global)?;
 
         // SAFETY: `on_reload` is only reachable while the server is running
         // (`self.app` set in `listen()`).
@@ -2175,6 +2206,7 @@ where
                 ));
             }
         }
+        Ok(())
     }
 
     pub(crate) fn reload_static_routes(&mut self) -> Result<bool, crate::Error> {
@@ -2226,7 +2258,7 @@ where
         // ws shadows, and each `wrap_handler_slot` call allocates via
         // `with_async_context_if_needed`. Same window as `serve()`; same fix.
         let _handler_pins = super::protect_handler_shadows(&new_config);
-        self.on_reload_from_zig(&mut new_config, global);
+        self.on_reload_from_zig(&mut new_config, global)?;
 
         Ok(self.js_value.try_get().unwrap_or(JSValue::UNDEFINED))
     }

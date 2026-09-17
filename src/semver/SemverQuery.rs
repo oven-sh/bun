@@ -568,7 +568,10 @@ impl Group {
             && !self.head.head.range.has_left()
     }
 
-    /// npm's `includePrerelease`: a prerelease only has to satisfy the comparators.
+    /// npm's `includePrerelease`: a prerelease only has to satisfy the comparators. The parser has
+    /// no such mode. There node-semver also puts `-0` on a lower bound it derives (`>1` is
+    /// `>=2.0.0-0`, `1.x` starts at `>=1.0.0-0`), so it admits a prerelease of that bound
+    /// (`2.0.0-rc.1`). This does not.
     #[inline]
     pub fn satisfies_including_prerelease(
         &self,
@@ -734,15 +737,7 @@ impl Token {
                     ..Default::default()
                 },
                 TokenTag::Gt => Range {
-                    left: Comparator {
-                        op: RangeOp::Gt,
-                        version: Version {
-                            major: version.major.unwrap_or(0),
-                            minor: u64::MAX,
-                            patch: u64::MAX,
-                            ..Default::default()
-                        },
-                    },
+                    left: Comparator::gte_next_major(version.major.unwrap_or(0)),
                     ..Default::default()
                 },
                 TokenTag::Gte => Range {
@@ -785,15 +780,10 @@ impl Token {
                     ..Default::default()
                 },
                 TokenTag::Gt => Range {
-                    left: Comparator {
-                        op: RangeOp::Gt,
-                        version: Version {
-                            major: version.major.unwrap_or(0),
-                            minor: version.minor.unwrap_or(0),
-                            patch: u64::MAX,
-                            ..Default::default()
-                        },
-                    },
+                    left: Comparator::gte_next_minor(
+                        version.major.unwrap_or(0),
+                        version.minor.unwrap_or(0),
+                    ),
                     ..Default::default()
                 },
                 TokenTag::Gte => Range {

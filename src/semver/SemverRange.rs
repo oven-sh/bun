@@ -253,6 +253,46 @@ impl Comparator {
         }
     }
 
+    /// `>= {major+1}.0.0`, how node-semver reads `>{major}` and `>{major}.x`. On overflow,
+    /// `> u64::MAX.u64::MAX.u64::MAX`, which no version satisfies. With `includePrerelease`
+    /// node-semver starts at `{major+1}.0.0-0`: see `Group::satisfies_including_prerelease`.
+    pub(crate) fn gte_next_major(major: u64) -> Comparator {
+        match major.checked_add(1) {
+            Some(m) => Comparator {
+                op: Op::Gte,
+                version: Version {
+                    major: m,
+                    ..Default::default()
+                },
+            },
+            None => Comparator {
+                op: Op::Gt,
+                version: Version {
+                    major: u64::MAX,
+                    minor: u64::MAX,
+                    patch: u64::MAX,
+                    ..Default::default()
+                },
+            },
+        }
+    }
+
+    /// `>= {major}.{minor+1}.0`, how node-semver reads `>{major}.{minor}` and
+    /// `>{major}.{minor}.x`. On overflow, the next major.
+    pub(crate) fn gte_next_minor(major: u64, minor: u64) -> Comparator {
+        match minor.checked_add(1) {
+            Some(m) => Comparator {
+                op: Op::Gte,
+                version: Version {
+                    major,
+                    minor: m,
+                    ..Default::default()
+                },
+            },
+            None => Comparator::gte_next_major(major),
+        }
+    }
+
     #[inline]
     pub(crate) fn eql(self, rhs: Comparator) -> bool {
         self.op == rhs.op && self.version.eql(rhs.version)

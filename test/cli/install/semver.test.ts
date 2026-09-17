@@ -260,6 +260,99 @@ describe("Bun.semver.satisfies()", () => {
     testSatisfies("^" + padded, "6.0.0", false);
   });
 
+  test("> with a partial version starts at the next major or minor", () => {
+    // node-semver reads `>1` as `>=2.0.0` and `>1.2` as `>=1.3.0`. In each range the other
+    // comparator names a prerelease of that bound, so the prerelease rule alone does not
+    // reject the version. Every expectation is the answer of npm's semver 7.7.4.
+    const excludes = [
+      [">1 >=2.0.0-rc.0", "2.0.0-rc.1"],
+      [">=2.0.0-rc.0 >1", "2.0.0-rc.1"],
+      ["> 1 >=2.0.0-rc.0", "2.0.0-rc.1"],
+      [">v1 >=2.0.0-rc.0", "2.0.0-rc.1"],
+      [">1.x >=2.0.0-rc.0", "2.0.0-rc.1"],
+      [">1.* >=2.0.0-rc.0", "2.0.0-rc.1"],
+      [">1.x.x >=2.0.0-rc.0", "2.0.0-rc.1"],
+      [">1 <=2.0.0-rc.5", "2.0.0-rc.1"],
+      ["<=2.0.0-rc.5 >1", "2.0.0-rc.1"],
+      [">1 ^2.0.0-rc.0", "2.0.0-rc.1"],
+      [">1 ~2.0.0-rc.0", "2.0.0-rc.1"],
+      [">0 >=1.0.0-a", "1.0.0-a"],
+      [">1 >=2.0.0-rc.0 || 5.0.0", "2.0.0-rc.1"],
+      ["5.0.0 || >1 >=2.0.0-rc.0", "2.0.0-rc.1"],
+      [">1.9 >=1.10.0-rc.0", "1.10.0-rc.1"],
+      [">=1.10.0-rc.0 >1.9", "1.10.0-rc.1"],
+      ["> 1.9 >=1.10.0-rc.0", "1.10.0-rc.1"],
+      [">1.2.x >=1.3.0-rc.0", "1.3.0-rc.1"],
+      [">1.2.* >=1.3.0-rc.0", "1.3.0-rc.1"],
+      [">1.2 <=1.3.0-rc.5", "1.3.0-rc.1"],
+      [">1.2 ^1.3.0-rc.0", "1.3.0-rc.1"],
+      [">0.0 >=0.1.0-a", "0.1.0-a"],
+      [">99 ~>100.0.0-9", "100.0.0-aA"],
+    ];
+    for (const [range, version] of excludes) {
+      testSatisfies(range, version, false);
+    }
+
+    const includes = [
+      [">1", "2.0.0"],
+      [">1", "3.1.4"],
+      [">1.x", "2.0.0"],
+      [">0", "1.0.0"],
+      [">1.2", "1.3.0"],
+      [">1.2", "2.0.0"],
+      [">1.2.x", "1.3.0"],
+      [">0.0", "0.1.0"],
+      [">1 >=2.0.0-rc.0", "2.0.0"],
+      // a prerelease above the bound still passes
+      [">1 >=2.0.1-rc.0", "2.0.1-rc.1"],
+      [">1 >=3.0.0-rc.0", "3.0.0-rc.1"],
+      [">1.9 >=2.0.0-rc.0", "2.0.0-rc.1"],
+      [">1.2 >=1.3.1-rc.0", "1.3.1-rc.1"],
+      [">1.2 >=1.4.0-rc.0", "1.4.0-rc.1"],
+      [">1 || 2.0.0-rc.1", "2.0.0-rc.1"],
+      // a full version after `>` keeps its form
+      [">1.9.9 >=2.0.0-rc.0", "2.0.0-rc.1"],
+      [">1.2.3-rc.0", "1.2.3-rc.1"],
+    ];
+    for (const [range, version] of includes) {
+      testSatisfies(range, version, true);
+    }
+
+    const stillExcluded = [
+      [">1", "1.0.0"],
+      [">1", "1.9.9"],
+      [">1", "2.0.0-rc.1"],
+      [">1", "2.0.0-0"],
+      [">1.x", "1.9.9"],
+      [">0", "0.9.9"],
+      [">1.2", "1.2.0"],
+      [">1.2", "1.2.9"],
+      [">1.2", "1.3.0-rc.1"],
+      [">1.2.x", "1.2.9"],
+      [">0.0", "0.0.9"],
+      [">1 >=2.0.0-rc.5", "2.0.0-rc.1"],
+    ];
+    for (const [range, version] of stillExcluded) {
+      testSatisfies(range, version, false);
+    }
+
+    // npm's semver rejects a number above 2^53 - 1, so these have no answer from it. Bun counts
+    // in u64: the minor carries into the major, and nothing is above the last major.
+    const M = "18446744073709551615";
+    const M1 = "18446744073709551614";
+    testSatisfies(`>${M1}`, `${M}.0.0`, true);
+    testSatisfies(`>${M1}`, `${M1}.${M}.${M}`, false);
+    testSatisfies(`>${M1} >=${M}.0.0-rc.0`, `${M}.0.0-rc.1`, false);
+    testSatisfies(`>1.${M1}`, `1.${M}.0`, true);
+    testSatisfies(`>1.${M1}`, `1.${M1}.${M}`, false);
+    testSatisfies(`>1.${M1} >=1.${M}.0-rc.0`, `1.${M}.0-rc.1`, false);
+    testSatisfies(`>1.${M}`, `2.0.0`, true);
+    testSatisfies(`>1.${M}`, `1.${M}.${M}`, false);
+    testSatisfies(`>1.${M} >=2.0.0-rc.0`, `2.0.0-rc.1`, false);
+    testSatisfies(`>${M}`, `${M}.0.0`, false);
+    testSatisfies(`>${M}`, `${M}.${M}.${M}`, false);
+  });
+
   test("u64::MAX component does not collapse ^/~/x/hyphen ranges to empty", () => {
     // Desugaring these range forms builds an exclusive `< {component+1}` upper bound.
     // At u64::MAX that +1 must not saturate back to MAX (which yields `>=X <X`, an empty range).

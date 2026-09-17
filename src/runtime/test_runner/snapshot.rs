@@ -38,8 +38,7 @@ pub struct Snapshots {
     /// With `--update-snapshots`: the entries `file_buf` had when it was read, in file order.
     existing: Vec<ExistingEntry>,
     existing_by_hash: HashMap<u64, usize>,
-    /// Tests of the current file that did not run to a pass. `None` until the file is done.
-    unfinished_tests: Option<StringSet>,
+    unfinished_tests: UnfinishedTests,
     counts: StringHashMap<usize>,
     _current_file: Option<File>,
     /// Directory whose `__snapshots__/` was last created (or found existing);
@@ -71,7 +70,7 @@ impl Snapshots {
             values: HashMap::new(),
             existing: Vec::new(),
             existing_by_hash: HashMap::new(),
-            unfinished_tests: None,
+            unfinished_tests: UnfinishedTests::NotDone,
             counts: StringHashMap::new(),
             _current_file: None,
             snapshot_dir_path: None,
@@ -151,6 +150,27 @@ impl ExistingEntry {
     }
 }
 
+/// The tests of the current test file that did not run to a pass, over every run of the file.
+#[derive(Default)]
+enum UnfinishedTests {
+    /// No run of the file is done: every entry stays.
+    #[default]
+    NotDone,
+    /// A run could not list its tests: every entry stays.
+    Unknown,
+    Names(StringSet),
+}
+
+fn in_backticks(bytes: &[u8]) -> strings::QuoteEscapeFormat<'_> {
+    strings::format_escapes(
+        bytes,
+        strings::QuoteEscapeFormatFlags {
+            quote_char: b'`',
+            ..Default::default()
+        },
+    )
+}
+
 /// The index after the closing quote of the string literal that starts at `start`.
 fn string_literal_end(text: &[u8], start: usize) -> Option<usize> {
     let quote = *text
@@ -167,36 +187,61 @@ fn string_literal_end(text: &[u8], start: usize) -> Option<usize> {
     None
 }
 
-/// The statement whose value literal ends at `value_end`, with the rest of its line and the blank line above it.
-fn entry_range(
+/// Whether `text` is only whitespace, `;` and comments: no part of a statement.
+fn is_between_statements(mut text: &[u8]) -> bool {
+    loop {
+        text = strings::trim_left(text, b" \t\r\n;");
+        if text.starts_with(b"//") {
+            text = match strings::index_of_char_usize(text, b'\n') {
+                Some(line_end) => &text[line_end..],
+                None => &[],
+            };
+        } else if text.starts_with(b"/*") {
+            match strings::index_of(&text[2..], b"*/") {
+                Some(comment_end) => text = &text[2 + comment_end + 2..],
+                None => return false,
+            }
+        } else {
+            return text.is_empty();
+        }
+    }
+}
+
+/// The range of an entry (its statement, the rest of its line, the blank line above) and of its value literal.
+fn entry_ranges(
     text: &[u8],
     floor: usize,
-    stmt_start: usize,
-    value_end: usize,
-) -> Option<Range<usize>> {
+    stmt_loc: bun_ast::Loc,
+    value_loc: bun_ast::Loc,
+    next_stmt_loc: Option<bun_ast::Loc>,
+) -> Option<(Range<usize>, Range<usize>)> {
+    let offset = |loc: bun_ast::Loc| usize::try_from(loc.start).ok();
+    let (stmt_start, value_start) = (offset(stmt_loc)?, offset(value_loc)?);
+    let value_end = string_literal_end(text, value_start)?;
+    let next_stmt_start = next_stmt_loc.map_or(Some(text.len()), offset)?;
+    // The parser folds `(value)` and `value || other` to the literal. Such a statement goes on after the literal.
+    if stmt_start < floor
+        || value_start <= stmt_start
+        || !is_between_statements(text.get(value_end..next_stmt_start)?)
+    {
+        return None;
+    }
+
     let above = &text[..stmt_start];
     let blank_line = if above.ends_with(b"\n\r\n") {
         2
     } else {
         usize::from(above.ends_with(b"\n\n"))
     };
-    let start = (stmt_start - blank_line).max(floor);
     let mut end = value_end;
     while matches!(text.get(end), Some(b' ' | b'\t')) {
         end += 1;
     }
-    match text.get(end) {
-        Some(b';') => end += 1,
-        Some(b'\r' | b'\n') | None => {}
-        Some(_) => return None,
+    for after in [b';', b'\r', b'\n'] {
+        end += usize::from(text.get(end) == Some(&after));
     }
-    if text.get(end) == Some(&b'\r') {
-        end += 1;
-    }
-    if text.get(end) == Some(&b'\n') {
-        end += 1;
-    }
-    Some(start..end)
+    let start = (stmt_start - blank_line).max(floor);
+    Some((start..end, value_start..value_end))
 }
 
 impl Snapshots {
@@ -302,20 +347,8 @@ impl Snapshots {
         write!(
             self.file_buf,
             "\nexports[`{}`] = `{}`;\n",
-            strings::format_escapes(
-                &name_with_counter,
-                strings::QuoteEscapeFormatFlags {
-                    quote_char: b'`',
-                    ..Default::default()
-                }
-            ),
-            strings::format_escapes(
-                target_value,
-                strings::QuoteEscapeFormatFlags {
-                    quote_char: b'`',
-                    ..Default::default()
-                }
-            ),
+            in_backticks(&name_with_counter),
+            in_backticks(target_value),
         )
         .map_err(|_| crate::Error::WriteError)?;
 
@@ -463,37 +496,23 @@ impl Snapshots {
         if self.update_snapshots && found.len() != statements {
             return Err(crate::Error::ParseError);
         }
-        for (key, stmt_loc, value_loc) in found {
-            self.note_existing(key, stmt_loc, value_loc)?;
+        let mut found = found.into_iter().peekable();
+        while let Some((key, stmt_loc, value_loc)) = found.next() {
+            let floor = self.existing.last().map_or(0, |e| e.range.end);
+            let next_stmt_loc = found.peek().map(|next| next.1);
+            let (range, value_range) =
+                entry_ranges(&self.file_buf, floor, stmt_loc, value_loc, next_stmt_loc)
+                    .ok_or(crate::Error::ParseError)?;
+            self.existing_by_hash
+                .insert(hash(&key), self.existing.len());
+            self.existing.push(ExistingEntry {
+                key,
+                range,
+                value_range,
+                taken: false,
+                new_value: None,
+            });
         }
-        Ok(())
-    }
-
-    /// Records where an entry is in `file_buf`. Fails for a file that Bun or Jest did not write this way.
-    fn note_existing(
-        &mut self,
-        key: Box<[u8]>,
-        stmt_loc: bun_ast::Loc,
-        value_loc: bun_ast::Loc,
-    ) -> Result<(), Error> {
-        let text = self.file_buf.as_slice();
-        let floor = self.existing.last().map_or(0, |e| e.range.end);
-        let stmt_start = usize::try_from(stmt_loc.start).unwrap_or(0);
-        let value_start = usize::try_from(value_loc.start).unwrap_or(0);
-        let value_end = string_literal_end(text, value_start)
-            .filter(|_| floor <= stmt_start && stmt_start < value_start)
-            .ok_or(crate::Error::ParseError)?;
-        let range =
-            entry_range(text, floor, stmt_start, value_end).ok_or(crate::Error::ParseError)?;
-        self.existing_by_hash
-            .insert(hash(&key), self.existing.len());
-        self.existing.push(ExistingEntry {
-            key,
-            range,
-            value_range: value_start..value_end,
-            taken: false,
-            new_value: None,
-        });
         Ok(())
     }
 
@@ -522,7 +541,10 @@ impl Snapshots {
 
     /// Rewrites `file_buf` around the entries it had: a new value in place, an entry no test takes removed.
     fn apply_updates(&mut self) -> Result<(), Error> {
-        let unfinished_tests = self.unfinished_tests.take();
+        let unfinished_tests = match core::mem::take(&mut self.unfinished_tests) {
+            UnfinishedTests::Names(names) => Some(names),
+            UnfinishedTests::NotDone | UnfinishedTests::Unknown => None,
+        };
         let existing = core::mem::take(&mut self.existing);
         self.existing_by_hash.clear();
 
@@ -539,18 +561,8 @@ impl Snapshots {
             } else if let Some(value) = &entry.new_value {
                 contents.extend_from_slice(&self.file_buf[copied..entry.value_range.start]);
                 copied = entry.value_range.end;
-                write!(
-                    contents,
-                    "`{}`",
-                    strings::format_escapes(
-                        value,
-                        strings::QuoteEscapeFormatFlags {
-                            quote_char: b'`',
-                            ..Default::default()
-                        }
-                    ),
-                )
-                .map_err(|_| crate::Error::WriteError)?;
+                write!(contents, "`{}`", in_backticks(value))
+                    .map_err(|_| crate::Error::WriteError)?;
             }
         }
         contents.extend_from_slice(&self.file_buf[copied..]);
@@ -561,9 +573,23 @@ impl Snapshots {
     /// With `--update-snapshots`, the entries of a test that did not run to a pass stay in the file.
     pub(crate) fn note_unfinished_tests(&mut self, buntest: &BunTest) {
         let current = self._current_file.as_ref();
-        if self.update_snapshots && current.is_some_and(|file| file.id == buntest.file_id) {
-            self.unfinished_tests = buntest.unfinished_test_names();
+        if !self.update_snapshots || current.is_none_or(|file| file.id != buntest.file_id) {
+            return;
         }
+        // A later run of the same file can register fewer tests: its modules are in the module cache.
+        self.unfinished_tests = match (
+            core::mem::take(&mut self.unfinished_tests),
+            buntest.unfinished_test_names(),
+        ) {
+            (UnfinishedTests::Unknown, _) | (_, None) => UnfinishedTests::Unknown,
+            (UnfinishedTests::NotDone, Some(names)) => UnfinishedTests::Names(names),
+            (UnfinishedTests::Names(mut all), Some(names)) => {
+                for name in names.keys() {
+                    bun_core::handle_oom(all.insert(name));
+                }
+                UnfinishedTests::Names(all)
+            }
+        };
     }
 
     pub(crate) fn add_inline_snapshot_to_write(

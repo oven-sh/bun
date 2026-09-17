@@ -51,7 +51,8 @@ describe.concurrent("--update-snapshots", () => {
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
     const snapshots: Record<string, string> = {};
     for (const name of fs.readdirSync(join(String(dir), "__snapshots__")).sort()) {
-      snapshots[name] = await Bun.file(join(String(dir), "__snapshots__", name)).text();
+      // Not `Bun.file().text()`: that drops a BOM.
+      snapshots[name] = fs.readFileSync(join(String(dir), "__snapshots__", name), "utf8");
     }
     return { snapshots, stderr, exitCode };
   }
@@ -60,7 +61,7 @@ describe.concurrent("--update-snapshots", () => {
   async function updateOne(tests: string, snapshot: string | undefined, ...args: string[]) {
     const { snapshots, ...rest } = await update(
       {
-        "a.test.ts": `import { afterEach, beforeAll, describe, expect, test } from "bun:test";\n${tests}`,
+        "a.test.ts": `import { afterAll, beforeAll, describe, expect, test } from "bun:test";\n${tests}`,
         ...(snapshot !== undefined && { "__snapshots__/a.test.ts.snap": snapshot }),
       },
       ...args,
@@ -171,7 +172,37 @@ describe.concurrent("--update-snapshots", () => {
     });
   });
 
-  test("escapes a replaced value and keeps CRLF line ends", async () => {
+  test.each([
+    [
+      "a BOM and a Jest header",
+      '\uFEFF// Jest Snapshot v1, https://goo.gl/fbAQLP\n\nexports[`a 1`] = `"old"`;\n\nexports[`gone 1`] = `"g"`;\n\nexports[`b 1`] = `"b"`;\n',
+      '\uFEFF// Jest Snapshot v1, https://goo.gl/fbAQLP\n\nexports[`a 1`] = `"new"`;\n\nexports[`b 1`] = `"b"`;\n',
+    ],
+    [
+      "no line break at the end",
+      header + '\nexports[`a 1`] = `"old"`;\n\nexports[`b 1`] = `"b"`;\n\nexports[`gone 1`] = `"g"`',
+      header + '\nexports[`a 1`] = `"new"`;\n\nexports[`b 1`] = `"b"`;\n',
+    ],
+    [
+      "all entries on one line, quoted with ' and \"",
+      header + 'exports[\'a 1\'] = \'"old"\'; exports["gone 1"] = "g"; exports[`b 1`] = `"b"`\n',
+      header + 'exports[\'a 1\'] = `"new"`;  exports[`b 1`] = `"b"`\n',
+    ],
+    [
+      "no header and a key that is there twice",
+      'exports[`a 1`] = `"first"`;\nexports[`a 1`] = `"old"`;\nexports[`b 1`] = `"b"`;\n',
+      'exports[`a 1`] = `"new"`;\nexports[`b 1`] = `"b"`;\n',
+    ],
+  ])("keeps the layout of a file with %s", async (_, before, after) => {
+    const result = await updateOne(
+      `test("a", () => { expect("new").toMatchSnapshot(); });
+       test("b", () => { expect("b").toMatchSnapshot(); });`,
+      before,
+    );
+    expect(result).toMatchObject({ snapshot: after, exitCode: 0 });
+  });
+
+  test("escapes a replaced value, in a file with CRLF line ends", async () => {
     const crlf = (text: string) => text.replaceAll("\n", "\r\n");
     const value = "tick ` dollar ${x} back \\ slash";
     const result = await updateOne(
@@ -191,7 +222,10 @@ describe.concurrent("--update-snapshots", () => {
     });
   });
 
-  test("removes nothing when a describe callback throws", async () => {
+  test.each([
+    ["", []],
+    [", also when the file runs twice", ["./a.test.ts", "./a.test.ts"]],
+  ])("removes nothing when a describe callback throws%s", async (_, args) => {
     const result = await updateOne(
       `test("top", () => { expect("new").toMatchSnapshot(); });
        describe("suite", () => {
@@ -199,6 +233,7 @@ describe.concurrent("--update-snapshots", () => {
          test("late", () => { expect("l").toMatchSnapshot(); });
        });`,
       snap({ "top 1": `"old"`, "suite late 1": `"l"` }),
+      ...args,
     );
     expect(result).toMatchObject({
       snapshot: snap({ "top 1": `"new"`, "suite late 1": `"l"` }),
@@ -221,18 +256,51 @@ describe.concurrent("--update-snapshots", () => {
     });
   });
 
-  test("keeps the entries of a hook when -t filters out some of its tests", async () => {
-    const entries = { "(unnamed) 1": `"one"`, "(unnamed) 2": `"two"` };
+  test("keeps the entries of a beforeAll or afterAll hook that did not run to a pass", async () => {
+    const entries = { "top 1": `"t"`, "not run (unnamed) 1": `"b"`, "throws (unnamed) 1": `"a"` };
     const result = await updateOne(
-      `let last;
-       afterEach(() => { expect(last).toMatchSnapshot(); });
-       test("one", () => { last = "one"; });
-       test("two", () => { last = "two"; });`,
+      `test("top", () => { expect("t").toMatchSnapshot(); });
+       describe("not run", () => {
+         beforeAll(() => { expect("b").toMatchSnapshot(); });
+         test("left out", () => {});
+       });
+       describe("throws", () => {
+         afterAll(() => { throw new Error("boom"); expect("a").toMatchSnapshot(); });
+         test("top too", () => {});
+       });`,
       snap(entries),
       "-t",
-      "one",
+      "top",
+    );
+    expect(result).toMatchObject({ snapshot: snap(entries), exitCode: 1 });
+  });
+
+  test("keeps the entries of a skipped test when the test file runs twice", async () => {
+    const entries = { "skipped 1": `"s"`, "ran 1": `"r"` };
+    const result = await updateOne(
+      `test("ran", () => { expect("r").toMatchSnapshot(); });
+       test.skip("skipped", () => { expect("s").toMatchSnapshot(); });`,
+      snap(entries),
+      "./a.test.ts",
+      "./a.test.ts",
     );
     expect(result).toMatchObject({ snapshot: snap(entries), exitCode: 0 });
+  });
+
+  test("--rerun-each keeps the entries of a skipped test that an imported module has", async () => {
+    const entries = snap({ "shared 1": `"s"`, "ran 1": `"r"` });
+    const result = await update(
+      {
+        "shared.ts": `import { expect, test } from "bun:test";
+          test.skip("shared", () => { expect("s").toMatchSnapshot(); });`,
+        "a.test.ts": `import "./shared";
+          import { expect, test } from "bun:test";
+          test("ran", () => { expect("r").toMatchSnapshot(); });`,
+        "__snapshots__/a.test.ts.snap": entries,
+      },
+      "--rerun-each=2",
+    );
+    expect(result).toMatchObject({ snapshots: { "a.test.ts.snap": entries }, exitCode: 0 });
   });
 
   test("writes a new file in the order in which the tests run", async () => {
@@ -248,6 +316,8 @@ describe.concurrent("--update-snapshots", () => {
     ["a syntax error", 'exports[`b 1`] = `"old\n'],
     ["a value with ${}", 'exports[`b 1`] = `"old"`;\n\nexports[`gone 1`] = `${1}`;\n'],
     ["a statement in parentheses", 'exports[`b 1`] = `"old"`;\n\n(exports[`gone 1`] = `"g"`);\n'],
+    ["a value in parentheses on its own line", 'exports[`b 1`] = `"old"`;\n\nexports[`gone 1`] = (\n  `"g"`\n);\n'],
+    ["a value that goes on in the next line", 'exports[`b 1`] = `"old"`;\n\nexports[`gone 1`] = `"g"`\n  || `"h"`;\n'],
   ])("writes the file again from the start when it has %s", async (_, entries) => {
     const result = await updateOne(
       `test("a", () => { expect("a").toMatchSnapshot(); });
@@ -296,15 +366,19 @@ describe.concurrent("--update-snapshots", () => {
     const result = await update(
       {
         "a.test.ts": tests("a"),
-        "b.test.ts": tests("b"),
+        // No snapshot here. The test "gone" that the filter leaves out must not keep `gone 1` of the other files.
+        "b.test.ts": `import { test } from "bun:test";
+          test("run b", () => {});
+          test("gone", () => {});`,
+        "c.test.ts": tests("c"),
         "__snapshots__/a.test.ts.snap": before("a"),
-        "__snapshots__/b.test.ts.snap": before("b"),
+        "__snapshots__/c.test.ts.snap": before("c"),
       },
       "-t",
       "run",
     );
     expect(result).toMatchObject({
-      snapshots: { "a.test.ts.snap": after("a"), "b.test.ts.snap": after("b") },
+      snapshots: { "a.test.ts.snap": after("a"), "c.test.ts.snap": after("c") },
       exitCode: 0,
     });
   });

@@ -721,46 +721,34 @@ impl BunTest {
         }
     }
 
-    /// Snapshot names of the tests that did not run to a pass. `None` when a describe callback threw: tests are missing.
+    /// Snapshot names of the tests and beforeAll/afterAll hooks that did not run to a pass. `None` when a describe callback threw: tests are missing.
     pub(crate) fn unfinished_test_names(&self) -> Option<StringSet> {
-        fn add(names: &mut StringSet, entry: &ExecutionEntry) {
-            let name = super::expect::Expect::snapshot_name_of(entry, b"");
-            bun_core::handle_oom(names.insert(&name));
-        }
-
         fn collect(
             scope: &DescribeScope,
             passed: &[*const ExecutionEntry],
             names: &mut StringSet,
-        ) -> Option<bool> {
+        ) -> Option<()> {
             if scope.failed {
                 return None;
             }
-            let mut any = false;
+            let tests = scope.entries.iter().filter_map(|entry| match entry {
+                TestScheduleEntry::TestCallback(test) => Some(test),
+                TestScheduleEntry::Describe(_) => None,
+            });
+            for entry in scope.before_all.iter().chain(&scope.after_all).chain(tests) {
+                let did_pass = passed.binary_search(&core::ptr::from_ref(&**entry)).is_ok();
+                // A `test.failing` passes when it throws, so it did not reach all of its snapshots.
+                if !did_pass || entry.base.mode == ScopeMode::Failing {
+                    let name = super::expect::Expect::snapshot_name_of(entry, b"");
+                    bun_core::handle_oom(names.insert(&name));
+                }
+            }
             for entry in &scope.entries {
-                any |= match entry {
-                    TestScheduleEntry::Describe(describe) => collect(describe, passed, names)?,
-                    TestScheduleEntry::TestCallback(test) => {
-                        let unfinished = test.base.mode == ScopeMode::Failing
-                            || passed.binary_search(&core::ptr::from_ref(&**test)).is_err();
-                        if unfinished {
-                            add(names, test);
-                        }
-                        unfinished
-                    }
-                };
+                if let TestScheduleEntry::Describe(describe) = entry {
+                    collect(describe, passed, names)?;
+                }
             }
-            // A hook runs for each test below its scope, and its snapshots have the name of the scope.
-            let hooks = [
-                &scope.before_all,
-                &scope.before_each,
-                &scope.after_each,
-                &scope.after_all,
-            ];
-            if let Some(hook) = hooks.into_iter().flatten().next().filter(|_| any) {
-                add(names, hook);
-            }
-            Some(any)
+            Some(())
         }
 
         let mut passed: Vec<*const ExecutionEntry> = self
@@ -768,7 +756,8 @@ impl BunTest {
             .sequences
             .iter()
             .filter(|sequence| sequence.result == Execution::Result::Pass)
-            .filter_map(|sequence| sequence.test_entry.map(|entry| entry.as_ptr().cast_const()))
+            .filter_map(|sequence| sequence.test_entry.or(sequence.first_entry))
+            .map(|entry| entry.as_ptr().cast_const())
             .collect();
         passed.sort_unstable();
         let mut names = StringSet::new();

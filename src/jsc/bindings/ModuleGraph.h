@@ -36,17 +36,13 @@ public:
 
     template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM&);
     // `maker`: the graph in whose context this one is being made (null: the host's).
-    static JSModuleGraph* create(JSC::VM&, Zig::GlobalObject*, JSC::Structure*, JSC::JSModuleLoader*, unsigned overlayShape, JSC::JSObject* onError, JSModuleGraph* maker);
+    static JSModuleGraph* create(JSC::VM&, Zig::GlobalObject*, JSC::Structure*, JSC::JSModuleLoader*, JSC::JSObject* onError, JSModuleGraph* maker);
     static JSC::Structure* createStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue prototype);
     DECLARE_EXPORT_INFO;
     DECLARE_VISIT_CHILDREN;
 
     JSC::JSModuleLoader* loader() const { return m_loader.get(); }
     JSC::JSLexicalEnvironment* overlay() const;
-    // Which shape the overlay has: one number per `globals` name set, never 0 and never reused.
-    // Code compiled under one shape must not be shared with another, or with the host
-    // (see commonJSSourceForGraph).
-    unsigned overlayShape() const { return m_overlayShape; }
     JSC::JSMap* requireMap() const { return m_requireMap.get(); }
     JSC::JSObject* onError() const { return m_onError.get(); } // null if the host gave none
     // The graph in whose context this one was made (null: the host's). Errors of a graph that was
@@ -70,7 +66,7 @@ public:
     void dispose(Zig::GlobalObject*);
 
 private:
-    JSModuleGraph(JSC::VM&, JSC::Structure*, Ref<WebCore::ScriptExecutionContext>&&, JSC::JSModuleLoader*, unsigned overlayShape, JSC::JSObject* onError, JSModuleGraph* maker);
+    JSModuleGraph(JSC::VM&, JSC::Structure*, Ref<WebCore::ScriptExecutionContext>&&, JSC::JSModuleLoader*, JSC::JSObject* onError, JSModuleGraph* maker);
     void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
 
     Ref<WebCore::ScriptExecutionContext> m_context;
@@ -80,7 +76,6 @@ private:
     JSC::WriteBarrier<JSC::JSObject> m_onError;
     JSC::WriteBarrier<JSModuleGraph> m_maker;
     JSC::WriteBarrier<JSC::JSString> m_mainPath;
-    unsigned m_overlayShape { 0 };
 };
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionIsDisposedModuleGraph);
@@ -95,12 +90,9 @@ public:
     {
     }
     // Sorted `globals` names -> the SymbolTable the overlays of the graphs made with that name
-    // set share, which is what JSC keys shared module executables on. Weak: alive while an
-    // overlay uses it.
+    // set share, which is what JSC keys the executables graphs share on (of ES modules, and of
+    // CommonJS modules' wrappers). Weak: alive while an overlay uses it.
     JSC::WeakGCMap<WTF::String, JSC::SymbolTable> overlaySymbolTables;
-    // The same keys -> JSModuleGraph::overlayShape(). Never forgets, so a number is never reused
-    // for another name set while code compiled under the first may still be cached.
-    WTF::HashMap<WTF::String, unsigned> overlayShapes;
 };
 
 void initJSModuleGraphClassStructure(JSC::LazyClassStructure::Initializer&);

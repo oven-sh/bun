@@ -34,11 +34,11 @@ using namespace JSC;
 // ─── The overlay ─────────────────────────────────────────────────────────────────────
 //
 // A lexical environment over the global lexical environment: the module scope of the graph's
-// loader, and the scope the wrappers of its CommonJS modules close over. It holds the host's
+// loader, and the scope its CommonJS modules are evaluated in. It holds the host's
 // `globals`, @moduleLoader (what import() compiles to a lookup of) and @moduleGraph (the
 // graph, which is how code scoped to the overlay is attributed to it and keeps it alive).
 // Graphs whose `globals` have the same names share one SymbolTable, which is what JSC keys
-// shared module executables on.
+// the executables they share on: those of ES modules, and of CommonJS modules' wrappers.
 
 static Identifier moduleGraphSlotName(VM& vm) { return WebCore::builtinNames(vm).moduleGraphPrivateName(); }
 static Identifier moduleLoaderSlotName(VM& vm) { return vm.propertyNames->builtinNames().moduleLoaderPrivateName(); }
@@ -61,7 +61,7 @@ static ModuleGraphState& moduleGraphState(Zig::GlobalObject* globalObject)
     return *state;
 }
 
-static SymbolTable* overlaySymbolTable(Zig::GlobalObject* globalObject, const Vector<Identifier>& sortedNames, unsigned& shape)
+static SymbolTable* overlaySymbolTable(Zig::GlobalObject* globalObject, const Vector<Identifier>& sortedNames)
 {
     VM& vm = globalObject->vm();
     // One key per name set: each name as <length>:<name>, so no two sets share a key.
@@ -69,8 +69,6 @@ static SymbolTable* overlaySymbolTable(Zig::GlobalObject* globalObject, const Ve
     for (auto& name : sortedNames)
         keyBuilder.append(name.length(), ':', name.string());
     String key = keyBuilder.toString();
-    auto& shapes = moduleGraphState(globalObject).overlayShapes;
-    shape = shapes.ensure(key, [&] { return shapes.size() + 1; }).iterator->value;
     auto& symbolTables = moduleGraphState(globalObject).overlaySymbolTables;
     if (SymbolTable* existing = symbolTables.get(key))
         return existing;
@@ -106,7 +104,7 @@ static void setOverlaySlot(VM& vm, JSLexicalEnvironment* overlay, const Identifi
 }
 
 // The new graph's loader, over a new overlay holding `globals`.
-static JSModuleLoader* createModuleGraphLoader(Zig::GlobalObject* globalObject, JSObject* globals, unsigned& overlayShape)
+static JSModuleLoader* createModuleGraphLoader(Zig::GlobalObject* globalObject, JSObject* globals)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -119,7 +117,7 @@ static JSModuleLoader* createModuleGraphLoader(Zig::GlobalObject* globalObject, 
             names.append(name);
         std::sort(names.begin(), names.end(), [](const Identifier& a, const Identifier& b) { return codePointCompare(a.string(), b.string()) < 0; });
     }
-    SymbolTable* symbolTable = overlaySymbolTable(globalObject, names, overlayShape);
+    SymbolTable* symbolTable = overlaySymbolTable(globalObject, names);
     JSLexicalEnvironment* overlay = JSLexicalEnvironment::create(vm, globalObject, globalObject->globalLexicalEnvironment(), symbolTable, jsUndefined());
     for (auto& name : names) {
         JSValue value = globals->get(globalObject, name);
@@ -380,24 +378,23 @@ Structure* JSModuleGraph::createStructure(VM& vm, JSGlobalObject* globalObject, 
     return createClassStructure(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
 }
 
-JSModuleGraph::JSModuleGraph(VM& vm, Structure* structure, Ref<WebCore::ScriptExecutionContext>&& context, JSModuleLoader* loader, unsigned overlayShape, JSObject* onError, JSModuleGraph* maker)
+JSModuleGraph::JSModuleGraph(VM& vm, Structure* structure, Ref<WebCore::ScriptExecutionContext>&& context, JSModuleLoader* loader, JSObject* onError, JSModuleGraph* maker)
     : Base(vm, structure)
     , m_context(WTF::move(context))
     , m_loader(loader, WriteBarrierEarlyInit)
     , m_onError(onError, WriteBarrierEarlyInit)
     , m_maker(maker, WriteBarrierEarlyInit)
-    , m_overlayShape(overlayShape)
 {
 }
 
-JSModuleGraph* JSModuleGraph::create(VM& vm, Zig::GlobalObject* globalObject, Structure* structure, JSModuleLoader* loader, unsigned overlayShape, JSObject* onError, JSModuleGraph* maker)
+JSModuleGraph* JSModuleGraph::create(VM& vm, Zig::GlobalObject* globalObject, Structure* structure, JSModuleLoader* loader, JSObject* onError, JSModuleGraph* maker)
 {
     Ref context = WebCore::ScriptExecutionContext::createForModuleGraph(*globalObject->scriptExecutionContext());
     // Made in a graph's context it is that graph's, like everything else opened there: disposed
     // with it, and its maker for errors.
     if (maker)
         maker->context().ownGraphContext(context.get());
-    auto* cell = new (NotNull, allocateCell<JSModuleGraph>(vm)) JSModuleGraph(vm, structure, WTF::move(context), loader, overlayShape, onError, maker);
+    auto* cell = new (NotNull, allocateCell<JSModuleGraph>(vm)) JSModuleGraph(vm, structure, WTF::move(context), loader, onError, maker);
     cell->finishCreation(vm, globalObject);
     return cell;
 }
@@ -705,10 +702,9 @@ JSC_HOST_CALL_ATTRIBUTES EncodedJSValue JSModuleGraphConstructor::construct(JSGl
         structure = InternalFunction::createSubclassStructure(globalObject, newTarget, structure);
         RETURN_IF_EXCEPTION(scope, {});
     }
-    unsigned overlayShape = 0;
-    JSModuleLoader* loader = createModuleGraphLoader(globalObject, globals, overlayShape);
+    JSModuleLoader* loader = createModuleGraphLoader(globalObject, globals);
     RETURN_IF_EXCEPTION(scope, {});
-    return JSValue::encode(JSModuleGraph::create(vm, globalObject, structure, loader, overlayShape, onError, currentModuleGraph(globalObject)));
+    return JSValue::encode(JSModuleGraph::create(vm, globalObject, structure, loader, onError, currentModuleGraph(globalObject)));
 }
 
 void initJSModuleGraphClassStructure(LazyClassStructure::Initializer& init)

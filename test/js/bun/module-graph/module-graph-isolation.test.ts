@@ -3718,9 +3718,9 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
     });
     // (A heap snapshot or four, on the builds where the realm is still there.)
   }, 30_000);
-  test("a CommonJS wrapper made inside another function keeps that function's scope", async () => {
+  test("a CommonJS wrapper made inside another function keeps that function's scope, inside the graph's", async () => {
     expect(await runsFixture("custom-commonjs-wrapper.mjs")).toEqual({
-      stdout: `["of the wrapper","undefined"]`,
+      stdout: `["of the wrapper","string"]`,
       exitCode: 0,
     });
   });

@@ -5,6 +5,7 @@ use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::collections::BTreeSet;
 
 use bun_alloc::Arena;
 use bun_ast::Loader;
@@ -13,7 +14,7 @@ use bun_ast::{ImportRecord, ImportRecordFlags};
 use bun_bundler::analyze_transpiled_module;
 use bun_bundler::options::ModuleType;
 use bun_bundler::transpiler::{self as transpiler, AlreadyBundled, ParseOptions, Transpiler};
-use bun_collections::HiveArrayFallback;
+use bun_collections::{HashMap, HiveArrayFallback};
 use bun_core::{MutableString, String, strings};
 use bun_event_loop::{TaskTag, Taskable, task_tag};
 use bun_io::posix_event_loop::get_vm_ctx;
@@ -41,7 +42,7 @@ use crate::runtime_transpiler_cache::{
 };
 use crate::strong::Optional as StrongOptional;
 use crate::virtual_machine::{SourceMapHandlerGetter, VirtualMachine};
-use crate::{JSGlobalObject, JSInternalPromise, JSValue, JsResult, ResolvedSource};
+use crate::{JSGlobalObject, JSInternalPromise, JSValue, ResolvedSource};
 
 // LAYERING: `ParseOptions.runtime_transpiler_cache` carries the canonical
 // lower-tier type from `bun_js_parser` (re-exported via `bun_bundler`). The
@@ -201,6 +202,8 @@ pub struct RuntimeTranspilerStore {
     pub(crate) store: TranspilerJobStore,
     pub enabled: bool,
     pub(crate) queue: Queue,
+    /// JS thread only.
+    order: ImportOrder,
 }
 
 pub type Queue = UnboundedQueue<TranspilerJob>;
@@ -212,8 +215,226 @@ impl Default for RuntimeTranspilerStore {
             store: TranspilerJobStore::init(),
             enabled: true,
             queue: Queue::new(),
+            order: ImportOrder::default(),
         }
     }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// ImportOrder
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Import indices along the depth-first, source-order path that first reaches a module.
+type Position = Box<[u32]>;
+
+/// Hash of a module key (the resolved specifier).
+type ModuleKey = u64;
+
+struct ModuleNode {
+    position: Position,
+    /// In resolve order, so that an earlier path found later moves them too.
+    imports: Vec<ModuleKey>,
+    /// Fetches of this module issued to the pool and not yet fulfilled.
+    outstanding: u32,
+}
+
+impl ModuleNode {
+    fn at(position: Position) -> Self {
+        Self {
+            position,
+            imports: Vec::new(),
+            outstanding: 0,
+        }
+    }
+}
+
+/// A CommonJS file imported from an ES module runs when its fetch settles (its
+/// synthetic record takes its export names from `module.exports`), and the pool
+/// finishes jobs in any order, so a CommonJS result is held here until every
+/// fetch before it in the import graph is fulfilled. ES module results are not
+/// held: fulfilling one runs nothing and is what makes JSC fetch its imports.
+#[derive(Default)]
+struct ImportOrder {
+    next_root: u32,
+    /// Every module resolved or fetched since the pool was last idle.
+    nodes: HashMap<ModuleKey, ModuleNode>,
+    /// Every issued fetch not yet fulfilled, held ones included.
+    outstanding: BTreeSet<(Position, ModuleKey)>,
+    /// More than one per module only if the loader fetched it twice.
+    held: HashMap<ModuleKey, Vec<CompletedJob>>,
+}
+
+impl ImportOrder {
+    fn key(specifier: &[u8]) -> ModuleKey {
+        bun_wyhash::hash(specifier)
+    }
+
+    fn root(&mut self) -> Position {
+        let position = Box::new([self.next_root]);
+        self.next_root += 1;
+        position
+    }
+
+    /// The node for `key`, placed as a new root if the graph has not reached it.
+    fn node(&mut self, key: ModuleKey) -> &mut ModuleNode {
+        if !self.nodes.contains_key(&key) {
+            let position = self.root();
+            self.nodes.insert(key, ModuleNode::at(position));
+        }
+        self.nodes.get_mut(&key).unwrap()
+    }
+
+    /// `specifier` is the next import of `referrer` (empty for an entry point).
+    fn resolved(&mut self, referrer: &[u8], specifier: &[u8]) {
+        if self.outstanding.is_empty() {
+            self.reset();
+        }
+        let key = Self::key(specifier);
+        let position = if referrer.is_empty() {
+            self.root()
+        } else {
+            let parent = self.node(Self::key(referrer));
+            let position = child_position(&parent.position, parent.imports.len());
+            parent.imports.push(key);
+            position
+        };
+        self.place(key, position);
+    }
+
+    /// Moves `key` and its imports to `position` unless an earlier path already reaches it.
+    fn place(&mut self, key: ModuleKey, position: Position) {
+        // Depth-first in import order: each module is reached by its smallest path first, so moves once.
+        let mut stack = vec![(key, position)];
+        while let Some((key, position)) = stack.pop() {
+            let Some(node) = self.nodes.get_mut(&key) else {
+                self.nodes.insert(key, ModuleNode::at(position));
+                continue;
+            };
+            if position >= node.position {
+                continue;
+            }
+            let previous = core::mem::replace(&mut node.position, position);
+            if node.outstanding > 0 {
+                self.outstanding.remove(&(previous, key));
+                self.outstanding.insert((node.position.clone(), key));
+            }
+            let node = self.nodes.get(&key).unwrap();
+            for (index, import) in node.imports.iter().enumerate().rev() {
+                // pos(import) <= pos(self) ++ [index] always holds, so an unmoved module has nothing to move below it.
+                if self
+                    .nodes
+                    .get(import)
+                    .is_none_or(|below| precedes(&node.position, index, &below.position))
+                {
+                    stack.push((*import, child_position(&node.position, index)));
+                }
+            }
+        }
+    }
+
+    /// A fetch of `specifier` went to the pool.
+    fn issue(&mut self, specifier: &[u8]) -> ModuleKey {
+        let key = Self::key(specifier);
+        let node = self.node(key);
+        node.outstanding += 1;
+        let position = node.position.clone();
+        bun_core::scoped_log!(
+            RuntimeTranspilerStore,
+            "issue {:?} {}",
+            &position[..],
+            bstr::BStr::new(specifier)
+        );
+        self.outstanding.insert((position, key));
+        key
+    }
+
+    /// True while a fetch of a module before `key` in graph order is unfulfilled.
+    fn has_unfulfilled_predecessor(&self, key: ModuleKey) -> bool {
+        self.outstanding
+            .first()
+            .is_some_and(|(_, first)| *first != key)
+    }
+
+    fn hold(&mut self, completed: CompletedJob) {
+        bun_core::scoped_log!(
+            RuntimeTranspilerStore,
+            "hold {} until {:?}",
+            completed.specifier,
+            self.outstanding.first().map(|(position, _)| &position[..])
+        );
+        self.held
+            .entry(completed.order_key)
+            .or_default()
+            .push(completed);
+    }
+
+    /// A held result with no unfulfilled predecessor left, if any.
+    fn next_ready(&mut self) -> Option<CompletedJob> {
+        let first = self.outstanding.first()?.1;
+        let same_module = self.held.get_mut(&first)?;
+        let completed = same_module.pop();
+        if same_module.is_empty() {
+            self.held.remove(&first);
+        }
+        completed
+    }
+
+    fn fulfilled(&mut self, key: ModuleKey) {
+        if let Some(node) = self.nodes.get_mut(&key) {
+            debug_assert!(node.outstanding > 0);
+            node.outstanding -= 1;
+            if node.outstanding == 0 {
+                self.outstanding.remove(&(node.position.clone(), key));
+            }
+        }
+        if self.outstanding.is_empty() {
+            self.reset();
+        }
+    }
+
+    /// No fetch in flight: nothing to order against, so forget the graph and restart positions.
+    fn reset(&mut self) {
+        debug_assert!(self.held.is_empty());
+        if !self.nodes.is_empty() {
+            self.nodes = HashMap::default();
+        }
+        self.next_root = 0;
+    }
+}
+
+fn child_position(parent: &Position, index: usize) -> Position {
+    let mut position = Vec::with_capacity(parent.len() + 1);
+    position.extend_from_slice(parent);
+    position.push(index as u32);
+    position.into_boxed_slice()
+}
+
+/// `parent ++ [index] < other`, without building it.
+fn precedes(parent: &[u32], index: usize, other: &[u32]) -> bool {
+    let shared = parent.len().min(other.len());
+    match parent[..shared].cmp(&other[..shared]) {
+        core::cmp::Ordering::Less => true,
+        core::cmp::Ordering::Greater => false,
+        core::cmp::Ordering::Equal => match other.get(parent.len()) {
+            // `other` is `parent` or a prefix of it, so the longer child comes after it.
+            None => false,
+            Some(&next) => {
+                (index as u32) < next || ((index as u32) == next && other.len() > parent.len() + 1)
+            }
+        },
+    }
+}
+
+/// `GlobalObject::moduleLoaderResolve`: record one edge of the import graph.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Bun__onModuleResolved(
+    vm: *mut VirtualMachine,
+    referrer: &String,
+    specifier: &String,
+) {
+    // SAFETY: `vm` is the live per-thread VM the C++ global object holds; JS thread.
+    let order = unsafe { &mut (*vm).transpiler_store.order };
+    order.resolved(&referrer.to_utf8(), &specifier.to_utf8());
 }
 
 impl Taskable for RuntimeTranspilerStore {
@@ -250,6 +471,8 @@ impl RuntimeTranspilerStore {
                 self.store.put(job);
             }
         }
+        // Held results root JS promises; a Worker's VM is deallocated without `Drop`.
+        self.order = ImportOrder::default();
     }
 
     /// Fulfil every completed job's module promise. This drain is a dispatcher:
@@ -257,44 +480,117 @@ impl RuntimeTranspilerStore {
     /// folded here and the drain goes on; the VM's termination ends it, with
     /// the rest of the batch back on the queue (each still has its own posted
     /// task, or the teardown release, to pick it up).
-    // Note: takes `NonNull` rather than `&mut` for `event_loop`/`vm`
-    // because `&mut self` already aliases `vm.transpiler_store` (this `Self` is
-    // a field of `VirtualMachine`). Field-level derefs only.
-    pub fn run_from_js_thread(
-        &mut self,
+    ///
+    /// # Safety
+    /// `this` is the VM's store, on the JS thread. Raw because the microtask
+    /// drains below re-enter it (`transpile`, `Bun__onModuleResolved`).
+    pub unsafe fn run_from_js_thread(
+        this: *mut Self,
         event_loop: NonNull<EventLoop>,
         global: &JSGlobalObject,
         vm: NonNull<VirtualMachine>,
     ) {
-        let batch = self.queue.pop_batch();
-        // SAFETY: `vm` is the live owning VM (caller is the JS-thread tick loop).
-        let jsc_vm = unsafe { (*vm.as_ptr()).jsc_vm() };
+        // SAFETY: fn contract; `vm` is the live owning VM.
+        let (batch, jsc_vm) = unsafe { ((*this).queue.pop_batch(), (*vm.as_ptr()).jsc_vm()) };
         let mut iter = batch.iterator();
-        let mut job = iter.next();
-        let mut first = true;
-        while !job.is_null() {
-            if !first {
-                // if there are more, we need to drain the microtasks from the previous run
-                // SAFETY: `event_loop` is the VM's live event-loop self-pointer.
-                let drained =
-                    unsafe { (*event_loop.as_ptr()).drain_microtasks_with_global(global, jsc_vm) };
-                if drained.is_err() {
-                    self.requeue(job, &mut iter);
-                    return;
-                }
+        // SAFETY: `event_loop` is the VM's live event-loop self-pointer; no borrow of `*this` is live.
+        let drain =
+            || unsafe { (*event_loop.as_ptr()).drain_microtasks_with_global(global, jsc_vm) };
+        // The last fulfilment's microtasks (record creation, and an ES module's fetches) are pending.
+        let mut undrained = false;
+        loop {
+            let job = iter.next();
+            if job.is_null() {
+                break;
             }
-            first = false;
-            // SAFETY: `job` is a live job popped from the intrusive queue.
-            let fulfilled = unsafe { (*job).run_from_js_thread() };
-            job = iter.next();
-            if let Err(err) = fulfilled {
-                if crate::task::report_error_or_terminate(global, err).is_err() {
-                    self.requeue(job, &mut iter);
+            if undrained {
+                if drain().is_err() {
+                    // SAFETY: fn contract; statement-scoped.
+                    unsafe { (*this).requeue(job, &mut iter) };
                     return;
                 }
+                undrained = false;
+            }
+            // SAFETY: `job` is a live job popped from the intrusive queue; `this` per fn
+            // contract, each access statement-scoped.
+            let fulfilled = unsafe {
+                let completed = (*job).take_completed();
+                if completed.evaluates_when_fulfilled()
+                    && (*this)
+                        .order
+                        .has_unfulfilled_predecessor(completed.order_key)
+                {
+                    (*this).order.hold(completed);
+                    continue;
+                }
+                undrained = true;
+                Self::fulfill(this, global, completed)
+            };
+            if fulfilled.is_err() {
+                // SAFETY: fn contract; statement-scoped.
+                unsafe { (*this).requeue(iter.next(), &mut iter) };
+                return;
             }
         }
+        // Held CommonJS results whose turn has come.
+        loop {
+            if undrained && drain().is_err() {
+                return;
+            }
+            // SAFETY: fn contract; statement-scoped, after the drain.
+            let Some(completed) = (unsafe { (*this).order.next_ready() }) else {
+                break;
+            };
+            // SAFETY: fn contract.
+            if unsafe { Self::fulfill(this, global, completed) }.is_err() {
+                return;
+            }
+            undrained = true;
+        }
         // immediately after this is called, the microtasks will be drained again.
+    }
+
+    /// Settle the module promise with the result. `Err` when the VM is terminating.
+    ///
+    /// # Safety
+    /// As for [`run_from_js_thread`](Self::run_from_js_thread).
+    unsafe fn fulfill(
+        this: *mut Self,
+        global: &JSGlobalObject,
+        completed: CompletedJob,
+    ) -> Result<(), ()> {
+        let CompletedJob {
+            order_key,
+            global_this,
+            mut promise,
+            result,
+            specifier,
+            referrer,
+            mut log,
+        } = completed;
+        bun_core::scoped_log!(
+            RuntimeTranspilerStore,
+            "fulfill {} (outstanding {})",
+            specifier,
+            // SAFETY: fn contract.
+            unsafe { (*this).order.outstanding.len() }
+        );
+        let fulfilled = AsyncModule::fulfill(
+            &global_this,
+            promise.swap(),
+            result,
+            &specifier,
+            &referrer,
+            &mut log,
+        );
+        // SAFETY: fn contract.
+        unsafe { (*this).order.fulfilled(order_key) };
+        if let Err(err) = fulfilled {
+            if crate::task::report_error_or_terminate(global, err).is_err() {
+                return Err(());
+            }
+        }
+        Ok(())
     }
 
     /// Put `job` and the rest of a popped batch back: each still has its posted
@@ -343,6 +639,8 @@ impl RuntimeTranspilerStore {
             }
         }
 
+        let order_key = self.order.issue(&input_specifier.to_utf8());
+
         // Build the job by value and `get_init` it into the hive — the `Box`
         // alloc, `JSInternalPromise::create`, and `StrongOptional::create`
         // above all happen *before* the slot is claimed, so an OOM/throw on
@@ -356,6 +654,7 @@ impl RuntimeTranspilerStore {
                 path: owned_path,
                 global_this: BackRef::new(global_object),
                 non_threadsafe_referrer: referrer,
+                order_key,
                 vm,
                 ticket: None,
                 log: bun_ast::Log::init(),
@@ -405,6 +704,8 @@ pub struct TranspilerJob {
     pub path: bun_paths::fs::Path<'static>,
     pub(crate) non_threadsafe_input_specifier: bun_core::String,
     pub(crate) non_threadsafe_referrer: bun_core::String,
+    /// See [`ImportOrder`].
+    order_key: ModuleKey,
     pub(crate) loader: Loader,
     pub(crate) promise: StrongOptional,
     // Note: struct is stored in a HiveArray and crosses to a worker thread;
@@ -433,6 +734,24 @@ unsafe impl unbounded_queue::Linked for TranspilerJob {
     unsafe fn link(item: *mut Self) -> *const unbounded_queue::Link<Self> {
         // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
         unsafe { core::ptr::addr_of!((*item).next) }
+    }
+}
+
+/// A finished job's result, moved out of its pool slot; `promise` roots the module promise.
+struct CompletedJob {
+    order_key: ModuleKey,
+    global_this: BackRef<JSGlobalObject>,
+    promise: StrongOptional,
+    result: Result<ResolvedSource, crate::CrateError>,
+    specifier: String,
+    referrer: String,
+    log: bun_ast::Log,
+}
+
+impl CompletedJob {
+    /// A CommonJS result: JSC runs the module body when its fetch settles (`createCommonJSModule`).
+    fn evaluates_when_fulfilled(&self) -> bool {
+        matches!(&self.result, Ok(source) if source.is_commonjs_module)
     }
 }
 
@@ -512,19 +831,13 @@ impl TranspilerJob {
         ticket.post(ConcurrentTask::create_from(transpiler_store));
     }
 
-    fn run_from_js_thread(&mut self) -> JsResult<()> {
+    /// Move the result out and hand the slot back to the pool.
+    fn take_completed(&mut self) -> CompletedJob {
         let vm = self.vm;
-        let promise = self.promise.swap();
-        // Copy the BackRef out (it is `Copy`) so the borrow of `*self` ends
-        // before `reset_for_pool`/`put` need `&mut *self` below; deref at the
-        // `fulfill` call site instead.
-        let global_this = self.global_this;
         // Note: the KeepAlive takes an `EventLoopCtx`
         // vtable; resolve it via the `get_vm_ctx` hook (registered by `bun_runtime::init`).
         self.poll_ref.unref(get_vm_ctx(AllocatorType::Js));
 
-        let referrer = core::mem::take(&mut self.non_threadsafe_referrer);
-        let mut log = core::mem::replace(&mut self.log, bun_ast::Log::init());
         let (specifier, result) = match self.parse_error {
             Some(e) => (String::clone_utf8(self.path.text), Err(e)),
             None => {
@@ -535,8 +848,16 @@ impl TranspilerJob {
                 (out, Ok(resolved_source))
             }
         };
+        let completed = CompletedJob {
+            order_key: self.order_key,
+            global_this: self.global_this,
+            promise: core::mem::take(&mut self.promise),
+            result,
+            specifier,
+            referrer: core::mem::take(&mut self.non_threadsafe_referrer),
+            log: core::mem::replace(&mut self.log, bun_ast::Log::init()),
+        };
 
-        self.promise.deinit();
         self.reset_for_pool();
 
         // SAFETY: vm outlives the job; transpiler_store.store.put recycles the slot.
@@ -547,14 +868,7 @@ impl TranspilerJob {
                 .put(std::ptr::from_mut::<TranspilerJob>(self))
         };
 
-        AsyncModule::fulfill(
-            &global_this,
-            promise,
-            result,
-            &specifier,
-            &referrer,
-            &mut log,
-        )
+        completed
     }
 
     fn schedule(&mut self) {

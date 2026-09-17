@@ -124,21 +124,16 @@ pub(crate) fn find_imported_parts_in_js_order(
     order: &WalkOrder,
     chunks_len: usize,
 ) -> Result<(), bun_alloc::AllocError> {
-    let flags = this.graph.meta.items_flags();
-
     let runs: &[PartRun] = &order.runs_of_chunk[chunk_index as usize];
 
     let mut layout = ChunkLayout {
         c: this,
-        flags,
-        parts: this.graph.ast.items_parts(),
         files: Vec::with_capacity(chunk.files_with_parts_in_chunk.count()),
         part_ranges: Vec::new(),
         parts_prefix: Vec::new(),
         chunk_index,
         // The one column written through a shared `&LinkerContext` (see `place`).
         entry_point_chunk_indices: this.graph.files.slice().split_raw().entry_point_chunk_index,
-        with_scb: this.graph.is_scb_bitset.bit_length > 0,
     };
 
     // The runtime goes first: every helper a file calls is declared above it.
@@ -222,7 +217,6 @@ impl WalkOrder {
 
 /// Which walk lays out which chunk. A chunk has one owner, so the walks share nothing they write.
 struct WalkPlan {
-    code_splitting: bool,
     /// With code splitting, per file: the JS chunk that holds it (`u32::MAX`: none).
     chunk_of_file: Vec<u32>,
     /// Per chunk: the entry point id of the walk that lays it out (`u32::MAX`: not a JS chunk).
@@ -239,7 +233,6 @@ impl WalkPlan {
         let entry_points = c.graph.entry_points.items_source_index();
         let code_splitting = c.graph.code_splitting;
         let mut plan = WalkPlan {
-            code_splitting,
             chunk_of_file: Vec::new(),
             owner_of_chunk: vec![u32::MAX; chunks.len()],
             slot_of_chunk: vec![0; chunks.len()],
@@ -282,7 +275,7 @@ impl WalkPlan {
                     *slot = entry_id as u32;
                 }
             }
-            rank = LoadOrder::rank(c, &plan.entry_id_of_file);
+            rank = load_rank(c, &plan.entry_id_of_file);
         }
         let mut walk_of_entry = vec![u32::MAX; entry_points.len()];
         let mut walks: Vec<EntryWalk> = Vec::new();
@@ -310,7 +303,6 @@ impl WalkPlan {
                 *walk_index = walks.len() as u32;
                 walks.push(EntryWalk {
                     entry_id: owner,
-                    root: entry_points[owner as usize],
                     chunks: Vec::new(),
                     runs: Vec::new(),
                     entered: Vec::new(),
@@ -326,20 +318,6 @@ impl WalkPlan {
     }
 }
 
-/// The order the entry points load in: the user's, then the on-demand ones as evaluation meets them, then the rest.
-struct LoadOrder<'a, 'ctx> {
-    c: &'a LinkerContext<'ctx>,
-    /// The load of an entry point that loads the file evaluated it.
-    visited: AutoBitSet,
-    /// Per file: 1 + the entry point of the last load that went through it and does not load it.
-    passed: Vec<u32>,
-    entry_id_of_file: &'a [u32],
-    rank: Vec<u32>,
-    next_rank: u32,
-    queued: Vec<bool>,
-    on_demand: Vec<u32>,
-}
-
 #[derive(Clone, Copy)]
 enum LoadFrame {
     /// `loader`: the entry point whose load reaches the file.
@@ -352,73 +330,62 @@ enum LoadFrame {
     Later(u32),
 }
 
-impl<'a, 'ctx> LoadOrder<'a, 'ctx> {
-    fn rank(c: &'a LinkerContext<'ctx>, entry_id_of_file: &'a [u32]) -> Vec<u32> {
-        let files_len = c.graph.files.len();
-        let entry_points = c.graph.entry_points.items_source_index();
-        let entry_point_kinds = c.graph.files.items_entry_point_kind();
-        let mut this = LoadOrder {
-            c,
-            visited: bun_core::handle_oom(AutoBitSet::init_empty(files_len)),
-            passed: vec![0; files_len],
-            entry_id_of_file,
-            rank: vec![u32::MAX; entry_points.len()],
-            next_rank: 0,
-            queued: vec![false; entry_points.len()],
-            on_demand: Vec::new(),
-        };
-        let mut stack: Vec<LoadFrame> = Vec::new();
-        for (entry_id, &source_index) in entry_points.iter().enumerate() {
-            if entry_point_kinds[source_index as usize] != EntryPoint::Kind::DynamicImport {
-                this.load(&mut stack, entry_id as u32);
-            }
-        }
-        let (mut met, mut unmet) = (0, 0);
-        loop {
-            if let Some(&entry_id) = this.on_demand.get(met) {
-                met += 1;
-                this.load(&mut stack, entry_id);
-                continue;
-            }
-            while unmet < entry_points.len() && this.rank[unmet] != u32::MAX {
+/// Per entry point id: when it loads. The user's first, then the on-demand ones as evaluation meets them, then the rest.
+fn load_rank(c: &LinkerContext, entry_id_of_file: &[u32]) -> Vec<u32> {
+    const QUEUED: u32 = u32::MAX - 1;
+    let files_len = c.graph.files.len();
+    let entry_points = c.graph.entry_points.items_source_index();
+    let entry_point_kinds = c.graph.files.items_entry_point_kind();
+    let css = c.graph.ast.items_css();
+    let loaders = c.parse_graph().input_files.items_loader();
+    let parts = c.graph.ast.items_parts();
+    let import_records = c.graph.ast.items_import_records();
+    let entry_bits = c.graph.files.items_entry_bits();
+
+    // The load of an entry point that loads the file evaluated it.
+    let mut visited = bun_core::handle_oom(AutoBitSet::init_empty(files_len));
+    // Per file: 1 + the entry point of the last load that went through it and does not load it.
+    let mut passed: Vec<u32> = vec![0; files_len];
+    let mut rank: Vec<u32> = vec![u32::MAX; entry_points.len()];
+    let mut next_rank = 0;
+    let mut stack: Vec<LoadFrame> = Vec::new();
+    let mut pending: Vec<u32> = (0..entry_points.len() as u32)
+        .filter(|&entry_id| {
+            entry_point_kinds[entry_points[entry_id as usize] as usize]
+                != EntryPoint::Kind::DynamicImport
+        })
+        .collect();
+    let (mut next, mut unmet) = (0, 0);
+    loop {
+        let entry_id = if let Some(&entry_id) = pending.get(next) {
+            next += 1;
+            entry_id
+        } else {
+            while unmet < entry_points.len() && rank[unmet] < QUEUED {
                 unmet += 1;
             }
             if unmet == entry_points.len() {
                 break;
             }
-            this.load(&mut stack, unmet as u32);
+            unmet as u32
+        };
+        if rank[entry_id as usize] < QUEUED {
+            continue;
         }
-        this.rank
-    }
-
-    fn load(&mut self, stack: &mut Vec<LoadFrame>, entry_id: u32) {
-        if self.rank[entry_id as usize] != u32::MAX {
-            return;
-        }
-        let c = self.c;
-        let css = c.graph.ast.items_css();
-        let loaders = c.parse_graph().input_files.items_loader();
-        let parts = c.graph.ast.items_parts();
-        let import_records = c.graph.ast.items_import_records();
-        let entry_bits = c.graph.files.items_entry_bits();
-
-        debug_assert!(stack.is_empty());
-        let entry_points = c.graph.entry_points.items_source_index();
         stack.push(LoadFrame::Load(entry_id));
         while let Some(frame) = stack.pop() {
             let (source_index, loader) = match frame {
                 LoadFrame::Load(entry_id) => {
-                    if self.rank[entry_id as usize] == u32::MAX {
-                        self.rank[entry_id as usize] = self.next_rank;
-                        self.next_rank += 1;
+                    if rank[entry_id as usize] >= QUEUED {
+                        rank[entry_id as usize] = next_rank;
+                        next_rank += 1;
                     }
                     (entry_points[entry_id as usize], entry_id)
                 }
                 LoadFrame::Later(entry_id) => {
-                    if self.rank[entry_id as usize] == u32::MAX
-                        && !core::mem::replace(&mut self.queued[entry_id as usize], true)
-                    {
-                        self.on_demand.push(entry_id);
+                    if rank[entry_id as usize] == u32::MAX {
+                        rank[entry_id as usize] = QUEUED;
+                        pending.push(entry_id);
                     }
                     continue;
                 }
@@ -427,16 +394,15 @@ impl<'a, 'ctx> LoadOrder<'a, 'ctx> {
                     loader,
                 } => (source_index, loader),
             };
-            if source_index == Index::RUNTIME.value() || self.visited.is_set(source_index as usize)
-            {
+            if source_index == Index::RUNTIME.value() || visited.is_set(source_index as usize) {
                 continue;
             }
             // A load evaluates the files that its entry point loads. It goes through the others.
             let evaluates = c.graph.files_live.is_set(source_index as usize)
                 && entry_bits[source_index as usize].is_set(loader as usize);
             if evaluates {
-                self.visited.set(source_index as usize);
-            } else if core::mem::replace(&mut self.passed[source_index as usize], loader + 1)
+                visited.set(source_index as usize);
+            } else if core::mem::replace(&mut passed[source_index as usize], loader + 1)
                 == loader + 1
             {
                 continue;
@@ -476,9 +442,9 @@ impl<'a, 'ctx> LoadOrder<'a, 'ctx> {
                         } else if record.kind == ImportKind::Require
                             && !part_has_no_side_effects(part)
                         {
-                            LoadFrame::Load(self.entry_id_of_file[other as usize])
+                            LoadFrame::Load(entry_id_of_file[other as usize])
                         } else {
-                            LoadFrame::Later(self.entry_id_of_file[other as usize])
+                            LoadFrame::Later(entry_id_of_file[other as usize])
                         });
                     }
                     if runs {
@@ -494,6 +460,7 @@ impl<'a, 'ctx> LoadOrder<'a, 'ctx> {
             stack[mark..].reverse();
         }
     }
+    rank
 }
 
 #[derive(Clone, Copy)]
@@ -509,7 +476,6 @@ enum WalkFrame {
 /// One walk from an entry point. It lays out the chunks that the entry point owns.
 struct EntryWalk {
     entry_id: u32,
-    root: IndexInt,
     chunks: Vec<u32>,
     /// Per owned chunk: the runs placed so far.
     runs: Vec<Vec<PartRun>>,
@@ -522,7 +488,8 @@ impl EntryWalk {
         let mut seen = bun_core::handle_oom(AutoBitSet::init_empty(c.graph.files.len()));
         let mut stack: Vec<WalkFrame> = Vec::new();
         let mut css_placed: HashMap<u64, ()> = HashMap::default();
-        self.walk(c, plan, &mut seen, &mut stack, &mut css_placed, self.root);
+        let root = c.graph.entry_points.items_source_index()[self.entry_id as usize];
+        self.walk(c, plan, &mut seen, &mut stack, &mut css_placed, root);
 
         // Chunk folding can move a file into a chunk whose entry points do not import it. It goes last there.
         let runtime = Index::RUNTIME.value();
@@ -567,7 +534,7 @@ impl EntryWalk {
         };
         // The slot of the owned chunk that holds the file.
         let slot_of = |source_index: IndexInt| -> Option<u32> {
-            if !plan.code_splitting {
+            if !c.graph.code_splitting {
                 return loads(source_index, entry_id).then_some(0);
             }
             if !files_live.is_set(source_index as usize) {
@@ -612,7 +579,7 @@ impl EntryWalk {
 
             // The walk places a file of a chunk it owns. It goes through the others.
             let slot = slot_of(source_index);
-            if slot.is_some() && plan.code_splitting {
+            if slot.is_some() && c.graph.code_splitting {
                 self.entered.push(source_index);
             }
             // The parts of a file run when the walk places it, or when its loader loads it into another chunk.
@@ -631,7 +598,7 @@ impl EntryWalk {
                 if is_css {
                     let Some(slot) = slot else { return };
                     // The chunk of the importer loads the CSS file, whatever load reached the importer.
-                    let chunk_loads_css = if plan.code_splitting {
+                    let chunk_loads_css = if c.graph.code_splitting {
                         files_live.is_set(other as usize)
                             && entry_bits[other as usize]
                                 .has_intersection(&entry_bits[source_index as usize])
@@ -743,15 +710,12 @@ impl EntryWalk {
 
 struct ChunkLayout<'a, 'ctx> {
     c: &'a LinkerContext<'ctx>,
-    flags: &'a [crate::js_meta::Flags],
-    parts: &'a [bun_ast::PartList<'ctx>],
     files: Vec<IndexInt>,
     part_ranges: Vec<PartRange>,
     parts_prefix: Vec<PartRange>,
     chunk_index: u32,
     /// Raw `entry_point_chunk_index` column, for the one write in `place`.
     entry_point_chunk_indices: *mut [u32],
-    with_scb: bool,
 }
 
 impl ChunkLayout<'_, '_> {
@@ -761,7 +725,7 @@ impl ChunkLayout<'_, '_> {
         source_index: IndexInt,
         part_index: IndexInt,
     ) {
-        let parts = self.parts[source_index as usize].as_slice();
+        let parts = self.c.graph.ast.items_parts()[source_index as usize].as_slice();
         let part_start = |part_index: IndexInt| -> i32 {
             match parts[part_index as usize].stmts.slice().first() {
                 Some(stmt) => stmt.loc.start,
@@ -793,10 +757,11 @@ impl ChunkLayout<'_, '_> {
 
     fn place(&mut self, run: PartRun) {
         let source_index = run.source_index;
-        let parts = self.parts[source_index as usize].as_slice();
+        let parts = self.c.graph.ast.items_parts()[source_index as usize].as_slice();
         let leaves = run.end == u32::MAX;
         // Wrapped files can't be split because they are all inside the wrapper
-        let can_be_split = self.flags[source_index as usize].wrap == Wrap::None;
+        let can_be_split =
+            self.c.graph.meta.items_flags()[source_index as usize].wrap == Wrap::None;
         if can_be_split {
             let parts_live = &self.c.graph.parts_live[source_index as usize];
             let end = if leaves { parts.len() as u32 } else { run.end };
@@ -820,10 +785,12 @@ impl ChunkLayout<'_, '_> {
             return;
         }
 
-        if self.with_scb && self.c.graph.is_scb_bitset.is_set(source_index as usize) {
+        if self.c.graph.is_scb_bitset.bit_length > 0
+            && self.c.graph.is_scb_bitset.is_set(source_index as usize)
+        {
             // SAFETY: `entry_point_chunk_indices` is the raw column pointer
             // for `entry_point_chunk_index` (distinct from every column read
-            // through `self.c` / `self.flags` / `self.parts`), valid for
+            // through `self.c`), valid for
             // `graph.files.len()` writes for the duration of the link step.
             // Chunks run in parallel and, without code splitting, several may
             // contain this file: highest index wins (unset is `u32::MAX`), as

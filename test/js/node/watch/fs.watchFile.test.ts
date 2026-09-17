@@ -150,6 +150,61 @@ describe("fs.watchFile", () => {
     expect(called).toBe(false);
   });
 
+  type AnyStats = fs.Stats | fs.BigIntStats;
+  // Records one watcher's callbacks. `next` resolves with the first callback
+  // not yet consumed that matches, so a stray callback is skipped, not
+  // mistaken for the one under test.
+  function recorder<T>(pick: (curr: AnyStats, prev: AnyStats) => T) {
+    const calls: T[] = [];
+    let cursor = 0;
+    let wake = () => {};
+    return {
+      calls,
+      listener: (curr: AnyStats, prev: AnyStats) => {
+        calls.push(pick(curr, prev));
+        wake();
+      },
+      async next(matches: (call: T) => boolean): Promise<T> {
+        for (;;) {
+          for (; cursor < calls.length; cursor++) {
+            if (matches(calls[cursor])) return calls[cursor++];
+          }
+          const { promise, resolve } = Promise.withResolvers<void>();
+          wake = resolve;
+          await promise;
+        }
+      },
+    };
+  }
+  // A second watcher in the same scheduler pass, on a file that does not exist
+  // yet. Its first callback proves that it is polled. After that, two of its
+  // callbacks prove two more passes, so every watcher was polled once more.
+  function startClock(file: string) {
+    const rec = recorder(() => 0);
+    fs.watchFile(file, { interval: 20 }, rec.listener);
+    let n = 0;
+    return {
+      ready: () => rec.next(() => true),
+      async twoPolls() {
+        for (let i = 0; i < 2; i++) {
+          updateFile(file, String(++n));
+          await rec.next(() => true);
+        }
+      },
+      stop: () => fs.unwatchFile(file),
+    };
+  }
+  // Changes the file until the watcher reports it, which proves that the
+  // initial stat ran and the watcher is polled.
+  async function warmUp(file: string, change: () => void, seen: () => Promise<unknown>) {
+    const interval = repeat(change);
+    try {
+      await seen();
+    } finally {
+      clearInterval(interval);
+    }
+  }
+
   // libuv saves the stat of every successful poll as the next `previous`, also
   // when nothing changed and no listener ran (`ctx->statbuf = *statbuf`):
   // https://github.com/libuv/libuv/blob/5152db2cbfeb5582e9c27c5ea1dba2cd9e10759b/src/fs-poll.c#L211-L218
@@ -157,60 +212,35 @@ describe("fs.watchFile", () => {
   // to carry the moved atime anyway.
   test.skipIf(!atimeMovesOnRead)("previous has the atime of the last poll, not of the last callback", async () => {
     const file = path.join(testDir, "atime.txt");
-    // A second watched file, polled by the same scheduler pass. Two of its
-    // callbacks after the read prove that the pass polled `file` after it.
-    const clock = path.join(testDir, "clock.txt");
     fs.writeFileSync(file, "abc");
-    fs.writeFileSync(clock, "0");
     const old = new Date(Date.now() - 3600_000);
     fs.utimesSync(file, old, old);
 
-    const fileCalls: { curr: fs.Stats; prev: fs.Stats }[] = [];
-    let clockCalls = 0;
-    let wake = () => {};
-    fs.watchFile(file, { interval: 20 }, (curr, prev) => {
-      fileCalls.push({ curr, prev });
-      wake();
-    });
-    fs.watchFile(clock, { interval: 20 }, () => {
-      clockCalls++;
-      wake();
-    });
-    async function until(cond: () => boolean) {
-      while (!cond()) {
-        const { promise, resolve } = Promise.withResolvers<void>();
-        wake = resolve;
-        await promise;
-      }
-    }
-
+    const rec = recorder((curr, prev) => ({ currSize: Number(curr.size), prevAtimeMs: Number(prev.atimeMs) }));
+    fs.watchFile(file, { interval: 20 }, rec.listener);
+    const clock = startClock(path.join(testDir, "clock.txt"));
     try {
-      // The first change proves that `file` is polled. mtime is now newer
-      // than atime, so relatime updates atime on the next read.
-      fs.appendFileSync(file, "d");
-      await until(() => fileCalls.length >= 1);
+      // Appends keep the inode and its old atime. mtime is now newer than
+      // atime, so relatime updates atime on the next read.
+      await warmUp(
+        file,
+        () => fs.appendFileSync(file, "d"),
+        () => rec.next(() => true),
+      );
+      await clock.ready();
 
       const before = fs.statSync(file);
       fs.readFileSync(file);
       const afterRead = fs.statSync(file);
       expect(afterRead.atimeMs).not.toBe(before.atimeMs);
 
-      updateFile(clock, "1");
-      await until(() => clockCalls >= 1);
-      updateFile(clock, "2");
-      await until(() => clockCalls >= 2);
+      await clock.twoPolls();
 
       updateFile(file, "abcdef");
-      await until(() => fileCalls.length >= 2);
-
-      const { curr, prev } = fileCalls[1];
-      expect({ currSize: curr.size, prevAtimeMs: prev.atimeMs }).toEqual({
-        currSize: 6,
-        prevAtimeMs: afterRead.atimeMs,
-      });
+      expect(await rec.next(c => c.currSize === 6)).toEqual({ currSize: 6, prevAtimeMs: afterRead.atimeMs });
     } finally {
       fs.unwatchFile(file);
-      fs.unwatchFile(clock);
+      clock.stop();
     }
   });
 
@@ -222,7 +252,7 @@ describe("fs.watchFile", () => {
   test.each([false, true])(
     "previous is the last real stat when a deleted file reappears (bigint: %p)",
     async bigint => {
-      const pick = (stats: fs.Stats | fs.BigIntStats) => ({
+      const stat = (stats: AnyStats) => ({
         ino: Number(stats.ino),
         size: Number(stats.size),
         mtimeMs: Number(stats.mtimeMs),
@@ -230,64 +260,34 @@ describe("fs.watchFile", () => {
       const zeroed = { ino: 0, size: 0, mtimeMs: 0 };
 
       const file = path.join(testDir, "reappear.txt");
-      const clock = path.join(testDir, "clock.txt");
-      fs.writeFileSync(clock, "0");
-      const calls: { curr: ReturnType<typeof pick>; prev: ReturnType<typeof pick> }[] = [];
-      let clockCalls = 0;
-      let wake = () => {};
-      fs.watchFile(file, { interval: 20, bigint }, (curr, prev) => {
-        calls.push({ curr: pick(curr), prev: pick(prev) });
-        wake();
-      });
-      fs.watchFile(clock, { interval: 20 }, () => {
-        clockCalls++;
-        wake();
-      });
-      async function until(cond: () => boolean) {
-        while (!cond()) {
-          const { promise, resolve } = Promise.withResolvers<void>();
-          wake = resolve;
-          await promise;
-        }
-      }
-      // Resolves with the index of the next callback whose `curr` has this size.
-      let cursor = 0;
-      async function nextCallWithSize(size: number) {
-        for (;;) {
-          for (; cursor < calls.length; cursor++) {
-            if (calls[cursor].curr.size === size) return cursor++;
-          }
-          await until(() => cursor < calls.length);
-        }
-      }
-
+      const rec = recorder((curr, prev) => ({ curr: stat(curr), prev: stat(prev) }));
+      fs.watchFile(file, { interval: 20, bigint }, rec.listener);
+      const clock = startClock(path.join(testDir, "clock.txt"));
       try {
         // The file does not exist yet: the first callback has two zeroed stats.
-        expect(calls[await nextCallWithSize(0)]).toEqual({ curr: zeroed, prev: zeroed });
+        expect(await rec.next(() => true)).toEqual({ curr: zeroed, prev: zeroed });
+        await clock.ready();
 
         // It never had a real stat, so `previous` is still zeroed when it appears.
         updateFile(file, "aaa");
-        expect(calls[await nextCallWithSize(3)].prev).toEqual(zeroed);
+        const created = await rec.next(c => c.curr.size === 3);
+        expect(created.prev).toEqual(zeroed);
 
         fs.unlinkSync(file);
-        const goneIndex = await nextCallWithSize(0);
-        const lastReal = calls[goneIndex - 1].curr;
-        expect(lastReal.size).toBe(3);
-        expect(calls[goneIndex]).toEqual({ curr: zeroed, prev: lastReal });
+        const gone = await rec.next(c => c.curr.size === 0);
+        expect(gone).toEqual({ curr: zeroed, prev: created.curr });
 
-        // A file that stays missing does not call back again. Two clock
-        // callbacks prove that the scheduler polled `file` again.
-        updateFile(clock, "1");
-        await until(() => clockCalls >= 1);
-        updateFile(clock, "2");
-        await until(() => clockCalls >= 2);
-        expect(calls.length).toBe(goneIndex + 1);
+        // A file that stays missing does not call back again.
+        const count = rec.calls.length;
+        await clock.twoPolls();
+        expect(rec.calls.length).toBe(count);
 
         updateFile(file, "bb");
-        expect(calls[await nextCallWithSize(2)].prev).toEqual(lastReal);
+        const back = await rec.next(c => c.curr.size === 2);
+        expect(back.prev).toEqual(created.curr);
       } finally {
         fs.unwatchFile(file);
-        fs.unwatchFile(clock);
+        clock.stop();
       }
     },
   );
@@ -303,41 +303,31 @@ describe("fs.watchFile", () => {
     fs.mkdirSync(dir);
     fs.writeFileSync(file, "hello");
 
-    const calls: { curr: number; prev: number }[] = [];
-    let wake = () => {};
-    fs.watchFile(file, { interval: 20 }, (curr, prev) => {
-      calls.push({ curr: curr.size, prev: prev.size });
-      wake();
-    });
-    async function callCount(count: number) {
-      while (calls.length < count) {
-        const { promise, resolve } = Promise.withResolvers<void>();
-        wake = resolve;
-        await promise;
-      }
-      return calls.length;
-    }
-
+    const rec = recorder((curr, prev) => ({ curr: Number(curr.size), prev: Number(prev.size) }));
+    fs.watchFile(file, { interval: 20 }, rec.listener);
     try {
+      // Each rename is a new inode, so the size stays 5 through the warm-up.
+      await warmUp(
+        file,
+        () => updateFile(file, "hello"),
+        () => rec.next(() => true),
+      );
+
       // stat() fails with ENOENT
       fs.rmSync(dir, { recursive: true });
-      expect(await callCount(1)).toBe(1);
-      expect(calls[0]).toEqual({ curr: 0, prev: 5 });
+      expect(await rec.next(c => c.curr === 0)).toEqual({ curr: 0, prev: 5 });
 
       // stat() fails with ENOTDIR: a different error code, so node calls back
       fs.writeFileSync(dir, "x");
-      expect(await callCount(2)).toBe(2);
-      expect(calls[1]).toEqual({ curr: 0, prev: 5 });
+      expect(await rec.next(c => c.curr === 0)).toEqual({ curr: 0, prev: 5 });
 
       // back to ENOENT
       fs.rmSync(dir);
-      expect(await callCount(3)).toBe(3);
-      expect(calls[2]).toEqual({ curr: 0, prev: 5 });
+      expect(await rec.next(c => c.curr === 0)).toEqual({ curr: 0, prev: 5 });
 
       fs.mkdirSync(dir);
-      fs.writeFileSync(file, "hi");
-      expect(await callCount(4)).toBe(4);
-      expect(calls[3]).toEqual({ curr: 2, prev: 5 });
+      updateFile(file, "hi");
+      expect(await rec.next(c => c.curr === 2)).toEqual({ curr: 2, prev: 5 });
     } finally {
       fs.unwatchFile(file);
     }

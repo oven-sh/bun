@@ -982,18 +982,15 @@ impl bun_event_loop::Taskable for StatWatcherHop {
     }
 }
 
-/// libuv's `statbuf_eq`: the fields a poll compares. `atime` is not one of them.
+/// libuv's `statbuf_eq`: the fields a poll compares. `atime` and the block
+/// counts, which settle after writeback on ZFS and btrfs, are not among them.
 fn stat_eq(a: &PosixStat, b: &PosixStat) -> bool {
     a.dev == b.dev
         && a.ino == b.ino
         && a.mode == b.mode
-        && a.nlink == b.nlink
         && a.uid == b.uid
         && a.gid == b.gid
-        && a.rdev == b.rdev
         && a.size == b.size
-        && a.blksize == b.blksize
-        && a.blocks == b.blocks
         && a.mtim.sec == b.mtim.sec
         && a.mtim.nsec == b.mtim.nsec
         && a.ctim.sec == b.ctim.sec

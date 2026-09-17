@@ -485,15 +485,17 @@ impl JSValkeyClient {
     ) -> JsResult<*mut JSValkeyClient> {
         let global_object = GlobalRef::from(global_object);
         let vm: &'static VirtualMachine = global_object.bun_vm();
-        let vm_ref = vm;
 
         let url_str = if arguments.len() >= 1 && !arguments[0].is_undefined_or_null() {
             arguments[0].to_bun_string(&global_object)?
         } else {
-            let env = vm_ref.env_loader();
-            match env.get(b"REDIS_URL").or_else(|| env.get(b"VALKEY_URL")) {
-                Some(url) => BunString::borrow_utf8(url),
-                None => BunString::static_("valkey://localhost:6379"),
+            let env = global_object.process_env()?;
+            match env.get_stringish(&global_object, "REDIS_URL")? {
+                Some(url) => url,
+                None => match env.get_stringish(&global_object, "VALKEY_URL")? {
+                    Some(url) => url,
+                    None => BunString::static_("valkey://localhost:6379"),
+                },
             }
         };
         let mut fallback_url_buf = [0u8; 2048];

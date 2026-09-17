@@ -447,8 +447,7 @@ pub fn check_x509_server_identity(x509: &mut boring::X509, hostname: &[u8]) -> b
     // As in Node.js, a host is an IP address only as typed, not after the IDNA mapping.
     let host_is_ip = bun_core::ip_address::is_ip_address(unfqdn(hostname));
     let ascii_hostname;
-    // CVE-2026-48618: IDNA maps "。" to ".", so a non-ASCII host is matched on its UTS #46 form.
-    // `tls.checkServerIdentity` applies the same rule. An ASCII host stays as typed.
+    // CVE-2026-48618: IDNA maps "。" to ".", so a non-ASCII host is matched on its UTS #46 form, as in `tls.checkServerIdentity`.
     let hostname = if strings::first_non_ascii(hostname).is_some() {
         let ascii = Bun__idnaToASCII(&bun_core::String::borrow_utf8(hostname));
         if ascii.is_dead() {

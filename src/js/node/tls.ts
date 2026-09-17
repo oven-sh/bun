@@ -454,10 +454,7 @@ function checkServerIdentity(hostname, cert) {
   const ips = [];
 
   hostname = "" + hostname;
-  // CVE-2026-48618: IDNA maps "。" to ".", so a non-ASCII host is matched on its UTS #46 form.
-  // Not url.domainToASCII(), which Node.js calls here: that parses a URL host, so it cuts the name at
-  // "/", "?", "#" and "\", drops tab, CR and LF, and decodes "%xx". An ASCII host stays as typed, as in
-  // the native matcher.
+  // CVE-2026-48618: UTS #46 maps "。" to ".". Not url.domainToASCII() as in Node.js: that URL host parse cuts the name at "/".
   const hostnameASCII =
     RegExpPrototypeExec.$call(/[^\u0000-\u007F]/, hostname) === null ? hostname : idnaToASCII(hostname);
 
@@ -552,8 +549,7 @@ function normalizePemKeyOption(key, ctxPassphrase) {
 
 const SSL_OP_CIPHER_SERVER_PREFERENCE = 0x00400000;
 
-// The native layer keeps the name as a C string and refuses one with a NUL. As in Node.js, SNI gets
-// the name up to the NUL, and checkServerIdentity() gets the whole `servername`.
+// SNI is a C string, so as in Node.js it ends at a NUL. checkServerIdentity() still gets the whole servername.
 function sniName(servername) {
   if (typeof servername !== "string") return servername;
   const nul = StringPrototypeIndexOf.$call(servername, "\0");

@@ -157,9 +157,7 @@ static String parseDomainAsHost(const String& domain)
     return parsedHost;
 }
 
-// idnaToASCII for src/boringssl/lib.rs, on any thread. Dead when the name does not convert.
-// Not parseDomainAsHost: a URL host parse cuts the name at '/', '?', '#' and '\\', drops tab,
-// CR and LF, and decodes "%xx", so a certificate check would see a shorter name than the caller.
+// idnaToASCII for the certificate check in src/boringssl/lib.rs, on any thread. Not parseDomainAsHost, which cuts the name at '/'. Dead when the name does not convert.
 extern "C" BunString Bun__idnaToASCII(const BunString* domain)
 {
     auto ascii = icuToASCII(domain->toWTFString(), IDNAMode::Default);

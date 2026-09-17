@@ -29,11 +29,13 @@
 namespace WebCore {
 using namespace JSC;
 
-DOMGuardedObject::DOMGuardedObject(JSDOMGlobalObject& globalObject, JSCell& guarded)
+DOMGuardedObject::DOMGuardedObject(JSDOMGlobalObject& globalObject, JSCell& guarded, HasPendingActivity hasPendingActivity)
     : ActiveDOMCallback(globalObject.scriptExecutionContext())
     , m_guarded(&guarded)
     , m_globalObject(&globalObject)
 {
+    if (hasPendingActivity == HasPendingActivity::Yes)
+        m_pendingActivity.set(globalObject.vm(), &guarded);
     if (globalObject.vm().heap.mutatorShouldBeFenced()) {
         Locker locker { globalObject.gcLock() };
         globalObject.guardedObjects().add(this);
@@ -52,6 +54,7 @@ void DOMGuardedObject::clear()
     ASSERT(!m_guarded || m_globalObject);
     removeFromGlobalObject();
     m_guarded.clear();
+    m_pendingActivity.clear();
 }
 
 void DOMGuardedObject::removeFromGlobalObject()

@@ -22,7 +22,6 @@ const {
   kNeedDrain,
   kProxyConfig,
   checkShouldUseProxy,
-  defaultAgentOfRunningScript,
   kPerRequestCheckServerIdentity,
 } = require("internal/http");
 const { validateInteger, validateBoolean, validateString, validateOneOf } = require("internal/validators");
@@ -199,7 +198,7 @@ function ClientRequest(input, options, cb) {
     agent = new defaultAgent.constructor();
   } else if (agent === null || agent === undefined) {
     if (typeof options.createConnection !== "function") {
-      agent = defaultAgentOfRunningScript(defaultAgent);
+      agent = defaultAgent;
     }
     // Explicitly pass through this statement as agent will not be used
     // when createConnection is provided.

@@ -945,10 +945,12 @@ const dir = String(
     "dials-the-host.mjs": `
       import net from "node:net";
       import http from "node:http";
+      // The graph's own: a request through http.globalAgent is the realm's agent's to make.
+      const agent = new http.Agent();
       // From a microtask, which still runs once the graph has been disposed.
       export const dialLater = port => queueMicrotask(() => {
         net.connect(port, "127.0.0.1").on("error", () => {});
-        http.get({ host: "127.0.0.1", port, path: "/" }).on("error", () => {});
+        http.get({ host: "127.0.0.1", port, path: "/", agent }).on("error", () => {});
         // (A fetch that was dropped a moment after it started still got as far as connecting, now and then: several.)
         for (let i = 0; i < 8; i++) fetch("http://127.0.0.1:" + port + "/").catch(() => {});
         for (let i = 0; i < 8; i++) new Bun.FetchSession().fetch("http://127.0.0.1:" + port + "/", { method: "POST", body: "x" }).catch(() => {});
@@ -972,6 +974,25 @@ const dir = String(
       await Bun.connect({ hostname: "127.0.0.1", port: server.port, socket: { open(socket) { socket.end(); }, data() {} } });
       for (let i = 0; i < 10; i++) await new Promise(resolve => setImmediate(resolve));
       console.log(JSON.stringify({ arrivedFromTheGraph: arrived - 1 }));
+      process.exit(0);
+    `,
+    "configures-the-global-agent-tenant.mjs": `
+      import http from "node:http";
+      export function request(port) {
+        http.globalAgent.maxSockets = 1;
+        const request = http.get({ host: "127.0.0.1", port, path: "/" }, response => response.resume());
+        request.on("error", () => {});
+        return { isTheGlobalAgent: request.agent === http.globalAgent, maxSockets: request.agent.maxSockets };
+      }
+    `,
+    "configures-the-global-agent.mjs": `
+      import http from "node:http";
+      using server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("ok") });
+      const graph = new Bun.ModuleGraph();
+      const app = await graph.import(import.meta.dir + "/configures-the-global-agent-tenant.mjs");
+      const used = graph.run(() => app.request(server.port));
+      graph.dispose();
+      console.log(JSON.stringify({ ...used, theHostSeesIt: http.globalAgent.maxSockets }));
       process.exit(0);
     `,
     "requests-without-an-agent.mjs": `
@@ -1399,7 +1420,8 @@ const dir = String(
           }));
         },
         httpRequest(state, hostPort) {
-          const request = http.get({ host: "127.0.0.1", port: hostPort, path: "/hang?tag=" + state.tag });
+          // Through an agent of the graph's own: http.globalAgent is the realm's, and so is what that opens.
+          const request = http.get({ host: "127.0.0.1", port: hostPort, path: "/hang?tag=" + state.tag, agent: new http.Agent() });
           request.on("error", () => {});
           state.close = () => request.destroy();
         },
@@ -2650,6 +2672,21 @@ describe("ModuleGraph isolation: what is the host's, or the realm's, survives a 
     }
   });
 
+  test("http.globalAgent: the socket a graph's request made it open is the realm's, and is not closed with the graph", async () => {
+    using made = await newGraph();
+    made.graph
+      .run(() => made.app.getThrough(undefined, hostHttp.port, "/hang?tag=through-the-global-agent"))
+      .catch(() => {});
+    await until(() => connected.has("http:through-the-global-agent"));
+    made.graph.dispose();
+    await hostTimerTurns();
+    expect(connected.has("http:through-the-global-agent")).toBe(true);
+    // The host's own request through the same agent is answered.
+    await hostApp.getThrough(undefined, hostHttp.port, "/release?tag=nobody");
+    await fetch(`http://127.0.0.1:${hostHttp.port}/release?tag=through-the-global-agent`);
+    await until(() => !connected.has("http:through-the-global-agent"));
+  });
+
   test("a Bun.SQL of the host's: the connection a graph's query made it dial is still the host's", async () => {
     // (The host's server never answers the startup message, which names the user: the tag.)
     const sql = new Bun.SQL(`postgres://tag%3Asql-of-the-host@127.0.0.1:${hostTcp.port}/db?sslmode=disable`, {
@@ -3557,6 +3594,12 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
   test("a node:net or node:http dial, a fetch(), a WebSocket, a RedisClient or a Bun.SQL its leftover script makes does not go out, as a Bun.connect() does not", async () => {
     expect(await runsFixture("dials-after-it-was-disposed.mjs")).toEqual({
       stdout: `{"arrivedFromTheGraph":0}`,
+      exitCode: 0,
+    });
+  });
+  test("http.globalAgent is one agent for the host and every graph: the one a graph configures is the one its requests use", async () => {
+    expect(await runsFixture("configures-the-global-agent.mjs")).toEqual({
+      stdout: `{"isTheGlobalAgent":true,"maxSockets":1,"theHostSeesIt":1}`,
       exitCode: 0,
     });
   });

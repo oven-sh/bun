@@ -441,8 +441,8 @@ static RESOLVER_MUTEX: Mutex = Mutex::new();
 
 type BinFolderArray = BoundedArray<&'static [u8], 128>;
 
-const MAX_TSCONFIG_EXTENDS_CHAIN: usize = 64;
-type TSConfigExtendsChain = BoundedArray<*mut TSConfigJSON, MAX_TSCONFIG_EXTENDS_CHAIN>;
+/// The most nested `extends` the resolver follows from one tsconfig.json.
+const MAX_TSCONFIG_EXTENDS_DEPTH: usize = 64;
 // `BoundedArray` has no const constructor; init lazily under
 // `BIN_FOLDERS_LOADED`.
 static BIN_FOLDERS: bun_core::RacyCell<core::mem::MaybeUninit<BinFolderArray>> =
@@ -4067,25 +4067,19 @@ impl<'a> Resolver<'a> {
     /// array is walked left to right, so a later entry lands after (and
     /// overrides) an earlier one, as in tsc. A parent that fails to parse is
     /// logged and skipped.
-    ///
-    /// `config` and every pointer pushed to `chain` are heap `TSConfigJSON`
-    /// allocations from `parse_tsconfig`. The caller owns them.
     fn collect_tsconfig_extends_chain(
         &mut self,
-        config: *mut TSConfigJSON,
+        config: Box<TSConfigJSON>,
         depth: usize,
-        chain: &mut TSConfigExtendsChain,
+        chain: &mut Vec<Box<TSConfigJSON>>,
     ) -> crate::CrateResult<()> {
-        // A cycle (`a` extends `a`) never reaches the append below, so bound
-        // the recursion by the chain's capacity.
-        if depth >= MAX_TSCONFIG_EXTENDS_CHAIN {
+        // A cycle (`a` extends `a`) never reaches the push below, so bound
+        // the recursion.
+        if depth >= MAX_TSCONFIG_EXTENDS_DEPTH {
             return Err(bun_core::bounded_array::OverflowError::Overflow.into());
         }
-        // SAFETY: `config` is a live heap allocation owned by the caller, and
-        // nothing below writes through it.
-        let current = unsafe { &*config };
-        let ts_dir_name = Dirname::dirname(&current.abs_path);
-        for extends in current.extends.iter() {
+        let ts_dir_name = Dirname::dirname(&config.abs_path);
+        for extends in config.extends.iter() {
             let abs_path = ResolvePath::join_abs_string_buf(
                 ts_dir_name,
                 bufs!(tsconfig_path_abs),
@@ -4094,7 +4088,6 @@ impl<'a> Resolver<'a> {
             );
             match self.parse_tsconfig(abs_path, FD::INVALID) {
                 Ok(Some(parent_config)) => {
-                    let parent_config = bun_core::heap::into_raw(parent_config);
                     self.collect_tsconfig_extends_chain(parent_config, depth + 1, chain)?;
                 }
                 Ok(None) => {}
@@ -4111,7 +4104,7 @@ impl<'a> Resolver<'a> {
                 }
             }
         }
-        chain.append(config)?;
+        chain.push(config);
         Ok(())
     }
 
@@ -6493,7 +6486,7 @@ impl<'a> Resolver<'a> {
             }
 
             if let Some(tsconfigpath) = tsconfig_path {
-                let parsed_tsconfig: Option<*mut TSConfigJSON> = match self.parse_tsconfig(
+                let parsed_tsconfig: Option<Box<TSConfigJSON>> = match self.parse_tsconfig(
                     tsconfigpath,
                     if FeatureFlags::STORE_FILE_DESCRIPTORS {
                         fd
@@ -6501,7 +6494,7 @@ impl<'a> Resolver<'a> {
                         FD::ZERO
                     },
                 ) {
-                    Ok(v) => v.map(bun_core::heap::into_raw),
+                    Ok(v) => v,
                     Err(err) => {
                         let pretty = tsconfigpath;
                         if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
@@ -6538,20 +6531,15 @@ impl<'a> Resolver<'a> {
                 // tsconfig_json to None otherwise.
                 if let Some(tsconfig_json) = parsed_tsconfig {
                     // Every config in the chain, base first and `tsconfig_json` last.
-                    // Each pointer is a heap TSConfigJSON from `parse_tsconfig`,
-                    // uniquely owned by this walk and freed via heap::take below.
-                    let mut chain = TSConfigExtendsChain::default();
+                    let mut chain: Vec<Box<TSConfigJSON>> = Vec::new();
                     self.collect_tsconfig_extends_chain(tsconfig_json, 0, &mut chain)?;
 
-                    let mut chain = chain.as_slice().iter().copied();
-                    let merged_config = chain.next().expect("the leaf config is in the chain");
+                    let mut chain = chain.into_iter();
+                    let mut merged_config = chain.next().expect("the leaf config is in the chain");
                     // starting from the base config
                     // successively apply the inheritable attributes of the next config
-                    for parent_config_ptr in chain {
-                        // SAFETY: see the note on `chain` above.
-                        let parent_config = unsafe { &mut *parent_config_ptr };
-                        // SAFETY: see the note on `chain` above.
-                        let mc = unsafe { &mut *merged_config };
+                    for mut parent_config in chain {
+                        let mc = &mut *merged_config;
                         if let Some(v) = parent_config.emit_decorator_metadata {
                             mc.emit_decorator_metadata = Some(v);
                         }
@@ -6591,18 +6579,15 @@ impl<'a> Resolver<'a> {
                             // JSON), so this is a no-op but documents the ownership.
                             // (Drop handles parent_config.paths.)
                         }
-                        // Every scalar/reference we need has been copied into merged_config
-                        // (strings live in dirname_store or default_allocator and outlive the
-                        // struct). The heap-allocated TSConfigJSON itself is no longer needed;
-                        // without this, every intermediate config in an extends chain leaks on
-                        // each dir_info_uncached() call, which is especially bad under HMR where
-                        // bust_dir_cache triggers a re-parse of the whole chain on every reload.
-                        // SAFETY: parent_config_ptr came from TSConfigJSON::new (heap::alloc)
-                        TSConfigJSON::destroy(unsafe { bun_core::heap::take(parent_config_ptr) });
+                        // Every field we need has moved into merged_config. Free the
+                        // intermediate through `destroy` so the `.alloc` log pairs it
+                        // with its `new`.
+                        TSConfigJSON::destroy(parent_config);
                     }
-                    // `merged_config` is a leaked Box (heap::alloc) interned into DirInfo; outlives the resolver.
+                    // `merged_config` is a leaked Box interned into DirInfo; outlives the resolver.
                     info.tsconfig_json = Some(
-                        core::ptr::NonNull::new(merged_config).expect("heap::alloc is non-null"),
+                        core::ptr::NonNull::new(bun_core::heap::into_raw(merged_config))
+                            .expect("heap::alloc is non-null"),
                     );
                 }
                 info.enclosing_tsconfig_json = info.tsconfig_json();

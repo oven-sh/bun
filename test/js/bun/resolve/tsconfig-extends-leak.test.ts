@@ -146,7 +146,8 @@ describe.concurrent("tsconfig 'extends' array", () => {
     `,
   };
 
-  async function run(tsconfigs: Record<string, object>) {
+  // Asserts the two printed lines, then the exit code.
+  async function expectRun(tsconfigs: Record<string, object>, expected: [string, string]) {
     const entries = Object.fromEntries(Object.entries(tsconfigs).map(([k, v]) => [k, JSON.stringify(v)]));
     using dir = tempDir("tsconfig-extends-array", { ...files, ...entries });
     await using proc = Bun.spawn({
@@ -158,8 +159,8 @@ describe.concurrent("tsconfig 'extends' array", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
+    expect(stdout.trim().split("\n")).toEqual(expected);
     expect(exitCode).toBe(0);
-    return stdout.trim().split("\n");
   }
 
   const base = {
@@ -168,78 +169,86 @@ describe.concurrent("tsconfig 'extends' array", () => {
   const b = { compilerOptions: { paths: { "@x/*": ["./b/*"] } } };
 
   test("single entry", async () => {
-    expect(
-      await run({
+    await expectRun(
+      {
         "base.json": base,
         "tsconfig.json": { extends: ["./base.json"] },
-      }),
-    ).toEqual(["legacy", "a"]);
+      },
+      ["legacy", "a"],
+    );
   });
 
   test("a later entry overrides an earlier one", async () => {
-    expect(
-      await run({
+    await expectRun(
+      {
         "base.json": base,
         "b.json": b,
         "tsconfig.json": { extends: ["./base.json", "./b.json"] },
-      }),
-    ).toEqual(["legacy", "b"]);
-    expect(
-      await run({
+      },
+      ["legacy", "b"],
+    );
+    await expectRun(
+      {
         "base.json": base,
         "b.json": b,
         "tsconfig.json": { extends: ["./b.json", "./base.json"] },
-      }),
-    ).toEqual(["legacy", "a"]);
+      },
+      ["legacy", "a"],
+    );
   });
 
   test("the config that holds the array overrides every entry", async () => {
-    expect(
-      await run({
+    await expectRun(
+      {
         "base.json": base,
         "b.json": b,
         "tsconfig.json": {
           extends: ["./base.json", "./b.json"],
           compilerOptions: { paths: { "@x/*": ["./leaf/*"] } },
         },
-      }),
-    ).toEqual(["legacy", "leaf"]);
+      },
+      ["legacy", "leaf"],
+    );
   });
 
   test("an array in the middle of a chain", async () => {
-    expect(
-      await run({
+    await expectRun(
+      {
         "base.json": base,
         "b.json": b,
         "mid.json": { extends: ["./base.json", "./b.json"] },
         "tsconfig.json": { extends: "./mid.json" },
-      }),
-    ).toEqual(["legacy", "b"]);
+      },
+      ["legacy", "b"],
+    );
   });
 
   test("an entry with its own extends is resolved before the next entry", async () => {
-    expect(
-      await run({
+    await expectRun(
+      {
         "base.json": base,
         "b.json": { extends: "./base.json", ...b },
         "c.json": { compilerOptions: { paths: { "@x/*": ["./leaf/*"] } } },
         "tsconfig.json": { extends: ["./b.json", "./c.json"] },
-      }),
-    ).toEqual(["legacy", "leaf"]);
+      },
+      ["legacy", "leaf"],
+    );
   });
 
   test("a child config sets or clears experimentalDecorators", async () => {
-    expect(
-      await run({
+    await expectRun(
+      {
         "base.json": { compilerOptions: { paths: { "@x/*": ["./a/*"] } } },
         "tsconfig.json": { extends: "./base.json", compilerOptions: { experimentalDecorators: true } },
-      }),
-    ).toEqual(["legacy", "a"]);
-    expect(
-      await run({
+      },
+      ["legacy", "a"],
+    );
+    await expectRun(
+      {
         "base.json": base,
         "tsconfig.json": { extends: ["./base.json"], compilerOptions: { experimentalDecorators: false } },
-      }),
-    ).toEqual(["standard", "a"]);
+      },
+      ["standard", "a"],
+    );
   });
 });

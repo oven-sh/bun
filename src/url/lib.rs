@@ -847,10 +847,11 @@ impl<'a> URL<'a> {
                 b':' => {
                     if i + 3 <= str.len() && str[i + 1] == b'/' && str[i + 2] == b'/' {
                         self.protocol = &str[0..i];
-                        // RFC 3986 §3.1: only behind a scheme of these bytes is there an authority.
-                        let is_scheme = self.protocol.iter().all(|byte| {
-                            matches!(byte, b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'+' | b'-' | b'.')
-                        });
+                        // RFC 3986 §3.1: only behind `ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )` is there an authority.
+                        let is_scheme = self.protocol.first().is_some_and(u8::is_ascii_alphabetic)
+                            && self.protocol.iter().all(|byte| {
+                                matches!(byte, b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'+' | b'-' | b'.')
+                            });
                         return is_scheme.then(|| u32::try_from(i + 3).expect("int cast"));
                     }
                 }
@@ -1896,6 +1897,10 @@ mod tests {
         let url = URL::parse(b"blob:http://second.example/id");
         assert_eq!(url.protocol, b"blob:http");
         assert_eq!(url.hostname, b"blob");
+
+        let url = URL::parse(b"1http://second.example/");
+        assert_eq!(url.protocol, b"1http");
+        assert_eq!(url.hostname, b"1http");
 
         let url = URL::parse(b"localhost:3000/api");
         assert_eq!(url.protocol, b"");

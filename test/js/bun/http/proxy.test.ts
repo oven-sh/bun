@@ -2498,6 +2498,7 @@ describe("proxy resolution", () => {
       // and the name this reads is one no user can have written down.
       ["http:other.test://example.test/", "", "", "http", "other.test:"],
       [String.raw`http:\other.test://example.test/`, "", "", "http", String.raw`\other.test:`],
+      ["1http://example.test/", "", "", "1http", ""],
       ["git+ssh://user@example.test/repo.git", "user", "", "example.test", ""],
       // IPv6 hosts keep their brackets in `hostname`
       ["http://[::1]:3000/", "", "", "[::1]", "3000"],

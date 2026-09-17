@@ -2551,3 +2551,63 @@ test.skipIf(memoryForLongStrings < 10 * 1024 ** 3)(
   },
   30_000,
 );
+
+// A FinalizationRegistry cleanup job is posted to the event loop for a context.
+// The context then dies and is swept before the job runs. ~JSGlobalObject only
+// cancels the job's ticket; the job must not reach the VM through the
+// ticket's destructed realm. On a debug build this was the assertion
+// `!isCancelled()` in DeferredWorkTimer::Ticket::scriptExecutionOwner().
+test("a FinalizationRegistry cleanup job of a context that was destructed before it ran does not read the dead context", async () => {
+  const fixture = `
+    const vm = require("node:vm");
+    const { releaseWeakRefs } = require("bun:jsc");
+
+    // The first cells of the context subspace are precise allocations. Keep 8
+    // contexts alive so the contexts under test land in a block.
+    const keep = [];
+    for (let i = 0; i < 8; i++) keep.push(vm.createContext({}));
+
+    const collectedRounds = new Set();
+    const observer = new FinalizationRegistry(round => collectedRounds.add(round));
+
+    let round = 0;
+    function deep(depth, fn) {
+      if (depth === 0) return fn();
+      const r = deep(depth - 1, fn);
+      return r;
+    }
+    function setup() {
+      const sandbox = {};
+      observer.register(sandbox, round);
+      const context = vm.createContext(sandbox);
+      vm.runInContext(
+        "globalThis.registry = new FinalizationRegistry(() => {}); for (let i = 0; i < 4; i++) registry.register({}, i);",
+        context,
+      );
+      // The targets are dead and the registry is alive: its cleanup job is posted.
+      Bun.gc(true);
+    }
+
+    for (round = 0; round < 5; round++) {
+      // Create the context well below the frames the rest of the round runs in.
+      deep(500, setup);
+      // The shared context structure roots the most recently created context.
+      vm.createContext({});
+      // createContext() holds the sandbox in a WeakRef until the turn ends.
+      releaseWeakRefs();
+      // The context dies and is swept here, before the posted job runs.
+      Bun.gc(true);
+      for (let i = 0; !collectedRounds.has(round) && i < 50; i++) await Bun.sleep(1);
+    }
+    if (collectedRounds.size === 0) throw new Error("no round collected its context");
+    console.log("done");
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "done\n", stderr: "", exitCode: 0 });
+});

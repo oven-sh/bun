@@ -930,7 +930,7 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
     }
     case JSPromise::Status::Pending: {
         loadPromise->markAsHandled();
-        // A fetch is genuinely asynchronous (a plugin's async onLoad, or an outer import() that owns the entry is still fetching).
+        // A fetch is genuinely asynchronous (a plugin's async onLoad). A fetch an import already started is not: JSC runs it again synchronously.
         if (!entryExistedBefore)
             loader->removeEntry(key); // takes the loader's cellLock itself
         return throwVMTypeError(globalObject, scope, makeString("require() async module \""_s, keyString, "\" is unsupported. use \"await import()\" instead."_s));

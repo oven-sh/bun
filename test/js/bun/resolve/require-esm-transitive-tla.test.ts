@@ -103,6 +103,32 @@ describe("require(esm) rejects top-level await before evaluating anything", () =
     });
   });
 
+  // in-graph.cjs runs while entry.mjs's graph is still loading, so the modules it require()s are ones that
+  // graph has requested and not evaluated yet.
+  test.concurrent("also when the ES module graph that imports it is still loading", async () => {
+    using dir = tempDir("require-esm-tla-in-graph", {
+      ...fixtures,
+      "in-graph.cjs": `
+        const { attempt } = require("./attempt.cjs");
+        globalThis.required = { direct: attempt("./tla-value.mjs"), transitive: attempt("./parent.mjs") };
+        globalThis.orderAfterRequire = [...globalThis.order];
+      `,
+      "entry.mjs": `
+        import "./in-graph.cjs";
+        import "./tla-value.mjs";
+        import "./parent.mjs";
+        const { required, orderAfterRequire, order } = globalThis;
+        console.log(JSON.stringify({ required, orderAfterRequire, order }));
+      `,
+    });
+    expect(await run(String(dir), "entry.mjs")).toEqual({
+      required: { direct: rejected, transitive: rejected },
+      orderAfterRequire: [],
+      // The graph then evaluates each module once, in import order.
+      order: ["tla-value", "dep-tla", "parent"],
+    });
+  });
+
   test.concurrent("with a message that names the requiring module and the one with the await", async () => {
     using dir = tempDir("require-esm-tla-message", {
       ...fixtures,

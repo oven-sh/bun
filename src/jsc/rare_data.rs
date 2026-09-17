@@ -84,15 +84,15 @@ impl HotMap {
         self._map.get(key).copied()
     }
 
-    /// Untyped insert — typed `insert<T>` lives in `bun_runtime` where the
-    /// `TaggedPointerUnion` payload list is named.
-    pub fn insert_raw(&mut self, key: &[u8], entry: HotMapEntry) {
+    /// Returns `false` and keeps the existing entry if `key` is already registered.
+    pub fn insert_raw(&mut self, key: &[u8], entry: HotMapEntry) -> bool {
         let gop = bun_core::handle_oom(self._map.get_or_put(key));
         if gop.found_existing {
-            panic!("HotMap already contains key");
+            return false;
         }
         // `get_or_put` already boxed the key; the map owns its keys.
         *gop.value_ptr = entry;
+        true
     }
 
     pub fn remove(&mut self, key: &[u8]) {

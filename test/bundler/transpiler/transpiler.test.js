@@ -2334,26 +2334,28 @@ export default class {
       ["default literal", ["default"], `export default 42;\nexport const keep = 1;\n`],
     ];
 
-    it.concurrent.each(hoistable)("eliminates a hoistable %s without crashing", async (_label, names, source) => {
-      const script = `
-        const out = new Bun.Transpiler({ loader: "ts", exports: { eliminate: ${JSON.stringify(names)} } })
-          .transformSync(${JSON.stringify(source)});
-        console.write(JSON.stringify(out));
-      `;
+    describe.each(hoistable)("hoistable %s", (_label, names, source) => {
+      it.concurrent("is eliminated without crashing", async () => {
+        const script = `
+          const out = new Bun.Transpiler({ loader: "ts", exports: { eliminate: ${JSON.stringify(names)} } })
+            .transformSync(${JSON.stringify(source)});
+          console.write(JSON.stringify(out));
+        `;
 
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "-e", script],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", script],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+        // Surfaces the panic message instead of a JSON.parse error below.
+        if (exitCode !== 0) expect(stderr).toBe("");
+        expect(JSON.parse(stdout)).toBe("export const keep = 1;\n");
+        expect(exitCode).toBe(0);
       });
-
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-      // Surfaces the panic message instead of a JSON.parse error below.
-      if (exitCode !== 0) expect(stderr).toBe("");
-      expect(JSON.parse(stdout)).toBe("export const keep = 1;\n");
-      expect(exitCode).toBe(0);
     });
 
     const reordered = [
@@ -2361,9 +2363,11 @@ export default class {
       ["default class", ["default"], `console.log("one");\nconsole.log("two");\nexport default class A {}\n`],
     ];
 
-    it.each(reordered)("keeps statement order when a hoistable %s is eliminated", (_label, names, source) => {
-      const out = new Bun.Transpiler({ loader: "ts", exports: { eliminate: names } }).transformSync(source);
-      expect(out).toBe(`console.log("one");\nconsole.log("two");\n`);
+    describe.each(reordered)("hoistable %s", (_label, names, source) => {
+      it("keeps statement order when eliminated", () => {
+        const out = new Bun.Transpiler({ loader: "ts", exports: { eliminate: names } }).transformSync(source);
+        expect(out).toBe(`console.log("one");\nconsole.log("two");\n`);
+      });
     });
   });
 

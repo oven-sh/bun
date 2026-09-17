@@ -522,10 +522,11 @@ private:
 
             /* Bun.serve: every request of this read is dispatched corked, not only
              * the first. A response to an earlier request can release the cork
-             * taken above (a body larger than the cork buffer, the sendfile
-             * path). The handler writes the status line, each header and the
-             * body as separate writes, and without the cork each of them is one
-             * send(). node:http corks in its own write calls. */
+             * taken above (a response that JavaScript produced, a body larger
+             * than the cork buffer, the sendfile path). The handler writes the
+             * status line, each header and the body as separate writes, and
+             * without the cork each of them is one send(). node:http corks in its
+             * own write calls. */
             if constexpr (!IsNodeHttp) {
                 ((AsyncSocket<SSL> *) s)->cork();
             }

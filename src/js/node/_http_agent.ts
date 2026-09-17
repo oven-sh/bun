@@ -328,7 +328,12 @@ Agent.prototype.createSocket = function createSocket(req, options, cb) {
   $debug("createConnection", name);
   options.encoding = null;
 
-  const oncreate = once((err, s) => {
+  // The socket is opened as the Agent's owner (below), but the request that is waiting for it is
+  // its requester's: a proxy tunnel answers from the proxy connection's callbacks, which run as
+  // the owner, so the requester's frame is kept here and what follows runs in it on both paths.
+  const requesterFrame = AsyncContextFrame.current();
+  const oncreate = once((err, s) => AsyncContextFrame.run(requesterFrame, onSocketReady, this, err, s));
+  function onSocketReady(err, s) {
     // `cb` is onSocketCreated.bind(this, req); release it from this closure's
     // scope so retaining this arrow past its call cannot retain req.
     const done = cb;
@@ -344,7 +349,7 @@ Agent.prototype.createSocket = function createSocket(req, options, cb) {
     $debug("sockets", name, this.sockets[name].length, this.totalSocketCount);
     installListeners(this, s, options);
     done(null, s);
-  });
+  }
   const keepAlive = this.keepAlive;
   if (keepAlive) {
     options.keepAlive = keepAlive;

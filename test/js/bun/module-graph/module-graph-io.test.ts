@@ -1033,3 +1033,87 @@ describe.concurrent("ModuleGraph: an error in what a graph opened is the graph's
     });
   });
 });
+
+// An Agent opens its sockets as whoever made it, but the request that waits for one stays its
+// requester's, however the socket comes to be: connected directly, or through a CONNECT proxy
+// (where the Agent hears that the socket is ready from the proxy connection's own callbacks).
+describe.concurrent("ModuleGraph: a request through an Agent of the host's is still the graph's", () => {
+  test.each(["direct", "through a CONNECT proxy"])(
+    "%s: the response callback, and an error nobody listens for",
+    async how => {
+      const dir = fixture({
+        "key.pem": tls.key,
+        "cert.pem": tls.cert,
+        "tenant.mjs": `
+        import https from "node:https";
+        // No agent: the host's https.globalAgent.
+        export const get = (port, told) => { https.get({ host: "localhost", port, path: "/", rejectUnauthorized: false }, response => { response.resume(); told(Bun.ModuleGraph.current); }); };
+        export const getFromNobody = port => { https.get({ host: "localhost", port, path: "/", rejectUnauthorized: false }); };
+      `,
+        "main.mjs": `
+        import https from "node:https";
+        import net from "node:net";
+        import fs from "node:fs";
+        const origin = https.createServer({ key: fs.readFileSync(import.meta.dir + "/key.pem"), cert: fs.readFileSync(import.meta.dir + "/cert.pem") }, (request, response) => response.end("ok"));
+        await new Promise(resolve => origin.listen(0, "127.0.0.1", resolve));
+        const out = {};
+        const graph = new Bun.ModuleGraph({ onError: error => told.resolve("the graph's onError: " + error.code) });
+        process.on("uncaughtException", error => told.resolve("the host's uncaughtException: " + error.code));
+        let told;
+        const app = await graph.import(import.meta.dir + "/tenant.mjs");
+
+        told = Promise.withResolvers();
+        graph.run(() => app.get(origin.address().port, current => told.resolve(current === graph ? "the graph's context" : "not the graph's context")));
+        out.response = await told.promise;
+
+        // Nobody answers on this port (or, with a proxy, the proxy refuses the CONNECT), and the request has no 'error' listener.
+        const closed = net.createServer();
+        await new Promise(resolve => closed.listen(0, "127.0.0.1", resolve));
+        const closedPort = closed.address().port;
+        await new Promise(resolve => closed.close(resolve));
+        told = Promise.withResolvers();
+        graph.run(() => app.getFromNobody(closedPort));
+        out.error = await told.promise;
+
+        console.log(JSON.stringify(out));
+        process.exit(0);
+      `,
+        "proxy.mjs": `
+        import net from "node:net";
+        // Answers CONNECT host:port by connecting there; 502 when it cannot.
+        const proxy = net.createServer(client => {
+          client.once("data", head => {
+            const [, host, port] = /^CONNECT ([^:]+):(\\d+) /.exec(head.toString("latin1")) ?? [];
+            const upstream = net.connect(Number(port), host === "localhost" ? "127.0.0.1" : host);
+            upstream.once("connect", () => { client.write("HTTP/1.1 200 Connection Established\\r\\n\\r\\n"); upstream.pipe(client); client.pipe(upstream); });
+            upstream.once("error", () => client.end("HTTP/1.1 502 Bad Gateway\\r\\n\\r\\n"));
+            client.on("error", () => upstream.destroy());
+          });
+        });
+        proxy.listen(0, "127.0.0.1", () => console.log(proxy.address().port));
+      `,
+      });
+      let env: Record<string, string | undefined> = { ...bunEnv, NO_PROXY: undefined, no_proxy: undefined };
+      await using proxy =
+        how === "direct"
+          ? null
+          : Bun.spawn({ cmd: [bunExe(), join(dir, "proxy.mjs")], env: bunEnv, stdout: "pipe", stderr: "inherit" });
+      if (proxy) {
+        const reader = proxy.stdout.getReader();
+        const port = new TextDecoder().decode((await reader.read()).value).trim();
+        reader.releaseLock();
+        env = { ...env, NODE_USE_ENV_PROXY: "1", HTTPS_PROXY: "http://127.0.0.1:" + port, https_proxy: undefined };
+      }
+      await using proc = Bun.spawn({ cmd: [bunExe(), join(dir, "main.mjs")], env, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout && JSON.parse(stdout), stderr, exitCode }).toEqual({
+        stdout: {
+          response: "the graph's context",
+          error: "the graph's onError: " + (how === "direct" ? "ECONNREFUSED" : "ERR_PROXY_TUNNEL"),
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
+});

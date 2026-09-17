@@ -1455,7 +1455,7 @@ pub mod command {
 
         if tag == Tag::AutoCommand
             && ctx.positionals.is_empty()
-            && ctx.worker_eval_mode != bun_options_types::context::WorkerEvalMode::Auto
+            && ctx.runtime_options.input_type != bun_options_types::context::RuntimeInputType::Auto
         {
             run_command::RunCommand::exec_stdin(ctx, false)?;
             return Ok(());

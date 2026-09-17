@@ -2914,8 +2914,7 @@ fn get_or_put_resolved_package(
                     break 'res FolderResolutionValue::Err(crate::Error::MissingPackageJSON);
                 }
 
-                // Declared by a remote package, which is not on disk until it is
-                // installed, so the folder's package.json cannot be read here.
+                // Declared by a remote package that is not on disk yet: stub it.
                 let mut package = Package::default();
 
                 {

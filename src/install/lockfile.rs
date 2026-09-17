@@ -894,8 +894,7 @@ impl Lockfile {
     }
 
     /// Is dependency `id` declared by the root, a workspace, or a `file:` package
-    /// they reach through `file:` packages only? Checked, not assumed: a migrated
-    /// lockfile can carry dependencies for a folder that a registry package shipped.
+    /// they reach through `file:` packages only?
     pub(crate) fn is_dependency_of_local_package(&self, id: DependencyID) -> bool {
         let Some(parent_id) = self.get_parent_pkg_of_dependency(id) else {
             return false;

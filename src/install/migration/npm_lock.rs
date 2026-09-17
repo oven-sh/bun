@@ -727,9 +727,7 @@ impl<'a> Migrator<'a> {
                 }
 
                 let version_tag = version.tag;
-                // Trust a `file:` spec only in a `file:` package the root or a workspace
-                // reaches through `file:` packages, not in a folder a registry package
-                // ships (`is_trusted_folder_dependency`).
+                // Same rule as `Lockfile::is_trusted_folder_dependency`.
                 let declares_folder = res_tag == resolution::Tag::Folder
                     && version_tag == DepTag::Folder
                     && self.local_declared.is_set(j as usize);

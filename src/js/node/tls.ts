@@ -1259,8 +1259,8 @@ function Server(options, secureConnectionListener): void {
     // Recorded only after the live listener took it: listen() replays every entry,
     // and one that addServerName() rejects would fail every later listen().
     // Delete first: a re-added name moves to the end, which keeps call order.
-    contexts.delete(hostname);
-    contexts.set(hostname, context);
+    contexts.$delete(hostname);
+    contexts.$set(hostname, context);
   };
 
   this.setSecureContext = function (options) {

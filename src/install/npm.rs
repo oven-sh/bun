@@ -2911,7 +2911,9 @@ impl PackageManifest {
                             // kept: it skips a value that is not a string. Skipped
                             // when meta-only optional peers may have been
                             // synthesised, since `stored[j]` correspondence no
-                            // longer holds then.
+                            // longer holds then. The source is read through a
+                            // `String`, because the inline form of a `String`
+                            // ends at the first NUL and a registry can send one.
                             if !is_peer || optional_peer_dep_names.is_empty() {
                                 let string_buf: &[u8] = string_builder.allocated_slice();
                                 let stored: Vec<(&[u8], &[u8])> = items
@@ -2926,15 +2928,21 @@ impl PackageManifest {
                                         dep_name.value.slice(string_buf)
                                             == this_names[j].value.slice(string_buf)
                                     );
-                                    debug_assert!(dep_name.value.slice(string_buf) == stored[j].0);
+                                    let source = stored[j].0;
+                                    debug_assert!(
+                                        dep_name.value.slice(string_buf)
+                                            == SemverString::init(source, source).slice(source)
+                                    );
                                 }
                                 for (j, dep_version) in value_dependencies.iter().enumerate() {
                                     debug_assert!(
                                         dep_version.value.slice(string_buf)
                                             == this_versions[j].value.slice(string_buf)
                                     );
+                                    let source = stored[j].1;
                                     debug_assert!(
-                                        dep_version.value.slice(string_buf) == stored[j].1
+                                        dep_version.value.slice(string_buf)
+                                            == SemverString::init(source, source).slice(source)
                                     );
                                 }
                             }

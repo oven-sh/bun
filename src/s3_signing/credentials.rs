@@ -294,12 +294,19 @@ impl S3Credentials {
         if matches!(content_disposition, Some(s) if s.is_empty()) {
             content_disposition = None;
         }
-        // SigV4 hashes the header value with outer whitespace removed and
-        // inner runs collapsed. Send that exact form so the wire value and
-        // the signed value cannot drift.
+        // As a signed header, SigV4 hashes the value with outer whitespace
+        // removed and inner runs collapsed. Send that exact form so the wire
+        // value and the signed value cannot drift. A presigned URL carries the
+        // value as a query parameter instead and keeps it as given.
         let content_type: Option<Box<[u8]>> = sign_options
             .content_type
-            .map(collapse_whitespace)
+            .map(|ct| {
+                if sign_query_option.is_some() {
+                    Box::from(ct)
+                } else {
+                    collapse_whitespace(ct)
+                }
+            })
             .filter(|s| !s.is_empty());
         let content_type = content_type.as_deref();
         let mut content_encoding = sign_options.content_encoding;
@@ -477,7 +484,9 @@ impl S3Credentials {
         let service_name: &str = "s3";
 
         let aws_content_hash: &[u8] = content_hash.unwrap_or(b"UNSIGNED-PAYLOAD");
-        let mut tmp_buffer = [0u8; 4096];
+        // Canonical request: path (up to 1089 bytes), query, session token (up
+        // to 2 KB), and every signed header value.
+        let mut tmp_buffer = [0u8; 8192];
 
         let authorization: Box<[u8]> = 'brk: {
             // we hash the hash so we need 2 buffers
@@ -1362,6 +1371,16 @@ impl CanonicalRequest {
         macro_rules! w {
             ($($arg:tt)*) => { core::fmt::Write::write_fmt(&mut c, format_args!($($arg)*))? };
         }
+        // The server hashes the header bytes it receives. `BStr` Display
+        // replaces invalid UTF-8 with U+FFFD, so user header values (Latin-1
+        // from fetch headers) go in as raw bytes.
+        macro_rules! header {
+            ($name:literal, $value:expr) => {{
+                w!(concat!($name, ":"));
+                bun_core::io::Write::write_all(&mut c, $value).map_err(|_| core::fmt::Error)?;
+                w!("\n");
+            }};
+        }
         // method, path, query
         w!(
             "{}\n{}\n{}\n",
@@ -1370,22 +1389,16 @@ impl CanonicalRequest {
             BStr::new(query)
         );
         if key.content_disposition {
-            w!(
-                "content-disposition:{}\n",
-                BStr::new(content_disposition.unwrap())
-            );
+            header!("content-disposition", content_disposition.unwrap());
         }
         if key.content_encoding {
-            w!(
-                "content-encoding:{}\n",
-                BStr::new(content_encoding.unwrap())
-            );
+            header!("content-encoding", content_encoding.unwrap());
         }
         if key.content_md5 {
             w!("content-md5:{}\n", BStr::new(content_md5.unwrap()));
         }
         if key.content_type {
-            w!("content-type:{}\n", BStr::new(content_type.unwrap()));
+            header!("content-type", content_type.unwrap());
         }
         w!("host:{}\n", BStr::new(host));
         if key.acl {

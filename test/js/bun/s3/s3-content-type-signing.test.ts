@@ -50,7 +50,9 @@ function verifySigV4(req: Request, body: string): Seen {
     "AWS4-HMAC-SHA256",
     amzDate,
     `${day}/${credentials.region}/s3/aws4_request`,
-    createHash("sha256").update(canonicalRequest).digest("hex"),
+    // Header values are byte strings. Hash the bytes the server received, not
+    // a UTF-8 re-encoding of them.
+    createHash("sha256").update(Buffer.from(canonicalRequest, "latin1")).digest("hex"),
   ].join("\n");
   const hmac = (key: string | Buffer, data: string) => createHmac("sha256", key).update(data).digest();
   const signingKey = hmac(
@@ -203,6 +205,50 @@ describe.concurrent("s3 content-type signing", () => {
     ]);
   });
 
+  it("signs the raw Latin-1 bytes of a fetch Content-Type header", async () => {
+    const { server, seen } = startServer();
+    using _ = server;
+
+    const res = await fetch("s3://k.txt", {
+      method: "PUT",
+      body: "x",
+      headers: { "content-type": "text/plain; name=\u00e9" },
+      s3: { ...credentials, endpoint: server.url.href },
+    });
+    expect(res.status).toBe(200);
+
+    expect(seen).toEqual([
+      {
+        method: "PUT",
+        contentType: "text/plain; name=\u00e9",
+        signedHeaders: ["content-type", "host", "x-amz-content-sha256", "x-amz-date"],
+        signatureMatches: true,
+      },
+    ]);
+  });
+
+  it("signs the Content-Type on a fetch that also sends a Range header", async () => {
+    const { server, seen } = startServer();
+    using _ = server;
+
+    const res = await fetch("s3://j.html", {
+      method: "PUT",
+      body: "x",
+      headers: { "content-type": "text/html;charset=utf-8", range: "bytes=0-0" },
+      s3: { ...credentials, endpoint: server.url.href },
+    });
+    expect(res.status).toBe(200);
+
+    expect(seen).toEqual([
+      {
+        method: "PUT",
+        contentType: "text/html;charset=utf-8",
+        signedHeaders: ["content-type", "host", "x-amz-content-sha256", "x-amz-date"],
+        signatureMatches: true,
+      },
+    ]);
+  });
+
   it("signs the Content-Type on the multipart create request", async () => {
     const { server, seen } = startServer();
     using _ = server;
@@ -237,5 +283,12 @@ describe.concurrent("s3 content-type signing", () => {
         signatureMatches: true,
       },
     ]);
+  });
+
+  it("presign keeps the type as given and signs only host", async () => {
+    const client = new S3Client({ ...credentials, endpoint: "https://s3.example.com" });
+    const url = new URL(client.presign("p.html", { method: "PUT", type: " text/plain " }));
+    expect(url.searchParams.get("X-Amz-SignedHeaders")).toBe("host");
+    expect(url.searchParams.get("response-content-type")).toBe(" text/plain ");
   });
 });

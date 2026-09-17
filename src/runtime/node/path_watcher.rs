@@ -213,13 +213,6 @@ pub struct PathWatcher {
 /// One `fs.watch()` call attached to a [`PathWatcher`].
 struct Handler {
     /// Basename of the path this call watched, before symlinks are resolved.
-    /// An inotify event about the watched path itself carries no name, and
-    /// libuv fills in the basename of the path its caller passed, so a symlink
-    /// is reported under its own name:
-    /// https://github.com/libuv/libuv/blob/v1.52.1/src/unix/linux.c#L2625
-    /// libuv keeps that path per wd, so in node two watchers on one inode both
-    /// report the first one's name. Here each handler reports its own.
-    /// libuv's kqueue and FSEvents backends report the resolved name.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     name: Box<[u8]>,
     change: ChangeEvent,
@@ -228,6 +221,7 @@ struct Handler {
 impl Handler {
     /// `watched_path` is `watch()`'s `path`: absolute, symlinks unresolved.
     fn new(watched_path: &ZStr) -> Self {
+        // Not Linux: libuv's kqueue and FSEvents backends report the resolved name, the basename of `PathWatcher.path`.
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
         let _ = watched_path;
         Self {
@@ -304,8 +298,7 @@ impl PathWatcher {
         }
     }
 
-    /// [`emit`](Self::emit) for an event about the watched path itself: each
-    /// handler is told its own [`Handler::name`]. Caller holds `manager.mutex`.
+    /// [`emit`](Self::emit) for an event about the watched path itself. Each handler gets its own name, as in libuv: https://github.com/libuv/libuv/blob/v1.52.1/src/unix/linux.c#L2625
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn emit_self(&self, event_type: WatchEventKind, is_file: bool) {
         let timestamp = bun_core::time::milli_timestamp();
@@ -323,9 +316,9 @@ impl PathWatcher {
         }
     }
 
-    /// Like [`emit_self`](Self::emit_self), but without per-handler duplicate
-    /// suppression. The `IN_IGNORED` retiring a deleted inode's wd lands in the
-    /// same millisecond as its `IN_DELETE_SELF`, with the same path and type, so
+    /// Like [`emit_self`](Self::emit_self), but without per-handler duplicate suppression.
+    /// The `IN_IGNORED` retiring a deleted inode's wd lands in the same
+    /// millisecond as its `IN_DELETE_SELF`, with the same path and type, so
     /// `should_emit` would fold the two into one; node (libuv) delivers both.
     /// Caller holds `manager.mutex`.
     #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -524,6 +517,7 @@ pub(crate) fn watch(
 
     let mut key_buf = path::path_buffer_pool::get();
     let key = PathWatcherManager::make_key(key_buf.as_mut_slice(), resolved.as_bytes(), recursive);
+    // Per handler: libuv keeps one path per wd, so two node watchers on one inode share the first one's name. Here each reports its own.
     let handler = Handler::new(path);
 
     manager.mutex.lock();
@@ -1109,12 +1103,11 @@ impl Linux {
                             &*std::ptr::from_ref::<[u8]>(o.subpath.as_bytes()),
                         )
                     };
-                    // SAFETY: owner_watcher live under manager.mutex. Copy the
-                    // scalars and launder the path bytes via a raw ptr so they
-                    // are decoupled from the scoped `&mut` temporaries `add_one`
-                    // takes below. `path` is a `ZBox`; its heap bytes are a
-                    // separate allocation, so this mirrors the `owner_subpath`
-                    // raw-ptr laundering above.
+                    // SAFETY: owner_watcher live under manager.mutex. Copy the scalars
+                    // and launder the path bytes via a raw ptr so they are decoupled
+                    // from the scoped `&mut` temporaries `add_one` takes below. `path`
+                    // is a `ZBox`; its heap bytes are a separate allocation, so this
+                    // mirrors the `owner_subpath` raw-ptr laundering above.
                     let (watcher_is_file, watcher_recursive, watcher_path): (bool, bool, &[u8]) = unsafe {
                         (
                             (*owner_watcher).is_file,
@@ -1123,8 +1116,7 @@ impl Linux {
                         )
                     };
 
-                    // Build the path relative to this owner's root. `None` is the
-                    // watched path itself, which each handler has its own name for.
+                    // Build the path relative to this owner's root; `None` is the watched path itself.
                     let rel: Option<&[u8]> = if watcher_is_file {
                         None
                     } else if owner_subpath.is_empty() {
@@ -1132,8 +1124,8 @@ impl Linux {
                             // A nameless event on the root wd is about the watched
                             // directory itself (IN_DELETE_SELF, IN_MOVE_SELF,
                             // IN_ATTRIB); libuv reports basename(watched path),
-                            // same as for a file. A recursive watch reports
-                            // root-relative paths instead, so its root keeps "".
+                            // same as for a file. node's recursive watcher uses
+                            // root-relative paths instead, so those keep "".
                             None
                         } else {
                             Some(name)

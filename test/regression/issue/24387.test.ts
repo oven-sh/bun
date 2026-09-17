@@ -13,7 +13,7 @@ test("regression: require()ing a module with TLA should error and then wipe the 
 
   expect(await stderr.text()).toBe("");
   expect(await stdout.text()).toMatchInlineSnapshot(`
-    "require() async module "<the module>" is unsupported. use "await import()" instead.
+    "ERR_REQUIRE_ASYNC_MODULE require() cannot be used on an ESM graph with top-level await. Use import() instead.
     Module {
       foo: 67,
     }

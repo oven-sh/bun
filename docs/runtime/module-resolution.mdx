@@ -163,7 +163,7 @@ const myStuff = require("./my-commonjs.cjs");
 
 ### Top level await
 
-The only exception to this rule is top-level await. You can't `require()` a file that uses top-level await, since the `require()` function is inherently synchronous.
+The only exception to this rule is top-level await. You can't `require()` a file that uses top-level await, or a file that imports one, since the `require()` function is inherently synchronous. Like Node.js, Bun throws an `ERR_REQUIRE_ASYNC_MODULE` error in that case, before it runs any module in that graph.
 
 Fortunately, very few libraries use top-level await, so this is rarely a problem. But if you're using top-level await in your application code, make sure that file isn't `require()`'d from elsewhere in your application. Use `import` or [dynamic `import()`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/import) instead.
 

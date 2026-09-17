@@ -5581,9 +5581,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// Returns whether a part was appended. Statements that are entirely
-    /// eliminated while visiting (dead code, `exports.eliminate`) leave `parts`
-    /// untouched.
+    /// Returns `false` when visiting eliminated every statement, so no part was pushed.
     pub(crate) fn append_part(
         &mut self,
         parts: &mut ListManaged<'a, js_ast::Part>,

@@ -46,8 +46,7 @@ fn print_resolution_label<'a>(
     label
 }
 
-/// `bun patch` copies a `file:` package out of its folder, and `--commit` diffs
-/// against it, so both refuse the folders the installers refuse.
+/// `bun patch` reads a `file:` package from its folder, so it refuses what the installers refuse.
 fn refuse_unsafe_folder_package(lockfile: &Lockfile, pkg: &Package) {
     if pkg.resolution.tag != ResolutionTag::Folder {
         return;

@@ -796,6 +796,50 @@ impl Listener {
         Ok(JSValue::UNDEFINED)
     }
 
+    /// `tls.Server#setSecureContext()` on a listening server: builds an
+    /// `SSL_CTX` from `tls` and makes it the default for every later accept.
+    /// Sockets already accepted keep the context they handshook with.
+    pub(crate) fn set_secure_context(
+        this: &Self,
+        global: &JSGlobalObject,
+        tls: JSValue,
+    ) -> JsResult<JSValue> {
+        if !this.ssl {
+            return Ok(JSValue::UNDEFINED);
+        }
+        // SAFETY: per-thread VM; valid for program lifetime.
+        let vm = VirtualMachine::get().as_mut();
+        let Some(ssl_config) = SSLConfig::from_js(vm, global, tls)? else {
+            return Ok(JSValue::UNDEFINED);
+        };
+        let mut create_err = uws::create_bun_socket_error_t::none;
+        let Some(ctx) = ssl_config.as_usockets().create_ssl_context(&mut create_err) else {
+            return Err(
+                global.throw_value(crate::socket::uws_jsc::create_bun_socket_error_to_js(
+                    create_err, global,
+                )),
+            );
+        };
+
+        // `from_js` runs getters on `tls`, so the listener is read only now.
+        match this.listener.get() {
+            ListenerType::Uws(ls) => {
+                // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
+                bun_opaque::opaque_deref_mut(ls).set_default_ssl_ctx(ctx.as_ptr());
+                this.secure_ctx.set(Some(ctx));
+            }
+            #[cfg(windows)]
+            ListenerType::NamedPipe(pipe) => {
+                // SAFETY: the pipe context is live while `this.listener` holds it.
+                unsafe { pipe.as_ref() }.ctx.set(Some(ctx));
+            }
+            #[cfg(not(windows))]
+            ListenerType::NamedPipe(_) => {}
+            ListenerType::None => {}
+        }
+        Ok(JSValue::UNDEFINED)
+    }
+
     #[bun_jsc::host_fn(method)]
     pub(crate) fn dispose(
         this: &Self,
@@ -1700,6 +1744,29 @@ pub(crate) fn js_add_server_name(global: &JSGlobalObject, frame: &CallFrame) -> 
     Err(global.throw(format_args!("Expected a Listener instance")))
 }
 
+#[bun_jsc::host_fn]
+pub(crate) fn js_set_secure_context(
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
+    jsc::mark_binding!();
+
+    let [listener, tls] = frame.arguments_as_array::<2>();
+    if frame.arguments_count() < 2 {
+        return Err(global.throw_not_enough_arguments(
+            "setSecureContext",
+            2,
+            frame.arguments_count() as usize,
+        ));
+    }
+    // A cluster worker's `_handle` is the primary's proxy, not a `Listener`:
+    // its connections are wrapped in JS from the server's own credentials.
+    match listener.as_class_ref::<Listener>() {
+        Some(this) => Listener::set_secure_context(this, global, tls),
+        None => Ok(JSValue::UNDEFINED),
+    }
+}
+
 #[cfg(windows)]
 fn is_valid_pipe_name(pipe_name: &[u8]) -> bool {
     // check for valid pipe names
@@ -1740,7 +1807,8 @@ pub struct WindowsNamedPipeListeningContext {
     /// JSC_BORROW: process-lifetime singleton; `&'static` so call sites read
     /// `self.vm.is_shutting_down()` without a raw-pointer deref.
     pub(crate) vm: &'static VirtualMachine,
-    pub ctx: Option<boring_sys::OwnedSslCtx>, // server reuses the same ctx
+    /// Every accept wraps its pipe with this context.
+    pub ctx: JsCell<Option<boring_sys::OwnedSslCtx>>,
 }
 
 #[cfg(not(windows))]
@@ -1771,7 +1839,7 @@ impl WindowsNamedPipeListeningContext {
         let listener_ref = this_ref.listener.unwrap();
         let listener: &Listener = listener_ref.get();
         use crate::socket::windows_named_pipe_context::SocketType as PipeSocketType;
-        let socket: PipeSocketType = if this_ref.ctx.is_some() {
+        let socket: PipeSocketType = if this_ref.ctx.get().is_some() {
             PipeSocketType::Tls(Listener::on_name_pipe_created::<true>(listener))
         } else {
             PipeSocketType::Tcp(Listener::on_name_pipe_created::<false>(listener))
@@ -1785,7 +1853,7 @@ impl WindowsNamedPipeListeningContext {
         let result = unsafe {
             (*client)
                 .named_pipe
-                .get_accepted_by(&mut (*this).uv_pipe, this_ref.ctx.as_ref())
+                .get_accepted_by(&mut (*this).uv_pipe, this_ref.ctx.get().as_ref())
         };
         if result.is_err() {
             // connection dropped
@@ -1846,7 +1914,7 @@ impl WindowsNamedPipeListeningContext {
             listener: NonNull::new(listener).map(bun_ptr::BackRef::from),
             global_this: GlobalRef::from(global_this),
             vm: global_this.bun_vm(),
-            ctx: None,
+            ctx: JsCell::new(None),
         }));
         // Cleanup guard: once the uv pipe handle is registered with the loop it must be closed via
         // uv_close; before that point we can free the struct directly. `deinit()` also
@@ -1870,7 +1938,7 @@ impl WindowsNamedPipeListeningContext {
             match ctx_opts.create_ssl_context(&mut err) {
                 // SAFETY: `this` was just allocated above; scoped field write.
                 Some(ctx) => unsafe {
-                    (*this).ctx = Some(ctx);
+                    (*this).ctx.set(Some(ctx));
                 },
                 None => return Err(ListenPipeError::Other(crate::Error::InvalidOptions)),
             }

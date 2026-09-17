@@ -4,6 +4,7 @@ const net = require("node:net");
 const Duplex = require("internal/streams/duplex");
 const EventEmitter = require("node:events");
 const addServerName = $newRustFunction("Listener.rs", "jsAddServerName", 3);
+const setListenerSecureContext = $newRustFunction("Listener.rs", "jsSetSecureContext", 2);
 const { throwNotImplemented } = require("internal/shared");
 const { domainToASCII } = require("internal/url");
 const {
@@ -1269,12 +1270,10 @@ function Server(options, secureConnectionListener): void {
       options = processPfxOptions(options);
       const { ALPNProtocols } = options;
 
-      if (ALPNProtocols) {
-        convertALPNProtocols(ALPNProtocols, next);
-      } else {
-        // An omitted ALPNProtocols clears the previous call's protocols.
-        next.ALPNProtocols = undefined;
-      }
+      // Unlike the fields below, an omitted ALPNProtocols keeps the server's
+      // list: node assigns it in the Server constructor only.
+      // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1381-L1382
+      if (ALPNProtocols) convertALPNProtocols(ALPNProtocols, next);
 
       let cert = options.cert;
       // Assign unconditionally so a later setSecureContext() that omits an
@@ -1292,11 +1291,12 @@ function Server(options, secureConnectionListener): void {
       next.key = key;
 
       // BoringSSL rejects a mixed EC/RSA multi-identity configuration while
-      // loading the chain. The native context is built lazily at listen time,
-      // so surface the most common mismatch synchronously here: a key whose
+      // loading the chain. Before listen() no native context is built, so
+      // surface the most common mismatch synchronously here: a key whose
       // type differs from its own index-paired certificate. This is a
-      // best-effort check - the native loader at listen time remains the
-      // authority and still rejects configurations that pass it.
+      // best-effort check - the native loader (listen(), or the rebuild below
+      // on a listening server) remains the authority and still rejects
+      // configurations that pass it.
       const keyLength = Array.isArray(key) ? key.length : 0;
       if (keyLength > 1 && cert) {
         const certs = Array.isArray(cert) ? cert : [cert];
@@ -1404,13 +1404,26 @@ function Server(options, secureConnectionListener): void {
       // validateSecureContextOptions already rejected unknown method names.
       // Assign unconditionally so a later setSecureContext() without these
       // options clears the previous call's version constraints instead of
-      // re-applying them on the next listen.
+      // re-applying them to the next context built.
       next.secureProtocol = options.secureProtocol;
       next.minVersion = options.minVersion;
       next.maxVersion = options.maxVersion;
     }
     if (options) {
-      this.ALPNProtocols = next.ALPNProtocols;
+      // A listening server built its native context from these fields in
+      // listen(), so it is rebuilt here. It throws on material BoringSSL
+      // rejects, hence before any field is assigned.
+      const handle = this._handle;
+      if (handle && !(serverTLSOptions instanceof InternalSecureContext)) {
+        // [buntls] reads the credential fields off its receiver: these are the
+        // staged ones, everything else is inherited from the server.
+        const staged = { __proto__: this, ...next };
+        const tls = staged[buntls](0, undefined, false)[0];
+        // The clamp net.ts applies before Bun.listen().
+        if (!tls.requestCert) tls.rejectUnauthorized = false;
+        setListenerSecureContext(handle, tls);
+      }
+      if (next.ALPNProtocols !== undefined) this.ALPNProtocols = next.ALPNProtocols;
       this.cert = next.cert;
       this.key = next.key;
       this.ca = next.ca;

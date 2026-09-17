@@ -30,3 +30,43 @@ test("concurrent dynamic imports of the same module both resolve", async () => {
   expect(stdout.trim()).toBe("ok");
   expect(exitCode).toBe(0);
 });
+
+// Work pool threads transpile the static imports of a module. A worker keeps its parse arena (one mimalloc heap)
+// while it has more modules to transpile, and frees it when it runs out of tasks.
+test("a burst of imports creates no allocator heap per module, and no heap outlives the burst", async () => {
+  const count = 100;
+  const files: Record<string, string> = {
+    "entry.ts": Array.from({ length: count }, (_, i) => `import "./m${i}.ts";`).join("\n"),
+    "main.mjs": `
+      import { heapStats } from "bun:jsc";
+      // "total" counts mi_heap_new() calls, "current" counts the heaps that are alive.
+      const heaps = () => heapStats().mimalloc.heaps;
+      const before = heaps();
+      await import("./entry.ts");
+      const created = heaps().total - before.total;
+      // A worker frees its arena on its own thread, so the last heap can go away after the import resolves.
+      const deadline = performance.now() + 3000;
+      while (heaps().current > before.current && performance.now() < deadline) {
+        await new Promise(resolve => setImmediate(resolve));
+      }
+      console.log(JSON.stringify({ created, alive: heaps().current - before.current }));
+    `,
+  };
+  for (let i = 0; i < count; i++) files[`m${i}.ts`] = `export const v${i}: number = ${i};`;
+  using dir = tempDir("import-burst-heaps", files);
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.mjs"],
+    cwd: String(dir),
+    // With two workers the queue stays full for the whole burst, so a worker runs out of tasks only at the end.
+    env: { ...bunEnv, UV_THREADPOOL_SIZE: "2" },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const { created, alive } = JSON.parse(stdout);
+  // One heap per module would be count + 1.
+  expect(created).toBeLessThan(count / 2);
+  expect(alive).toBe(0);
+  expect(exitCode).toBe(0);
+});

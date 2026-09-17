@@ -97,12 +97,13 @@ impl Query {
         None
     }
 
-    /// Whether this AND chain is `*` (a lone `>=0.0.0`), which every version satisfies.
+    /// Whether this AND chain is `*` (a lone `>=0.0.0`), which every version satisfies. `>=0.0.0-0` is not `*`.
     fn admits_all(&self) -> bool {
         let range = &self.range;
         self.next.is_none()
             && range.left.op == Op::Gte
             && range.left.version.is_zero()
+            && !range.left.version.tag.has_pre()
             && !range.has_right()
     }
 

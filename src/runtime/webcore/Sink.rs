@@ -889,9 +889,7 @@ pub(crate) unsafe fn sink_handle_from_id(
 ///
 /// Return shape matches [`streams::result::Writable::to_js`] so
 /// `nativeSinkWriteIsBackpressure` reads a negative number / pending promise
-/// exactly as the previous `js_write_bytes` path produced. No
-/// [`JsSinkType::get_pending_error`] guard: only `NetworkSink` sets one, on
-/// the `s3file.writer()` path, and that sink is never the sink of a pump.
+/// exactly as the previous `js_write_bytes` path produced.
 #[unsafe(no_mangle)]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn Bun__NativeTransformSink__writeBytes(

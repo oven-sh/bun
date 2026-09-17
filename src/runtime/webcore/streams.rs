@@ -2283,9 +2283,8 @@ pub struct NetworkSink {
     /// failure callback can reject with the original JS error (e.g. S3
     /// `NoSuchKey`) instead of the generic `UnknownError` passed to `fail()`.
     pub(crate) upstream_error: jsc::strong::Optional,
-    /// `s3file.writer()`: the S3 error of a failed upload. Every later JS
-    /// call throws it through `get_pending_error`, also when no
-    /// `flush()`/`end()` promise was pending to reject.
+    /// `s3file.writer()`: the error of a failed upload, thrown by every later
+    /// JS call through `get_pending_error`.
     pub(crate) pending_error: jsc::strong::Optional,
     pub(crate) ended: bool,
     pub(crate) done: bool,

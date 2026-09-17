@@ -452,8 +452,6 @@ pub(crate) fn writable_stream(
             }
             S3UploadResult::Failure(err) => {
                 let js_err = s3_error_to_js(&err, global, sink.path());
-                // Every later `write()`, `flush()` or `end()` throws it, so a
-                // failure with no promise pending is not reported as success.
                 sink.pending_error.set(global, js_err);
                 if sink.flush_promise.has_value() {
                     sink.flush_promise.reject(global, Ok(js_err))?;

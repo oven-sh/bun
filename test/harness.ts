@@ -318,6 +318,52 @@ export async function expectMaxObjectTypeCount(
   expect(heapStats().objectTypeCounts[type] ?? 0).toBeLessThanOrEqual(count);
 }
 
+// Runs the command passed as a JSON array in the last argument and prints one
+// JSON line: the command's output, exit status, and peak RSS in bytes.
+const maxRSSSpawner = /* js */ `
+  const proc = Bun.spawn({ cmd: JSON.parse(process.argv.at(-1)), stdout: "pipe", stderr: "pipe" });
+  process.on("SIGTERM", () => proc.kill());
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { signalCode } = proc;
+  console.log(JSON.stringify({ stdout, stderr, exitCode, signalCode, maxRSS: proc.resourceUsage().maxRSS }));
+`;
+
+/**
+ * Runs `cmd` and returns its output, exit status, and peak RSS in bytes.
+ *
+ * On Linux, `resourceUsage().maxRSS` of a process that the test spawned
+ * itself is not that process's own peak, because `ru_maxrss` survives exec.
+ * The child starts from the high-water mark of its spawner (`exec_mmap` ->
+ * `setmax_mm_hiwater_rss`), so the number is max(test runner peak, child
+ * peak). Here the spawner is a small bun process. The inherited mark is then
+ * a fixed floor (~30 MB release, ~320 MB debug+ASAN), not whatever the test
+ * runner allocated so far.
+ */
+export async function runCommandMaxRSS(options: { cmd: string[]; cwd?: string; env?: NodeJS.Dict<string> }) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", maxRSSSpawner, JSON.stringify(options.cmd)],
+    cwd: options.cwd,
+    env: options.env ?? bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+  const result: {
+    stdout: string;
+    stderr: string;
+    exitCode: number;
+    signalCode: NodeJS.Signals | null;
+    maxRSS: number;
+  } = JSON.parse(stdout);
+  // Guard the unit: any bun process peaks well above 1 MiB in bytes but under
+  // 1_048_576 in kB; a failure here means maxRSS regressed to kB and every
+  // upper bound on it is vacuous.
+  expect(result.maxRSS).toBeGreaterThan(1024 * 1024);
+  return result;
+}
+
 /**
  * Peak RSS of a bun process that runs `fixture`, whose only stdout line is
  * the JSON `expected` (the transfer's completion result), and the peak RSS of

@@ -2467,6 +2467,39 @@ describe("proxy resolution", () => {
       ["http://example.test/#a@b", "", "", "example.test", ""],
       ["http://example.test:8080/user@other.test:9090", "", "", "example.test", "8080"],
       ["http://user:pass@example.test/path@other.test", "user", "pass", "example.test", ""],
+      // A `\` ends the authority of http, https, ws, wss, ftp and file, as it does for `new URL()`:
+      // an `@` after it is not userinfo, and the host and the port end there too.
+      [String.raw`http://user:pass@example.test\x@other.test/`, "user", "pass", "example.test", ""],
+      [String.raw`http://a:b@c\@d/`, "a", "b", "c", ""],
+      [String.raw`http://example.test\@other.test/`, "", "", "example.test", ""],
+      [String.raw`HTTPS://user:pass@example.test\@other.test/`, "user", "pass", "example.test", ""],
+      [String.raw`ws://user:pass@example.test\@other.test/`, "user", "pass", "example.test", ""],
+      [String.raw`wss://user:pass@example.test\@other.test/`, "user", "pass", "example.test", ""],
+      [String.raw`ftp://user:pass@example.test\@other.test/`, "user", "pass", "example.test", ""],
+      [String.raw`file://example.test\@other.test/`, "", "", "example.test", ""],
+      [String.raw`http://example.test\\@other.test/`, "", "", "example.test", ""],
+      [String.raw`http://example.test\@[::1]:8080/`, "", "", "example.test", ""],
+      [String.raw`http://u:p@[::1]:80\@other.test:8080/sub`, "u", "p", "[::1]", "80"],
+      [String.raw`http://u:p@example.test:8080\@other.test:9090/`, "u", "p", "example.test", "8080"],
+      // `new URL()` drops a tab before it parses. This keeps it, so the name resolves to nothing.
+      [`http://example.test\t\\@other.test/`, "", "", "example.test\t", ""],
+      // A `#` ends the authority too, with or without a `/` in front of it.
+      ["http://u:p@example.test:8080#@other.test/", "u", "p", "example.test", "8080"],
+      // In any other scheme a `\` is part of the userinfo, again as for `new URL()`.
+      [
+        String.raw`socks5://user:pass@example.test\x@other.test/`,
+        "user",
+        String.raw`pass@example.test\x`,
+        "other.test",
+        "",
+      ],
+      // The scheme ends at the first `:` and holds only the bytes RFC 3986 allows, so the `://` of
+      // a later one starts no authority. `new URL()` reads `other.test` as the host of these two,
+      // and the name this reads is one no user can have written down.
+      ["http:other.test://example.test/", "", "", "http", "other.test:"],
+      [String.raw`http:\other.test://example.test/`, "", "", "http", String.raw`\other.test:`],
+      ["1http://example.test/", "", "", "1http", ""],
+      ["git+ssh://user@example.test/repo.git", "user", "", "example.test", ""],
       // IPv6 hosts keep their brackets in `hostname`
       ["http://[::1]:3000/", "", "", "[::1]", "3000"],
       ["http://user:pass@[::1]:3000/", "user", "pass", "[::1]", "3000"],
@@ -2679,6 +2712,19 @@ describe.concurrent("proxy environment", () => {
       `,
     );
     expect(results).toEqual(["proxy", "origin"]);
+  });
+
+  test("fetch('s3://…') reaches a proxy whose variable holds a domain login", async () => {
+    // S3 keeps the proxy as a string and parses it again, so it needs the same reading as fetch().
+    const results = await run(
+      () => ({}),
+      `
+      const s3 = { accessKeyId: "test", secretAccessKey: "test", endpoint: "http://127.0.0.1:" + ORIGIN_PORT };
+      process.env.HTTP_PROXY = PROXY.replace("http://", "http://DOMAIN" + String.fromCharCode(92) + "user:pass@");
+      console.log(JSON.stringify([await fetch("s3://bucket/key", { s3 }).then(r => r.text(), e => e.code)]));
+      `,
+    );
+    expect(results).toEqual(["proxy"]);
   });
 
   test("a worker starts from the proxy environment its parent has at that moment", async () => {
@@ -2905,6 +2951,23 @@ describe("http_proxy/NO_PROXY re-evaluated per redirect hop", () => {
       stdout: "FINAL-ORIGIN-B",
       proxyLog: [`GET http://127.0.0.1:${originA.port}/r302 HTTP/1.1`],
       proxyAuth: ["Basic dXNlcjpwYXNz"],
+    });
+    if (exitCode !== 0) console.error("stderr:", stderr);
+    expect(exitCode).toBe(0);
+  });
+
+  test("a domain login in http_proxy reaches the proxy as written", async () => {
+    // `http://DOMAIN\user:pass@host:port` is how a Windows domain account is spelled in a proxy
+    // variable, and curl reads the `\` as an ordinary userinfo byte. Only this parser reads the
+    // variable, and it names the host that is dialed, so there is no second reading to agree with.
+    const { stdout, stderr, exitCode, proxyLog, proxyAuth } = await runFetch(
+      { http_proxy: String.raw`http://DOMAIN\user:pass@127.0.0.1:${proxy.port}` },
+      `http://127.0.0.1:${originA.port}/final`,
+    );
+    expect({ stdout, proxyLog, proxyAuth }).toEqual({
+      stdout: "FINAL-PROXY",
+      proxyLog: [`GET http://127.0.0.1:${originA.port}/final HTTP/1.1`],
+      proxyAuth: [`Basic ${btoa(String.raw`DOMAIN\user:pass`)}`],
     });
     if (exitCode !== 0) console.error("stderr:", stderr);
     expect(exitCode).toBe(0);

@@ -729,8 +729,6 @@ impl<T: JsSinkType> JSSink<T> {
         use bun_sys_jsc::ErrorJsc;
         bun_core::mark_binding!();
 
-        // `close()` is cleanup. It does not throw a stored failure that a
-        // `write()`, `flush()` or `end()` already reported.
         let result = if reason.is_empty() {
             // SAFETY: caller contract; `end` does not free the sink.
             unsafe { (*this).end(None) }

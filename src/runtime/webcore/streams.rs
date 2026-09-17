@@ -2653,8 +2653,6 @@ impl NetworkSink {
 
     pub(crate) fn end_from_js(&mut self, cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
         let _ = self.end(None);
-        // A failure inside `end()` (the single PUT could not be signed)
-        // already ran the upload callback and detached the task.
         if let Some(err) = self.pending_error.get() {
             return bun_sys::Result::Ok(JSPromise::rejected_promise(cx.global(), err).to_js());
         }

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { mkfifo } from "mkfifo";
 import fs, { existsSync, readdirSync, rmSync } from "node:fs";
 import { join } from "path";
@@ -656,8 +656,7 @@ describe("Bun.Archive", () => {
       const [, , uid, gid] = line.split(":");
       return Number.isInteger(+uid) && Number.isInteger(+gid) ? { uid: +uid, gid: +gid } : null;
     })();
-    const lockedAsNobody = isLinux && isRoot && !!Bun.which("runuser") && nobody !== null;
-    const canLockDir = !isWindows && (!isRoot || lockedAsNobody);
+    const canLockDir = !isWindows && (!isRoot || nobody !== null);
 
     // GNU tar removes a file the destination already holds and creates a new
     // one. Writing into the old inode would reach every other name linked to it.
@@ -709,8 +708,8 @@ describe("Bun.Archive", () => {
       });
 
       // The old name cannot be removed from a directory the user cannot write.
-      // Root bypasses that check, so as root on Linux the extraction runs in a
-      // child dropped to `nobody`, as in test/js/bun/resolve/resolve.test.ts.
+      // Root bypasses that check, so as root the extraction runs in a child
+      // with the uid of `nobody`.
       async function extractInLockedDir(dir: string): Promise<{ count?: number; error?: string }> {
         const locked = join(dir, "locked");
         const fixture = join(dir, "fixture.js");
@@ -721,25 +720,20 @@ describe("Bun.Archive", () => {
              .extract(dir, glob ? { glob } : undefined)
              .then(count => console.log(JSON.stringify({ count })), e => console.log(JSON.stringify({ error: e.message })));`,
         );
-        if (lockedAsNobody) {
+        if (nobody) {
           for (const p of fs.readdirSync(dir, { recursive: true })) {
-            fs.lchownSync(join(dir, String(p)), nobody!.uid, nobody!.gid);
+            fs.lchownSync(join(dir, String(p)), nobody.uid, nobody.gid);
           }
-          fs.chownSync(dir, nobody!.uid, nobody!.gid);
+          fs.chownSync(dir, nobody.uid, nobody.gid);
         }
         fs.chmodSync(locked, 0o555);
         try {
           await using proc = Bun.spawn({
-            cmd: [
-              ...(lockedAsNobody ? ["runuser", "-u", "nobody", "--"] : []),
-              bunExe(),
-              fixture,
-              dir,
-              options?.glob ?? "",
-            ],
+            cmd: [bunExe(), fixture, dir, options?.glob ?? ""],
             env: bunEnv,
             stdout: "pipe",
             stderr: "pipe",
+            ...(nobody ?? {}),
           });
           const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
           expect(stderr).toBe("");

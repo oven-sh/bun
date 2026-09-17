@@ -635,10 +635,13 @@ impl Generator<'_, '_> {
             return;
         }
 
-        *this.result = this
-            .byte_range_mapping
-            .generate_report_from_blocks(blocks, function_blocks, ignore_sourcemap)
-            .ok();
+        *this.result = Some(bun_core::handle_oom(
+            this.byte_range_mapping.generate_report_from_blocks(
+                blocks,
+                function_blocks,
+                ignore_sourcemap,
+            ),
+        ));
     }
 }
 
@@ -1091,13 +1094,22 @@ extern "C" fn ByteRangeMapping__generate(
     map.insert(hash, new_value);
 }
 
-/// `source_id` runs the text already on record for `source_url` (a provider
-/// that wraps the one `ByteRangeMapping__generate` was given).
+/// For a provider that wraps another one. It is one more instance of
+/// `source_url` only if it carries the text on record: `module._compile()`
+/// names a file and brings a text of its own, which no line table describes.
 #[unsafe(no_mangle)]
-extern "C" fn ByteRangeMapping__addSourceID(source_url: &bun_core::String, source_id: i32) {
-    if let Some(mut this) = find(source_url) {
-        // SAFETY: pointer into the thread-local map, valid for this call.
-        unsafe { this.as_mut() }.source_ids.push(source_id);
+extern "C" fn ByteRangeMapping__addSourceID(
+    source_url: &bun_core::String,
+    source_contents: &bun_core::String,
+    source_id: i32,
+) {
+    let Some(mut this) = find(source_url) else {
+        return;
+    };
+    // SAFETY: pointer into the thread-local map, valid for this call.
+    let this = unsafe { this.as_mut() };
+    if this.source_hash == bun_wyhash::hash(source_contents.to_utf8().slice()) {
+        this.source_ids.push(source_id);
     }
 }
 

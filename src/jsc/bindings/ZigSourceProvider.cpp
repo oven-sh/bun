@@ -42,14 +42,16 @@ SourceOrigin toSourceOrigin(const String& sourceURL, bool isBuiltin)
 }
 
 extern "C" void ByteRangeMapping__generate(const BunString* sourceURL, const BunString* code, int sourceID);
-extern "C" void ByteRangeMapping__addSourceID(const BunString* sourceURL, int sourceID);
+extern "C" void ByteRangeMapping__addSourceID(const BunString* sourceURL, const BunString* code, int sourceID);
 
 void addCodeCoverageSourceID(JSC::VM& vm, JSC::SourceProvider& provider)
 {
     if (!vm.controlFlowProfiler())
         return;
     BunString sourceURL = Bun::toString(provider.sourceURL());
-    ByteRangeMapping__addSourceID(&sourceURL, provider.asID());
+    WTF::String sourceString = provider.source().toStringWithoutCopying();
+    BunString source = Bun::toString(sourceString);
+    ByteRangeMapping__addSourceID(&sourceURL, &source, provider.asID());
 }
 
 extern "C" bool BunTest__shouldGenerateCodeCoverage(const BunString* sourceURL);

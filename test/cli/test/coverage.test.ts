@@ -841,6 +841,44 @@ test("loads", async () => {
     expect(inGraph).toEqual(inHost);
   });
 
+  // module._compile() names a file and brings a text of its own, which no
+  // line table describes. In a graph it runs under a wrapping SourceProvider,
+  // like the graph's load of the file itself, and must not count as one.
+  test("module._compile() in a Bun.ModuleGraph does not count as a load of the file it names", async () => {
+    const compiledText =
+      Buffer.alloc(12, "\n").toString() +
+      "exports.other = function other(n) {\n  if (n > 5) {\n    return 1;\n  }\n  return 2;\n};\nexports.other(1);\n";
+    const files = {
+      "subject.cjs": cjs,
+      "compile.cjs": `
+const Module = require("node:module");
+exports.compileAs = (filename, text) => {
+  const module = new Module(filename);
+  module.filename = filename;
+  module._compile(text, filename);
+  return module.exports;
+};
+`,
+      "loads.test.ts": `
+import { expect, test } from "bun:test";
+const { covered } = require("./subject.cjs");
+
+test("loads", async () => {
+  expect(covered(1)).toBe(2);
+  if (process.env.COMPILE_IN_GRAPH) {
+    using graph = new Bun.ModuleGraph({});
+    const { compileAs } = await graph.import(import.meta.dir + "/compile.cjs");
+    const compiled = graph.run(() => compileAs(require.resolve("./subject.cjs"), ${JSON.stringify(compiledText)}));
+    expect(compiled.other(10)).toBe(1);
+  }
+});
+`,
+    };
+    const [compiled, control] = await Promise.all([coverageRow(files, { COMPILE_IN_GRAPH: "1" }), coverageRow(files)]);
+    expect(control.row).toMatch(/^ subject\.cjs +\| +100\.00 +\| +\d+\.\d+ +\| +\d/);
+    expect(compiled).toEqual(control);
+  });
+
   // The line table and the source map on record describe one text, so a load
   // of another text starts the file's coverage over.
   test("a file that changed between two loads reports the last text alone", async () => {
@@ -873,10 +911,12 @@ test("loads", async () => {
       "loads.test.ts": `
 import { expect, test } from "bun:test";
 import { codeCoverageForFile } from "bun:jsc";
+import { join } from "node:path";
 import { covered } from "./subject.ts";
 
 test("loads", async () => {
-  const file = import.meta.dir + "/subject.ts";
+  // codeCoverageForFile() takes the path as the module loader spells it.
+  const file = join(import.meta.dir, "subject.ts");
   expect(covered(1)).toBe(2);
   const hostAlone = codeCoverageForFile(file, false);
   using graph = new Bun.ModuleGraph({});

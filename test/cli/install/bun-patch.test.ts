@@ -1,6 +1,6 @@
 import { $, ShellOutput } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { lstatSync, readFileSync } from "fs";
+import { existsSync, lstatSync, readFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, tempDir, VerdaccioRegistry } from "harness";
 import { isAbsolute, join, sep } from "path";
 
@@ -1309,7 +1309,7 @@ describe("a folder whose version is not in the lockfile as the target", () => {
       expect(stderr).toEndWith(notInLockfile);
       expect({
         packageJson: await Bun.file(join(packageDir, "package.json")).json(),
-        patches: await Bun.file(join(packageDir, "patches", "no-deps@1.0.0.patch")).exists(),
+        patches: existsSync(join(packageDir, "patches")),
         version: await shippedVersion(packageDir),
       }).toEqual({ packageJson, patches: false, version: "1.0.0" });
       expect(exitCode).toBe(1);
@@ -1322,6 +1322,32 @@ describe("a folder whose version is not in the lockfile as the target", () => {
         "no-deps": "2.0.0",
         "no-deps-1-1": "npm:no-deps@1.1.0",
       });
+
+      const { stderr, exitCode } = await runBun(packageDir, "patch", shippedCopy);
+      expect(stderr).toEndWith(notInLockfile);
+      expect(await shippedVersion(packageDir)).toBe("1.0.0");
+      expect(exitCode).toBe(1);
+    });
+
+    // Two lockfile rows with the name: no-deps@2.0.0 and a tarball with no-deps@1.1.0. The version
+    // in package.json is not the label of a tarball package, so the tarball is not taken by name.
+    test.concurrent("bun patch <path> is refused when the lockfile has an npm and a tarball package", async () => {
+      const packageJson = {
+        name: "foo",
+        dependencies: { "ships-no-deps": "1.0.0", "no-deps": "2.0.0", "no-deps-tarball": "./no-deps-1.1.0.tgz" },
+      };
+      const { packageDir } = await registry.createTestDir({
+        bunfigOpts: { linker },
+        files: {
+          "package.json": JSON.stringify(packageJson),
+          "no-deps-1.1.0.tgz": readFileSync(
+            join(import.meta.dir, "registry", "packages", "no-deps", "no-deps-1.1.0.tgz"),
+          ),
+        },
+      });
+      const install = await runBun(packageDir, "install");
+      expect(install.stderr).not.toContain("error:");
+      expect(install.exitCode).toBe(0);
 
       const { stderr, exitCode } = await runBun(packageDir, "patch", shippedCopy);
       expect(stderr).toEndWith(notInLockfile);

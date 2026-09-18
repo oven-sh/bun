@@ -48,22 +48,23 @@ fn print_resolution_label<'a>(
 
 #[derive(Clone, Copy)]
 enum FolderLookupError {
-    /// No npm package of that name has the folder's version, and no single
-    /// package with another resolution is left to take.
+    /// No package of that name has the folder's version.
     NotInLockfile,
-    /// More than one package of that name has a git, tarball or folder
-    /// resolution. The folder's version cannot tell them apart.
+    /// Every package of that name has a git, tarball or folder resolution,
+    /// and there is more than one. The folder's version cannot tell them
+    /// apart.
     Ambiguous,
 }
 
 /// Finds the lockfile package that `bun patch <path>` targets, from the `name`
 /// and `version` of the folder's package.json. The version is the label of an
-/// npm resolution only, so it picks between the npm packages of that name. A
-/// package with another resolution (git, tarball, folder) has a URL or path as
-/// its label, which the package.json does not carry, so it is taken when it is
-/// the only one left. A folder that bun did not install, such as a copy that
-/// another package ships inside its tarball, has no match when its version is
-/// not in the lockfile.
+/// npm resolution only, so when the lockfile has npm packages of that name,
+/// one of them has to have that version. A package with another resolution
+/// (git, tarball, folder) has a URL or path as its label, which the
+/// package.json does not carry, so it is taken only when it is the single
+/// package of that name. A folder that bun did not install, such as a copy
+/// that another package ships inside its tarball, has no match when its
+/// version is not in the lockfile.
 fn package_for_folder(
     lockfile: &Lockfile,
     name_hash: u64,
@@ -74,22 +75,22 @@ fn package_for_folder(
     };
     let strbuf = lockfile.buffers.string_bytes.as_slice();
     let mut resolution_label = Vec::new();
-    let mut not_npm: Option<Package> = None;
-    let mut not_npm_count = 0;
+    let mut has_npm = false;
     for &id in entry.as_slice() {
         let pkg = *lockfile.packages.get(id as usize);
-        if pkg.resolution.tag == ResolutionTag::Npm {
-            if print_resolution_label(&mut resolution_label, &pkg.resolution, strbuf) == version {
-                return Ok(pkg);
-            }
-        } else {
-            not_npm = Some(pkg);
-            not_npm_count += 1;
+        if pkg.resolution.tag != ResolutionTag::Npm {
+            continue;
+        }
+        has_npm = true;
+        if print_resolution_label(&mut resolution_label, &pkg.resolution, strbuf) == version {
+            return Ok(pkg);
         }
     }
-    match (not_npm_count, not_npm) {
-        (1, Some(pkg)) => Ok(pkg),
-        (0, _) => Err(FolderLookupError::NotInLockfile),
+    if has_npm {
+        return Err(FolderLookupError::NotInLockfile);
+    }
+    match entry.as_slice() {
+        [id] => Ok(*lockfile.packages.get(*id as usize)),
         _ => Err(FolderLookupError::Ambiguous),
     }
 }

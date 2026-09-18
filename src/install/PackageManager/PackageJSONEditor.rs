@@ -930,6 +930,59 @@ fn resolve_catalog_literals(
     }
 }
 
+/// A request without a name (`bun add ./folder`, a tarball, a git URL) is written as `"<literal>": "<literal>"` before the install. Once it resolves it has a name; this is the value `package_json` already declares under that name, which `bun add <name>@<literal>` would have overwritten. A peer entry and the entry of another group may share a name, so only lists of `dependency_list`'s kind are searched.
+fn declared_slot_of_resolved_name(
+    package_json: &Expr,
+    request: &UpdateRequest,
+    lockfile: &Lockfile,
+    dependency_list: &[u8],
+) -> Option<*mut E::EString> {
+    if request.is_aliased {
+        return None;
+    }
+    let name = request.get_name_in_lockfile(lockfile)?;
+    if name == request.get_name() {
+        return None;
+    }
+    let is_peer = |list: &[u8]| list == DependencyGroup::PEER.prop;
+    DependencyGroup::FOUR
+        .iter()
+        .filter(|group| is_peer(group.prop) == is_peer(dependency_list))
+        .find_map(|group| {
+            let declared = package_json
+                .as_property(group.prop)?
+                .expr
+                .as_property(name)?;
+            declared.expr.data.e_string().map(|value| value.as_ptr())
+        })
+}
+
+/// Removes `key` from the dependency list `list`, and the list once nothing is left in it. Returns whether `key` was there.
+fn remove_entry(package_json: &mut Expr, list: &[u8], key: &[u8]) -> bool {
+    let Some(query) = package_json.as_property(list) else {
+        return false;
+    };
+    let Some(mut entries) = query.expr.data.e_object() else {
+        return false;
+    };
+    let before = entries.properties.len();
+    entries.properties.retain(|property| {
+        !property
+            .key
+            .and_then(|key| key.data.e_string())
+            .is_some_and(|name| name.eql_bytes(key))
+    });
+    let removed = entries.properties.len() != before;
+    if removed && entries.properties.is_empty() {
+        package_json
+            .data
+            .as_e_object_mut()
+            .properties
+            .remove(query.i as usize);
+    }
+    removed
+}
+
 /// Edits the dependency lists for `updates` and returns whether anything was rewritten; `trustedDependencies` is added later by `package_json_write_back::flush`.
 pub(crate) fn edit(
     manager: &mut PackageManager,
@@ -972,6 +1025,10 @@ pub(crate) fn edit(
     let mut remaining = updates.len();
     let mut replacing: usize = 0;
     let only_add_missing = manager.options.enable.only_missing();
+    // The same conditions as `package_json_write_back::fold_resolved_positionals`, which folds the lockfile rows this way.
+    let fold_positionals = !options.before_install
+        && manager.subcommand == Subcommand::Add
+        && manager.options.add_catalog.is_none();
 
     // There are three possible scenarios here
     // 1. There is no "dependencies" (or equivalent list) or it is empty
@@ -983,6 +1040,22 @@ pub(crate) fn edit(
             let mut i: usize = 0;
             'loop_: while i < updates.len() {
                 let request = &mut updates[i];
+                if fold_positionals {
+                    if let Some(slot) = declared_slot_of_resolved_name(
+                        current_package_json,
+                        request,
+                        &manager.lockfile,
+                        dependency_list,
+                    ) {
+                        if remove_entry(current_package_json, dependency_list, request.get_name()) {
+                            request.e_string = Some(slot);
+                            remaining -= 1;
+                            changed = true;
+                            i += 1;
+                            continue 'loop_;
+                        }
+                    }
+                }
                 // order-insensitive scan: `FOUR` is fine here
                 'dependency_group: for list in DependencyGroup::FOUR.map(|g| g.prop) {
                     if let Some(query) = current_package_json.as_property(list) {
@@ -1214,12 +1287,7 @@ pub(crate) fn edit(
                 break;
             }
 
-            // For a non-aliased git/github/tarball/folder request, `get_name()` is the
-            // URL or path literal: the before-install edit keys its entry by that
-            // literal, and the slot above was just re-keyed to the resolved package
-            // name. If the list already declared this package under the resolved name
-            // with a different literal (e.g. a new commit hash), that stale entry is
-            // still present, so drop it or the file ends up with a duplicate key.
+            // The slot above was just re-keyed from the request's literal to its resolved name. An entry `declared_slot_of_resolved_name` could not hand over, because its value is not a string, still has that key and would duplicate it.
             if !request.is_aliased && k < new_dependencies.len() {
                 let resolved_name = request.get_resolved_name(&manager.lockfile);
                 let mut j = new_dependencies.len();

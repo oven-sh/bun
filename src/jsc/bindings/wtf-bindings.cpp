@@ -238,8 +238,7 @@ extern "C" size_t WTF__base64URLEncode(const char* __restrict inputDataBuffer, s
     return simdutf::binary_to_base64(inputDataBuffer, inputDataBufferSize, destinationDataBuffer, simdutf::base64_url);
 }
 
-// `Date.parse` without a VM: the V8 parser that bun's runtime selects
-// (useV8DateParser in ZigGlobalObject.cpp), with the host tz for local-time input.
+// Bun's `Date.parse` is the V8 parser (useV8DateParser), so use the same one here.
 extern "C" double Bun__parseDateString(const unsigned char* string, size_t length)
 {
     bool isLocalTime = false;

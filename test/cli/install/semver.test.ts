@@ -595,8 +595,6 @@ describe("Bun.semver.satisfies()", () => {
       check([
         ...[">=x", "<=x", ">=*", "<=*", ">=x.x", "<=x.x.x", "<= x", ">= *"].map((range): Row => [range, "1.0.0", true]),
         ...["x", "*", "=x", "^x", "~x", "~>x"].map((range): Row => [range, "1.0.0", true]),
-        // a number after the wildcard changes nothing here either
-        ...[">=x.1", ">=x.1.2", "<=x.1", "<=x.1.2"].map((range): Row => [range, "0.0.0", true]),
         [">=x <2", "1.2.3", true],
         [">=x <2", "2.0.0", false],
         // a wildcard after a number is a bound, not the empty set

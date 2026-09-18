@@ -696,9 +696,9 @@ impl Token {
         match self.wildcard {
             Wildcard::Major => match self.tag {
                 // https://github.com/npm/node-semver/blob/3a8a4309ae986c1967b3073ba88c9e69433d44cb/classes/range.js#L380-L387
-                // A wildcard major makes `<` and `>` allow nothing and `<=` and `>=` allow anything,
-                // whatever follows it. An operator before text that is not a version (`>latest`)
-                // also gets here, with no wildcard written, and keeps reading as anything.
+                // A wildcard major makes `<` and `>` allow nothing, whatever follows it. An operator
+                // before text that is not a version (`>latest`) also gets here, with no wildcard
+                // written, and keeps reading as anything.
                 TokenTag::Lt | TokenTag::Gt if parsed.wildcard_written => Range {
                     left: Comparator::null_set(),
                     ..Default::default()
@@ -706,7 +706,7 @@ impl Token {
                 _ => Range {
                     left: Comparator {
                         op: RangeOp::Gte,
-                        version: Version::default(),
+                        version: version.min(),
                     },
                     right: Comparator {
                         op: RangeOp::Lte,

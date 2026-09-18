@@ -661,6 +661,7 @@ pub fn install_with_manager(
         .print(std::ptr::from_mut(Output::error_writer()))?;
     manager.log_mut().reset();
     super::add_catalog::refuse_declared_positionals(manager);
+    super::package_json_write_back::fold_resolved_positionals(manager);
 
     // This operation doesn't perform any I/O, so it should be relatively cheap.
     // Both old and new lockfiles must stay live for the later

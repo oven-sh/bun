@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { itBundled, type BundlerTestInput } from "../expectBundled";
@@ -3302,11 +3302,14 @@ test("react-compiler compile time is not exponential in the function nesting dep
 // recursion now checks the stack first, and a function that does not fit stays
 // as written.
 test("react-compiler leaves a function that nests too deeply as written", async () => {
-  // A debug build has far larger frames: its compiler overflowed at about 30
-  // nested `if`s or loops. It is too slow for the other shapes, most of which
-  // still fit at this depth.
+  // A release build runs out of stack between 300 and 800 levels, and near
+  // 3,500 on Windows. A debug build has frames 20 times larger: its compiler
+  // overflowed at about 30 nested `if`s or loops, and it is too slow for the
+  // other shapes. An ASAN release build and a Windows debug build compile one
+  // shape at a depth that fits: nothing they finish in time runs out of stack.
   const small = isDebug || isASAN;
-  const depth = small ? 80 : 1000;
+  const sureToRunOut = isDebug && !isWindows;
+  const depth = small ? 80 : isWindows ? 6000 : 1000;
   const repeat = (fill: string) => Buffer.alloc(fill.length * depth, fill).toString();
   const each = (fill: (i: number) => string) => Array.from({ length: depth }, (_, i) => fill(i)).join("");
   // Each body puts `innermost` at the deepest level.
@@ -3319,7 +3322,7 @@ test("react-compiler leaves a function that nests too deeply as written", async 
     Arrow: v => `const v = ${repeat("() => ")}${v}; return <b onClick={v}>{n}</b>;`,
     Member: v => `const v = p[${v}]${repeat(".a")}; return <b>{v}{n}</b>;`,
   };
-  const names = small ? ["If", "For"] : Object.keys(shapes);
+  const names = sureToRunOut ? ["If", "For"] : small ? ["If"] : Object.keys(shapes);
   // One file: the compiler starts on each function with a full stack, and `Shallow` comes last.
   using dir = tempDir("react-compiler-depth", {
     "entry.jsx": `
@@ -3354,8 +3357,8 @@ test("react-compiler leaves a function that nests too deeply as written", async 
   expect({
     stderr,
     missing: names.filter(name => !stdout.includes(`"innermost ${name}"`)),
-    // Only a debug build is sure to run out of stack at its depth: the frames of the others may shrink.
-    compiled: isDebug ? names.filter(isCompiled) : [],
+    // A release build runs out of stack here too, but its frames may shrink.
+    compiled: sureToRunOut ? names.filter(isCompiled) : [],
     shallowCompiled: isCompiled("Shallow"),
     exitCode,
     signalCode: proc.signalCode,

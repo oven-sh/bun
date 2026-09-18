@@ -16,7 +16,15 @@ use crate::{PackageID, PackageNameHash};
 pub struct Candidate<'a> {
     pub name: &'a [u8],
     pub abs_posix_dir: &'a [u8],
+    /// Directory symlinks that also reach this package. A path selector matches any of them.
+    pub alias_posix_dirs: &'a [Box<[u8]>],
     pub is_root: bool,
+}
+
+impl Candidate<'_> {
+    fn dirs(&self) -> impl Iterator<Item = &[u8]> {
+        core::iter::once(self.abs_posix_dir).chain(self.alias_posix_dirs.iter().map(|d| &**d))
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -141,9 +149,8 @@ fn base_matches(base: &Base, c: &Candidate<'_>, explicit_root_only: bool) -> boo
             }
         }
         Base::Name(glob) => bun_glob::r#match(glob, c.name).matches(),
-        Base::Path(glob) => bun_glob::r#match(glob, c.abs_posix_dir).matches(),
-        Base::Subtree(glob) => {
-            let mut dir = c.abs_posix_dir;
+        Base::Path(glob) => c.dirs().any(|dir| bun_glob::r#match(glob, dir).matches()),
+        Base::Subtree(glob) => c.dirs().any(|mut dir| {
             loop {
                 if bun_glob::r#match(glob, dir).matches() {
                     return true;
@@ -153,7 +160,7 @@ fn base_matches(base: &Base, c: &Candidate<'_>, explicit_root_only: bool) -> boo
                     _ => return false,
                 }
             }
-        }
+        }),
     }
 }
 
@@ -436,6 +443,7 @@ pub fn select_lockfile_workspaces(
         .map(|(&pkg_id, dir)| Candidate {
             name: pkg_names[pkg_id as usize].slice(string_buf),
             abs_posix_dir: dir,
+            alias_posix_dirs: &[],
             is_root: pkg_resolutions[pkg_id as usize].tag == ResolutionTag::Root,
         })
         .collect();

@@ -657,6 +657,17 @@ private:
                     httpResponseData->inStream = nullptr;
                 }
             }
+            if constexpr (IsNodeHttp) {
+                /* Not after upgrade() from the body handler: the ext holds a WebSocketData then. */
+                if (switchToTunnelAfterThisChunk && httpContextData->upgradedWebSocket != user) {
+                    /* pause() and resume() on the response do nothing in tunnel mode:
+                     * lift a read pause that the request body left (req.pause(), a full buffer). */
+                    Bun__NodeHTTP__onReadsResumable(SSL, (struct us_socket_t *) user);
+                    if (us_socket_is_closed((struct us_socket_t *) user)) {
+                        return nullptr;
+                    }
+                }
+            }
             return user;
         });
 

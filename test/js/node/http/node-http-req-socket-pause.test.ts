@@ -3,9 +3,10 @@
  */
 import { describe, expect, it } from "bun:test";
 import { once } from "node:events";
-import { Agent, createServer, request, type Server } from "node:http";
+import { Agent, createServer, request, type IncomingMessage, type Server } from "node:http";
 import type { AddressInfo, Socket } from "node:net";
 import { connect } from "node:net";
+import type { Duplex } from "node:stream";
 
 it("req.socket emits 'pause' once an unread request body fills the IncomingMessage buffer", async () => {
   // Node's test-http-no-read-no-dump: a handler that never reads the body sees
@@ -293,4 +294,165 @@ it("upgrade request whose whole body arrived while it was paused still hands the
     server.closeAllConnections();
     if (server.listening) server.close();
   }
+});
+
+describe("upgrade request whose whole body arrived with its head", () => {
+  const upgradeHeaders = "Upgrade: test\r\nConnection: Upgrade\r\n";
+  const switchingProtocols = `HTTP/1.1 101 Switching Protocols\r\n${upgradeHeaders}\r\n`;
+  const body = Buffer.alloc(100, "y").toString();
+  const fixedLengthPost = `POST /upgrade HTTP/1.1\r\nHost: a\r\n${upgradeHeaders}Content-Length: ${body.length}\r\n\r\n${body}`;
+
+  /** Collects what the upgrade socket receives. */
+  function tunnelReader() {
+    let bytes = "";
+    let wake: (() => void) | undefined;
+    return {
+      onData(chunk: Buffer) {
+        bytes += chunk;
+        wake?.();
+      },
+      get bytes() {
+        return bytes;
+      },
+      async receives(expected: string) {
+        while (bytes.length < expected.length) {
+          const { promise, resolve } = Promise.withResolvers<void>();
+          wake = resolve;
+          await promise;
+        }
+      },
+    };
+  }
+
+  for (const readInListener of [true, false]) {
+    it(`a paused request keeps its body when the upgrade socket is read ${readInListener ? "in" : "after"} the listener`, async () => {
+      const tunnel = tunnelReader();
+      const { promise: handedOff, resolve: onUpgrade } = Promise.withResolvers<[IncomingMessage, Duplex]>();
+      const server = createServer();
+      server.on("upgrade", (req, socket) => {
+        req.pause();
+        socket.on("error", () => {});
+        if (readInListener) socket.on("data", tunnel.onData);
+        socket.write(switchingProtocols);
+        onUpgrade([req, socket]);
+      });
+      let client: Awaited<ReturnType<typeof connectTo>> | undefined;
+      try {
+        client = await connectTo(server);
+        client.socket.write(fixedLengthPost);
+        const [req, socket] = await handedOff;
+        // The 101 is a round trip: the server has parsed the whole first read.
+        await client.receive("101 Switching Protocols");
+        client.socket.write("ping-1;");
+        if (!readInListener) socket.on("data", tunnel.onData);
+        await tunnel.receives("ping-1;");
+        expect(req.readableFlowing).toBe(false);
+
+        let received = "";
+        req.on("data", chunk => (received += chunk));
+        req.resume();
+        await once(req, "end");
+        expect(received).toBe(body);
+
+        client.socket.write("ping-2;");
+        await tunnel.receives("ping-1;ping-2;");
+        expect(tunnel.bytes).toBe("ping-1;ping-2;");
+      } finally {
+        client?.socket.destroy();
+        server.closeAllConnections();
+        if (server.listening) server.close();
+      }
+    });
+  }
+
+  it("the upgrade socket gets the bytes after a body that paused the connection", async () => {
+    // As above, the first chunk fills the request's buffer, and the end of the body is
+    // received while the connection is paused. Node.js v26.3.0 delivers the body, but
+    // never reads the socket again.
+    const tunnel = tunnelReader();
+    const { promise: handedOff, resolve: onUpgrade } = Promise.withResolvers<[IncomingMessage, Duplex]>();
+    const server = createServer({ highWaterMark: 1024 });
+    server.on("upgrade", (req, socket) => {
+      socket.on("error", () => {});
+      socket.write(switchingProtocols);
+      onUpgrade([req, socket]);
+    });
+    let client: Awaited<ReturnType<typeof connectTo>> | undefined;
+    try {
+      client = await connectTo(server);
+      client.socket.write(chunkedPost("/upgrade", upgradeHeaders));
+      const [req, socket] = await handedOff;
+      await client.receive("101 Switching Protocols");
+
+      let received = "";
+      req.on("data", chunk => (received += chunk));
+      await once(req, "end");
+      expect(received).toBe(BODY_HEAD + BODY_TAIL);
+
+      client.socket.write("ping;");
+      socket.on("data", tunnel.onData);
+      await tunnel.receives("ping;");
+      expect(tunnel.bytes).toBe("ping;");
+    } finally {
+      client?.socket.destroy();
+      server.closeAllConnections();
+      if (server.listening) server.close();
+    }
+  });
+
+  it("a read of the upgrade socket still resumes a paused request whose body is incomplete", async () => {
+    // Like Node.js's UpgradeStream._read: the listener never resumes the request, and the part
+    // of the body that came with the head fills its buffer. The socket still gets its bytes.
+    const tunnel = tunnelReader();
+    const server = createServer({ highWaterMark: 1024 });
+    server.on("upgrade", (req, socket) => {
+      req.pause();
+      socket.on("error", () => {});
+      socket.on("data", tunnel.onData);
+      socket.write(switchingProtocols);
+    });
+    const request = chunkedPost("/upgrade", upgradeHeaders);
+    const cut = request.lastIndexOf(`${BODY_TAIL.length.toString(16)}\r\n${BODY_TAIL}`);
+    let client: Awaited<ReturnType<typeof connectTo>> | undefined;
+    try {
+      client = await connectTo(server);
+      client.socket.write(request.slice(0, cut));
+      await client.receive("101 Switching Protocols");
+      client.socket.write(request.slice(cut) + "ping;");
+      await tunnel.receives("ping;");
+      expect(tunnel.bytes).toBe("ping;");
+    } finally {
+      client?.socket.destroy();
+      server.closeAllConnections();
+      if (server.listening) server.close();
+    }
+  });
+
+  it("a read of the upgrade socket still resumes a request that is not paused", async () => {
+    // Inside the listener req.complete is still false here (Node.js has true), so a listener
+    // that waits for the end of the message depends on this resume.
+    const { promise: completeWhenAccepted, resolve: onAccept } = Promise.withResolvers<boolean>();
+    const server = createServer();
+    server.on("upgrade", (req, socket) => {
+      socket.on("error", () => {});
+      socket.on("data", () => {});
+      const accept = () => {
+        socket.write(switchingProtocols);
+        onAccept(req.complete);
+      };
+      if (req.complete) accept();
+      else req.once("end", accept);
+    });
+    let client: Awaited<ReturnType<typeof connectTo>> | undefined;
+    try {
+      client = await connectTo(server);
+      client.socket.write(fixedLengthPost);
+      expect(await completeWhenAccepted).toBe(true);
+      await client.receive("101 Switching Protocols");
+    } finally {
+      client?.socket.destroy();
+      server.closeAllConnections();
+      if (server.listening) server.close();
+    }
+  });
 });

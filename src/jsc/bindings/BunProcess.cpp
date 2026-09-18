@@ -1083,6 +1083,7 @@ static const NeverDestroyed<String>* getSignalNames()
         MAKE_STATIC_STRING_IMPL("SIGINFO"),
         MAKE_STATIC_STRING_IMPL("SIGSYS"),
         MAKE_STATIC_STRING_IMPL("SIGBREAK"),
+        MAKE_STATIC_STRING_IMPL("SIGPWR"),
     };
 
     return signalNames;
@@ -1095,7 +1096,7 @@ static void loadSignalNumberMap()
     std::call_once(signalNameToNumberMapOnceFlag, [] {
         auto signalNames = getSignalNames();
         signalNameToNumberMap = new HashMap<String, int>();
-        signalNameToNumberMap->reserveInitialCapacity(31);
+        signalNameToNumberMap->reserveInitialCapacity(32);
 #if OS(WINDOWS)
         // libuv-supported console-control signals on Windows:
         // CTRL_C_EVENT → SIGINT, CTRL_BREAK_EVENT → SIGBREAK,
@@ -1185,6 +1186,9 @@ static void loadSignalNumberMap()
 #ifdef SIGSYS
         signalNameToNumberMap->add(signalNames[30], SIGSYS);
 #endif
+#ifdef SIGPWR
+        signalNameToNumberMap->add(signalNames[32], SIGPWR);
+#endif
 #endif
     });
 }
@@ -1195,7 +1199,7 @@ static void loadSignalNumberToNameMap()
     std::call_once(signalNumberToNameMapOnceFlag, [] {
         auto signalNames = getSignalNames();
         signalNumberToNameMap = new HashMap<int, String>();
-        signalNumberToNameMap->reserveInitialCapacity(31);
+        signalNumberToNameMap->reserveInitialCapacity(32);
         signalNumberToNameMap->add(SIGHUP, signalNames[0]);
         signalNumberToNameMap->add(SIGINT, signalNames[1]);
         signalNumberToNameMap->add(SIGQUIT, signalNames[2]);
@@ -1271,6 +1275,9 @@ static void loadSignalNumberToNameMap()
 #endif
 #ifdef SIGBREAK
         signalNumberToNameMap->add(SIGBREAK, signalNames[31]);
+#endif
+#ifdef SIGPWR
+        signalNumberToNameMap->add(SIGPWR, signalNames[32]);
 #endif
     });
 }
@@ -1554,6 +1561,66 @@ __attribute__((noinline)) static void forwardSignal(int signalNumber)
     Bun__onPosixSignal(signalNumber);
 }
 
+#if !OS(WINDOWS)
+static void restoreDefaultSignalDisposition(int signalNumber)
+{
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = SIG_DFL;
+    sigemptyset(&sa.sa_mask);
+    sigaction(signalNumber, &sa, nullptr);
+}
+#endif
+
+// Set while process.on(<JSC's thread suspend/resume signal>) has listeners. Linux only.
+static std::atomic<bool> threadSuspendResumeSignalHasListeners { false };
+
+#if OS(LINUX)
+static struct sigaction jscThreadSuspendResumeAction;
+
+// JSC suspends and resumes threads with pthread_kill(g_wtfConfig.sigThreadSuspendResume), which
+// Linux reports as SI_TKILL from our own pid. WTF's handler takes every delivery for one of those
+// (it reads a Thread* that only suspend() and resume() set), so every other delivery (kill(2),
+// sigqueue(3), another process) is handled here, as the ordinary signal it is.
+static void onThreadSuspendResumeSignal(int signalNumber, siginfo_t* info, void* ucontext)
+{
+    // WTF's handler leaves the EINTR of its sigsuspend() in errno.
+    int savedErrno = errno;
+    if (info->si_code == SI_TKILL && info->si_pid == getpid()) [[likely]] {
+        jscThreadSuspendResumeAction.sa_sigaction(signalNumber, info, ucontext);
+    } else if (threadSuspendResumeSignalHasListeners.load()) {
+        Bun__onPosixSignal(signalNumber);
+    } else if (getpid() != 1) {
+        // No listener: take the default action. The kernel gives pid 1 none, so there the
+        // process would live on without the handler that JSC needs.
+        restoreDefaultSignalDisposition(signalNumber);
+        raise(signalNumber);
+    }
+    errno = savedErrno;
+}
+
+void guardThreadSuspendResumeSignal()
+{
+    int signalNumber = g_wtfConfig.sigThreadSuspendResume;
+    RELEASE_ASSERT(!sigaction(signalNumber, nullptr, &jscThreadSuspendResumeAction));
+    RELEASE_ASSERT(jscThreadSuspendResumeAction.sa_flags & SA_SIGINFO);
+    struct sigaction action = jscThreadSuspendResumeAction;
+    action.sa_sigaction = onThreadSuspendResumeSignal;
+    RELEASE_ASSERT(!sigaction(signalNumber, &action, nullptr));
+}
+#endif
+
+// The sigaction of this signal never changes: onThreadSuspendResumeSignal serves JSC and the listeners.
+static bool isThreadSuspendResumeSignal(int signalNumber)
+{
+#if OS(LINUX)
+    return signalNumber == g_wtfConfig.sigThreadSuspendResume;
+#else
+    UNUSED_PARAM(signalNumber);
+    return false;
+#endif
+}
+
 // `bun run --watch` keeps this signal's handler installed for the process
 // lifetime (node's watcher process owns SIGINT the same way), so the
 // listener-removal path below must never restore SIG_DFL for it.
@@ -1634,11 +1701,7 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
             int listenerCount = eventEmitter.listenerCount(eventName);
             // Mirror the count for the watcher thread's --watch-kill-signal check.
             Bun__onSignalListenerCountChanged(signalNumber, listenerCount);
-#if OS(LINUX)
-            // SIGKILL and SIGSTOP cannot be handled, and JSC needs its own signal handler to
-            // suspend and resume the JS thread which we must not override.
-            if (signalNumber != SIGKILL && signalNumber != SIGSTOP && signalNumber != g_wtfConfig.sigThreadSuspendResume) {
-#elif OS(DARWIN) || OS(FREEBSD)
+#if OS(LINUX) || OS(DARWIN) || OS(FREEBSD)
             // these signals cannot be handled
             if (signalNumber != SIGKILL && signalNumber != SIGSTOP) {
 #elif OS(WINDOWS)
@@ -1657,7 +1720,10 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
                         };
 #if !OS(WINDOWS)
                         Bun__ensureSignalHandler();
-                        installForwardSignalHandler(signalNumber);
+                        if (isThreadSuspendResumeSignal(signalNumber))
+                            threadSuspendResumeSignalHasListeners.store(true);
+                        else
+                            installForwardSignalHandler(signalNumber);
 #else
                         signal_handle.handle = Bun__UVSignalHandle__init(
                             eventEmitter.scriptExecutionContext()->jsGlobalObject(),
@@ -1675,7 +1741,9 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
                         // The watch-mode sticky signal keeps its OS handler installed; only the
                         // handler teardown is skipped. The map entry is still removed — it is the
                         // "has JS listeners" source of truth that e.g. self-kill flush consults.
-                        if (signalNumber != watchModeStickySignal) {
+                        if (isThreadSuspendResumeSignal(signalNumber)) {
+                            threadSuspendResumeSignalHasListeners.store(false);
+                        } else if (signalNumber != watchModeStickySignal) {
 #if !OS(WINDOWS)
                             if (void (*oldHandler)(int) = signal(signalNumber, SIG_DFL); oldHandler != forwardSignal) {
                                 // Don't uninstall the old handler if it's not the one we installed.
@@ -1849,17 +1917,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_throwValue, (JSGlobalObject * globalObject, 
     scope.throwException(globalObject, value);
     return {};
 }
-
-#if !OS(WINDOWS)
-static void restoreDefaultSignalDisposition(int signalNumber)
-{
-    struct sigaction sa;
-    memset(&sa, 0, sizeof(sa));
-    sa.sa_handler = SIG_DFL;
-    sigemptyset(&sa.sa_mask);
-    sigaction(signalNumber, &sa, nullptr);
-}
-#endif
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionAbort, (JSGlobalObject * globalObject, CallFrame*))
 {

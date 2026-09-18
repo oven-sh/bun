@@ -149,4 +149,10 @@ JSC_DECLARE_HOST_FUNCTION(jsFunctionReportUncaughtException);
 // process.cwd() as a JSString, cached on the process object until it changes.
 JSC::JSValue getCachedCwd(JSC::JSGlobalObject*);
 
+#if OS(LINUX)
+// Wraps the handler WTF installed for g_wtfConfig.sigThreadSuspendResume so that it only sees
+// the deliveries JSC sent. Call once, right after WTF::initializeMainThread().
+void guardThreadSuspendResumeSignal();
+#endif
+
 } // namespace Bun

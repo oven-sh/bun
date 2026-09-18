@@ -295,6 +295,9 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
 
         std::set_terminate([]() { Zig__GlobalObject__onCrash(); });
         WTF::initializeMainThread();
+#if OS(LINUX)
+        Bun::guardThreadSuspendResumeSignal();
+#endif
 
         // Use JSC::initialize with a callback to set Options during initialization.
         // The callback runs BEFORE IPInt::initialize() so we can configure WASM options early.

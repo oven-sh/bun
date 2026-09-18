@@ -2,6 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
+import { cssInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "path";
@@ -5696,6 +5697,254 @@ describe("css tests", () => {
         safari: 14 << 16,
       },
     );
+
+    // Safari 14 needs `:-webkit-full-screen`, so downleveling widens the prefix
+    // set of `:fullscreen` in place. A rule that is cloned from the downleveled
+    // rule (the `:dir()` rules for logical properties), or minified a second
+    // time (adjacent `@media` blocks that merge), must print the same way as a
+    // rule that is downleveled for the first time.
+    const rtl_langs = "ae, ar, arc, bcc, bqi, ckb, dv, fa, glk, he, ku, mzn, nqo, pnb, ps, sd, ug, ur, yi";
+    prefix_test(
+      ".f:fullscreen:dir(ltr) {left:1px}",
+      `
+      .f:-webkit-full-screen:not(:lang(${rtl_langs})) {
+        left: 1px;
+      }
+
+      .f:fullscreen:not(:lang(${rtl_langs})) {
+        left: 1px;
+      }
+      `,
+      {
+        safari: 14 << 16,
+      },
+    );
+    prefix_test(
+      ".f:fullscreen { inset-inline-start: 1px; border-start-start-radius: 2px; color: red }",
+      `
+      .f:-webkit-full-screen {
+        color: red;
+      }
+
+      .f:fullscreen {
+        color: red;
+      }
+
+      .f:-webkit-full-screen:not(:lang(${rtl_langs})) {
+        border-top-left-radius: 2px;
+        left: 1px;
+      }
+
+      .f:fullscreen:not(:lang(${rtl_langs})) {
+        border-top-left-radius: 2px;
+        left: 1px;
+      }
+
+      .f:-webkit-full-screen:lang(${rtl_langs}) {
+        border-top-right-radius: 2px;
+        right: 1px;
+      }
+
+      .f:fullscreen:lang(${rtl_langs}) {
+        border-top-right-radius: 2px;
+        right: 1px;
+      }
+      `,
+      {
+        safari: 14 << 16,
+      },
+    );
+    prefix_test(
+      ".g:fullscreen .f:fullscreen { inset-inline-start: 1px }",
+      `
+      .g:-webkit-full-screen .f:-webkit-full-screen:not(:lang(${rtl_langs})) {
+        left: 1px;
+      }
+
+      .g:fullscreen .f:fullscreen:not(:lang(${rtl_langs})) {
+        left: 1px;
+      }
+
+      .g:-webkit-full-screen .f:-webkit-full-screen:lang(${rtl_langs}) {
+        right: 1px;
+      }
+
+      .g:fullscreen .f:fullscreen:lang(${rtl_langs}) {
+        right: 1px;
+      }
+      `,
+      {
+        safari: 14 << 16,
+      },
+    );
+    // `.f:fullscreen` is not compatible with Safari 14 and moves to a rule of its own.
+    prefix_test(
+      ".f:fullscreen, .g { inset-inline-start: 1px }",
+      `
+      .g:not(:lang(${rtl_langs})) {
+        left: 1px;
+      }
+
+      .g:lang(${rtl_langs}) {
+        right: 1px;
+      }
+
+      .f:-webkit-full-screen:not(:lang(${rtl_langs})) {
+        left: 1px;
+      }
+
+      .f:fullscreen:not(:lang(${rtl_langs})) {
+        left: 1px;
+      }
+
+      .f:-webkit-full-screen:lang(${rtl_langs}) {
+        right: 1px;
+      }
+
+      .f:fullscreen:lang(${rtl_langs}) {
+        right: 1px;
+      }
+      `,
+      {
+        safari: 14 << 16,
+      },
+    );
+    prefix_test(
+      "@media (min-width: 1px) { .a:fullscreen .b:fullscreen { color: red } } @media (min-width: 1px) { .c { color: blue } }",
+      `
+      @media (min-width: 1px) {
+        .a:-webkit-full-screen .b:-webkit-full-screen {
+          color: red;
+        }
+
+        .a:fullscreen .b:fullscreen {
+          color: red;
+        }
+
+        .c {
+          color: #00f;
+        }
+      }
+      `,
+      {
+        safari: 14 << 16,
+      },
+    );
+    // With nesting compiled away, `.k` prints in its own prefix passes inside
+    // the last pass of `.p`. The sibling after it prints outside any pass, and
+    // the widened `:fullscreen` of `.p` must print as the unprefixed name.
+    prefix_test(
+      ".p:fullscreen { & .k:fullscreen { color: red } & .j { color: blue } }",
+      `
+      .p:-webkit-full-screen .j {
+        color: #00f;
+      }
+
+      .p:-webkit-full-screen .k:-webkit-full-screen {
+        color: red;
+      }
+
+      .p:fullscreen .k:fullscreen {
+        color: red;
+      }
+
+      .p:fullscreen .j {
+        color: #00f;
+      }
+      `,
+      {
+        safari: 14 << 16,
+      },
+    );
+    prefix_test(
+      ".p:fullscreen { & .k:fullscreen { inset-inline-start: 1px } & .j { color: blue } }",
+      `
+      .p:-webkit-full-screen .j {
+        color: #00f;
+      }
+
+      .p:-webkit-full-screen .k:-webkit-full-screen:not(:lang(${rtl_langs})) {
+        left: 1px;
+      }
+
+      .p:fullscreen .k:fullscreen:not(:lang(${rtl_langs})) {
+        left: 1px;
+      }
+
+      .p:-webkit-full-screen .k:-webkit-full-screen:lang(${rtl_langs}) {
+        right: 1px;
+      }
+
+      .p:fullscreen .k:fullscreen:lang(${rtl_langs}) {
+        right: 1px;
+      }
+
+      .p:fullscreen .j {
+        color: #00f;
+      }
+      `,
+      {
+        safari: 14 << 16,
+      },
+    );
+
+    // The same position for the two pseudo-element arms that pick a legacy name.
+    prefix_test(
+      ".p::placeholder { & .k::placeholder { color: red } & .j { color: blue } }",
+      `
+      .p::-webkit-input-placeholder .j {
+        color: #00f;
+      }
+
+      .p::-webkit-input-placeholder .k::-webkit-input-placeholder {
+        color: red;
+      }
+
+      .p::placeholder .k::placeholder {
+        color: red;
+      }
+
+      .p::placeholder .j {
+        color: #00f;
+      }
+      `,
+      {
+        safari: 10 << 16,
+      },
+    );
+    prefix_test(
+      ".p::file-selector-button { & .k::file-selector-button { color: red } & .j { color: blue } }",
+      `
+      .p::-webkit-file-upload-button .j {
+        color: #00f;
+      }
+
+      .p::-webkit-file-upload-button .k::-webkit-file-upload-button {
+        color: red;
+      }
+
+      .p::file-selector-button .k::file-selector-button {
+        color: red;
+      }
+
+      .p::file-selector-button .j {
+        color: #00f;
+      }
+      `,
+      {
+        safari: 14 << 16,
+      },
+    );
+
+    // The rule after `.k` has no pass of its own, and its hand-written prefix stays.
+    test("a sibling after a prefixed nested rule keeps its hand-written prefix", () => {
+      const output = cssInternals.prefixTest(
+        ".p:fullscreen { & .k:fullscreen { color: red } & .j:is(.x, .y)::-moz-selection { color: blue } }",
+        "",
+        { safari: 14 << 16 },
+      );
+      expect(output).toEndWith(".p:fullscreen .j:is(.x, .y)::-moz-selection {\n  color: #00f;\n}\n");
+    });
 
     prefix_test(
       "a:dir(rtl)::after {color:red}",

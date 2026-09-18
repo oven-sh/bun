@@ -595,20 +595,9 @@ pub mod ssl_wrapper {
             // we already sent the ssl shutdown
             if self.flags.sent_ssl_shutdown() || self.flags.fatal_error() {
                 if fast_shutdown {
-                    // A fast shutdown is a full teardown — the owner calls it
-                    // right before detaching/freeing handlers.ctx (proxy tunnel
-                    // on response-complete; TLS-over-duplex on raw EOF).
-                    //
-                    // Run the close callback now, regardless of whether the
-                    // peer's close_notify has arrived: if it HAS (or the read
-                    // was fatal) and handle_reading is still flushing the final
-                    // decrypted bytes, closed_notified is unset and its deferred
-                    // trigger_close_callback would otherwise fire on_close
-                    // into the freed ctx; if it has NOT (peer went away after
-                    // our shutdown), the TLS-over-duplex teardown chain
-                    // (UpgradedDuplex::on_close -> DuplexUpgradeContext::on_close
-                    // -> deinit) never runs and leaks the whole context graph.
-                    // trigger_close_callback is idempotent (closed_notified).
+                    // The owner frees handlers.ctx after a fast shutdown, so close now: a
+                    // handle_reading still on the stack would fire on_close into it (#31959),
+                    // and when no peer close_notify comes, nothing else runs the owner's teardown.
                     self.flags.set_received_ssl_shutdown(true);
                     self.trigger_close_callback();
                     // Do not read self after the close callback: the owner's

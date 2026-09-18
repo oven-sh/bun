@@ -1839,9 +1839,12 @@ describe.each(["hoisted", "isolated"] as const)("peer no published version satis
 describe.concurrent("a dependency that bun.lock binds to a package it does not accept", () => {
   const manifests: Manifests = {
     "aauser": { "1.0.0": { dependencies: { shared: "^1.0.0" } } },
+    "aauser-long": { "1.0.0": { dependencies: { "shared-long-name": "^1.0.0" } } },
     "has-peer": { "1.0.0": { peerDependencies: { shared: "^1.0.0" } } },
     "plain": { "1.0.0": {} },
     "shared": { "1.0.0": {}, "1.5.0": {}, "2.0.0": {} },
+    // Names longer than the eight bytes a lockfile string holds inline.
+    "other-long-name": { "1.0.0": {}, "2.0.0": {} },
   };
 
   type Linker = "hoisted" | "isolated";
@@ -1959,6 +1962,23 @@ describe.concurrent("a dependency that bun.lock binds to a package it does not a
       packageJsons: { "package.json": { name: "app", dependencies: { myalias: "npm:shared@^1.0.0" } } },
       breakLockfile: entryPointedAt("myalias", "plain", "1.0.0"),
       seen: [[".", "myalias", "shared@1.5.0"]],
+    },
+    // The plain ^1.0.0 of aauser-long follows a workspace's alias of the same name to another package. 2.0.0 fits
+    // neither row, and the plain one has to follow the alias again.
+    "an npm: alias and the dependency that follows it": {
+      packageJsons: {
+        "package.json": { name: "app", workspaces: ["packages/*"], dependencies: { "aauser-long": "1.0.0" } },
+        "packages/lib/package.json": {
+          name: "lib",
+          version: "1.0.0",
+          dependencies: { "shared-long-name": "npm:other-long-name@1.0.0" },
+        },
+      },
+      breakLockfile: entryPointedAt("shared-long-name", "other-long-name", "2.0.0"),
+      seen: [
+        ["node_modules/aauser-long", "shared-long-name", "other-long-name@1.0.0"],
+        ["packages/lib", "shared-long-name", "other-long-name@1.0.0"],
+      ],
     },
   };
 
@@ -2089,5 +2109,108 @@ describe.concurrent("a dependency that bun.lock binds to a package it does not a
     expect(await Promise.all(seen.map(([from, request]) => seenFrom(join(cwd, from), request)))).toEqual(
       seen.map(([, , expected]) => expected),
     );
+  });
+
+  async function run(cwd: string, ...args: string[]) {
+    await using proc = spawn({
+      cmd: [bunExe(), ...args],
+      cwd,
+      env: { ...env, BUN_INSTALL_CACHE_DIR: cacheDir(cwd) },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { out, err, exitCode };
+  }
+
+  // aauser's plain ^1.0.0 is on 2.0.0 only because it follows the root's alias. Without the alias nothing accepts
+  // 2.0.0, and the install that drops the alias has to say so, not the next --frozen-lockfile.
+  it("removing an npm: alias resolves the dependency that followed it again, in the same install", async () => {
+    using registry = await serveRegistry(manifests);
+    using dir = createProject(registry.url, "hoisted", {
+      "package.json": { name: "app", dependencies: { aauser: "1.0.0", shared: "npm:shared@>=1.0.0" } },
+    });
+    const cwd = String(dir);
+    expect(await install(cwd)).toMatchObject({ exitCode: 0 });
+    expect(await seenFrom(join(cwd, "node_modules", "aauser"), "shared")).toBe("shared@2.0.0");
+
+    await write(join(cwd, "package.json"), JSON.stringify({ name: "app", dependencies: { aauser: "1.0.0" } }));
+    await dropNodeModules(cwd);
+    expect(await install(cwd)).toMatchObject({ err: expect.stringContaining("Saved lockfile"), exitCode: 0 });
+    const lockfile = await file(join(cwd, "bun.lock")).text();
+    expect(lockfile).not.toContain("shared@2.0.0");
+
+    await dropNodeModules(cwd);
+    expect(await install(cwd, "--frozen-lockfile")).toMatchObject({ err: "", exitCode: 0 });
+    expect(await file(join(cwd, "bun.lock")).text()).toBe(lockfile);
+    expect(await seenFrom(join(cwd, "node_modules", "aauser"), "shared")).toBe("shared@1.5.0");
+  });
+
+  // The package leaves with its rows. Resolving them first could fail an install whose only job is to drop them.
+  it("a package that package.json stops listing is dropped without resolving its dependency again", async () => {
+    using registry = await serveRegistry(manifests);
+    using dir = createProject(registry.url, "hoisted", aauserNextToShared2);
+    const cwd = String(dir);
+    const lockfilePath = join(cwd, "bun.lock");
+    expect(await install(cwd)).toMatchObject({ exitCode: 0 });
+    await write(lockfilePath, withoutEntry("aauser/shared")(await file(lockfilePath).text()));
+
+    await write(join(cwd, "package.json"), JSON.stringify({ name: "app", dependencies: { shared: "2.0.0" } }));
+    await dropNodeModules(cwd);
+    await rm(cacheDir(cwd), { recursive: true, force: true });
+    registry.requests.length = 0;
+    expect(await install(cwd)).toMatchObject({ exitCode: 0 });
+    expect(registry.requests.filter(path => !path.endsWith(".tgz"))).toEqual([]);
+    expect(await file(lockfilePath).text()).not.toContain("aauser");
+  });
+
+  // `bun add` and `bun update <name>` send the scanner what the command reaches, not the whole tree.
+  it("bun add sends the package that a dependency resolved to again to the security scanner", async () => {
+    using registry = await serveRegistry(manifests);
+    using dir = createProject(registry.url, "hoisted", aauserNextToShared2);
+    const cwd = String(dir);
+    const lockfilePath = join(cwd, "bun.lock");
+    expect(await install(cwd)).toMatchObject({ exitCode: 0 });
+    const consistent = await file(lockfilePath).text();
+    await write(lockfilePath, withoutEntry("aauser/shared")(consistent));
+    await dropNodeModules(cwd);
+
+    await Promise.all([
+      write(
+        join(cwd, "scanner.ts"),
+        `export const scanner = {
+          version: "1",
+          scan: async ({ packages }) => {
+            console.log("scanned: " + packages.map(p => p.name + "@" + p.version).sort().join(" "));
+            return [];
+          },
+        };`,
+      ),
+      write(
+        join(cwd, "bunfig.toml"),
+        Bun.TOML.stringify({
+          install: { registry: registry.url, linker: "hoisted", security: { scanner: "./scanner.ts" } },
+        }),
+      ),
+    ]);
+    const added = await run(cwd, "add", "plain@1.0.0");
+    expect(added).toMatchObject({ out: expect.stringContaining("scanned: plain@1.0.0 shared@1.5.0\n"), exitCode: 0 });
+    expect(await seenFrom(join(cwd, "node_modules", "aauser"), "shared")).toBe("shared@1.5.0");
+  });
+
+  // `bun update <name>` plans the row itself: it resolves inside its own range and the plan names the package.
+  it("bun update <name> moves a dependency it names back inside its range", async () => {
+    using registry = await serveRegistry(manifests);
+    using dir = createProject(registry.url, "hoisted", aauserNextToShared2);
+    const cwd = String(dir);
+    const lockfilePath = join(cwd, "bun.lock");
+    expect(await install(cwd)).toMatchObject({ exitCode: 0 });
+    const consistent = await file(lockfilePath).text();
+    await write(lockfilePath, withoutEntry("aauser/shared")(consistent));
+    await dropNodeModules(cwd);
+
+    expect(await run(cwd, "update", "shared")).toMatchObject({ exitCode: 0 });
+    expect(await file(lockfilePath).text()).toBe(consistent);
+    expect(await seenFrom(join(cwd, "node_modules", "aauser"), "shared")).toBe("shared@1.5.0");
   });
 });

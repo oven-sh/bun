@@ -4733,6 +4733,16 @@ impl NodeFS {
         Ok(())
     }
 
+    /// Gives a copied file the mode of its source. A FIFO or a device that was already at the
+    /// destination path is not a copy, so it keeps its mode. The FICLONE paths call `fchmod`
+    /// directly: the kernel clones only into a regular file.
+    #[cfg(not(windows))]
+    fn copy_mode_to_regular_dest(dest_fd: FD, mode: Mode) {
+        if matches!(Syscall::fstat(dest_fd), Ok(st) if sys::S::ISREG(st.st_mode as u32)) {
+            let _ = Syscall::fchmod(dest_fd, mode);
+        }
+    }
+
     pub(crate) fn copy_file(&mut self, args: &args::CopyFile, _: Flavor) -> Maybe<ret::CopyFile> {
         match self.copy_file_inner(args) {
             Ok(_) => Ok(()),
@@ -4831,7 +4841,7 @@ impl NodeFS {
                         &mut wrote,
                     );
                     let _ = Syscall::ftruncate(dest_fd, (wrote & ((1u64 << 63) - 1)) as i64);
-                    let _ = Syscall::fchmod(dest_fd, stat_.st_mode as u32);
+                    Self::copy_mode_to_regular_dest(dest_fd, stat_.st_mode as Mode);
                     dest_fd.close();
                     return result;
                 }
@@ -4931,7 +4941,7 @@ impl NodeFS {
                 match sys::get_errno(rc) {
                     E::SUCCESS => {
                         if rc == 0 {
-                            let _ = Syscall::fchmod(dest_fd, stat_.st_mode as Mode);
+                            Self::copy_mode_to_regular_dest(dest_fd, stat_.st_mode as Mode);
                             return Ok(());
                         }
                     }
@@ -4960,7 +4970,7 @@ impl NodeFS {
                 let _ = sys::unlink(dest);
                 return Err(err);
             }
-            let _ = Syscall::fchmod(dest_fd, stat_.st_mode as Mode);
+            Self::copy_mode_to_regular_dest(dest_fd, stat_.st_mode as Mode);
             return Ok(());
         }
 
@@ -5032,10 +5042,8 @@ impl NodeFS {
 
             let _close_dest =
                 scopeguard::guard((dest_fd, stat_.st_mode, &wrote), |(fd, m, wrote)| {
-                    // ftruncate/fchmod take only ints — no memory-safety preconditions; route
-                    // through the existing `bun_sys` safe wrappers (same as lines above).
                     let _ = Syscall::ftruncate(fd, (wrote.get() & ((1u64 << 63) - 1)) as i64);
-                    let _ = Syscall::fchmod(fd, m as u32);
+                    Self::copy_mode_to_regular_dest(fd, m as Mode);
                     fd.close();
                 });
 
@@ -8376,7 +8384,7 @@ impl NodeFS {
                 let _close_dest =
                     scopeguard::guard((dest_fd, stat_.st_mode, &wrote), |(fd, m, wrote)| {
                         let _ = Syscall::ftruncate(fd, (wrote.get() & ((1u64 << 63) - 1)) as i64);
-                        let _ = Syscall::fchmod(fd, m as u32);
+                        Self::copy_mode_to_regular_dest(fd, m as Mode);
                         fd.close();
                     });
 
@@ -8483,7 +8491,7 @@ impl NodeFS {
                 (dest_fd, stat_.st_mode as Mode, &wrote),
                 |(fd, m, wrote)| {
                     let _ = Syscall::ftruncate(fd, (wrote.get() & ((1u64 << 63) - 1)) as i64);
-                    let _ = Syscall::fchmod(fd, m);
+                    Self::copy_mode_to_regular_dest(fd, m);
                     fd.close();
                 },
             );
@@ -8661,7 +8669,7 @@ impl NodeFS {
                 (dest_fd, stat_.st_mode as Mode, &wrote),
                 |(fd, m, wrote)| {
                     let _ = Syscall::ftruncate(fd, (wrote.get() & ((1u64 << 63) - 1)) as i64);
-                    let _ = Syscall::fchmod(fd, m);
+                    Self::copy_mode_to_regular_dest(fd, m);
                     fd.close();
                 },
             );

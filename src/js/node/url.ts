@@ -29,6 +29,7 @@ const { URL, URLSearchParams, URLPattern } = globalThis;
 const { domainToASCII, domainToUnicode, idnaToASCII, urlToHttpOptions } = require("internal/url");
 const { validateString, validateObject } = require("internal/validators");
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
+let querystringStringify: typeof import("node:querystring").stringify | undefined;
 
 function Url() {
   this.protocol = null;
@@ -688,8 +689,9 @@ Url.prototype.format = function format() {
   }
 
   const thisQuery = this.query;
-  if (thisQuery && typeof thisQuery === "object" && Object.keys(thisQuery).length) {
-    query = new URLSearchParams(thisQuery).toString();
+  if (thisQuery !== null && typeof thisQuery === "object") {
+    querystringStringify ??= require("node:querystring").stringify;
+    query = querystringStringify(thisQuery);
   }
 
   var search = this.search || (query && "?" + query) || "";

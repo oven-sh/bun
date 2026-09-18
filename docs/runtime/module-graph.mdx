@@ -135,7 +135,9 @@ While one graph runs a module, JavaScriptCore optimizes the module's code for th
 
 The steady speed of the shared code depends on what the modules declare:
 
-- Functions, imports and module-level variables run about as fast as before, however many graphs there are. JavaScriptCore recompiles this code once, when the second graph appears. A version of the test app that uses no classes ran 2% slower with two graphs, with ten and with fifty.
-- A `class` is a different class in each graph, because each graph evaluates the declaration. The shared code that creates or uses its instances handles one kind of object for each graph. JavaScriptCore recompiles that code again when a third graph starts to run it. That code runs slower with two graphs than with one, and slower again with more. The test app creates small objects of classes with private fields in its hot code. It ran 15% to 45% slower with two graphs and 40% to 80% slower with ten.
+- Functions, imports and module-level variables run about as fast as before, however many graphs there are. JavaScriptCore recompiles this code once, when the second graph appears. A version of the test app that uses no classes ran as fast with fifty graphs as with one.
+- A `class` is a different class in each graph, because each graph evaluates the declaration. The shared code that creates or uses its instances handles one kind of object for each graph. That code runs slower with several graphs than with one, and JavaScriptCore can recompile it again each time another graph starts to run it. The test app creates small objects of classes with private fields in its hot code. It ran 15% to 45% slower with two graphs and 25% to 80% slower with ten. How much depends on the graph and on how the calls are spread over the graphs.
+
+`dispose()` does not bring the former speed back. After the other graphs are disposed, the first graph runs as it did with them.
 
 A [`Worker`](/runtime/workers) or a separate process compiles its own copy of the code, so its speed does not depend on how many other instances exist. Measure your app with the number of graphs you plan to run.

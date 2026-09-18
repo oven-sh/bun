@@ -1,6 +1,6 @@
 import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 
 $.throws(false);
 
@@ -55,6 +55,76 @@ describe("yes", async () => {
       head: "hi\nhi\nhi\nhi\n",
       filled: true,
     });
+    expect(exitCode).toBe(0);
+  });
+
+  // A write to /dev/null (or to a regular file) completes on the spot, so only
+  // `yes` itself can hand the thread back to the event loop between chunks.
+  // Not concurrent: the runner kills the child of a sequential test that times
+  // out, and a child that never yields would otherwise spin on after the run.
+  test.each([
+    ["a redirect to /dev/null", "$`yes > /dev/null`.quiet()"],
+    ["an inherited stdout that is /dev/null", "$`yes`"],
+  ])("does not block the event loop with %s", async (_, shell) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `import { $ } from "bun";
+         ${shell}.nothrow().run();
+         console.error("run() returned");
+         let ticks = 0;
+         setInterval(() => {
+           if (++ticks === 3) {
+             console.error("timers fired");
+             process.exit(0);
+           }
+         }, 1);`,
+      ],
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("run() returned\ntimers fired\n");
+    expect(exitCode).toBe(0);
+  });
+
+  // `ulimit -f` caps out.txt. A `yes` that never yields fills the file inside
+  // run() and stops on EFBIG, so a regression fails here with a small file
+  // instead of writing gigabytes until the test times out.
+  test.skipIf(isWindows)("does not block the event loop with a redirect to a regular file", async () => {
+    // 512 or 1024 bytes per block, depending on the shell.
+    const blocks = 32768;
+    using dir = tempDir("yes-regular-file", {});
+    await using proc = Bun.spawn({
+      cmd: [
+        "/bin/sh",
+        "-c",
+        `ulimit -f ${blocks} && exec "$@"`,
+        "sh",
+        bunExe(),
+        "-e",
+        `import { $ } from "bun";
+         import { statSync } from "node:fs";
+         $\`yes > out.txt\`.quiet().nothrow().run();
+         const full = statSync("out.txt").size >= ${blocks} * 512;
+         console.error("run() returned, out.txt is " + (full ? "full" : "not full"));
+         let ticks = 0;
+         setInterval(() => {
+           if (++ticks === 3) {
+             console.error("timers fired");
+             process.exit(0);
+           }
+         }, 1);`,
+      ],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("run() returned, out.txt is not full\ntimers fired\n");
     expect(exitCode).toBe(0);
   });
 });

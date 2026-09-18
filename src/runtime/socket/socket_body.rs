@@ -81,6 +81,24 @@ fn read_error_from_close_code(code: c_int) -> sys::Error {
     }
 }
 
+/// One peer reset gives a different send errno per platform: linux reports
+/// `ECONNRESET`, darwin `EPIPE`. Report the one code the read side reports
+/// everywhere. Any other errno keeps its identity.
+#[cfg(not(windows))]
+fn dead_transport_close_code(errno: c_int) -> c_int {
+    if errno == sys::SystemErrno::EPIPE as c_int || errno == sys::SystemErrno::ECONNABORTED as c_int
+    {
+        return sys::SystemErrno::ECONNRESET as c_int;
+    }
+    errno
+}
+
+/// `read_error_from_close_code` already collapses the Windows codes.
+#[cfg(windows)]
+fn dead_transport_close_code(errno: c_int) -> c_int {
+    errno
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Re-exports
 // ──────────────────────────────────────────────────────────────────────────
@@ -906,6 +924,20 @@ impl<const SSL: bool> NewSocket<SSL> {
         let called = handlers.call_error_handler(this_value, &[this_value, err_value]);
         self.exit_scope(scope);
         called
+    }
+
+    /// A `send()` the kernel rejected outright takes the connection down. Close
+    /// with that errno, the way uSockets' loop closes a failed `recv()`:
+    /// `on_close` reports a code above the `CloseCode` range as the error that
+    /// ended the connection. A plain close would reach JS as a clean EOF.
+    pub(crate) fn close_after_fatal_send(&self, errno: c_int) {
+        let socket = self.socket.get();
+        // 0, 1 and 2 collide with `CloseCode`, which `on_close` filters out.
+        if errno > 2 {
+            socket.close_with_error_code(dead_transport_close_code(errno));
+        } else {
+            socket.close(uws::CloseCode::Normal);
+        }
     }
 
     /// Takes `ThisPtr<Self>`, not `&mut self`: `callback.call(...)` re-enters

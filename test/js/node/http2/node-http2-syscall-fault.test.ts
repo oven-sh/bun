@@ -3,6 +3,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tls as certs, isASAN, isWindows } from "harness";
 import { once } from "node:events";
 import http2 from "node:http2";
+import net from "node:net";
 import path from "node:path";
 
 const skip = !fault.available() || isWindows;
@@ -271,5 +272,162 @@ describe.skipIf(skip)("node:http2 seeded short-I/O fuzz", () => {
         client.close();
       }
     }
+  });
+});
+
+describe.skipIf(skip)("node:http2 transport write errors", () => {
+  // A send() the kernel rejects is the only report that the peer is gone: the
+  // transport closes before the read side is polled again. A client session and
+  // its request have to report it, and the process must not exit before they do
+  // when the socket is its only handle (the client below starts no timer).
+  //
+  // One peer reset gives a different send errno per platform: linux reports
+  // ECONNRESET, darwin EPIPE. The read side reports ECONNRESET for it on every
+  // platform, and that is the only side Node reports a reset from (it drops the
+  // status of a failed write, see the note in node_http2.cc ClearOutgoing).
+  // Injecting each errno pins the code bun reports on every platform.
+  //
+  // phase "request": the failing send is a later request() on an idle session.
+  // phase "connect": it is inside the connect flush, which sends the preface
+  // (the first send) and then the queued request's HEADERS (the second).
+  const cases = [
+    { errno: "EPIPE", phase: "request" },
+    { errno: "ECONNRESET", phase: "request" },
+    { errno: "ECONNRESET", phase: "connect" },
+  ];
+  test.each(cases)("send → $errno during the $phase flush is reported as ECONNRESET", async ({ errno, phase }) => {
+    // The client runs in a subprocess: the fault rules are process-global, so
+    // the raw peer below has to live in a process that is not faulted.
+    const fixture = `
+      const { socketFaultInjection: fault } = require("bun:internal-for-testing");
+      const http2 = require("node:http2");
+      const state = { streamError: null, sessionError: null, rstCode: null };
+      const failSends = after =>
+        fault.set({ syscall: "send", action: "errno", errno: process.env.H2_FAULT_ERRNO, after, repeat: -1 });
+      const session = http2.connect("http://127.0.0.1:" + process.env.H2_PEER_PORT);
+      session.on("error", err => (state.sessionError = err.code));
+      let req;
+      function request() {
+        req = session.request({ ":path": "/" });
+        req.on("error", err => (state.streamError = err.code));
+        req.on("close", () => (state.rstCode = req.rstCode));
+        req.resume();
+        req.end();
+      }
+      if (process.env.H2_FAULT_PHASE === "connect") {
+        failSends(1);
+        request();
+      } else {
+        session.on("remoteSettings", () => {
+          failSends(0);
+          request();
+        });
+      }
+      process.on("exit", () => {
+        const destroyed = { sessionDestroyed: session.destroyed, streamDestroyed: !!req && req.destroyed };
+        console.log(JSON.stringify({ ...state, ...destroyed }));
+      });
+    `;
+    const frame = (type: number, flags: number) => Buffer.from([0, 0, 0, type, flags, 0, 0, 0, 0]);
+    const server = net.createServer(socket => {
+      socket.on("error", () => {});
+      socket.write(frame(4, 0)); // empty SETTINGS
+      socket.once("data", () => socket.write(frame(4, 1))); // ACK the client's SETTINGS
+    });
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", () => resolve()));
+    try {
+      const port = (server.address() as import("node:net").AddressInfo).port;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: { ...bunEnv, H2_PEER_PORT: String(port), H2_FAULT_ERRNO: errno, H2_FAULT_PHASE: phase },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout.trim())).toEqual({
+        streamError: "ECONNRESET",
+        sessionError: "ECONNRESET",
+        rstCode: http2.constants.NGHTTP2_INTERNAL_ERROR,
+        sessionDestroyed: true,
+        streamDestroyed: true,
+      });
+      expect(exitCode).toBe(0);
+    } finally {
+      server.close();
+    }
+  });
+
+  test("a server session whose response write fails closes quietly", async () => {
+    // A client that vanishes is routine for a server, and it has nobody to report it to.
+    // Node's server sessions close without an 'error', and an 'error' on a stream with no
+    // listener would end the process. This server attaches no 'error' listener at all.
+    const fixture = `
+      const { socketFaultInjection: fault } = require("bun:internal-for-testing");
+      const http2 = require("node:http2");
+      const events = [];
+      const server = http2.createServer();
+      server.on("session", session => {
+        session.on("close", () => {
+          events.push("session.close");
+          server.close();
+        });
+      });
+      server.on("stream", stream => {
+        events.push("stream");
+        stream.on("close", () => events.push("stream.close(rstCode=" + stream.rstCode + ")"));
+        fault.set({ syscall: "send", action: "errno", errno: "ECONNRESET", repeat: -1 });
+        stream.respond({ ":status": 200 });
+        stream.end();
+      });
+      process.on("uncaughtException", err => {
+        events.push("uncaught:" + err.code);
+        console.log(JSON.stringify(events));
+        process.exit(1);
+      });
+      process.on("exit", code => code === 0 && console.log(JSON.stringify(events)));
+      server.listen(0, "127.0.0.1", () => console.log("port=" + server.address().port));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    // A raw client: preface, SETTINGS, and one GET with END_STREAM. It sends nothing more.
+    const frame = (type: number, flags: number, streamId: number, payload = Buffer.alloc(0)) => {
+      const header = Buffer.alloc(9);
+      header.writeUIntBE(payload.length, 0, 3);
+      header[3] = type;
+      header[4] = flags;
+      header.writeUInt32BE(streamId, 5);
+      return Buffer.concat([header, payload]);
+    };
+    // :method GET, :scheme http and :path / from the static table, then a literal :authority.
+    const requestBlock = Buffer.concat([Buffer.from([0x82, 0x86, 0x84, 0x01, 0x09]), Buffer.from("localhost")]);
+    let stdout = "";
+    let socket: net.Socket | undefined;
+    for await (const chunk of proc.stdout) {
+      stdout += Buffer.from(chunk).toString();
+      const port = /port=(\d+)/.exec(stdout);
+      if (port && !socket) {
+        socket = net.connect(Number(port[1]), "127.0.0.1", () => {
+          socket!.write(
+            Buffer.concat([
+              Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", "latin1"),
+              frame(4, 0, 0),
+              frame(1, 0x4 | 0x1, 1, requestBlock),
+            ]),
+          );
+        });
+        socket.on("error", () => {});
+      }
+    }
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    socket?.destroy();
+    expect(stderr).toBe("");
+    const lines = stdout.trim().split("\n");
+    expect(JSON.parse(lines[lines.length - 1])).toEqual(["stream", "stream.close(rstCode=0)", "session.close"]);
+    expect(exitCode).toBe(0);
   });
 });

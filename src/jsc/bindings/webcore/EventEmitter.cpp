@@ -247,7 +247,7 @@ bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
 
         if (!jsFunction) [[unlikely]]
             continue;
-        if (WebCore::clientData(vm)->isStoppingOrStopped(vm)) [[unlikely]]
+        if (WebCore::clientData(vm)->isStoppingOrStopped(vm) || vm.hasPendingTerminationException()) [[unlikely]]
             break;
 
         JSC::JSGlobalObject* lexicalGlobalObject = jsFunction->globalObject();
@@ -256,9 +256,15 @@ bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
             continue;
 
         fired = true;
-        WTF::NakedPtr<JSC::Exception> exceptionPtr;
-        call(lexicalGlobalObject, jsFunction, callData, thisValue, arguments, exceptionPtr);
-        auto* exception = exceptionPtr.get();
+        JSC::Exception* exception = nullptr;
+        {
+            auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+            call(lexicalGlobalObject, jsFunction, callData, thisValue, arguments);
+            exception = scope.exception();
+            // A TerminationException is not this listener's error: it stays pending and emit() unwinds on it.
+            if (exception && !scope.clearExceptionExceptTermination()) [[unlikely]]
+                return fired;
+        }
 
         if (exception) [[unlikely]] {
             auto errorIdentifier = vm.propertyNames->error;

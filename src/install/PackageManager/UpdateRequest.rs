@@ -342,6 +342,41 @@ impl PackageManager {
     pub(crate) fn is_update_request(&self, name_hash: PackageNameHash, name: &[u8]) -> bool {
         self.index_of_update_request(name_hash, name).is_some()
     }
+
+    /// In a global install, whether the bins of `package_id` belong in the global bin dir and not
+    /// in the global `node_modules/.bin`. The caller checks that the package is in the root
+    /// `node_modules`.
+    ///
+    /// A command that names packages links only those packages. A command that installs the whole
+    /// tree, like a bare `bun update -g`, links every direct dependency of the global package.json.
+    pub(crate) fn links_bins_globally(&self, package_id: PackageID) -> bool {
+        if !self.options.global {
+            return false;
+        }
+        let names_packages = match self.subcommand {
+            Subcommand::Update => !self.update_requests.is_empty(),
+            Subcommand::Add
+            | Subcommand::Remove
+            | Subcommand::Link
+            | Subcommand::Patch
+            | Subcommand::PatchCommit => true,
+            _ => false,
+        };
+        if names_packages {
+            return self
+                .update_requests
+                .iter()
+                .any(|request| request.package_id == package_id);
+        }
+        self.lockfile
+            .packages
+            .items_resolutions()
+            .first()
+            .is_some_and(|root| {
+                root.get(self.lockfile.buffers.resolutions.as_slice())
+                    .contains(&package_id)
+            })
+    }
 }
 
 pub use super::Subcommand;

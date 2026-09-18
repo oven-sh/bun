@@ -15,15 +15,15 @@ use crate::dependency::{Dependency, DependencyExt as _};
 use crate::isolated_install::FileCopier;
 use crate::lockfile_real::package::{Package, PackageColumns as _};
 use crate::lockfile_real::tree;
-use crate::lockfile_real::{self as lockfile, Lockfile, PackageIndexEntry};
+use crate::lockfile_real::{self as lockfile, Lockfile};
 use crate::package_manager_real::PackageManager;
 use crate::package_manager_real::options::{LogLevel, PatchFeatures};
 use crate::package_manager_real::package_manager_directories::{
     compute_cache_dir_and_subpath, get_temporary_directory,
 };
 use crate::{
-    BuntagHashBuf, DependencyID, Features, PackageID, Resolution, buntaghashbuf_make,
-    initialize_store, invalid_package_id,
+    BuntagHashBuf, DependencyID, Features, PackageID, Resolution, ResolutionTag,
+    buntaghashbuf_make, initialize_store, invalid_package_id,
 };
 
 #[inline]
@@ -44,6 +44,72 @@ fn print_resolution_label<'a>(
     write!(label, "{}", resolution.fmt(string_buf, PathSep::Posix))
         .expect("formatting into a Vec is infallible");
     label
+}
+
+#[derive(Clone, Copy)]
+enum FolderLookupError {
+    /// No npm package of that name has the folder's version, and no single
+    /// package with another resolution is left to take.
+    NotInLockfile,
+    /// More than one package of that name has a git, tarball or folder
+    /// resolution. The folder's version cannot tell them apart.
+    Ambiguous,
+}
+
+/// Finds the lockfile package that `bun patch <path>` targets, from the `name`
+/// and `version` of the folder's package.json. The version is the label of an
+/// npm resolution only, so it picks between the npm packages of that name. A
+/// package with another resolution (git, tarball, folder) has a URL or path as
+/// its label, which the package.json does not carry, so it is taken when it is
+/// the only one left. A folder that bun did not install, such as a copy that
+/// another package ships inside its tarball, has no match when its version is
+/// not in the lockfile.
+fn package_for_folder(
+    lockfile: &Lockfile,
+    name_hash: u64,
+    version: &[u8],
+) -> Result<Package, FolderLookupError> {
+    let Some(entry) = lockfile.package_index.get(&name_hash) else {
+        return Err(FolderLookupError::NotInLockfile);
+    };
+    let strbuf = lockfile.buffers.string_bytes.as_slice();
+    let mut resolution_label = Vec::new();
+    let mut not_npm: Option<Package> = None;
+    let mut not_npm_count = 0;
+    for &id in entry.as_slice() {
+        let pkg = *lockfile.packages.get(id as usize);
+        if pkg.resolution.tag == ResolutionTag::Npm {
+            if print_resolution_label(&mut resolution_label, &pkg.resolution, strbuf) == version {
+                return Ok(pkg);
+            }
+        } else {
+            not_npm = Some(pkg);
+            not_npm_count += 1;
+        }
+    }
+    match (not_npm_count, not_npm) {
+        (1, Some(pkg)) => Ok(pkg),
+        (0, _) => Err(FolderLookupError::NotInLockfile),
+        _ => Err(FolderLookupError::Ambiguous),
+    }
+}
+
+fn folder_lookup_error(err: FolderLookupError, folder: &[u8], name: &[u8], version: &[u8]) -> ! {
+    match err {
+        FolderLookupError::NotInLockfile => bun_core::pretty_error!(
+            "<r><red>error<r>: cannot patch <b>{}<r>: <b>{}@{}<r> is not in the lockfile<r>\n",
+            bstr::BStr::new(folder),
+            bstr::BStr::new(name),
+            bstr::BStr::new(version),
+        ),
+        FolderLookupError::Ambiguous => bun_core::pretty_error!(
+            "<r><red>error<r>: cannot patch <b>{}<r>: more than one package named <b>{}<r> has a git, tarball or folder resolution. Run <b>bun patch {}@\\<label\\><r> with the label from the lockfile instead.<r>\n",
+            bstr::BStr::new(folder),
+            bstr::BStr::new(name),
+            bstr::BStr::new(name),
+        ),
+    }
+    Global::crash();
 }
 
 #[derive(Default)]
@@ -219,35 +285,14 @@ pub fn do_patch_commit(
                 Features::FOLDER,
             )?;
 
-            let actual_package = match lockfile.package_index.get(&package.name_hash) {
-                None => {
-                    bun_core::pretty_error!(
-                        "<r><red>error<r>: failed to find package in lockfile package index, this is a bug in Bun. Please file a GitHub issue.<r>\n",
-                    );
-                    Global::crash();
-                }
-                Some(PackageIndexEntry::Id(id)) => *lockfile.packages.get(*id as usize),
-                Some(PackageIndexEntry::Ids(ids)) => 'brk: {
-                    let mut resolution_label = Vec::new();
-                    for &id in ids.as_slice() {
-                        let pkg = *lockfile.packages.get(id as usize);
-                        if print_resolution_label(
-                            &mut resolution_label,
-                            &pkg.resolution,
-                            lockfile.buffers.string_bytes.as_slice(),
-                        ) == version
-                        {
-                            break 'brk pkg;
-                        }
-                    }
-                    bun_core::pretty_error!(
-                        "<r><red>error<r>: could not find package with name:<r> {}\n<r>",
-                        bstr::BStr::new(
-                            package.name.slice(lockfile.buffers.string_bytes.as_slice())
-                        ),
-                    );
-                    Global::crash();
-                }
+            let actual_package = match package_for_folder(&lockfile, package.name_hash, version) {
+                Ok(pkg) => pkg,
+                Err(err) => folder_lookup_error(
+                    err,
+                    argument,
+                    package.name.slice(lockfile.buffers.string_bytes.as_slice()),
+                    version,
+                ),
             };
 
             break 'result (argument.to_vec(), actual_package);
@@ -804,32 +849,11 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
                 let lockfile: &Lockfile = &manager.lockfile;
                 let strbuf = lockfile.buffers.string_bytes.as_slice();
 
-                let actual_package = match lockfile.package_index.get(&package.name_hash) {
-                    None => {
-                        bun_core::pretty_error!(
-                            "<r><red>error<r>: failed to find package in lockfile package index, this is a bug in Bun. Please file a GitHub issue.<r>\n",
-                        );
-                        Global::crash();
-                    }
-                    Some(PackageIndexEntry::Id(id)) => *lockfile.packages.get(*id as usize),
-                    Some(PackageIndexEntry::Ids(ids)) => 'id: {
-                        let mut resolution_label = Vec::new();
-                        for &id in ids.as_slice() {
-                            let pkg = *lockfile.packages.get(id as usize);
-                            if print_resolution_label(
-                                &mut resolution_label,
-                                &pkg.resolution,
-                                strbuf,
-                            ) == version
-                            {
-                                break 'id pkg;
-                            }
-                        }
-                        bun_core::pretty_error!(
-                            "<r><red>error<r>: could not find package with name:<r> {}\n<r>",
-                            bstr::BStr::new(package.name.slice(strbuf)),
-                        );
-                        Global::crash();
+                let actual_package = match package_for_folder(lockfile, package.name_hash, version)
+                {
+                    Ok(pkg) => pkg,
+                    Err(err) => {
+                        folder_lookup_error(err, argument, package.name.slice(strbuf), version)
                     }
                 };
 

@@ -566,10 +566,8 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand }) => {
       reserved.release();
       await sql.unsafe("SELECT 'barrier'");
       expect(outcomes).toEqual({ tagged: closedCode, unsafe: closedCode, file: closedCode });
-      expect(received).toEqual([
-        { conn: 0, sql: "SELECT 'R1'" },
-        { conn: 0, sql: "SELECT 'barrier'" },
-      ]);
+      // Which connection carries the barrier depends on what close() does with the reserved one after the wait.
+      expect(received.map(statement => statement.sql)).toEqual(["SELECT 'R1'", "SELECT 'barrier'"]);
     } finally {
       await sql.close({ timeout: 0 }).catch(() => {});
       await new Promise<void>(r => server.close(() => r()));

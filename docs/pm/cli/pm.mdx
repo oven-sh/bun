@@ -332,6 +332,16 @@ To clear Bun's global module cache:
 bun pm cache rm
 ```
 
+To remove only the packages that were downloaded more than 30 days ago:
+
+```bash terminal icon="terminal"
+bun pm cache prune
+bun pm cache prune --max-age 7   # packages downloaded more than 7 days ago
+bun pm cache prune --dry-run     # list what would be removed without deleting anything
+```
+
+The age of a package is the time since Bun downloaded it. Bun does not record when a cached package was last used, so a package that an install still uses is removed too once it is old enough. The next `bun install` downloads it again. Keep this in mind before you run `bun install --offline`. The command does not touch the [global store](/pm/global-store) in `<cache>/links/`, cached git clones, or package manifests. The size in the summary is the size of the removed files. A file that a `node_modules` tree hardlinks stays on disk until that tree is removed too.
+
 ## migrate
 
 To migrate another package manager's lockfile without installing anything:

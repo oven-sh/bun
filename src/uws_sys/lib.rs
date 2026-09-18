@@ -446,6 +446,9 @@ pub mod fault_inject {
     /// Not a syscall: the JS `Buffer` allocated for a TLS session/keylog
     /// payload in the `on_session`/`on_keylog` dispatch.
     pub const SESSION_BUFFER: c_int = 12;
+    /// Not a syscall: `SSL_write` failing with a fatal SSL error inside
+    /// `us_internal_ssl_write`.
+    pub const SSL_WRITE: c_int = 13;
 
     pub const ACTION_NONE: c_int = 0;
     pub const ACTION_ERRNO: c_int = 1;

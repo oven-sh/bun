@@ -133,8 +133,7 @@ public:
 
     bool load(JSC::VM& vm, Zig::GlobalObject* globalObject);
 
-    // Records `child` in m_children unless it is already there. Only for the
-    // native list: once m_childrenValue exists, the caller pushes onto that array.
+    // Appends `child` to m_children unless it is already there.
     void addChild(JSC::VM& vm, JSC::JSCell* child);
 
     DECLARE_INFO;

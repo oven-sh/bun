@@ -316,9 +316,7 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
 void JSCommonJSModule::addChild(JSC::VM& vm, JSC::JSCell* child)
 {
     ASSERT(!m_childrenValue);
-    // require() of a cached module comes through here on every call. Like
-    // Node's updateChildren(), list a child once. Repeats are usually the
-    // last entry, so scan backwards.
+    // A cached require() repeats the last child, so scan backwards.
     for (size_t i = m_children.size(); i-- > 0;) {
         if (m_children[i].get() == child)
             return;

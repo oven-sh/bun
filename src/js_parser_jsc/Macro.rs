@@ -220,8 +220,7 @@ impl MacroContext {
         let macro_vm = macro_entry.value_ptr.vm;
         let macro_: *const Macro = macro_entry.value_ptr;
         if macro_disabled {
-            // Its load failed on an earlier call. Returning `caller` would leave this call in the
-            // output with its import gone.
+            // Its load failed earlier; returning `caller` would leave an unbound call in the output.
             log.add_error_fmt(
                 Some(source),
                 caller.loc,
@@ -598,9 +597,7 @@ impl<'a> Run<'a> {
         let result = match vm.run_with_api_lock(|| macro_callback.call(global, JSValue::ZERO, args))
         {
             Ok(result) => result,
-            // The macro threw: print it (with its stack) and fail this expansion. Not
-            // `uncaught_exception`: on the program's own VM (a `require()`d file) that is the
-            // fatal-error path, and the program may catch the failed `require()` and go on.
+            // Printed, not `uncaught_exception`: in a `require()`ing program's VM that path is fatal.
             Err(JsError::Thrown) => {
                 let err = global.take_exception(JsError::Thrown);
                 vm.as_mut().run_error_handler(err, None);
@@ -920,8 +917,7 @@ impl<'a> Run<'a> {
 
                 let _ = self.macro_.vm();
                 let vm = VirtualMachine::get();
-                // This wait is the promise's handler: a rejection is reported below, not by the
-                // VM's unhandled-rejection path (fatal to a program that `require()`d the file).
+                // This wait handles the promise: the rejection tracker must not report it too.
                 promise.set_handled(vm.jsc_vm());
                 match vm.as_mut().wait_for_promise_until_idle(promise) {
                     Ok(()) => {}

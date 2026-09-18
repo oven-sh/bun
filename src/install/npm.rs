@@ -2952,9 +2952,7 @@ impl PackageManifest {
                         time_props.iter().find(|p| p.key.slice() == version_name)
                     };
                     if let Some(publish_time_str) = entry.and_then(|p| p.value.as_str()) {
-                        // Accept every form JS `Date.parse` reads, like npm's
-                        // `Date.parse(time[v])` check. An ISO 8601 only parser
-                        // leaves the timestamp at 0, which always passes the gate.
+                        // npm reads this entry with `Date.parse`, so accept the same forms.
                         if let Ok(ms) = bun_core::wtf::parse_date(publish_time_str) {
                             package_version.publish_timestamp_ms = ms;
                         }

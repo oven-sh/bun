@@ -243,8 +243,7 @@ extern "C" double WTF__parseES5Date(const Latin1Character* string, size_t length
     return WTF::parseES5Date({ string, length }, isLocalTime);
 }
 
-// Same parser order as JSC's `Date.parse`: ES5/ISO 8601 first, then the
-// RFC 2822 and `Date.prototype.toString` forms.
+// Same parser order as JSC::DateCache::parseDate (the `Date.parse` path).
 extern "C" double WTF__parseDate(const Latin1Character* string, size_t length)
 {
     bool isLocalTime;

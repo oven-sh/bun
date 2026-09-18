@@ -6,8 +6,7 @@
 //! dependency is required to reference it.
 //!
 //! Source of truth: `src/jsc/bindings/wtf-bindings.cpp` (`WTF__parseES5Date`,
-//! `WTF__parseDate`), which forward to `WTF::parseES5Date` and
-//! `WTF::parseDate` in vendor/WebKit `Source/WTF/wtf/DateMath.{h,cpp}`.
+//! `WTF__parseDate`), over vendor/WebKit `Source/WTF/wtf/DateMath.{h,cpp}`.
 //!
 //! Note: WTF's `parseES5Date` sets an `isLocalTime` out-param so the JS
 //! `Date` constructor can later apply the VM's tz offset. The C shim discards
@@ -54,10 +53,7 @@ pub fn parse_es5_date(buf: &[u8]) -> Result<f64, InvalidDate> {
     }
 }
 
-/// Every form that JS `Date.parse` accepts: ISO 8601 first, then RFC 2822 and
-/// the `Date.prototype.toString` form. A local-time input is shifted by the
-/// host tz offset, like `Date.parse`. `Err` on empty input or a form the
-/// parser rejects. `s` is treated as Latin-1.
+/// Same forms and result as JS `Date.parse`. `Err` on empty or unreadable input.
 pub fn parse_date(s: &[u8]) -> Result<f64, InvalidDate> {
     if s.is_empty() {
         return Err(InvalidDate);

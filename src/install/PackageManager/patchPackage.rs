@@ -127,8 +127,7 @@ pub fn do_patch_commit(
             workspace_package_id,
             argument,
         ) {
-            // prepare_patch replaces the link at the hoisted path. A symlink here means the copy is at
-            // the root, or it is the store folder that the symlink points to.
+            // prepare_patch detaches symlinks; a symlink here means the prepared copy is at the root
             if !is_real_dir_not_symlink(&rel_path) && is_real_dir_not_symlink(argument) {
                 argument
             } else {
@@ -1073,11 +1072,7 @@ fn is_real_dir_not_symlink(path: &[u8]) -> bool {
     folder_kind(path) == FolderKind::RealDir
 }
 
-/// The folder that holds the installed package `pkg_id`. `hoisted_folder` is where the hoisted
-/// tree puts it. The isolated linker links a package only into the packages that depend on it,
-/// so a package that the root does not depend on has nothing at `hoisted_folder`. Its files are
-/// in its store entry, `node_modules/.bun/<entry>/node_modules/<name>`, and every dependent
-/// links to that folder.
+/// The isolated linker puts nothing at the hoisted path of a package that the root does not link.
 fn installed_module_folder(
     manager: &PackageManager,
     lockfile: &Lockfile,
@@ -1091,10 +1086,7 @@ fn installed_module_folder(
     isolated_store_folder(manager, lockfile, pkg_id, workspace_package_id).unwrap_or(hoisted_folder)
 }
 
-/// A package has one store entry for each set of peer dependencies it resolves with. The entry
-/// that `workspace_package_id` (the root, or the workspace of the current directory) loads comes
-/// first, so the `node_modules/<name>` link of that workspace leads to the folder that
-/// `bun patch` prepares. An entry that it does not load is used when there is no other.
+/// A package has one store entry for each peer resolution: the one that the workspace loads wins.
 fn isolated_store_folder(
     manager: &PackageManager,
     lockfile: &Lockfile,
@@ -1124,8 +1116,7 @@ fn isolated_store_folder(
             store_entry::fmt_store_path(store_entry::Id::from(entry as u32), &store, lockfile),
         )
         .expect("formatting into a Vec is infallible");
-        // A link here leads into the global store. A copy detached from it does not survive the
-        // next install: `link_project_to_global_store` replaces a real directory with the link.
+        // `link_project_to_global_store` puts a global store link back over a detached copy.
         if folder_kind(&folder) != FolderKind::RealDir {
             return None;
         }
@@ -1166,8 +1157,7 @@ fn isolated_store_folder(
         .find_map(project_folder)
 }
 
-/// `git diff --no-index` reads a symlink operand as a file. A link to the package, for example
-/// the isolated linker's `node_modules/<name>`, stands for the folder it points to.
+/// `git diff --no-index` reads a symlink operand as a file, not as the folder it points to.
 fn resolve_symlinked_folder(folder: Vec<u8>) -> Vec<u8> {
     if folder_kind(&folder) != FolderKind::Symlink {
         return folder;

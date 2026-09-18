@@ -1830,10 +1830,8 @@ impl Bufio {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ShellExecEnvKind {
-    #[default]
-    Normal,
     CmdSubst,
     Subshell,
     Pipeline,
@@ -1923,7 +1921,8 @@ impl ShellExecEnv {
     /// fresh env for a subshell/pipeline child: dups `cwd_fd`, clones
     /// `shell_env`/`export_env`, gives it a fresh empty `cmd_local_env`, and
     /// borrows or owns buffered stdout/stderr per `kind` (subshell/pipeline
-    /// borrow the parent's buffers so output bubbles up; cmd-subst owns).
+    /// borrow the parent's buffers so output bubbles up; cmd-subst owns its
+    /// stdout, which is the substitution's value, and borrows stderr).
     ///
     /// Caller frees with `ShellExecEnv::deinit_impl(p)`.
     pub(crate) fn dupe_for_subshell(
@@ -1937,7 +1936,7 @@ impl ShellExecEnv {
 
         // For `.fd` with a captured
         // buffer, borrow that; for `.ignore`, own a fresh one; for `.pipe`,
-        // own when normal/cmd_subst, borrow parent's when subshell/pipeline.
+        // borrow the parent's.
         let bufio_for = |out: &OutKind, parent_buf: *mut Vec<u8>| -> Bufio {
             match out {
                 OutKind::Fd(f) => match f.captured {
@@ -1945,17 +1944,16 @@ impl ShellExecEnv {
                     None => Bufio::Owned(Vec::<u8>::default()),
                 },
                 OutKind::Ignore => Bufio::Owned(Vec::<u8>::default()),
-                OutKind::Pipe => match kind {
-                    ShellExecEnvKind::Normal | ShellExecEnvKind::CmdSubst => {
-                        Bufio::Owned(Vec::<u8>::default())
-                    }
-                    ShellExecEnvKind::Subshell | ShellExecEnvKind::Pipeline => {
-                        Bufio::Borrowed(parent_buf)
-                    }
-                },
+                OutKind::Pipe => Bufio::Borrowed(parent_buf),
             }
         };
-        let stdout = bufio_for(&io.stdout, self.buffered_stdout());
+        let stdout = match kind {
+            // `Expansion::child_done` reads the substitution's value from here.
+            ShellExecEnvKind::CmdSubst => Bufio::Owned(Vec::<u8>::default()),
+            ShellExecEnvKind::Subshell | ShellExecEnvKind::Pipeline => {
+                bufio_for(&io.stdout, self.buffered_stdout())
+            }
+        };
         let stderr = bufio_for(&io.stderr, self.buffered_stderr());
 
         let duped = Box::new(ShellExecEnv {

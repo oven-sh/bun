@@ -1154,6 +1154,26 @@ describe.concurrent("process.nextTick and a CommonJS entry point", () => {
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: nextTickFirst + "\n", stderr: "", exitCode: 0 });
   });
 
+  it("what a symlink to a .cjs that bun runs as `node` throws is an uncaughtException", async () => {
+    using dir = tempDir("process-nexttick-entry", {
+      "real/bin.cjs": `
+        process.on("uncaughtExceptionMonitor", (error, origin) => console.log(origin));
+        process.on("uncaughtException", () => {});
+        throw new Error("from the entry point");
+      `,
+    });
+    symlinkSync(join(String(dir), "real", "bin.cjs"), join(String(dir), "bin.cjs"), "file");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--bun", "node", "./bin.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "uncaughtException\n", stderr: "", exitCode: 0 });
+  });
+
   // An ES module entry point runs inside a microtask, so what it queues with process.nextTick waits
   // for the microtask queue. Here the preload has already made the queue.
   it.each([

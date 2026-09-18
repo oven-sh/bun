@@ -871,6 +871,7 @@ impl Task {
 
         let mut step =
             Step::from_u32(entry_steps[self.entry_id.get() as usize].load(Ordering::Acquire));
+        let mut link_in_place = false;
         'step: loop {
             match step {
                 Step::LinkPackage => {
@@ -1204,15 +1205,7 @@ impl Task {
                             }
                         }
 
-                        // The final path must be free for the rename below, and the backends
-                        // would keep whatever a stale staging tree holds.
-                        for which in [Which::Final, Which::Staging] {
-                            let mut leftover = AutoPath::init_top_level_dir();
-                            installer.append_real_store_path(&mut leftover, self.entry_id, which);
-                            if let sys::Result::Err(err) = Fd::cwd().delete_tree(leftover.slice()) {
-                                return Ok(Yield::failure(TaskError::LinkPackage(err)));
-                            }
-                        }
+                        link_in_place |= !installer.clear_local_store_package(self.entry_id);
                     }
 
                     if uses_global_store {
@@ -1249,7 +1242,11 @@ impl Task {
                         installer.append_real_store_path(
                             &mut dest_subpath,
                             self.entry_id,
-                            Which::Staging,
+                            if link_in_place {
+                                Which::Final
+                            } else {
+                                Which::Staging
+                            },
                         );
                         match backend {
                             InstallMethod::Clonefile => {
@@ -1458,12 +1455,14 @@ impl Task {
                         }
                     }
 
-                    if !uses_global_store {
-                        if let sys::Result::Err(err) =
-                            installer.commit_local_store_package(self.entry_id)
-                        {
-                            return Ok(Yield::failure(TaskError::LinkPackage(err)));
-                        }
+                    if !uses_global_store
+                        && !link_in_place
+                        && installer.commit_local_store_package(self.entry_id).is_err()
+                    {
+                        // The rename cannot land (macOS < 15 refuses paths past MAXPATHLEN):
+                        // run the step again, linking in place as before staging existed.
+                        link_in_place = true;
+                        continue 'step;
                     }
 
                     step = self.next_step(current_step);
@@ -2528,6 +2527,28 @@ impl<'a> Installer<'a> {
                 // ours.
                 sys::Result::Ok(())
             }
+        }
+    }
+
+    /// Empties a project-local entry's final and staging paths before it is linked.
+    /// An existing package leaves its final path in one step, by a rename onto the
+    /// staging path, so that a delete cut short never leaves part of it there.
+    /// Returns false if either path cannot be emptied: link in place then.
+    pub(crate) fn clear_local_store_package(&self, entry_id: StoreEntryId) -> bool {
+        debug_assert!(!self.entry_uses_global_store(entry_id));
+        let mut staging = AutoPath::init_top_level_dir();
+        self.append_real_store_path(&mut staging, entry_id, Which::Staging);
+        let mut final_ = AutoPath::init_top_level_dir();
+        self.append_real_store_path(&mut final_, entry_id, Which::Final);
+
+        if Fd::cwd().delete_tree(staging.slice()).is_err() {
+            let _ = Fd::cwd().delete_tree(final_.slice());
+            return false;
+        }
+        match sys::renameat(Fd::cwd(), final_.slice_z(), Fd::cwd(), staging.slice_z()) {
+            sys::Result::Ok(()) => Fd::cwd().delete_tree(staging.slice()).is_ok(),
+            sys::Result::Err(err) if err.get_errno() == sys::Errno::ENOENT => true,
+            sys::Result::Err(_) => Fd::cwd().delete_tree(final_.slice()).is_ok(),
         }
     }
 

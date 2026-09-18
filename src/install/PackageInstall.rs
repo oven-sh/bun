@@ -234,7 +234,6 @@ pub enum Step {
     OpeningCacheDir,
     OpeningDestDir,
     CopyingFiles,
-    MovingIntoPlace,
     LinkingDependency,
 }
 
@@ -245,7 +244,6 @@ impl Step {
             Step::CopyingFiles => b"copying files from cache to destination",
             Step::OpeningCacheDir => b"opening cache/package/version dir",
             Step::OpeningDestDir => b"opening node_modules/package dir",
-            Step::MovingIntoPlace => b"moving copied files into node_modules/package dir",
             Step::LinkingDependency => b"linking dependency/workspace to node_modules",
         }
     }
@@ -271,7 +269,7 @@ impl core::fmt::Display for StagingPath<'_> {
 }
 
 /// Renames a fully linked `StagingPath` (relative to `dir`) onto `dest`. Fails if
-/// `dest` is occupied.
+/// `dest` is occupied; the caller then links in place, as before staging existed.
 pub(crate) fn rename_staging_into_place(dir: Fd, staging: &ZStr, dest: &ZStr) -> sys::Maybe<()> {
     #[cfg(windows)]
     {
@@ -2381,44 +2379,28 @@ impl<'a> PackageInstall<'a> {
             self.uninstall_before_install(destination_dir);
         }
 
-        let mut staging_buf = path::path_buffer_pool::get();
-        let Ok(staging) = bun_core::fmt::buf_print_z(
-            &mut staging_buf[..],
-            format_args!("{}", StagingPath(self.destination_dir_subpath.as_bytes())),
-        ) else {
-            return InstallResult::fail(
-                crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG),
-                Step::OpeningDestDir,
-                None,
-            );
-        };
-        // A stale one may hold files of another version, which the backends would keep.
-        if let Err(err) = destination_dir.delete_tree(staging.as_bytes()) {
-            return InstallResult::fail(err.into(), Step::OpeningDestDir, None);
-        }
-
-        if let failure @ InstallResult::Failure(_) =
-            self.install_into(destination_dir, staging, method, resolution_tag)
-        {
-            let _ = destination_dir.delete_tree(staging.as_bytes());
-            return failure;
-        }
-
         let dest = self.destination_dir_subpath;
-        let mut renamed = rename_staging_into_place(destination_dir.fd(), staging, dest);
-        if renamed.is_err() && dest.as_bytes() != b"." {
-            // Occupied: a workspace depended on under two names is walked as two trees,
-            // so the packages inside it are installed twice. The later one replaces it.
-            self.uninstall_before_install(destination_dir);
-            renamed = rename_staging_into_place(destination_dir.fd(), staging, dest);
-        }
-        match renamed {
-            Ok(()) => InstallResult::Success,
-            Err(err) => {
+        let mut staging_buf = path::path_buffer_pool::get();
+        // A stale staging directory may hold files of another version, which the backends keep.
+        if let Ok(staging) = bun_core::fmt::buf_print_z(
+            &mut staging_buf[..],
+            format_args!("{}", StagingPath(dest.as_bytes())),
+        ) && destination_dir.delete_tree(staging.as_bytes()).is_ok()
+        {
+            if let failure @ InstallResult::Failure(_) =
+                self.install_into(destination_dir, staging, method, resolution_tag)
+            {
                 let _ = destination_dir.delete_tree(staging.as_bytes());
-                InstallResult::fail(err.into(), Step::MovingIntoPlace, None)
+                return failure;
             }
+            if rename_staging_into_place(destination_dir.fd(), staging, dest).is_ok() {
+                return InstallResult::Success;
+            }
+            let _ = destination_dir.delete_tree(staging.as_bytes());
         }
+        // Link in place, as before staging existed: `dest` is occupied (a workspace with two names
+        // has its packages installed once per name), or macOS < 15 refuses a path past MAXPATHLEN.
+        self.install_into(destination_dir, dest, method, resolution_tag)
     }
 
     fn install_into(

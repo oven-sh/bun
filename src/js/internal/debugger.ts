@@ -102,6 +102,9 @@ function cdpAdapterConstructor() {
   return (lazyInspectorCDPAdapter ??= require("internal/inspector/cdp").InspectorCDPAdapter);
 }
 
+// The endpoint opened for BUN_INSPECT (started first), listed in the --inspect banner.
+let automaticEndpoint: string | undefined;
+
 export default function (
   executionContextId: number,
   url: string,
@@ -227,7 +230,14 @@ export default function (
 
   // If the user types --inspect, we print the URL to the console.
   // If the user is using an editor extension, don't print anything.
-  if (!isAutomatic) {
+  if (isAutomatic) {
+    automaticEndpoint = debug.url?.href ?? url;
+  } else {
+    const footer =
+      (automaticEndpoint ? `BUN_INSPECT:\n  ${dim(automaticEndpoint)}\n` : "") +
+      dim("--------------------- Bun Inspector ---------------------") +
+      reset() +
+      "\n";
     const debugUrl = debug.url;
     if (debugUrl) {
       const { protocol, href, host, pathname } = debugUrl;
@@ -237,12 +247,12 @@ export default function (
         if (protocol.includes("ws")) {
           Bun.write(Bun.stderr, `Inspect in browser:\n  ${link(`https://debug.bun.sh/#${host}${pathname}`)}\n`);
         }
-        Bun.write(Bun.stderr, dim("--------------------- Bun Inspector ---------------------") + reset() + "\n");
+        Bun.write(Bun.stderr, footer);
       }
     } else {
       Bun.write(Bun.stderr, dim("--------------------- Bun Inspector ---------------------") + reset() + "\n");
       Bun.write(Bun.stderr, `Listening on ${dim(url)}\n`);
-      Bun.write(Bun.stderr, dim("--------------------- Bun Inspector ---------------------") + reset() + "\n");
+      Bun.write(Bun.stderr, footer);
     }
   }
 

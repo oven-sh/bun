@@ -298,6 +298,56 @@ describe("css tests", () => {
       );
     });
 
+    describe("rules added for a logical property print in the prefix passes of their selector", () => {
+      // A logical property adds a `:dir(ltr)` and a `:dir(rtl)` rule. Each is a
+      // copy of the rule's selectors, which already carry the prefixes the
+      // targets need, with `:dir()` appended, and goes through `update_prefix`
+      // again. safari 14 needs `:-webkit-full-screen`, `:-webkit-autofill` and
+      // `::-webkit-file-upload-button`. It has `:lang()` lists but no `:dir()`.
+      const rtl = ":lang(ae,ar,arc,bcc,bqi,ckb,dv,fa,glk,he,ku,mzn,nqo,pnb,ps,sd,ug,ur,yi)";
+      minify_prefix_test_again(
+        ".a:fullscreen{inset-inline-start:4px}",
+        `.a:-webkit-full-screen:not(${rtl}){left:4px}.a:fullscreen:not(${rtl}){left:4px}.a:-webkit-full-screen${rtl}{right:4px}.a:fullscreen${rtl}{right:4px}`,
+        { safari: 14 << 16 },
+      );
+      minify_prefix_test_again(
+        ".a:fullscreen .b{inset-inline-start:4px}",
+        `.a:-webkit-full-screen .b:not(${rtl}){left:4px}.a:fullscreen .b:not(${rtl}){left:4px}.a:-webkit-full-screen .b${rtl}{right:4px}.a:fullscreen .b${rtl}{right:4px}`,
+        { safari: 14 << 16 },
+      );
+      minify_prefix_test_again(
+        ".a:autofill{border-start-start-radius:2px}",
+        `.a:-webkit-autofill:not(${rtl}){border-top-left-radius:2px}.a:autofill:not(${rtl}){border-top-left-radius:2px}.a:-webkit-autofill${rtl}{border-top-right-radius:2px}.a:autofill${rtl}{border-top-right-radius:2px}`,
+        { safari: 14 << 16 },
+      );
+      minify_prefix_test_again(
+        ".a:fullscreen::file-selector-button{inset-inline-start:4px}",
+        `.a:-webkit-full-screen:not(${rtl})::-webkit-file-upload-button{left:4px}.a:fullscreen:not(${rtl})::file-selector-button{left:4px}.a:-webkit-full-screen${rtl}::-webkit-file-upload-button{right:4px}.a:fullscreen${rtl}::file-selector-button{right:4px}`,
+        { safari: 14 << 16 },
+      );
+    });
+
+    describe("a second minify keeps the prefix passes of `:fullscreen` next to another component", () => {
+      // `get_prefix` reports a prefix for each of these components: the set the
+      // targets need for the second `:fullscreen` and `::file-selector-button`,
+      // and none for `:not()`.
+      minify_prefix_test_again(
+        ".a:fullscreen .b:fullscreen{color:red}",
+        ".a:-webkit-full-screen .b:-webkit-full-screen{color:red}.a:fullscreen .b:fullscreen{color:red}",
+        { safari: 14 << 16 },
+      );
+      minify_prefix_test_again(
+        ".a:fullscreen:not(.b){color:red}",
+        ".a:-webkit-full-screen:not(.b){color:red}.a:fullscreen:not(.b){color:red}",
+        { safari: 14 << 16 },
+      );
+      minify_prefix_test_again(
+        ".a:fullscreen::file-selector-button{color:red}",
+        ".a:-webkit-full-screen::-webkit-file-upload-button{color:red}.a:fullscreen::file-selector-button{color:red}",
+        { safari: 14 << 16 },
+      );
+    });
+
     describe("merging equivalent rules keeps every variant that was written", () => {
       minify_test_again(
         ".a:-moz-read-only{color:red}.a:read-only{color:red}",

@@ -1257,17 +1257,19 @@ describe("a bundled dependency as the target", () => {
     `note: to change it, run bun patch ${bundler} and edit its copy in the node_modules folder of that package\n`;
 
   // CI exports BUN_INSTALL_CACHE_DIR, which overrides the harness bunfig's per-test `cache`.
-  async function runBun(cwd: string, ...args: string[]) {
+  async function spawnBun(cwd: string, cacheDir: string, args: string[]) {
     await using proc = Bun.spawn({
       cmd: [bunExe(), ...args],
       cwd,
-      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache") },
+      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: cacheDir },
       stdout: "pipe",
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     return { stdout, stderr, exitCode };
   }
+
+  const runBun = (cwd: string, ...args: string[]) => spawnBun(cwd, join(cwd, ".bun-cache"), args);
 
   async function installedProject(linker: "hoisted" | "isolated", dependencies: Record<string, string>) {
     const packageJson = { name: "foo", dependencies };
@@ -1351,5 +1353,52 @@ describe("a bundled dependency as the target", () => {
         expect(exitCode).toBe(1);
       },
     );
+
+    // The workspace also installs no-deps@1.0.0 on its own, so only the path tells that the
+    // target is the bundled copy. The root alias takes the name `bundled-1`, so the hoisted
+    // linker nests bundled-1@1.0.0 in the workspace. Without the alias the lockfile tree
+    // hoists it to the root, and only the isolated linker links it into the workspace.
+    describe.each(
+      [
+        { layout: "bundled-1 nested in the workspace", rootDependencies: { "bundled-1": "npm:no-deps@2.0.0" } },
+        { layout: "bundled-1 hoisted to the root", rootDependencies: {} },
+      ].filter(({ rootDependencies }) => linker === "isolated" || "bundled-1" in rootDependencies),
+    )("in a workspace, $layout", ({ rootDependencies }) => {
+      test.concurrent.each([
+        { cwd: ".", arg: "packages/foo/node_modules/bundled-1/node_modules/no-deps" },
+        { cwd: "packages/foo", arg: "node_modules/bundled-1/node_modules/no-deps" },
+      ])("bun patch $arg is refused from $cwd", async ({ cwd, arg }) => {
+        const { packageDir } = await registry.createTestDir({
+          bunfigOpts: { linker },
+          files: {
+            "package.json": JSON.stringify({
+              name: "root",
+              workspaces: ["packages/*"],
+              dependencies: rootDependencies,
+            }),
+            "packages/foo/package.json": JSON.stringify({
+              name: "foo",
+              dependencies: { "bundled-1": "1.0.0", "no-deps": "1.0.0" },
+            }),
+          },
+        });
+        const install = await runBun(packageDir, "install");
+        expect(install.stderr).not.toContain("error:");
+        expect(install.exitCode).toBe(0);
+
+        const bundledCopy = join(packageDir, "packages", "foo", "node_modules", "bundled-1", "node_modules", "no-deps");
+        expect(await Bun.file(join(bundledCopy, "package.json")).json()).toEqual({ name: "no-deps", version: "1.0.0" });
+        const marker = Bun.file(join(bundledCopy, "only-in-the-bundled-copy.txt"));
+        await Bun.write(marker, "bundled");
+
+        const { stderr, exitCode } = await spawnBun(join(packageDir, cwd), join(packageDir, ".bun-cache"), [
+          "patch",
+          arg,
+        ]);
+        expect(stderr).toEndWith(bundledError("no-deps", "bundled-1"));
+        expect(await marker.exists()).toBe(true);
+        expect(exitCode).toBe(1);
+      });
+    });
   });
 });

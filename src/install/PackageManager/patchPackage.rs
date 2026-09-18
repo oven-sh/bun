@@ -22,8 +22,8 @@ use crate::package_manager_real::package_manager_directories::{
     compute_cache_dir_and_subpath, get_temporary_directory,
 };
 use crate::{
-    BuntagHashBuf, DependencyID, Features, PackageID, Resolution, buntaghashbuf_make,
-    initialize_store, invalid_package_id,
+    BuntagHashBuf, DependencyID, Features, PackageID, Resolution, ResolutionTag,
+    buntaghashbuf_make, initialize_store, invalid_package_id,
 };
 
 #[inline]
@@ -1323,7 +1323,7 @@ impl BundledPackages {
         self.bundler_of_package(parent_id)
     }
 
-    /// The first bundled dependency on `node_modules/a/node_modules/b`, found in the lockfile's tree.
+    /// The first bundled dependency on `<workspace>/node_modules/a/node_modules/b`, found in the lockfile's tree.
     fn bundler_on_path(&self, lockfile: &Lockfile, path: &[u8]) -> Option<PackageID> {
         let top_level_dir = FileSystem::instance().top_level_dir();
         let mut abs_buf = bun_paths::path_buffer_pool::get();
@@ -1333,12 +1333,35 @@ impl BundledPackages {
             &[path],
         )?;
         let mut components =
-            strings::tokenize_any(resolve_path::relative(top_level_dir, abs), b"/\\");
+            strings::tokenize_any(resolve_path::relative(top_level_dir, abs), b"/\\").peekable();
 
         let string_buf = lockfile.buffers.string_bytes.as_slice();
         let dependencies = lockfile.buffers.dependencies.as_slice();
         let trees = lockfile.buffers.trees.as_slice();
-        let mut tree = trees.first()?;
+        let root_tree = trees.first()?;
+        let dependency_in = |tree: &tree::Tree, alias: &[u8]| {
+            tree.dependencies
+                .get(lockfile.buffers.hoisted_dependencies.as_slice())
+                .iter()
+                .copied()
+                .find(|&dep_id| dependencies[dep_id as usize].name.slice(string_buf) == alias)
+        };
+
+        let mut workspace_folder: Vec<u8> = Vec::new();
+        while let Some(component) = components.next_if(|component| *component != b"node_modules") {
+            if !workspace_folder.is_empty() {
+                workspace_folder.push(b'/');
+            }
+            workspace_folder.extend_from_slice(component);
+        }
+        let mut tree = if workspace_folder.is_empty() {
+            root_tree
+        } else {
+            workspace_tree(lockfile, &workspace_folder)?
+        };
+
+        // The isolated linker links a workspace's dependency into the workspace even when the tree hoists it.
+        let mut hoisted_to = (tree.id != root_tree.id).then_some(root_tree);
         let mut alias: Vec<u8> = Vec::new();
         loop {
             if components.next()? != b"node_modules" {
@@ -1350,25 +1373,47 @@ impl BundledPackages {
                 alias.push(b'/');
                 alias.extend_from_slice(components.next()?);
             }
-            let has_alias = |dep_id: DependencyID| {
-                dependencies
-                    .get(dep_id as usize)
-                    .is_some_and(|dep| dep.name.slice(string_buf) == alias)
+            let dep_id = match dependency_in(tree, &alias) {
+                Some(dep_id) => dep_id,
+                None => {
+                    tree = hoisted_to?;
+                    dependency_in(tree, &alias)?
+                }
             };
-            let dep_id = tree
-                .dependencies
-                .get(lockfile.buffers.hoisted_dependencies.as_slice())
-                .iter()
-                .copied()
-                .find(|&dep_id| has_alias(dep_id))?;
+            hoisted_to = None;
             if let Some(bundler) = self.bundler_of_dependency(lockfile, dep_id) {
                 return Some(bundler);
             }
-            tree = trees
-                .iter()
-                .find(|child| child.parent == tree.id && has_alias(child.dependency_id))?;
+            tree = trees.iter().find(|child| {
+                child.parent == tree.id
+                    && dependencies
+                        .get(child.dependency_id as usize)
+                        .is_some_and(|dep| dep.name.slice(string_buf) == alias)
+            })?;
         }
     }
+}
+
+/// The tree of the workspace in `folder` (relative to the root, `/` separators). The root tree when it has none.
+fn workspace_tree<'a>(lockfile: &'a Lockfile, folder: &[u8]) -> Option<&'a tree::Tree> {
+    let string_buf = lockfile.buffers.string_bytes.as_slice();
+    let resolutions = lockfile.packages.items_resolution();
+    let workspace_id = resolutions.iter().position(|resolution| {
+        resolution.tag == ResolutionTag::Workspace
+            && resolution.workspace().slice(string_buf) == folder
+    })? as PackageID;
+    let trees = lockfile.buffers.trees.as_slice();
+    trees
+        .iter()
+        .find(|tree| {
+            tree.parent == 0
+                && lockfile
+                    .buffers
+                    .resolutions
+                    .get(tree.dependency_id as usize)
+                    == Some(&workspace_id)
+        })
+        .or(trees.first())
 }
 
 fn crash_bundled(lockfile: &Lockfile, name: &[u8], bundler: PackageID) -> ! {

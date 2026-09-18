@@ -702,9 +702,7 @@ impl Default for Location {
 enum LineText {
     /// About 120 bytes around the error.
     Windowed,
-    /// The whole line. The printer redacts a secret by the key in front of
-    /// it (`token = "..."`), so a message with
-    /// `redact_sensitive_information` must not lose the key to the window.
+    /// The whole line, so the redaction still sees the key before a secret.
     Whole,
 }
 
@@ -855,10 +853,7 @@ impl Location {
                 // `source_backing` in `Transpiler::parse_*` is RAII and
                 // drops on the parse-error path *before* `process_fetch_log`
                 // clones the `Msg` into a `BuildMessage`, so own the bytes here
-                // instead of borrowing `source.contents`. `full_line` is
-                // bounded (≤ ~120 bytes, or one line of a config file for
-                // `LineText::Whole`) and only materialized on diagnostic
-                // paths.
+                // instead of borrowing `source.contents`.
                 line_text: Some(Cow::Owned(bun_core::trim_left(full_line, b"\n\r").to_vec())),
                 offset: usize::try_from(r.loc.start.max(0)).expect("int cast"),
             });

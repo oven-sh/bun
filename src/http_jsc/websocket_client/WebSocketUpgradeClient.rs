@@ -318,7 +318,7 @@ where
         let group = global
             .bun_vm()
             .as_mut()
-            .rare_data()
+            .client_socket_groups_in(websocket.context())
             .ws_upgrade_group::<SSL>(loop_);
         let kind: SocketKind = if SSL {
             SocketKind::WsClientUpgradeTls
@@ -416,7 +416,10 @@ where
                 // in the URL (wss+unix://name/path) to verify against
                 // a specific certificate name.
                 if !host_slice.slice().is_empty() {
-                    this.hostname.set(ZBox::from_bytes(host_slice.slice()));
+                    this.hostname
+                        .set(ZBox::from_bytes(bun_http::strip_ipv6_brackets(
+                            host_slice.slice(),
+                        )));
                 }
             }
 
@@ -448,7 +451,10 @@ where
             // dialed. For HTTPS proxy connections, that's the proxy host,
             // not the wss:// target.
             if !display_host.is_empty() {
-                this.hostname.set(ZBox::from_bytes(display_host));
+                this.hostname
+                    .set(ZBox::from_bytes(bun_http::strip_ipv6_brackets(
+                        display_host,
+                    )));
             }
         }
 

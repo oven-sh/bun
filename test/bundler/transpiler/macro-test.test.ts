@@ -12,6 +12,7 @@ import defaultMacro, {
   identity as identity1,
   identity as identity2,
   ireturnapromise,
+  symbolKeys,
 } from "./macro.ts" assert { type: "macro" };
 
 import * as macros from "./macro.ts" assert { type: "macro" };
@@ -36,6 +37,14 @@ test("type coercion", () => {
   expect(identity(1.5)).toBe(1.5);
   expect(identity(1)).toBe(1);
   expect(identity(true)).toBe(true);
+});
+
+// A Symbol key has no source form. The inlined object keeps the string keys
+// only, like JSON.stringify, instead of a string key named by the description.
+test("object with Symbol keys", () => {
+  const value = symbolKeys();
+  expect(value).toEqual({ v: 2 });
+  expect(Reflect.ownKeys(value)).toEqual(["v"]);
 });
 
 test("escaping", () => {

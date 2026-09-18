@@ -41,6 +41,8 @@ pub struct Handler {
     // LIFETIMES.tsv = STATIC (vm) / JSC_BORROW (global_object) — both outlive the handler.
     pub(crate) vm: bun_ptr::BackRef<VirtualMachine>,
     pub(crate) global_object: bun_ptr::BackRef<JSGlobalObject>,
+    /// The context of the script that gave these handlers: a websocket event is dispatched inside it.
+    pub(crate) context: bun_jsc::ContextId,
 
     /// used by publish()
     pub(crate) flags: HandlerFlags,
@@ -95,6 +97,7 @@ impl Handler {
         if !on_error.is_empty_or_undefined_or_null() {
             // A top-level call of its own: what `error` throws is reported here.
             global_object.bun_vm().event_loop_mut().run_callback(
+                bun_event_loop::ContextId::NONE,
                 on_error,
                 global_object,
                 JSValue::UNDEFINED,
@@ -123,6 +126,7 @@ impl Handler {
             server: None,
             vm: bun_ptr::BackRef::new(VirtualMachine::get()),
             global_object: bun_ptr::BackRef::new(global_object),
+            context: global_object.bun_vm().context_of_caller_no_frame().id(),
             flags: HandlerFlags::empty(),
         };
 

@@ -208,6 +208,10 @@ impl bun_event_loop::Taskable for crate::shell::dispatch_tasks::ShellAsyncTask {
         // SAFETY: fn contract — the box `Async::init` made; nothing else frees an unrun one.
         drop(unsafe { bun_core::heap::take(this) });
     }
+    /// See [`ShellTaskCtx`](crate::shell::interpreter::ShellTaskCtx): a step of a shell script always runs.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
+    }
 }
 
 /// Mini-loop trampoline.

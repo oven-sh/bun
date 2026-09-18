@@ -33,9 +33,8 @@ use super::uuid::UUID;
 //     → moved to `bun_runtime::jsc_hooks::RuntimeState` (already there).
 //   - `node_fs_stat_watcher_scheduler`
 //     → erased `*mut c_void` slot; high tier lazy-inits.
-//   - the `bun test --isolate` watcher/server registries → moved to
-//     `bun_runtime::jsc_hooks::ActiveHandles` so the entries keep their
-//     concrete types.
+//   - the `bun test --isolate` watcher/server registries → each owner embeds
+//     a `bun_jsc::AbortHandle` armed in its `ScriptExecutionContext`.
 //   - `stdin/stdout/stderr_store` → erased `*mut blob::Store` constructed via
 //     `__bun_stdio_blob_store_new` (link-time extern).
 //   - `valkey_context` was a stateless ZST with empty `deinit`; dropped.
@@ -223,24 +222,8 @@ pub struct RareData {
     /// `bun test --parallel` IPC channel (worker ↔ coordinator). Survives the
     /// per-file isolation swap so the worker keeps its link to the coordinator.
     pub(crate) test_parallel_ipc_group: SocketGroup,
-    /// `Bun.connect` client sockets — one group per VM (not per connection).
-    pub(crate) bun_connect_group_tcp: SocketGroup,
-    pub(crate) bun_connect_group_tls: SocketGroup,
-    /// SQL drivers — TCP and TLS share one group each per VM. STARTTLS adopts
-    /// from the `_tcp` group into `_tls` without reallocating a context.
-    pub(crate) postgres_group: SocketGroup,
-    pub(crate) postgres_tls_group: SocketGroup,
-    pub(crate) mysql_group_: SocketGroup,
-    pub(crate) mysql_tls_group: SocketGroup,
-    pub(crate) valkey_group_: SocketGroup,
-    pub(crate) valkey_tls_group: SocketGroup,
-    /// `new WebSocket(...)` client. Upgrade phase (HTTP handshake) and connected
-    /// phase (frame I/O) live in separate kinds so the handshake handler doesn't
-    /// have to runtime-branch on state.
-    pub(crate) ws_upgrade_group_: SocketGroup,
-    pub(crate) ws_upgrade_tls_group: SocketGroup,
-    pub(crate) ws_client_group_: SocketGroup,
-    pub(crate) ws_client_tls_group: SocketGroup,
+    /// The client sockets of the VM's own contexts.
+    pub(crate) socket_groups: SocketGroups,
 
     /// `ssl_ctx_cache.getOrCreate(&.{})` — i.e. the default-trust-store client
     /// CTX. Cached separately so the hot `tls:true` / `wss://` path skips even the
@@ -313,18 +296,7 @@ impl Default for RareData {
             file_polls: None,
             spawn_ipc_group: SocketGroup::default(),
             test_parallel_ipc_group: SocketGroup::default(),
-            bun_connect_group_tcp: SocketGroup::default(),
-            bun_connect_group_tls: SocketGroup::default(),
-            postgres_group: SocketGroup::default(),
-            postgres_tls_group: SocketGroup::default(),
-            mysql_group_: SocketGroup::default(),
-            mysql_tls_group: SocketGroup::default(),
-            valkey_group_: SocketGroup::default(),
-            valkey_tls_group: SocketGroup::default(),
-            ws_upgrade_group_: SocketGroup::default(),
-            ws_upgrade_tls_group: SocketGroup::default(),
-            ws_client_group_: SocketGroup::default(),
-            ws_client_tls_group: SocketGroup::default(),
+            socket_groups: SocketGroups::default(),
             default_client_ssl_ctx: None,
             node_fs_stat_watcher_scheduler: None,
             memory_pressure_watcher: None,
@@ -407,64 +379,28 @@ impl ProxyEnvStorage {
     }
 }
 
+/// Uppercase first: on Windows the case-insensitive compare in `slot` matches
+/// the uppercase entry for either input case.
+const PROXY_ENV_KEYS: [&[u8]; 8] = [
+    b"HTTP_PROXY",
+    b"http_proxy",
+    b"HTTPS_PROXY",
+    b"https_proxy",
+    b"ALL_PROXY",
+    b"all_proxy",
+    b"NO_PROXY",
+    b"no_proxy",
+];
+
+/// One value per `PROXY_ENV_KEYS` entry.
 #[derive(Default)]
-pub struct ProxyEnvSlots {
-    #[allow(non_snake_case)]
-    pub(crate) HTTP_PROXY: Option<Arc<RefCountedEnvValue>>,
-    pub(crate) http_proxy: Option<Arc<RefCountedEnvValue>>,
-    #[allow(non_snake_case)]
-    pub(crate) HTTPS_PROXY: Option<Arc<RefCountedEnvValue>>,
-    pub(crate) https_proxy: Option<Arc<RefCountedEnvValue>>,
-    #[allow(non_snake_case)]
-    pub(crate) NO_PROXY: Option<Arc<RefCountedEnvValue>>,
-    pub(crate) no_proxy: Option<Arc<RefCountedEnvValue>>,
-}
+pub struct ProxyEnvSlots([Option<Arc<RefCountedEnvValue>>; PROXY_ENV_KEYS.len()]);
 
 pub struct Slot<'a> {
-    /// Static-lifetime field name (e.g. "NO_PROXY") — safe to use as
+    /// Static-lifetime name (e.g. "NO_PROXY") — safe to use as
     /// the env map key without duping.
     pub key: &'static [u8],
     pub ptr: &'a mut Option<Arc<RefCountedEnvValue>>,
-}
-
-/// Helper macro: expands `$body` once per proxy-env field, binding `$name`
-/// (the static byte-string key) and `$field` (the field ident).
-macro_rules! for_each_proxy_field {
-    ($self:expr, |$name:ident, $field:ident| $body:block) => {{
-        // Uppercase fields are declared first. On Windows the case-insensitive
-        // eql matches the uppercase field for either input case and returns
-        // before reaching lowercase.
-        {
-            let $name: &'static [u8] = b"HTTP_PROXY";
-            let $field = &mut $self.HTTP_PROXY;
-            $body
-        }
-        {
-            let $name: &'static [u8] = b"http_proxy";
-            let $field = &mut $self.http_proxy;
-            $body
-        }
-        {
-            let $name: &'static [u8] = b"HTTPS_PROXY";
-            let $field = &mut $self.HTTPS_PROXY;
-            $body
-        }
-        {
-            let $name: &'static [u8] = b"https_proxy";
-            let $field = &mut $self.https_proxy;
-            $body
-        }
-        {
-            let $name: &'static [u8] = b"NO_PROXY";
-            let $field = &mut $self.NO_PROXY;
-            $body
-        }
-        {
-            let $name: &'static [u8] = b"no_proxy";
-            let $field = &mut $self.no_proxy;
-            $body
-        }
-    }};
 }
 
 impl ProxyEnvSlots {
@@ -482,28 +418,18 @@ impl ProxyEnvSlots {
         } else {
             strings::eql
         };
-        for_each_proxy_field!(self, |fname, field| {
-            if eql(name, fname) {
-                return Some(Slot {
-                    key: fname,
-                    ptr: field,
-                });
-            }
-        });
-        None
+        let index = PROXY_ENV_KEYS.iter().position(|key| eql(name, key))?;
+        Some(Slot {
+            key: PROXY_ENV_KEYS[index],
+            ptr: &mut self.0[index],
+        })
     }
 
     /// Bump refcounts on all non-null values so a worker can share the
     /// parent's strings. Caller passes the parent's locked guard — the `Arc`
     /// load + clone is not atomic with respect to `Bun__setEnvValue`'s drop.
     pub(crate) fn clone_from(&mut self, parent: &ProxyEnvSlots) {
-        // Arc::clone bumps the refcount.
-        self.HTTP_PROXY.clone_from(&parent.HTTP_PROXY);
-        self.http_proxy.clone_from(&parent.http_proxy);
-        self.HTTPS_PROXY.clone_from(&parent.HTTPS_PROXY);
-        self.https_proxy.clone_from(&parent.https_proxy);
-        self.NO_PROXY.clone_from(&parent.NO_PROXY);
-        self.no_proxy.clone_from(&parent.no_proxy);
+        self.0.clone_from(&parent.0);
     }
 
     /// Overwrite proxy-var entries in an env map with this storage's reffed
@@ -512,28 +438,18 @@ impl ProxyEnvSlots {
     /// clone captured a snapshot the storage doesn't hold a ref on (e.g. an
     /// initial-environ value later overwritten by the setter).
     pub(crate) fn sync_into(&self, map: &mut bun_dotenv::Map) {
-        macro_rules! sync_one {
-            ($name:literal, $field:ident) => {
-                if let Some(val) = &self.$field {
-                    bun_core::handle_oom(map.put($name, &val.bytes));
-                }
-            };
+        for (key, value) in PROXY_ENV_KEYS.iter().zip(&self.0) {
+            if let Some(value) = value {
+                bun_core::handle_oom(map.put(key, &value.bytes));
+            }
         }
-        sync_one!(b"HTTP_PROXY", HTTP_PROXY);
-        sync_one!(b"http_proxy", http_proxy);
-        sync_one!(b"HTTPS_PROXY", HTTPS_PROXY);
-        sync_one!(b"https_proxy", https_proxy);
-        sync_one!(b"NO_PROXY", NO_PROXY);
-        sync_one!(b"no_proxy", no_proxy);
     }
 
     /// Undo every `Bun__setEnvValue` since `snapshot` was captured: drop the
     /// slot refs and put the captured values back into `map`. Caller holds
     /// the `ProxyEnvStorage` lock, like the setter.
     pub(crate) fn restore(&mut self, map: &mut bun_dotenv::Map, snapshot: &ProxyEnvSnapshot) {
-        for_each_proxy_field!(self, |_name, field| {
-            *field = None;
-        });
+        self.0 = Default::default();
         for (key, value) in &snapshot.entries {
             match value {
                 Some(value) => bun_core::handle_oom(map.put(key, value)),
@@ -543,21 +459,12 @@ impl ProxyEnvSlots {
     }
 }
 
-const PROXY_ENV_KEYS: [&[u8]; 6] = [
-    b"HTTP_PROXY",
-    b"http_proxy",
-    b"HTTPS_PROXY",
-    b"https_proxy",
-    b"NO_PROXY",
-    b"no_proxy",
-];
-
-/// The six proxy keys as the env map held them when the test runner started.
+/// The proxy keys as the env map held them when the test runner started.
 /// `process.env` writes to these keys go through `Bun__setEnvValue` into the
 /// per-VM env map, which seeds every later global's `process.env`, so
 /// `--isolate` restores them from this between files.
 pub struct ProxyEnvSnapshot {
-    entries: [(&'static [u8], Option<Box<[u8]>>); 6],
+    entries: [(&'static [u8], Option<Box<[u8]>>); PROXY_ENV_KEYS.len()],
 }
 
 impl ProxyEnvSnapshot {
@@ -593,66 +500,190 @@ impl RefCountedEnvValue {
 // RareData methods — simple accessors / lazy-init
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Expand `$body` once per embedded `SocketGroup` field.
-macro_rules! for_each_socket_group {
-    ($self:ident, |$g:ident| $body:block) => {{
-        {
-            let $g = &mut $self.spawn_ipc_group;
-            $body
+/// The socket groups, embedded and lazily linked into the loop on first
+/// socket, for client sockets that aren't tied to a Listener / server: one set
+/// per [`ScriptExecutionContext`](crate::ScriptExecutionContext) that owns
+/// sockets (the VM's own contexts share `RareData`'s), so a context that stops
+/// closes exactly what its script connected.
+#[derive(Default)]
+pub struct SocketGroups {
+    /// `Bun.connect` client sockets — one group per context (not per connection).
+    bun_connect_group_tcp: SocketGroup,
+    bun_connect_group_tls: SocketGroup,
+    /// SQL drivers — TCP and TLS share one group each. STARTTLS adopts
+    /// from the `_tcp` group into `_tls` without reallocating a context.
+    postgres_group: SocketGroup,
+    postgres_tls_group: SocketGroup,
+    mysql_group_: SocketGroup,
+    mysql_tls_group: SocketGroup,
+    valkey_group_: SocketGroup,
+    valkey_tls_group: SocketGroup,
+    /// `new WebSocket(...)` client. Upgrade phase (HTTP handshake) and connected
+    /// phase (frame I/O) live in separate kinds so the handshake handler doesn't
+    /// have to runtime-branch on state.
+    ws_upgrade_group_: SocketGroup,
+    ws_upgrade_tls_group: SocketGroup,
+    ws_client_group_: SocketGroup,
+    ws_client_tls_group: SocketGroup,
+}
+
+impl SocketGroups {
+    /// How many groups a set has: the length of [`each`](Self::each)'s array, which does not
+    /// compile with any other.
+    const COUNT: usize = 12;
+
+    fn each(&mut self) -> [&mut SocketGroup; Self::COUNT] {
+        [
+            &mut self.bun_connect_group_tcp,
+            &mut self.bun_connect_group_tls,
+            &mut self.postgres_group,
+            &mut self.postgres_tls_group,
+            &mut self.mysql_group_,
+            &mut self.mysql_tls_group,
+            &mut self.valkey_group_,
+            &mut self.valkey_tls_group,
+            &mut self.ws_upgrade_group_,
+            &mut self.ws_upgrade_tls_group,
+            &mut self.ws_client_group_,
+            &mut self.ws_client_tls_group,
+        ]
+    }
+
+    /// The set `group` is one of: where a socket in `group` moves to when it
+    /// changes kind (STARTTLS, WebSocket upgrade → client), so it stays with
+    /// the context that connected it.
+    ///
+    /// # Safety
+    /// `group` is a linked group of some `SocketGroups`.
+    pub unsafe fn of<'a>(group: &SocketGroup) -> &'a mut SocketGroups {
+        // SAFETY: fn contract — `lazy` set the owner to the embedding set,
+        // which is boxed (in `RareData` or on its own) and outlives its sockets.
+        unsafe { &mut *group.owner::<SocketGroups>() }
+    }
+
+    // `loop_` is passed by value (raw `*mut uws::Loop`, read from
+    // `vm.uws_loop()` before the groups are borrowed), so no caller needs a
+    // second borrow of the VM just for it.
+    #[inline]
+    fn lazy(
+        &mut self,
+        group: fn(&mut Self) -> &mut SocketGroup,
+        loop_: *mut uws::Loop,
+    ) -> &mut SocketGroup {
+        let owner = core::ptr::from_mut(self).cast::<c_void>();
+        let g = group(self);
+        if g.loop_.is_null() {
+            g.init(loop_, None, owner);
         }
-        {
-            let $g = &mut $self.test_parallel_ipc_group;
-            $body
+        g
+    }
+
+    /// One shared group per (context, ssl) for every `Bun.connect` / `tls.connect`
+    /// client socket. Replaces the old per-connection `us_socket_context_t`
+    /// allocation that was the root of the SSL_CTX-per-connect leak.
+    pub fn bun_connect_group<const SSL: bool>(
+        &mut self,
+        loop_: *mut uws::Loop,
+    ) -> &mut SocketGroup {
+        if SSL {
+            self.lazy(|s| &mut s.bun_connect_group_tls, loop_)
+        } else {
+            self.lazy(|s| &mut s.bun_connect_group_tcp, loop_)
         }
-        {
-            let $g = &mut $self.bun_connect_group_tcp;
-            $body
+    }
+    pub fn postgres_group<const SSL: bool>(&mut self, loop_: *mut uws::Loop) -> &mut SocketGroup {
+        if SSL {
+            self.lazy(|s| &mut s.postgres_tls_group, loop_)
+        } else {
+            self.lazy(|s| &mut s.postgres_group, loop_)
         }
-        {
-            let $g = &mut $self.bun_connect_group_tls;
-            $body
+    }
+    pub fn mysql_group<const SSL: bool>(&mut self, loop_: *mut uws::Loop) -> &mut SocketGroup {
+        if SSL {
+            self.lazy(|s| &mut s.mysql_tls_group, loop_)
+        } else {
+            self.lazy(|s| &mut s.mysql_group_, loop_)
         }
-        {
-            let $g = &mut $self.postgres_group;
-            $body
+    }
+    pub fn valkey_group<const SSL: bool>(&mut self, loop_: *mut uws::Loop) -> &mut SocketGroup {
+        if SSL {
+            self.lazy(|s| &mut s.valkey_tls_group, loop_)
+        } else {
+            self.lazy(|s| &mut s.valkey_group_, loop_)
         }
-        {
-            let $g = &mut $self.postgres_tls_group;
-            $body
+    }
+    pub fn ws_upgrade_group<const SSL: bool>(&mut self, loop_: *mut uws::Loop) -> &mut SocketGroup {
+        if SSL {
+            self.lazy(|s| &mut s.ws_upgrade_tls_group, loop_)
+        } else {
+            self.lazy(|s| &mut s.ws_upgrade_group_, loop_)
         }
-        {
-            let $g = &mut $self.mysql_group_;
-            $body
+    }
+    pub fn ws_client_group<const SSL: bool>(&mut self, loop_: *mut uws::Loop) -> &mut SocketGroup {
+        if SSL {
+            self.lazy(|s| &mut s.ws_client_tls_group, loop_)
+        } else {
+            self.lazy(|s| &mut s.ws_client_group_, loop_)
         }
-        {
-            let $g = &mut $self.mysql_tls_group;
-            $body
+    }
+
+    /// No socket is open, connecting or listening in any of these groups.
+    pub(crate) fn is_empty(&mut self) -> bool {
+        self.each().into_iter().all(|g| Self::group_is_empty(g))
+    }
+
+    /// Close every socket in these groups (JS thread), for a context that has stopped: nothing
+    /// connects for it any more, so one pass leaves them empty. Their close handlers run and
+    /// reach this set again ([`of`](Self::of)), so no borrow of it is held across one.
+    ///
+    /// # Safety
+    /// `this` is a live, boxed set.
+    pub(crate) unsafe fn close_all(this: *mut Self) {
+        for i in 0..Self::COUNT {
+            // SAFETY: fn contract; the borrow ends before `close_all` dispatches.
+            let group: *mut SocketGroup = unsafe { &mut *this }.each()[i];
+            // SAFETY: `group` is embedded in the live set.
+            unsafe {
+                if !(*group).loop_.is_null() {
+                    (*group).close_all();
+                }
+            }
         }
-        {
-            let $g = &mut $self.valkey_group_;
-            $body
+    }
+
+    fn group_is_empty(g: &SocketGroup) -> bool {
+        g.head_sockets.is_null()
+            && g.head_connecting_sockets.is_null()
+            && g.head_listen_sockets.is_null()
+            && g.low_prio_count == 0
+    }
+
+    /// Detach every group from the thread's uSockets loop (each is empty). Idempotent.
+    fn detach_from_loop(&mut self) {
+        for g in self.each() {
+            detach_group_from_loop(g);
         }
-        {
-            let $g = &mut $self.valkey_tls_group;
-            $body
-        }
-        {
-            let $g = &mut $self.ws_upgrade_group_;
-            $body
-        }
-        {
-            let $g = &mut $self.ws_upgrade_tls_group;
-            $body
-        }
-        {
-            let $g = &mut $self.ws_client_group_;
-            $body
-        }
-        {
-            let $g = &mut $self.ws_client_tls_group;
-            $body
-        }
-    }};
+    }
+}
+
+/// Detach an embedded, emptied group from its loop. Idempotent.
+fn detach_group_from_loop(g: &mut SocketGroup) {
+    // Groups whose lazy accessor was never called are still zero-initialised
+    // (`loop_ == null`, never `init`'d). The C `us_socket_group_deinit` happens
+    // to no-op on those, but `SocketGroup::destroy`'s safety contract requires a
+    // prior `init`, so honour it explicitly.
+    if !g.loop_.is_null() {
+        // SAFETY: embedded by-value group, previously `init`'d and emptied by
+        // its owner, so destroy reduces to the empty-list debug asserts.
+        unsafe { SocketGroup::destroy(std::ptr::from_mut::<SocketGroup>(g)) };
+        g.loop_ = core::ptr::null_mut();
+    }
+}
+
+impl Drop for SocketGroups {
+    fn drop(&mut self) {
+        self.detach_from_loop();
+    }
 }
 
 impl RareData {
@@ -801,20 +832,26 @@ impl RareData {
             .push(CleanupHook::from(global_this, ctx, func));
     }
 
-    pub fn spawn_sync_event_loop(&mut self, vm: &mut VirtualMachine) -> &mut SpawnSyncEventLoop {
+    /// `None` if the loop cannot be created; nothing is cached, so a later call retries.
+    pub fn spawn_sync_event_loop(
+        &mut self,
+        vm: &mut VirtualMachine,
+    ) -> Option<&mut SpawnSyncEventLoop> {
         if self.spawn_sync_event_loop_.is_none() {
             // In-place out-param init: `event_loop` inside captures the
             // `self` address, so the value must not move after init; allocate
             // the Box first, then init into it.
             let mut boxed = Box::<SpawnSyncEventLoop>::new_uninit();
-            SpawnSyncEventLoop::init(
+            if !SpawnSyncEventLoop::init(
                 &mut *boxed,
                 core::ptr::from_mut::<VirtualMachine>(vm).cast::<()>(),
-            );
-            // SAFETY: `init` fully initialised the slot.
+            ) {
+                return None;
+            }
+            // SAFETY: `init` fully initialised the slot when it returned `true`.
             self.spawn_sync_event_loop_ = Some(unsafe { boxed.assume_init() });
         }
-        self.spawn_sync_event_loop_.as_mut().unwrap()
+        self.spawn_sync_event_loop_.as_deref_mut()
     }
 
     // ── watch-mode listen sockets ─────────────────────────────────────────
@@ -850,72 +887,6 @@ impl RareData {
     }
     pub fn test_parallel_ipc_group(&mut self, loop_: *mut uws::Loop) -> &mut SocketGroup {
         Self::lazy_group(&mut self.test_parallel_ipc_group, loop_)
-    }
-    /// One shared group per (VM, ssl) for every `Bun.connect` / `tls.connect`
-    /// client socket. Replaces the old per-connection `us_socket_context_t`
-    /// allocation that was the root of the SSL_CTX-per-connect leak.
-    pub fn bun_connect_group<const SSL: bool>(
-        &mut self,
-        loop_: *mut uws::Loop,
-    ) -> &mut SocketGroup {
-        Self::lazy_group(
-            if SSL {
-                &mut self.bun_connect_group_tls
-            } else {
-                &mut self.bun_connect_group_tcp
-            },
-            loop_,
-        )
-    }
-    pub fn postgres_group<const SSL: bool>(&mut self, loop_: *mut uws::Loop) -> &mut SocketGroup {
-        Self::lazy_group(
-            if SSL {
-                &mut self.postgres_tls_group
-            } else {
-                &mut self.postgres_group
-            },
-            loop_,
-        )
-    }
-    pub fn mysql_group<const SSL: bool>(&mut self, loop_: *mut uws::Loop) -> &mut SocketGroup {
-        Self::lazy_group(
-            if SSL {
-                &mut self.mysql_tls_group
-            } else {
-                &mut self.mysql_group_
-            },
-            loop_,
-        )
-    }
-    pub fn valkey_group<const SSL: bool>(&mut self, loop_: *mut uws::Loop) -> &mut SocketGroup {
-        Self::lazy_group(
-            if SSL {
-                &mut self.valkey_tls_group
-            } else {
-                &mut self.valkey_group_
-            },
-            loop_,
-        )
-    }
-    pub fn ws_upgrade_group<const SSL: bool>(&mut self, loop_: *mut uws::Loop) -> &mut SocketGroup {
-        Self::lazy_group(
-            if SSL {
-                &mut self.ws_upgrade_tls_group
-            } else {
-                &mut self.ws_upgrade_group_
-            },
-            loop_,
-        )
-    }
-    pub fn ws_client_group<const SSL: bool>(&mut self, loop_: *mut uws::Loop) -> &mut SocketGroup {
-        Self::lazy_group(
-            if SSL {
-                &mut self.ws_client_tls_group
-            } else {
-                &mut self.ws_client_group_
-            },
-            loop_,
-        )
     }
 
     // ── close_all_socket_groups ───────────────────────────────────────────
@@ -1169,19 +1140,8 @@ impl RareData {
     pub(crate) fn detach_socket_groups_from_loop(&mut self) {
         // closeAllSocketGroups() must have already run (before JSC teardown) so
         // these are empty; deinit() asserts that in debug.
-        for_each_socket_group!(self, |g| {
-            // Groups whose lazy accessor was never called are still
-            // zero-initialised (`loop_ == null`, never `init`'d). The C
-            // `us_socket_group_deinit` happens to no-op on those, but
-            // `SocketGroup::destroy`'s safety contract requires a prior
-            // `init`, so honour it explicitly.
-            if !g.loop_.is_null() {
-                // SAFETY: embedded by-value group, previously `init`'d; the
-                // loop has already unlinked it (close_all_socket_groups ran),
-                // so destroy reduces to the empty-list debug asserts.
-                unsafe { SocketGroup::destroy(std::ptr::from_mut::<SocketGroup>(g)) };
-                g.loop_ = core::ptr::null_mut();
-            }
-        });
+        self.socket_groups.detach_from_loop();
+        detach_group_from_loop(&mut self.spawn_ipc_group);
+        detach_group_from_loop(&mut self.test_parallel_ipc_group);
     }
 }

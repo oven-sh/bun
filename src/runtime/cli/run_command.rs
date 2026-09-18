@@ -874,6 +874,14 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 Global::exit(1);
             }
 
+            // A request to an origin the environment proxies never dials it.
+            if VirtualMachine::get()
+                .env_loader()
+                .get_http_proxy_for(&url)
+                .is_some()
+            {
+                continue;
+            }
             bun_http::async_http::preconnect(url, false);
         }
     }
@@ -972,8 +980,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // hand the CLI's vectors over wholesale (process-lifetime, never freed).
         vm.preload = std::mem::take(&mut ctx.preloads);
         vm.argv = std::mem::take(&mut ctx.passthrough);
-        // `InitOptions` has no `store_fd` field, so set it on the resolver directly.
-        vm.transpiler.resolver.store_fd = ctx.debug.hot_reload != cli::command::HotReload::None;
         // `vm.dns_result_order` is a `u8` until the b2-cycle widens
         // it to `bun_dns::Order`; the enum is `#[repr(u8)]` so `as u8` is exact.
         vm.dns_result_order =
@@ -1168,6 +1174,10 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // SAFETY: `init_with_module_graph` returns the unique freshly-boxed VM
         // on this thread.
         let vm = unsafe { &mut *vm_ptr };
+        if graph.runtime_options.jit_policy > 1.0 {
+            vm.jsc_vm()
+                .set_startup_jit_deferral_scale(f64::from(graph.runtime_options.jit_policy));
+        }
 
         vm.preload = std::mem::take(&mut ctx.preloads);
         vm.argv = std::mem::take(&mut ctx.passthrough);

@@ -4736,6 +4736,10 @@ impl NodeFS {
     /// Gives a copied file the mode of its source. A FIFO or a device that was already at the
     /// destination path is not a copy, so it keeps its mode. The FICLONE paths call `fchmod`
     /// directly: the kernel clones only into a regular file.
+    ///
+    /// Node differs: libuv's `uv__fs_copyfile` runs `ftruncate(dstfd, 0)` first, which fails with
+    /// EINVAL on such a destination, so it throws and unlinks the path. Bun writes through and
+    /// leaves the node in place, which keeps `copyFile(x, "/dev/stdout")` working.
     #[cfg(not(windows))]
     fn copy_mode_to_regular_dest(dest_fd: FD, mode: Mode) {
         if matches!(Syscall::fstat(dest_fd), Ok(st) if sys::S::ISREG(st.st_mode as u32)) {

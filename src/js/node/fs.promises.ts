@@ -16,6 +16,8 @@ var PromisePrototypeFinally = $Promise.prototype.finally; //TODO
 var SymbolAsyncDispose = Symbol.asyncDispose;
 var ObjectFreeze = Object.freeze;
 
+const markAsUncloneable = $newCppFunction("Worker.cpp", "jsFunctionMarkAsUncloneable", 1);
+
 const kFd = Symbol("kFd");
 const kRefs = Symbol("kRefs");
 const kClosePromise = Symbol("kClosePromise");
@@ -424,6 +426,8 @@ function asyncWrap(fn: any, name: string) {
   class FileHandle extends EventEmitter {
     constructor(fd, flag, path?: string) {
       super();
+      // Node's FileHandle is a native host object the serializer rejects; Bun's is a JS class.
+      markAsUncloneable(this);
       this[kFd] = fd ? fd : -1;
       this[kRefs] = 1;
       this[kClosePromise] = null;

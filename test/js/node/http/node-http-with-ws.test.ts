@@ -3,7 +3,7 @@ import { bunEnv, bunExe, tls as options } from "harness";
 import http from "http";
 import https from "https";
 import { once } from "node:events";
-import type { AddressInfo } from "node:net";
+import net, { type AddressInfo } from "node:net";
 import tls from "tls";
 import { WebSocketServer, type WebSocket as WsWebSocket } from "ws";
 
@@ -161,4 +161,147 @@ describe.concurrent("request handlers run to completion before the callbacks the
     await closed;
     expect(order).toEqual(["rest of handler", "nextTick", "microtask"]);
   });
+});
+
+// A client may send frames before it has the 101 (RFC 6455 tells it to wait,
+// but npm ws on Node.js delivers them anyway). They reach the server either in
+// the head of the 'upgrade' event or as data on the raw socket while a
+// deferred handleUpgrade() waits. Both must reach the WebSocket's parser.
+describe.concurrent("frames the client sends before the 101", () => {
+  const upgradeRequest =
+    "GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
+    "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n";
+
+  // FIN + opcode, masked with a zero key (a server only requires that the mask bit is set).
+  function maskedFrame(opcode: number, payload: string) {
+    return Buffer.concat([Buffer.from([0x80 | opcode, 0x80 | payload.length, 0, 0, 0, 0]), Buffer.from(payload)]);
+  }
+  const text = (payload: string) => maskedFrame(0x1, payload);
+  const ping = (payload: string) => maskedFrame(0x9, payload);
+
+  // 'pushed-after-handoff': the server pushes the early bytes into the socket
+  // right after handleUpgrade() returns, like the task that delivers a chunk
+  // net.Socket read just before the handoff.
+  type Mode = "in-event" | "deferred" | "verifyClient" | "later-read" | "pushed-after-handoff";
+  const modes: Mode[] = ["in-event", "deferred", "verifyClient", "later-read", "pushed-after-handoff"];
+
+  // Runs one connection. `early` goes out before the 101, `afterUpgrade` right
+  // after it. Resolves with what the server's 'message' listener saw and the
+  // pong payloads the client received, once the "later" text frame has arrived
+  // at the server and `expectedPongs` pongs at the client.
+  async function run(mode: Mode, secure: boolean, early: Buffer, afterUpgrade: Buffer[], expectedPongs = 0) {
+    const seen: string[] = [];
+    const pongs: string[] = [];
+    const done = Promise.withResolvers<{ seen: string[]; pongs: string[] }>();
+    const settle = () => {
+      if (seen.includes("later") && pongs.length >= expectedPongs) done.resolve({ seen, pongs });
+    };
+    const onConnection = (ws: WsWebSocket) => {
+      ws.on("message", data => {
+        seen.push(String(data));
+        settle();
+      });
+    };
+
+    await using server = secure ? https.createServer(options) : http.createServer();
+    // 'later-read' mode: the client writes the early frame only once the
+    // server has the request, and the server upgrades only once that frame
+    // reached the raw socket.
+    const gotRequest = Promise.withResolvers<void>();
+    if (mode === "verifyClient") {
+      new WebSocketServer({ server, verifyClient: (_info, cb) => setImmediate(() => cb(true)) }).on(
+        "connection",
+        onConnection,
+      );
+    } else {
+      const wss = new WebSocketServer({ noServer: true });
+      server.on("upgrade", (req, socket, head) => {
+        const upgrade = () => wss.handleUpgrade(req, socket, head, onConnection);
+        if (mode === "in-event") upgrade();
+        else if (mode === "deferred") setImmediate(upgrade);
+        else if (mode === "pushed-after-handoff") {
+          upgrade();
+          socket.push(early);
+        } else {
+          socket.once("readable", () => setImmediate(upgrade));
+          gotRequest.resolve();
+        }
+      });
+    }
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const port = (server.address() as AddressInfo).port;
+
+    const client: net.Socket = secure
+      ? tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false })
+      : net.connect(port, "127.0.0.1");
+    client.on("error", () => {});
+    client.on("close", () => done.reject(new Error(`connection closed, server saw ${JSON.stringify(seen)}`)));
+    await once(client, secure ? "secureConnect" : "connect");
+    if (mode === "later-read") {
+      client.write(upgradeRequest);
+      await gotRequest.promise;
+      client.write(early);
+    } else if (mode === "pushed-after-handoff") {
+      client.write(upgradeRequest);
+    } else {
+      client.write(Buffer.concat([Buffer.from(upgradeRequest), early]));
+    }
+
+    let buffered = Buffer.alloc(0);
+    let gotHead = false;
+    client.on("data", chunk => {
+      buffered = Buffer.concat([buffered, chunk]);
+      if (!gotHead) {
+        const end = buffered.indexOf("\r\n\r\n");
+        if (end === -1) return;
+        const status = buffered.subarray(0, end).toString().split("\r\n")[0];
+        if (status !== "HTTP/1.1 101 Switching Protocols") {
+          done.reject(new Error(`upgrade failed: ${status}`));
+          return;
+        }
+        gotHead = true;
+        buffered = buffered.subarray(end + 4);
+        for (const frame of afterUpgrade) client.write(frame);
+      }
+      // Server frames are unmasked and short here: [opcode, length, payload].
+      while (buffered.length >= 2 && buffered.length >= 2 + (buffered[1] & 0x7f)) {
+        const length = buffered[1] & 0x7f;
+        if ((buffered[0] & 0x0f) === 0xa) pongs.push(buffered.subarray(2, 2 + length).toString());
+        buffered = buffered.subarray(2 + length);
+      }
+      settle();
+    });
+
+    try {
+      return await done.promise;
+    } finally {
+      client.destroy();
+    }
+  }
+
+  for (const secure of [false, true]) {
+    describe(secure ? "over TLS" : "over TCP", () => {
+      test.each(modes)("a whole frame, handleUpgrade() %s", async mode => {
+        expect(await run(mode, secure, text("early"), [text("later")])).toEqual({
+          seen: ["early", "later"],
+          pongs: [],
+        });
+      });
+
+      test.each(modes)("a frame cut in two by the 101, handleUpgrade() %s", async mode => {
+        const frame = text("early");
+        expect(await run(mode, secure, frame.subarray(0, 3), [frame.subarray(3), text("later")])).toEqual({
+          seen: ["early", "later"],
+          pongs: [],
+        });
+      });
+
+      test.each(modes)("a ping among the early frames, handleUpgrade() %s", async mode => {
+        expect(await run(mode, secure, Buffer.concat([text("early"), ping("k")]), [text("later")], 1)).toEqual({
+          seen: ["early", "later"],
+          pongs: ["k"],
+        });
+      });
+    });
+  }
 });

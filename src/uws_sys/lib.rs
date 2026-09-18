@@ -31,6 +31,9 @@ pub const LIBUS_SOCKET_IPV6_ONLY: core::ffi::c_int = 8;
 pub const LIBUS_LISTEN_REUSE_ADDR: core::ffi::c_int = 16;
 pub const LIBUS_SOCKET_OPEN_PAUSED: core::ffi::c_int = 256;
 
+/// `LIBUS_RECV_BUFFER_PADDING` (libusockets.h): writable bytes on each side of the loop's receive buffer.
+pub const LIBUS_RECV_BUFFER_PADDING: usize = 32;
+
 /// BoringSSL `SSL_CTX` (alias so callers don't need a direct boringssl dep).
 pub type SslCtx = bun_boringssl_sys::SSL_CTX;
 

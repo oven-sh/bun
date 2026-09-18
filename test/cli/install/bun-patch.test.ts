@@ -1,6 +1,6 @@
 import { $, ShellOutput } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { lstatSync, readdirSync, readFileSync } from "fs";
+import { lstatSync, readdirSync, readFileSync, readlinkSync } from "fs";
 import { bunEnv, bunExe, isASAN, tempDir, VerdaccioRegistry } from "harness";
 import { isAbsolute, join, sep } from "path";
 
@@ -202,24 +202,21 @@ describe("isolated linker: package with no folder at its hoisted path", () => {
   }
 
   // CI exports BUN_INSTALL_CACHE_DIR, which overrides the harness bunfig's per-test `cache`.
-  async function runBun(cwd: string, ...args: string[]) {
+  async function runOkIn(packageDir: string, cwd: string, ...args: string[]) {
     await using proc = Bun.spawn({
       cmd: [bunExe(), ...args],
       cwd,
-      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache") },
+      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache") },
       stdout: "pipe",
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { stdout, stderr, exitCode };
-  }
-
-  async function runOk(cwd: string, ...args: string[]) {
-    const { stdout, stderr, exitCode } = await runBun(cwd, ...args);
     expect(stderr).not.toContain("error:");
     expect(exitCode).toBe(0);
     return stdout;
   }
+
+  const runOk = (packageDir: string, ...args: string[]) => runOkIn(packageDir, packageDir, ...args);
 
   async function patch(cwd: string, arg: string, pkg: string, folder: string) {
     const stdout = await runOk(cwd, "patch", arg);
@@ -331,14 +328,15 @@ describe("isolated linker: package with no folder at its hoisted path", () => {
 
   // `peer-deps@1.0.0` has the peer dependency `no-deps`. Each workspace resolves it to another
   // version, so the package has one store entry for each workspace.
-  test.concurrent("a package with one store entry for each peer resolution", async () => {
-    const versions = ["1.0.0", "2.0.0"];
+  const peerVersions = ["1.0.0", "2.0.0"];
+
+  async function installPeerVariants() {
     const { packageDir } = await registry.createTestDir({
       bunfigOpts: { linker: "isolated" },
       files: {
         "package.json": JSON.stringify({ name: "app", workspaces: ["packages/*"] }),
         packages: Object.fromEntries(
-          versions.map(version => [
+          peerVersions.map(version => [
             `pkg-${version}`,
             {
               "package.json": JSON.stringify({
@@ -356,13 +354,19 @@ describe("isolated linker: package with no folder at its hoisted path", () => {
     const entries = readdirSync(join(packageDir, "node_modules", ".bun")).filter(entry =>
       entry.startsWith("peer-deps@1.0.0+"),
     );
-    expect(entries).toHaveLength(versions.length);
+    expect(entries).toHaveLength(peerVersions.length);
+    return { packageDir, entries };
+  }
 
-    const stdout = await runOk(packageDir, "patch", "peer-deps");
-    const folder = stdout.match(/bun patch --commit '([^']+)'/)?.[1];
+  const suggestedFolder = (stdout: string) => stdout.match(/bun patch --commit '([^']+)'/)![1];
+
+  test.concurrent("a package with one store entry for each peer resolution", async () => {
+    const { packageDir, entries } = await installPeerVariants();
+
+    const folder = suggestedFolder(await runOk(packageDir, "patch", "peer-deps"));
     expect(entries.map(entry => storeFolder(entry, "peer-deps"))).toContain(folder);
 
-    await Bun.write(join(packageDir, folder!, "index.js"), patched);
+    await Bun.write(join(packageDir, folder, "index.js"), patched);
     await runOk(packageDir, "patch", "--commit", "peer-deps");
 
     expect(kind(packageDir, "node_modules", "peer-deps")).toBe("missing");
@@ -370,6 +374,28 @@ describe("isolated linker: package with no folder at its hoisted path", () => {
       expect(await Bun.file(join(packageDir, storeFolder(entry, "peer-deps"), "index.js")).text()).toBe(patched);
     }
   });
+
+  // In a workspace, `bun patch` prepares the entry that this workspace links. The edits are then
+  // behind `node_modules/peer-deps` of the workspace, for its code and for `--commit` with that path.
+  const storeEntry = (path: string) => path.split(/[\\/]/).at(path.split(/[\\/]/).lastIndexOf(".bun") + 1);
+
+  for (const version of peerVersions) {
+    test.concurrent(`the store entry that the workspace pkg-${version} links`, async () => {
+      const { packageDir } = await installPeerVariants();
+      const workspace = join(packageDir, "packages", `pkg-${version}`);
+      const link = join(workspace, "node_modules", "peer-deps");
+
+      const folder = suggestedFolder(await runOkIn(packageDir, workspace, "patch", "peer-deps"));
+      expect(storeEntry(folder)).toBe(storeEntry(readlinkSync(link)));
+
+      await Bun.write(join(link, "index.js"), patched);
+      await runOkIn(packageDir, workspace, "patch", "--commit", "node_modules/peer-deps");
+
+      expect(await Bun.file(join(packageDir, "patches", "peer-deps@1.0.0.patch")).text()).toContain(
+        "+module.exports = 'patched';",
+      );
+    });
+  }
 
   // With the global store `node_modules/.bun/<entry>` is a link into the cache. An install puts
   // that link back over a directory it finds there, so a copy made in the store folder would

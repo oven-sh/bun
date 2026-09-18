@@ -265,7 +265,13 @@ pub fn do_patch_commit(
             )
             .as_bytes()
             .to_vec();
-            let changes_dir = installed_module_folder(manager, &lockfile, pkg_id, hoisted_folder);
+            let changes_dir = installed_module_folder(
+                manager,
+                &lockfile,
+                pkg_id,
+                workspace_package_id,
+                hoisted_folder,
+            );
             break 'brk (changes_dir, *lockfile.packages.get(pkg_id as usize));
         }
     };
@@ -895,6 +901,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
                     manager,
                     &manager.lockfile,
                     pkg_id,
+                    workspace_package_id,
                     resolve_path::join::<platform::Auto>(&[&folder_relative_path, name]).to_vec(),
                 );
 
@@ -1075,20 +1082,24 @@ fn installed_module_folder(
     manager: &PackageManager,
     lockfile: &Lockfile,
     pkg_id: PackageID,
+    workspace_package_id: PackageID,
     hoisted_folder: Vec<u8>,
 ) -> Vec<u8> {
     if folder_kind(&hoisted_folder) != FolderKind::Missing {
         return hoisted_folder;
     }
-    isolated_store_folder(manager, lockfile, pkg_id).unwrap_or(hoisted_folder)
+    isolated_store_folder(manager, lockfile, pkg_id, workspace_package_id).unwrap_or(hoisted_folder)
 }
 
-/// A package has one store entry for each set of peer dependencies it resolves with. The first
-/// entry that is in the project is the one `bun patch` and `bun patch --commit` both name.
+/// A package has one store entry for each set of peer dependencies it resolves with. The entry
+/// that `workspace_package_id` (the root, or the workspace of the current directory) loads comes
+/// first, so the `node_modules/<name>` link of that workspace leads to the folder that
+/// `bun patch` prepares. An entry that it does not load is used when there is no other.
 fn isolated_store_folder(
     manager: &PackageManager,
     lockfile: &Lockfile,
     pkg_id: PackageID,
+    workspace_package_id: PackageID,
 ) -> Option<Vec<u8>> {
     let store = handle_oom(build_store(
         manager,
@@ -1100,31 +1111,59 @@ fn isolated_store_folder(
     ));
     let name = lockfile.packages.items_name()[pkg_id as usize]
         .slice(lockfile.buffers.string_bytes.as_slice());
+    let entry_node_ids = store.entries.items_node_id();
+    let entry_dependencies = store.entries.items_dependencies();
     let node_pkg_ids = store.nodes.items_pkg_id();
-    let mut folder = Vec::new();
-    for (entry_idx, node_id) in store.entries.items_node_id().iter().enumerate() {
-        if node_pkg_ids[node_id.get() as usize] != pkg_id {
-            continue;
-        }
-        folder.clear();
+    let entry_pkg_id = |entry: usize| node_pkg_ids[entry_node_ids[entry].get() as usize];
+
+    let project_folder = |entry: usize| -> Option<Vec<u8>> {
+        let mut folder = Vec::new();
         write!(
             folder,
             "node_modules/.bun/{}",
-            store_entry::fmt_store_path(store_entry::Id::from(entry_idx as u32), &store, lockfile),
+            store_entry::fmt_store_path(store_entry::Id::from(entry as u32), &store, lockfile),
         )
         .expect("formatting into a Vec is infallible");
         // A link here leads into the global store. A copy detached from it does not survive the
         // next install: `link_project_to_global_store` replaces a real directory with the link.
         if folder_kind(&folder) != FolderKind::RealDir {
-            continue;
+            return None;
         }
         write!(folder, "/node_modules/{}", bstr::BStr::new(name))
             .expect("formatting into a Vec is infallible");
-        if folder_kind(&folder) == FolderKind::RealDir {
-            return Some(folder);
+        (folder_kind(&folder) == FolderKind::RealDir).then_some(folder)
+    };
+
+    // Breadth first from the current package: the nearest entry is the one it loads.
+    let mut seen = vec![false; entry_node_ids.len()];
+    let mut queue: Vec<usize> = Vec::new();
+    if let Some(start) =
+        (0..entry_node_ids.len()).find(|&entry| entry_pkg_id(entry) == workspace_package_id)
+    {
+        seen[start] = true;
+        queue.push(start);
+    }
+    let mut next = 0;
+    while let Some(&entry) = queue.get(next) {
+        next += 1;
+        if entry_pkg_id(entry) == pkg_id {
+            if let Some(folder) = project_folder(entry) {
+                return Some(folder);
+            }
+        }
+        for dependency in entry_dependencies[entry].slice() {
+            let Some(dependency_entry) = dependency.entry_id.try_get() else {
+                continue;
+            };
+            if !core::mem::replace(&mut seen[dependency_entry as usize], true) {
+                queue.push(dependency_entry as usize);
+            }
         }
     }
-    None
+
+    (0..entry_node_ids.len())
+        .filter(|&entry| !seen[entry] && entry_pkg_id(entry) == pkg_id)
+        .find_map(project_folder)
 }
 
 /// `git diff --no-index` reads a symlink operand as a file. A link to the package, for example

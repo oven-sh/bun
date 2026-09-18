@@ -223,12 +223,11 @@ impl<'a> Graph<'a> {
     /// `source_index`. It is the last entry of the asset's `additional_files`,
     /// not always the only one: an asset that is an entry point, or that an
     /// `onLoad` plugin gave a copied loader, has a `SourceIndex` entry first.
-    pub(crate) fn asset_output_file(&self, source_index: usize) -> Option<&options::OutputFile> {
+    /// Panics if the asset has no output file.
+    pub(crate) fn asset_output_file(&self, source_index: usize) -> &options::OutputFile {
         match self.input_files.items_additional_files()[source_index].last() {
-            Some(&AdditionalFile::OutputFile(id)) => {
-                Some(&self.additional_output_files[id as usize])
-            }
-            _ => None,
+            Some(&AdditionalFile::OutputFile(id)) => &self.additional_output_files[id as usize],
+            _ => bun_core::Output::panic(format_args!("Internal error: missing asset file")),
         }
     }
 

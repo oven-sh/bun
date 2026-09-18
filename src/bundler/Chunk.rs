@@ -7,7 +7,7 @@ use bun_alloc::AllocError;
 use bun_ast::{ImportKind, ImportRecord};
 use bun_ast::{Ref, Stmt};
 use bun_collections::{ArrayHashMap, AutoBitSet, VecExt, index_sort};
-use bun_core::{FeatureFlags, Output};
+use bun_core::FeatureFlags;
 // Note: `bun.ast.Index` is mirrored as both `crate::Index`
 // (`bun_ast::Index`) and `bun_ast::Index` via a
 // TYPE_ONLY split. `CssImportOrderKind::SourceIndex` carries the js_parser
@@ -789,15 +789,7 @@ impl IntermediateOutput {
                             }
 
                             let file_path: &[u8] = match piece.query.kind() {
-                                QueryKind::Asset => {
-                                    let Some(output_file) = graph.asset_output_file(index) else {
-                                        Output::panic(format_args!(
-                                            "Internal error: missing asset file"
-                                        ));
-                                    };
-
-                                    &output_file.dest_path
-                                }
+                                QueryKind::Asset => &graph.asset_output_file(index).dest_path,
                                 QueryKind::Chunk => &chunks[index].final_rel_path,
                                 QueryKind::Scb => {
                                     &chunks[entry_point_chunks_for_scb[index] as usize]
@@ -949,11 +941,7 @@ impl IntermediateOutput {
                                             .advance(&unique_key_for_additional_files[index]);
                                     }
 
-                                    // The counting pass above already found this asset's file.
-                                    break 'brk &graph
-                                        .asset_output_file(index)
-                                        .expect("asset has an output file")
-                                        .dest_path;
+                                    break 'brk &graph.asset_output_file(index).dest_path;
                                 }
                                 QueryKind::Chunk => 'brk: {
                                     let piece_chunk = &chunks[index];

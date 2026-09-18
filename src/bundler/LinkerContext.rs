@@ -2668,15 +2668,12 @@ impl<'a> LinkerContext<'a> {
                             let output_file = self
                                 .parse_graph()
                                 .asset_output_file(piece.query.index() as usize);
-                            debug_assert!(output_file.is_some());
-                            if let Some(output_file) = output_file {
-                                hash.write(bun_paths::resolve_path::relative_platform::<
-                                    bun_paths::resolve_path::platform::Posix,
-                                    false,
-                                >(
-                                    from_chunk_dir, &output_file.dest_path
-                                ));
-                            }
+                            hash.write(bun_paths::resolve_path::relative_platform::<
+                                bun_paths::resolve_path::platform::Posix,
+                                false,
+                            >(
+                                from_chunk_dir, &output_file.dest_path
+                            ));
                         }
                         crate::chunk::QueryKind::Chunk | crate::chunk::QueryKind::ChunkId => {
                             out.push(piece.query.index())

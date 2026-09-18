@@ -2761,8 +2761,7 @@ impl RunCommand {
         Some(joined.to_vec().into_boxed_slice())
     }
 
-    /// `path` names the file `entry` describes. The lexical `..` in
-    /// `absolutize_for_argv` can differ from the kernel's after a symlink.
+    /// Whether `path` is the same inode as `entry`.
     fn names_entry_file(path: &[u8], entry: &bun_sys::Stat) -> bool {
         if path.len() >= MAX_PATH_BYTES {
             return false;

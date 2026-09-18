@@ -611,6 +611,7 @@ pub enum Wildcard {
 impl Token {
     pub(crate) fn to_range(self, parsed: &version::ParseResult<u64>) -> Range {
         let version = &parsed.version;
+        let wildcard_is_written = parsed.valid && parsed.wildcard_written;
         match self.tag {
             // Allows changes that do not modify the left-most non-zero element in the [major, minor, patch] tuple
             TokenTag::Caret => {
@@ -618,6 +619,9 @@ impl Token {
                 let mut range = Range::default();
                 'done: {
                     let Some(major) = version.major else {
+                        if wildcard_is_written {
+                            range = Range::init_wildcard(version.min(), Wildcard::Major);
+                        }
                         break 'done;
                     };
                     range.left = Comparator {
@@ -654,6 +658,9 @@ impl Token {
                 let mut range = Range::default();
                 'done: {
                     let Some(major) = version.major else {
+                        if wildcard_is_written {
+                            range = Range::init_wildcard(version.min(), Wildcard::Major);
+                        }
                         break 'done;
                     };
                     range.left = Comparator {
@@ -696,7 +703,7 @@ impl Token {
         match self.wildcard {
             Wildcard::Major => match self.tag {
                 // https://github.com/npm/node-semver/blob/3a8a4309ae986c1967b3073ba88c9e69433d44cb/classes/range.js#L380-L387
-                TokenTag::Lt | TokenTag::Gt if parsed.valid && parsed.wildcard_written => Range {
+                TokenTag::Lt | TokenTag::Gt if wildcard_is_written => Range {
                     left: Comparator::null_set(),
                     ..Default::default()
                 },

@@ -551,7 +551,7 @@ describe("Bun.semver.satisfies()", () => {
 
   describe("a wildcard major after < or >", () => {
     // node-semver's replaceXRange turns `<x` and `>x` into `<0.0.0-0`, which no version satisfies.
-    // Every expectation in the first three tests is the answer of npm's semver 7.7.4.
+    // Every expectation but those of the last test is the answer of npm's semver 7.7.4 and 7.8.5.
     type Row = [range: string, version: string, expected: boolean];
     const check = (rows: Row[]) =>
       expect(rows.map(([range, version]) => [range, version, satisfies(version, range)])).toEqual(rows);
@@ -610,8 +610,27 @@ describe("Bun.semver.satisfies()", () => {
       ]);
     });
 
-    test("an operator before text that is not a version still allows any version", () => {
-      // npm calls these ranges invalid. Bun reads the comparator as `*`, and the rows above do not change that.
+    test("a wildcard major after ^ or ~ stays any version inside a union or an intersection", () => {
+      check([
+        ["^x || 1.0.0", "2.0.0", true],
+        ["~x || 1.0.0", "2.0.0", true],
+        ["^x.x || 1.0.0", "2.0.0", true],
+        ["~x.x.x || 1.0.0", "2.0.0", true],
+        ["^* || <1", "2.0.0", true],
+        ["1.0.0 || ^x", "2.0.0", true],
+        ["^x || <x", "1.0.0", true],
+        ["<x || ^x", "1.0.0", true],
+        ["~* || <*", "2.3.4", true],
+        [">x || ~X", "2.3.4", true],
+        ["^x >=3", "2.0.0", false],
+        ["^x >=3", "3.0.0", true],
+        [">=3 ~x", "2.0.0", false],
+        [">=3 ~x", "3.1.0", true],
+      ]);
+    });
+
+    test("an operator before text that is not a version keeps its reading", () => {
+      // npm calls these ranges invalid. Bun reads the text as `*` after `<` or `>`, and the rows above do not change that.
       check([
         [">latest", "1.0.0", true],
         ["<foo", "1.0.0", true],
@@ -622,6 +641,9 @@ describe("Bun.semver.satisfies()", () => {
         ["<xstate", "1.0.0", true],
         [">*next", "1.0.0", true],
         [">x.1.2.3", "1.0.0", true],
+        // after `^` the text adds no comparator
+        ["^latest || 1.0.0", "2.0.0", false],
+        ["^xenial || 1.0.0", "2.0.0", false],
       ]);
     });
   });

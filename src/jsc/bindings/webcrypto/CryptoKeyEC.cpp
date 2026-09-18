@@ -30,6 +30,7 @@
 
 #include "CryptoAlgorithmRegistry.h"
 #include "JsonWebKey.h"
+#include "OpenSSLUtilities.h"
 #include <wtf/text/Base64.h>
 
 namespace WebCore {
@@ -59,17 +60,23 @@ CryptoKeyEC::CryptoKeyEC(CryptoAlgorithmIdentifier identifier, NamedCurve curve,
     ASSERT(platformSupportedCurve(curve));
 }
 
-ExceptionOr<CryptoKeyPair> CryptoKeyEC::generatePair(CryptoAlgorithmIdentifier identifier, const String& curve, bool extractable, CryptoKeyUsageBitmap usages)
+void CryptoKeyEC::generatePair(CryptoAlgorithmIdentifier identifier, const String& curve, bool extractable, CryptoKeyUsageBitmap usages, KeyPairCallback&& callback, FailureCallback&& failureCallback, ScriptExecutionContext& context)
 {
     auto namedCurve = toNamedCurve(curve);
-    if (!namedCurve || !platformSupportedCurve(*namedCurve))
-        return Exception { NotSupportedError };
+    if (!namedCurve || !platformSupportedCurve(*namedCurve)) {
+        failureCallback(NotSupportedError);
+        return;
+    }
 
-    auto result = platformGeneratePair(identifier, *namedCurve, extractable, usages);
-    if (!result)
-        return Exception { OperationError };
-
-    return WTF::move(*result);
+    generateKeyPairInWorkQueue(
+        context,
+        [namedCurve = *namedCurve] { return platformGeneratePair(namedCurve); },
+        [identifier, namedCurve = *namedCurve, extractable, usages, callback = WTF::move(callback)](EvpKeyPair&& keys) {
+            auto publicKey = CryptoKeyEC::create(identifier, namedCurve, CryptoKeyType::Public, WTF::move(keys.publicKey), true, usages);
+            auto privateKey = CryptoKeyEC::create(identifier, namedCurve, CryptoKeyType::Private, WTF::move(keys.privateKey), extractable, usages);
+            callback(CryptoKeyPair { WTF::move(publicKey), WTF::move(privateKey) });
+        },
+        [failureCallback = WTF::move(failureCallback)] { failureCallback(OperationError); });
 }
 
 RefPtr<CryptoKeyEC> CryptoKeyEC::importRaw(CryptoAlgorithmIdentifier identifier, const String& curve, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap usages)

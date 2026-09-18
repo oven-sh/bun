@@ -13,7 +13,8 @@ class PhonyWorkQueue : public WTF::RefCounted<PhonyWorkQueue> {
 public:
     static Ref<PhonyWorkQueue> create(WTF::ASCIILiteral name);
 
-    void dispatch(JSC::JSGlobalObject* globalObject, Function<void()>&&);
+    // Holds no state, so a caller without a queue at hand calls this directly.
+    static void dispatch(JSC::JSGlobalObject* globalObject, Function<void()>&&);
 };
 
 }; // namespace Bun

@@ -1498,9 +1498,11 @@ class ChildProcess extends EventEmitter {
         this.#handle = null;
         ex.syscall = "spawn " + this.spawnfile;
         ex.spawnargs = Array.prototype.slice.$call(this.spawnargs, 1);
+        const exitCode = (ex as SystemError).errno ?? -1;
+        this.exitCode = exitCode;
         process.nextTick(() => {
           this.emit("error", ex);
-          this.emit("close", (ex as SystemError).errno ?? -1);
+          this.emit("close", exitCode);
         });
         if (exCode === "EMFILE" || exCode === "ENFILE") {
           // emfile/enfile error; in this case node does not initialize stdio streams.

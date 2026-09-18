@@ -62,6 +62,7 @@ describe.concurrent("--offline with an optional dependency that is not in the ca
     "optional-dup-a": { "1.0.0": { optionalDependencies: { dup: "1.0.0" } } },
     "optional-dup-b": { "1.0.0": { optionalDependencies: { dup: "1.0.0" } } },
     "scanner": { "1.0.0": { main: "index.js" } },
+    "scanner-with-native": { "1.0.0": { main: "index.js", optionalDependencies: { native: "1.0.0" } } },
     "leaf": { "1.0.0": {}, "2.0.0": {} },
     "plain": { "1.0.0": {} },
   };
@@ -363,6 +364,18 @@ describe.concurrent("--offline with an optional dependency that is not in the ca
         versions: {},
       });
       expect(code).toBe(0);
+    });
+
+    it("still reports a package that the install of a security scanner skipped", async () => {
+      // The scanner is installed first, on its own. That install skips native and leaf.
+      const r = await installOfflineAfterOnline(linker, {
+        manifest: { devDependencies: { "scanner-with-native": "1.0.0" }, dependencies: { "uses-leaf": "1.0.0" } },
+        scanner: "scanner-with-native",
+        evict: cacheEntriesOf("native", "leaf"),
+      });
+      expect(r.err).toContain('error: --offline: "leaf" is not in the cache');
+      expect(r.requests).toEqual([]);
+      expect(r.code).toBe(1);
     });
 
     it("fails the install of a security scanner that is not in the cache", async () => {

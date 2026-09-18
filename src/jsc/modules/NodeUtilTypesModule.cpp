@@ -729,18 +729,27 @@ static bool compareBranch(JSC::JSGlobalObject* globalObject, JSC::MarkedArgument
     if (actualIsKeyObject || expectedIsKeyObject) {
         if (!actualIsKeyObject || !expectedIsKeyObject)
             return false;
-        // KeyObject.prototype.equals, called like the JS implementation did.
-        JSC::JSObject* actualObject = actual.getObject();
-        JSValue equalsFunction = actualObject->get(globalObject, JSC::Identifier::fromString(vm, "equals"_s));
+        auto& actualHandle = uncheckedDowncast<Bun::JSKeyObject>(actual.asCell())->handle();
+        auto& expectedHandle = uncheckedDowncast<Bun::JSKeyObject>(expected.asCell())->handle();
+        bool equal = actualHandle.deepEquals(globalObject, scope, expectedHandle);
         RETURN_IF_EXCEPTION(scope, false);
-        auto callData = JSC::getCallData(equalsFunction);
-        if (callData.type == JSC::CallData::Type::None)
+        if (!equal)
             return false;
-        JSC::MarkedArgumentBuffer args;
-        args.append(expected);
-        JSValue result = JSC::call(globalObject, equalsFunction, callData, actual, args);
+        return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, objectSubset);
+    }
+
+    const bool actualIsCryptoKey = actual.isCell() && actual.asCell()->inherits<WebCore::JSCryptoKey>();
+    const bool expectedIsCryptoKey = expected.isCell() && expected.asCell()->inherits<WebCore::JSCryptoKey>();
+    if (actualIsCryptoKey || expectedIsCryptoKey) {
+        if (!actualIsCryptoKey || !expectedIsCryptoKey)
+            return false;
+        auto* actualKey = uncheckedDowncast<WebCore::JSCryptoKey>(actual.asCell());
+        auto* expectedKey = uncheckedDowncast<WebCore::JSCryptoKey>(expected.asCell());
+        bool equal = Bun::KeyObject::cryptoKeysDeepEqual(globalObject, scope, actualKey, expectedKey, [&](JSValue actualAlgorithm, JSValue expectedAlgorithm) {
+            return compareBranch(globalObject, gcBuffer, cycles, scope, actualAlgorithm, expectedAlgorithm);
+        });
         RETURN_IF_EXCEPTION(scope, false);
-        if (!result.toBoolean(globalObject))
+        if (!equal)
             return false;
         return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, objectSubset);
     }

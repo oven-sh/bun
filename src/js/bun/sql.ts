@@ -21,8 +21,7 @@ enum ReservedConnectionState {
   acceptQueries = 1 << 0,
   closed = 1 << 1,
   released = 1 << 2,
-  /// The connection closed under the handle. Its pool slot reconnects and goes to
-  /// another caller, so a query from this handle must not run on the slot again.
+  /// the connection closed while the handle was live
   disconnected = 1 << 3,
 }
 
@@ -185,6 +184,7 @@ const SQL: typeof Bun.SQL = function SQL(
       return query.reject(pool.queryCancelledError());
     }
 
+    // the slot reconnects for other callers, so pooledConnection.connection is no longer this handle's
     if (state.connectionState & ReservedConnectionState.disconnected) {
       transactionQueries.delete(query);
       return query.reject(pool.connectionClosedError());

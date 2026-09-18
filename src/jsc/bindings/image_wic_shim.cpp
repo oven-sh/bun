@@ -54,9 +54,4 @@ extern "C" int32_t bun_wic_propbag_write_u8(void* props, const wchar_t* name, ui
     return write1(props, name, VT_UI1, [](VARIANT& var) { var.bVal = v; });
 }
 
-#else
-// Stubs so the symbols exist everywhere; backend_wic.rs is Windows-only so
-// these are never called, but the linker wants them.
-extern "C" int bun_wic_propbag_write_f32(void*, const void*, float) { return 0; }
-extern "C" int bun_wic_propbag_write_u8(void*, const void*, unsigned char) { return 0; }
-#endif
+#endif // defined(_WIN32)

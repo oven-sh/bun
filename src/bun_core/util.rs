@@ -3838,8 +3838,7 @@ pub(crate) fn set_bun_options_argc(n: usize) {
 }
 
 /// Trait for arg types accepted by [`append_options_env`].
-/// Impl'd for `bun_core::String`
-/// and `Box<ZStr>` in their owning crates.
+/// Impl'd for `&'static ZStr` and `bun_core::String`.
 pub trait OptionsEnvArg {
     fn from_slice(s: &[u8]) -> Self;
     fn from_buf(buf: Vec<u8>) -> Self;
@@ -3860,22 +3859,6 @@ impl OptionsEnvArg for &'static ZStr {
         buf.push(0);
         let z: &'static [u8] = buf.leak();
         ZStr::from_slice_with_nul(z)
-    }
-}
-
-/// Owned `Box<ZStr>` arm of `appendOptionsEnv` — used by `bun::init_argv`'s
-/// BUN_OPTIONS splice path, which stores argv entries as `Box<ZStr>`.
-impl OptionsEnvArg for Box<ZStr> {
-    fn from_slice(s: &[u8]) -> Self {
-        ZStr::boxed(s)
-    }
-    fn from_buf(mut buf: Vec<u8>) -> Self {
-        buf.push(0);
-        let b: Box<[u8]> = buf.into_boxed_slice();
-        // SAFETY: `ZStr` is `#[repr(transparent)]` over `[u8]`; the fat-pointer
-        // metadata (len includes the trailing NUL) is preserved by the cast —
-        // identical to `ZStr::boxed` but consuming the Vec without re-copying.
-        unsafe { crate::heap::take(crate::heap::into_raw(b) as *mut ZStr) }
     }
 }
 

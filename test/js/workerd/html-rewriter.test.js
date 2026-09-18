@@ -2969,6 +2969,39 @@ describe("tagName, endTag.name, and comment.text setters", () => {
     expect(out).toBe("<p>A<!--B--></p>");
   });
 
+  describe("comment.text and the sequences that end a comment", () => {
+    // The tokenizer ends a comment at `-->` and at `--!>` anywhere in its text,
+    // and at a leading `>` or `->` (`<!-->` and `<!--->` are empty comments).
+    // Anything after one of these is outside the comment, so it is markup.
+    const markup = "<img src=x onerror=alert(1)>";
+    const setText = text =>
+      new HTMLRewriter()
+        .on("p", {
+          comments(comment) {
+            comment.text = text;
+          },
+        })
+        .transform("<p><!--c--></p>");
+
+    it.each(["x-->", "x--!>", ">", "->"].flatMap(end => [end, end + markup]))("%j is rejected", text => {
+      expect(() => setText(text)).toThrow("Comment text shouldn't contain a comment-closing sequence.");
+    });
+
+    // Text that only resembles one of them stays valid: a second parse reads it
+    // back as the one comment inside `<p>`, and finds no other element.
+    const accepted = ["", "-", "--", "--!", "x--!", "x--", "a>b", "a->b", "a--!b", "x<!--", "x" + markup];
+    it.each(accepted)("%j is accepted", text => {
+      const out = setText(text);
+      const comments = [];
+      const elements = [];
+      new HTMLRewriter()
+        .onDocument({ comments: comment => void comments.push(comment.text) })
+        .on("*", { element: el => void elements.push(el.tagName) })
+        .transform(out);
+      expect({ out, comments, elements }).toEqual({ out: `<p><!--${text}--></p>`, comments: [text], elements: ["p"] });
+    });
+  });
+
   it("setters on a detached wrapper are a no-op and never coerce the value", () => {
     let savedElement;
     let savedEndTag;

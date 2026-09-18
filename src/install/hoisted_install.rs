@@ -392,8 +392,7 @@ pub(crate) fn install_hoisted_packages(
                     for _i in 0..trees_count {
                         trees.push(TreeContext {
                             binaries: bin::PriorityQueue::init(bin::PriorityQueueContext {
-                                dependencies: buf_deps,
-                                string_buf: buf_strings,
+                                lockfile: lockfile_ref,
                             }),
                             pending_installs: Vec::new(),
                             install_count: 0,

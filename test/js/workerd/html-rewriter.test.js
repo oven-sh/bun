@@ -1965,7 +1965,8 @@ describe("HTMLRewriter", () => {
   // The selector VM used to re-run every ancestor's descendant-combinator jumps
   // for every start tag, so "div div div div" over N nested <div>s was O(N^4):
   // depth 600 (6.6 KB) took about two minutes. A stray end tag scanned the whole
-  // open stack, so "<a></b>" x 40k was O(N^2). The spawn timeout is the assertion.
+  // open stack, so "<a></b>" x 40k was O(N^2). The test timeout is the assertion:
+  // the runner kills the child when it fires.
   it("descendant combinators and stray end tags stay linear in nesting depth", async () => {
     const depth = 600;
     const fixture = /* js */ `
@@ -1985,8 +1986,6 @@ describe("HTMLRewriter", () => {
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
-      timeout: 30_000,
-      killSignal: "SIGKILL",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
@@ -1994,7 +1993,7 @@ describe("HTMLRewriter", () => {
       stderr: "",
       exitCode: 0,
     });
-  }, 40_000);
+  });
 
   it("supports deleting innerContent", async () => {
     expect(

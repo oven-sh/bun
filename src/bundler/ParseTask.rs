@@ -1009,6 +1009,7 @@ pub mod parse_worker {
                     Some(b"text/plain"),
                     None,
                     topts.compile_mode.is_standalone_html(),
+                    topts.asset_inline_limit,
                 );
                 return Ok(ast);
             }
@@ -1050,6 +1051,7 @@ pub mod parse_worker {
                     Some(b"text/html"),
                     None,
                     topts.compile_mode.is_standalone_html(),
+                    topts.asset_inline_limit,
                 );
                 return Ok(ast);
             }
@@ -1354,7 +1356,7 @@ pub mod parse_worker {
             Loader::Dataurl | Loader::Base64 | Loader::Bunsh => {
                 return get_empty_ast::<E::String>(log, transpiler, opts, bump, source);
             }
-            Loader::File | Loader::Wasm => {
+            Loader::File | Loader::Url | Loader::Wasm => {
                 debug_assert!(loader.should_copy_for_bundling());
 
                 // Put a unique key in the AST to implement the URL loader. At the end
@@ -1415,13 +1417,20 @@ pub mod parse_worker {
                     )?
                     .ok_or(AnyError::ParserError)?,
                 );
-                ast.add_url_for_css(
-                    bump,
-                    source,
-                    None,
-                    Some(unique_key),
-                    topts.compile_mode.is_standalone_html(),
-                );
+                // `file` always emits; `url` inlines CSS references below
+                // `asset_inline_limit`; standalone HTML inlines everything.
+                let force_inline = topts.compile_mode.is_standalone_html();
+                let should_inline_for_css = force_inline || loader == Loader::Url;
+                if should_inline_for_css {
+                    ast.add_url_for_css(
+                        bump,
+                        source,
+                        None,
+                        Some(unique_key),
+                        force_inline,
+                        topts.asset_inline_limit,
+                    );
+                }
                 return Ok(ast);
             }
         }
@@ -2262,7 +2271,7 @@ pub mod parse_worker {
             .loader
             // SAFETY: `options` is a disjoint field of the live `*transpiler`.
             .or_else(|| file_path.loader(unsafe { &(*transpiler).options.loaders }))
-            .unwrap_or(Loader::File);
+            .unwrap_or(Loader::Url);
 
         let mut contents_came_from_plugin: bool = false;
         let result = get_code_for_parse_task(
@@ -2334,7 +2343,7 @@ pub mod parse_worker {
             .loader
             // SAFETY: `options` is a disjoint field of the live `*transpiler` (see .rs:1955).
             .or_else(|| file_path.loader(unsafe { &(*transpiler).options.loaders }))
-            .unwrap_or(Loader::File);
+            .unwrap_or(Loader::Url);
 
         // WARNING: Do not change the variant of `task.contents_or_fd` from
         // `.fd` to `.contents` (or back) after this point!

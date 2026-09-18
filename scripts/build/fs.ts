@@ -34,9 +34,8 @@ export function writeIfChanged(path: string, content: string): boolean {
  * Create multiple directories (and their parents). Deduplicates so
  * `["a/b/c", "a/b/d"]` only stats/creates `a/b` once.
  *
- * Used at configure time to pre-create all object-file parent dirs —
- * ninja doesn't mkdir, and we don't want N×mkdir syscalls for the same
- * directory when compiling N files that share a parent.
+ * Used at configure time to pre-create all object-file parent dirs without
+ * N×mkdir syscalls for the same directory when N files share a parent.
  */
 export function mkdirAll(dirs: Iterable<string>): void {
   const seen = new Set<string>();

@@ -2036,7 +2036,7 @@ impl EString {
         }
     }
 
-    /// Link `other` onto this string's rope tail.
+    /// Link `other` onto this string's rope tail. Mutates both ropes: neither may have another owner.
     ///
     /// `other` MUST be Store/arena-allocated (callers pass
     /// `Expr::init(EString, ...).data.e_string_mut()` or a freshly

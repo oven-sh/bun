@@ -228,10 +228,10 @@ impl readable_stream::SourceContext for ByteStream {
     }
     fn to_buffered_value(
         &mut self,
-        global: &JSGlobalObject,
+        cx: &bun_jsc::JsThread<'_>,
         action: streams::BufferActionTag,
     ) -> Option<bun_jsc::JsResult<JSValue>> {
-        Some(Self::to_buffered_value(self, global, action))
+        Some(Self::to_buffered_value(self, cx, action))
     }
 }
 
@@ -303,9 +303,16 @@ impl ByteStream {
         })
     }
 
-    pub(crate) fn unpipe_without_deref(&self) {
-        self.sink.set(SinkHandle::None);
+    /// Drop the native sink and end the stream locked to it: errored with the producer's `err`, else closed.
+    pub(crate) fn detach_sink(&self, err: Option<&streams::StreamError>) {
         self.sink_paused.set(false);
+        if self.sink.replace(SinkHandle::None).is_some() {
+            self.parent_const().end_locked_stream(err);
+        }
+    }
+
+    pub(crate) fn unpipe_without_deref(&self) {
+        self.detach_sink(None);
     }
 
     /// The sink is gone before the stream ended (its peer went away). The stream stays
@@ -350,12 +357,12 @@ impl ByteStream {
                     return;
                 }
                 streams::Writable::Err(e) => {
-                    self.sink.set(SinkHandle::None);
+                    self.detach_sink(None);
                     sink.end(Some(streams::StreamError::Error(e)));
                     return;
                 }
                 streams::Writable::Done => {
-                    self.sink.set(SinkHandle::None);
+                    self.detach_sink(None);
                     sink.end(None);
                     return;
                 }
@@ -375,15 +382,14 @@ impl ByteStream {
         }
 
         if self.has_received_last_chunk.get() && self.sink.get().is_some() {
-            self.sink.set(SinkHandle::None);
+            self.detach_sink(None);
             sink.end(None);
         }
     }
 
     /// Sink closed early: detach and drive the NewSource cancel path.
     pub fn cancel_from_sink(&self, _err: Option<SysError>) {
-        self.sink.set(SinkHandle::None);
-        self.sink_paused.set(false);
+        self.detach_sink(None);
         if self.done.get() {
             return;
         }
@@ -439,8 +445,7 @@ impl ByteStream {
         if sink.is_some() {
             // Upstream error must reach the sink even while back-pressured.
             if let streams::Result::Err(err) = stream {
-                self.sink.set(SinkHandle::None);
-                self.sink_paused.set(false);
+                self.detach_sink(Some(&err));
                 sink.end(Some(err));
                 return;
             }
@@ -458,14 +463,12 @@ impl ByteStream {
                     self.sink_paused.set(true);
                 }
                 streams::Writable::Err(e) => {
-                    self.sink.set(SinkHandle::None);
-                    self.sink_paused.set(false);
+                    self.detach_sink(None);
                     sink.end(Some(streams::StreamError::Error(e)));
                     return;
                 }
                 streams::Writable::Done => {
-                    self.sink.set(SinkHandle::None);
-                    self.sink_paused.set(false);
+                    self.detach_sink(None);
                     sink.end(None);
                     return;
                 }
@@ -475,7 +478,7 @@ impl ByteStream {
             }
 
             if is_done && !self.sink_paused.get() && self.sink.get().is_some() {
-                self.sink.set(SinkHandle::None);
+                self.detach_sink(None);
                 sink.end(None);
             }
             return;
@@ -796,9 +799,9 @@ impl ByteStream {
         self.pending_value.with_mut(|pv| pv.deinit());
         // A native sink wired to this stream must fail, not later see an EOF and commit what it
         // has (an S3 upload would complete with a truncated object).
-        let sink = self.sink.replace(SinkHandle::None);
+        let sink = *self.sink.get();
         if sink.is_some() {
-            self.sink_paused.set(false);
+            self.detach_sink(None);
             sink.end(Some(streams::StreamError::AbortReason(
                 jsc::CommonAbortReason::UserAbort,
             )));
@@ -920,15 +923,15 @@ impl ByteStream {
 
     fn to_buffered_value(
         &self,
-        global_this: &JSGlobalObject,
+        cx: &bun_jsc::JsThread<'_>,
         action: streams::BufferActionTag,
     ) -> bun_jsc::JsResult<JSValue> {
         if self.buffer_action.get().is_some() {
-            return Err(global_this.throw(format_args!("Cannot buffer value twice")));
+            return Err(cx.global().throw(format_args!("Cannot buffer value twice")));
         }
 
         if let streams::Result::Err(err) = &self.pending.get().result {
-            let err_js = err.to_js(global_this);
+            let err_js = err.to_js(cx.global());
             err_js.ensure_still_alive();
             self.pending.with_mut(|p| p.result = streams::Result::Done);
             self.done.set(true);
@@ -936,16 +939,15 @@ impl ByteStream {
                 b.clear();
                 b.shrink_to_fit();
             });
-            return Ok(jsc::JSPromise::rejected_promise(global_this, err_js).to_js());
+            return Ok(jsc::JSPromise::rejected_promise(cx.global(), err_js).to_js());
         }
 
         if let Some(blob_) = self.to_any_blob() {
             let mut blob = blob_;
-            return blob.to_promise(global_this, action);
+            return blob.to_promise(cx, action);
         }
 
-        self.buffer_action
-            .set(Some(BufferAction::new(action, global_this)));
+        self.buffer_action.set(Some(BufferAction::new(action, cx)));
         let promise = self.buffer_action.get().as_ref().unwrap().value();
         // Signal after the action is installed so a backpressure-gated
         // producer observes it; a synchronous producer may fulfil it inline.

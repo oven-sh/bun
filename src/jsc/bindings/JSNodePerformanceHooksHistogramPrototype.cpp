@@ -12,6 +12,7 @@
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/JSMap.h>
 #include <JavaScriptCore/JSMapInlines.h>
+#include <JavaScriptCore/MathCommon.h>
 
 namespace Bun {
 
@@ -59,26 +60,25 @@ JSC_DEFINE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncRecord, (JSGlob
         return {};
     }
 
-    if (callFrame->argumentCount() < 1) {
-        Bun::ERR::MISSING_ARGS(scope, globalObject, "record requires at least one argument"_s);
-        return {};
-    }
-
-    JSValue arg = callFrame->uncheckedArgument(0);
+    // Same checks as Node.js: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/histogram.js#L284-L295
+    JSValue arg = callFrame->argument(0);
     int64_t value;
-    if (arg.isNumber()) {
-        value = truncateDoubleToInt64(arg.asNumber());
+    if (arg.isNumber() && arg.asNumber() >= 1 && JSC::isSafeInteger(arg.asNumber())) [[likely]] {
+        // Hot path: a valid sample does not pay for the validateInteger call.
+        value = static_cast<int64_t>(arg.asNumber());
     } else if (arg.isBigInt()) {
+        // It has to fit in an int64: https://github.com/nodejs/node/blob/v26.3.0/src/histogram.cc#L173-L185
         auto* bigInt = uncheckedDowncast<JSBigInt>(arg);
+        if (JSBigInt::compare(bigInt, static_cast<int64_t>(1)) == JSBigInt::ComparisonResult::LessThan
+            || JSBigInt::compare(bigInt, std::numeric_limits<int64_t>::max()) == JSBigInt::ComparisonResult::GreaterThan) {
+            return Bun::ERR::OUT_OF_RANGE(scope, globalObject, "value is out of range"_s);
+        }
         value = JSBigInt::toBigInt64(bigInt);
     } else {
-        Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "value"_s, "number or BigInt"_s, arg);
-        return {};
-    }
-
-    if (value < 1) {
-        Bun::ERR::OUT_OF_RANGE(scope, globalObject, "value is out of range (must be >= 1)"_s);
-        return {};
+        ssize_t integer = 0;
+        Bun::V::validateInteger(scope, globalObject, arg, "val"_s, jsNumber(1), jsUndefined(), &integer);
+        RETURN_IF_EXCEPTION(scope, {});
+        value = integer;
     }
 
     thisObject->record(value);
@@ -144,7 +144,8 @@ JSC_DEFINE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncReset, (JSGloba
 
 static double toPercentile(JSC::ThrowScope& scope, JSGlobalObject* globalObject, JSValue value)
 {
-    Bun::V::validateNumber(scope, globalObject, value, "percentile"_s, jsNumber(0), jsNumber(100));
+    // Type check only, like Node.js: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/histogram.js#L189-L197
+    Bun::V::validateNumber(scope, globalObject, value, "percentile"_s, jsUndefined(), jsUndefined());
     RETURN_IF_EXCEPTION(scope, {});
 
     // TODO: rewrite validateNumber to return the validated value.
@@ -167,12 +168,7 @@ JSC_DEFINE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncPercentile, (JS
         return {};
     }
 
-    if (callFrame->argumentCount() < 1) {
-        Bun::ERR::MISSING_ARGS(scope, globalObject, "percentile requires an argument"_s);
-        return {};
-    }
-
-    double percentile = toPercentile(scope, globalObject, callFrame->uncheckedArgument(0));
+    double percentile = toPercentile(scope, globalObject, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, {});
 
     return JSValue::encode(jsNumber(static_cast<double>(thisObject->getPercentile(percentile))));
@@ -189,12 +185,7 @@ JSC_DEFINE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncPercentileBigIn
         return {};
     }
 
-    if (callFrame->argumentCount() < 1) {
-        Bun::ERR::MISSING_ARGS(scope, globalObject, "percentileBigInt requires an argument"_s);
-        return {};
-    }
-
-    double percentile = toPercentile(scope, globalObject, callFrame->uncheckedArgument(0));
+    double percentile = toPercentile(scope, globalObject, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, {});
 
     RELEASE_AND_RETURN(scope, JSValue::encode(JSBigInt::createFrom(globalObject, thisObject->getPercentile(percentile))));
@@ -237,11 +228,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodePerformanceHooksHistogramGetter_min, (JSGlobalObj
         return {};
     }
 
-    int64_t minValue = thisObject->getMin();
-
-    // Node.js returns the value as if it were unsigned when converting to double
-    // This handles the special case where the initial value is INT64_MIN
-    return JSValue::encode(jsNumber(static_cast<double>(static_cast<uint64_t>(minValue))));
+    return JSValue::encode(jsNumber(static_cast<double>(thisObject->getMin())));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsNodePerformanceHooksHistogramGetter_minBigInt, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
@@ -253,13 +240,6 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodePerformanceHooksHistogramGetter_minBigInt, (JSGlo
     if (!thisObject) [[unlikely]] {
         WebCore::throwThisTypeError(*globalObject, scope, "Histogram"_s, "minBigInt"_s);
         return {};
-    }
-
-    // Node.js returns different initial values for min vs minBigInt
-    // min returns 9223372036854776000 (as double)
-    // minBigInt returns 9223372036854775807n (INT64_MAX)
-    if (thisObject->getCount() == 0) {
-        RELEASE_AND_RETURN(scope, JSValue::encode(JSBigInt::createFrom(globalObject, INT64_MAX)));
     }
 
     RELEASE_AND_RETURN(scope, JSValue::encode(JSBigInt::createFrom(globalObject, thisObject->getMin())));

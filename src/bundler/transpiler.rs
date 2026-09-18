@@ -547,11 +547,11 @@ impl<'a> Transpiler<'a> {
     ) -> crate::Result<resolver::Result> {
         let is_builtin = if resolved.flags.is_external() {
             true
-        } else if resolved.path_const().is_some() {
-            return Ok(resolved);
         } else {
-            // Stubbed builtins carry the "node" namespace; anything else came from a "browser" map.
-            resolved.path_pair.primary.namespace == b"node"
+            match resolved.path_or_disabled() {
+                Ok(_) => return Ok(resolved),
+                Err(reason) => reason == resolver::DisabledReason::NodeBuiltin,
+            }
         };
 
         if is_builtin {

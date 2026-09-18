@@ -286,13 +286,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if p.lexer.token == T::TColon {
                     p.lexer.next()?;
                     if !rest_arg {
+                        let is_decorated = opts.has_argument_decorators
+                            || opts.has_decorators
+                            || arg_has_decorators;
                         if p.options.features.emit_decorator_metadata
                             && opts.allow_ts_decorators
-                            && (opts.has_argument_decorators
-                                || opts.has_decorators
-                                || arg_has_decorators)
+                            && (is_decorated || opts.is_class_accessor)
                         {
-                            ts_metadata = p.skip_type_script_type_with_metadata(Level::Lowest)?;
+                            p.ts_metadata_defer_usage = !is_decorated;
+                            let result = p.skip_type_script_type_with_metadata(Level::Lowest);
+                            p.ts_metadata_defer_usage = false;
+                            ts_metadata = result?;
                         } else {
                             p.skip_type_script_type(Level::Lowest)?;
                         }
@@ -372,17 +376,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if p.lexer.token == T::TColon {
                 p.lexer.next()?;
 
+                let is_decorated = opts.has_argument_decorators || opts.has_decorators;
                 if p.options.features.emit_decorator_metadata
                     && opts.allow_ts_decorators
-                    && (opts.has_argument_decorators || opts.has_decorators)
+                    && (is_decorated || opts.is_class_accessor)
                 {
-                    func.return_ts_metadata = p.skip_typescript_return_type_with_metadata()?;
+                    p.ts_metadata_defer_usage = !is_decorated;
+                    let result = p.skip_typescript_return_type_with_metadata();
+                    p.ts_metadata_defer_usage = false;
+                    func.return_ts_metadata = result?;
                 } else {
                     p.skip_typescript_return_type()?;
                 }
             } else if p.options.features.emit_decorator_metadata
                 && opts.allow_ts_decorators
-                && (opts.has_argument_decorators || opts.has_decorators)
+                && (opts.has_argument_decorators || opts.has_decorators || opts.is_class_accessor)
             {
                 if func.flags.contains(Flags::Function::IsAsync) {
                     func.return_ts_metadata = bun_ast::ts::Metadata::MPromise;

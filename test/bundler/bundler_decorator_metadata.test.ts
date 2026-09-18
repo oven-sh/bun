@@ -1261,4 +1261,82 @@ describe("bundler", () => {
       stdout: "true\n",
     },
   });
+
+  // The decorated getter's metadata names the setter's parameter type, so
+  // that import is kept.
+  itBundled("decorator_metadata/AccessorPairKeepsSetterImport", {
+    files: {
+      "/entry.ts": /* ts */ `
+            ${reflectMetadata}
+
+            import { Foo } from "./foo.js";
+            import * as ns from "./foo.js";
+
+            function d1() {}
+
+            class Bar {
+                @d1
+                get foo(): number { return 1; }
+                set foo(v: Foo) {}
+
+                @d1
+                get dotted(): number { return 1; }
+                set dotted(v: ns.Foo) {}
+            }
+
+            console.log(Reflect.getMetadata("design:type", Bar.prototype, "foo") === Foo);
+            console.log(Reflect.getMetadata("design:paramtypes", Bar.prototype, "foo")[0] === Foo);
+            console.log(Reflect.getMetadata("design:type", Bar.prototype, "dotted") === Foo);
+        `,
+      "/foo.js": /* js */ `
+            const f = () => "Foo";
+            module.exports[f()] = class Foo {};
+        `,
+      "/tsconfig.json": /* json */ `
+            {
+                "compilerOptions": {
+                    "experimentalDecorators": true,
+                    "emitDecoratorMetadata": true,
+                }
+            }
+        `,
+    },
+    run: {
+      stdout: "true\ntrue\ntrue\n",
+    },
+  });
+
+  // An accessor pair with no decorator emits no metadata, so a type-only
+  // import it names is still removed.
+  itBundled("decorator_metadata/UndecoratedAccessorElidesTypeImport", {
+    files: {
+      "/entry.ts": /* ts */ `
+            import { Foo } from "./foo";
+            import * as ns from "./foo";
+
+            class Bar {
+                get foo(): Foo { return null as any; }
+                set foo(v: Foo) {}
+                set dotted(v: ns.Foo) {}
+            }
+
+            console.log(typeof Bar);
+        `,
+      "/foo.ts": /* ts */ `
+            console.log("foo evaluated");
+            export interface Foo {}
+        `,
+      "/tsconfig.json": /* json */ `
+            {
+                "compilerOptions": {
+                    "experimentalDecorators": true,
+                    "emitDecoratorMetadata": true,
+                }
+            }
+        `,
+    },
+    run: {
+      stdout: "function\n",
+    },
+  });
 });

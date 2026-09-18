@@ -366,7 +366,16 @@ export function initializeNextTickQueue(process: typeof globalThis.process, next
           var restoreGraph = $getInternalField($asyncContext, 1);
           var graph = tock.graph;
           $putInternalField($asyncContext, 0, tock.frame);
-          if (graph !== restoreGraph) $putInternalField($asyncContext, 1, graph);
+          // Nearly every tick has no graph on either side. A compare with undefined is a compare
+          // with a constant; `graph !== restoreGraph` alone is a compare of two values the JIT has
+          // to type-check first, before and again after the callback.
+          var swapGraph = false;
+          if (graph !== undefined || restoreGraph !== undefined) {
+            if (graph !== restoreGraph) {
+              swapGraph = true;
+              $putInternalField($asyncContext, 1, graph);
+            }
+          }
           // No catch and no finally: what a tick throws leaves this function as it was thrown, with
           // the tick's context still current. JSNextTickQueue::drain reports it there (so an
           // uncaughtException handler reads the tick's AsyncLocalStorage stores, as in node), puts the
@@ -393,7 +402,7 @@ export function initializeNextTickQueue(process: typeof globalThis.process, next
             }
           }
           $putInternalField($asyncContext, 0, restoreFrame);
-          if (graph !== restoreGraph) $putInternalField($asyncContext, 1, restoreGraph);
+          if (swapGraph) $putInternalField($asyncContext, 1, restoreGraph);
         }
 
         drainMicrotasks();

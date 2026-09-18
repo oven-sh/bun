@@ -374,3 +374,32 @@ test("every callback of several graphs and the host, all running at once, finds 
   ).toEqual([]);
   // (One test on purpose, and slow on a debug build: it is everything running at once.)
 }, 30_000);
+
+test("ticks drained while a graph's context is current run in the context they were queued in", () => {
+  const storage = new AsyncLocalStorage<string>();
+  using stack = new DisposableStack();
+  const a = stack.adopt(new ModuleGraph(), graph => graph.dispose());
+  const b = stack.adopt(new ModuleGraph(), graph => graph.dispose());
+  const whose = (graph: unknown) =>
+    graph === a ? "a" : graph === b ? "b" : graph === undefined ? "host" : "an unknown graph";
+  const seen: string[] = [];
+  const tick = (tag: string) =>
+    storage.run(tag, () =>
+      process.nextTick(() => seen.push(`${tag}: ran in ${whose(ModuleGraph.current)}, store ${storage.getStore()}`)),
+    );
+  tick("host");
+  b.run(() => tick("b"));
+  a.run(() => {
+    tick("a");
+    // .resolves runs the event loop right here: the three ticks are drained with a's context
+    // current between them, not the host's.
+    expect(new Promise<void>(resolve => setImmediate(resolve))).resolves.toBeUndefined();
+    seen.push(`after the wait: ${whose(ModuleGraph.current)}, store ${storage.getStore()}`);
+  });
+  expect(seen).toEqual([
+    "host: ran in host, store host",
+    "b: ran in b, store b",
+    "a: ran in a, store a",
+    "after the wait: a, store undefined",
+  ]);
+});

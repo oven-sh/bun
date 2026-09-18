@@ -4195,7 +4195,7 @@ static bool readLinuxVmHWM(size_t* peak)
     ssize_t n = 0;
 
     do
-        fd = open("/proc/self/status", O_RDONLY);
+        fd = open("/proc/self/status", O_RDONLY | O_CLOEXEC);
     while (fd == -1 && errno == EINTR);
 
     if (fd == -1)
@@ -4220,7 +4220,8 @@ static bool readLinuxVmHWM(size_t* peak)
         return false;
     buf[total] = '\0';
 
-    static constexpr const char key[] = "VmHWM:";
+    // Anchored at a line start: the "Name:" line comes first and is free text.
+    static constexpr const char key[] = "\nVmHWM:";
     const char* s = strstr(buf, key);
     if (s == nullptr)
         return false;
@@ -4230,7 +4231,8 @@ static bool readLinuxVmHWM(size_t* peak)
     errno = 0;
     char* end = nullptr;
     unsigned long long val = strtoull(s, &end, 10);
-    if (errno != 0 || end == s)
+    // A digit run that ends at the buffer end was cut off by the buffer size.
+    if (errno != 0 || end == s || *end != ' ')
         return false;
 
     *peak = static_cast<size_t>(val) * 1024;

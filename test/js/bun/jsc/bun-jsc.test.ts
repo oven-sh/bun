@@ -87,7 +87,6 @@ describe("bun:jsc", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
     const { peak, maxRSS, reportMaxRss, vmHwm } = JSON.parse(stdout);
     // The child reads VmHWM last, so none of the peaks is above it.
     for (const value of [peak, maxRSS, reportMaxRss]) {
@@ -95,6 +94,7 @@ describe("bun:jsc", () => {
       expect(value).toBeLessThanOrEqual(vmHwm);
       expect(value).toBeLessThan(big.length);
     }
+    expect(exitCode).toBe(0);
   });
   it("getRandomSeed", () => {
     expect(getRandomSeed()).toBeDefined();

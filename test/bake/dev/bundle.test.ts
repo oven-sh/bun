@@ -1,5 +1,5 @@
 // Bundle tests are tests concerning bundling bugs that only occur in DevServer.
-import { expect } from "bun:test";
+import { describe, expect } from "bun:test";
 import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
 devTest("import identifier doesnt get renamed", {
@@ -410,6 +410,189 @@ devTest("removing 'use client' from a component with a pending resolution failur
     // The server must still be alive and responding.
     const res = await dev.fetch("/");
     expect(res).toBeInstanceOf(Response);
+  },
+});
+// The server registers Comp.ts while actions.ts has a build error. It must not
+// evaluate Comp.ts to do that: the import of actions.ts cannot load yet.
+describe.each([false, true])("export star: %p", exportStar => {
+  devTest("build error in a file imported by a 'use client' component", {
+    framework: minimalFramework,
+    files: {
+      "routes/index.ts": `
+        import { serverManifest } from "bun:bake/server";
+        import * as Comp from "../Comp";
+        export default function (req, meta) {
+          return new Response(typeof Comp.Button);
+        }
+      `,
+      "routes/manifest.ts": `
+        import { serverManifest } from "bun:bake/server";
+        export default function (req, meta) {
+          return Response.json(Object.keys(serverManifest).sort());
+        }
+      `,
+      "Comp.ts": `
+        "use client";
+        ${exportStar ? `export * from "./inner";` : ""}
+        import { save } from "./actions";
+        export function Button() { return save; }
+      `,
+      "inner.ts": `
+        export const Inner = 1;
+      `,
+      "actions.ts": `
+        export function save() { return 1 +; }
+      `,
+    },
+    async test(dev) {
+      expect((await dev.fetch("/")).status).toBe(500);
+      // Registered already, although Comp.ts cannot be evaluated yet.
+      expect(await dev.fetch("/manifest").json()).toEqual(["Comp.ts#Button", ...(exportStar ? ["Comp.ts#Inner"] : [])]);
+      await dev.write("actions.ts", `export function save() { return 1; }`);
+      await dev.fetch("/").equals("object");
+    },
+  });
+});
+// The names that the server reads from the bundle must be the names that an
+// evaluation registers.
+describe.each([false, true])("separateSSRGraph: %p", separateSSRGraph => {
+  devTest("names registered for a 'use client' component", {
+    framework: {
+      ...minimalFramework,
+      serverComponents: { ...minimalFramework.serverComponents!, separateSSRGraph },
+    },
+    files: {
+      "routes/index.ts": `
+        import { serverManifest } from "bun:bake/server";
+        import "../Comp";
+        import "../Barrel";
+        export default function (req, meta) {
+          const byFile = {};
+          for (const key of Object.keys(serverManifest).sort()) {
+            const [file, name] = key.split("#");
+            (byFile[file] ??= []).push(name);
+          }
+          return Response.json(byFile);
+        }
+      `,
+      "Comp.ts": `
+        "use client";
+        const hidden = 1;
+        export function Button() {}
+        export const Label = "label";
+        export { hidden as Renamed };
+        export * as ns from "./inner";
+        export default function Page() {}
+      `,
+      "Barrel.ts": `
+        "use client";
+        export * from "./middle";
+        export const Own = 1;
+      `,
+      "middle.ts": `
+        export * from "./inner";
+        export const Middle = 1;
+      `,
+      "inner.ts": `
+        export const Inner = 1;
+      `,
+    },
+    async test(dev) {
+      // With a separate SSR graph the server registers a generated proxy. It has only the file's own exports.
+      expect(await dev.fetch("/").json()).toEqual({
+        "Comp.ts": ["Button", "Label", "Renamed", "default", "ns"],
+        "Barrel.ts": separateSSRGraph ? ["Own"] : ["Inner", "Middle", "Own"],
+      });
+    },
+  });
+});
+// legacy.cjs is CommonJS, so the bundle does not have its names: the server evaluates Barrel.ts.
+devTest("names registered for a 'use client' component over a CommonJS export star", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": `
+      import { serverManifest } from "bun:bake/server";
+      import "../Barrel";
+      export default function (req, meta) {
+        // #40259 stops an export star from forwarding the default of legacy.cjs, so leave it out.
+        return Response.json(Object.keys(serverManifest).filter(key => key !== "Barrel.ts#default").sort());
+      }
+    `,
+    "Barrel.ts": `
+      "use client";
+      export * from "./legacy.cjs";
+      export const Own = 1;
+    `,
+    "legacy.cjs": `
+      module.exports = { FromCjs: 1 };
+    `,
+  },
+  async test(dev) {
+    // Nothing waits for the evaluation, so the first request can see a partial list.
+    await dev.fetch("/");
+    expect(await dev.fetch("/").json()).toEqual(["Barrel.ts#FromCjs", "Barrel.ts#Own"]);
+  },
+});
+// `export * from` can form a cycle. The walk over it must end, with every name.
+devTest("names registered for a 'use client' component over an export star cycle", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": `
+      import { serverManifest } from "bun:bake/server";
+      import "../Barrel";
+      export default function (req, meta) {
+        return Response.json(Object.keys(serverManifest).sort());
+      }
+    `,
+    "Barrel.ts": `
+      "use client";
+      export * from "./a";
+      export const Own = 1;
+    `,
+    "a.ts": `
+      export * from "./b";
+      export const A = 1;
+    `,
+    "b.ts": `
+      export * from "./a";
+      export const B = 1;
+    `,
+  },
+  async test(dev) {
+    expect(await dev.fetch("/").json()).toEqual(["Barrel.ts#A", "Barrel.ts#B", "Barrel.ts#Own"]);
+  },
+});
+devTest("'use client' removed from a component while a file it imports has a build error", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": `
+      import { serverManifest } from "bun:bake/server";
+      import * as Comp from "../Comp";
+      export default function (req, meta) {
+        return new Response(typeof Comp.Button + " " + Object.keys(serverManifest).join(","));
+      }
+    `,
+    "Comp.ts": `
+      "use client";
+      import { save } from "./actions";
+      export function Button() { return save; }
+    `,
+    "actions.ts": `
+      export function save() { return 1 +; }
+    `,
+  },
+  async test(dev) {
+    expect((await dev.fetch("/")).status).toBe(500);
+    await dev.write(
+      "Comp.ts",
+      `
+        import { save } from "./actions";
+        export function Button() { return save; }
+      `,
+      { errors: null },
+    );
+    await dev.write("actions.ts", `export function save() { return 1; }`);
+    await dev.fetch("/").equals("function");
   },
 });
 devTest("deinit with a free-list slot in DirectoryWatchStore.dependencies", {

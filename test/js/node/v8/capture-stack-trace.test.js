@@ -1111,11 +1111,29 @@ test("a name that throws: the default Error.prepareStackTrace throws, error.stac
           throw new RangeError("from message");
         },
       }),
+    // What was thrown is described with Error.prototype.toString(), which does not call its toString().
+    "name getter throws an object": () =>
+      Object.defineProperty(new Error("boom"), "name", {
+        get() {
+          throw {
+            message: "thrown object",
+            toString() {
+              throw 1;
+            },
+          };
+        },
+      }),
+    "name getter throws a string": () =>
+      Object.defineProperty(new Error("boom"), "name", {
+        get() {
+          throw "thrown string";
+        },
+      }),
     "describing the throw throws": () =>
       Object.defineProperty(new Error("boom"), "name", {
         get() {
           throw {
-            toString() {
+            get name() {
               throw 1;
             },
           };
@@ -1145,16 +1163,20 @@ test("a name that throws: the default Error.prepareStackTrace throws, error.stac
   expect({ byHand, insideACallback }).toEqual({
     byHand: {
       "name getter throws": "from name",
-      "name is a Symbol": expect.stringContaining("ymbol"),
+      "name is a Symbol": "Cannot convert a symbol to a string",
       "name.toString throws": "from toString",
       "message getter throws": "from message",
+      "name getter throws an object": "thrown object",
+      "name getter throws a string": "string",
       "describing the throw throws": "object",
     },
     insideACallback: {
       "name getter throws": "<error: RangeError: from name>",
-      "name is a Symbol": expect.stringMatching(/^<error: TypeError: Cannot convert a symbol to a string>$/i),
+      "name is a Symbol": "<error: TypeError: Cannot convert a symbol to a string>",
       "name.toString throws": "<error: RangeError: from toString>",
       "message getter throws": "threw from message",
+      "name getter throws an object": "<error: Error: thrown object>",
+      "name getter throws a string": "<error>",
       "describing the throw throws": "<error>",
     },
   });

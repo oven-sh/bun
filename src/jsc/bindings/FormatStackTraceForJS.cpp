@@ -92,11 +92,20 @@ static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalO
         JSValue thrown = exception->value();
         if (!scope.tryClearException())
             return {};
-        WTF::String description = thrown.toWTFString(lexicalGlobalObject);
-        if (scope.exception()) [[unlikely]] {
-            if (!scope.tryClearException())
-                return {};
-            description = WTF::String();
+        // V8 describes what was thrown as it heads a stack, with Error.prototype.toString(): nothing
+        // for a value that is not an object, or when describing it throws too.
+        WTF::String description;
+        if (JSC::JSObject* thrownObject = thrown.getObject()) {
+            WTF::String thrownName = stackTraceHeaderName(vm, lexicalGlobalObject, thrownObject);
+            WTF::String thrownMessage;
+            if (!scope.exception()) [[likely]]
+                thrownMessage = stackTraceHeaderMessage(vm, lexicalGlobalObject, thrownObject);
+            if (scope.exception()) [[unlikely]] {
+                if (!scope.tryClearException())
+                    return {};
+            } else {
+                description = stackTraceHeaderOnly(thrownName, thrownMessage);
+            }
         }
         // The description comes from JS: past `String::MaxLength` makeString() calls `CRASH()`.
         if (!description.isNull())

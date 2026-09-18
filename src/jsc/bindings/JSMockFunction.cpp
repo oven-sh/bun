@@ -824,14 +824,9 @@ static JSC::JSObject* createMockResult(JSC::VM& vm, Zig::GlobalObject* globalObj
     return result;
 }
 
-// Writes `type` and `value` into the "incomplete" entry of a call that just finished. The entry
-// is settled in place, like jest-mock does, because the implementation can call mockClear() and
-// replace the array the entry was pushed into.
-//
-// The implementation can also reach the entry through `fn.mock.results` and reshape it (define
-// an accessor, freeze it). Slot writes are only valid while the structure is still the one
-// createMockResult built. Otherwise settle through CreateDataProperty, which leaves a
-// non-writable or non-configurable property alone and never runs user code.
+// Settles the "incomplete" entry in place (like jest-mock) because the implementation may have
+// called mockClear() and replaced the array that held it. It may also have reshaped the entry
+// through fn.mock.results, so slot writes need the original structure.
 static void settleMockResult(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSObject* result, MockResultType type, JSC::JSValue value)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);

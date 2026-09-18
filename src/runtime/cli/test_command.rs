@@ -2966,6 +2966,7 @@ impl TestCommand {
                     if let Some(hooks_only) = bun_test_root.clone_active_file() {
                         Self::run_until_done(vm, &hooks_only)?;
                     }
+                    Self::forget_spawned_processes(vm);
                     reporter.summary().fail += 1;
 
                     if reporter.jest.bail == reporter.summary().fail {
@@ -3040,13 +3041,7 @@ impl TestCommand {
                 Output::flush();
             }
 
-            if !vm.test_isolation_enabled {
-                // Ensure these never linger across files. Under --isolate this
-                // is done by swapGlobalForTestIsolation() (kill+clear) and we
-                // need tracking to remain enabled and populated until then.
-                vm.auto_killer.clear();
-                vm.auto_killer.disable();
-            }
+            Self::forget_spawned_processes(vm);
 
             repeat_index += 1;
         }
@@ -3054,6 +3049,18 @@ impl TestCommand {
             let _ = junit.end_file(None);
         }
         Ok(())
+    }
+
+    /// Empties the auto-killer's set at the end of a run, so a later test that times out does not
+    /// kill what this run spawned.
+    fn forget_spawned_processes(vm: &mut VirtualMachine) {
+        if !vm.test_isolation_enabled {
+            // Ensure these never linger across files. Under --isolate this
+            // is done by swapGlobalForTestIsolation() (kill+clear) and we
+            // need tracking to remain enabled and populated until then.
+            vm.auto_killer.clear();
+            vm.auto_killer.disable();
+        }
     }
 
     /// Starts `buntest_strong` unless something already has, then runs the event loop until it

@@ -256,6 +256,20 @@ describe("--rerun-each and preload-level beforeAll/afterAll", () => {
         throw new Error("the setup fails");
       });
     `,
+    // The helper exits when its stdin closes, so it cannot outlive the run.
+    "preload-helper.ts": `
+      import { beforeAll, afterAll } from "bun:test";
+      let helper;
+      beforeAll(() => {
+        helper = Bun.spawn([process.execPath, "-e", "process.stdin.resume()"], { stdin: "pipe" });
+        console.log("preload beforeAll");
+      });
+      afterAll(async () => {
+        helper.stdin.end();
+        await helper.exited;
+        console.log("preload afterAll");
+      });
+    `,
     "a.test.ts": `
       import { test } from "bun:test";
       test("a", () => console.log("test a"));
@@ -275,20 +289,24 @@ describe("--rerun-each and preload-level beforeAll/afterAll", () => {
       await new Promise(resolve => setImmediate(resolve));
       throw new Error("this file fails to load");
     `,
+    "timeout.test.ts": `
+      import { test } from "bun:test";
+      test("times out", () => new Promise(() => {}), 1);
+    `,
   };
 
-  async function run(args: string[], preload = "./preload.ts") {
+  async function run(args: string[], preload = "./preload.ts", env = bunEnv) {
     using dir = tempDir("test-rerun-each-preload-hooks", files);
     await using proc = Bun.spawn({
       cmd: [bunExe(), "test", "--preload", preload, ...args],
-      env: bunEnv,
+      env,
       cwd: String(dir),
       stderr: "pipe",
       stdout: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     // A --parallel worker's console.log arrives on the coordinator's stderr.
-    return { events: (stdout + stderr).match(/^(preload|test) .+$/gm), exitCode };
+    return { events: (stdout + stderr).match(/^(preload|test|killed) .+$/gm), exitCode };
   }
 
   const before = "preload beforeAll";
@@ -327,6 +345,20 @@ describe("--rerun-each and preload-level beforeAll/afterAll", () => {
       exitCode: 1,
     },
     {
+      // The stray rejection makes the file run the beforeAll before it fails to load.
+      name: "once when the first file fails to load after a stray rejection",
+      args: ["--rerun-each=2", "./stray.test.ts", "./a.test.ts"],
+      events: [before, "test a", "test a", after],
+      exitCode: 1,
+    },
+    {
+      // The stray rejection makes the file run the afterAll before it fails to load.
+      name: "once without --rerun-each when the last file fails to load after a stray rejection",
+      args: ["./a.test.ts", "./stray.test.ts"],
+      events: [before, "test a", after],
+      exitCode: 1,
+    },
+    {
       name: "to the end of an async afterAll when the last file fails to load",
       preload: "./preload-async.ts",
       args: ["--rerun-each=2", "./a.test.ts", "./throws.test.ts"],
@@ -338,7 +370,17 @@ describe("--rerun-each and preload-level beforeAll/afterAll", () => {
       name: "and --bail counts a hook that fails after the first file fails to load",
       preload: "./preload-fails.ts",
       args: ["--rerun-each=2", "--bail=1", "./throws.test.ts", "./a.test.ts"],
+      // A test or hook that reaches --bail exits without the VM teardown, which LeakSanitizer reports (#32183).
+      env: { ...bunEnv, ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":") },
       events: [before],
+      exitCode: 1,
+    },
+    {
+      // A test that times out kills the processes that tests left behind, not what a preload hook spawned.
+      name: "and the helper process of a beforeAll survives a later timeout when the first file fails to load",
+      preload: "./preload-helper.ts",
+      args: ["--rerun-each=2", "./throws.test.ts", "./timeout.test.ts"],
+      events: [before, after],
       exitCode: 1,
     },
     {
@@ -348,8 +390,8 @@ describe("--rerun-each and preload-level beforeAll/afterAll", () => {
       events: [before, "test a", after, before, "test a", after, before, "test b", after, before, "test b", after],
       exitCode: 0,
     },
-  ])("$name", async ({ args, preload, events, exitCode }) => {
-    const result = await run(args, preload);
+  ])("$name", async ({ args, preload, env, events, exitCode }) => {
+    const result = await run(args, preload, env);
     expect(result.events).toEqual(events);
     expect(result.exitCode).toBe(exitCode);
   });

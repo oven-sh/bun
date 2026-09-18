@@ -537,7 +537,7 @@ console.log(greet("world"));`,
       "style.css": `body { color: red; }`,
     };
 
-    async function buildWithSourcemap(dir: string, outdir: string, sourcemap: string) {
+    async function buildWithSourcemap(dir: string, outdir: string, sourcemap: string, entry = "index.html") {
       await using proc = Bun.spawn({
         cmd: [
           bunExe(),
@@ -545,7 +545,7 @@ console.log(greet("world"));`,
           "--compile",
           "--target=browser",
           `--sourcemap=${sourcemap}`,
-          `${dir}/index.html`,
+          `${dir}/${entry}`,
           "--outdir",
           outdir,
         ],
@@ -581,6 +581,26 @@ console.log(greet("world"));`,
       expect(map.sourcesContent.join("\n")).toContain("function greet(name: string): string {");
       expect(typeof map.mappings).toBe("string");
       expect(map.mappings.length).toBeGreaterThan(0);
+    });
+
+    // The script and its map are named after the document. A line break written
+    // raw ends the `//` comment, and the rest of the name runs in the page.
+    // A Windows file name cannot contain LF.
+    test.skipIf(isWindows)("CLI --sourcemap=linked percent-encodes a line break in the document's name", async () => {
+      const { "index.html": document, ...rest } = fixture;
+      using dir = tempDir("compile-browser-sourcemap-line-break", { "in\ndex.html": document, ...rest });
+      const outdir = `${dir}/dist`;
+      await buildWithSourcemap(String(dir), outdir, "linked", "in\ndex.html");
+
+      const files = Array.from(new Bun.Glob("**/*").scanSync({ cwd: outdir })).sort();
+      expect(files).toHaveLength(2);
+      const mapFile = files.find(f => f.endsWith(".js.map"))!;
+      expect(mapFile).toMatch(/^in\ndex-[0-9a-z]+\.js\.map$/);
+
+      const html = await Bun.file(`${outdir}/in\ndex.html`).text();
+      expect(html.slice(html.indexOf("//# sourceMappingURL="))).toStartWith(
+        `//# sourceMappingURL=./${mapFile.replace("\n", "%0A")}\n</script>`,
+      );
     });
 
     test("CLI --sourcemap=inline embeds a data: URL sourcemap in the inline script", async () => {

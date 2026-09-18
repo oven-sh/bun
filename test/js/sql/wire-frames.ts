@@ -291,18 +291,30 @@ export async function pgMinimalReadyServer(): Promise<{ port: number; server: ne
   });
 }
 
+/** In a `pgMockServer` reply: the mock keeps back every later frame of that connection until `release()`. */
+export const pgHold = Symbol("pgHold");
+
 /**
  * Postgres mock that answers the StartupMessage with AuthenticationOk +
  * ReadyForQuery and then hands every complete frontend message (type as a
  * one-char string, e.g. "P", "B", "E", "S", "Q", "X") to `respond`; whatever it
  * returns is written back in order after the whole chunk has been parsed.
+ * A reply can stop part-way with `pgHold`; `release()` sends what was kept back.
  */
 export async function pgMockServer(
-  respond: (type: string, body: Buffer, socket: net.Socket) => Buffer | Buffer[] | void,
-): Promise<{ port: number; server: net.Server }> {
-  return listeningServer(socket => {
+  respond: (type: string, body: Buffer, socket: net.Socket) => Buffer | (Buffer | typeof pgHold)[] | void,
+): Promise<{ port: number; server: net.Server; release(): void }> {
+  const releases = new Set<() => void>();
+  const { port, server } = await listeningServer(socket => {
     let buffered = Buffer.alloc(0);
     let startup = true;
+    let held: Buffer[] | undefined;
+    const release = () => {
+      if (held?.length) socket.write(Buffer.concat(held));
+      held = undefined;
+    };
+    releases.add(release);
+    socket.on("close", () => releases.delete(release));
     socket.on("data", chunk => {
       buffered = Buffer.concat([buffered, chunk]);
       const out: Buffer[] = [];
@@ -314,12 +326,17 @@ export async function pgMockServer(
       }
       buffered = pgReadFrontendMessages(buffered, (type, body) => {
         const reply = respond(String.fromCharCode(type), body, socket);
-        if (reply) out.push(...(Array.isArray(reply) ? reply : [reply]));
+        if (!reply) return;
+        for (const frame of Array.isArray(reply) ? reply : [reply]) {
+          if (frame === pgHold) held ??= [];
+          else (held ?? out).push(frame);
+        }
       });
       if (out.length) socket.write(Buffer.concat(out));
     });
     socket.on("error", () => {});
   });
+  return { port, server, release: () => releases.forEach(release => release()) };
 }
 
 // ---------------------------------------------------------------------------

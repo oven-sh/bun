@@ -9,15 +9,14 @@ import { SQL } from "bun";
 import { describe, expect, test } from "bun:test";
 import { describeWithContainer } from "harness";
 import {
-  listeningServer,
-  pgAuthenticationOk,
   pgBindComplete,
   pgBindParameters,
   pgCommandComplete,
   pgDataRow,
+  pgHold,
+  pgMockServer,
   pgParameterDescription,
   pgParseComplete,
-  pgReadFrontendMessages,
   pgReadyForQuery,
   pgRowDescription,
 } from "./wire-frames";
@@ -116,59 +115,30 @@ const columnKinds = {
 type ColumnKind = (typeof columnKinds)[keyof typeof columnKinds];
 
 async function echoServer(kind: ColumnKind) {
+  const bound = new WeakMap<object, string[]>();
   let connections = 0;
-  let release = () => {};
-  const { port, server } = await listeningServer(socket => {
-    connections++;
-    let buffered = Buffer.alloc(0);
-    let startup = true;
-    let bound: string[] = [];
-    let held: Buffer[] | undefined;
-    const send = (...frames: Buffer[]) => {
-      if (held) held.push(...frames);
-      else socket.write(Buffer.concat(frames));
-    };
-    release = () => {
-      if (!held) return;
-      socket.write(Buffer.concat(held));
-      held = undefined;
-    };
-    socket.on("error", () => {});
-    socket.on("data", chunk => {
-      buffered = Buffer.concat([buffered, chunk]);
-      if (startup) {
-        if (buffered.length < 4 || buffered.length < buffered.readInt32BE(0)) return;
-        buffered = buffered.subarray(buffered.readInt32BE(0));
-        startup = false;
-        send(pgAuthenticationOk(), pgReadyForQuery());
+  const mock = await pgMockServer((type, body, socket) => {
+    switch (type) {
+      case "P":
+        return pgParseComplete();
+      case "D":
+        return [pgParameterDescription([25 /* text */]), pgRowDescription([{ name: "v", typeOid: kind.typeOid }])];
+      case "B":
+        bound.set(socket, pgBindParameters(body)[0]!.toString().split(";"));
+        return pgBindComplete();
+      case "E": {
+        const pieces = bound.get(socket)!;
+        const rows = pieces.map(piece => (piece === "hold" ? pgHold : pgDataRow([Buffer.from(kind.cell(piece))])));
+        return [...rows, pgCommandComplete("SELECT " + pieces.length)];
       }
-      buffered = pgReadFrontendMessages(buffered, (type, body) => {
-        switch (String.fromCharCode(type)) {
-          case "P":
-            return send(pgParseComplete());
-          case "D":
-            return send(
-              pgParameterDescription([25 /* text */]),
-              pgRowDescription([{ name: "v", typeOid: kind.typeOid }]),
-            );
-          case "B":
-            bound = pgBindParameters(body)[0]!.toString().split(";");
-            return send(pgBindComplete());
-          case "E":
-            for (const piece of bound) {
-              if (piece === "hold") held ??= [];
-              else send(pgDataRow([Buffer.from(kind.cell(piece))]));
-            }
-            return send(pgCommandComplete("SELECT " + bound.length));
-          case "S":
-            return send(pgReadyForQuery());
-          case "X":
-            return socket.end();
-        }
-      });
-    });
+      case "S":
+        return pgReadyForQuery();
+      case "X":
+        socket.end();
+    }
   });
-  return { port, server, release: () => release(), connections: () => connections };
+  mock.server.on("connection", () => connections++);
+  return { ...mock, connections: () => connections };
 }
 
 for (const [name, kind] of Object.entries(columnKinds)) {

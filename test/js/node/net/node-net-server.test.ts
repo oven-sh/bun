@@ -66,6 +66,90 @@ describe("net.createServer listen", () => {
     );
   });
 
+  // A kernel without IPv6 (ipv6.disable=1) fails socket(AF_INET6) with EAFNOSUPPORT. Node binds
+  // "::" when listen() gets no host and falls back to "0.0.0.0" there. A seccomp filter in the
+  // child gives the same socket() result without a special kernel.
+  it.skipIf(process.platform !== "linux" || (process.arch !== "x64" && process.arch !== "arm64"))(
+    "should fall back to 0.0.0.0 when no host is given and the kernel has no IPv6",
+    async () => {
+      using dir = tempDir("net-listen-no-ipv6", {
+        "deny-inet6.c": `
+          typedef unsigned short u16; typedef unsigned char u8; typedef unsigned int u32;
+          struct sock_filter { u16 code; u8 jt; u8 jf; u32 k; };
+          struct sock_fprog { u16 len; struct sock_filter *filter; };
+          int prctl(int option, ...);
+          #if defined(__x86_64__)
+          #define NR_SOCKET 41
+          #else
+          #define NR_SOCKET 198
+          #endif
+          int deny_inet6_sockets(void) {
+            struct sock_filter f[] = {
+              { 0x20, 0, 0, 0 },               /* A = nr                          (BPF_LD|BPF_W|BPF_ABS)  */
+              { 0x15, 0, 3, NR_SOCKET },       /* if nr != socket: allow          (BPF_JMP|BPF_JEQ|BPF_K) */
+              { 0x20, 0, 0, 16 },              /* A = args[0] (domain)                                    */
+              { 0x15, 0, 1, 10 },              /* if domain != AF_INET6: allow                            */
+              { 0x06, 0, 0, 0x00050000 | 97 }, /* SECCOMP_RET_ERRNO | EAFNOSUPPORT (BPF_RET|BPF_K)        */
+              { 0x06, 0, 0, 0x7fff0000 },      /* SECCOMP_RET_ALLOW                                       */
+            };
+            struct sock_fprog prog = { sizeof(f) / sizeof(f[0]), f };
+            if (prctl(38 /* PR_SET_NO_NEW_PRIVS */, 1, 0, 0, 0) != 0) return -1;
+            if (prctl(22 /* PR_SET_SECCOMP */, 2 /* SECCOMP_MODE_FILTER */, &prog) != 0) return -2;
+            return 0;
+          }
+        `,
+        "fixture.ts": `
+          import { cc } from "bun:ffi";
+          import { once } from "node:events";
+          import { createServer } from "node:net";
+
+          const { symbols } = cc({
+            source: new URL("./deny-inet6.c", import.meta.url).pathname,
+            symbols: { deny_inet6_sockets: { args: [], returns: "i32" } },
+          });
+          const result: Record<string, unknown> = { seccomp: symbols.deny_inet6_sockets() };
+
+          const defaulted = createServer().listen(0);
+          await once(defaulted, "listening");
+          const { address, family } = defaulted.address() as import("node:net").AddressInfo;
+          result.noHost = { address, family };
+          defaulted.close();
+
+          const [err] = await once(createServer().listen(0, "::"), "error");
+          result.explicitIPv6 = { code: err.code, syscall: err.syscall, message: err.message };
+
+          try {
+            Bun.listen({ hostname: "::", port: 0, socket: { data() {} } }).stop();
+            result.bunListen = "listening";
+          } catch (e: any) {
+            result.bunListen = { code: e.code, syscall: e.syscall, errno: typeof e.errno };
+          }
+          console.log(JSON.stringify(result));
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "fixture.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({
+        seccomp: 0,
+        noHost: { address: "0.0.0.0", family: "IPv4" },
+        explicitIPv6: {
+          code: "EAFNOSUPPORT",
+          syscall: "listen",
+          message: "listen EAFNOSUPPORT: address family not supported ::",
+        },
+        bunListen: { code: "EAFNOSUPPORT", syscall: "listen", errno: "number" },
+      });
+      expect(exitCode).toBe(0);
+    },
+  );
+
   it("should call listening", done => {
     const { mustCall } = createCallCheckCtx(done);
 

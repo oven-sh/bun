@@ -6682,7 +6682,7 @@ impl VirtualMachine {
     ) -> crate::CrateResult<()> {
         use crate::JSType;
         use crate::console_object::formatter::TagOptions;
-        use crate::console_object::{self, Tag, TagPayload};
+        use crate::console_object::{self, Tag, TagPayload, TagResult};
 
         let prev_had_errors = self.had_errors;
         self.had_errors = true;
@@ -7135,11 +7135,18 @@ impl VirtualMachine {
             // An object that arrives inside the `JSC::Exception` it was thrown with is shown too.
             let error_instance =
                 Self::thrown_object_to_show(error_instance).unwrap_or(error_instance);
-            let tag = Tag::get_advanced(
+            let tag = match Tag::get_advanced(
                 error_instance,
                 global_ref,
                 TagOptions::DISABLE_INSPECT_CUSTOM | TagOptions::HIDE_GLOBAL,
-            )?;
+            ) {
+                Ok(tag) => tag,
+                Err(_) if allow_side_effects => TagResult {
+                    tag: TagPayload::NativeCode,
+                    ..Default::default()
+                },
+                Err(err) => return Err(err.into()),
+            };
             if !matches!(tag.tag, TagPayload::NativeCode) {
                 let _ = if allow_ansi_color {
                     formatter.format::<true>(tag, writer, error_instance, global_ref)
@@ -7147,10 +7154,10 @@ impl VirtualMachine {
                     formatter.format::<false>(tag, writer, error_instance, global_ref)
                 };
                 writer.write_all(b"\n")?;
-                // What the value throws while it is printed is not the error being reported.
-                if allow_side_effects && global_ref.has_exception() {
-                    global_ref.clear_exception();
-                }
+            }
+            // What the value throws while it is shown is not the error being reported.
+            if allow_side_effects && global_ref.has_exception() {
+                global_ref.clear_exception();
             }
         }
 

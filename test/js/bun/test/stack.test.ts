@@ -120,6 +120,7 @@ function thrower() {
   if (kind === "string") throw "only a string";
   if (kind === "error") throw new Error("an error");
   if (kind === "resolve") require("./does-not-exist");
+  if (kind === "typeof") throw { get $$typeof() { throw 1; } };
   throw Object.assign(new String("hostile"), { toString() { throw 1; }, [Symbol.toPrimitive]() { throw 1; } });
 }
 switch (entryPoint) {
@@ -211,13 +212,30 @@ switch (entryPoint) {
       - <dir>/fixture.js
             at thrower (<dir>/fixture.js:9:<col>)"
     `);
+    expect([string.exitCode, error.exitCode, resolve.exitCode]).toEqual([1, 1, 1]);
   });
 
-  test.concurrent("an object that throws while it is printed does not stop the ticks after it", async () => {
+  test.concurrent("an object that throws while it is shown does not stop the ticks after it", async () => {
     using dir = tempDir("thrown-object", { "fixture.js": fixture });
-    const { stdout, output, exitCode } = await report(String(dir), "nextTick", "hostile");
-    expect(output).toMatch(/^error$/m);
-    expect({ stdout, exitCode }).toEqual({ stdout: "the next tick ran", exitCode: 1 });
+    const [getter, toString] = await Promise.all(
+      ["typeof", "hostile"].map(kind => report(String(dir), "nextTick", kind)),
+    );
+    expect(getter.output).toMatchInlineSnapshot(`
+      "5 | function thrower() {
+       6 |   if (kind === "object") throw new Thing();
+       7 |   if (kind === "string") throw "only a string";
+       8 |   if (kind === "error") throw new Error("an error");
+       9 |   if (kind === "resolve") require("./does-not-exist");
+      10 |   if (kind === "typeof") throw { get $$typeof() { throw 1; } };
+      ^
+      error
+            at thrower (<dir>/fixture.js:10:<col>)"
+    `);
+    expect(toString.output).toMatch(/^error$/m);
+    expect([getter, toString].map(({ stdout, exitCode }) => ({ stdout, exitCode }))).toEqual([
+      { stdout: "the next tick ran", exitCode: 1 },
+      { stdout: "the next tick ran", exitCode: 1 },
+    ]);
   });
 
   test.concurrent("bun test prints an object that a test body throws", async () => {

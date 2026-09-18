@@ -1516,6 +1516,14 @@ fn report_lockfile_load_error(
     if log_level != Options::LogLevel::Silent
         && !crate::migration::reported_unsupported_lockfile_version(cause)
     {
+        // Unbuffered: print the details before the buffered summary and warning.
+        if manager.log_mut().errors > 0 {
+            manager
+                .log_mut()
+                .print(std::ptr::from_mut(Output::error_writer()))?;
+            manager.log_mut().reset();
+        }
+
         Output::err(
             cause.value,
             "failed to {} lockfile: '{}'",
@@ -1525,13 +1533,6 @@ fn report_lockfile_load_error(
         if !manager.options.enable.fail_early() {
             Output::print_errorln("");
             bun_core::warn!("Ignoring lockfile");
-        }
-
-        if manager.log_mut().errors > 0 {
-            manager
-                .log_mut()
-                .print(std::ptr::from_mut(Output::error_writer()))?;
-            manager.log_mut().reset();
         }
         Output::flush();
     }

@@ -514,6 +514,64 @@ describe("Bun.serve HTTP/3", () => {
     expect(stdout).toContain("listening");
     expect(exitCode).toBe(0);
   });
+
+  // The warning is written on the JS thread. It must reach stderr when it is
+  // written, not when the process exits. A process that is killed never exits
+  // the usual way, so the warning must already be on the pipe before SIGKILL.
+  test("validation: the unix socket warning reaches stderr while the server runs", async () => {
+    using dir = tempDir("serve-http3-unix-warn", {});
+    const sock = join(String(dir), "h3.sock");
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `Bun.serve({ unix: ${JSON.stringify(sock)}, tls: ${JSON.stringify(tls)}, http3: true, fetch: () => new Response("x") }); console.log("listening");`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    // console.log flushes at once, so "listening" on stdout means the warning
+    // was already written on the same thread.
+    const reader = proc.stdout.getReader();
+    let stdout = "";
+    while (!stdout.includes("listening")) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      stdout += new TextDecoder().decode(value);
+    }
+    reader.releaseLock();
+    expect(stdout).toBe("listening\n");
+
+    proc.kill("SIGKILL");
+    const [stderr] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("http3: true with a unix socket — HTTP/3 listener skipped");
+  });
+
+  test("validation: the unix socket warning reaches stderr from a Worker", async () => {
+    using dir = tempDir("serve-http3-unix-worker", {
+      "worker.ts": `
+        using s = Bun.serve({ unix: process.env.H3_SOCK, tls: ${JSON.stringify(tls)}, http3: true, fetch: () => new Response("x") });
+      `,
+    });
+    const sock = join(String(dir), "h3.sock");
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `new Worker("./worker.ts").addEventListener("close", e => console.log("worker close", e.code));`,
+      ],
+      env: { ...bunEnv, H3_SOCK: sock },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("worker close 0\n");
+    expect(stderr).toContain("http3: true with a unix socket — HTTP/3 listener skipped");
+    expect(exitCode).toBe(0);
+  });
 });
 
 // Cases ported from h2o t/40http3 and aioquic interop. Each test gets its own

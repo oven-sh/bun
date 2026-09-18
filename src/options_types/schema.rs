@@ -210,6 +210,8 @@ pub mod api {
         pub default_registry: Option<NpmRegistry>,
         /// scoped
         pub scoped: Option<NpmRegistryMap>,
+        /// `install.forceRegistry`: every package resolves through this registry, whatever else is configured.
+        pub force_registry: Option<NpmRegistry>,
         /// lockfile_path
         pub lockfile_path: Option<Box<[u8]>>,
         /// save_lockfile_path

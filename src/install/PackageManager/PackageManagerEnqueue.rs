@@ -1266,7 +1266,7 @@ fn enqueue_dependency_impl(
                                                 let manifest_ref = bun_ptr::BackRef::new(
                                                     loaded_manifest.as_ref().unwrap(),
                                                 );
-                                                if let Some(new_resolve_result) =
+                                                let new_resolve_result =
                                                     get_or_put_resolved_package_with_find_result(
                                                         // SAFETY: see `this_ptr` note above.
                                                         unsafe { &mut *this_ptr },
@@ -1281,11 +1281,16 @@ fn enqueue_dependency_impl(
                                                         install_peer,
                                                         success_fn,
                                                         declared_range,
-                                                    )
-                                                    .ok()
-                                                    .flatten()
+                                                    );
+                                                // A rejected alias package needs no fetch either.
+                                                if matches!(new_resolve_result, Ok(Some(_)))
+                                                    || (declared_range.is_some()
+                                                        && matches!(
+                                                            new_resolve_result,
+                                                            Err(crate::Error::NoMatchingVersion)
+                                                        ))
                                                 {
-                                                    resolve_result_ = Ok(Some(new_resolve_result));
+                                                    resolve_result_ = new_resolve_result;
                                                     let _ =
                                                         this.network_dedupe_map.remove(&task_id);
                                                     continue 'retry_with_new_resolve_result;

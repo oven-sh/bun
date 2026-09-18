@@ -6,6 +6,7 @@ import {
   bunEnv,
   bunExe,
   bunEnv as env,
+  isDebug,
   isWindows,
   joinP,
   normalizeBunSnapshot,
@@ -4137,6 +4138,64 @@ describe.concurrent("bun-install", () => {
       expect(updateExitCode).toBe(0);
     });
   });
+
+  // An exact version resolves from an expired manifest in the disk cache, without a request. moo's
+  // "boba" meets the alias there, and its range does not admit the prerelease. Only a debug build
+  // reads BUN_CONFIG_MANIFEST_CACHE_CONTROL_TIMESTAMP, which makes the cached manifests expired.
+  it.skipIf(!isDebug)(
+    "npm alias with an exact version in an expired manifest cache is not used by a range that excludes it",
+    async () => {
+      await withContext(defaultOpts, async ctx => {
+        const urls: string[] = [];
+        setContextHandler(ctx, aliasRegistry(ctx, urls, { baz: ["1.5.0-0"], boba: ["1.3.0"] }));
+        const cache = join(ctx.package_dir, ".cache");
+        await Promise.all([
+          write(
+            join(ctx.package_dir, "bunfig.toml"),
+            Bun.TOML.stringify({ install: { cache, registry: ctx.registry_url, linker: "hoisted" } }),
+          ),
+          write(
+            join(ctx.package_dir, "package.json"),
+            JSON.stringify({ name: "foo", workspaces: ["moo"], dependencies: { boba: "npm:baz@1.5.0-0" } }),
+          ),
+          write(
+            join(ctx.package_dir, "moo", "package.json"),
+            JSON.stringify({ name: "moo", dependencies: { boba: "<2.0.0" } }),
+          ),
+        ]);
+        const packages = { "boba": "baz@1.5.0-0", "moo": "moo@workspace:moo", "moo/boba": "boba@1.3.0" };
+
+        async function install(extraEnv: Record<string, string>) {
+          urls.length = 0;
+          await using proc = spawn({
+            cmd: [bunExe(), "install"],
+            cwd: ctx.package_dir,
+            stdout: "pipe",
+            stdin: "ignore",
+            stderr: "pipe",
+            // CI exports BUN_INSTALL_CACHE_DIR, which wins over the bunfig's `cache`
+            env: { ...env, BUN_INSTALL_CACHE_DIR: cache, ...extraEnv },
+          });
+          const [err, , exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+          expect(err).toContain("Saved lockfile");
+          expect(err).not.toContain("error:");
+          expect(lockedPackages(await file(join(ctx.package_dir, "bun.lock")).text())).toEqual(packages);
+          expect(exitCode).toBe(0);
+          return urls.sort().map(url => url.slice(ctx.registry_url.length));
+        }
+
+        expect(await install({})).toEqual(["baz", "baz-1.5.0-0.tgz", "boba", "boba-1.3.0.tgz"]);
+
+        await Promise.all([
+          rm(join(ctx.package_dir, "bun.lock")),
+          rm(join(ctx.package_dir, "node_modules"), { recursive: true, force: true }),
+          rm(join(ctx.package_dir, "moo", "node_modules"), { recursive: true, force: true }),
+        ]);
+        // boba's range needs a fresh manifest. The alias and the tarballs come from the cache.
+        expect(await install({ BUN_CONFIG_MANIFEST_CACHE_CONTROL_TIMESTAMP: "4000000000" })).toEqual(["boba"]);
+      });
+    },
+  );
 
   it("should not apply overrides to package name of aliased package", async () => {
     await withContext(defaultOpts, async ctx => {

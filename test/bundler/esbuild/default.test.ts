@@ -2302,7 +2302,6 @@ describe.concurrent("bundler", () => {
     },
   });
   itBundled("default/ImportWithQueryParameter", {
-    todo: true,
     files: {
       "/entry.js": /* js */ `
         // Each of these should have a separate identity (i.e. end up in the output file twice)

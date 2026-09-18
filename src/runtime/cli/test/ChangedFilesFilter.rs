@@ -191,6 +191,7 @@ pub(crate) fn filter<'a>(
     };
 
     let sources = bundle.graph.input_files.items_source();
+    let ignored_suffixes = bundle.graph.input_files.items_ignored_suffix();
     let import_records = bundle.graph.ast.items_import_records();
 
     // Map absolute source path -> source index for paths that participate in
@@ -221,9 +222,17 @@ pub(crate) fn filter<'a>(
         if !source.path.is_file() {
             continue;
         }
+        // A file that is also imported with a `?query` is more than one source.
+        let seen = path_to_index.contains_key(path_text);
+        if seen && !ignored_suffixes[idx].is_empty() {
+            continue;
+        }
         // All scanned entry points are absolute, and the resolver emits
         // absolute file paths as well.
         path_to_index.put_assume_capacity(path_text, u32::try_from(idx).unwrap());
+        if seen {
+            continue;
+        }
         // Copy out of the bundler's arena so the caller can use these paths
         // after the BundleV2 heap is gone.
         graph_files.push(Box::<[u8]>::from(path_text));
@@ -256,14 +265,11 @@ pub(crate) fn filter<'a>(
     let mut affected = bun_core::handle_oom(DynamicBitSet::init_empty(sources.len()));
     let mut queue: Vec<u32> = Vec::new();
 
-    {
-        for changed_path in changed_files.keys() {
-            if let Some(&idx) = path_to_index.get(changed_path.as_ref()) {
-                if !affected.is_set(idx as usize) {
-                    affected.set(idx as usize);
-                    queue.push(idx);
-                }
-            }
+    // Not through `path_to_index`: a file that is also imported with a `?query` is two sources.
+    for (idx, source) in sources.iter().enumerate() {
+        if source.path.is_file() && changed_files.contains(source.path.text) {
+            affected.set(idx);
+            queue.push(u32::try_from(idx).unwrap());
         }
     }
 

@@ -87,15 +87,15 @@ pub mod visible {
                     return 0;
                 }
                 let excess = total - max_width;
-                // The first try drops less than `excess` when a wide codepoint
-                // straddles the cut. The next one drops that codepoint too.
-                for dropped_width in excess..=total {
-                    let index = utf8_index_at_width(input, dropped_width);
-                    if utf8(&input[..index]) >= excess {
-                        return index;
-                    }
+                let index = utf8_index_at_width(input, excess);
+                if utf8(&input[..index]) >= excess {
+                    return index;
                 }
-                input.len()
+                // A codepoint is at most 2 columns wide, so a wide one straddles
+                // the cut and the prefix is 1 column short. Drop that codepoint too.
+                let index = utf8_index_at_width(input, excess + 1);
+                debug_assert!(utf8(&input[..index]) >= excess);
+                index
             }
         }
     }

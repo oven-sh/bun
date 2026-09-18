@@ -866,12 +866,15 @@ const SQL: typeof Bun.SQL = function SQL(
       }
       // at this point we dont need to rollback anymore
       needs_rollback = false;
+      // the callback settled: a statement sent from now on would run after COMMIT, outside the transaction
+      state.connectionState &= ~ReservedConnectionState.acceptQueries;
       if (BEFORE_COMMIT_OR_ROLLBACK_COMMAND) {
         await run_internal_transaction_sql(BEFORE_COMMIT_OR_ROLLBACK_COMMAND);
       }
       await run_internal_transaction_sql(COMMIT_COMMAND);
       return resolve(transaction_result);
     } catch (err) {
+      state.connectionState &= ~ReservedConnectionState.acceptQueries;
       try {
         if (!(state.connectionState & ReservedConnectionState.closed) && needs_rollback) {
           if (BEFORE_COMMIT_OR_ROLLBACK_COMMAND) {

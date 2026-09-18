@@ -98,6 +98,9 @@ JSValue fetchESMSourceCodeAsync(
     BunString* referrer,
     BunString* typeAttribute);
 
+// Queues every task parked in `queue` as a microtask, where each goes when no require() of an ES module diverts it.
+void requeueSynchronousModuleQueueAsMicrotasks(JSC::JSGlobalObject*, JSC::VM::SynchronousModuleQueue&);
+
 JSValue fetchCommonJSModule(
     Zig::GlobalObject* globalObject,
     JSCommonJSModule* moduleObject,

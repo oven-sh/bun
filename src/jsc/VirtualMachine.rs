@@ -7614,6 +7614,11 @@ pub(crate) fn plugin_runner_on_resolve_jsc(
     // specifier: hand it back unprefixed. Other namespaces keep the `ns:path`
     // form the module loader dispatches on.
     if user_namespace.eq_ascii(b"file") {
+        if file_path.index_of_ascii_char(0).is_some() {
+            return Ok(Some(Err(global.create_error_instance(format_args!(
+                "onResolve plugin \"path\" must not contain a null byte when the namespace is \"file\""
+            )))));
+        }
         return Ok(Some(Ok(file_path)));
     }
 

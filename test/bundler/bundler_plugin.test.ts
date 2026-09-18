@@ -1866,6 +1866,105 @@ describe("bundler", () => {
     expect(exitCode).toBe(0);
   });
 
+  // open(2) ends a path at a null byte, so the bundler would read a different file than the path names.
+  test.concurrent("plugin/onResolve path with a null byte is not opened as a file", async () => {
+    using dir = tempDir("plugin-resolve-null-byte", {
+      "entry.js": `import { value } from "via-plugin"; console.log(value);`,
+      "real.ts": `export const value = "read from the path before the null byte";`,
+      "sub/real.ts": `export const value = "read from the path before the null byte";`,
+      "build.mjs": `
+        import { join, sep } from "node:path";
+
+        const root = import.meta.dir;
+        const entry = join(root, "entry.js");
+        const nullByteInFileName = join(root, "real.ts") + "\\0ignored.ts";
+        const nullByteInDirectoryName = join(root, "sub") + "\\0ignored" + sep;
+        const onLoadPaths = [];
+
+        async function run(entrypoint, setup) {
+          const result = await Bun.build({
+            entrypoints: [entrypoint],
+            throw: false,
+            plugins: [{ name: "null-byte", setup }],
+          });
+          return { success: result.success, logs: result.logs.map(log => log.message) };
+        }
+
+        console.log(
+          JSON.stringify({
+            nullByteInFileName,
+            fileName: await run(entry, build => {
+              build.onResolve({ filter: /^via-plugin$/ }, () => ({ path: nullByteInFileName }));
+            }),
+            directoryName: await run(entry, build => {
+              build.onResolve({ filter: /^via-plugin$/ }, () => ({ path: nullByteInDirectoryName + "real.ts" }));
+            }),
+            entryPoint: await run("via-plugin", build => {
+              build.onResolve({ filter: /^via-plugin$/ }, () => ({ path: nullByteInFileName }));
+            }),
+            namespaceWithoutOnLoadMatch: await run(entry, build => {
+              build.onResolve({ filter: /^via-plugin$/ }, () => ({ path: nullByteInFileName, namespace: "custom" }));
+              build.onLoad({ filter: /never-matches/, namespace: "custom" }, () => ({ contents: "" }));
+            }),
+            // The resolver takes the directory of the importer as the place to look for "./real.ts".
+            namespaceImportsRelativePath: await run(entry, build => {
+              build.onResolve({ filter: /^via-plugin$/ }, () => ({
+                path: nullByteInDirectoryName + "virtual.js",
+                namespace: "custom",
+              }));
+              build.onLoad({ filter: /virtual\\.js$/, namespace: "custom" }, () => ({
+                contents: 'export { value } from "./real.ts";',
+                loader: "js",
+              }));
+            }),
+            // A null byte is valid in a path that only an onLoad callback reads, and in an external specifier.
+            namespaceWithOnLoadMatch: await run(entry, build => {
+              build.onResolve({ filter: /^via-plugin$/ }, () => ({ path: "\\0virtual", namespace: "custom" }));
+              build.onLoad({ filter: /virtual$/, namespace: "custom" }, args => {
+                onLoadPaths.push(args.path);
+                return { contents: "export const value = 1;", loader: "js" };
+              });
+            }),
+            external: await run(entry, build => {
+              build.onResolve({ filter: /^via-plugin$/ }, () => ({ path: "external\\0module", external: true }));
+            }),
+            onLoadPaths,
+          }),
+        );
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // The fixture prints one line, so empty stdout means it crashed.
+    const { nullByteInFileName, ...results } = stdout.trim() ? JSON.parse(stdout) : { crashed: stderr };
+    const rejected = {
+      success: false,
+      logs: ['onResolve plugin "path" must not contain a null byte when the namespace is "file"'],
+    };
+    expect(results).toEqual({
+      fileName: rejected,
+      directoryName: rejected,
+      entryPoint: rejected,
+      namespaceWithoutOnLoadMatch: {
+        success: false,
+        logs: [`File not found ${JSON.stringify(nullByteInFileName)}`],
+      },
+      namespaceImportsRelativePath: { success: false, logs: ['Could not resolve: "./real.ts"'] },
+      namespaceWithOnLoadMatch: { success: true, logs: [] },
+      external: { success: true, logs: [] },
+      onLoadPaths: ["\0virtual"],
+    });
+    expect(exitCode).toBe(0);
+  });
+
   // Two entry point names that onResolve maps to one file make one output file.
   for (const splitting of [false, true]) {
     test.concurrent(`plugin/two entry points that resolve to one file (splitting: ${splitting})`, async () => {

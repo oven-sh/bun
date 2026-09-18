@@ -1,7 +1,7 @@
 /// <reference types="./plugins" />
 import { plugin } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 import { resolve } from "path";
 
 declare global {
@@ -882,6 +882,98 @@ it.concurrent("a no-op onResolve that returns args.path unchanged is transparent
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout.trim() || stderr).toBe("entry ran:dep");
+  expect(exitCode).toBe(0);
+});
+
+// open(2) ends a path at a null byte, so the module loader would read a different file than the path names.
+it.concurrent("an onResolve path with a null byte is not opened as a file", async () => {
+  using dir = tempDir("plugin-onresolve-null-byte", {
+    "real.ts": `export const value = "read from the path before the null byte";`,
+    "sub/real.ts": `export const value = "read from the path before the null byte";`,
+    "addon.node": "process.dlopen() got the path before the null byte",
+    // A namespaced path that no onLoad callback takes is read from disk as "namespace:path".
+    // ":" cannot be in a Windows file name.
+    ...(isWindows
+      ? {}
+      : {
+          "custom:real.ts": `export const value = "read from the path before the null byte";`,
+          "custom:sub/real.ts": `export const value = "read from the path before the null byte";`,
+        }),
+    "entry.js": `
+      import { join, sep } from "node:path";
+
+      const root = import.meta.dir;
+
+      Bun.plugin({
+        name: "null-byte",
+        setup(build) {
+          build.onResolve({ filter: /^file-name\\.mod$/ }, () => ({ path: join(root, "real.ts") + "\\0ignored.ts" }));
+          build.onResolve({ filter: /^directory-name\\.mod$/ }, () => ({
+            path: join(root, "sub") + "\\0ignored" + sep + "real.ts",
+          }));
+          build.onResolve({ filter: /^addon\\.mod$/ }, () => ({ path: join(root, "addon.node") + "\\0ignored.node" }));
+          build.onResolve({ filter: /^namespace-file-name\\.mod$/ }, () => ({
+            path: "real.ts\\0ignored.ts",
+            namespace: "custom",
+          }));
+          build.onResolve({ filter: /^namespace-directory-name\\.mod$/ }, () => ({
+            path: "sub\\0ignored/real.ts",
+            namespace: "custom",
+          }));
+          build.onResolve({ filter: /^virtual\\.mod$/ }, () => ({ path: "\\0virtual", namespace: "custom" }));
+          build.onLoad({ filter: /virtual$/, namespace: "custom" }, ({ path }) => ({
+            contents: "export const value = " + JSON.stringify("onLoad:" + path) + ";",
+            loader: "js",
+          }));
+        },
+      });
+
+      async function attempt(fn) {
+        try {
+          return await fn();
+        } catch (error) {
+          return "threw: " + error.message;
+        }
+      }
+
+      console.log(
+        JSON.stringify({
+          importFileName: await attempt(async () => (await import("file-name.mod")).value),
+          requireFileName: await attempt(() => require("file-name" + ".mod").value),
+          requireDirectoryName: await attempt(() => require("directory-name" + ".mod").value),
+          requireAddon: await attempt(() => require("addon" + ".mod")),
+          resolveSync: await attempt(() => Bun.resolveSync("file-name.mod", root)),
+          importNamespaceFileName: await attempt(async () => (await import("namespace-file-name.mod")).value),
+          requireNamespaceFileName: await attempt(() => require("namespace-file-name" + ".mod").value),
+          requireNamespaceDirectoryName: await attempt(() => require("namespace-directory-name" + ".mod").value),
+          // A null byte is valid in a path that an onLoad callback takes.
+          onLoad: await attempt(async () => (await import("virtual.mod")).value),
+        }),
+      );
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const rejected = 'threw: onResolve plugin "path" must not contain a null byte when the namespace is "file"';
+  // The fixture catches its own failures, so empty stdout means it crashed.
+  expect(stdout.trim() ? JSON.parse(stdout) : { crashed: stderr }).toEqual({
+    importFileName: rejected,
+    requireFileName: rejected,
+    requireDirectoryName: rejected,
+    requireAddon: rejected,
+    resolveSync: rejected,
+    importNamespaceFileName: 'threw: ENOENT reading "custom:real.ts\0ignored.ts"',
+    requireNamespaceFileName: 'threw: ENOENT reading "custom:real.ts\0ignored.ts"',
+    requireNamespaceDirectoryName: 'threw: ENOENT reading "custom:sub\0ignored/real.ts"',
+    onLoad: "onLoad:\0virtual",
+  });
   expect(exitCode).toBe(0);
 });
 

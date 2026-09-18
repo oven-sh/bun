@@ -18,14 +18,15 @@ static CHILDREN: AtomicU32 = AtomicU32::new(0);
 /// A Ctrl+C arrived while `CHILDREN > 0` and was left to them.
 static RECEIVED: AtomicBool = AtomicBool::new(false);
 /// Live foreground children the handler forwards to. Zero is a free slot.
+/// `SIGNALED` marks a slot that has had a parent SIGINT delivered.
 #[cfg(unix)]
 static PIDS: [AtomicI32; 1024] = [const { AtomicI32::new(0) }; 1024];
-/// Children entered but not yet in `PIDS` (their spawn is in flight).
 #[cfg(unix)]
-static IN_FLIGHT: AtomicU32 = AtomicU32::new(0);
-/// A parent SIGINT arrived while a spawn was in flight. `set_pid` delivers it.
+const SIGNALED: i32 = 1 << 30;
+/// Count of parent SIGINTs. A child compares it with the value at its
+/// `enter` to see one that arrived before its pid was registered.
 #[cfg(unix)]
-static PENDING: AtomicBool = AtomicBool::new(false);
+static PARENT_SIGINTS: AtomicU32 = AtomicU32::new(0);
 /// The Ctrl+C in `RECEIVED` came from our parent by kill(2).
 #[cfg(unix)]
 static FROM_PARENT: AtomicBool = AtomicBool::new(false);
@@ -67,14 +68,21 @@ extern "C" fn handler(
             let sender = (*info).si_pid();
             if sender != 0 && sender == libc::getppid() {
                 FROM_PARENT.store(true, Ordering::SeqCst);
+                PARENT_SIGINTS.fetch_add(1, Ordering::SeqCst);
                 for slot in PIDS.iter() {
-                    let pid = slot.load(Ordering::SeqCst);
-                    if pid > 0 {
-                        libc::kill(pid, sig);
+                    let v = slot.load(Ordering::SeqCst);
+                    if v == 0 {
+                        continue;
                     }
-                }
-                if IN_FLIGHT.load(Ordering::SeqCst) > 0 {
-                    PENDING.store(true, Ordering::SeqCst);
+                    // The first delivery is handed to whoever marks the slot
+                    // first, this handler or `set_pid`. A later one is a repeat.
+                    if v & SIGNALED != 0
+                        || slot
+                            .compare_exchange(v, v | SIGNALED, Ordering::SeqCst, Ordering::SeqCst)
+                            .is_ok()
+                    {
+                        libc::kill(v & !SIGNALED, sig);
+                    }
                 }
             }
         }
@@ -105,46 +113,42 @@ pub struct Child {
     #[cfg(unix)]
     slot: Option<usize>,
     #[cfg(unix)]
-    in_flight: bool,
+    parent_sigints: u32,
 }
 impl Child {
     pub fn enter() -> Self {
-        CHILDREN.fetch_add(1, Ordering::SeqCst);
+        // Read before the count goes up: a parent SIGINT between the two
+        // kills us (no child alive), one after is delivered by `set_pid`.
         #[cfg(unix)]
-        IN_FLIGHT.fetch_add(1, Ordering::SeqCst);
+        let parent_sigints = PARENT_SIGINTS.load(Ordering::SeqCst);
+        CHILDREN.fetch_add(1, Ordering::SeqCst);
         Self {
             #[cfg(unix)]
             slot: None,
             #[cfg(unix)]
-            in_flight: true,
+            parent_sigints,
         }
     }
 
     /// Registers the spawned child for forwarding, and delivers a parent
-    /// SIGINT that arrived during the spawn. SIGINT is masked across the
-    /// registration so the handler cannot deliver the same signal twice.
+    /// SIGINT that arrived during the spawn.
     #[cfg(unix)]
     pub fn set_pid(&mut self, pid: i32) {
-        if !self.in_flight {
+        if self.slot.is_some() || pid <= 0 || pid & SIGNALED != 0 {
             return;
         }
-        let _masked = MaskSigint::new();
         self.slot = PIDS.iter().position(|slot| {
             slot.compare_exchange(0, pid, Ordering::SeqCst, Ordering::SeqCst)
                 .is_ok()
         });
-        if PENDING.load(Ordering::SeqCst) {
+        let Some(slot) = self.slot else { return };
+        if PARENT_SIGINTS.load(Ordering::SeqCst) != self.parent_sigints
+            && PIDS[slot]
+                .compare_exchange(pid, pid | SIGNALED, Ordering::SeqCst, Ordering::SeqCst)
+                .is_ok()
+        {
             // SAFETY: `pid` was just spawned and is not reaped.
             unsafe { libc::kill(pid, libc::SIGINT) };
-        }
-        self.leave_flight();
-    }
-
-    #[cfg(unix)]
-    fn leave_flight(&mut self) {
-        self.in_flight = false;
-        if IN_FLIGHT.fetch_sub(1, Ordering::SeqCst) == 1 {
-            PENDING.store(false, Ordering::SeqCst);
         }
     }
 
@@ -155,44 +159,10 @@ impl Child {
 impl Drop for Child {
     fn drop(&mut self) {
         #[cfg(unix)]
-        {
-            if let Some(slot) = self.slot {
-                PIDS[slot].store(0, Ordering::SeqCst);
-            }
-            if self.in_flight {
-                // The spawn failed: nothing to deliver to.
-                let _masked = MaskSigint::new();
-                self.leave_flight();
-            }
+        if let Some(slot) = self.slot {
+            PIDS[slot].store(0, Ordering::SeqCst);
         }
         CHILDREN.fetch_sub(1, Ordering::SeqCst);
-    }
-}
-
-/// SIGINT blocked on this thread until drop.
-#[cfg(unix)]
-struct MaskSigint(libc::sigset_t);
-#[cfg(unix)]
-impl MaskSigint {
-    fn new() -> Self {
-        // SAFETY: `set` is a valid out-pointer; `old` receives the previous mask.
-        unsafe {
-            let mut set: libc::sigset_t = bun_core::ffi::zeroed();
-            let mut old: libc::sigset_t = bun_core::ffi::zeroed();
-            libc::sigemptyset(&raw mut set);
-            libc::sigaddset(&raw mut set, libc::SIGINT);
-            libc::pthread_sigmask(libc::SIG_BLOCK, &raw const set, &raw mut old);
-            Self(old)
-        }
-    }
-}
-#[cfg(unix)]
-impl Drop for MaskSigint {
-    fn drop(&mut self) {
-        // SAFETY: restores the mask saved in `new`.
-        unsafe {
-            libc::pthread_sigmask(libc::SIG_SETMASK, &raw const self.0, core::ptr::null_mut())
-        };
     }
 }
 

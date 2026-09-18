@@ -4,6 +4,7 @@
  *  `bunx vitest test/js/bun/test/mock-fn.test.js`
  *  `NODE_OPTIONS=--experimental-vm-modules npx jest test/js/bun/test/mock-fn.test.js`
  */
+import vm from "node:vm";
 import test_interop from "./test-interop.js";
 var { isBun, describe, test, it, expect, jest, vi, mock, spyOn } = await test_interop();
 
@@ -1222,4 +1223,87 @@ describe("spyOn", () => {
   }
 
   // spyOn does not work with getters/setters yet.
+});
+
+describe("constructing a mock", () => {
+  // Previously, invoking a mock with `new` returned the implementation's
+  // result as-is, even when it was a primitive, which is invalid for a
+  // constructor and crashed the engine.
+  test("returns an object when there is no implementation", () => {
+    const fn = jest.fn();
+    const instance = new fn();
+    expect(typeof instance).toBe("object");
+    expect(instance).not.toBe(null);
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  test("ignores a primitive return value", () => {
+    const fn = jest.fn(function () {
+      return 42;
+    });
+    const instance = Reflect.construct(fn, []);
+    expect(typeof instance).toBe("object");
+    expect(fn.mock.results[0]).toEqual({ type: "return", value: 42 });
+  });
+
+  test("returns the implementation's object return value", () => {
+    const result = { x: 1 };
+    const fn = jest.fn(function () {
+      return result;
+    });
+    expect(new fn()).toBe(result);
+  });
+
+  test("ignores a primitive from mockReturnValue", () => {
+    const fn = jest.fn().mockReturnValue(5);
+    const instance = new fn();
+    expect(typeof instance).toBe("object");
+    expect(fn()).toBe(5);
+  });
+
+  test("uses new.target's prototype for the instance", () => {
+    function Other() {}
+    const fn = jest.fn(function () {});
+    const instance = Reflect.construct(fn, [], Other);
+    expect(Object.getPrototypeOf(instance)).toBe(Other.prototype);
+  });
+
+  test("falls back to Object.prototype when new.target has a primitive prototype", () => {
+    function Other() {}
+    Other.prototype = 1;
+    const fn = jest.fn(function () {});
+    const instance = Reflect.construct(fn, [], Other);
+    expect(Object.getPrototypeOf(instance)).toBe(Object.prototype);
+  });
+
+  test("uses new.target's realm for the fallback prototype", () => {
+    const context = vm.createContext({});
+    const OtherRealm = vm.runInContext("(function Other() {})", context);
+    OtherRealm.prototype = 1;
+    const otherObjectPrototype = vm.runInContext("Object.prototype", context);
+    expect(otherObjectPrototype).not.toBe(Object.prototype);
+    const fn = jest.fn(function () {});
+    const instance = Reflect.construct(fn, [], OtherRealm);
+    expect(Object.getPrototypeOf(instance)).toBe(otherObjectPrototype);
+  });
+
+  test("passes the instance to the implementation as this", () => {
+    let seenThis;
+    const fn = jest.fn(function () {
+      seenThis = this;
+      this.tagged = true;
+    });
+    const instance = new fn();
+    expect(seenThis).toBe(instance);
+    expect(instance.tagged).toBe(true);
+  });
+
+  if (isBun) {
+    test("constructing a spy on a non-function property does not crash", () => {
+      const obj = { foo: 123 };
+      const spy = spyOn(obj, "foo");
+      const instance = Reflect.construct(spy, []);
+      expect(typeof instance).toBe("object");
+    });
+  }
 });

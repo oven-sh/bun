@@ -1360,6 +1360,43 @@ error: Hello World`,
       },
     },
   });
+  // A module containing any non-ASCII text (here a preserved comment) is held
+  // by JSC as a 16-bit string. Without a source map the error preview is
+  // rendered from that string, and so is the fix-up that moves a constructor
+  // call's position back to its new keyword when the two are on different
+  // lines. Both used to give up on 16-bit sources: no preview, and a frame
+  // position of 1:1. The ASCII twin of this fixture has always printed the
+  // output asserted here.
+  itBundled("compile/NoSourceMapNonAsciiSource", {
+    target: "bun",
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        /*! © café 中 */
+        function code() {
+          throw new (class Boom extends Error {
+            constructor(message: string) {
+              super(message);
+            }
+          })("boom");
+        }
+        code();
+      `,
+    },
+    run: {
+      exitCode: 1,
+      validate({ stderr }) {
+        expect(stderr).toInclude("| /*! © café 中 */\n");
+        expect(stderr).toInclude(
+          `5 |   throw new class Boom extends Error {
+            ^
+error: boom
+`,
+        );
+        expect(stderr).toMatch(/at code \(.*:5:9\)\n/);
+      },
+    },
+  });
   itBundled("compile/SourceMapBigFile", {
     target: "bun",
     compile: true,

@@ -1,6 +1,7 @@
 import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tmpdirSync } from "harness";
+import { chmodSync, realpathSync } from "node:fs";
 import { join } from "path";
 import { createTestBuilder } from "./test_builder";
 const TestBuilder = createTestBuilder(import.meta.path);
@@ -82,6 +83,74 @@ describe("bun exec", () => {
     const val = await $`bun exec 'bun'`.env({ ...bunEnv, PATH: "" }).nothrow();
     expect(val.stderr.toString()).not.toContain("bun: command not found: bun");
     expect(val.stdout.toString()).toContain("Bun is a fast JavaScript runtime");
+  });
+
+  // One plain command runs in place of `bun exec`, as `sh -c` does, so the
+  // program is the process a parent signals and waits for.
+  test.skipIf(isWindows)("a single plain command replaces the bun exec process", async () => {
+    const script = `${BUN} -e "console.log(process.ppid)"`;
+    await using proc = Bun.spawn({ cmd: [BUN, "exec", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(Number(stdout.trim())).toBe(process.pid);
+    expect(exitCode).toBe(0);
+  });
+
+  test.skipIf(isWindows)("a VAR=value prefix reaches the program that replaces the process", async () => {
+    const script = `EXEC_PREFIX=set ${BUN} -e "console.log(process.env.EXEC_PREFIX, process.ppid)"`;
+    await using proc = Bun.spawn({ cmd: [BUN, "exec", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe(`set ${process.pid}`);
+    expect(exitCode).toBe(0);
+  });
+
+  test.skipIf(isWindows)("a PATH= prefix applies to the lookup of the command", async () => {
+    // `cat` exists on the inherited PATH too: the prefixed one must win.
+    using dir = tempDir("exec-path-prefix", { "bin/cat": "#!/bin/sh\necho from-prefix-path\n" });
+    chmodSync(join(String(dir), "bin", "cat"), 0o755);
+    const script = `PATH=${join(String(dir), "bin")} cat`;
+    await using proc = Bun.spawn({ cmd: [BUN, "exec", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("from-prefix-path\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("PWD is the working directory of bun exec", async () => {
+    using dir = tempDir("exec-pwd", {});
+    const script = `${BUN} -e "console.log(process.env.PWD)"`;
+    await using proc = Bun.spawn({
+      cmd: [BUN, "exec", script],
+      cwd: String(dir),
+      env: { ...bunEnv, PWD: "/elsewhere" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(realpathSync(stdout.trim())).toBe(realpathSync(String(dir)));
+    expect(exitCode).toBe(0);
+  });
+
+  test.skipIf(isWindows)("the program that replaces the process gets the default SIGPIPE", async () => {
+    // Bun ignores SIGPIPE. A program spawned by a shell does not inherit that.
+    const probe = `${BUN} exec 'cat /dev/zero' | head -c 4 >/dev/null; echo \${PIPESTATUS[0]}`;
+    await using proc = Bun.spawn({ cmd: ["bash", "-c", probe], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    // 128 + SIGPIPE(13): cat died of the signal, it did not see EPIPE.
+    expect(stdout.trim()).toBe("141");
+    expect(exitCode).toBe(0);
+  });
+
+  test.skipIf(isWindows)("a script with more than one command keeps the bun exec process", async () => {
+    const script = `true && ${BUN} -e "console.log(process.ppid)"`;
+    await using proc = Bun.spawn({ cmd: [BUN, "exec", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(Number(stdout.trim())).toBe(proc.pid);
+    expect(exitCode).toBe(0);
   });
 
   test("works with latin1 paths", async () => {

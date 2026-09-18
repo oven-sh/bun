@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
-import { existsSync, symlinkSync } from "node:fs";
+import { existsSync, readFileSync, symlinkSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 import { join } from "path";
 
@@ -1309,5 +1309,145 @@ describe("auto-discovered bunfig.toml [run] section", () => {
     expect(r.stderr).toContain("Expected boolean");
     expect(r.stdout).not.toContain("Bun is");
     expect(r.exitCode).toBe(1);
+  });
+});
+
+describe("--shell and [run] shell pick the interpreter for --filter", () => {
+  // `echo $0` tells the shells apart. A POSIX shell prints its own path. The
+  // Bun shell does not. Windows always runs the Bun shell here.
+  const probe = "echo $0";
+  const systemShell = /\/(bash|sh|zsh)\b/;
+
+  function workspace(prefix: string, bunfig?: string) {
+    return tempDir(prefix, {
+      ...(bunfig ? { "bunfig.toml": bunfig } : {}),
+      "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
+      packages: {
+        dep0: {
+          "package.json": JSON.stringify({ name: "dep0", scripts: { probe } }),
+        },
+      },
+    });
+  }
+
+  function run(dir: string, args: string[]) {
+    const { exitCode, stdout, stderr } = spawnSync({
+      cwd: dir,
+      cmd: [bunExe(), ...args],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    return { exitCode, stdout: stdout.toString(), stderr: stderr.toString() };
+  }
+
+  test("--shell=bun runs the script in the Bun shell", () => {
+    using dir = workspace("filter-shell-bun");
+    const r = run(String(dir), ["run", "--shell=bun", "--filter", "dep0", "probe"]);
+    expect(r.stdout).toContain("dep0 probe:");
+    expect(r.stdout).not.toMatch(systemShell);
+    expect(r.exitCode).toBe(0);
+  });
+
+  test.skipIf(isWindows)("--shell=system runs the script in the system shell", () => {
+    using dir = workspace("filter-shell-system");
+    const r = run(String(dir), ["run", "--shell=system", "--filter", "dep0", "probe"]);
+    expect(r.stdout).toMatch(systemShell);
+    expect(r.exitCode).toBe(0);
+  });
+
+  test('[run] shell = "bun" runs the script in the Bun shell', () => {
+    using dir = workspace("filter-bunfig-shell-bun", '[run]\nshell = "bun"\n');
+    const r = run(String(dir), ["run", "--filter", "dep0", "probe"]);
+    expect(r.stdout).toContain("dep0 probe:");
+    expect(r.stdout).not.toMatch(systemShell);
+    expect(r.exitCode).toBe(0);
+  });
+
+  test.skipIf(isWindows)('[run] shell = "system" runs the script in the system shell', () => {
+    using dir = workspace("filter-bunfig-shell-system", '[run]\nshell = "system"\n');
+    const r = run(String(dir), ["run", "--filter", "dep0", "probe"]);
+    expect(r.stdout).toMatch(systemShell);
+    expect(r.exitCode).toBe(0);
+  });
+
+  test("the default stays the platform shell", () => {
+    using dir = workspace("filter-shell-default");
+    const r = run(String(dir), ["run", "--filter", "dep0", "probe"]);
+    expect(r.stdout).toContain("dep0 probe:");
+    if (isWindows) {
+      expect(r.stdout).not.toMatch(systemShell);
+    } else {
+      expect(r.stdout).toMatch(systemShell);
+    }
+    expect(r.exitCode).toBe(0);
+  });
+
+  // The runner's env is the whole environment the script gets. The Bun shell
+  // hop must not load the package directory's .env on top of it.
+  test.each([["--shell=bun"], ["--shell=system"]])("%s does not load the package .env", shell => {
+    using dir = tempDir("filter-shell-dotenv", {
+      "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
+      packages: {
+        dep0: {
+          ".env": "FROM_PACKAGE_DOTENV=leaked\n",
+          "env.js": `console.log("[" + (process.env.FROM_PACKAGE_DOTENV ?? "") + "]");`,
+          "package.json": JSON.stringify({
+            name: "dep0",
+            scripts: {
+              env: `${bunExe()} --no-env-file env.js`,
+            },
+          }),
+        },
+      },
+    });
+    const r = run(String(dir), ["run", shell, "--filter", "dep0", "env"]);
+    expect(r.stdout).toContain("dep0 env: []");
+    expect(r.exitCode).toBe(0);
+  });
+
+  // SIGINT to the runner makes it send SIGINT to each script's child. Under
+  // the Bun shell that child is a `bun exec` hop, which must pass the signal
+  // on to the program.
+  test.skipIf(isWindows)("--shell=bun: SIGINT to the runner reaches the program", async () => {
+    using dir = tempDir("filter-shell-bun-abort", {
+      "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
+      packages: {
+        dep0: {
+          // The runner acts on the signal when its loop wakes, so the script keeps it awake.
+          "slow.js": `await Bun.write("pid.txt", String(process.pid)); setInterval(() => console.log("tick"), 100);`,
+          "package.json": JSON.stringify({ name: "dep0", scripts: { slow: `${bunExe()} slow.js` } }),
+        },
+      },
+    });
+    const pidFile = join(String(dir), "packages", "dep0", "pid.txt");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--shell=bun", "--filter", "dep0", "slow"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    // The file exists before its content is written, so poll for the pid itself.
+    const deadline = Date.now() + 10000;
+    let pid = 0;
+    while (!pid && Date.now() < deadline) {
+      pid = existsSync(pidFile) ? Number(readFileSync(pidFile, "utf8")) : 0;
+      if (!pid) await Bun.sleep(20);
+    }
+    expect(pid).toBeGreaterThan(0);
+    proc.kill("SIGINT");
+    await proc.exited;
+    let alive = true;
+    const gone = Date.now() + 10000;
+    while (alive && Date.now() < gone) {
+      try {
+        process.kill(pid, 0);
+        await Bun.sleep(50);
+      } catch {
+        alive = false;
+      }
+    }
+    expect(alive).toBe(false);
   });
 });

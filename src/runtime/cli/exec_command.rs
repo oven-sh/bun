@@ -64,6 +64,10 @@ impl ExecCommand {
         // loader is a thread-/process-lifetime singleton, so `&'static mut` is
         // sound for the single CLI dispatch thread.
         let env = unsafe { &mut *bundle.env };
+        // A shell sets PWD to its working directory at startup.
+        env.map.put(b"PWD", cwd)?;
+        #[cfg(unix)]
+        Self::exec_in_place(&script, env, cwd);
         let mini = bun_event_loop::MiniEventLoop::init_global(Some(env), Some(cwd));
         let parts: [&[u8]; 2] = [cwd, b"[eval]"];
         let script_path = bun_paths::resolve_path::join::<bun_paths::platform::Auto>(&parts);
@@ -91,5 +95,115 @@ impl ExecCommand {
         };
 
         Global::exit(u32::from(code));
+    }
+
+    /// A script that is one plain command, with or without `VAR=value`
+    /// prefixes, runs in place of this process, as `sh -c <command>` does.
+    /// The process a parent signals and waits for is then the program
+    /// itself. Anything else (a second command, a redirect, an expansion, a
+    /// builtin) takes the interpreter, and so does a failed `execve`.
+    #[cfg(unix)]
+    fn exec_in_place(src: &[u8], env: &mut bun_dotenv::Loader, cwd: &[u8]) {
+        use bun_shell_parser::ast::{Atom, Expr, SimpleAtom};
+
+        fn push_text(word: &mut Vec<u8>, atom: &SimpleAtom<'_>) -> bool {
+            match atom {
+                SimpleAtom::Text(text) => word.extend_from_slice(text),
+                SimpleAtom::QuotedEmpty => {}
+                _ => return false,
+            }
+            true
+        }
+        fn plain_word(atom: &Atom<'_>) -> Option<Vec<u8>> {
+            let mut word = Vec::new();
+            let plain = match atom {
+                Atom::Simple(atom) => push_text(&mut word, atom),
+                Atom::Compound(compound) => {
+                    compound.atoms.iter().all(|atom| push_text(&mut word, atom))
+                }
+            };
+            plain.then_some(word)
+        }
+
+        let arena = bun_alloc::Arena::new();
+        let mut out_parser = None;
+        let mut out_lex_result = None;
+        let Ok(script) = Interpreter::parse(
+            &arena,
+            src,
+            &mut [],
+            &[],
+            &mut out_parser,
+            &mut out_lex_result,
+        ) else {
+            return;
+        };
+        let [stmt] = script.stmts else { return };
+        let [Expr::Cmd(cmd)] = stmt.exprs else { return };
+        if !cmd.redirect.is_empty() || cmd.redirect_file.is_some() {
+            return;
+        }
+        let mut argv: Vec<Vec<u8>> = Vec::with_capacity(cmd.name_and_args.len());
+        for atom in cmd.name_and_args {
+            let Some(word) = plain_word(atom) else { return };
+            argv.push(word);
+        }
+        let Some(name) = argv.first() else { return };
+        let mut assigns: Vec<(&[u8], Vec<u8>)> = Vec::with_capacity(cmd.assigns.len());
+        for assign in cmd.assigns {
+            let Some(value) = plain_word(&assign.value) else {
+                return;
+            };
+            assigns.push((assign.label, value));
+        }
+        if crate::shell::builtin::Kind::from_argv0(name).is_some() {
+            return;
+        }
+        // Before the lookup: a `PATH=` prefix applies to it.
+        for (label, value) in &assigns {
+            if env.map.put(label, value).is_err() {
+                return;
+            }
+        }
+        let mut path_buf = bun_paths::path_buffer_pool::get();
+        let Some(resolved) =
+            bun_which::which(&mut path_buf, env.get(b"PATH").unwrap_or(b""), cwd, name)
+        else {
+            return;
+        };
+        let Ok(envp) = env.map.create_null_delimited_env_map() else {
+            return;
+        };
+        let args_z: Vec<Box<[u8]>> = argv
+            .into_iter()
+            .map(|mut word| {
+                word.push(0);
+                word.into_boxed_slice()
+            })
+            .collect();
+        let mut argv_ptrs: Vec<*const ::core::ffi::c_char> =
+            args_z.iter().map(|arg| arg.as_ptr().cast()).collect();
+        argv_ptrs.push(core::ptr::null());
+        Output::flush();
+        // SAFETY: `resolved`, every `args_z` element and the `envp` strings are
+        // NUL-terminated and outlive the call. The pointer arrays end in null.
+        // `execve` returns only on failure.
+        unsafe {
+            unsafe extern "C" {
+                safe fn on_before_reload_process_posix();
+            }
+            // Clears CLOEXEC on stdio, resets caught handlers and the mask,
+            // as the `--watch` reload does before its execve.
+            on_before_reload_process_posix();
+            // Bun ignores these two at startup. A program spawned by a shell
+            // gets the default.
+            libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+            libc::signal(libc::SIGXFSZ, libc::SIG_DFL);
+            libc::execve(
+                resolved.as_ptr(),
+                argv_ptrs.as_ptr(),
+                envp.as_slice().as_ptr(),
+            )
+        };
     }
 }

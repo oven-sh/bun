@@ -2206,3 +2206,105 @@ describe("auto-discovered bunfig.toml [run] section", () => {
     expect(r.exitCode).toBe(1);
   });
 });
+
+describe.concurrent("--shell and [run] shell pick the interpreter", () => {
+  // `echo $0` tells the shells apart. A POSIX shell prints its own path. The
+  // Bun shell does not. Windows always runs the Bun shell here.
+  const probe = "echo $0";
+  const systemShell = /\/(bash|sh|zsh)\b/;
+  const pkg = JSON.stringify({ scripts: { one: probe, two: probe } });
+
+  test.each([
+    ["--parallel", ["run", "--shell=bun", "--parallel", "one", "two"]],
+    ["--sequential", ["run", "--shell=bun", "--sequential", "one", "two"]],
+  ])("--shell=bun %s runs the scripts in the Bun shell", async (_, args) => {
+    using dir = tempDir("mr-shell-bun", { "package.json": pkg });
+    const r = await runMulti(args, String(dir));
+    expectDone(r.stderr, "one");
+    expectDone(r.stderr, "two");
+    expect(r.stdout).not.toMatch(systemShell);
+    expect(r.exitCode).toBe(0);
+  });
+
+  test.skipIf(isWindows).each([
+    ["--parallel", ["run", "--shell=system", "--parallel", "one"]],
+    ["--sequential", ["run", "--shell=system", "--sequential", "one"]],
+  ])("--shell=system %s runs the scripts in the system shell", async (_, args) => {
+    using dir = tempDir("mr-shell-system", { "package.json": pkg });
+    const r = await runMulti(args, String(dir));
+    expect(r.stdout).toMatch(systemShell);
+    expect(r.exitCode).toBe(0);
+  });
+
+  test('[run] shell = "bun" runs the scripts in the Bun shell', async () => {
+    using dir = tempDir("mr-bunfig-shell-bun", { "bunfig.toml": '[run]\nshell = "bun"\n', "package.json": pkg });
+    const r = await runMulti(["run", "--parallel", "one"], String(dir));
+    expectDone(r.stderr, "one");
+    expect(r.stdout).not.toMatch(systemShell);
+    expect(r.exitCode).toBe(0);
+  });
+
+  test("the default stays the platform shell", async () => {
+    using dir = tempDir("mr-shell-default", { "package.json": pkg });
+    const r = await runMulti(["run", "--parallel", "one"], String(dir));
+    expectDone(r.stderr, "one");
+    if (isWindows) {
+      expect(r.stdout).not.toMatch(systemShell);
+    } else {
+      expect(r.stdout).toMatch(systemShell);
+    }
+    expect(r.exitCode).toBe(0);
+  });
+
+  // The runner's env is the whole environment the script gets. The Bun shell
+  // hop must not load the package directory's .env on top of it.
+  test.each([["--shell=bun"], ["--shell=system"]])("%s does not load the package .env", async shell => {
+    using dir = tempDir("mr-shell-dotenv", {
+      ".env": "FROM_PACKAGE_DOTENV=leaked\n",
+      "env.js": `console.log("[" + (process.env.FROM_PACKAGE_DOTENV ?? "") + "]");`,
+      "package.json": JSON.stringify({
+        scripts: {
+          env: `${bunExe()} --no-env-file env.js`,
+        },
+      }),
+    });
+    const r = await runMulti(["run", shell, "--parallel", "env"], String(dir));
+    expectPrefixed(r.stdout, "env", "[]");
+    expect(r.exitCode).toBe(0);
+  });
+
+  // The abort sends SIGINT to each script's child. Under the Bun shell that
+  // child is a `bun exec` hop, which must pass the signal on to the program.
+  test.skipIf(isWindows)("--shell=bun: a failure aborts the other script and its program", async () => {
+    using dir = tempDir("mr-shell-bun-abort", {
+      "slow.js": `await Bun.write("pid.txt", String(process.pid)); await Bun.sleep(30000);`,
+      "fail.js": `while (!(await Bun.file("pid.txt").exists())) await Bun.sleep(20); process.exit(1);`,
+      "package.json": JSON.stringify({
+        scripts: { slow: `${bunExe()} slow.js`, fail: `${bunExe()} fail.js` },
+      }),
+    });
+    const start = Date.now();
+    const r = await runMulti(["run", "--shell=bun", "--parallel", "slow", "fail"], String(dir));
+    const elapsed = Date.now() - start;
+    expectExited(r.stderr, "fail", 1);
+    expect(elapsed).toBeLessThan(15000);
+    expect(r.exitCode).not.toBe(0);
+    const pid = Number(await Bun.file(path.join(String(dir), "pid.txt")).text());
+    expect(pid).toBeGreaterThan(0);
+    expect(await programGone(pid)).toBe(true);
+  });
+});
+
+/** The program is gone once the signal lands. Poll, do not sleep. */
+async function programGone(pid: number): Promise<boolean> {
+  const deadline = Date.now() + 10000;
+  while (Date.now() < deadline) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return true;
+    }
+    await Bun.sleep(50);
+  }
+  return false;
+}

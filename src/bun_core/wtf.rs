@@ -5,8 +5,9 @@
 //! tier-0 callers declare the C symbol directly — no `bun_jsc` crate
 //! dependency is required to reference it.
 //!
-//! Source of truth: `src/jsc/bindings/wtf-bindings.cpp` (`WTF__parseES5Date`,
-//! `WTF__parseDate`), over vendor/WebKit `Source/WTF/wtf/DateMath.{h,cpp}`.
+//! Source of truth: `src/jsc/bindings/wtf-bindings.cpp` (`WTF__parseES5Date`),
+//! which forwards to `WTF::parseES5Date` in
+//! vendor/WebKit `Source/WTF/wtf/DateMath.{h,cpp}`.
 //!
 //! Note: WTF's `parseES5Date` sets an `isLocalTime` out-param so the JS
 //! `Date` constructor can later apply the VM's tz offset. The C shim discards

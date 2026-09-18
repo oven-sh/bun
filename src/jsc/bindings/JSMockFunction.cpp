@@ -824,9 +824,7 @@ static JSC::JSObject* createMockResult(JSC::VM& vm, Zig::GlobalObject* globalObj
     return result;
 }
 
-// Settles the "incomplete" entry in place (like jest-mock) because the implementation may have
-// called mockClear() and replaced the array that held it. It may also have reshaped the entry
-// through fn.mock.results, so slot writes need the original structure.
+// Settles the entry in place: mockClear() during the call may have dropped the results array, and user code may have reshaped the entry.
 static void settleMockResult(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSObject* result, MockResultType type, JSC::JSValue value)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);

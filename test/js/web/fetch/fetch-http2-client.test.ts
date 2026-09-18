@@ -1359,6 +1359,77 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
       );
     });
 
+    // RFC 9110 §10.1.1: an origin does not have to answer the expectation, so
+    // a client SHOULD NOT wait for an indefinite period before it sends the
+    // body. The wait ends on a 4 s socket timer tick, hence the long timeout.
+    test("Expect: 100-continue sends the body when no 100 arrives", async () => {
+      // Never sends an interim response. Answers a stream once its body ends.
+      const server = nodetls.createServer({ ...tls, ALPNProtocols: ["h2"] }, socket => {
+        const received = new Map<number, number>();
+        let buf = Buffer.alloc(0);
+        let prefaceSeen = false;
+        socket.on("data", chunk => {
+          buf = Buffer.concat([buf, chunk]);
+          if (!prefaceSeen) {
+            if (buf.length < 24) return;
+            buf = buf.subarray(24);
+            prefaceSeen = true;
+            socket.write(frame(4, 0, 0));
+          }
+          while (buf.length >= 9) {
+            const len = buf.readUIntBE(0, 3);
+            if (buf.length < 9 + len) return;
+            const type = buf[3],
+              flags = buf[4],
+              id = buf.readUInt32BE(5) & 0x7fffffff;
+            buf = buf.subarray(9 + len);
+            if (type === 4 && !(flags & 1)) socket.write(frame(4, 1, 0));
+            if (type !== 0) continue;
+            received.set(id, (received.get(id) ?? 0) + len);
+            if (flags & 1) {
+              socket.write(frame(1, 4, id, hpackStatus(200)));
+              socket.write(frame(0, 1, id, Buffer.from(`got ${received.get(id)} bytes`)));
+            }
+          }
+        });
+        socket.on("error", () => {});
+      });
+      server.listen(0);
+      await once(server, "listening");
+      const { port } = server.address() as import("node:net").AddressInfo;
+      try {
+        await using proc = await spawnFetch(`
+          const post = (host, init) =>
+            fetch("https://" + host + ":${port}", {
+              method: "POST",
+              headers: { Expect: "100-continue" },
+              tls: { rejectUnauthorized: false },
+              ...init,
+            }).then(async r => r.status + " " + (await r.text()), e => "rejected " + (e?.code ?? e));
+          const streamed = new ReadableStream({
+            start(ctrl) {
+              ctrl.enqueue(new TextEncoder().encode("streamed-"));
+              ctrl.enqueue(new TextEncoder().encode("body"));
+              ctrl.close();
+            },
+          });
+          console.log(JSON.stringify(await Promise.all([
+            post("localhost", { body: "twenty-chars-body!!!" }),
+            post("localhost", { body: streamed, duplex: "half" }),
+            // Another host name is another connection, so no sibling request
+            // arms this socket's idle timer.
+            post("127.0.0.1", { body: "no idle timer", timeout: false }),
+          ])));
+        `);
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(JSON.parse(stdout)).toEqual(["200 got 20 bytes", "200 got 13 bytes", "200 got 13 bytes"]);
+        expect(exitCode).toBe(0);
+      } finally {
+        server.close();
+      }
+    }, 30_000);
+
     test("Content-Length / DATA mismatch rejects", async () => {
       await withRawH2Server(
         (conn, id) => {

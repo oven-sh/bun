@@ -37,6 +37,13 @@ pub(crate) const WRITE_BUFFER_HIGH_WATER: usize = 256 * 1024;
 /// stalled — caps the PING-reflection growth at a fixed budget instead of OOM.
 pub(crate) const WRITE_BUFFER_CONTROL_LIMIT: usize = 1024 * 1024;
 
+/// How long a request body is held for `100 Continue` under
+/// `Expect: 100-continue` before it is sent anyway. Same as curl's
+/// `CURLOPT_EXPECT_100_TIMEOUT_MS` and Go's `ExpectContinueTimeout` defaults.
+/// The session's socket timer enforces it, so the body goes out at the first
+/// 4 s timer tick after this much time.
+pub(crate) const EXPECT_CONTINUE_TIMEOUT: core::time::Duration = core::time::Duration::from_secs(1);
+
 /// Live-object counters for the leak test in fetch-http2-leak.test.ts.
 /// Incremented at allocation, decremented in deinit. Read from the JS thread
 /// via TestingAPIs.liveCounts so they must be atomic.

@@ -4,6 +4,7 @@
 use core::cell::Cell;
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
+use std::time::Instant;
 
 use crate::Error;
 use bun_collections::{ArrayHashMap, VecExt};
@@ -26,6 +27,7 @@ use crate::{HTTPClient, HTTPVerboseLevel, HeaderResult, NewHTTPContext, Protocol
 pub type Socket = HTTPSocket<true>;
 
 const LOCAL_INITIAL_WINDOW_SIZE: u32 = super::LOCAL_INITIAL_WINDOW_SIZE;
+const EXPECT_CONTINUE_TIMEOUT: core::time::Duration = super::EXPECT_CONTINUE_TIMEOUT;
 
 // 31-/24-bit wire fields stored as u32; range asserts at use sites.
 #[allow(non_camel_case_types)]
@@ -109,6 +111,11 @@ pub struct ClientSession {
     /// `onData` only re-arms the idle timer when this is true so a server
     /// can't keep a stalled upload alive forever with bare PINGs.
     pub(crate) stream_progressed: bool,
+    /// The socket timer is armed for a stream's `awaiting_continue`, not for
+    /// the idle timeout, so its firing must not fail the session. Recorded by
+    /// `rearm_timeout` rather than derived when the timer fires: the held
+    /// stream can be gone by then (RST_STREAM does not re-arm).
+    continue_timer_armed: bool,
     pub(crate) goaway_last_stream_id: u31,
     pub(crate) fatal_error: Option<Error>,
     /// HEADERS/CONTINUATION fragments for a stream we no longer track (e.g.
@@ -237,18 +244,19 @@ impl ClientSession {
     /// may have given up (`socket_ref_owed`) released, followed by the guard's
     /// own ref, both through `this`. When the body tore the session down that
     /// second release frees it, with no reference to it live anywhere.
-    fn enter(this: SessionPtr, body: impl FnOnce(&mut ClientSession)) {
+    fn enter<R>(this: SessionPtr, body: impl FnOnce(&mut ClientSession) -> R) -> R {
         let _guard = RefPtr::from_this(this);
         // SAFETY: `this` is live (see `this_ptr`; the guard above holds it for
         // the rest of this call) and HTTP-thread-only, so this is the only
         // borrow of the session for the duration of `body`.
-        body(unsafe { &mut *this.as_ptr() });
+        let result = body(unsafe { &mut *this.as_ptr() });
         if this.socket_ref_owed.take() {
             // SAFETY: the body gave up the socket ext's ref; `_guard`
             // still holds one, so the session is live and this release is not
             // the last. No borrow of the session is live: the body's ended.
             unsafe { ClientSession::deref(this.as_ptr()) };
         }
+        result
     }
 
     /// Socket onData entry point; see [`Self::handle_data`].
@@ -266,6 +274,13 @@ impl ClientSession {
     /// caller holds its own guard, the session is freed before this returns.
     pub(crate) fn on_close(this: SessionPtr, err: Error) {
         Self::enter(this, |s| s.fail_streams(err));
+    }
+
+    /// Socket onTimeout / onLongTimeout entry point. False when it was the
+    /// idle timeout that fired: the caller then fails the session through
+    /// [`Self::on_close`]. See [`Self::release_held_bodies`].
+    pub(crate) fn on_timeout(this: SessionPtr) -> bool {
+        Self::enter(this, |s| s.release_held_bodies())
     }
 
     /// Multiplex `client` onto an established (registered or pool-resumed)
@@ -367,6 +382,7 @@ impl ClientSession {
             encoder_poisoned: false,
             delivering: false,
             stream_progressed: false,
+            continue_timer_armed: false,
             goaway_last_stream_id: 0,
             fatal_error: None,
             orphan_header_block: Vec::new(),
@@ -600,6 +616,9 @@ impl ClientSession {
             HTTPStage::Body
         };
         client.state.response_stage = HTTPStage::Headers;
+        if stream_ref.awaiting_continue.is_some() {
+            self.rearm_timeout();
+        }
 
         if let Err(err) = self.pump_send_bodies() {
             self.fail_all(err);
@@ -651,6 +670,21 @@ impl ClientSession {
     /// sibling re-arming, or strip the safety net from one that wants it),
     /// so the session disarms only when *every* attached client opted out.
     fn rearm_timeout(&mut self) {
+        // RFC 9110 §10.1.1: a client SHOULD NOT wait indefinitely for
+        // `100 Continue`. The socket timer is this thread's only clock, so
+        // while a request body is held it is armed for its next tick (at most
+        // one 4 s wheel period away) and its firing runs `release_held_bodies`
+        // instead of failing the session. Re-arming within a period does not
+        // move that tick, so traffic on sibling streams cannot postpone it.
+        self.continue_timer_armed = self
+            .streams
+            .values()
+            .iter()
+            .any(|&s| stream_ref(s).awaiting_continue.is_some());
+        if self.continue_timer_armed {
+            self.socket.set_timeout(1);
+            return;
+        }
         // The socket is shared by every stream on the session, so arm the
         // longest effective idle timeout among them (0 = every client's
         // effective deadline is "none", or no clients are attached).
@@ -917,6 +951,30 @@ impl ClientSession {
         self.reap_aborted();
         self.rearm_timeout();
         self.maybe_release();
+    }
+
+    /// The socket timer fired. False when it was the idle timeout. Otherwise
+    /// `rearm_timeout` armed it for a held request body: send every body held
+    /// for `EXPECT_CONTINUE_TIMEOUT` as if `100 Continue` had arrived. A body
+    /// held for less waits for the next tick, 4 s later.
+    fn release_held_bodies(&mut self) -> bool {
+        if !self.continue_timer_armed {
+            return false;
+        }
+        let now = Instant::now();
+        for &s in self.streams.values() {
+            let s = stream_mut(s);
+            if s.awaiting_continue.is_some_and(|since| {
+                now.saturating_duration_since(since) >= EXPECT_CONTINUE_TIMEOUT
+            }) {
+                s.awaiting_continue = None;
+            }
+        }
+        self.rearm_timeout();
+        if let Err(err) = self.pump_send_bodies() {
+            self.fail_all(err);
+        }
+        true
     }
 
     /// Called while the socket is parked in the pool with no clients; answers

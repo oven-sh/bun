@@ -5,6 +5,7 @@
 
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
+use std::time::Instant;
 
 use crate::Error;
 use bun_picohttp as picohttp;
@@ -50,9 +51,11 @@ pub struct Stream {
     /// delivery. Subsequent HEADERS are trailers and decoded-then-dropped.
     pub(crate) headers_ready: bool,
     pub(crate) headers_end_stream: bool,
-    /// Expect: 100-continue is in effect: hold the request body until a 1xx
-    /// or final status arrives.
-    pub(crate) awaiting_continue: bool,
+    /// Expect: 100-continue is in effect: hold the request body until
+    /// `100 Continue` or a final status arrives, or until the session's socket
+    /// timer finds it held for `EXPECT_CONTINUE_TIMEOUT`. Holds the time the
+    /// HEADERS were queued.
+    pub(crate) awaiting_continue: Option<Instant>,
     pub(crate) fatal_error: Option<Error>,
     /// DATA bytes consumed since the last WINDOW_UPDATE for this stream.
     pub(crate) unacked_bytes: u32,
@@ -139,7 +142,7 @@ impl Stream {
             rst_done: false,
             headers_ready: false,
             headers_end_stream: false,
-            awaiting_continue: false,
+            awaiting_continue: None,
             fatal_error: None,
             unacked_bytes: 0,
             data_bytes_received: 0,

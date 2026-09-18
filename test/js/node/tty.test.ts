@@ -1,5 +1,6 @@
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { join } from "node:path";
 import { WriteStream } from "node:tty";
 
 describe("ReadStream.prototype.setRawMode", () => {
@@ -189,6 +190,132 @@ describe("ReadStream.prototype.setRawMode", () => {
       afterStdinCooked: false,
     });
     expect(await proc.exited).toBe(0);
+  });
+});
+
+// When a stdout/stderr/child.stdin write fails (EIO on a hung-up tty, EPIPE on
+// a closed pipe) Node's uv write callback runs the cb + errorOrDestroy pair
+// from a libuv callback frame, so a throw from emit('error') with no listener
+// is an uncaughtException. Bun's FileSink reports the failure as a rejected
+// promise, so running the same pair from the promise reaction surfaced the
+// throw as unhandledRejection instead.
+describe.concurrent.skipIf(isWindows)("process.stdout on a hung-up tty", () => {
+  const fixture = `
+    const { writeFileSync, writeSync } = require("node:fs");
+    const events = [];
+    process.on("exit", code => {
+      events.push("exit:" + code);
+      writeFileSync(process.env.RESULT_FILE, JSON.stringify(events));
+    });
+
+    // Outlive the SIGHUP the kernel sends when the master closes, like a
+    // nohup'd daemon, so the failing write is actually reached.
+    process.on("SIGHUP", () => {});
+
+    process.on("uncaughtException", err => {
+      events.push("uncaught:" + (err && err.code));
+      process.exit(7);
+    });
+    process.on("unhandledRejection", err => {
+      events.push("unhandledRejection:" + (err && err.code));
+      process.exit(8);
+    });
+
+    if (!process.env.NO_ERROR_LISTENER) {
+      process.stdout.on("error", err => {
+        events.push("error:" + err.code);
+        process.exit(0);
+      });
+    }
+
+    process.stdout.write("READY\\n");
+
+    // Probe fd 1 with a raw writeSync (bypassing the stream, so errorOrDestroy
+    // is not primed) until the master close is visible as EIO, then issue the
+    // stream write under test as the first failing stream write. Also keeps the
+    // loop alive without relying on stdin, which raced on CI.
+    let ticks = 0;
+    const probe = () => {
+      try {
+        writeSync(1, ".");
+        if (++ticks > 100000) { events.push("no-hangup"); process.exit(99); }
+        return setImmediate(probe);
+      } catch (e) {
+        if (!e || e.code !== "EIO") { events.push("probe:" + (e && e.code)); process.exit(99); }
+      }
+      if (process.env.USE_END) {
+        // Writable.prototype.end(chunk) routes through _write (underscoreWriteFast)
+        // with state.onwrite as the callback, rather than the writeFast override.
+        process.stdout.end("after hangup\\n");
+      } else {
+        process.stdout.write("after hangup\\n", err => {
+          if (err) events.push("cb:" + err.code);
+        });
+      }
+    };
+    setImmediate(probe);
+  `;
+
+  async function runUntilHangup(env: Record<string, string>) {
+    using dir = tempDir("stdout-hangup", { "fixture.js": fixture });
+    const resultFile = join(String(dir), "result.json");
+
+    let output = "";
+    const decoder = new TextDecoder();
+    const { promise: ready, resolve } = Promise.withResolvers<void>();
+    await using terminal = new Bun.Terminal({
+      data(_terminal, chunk: Uint8Array) {
+        output += decoder.decode(chunk, { stream: true });
+        if (output.includes("READY")) resolve();
+      },
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(String(dir), "fixture.js")],
+      env: { ...bunEnv, ...env, RESULT_FILE: resultFile },
+      terminal,
+    });
+
+    await Promise.race([
+      ready,
+      proc.exited.then(code => {
+        throw new Error(`child exited (${code}) before READY; terminal: ${JSON.stringify(output)}`);
+      }),
+    ]);
+    terminal.close();
+
+    const exitCode = await proc.exited;
+    const events = await Bun.file(resultFile)
+      .json()
+      .catch(() => null);
+    return { events, exitCode, signalCode: proc.signalCode };
+  }
+
+  // node v26.3.0: ["cb:EIO","uncaught:EIO","exit:7"]
+  test("unhandled write error surfaces as uncaughtException, not unhandledRejection", async () => {
+    expect(await runUntilHangup({ NO_ERROR_LISTENER: "1" })).toEqual({
+      events: ["cb:EIO", "uncaught:EIO", "exit:7"],
+      exitCode: 7,
+      signalCode: null,
+    });
+  });
+
+  // node v26.3.0: ["cb:EIO","error:EIO","exit:0"]
+  test("with an 'error' listener, both the write callback and the listener fire", async () => {
+    expect(await runUntilHangup({})).toEqual({
+      events: ["cb:EIO", "error:EIO", "exit:0"],
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  // node v26.3.0: ["uncaught:EIO","exit:7"]
+  test("unhandled end(chunk) error via _write surfaces as uncaughtException", async () => {
+    expect(await runUntilHangup({ NO_ERROR_LISTENER: "1", USE_END: "1" })).toEqual({
+      events: ["uncaught:EIO", "exit:7"],
+      exitCode: 7,
+      signalCode: null,
+    });
   });
 });
 

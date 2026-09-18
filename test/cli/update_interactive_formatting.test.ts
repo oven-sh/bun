@@ -323,7 +323,8 @@ describe.concurrent("bun update --interactive", () => {
   // ellipsis. Eight wide characters fit in 17 columns, and the padding takes the two columns that
   // are left. A combining accent takes no column and stays with its letter.
   it("should truncate a package name on a character boundary", async () => {
-    const eWithCombiningAcute = "e\u0301";
+    // "e" and a combining acute accent: 3 bytes and 1 column each time.
+    const accentedLetters = (count: number) => Buffer.alloc(count * 3, "e\u0301").toString();
     await using server = manifestRegistry();
     await using dir = tempDir("update-interactive-wide-name-truncated", {
       "bunfig.toml": `[install]\ncache = false\nregistry = "${server.url}"\n`,
@@ -332,7 +333,7 @@ describe.concurrent("bun update --interactive", () => {
         version: "1.0.0",
         dependencies: {
           "a-long-ascii-package-name-that-needs-an-ellipsis": "1.0.0",
-          [eWithCombiningAcute.repeat(40)]: "1.0.0",
+          [accentedLetters(40)]: "1.0.0",
           "日本語パッケージ名前テスト長い名前のパッケージです": "1.0.0",
         },
       }),
@@ -344,7 +345,7 @@ describe.concurrent("bun update --interactive", () => {
     expect(tableLines(stdout)).toEqual([
       "  dependencies                             Current  Target  Latest",
       "  ❯ □ a-long-ascii-pack…needs-an-ellipsis  1.0.0    1.0.0   2.0.0",
-      `    □ ${eWithCombiningAcute.repeat(17)}…${eWithCombiningAcute.repeat(17)}  1.0.0    1.0.0   2.0.0`,
+      `    □ ${accentedLetters(17)}…${accentedLetters(17)}  1.0.0    1.0.0   2.0.0`,
       "    □ 日本語パッケージ…のパッケージです    1.0.0    1.0.0   2.0.0",
     ]);
     expect(exitCode).toBe(0);

@@ -22,12 +22,13 @@ const {
   opendir,
   readdir,
   readlink,
+  realpath,
   stat,
   symlink,
   unlink,
   utimes,
 } = require("node:fs/promises");
-const { dirname, isAbsolute, join, parse, resolve } = require("node:path");
+const { basename, dirname, isAbsolute, join, parse, resolve } = require("node:path");
 
 const PromisePrototypeThen = $Promise.prototype.$then;
 const PromiseReject = Promise.$reject;
@@ -90,33 +91,62 @@ function getStats(src, dest, opts) {
   ]);
 }
 
-// Recursively check if dest parent is a subdirectory of src.
-// It works for all file types including symlinks since it
-// checks the src and dest inodes. It starts from the deepest
-// parent and stops once it reaches the src parent or the root path.
+async function resolveExistingRealpath(p) {
+  let current = resolve(p);
+  const tail: string[] = [];
+  for (;;) {
+    try {
+      current = await realpath(current);
+      break;
+    } catch (err: any) {
+      if (err?.code !== "ENOENT") return resolve(p);
+      const parent = dirname(current);
+      if (parent === current) break;
+      tail.push(basename(current));
+      current = parent;
+    }
+  }
+  let i = tail.length;
+  while (i > 0) current = join(current, tail[--i]);
+  return current;
+}
+
 async function checkParentPaths(src, srcStat, dest) {
+  if (srcStat.isDirectory()) {
+    const resolvedSrc = await resolveExistingRealpath(src);
+    const resolvedDest = await resolveExistingRealpath(dest);
+    if (isSrcSubdir(resolvedSrc, resolvedDest)) {
+      throw fsCpEinvalError({
+        message: `cannot copy ${src} to a subdirectory of self ${dest}`,
+        path: dest,
+        syscall: "cp",
+        errno: EINVAL,
+        code: "EINVAL",
+      });
+    }
+  }
   const srcParent = resolve(dirname(src));
-  const destParent = resolve(dirname(dest));
-  if (destParent === srcParent || destParent === parse(destParent).root) {
-    return;
+  let destParent = resolve(dirname(dest));
+  for (;;) {
+    if (destParent === srcParent || destParent === parse(destParent).root) return;
+    let destStat;
+    try {
+      destStat = await stat(destParent, { bigint: true });
+    } catch (err: any) {
+      if (err.code === "ENOENT") return;
+      throw err;
+    }
+    if (areIdentical(srcStat, destStat)) {
+      throw fsCpEinvalError({
+        message: `cannot copy ${src} to a subdirectory of self ${dest}`,
+        path: dest,
+        syscall: "cp",
+        errno: EINVAL,
+        code: "EINVAL",
+      });
+    }
+    destParent = resolve(dirname(destParent));
   }
-  let destStat;
-  try {
-    destStat = await stat(destParent, { bigint: true });
-  } catch (err: any) {
-    if (err.code === "ENOENT") return;
-    throw err;
-  }
-  if (areIdentical(srcStat, destStat)) {
-    throw fsCpEinvalError({
-      message: `cannot copy ${src} to a subdirectory of self ${dest}`,
-      path: dest,
-      syscall: "cp",
-      errno: EINVAL,
-      code: "EINVAL",
-    });
-  }
-  return checkParentPaths(src, srcStat, destParent);
 }
 
 // The native recursive copy (a single clonefile() on macOS) copies symlinks

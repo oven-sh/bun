@@ -510,6 +510,7 @@ describe("backpressure", () => {
       const handled = Promise.withResolvers<void>();
       const closed = Promise.withResolvers<void>();
       await using server = createServer(tls, (req, res) => {
+        const socket = req.socket;
         res.on("finish", () => events.push("finish"));
         res.on("close", () => {
           events.push("close");
@@ -518,7 +519,11 @@ describe("backpressure", () => {
         backlog = writeBodyInChunks(
           res,
           endWithChunk,
-          () => events.push("end callback"),
+          () => {
+            events.push("end callback");
+            // The handler takes the callback as "the response is sent" and drops the connection.
+            socket.destroy();
+          },
           () => events.push("write callback"),
         );
         handled.resolve();

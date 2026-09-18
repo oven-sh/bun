@@ -461,11 +461,12 @@ private:
                 /* node:http also queues behind responses that were dispatched but
                  * are not the connection's current response yet, and behind a
                  * response that has ended but not finished: its bytes are still
-                 * in the outgoing buffer, and it owns the connection (Node's
-                 * socket._httpMessage) until they have been written out, with
-                 * later responses queued behind it (Node's state.outgoing). */
+                 * in the outgoing buffer (or the TLS spill slot), and it owns the
+                 * connection (Node's socket._httpMessage) until they have been
+                 * written out, with later responses queued behind it (Node's
+                 * state.outgoing). */
                 queueBehindEarlierResponse = httpResponseData->nodeHttpQueuedPipelinedCount > 0
-                    || ((AsyncSocket<SSL> *) s)->getBufferedAmount() > 0;
+                    || !((AsyncSocket<SSL> *) s)->hasFullyDrained();
             }
             if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) || queueBehindEarlierResponse) {
                 if constexpr (!IsNodeHttp) {

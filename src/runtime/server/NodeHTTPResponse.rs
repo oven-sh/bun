@@ -1815,6 +1815,10 @@ impl NodeHTTPResponse {
         }
 
         if flags.contains(Flags::ENDED) {
+            if !response.has_fully_drained() {
+                // The flush left a TLS batch tail in userspace; the next writable event reports it.
+                return true;
+            }
             // Armed by end(): the bytes it left buffered are out, so the response has finished.
             let _guard = self.ref_guard();
             response.clear_on_writable();
@@ -2049,7 +2053,7 @@ impl NodeHTTPResponse {
             if let Some(raw_response) = self.raw_response.get() {
                 if !self.flags.get().contains(Flags::SOCKET_CLOSED)
                     && !raw_response.is_closed()
-                    && raw_response.get_buffered_amount() > 0
+                    && !raw_response.has_fully_drained()
                 {
                     raw_response.on_writable(on_drain_shim, self.as_ctx_ptr());
                     return Ok(JSValue::js_number(-(bytes.len() as f64) - 1.0));

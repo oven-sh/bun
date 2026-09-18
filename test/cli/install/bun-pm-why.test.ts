@@ -230,15 +230,18 @@ describe.concurrent.each(["why", "pm why"])("bun %s", cmd => {
         dependencies: { "gh-pkg": "github:owner/repo#abc1234" },
       }),
       "packages/pkg-a/package.json": JSON.stringify({ name: "pkg-a", version: "1.2.3" }),
+      "packages/pkg-b/package.json": JSON.stringify({ name: "pkg-b", version: "2.0.0" }),
       "bun.lock": JSON.stringify({
         lockfileVersion: 1,
         workspaces: {
           "": { name: "ws-root", dependencies: { "gh-pkg": "github:owner/repo#abc1234" } },
           "packages/pkg-a": { name: "pkg-a", version: "1.2.3" },
+          "packages/pkg-b": { name: "pkg-b", version: "2.0.0" },
         },
         packages: {
           "gh-pkg": ["gh-pkg@github:owner/repo#abc1234", {}, "abc1234"],
           "pkg-a": ["pkg-a@workspace:packages/pkg-a"],
+          "pkg-b": ["pkg-b@workspace:packages/pkg-b"],
         },
       }),
     };
@@ -252,22 +255,29 @@ describe.concurrent.each(["why", "pm why"])("bun %s", cmd => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      return { stdout, stderr, exitCode };
+      // The workspace path is printed with the platform separator.
+      return { stdout: stdout.replaceAll("\\", "/"), stderr, exitCode };
     }
 
     // The glob keeps this independent of exact-name matching.
-    it.each(["pkg-*@1.2.3", "pkg-*@^1", "pkg-*@>=1.0.0 <2", "pkg-*@*"])(
-      "matches the workspace version for %s",
-      async query => {
-        using dir = tempDir(`why-workspace-version-${i++}`, files);
-        const { stdout, stderr, exitCode } = await why(String(dir), query);
-        expect(stderr).toBe("");
-        expect(stdout).toContain("pkg-a@workspace:packages/pkg-a");
-        expect(exitCode).toBe(0);
-      },
-    );
+    it.each([
+      ["pkg-*@1.2.3", ["pkg-a"]],
+      ["pkg-*@^1", ["pkg-a"]],
+      ["pkg-*@>=1.0.0 <2", ["pkg-a"]],
+      ["pkg-*@2.0.0", ["pkg-b"]],
+      ["pkg-*@*", ["pkg-a", "pkg-b"]],
+      // Not a range: compared with the printed resolution, as before.
+      ["pkg-*@workspace:packages/pkg-a", ["pkg-a"]],
+    ])("matches the workspace version for %s", async (query, expected) => {
+      using dir = tempDir(`why-workspace-version-${i++}`, files);
+      const { stdout, stderr, exitCode } = await why(String(dir), query);
+      expect(stderr).toBe("");
+      const found = ["pkg-a", "pkg-b"].filter(name => stdout.includes(`${name}@workspace:packages/${name}`));
+      expect(found).toEqual(expected);
+      expect(exitCode).toBe(0);
+    });
 
-    it.each(["pkg-*@^2", "pkg-*@1.2.4"])("does not match the workspace version for %s", async query => {
+    it.each(["pkg-*@^3", "pkg-*@1.2.4", "pkg-*@beta"])("does not match the workspace version for %s", async query => {
       using dir = tempDir(`why-workspace-version-${i++}`, files);
       const { stdout, exitCode } = await why(String(dir), query);
       expect(stdout).toContain(`No packages matching '${query}' found in lockfile`);

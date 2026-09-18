@@ -169,7 +169,11 @@ impl<'a> GlobPattern<'a> {
                 result.version_pattern = version_pattern;
 
                 let sliced = semver::SlicedString::init(version_pattern, version_pattern);
-                result.version_query = semver::query::parse(version_pattern, sliced).ok();
+                // Text that is not a range (`workspace:packages/a`, `beta`) parses to an
+                // empty group, and an empty group satisfies every version.
+                result.version_query = semver::query::parse(version_pattern, sliced)
+                    .ok()
+                    .filter(|group| !group.is_empty());
 
                 return result;
             }

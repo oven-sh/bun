@@ -1055,22 +1055,25 @@ fn detach_module_folder_from_shared_store(module_folder: &[u8]) {
     }
     let mut depth: usize = 0;
     while depth < components {
-        // A missing component (a package that is not installed at this path
-        // yet) is skipped, so a symlink ancestor above it is still found.
-        let is_symlink: Option<bool> = {
+        let is_symlink: bool = {
             #[cfg(windows)]
             {
-                sys::get_file_attributes(p.slice_z()).map(|attrs| attrs.is_reparse_point)
+                match sys::get_file_attributes(p.slice_z()) {
+                    Some(attrs) => attrs.is_reparse_point,
+                    None => return,
+                }
             }
             #[cfg(not(windows))]
             {
-                // `mode_t` is `u16` on darwin/freebsd, `u32` on linux.
-                sys::lstat(p.slice_z())
-                    .ok()
-                    .map(|st| sys::posix::s_islnk(st.st_mode as u32))
+                if let Ok(st) = sys::lstat(p.slice_z()) {
+                    // `mode_t` is `u16` on darwin/freebsd, `u32` on linux.
+                    sys::posix::s_islnk(st.st_mode as u32)
+                } else {
+                    return;
+                }
             }
         };
-        if is_symlink == Some(true) {
+        if is_symlink {
             // Windows directory symlinks/junctions are removed with rmdir,
             // file symlinks with unlink; on POSIX unlink covers both. If
             // removal fails the symlink is still live, and the caller's

@@ -1438,7 +1438,12 @@ where
     }
 
     /// Takes `ThisPtr<Self>` because `terminate` may free `this`; see `fail`.
-    pub fn handle_timeout(this: ThisPtr<Self>, _: Socket<SSL>) {
+    pub fn handle_timeout(this: ThisPtr<Self>, socket: Socket<SSL>) {
+        if this.state.get() == State::Done {
+            // The tunnel's close timeout. `fail` closes gracefully, which a TLS proxy can stall.
+            socket.close(uws::CloseCode::Failure);
+            return;
+        }
         Self::terminate(this, ErrorCode::Timeout);
     }
 

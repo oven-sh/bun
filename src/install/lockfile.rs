@@ -1375,10 +1375,14 @@ impl<'a> Cloner<'a> {
 impl Lockfile {
     /// Re-hoists while a pass bound an optional peer late; a reload has that binding up front.
     pub(crate) fn resolve(&mut self, log: &mut bun_ast::Log) -> Result<(), tree::SubtreeError> {
-        while self.hoist::<{ tree::BuilderMethod::Resolvable }>(log, None, true, &[], None)? {}
+        while self
+            .hoist::<{ tree::BuilderMethod::Resolvable }>(log, None, true, &[], None)?
+            .late_bound_optional_peer
+        {}
         Ok(())
     }
 
+    /// Returns the packages that the install tree binds a non-optional dependency to.
     pub(crate) fn filter(
         &mut self,
         log: &mut bun_ast::Log,
@@ -1386,18 +1390,19 @@ impl Lockfile {
         install_root_dependencies: bool,
         workspace_filters: &[WorkspaceFilter],
         packages_to_install: Option<&[PackageID]>,
-    ) -> Result<(), tree::SubtreeError> {
-        self.hoist::<{ tree::BuilderMethod::Filter }>(
-            log,
-            Some(manager),
-            install_root_dependencies,
-            workspace_filters,
-            packages_to_install,
-        )?;
-        Ok(())
+    ) -> Result<DynamicBitSet, tree::SubtreeError> {
+        Ok(self
+            .hoist::<{ tree::BuilderMethod::Filter }>(
+                log,
+                Some(manager),
+                install_root_dependencies,
+                workspace_filters,
+                packages_to_install,
+            )?
+            .required_packages)
     }
 
-    /// Sets `buffers.trees`/`hoisted_dependencies`; returns `Builder::late_bound_optional_peer`.
+    /// Sets `buffers.trees`/`hoisted_dependencies`.
     pub(crate) fn hoist<const METHOD: tree::BuilderMethod>(
         &mut self,
         log: &mut bun_ast::Log,
@@ -1407,7 +1412,7 @@ impl Lockfile {
         install_root_dependencies: bool,
         workspace_filters: &[WorkspaceFilter],
         packages_to_install: Option<&[PackageID]>,
-    ) -> Result<bool, tree::SubtreeError> {
+    ) -> Result<HoistResult, tree::SubtreeError> {
         let slice = self.packages.slice();
 
         // Only the install applies the barrier, so the saved tree does not depend on it.
@@ -1440,6 +1445,11 @@ impl Lockfile {
             late_bound_optional_peer: false,
             list: Default::default(),
             sort_buf: Default::default(),
+            required_packages: if METHOD == tree::BuilderMethod::Filter {
+                DynamicBitSet::init_empty(slice.len())?
+            } else {
+                DynamicBitSet::default()
+            },
         };
 
         Tree::default().process_subtree(tree::ROOT_DEP_ID, tree::INVALID_ID, &mut builder)?;
@@ -1459,8 +1469,17 @@ impl Lockfile {
         let late_bound_optional_peer = builder.late_bound_optional_peer;
         self.buffers.trees = cleaned.trees;
         self.buffers.hoisted_dependencies = cleaned.dep_ids;
-        Ok(late_bound_optional_peer)
+        Ok(HoistResult {
+            late_bound_optional_peer,
+            required_packages: cleaned.required_packages,
+        })
     }
+}
+
+pub(crate) struct HoistResult {
+    pub(crate) late_bound_optional_peer: bool,
+    /// `Builder::required_packages`. Empty unless `METHOD` is `Filter`.
+    pub(crate) required_packages: DynamicBitSet,
 }
 
 #[derive(Clone, Copy)]

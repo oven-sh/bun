@@ -380,3 +380,18 @@ describe.concurrent("workspace: spec that names no workspace", () => {
     expect(readFileSync(join(String(dir), "node_modules", "a", "package.json"), "utf8")).toContain('"name":"a"');
   });
 });
+
+// A glob that leaves the root can match the root again. The root is not its own member.
+test("a workspaces glob that also matches the root does not add the root as a member", async () => {
+  using dir = tempDir("bad-workspace-glob-matches-root", {
+    "root/package.json": JSON.stringify({ name: "root", version: "1.0.0", workspaces: ["../*"] }),
+    "proj-a/package.json": JSON.stringify({ name: "proj-a", version: "1.0.0" }),
+  });
+  const root = join(String(dir), "root");
+
+  const { stderr, exitCode } = await runInstall(root);
+
+  expect(stderr).not.toContain("error:");
+  expect(exitCode).toBe(0);
+  expect(install_test_helpers.parseLockfile(root).packages.map(pkg => pkg.name)).toEqual(["root", "proj-a"]);
+});

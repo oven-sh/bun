@@ -534,6 +534,17 @@ impl WorkspaceMap {
                         cwd, filepath_buf, &[entry_dir, b"package.json"]
                     ) {
                         Some(abs_package_json_path) => {
+                            // a pattern that leaves the root can match it again (`../*`)
+                            if strings::eql_long(
+                                resolve_path::dirname::<path::platform::Auto>(
+                                    abs_package_json_path,
+                                ),
+                                root_dir,
+                                true,
+                            ) {
+                                continue;
+                            }
+
                             process_workspace_name(json_cache, abs_package_json_path, log)
                                 .map(|entry| (abs_package_json_path, entry))
                         }

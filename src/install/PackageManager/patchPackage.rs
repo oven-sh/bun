@@ -22,8 +22,8 @@ use crate::package_manager_real::package_manager_directories::{
     compute_cache_dir_and_subpath, get_temporary_directory,
 };
 use crate::{
-    BuntagHashBuf, DependencyID, Features, PackageID, Resolution, buntaghashbuf_make,
-    initialize_store, invalid_package_id,
+    BuntagHashBuf, DependencyID, Features, PackageID, Resolution, ResolutionTag,
+    buntaghashbuf_make, initialize_store, invalid_package_id,
 };
 
 #[inline]
@@ -288,11 +288,12 @@ pub fn do_patch_commit(
     )
     .expect("formatting into a Vec is infallible");
 
+    let source_is_cache_entry = is_cache_entry(pkg.resolution.tag);
     let patchfile_contents: Vec<u8> = 'brk: {
         let new_folder = changes_dir;
         let mut buf2 = bun_paths::path_buffer_pool::get();
         let mut buf3 = bun_paths::path_buffer_pool::get();
-        let old_folder: &[u8] = 'old_folder: {
+        let old_folder: Vec<u8> = 'old_folder: {
             let cache_dir_path = match sys::get_fd_path(cache_dir, &mut buf2) {
                 Ok(s) => s,
                 Err(e) => {
@@ -303,8 +304,10 @@ pub fn do_patch_commit(
             break 'old_folder resolve_path::join::<platform::Posix>(&[
                 cache_dir_path,
                 cache_dir_subpath.as_bytes(),
-            ]);
+            ])
+            .to_vec();
         };
+        let old_folder: &[u8] = &old_folder;
 
         let random_tempdir = match bun_paths::fs::FileSystem::tmpname(
             b"node_modules_tmp",
@@ -318,11 +321,7 @@ pub fn do_patch_commit(
             }
         };
 
-        // If the package has nested a node_modules folder, we don't want this to
-        // appear in the patch file when we run git diff.
-        //
-        // There isn't an option to exclude it with `git diff --no-index`, so we
-        // will `rename()` it out and back again.
+        // `git diff --no-index` takes no pathspec: the packages bun installed move out and back.
         let has_nested_node_modules: bool = 'has_nested_node_modules: {
             let new_folder_handle =
                 match Dir::cwd().open_dir(new_folder, sys::OpenDirOptions::default()) {
@@ -337,18 +336,49 @@ pub fn do_patch_commit(
                     }
                 };
 
-            if sys::renameat_concurrently_a(
-                new_folder_handle.fd,
-                b"node_modules",
-                root_node_modules.fd,
-                random_tempdir.as_bytes(),
-                sys::RenameOptions {
-                    move_fallback: true,
-                },
-            )
-            .is_err()
-            {
+            let Ok(nested) = new_folder_handle.open_dir(b"node_modules", ITERATE) else {
                 break 'has_nested_node_modules false;
+            };
+            // A folder or workspace source has its own installs in `node_modules`, not bundled ones.
+            let cache_nested = if source_is_cache_entry {
+                match Dir::cwd().open_dir(
+                    resolve_path::join::<platform::Auto>(&[old_folder, b"node_modules"]),
+                    sys::OpenDirOptions::default(),
+                ) {
+                    Ok(d) => Some(d),
+                    Err(e) if e.get_errno() == sys::E::ENOENT => None,
+                    Err(e) => {
+                        Output::err(e, "failed to read from cache", ());
+                        Global::crash();
+                    }
+                }
+            } else {
+                None
+            };
+            let tempdir = match root_node_modules
+                .make_open_path(random_tempdir.as_bytes(), sys::OpenDirOptions::default())
+            {
+                Ok(d) => d,
+                Err(e) => {
+                    Output::err(e, "failed to make tempdir", ());
+                    Global::crash();
+                }
+            };
+            if let Err(e) = move_entries_absent_from(&nested, cache_nested.as_ref(), &tempdir, true)
+            {
+                drop((nested, cache_nested, tempdir));
+                if let Err(e) = restore_nested_from_tempdir(
+                    &root_node_modules,
+                    random_tempdir.as_bytes(),
+                    &new_folder_handle,
+                ) {
+                    bun_core::warn!(
+                        "failed restoring nested node_modules folder, this may cause issues: {}",
+                        e
+                    );
+                }
+                Output::err(e, "failed moving the nested node_modules folder aside", ());
+                Global::crash();
             }
 
             break 'has_nested_node_modules true;
@@ -426,14 +456,8 @@ pub fn do_patch_commit(
                 };
 
                 if has_nested_node_modules {
-                    if let Err(e) = sys::renameat_concurrently_a(
-                        root_node_modules.fd,
-                        random_tempdir.as_bytes(),
-                        new_folder_handle.fd,
-                        b"node_modules",
-                        sys::RenameOptions { move_fallback: true },
-                    ) {
-                        bun_core::warn!("failed renaming nested node_modules folder, this may cause issues: {}", e);
+                    if let Err(e) = restore_nested_from_tempdir(&root_node_modules, random_tempdir.as_bytes(), &new_folder_handle) {
+                        bun_core::warn!("failed restoring nested node_modules folder, this may cause issues: {}", e);
                     }
                 }
 
@@ -732,6 +756,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
         argument
     };
 
+    let resolution_tag: ResolutionTag;
     let (cache_dir, cache_dir_subpath, module_folder, pkg_name): (Fd, &[u8], Vec<u8>, Vec<u8>) =
         match arg_kind {
             PatchArgKind::Path => 'brk: {
@@ -870,6 +895,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
                 #[cfg(not(windows))]
                 let buf = argument.to_vec();
 
+                resolution_tag = actual_package.resolution.tag;
                 break 'brk (cache_dir, cache_dir_subpath.as_bytes(), buf, name);
             }
             PatchArgKind::NameAndVersion => 'brk: {
@@ -934,6 +960,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
                 #[cfg(not(windows))]
                 let buf = module_folder_.to_vec();
 
+                resolution_tag = pkg_resolution.tag;
                 break 'brk (cache_dir, cache_dir_subpath.as_bytes(), buf, pkg_name);
             }
         };
@@ -956,9 +983,12 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
     // recreate the path below it so the copy lands in a project-local tree.
     detach_module_folder_from_shared_store(module_folder);
 
-    if let Err(e) =
-        overwrite_package_in_node_modules_folder(cache_dir, cache_dir_subpath, module_folder)
-    {
+    if let Err(e) = overwrite_package_in_node_modules_folder(
+        cache_dir,
+        cache_dir_subpath,
+        module_folder,
+        is_cache_entry(resolution_tag),
+    ) {
         bun_core::pretty_error!(
             "<r><red>error<r>: error overwriting folder in node_modules: {}\n<r>",
             e.name(),
@@ -1139,10 +1169,188 @@ fn detach_module_folder_from_shared_store(module_folder: &[u8]) {
     }
 }
 
+/// The source folder is an extracted archive, not a project folder.
+fn is_cache_entry(tag: ResolutionTag) -> bool {
+    matches!(
+        tag,
+        ResolutionTag::Npm
+            | ResolutionTag::Git
+            | ResolutionTag::Github
+            | ResolutionTag::LocalTarball
+            | ResolutionTag::RemoteTarball
+    )
+}
+
+const ITERATE: sys::OpenDirOptions = sys::OpenDirOptions {
+    iterate: true,
+    no_follow: false,
+};
+
+/// `@scope` and `.bin` hold packages, so they merge one level down.
+fn is_package_group(name: &[u8]) -> bool {
+    bun_core::starts_with_char(name, b'@') || name == b".bin"
+}
+
+/// Moves the entries of `from` that `reference` lacks into `to`. `None` moves all.
+fn move_entries_absent_from(
+    from: &Dir,
+    reference: Option<&Dir>,
+    to: &Dir,
+    merge_groups: bool,
+) -> sys::Result<()> {
+    use bun_paths::path_options::AssumeOk as _;
+
+    let mut iter = sys::iterate_dir(from.fd);
+    while let Some(entry) = iter.next()? {
+        let mut name = bun_paths::AutoRelPath::from(entry.name.slice()).assume_ok();
+        let name_z = name.slice_z();
+        let Some(reference) = reference else {
+            sys::renameat(from.fd, name_z, to.fd, name_z)?;
+            continue;
+        };
+        match sys::exists_at_type(reference.fd, name_z) {
+            Err(e) if e.get_errno() == sys::E::ENOENT => {
+                sys::renameat(from.fd, name_z, to.fd, name_z)?;
+            }
+            Err(e) => return Err(e),
+            Ok(sys::ExistsAtType::Directory)
+                if merge_groups && is_package_group(name_z.as_bytes()) =>
+            {
+                let from_group = from.open_dir(name_z.as_bytes(), ITERATE)?;
+                let reference_group = reference.open_dir(name_z.as_bytes(), Default::default())?;
+                let to_group = to.make_open_path(name_z.as_bytes(), Default::default())?;
+                move_entries_absent_from(&from_group, Some(&reference_group), &to_group, false)?;
+            }
+            Ok(_) => {}
+        }
+    }
+    Ok(())
+}
+
+/// Moves the packages `bun patch --commit` set aside back under `<pkg>/node_modules`.
+fn restore_nested_from_tempdir(
+    root_node_modules: &Dir,
+    tempdir_name: &[u8],
+    new_folder_handle: &Dir,
+) -> sys::Result<()> {
+    let tempdir = root_node_modules.open_dir(tempdir_name, ITERATE)?;
+    let nested =
+        new_folder_handle.make_open_path(b"node_modules", sys::OpenDirOptions::default())?;
+    move_entries_absent_from(&tempdir, Some(&nested), &nested, true)?;
+    drop((tempdir, nested));
+    root_node_modules.delete_tree(tempdir_name)
+}
+
+/// Moves `<pkg>/node_modules` to a sibling of `<pkg>`. `None` when absent.
+fn stash_nested_node_modules(
+    node_modules_folder_path: &[u8],
+) -> Result<Option<Vec<u8>>, crate::Error> {
+    let mut tmpbuf = bun_paths::path_buffer_pool::get();
+    let tmpname = bun_paths::fs::FileSystem::tmpname(
+        b"node_modules_tmp",
+        &mut tmpbuf[..],
+        bun_core::fast_random(),
+    )?;
+    let parent = resolve_path::dirname::<platform::Auto>(node_modules_folder_path);
+    let mut stash_buf = bun_paths::path_buffer_pool::get();
+    let stash_path = resolve_path::join_z_buf::<platform::Auto>(
+        &mut stash_buf[..],
+        &[parent, tmpname.as_bytes()],
+    );
+    let nested =
+        resolve_path::join_z::<platform::Auto>(&[node_modules_folder_path, b"node_modules"]);
+    match sys::renameat(Fd::cwd(), nested, Fd::cwd(), stash_path) {
+        Ok(()) => Ok(Some(stash_path.as_bytes().to_vec())),
+        Err(e) if e.get_errno() == sys::E::ENOENT => Ok(None),
+        // overlayfs cannot rename a lower-layer directory: the copy still runs.
+        Err(e) => {
+            bun_core::warn!(
+                "failed to keep {} aside, the dependencies installed under it are removed: {}",
+                bstr::BStr::new(nested.as_bytes()),
+                e
+            );
+            Ok(None)
+        }
+    }
+}
+
+/// Moves back the stashed packages the fresh copy lacks, then drops the rest.
+fn restore_nested_node_modules(
+    node_modules_folder_path: &[u8],
+    stash_path: &[u8],
+) -> Result<(), crate::Error> {
+    let nested = resolve_path::join::<platform::Auto>(&[node_modules_folder_path, b"node_modules"]);
+    let dest = Fd::cwd().make_open_path(nested)?;
+    let stash = Dir::cwd().open_dir(stash_path, ITERATE)?;
+    move_entries_absent_from(&stash, Some(&dest), &dest, true)?;
+    drop(stash);
+    drop(dest);
+    if let Err(e) = Fd::cwd().delete_tree(stash_path) {
+        bun_core::warn!(
+            "failed to remove {}, this may cause issues: {}",
+            bstr::BStr::new(stash_path),
+            e
+        );
+    }
+    Ok(())
+}
+
 fn overwrite_package_in_node_modules_folder(
     cache_dir: Fd,
     cache_dir_subpath: &[u8],
     node_modules_folder_path: &[u8],
+    source_is_cache_entry: bool,
+) -> Result<(), crate::Error> {
+    let node_modules_folder_path = strings::trim_right(node_modules_folder_path, b"/");
+
+    // Keep the packages bun installed under `<pkg>` across the delete and copy.
+    let stash_path = stash_nested_node_modules(node_modules_folder_path)?;
+    let Some(stash_path) = stash_path else {
+        return copy_package_from_cache(
+            cache_dir,
+            cache_dir_subpath,
+            node_modules_folder_path,
+            source_is_cache_entry,
+        );
+    };
+    match copy_package_from_cache(
+        cache_dir,
+        cache_dir_subpath,
+        node_modules_folder_path,
+        source_is_cache_entry,
+    ) {
+        Ok(()) => restore_nested_node_modules(node_modules_folder_path, &stash_path),
+        Err(e) => {
+            let nested =
+                resolve_path::join::<platform::Auto>(&[node_modules_folder_path, b"node_modules"]);
+            let _ = Fd::cwd().make_path(node_modules_folder_path);
+            if let Err(e) = sys::renameat_concurrently_a(
+                Fd::cwd(),
+                &stash_path,
+                Fd::cwd(),
+                nested,
+                sys::RenameOptions {
+                    move_fallback: true,
+                },
+            ) {
+                bun_core::warn!(
+                    "failed moving {} back to {}, this may cause issues: {}",
+                    bstr::BStr::new(&stash_path),
+                    bstr::BStr::new(nested),
+                    e
+                );
+            }
+            Err(e)
+        }
+    }
+}
+
+/// A cache entry ships its `node_modules`. A project folder or `file:.` does not.
+fn copy_package_from_cache(
+    cache_dir: Fd,
+    cache_dir_subpath: &[u8],
+    node_modules_folder_path: &[u8],
+    source_is_cache_entry: bool,
 ) -> Result<(), crate::Error> {
     let _ = Fd::cwd().delete_tree(node_modules_folder_path);
 
@@ -1192,11 +1400,18 @@ fn overwrite_package_in_node_modules_folder(
         },
     )?;
 
-    let ignore_directories: &[&bun_paths::OSPathSlice] = &[
-        bun_paths::os_path_literal!("node_modules"),
-        bun_paths::os_path_literal!(".git"),
-        bun_paths::os_path_literal!("CMakeFiles"),
-    ];
+    let ignore_directories: &[&bun_paths::OSPathSlice] = if source_is_cache_entry {
+        &[
+            bun_paths::os_path_literal!(".git"),
+            bun_paths::os_path_literal!("CMakeFiles"),
+        ]
+    } else {
+        &[
+            bun_paths::os_path_literal!("node_modules"),
+            bun_paths::os_path_literal!(".git"),
+            bun_paths::os_path_literal!("CMakeFiles"),
+        ]
+    };
 
     let mut copier: FileCopier = FileCopier::init(
         cached_package_folder.fd,

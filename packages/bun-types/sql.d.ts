@@ -11,9 +11,10 @@ declare module "bun" {
      *
      * The handle closes at once: new queries and `begin()` calls reject. If a
      * transaction started with `begin()` or `beginDistributed()` on this handle
-     * is still running, the connection goes back to the pool after that
-     * transaction commits or rolls back. The returned promise resolves when
-     * the pool has the connection back.
+     * is still running, that transaction keeps the connection until it commits
+     * or rolls back. The pool gets the connection back after that. The
+     * returned promise resolves at once, so `release()` can be awaited from
+     * inside such a transaction.
      */
     release(): Promise<void>;
   }

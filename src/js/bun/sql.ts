@@ -527,9 +527,12 @@ const SQL: typeof Bun.SQL = function SQL(
       if (reservedTransaction.size > 0) {
         // A reserved.begin() still owns the connection. The next holder from the
         // pool must not share it until that transaction has committed or rolled back.
-        return Promise.all(Array.from(reservedTransaction)).then(releaseToPool);
+        // The caller is not made to wait: its own transaction callback may be the
+        // one that calls release().
+        Promise.all(Array.from(reservedTransaction)).then(releaseToPool);
+      } else {
+        releaseToPool();
       }
-      releaseToPool();
       return Promise.$resolve(undefined);
     };
     // this dont need to be async dispose only disposable but we keep compatibility with other types of sql functions

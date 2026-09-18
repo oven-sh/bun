@@ -459,7 +459,10 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand }) => {
       await started.promise;
       const released = reserved.release();
       const rejected = await Promise.allSettled([reserved`SELECT 'late'`, reserved.begin(async () => {})]);
-      expect(rejected.map(r => r.status)).toEqual(["rejected", "rejected"]);
+      expect(rejected.map(r => (r.status === "rejected" ? r.reason.message : r.status))).toEqual([
+        "Connection closed",
+        "Connection closed",
+      ]);
       gate.resolve();
       expect(await nested).toBe("nested");
       await released;
@@ -468,6 +471,41 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand }) => {
       expect(received).toEqual([
         { conn: 0, sql: beginCommand },
         { conn: 0, sql: "SELECT 'N1'" },
+        { conn: 0, sql: "COMMIT" },
+      ]);
+    } finally {
+      await sql.close({ timeout: 0 }).catch(() => {});
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
+
+  // The promise release() returns must not wait for the caller's own transaction,
+  // or this callback could never return.
+  test("reserved.release() awaited inside the reserved transaction does not deadlock", async () => {
+    const received: Received[] = [];
+    const { port, server } = await mockServer(received);
+    const sql = new SQL(options(port));
+    try {
+      const reserved = await sql.reserve();
+      const nested = reserved.begin(async tx => {
+        await tx.unsafe("SELECT 'N1'");
+        await reserved.release();
+        await tx.unsafe("SELECT 'N2 after release'");
+        return "nested";
+      });
+      const other = sql.begin(async tx => {
+        await tx.unsafe("SELECT 'OTHER'");
+        return "other";
+      });
+      expect(await nested).toBe("nested");
+      expect(await other).toBe("other");
+      expect(received).toEqual([
+        { conn: 0, sql: beginCommand },
+        { conn: 0, sql: "SELECT 'N1'" },
+        { conn: 0, sql: "SELECT 'N2 after release'" },
+        { conn: 0, sql: "COMMIT" },
+        { conn: 0, sql: beginCommand },
+        { conn: 0, sql: "SELECT 'OTHER'" },
         { conn: 0, sql: "COMMIT" },
       ]);
     } finally {

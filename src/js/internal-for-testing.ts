@@ -696,9 +696,7 @@ export const isMemoryPressureWatcherInstalled: () => boolean = $newCppFunction(
 export const spawnThreadsForTesting: (iterations: number, fd: number, parallelism: number, detach?: boolean) => number =
   $newCppFunction("InternalForTesting.cpp", "jsFunction_spawnThreadsForTesting", 4);
 
-// Linux only. Suspends the calling thread with WTF::Thread::suspend, sends `signal` during the
-// suspension (kill(2), or pthread_kill() when `threadDirected`), and resumes after `holdMilliseconds`.
-// `state` (shared Int32Array): [0] caller's counter, [1] set if it moved while suspended, [2] set on resume.
+// Linux only. Suspends the caller with WTF::Thread::suspend, sends `signal` meanwhile, resumes after `holdMilliseconds`. State protocol: test/js/node/process/process-sigpwr.test.ts.
 export const suspendThreadAndSignalForTesting: (
   state: Int32Array,
   signal: number,

@@ -125,6 +125,11 @@ describe.skipIf(!isLinux)("SIGPWR", () => {
   // WebKit's handler waits in sigsuspend(), which returns as soon as any handler returns. The hook
   // suspends this thread the way the GC does, sends SIGPWR during the suspension, and reports
   // whether the thread ran before the resume. A second round proves that the handshake still works.
+  //
+  // suspendThreadAndSignalForTesting(state, signal, holdMilliseconds, threadDirected): `state` is an
+  // Int32Array over a SharedArrayBuffer. The caller keeps incrementing state[0]. The hook sets
+  // state[1] to 1 if that counter moved during the suspension, and state[2] to 1 once the thread is
+  // resumed. `threadDirected` sends with pthread_kill() to this thread instead of kill(2) to the process.
   describe.each([
     ["kill(2)", false],
     ["pthread_kill()", true],

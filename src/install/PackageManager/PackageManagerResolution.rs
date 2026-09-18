@@ -4,7 +4,6 @@ use core::mem::ManuallyDrop;
 use bun_collections::index_sort;
 use bun_core::Output;
 use bun_core::strings;
-use bun_paths::resolve_path;
 use bun_semver as semver;
 use bun_semver::{SlicedString, String as SemverString};
 
@@ -507,7 +506,7 @@ fn workspace_containment<'b>(
         return Containment::Refused("is too long");
     };
 
-    let (real_dir, dropped_dotdot) =
+    let (real_dir, dropped) =
         match real_path_of_nearest_existing_dir(&mut abs_dir_buf.0, abs_dir_len, real_dir_buf) {
             Ok(resolved) => resolved,
             Err(err) => return Containment::Failed(err),
@@ -527,17 +526,17 @@ fn workspace_containment<'b>(
         }
     };
 
-    if resolve_path::is_parent_or_equal(real_root, real_dir) != resolve_path::ParentEqual::Unrelated
-    {
-        // The `..` applies to a directory the install has yet to create, not to a known one.
-        if dropped_dotdot {
-            return Containment::Refused(
-                "has a \"..\" component below a directory that does not exist",
-            );
-        }
-        return Containment::Inside;
+    if !is_inside(real_root, real_dir) {
+        return Containment::Outside(real_dir);
     }
-    Containment::Outside(real_dir)
+    match dropped {
+        // The install has yet to create the component each one applies to.
+        Dropped::DotDot => {
+            Containment::Refused("has a \"..\" component below a directory that does not exist")
+        }
+        Dropped::Symlink => Containment::Refused("has a symlink that does not resolve"),
+        Dropped::Plain => Containment::Inside,
+    }
 }
 
 /// `<root>/<path>` and a NUL, not normalized: only the OS resolves a `..` after a symlink.
@@ -561,19 +560,29 @@ fn write_absolute_path(buf: &mut [u8], root: &[u8], path: &[u8]) -> Option<usize
     Some(len)
 }
 
-/// The nearest existing directory, and whether a `..` was dropped to reach it.
+/// What the walk below had to drop to reach an existing directory. A `..` and a symlink both
+/// resolve against a component the install has yet to create.
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+enum Dropped {
+    Plain,
+    Symlink,
+    DotDot,
+}
+
+/// The nearest existing directory of the NUL-terminated `buf[..len]`, which `bun.lock` can
+/// name even when it is missing, and what the walk to it dropped.
 fn real_path_of_nearest_existing_dir<'b>(
     buf: &mut [u8],
     len: usize,
     out: &'b mut bun_paths::PathBuffer,
-) -> bun_sys::Maybe<(&'b [u8], bool)> {
+) -> bun_sys::Maybe<(&'b [u8], Dropped)> {
     let mut len = len;
-    let mut dropped_dotdot = false;
+    let mut dropped = Dropped::Plain;
     loop {
         // SAFETY: `buf[len]` is the NUL this function maintains.
         let path = bun_core::ZStr::from_buf(buf, len);
         let err = match bun_sys::realpath(path, out) {
-            Ok(real) => return Ok((real, dropped_dotdot)),
+            Ok(real) => return Ok((real, dropped)),
             Err(err) => err,
         };
         let parent_len = match (err.get_errno(), bun_paths::dirname(&buf[..len])) {
@@ -582,8 +591,39 @@ fn real_path_of_nearest_existing_dir<'b>(
             }
             _ => return Err(err),
         };
-        dropped_dotdot |= bun_paths::basename(&buf[..len]) == b"..";
+        dropped = dropped.max(if bun_paths::basename(&buf[..len]) == b".." {
+            Dropped::DotDot
+        } else if is_symlink(path) {
+            Dropped::Symlink
+        } else {
+            Dropped::Plain
+        });
         len = parent_len;
         buf[len] = 0;
     }
+}
+
+fn is_symlink(path: &bun_core::ZStr) -> bool {
+    #[cfg(windows)]
+    {
+        bun_sys::get_file_attributes(path).is_some_and(|a| a.is_reparse_point)
+    }
+    #[cfg(not(windows))]
+    {
+        bun_sys::lstat(path).is_ok_and(|st| bun_sys::posix::s_islnk(st.st_mode as u32))
+    }
+}
+
+/// Both paths come from the same `realpath`, so the compare is exact: a case-sensitive
+/// volume has `MyApp` and `myapp` as two directories.
+fn is_inside(root: &[u8], dir: &[u8]) -> bool {
+    let root = match root.len() {
+        // The filesystem root keeps its separator, and every path starts with one.
+        1 => &root[..0],
+        _ => root,
+    };
+    if !strings::has_prefix(dir, root) {
+        return false;
+    }
+    dir.len() == root.len() || bun_paths::is_sep_any(dir[root.len()])
 }

@@ -447,6 +447,37 @@ describe.concurrent("workspace packages outside the workspace root", () => {
     await expectRefused(String(dir), `error: workspace "${entry}" is inside node_modules\n`);
   });
 
+  // `nm` is a symlink the clone ships, and it points at the `node_modules` the install
+  // creates, so the path names a directory nobody can resolve yet. The `node_modules`
+  // refusal above only reads the spelling, which this path does not have.
+  test("a workspace path through a symlink that does not resolve is refused", async () => {
+    using dir = tempDir("bad-workspace-dangling-symlink", {
+      ...SIBLING_PROJECTS,
+      "clone/packages/a/package.json": JSON.stringify({ name: "a", version: "1.0.0" }),
+      "clone/package.json": cloneRoot({ dependencies: { b: "workspace:nm/a/esc" } }),
+      "clone/bun.lock": JSON.stringify({
+        lockfileVersion: 2,
+        configVersion: 1,
+        workspaces: {
+          "": { name: "root", dependencies: { b: "workspace:nm/a/esc" } },
+          "nm/a/esc": { name: "victim", dependencies: { inner: "^1.0.0" } },
+          "packages/a": { name: "a", version: "1.0.0" },
+          "packages/inner": { name: "inner", version: "1.99.0" },
+        },
+        packages: {
+          a: ["a@workspace:packages/a"],
+          b: ["victim@workspace:nm/a/esc"],
+          inner: ["inner@workspace:packages/inner"],
+        },
+      }),
+    });
+    symlinkSync(join(String(dir), "victim"), join(String(dir), "clone", "packages", "a", "esc"), "junction");
+    // Not a junction: the target does not exist yet, which is the point.
+    symlinkSync("node_modules", join(String(dir), "clone", "nm"), "dir");
+
+    await expectRefused(String(dir), `error: workspace "nm/a/esc" has a symlink that does not resolve\n`);
+  });
+
   // `bun prune` deletes inside the same `<workspace>/node_modules` directories, so it
   // checks the paths as well. The manifest and the lockfile agree here, so the frozen
   // lockfile check that runs first is happy.

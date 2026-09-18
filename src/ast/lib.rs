@@ -983,8 +983,7 @@ impl Data {
                     let (line_text, caret_column) = excerpt_around_column(
                         line_text,
                         usize::try_from(location.column - 1).expect("int cast"),
-                        // The redaction has to see the whole line: the key that
-                        // marks a secret can be far to the left of the caret.
+                        // A cut can drop the key that marks a secret, so a redacted line prints whole.
                         if redact_sensitive_information {
                             usize::MAX
                         } else {
@@ -1080,17 +1079,12 @@ fn write_n_bytes(to: &mut impl fmt::Write, b: u8, n: usize) -> fmt::Result {
     Ok(())
 }
 
-/// `Data::write_format` prints at most this many bytes of a line, plus the
-/// bytes that complete a UTF-8 sequence at either end. It prints a redacted
-/// line whole.
+/// `Data::write_format` cuts a line longer than this many bytes, unless it redacts the line.
 const MAX_EXCERPT_LEN: usize = 120;
-/// The excerpt starts this many bytes before the caret, or earlier when the
-/// line ends before the excerpt is full.
+/// The excerpt starts this many bytes before the caret, or earlier when the line ends first.
 const EXCERPT_LEN_BEFORE_CARET: usize = 40;
 
-/// Walks `text` until `columns` UTF-16 code units, the unit of
-/// `Location::column`, have gone by or `text` ends. Returns the bytes and the
-/// code units walked.
+/// Walks `text` for up to `columns` UTF-16 code units. Returns the bytes and the code units walked.
 fn advance_utf16_columns(text: &[u8], columns: usize) -> (usize, usize) {
     use bun_core::strings::{CodepointIterator, Cursor};
     let iter = CodepointIterator::init(text);
@@ -1102,10 +1096,7 @@ fn advance_utf16_columns(text: &[u8], columns: usize) -> (usize, usize) {
     (cursor.i as usize + cursor.width as usize, walked)
 }
 
-/// The part of `line_text`, at most about `max_len` bytes, that
-/// `Data::write_format` prints for a caret at the 0-based `column`, and the
-/// caret's column in that part. Not every producer of a `Location` bounds
-/// `line_text`, and `column` can lie past its end.
+/// The part of `line_text` to print for a caret at the 0-based `column`, and the caret's column in it.
 fn excerpt_around_column(line_text: &[u8], column: usize, max_len: usize) -> (&[u8], usize) {
     debug_assert!(max_len >= EXCERPT_LEN_BEFORE_CARET);
     let (caret, caret_column) = advance_utf16_columns(line_text, column);

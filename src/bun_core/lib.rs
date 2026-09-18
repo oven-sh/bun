@@ -2013,8 +2013,7 @@ pub(crate) mod strings_impl {
         }
         i
     }
-    /// Length of a TOML `"""` or `'''` value that `text` starts inside of, up to
-    /// its closing run of quotes on the same line (`toml.rs` `quote_run_close`).
+    /// Length of a TOML triple-quoted value from `text` to its closing quote run on the same line.
     pub(crate) fn find_closing_triple_quote(text: &[u8], q: u8) -> Option<usize> {
         let mut i = 0usize;
         while i + 2 < text.len() {

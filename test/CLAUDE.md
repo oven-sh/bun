@@ -99,6 +99,8 @@ When a test file spawns a Bun process, we like for that file to end in `*-fixtur
 
 Generally, `await using` or `using` is a good idea to ensure proper resource cleanup. This works in most Bun APIs like Bun.listen, Bun.connect, Bun.spawn, Bun.serve, etc.
 
+On Windows, a spawned process that can outlive the test (`detached: true`, daemons, crash-reporter children) must not keep the temp dir as its working directory: give it `cwd: os.tmpdir()`, or kill it and await its exit before the test ends. A terminating process releases its cwd handle asynchronously, so `tempDir` disposal races it and fails with EBUSY. The same applies to the test process itself: after a `process.chdir()` into the temp dir, restore the cwd before the test ends (declare `using cwd = cwdScope(dir)` after `using dir = tempDir(...)` so it is undone first, or chdir back in a `finally`).
+
 #### Async/await in tests
 
 Prefer async/await over callbacks.

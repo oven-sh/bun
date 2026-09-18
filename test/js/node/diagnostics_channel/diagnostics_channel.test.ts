@@ -395,6 +395,31 @@ describe("Channel", () => {
     expect(JSON.parse(stdout)).toEqual({ sameObject: true, hasSubscribers: true, heldHasSubscribers: true });
     expect(exitCode).toBe(0);
   });
+
+  // The finalizer of a collected channel with no successor still removes its
+  // entry. Each entry holds a WeakRef, so the WeakRef count is the observable.
+  test("finalizer of a dead channel removes its entry", async () => {
+    const script = `
+      const dc = require("node:diagnostics_channel");
+      const { heapStats } = require("bun:jsc");
+      const count = () => heapStats().objectTypeCounts.WeakRef ?? 0;
+      const before = count();
+      for (let i = 0; i < 1000; i++) dc.channel("gc.cleanup." + i);
+      const after = count();
+      let now = after;
+      for (let i = 0; i < 100 && now > before + 100; i++) {
+        await Bun.sleep(0);
+        Bun.gc(true);
+        now = count();
+      }
+      console.log(JSON.stringify({ created: after - before >= 1000, cleaned: now <= before + 100 }));
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ created: true, cleaned: true });
+    expect(exitCode).toBe(0);
+  });
 });
 
 describe("TracingChannel", () => {

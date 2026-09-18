@@ -627,7 +627,13 @@ test.concurrent.skipIf(!isPosix)("bun run --no-orphans <script>: clean exit reap
 const hasBash = Bun.which("bash") != null;
 describe.concurrent("bun run --no-orphans with SIGCHLD ignored", () => {
   function bunRunGo(cwd: string) {
-    const env: Record<string, string> = { ...bunEnv };
+    const env: Record<string, string> = {
+      ...bunEnv,
+      // LeakSanitizer cannot run while SIGCHLD is ignored: at exit it forks a
+      // ptrace probe, its own waitpid() fails too, and it prints a seccomp
+      // warning built from the unset status.
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+    };
     delete env.BUN_FEATURE_FLAG_NO_ORPHANS;
     return Bun.spawn({
       // bash turns a '' trap into SIG_IGN for the program it execs. dash does

@@ -139,8 +139,13 @@ pub struct DataURL<'a> {
 }
 
 impl<'a> DataURL<'a> {
+    /// The scheme is case-insensitive (RFC 3986): `DATA:` is a data URL too.
+    pub fn has_scheme(url: &[u8]) -> bool {
+        strings::has_prefix_case_insensitive(url, b"data:")
+    }
+
     pub fn parse(url: &'a [u8]) -> Result<Option<DataURL<'a>>, ParseDataURLError> {
-        if !url.starts_with(b"data:") {
+        if !Self::has_scheme(url) {
             return Ok(None);
         }
 

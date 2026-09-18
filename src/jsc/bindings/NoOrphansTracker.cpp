@@ -26,8 +26,8 @@
 // birth records its uniqueid — is narrowed by the freeze-then-rescan loop in
 // `killTracked()` but cannot be fully closed from userspace.
 //
-// All state is process-global; spawnSync is single-threaded by design (see
-// Bun__currentSyncPID), so no locking.
+// All state is process-global; this is only reached from the thread that
+// armed the parent-death watchdog (pdeathsig::is_arming_thread), so no locking.
 
 #include "root.h"
 
@@ -64,10 +64,7 @@ static_assert(sizeof(ProcUniqIdentifierInfo) == 56, "xnu ABI");
 
 class NoOrphansTracker {
 public:
-    // Function-local static: lazy first-use construction, no global ctor,
-    // thread-safe per C++11 [stmt.dcl]. spawnSync is single-threaded anyway
-    // (see Bun__currentSyncPID), but this keeps the binary's static-init
-    // section clean.
+    // Function-local static keeps this out of the binary's static-init section.
     static NoOrphansTracker& get()
     {
         static NoOrphansTracker instance;

@@ -7,7 +7,7 @@
  *  `NODE_OPTIONS=--experimental-vm-modules npx jest test/js/bun/test/expect-extend.test.js`
  */
 
-import { withoutAggressiveGC } from "harness";
+import { isDebug, withoutAggressiveGC } from "harness";
 import test_interop from "./test-interop.js";
 var { isBun, expect, describe, test, it } = await test_interop();
 
@@ -329,8 +329,9 @@ describe("async support", () => {
 });
 
 it("should not crash under intensive usage", () => {
+  const iterations = isDebug ? 1000 : 10000;
   withoutAggressiveGC(() => {
-    for (let i = 0; i < 10000; ++i) {
+    for (let i = 0; i < iterations; ++i) {
       expect(i)._toBeDivisibleBy(1);
       expect(i).toEqual(expect._toBeDivisibleBy(1));
     }

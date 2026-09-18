@@ -1005,7 +1005,38 @@ fn get_maybe_non_null_in_instruction(
 /// the same Map is passed to recursive invocations for inner functions).
 fn get_assumed_invoked_functions(func: &HirFunction, env: &Environment) -> HashSet<FunctionId> {
     let mut temporaries: IdMap<IdentifierId, (FunctionId, HashSet<FunctionId>)> = IdMap::new();
-    get_assumed_invoked_functions_impl(func, env, &mut temporaries)
+    let mut hoistable = get_assumed_invoked_functions_impl(func, env, &mut temporaries);
+
+    // Step 3: Propagate assumed-invoked status through mayInvoke chains
+    //
+    // Not in upstream, which runs this step at the end of every recursive call, over every
+    // entry of the shared map. A `mayInvoke` set then holds a whole chain, and N nested
+    // functions take N^3 steps. Here a `mayInvoke` set holds what the function invokes
+    // directly, and this loop follows the chains once, to the same set.
+    let mut changed = true;
+    while changed {
+        changed = false;
+        // Two-phase: collect then insert
+        let mut to_add = Vec::new();
+        for (_, (func_id, may_invoke)) in temporaries.iter() {
+            if hoistable.contains(func_id) {
+                for &called in may_invoke {
+                    if !hoistable.contains(&called) {
+                        to_add.push(called);
+                    }
+                }
+            }
+        }
+        for id in to_add {
+            changed = true;
+            hoistable.insert(id);
+        }
+        if !changed {
+            break;
+        }
+    }
+
+    hoistable
 }
 
 fn get_assumed_invoked_functions_impl(
@@ -1116,30 +1147,6 @@ fn get_assumed_invoked_functions_impl(
         }
     }
 
-    // Step 3: Propagate assumed-invoked status through mayInvoke chains
-    let mut changed = true;
-    while changed {
-        changed = false;
-        // Two-phase: collect then insert
-        let mut to_add = Vec::new();
-        for (_, (func_id, may_invoke)) in temporaries.iter() {
-            if hoistable.contains(func_id) {
-                for &called in may_invoke {
-                    if !hoistable.contains(&called) {
-                        to_add.push(called);
-                    }
-                }
-            }
-        }
-        for id in to_add {
-            changed = true;
-            hoistable.insert(id);
-        }
-        if !changed {
-            break;
-        }
-    }
-
     hoistable
 }
 
@@ -1230,13 +1237,17 @@ fn collect_non_nulls_in_blocks(
                                 .map(|place| place.identifier)
                                 .collect()
                         };
-                    let inner_assumed = get_assumed_invoked_functions(inner_func, env);
+                    // Not in upstream, which computes this set again for each nested
+                    // function. The TS original passes the set of the outermost function
+                    // down (`...context`). `inner_func` is in that set, and only code inside
+                    // `inner_func` can refer to a function that it declares, so the two sets
+                    // agree on those functions.
                     let inner_ctx = CollectHoistableContext {
                         temporaries: ctx.temporaries,
                         known_immutable_identifiers: &HashSet::default(),
                         hoistable_from_optionals: ctx.hoistable_from_optionals,
                         nested_fn_immutable_context: Some(&nested_fn_immutable_context),
-                        assumed_invoked_fns: &inner_assumed,
+                        assumed_invoked_fns: ctx.assumed_invoked_fns,
                     };
                     let inner_nodes =
                         collect_non_nulls_in_blocks(inner_func, env, &inner_ctx, registry);

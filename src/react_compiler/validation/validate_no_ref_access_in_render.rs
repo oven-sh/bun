@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use crate::collections::{FxHashSet as HashSet, IdMap};
 
 use crate::diagnostics::{
@@ -37,6 +39,11 @@ fn next_ref_id() -> RefId {
 /// RefValue compares loc but ignores ref_id. This is critical for fixpoint
 /// convergence — join creates fresh ref_ids, and comparing them would
 /// prevent the environment from stabilizing.
+///
+/// Not in upstream: a nested type is an `Rc`, not a `Box`. The type of a function holds the
+/// type of what it returns, so a type is as deep as the functions nest, and every fixpoint
+/// pass of every enclosing function clones, joins and compares it again. The TS original
+/// shares the object.
 #[derive(Debug, Clone)]
 enum RefAccessType {
     None,
@@ -52,7 +59,7 @@ enum RefAccessType {
         ref_id: Option<RefId>,
     },
     Structure {
-        value: Option<Box<RefAccessRefType>>,
+        value: Option<Rc<RefAccessRefType>>,
         fn_type: Option<RefFnType>,
     },
 }
@@ -82,6 +89,9 @@ impl PartialEq for RefAccessType {
     }
 }
 
+// Not in upstream: with `Eq`, `==` on an `Rc` returns early for one allocation.
+impl Eq for RefAccessType {}
+
 /// Corresponds to TS `RefAccessRefType` — the subset of `RefAccessType` that can appear
 /// inside `Structure.value` and be joined via `join_ref_access_ref_types`.
 ///
@@ -97,7 +107,7 @@ enum RefAccessRefType {
         ref_id: Option<RefId>,
     },
     Structure {
-        value: Option<Box<RefAccessRefType>>,
+        value: Option<Rc<RefAccessRefType>>,
         fn_type: Option<RefFnType>,
     },
 }
@@ -125,10 +135,13 @@ impl PartialEq for RefAccessRefType {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+// Not in upstream: see `RefAccessType`.
+impl Eq for RefAccessRefType {}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct RefFnType {
     read_ref_effect: bool,
-    return_type: Box<RefAccessType>,
+    return_type: Rc<RefAccessType>,
 }
 
 impl RefAccessType {
@@ -164,7 +177,93 @@ impl RefAccessType {
     }
 }
 
+/// Not in upstream: see `join_shared`.
+trait IsSame {
+    /// Whether the two types are the same, ref ids included: `==` ignores them, and the join
+    /// reads them. Two nested types are the same only as one allocation, so this does not
+    /// recurse.
+    fn is_same(&self, other: &Self) -> bool;
+}
+
+impl IsSame for RefAccessType {
+    fn is_same(&self, other: &Self) -> bool {
+        match (self, other) {
+            (RefAccessType::None, RefAccessType::None)
+            | (RefAccessType::Nullable, RefAccessType::Nullable) => true,
+            (RefAccessType::Guard { ref_id: a }, RefAccessType::Guard { ref_id: b })
+            | (RefAccessType::Ref { ref_id: a }, RefAccessType::Ref { ref_id: b }) => a == b,
+            (
+                RefAccessType::RefValue {
+                    loc: a_loc,
+                    ref_id: a_id,
+                },
+                RefAccessType::RefValue {
+                    loc: b_loc,
+                    ref_id: b_id,
+                },
+            ) => a_loc == b_loc && a_id == b_id,
+            (
+                RefAccessType::Structure {
+                    value: a_val,
+                    fn_type: a_fn,
+                },
+                RefAccessType::Structure {
+                    value: b_val,
+                    fn_type: b_fn,
+                },
+            ) => {
+                let same_value = match (a_val, b_val) {
+                    (None, None) => true,
+                    (Some(a_val), Some(b_val)) => Rc::ptr_eq(a_val, b_val),
+                    _ => false,
+                };
+                let same_fn = match (a_fn, b_fn) {
+                    (None, None) => true,
+                    (
+                        Some(RefFnType {
+                            read_ref_effect: a_effect,
+                            return_type: a_return,
+                        }),
+                        Some(RefFnType {
+                            read_ref_effect: b_effect,
+                            return_type: b_return,
+                        }),
+                    ) => a_effect == b_effect && Rc::ptr_eq(a_return, b_return),
+                    _ => false,
+                };
+                same_value && same_fn
+            }
+            _ => false,
+        }
+    }
+}
+
+impl IsSame for RefAccessRefType {
+    fn is_same(&self, other: &Self) -> bool {
+        RefAccessType::from_ref_type(self).is_same(&RefAccessType::from_ref_type(other))
+    }
+}
+
 // --- Join operations ---
+
+/// Not in upstream: joins two nested types. The result is an operand when the join is the same
+/// as that operand. A type that a fixpoint pass does not change then keeps its allocation, and
+/// the next join or `==` with it returns at the pointer check. That check relies on the join
+/// of a type with itself being that type, with no new ref id. `b` goes first because
+/// `Env::set` passes the stored type as `b`.
+fn join_shared<T: IsSame>(a: &Rc<T>, b: &Rc<T>, join: impl FnOnce(&T, &T) -> T) -> Rc<T> {
+    if Rc::ptr_eq(a, b) {
+        return Rc::clone(a);
+    }
+    let joined = join(a, b);
+    if joined.is_same(b) {
+        Rc::clone(b)
+    } else if joined.is_same(a) {
+        Rc::clone(a)
+    } else {
+        Rc::new(joined)
+    }
+}
 
 fn join_ref_access_ref_types(a: &RefAccessRefType, b: &RefAccessRefType) -> RefAccessRefType {
     match (a, b) {
@@ -217,16 +316,17 @@ fn join_ref_access_ref_types(a: &RefAccessRefType, b: &RefAccessRefType) -> RefA
                 (None, other) | (other, None) => other.clone(),
                 (Some(a_fn), Some(b_fn)) => Some(RefFnType {
                     read_ref_effect: a_fn.read_ref_effect || b_fn.read_ref_effect,
-                    return_type: Box::new(join_ref_access_types(
+                    return_type: join_shared(
                         &a_fn.return_type,
                         &b_fn.return_type,
-                    )),
+                        join_ref_access_types,
+                    ),
                 }),
             };
             let value = match (a_value, b_value) {
                 (None, other) | (other, None) => other.clone(),
                 (Some(a_val), Some(b_val)) => {
-                    Some(Box::new(join_ref_access_ref_types(a_val, b_val)))
+                    Some(join_shared(a_val, b_val, join_ref_access_ref_types))
                 }
             };
             RefAccessRefType::Structure { value, fn_type }
@@ -789,7 +889,7 @@ fn validate_no_ref_access_in_render_impl(
                                 value: None,
                                 fn_type: Some(RefFnType {
                                     read_ref_effect,
-                                    return_type: Box::new(return_type),
+                                    return_type: Rc::new(return_type),
                                 }),
                             },
                         );
@@ -808,7 +908,7 @@ fn validate_no_ref_access_in_render_impl(
                             ..
                         }) = &fn_type
                         {
-                            return_type = *fn_ty.return_type.clone();
+                            return_type = (*fn_ty.return_type).clone();
                             if fn_ty.read_ref_effect {
                                 did_error = true;
                                 errors.push(ref_access_error(
@@ -937,7 +1037,7 @@ fn validate_no_ref_access_in_render_impl(
                                 ref_env.set(
                                     instr.lvalue.identifier,
                                     RefAccessType::Structure {
-                                        value: value.to_ref_type().map(Box::new),
+                                        value: value.to_ref_type().map(Rc::new),
                                         fn_type: None,
                                     },
                                 );

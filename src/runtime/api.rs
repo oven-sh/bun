@@ -270,7 +270,7 @@ fn with_text_format_source_encoded<R>(
     let mut encoding = SourceEncoding::Utf8Text;
     let bytes: &[u8] = 'bytes: {
         if blob_or_buffer_input == BlobOrBufferInput::Bytes && !input_value.is_string() {
-            if let Some(v) = BlobOrStringOrBuffer::from_js(global, input_value)? {
+            if let Some(v) = BlobOrStringOrBuffer::from_js_stable(global, input_value)? {
                 _blob_hold = v;
                 encoding = SourceEncoding::Bytes;
                 break 'bytes _blob_hold.slice();

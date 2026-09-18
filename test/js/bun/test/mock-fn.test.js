@@ -4,6 +4,7 @@
  *  `bunx vitest test/js/bun/test/mock-fn.test.js`
  *  `NODE_OPTIONS=--experimental-vm-modules npx jest test/js/bun/test/mock-fn.test.js`
  */
+import vm from "node:vm";
 import test_interop from "./test-interop.js";
 var { isBun, describe, test, it, expect, jest, vi, mock, spyOn } = await test_interop();
 
@@ -480,6 +481,104 @@ describe("mock()", () => {
     expect(fn).toHaveBeenLastCalledWith(43);
     expect(fn).toHaveBeenCalledWith(43);
   });
+  test("a results entry is settled in place when the call ends", () => {
+    let entry;
+    const fn = jest.fn(() => {
+      entry = fn.mock.results[0];
+      return entry.type;
+    });
+    expect(fn()).toBe("incomplete");
+    expect(fn.mock.results[0]).toBe(entry);
+    expect(entry).toEqual({ type: "return", value: "incomplete" });
+  });
+  test.each(["mockClear", "mockReset"])("a results entry settles when the implementation calls %s()", method => {
+    const fn = jest.fn();
+    fn.mockReturnValueOnce(1).mockImplementationOnce(() => {
+      fn[method]();
+      return 2;
+    });
+    fn();
+    // mockClear() gives the mock a new results array. This one keeps the entry of the call that runs it.
+    const results = fn.mock.results;
+    expect(fn()).toBe(2);
+    expect(results).toEqual([
+      { type: "return", value: 1 },
+      { type: "return", value: 2 },
+    ]);
+    expect(fn.mock.results).toEqual([]);
+    expect(fn.mock.calls).toEqual([]);
+  });
+  test("a results entry settles when the implementation calls mockClear() and throws", () => {
+    const error = new Error("thrown after mockClear()");
+    const fn = jest.fn(() => {
+      fn.mockClear();
+      throw error;
+    });
+    const results = fn.mock.results;
+    expect(() => fn()).toThrow(error);
+    expect(results).toEqual([{ type: "throw", value: error }]);
+    expect(fn.mock.results).toEqual([]);
+  });
+  test("a call that ran mockClear() does not write to the new mock.results", () => {
+    let clear = false;
+    const fn = jest.fn(() => {
+      if (!clear) return "nested";
+      clear = false;
+      fn.mockClear();
+      fn();
+      return "cleared";
+    });
+    fn();
+    fn();
+    clear = true;
+    expect(fn()).toBe("cleared");
+    // Only the nested call started after mockClear().
+    expect(fn.mock.results).toEqual([{ type: "return", value: "nested" }]);
+    expect(fn).toHaveReturnedTimes(1);
+    expect(fn).toHaveLastReturnedWith("nested");
+  });
+  test("a results entry settles after the implementation changed its shape", () => {
+    const fn = jest.fn(() => {
+      const entry = fn.mock.results[0];
+      delete entry.type;
+      entry.extra = true;
+      return 1;
+    });
+    fn();
+    expect(fn.mock.results).toEqual([{ type: "return", value: 1, extra: true }]);
+  });
+  if (isBun) {
+    // jest-mock assigns to the entry, so there the call throws a TypeError: the accessor has no setter.
+    test("a results entry settles after the implementation made its value an accessor", () => {
+      const read = entry => entry.value;
+      const fn = jest.fn(() => {
+        const entry = fn.mock.results.at(-1);
+        Object.defineProperty(entry, "value", { get: () => "getter", configurable: true, enumerable: true });
+        // Give the getter read an inline cache for this structure.
+        for (let i = 0; i < 1000; i++) read(entry);
+        return 7;
+      });
+      fn();
+      fn();
+      expect(fn.mock.results.map(read)).toEqual([7, 7]);
+    });
+    test("optimized code that read an incomplete results entry sees it settle", () => {
+      const { numberOfDFGCompiles } = require("bun:jsc");
+      let readEntry;
+      const fn = jest.fn(() => {
+        // ENTRY is a global lexical const, so the optimizing JIT folds `ENTRY.type` into a constant.
+        // Only a write that fires the property replacement watchpoint discards that code.
+        readEntry = vm.runInContext(
+          "const ENTRY = fn.mock.results[0]; (function readEntry() { return ENTRY.type + ':' + ENTRY.value; })",
+          vm.createContext({ fn }),
+        );
+        for (let i = 0; i < 100_000 && numberOfDFGCompiles(readEntry) === 0; i++) readEntry();
+        return readEntry();
+      });
+      expect(fn()).toBe("incomplete:undefined");
+      expect(readEntry()).toBe("return:incomplete:undefined");
+    });
+  }
   test("multiple calls work", () => {
     const fn = jest.fn(f => f);
     expect(fn(43)).toBe(43);

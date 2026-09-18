@@ -313,6 +313,20 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     return true;
 }
 
+void JSCommonJSModule::addChild(JSC::VM& vm, JSC::JSCell* child)
+{
+    ASSERT(!m_childrenValue);
+    // require() of a cached module comes through here on every call. Like
+    // Node's updateChildren(), list a child once. Repeats are usually the
+    // last entry, so scan backwards.
+    for (size_t i = m_children.size(); i-- > 0;) {
+        if (m_children[i].get() == child)
+            return;
+    }
+    WTF::Locker locker { cellLock() };
+    m_children.append(WriteBarrier<Unknown>(vm, this, child));
+}
+
 bool JSCommonJSModule::load(JSC::VM& vm, Zig::GlobalObject* globalObject)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -366,9 +380,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionEvaluateCommonJSModule, (JSGlobalObject * lex
             // referrer.children.indexOf(moduleObject) === -1 && referrer.children.push(moduleObject)
             returnValue = referrer->m_childrenValue.get();
         } else {
-            WTF::Locker locker { referrer->cellLock() };
-            referrer->m_children.append(WriteBarrier<Unknown>());
-            referrer->m_children.last().set(vm, referrer, moduleObject);
+            referrer->addChild(vm, moduleObject);
         }
     }
 
@@ -677,28 +689,8 @@ JSC_DEFINE_CUSTOM_GETTER(getterChildren, (JSC::JSGlobalObject * globalObject, JS
         MarkedArgumentBuffer children;
         children.ensureCapacity(mod->m_children.size());
 
-        // Deduplicate children while preserving insertion order.
-        JSCommonJSModule* last = nullptr;
-        int n = -1;
-        for (WriteBarrier<Unknown> childBarrier : mod->m_children) {
-            JSCommonJSModule* child = uncheckedDowncast<JSCommonJSModule>(childBarrier.get());
-            // Check the last module since duplicate imports, if any, will
-            // probably be adjacent. Then just do a linear scan.
-            if (last == child) [[unlikely]]
-                continue;
-            int i = 0;
-            while (i < n) {
-                if (children.at(i).asCell() == child) [[unlikely]]
-                    goto next;
-                i += 1;
-            }
-            children.append(child);
-            last = child;
-            n += 1;
-        next:
-            {
-            }
-        }
+        for (const WriteBarrier<Unknown>& childBarrier : mod->m_children)
+            children.append(childBarrier.get());
 
         // Construct the array
         JSArray* array = JSC::constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), children);
@@ -1063,7 +1055,7 @@ JSCommonJSModule* JSCommonJSModule::create(
 size_t JSCommonJSModule::estimatedSize(JSC::JSCell* cell, JSC::VM& vm)
 {
     auto* thisObject = uncheckedDowncast<JSCommonJSModule>(cell);
-    size_t additionalSize = 0;
+    size_t additionalSize = thisObject->m_children.capacity() * sizeof(WriteBarrier<Unknown>);
     if (!thisObject->sourceCode.isNull() && !thisObject->sourceCode.view().isEmpty()) {
         additionalSize += thisObject->sourceCode.view().length();
         if (!thisObject->sourceCode.view().is8Bit()) {

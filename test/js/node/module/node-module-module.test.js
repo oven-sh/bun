@@ -994,6 +994,47 @@ console.log("survived", require("./late.js"));`,
     expect(await proc.exited).toBe(0);
   });
 
+  test("require() of a cached module does not add a duplicate native child reference", async () => {
+    // Before module.children is read, the parent tracks its children in a
+    // native vector that the GC visits. A cached require() used to append to
+    // it every time, so GC cost grew with the number of require() calls.
+    // The heap snapshot lists one edge per vector entry, so count the edges
+    // between Module nodes before touching module.children.
+    using dir = tempDir("cjs-cached-require-children", {
+      "child.cjs": `module.exports = { value: 1 };`,
+      "parent.cjs": `
+        const N = 1000;
+        for (let i = 0; i < N; i++) require("./child.cjs");
+        const snapshot = Bun.generateHeapSnapshot();
+        const moduleClass = snapshot.nodeClassNames.indexOf("Module");
+        const moduleIds = new Set();
+        for (let i = 0; i < snapshot.nodes.length; i += 4) {
+          if (snapshot.nodes[i + 2] === moduleClass) moduleIds.add(snapshot.nodes[i]);
+        }
+        let moduleEdges = 0;
+        for (let i = 0; i < snapshot.edges.length; i += 4) {
+          if (moduleIds.has(snapshot.edges[i]) && moduleIds.has(snapshot.edges[i + 1])) moduleEdges++;
+        }
+        console.log(JSON.stringify({ moduleEdges, children: module.children.length }));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "parent.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const { moduleEdges, children } = JSON.parse(stdout);
+    expect(children).toBe(1);
+    // The parent points at the child once. A few more Module-to-Module edges
+    // can exist (the entry point and the parent pointers), but not one per call.
+    expect(moduleEdges).toBeLessThan(10);
+    if (exitCode !== 0) expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
   test("new Module().exports survives object spread", async () => {
     // exports was built with inline capacity 0, so spreading it hit JSC's
     // tryCreateObjectViaCloning hasInlineStorage() debug assert. Run in a

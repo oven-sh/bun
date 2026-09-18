@@ -54,8 +54,8 @@ public:
     // `module.children`. In that case, all children may also need their
     // children fields to exist, recursively. To avoid allocating a *JSArray for
     // each module, the children array is constructed internally as a
-    // Vector of pointers. If accessed, deduplication happens and array is
-    // moved into JavaScript. These two fields add 16 bytes to JSCommonJSModule.
+    // Vector of pointers, each child once (see addChild). If accessed, the
+    // array is moved into JavaScript. These two fields add 16 bytes to JSCommonJSModule.
     // `m_childrenValue` can be set to any value via the user-exposed setter,
     // but Bun does not test that behavior besides ensuring it does not crash.
     mutable JSC::WriteBarrier<Unknown> m_childrenValue;
@@ -132,6 +132,10 @@ public:
     JSValue filename() { return m_filename.get(); }
 
     bool load(JSC::VM& vm, Zig::GlobalObject* globalObject);
+
+    // Records `child` in m_children unless it is already there. Only for the
+    // native list: once m_childrenValue exists, the caller pushes onto that array.
+    void addChild(JSC::VM& vm, JSC::JSCell* child);
 
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;

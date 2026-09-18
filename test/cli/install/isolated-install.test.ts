@@ -678,6 +678,61 @@ describe("isolated workspaces", () => {
   });
 });
 
+// https://github.com/oven-sh/bun/issues/43221
+describe("failed script of a workspace linked only as an optional dependency", () => {
+  for (const linker of ["isolated", "hoisted"] as const) {
+    test(`${linker}: keeps the workspace folder and its link`, async () => {
+      const { packageDir } = await registry.createTestDir({
+        bunfigOpts: { linker },
+        files: {
+          "package.json": JSON.stringify({
+            name: "monorepo-optional-workspace",
+            workspaces: ["packages/*"],
+          }),
+          "packages/x/package.json": JSON.stringify({
+            name: "x",
+            version: "1.0.0",
+            scripts: { postinstall: "exit 1" },
+          }),
+          "packages/x/src.txt": "keep me",
+          "packages/y/package.json": JSON.stringify({
+            name: "y",
+            version: "1.0.0",
+            optionalDependencies: { x: "workspace:*" },
+          }),
+        },
+      });
+
+      await using proc = spawn({
+        cmd: [bunExe(), "install", "--filter", "y"],
+        cwd: packageDir,
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).not.toContain("error:");
+      expect(stdout).toContain("bun install v1.");
+      expect(exitCode).toBe(0);
+
+      const link =
+        linker === "isolated"
+          ? join(packageDir, "packages", "y", "node_modules", "x")
+          : join(packageDir, "node_modules", "x");
+      expect(
+        await Promise.all([
+          readdirSorted(join(packageDir, "packages")),
+          file(join(packageDir, "packages", "x", "src.txt")).text(),
+          file(join(packageDir, "packages", "x", "package.json")).json(),
+          lstatSync(link).isSymbolicLink(),
+          file(join(link, "src.txt")).text(),
+        ]),
+      ).toEqual([["x", "y"], "keep me", { name: "x", version: "1.0.0", scripts: { postinstall: "exit 1" } }, true, "keep me"]);
+    });
+  }
+});
+
 describe("optional peers", () => {
   const tests = [
     // non-optional versions

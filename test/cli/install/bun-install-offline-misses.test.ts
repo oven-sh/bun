@@ -37,6 +37,7 @@ async function install(cwd: string, args: string[]) {
 // install does not flush before it exits.
 describe.concurrent("--offline with an optional dependency that is not in the cache", () => {
   const otherCpu = process.arch === "arm64" ? "x64" : "arm64";
+  const otherOs = process.platform === "linux" ? "darwin" : "linux";
   // name -> version -> the rest of its package.json
   const packages: Record<string, Record<string, object>> = {
     "host": { "1.0.0": { optionalDependencies: { native: "1.0.0" } } },
@@ -50,7 +51,12 @@ describe.concurrent("--offline with an optional dependency that is not in the ca
       "1.0.0": { peerDependencies: { native: "1.0.0" }, peerDependenciesMeta: { native: { optional: true } } },
     },
     "peer-leaf": { "1.0.0": { peerDependencies: { leaf: "1.0.0" } } },
-    "mid": { "1.0.0": { dependencies: { leaf: "1.0.0" } } },
+    "mid": { "1.0.0": { dependencies: { leaf: "1.0.0" } }, "2.0.0": {} },
+    "host-two-natives": {
+      "1.0.0": { optionalDependencies: { "native-leaf-other-cpu": "1.0.0", "native-mid-other-os": "1.0.0" } },
+    },
+    "native-leaf-other-cpu": { "1.0.0": { cpu: [otherCpu], optionalDependencies: { leaf: "1.0.0" } } },
+    "native-mid-other-os": { "1.0.0": { os: [otherOs], dependencies: { mid: "1.0.0" } } },
     "peer-mid": { "1.0.0": { peerDependencies: { mid: "1.0.0" } } },
     "dup": { "1.0.0": { dependencies: { leaf: "1.0.0" } }, "2.0.0": {} },
     "optional-dup-a": { "1.0.0": { optionalDependencies: { dup: "1.0.0" } } },
@@ -325,6 +331,23 @@ describe.concurrent("--offline with an optional dependency that is not in the ca
       ]);
       expect(r.requests).toEqual([]);
       expect(r.code).toBe(1);
+    });
+
+    it("does not require what is below a package that a peer resolves to but no linker places", async () => {
+      // The lockfile resolves the peer of peer-mid to mid@1.0.0, which only native-mid-other-os lists.
+      // The linkers bind it to mid@2.0.0 of the root, so nothing places mid@1.0.0 or requires leaf.
+      const { err, code, ...result } = await installOfflineAfterOnline(linker, {
+        manifest: { dependencies: { mid: "2.0.0", "peer-mid": "1.0.0", "host-two-natives": "1.0.0" } },
+        offlineArgs: [`--cpu=${otherCpu}`],
+      });
+      expect(err).not.toContain("error:");
+      expect(result).toEqual({
+        installed: ["host-two-natives", "mid", "peer-mid"],
+        requests: [],
+        lockfileChanged: false,
+        versions: {},
+      });
+      expect(code).toBe(0);
     });
 
     it("skips a package that is optional for one package and an optional peer of another", async () => {

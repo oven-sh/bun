@@ -21,7 +21,7 @@ use crate::dependency;
 use crate::dependency::{DependencyExt as _, TagExt as _, VersionExt as _};
 use crate::lockfile::PackageIndexEntry;
 use crate::lockfile::package::Package;
-use crate::lockfile::tree::placed_packages;
+use crate::lockfile::tree::{InstalledPackages, placed_packages};
 use crate::lockfile_real as Lockfile;
 use crate::package_manager_real::{
     self, FailFn, PackageManager, SuccessFn, TaskCallbackList, WorkspaceFilter,
@@ -469,7 +469,10 @@ pub(crate) fn report_offline_misses(
             workspace_filters,
             install_root_dependencies,
             packages_to_install,
-            not_installed,
+            InstalledPackages {
+                not_installed,
+                in_place: Some(&present),
+            },
         )
         .unwrap_or_oom()
     };

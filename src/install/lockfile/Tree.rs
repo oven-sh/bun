@@ -620,18 +620,27 @@ pub(crate) struct PlacedPackages {
     pub(crate) required: DynamicBitSet,
     /// Any placed dependency resolves to the package.
     pub(crate) seen: DynamicBitSet,
-    /// A peer dependency without `Behavior::OPTIONAL` of a walked package resolves to the package. The walk goes below it.
+    /// A peer dependency without `Behavior::OPTIONAL` of a walked package resolves to the package.
     pub(crate) peers: DynamicBitSet,
 }
 
-/// Walks what the linkers place, from the root. Below a `not_installed` package only if it is required.
+/// What an install found, for `placed_packages`. Both sets are `bit[package_id]`.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct InstalledPackages<'a> {
+    /// The walk goes below one of these only if it is required.
+    pub(crate) not_installed: Option<&'a DynamicBitSet>,
+    /// A folder of the package is in place. The walk goes below the package of a peer only then.
+    pub(crate) in_place: Option<&'a DynamicBitSet>,
+}
+
+/// Walks what the linkers place, from the root.
 pub(crate) fn placed_packages(
     lockfile: &Lockfile,
     manager: &PackageManager,
     workspace_filters: &[WorkspaceFilter],
     install_root_dependencies: bool,
     packages_to_install: Option<&[PackageID]>,
-    not_installed: Option<&DynamicBitSet>,
+    installed: InstalledPackages<'_>,
 ) -> Result<PlacedPackages, AllocError> {
     let dependencies = lockfile.buffers.dependencies.as_slice();
     let resolutions = lockfile.buffers.resolutions.as_slice();
@@ -671,22 +680,25 @@ pub(crate) fn placed_packages(
                 continue;
             }
             let is_optional = behavior.contains(crate::dependency::Behavior::OPTIONAL);
-            let is_not_installed =
-                not_installed.is_some_and(|skipped| skipped.is_set(pkg_id as usize));
+            let is_in = |set: Option<&DynamicBitSet>| {
+                set.is_some_and(|set| set.is_set_allow_out_of_bound(pkg_id as usize, false))
+            };
             if behavior.is_peer() {
                 // An optional peer installs nothing. A linker can bind the other kind to another package, so it judges nothing.
                 if is_optional {
                     continue;
                 }
                 placed.peers.set(pkg_id as usize);
+                if !is_in(installed.in_place) {
+                    continue;
+                }
             } else {
                 placed.seen.set(pkg_id as usize);
                 if !is_optional {
                     placed.required.set(pkg_id as usize);
+                } else if is_in(installed.not_installed) {
+                    continue;
                 }
-            }
-            if is_not_installed && (is_optional || behavior.is_peer()) {
-                continue;
             }
             if !queued.is_set(pkg_id as usize) {
                 queued.set(pkg_id as usize);

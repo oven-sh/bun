@@ -350,7 +350,7 @@ query.run();
 
 Internally, this calls [`sqlite3_reset`](https://www.sqlite.org/capi3ref.html#sqlite3_reset) and calls [`sqlite3_step`](https://www.sqlite.org/capi3ref.html#sqlite3_step) once. Stepping through all the rows is not necessary when you don't care about the results.
 
-The `lastInsertRowid` property is the ID of the last row inserted into the database. The `changes` property is the number of rows affected by the query.
+The `lastInsertRowid` property is the ID of the last row inserted into the database. The `changes` property is the number of rows that the query inserts, updates, or deletes itself. Rows that a trigger or a foreign key action such as `ON DELETE CASCADE` changes do not count. A schema statement such as `CREATE VIRTUAL TABLE` can report rows that a virtual table module, for example FTS5, writes to its own tables.
 
 ### `.as(Class)` - Map query results to a class
 

@@ -828,6 +828,7 @@ impl Stringifier {
                                 writer,
                                 dep.behavior,
                                 deps_buf,
+                                resolution_buf,
                                 &pkg_deps_sort_buf,
                                 pkg_meta,
                                 pkg_bin,
@@ -853,6 +854,7 @@ impl Stringifier {
                                 writer,
                                 dep.behavior,
                                 deps_buf,
+                                resolution_buf,
                                 &pkg_deps_sort_buf,
                                 pkg_meta,
                                 pkg_bin,
@@ -883,6 +885,7 @@ impl Stringifier {
                                 writer,
                                 dep.behavior,
                                 deps_buf,
+                                resolution_buf,
                                 &pkg_deps_sort_buf,
                                 pkg_meta,
                                 pkg_bin,
@@ -912,6 +915,7 @@ impl Stringifier {
                                 writer,
                                 dep.behavior,
                                 deps_buf,
+                                resolution_buf,
                                 &pkg_deps_sort_buf,
                                 pkg_meta,
                                 pkg_bin,
@@ -959,6 +963,7 @@ impl Stringifier {
                                 writer,
                                 dep.behavior,
                                 deps_buf,
+                                resolution_buf,
                                 &pkg_deps_sort_buf,
                                 pkg_meta,
                                 pkg_bin,
@@ -1007,6 +1012,7 @@ impl Stringifier {
                                 writer,
                                 dep.behavior,
                                 deps_buf,
+                                resolution_buf,
                                 &pkg_deps_sort_buf,
                                 pkg_meta,
                                 pkg_bin,
@@ -1056,6 +1062,7 @@ impl Stringifier {
         writer: &mut Writer,
         dep_behavior: Behavior,
         deps_buf: &[Dependency],
+        resolution_buf: &[PackageID],
         pkg_dep_ids: &[DependencyID],
         meta: &Meta,
         bin: &Bin,
@@ -1152,6 +1159,35 @@ impl Stringifier {
                 )?;
             }
 
+            writer.write_byte(b']')?;
+        }
+
+        // An unresolved bundled dependency has no entry of its own to carry `"bundled": true`.
+        let mut last_listed: Option<&[u8]> = None;
+        for &dep_id in pkg_dep_ids {
+            let dep = &deps_buf[dep_id as usize];
+            if !dep.behavior.is_bundled() || resolution_buf[dep_id as usize] != invalid_package_id {
+                continue;
+            }
+            let name = dep.name.slice(buf);
+            // `pkg_dep_ids` is sorted by name, so a name in two dependency groups is adjacent.
+            if last_listed == Some(name) {
+                continue;
+            }
+            if last_listed.is_none() {
+                debug_assert!(any);
+                writer.write_all(b", \"bundledDependencies\": [")?;
+            } else {
+                writer.write_all(b", ")?;
+            }
+            write!(
+                writer,
+                "{}",
+                bun_core::fmt::format_json_string_utf8(name, Default::default())
+            )?;
+            last_listed = Some(name);
+        }
+        if last_listed.is_some() {
             writer.write_byte(b']')?;
         }
 
@@ -3203,6 +3239,14 @@ pub(crate) fn parse_into_binary_lockfile(
                     continue 'deps;
                 }
 
+                // Bundled and no entry of its own: stays unresolved, never an ancestor's package.
+                if dep.behavior.is_bundled()
+                    && child_pkg_path(pkg_path, dep.name.slice(string_buf), &mut path_buf[..])
+                        .is_some_and(|own_entry| !pkg_map.contains(own_entry))
+                {
+                    continue 'deps;
+                }
+
                 let peer_res_id = resolve_peer_dep_version_based(
                     dep,
                     catalogs,
@@ -3393,6 +3437,25 @@ pub(crate) fn resolve_peer_dep_version_based(
     None
 }
 
+/// Key of the entry directly under `pkg_path`, where a bundled dependency goes. `None` if too long.
+fn child_pkg_path<'a>(
+    pkg_path: &[u8],
+    dep_name: &[u8],
+    path_buf: &'a mut [u8],
+) -> Option<&'a [u8]> {
+    let len = pkg_path
+        .len()
+        .saturating_add(1)
+        .saturating_add(dep_name.len());
+    if len > path_buf.len() {
+        return None;
+    }
+    path_buf[..pkg_path.len()].copy_from_slice(pkg_path);
+    path_buf[pkg_path.len()] = b'/';
+    path_buf[pkg_path.len() + 1..len].copy_from_slice(dep_name);
+    Some(&path_buf[..len])
+}
+
 /// Edges a fresh install may itself leave unresolved, so bun.lock lists them without a package.
 fn may_stay_unresolved(dep: &Dependency) -> bool {
     dep.behavior.intersects(Behavior::OPTIONAL | Behavior::PEER)
@@ -3494,6 +3557,34 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
         None
     };
 
+    // Bundled dependencies without an entry of their own (the fresh install left them unresolved).
+    let mut bundled_without_entry: Vec<u64> = Vec::new();
+    if CHECK_FOR_BUNDLED {
+        if let Some(bundled_deps) = obj.get(b"bundledDependencies") {
+            if !bundled_deps.is_array() {
+                log.add_error(
+                    Some(source),
+                    value_loc_of(source, bundled_deps.loc),
+                    b"Expected an array",
+                );
+                return Err(ParseError::InvalidPackageInfo);
+            }
+
+            for (i, item) in array_items(&bundled_deps).iter().enumerate() {
+                let Some(name_str) = item.as_str() else {
+                    log.add_error(
+                        Some(source),
+                        item_loc(source, bundled_deps.loc, i),
+                        b"Expected a string",
+                    );
+                    return Err(ParseError::InvalidPackageInfo);
+                };
+
+                bundled_without_entry.push(StringBuilder::string_hash(name_str));
+            }
+        }
+    }
+
     let off = lockfile.buffers.dependencies.len();
     for &(group_name, group_behavior) in WORKSPACE_DEPENDENCY_GROUPS.iter() {
         if let Some(deps) = obj.get(group_name.as_bytes()) {
@@ -3563,25 +3654,18 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
                     let bundled_pkgs =
                         bundled_pkgs.expect("bundled_pkgs required when CHECK_FOR_BUNDLED");
                     let path_buf = &mut path_buf.as_mut().unwrap()[..];
-                    let bundled_location_len = pkg_path
-                        .len()
-                        .saturating_add(1)
-                        .saturating_add(name_str.len());
-                    if bundled_location_len > path_buf.len() {
+                    let Some(bundled_location) = child_pkg_path(pkg_path, name_str, path_buf)
+                    else {
                         log.add_error(
                             Some(source),
                             row.key_loc,
                             b"Package path and dependency name too long",
                         );
                         return Err(ParseError::InvalidPackageKey);
-                    }
-                    path_buf[0..pkg_path.len()].copy_from_slice(pkg_path);
-                    let remain = &mut path_buf[pkg_path.len()..];
-                    remain[0] = b'/';
-                    let remain = &mut remain[1..];
-                    remain[0..name_str.len()].copy_from_slice(name_str);
-                    let bundled_location = &path_buf[0..bundled_location_len];
-                    if bundled_pkgs.contains(bundled_location) {
+                    };
+                    if bundled_pkgs.contains(bundled_location)
+                        || bundled_without_entry.contains(&name.hash)
+                    {
                         dep.behavior.insert(Behavior::BUNDLED);
                     }
                 }

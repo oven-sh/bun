@@ -21,6 +21,8 @@
 #include <JavaScriptCore/JSTypedArrays.h>
 #include <JavaScriptCore/TypedArrayType.h>
 #include <cmath>
+#include <wtf/StackPointer.h>
+#include <wtf/StdLibExtras.h>
 
 namespace Bun {
 namespace WebStreams {
@@ -169,6 +171,18 @@ void queueStreamsMicrotask(JSGlobalObject* globalObject, JSFunction* handler, JS
 {
     QueuedTask task { nullptr, InternalMicrotask::BunInvokeJobWithArguments, 0, globalObject, handler, value, context };
     globalObject->vm().queueMicrotask(WTF::move(task));
+}
+
+bool streamLinkMustDefer(JSC::VM& vm)
+{
+    // The last link of a chain calls the source's pull() or cancel(). JS calls throw RangeError at the
+    // soft limit, so a link that goes on leaves them this much room above it.
+#if ASAN_ENABLED
+    static constexpr size_t headroom = 384 * KB;
+#else
+    static constexpr size_t headroom = 128 * KB;
+#endif
+    return reinterpret_cast<uintptr_t>(currentStackPointer()) < reinterpret_cast<uintptr_t>(vm.softStackLimit()) + headroom;
 }
 
 bool canTransferArrayBuffer(JSC::ArrayBuffer& buffer)

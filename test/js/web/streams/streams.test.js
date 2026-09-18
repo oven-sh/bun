@@ -317,6 +317,218 @@ describe("ReadableStream.prototype.tee", () => {
   });
 });
 
+// A tee and a Response.textStream() link two streams natively: a pull or a cancel of the one runs
+// straight into the other, and so do the close steps of the link's read request, and the error steps
+// for a text stream. tee() on a branch, or textStream() on a text stream, repeated, builds a chain
+// of links, and each of those steps recurses once per link.
+describe("native links between streams", () => {
+  // Lets every link start, pull if it pulls on its own, and park a read on its parent.
+  const settle = `await new Promise(resolve => setImmediate(resolve));`;
+
+  // How a chain grows by one link. A tee also runs `side` on `b`, its second branch.
+  const tee = side => `const [a, b] = stream.tee(); ${side} stream = a;`;
+  const textStream = () => `stream = new Response(stream).textStream();`;
+  const kinds = {
+    "tee()": { type: undefined, link: tee },
+    "tee() of a byte stream": { type: "bytes", link: tee },
+    "Response.textStream()": { type: undefined, link: textStream },
+  };
+
+  // These chains are deeper than the native stack: a recursion that does not bound itself overflows
+  // it and the process dies. That takes about 29,000 links on the 8 MB main thread stack of a release
+  // build, and about 3,000 in a debug build. macOS and Windows have 18 MB. Debug and ASAN builds also
+  // build a chain slower, so they need, and get, less depth.
+  const depth = (isDebug ? 4_000 : isASAN ? 30_000 : 50_000) * (isMacOS || isWindows ? 2 : 1);
+
+  // Reads at the end of the chain, and for a tee at four second branches on the way there.
+  const settleAllScript = ({ type, link }, act) => `
+    let controller;
+    let stream = new ReadableStream({ type: ${JSON.stringify(type)}, start(c) { controller = c; } });
+    const ends = [];
+    for (let i = 0; i < ${depth}; i++) { ${link(`if (i % ${depth / 4} === 0) ends.push(b);`)} }
+    ends.push(stream);
+    const reads = ends.map(end => end.getReader().read().then(result => result, error => error.message));
+    ${settle}
+    controller.${act};
+    console.log(JSON.stringify(await Promise.all(reads)));
+  `;
+
+  // A tee cancels its source once both branches are canceled, so every second branch is canceled too.
+  // Each tee wraps the reason it got from below: [[["a", "b"], "b"], "b"] and so on.
+  const cancelScript = ({ type, link }) => `
+    let reason;
+    let stream = new ReadableStream({ type: ${JSON.stringify(type)}, cancel(r) { reason = r; } });
+    for (let i = 0; i < ${depth}; i++) { ${link(`b.cancel("b");`)} }
+    ${settle}
+    await stream.cancel("a");
+    let nesting = 0;
+    for (; Array.isArray(reason); reason = reason[0]) nesting++;
+    console.log(JSON.stringify({ nesting, innermost: reason }));
+  `;
+
+  // The source closes in its first pull. A default tee pulls on its own, and recurses on a pull only
+  // through links whose queue is full. It takes one chunk per link to fill them, which is quadratic,
+  // so it has no case. The check it goes through is the one Response.textStream() goes through.
+  const readScript = ({ type, link }, readerOptions, view) => `
+    let pulls = 0;
+    let stream = new ReadableStream(
+      { type: ${JSON.stringify(type)}, pull(c) { pulls++; c.close(); c.byobRequest?.respond(0); } },
+      { highWaterMark: 0 },
+    );
+    for (let i = 0; i < ${depth}; i++) { ${link("")} }
+    ${settle}
+    const { done } = await stream.getReader(${readerOptions}).read(${view});
+    console.log(JSON.stringify({ pulls, done }));
+  `;
+
+  const cases = [];
+  for (const [name, kind] of Object.entries(kinds)) {
+    const ends = kind.link === tee ? 5 : 1;
+    cases.push(
+      [`${name} ${depth} deep: the source closes`, settleAllScript(kind, `close()`), Array(ends).fill({ done: true })],
+      [
+        `${name} ${depth} deep: the end is canceled`,
+        cancelScript(kind),
+        { nesting: kind.link === tee ? depth : 0, innermost: "a" },
+      ],
+    );
+  }
+  // A tee forwards an error through reader.closed, one microtask per link. It never recursed.
+  cases.push([
+    `Response.textStream() ${depth} deep: the source errors`,
+    settleAllScript(kinds["Response.textStream()"], `error(new Error("boom"))`),
+    ["boom"],
+  ]);
+  const pulled = { pulls: 1, done: true };
+  cases.push(
+    [
+      `tee() of a byte stream ${depth} deep: the end is read`,
+      readScript(kinds["tee() of a byte stream"], "", ""),
+      pulled,
+    ],
+    [
+      `tee() of a byte stream ${depth} deep: the end is read into a view`,
+      readScript(kinds["tee() of a byte stream"], `{ mode: "byob" }`, "new Uint8Array(4)"),
+      pulled,
+    ],
+    [
+      `Response.textStream() ${depth} deep: the end is read`,
+      readScript(kinds["Response.textStream()"], "", ""),
+      pulled,
+    ],
+  );
+
+  // The last link of a chain calls the source's pull() or cancel(), and a JS call needs stack of its
+  // own. Each of the deepest frames that a JS recursion gets reads, or cancels, the end of one short chain.
+  const frames = 2_000;
+  const deepestFramesScript = ({ type, link }, links, act, settled) => `
+    let pulls = 0, cancels = 0;
+    const ends = Array.from({ length: ${frames} }, () => {
+      let stream = new ReadableStream(
+        {
+          type: ${JSON.stringify(type)},
+          pull(c) { pulls++; c.enqueue(new Uint8Array([1])); },
+          cancel() { cancels++; },
+        },
+        { highWaterMark: 0 },
+      );
+      for (let i = 0; i < ${links}; i++) { ${link(act === "cancel" ? `b.cancel("b");` : "")} }
+      return stream.getReader();
+    });
+    ${settle}
+    const results = [];
+    let next = 0;
+    function recurse() {
+      try {
+        recurse();
+      } catch (e) {
+        if (!(e instanceof RangeError)) throw e;
+      }
+      if (next < ends.length) results.push(ends[next++].${act}().then(() => ${JSON.stringify(settled)}, error => error.name));
+    }
+    recurse();
+    const counts = { ${act === "read" ? "pulls: 0" : "cancels: 0"} };
+    for (const result of await Promise.all(results)) counts[result] = (counts[result] ?? 0) + 1;
+    counts.${act === "read" ? "pulls = pulls" : "cancels = cancels"};
+    console.log(JSON.stringify(counts));
+  `;
+  cases.push(
+    [
+      "tee() of a byte stream: a read from each of the deepest JS frames",
+      deepestFramesScript(kinds["tee() of a byte stream"], 2, "read", "read"),
+      { pulls: frames, read: frames },
+    ],
+    [
+      "Response.textStream(): a read from each of the deepest JS frames",
+      deepestFramesScript(kinds["Response.textStream()"], 1, "read", "read"),
+      { pulls: frames, read: frames },
+    ],
+    [
+      "tee(): a cancel from each of the deepest JS frames",
+      deepestFramesScript(kinds["tee()"], 2, "cancel", "canceled"),
+      { cancels: frames, canceled: frames },
+    ],
+    [
+      "Response.textStream(): a cancel from each of the deepest JS frames",
+      deepestFramesScript(kinds["Response.textStream()"], 1, "cancel", "canceled"),
+      { cancels: frames, canceled: frames },
+    ],
+  );
+
+  // A link that puts itself off to a microtask has to advance when that microtask runs, however little
+  // stack there is then, or a drain that runs near the limit never ends. With no check in the links
+  // nothing is put off, so this case passes then too. A drain any nearer to the limit than `skip`
+  // frames cannot enter a microtask at all, and that is fatal.
+  const [skip, drains] = isDebug || isASAN ? [1_500, 2_000] : [200, 1_000];
+  cases.push([
+    "tee(): the source closes and microtasks are drained near the stack limit",
+    `
+      import { drainMicrotasks } from "bun:jsc";
+      const closed = new Array(${drains}).fill(false);
+      const controllers = Array.from({ length: ${drains} }, (_, i) => {
+        let controller;
+        let stream = new ReadableStream({ start(c) { controller = c; } });
+        for (let link = 0; link < 2; link++) [stream] = stream.tee();
+        stream.getReader().read().then(({ done }) => (closed[i] = done));
+        return controller;
+      });
+      ${settle}
+      let frame = 0, closedByTheDrain = 0;
+      function recurse() {
+        try {
+          recurse();
+        } catch (e) {
+          if (!(e instanceof RangeError)) throw e;
+        }
+        const i = frame++ - ${skip};
+        if (i < 0 || i >= ${drains}) return;
+        controllers[i].close();
+        drainMicrotasks();
+        if (closed[i]) closedByTheDrain++;
+      }
+      recurse();
+      console.log(JSON.stringify({ closedByTheDrain }));
+    `,
+    { closedByTheDrain: drains },
+  ]);
+
+  test.concurrent.each(cases)("%s", async (_name, script, expected) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: JSON.stringify(expected) + "\n",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+});
+
 it("ReadableStream.prototype[Symbol.asyncIterator]", async () => {
   const stream = new ReadableStream({
     start(controller) {

@@ -1545,7 +1545,7 @@ static LIBUS_SOCKET_DESCRIPTOR bsd_create_unix_socket_address(const char *path, 
 static LIBUS_SOCKET_DESCRIPTOR internal_bsd_create_listen_socket_unix(const char* path, int options, struct sockaddr_un* server_address, size_t addrlen, int* error) {
     LIBUS_SOCKET_DESCRIPTOR listenFd = LIBUS_SOCKET_ERROR;
 
-    listenFd = bsd_create_socket(AF_UNIX, SOCK_STREAM, 0, NULL);
+    listenFd = bsd_create_socket(AF_UNIX, SOCK_STREAM, 0, error);
 
     if (listenFd == LIBUS_SOCKET_ERROR) {
         return LIBUS_SOCKET_ERROR;

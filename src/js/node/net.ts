@@ -3908,11 +3908,9 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
     );
   } catch (err) {
     const isUnix = path != null;
-    process.nextTick(
-      emitErrorNextTick,
-      this,
-      formatListenError(err, isUnix ? path : hostname, isUnix ? undefined : port),
-    );
+    // Bun.listen reports the address it tried. After the IPv4 fallback that is not `hostname`.
+    const address = isUnix ? path : typeof err?.address === "string" && err.address ? err.address : hostname;
+    process.nextTick(emitErrorNextTick, this, formatListenError(err, address, isUnix ? undefined : port));
   }
   return this;
 };

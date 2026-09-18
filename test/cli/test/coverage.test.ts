@@ -726,7 +726,21 @@ describe("a file loaded more than once counts every load", () => {
     "two-graphs.ts": esm,
     "cjs-host-and-graph.cjs": cjs,
     "query-strings.ts": esm,
+    "overlapping-imports.ts": esm,
     "require-cache.cjs": cjs,
+    // https://github.com/oven-sh/bun/issues/35345
+    "issue-35345.ts": `export const MODULE_SCOPE = "evaluated";
+
+export function fnA(x: number): number {
+  const a = x + 1;
+  return a * 2;
+}
+
+export function fnB(x: number): number {
+  const b = x + 10;
+  return b * 3;
+}
+`,
     "functions.ts": `export function first() {
   return 1;
 }
@@ -797,6 +811,20 @@ test("query-strings.ts", async () => {
   expect(b.covered(1)).toBe(2);
 });
 
+test("overlapping-imports.ts", async () => {
+  const [a, b] = await Promise.all([import("./overlapping-imports.ts"), import("./overlapping-imports.ts")]);
+  expect(a).toBe(b);
+  expect(a.covered(10)).toBe(20);
+  expect(b.covered(1)).toBe(2);
+});
+
+test("issue-35345.ts", async () => {
+  const first = await import("./issue-35345.ts?bun-spec=1");
+  expect(first.fnA(1)).toBe(4);
+  const second = await import("./issue-35345.ts?bun-spec=2");
+  expect(second.fnB(1)).toBe(33);
+});
+
 test("require-cache.cjs", () => {
   const a = require("./require-cache.cjs");
   delete require.cache[require.resolve("./require-cache.cjs")];
@@ -845,11 +873,46 @@ test("changed.ts", async () => {
 `,
   };
 
+  // A plugin's onLoad result gets a new SourceProvider for every load, under --isolate too.
+  // https://github.com/oven-sh/bun/issues/40386
+  const pluginFiles = {
+    "bunfig.toml": `[test]\npreload = ["./plugin.ts"]\n`,
+    "plugin.ts": `
+import { plugin } from "bun";
+
+plugin({
+  name: "passthrough",
+  setup(build) {
+    build.onLoad({ filter: /plugin-loaded\\.ts$/ }, async ({ path }) => {
+      return { contents: await Bun.file(path).text(), loader: "ts" };
+    });
+  },
+});
+`,
+    "plugin-loaded.ts": esm,
+    "a.test.ts": `
+import { expect, test } from "bun:test";
+import { covered } from "./plugin-loaded.ts";
+
+test("a", () => {
+  expect(covered(10)).toBe(20);
+});
+`,
+    "b.test.ts": `
+import { expect, test } from "bun:test";
+import { covered } from "./plugin-loaded.ts";
+
+test("b", () => {
+  expect(covered(1)).toBe(2);
+});
+`,
+  };
+
   type Row = { functions: string; lines: string; uncovered: string };
-  async function run(env: Record<string, string>) {
-    using dir = tempDir("cov-loaded-twice", files);
+  async function run(fixture: Record<string, string>, args: string[], env: Record<string, string> = {}) {
+    using dir = tempDir("cov-loaded-twice", fixture);
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", "--coverage", "./loads.test.ts"],
+      cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=text", "--coverage-reporter=lcov", ...args],
       env: { ...bunEnv, ...env },
       cwd: String(dir),
       stdout: "pipe",
@@ -862,13 +925,25 @@ test("changed.ts", async () => {
       const [file, functions, lines, uncovered] = line.split("|").map(column => column.trim());
       if (uncovered !== undefined) rows[file] = { functions, lines, uncovered };
     }
-    return { rows, stdout };
+    const lcov: Record<string, string> = {};
+    for (const record of readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8").split(
+      "end_of_record",
+    )) {
+      const file = record.match(/^SF:(.+)$/m)?.[1];
+      if (file) lcov[file] = record;
+    }
+    return { rows, lcov, stdout };
   }
 
   let loaded: Awaited<ReturnType<typeof run>>;
   let oneLoad: Awaited<ReturnType<typeof run>>;
+  let pluginUnderIsolate: Awaited<ReturnType<typeof run>>;
   beforeAll(async () => {
-    [loaded, oneLoad] = await Promise.all([run({}), run({ ONE_LOAD: "1" })]);
+    [loaded, oneLoad, pluginUnderIsolate] = await Promise.all([
+      run(files, ["./loads.test.ts"]),
+      run(files, ["./loads.test.ts"], { ONE_LOAD: "1" }),
+      run(pluginFiles, ["--isolate", "./a.test.ts", "./b.test.ts"]),
+    ]);
   });
 
   const fullyCovered: Row = { functions: "100.00", lines: "100.00", uncovered: "" };
@@ -878,9 +953,19 @@ test("changed.ts", async () => {
     ["by two Bun.ModuleGraphs", "two-graphs.ts"],
     ["CommonJS, by the host and by a Bun.ModuleGraph", "cjs-host-and-graph.cjs"],
     ["under two query strings", "query-strings.ts"],
+    ["by two overlapping import()s", "overlapping-imports.ts"],
     ["again after a require.cache delete", "require-cache.cjs"],
   ])("%s", (_, file) => {
     expect(loaded.rows[file]).toEqual(fullyCovered);
+  });
+
+  test("from a plugin's onLoad, by two test files under --isolate", () => {
+    expect(pluginUnderIsolate.rows["plugin-loaded.ts"]).toEqual(fullyCovered);
+  });
+
+  test("lcov has the functions and the lines of both loads (#35345)", () => {
+    expect(loaded.lcov["issue-35345.ts"]).toMatch(/FNF:2\nFNH:2\n/);
+    expect(loaded.lcov["issue-35345.ts"]).not.toMatch(/DA:\d+,0\n/);
   });
 
   test("a function counts if any load ran it, and not if none did", () => {

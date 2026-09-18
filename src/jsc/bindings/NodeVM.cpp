@@ -984,8 +984,8 @@ const JSC::GlobalObjectMethodTable& NodeVMGlobalObject::globalObjectMethodTable(
         nullptr, // moduleLoaderEvaluate
         &promiseRejectionTrackerForNodeVM,
         &reportUncaughtExceptionAtEventLoop,
-        &Zig::GlobalObject::currentScriptExecutionOwner,
-        &Zig::GlobalObject::scriptExecutionStatus,
+        &currentScriptExecutionOwner,
+        &scriptExecutionStatus,
         &unsafeEvalNoop, // reportViolationForUnsafeEval
         nullptr, // defaultLanguage
         nullptr, // compileStreaming

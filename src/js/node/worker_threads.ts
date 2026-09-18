@@ -982,7 +982,7 @@ class Worker extends EventEmitter {
 
     if (this.#urlToRevoke) {
       if (!urlRevokeRegistry) {
-        urlRevokeRegistry = require("internal/async_context_frame").newRealmFinalizationRegistry(url => {
+        urlRevokeRegistry = new FinalizationRegistry<string>(url => {
           URL.revokeObjectURL(url);
         });
       }

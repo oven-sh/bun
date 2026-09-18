@@ -6,7 +6,8 @@
 #include "JSCTaskScheduler.h"
 #include "BunClientData.h"
 #include "ZigGlobalObject.h"
-#include "ModuleGraph.h"
+#include "ScriptExecutionContext.h"
+#include <JavaScriptCore/JSFinalizationRegistry.h>
 
 using Ticket = JSC::DeferredWorkTimer::Ticket;
 using Task = JSC::DeferredWorkTimer::Task;
@@ -54,15 +55,23 @@ static bool dropPendingTicketLocked(Bun::JSCTaskScheduler& scheduler, Ticket* ti
 void JSCTaskScheduler::onAddPendingWork(WebCore::JSVMClientData* clientData, Ref<Ticket>&& ticket, JSC::DeferredWorkTimer::WorkType kind)
 {
     auto& scheduler = clientData->deferredWorkTimer;
-    BunLoopKind loopKind = Bun__VM__currentLoopKind(clientData->bunVM);
+    JSCTaskScheduler::PendingWork pending { Bun__VM__currentLoopKind(clientData->bunVM), 0 };
+    // Script asked for this work (WebAssembly.compile, Atomics.waitAsync): it is the asking
+    // graph's, and is dropped with it. A FinalizationRegistry's cleanup is the collector's doing,
+    // for a registry that may be anybody's: it always runs.
+    if (!ticket->target()->inherits<JSC::JSFinalizationRegistry>()) {
+        auto* context = defaultGlobalObject(ticket->target()->globalObject())->currentScriptExecutionContext();
+        if (context->isForModuleGraph())
+            pending.graphContext = context->identifier();
+    }
     Locker<Lock> holder { scheduler.m_lock };
     if (scheduler.m_isShuttingDown) [[unlikely]]
         return;
     if (kind == DeferredWorkTimer::WorkType::ImminentlyScheduled) {
         Bun__eventLoop__refKeepAlive(clientData->bunVM, 1);
-        scheduler.m_pendingTicketsKeepingEventLoopAlive.add(WTF::move(ticket), loopKind);
+        scheduler.m_pendingTicketsKeepingEventLoopAlive.add(WTF::move(ticket), pending);
     } else {
-        scheduler.m_pendingTicketsOther.add(WTF::move(ticket), loopKind);
+        scheduler.m_pendingTicketsOther.add(WTF::move(ticket), pending);
     }
 }
 void JSCTaskScheduler::onScheduleWorkSoon(WebCore::JSVMClientData* clientData, Ref<Ticket>&& ticket, Task&& task)
@@ -84,7 +93,7 @@ void JSCTaskScheduler::onScheduleWorkSoon(WebCore::JSVMClientData* clientData, R
             return;
         }
         auto it = scheduler.m_pendingTicketsKeepingEventLoopAlive.find(ticket.ptr());
-        loopKind = it != scheduler.m_pendingTicketsKeepingEventLoopAlive.end() ? it->value : scheduler.m_pendingTicketsOther.get(ticket.ptr());
+        loopKind = (it != scheduler.m_pendingTicketsKeepingEventLoopAlive.end() ? it->value : scheduler.m_pendingTicketsOther.get(ticket.ptr())).loopKind;
     }
     // Outside m_lock (markShuttingDown, on the VM's thread, needs it): a post that
     // still races the shutdown lands on the VM handle, which either queues it for
@@ -108,13 +117,27 @@ void JSCTaskScheduler::onCancelPendingWork(WebCore::JSVMClientData* clientData, 
 static void runPendingWork(const ::BunVmHandleRef* vmHandle, Bun::JSCTaskScheduler& scheduler, JSCDeferredWorkTask* job)
 {
     Locker<Lock> holder { scheduler.m_lock };
-    bool wasPending = scheduler.m_pendingTicketsKeepingEventLoopAlive.remove(job->ticket.ptr());
-    if (!wasPending) {
-        wasPending = scheduler.m_pendingTicketsOther.remove(job->ticket.ptr());
-    } else {
+    bool wasPending = false;
+    uint32_t graphContext = 0;
+    if (auto it = scheduler.m_pendingTicketsKeepingEventLoopAlive.find(job->ticket.ptr()); it != scheduler.m_pendingTicketsKeepingEventLoopAlive.end()) {
+        graphContext = it->value.graphContext;
+        scheduler.m_pendingTicketsKeepingEventLoopAlive.remove(it);
+        wasPending = true;
         Bun__VmHandle__refKeepAlive(vmHandle, BunLoopKind::Regular, -1);
+    } else if (auto it = scheduler.m_pendingTicketsOther.find(job->ticket.ptr()); it != scheduler.m_pendingTicketsOther.end()) {
+        graphContext = it->value.graphContext;
+        scheduler.m_pendingTicketsOther.remove(it);
+        wasPending = true;
     }
     holder.unlockEarly();
+
+    // The Bun.ModuleGraph whose script asked for the work was disposed (or collected) since: like its
+    // other callbacks, this one is not called.
+    if (graphContext) {
+        RefPtr context = WebCore::ScriptExecutionContext::getScriptExecutionContext(graphContext);
+        if (!context || context->isStopped())
+            wasPending = false;
+    }
 
     // Deferred work runs script (FinalizationRegistry callbacks, wasm
     // completions); not once the VM's stop was requested. Like any other
@@ -123,21 +146,14 @@ static void runPendingWork(const ::BunVmHandleRef* vmHandle, Bun::JSCTaskSchedul
     if (wasPending && !job->ticket->isCancelled() && Bun__VmHandle__scriptAllowed(vmHandle)) {
         auto& vm = job->vm();
         auto* globalObject = job->ticket->target()->globalObject();
-        // The status of the work's owner, as DeferredWorkTimer::doWork asks it before it runs a
+        // The realm's own status, as DeferredWorkTimer::doWork asks it before it runs a
         // task. A realm that `bun test --isolate` retired reports Stopped, so the
         // finished file's leftover work is dropped instead of running under the next
-        // file. So does a disposed Bun.ModuleGraph: the work its script asked for
-        // (WebAssembly.compile, Atomics.waitAsync) and the cleanup of a
-        // FinalizationRegistry made in its context are not run. doWork re-queues a
-        // Suspended realm's task; no Bun realm reports that.
+        // file. doWork re-queues a Suspended realm's task; no Bun realm reports that.
         auto status = globalObject->globalObjectMethodTable()->scriptExecutionStatus(globalObject, job->ticket->scriptExecutionOwner());
         ASSERT(status != ScriptExecutionStatus::Suspended);
         if (status == ScriptExecutionStatus::Running) {
             auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-            // What the task calls (a FinalizationRegistry's cleanup callback) runs as the work's owner:
-            // a graph, or the realm, whoever's script this tick is nested under.
-            auto* owner = dynamicDowncast<JSModuleGraph>(job->ticket->scriptExecutionOwner());
-            ModuleGraphContextScope context(owner ? owner->context() : *defaultGlobalObject(globalObject)->scriptExecutionContext());
             job->task(job->ticket.get());
             if (auto* exception = scope.exception(); exception && !vm.hasPendingTerminationException()) {
                 scope.clearException();

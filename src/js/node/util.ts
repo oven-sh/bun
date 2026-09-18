@@ -652,7 +652,7 @@ function aborted(signal: AbortSignal, resource: object) {
   signal.addEventListener("abort", listener, resistStopPropagation({ __proto__: null, once: true }));
 
   if (!lazyAbortedRegistry) {
-    lazyAbortedRegistry = require("internal/async_context_frame").newRealmFinalizationRegistry(({ ref, listener }) => {
+    lazyAbortedRegistry = new FinalizationRegistry(({ ref, listener }) => {
       const signal = ref.deref();
       if (signal) signal.removeEventListener("abort", listener);
     });

@@ -96,8 +96,7 @@ class GCProfiler {
     this[kGCProfilerStartTime] = DateNow();
     const id = startGCProfiler();
     this[kGCProfilerSession] = id;
-    (gcProfilerRegistry ??=
-      require("internal/async_context_frame").newRealmFinalizationRegistry(discardGCProfiler)).register(this, id, this);
+    (gcProfilerRegistry ??= new FinalizationRegistry(discardGCProfiler)).register(this, id, this);
   }
 
   stop() {

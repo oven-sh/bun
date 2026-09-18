@@ -992,24 +992,13 @@ JSGlobalObject* GlobalObject::deriveShadowRealmGlobalObject(JSGlobalObject* glob
     return shadow;
 }
 
-// Whose the work that script asks JSC for now is (DeferredWorkTimer), and whose a
-// FinalizationRegistry made now is: the Bun.ModuleGraph whose context is current, else the realm.
-JSC::JSObject* Zig::GlobalObject::currentScriptExecutionOwner(JSC::JSGlobalObject* globalObject)
-{
-    if (auto* graph = Bun::currentModuleGraph(defaultGlobalObject(globalObject)))
-        return graph;
-    return globalObject;
-}
-
 extern "C" int Bun__VM__scriptExecutionStatus(void*);
-JSC::ScriptExecutionStatus Zig::GlobalObject::scriptExecutionStatus(JSC::JSGlobalObject* globalObject, JSC::JSObject* owner)
+JSC::ScriptExecutionStatus Zig::GlobalObject::scriptExecutionStatus(JSC::JSGlobalObject* globalObject, JSC::JSObject*)
 {
     // A finished file's realm is stopped while the VM runs on, as a detached document's is.
     if (Bun::isRetiredTestIsolationRealm(globalObject))
         return JSC::ScriptExecutionStatus::Stopped;
-    if (auto* graph = dynamicDowncast<Bun::JSModuleGraph>(owner); graph && graph->disposed())
-        return JSC::ScriptExecutionStatus::Stopped;
-    switch (Bun__VM__scriptExecutionStatus(::bunVM(globalObject))) {
+    switch (Bun__VM__scriptExecutionStatus(uncheckedDowncast<Zig::GlobalObject>(globalObject)->bunVM())) {
     case 0:
         return JSC::ScriptExecutionStatus::Running;
     case 1:

@@ -429,12 +429,7 @@ function asyncWrap(fn: any, name: string) {
       this[kClosePromise] = null;
       this[kFlag] = flag;
       if (this[kFd] !== -1) {
-        (fileHandleRegistry ??=
-          require("internal/async_context_frame").newRealmFinalizationRegistry(onFileHandleCollected)).register(
-          this,
-          { fd, path },
-          this,
-        );
+        (fileHandleRegistry ??= new FinalizationRegistry(onFileHandleCollected)).register(this, { fd, path }, this);
       }
     }
 
@@ -1525,8 +1520,7 @@ function asyncWrap(fn: any, name: string) {
       this[kFd] = fd;
       this[kFlag] = flag;
       if (fd !== -1) {
-        (fileHandleRegistry ??=
-          require("internal/async_context_frame").newRealmFinalizationRegistry(onFileHandleCollected)).register(
+        (fileHandleRegistry ??= new FinalizationRegistry(onFileHandleCollected)).register(
           this,
           { fd, path: undefined },
           this,

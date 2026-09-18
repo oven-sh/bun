@@ -57,20 +57,6 @@ const AsyncContextFrame = {
       $putInternalField($asyncContext, 1, prev);
     }
   },
-  /**
-   * A FinalizationRegistry a built-in module keeps for everything in the realm. A registry belongs
-   * to the context it is made in (a disposed Bun.ModuleGraph's is not called again), and this one
-   * is made by whichever script first needs it: it is made as the host's.
-   */
-  newRealmFinalizationRegistry(cleanup) {
-    const prev = $getInternalField($asyncContext, 1);
-    $putInternalField($asyncContext, 1, undefined);
-    try {
-      return new FinalizationRegistry(cleanup);
-    } finally {
-      $putInternalField($asyncContext, 1, prev);
-    }
-  },
   /** run() and runInGraph() at once: what script that kept both for later calls back in. */
   runInContext(frame, graph, fn, thisArg?, ...args) {
     const prevFrame = $getInternalField($asyncContext, 0);

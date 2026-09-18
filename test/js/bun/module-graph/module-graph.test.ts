@@ -7,7 +7,6 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { renameSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { createRequire } from "node:module";
-import vm from "node:vm";
 import { join } from "path";
 
 type ModuleGraphOptions = Bun.ModuleGraphOptions;
@@ -2098,36 +2097,6 @@ describe("Bun.ModuleGraph — a CommonJS file compiled for a graph and for the h
       expect(exitCode).toBe(0);
     });
   }
-  test("graphs whose globals have the same names share the file's compiled code", async () => {
-    const { stdout, exitCode } = await runBun(
-      [
-        "-e",
-        `
-        const { heapStats } = require("bun:jsc");
-        const compiled = () => {
-          Bun.gc(true);
-          const counts = heapStats().objectTypeCounts;
-          return (counts.UnlinkedProgramCodeBlock ?? 0) + (counts.UnlinkedFunctionCodeBlock ?? 0);
-        };
-        const instances = [];
-        const load = async i => {
-          const forms = (await new Bun.ModuleGraph({ globals: { shared: i, sharedFunction: () => i } }).import(${JSON.stringify(join(dir, "forms.cjs"))})).default;
-          instances.push(forms, forms.read(10), forms.nested(10), forms.strict(10));
-        };
-        await load(0);
-        const afterOne = compiled();
-        for (let i = 1; i <= 20; i++) await load(i);
-        console.log(JSON.stringify({ more: compiled() - afterOne, instances: instances.length / 4 }));
-        `,
-      ],
-      { cwd: dir },
-    );
-    // Not shared, every instance would add the file's program and the three functions it ran.
-    const { more, instances } = JSON.parse(stdout);
-    expect(instances).toBe(21);
-    expect(more).toBeLessThan(20);
-    expect(exitCode).toBe(0);
-  });
 });
 
 describe("Bun.ModuleGraph — concurrency", () => {
@@ -3121,59 +3090,6 @@ describe("Bun.ModuleGraph — generators, iterators, WeakRef/FinalizationRegistr
     }
     expect([wr.deref(), tokens]).toEqual([undefined, ["token-F"]]);
     void fr;
-  });
-  test("a FinalizationRegistry made in a graph's context runs its cleanup in that context", async () => {
-    const g = ModuleGraph({ env: { T: "G" } });
-    const m = await g.import(join(dir, "g.mjs"));
-    const seen: unknown[] = [];
-    const fr = g.run(() => m.registry((t: string) => seen.push(t, Bun.ModuleGraph.current === g)));
-    for (let i = 0; i < 50 && !seen.length; i++) {
-      Bun.gc(true);
-      await new Promise<void>(r => setTimeout(r, 0));
-    }
-    expect(seen).toEqual(["token-G", true]);
-    void fr;
-  });
-  test("a FinalizationRegistry made in a graph's context does not run its cleanup once the graph is disposed", async () => {
-    const g = ModuleGraph({ env: { T: "D" } });
-    const m = await g.import(join(dir, "g.mjs"));
-    const tokens: string[] = [];
-    const ofTheHost = m.registry((t: string) => tokens.push("host's " + t));
-    const ofTheGraph = g.run(() => m.registry((t: string) => tokens.push("graph's " + t)));
-    g.dispose();
-    for (let i = 0; i < 50 && !tokens.length; i++) {
-      Bun.gc(true);
-      await new Promise<void>(r => setTimeout(r, 0));
-    }
-    // The host's ran: a collection found both registries' objects. A few more turns for the graph's.
-    for (let i = 0; i < 5; i++) {
-      Bun.gc(true);
-      await new Promise<void>(r => setTimeout(r, 0));
-    }
-    expect(tokens).toEqual(["host's token-D"]);
-    void [ofTheHost, ofTheGraph];
-  });
-  test("a FinalizationRegistry made in a node:vm context belongs to the graph whose script made it", async () => {
-    const g = ModuleGraph({ env: { T: "V" } });
-    const tokens: string[] = [];
-    const make = (who: string) =>
-      vm.runInNewContext(`const fr = new FinalizationRegistry(report); (() => { fr.register({}, who) })(); fr`, {
-        report: (t: string) => tokens.push(t),
-        who,
-      });
-    const ofTheHost = make("host's");
-    const ofTheGraph = g.run(() => make("graph's"));
-    g.dispose();
-    for (let i = 0; i < 50 && !tokens.length; i++) {
-      Bun.gc(true);
-      await new Promise<void>(r => setTimeout(r, 0));
-    }
-    for (let i = 0; i < 5; i++) {
-      Bun.gc(true);
-      await new Promise<void>(r => setTimeout(r, 0));
-    }
-    expect(tokens).toEqual(["host's"]);
-    void [ofTheHost, ofTheGraph];
   });
   test("Atomics on a SharedArrayBuffer shared between host and graph", async () => {
     const m = await ModuleGraph().import(join(dir, "g.mjs"));

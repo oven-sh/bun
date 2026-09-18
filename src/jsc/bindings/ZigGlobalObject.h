@@ -201,8 +201,7 @@ public:
     static void compileStreaming(JSGlobalObject*, JSC::JSPromise*, JSC::JSValue source, std::optional<JSC::WebAssemblyCompileOptions>&&);
     static void instantiateStreaming(JSGlobalObject*, JSC::JSPromise*, JSC::JSValue source, JSC::JSObject* importObject, std::optional<JSC::WebAssemblyCompileOptions>&&);
 
-    static JSC::JSObject* currentScriptExecutionOwner(JSGlobalObject*);
-    static ScriptExecutionStatus scriptExecutionStatus(JSGlobalObject*, JSObject* owner);
+    static ScriptExecutionStatus scriptExecutionStatus(JSGlobalObject*, JSObject*);
     static void promiseRejectionTracker(JSGlobalObject*, JSC::JSPromise*, JSC::JSPromiseRejectionOperation);
     void setConsole(void* console);
     JSC::Structure* FFIFunctionStructure() const { return m_JSFFIFunctionStructure.getInitializedOnMainThread(this); }

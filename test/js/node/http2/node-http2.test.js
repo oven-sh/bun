@@ -6100,6 +6100,18 @@ describe.concurrent("write() after end()", () => {
       await expect(result).rejects.toThrow("NGHTTP2_INTERNAL_ERROR");
     });
 
+    it("close() with no code in the same tick still ends the stream", async () => {
+      // The RST_STREAM of a close() with NO_ERROR waits for 'finish', which an errored stream never emits.
+      const result = await serve((stream, late) => {
+        stream.respond({ ":status": 200 });
+        stream.write("done");
+        stream.end();
+        stream.write("late", late);
+        stream.close();
+      });
+      expect(result).toEqual([lateWriteEvents, 4]);
+    });
+
     // END_STREAM goes out when the write completes, before 'error' is emitted (node submits it
     // before 'error' too), so a reset from the 'error' listener comes after a clean end.
     it.each([

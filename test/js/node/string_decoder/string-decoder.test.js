@@ -276,6 +276,26 @@ it("encoding is an enumerable own data property", () => {
     desc: { value: "utf16le", writable: true, enumerable: true, configurable: true },
     spread: { encoding: "utf16le" },
   });
+
+  // Same shape on an instance of a subclass.
+  const s = new SubStringDecoder("latin1");
+  expect({
+    desc: Object.getOwnPropertyDescriptor(s, "encoding"),
+    json: JSON.stringify(s),
+  }).toEqual({
+    desc: { value: "latin1", writable: true, enumerable: true, configurable: true },
+    json: '{"encoding":"latin1"}',
+  });
+
+  // It is plain data, as in Node: an assignment sticks and the decoder keeps the constructor's encoding.
+  d.encoding = "hex";
+  expect({
+    value: d.encoding,
+    decoded: d.write(Buffer.from("hi", "utf16le")),
+  }).toEqual({
+    value: "hex",
+    decoded: "hi",
+  });
 });
 
 // Node's normalizeEncoding() maps every UTF-16LE alias (including the legacy

@@ -175,10 +175,8 @@ impl<'a> Scanner<'a> {
             }
         }
 
-        // The resolver had `path` cached (the cwd is read before the scanner
-        // runs), so the iterator was not invoked. Walk the cached entries in
-        // a stable order: regression/issue/26851 relies on `a_*.test` running
-        // before `b_*.test` under `--bail`.
+        // Cached listing, so the iterator was not invoked. Walk the entries in
+        // a stable order (regression/issue/26851 relies on it under `--bail`).
         if let EntriesOption::Entries(entries) = root {
             let mut entry_ptrs: Vec<*mut fs::Entry> = entries.data.values().copied().collect();
             index_sort::sort_slice_by(&mut entry_ptrs, |a, b| {

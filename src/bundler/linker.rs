@@ -41,38 +41,8 @@ pub struct Linker {
 
 const RUNTIME_SOURCE_PATH: &[u8] = b"bun:wrap";
 
-// ── relative_paths_list singleton ────────────────────────────────────────
-// `bun_alloc::BSSStringList<COUNT, ITEM_LENGTH>` encodes the parameters as
-// `COUNT = _COUNT * 2`, `ITEM_LENGTH = _ITEM_LENGTH + 1` (see `bun_alloc/lib.rs`).
-// `bss_string_list!` would be the canonical declare-site macro but
-// expands to `core::cell::SyncUnsafeCell`, and `bun_bundler` does not (yet)
-// enable `#![feature(sync_unsafe_cell)]`. Use the heap-allocating `init()`
-// fallback under a `LazyLock` instead — same lifetime semantics
-// (process-static, never freed), just not BSS-backed. Swap to the macro once
-// the crate-level feature flag lands.
-type ImportPathsList = bun_alloc::BSSStringList<{ 512 * 2 }, { 128 + 1 }>;
-
-/// `Send + Sync` newtype around the leaked `BSSStringList` heap allocation so
-/// it can sit inside a `LazyLock`. The underlying list serializes its own
-/// mutation through an internal `Mutex` (see `BSSStringList::append`), so
-/// sharing the raw pointer across threads is sound; the `&mut self` receiver
-/// on `append` is not an exclusivity requirement.
-struct ImportPathsListPtr(core::ptr::NonNull<ImportPathsList>);
-// SAFETY: `BSSStringList` guards every mutating method with `self.mutex`, and
-// the allocation is process-lifetime (never freed). The pointer is therefore
-// safe to publish and dereference from any thread.
-unsafe impl Send for ImportPathsListPtr {}
-// SAFETY: same invariant as `Send` — internal mutex serializes mutation and the
-// allocation is process-lifetime, so shared `&` access from any thread is sound.
-unsafe impl Sync for ImportPathsListPtr {}
-
-static RELATIVE_PATHS_LIST: std::sync::LazyLock<ImportPathsListPtr> =
-    std::sync::LazyLock::new(|| ImportPathsListPtr(ImportPathsList::init()));
-
-#[inline]
-fn relative_paths_list_ptr() -> *mut ImportPathsList {
-    RELATIVE_PATHS_LIST.0.as_ptr()
-}
+// `relative_paths_list: BSSStringList(512, 128)` → `<{512*2}, {128+1}>`
+bun_alloc::bss_string_list! { relative_paths_list_ptr : 512 * 2, 128 + 1 }
 
 // ── HardcodedModule alias lookup ────────────────────────────────────────
 // Thin adapter over `bun_resolve_builtins::Alias::get` so the call site keeps
@@ -116,12 +86,11 @@ mod hardcoded_module {
 /// singleton (the `OnceLock`-style exception PORTING.md carves out).
 #[inline]
 pub(crate) fn dupe(src: &[u8]) -> &'static [u8] {
-    // SAFETY: `relative_paths_list_ptr()` is Once-initialized and never freed
-    // (process-lifetime singleton). `append` takes `*mut Self`, serializes on
-    // the inner mutex, copies `src` into its owned backing buffer and returns
-    // a slice borrowing that storage; the returned borrow is `'static`-valid
-    // by construction.
-    unsafe { ImportPathsList::append(relative_paths_list_ptr(), &src).expect("OOM") }
+    // SAFETY: `relative_paths_list_ptr()` is the process-lifetime `bss_string_list!`
+    // singleton. `append` takes `*mut Self`, serializes on the inner mutex,
+    // copies `src` into its owned backing buffer and returns a slice borrowing
+    // that storage; the returned borrow is `'static`-valid by construction.
+    unsafe { bun_alloc::BSSStringList::append(relative_paths_list_ptr(), &src).expect("OOM") }
 }
 #[inline]
 fn intern(buf: Vec<u8>) -> &'static [u8] {
@@ -231,9 +200,6 @@ impl Linker {
         resolve_results: *mut ResolveResults,
         fs: *mut Fs::FileSystem,
     ) -> Self {
-        // The `LazyLock` accessor initializes `relative_paths_list` lazily on
-        // first `intern_path()` / `relative_paths_list()` call, so no eager
-        // poke is needed (it would be startup overhead for non-bundling code paths).
         Self {
             options,
             fs,

@@ -149,11 +149,15 @@ export function nodeMajorVersion(): number {
 /**
  * A `describe.each` table of `[name, executable]` for a fixture that must give the same output
  * under Bun and under Node.js. The system Node.js is in it when its major version is at least
- * `minNodeMajor`.
+ * `minNodeMajor`. `nodeOnWindows: false` leaves it out on Windows, for a fixture whose
+ * precondition Node cannot build there.
  */
-export function runtimesWithNode(minNodeMajor: number): [name: string, exe: string][] {
+export function runtimesWithNode(
+  minNodeMajor: number,
+  { nodeOnWindows = true }: { nodeOnWindows?: boolean } = {},
+): [name: string, exe: string][] {
   const runtimes: [string, string][] = [["bun", bunExe()]];
-  if (nodeMajorVersion() >= minNodeMajor) runtimes.push(["node", nodeExe()!]);
+  if ((nodeOnWindows || !isWindows) && nodeMajorVersion() >= minNodeMajor) runtimes.push(["node", nodeExe()!]);
   return runtimes;
 }
 

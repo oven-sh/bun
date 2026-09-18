@@ -2045,7 +2045,9 @@ describe("socket torn down with a write still in flight", () => {
   `;
 
   // Node 22.0 still called a canceled write's callback without an error, so only Node 24 or later is a reference.
-  describe.each(runtimesWithNode(24))("%s", (_, exe) => {
+  // Not on Windows: there a 64 MB write to a peer that never reads completes, and a write that is still
+  // pending when write() returns can complete a moment later, so Node cannot pin a write in flight.
+  describe.each(runtimesWithNode(24, { nodeOnWindows: false }))("%s", (_, exe) => {
     async function run(env: Record<string, string>) {
       await using proc = Bun.spawn({
         cmd: [exe, "-e", fixture],

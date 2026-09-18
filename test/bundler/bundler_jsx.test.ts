@@ -1363,3 +1363,94 @@ describe("bundler", () => {
     });
   });
 });
+
+// `this` is in its temporal dead zone inside a derived class constructor until
+// `super()` returns. The jsxDEV `self` argument must not read it there, and an
+// arrow function shares the constructor's `this`.
+describe.concurrent("jsx/derivedClassCtorSelf", () => {
+  const files = {
+    "node_modules/react/package.json": `{ "name": "react" }`,
+    "node_modules/react/jsx-dev-runtime.js": /* js */ `
+      export function jsxDEV(type, props, key, isStaticChildren, source, self) {
+        return { type, self };
+      }
+    `,
+    "index.tsx": /* tsx */ `
+      class Base {
+        constructor(el, items) {
+          this.el = el;
+          this.items = items;
+        }
+      }
+      class Derived extends Base {
+        constructor() {
+          super(<a />, [1].map(x => <b />));
+          this.after = <c />;
+          this.arrow = (() => <d />)();
+          this.nested = function () {
+            return <e />;
+          }.call(this);
+          this.inner = new (class {
+            field = <f />;
+          })();
+        }
+        method() {
+          return <g />;
+        }
+      }
+      const d = new Derived();
+      console.log(
+        JSON.stringify({
+          ctor: d.el.self,
+          ctorArrow: d.items[0].self,
+          after: d.after.self,
+          arrow: d.arrow.self,
+          nested: d.nested.self === d,
+          innerField: d.inner.field.self === d.inner,
+          method: d.method().self === d,
+        }),
+      );
+    `,
+  };
+
+  test("super(<jsx/>) runs in development", async () => {
+    using dir = tempDir("jsx-derived-ctor", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.tsx"],
+      env: { ...bunEnv, NODE_ENV: "development" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ nested: true, innerField: true, method: true });
+    expect(exitCode).toBe(0);
+  });
+
+  test("the self argument is undefined only where this is the derived constructor's", async () => {
+    using dir = tempDir("jsx-derived-ctor-out", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--no-bundle", "index.tsx"],
+      env: { ...bunEnv, NODE_ENV: "development" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const selfArgs = [
+      ...stdout.matchAll(/jsxDEV\w*\("(\w)", \{\}, undefined, false, undefined, (this|undefined)\)/g),
+    ].map(m => [m[1], m[2]]);
+    expect(selfArgs).toEqual([
+      ["a", "undefined"],
+      ["b", "undefined"],
+      ["c", "undefined"],
+      ["d", "undefined"],
+      ["e", "this"],
+      ["f", "this"],
+      ["g", "this"],
+    ]);
+    expect(exitCode).toBe(0);
+  });
+});

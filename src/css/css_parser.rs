@@ -3263,6 +3263,27 @@ impl<'a> Parser<'a> {
         self.input.token_list_parse_failures += 1;
     }
 
+    /// A `light-dark()` origin in relative color syntax re-parses the rest of
+    /// the color once per half, so nested origins cost 2^depth. Past the cap
+    /// the color parse fails and the value stays an unparsed token list.
+    pub(crate) const MAX_LIGHT_DARK_ORIGIN_DEPTH: u32 = 4;
+
+    /// Pair every `Ok` with `exit_light_dark_origin`.
+    #[inline]
+    pub(crate) fn enter_light_dark_origin(&mut self) -> CssResult<()> {
+        if self.input.light_dark_origin_depth >= Self::MAX_LIGHT_DARK_ORIGIN_DEPTH {
+            return Err(self.new_custom_error(ParserError::invalid_value));
+        }
+        self.input.light_dark_origin_depth += 1;
+        Ok(())
+    }
+
+    #[inline]
+    pub(crate) fn exit_light_dark_origin(&mut self) {
+        debug_assert!(self.input.light_dark_origin_depth > 0);
+        self.input.light_dark_origin_depth -= 1;
+    }
+
     pub(crate) fn is_exhausted(&mut self) -> bool {
         self.expect_exhausted().is_ok()
     }
@@ -3807,6 +3828,8 @@ pub struct ParserInput<'a> {
     /// alternative is guaranteed to fail again, so they propagate the error
     /// instead of retrying (which is exponential in the nesting depth).
     token_list_parse_failures: u64,
+    /// See `Parser::MAX_LIGHT_DARK_ORIGIN_DEPTH`.
+    light_dark_origin_depth: u32,
 }
 
 /// See `ParserInput::unclosed_block_at_eof`.
@@ -3835,6 +3858,7 @@ impl<'a> ParserInput<'a> {
             unclosed_block_at_eof: None,
             math_fn_parse_failures: 0,
             token_list_parse_failures: 0,
+            light_dark_origin_depth: 0,
         }
     }
 }

@@ -117,8 +117,8 @@ pub struct FetchTasklet {
 
     /// buffer used to stream response to JS
     pub(crate) scheduled_response_buffer: MutableString,
-    /// `HTTPClientResult::held_body`, for `drive_held_body`. `None` while a `HeldBodyPass` has it.
-    pub(crate) held_body: JsCell<Option<Box<http::HeldBody>>>,
+    /// `HTTPClientResult::held_body`, from when `on_progress_update` has it. JS thread only.
+    held_body: JsCell<HeldBodyState>,
     /// A held body arrived: the HTTP thread is done with this fetch, the response body is not.
     pub(crate) is_transport_done: bool,
     /// response weak ref we need this to track the response JS lifetime
@@ -909,8 +909,13 @@ impl FetchTasklet {
         self.mutex.lock();
         self.has_schedule_callback.store(false, Ordering::Relaxed);
         if let Some(held_body) = self.result.held_body.take() {
-            self.held_body.set(Some(held_body));
+            self.held_body.set(HeldBodyState::AtRest(held_body));
             self.is_transport_done = true;
+        }
+        if matches!(self.held_body.get(), HeldBodyState::Unread) {
+            self.held_body.set(HeldBodyState::None);
+            self.result.has_more = false;
+            self.result.fail = Some(http::Error::Aborted);
         }
         let is_done = !self.result.has_more;
 
@@ -929,7 +934,7 @@ impl FetchTasklet {
             }
             self.mutex.unlock();
             // Nothing will read a held body either, and it is all that is left of this fetch.
-            if is_done || self.held_body.take().is_some() {
+            if is_done || self.drop_held_body_at_rest() {
                 // SAFETY: `self` is the live heap tasklet; we hold a ref.
                 FetchTasklet::deref(std::ptr::from_mut(self));
             }
@@ -963,7 +968,7 @@ impl FetchTasklet {
             if let Err(err) = self.start_request_stream() {
                 // The VM is being stopped: leave like the `!script_allowed()` gate above does.
                 self.mutex.unlock();
-                if is_done || self.held_body.take().is_some() {
+                if is_done || self.drop_held_body_at_rest() {
                     // SAFETY: `self` is the live heap tasklet; we hold a ref.
                     FetchTasklet::deref(std::ptr::from_mut(self));
                 }
@@ -1807,15 +1812,19 @@ impl FetchTasklet {
 
     /// Produces a held body. Called wherever the HTTP thread would hear from the consumer.
     fn drive_held_body(&self) {
-        if self.held_body.get().is_none() {
+        if !matches!(self.held_body.get(), HeldBodyState::AtRest(_)) {
             return;
         }
         let mode = self.signal_store.body_receive_mode();
-        let unread = self.is_body_unread(mode);
-        if mode == BodyReceiveMode::Paused && !unread {
+        if self.is_body_unread(mode) {
+            return self.end_unread_held_body();
+        }
+        if mode == BodyReceiveMode::Paused {
             return;
         }
-        let held = self.held_body.take();
+        let HeldBodyState::AtRest(held) = self.held_body.replace(HeldBodyState::InPass) else {
+            return;
+        };
         let cx = self
             .global_this
             .js_thread(self.global_this.bun_vm().context_of(self.context));
@@ -1823,8 +1832,7 @@ impl FetchTasklet {
         jsc::Job::<HeldBodyPass>::schedule(
             &cx,
             HeldBodyPass {
-                // `None`: the pass only takes the end of the body to a turn that can report it.
-                held: held.filter(|_| !unread),
+                held,
                 max_output: if mode == BodyReceiveMode::BufferAll {
                     usize::MAX
                 } else {
@@ -1842,16 +1850,34 @@ impl FetchTasklet {
         mode == BodyReceiveMode::Abandoned || self.signal_store.aborted.load(Ordering::Relaxed)
     }
 
+    /// Queues the end of the body. This task runs in a stopped context too: the body gets settled.
+    fn end_unread_held_body(&self) {
+        self.held_body.set(HeldBodyState::Unread);
+        let task = Task::init(std::ptr::from_ref(self).cast_mut());
+        // SAFETY: JS thread; the loop is this VM's.
+        unsafe { (*self.global_this.bun_vm().event_loop()).enqueue_task(task) };
+    }
+
+    fn drop_held_body_at_rest(&self) -> bool {
+        let at_rest = matches!(self.held_body.get(), HeldBodyState::AtRest(_));
+        if at_rest {
+            self.held_body.set(HeldBodyState::None);
+        }
+        at_rest
+    }
+
     /// A `HeldBodyPass` is back: what `callback` and the task it posts do for the HTTP thread.
     fn on_held_body_pass(&mut self, pass: HeldBodyPass) -> JsResult<()> {
         let unread = self.is_body_unread(self.signal_store.body_receive_mode());
         self.mutex.lock();
-        match (pass.held, pass.ended) {
-            (Some(held), Ok(ended)) if !unread => {
+        match pass.ended {
+            Ok(ended) if !unread => {
                 self.result.has_more = !ended;
-                if !ended {
-                    self.held_body.set(Some(held));
-                }
+                self.held_body.set(if ended {
+                    HeldBodyState::None
+                } else {
+                    HeldBodyState::AtRest(pass.held)
+                });
                 let scheduled = &mut self.scheduled_response_buffer.list;
                 if scheduled.is_empty() {
                     *scheduled = pass.out;
@@ -1862,7 +1888,8 @@ impl FetchTasklet {
                     self.signal_store.pause_receive();
                 }
             }
-            (_, ended) => {
+            ended => {
+                self.held_body.set(HeldBodyState::None);
                 self.result.has_more = false;
                 self.result.fail = Some(match ended {
                     Err(err) if !unread => err,
@@ -2032,7 +2059,7 @@ impl FetchTasklet {
             request_body: fetch_options.body,
             request_body_streaming_buffer: None,
             scheduled_response_buffer: MutableString::default(),
-            held_body: JsCell::new(None),
+            held_body: JsCell::new(HeldBodyState::None),
             is_transport_done: false,
             response: jsc::Weak::default(),
             native_response: JsCell::new(None),
@@ -2782,9 +2809,20 @@ impl FetchTasklet {
     }
 }
 
+/// Where the rest of a body is once its transport is done.
+enum HeldBodyState {
+    /// The HTTP thread produces the body, or the body has ended.
+    None,
+    AtRest(Box<http::HeldBody>),
+    /// A `HeldBodyPass` has it.
+    InPass,
+    /// Nothing will read it, and the `on_progress_update` that ends the body is queued.
+    Unread,
+}
+
 /// One decode pass over a held body, on the work pool.
 struct HeldBodyPass {
-    held: Option<Box<http::HeldBody>>,
+    held: Box<http::HeldBody>,
     max_output: usize,
     out: Vec<u8>,
     ended: Result<bool, http::Error>,
@@ -2797,9 +2835,10 @@ struct HeldBodyPassOwner(*mut FetchTasklet);
 unsafe impl bun_jsc::job::JsAffine for HeldBodyPassOwner {}
 
 impl Drop for HeldBodyPassOwner {
-    /// Released unrun: nothing reports the end of the body, so the ref it would drop goes too.
+    /// Released unrun: the context that fetched stopped, or the VM is going.
     fn drop(&mut self) {
-        FetchTasklet::deref(self.0);
+        // SAFETY: the pass holds a ref; JS thread.
+        unsafe { (*self.0).end_unread_held_body() };
         FetchTasklet::deref(self.0);
     }
 }
@@ -2809,9 +2848,7 @@ impl jsc::JobContext for HeldBodyPass {
     type Js = HeldBodyPassOwner;
 
     fn run(pass: &mut Self, done: jsc::Completion<Self>) -> Option<jsc::Completion<Self>> {
-        if let Some(held) = pass.held.as_mut() {
-            pass.ended = held.decode(&mut pass.out, pass.max_output);
-        }
+        pass.ended = pass.held.decode(&mut pass.out, pass.max_output);
         Some(done)
     }
 

@@ -781,6 +781,35 @@ describe.concurrent("fetch() receive backpressure — the decompressor does not 
     expect({ length: bytes.byteLength, allA: isAllA(bytes) }).toEqual({ length: 16 * MARK, allA: true });
   });
 
+  // A host may keep a Response that a Bun.ModuleGraph's code fetched. dispose() aborts the fetch,
+  // and the body the host still holds has to end with it before what produced it is freed.
+  test("a Response outlives the Bun.ModuleGraph that fetched it: the part it kept undecoded ends", async () => {
+    await using server = await serveWhole(gzipSync(Buffer.alloc(64 * MARK)));
+    using dir = tempDir("held-body-graph", {
+      "app.ts": `export const get = (url: string) => fetch(url);`,
+      "host.ts": `
+        const graph = new Bun.ModuleGraph({});
+        const app = await graph.import(import.meta.dir + "/app.ts");
+        const res: Response = await graph.run(() => app.get(process.argv[2]));
+        graph.dispose();
+        // dispose() queued the task that ends the body. It runs before the loop gets here.
+        for (let i = 0; i < 3; i++) await new Promise(resolve => setImmediate(resolve));
+        process.stdout.write(await res.text().catch(e => e.name));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "host.ts", server.url],
+      env: clientEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("AbortError");
+    expect(exitCode).toBe(0);
+  });
+
   // One Response keeps its part at rest; the other has a reader, so a decode pass is out on
   // another thread when the worker goes.
   test("a worker can go away while its Responses keep parts of bodies undecoded", async () => {

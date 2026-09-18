@@ -506,7 +506,7 @@ fn on_close(ctx: *mut HTTPClient) {
         && !this.state.flags.is_redirect_pending;
     let mut fail_err: Option<crate::Error> = None;
     if in_progress && this.state.is_body_complete_on_close() {
-        match this.state.finalize_body_on_eof() {
+        match this.finish_body_on_close() {
             Ok(()) => {
                 // `this` dead (NLL); reborrow via `client_from_ctx` inside.
                 progress_update_for_proxy_socket(ctx, proxy_nn);

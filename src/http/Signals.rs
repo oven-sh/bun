@@ -85,6 +85,14 @@ impl Signals {
             .is_some_and(|a| a.load(Ordering::Acquire) == BodyReceiveMode::Paused as u8)
     }
 
+    /// Nothing will read the body, and its consumer is shutting the transport down.
+    #[inline]
+    pub(crate) fn is_body_abandoned(self) -> bool {
+        self.body_receive_mode
+            .map(bun_ptr::BackRef::from)
+            .is_some_and(|a| a.load(Ordering::Acquire) == BodyReceiveMode::Abandoned as u8)
+    }
+
     /// `Flowing` or `Paused`: a consumer takes the body piece by piece.
     #[inline]
     pub(crate) fn is_demand_driven(self) -> bool {

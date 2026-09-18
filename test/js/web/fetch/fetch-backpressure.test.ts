@@ -559,14 +559,26 @@ describe.concurrent("fetch() receive backpressure — the decompressor does not 
     };
   }
 
-  // Close-delimited, and the origin never closes: for the client this body does not end.
-  async function serveBomb(enc: Enc, secure: boolean) {
+  // How the origin ends the body. "never": close-delimited and the origin never closes, so for
+  // the client this body does not end. The others send the whole body and close at once, so the
+  // end of the transport reaches a client that still holds nearly all of the body undecoded.
+  type Ending = "never" | "content-length" | "chunked" | "close-delimited";
+  async function serveBomb(enc: Enc, secure: boolean, ending: Ending = "never") {
     const bomb = bombFor(enc);
+    const framing =
+      ending === "content-length"
+        ? `Content-Length: ${bomb.length}\r\n`
+        : ending === "chunked"
+          ? "Transfer-Encoding: chunked\r\n"
+          : "";
     const handler = (s: import("node:net").Socket) => {
       s.on("error", () => {});
       s.once("data", () => {
-        s.write(`HTTP/1.1 200 OK\r\nContent-Encoding: ${enc}\r\nConnection: close\r\n\r\n`);
+        s.write(`HTTP/1.1 200 OK\r\nContent-Encoding: ${enc}\r\n${framing}Connection: close\r\n\r\n`);
+        if (ending === "chunked") s.write(`${bomb.length.toString(16)}\r\n`);
         s.write(bomb);
+        if (ending === "chunked") s.write("\r\n0\r\n\r\n");
+        if (ending !== "never") s.end();
       });
     };
     const server = await listening(secure ? createTlsServer(tls, handler) : createTcpServer(handler));
@@ -576,13 +588,15 @@ describe.concurrent("fetch() receive backpressure — the decompressor does not 
   // A CONNECT proxy that pipes both ways. bun does not pause a tunnelled socket, so the origin's
   // bytes keep arriving while the reader is paused.
   async function serveConnectProxy() {
+    let connects = 0;
     const server = await listening(
       createTcpServer(client => {
         let upstream: import("node:net").Socket | undefined;
         client.on("error", () => upstream?.destroy());
         client.on("close", () => upstream?.destroy());
         client.once("data", head => {
-          const [, target] = head.toString("latin1").split(" ");
+          const [method, target] = head.toString("latin1").split(" ");
+          if (method === "CONNECT") connects++;
           const colon = target.lastIndexOf(":");
           upstream = connect(Number(target.slice(colon + 1)), target.slice(0, colon), () => {
             client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
@@ -594,7 +608,7 @@ describe.concurrent("fetch() receive backpressure — the decompressor does not 
         });
       }),
     );
-    return { ...server, url: `http://127.0.0.1:${server.port}` };
+    return { ...server, url: `http://127.0.0.1:${server.port}`, connects: () => connects };
   }
 
   // Takes one chunk, lets the client's memory settle, takes a few more, and reports the largest
@@ -603,8 +617,10 @@ describe.concurrent("fetch() receive backpressure — the decompressor does not 
     const base = process.memoryUsage.rss();
     let peak = 0;
     const sample = () => (peak = Math.max(peak, process.memoryUsage.rss() - base));
-    const res = await fetch(url, opts);
-    const reader = res.body.getReader();
+    const body = opts.s3
+      ? new Bun.S3Client({ accessKeyId: "t", secretAccessKey: "t", endpoint: url, bucket: "b" }).file("k").stream()
+      : (await fetch(url, opts)).body;
+    const reader = body.getReader();
     const first = await reader.read();
     for (let last = sample(), stable = 0; stable < 3; ) {
       await Bun.sleep(20);
@@ -623,10 +639,17 @@ describe.concurrent("fetch() receive backpressure — the decompressor does not 
     process.stdout.write(JSON.stringify({ got, peak, zeros }));
   `;
 
+  // An ambient NO_PROXY that lists 127.0.0.1 makes fetch() ignore its `proxy` option.
+  const clientEnv = { ...bunEnv };
+  for (const key of ["NO_PROXY", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"]) {
+    delete clientEnv[key];
+    delete clientEnv[key.toLowerCase()];
+  }
+
   async function runClient(url: string, opts: object, script: string) {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", `const url=${JSON.stringify(url)};const opts=${JSON.stringify(opts)};${script}`],
-      env: bunEnv,
+      env: clientEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -662,11 +685,127 @@ describe.concurrent("fetch() receive backpressure — the decompressor does not 
     },
   );
 
-  test("zstd through a CONNECT proxy: a reader that takes a little holds a little", async () => {
-    await using server = await serveBomb("zstd", true);
-    await using proxy = await serveConnectProxy();
-    const opts = { proxy: proxy.url, tls: { rejectUnauthorized: false } };
-    expectBounded(await runClient(server.url, opts, READ_A_LITTLE));
+  // The S3 client reads a bucket's compressed object through the same decoder.
+  test("gzip from S3: a reader that takes a little holds a little", async () => {
+    await using server = await serveBomb("gzip", false);
+    expectBounded(await runClient(server.url, { s3: true }, READ_A_LITTLE));
+  });
+
+  // bun does not pause a tunnelled socket, so all of the body and then the origin's close reach
+  // the client at once. The end of the transport must not decode what the reader has not asked
+  // for: the request ends there, and the Response keeps the rest of the body undecoded.
+  test.each(["never", "content-length", "chunked", "close-delimited"] as Ending[])(
+    "zstd through a CONNECT proxy, body ending %s: a reader that takes a little holds a little",
+    async ending => {
+      await using server = await serveBomb("zstd", true, ending);
+      await using proxy = await serveConnectProxy();
+      const opts = { proxy: proxy.url, tls: { rejectUnauthorized: false } };
+      expectBounded(await runClient(server.url, opts, READ_A_LITTLE));
+      expect(proxy.connects()).toBe(1);
+    },
+  );
+
+  // The origin sends the whole of a body at once and keeps the connection: the request ends with
+  // most of the body undecoded, and the Response keeps that part.
+  async function serveWhole(body: Buffer) {
+    const head = `HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: ${body.length}\r\n\r\n`;
+    const server = await listening(
+      createTcpServer(s => {
+        s.on("error", () => {});
+        // Answers each request head. What else arrives is an upload it does not wait for.
+        s.on("data", data => {
+          if (data.includes(" HTTP/1.1\r\n")) s.write(Buffer.concat([Buffer.from(head), body]));
+        });
+      }),
+    );
+    return { ...server, url: `http://127.0.0.1:${server.port}/` };
+  }
+
+  // The reader is eight budgets into the body when it reaches the damage, long after the
+  // request ended. The error has to reach it there: no hang, and no body that just stops.
+  test("gzip: damage in the part the Response kept undecoded rejects the read", async () => {
+    const member = gzipSync(Buffer.alloc(8 * MARK), { level: 9 });
+    const damaged = Buffer.from(member);
+    damaged.fill(0xff, 20, 60);
+    await using server = await serveWhole(Buffer.concat([member, damaged]));
+    const script = /* js */ `
+      const res = await fetch(url, opts);
+      let got = 0, code;
+      try {
+        for await (const chunk of res.body) got += chunk.byteLength;
+      } catch (e) {
+        code = e.code;
+      }
+      process.stdout.write(JSON.stringify({ got, code }));
+    `;
+    const { got, code, exitCode } = await runClient(server.url, {}, script);
+    expect({ got, code }).toEqual({ got: 8 * MARK, code: "ZlibError" });
+    expect(exitCode).toBe(0);
+  });
+
+  test("an abort reaches the part of a body that the Response kept undecoded", async () => {
+    await using server = await serveWhole(gzipSync(Buffer.alloc(64 * MARK)));
+
+    const reading = new AbortController();
+    const reader = (await fetch(server.url, { signal: reading.signal })).body!.getReader();
+    const first = await reader.read();
+    reading.abort();
+    const rest = (async () => {
+      while (!(await reader.read()).done);
+      return "ended";
+    })().catch(e => e.name);
+
+    const untouched = new AbortController();
+    const res = await fetch(server.url, { signal: untouched.signal });
+    untouched.abort();
+
+    expect({
+      first: first.value!.byteLength > 0,
+      rest: await rest,
+      untouched: await res.text().catch(e => e.name),
+    }).toEqual({ first: true, rest: "AbortError", untouched: "AbortError" });
+  });
+
+  // The request is over when its response is complete on the wire, so an upload that is still
+  // underway ends there, as it does for a body that is not compressed. The Response is not over.
+  test("an upload still underway ends with the request, not with the part the Response kept undecoded", async () => {
+    await using server = await serveWhole(gzipSync(Buffer.alloc(16 * MARK, 65)));
+    const cancelled = Promise.withResolvers<void>();
+    const upload = new ReadableStream({
+      pull: controller => controller.enqueue(new Uint8Array(1024)),
+      cancel: () => cancelled.resolve(),
+    });
+    const res = await fetch(server.url, { method: "POST", body: upload, duplex: "half" } as RequestInit);
+    await cancelled.promise;
+    const bytes = await res.bytes();
+    expect({ length: bytes.byteLength, allA: isAllA(bytes) }).toEqual({ length: 16 * MARK, allA: true });
+  });
+
+  // One Response keeps its part at rest; the other has a reader, so a decode pass is out on
+  // another thread when the worker goes.
+  test("a worker can go away while its Responses keep parts of bodies undecoded", async () => {
+    await using server = await serveWhole(gzipSync(Buffer.alloc(256 * MARK)));
+    const worker = /* js */ `
+      const { parentPort, workerData } = require("node:worker_threads");
+      (async () => {
+        globalThis.atRest = await fetch(workerData.url);
+        const reader = (await fetch(workerData.url)).body.getReader();
+        await reader.read();
+        parentPort.postMessage("ready");
+        while (!(await reader.read()).done);
+      })();
+    `;
+    const script = /* js */ `
+      const { Worker } = require("node:worker_threads");
+      const worker = new Worker(${JSON.stringify(worker)}, { eval: true, workerData: { url } });
+      const ready = await new Promise(resolve => worker.once("message", resolve));
+      await worker.terminate();
+      process.stdout.write(JSON.stringify({ ready }));
+    `;
+    const { ready, stderr, exitCode } = await runClient(server.url, {}, script);
+    expect(stderr).toBe("");
+    expect(ready).toBe("ready");
+    expect(exitCode).toBe(0);
   });
 
   // A live stream: two flushed messages in one packet, then the origin goes quiet with the frame
@@ -783,28 +922,27 @@ describe.concurrent("fetch() receive backpressure — the decompressor does not 
 
     // Content-Length bodies end with the origin's FIN, which reaches a client that still holds
     // most of the body undecoded. Chunked ones stay open.
-    async function serveBody(kind: Kind, chunked: boolean) {
+    async function serveBody(kind: Kind, chunked: boolean, secure = false) {
       const body = bodyFor(kind);
       const enc = kind === "br-hq" ? "br" : kind;
-      const server = await listening(
-        createTcpServer(s => {
-          s.on("error", () => {});
-          s.once("data", () => {
-            if (chunked) {
-              s.write(`HTTP/1.1 200 OK\r\nContent-Encoding: ${enc}\r\nTransfer-Encoding: chunked\r\n\r\n`);
-              s.write(`${body.length.toString(16)}\r\n`);
-              s.write(body);
-              s.write("\r\n0\r\n\r\n");
-            } else {
-              s.write(
-                `HTTP/1.1 200 OK\r\nContent-Encoding: ${enc}\r\nContent-Length: ${body.length}\r\nConnection: close\r\n\r\n`,
-              );
-              s.end(body);
-            }
-          });
-        }),
-      );
-      return { ...server, url: `http://127.0.0.1:${server.port}/` };
+      const handler = (s: import("node:net").Socket) => {
+        s.on("error", () => {});
+        s.once("data", () => {
+          if (chunked) {
+            s.write(`HTTP/1.1 200 OK\r\nContent-Encoding: ${enc}\r\nTransfer-Encoding: chunked\r\n\r\n`);
+            s.write(`${body.length.toString(16)}\r\n`);
+            s.write(body);
+            s.write("\r\n0\r\n\r\n");
+          } else {
+            s.write(
+              `HTTP/1.1 200 OK\r\nContent-Encoding: ${enc}\r\nContent-Length: ${body.length}\r\nConnection: close\r\n\r\n`,
+            );
+            s.end(body);
+          }
+        });
+      };
+      const server = await listening(secure ? createTlsServer(tls, handler) : createTcpServer(handler));
+      return { ...server, url: `${secure ? "https" : "http"}://127.0.0.1:${server.port}/` };
     }
 
     const STREAM = /* js */ `
@@ -849,6 +987,22 @@ describe.concurrent("fetch() receive backpressure — the decompressor does not 
         });
         expect(exitCode).toBe(0);
       });
+    });
+
+    // Through a tunnel the whole body and the origin's close are in before the reader's second
+    // pull, so nearly all of it comes from the part that the Response kept undecoded.
+    test.each([
+      ["a streaming reader", STREAM, { several: true }],
+      ["res.bytes()", BUFFER, {}],
+    ])("zstd through a CONNECT proxy, origin closes after the body: %s", async (_, script, seen) => {
+      await using server = await serveBody("zstd", false, true);
+      await using proxy = await serveConnectProxy();
+      const opts = { proxy: proxy.url, tls: { rejectUnauthorized: false } };
+      const { stderr, exitCode, ...result } = await runClient(server.url, opts, script);
+      expect(stderr).toBe("");
+      expect(result).toEqual({ total: SIZE, digest, ...seen });
+      expect(proxy.connects()).toBe(1);
+      expect(exitCode).toBe(0);
     });
   });
 });
@@ -1623,6 +1777,46 @@ describe.serial("fetch() receive backpressure — an unread body hands its conne
       expect(connections).toBeLessThan(N / 2);
     } finally {
       srv.closeAllConnections();
+      await new Promise(r => srv.close(() => r(undefined)));
+    }
+  });
+
+  // A compressed body is decoded as it is read, so all of it can be in while most of it is still
+  // undecoded. That ends the request: the Response keeps the rest, the connection goes back.
+  test("a compressed body that is complete on the wire, Response still held: its connection is reused", async () => {
+    const SIZE = 4 * MARK;
+    const body = gzipSync(Buffer.alloc(SIZE, 65));
+    let connections = 0;
+    const sockets = new Set<import("node:net").Socket>();
+    const srv = createTcpServer(socket => {
+      connections++;
+      sockets.add(socket);
+      socket.on("error", () => {});
+      socket.on("data", () => {
+        socket.write(
+          Buffer.concat([
+            Buffer.from(`HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: ${body.length}\r\n\r\n`),
+            body,
+          ]),
+        );
+      });
+    });
+    srv.listen(0, "127.0.0.1");
+    await once(srv, "listening");
+    try {
+      const url = `http://127.0.0.1:${(srv.address() as import("node:net").AddressInfo).port}/`;
+      const N = 8;
+      const responses: Response[] = [];
+      for (let i = 0; i < N; i++) responses.push(await fetch(url));
+      // Not exactly 1: a request can start before the previous body's last packet was taken.
+      // A body that pins its connection until it is read needs N of them.
+      expect(connections).toBeLessThan(N / 2);
+      for (const res of responses) {
+        const bytes = await res.bytes();
+        expect({ length: bytes.byteLength, allA: isAllA(bytes) }).toEqual({ length: SIZE, allA: true });
+      }
+    } finally {
+      for (const socket of sockets) socket.destroy();
       await new Promise(r => srv.close(() => r(undefined)));
     }
   });

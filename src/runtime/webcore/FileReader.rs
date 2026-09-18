@@ -321,16 +321,32 @@ impl FileReader {
                     panic!("Invalid state in FileReader: expected file ")
                 }
                 blob::store::Data::File(file) => {
+                    let snapshot = file.snapshot;
                     let open_result = Lazy::open_file_blob(file);
                     // drop the RefPtr<Store>; `lazy` was already cleared above
                     drop(store);
                     match open_result {
                         Err(err) => {
                             self.fd.set(Fd::INVALID);
+                            if snapshot.is_some() {
+                                return streams::Start::Exception(blob::not_readable_error(
+                                    self.parent_global().get(),
+                                ));
+                            }
                             return streams::Start::Err(err);
                         }
                         Ok(opened) => {
                             debug_assert!(opened.fd.is_valid());
+                            // `fs.openAsBlob`: the file may have changed since `stream()`.
+                            if let Some(snapshot) = snapshot {
+                                if !snapshot.matches_fd(opened.fd) {
+                                    opened.fd.close();
+                                    self.fd.set(Fd::INVALID);
+                                    return streams::Start::Exception(blob::not_readable_error(
+                                        self.parent_global().get(),
+                                    ));
+                                }
+                            }
                             self.fd.set(opened.fd);
                             pollable = opened.pollable;
                             #[cfg(unix)]

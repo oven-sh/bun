@@ -30,7 +30,7 @@ use super::SizeType;
 // ──────────────────────────────────────────────────────────────────────────
 
 pub use bun_jsc::webcore_types::store::{
-    Bytes, Data, DataTag, File, IsAllAscii, S3, SerializeTag, Store,
+    Bytes, Data, DataTag, File, FileSnapshot, IsAllAscii, S3, SerializeTag, Store,
 };
 
 // ──────────────────────────────────────────────────────────────────────────

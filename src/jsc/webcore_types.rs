@@ -382,15 +382,15 @@ impl Blob {
     // pulling the whole `BlobExt` trait into scope.
     // ────────────────────────────────────────────────────────────────────
 
-    /// `Blob.hasContentTypeFromUser()` — `true` when the user set a type
-    /// explicitly *or* the store is file/S3-backed (whose mime is sniffed).
+    /// `Blob.hasContentTypeFromUser()`: an explicit type, or a sniffed non-empty one.
     #[inline]
     pub fn has_content_type_from_user(&self) -> bool {
         self.content_type_was_set.get()
-            || self
-                .store()
-                .map(|s| matches!(s.data, store::Data::File(_) | store::Data::S3(_)))
-                .unwrap_or(false)
+            || (!self.content_type_slice().is_empty()
+                && self
+                    .store()
+                    .map(|s| matches!(s.data, store::Data::File(_) | store::Data::S3(_)))
+                    .unwrap_or(false))
     }
 
     /// `Blob.contentTypeOrMimeType()` — explicit `content_type` if set, else
@@ -419,6 +419,14 @@ impl Blob {
     #[inline]
     pub fn needs_to_read_file(&self) -> bool {
         matches!(self.store.get().as_deref(), Some(s) if matches!(s.data, store::Data::File(_)))
+    }
+
+    /// `fs.openAsBlob`: the stat this file store was created with, if any.
+    pub fn open_as_blob_snapshot(&self) -> Option<store::FileSnapshot> {
+        match &self.store.get().as_deref()?.data {
+            store::Data::File(file) => file.snapshot,
+            _ => None,
+        }
     }
 
     /// A usable filename: a non-empty `name`, else [`store_path`]. (`file.name`
@@ -795,6 +803,8 @@ pub mod store {
         pub max_size: SizeType,
         /// Milliseconds since ECMAScript epoch.
         pub last_modified: crate::JSTimeType,
+        /// `fs.openAsBlob` only: reads fail once the file differs from this.
+        pub snapshot: Option<FileSnapshot>,
     }
 
     impl Default for File {
@@ -807,6 +817,41 @@ pub mod store {
                 seekable: None,
                 max_size: MAX_SIZE,
                 last_modified: crate::INIT_TIMESTAMP,
+                snapshot: None,
+            }
+        }
+    }
+
+    /// Size and mtime of a file at one point in time.
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    pub struct FileSnapshot {
+        pub size: i64,
+        pub mtime_sec: i64,
+        pub mtime_nsec: i64,
+    }
+
+    impl FileSnapshot {
+        /// Does the open file behind `fd` still match this snapshot?
+        pub fn matches_fd(self, fd: bun_sys::Fd) -> bool {
+            matches!(bun_sys::fstat(fd), Ok(stat) if Self::of(&stat) == self)
+        }
+
+        pub fn of(stat: &bun_sys::Stat) -> Self {
+            #[cfg(not(windows))]
+            {
+                Self {
+                    size: stat.st_size as i64,
+                    mtime_sec: stat.st_mtime as i64,
+                    mtime_nsec: stat.st_mtime_nsec as i64,
+                }
+            }
+            #[cfg(windows)]
+            {
+                Self {
+                    size: stat.st_size as i64,
+                    mtime_sec: stat.mtim.sec as i64,
+                    mtime_nsec: stat.mtim.nsec as i64,
+                }
             }
         }
     }

@@ -20,7 +20,7 @@ use bun_core::{EncodedSlice, String as BunString, Utf8Bytes, WTFStringImplExt as
 use bun_http_types::MimeType::MimeType;
 use bun_jsc::{EncodedSliceJsc as _, StringJsc as _, bun_string_jsc};
 use bun_ptr::RefPtr;
-use bun_sys::{self, Fd};
+use bun_sys::{self, Fd, FdExt as _};
 
 use crate::webcore::node_types::{PathLike, PathOrBlob, PathOrFileDescriptor};
 use crate::webcore::s3 as S3;
@@ -79,6 +79,8 @@ pub enum ReadBytesResult {
     /// global-allocator-owned by the callback.
     Ok(Vec<u8>),
     Err(Box<bun_jsc::SystemError>),
+    /// `fs.openAsBlob`: the file no longer matches the store's snapshot.
+    NotReadable,
 }
 
 /// Handler trait for `read_bytes_to_handler` — the body only requires
@@ -112,7 +114,7 @@ pub use bun_jsc::webcore_types::{Blob, BlobContentType, ClosingState, MAX_SIZE, 
 /// 3: Added File name serialization for File objects (when is_jsdom_file is true)
 /// 4: Added the blob's `size` to file-backed stores so a sliced Bun.file()
 ///    keeps its window's end across structuredClone/postMessage
-const SERIALIZATION_VERSION: u8 = 4;
+const SERIALIZATION_VERSION: u8 = 5;
 
 pub use bun_jsc::generated::JSBlob as js;
 
@@ -521,6 +523,7 @@ impl BlobExt for Blob {
                             ReadBytesResult::Ok(buf.into_vec())
                         }
                         read_file::ReadFileResultType::Err(e) => ReadBytesResult::Err(Box::new(e)),
+                        read_file::ReadFileResultType::NotReadable => ReadBytesResult::NotReadable,
                     };
                     // SAFETY: `c` is the `ctx` handed to `read_bytes_to_handler`,
                     // and the read completion fires exactly once (`call` or
@@ -753,6 +756,17 @@ impl BlobExt for Blob {
                 writer.write_int_le::<u64>(self.size.get())?;
                 self.resolve_size();
                 store.serialize(writer)?;
+
+                // Version 5: the `fs.openAsBlob` snapshot.
+                if let store::Data::File(file) = Store::data_mut(store) {
+                    let snapshot = file.snapshot;
+                    writer.write_int_le::<u8>(snapshot.is_some() as u8)?;
+                    if let Some(snapshot) = snapshot {
+                        writer.write_int_le::<i64>(snapshot.size)?;
+                        writer.write_int_le::<i64>(snapshot.mtime_sec)?;
+                        writer.write_int_le::<i64>(snapshot.mtime_nsec)?;
+                    }
+                }
             }
         }
 
@@ -3674,6 +3688,33 @@ impl FormDataContext<'_> {
                             // we need to make this async and use download/downloadSlice
                         }
                         store::Data::File(file) => {
+                            // `fs.openAsBlob`: check the snapshot on the descriptor that is read.
+                            let mut snapshot_fd: Option<Fd> = None;
+                            if file.snapshot.is_some() {
+                                if let PathOrFileDescriptor::Path(path) = &file.pathlike {
+                                    let mut buffer = bun_paths::path_buffer_pool::get();
+                                    let opened = bun_sys::open(
+                                        path.slice_z(&mut buffer),
+                                        bun_sys::O::RDONLY | bun_sys::O::CLOEXEC,
+                                        0,
+                                    );
+                                    let err = match opened {
+                                        Ok(fd) => {
+                                            snapshot_fd = Some(fd);
+                                            open_as_blob_read_error_for_fd(blob, fd, global_this)
+                                        }
+                                        Err(_) => Some(not_readable_error(global_this)),
+                                    };
+                                    if let Some(err) = err {
+                                        if let Some(fd) = snapshot_fd {
+                                            fd.close();
+                                        }
+                                        self.failed = true;
+                                        let _ = global_this.throw_value(err);
+                                        return;
+                                    }
+                                }
+                            }
                             // TODO: make this async + lazy
                             // Use a fresh stack
                             // `NodeFS` (it is stateless aside from a path scratch
@@ -3682,10 +3723,16 @@ impl FormDataContext<'_> {
                             // `ReadFile` has `Drop`; can't use FRU `..Default::default()`.
                             let mut rf_args = crate::node::fs::args::ReadFile::default();
                             rf_args.encoding = crate::node::types::Encoding::Buffer;
-                            rf_args.path = file.pathlike.clone();
+                            rf_args.path = match snapshot_fd {
+                                Some(fd) => PathOrFileDescriptor::Fd(fd),
+                                None => file.pathlike.clone(),
+                            };
                             rf_args.offset = blob.offset.get();
                             rf_args.max_size = Some(blob.size.get());
                             let res = node_fs.read_file(&rf_args, crate::node::fs::Flavor::Sync);
+                            if let Some(fd) = snapshot_fd {
+                                fd.close();
+                            }
                             match res {
                                 Err(err) => {
                                     self.failed = true;
@@ -3891,6 +3938,24 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
     // Shared access only — Blob state is Cell/JsCell-based.
     let blob = unsafe { &**blob_guard };
 
+    // Version 5: the `fs.openAsBlob` snapshot (see the serializer).
+    if version >= 5 && matches!(store_tag, store::SerializeTag::File) {
+        let snapshot = if reader.read_int_le::<u8>()? != 0 {
+            Some(store::FileSnapshot {
+                size: reader.read_int_le::<i64>()?,
+                mtime_sec: reader.read_int_le::<i64>()?,
+                mtime_nsec: reader.read_int_le::<i64>()?,
+            })
+        } else {
+            None
+        };
+        if let Some(store) = blob.store.get() {
+            if let store::Data::File(file) = Store::data_mut(store) {
+                file.snapshot = snapshot;
+            }
+        }
+    }
+
     'versions: {
         if version == 1 {
             break 'versions;
@@ -3944,6 +4009,10 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
         blob.content_type
             .set(BlobContentType::Owned(std::sync::Arc::from(content_type)));
         blob.content_type_was_set.set(content_type_was_set);
+    } else {
+        // The wire value wins over the rebuilt store's sniffed type.
+        blob.content_type.set(BlobContentType::default());
+        blob.content_type_was_set.set(false);
     }
 
     let blob_ptr = scopeguard::ScopeGuard::into_inner(blob_guard);
@@ -5468,6 +5537,80 @@ pub(crate) fn construct_bun_file(
     Ok(unsafe { BlobExt::to_js(&*ptr, global_object) })
 }
 
+/// `fs.openAsBlob(path, type)`: a file Blob that keeps its creation stat as `snapshot`.
+pub(crate) fn construct_blob_for_open_as_blob(
+    global_object: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    // SAFETY: bun_vm() never returns null for a Bun-owned global.
+    let vm = global_object.bun_vm();
+    let arguments_slice = callframe.arguments();
+    let mut args = jsc::ArgumentsSlice::init(vm, arguments_slice);
+
+    let Some(mut path) = PathOrFileDescriptor::from_js(global_object, &mut args)? else {
+        return Err(
+            global_object.throw_invalid_arguments(format_args!("Expected file path string"))
+        );
+    };
+    let file_type = arguments_slice.get(1).copied().filter(|v| v.is_string());
+
+    // Like node, do not alias the caller's Buffer.
+    if let PathOrFileDescriptor::Path(p) = &mut path {
+        if matches!(p, PathLike::Buffer(_)) {
+            *p = PathLike::owned(p.slice().to_vec());
+        }
+    }
+
+    let mut blob = Blob::find_or_create_file_from_path(&mut path, global_object, false);
+
+    // An embedded file in a compiled binary is a `Bytes` store: nothing to stat.
+    let stat = match blob.store.get().as_ref().map(|store| &store.data) {
+        Some(store::Data::File(file)) => Some(stat_file(file)),
+        _ => None,
+    };
+    match stat {
+        Some(Ok(stat)) => {
+            if let Some(store) = blob.store.get() {
+                if let store::Data::File(file) = Store::data_mut(store) {
+                    apply_file_stat(file, &stat);
+                    file.snapshot = Some(store::FileSnapshot::of(&stat));
+                }
+            }
+            blob.resolve_size();
+        }
+        Some(Err(err)) => {
+            // Node throws the stat error itself: `ENOENT: ..., stat '<path>'`.
+            let err = match blob.store().and_then(|s| s.get_path()) {
+                Some(path) => err.with_path(path),
+                None => err,
+            };
+            let err_js = err.to_js(global_object);
+            blob.deinit();
+            return Err(global_object.throw_value(err_js));
+        }
+        None => {}
+    }
+
+    // Node stores `options.type` verbatim and never sniffs one.
+    blob.content_type.set(BlobContentType::default());
+    blob.content_type_was_set.set(false);
+    if let Some(file_type) = file_type {
+        let str = file_type.to_utf8(global_object)?;
+        let slice = str.slice();
+        if !slice.is_empty() && is_valid_blob_type(slice) {
+            blob.content_type_was_set.set(true);
+            blob.content_type
+                .set(BlobContentType::Owned(std::sync::Arc::from(slice)));
+        }
+    }
+
+    let ptr = Blob::new(blob);
+    // SAFETY: ptr was just produced by heap::alloc in Blob::new. Spelled
+    // `BlobExt::to_js(&*ptr, ..)` to pick the `&self` impl over the by-value
+    // `JsClass::to_js`.
+    Ok(unsafe { BlobExt::to_js(&*ptr, global_object) })
+}
+
 // `find_or_create_file_from_path`: canonical impl lives later in this file
 // (runtime `check_s3: bool` form). Const-generic duplicate removed here.
 
@@ -5792,38 +5935,48 @@ fn resolve_file_stat(store: &RefPtr<Store>) {
     // `RefPtr<Store>` liveness invariant; the caller holds the only ref across
     // this call, so an exclusive borrow is sound.
     let file = Store::data_mut(store).as_file_mut();
+    // the file may not exist yet. That's okay.
+    if let Ok(stat) = stat_file(file) {
+        apply_file_stat(file, &stat);
+    }
+}
+
+fn stat_file(file: &store::File) -> bun_sys::Result<bun_sys::Stat> {
     match &file.pathlike {
         PathOrFileDescriptor::Path(path) => {
             let mut buffer = bun_paths::path_buffer_pool::get();
-            match bun_sys::stat(path.slice_z(&mut buffer)) {
-                bun_sys::Result::Ok(stat) => {
-                    file.max_size = if bun_sys::S::ISREG(stat.st_mode as _) || stat.st_size > 0 {
-                        ((stat.st_size.max(0)) as u64) as SizeType
-                    } else {
-                        MAX_SIZE
-                    };
-                    file.mode = stat.st_mode as bun_sys::Mode;
-                    file.seekable = Some(bun_sys::S::ISREG(stat.st_mode as _));
-                    file.last_modified = stat_to_js_mtime(&stat);
-                }
-                // the file may not exist yet. That's okay.
-                _ => {}
-            }
+            bun_sys::stat(path.slice_z(&mut buffer))
         }
-        PathOrFileDescriptor::Fd(fd) => match bun_sys::fstat(*fd) {
-            bun_sys::Result::Ok(stat) => {
-                file.max_size = if bun_sys::S::ISREG(stat.st_mode as _) || stat.st_size > 0 {
-                    ((stat.st_size.max(0)) as u64) as SizeType
-                } else {
-                    MAX_SIZE
-                };
-                file.mode = stat.st_mode as bun_sys::Mode;
-                file.seekable = Some(bun_sys::S::ISREG(stat.st_mode as _));
-                file.last_modified = stat_to_js_mtime(&stat);
-            }
-            _ => {}
-        },
+        PathOrFileDescriptor::Fd(fd) => bun_sys::fstat(*fd),
     }
+}
+
+fn apply_file_stat(file: &mut store::File, stat: &bun_sys::Stat) {
+    file.max_size = if bun_sys::S::ISREG(stat.st_mode as _) || stat.st_size > 0 {
+        ((stat.st_size.max(0)) as u64) as SizeType
+    } else {
+        MAX_SIZE
+    };
+    file.mode = stat.st_mode as bun_sys::Mode;
+    file.seekable = Some(bun_sys::S::ISREG(stat.st_mode as _));
+    file.last_modified = stat_to_js_mtime(stat);
+}
+
+/// `fs.openAsBlob`: `NotReadableError` if `fd` no longer matches the store's `snapshot`.
+pub(crate) fn open_as_blob_read_error_for_fd(
+    blob: &Blob,
+    fd: Fd,
+    global: &JSGlobalObject,
+) -> Option<JSValue> {
+    if blob.open_as_blob_snapshot()?.matches_fd(fd) {
+        return None;
+    }
+    Some(not_readable_error(global))
+}
+
+pub(crate) fn not_readable_error(global: &JSGlobalObject) -> JSValue {
+    EncodedSlice::latin1(b"The blob could not be read")
+        .to_dom_exception_instance(global, bun_jsc::DOMExceptionCode::NotReadableError)
 }
 
 /// Whether a second Blob over `store` reads the same bytes from the start.

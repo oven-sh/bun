@@ -160,6 +160,171 @@ it("fs.openAsBlob", async () => {
   expect((await openAsBlob(import.meta.path)).size).toBe(statSync(import.meta.path).size);
 });
 
+describe.concurrent("fs.openAsBlob snapshots the file", () => {
+  const notReadable = expect.objectContaining({ name: "NotReadableError", message: "The blob could not be read" });
+  // A file stream that fails to start throws from the first read instead of
+  // rejecting (the same on main for `Bun.file("/missing").stream()`).
+  async function readError(read: () => Promise<unknown>) {
+    try {
+      await read();
+    } catch (e) {
+      return e;
+    }
+  }
+
+  it("reads the file while it is unchanged", async () => {
+    using dir = tempDir("open-as-blob", { "a.txt": "hello" });
+    const blob = await openAsBlob(join(String(dir), "a.txt"));
+    expect(blob.size).toBe(5);
+    expect(await blob.text()).toBe("hello");
+    expect(await blob.text()).toBe("hello");
+    expect(await blob.slice(1, 4).text()).toBe("ell");
+    expect(await new Response(blob.stream()).text()).toBe("hello");
+  });
+
+  it("rejects every read with NotReadableError after the file changes", async () => {
+    using dir = tempDir("open-as-blob", { "a.txt": "hello" });
+    const file = join(String(dir), "a.txt");
+    const blob = await openAsBlob(file);
+    writeFileSync(file, "swapped!");
+
+    expect(blob.size).toBe(5);
+    await expect(blob.text()).rejects.toEqual(notReadable);
+    await expect(blob.text()).rejects.toBeInstanceOf(DOMException);
+    await expect(blob.arrayBuffer()).rejects.toEqual(notReadable);
+    await expect(blob.bytes()).rejects.toEqual(notReadable);
+    await expect(blob.slice(1, 4).text()).rejects.toEqual(notReadable);
+    await expect(new Response(blob).text()).rejects.toEqual(notReadable);
+    expect(await readError(() => new Response(blob.stream()).text())).toEqual(notReadable);
+  });
+
+  it("rejects a read after the file is deleted", async () => {
+    using dir = tempDir("open-as-blob", { "a.txt": "hello" });
+    const file = join(String(dir), "a.txt");
+    const blob = await openAsBlob(file);
+    unlinkSync(file);
+    await expect(blob.text()).rejects.toEqual(notReadable);
+  });
+
+  it("rejects a fetch body after the file changes", async () => {
+    using dir = tempDir("open-as-blob", { "a.txt": "hello" });
+    const file = join(String(dir), "a.txt");
+    const blob = await openAsBlob(file);
+    await using server = Bun.serve({
+      port: 0,
+      fetch: async req => new Response(await req.text()),
+    });
+    expect(await (await fetch(server.url, { method: "POST", body: blob })).text()).toBe("hello");
+    writeFileSync(file, "swapped!");
+    await expect(fetch(server.url, { method: "POST", body: blob })).rejects.toEqual(notReadable);
+  });
+
+  it("rejects a FormData body after the file changes", async () => {
+    using dir = tempDir("open-as-blob", { "a.txt": "hello" });
+    const file = join(String(dir), "a.txt");
+    const blob = await openAsBlob(file);
+    const form = new FormData();
+    form.append("f", blob, "a.txt");
+    expect((await new Response(form).formData()).get("f")).toBeInstanceOf(Blob);
+    writeFileSync(file, "swapped!");
+    expect(() => new Response(form)).toThrow(notReadable);
+  });
+
+  it("rejects a stream created before the file changed", async () => {
+    using dir = tempDir("open-as-blob", { "a.txt": "hello" });
+    const file = join(String(dir), "a.txt");
+    const blob = await openAsBlob(file);
+    const stream = blob.stream();
+    writeFileSync(file, "swapped!");
+    expect(await readError(() => new Response(stream).text())).toEqual(notReadable);
+  });
+
+  it("keeps the snapshot through structuredClone", async () => {
+    using dir = tempDir("open-as-blob", { "a.txt": "hello" });
+    const file = join(String(dir), "a.txt");
+    const clone = structuredClone(await openAsBlob(file));
+    expect(await clone.text()).toBe("hello");
+    writeFileSync(file, "swapped!");
+    expect(clone.size).toBe(5);
+    await expect(clone.text()).rejects.toEqual(notReadable);
+  });
+
+  it("accepts Buffer and URL paths", async () => {
+    using dir = tempDir("open-as-blob", { "a.txt": "hello" });
+    const file = join(String(dir), "a.txt");
+    const fromBuffer = await openAsBlob(Buffer.from(file));
+    const fromUrl = await openAsBlob(Bun.pathToFileURL(file));
+    Bun.gc(true);
+    expect(await fromBuffer.text()).toBe("hello");
+    expect(await fromUrl.text()).toBe("hello");
+    writeFileSync(file, "swapped!");
+    await expect(fromBuffer.text()).rejects.toEqual(notReadable);
+    await expect(fromUrl.text()).rejects.toEqual(notReadable);
+  });
+
+  it("throws the stat error for a path that cannot be opened", () => {
+    using dir = tempDir("open-as-blob", {});
+    const file = join(String(dir), "missing.txt");
+    expect(() => openAsBlob(file)).toThrow(expect.objectContaining({ code: "ENOENT", syscall: "stat", path: file }));
+  });
+
+  it("rejects a Bun.serve response body after the file changes", async () => {
+    using dir = tempDir("open-as-blob", { "a.txt": "hello" });
+    const file = join(String(dir), "a.txt");
+    const blob = await openAsBlob(file);
+    await using server = Bun.serve({
+      port: 0,
+      fetch: () => new Response(blob),
+      error: err => new Response(err.name, { status: 500 }),
+    });
+    expect(await (await fetch(server.url)).text()).toBe("hello");
+    writeFileSync(file, "swapped!");
+    const res = await fetch(server.url);
+    expect([res.status, await res.text()]).toEqual([500, "NotReadableError"]);
+  });
+
+  it("does not infer the MIME type from the extension", async () => {
+    using dir = tempDir("open-as-blob", { "nofileext": "hello", "note.txt": "hello", "x.png": "png!" });
+    expect((await openAsBlob(join(String(dir), "nofileext"))).type).toBe("");
+    expect((await openAsBlob(join(String(dir), "note.txt"))).type).toBe("");
+    expect((await openAsBlob(join(String(dir), "x.png"))).type).toBe("");
+  });
+
+  it("stores an explicit options.type verbatim", async () => {
+    using dir = tempDir("open-as-blob", { "note.txt": "hello" });
+    const file = join(String(dir), "note.txt");
+    expect((await openAsBlob(file, { type: "text/plain" })).type).toBe("text/plain");
+    expect((await openAsBlob(file, { type: "TEXT/PLAIN" })).type).toBe("TEXT/PLAIN");
+    expect((await openAsBlob(file, { type: "" })).type).toBe("");
+    expect((await openAsBlob(file, { type: null })).type).toBe("");
+    expect(structuredClone(await openAsBlob(file)).type).toBe("");
+    expect(structuredClone(await openAsBlob(file, { type: "text/plain" })).type).toBe("text/plain");
+  });
+
+  it("sends no Content-Type header when the type is empty", async () => {
+    using dir = tempDir("open-as-blob", { "note.txt": "hello" });
+    const file = join(String(dir), "note.txt");
+    const seen: (string | null)[] = [];
+    await using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        seen.push(req.headers.get("content-type"));
+        return new Response("ok");
+      },
+    });
+    await fetch(server.url, { method: "POST", body: await openAsBlob(file) });
+    await fetch(server.url, { method: "POST", body: await openAsBlob(file, { type: "text/plain" }) });
+    expect(seen).toEqual([null, "text/plain"]);
+  });
+
+  it("validates the arguments like node", () => {
+    const invalidArgType = expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" });
+    expect(() => openAsBlob(import.meta.path, null)).toThrow(invalidArgType);
+    expect(() => openAsBlob(import.meta.path, { type: 123 })).toThrow(invalidArgType);
+    expect(() => openAsBlob(123)).toThrow(invalidArgType);
+  });
+});
+
 it("writing to 1, 2 are possible", () => {
   expect(fs.writeSync(1, Buffer.from("\nhello-stdout-test\n"))).toBe(19);
   expect(fs.writeSync(2, Buffer.from("\nhello-stderr-test\n"))).toBe(19);

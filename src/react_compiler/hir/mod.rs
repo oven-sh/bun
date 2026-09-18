@@ -1517,6 +1517,22 @@ impl NonLocalBinding {
             None
         }
     }
+
+    /// The node, when this binding is the callee of a `require("x")` or `require.resolve("x")` call.
+    pub fn require_call_node(&self) -> Option<bun_ast::Expr> {
+        use bun_ast::expr::Tag;
+        match self.kind {
+            NonLocalKind::BunOpaque(e)
+                if matches!(
+                    e.data.tag(),
+                    Tag::ERequireString | Tag::ERequireResolveString
+                ) =>
+            {
+                Some(e)
+            }
+            _ => None,
+        }
+    }
 }
 
 // =============================================================================

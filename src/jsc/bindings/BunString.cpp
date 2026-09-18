@@ -318,6 +318,16 @@ BunString toStringView(StringView view)
     };
 }
 
+WTF::CString tryUTF8(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, WTF::StringView view)
+{
+    auto utf8 = view.tryGetUTF8();
+    if (!utf8) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
+    return WTF::move(utf8.value());
+}
+
 // We don't want to ban atomiziation for tiny strings that are potentially going
 // to appear as properties/identifiers in JS. So we should only do this for long
 // strings that are unlikely to ever be atomized.

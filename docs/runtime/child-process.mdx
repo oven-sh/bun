@@ -313,7 +313,7 @@ childProc.disconnect();
 
 ### IPC between Bun & Node.js
 
-To use IPC between a `bun` process and a Node.js process, set `serialization: "json"` in `Bun.spawn`. This is because Node.js and Bun use different JavaScript engines with different object serialization formats.
+To use IPC between a `bun` process and a Node.js process, set `serialization: "json"` in `Bun.spawn`. This is because Node.js and Bun use different JavaScript engines with different object serialization formats. If the formats do not match, the Bun process reports the first message it cannot decode as an uncaught exception and closes the channel.
 
 ```js bun-node-ipc.js icon="file-code"
 if (typeof Bun !== "undefined") {

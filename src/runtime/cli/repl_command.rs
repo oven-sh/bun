@@ -27,6 +27,7 @@ use repl::Repl;
 
 use crate::Command;
 use crate::cli::Arguments;
+use crate::cli::run_command::RunCommand;
 
 pub(crate) struct ReplCommand;
 
@@ -54,6 +55,9 @@ impl ReplCommand {
                 ctx,
             )?;
         }
+
+        // Like `bun --interactive`, the REPL boots from a deleted cwd.
+        RunCommand::cwd_or_exe_dir(ctx)?;
 
         jsc::initialize(jsc::InitializeOptions {
             eval_mode: true,

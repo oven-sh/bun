@@ -278,6 +278,52 @@ for (const linker of ["hoisted", "isolated"] as const) {
   });
 }
 
+// The package is already installed and blocked. The second install trusts it and runs its script.
+// Only the hoisted linker runs the scripts of a package that a later install trusts.
+test.concurrent(
+  "a failed script of an installed package that an optional and a required dependency share (hoisted)",
+  async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson, env } = ctx;
+
+    const pkg = {
+      name: "foo",
+      version: "1.0.0",
+      dependencies: { "no-deps-scripted-to-deeply-fail": "1.0.0" },
+      optionalDependencies: { "no-deps-scripted-to-fail": "1.0.0" },
+    };
+    await writeFile(packageJson, JSON.stringify(pkg));
+    {
+      await using proc = spawn({
+        cmd: [bunExe(), "install", "--linker=hoisted"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env,
+      });
+      const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(err).not.toContain("error:");
+      expect(exitCode).toBe(0);
+    }
+
+    await writeFile(packageJson, JSON.stringify({ ...pkg, trustedDependencies: ["no-deps-scripted-to-fail"] }));
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--linker=hoisted"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(splitErrLines(err).filter(line => line.startsWith("error:"))).toEqual([
+      'error: install script from "no-deps-scripted-to-fail" exited with 1',
+    ]);
+    expect(exitCode).toBe(1);
+  },
+);
+
 test.concurrent(
   "trustedDependencies added on a later install still matches the resolved package name, not the dependency alias",
   async () => {

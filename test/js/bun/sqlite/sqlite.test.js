@@ -2288,6 +2288,32 @@ describe("changes counts only the rows that the statement changes itself", () =>
     expect(db[method]("SELECT 1; SELECT 2;").changes).toBe(0);
     expect(db.query("SELECT x FROM log ORDER BY rowid").values()).toEqual([[1], [2], [3]]);
   });
+
+  // A Statement that reported changes once reads only sqlite3_changes64() on later runs.
+  it.each(["prepare", "query"])("a reused Statement from %s() reports its own rows on every run", method => {
+    using db = new Database(":memory:");
+    db.exec(`
+      CREATE TABLE t (id INTEGER PRIMARY KEY, a);
+      CREATE TABLE log (x);
+      CREATE TRIGGER tr AFTER UPDATE ON t BEGIN
+        INSERT INTO log VALUES (new.id);
+      END;
+    `);
+    using insert = db[method]("INSERT INTO t (a) VALUES (?), (?), (?)");
+    using update = db[method]("UPDATE t SET a = ? WHERE id <= ?");
+    using select = db[method]("SELECT count(*) FROM t");
+
+    expect([
+      update.run("x", 0).changes,
+      insert.run(1, 2, 3).changes,
+      update.run("x", 2).changes,
+      select.run().changes,
+      insert.run(4, 5, 6).changes,
+      update.run("y", 0).changes,
+      select.run().changes,
+      update.run("y", 1).changes,
+    ]).toEqual([0, 3, 2, 0, 3, 0, 0, 1]);
+  });
 });
 
 it("#13082", async () => {

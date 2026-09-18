@@ -1399,14 +1399,8 @@ impl BlobExt for Blob {
 
             let path = s3.path();
 
-            // When no JS overrides were supplied, hand the store's *base*
-            // credentials to the upload.
             return crate::webcore::__s3_client::upload_stream(
-                if extra_options.is_some() {
-                    aws_options.credentials.dupe()
-                } else {
-                    s3.get_credentials().clone()
-                },
+                aws_options.credentials.clone(),
                 path,
                 readable_stream,
                 cx,
@@ -1630,11 +1624,8 @@ impl BlobExt for Blob {
 
                 let credentials_with_options =
                     s3.get_credentials_with_options(Some(options), global_this)?;
-                // `defer credentialsWithOptions.deinit()` → Drop handles slices.
-                // `writable_stream` adopts the dup'd ref by value; the
-                // MultiPartUpload derefs on done.
                 return crate::webcore::s3::client::writable_stream(
-                    credentials_with_options.credentials.dupe(),
+                    credentials_with_options.credentials.clone(),
                     path,
                     &global_this.js_thread(context),
                     credentials_with_options.options,
@@ -3374,7 +3365,8 @@ impl BlobExt for Blob {
                     // `bun_s3_signing::S3Credentials` here at the T6 call site
                     // (dotenv cannot name the s3_signing type — upward dep).
                     let env_creds = vm.transpiler.env_mut().get_s3_credentials();
-                    let credentials = crate::webcore::fetch::s3_credentials_from_env(env_creds);
+                    let credentials =
+                        RefPtr::new(crate::webcore::fetch::s3_credentials_from_env(env_creds));
                     let copy = core::mem::replace(
                         path_or_fd,
                         PathOrFileDescriptor::Path(PathLike::default()),
@@ -4479,11 +4471,7 @@ pub(crate) fn write_file_with_source_destination(
                         cx.global(),
                     )? {
                         return s3_client::upload_stream(
-                            if options.extra_options.is_some() {
-                                aws_options.credentials.dupe()
-                            } else {
-                                s3.get_credentials().clone()
-                            },
+                            aws_options.credentials.clone(),
                             s3.path(),
                             stream,
                             cx,
@@ -4578,11 +4566,7 @@ pub(crate) fn write_file_with_source_destination(
                     cx.global(),
                 )? {
                     return s3_client::upload_stream(
-                        if options.extra_options.is_some() {
-                            aws_options.credentials.dupe()
-                        } else {
-                            s3.get_credentials().clone()
-                        },
+                        aws_options.credentials.clone(),
                         s3.path(),
                         stream,
                         cx,
@@ -4861,11 +4845,7 @@ pub(crate) fn write_file_internal(
                                 )));
                             }
                             return Ok(ControlFlow::Break(s3_client::upload_stream(
-                                if options.extra_options.is_some() {
-                                    aws_options.credentials.dupe()
-                                } else {
-                                    s3.get_credentials().clone()
-                                },
+                                aws_options.credentials.clone(),
                                 s3.path(),
                                 readable,
                                 cx,

@@ -26,8 +26,7 @@
 "use strict";
 
 const { URL, URLSearchParams, URLPattern } = globalThis;
-const [domainToASCII, domainToUnicode, idnaToASCII] = $cpp("NodeURL.cpp", "Bun::createNodeURLBinding");
-const { urlToHttpOptions } = require("internal/url");
+const { domainToASCII, domainToUnicode, idnaToASCII, urlToHttpOptions } = require("internal/url");
 const { validateString, validateObject } = require("internal/validators");
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
 
@@ -127,12 +126,7 @@ function urlParse(
   if ($isObject(url) && url instanceof Url) return url;
 
   var u = new Url();
-  try {
-    u.parse(url, parseQueryString, slashesDenoteHost);
-  } catch (e) {
-    $putByIdDirect(e, "input", url);
-    throw e;
-  }
+  u.parse(url, parseQueryString, slashesDenoteHost);
   return u;
 }
 

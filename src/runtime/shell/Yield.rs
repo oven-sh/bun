@@ -37,8 +37,8 @@ pub enum Yield {
     /// Execution is waiting on async IO (epoll/kqueue/uv). The caller's task
     /// callback will resume by calling `.run()` again later.
     Suspended,
-    /// Threw a JS error.
-    Failed,
+    /// The node threw a JS exception; `Interpreter::fail` winds the script down.
+    Failed(NodeId),
     Done,
 }
 
@@ -50,10 +50,6 @@ impl Yield {
     #[inline]
     pub(crate) const fn done() -> Yield {
         Yield::Done
-    }
-    #[inline]
-    pub(crate) const fn failed() -> Yield {
-        Yield::Failed
     }
 }
 
@@ -131,7 +127,8 @@ impl Yield {
                     written,
                     err,
                 } => crate::shell::io_writer::on_io_writer_chunk(interp, child, written, err),
-                Yield::Suspended | Yield::Failed | Yield::Done => {
+                Yield::Failed(id) => interp.fail(id),
+                Yield::Suspended | Yield::Done => {
                     if let Some(y) = Self::drain_pipelines(interp, &mut pipeline_stack) {
                         y
                     } else {

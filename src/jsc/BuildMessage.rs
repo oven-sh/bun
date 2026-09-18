@@ -13,6 +13,7 @@ impl LogKindJsc for bun_ast::Kind {
     fn to_js(self, global: &JSGlobalObject) -> JsResult<JSValue> {
         match self {
             bun_ast::Kind::Err => Ok(global.common_strings().error()),
+            bun_ast::Kind::Verbose => Ok(crate::CommonString::FetchOptionVerbose.to_js(global)),
             kind => bun_core::String::static_(kind.string()).to_js(global),
         }
     }

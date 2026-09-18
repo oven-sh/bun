@@ -251,6 +251,13 @@ impl ServerWebSocket {
         self.handler.get()
     }
 
+    /// A websocket event is dispatched inside the context of the script that gave the handlers:
+    /// what a handler throws, and what the socket reports with no `error` handler, is that context's.
+    #[inline]
+    fn enter_handlers_context(&self) -> bun_jsc::virtual_machine::ContextScope<'_> {
+        self.handler().vm().enter_context(self.handler().context)
+    }
+
     // ──────────────────────────────────────────────────────────────────────
     // Shared helpers for the publish*/send* family.
     //
@@ -1548,32 +1555,44 @@ impl WebSocketHandler for ServerWebSocket {
     #[inline(always)]
     unsafe fn on_open(this: *mut Self, ws: AnyWebSocket) {
         // SAFETY: per trait contract — `this` is the live user-data slot.
-        crate::dispatch::fold(unsafe { &*this }.on_open(ws));
+        let this = unsafe { &*this };
+        let _context = this.enter_handlers_context();
+        crate::dispatch::fold(this.on_open(ws));
     }
     #[inline(always)]
     unsafe fn on_message(this: *mut Self, ws: AnyWebSocket, message: &[u8], opcode: Opcode) {
         // SAFETY: per trait contract.
-        crate::dispatch::fold(unsafe { &*this }.on_message(ws, message, opcode));
+        let this = unsafe { &*this };
+        let _context = this.enter_handlers_context();
+        crate::dispatch::fold(this.on_message(ws, message, opcode));
     }
     #[inline(always)]
     unsafe fn on_drain(this: *mut Self, ws: AnyWebSocket) {
         // SAFETY: per trait contract.
-        crate::dispatch::fold(unsafe { &*this }.on_drain(ws));
+        let this = unsafe { &*this };
+        let _context = this.enter_handlers_context();
+        crate::dispatch::fold(this.on_drain(ws));
     }
     #[inline(always)]
     unsafe fn on_ping(this: *mut Self, ws: AnyWebSocket, message: &[u8]) {
         // SAFETY: per trait contract.
-        crate::dispatch::fold(unsafe { &*this }.on_ping(ws, message));
+        let this = unsafe { &*this };
+        let _context = this.enter_handlers_context();
+        crate::dispatch::fold(this.on_ping(ws, message));
     }
     #[inline(always)]
     unsafe fn on_pong(this: *mut Self, ws: AnyWebSocket, message: &[u8]) {
         // SAFETY: per trait contract.
-        crate::dispatch::fold(unsafe { &*this }.on_pong(ws, message));
+        let this = unsafe { &*this };
+        let _context = this.enter_handlers_context();
+        crate::dispatch::fold(this.on_pong(ws, message));
     }
     #[inline(always)]
     unsafe fn on_close(this: *mut Self, ws: AnyWebSocket, code: i32, message: &[u8]) {
         // SAFETY: per trait contract.
-        crate::dispatch::fold(unsafe { &*this }.on_close(ws, code, message));
+        let this = unsafe { &*this };
+        let _context = this.enter_handlers_context();
+        crate::dispatch::fold(this.on_close(ws, code, message));
     }
 }
 

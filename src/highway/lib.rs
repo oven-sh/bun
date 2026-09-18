@@ -165,7 +165,7 @@ unsafe extern "C" {
 // single-byte scans, a <16-byte scalar prologue — see `SCALAR_CUTOFF`); inlining
 // them puts the FFI call directly at the hot lexer/printer call site so that
 // (a) the Rust-side frame disappears unconditionally, and (b) cross-language
-// LTO (`--profile=btg`, crossLangLto=true) can fold the C dispatch shim
+// LTO (release builds, crossLangLto=true) can fold the C dispatch shim
 // straight into the caller. Without this the profile shows the C shim as a
 // distinct hot leaf (e.g. `highway_index_of_newline_or_non_ascii` self-samples
 // in lint/create-vue benches).

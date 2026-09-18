@@ -3,16 +3,10 @@
 #[cfg(unix)]
 use core::ffi::{c_char, c_int};
 
-/// The effective user's home directory from the passwd database
-/// (`getpwuid_r(geteuid())`). `Ok(None)`: no entry for this uid; an entry
-/// with no `pw_dir` yields an empty path. `Err` is the errno `getpwuid_r`
-/// returned.
+/// The effective user's home from the passwd database. `Ok(None)`: no entry. `Err`: the errno.
 #[cfg(unix)]
 pub fn passwd_home_dir() -> Result<Option<Vec<u8>>, c_int> {
-    // From libuv:
-    // > Calling sysconf(_SC_GETPW_R_SIZE_MAX) would get the suggested size, but it
-    // > is frequently 1024 or 4096, so we can just use that directly. The pwent
-    // > will not usually be large.
+    // Like libuv's uv__getpwuid_r: start with 4096 bytes, double on ERANGE.
     let mut stack = [0u8; 4096];
     let mut heap: Vec<u8>;
     let mut buf: &mut [u8] = &mut stack;

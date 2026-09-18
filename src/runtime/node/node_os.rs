@@ -688,8 +688,7 @@ mod _impl {
                     .to_js(global),
                 )),
                 Ok(None) => {
-                    // bionic has no passwd entries for app uids; with HOME also unset
-                    // (zygote/run-as), return a usable default rather than throwing.
+                    // bionic has no passwd entry for app uids: give a usable default, not ENOENT.
                     #[cfg(target_os = "android")]
                     {
                         return Ok(BunString::static_("/data/local/tmp"));

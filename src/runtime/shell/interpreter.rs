@@ -2170,8 +2170,7 @@ impl ShellExecEnv {
         self.shell_env.get(key).or_else(|| self.export_env.get(key))
     }
 
-    /// Where `cd` with no args goes: [`Self::home_env`], else `""` (or
-    /// `/data/local/tmp` on Android).
+    /// Where `cd` with no args goes. `""` means `$HOME` is not set.
     pub(crate) fn get_homedir(&self) -> crate::shell::env_str::EnvStr {
         use crate::shell::env_str::EnvStr;
         self.home_env().unwrap_or_else(|| {
@@ -2183,16 +2182,14 @@ impl ShellExecEnv {
         })
     }
 
-    /// The value of `~`: [`Self::home_env`], else the passwd entry (what bash
-    /// and `os.homedir()` use). `None` means no home is known and the `~`
-    /// stays. Android keeps `/data/local/tmp`: bionic synthesizes a passwd
-    /// entry with `/` or `/data` for every uid.
+    /// The value of `~`. `None` means no home is known and the `~` stays.
     pub(crate) fn get_tilde_home(&self) -> Option<crate::shell::env_str::EnvStr> {
         use crate::shell::env_str::EnvStr;
         if let Some(home) = self.home_env() {
             return Some(home);
         }
         if bun_core::env::IS_ANDROID {
+            // bionic synthesizes a passwd entry with `/` or `/data` for every uid.
             return Some(EnvStr::init_slice(b"/data/local/tmp"));
         }
         #[cfg(unix)]

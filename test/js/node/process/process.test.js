@@ -1956,6 +1956,11 @@ describe("handling N rejected promises is O(N)", () => {
   //   before: release 23,900 / 4,600 ms, debug+ASAN ~55,000 / ~85,000 ms
   //   after:  release 25 / 20 ms, debug+ASAN 700 / 440 ms
   const limit = isDebug || isASAN ? 5_000 : 1_000;
+  // A machine too slow for `limit` still passes if the calls stay within 20x of
+  // `baseline`: the same calls again, on promises that are handled by then, so
+  // none of them reaches the rejection tracker. Measured ms / baseline: 0.7 to
+  // 2.2 after, 600 and up before.
+  const expectLinear = ({ ms, baseline }) => expect(ms).toBeLessThan(Math.max(limit, 20 * baseline));
   // A debug build needs about 2 s to start and make the promises, too close to
   // the 5 s default. The spawn timeout turns a quadratic run into a failure.
   const timeout = 30_000;
@@ -1982,21 +1987,24 @@ describe("handling N rejected promises is O(N)", () => {
   it(
     "while they wait to be reported, oldest first (the order Promise.allSettled attaches handlers)",
     async () => {
-      const { ms, ...events } = await run(`
+      const { ms, baseline, ...events } = await run(`
       const noop = () => {};
       const events = { unhandledRejection: 0, rejectionHandled: 0 };
       process.on("unhandledRejection", () => events.unhandledRejection++);
       process.on("rejectionHandled", () => events.rejectionHandled++);
       const promises = [];
       for (let i = 0; i < ${N}; i++) promises.push(Promise.reject(i));
-      const start = performance.now();
+      let start = performance.now();
       for (const promise of promises) promise.catch(noop);
       const ms = performance.now() - start;
+      start = performance.now();
+      for (const promise of promises) promise.catch(noop);
+      const baseline = performance.now() - start;
       for (let i = 0; i < 3; i++) await new Promise(r => setImmediate(r));
-      console.log(JSON.stringify({ ms, ...events }));
+      console.log(JSON.stringify({ ms, baseline, ...events }));
     `);
       expect(events).toEqual({ unhandledRejection: 0, rejectionHandled: 0 });
-      expect(ms).toBeLessThan(limit);
+      expectLinear({ ms, baseline });
     },
     timeout,
   );
@@ -2004,26 +2012,29 @@ describe("handling N rejected promises is O(N)", () => {
   it(
     "while they are being reported, from the 'unhandledRejection' listener",
     async () => {
-      const { ms, ...events } = await run(`
+      const { ms, baseline, ...events } = await run(`
       const noop = () => {};
       const events = { unhandledRejection: 0, rejectionHandled: 0 };
       const promises = [];
-      let ms;
+      let ms, baseline;
       process.on("unhandledRejection", () => {
         if (++events.unhandledRejection > 1) return;
         // The first report. The other N - 1 promises are in the batch being
         // reported. Newest first was the longest walk of that batch.
-        const start = performance.now();
+        let start = performance.now();
         for (let i = ${N} - 1; i > 0; i--) promises[i].catch(noop);
         ms = performance.now() - start;
+        start = performance.now();
+        for (let i = ${N} - 1; i > 0; i--) promises[i].catch(noop);
+        baseline = performance.now() - start;
       });
       process.on("rejectionHandled", () => events.rejectionHandled++);
       for (let i = 0; i < ${N}; i++) promises.push(Promise.reject(i));
       for (let i = 0; i < 3; i++) await new Promise(r => setImmediate(r));
-      console.log(JSON.stringify({ ms, ...events }));
+      console.log(JSON.stringify({ ms, baseline, ...events }));
     `);
       expect(events).toEqual({ unhandledRejection: 1, rejectionHandled: 0 });
-      expect(ms).toBeLessThan(limit);
+      expectLinear({ ms, baseline });
     },
     timeout,
   );

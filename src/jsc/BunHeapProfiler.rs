@@ -45,6 +45,25 @@ pub(crate) fn generate_and_write_profile(
 
     build_output_path(&mut path_buf, config)?;
 
+    write_profile_file(&mut path_buf, profile_slice.slice())?;
+
+    // Print where the markdown profile was written; node parity for the
+    // .heapprofile format is silence on success.
+    if config.text_format {
+        bun_core::pretty_errorln!(
+            "Heap profile written to: {}",
+            bstr::BStr::new(path_buf.slice())
+        );
+        Output::flush();
+    }
+    Ok(())
+}
+
+/// Writes `bytes` to `path`, creating its directory when that is what is missing.
+pub(crate) fn write_profile_file(
+    path_buf: &mut AutoAbsPathChecked,
+    bytes: &[u8],
+) -> Result<(), Error> {
     // Convert to OS-specific path (UTF-16 on Windows, UTF-8 elsewhere)
     #[cfg(windows)]
     let mut path_buf_os = bun_paths::os_path_buffer_pool::get();
@@ -58,9 +77,9 @@ pub(crate) fn generate_and_write_profile(
     // `slice_z()` borrows `path_buf` mutably, so we re-derive it at each call
     // site instead of holding a single binding.
     #[cfg(windows)]
-    let result = sys::File::write_file_os_path(Fd::cwd(), output_path_os, profile_slice.slice());
+    let result = sys::File::write_file_os_path(Fd::cwd(), output_path_os, bytes);
     #[cfg(not(windows))]
-    let result = sys::File::write_file(Fd::cwd(), path_buf.slice_z(), profile_slice.slice());
+    let result = sys::File::write_file(Fd::cwd(), path_buf.slice_z(), bytes);
     if let Err(err) = result {
         // If we got ENOENT, PERM, or ACCES, try creating the directory and retry
         let errno = err.get_errno();
@@ -71,11 +90,9 @@ pub(crate) fn generate_and_write_profile(
                 let _ = Fd::cwd().make_path(dir_path);
                 // Retry write
                 #[cfg(windows)]
-                let retry_result =
-                    sys::File::write_file_os_path(Fd::cwd(), output_path_os, profile_slice.slice());
+                let retry_result = sys::File::write_file_os_path(Fd::cwd(), output_path_os, bytes);
                 #[cfg(not(windows))]
-                let retry_result =
-                    sys::File::write_file(Fd::cwd(), path_buf.slice_z(), profile_slice.slice());
+                let retry_result = sys::File::write_file(Fd::cwd(), path_buf.slice_z(), bytes);
                 if retry_result.is_err() {
                     return Err(crate::CrateError::WriteFailed);
                 }
@@ -85,16 +102,6 @@ pub(crate) fn generate_and_write_profile(
         } else {
             return Err(crate::CrateError::WriteFailed);
         }
-    }
-
-    // Print where the markdown profile was written; node parity for the
-    // .heapprofile format is silence on success.
-    if config.text_format {
-        bun_core::pretty_errorln!(
-            "Heap profile written to: {}",
-            bstr::BStr::new(path_buf.slice())
-        );
-        Output::flush();
     }
     Ok(())
 }
@@ -122,6 +129,14 @@ fn build_output_path(
 
 fn generate_default_filename(buf: &mut PathBuffer, text_format: bool) -> Result<&[u8], Error> {
     let extension: &str = if text_format { ".md" } else { ".heapprofile" };
+    default_filename(buf, extension)
+}
+
+/// `Heap.<date>.<time>.<pid>.0.<seq><extension>`
+pub(crate) fn default_filename<'a>(
+    buf: &'a mut PathBuffer,
+    extension: &str,
+) -> Result<&'a [u8], Error> {
     let mut cursor = std::io::Cursor::new(&mut buf[..]);
     crate::bun_cpu_profiler::write_diagnostic_filename(&mut cursor, "Heap", extension)
         .map_err(|_| crate::CrateError::Sys(bun_errno::SystemErrno::ENOSPC))?;

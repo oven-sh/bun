@@ -1546,6 +1546,7 @@ extern "C" void Bun__ensureSignalHandler();
 extern "C" bool Bun__isMainThreadVM();
 extern "C" void Bun__onPosixSignal(int signalNumber);
 extern "C" void Bun__onSignalListenerCountChanged(int signalNumber, int listenerCount);
+extern "C" bool Bun__watchModeSigintHasListeners();
 
 __attribute__((noinline)) static void forwardSignal(int signalNumber)
 {
@@ -4777,6 +4778,24 @@ static void bypassCrashHandlerForSelfSentSignal(int pid, int ownPid, int signalN
 }
 #endif
 
+static bool signalHasJSListener(int signalNumber)
+{
+    if (Bun__isMainThreadVM())
+        return signalToContextIdsMap && signalToContextIdsMap->contains(signalNumber);
+    // Only the main thread may read `signalToContextIdsMap`: it mutates it. The installed handler
+    // says the same, except for the signal that --watch keeps it installed for and counts the
+    // listeners of.
+#if !OS(WINDOWS)
+    if (signalNumber == watchModeStickySignal)
+        return Bun__watchModeSigintHasListeners();
+    struct sigaction current;
+    return sigaction(signalNumber, nullptr, &current) == 0 && current.sa_handler == forwardSignal;
+#else
+    // uv_kill() terminates the process whatever listens.
+    return false;
+#endif
+}
+
 JSC_DEFINE_HOST_FUNCTION(Process_functionReallyKill, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
@@ -4798,10 +4817,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyKill, (JSC::JSGlobalObject * glob
     int ownPid = uv_os_getpid();
 #endif
     // Node's Kill binding runs RunAtExit for a self-directed unhandled signal, so flush profiles
-    // first. `signalToContextIdsMap` is mutated only on the main thread; workers never set
-    // profiler configs, so skipping the flush there avoids a rehash race.
-    if (signal > 0 && (pid == 0 || pid == -1 || pid == ownPid || pid == -ownPid)
-        && !(Bun__isMainThreadVM() && signalToContextIdsMap && signalToContextIdsMap->contains(signal))) {
+    // first. A Worker flushes the process-wide one (--pprof-heap).
+    if (signal > 0 && (pid == 0 || pid == -1 || pid == ownPid || pid == -ownPid) && !signalHasJSListener(signal)) {
         Bun__writeProfilesBeforeSelfKill();
     }
 

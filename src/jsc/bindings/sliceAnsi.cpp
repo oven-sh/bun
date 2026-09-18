@@ -1,6 +1,7 @@
 #include "root.h"
 #include "sliceAnsi.h"
 #include "ANSIHelpers.h"
+#include "VectorSizeLimit.h"
 
 #include <wtf/text/WTFString.h>
 #include <wtf/text/StringBuilder.h>
@@ -856,11 +857,11 @@ static size_t computeTotalWidth(std::span<const Char> input, size_t asciiPrefix,
 // The only lookahead: a tiny buffer for ANSI seen between consecutive visible
 // chars, because "is the next visible char a continuation?" decides whether
 // that ANSI is inside a cluster (emit unfiltered) or past-end (filter to
-// close-only). The buffer holds at most a few short spans (typically 0-1).
+// close-only). The input decides how many spans the buffer holds (typically 0-1): std::nullopt means it cannot grow.
 //
 // `end == SIZE_MAX` means unbounded (endD was +Inf) — we emit to EOF.
 template<typename Char>
-static WTF::String emitSliceStreaming(
+static std::optional<WTF::String> emitSliceStreaming(
     std::span<const Char> input, size_t asciiPrefix,
     size_t start, size_t end,
     StringView ellipsis, size_t ellipsisWidth,
@@ -891,8 +892,7 @@ static WTF::String emitSliceStreaming(
 
     // Pending ANSI: sequences seen since the last visible char. Flushed when
     // the NEXT visible char reveals whether they're inside a continuation
-    // (flush all) or past a break (filter close-only). Tiny: at most a few
-    // spans between adjacent visible chars.
+    // (flush all) or past a break (filter close-only). Usually 0-1 spans, but the input decides how many.
     struct Pending {
         const Char* start;
         const Char* end;
@@ -1254,9 +1254,10 @@ static WTF::String emitSliceStreaming(
                         break;
                     }
                 } else {
-                    pending.append(Pending { p, after, type, hlOpen });
-                    if (type == TokenType::Hyperlink)
-                        pendingHl.append(std::make_tuple(hlCode.toString(), hlCP, hlTerm));
+                    if (pending.size() >= Bun::maxVectorSize<Pending>() || !pending.tryAppend(Pending { p, after, type, hlOpen })) [[unlikely]]
+                        return std::nullopt;
+                    if (type == TokenType::Hyperlink && !pendingHl.tryAppend(std::make_tuple(hlCode.toString(), hlCP, hlTerm))) [[unlikely]]
+                        return std::nullopt;
                 }
                 p = after;
                 continue;
@@ -1340,8 +1341,9 @@ walkDone:;
     return result.toString();
 }
 
+// std::nullopt: out of memory. A null String: the caller reuses the input string.
 template<typename Char>
-static WTF::String sliceAnsiImpl(std::span<const Char> input, double startD, double endD, StringView ellipsis, size_t ellipsisWidth, bool ambiguousIsWide)
+static std::optional<WTF::String> sliceAnsiImpl(std::span<const Char> input, double startD, double endD, StringView ellipsis, size_t ellipsisWidth, bool ambiguousIsWide)
 {
     if (input.empty())
         return emptyString();
@@ -1537,19 +1539,23 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionBunSliceAnsi, (JSC::JSGlobalObject * globalOb
             : Bun__visibleWidthExcludeANSI_utf16(reinterpret_cast<const uint16_t*>(ellipsis.span16().data()), ellipsis.length(), ambiguousIsWide);
     }
 
-    WTF::String result;
+    std::optional<WTF::String> result;
     if (view->is8Bit()) {
         result = sliceAnsiImpl<Latin1Character>(view->span8(), startD, endD, ellipsis, ellipsisWidth, ambiguousIsWide);
     } else {
         result = sliceAnsiImpl<UChar>(view->span16(), startD, endD, ellipsis, ellipsisWidth, ambiguousIsWide);
     }
 
+    if (!result) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
     // null → no-op fast path hit: return the input JSString unchanged (zero-copy).
-    if (result.isNull())
+    if (result->isNull())
         return JSC::JSValue::encode(jsString);
-    if (result.isEmpty())
+    if (result->isEmpty())
         return JSC::JSValue::encode(JSC::jsEmptyString(vm));
-    return JSC::JSValue::encode(JSC::jsString(vm, result));
+    return JSC::JSValue::encode(JSC::jsString(vm, WTF::move(*result)));
 }
 
 } // namespace Bun

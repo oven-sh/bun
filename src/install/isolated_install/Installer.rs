@@ -2330,12 +2330,10 @@ impl<'a> Installer<'a> {
         self.append_real_store_node_modules_path(&mut dest, entry_id, Which::Staging);
         let base_len = dest.len();
 
+        let skips_missing = self.links_each_install(entry_id);
         let mut changed = false;
         for dep in self.store.entries.items_dependencies()[entry_id.get() as usize].slice() {
-            // A global store entry is shared: the link resolves once another install downloads the entry.
-            if !uses_global_store
-                && self.missing[dep.entry_id.get() as usize].load(Ordering::Relaxed)
-            {
+            if skips_missing && self.missing[dep.entry_id.get() as usize].load(Ordering::Relaxed) {
                 continue;
             }
             let dep_name = dependencies[dep.dep_id as usize].name.slice(string_buf);
@@ -2379,7 +2377,20 @@ impl<'a> Installer<'a> {
         }
     }
 
-    /// Main thread. Removes the links that the dependents outside the global store made to `entry_id`.
+    /// Whether the entry writes its dependency links on every install. A store entry relinks
+    /// instead: a link that it misses counts as a change, and that would run its scripts again.
+    /// A global store entry is shared: its link resolves once another install downloads the entry.
+    fn links_each_install(&self, entry_id: StoreEntryId) -> bool {
+        let node_id = self.store.entries.items_node_id()[entry_id.get() as usize];
+        let pkg_id = self.store.nodes.items_pkg_id()[node_id.get() as usize];
+        let tag = self.lockfile().packages.items_resolution()[pkg_id as usize].tag;
+        matches!(
+            tag,
+            ResolutionTag::Root | ResolutionTag::Workspace | ResolutionTag::Folder
+        )
+    }
+
+    /// Main thread. Removes the links to `entry_id` from the entries that link each install.
     fn unlink_links_to(&self, entry_id: StoreEntryId) {
         let lockfile = self.lockfile();
         let string_buf = lockfile.buffers.string_bytes.as_slice();
@@ -2388,34 +2399,38 @@ impl<'a> Installer<'a> {
         let pkg_resolutions = lockfile.packages.items_resolution();
         let entries = &self.store.entries;
         let entry_node_ids = entries.items_node_id();
-        let entry_deps = entries.items_dependencies();
         let node_pkg_ids = self.store.nodes.items_pkg_id();
         let node_dep_ids = self.store.nodes.items_dep_id();
 
-        for &parent_id in entries.items_parents()[entry_id.get() as usize].as_slice() {
-            // A global store entry is shared: the link resolves once another install downloads the entry.
-            if parent_id == StoreEntryId::INVALID || self.entry_uses_global_store(parent_id) {
+        // Not `items_parents()`: a public hoist adds the entry to the root's list only.
+        for (parent, deps) in entries.items_dependencies().iter().enumerate() {
+            let parent_id = StoreEntryId::from(parent as u32);
+            if !self.links_each_install(parent_id) {
                 continue;
             }
-            let node_id = entry_node_ids[parent_id.get() as usize];
-            let pkg_id = node_pkg_ids[node_id.get() as usize];
-            let dep_id = node_dep_ids[node_id.get() as usize];
-            let mut dest = AutoPath::init_top_level_dir();
-            self.append_real_store_node_modules_path(&mut dest, parent_id, Which::Final);
-            let base_len = dest.len();
-            let entry_node_modules_name = self.entry_store_node_modules_package_name(
-                dep_id,
-                pkg_id,
-                &pkg_resolutions[pkg_id as usize],
-                pkg_names,
-            );
-            for dep in entry_deps[parent_id.get() as usize].slice() {
+            let mut dest: Option<(AutoPath, usize, Option<&[u8]>)> = None;
+            for dep in deps.slice() {
                 if dep.entry_id != entry_id {
                     continue;
                 }
+                let (dest, base_len, entry_node_modules_name) = dest.get_or_insert_with(|| {
+                    let node_id = entry_node_ids[parent];
+                    let pkg_id = node_pkg_ids[node_id.get() as usize];
+                    let dep_id = node_dep_ids[node_id.get() as usize];
+                    let mut dest = AutoPath::init_top_level_dir();
+                    self.append_real_store_node_modules_path(&mut dest, parent_id, Which::Final);
+                    let base_len = dest.len();
+                    let name = self.entry_store_node_modules_package_name(
+                        dep_id,
+                        pkg_id,
+                        &pkg_resolutions[pkg_id as usize],
+                        pkg_names,
+                    );
+                    (dest, base_len, name)
+                });
                 let dep_name = dependencies[dep.dep_id as usize].name.slice(string_buf);
-                dest.set_length(base_len);
-                append_dependency_link_name(&mut dest, dep_name, entry_node_modules_name);
+                dest.set_length(*base_len);
+                append_dependency_link_name(dest, dep_name, *entry_node_modules_name);
                 symlinker::remove_link(dest.slice_z());
             }
         }

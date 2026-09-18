@@ -550,8 +550,8 @@ public:
     // Created by db.query(); close(false) finalizes these but leaves db.prepare() statements usable.
     bool ownedByDatabase : 1 = false;
     bool finalizedByClose : 1 = false;
-    // run() reported changes once, so this is an INSERT, UPDATE or DELETE: those always set sqlite3_changes64().
-    bool reportedChanges : 1 = false;
+    // An INSERT, UPDATE or DELETE: every run sets sqlite3_changes64(), so run() reads no other counter.
+    bool countsChanges : 1 = false;
 
 protected:
     JSSQLStatement(JSC::Structure* structure, JSDOMGlobalObject& globalObject, sqlite3_stmt* stmt, VersionSqlite3* version_db, int64_t memorySizeChange = 0)
@@ -2645,8 +2645,8 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRun, (JSC::JSGlob
 
     auto* db = sqlite3_db_handle(stmt);
     const bool canChangeRows = !sqlite3_stmt_readonly(stmt);
-    // Each counter read locks the connection mutex, so a statement that reported changes before skips the total.
-    const bool checkTotal = canChangeRows && !castedThis->reportedChanges;
+    // Each counter read locks the connection mutex, so only a statement of unknown kind reads the total.
+    const bool checkTotal = canChangeRows && !castedThis->countsChanges;
     const sqlite3_int64 total_changes_before = checkTotal ? sqlite3_total_changes64(db) : 0;
 
     int status = sqlite3_step(stmt);
@@ -2675,11 +2675,12 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRun, (JSC::JSGlob
     if (auto* diff = dynamicDowncast<JSC::InternalFieldTuple>(diffValue)) {
         int64_t last_insert_rowid = sqlite3_last_insert_rowid(db);
         sqlite3_int64 changes = 0;
-        if (castedThis->reportedChanges) {
+        if (castedThis->countsChanges) {
             changes = sqlite3_changes64(db);
         } else if (checkTotal) {
             changes = directChangesSince(db, total_changes_before);
-            castedThis->reportedChanges = changes != 0;
+            // SQLite rejects bound parameters in DDL and PRAGMA, so a statement that has them and changed rows is DML.
+            castedThis->countsChanges = changes != 0 && sqlite3_bind_parameter_count(stmt) > 0;
         }
         diff->putInternalField(vm, 0, JSC::jsNumber(changes));
         if (castedThis->useBigInt64) {

@@ -2289,7 +2289,27 @@ describe("changes counts only the rows that the statement changes itself", () =>
     expect(db.query("SELECT x FROM log ORDER BY rowid").values()).toEqual([[1], [2], [3]]);
   });
 
-  // A Statement that reported changes once reads only sqlite3_changes64() on later runs.
+  // With foreign keys on, DROP TABLE runs a DELETE that SQLite counts. The second DROP is a no-op and sets no counter.
+  it.each(["prepare", "query"])("a reused DROP TABLE Statement from %s() reports 0 when it is a no-op", method => {
+    using db = new Database(":memory:");
+    db.exec(`
+      PRAGMA foreign_keys = ON;
+      CREATE TABLE parent (id INTEGER PRIMARY KEY);
+      CREATE TABLE child (id INTEGER PRIMARY KEY, parent_id REFERENCES parent (id) ON DELETE CASCADE);
+      CREATE TABLE t (a);
+      INSERT INTO parent VALUES (1), (2), (3);
+      INSERT INTO child VALUES (10, 1);
+    `);
+    using drop = db[method]("DROP TABLE IF EXISTS parent");
+
+    expect([
+      drop.run().changes,
+      db.run("INSERT INTO t VALUES (1), (2), (3), (4), (5)").changes,
+      drop.run().changes,
+    ]).toEqual([3, 5, 0]);
+  });
+
+  // A Statement with bound parameters that changed rows once reads only sqlite3_changes64() on later runs.
   it.each(["prepare", "query"])("a reused Statement from %s() reports its own rows on every run", method => {
     using db = new Database(":memory:");
     db.exec(`

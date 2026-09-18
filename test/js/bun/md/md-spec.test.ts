@@ -240,6 +240,8 @@ const specFiles = [
   { name: "GFM Strikethrough", file: "spec-strikethrough.txt" },
   { name: "GFM Tasklists", file: "spec-tasklists.txt" },
   { name: "Permissive Autolinks", file: "spec-permissive-autolinks.txt" },
+  { name: "LaTeX Math", file: "spec-latex-math.txt" },
+  { name: "Underline", file: "spec-underline.txt" },
   { name: "GFM", file: "spec-gfm.txt" },
   { name: "Coverage", file: "coverage.txt" },
   { name: "Regressions", file: "regressions.txt" },

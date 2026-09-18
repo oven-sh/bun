@@ -73,7 +73,7 @@ impl Transition {
             }
 
             if property.is_none() {
-                if let Ok(value) = parser.try_parse(PropertyId::parse) {
+                if let Ok(value) = parser.try_parse(PropertyId::parse_custom_ident) {
                     property = Some(value);
                     continue;
                 }

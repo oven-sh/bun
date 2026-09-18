@@ -291,9 +291,35 @@ mod generic_registrations {
         animation::AnimationName,
         // ui
         ui::ColorScheme,
-        // PropertyId (used as `SmallList<PropertyId, 1>` for `transition-property`)
-        properties_generated::PropertyId,
     );
+
+    // `PropertyId` as a declaration *value* (`SmallList<PropertyId, 1>` for
+    // `transition-property`) is a `<custom-ident>`, so the generic parse goes
+    // through `parse_custom_ident`, not the name parser `PropertyId::parse`.
+    impl crate::generics::Parse for properties_generated::PropertyId {
+        #[inline]
+        fn parse(input: &mut crate::css_parser::Parser) -> crate::css_parser::CssResult<Self> {
+            properties_generated::PropertyId::parse_custom_ident(input)
+        }
+    }
+    impl crate::generics::ParseWithOptions for properties_generated::PropertyId {
+        #[inline]
+        fn parse_with_options(
+            input: &mut crate::css_parser::Parser,
+            _o: &crate::css_parser::ParserOptions,
+        ) -> crate::css_parser::CssResult<Self> {
+            properties_generated::PropertyId::parse_custom_ident(input)
+        }
+    }
+    impl crate::generics::ToCss for properties_generated::PropertyId {
+        #[inline]
+        fn to_css(
+            &self,
+            dest: &mut crate::printer::Printer,
+        ) -> ::core::result::Result<(), crate::PrintErr> {
+            properties_generated::PropertyId::to_css(self, dest)
+        }
+    }
 
     // `GenericBorder<S, P>` covers Border / BorderTop / … / Outline. The
     // inherent impl block bounds `S` on the protocol traits; mirror here.

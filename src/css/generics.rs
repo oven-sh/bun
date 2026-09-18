@@ -711,12 +711,14 @@ mod inherent_bridge {
 
     // ── properties/font ──
     use crate::properties::font::{
-        FontFamily, FontSize, FontStretch, FontStyle, FontVariantCaps, FontWeight, LineHeight,
+        FontFamily, FontSize, FontStretch, FontStretchKeyword, FontStyle, FontVariantCaps,
+        FontWeight, LineHeight,
     };
     bridge_clone_partialeq!(
         FontWeight,
         FontSize,
         FontStretch,
+        FontStretchKeyword,
         FontStyle,
         FontVariantCaps,
         LineHeight,

@@ -2,10 +2,12 @@
 //! Only really exists because of `NewServer()` and `NewRequestContext()` generics.
 
 use core::ffi::{c_uint, c_void};
+use core::ptr::NonNull;
 
 use bun_uws as uws;
 
 use crate::webcore::CookieMap;
+use crate::webcore::request_head::RequestHeadSnapshot;
 
 pub use super::request_context::AdditionalOnAbortCallback;
 use super::request_context::RequestContext;
@@ -40,6 +42,8 @@ pub enum CtxTag {
     HttpsMux,
     DebugHttpMux,
     DebugHttpsMux,
+    /// The context finished; `ptr` is the [`RequestHeadSnapshot`] the lazy getters read instead.
+    Head,
 }
 
 #[derive(Copy, Clone)]
@@ -53,6 +57,34 @@ impl AnyRequestContext {
         tag: CtxTag::None,
         ptr: core::ptr::null_mut(),
     };
+
+    /// The `Request` that stores this owns the snapshot and frees it with [`Self::take_head`].
+    pub(crate) fn head(snapshot: RequestHeadSnapshot) -> Self {
+        Self {
+            tag: CtxTag::Head,
+            ptr: snapshot.into_raw().as_ptr().cast::<()>(),
+        }
+    }
+
+    pub(crate) fn get_head(&self) -> Option<&RequestHeadSnapshot> {
+        if self.tag != CtxTag::Head {
+            return None;
+        }
+        // SAFETY: `RequestHeadSnapshot` is `repr(transparent)` over the non-null
+        // pointer `head()` stored in `ptr`.
+        Some(unsafe { &*core::ptr::from_ref(&self.ptr).cast::<RequestHeadSnapshot>() })
+    }
+
+    pub(crate) fn take_head(&mut self) -> Option<RequestHeadSnapshot> {
+        if self.tag != CtxTag::Head {
+            return None;
+        }
+        let ptr = NonNull::new(self.ptr.cast::<u8>())?;
+        *self = Self::NULL;
+        // SAFETY: `ptr` came from `into_raw` in `head()`, and the slot is cleared
+        // above so it is taken back exactly once.
+        Some(unsafe { RequestHeadSnapshot::from_raw(ptr) })
+    }
 }
 
 /// Internal: maps each `RequestContext` monomorphization to its tag so
@@ -114,7 +146,7 @@ macro_rules! dispatch {
             }};
         }
         match this.tag {
-            CtxTag::None => $default,
+            CtxTag::None | CtxTag::Head => $default,
             CtxTag::Http => arm!(HttpCtx),
             CtxTag::Https => arm!(HttpsCtx),
             CtxTag::DebugHttp => arm!(DebugHttpCtx),
@@ -138,7 +170,7 @@ macro_rules! dispatch {
             }};
         }
         match this.tag {
-            CtxTag::None => $default,
+            CtxTag::None | CtxTag::Head => $default,
             CtxTag::Http => arm!(HttpCtx),
             CtxTag::Https => arm!(HttpsCtx),
             CtxTag::DebugHttp => arm!(DebugHttpCtx),
@@ -162,6 +194,9 @@ impl AnyRequestContext {
     }
 
     pub(crate) fn memory_cost(self) -> usize {
+        if let Some(head) = self.get_head() {
+            return head.memory_cost();
+        }
         dispatch!(self, 0, |_T, ctx| ctx.memory_cost())
     }
 

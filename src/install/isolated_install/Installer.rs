@@ -14,6 +14,7 @@ use bun_sys::{FdDirExt as _, FdExt as _};
 
 use crate::bin_real;
 use crate::lockfile::package;
+use crate::lockfile::tree::RequiredPackages;
 use crate::lockfile_real::PackageIDSlice;
 use crate::package_install::{Method as InstallMethod, Summary as InstallSummary};
 use crate::package_manager_real::Command;
@@ -87,6 +88,9 @@ pub struct Installer<'a> {
     pub(crate) command_ctx: Command::Context<'a>,
 
     pub(crate) store: &'a Store,
+
+    /// Main-thread only.
+    pub(crate) required_packages: RequiredPackages<'a>,
 
     pub(crate) task_queue: UnboundedQueue<Task>, // intrusive via .next
     pub(crate) tasks: Box<[Task]>,

@@ -1929,7 +1929,6 @@ impl<'a> PackageInstaller<'a> {
 
                     let dep =
                         &self.lockfile().buffers.dependencies.as_slice()[dependency_id as usize];
-                    let dep_behavior = dep.behavior;
                     let truncated_dep_name_hash: TruncatedPackageNameHash =
                         dep.name_hash as TruncatedPackageNameHash;
                     let (is_trusted, is_trusted_through_update_request) = 'brk: {
@@ -1990,12 +1989,17 @@ impl<'a> PackageInstaller<'a> {
                                 break 'enqueue_lifecycle_scripts;
                             }
 
+                            let optional = !self.required_packages.contains(
+                                self.manager(),
+                                dependency_id,
+                                package_id,
+                            );
                             if self.enqueue_lifecycle_scripts(
                                 alias.slice(string_buf!()),
                                 log_level,
                                 &mut folder_path,
                                 package_id,
-                                dep_behavior.contains(crate::dependency::Behavior::OPTIONAL),
+                                optional,
                                 resolution,
                             ) {
                                 if is_trusted_through_update_request {
@@ -2230,7 +2234,6 @@ impl<'a> PackageInstaller<'a> {
             }
 
             let dep = &self.lockfile().buffers.dependencies.as_slice()[dependency_id as usize];
-            let dep_behavior = dep.behavior;
             let truncated_dep_name_hash: TruncatedPackageNameHash =
                 dep.name_hash as TruncatedPackageNameHash;
             let (is_trusted, is_trusted_through_update_request, add_to_lockfile) = 'brk: {
@@ -2299,12 +2302,16 @@ impl<'a> PackageInstaller<'a> {
                         break 'enqueue_lifecycle_scripts;
                     }
 
+                    let optional =
+                        !self
+                            .required_packages
+                            .contains(self.manager(), dependency_id, package_id);
                     if self.enqueue_lifecycle_scripts(
                         alias.slice(string_buf!()),
                         log_level,
                         &mut folder_path,
                         package_id,
-                        dep_behavior.contains(crate::dependency::Behavior::OPTIONAL),
+                        optional,
                         resolution,
                     ) {
                         let (trusted_name, trusted_name_hash) =

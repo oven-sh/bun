@@ -7,7 +7,7 @@ use bun_paths::resolve_path::{join_abs_string_buf, platform};
 use bun_sys::{Fd, File};
 
 use crate::bun_fs::FileSystem;
-use crate::dependency::{Behavior, DependencyExt as _};
+use crate::dependency::DependencyExt as _;
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::{Lockfile, Package};
 use crate::resolution::Tag as ResolutionTag;
@@ -59,18 +59,7 @@ fn root_target() -> WorkspaceTarget {
     }
 }
 
-/// Position of a row's group in the order `PackageJSONEditor::edit` searches a package.json in.
-fn group_rank(behavior: Behavior) -> u8 {
-    if behavior.is_prod() {
-        0
-    } else if behavior.is_dev() {
-        1
-    } else {
-        2
-    }
-}
-
-/// Phase 0 (before the lockfile is cleaned): a positional without a name (`bun add ./folder`, a tarball, a git URL) is a row keyed by its literal until it resolves. If the same package.json already declares the resolved name, that row takes the positional's version and resolution, as for `bun add <name>@<literal>`, and the literal-keyed row is dropped; `PackageJSONEditor::edit` does the same to the file. Otherwise both rows reach the tree and bun.lock under one name. A peer entry and the entry of another group may share a name, so a row is only folded into one of its own kind.
+/// Phase 0 (before the lockfile is cleaned): a positional without a name (`bun add ./folder`, a tarball, a git URL) is a row keyed by its literal until it resolves. Every row of the same package.json that already declares the resolved name takes the positional's version and resolution, as for `bun add <name>@<literal>`, and the literal-keyed row is dropped; `PackageJSONEditor::edit` does the same to the file. Otherwise both rows reach the tree and bun.lock under one name. A peer entry and the entry of another group may share a name, so a row is only folded into rows of its own kind.
 pub(crate) fn fold_resolved_positionals(manager: &mut PackageManager) {
     let named = core::mem::take(&mut manager.named_by_resolution);
     if named.is_empty()
@@ -80,66 +69,76 @@ pub(crate) fn fold_resolved_positionals(manager: &mut PackageManager) {
         return;
     }
     let pending = manager.pending_filtered_write.as_deref();
+    let workspace_name_hash = manager.workspace_name_hash;
     let requests = &manager.update_requests;
     let lockfile: &mut Lockfile = &mut manager.lockfile;
     let mut dropped: Vec<(PackageID, DependencyID)> = Vec::new();
 
     for &(request, positional) in &named {
         let workspace_id = lockfile.get_workspace_pkg_if_workspace_dep(positional);
-        if !lockfile
-            .workspaces_of_update_request(
-                pending,
-                manager.workspace_name_hash,
-                &requests[request as usize],
-            )
-            .contains(&workspace_id)
-        {
+        let receives = |request: &UpdateRequest| {
+            lockfile
+                .workspaces_of_update_request(pending, workspace_name_hash, request)
+                .contains(&workspace_id)
+        };
+        if !receives(&requests[request as usize]) {
             continue;
         }
         let list = lockfile.packages.items_dependencies()[workspace_id as usize];
         let rows = list.get(lockfile.buffers.dependencies.as_slice());
         let buf = lockfile.buffers.string_bytes.as_slice();
         let row = &rows[(positional - list.off) as usize];
-
-        if let Some(&(other, _)) = named.iter().find(|&&(_, other)| {
-            other != positional
-                && list.contains(other)
-                && rows[(other - list.off) as usize].name_hash == row.name_hash
-        }) {
-            let literal = |request: u32| {
-                let request = &requests[request as usize];
-                BStr::new(request.version.literal.slice(request.version_buf()))
-            };
-            Output::flush();
-            Output::err_generic(
-                "\"{}\" and \"{}\" both resolve to \"{}\"; add one of them",
-                (
-                    literal(request.min(other)),
-                    literal(request.max(other)),
-                    BStr::new(row.name.slice(buf)),
-                ),
-            );
-            Global::crash();
+        // A package.json without a name resolves to "", which two unrelated packages share.
+        if row.name.is_empty() {
+            continue;
         }
 
-        let Some(declared) = (0..rows.len())
+        let declared: Vec<usize> = (list.off as usize..(list.off + list.len) as usize)
             .filter(|&i| {
-                let declared = &rows[i];
-                list.off + i as DependencyID != positional
+                let declared = &rows[i - list.off as usize];
+                i != positional as usize
                     && declared.name_hash == row.name_hash
                     && declared.behavior.is_peer() == row.behavior.is_peer()
                     && !declared.behavior.is_optional_peer()
                     && !declared.behavior.is_workspace()
             })
-            .min_by_key(|&i| group_rank(rows[i].behavior))
-        else {
-            continue;
-        };
+            .collect();
 
-        let declared = list.off as usize + declared;
-        let version = row.version.clone();
-        lockfile.buffers.dependencies[declared].version = version;
-        lockfile.buffers.resolutions[declared] = lockfile.buffers.resolutions[positional as usize];
+        // The same command also asked for this package another way (`./a-v1 ./a-v2`, `./a-v1 pkga@./a-v2`, `./a-v1 pkga`).
+        if let Some(other) = declared.iter().find_map(|&i| {
+            requests.iter().enumerate().position(|(other, candidate)| {
+                other != request as usize
+                    && candidate.matches(&rows[i - list.off as usize], buf)
+                    && receives(candidate)
+            })
+        }) {
+            let (first, second) = (
+                &requests[other.min(request as usize)],
+                &requests[other.max(request as usize)],
+            );
+            Output::flush();
+            Output::err_generic(
+                "\"{}\" and \"{}\" both resolve to \"{}\"; add one of them",
+                (
+                    BStr::new(first.version_buf()),
+                    BStr::new(second.version_buf()),
+                    BStr::new(row.name.slice(buf)),
+                ),
+            );
+            Global::crash();
+        }
+        if declared.is_empty() {
+            continue;
+        }
+
+        for declared in declared {
+            let version = lockfile.buffers.dependencies[positional as usize]
+                .version
+                .clone();
+            lockfile.buffers.dependencies[declared].version = version;
+            lockfile.buffers.resolutions[declared] =
+                lockfile.buffers.resolutions[positional as usize];
+        }
         dropped.push((workspace_id, positional));
     }
 

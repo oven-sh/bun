@@ -930,31 +930,34 @@ fn resolve_catalog_literals(
     }
 }
 
-/// A request without a name (`bun add ./folder`, a tarball, a git URL) is written as `"<literal>": "<literal>"` before the install. Once it resolves it has a name; this is the value `package_json` already declares under that name, which `bun add <name>@<literal>` would have overwritten. A peer entry and the entry of another group may share a name, so only lists of `dependency_list`'s kind are searched.
-fn declared_slot_of_resolved_name(
+/// A request without a name (`bun add ./folder`, a tarball, a git URL) is written as `"<literal>": "<literal>"` before the install. Once it resolves it has a name; these are the values `package_json` already declares under that name, which take the literal as they do for `bun add <name>@<literal>`. A peer entry and the entry of another group may share a name, so only lists of `dependency_list`'s kind are searched.
+fn declared_slots_of_resolved_name(
     package_json: &Expr,
     request: &UpdateRequest,
     lockfile: &Lockfile,
     dependency_list: &[u8],
-) -> Option<*mut E::EString> {
+) -> Vec<*mut E::EString> {
     if request.is_aliased {
-        return None;
+        return Vec::new();
     }
-    let name = request.get_name_in_lockfile(lockfile)?;
-    if name == request.get_name() {
-        return None;
+    let Some(name) = request.get_name_in_lockfile(lockfile) else {
+        return Vec::new();
+    };
+    if name.is_empty() || name == request.get_name() {
+        return Vec::new();
     }
     let is_peer = |list: &[u8]| list == DependencyGroup::PEER.prop;
     DependencyGroup::FOUR
         .iter()
         .filter(|group| is_peer(group.prop) == is_peer(dependency_list))
-        .find_map(|group| {
+        .filter_map(|group| {
             let declared = package_json
                 .as_property(group.prop)?
                 .expr
                 .as_property(name)?;
             declared.expr.data.e_string().map(|value| value.as_ptr())
         })
+        .collect()
 }
 
 /// Removes `key` from the dependency list `list`, and the list once nothing is left in it. Returns whether `key` was there.
@@ -1025,10 +1028,12 @@ pub(crate) fn edit(
     let mut remaining = updates.len();
     let mut replacing: usize = 0;
     let only_add_missing = manager.options.enable.only_missing();
-    // The same conditions as `package_json_write_back::fold_resolved_positionals`, which folds the lockfile rows this way.
+    // `package_json_write_back::fold_resolved_positionals` does this to the lockfile rows.
     let fold_positionals = !options.before_install
         && manager.subcommand == Subcommand::Add
         && manager.options.add_catalog.is_none();
+    // The slots after the first that take a folded request's literal, by the request's name hash.
+    let mut also_declared: Vec<(PackageNameHash, *mut E::EString)> = Vec::new();
 
     // There are three possible scenarios here
     // 1. There is no "dependencies" (or equivalent list) or it is empty
@@ -1041,14 +1046,17 @@ pub(crate) fn edit(
             'loop_: while i < updates.len() {
                 let request = &mut updates[i];
                 if fold_positionals {
-                    if let Some(slot) = declared_slot_of_resolved_name(
+                    let declared = declared_slots_of_resolved_name(
                         current_package_json,
                         request,
                         &manager.lockfile,
                         dependency_list,
-                    ) {
+                    );
+                    if let Some((&slot, rest)) = declared.split_first() {
                         if remove_entry(current_package_json, dependency_list, request.get_name()) {
                             request.e_string = Some(slot);
+                            also_declared
+                                .extend(rest.iter().map(|&slot| (request.name_hash, slot)));
                             remaining -= 1;
                             changed = true;
                             i += 1;
@@ -1287,7 +1295,7 @@ pub(crate) fn edit(
                 break;
             }
 
-            // The slot above was just re-keyed from the request's literal to its resolved name. An entry `declared_slot_of_resolved_name` could not hand over, because its value is not a string, still has that key and would duplicate it.
+            // The slot above was just re-keyed from the request's literal to its resolved name. An entry `declared_slots_of_resolved_name` could not hand over, because its value is not a string, still has that key and would duplicate it.
             if !request.is_aliased && k < new_dependencies.len() {
                 let resolved_name = request.get_resolved_name(&manager.lockfile);
                 let mut j = new_dependencies.len();
@@ -1551,6 +1559,13 @@ pub(crate) fn edit(
             if e_string.data.slice() != new_literal {
                 changed = true;
                 e_string.data = bun_ast::StoreStr::new(new_literal);
+            }
+            for &(_, slot) in also_declared
+                .iter()
+                .filter(|&&(request_hash, _)| request_hash == request.name_hash)
+            {
+                // SAFETY: provenance (b) above, a slot of the parsed `current_package_json` tree that is not `e_string`.
+                unsafe { (*slot).data = bun_ast::StoreStr::new(new_literal) };
             }
         }
     }

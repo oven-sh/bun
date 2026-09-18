@@ -1,5 +1,6 @@
 import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
+import { lstatSync } from "fs";
 import { access, writeFile } from "fs/promises";
 import { bunExe, bunEnv as env, readdirSorted, tmpdirSync, toBeValidBin, toBeWorkspaceLink, toHaveBins } from "harness";
 import { join } from "path";
@@ -14,6 +15,16 @@ import {
   root_url,
   setHandler,
 } from "./dummy.registry";
+
+/** Whether `path` exists, as a directory, a file, or a link (even a dangling one). */
+function entryExists(path: string): boolean {
+  try {
+    lstatSync(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 beforeAll(dummyBeforeAll);
 afterAll(dummyAfterAll);
@@ -433,9 +444,148 @@ describe.each(["hoisted", "isolated"])("linker=%s", linker => {
       name: "baz",
       version: "0.0.3",
     });
-    if (linker === "hoisted") {
-      expect(out).not.toContain("Failed to install");
-      expect(exitCode).toBe(0);
+    expect(out).not.toContain("Failed to install");
+    expect(exitCode).toBe(0);
+  });
+
+  // From a lockfile the install phase asks for the tarball first, so the
+  // failure reaches the linker instead of the resolver.
+  it("warns and exits 0 when an optional dependency's tarball fails to download from a lockfile", async () => {
+    const urls: string[] = [];
+    setHandler(async request => {
+      const { pathname } = new URL(request.url);
+      urls.push(pathname);
+      if (pathname === "/BaR") {
+        return Response.json({
+          name: "BaR",
+          "dist-tags": { latest: "0.0.2" },
+          versions: {
+            "0.0.2": { name: "BaR", version: "0.0.2", dist: { tarball: `${root_url}/BaR-0.0.2.tgz` } },
+          },
+        });
+      }
+      if (pathname === "/BaR-0.0.2.tgz") return new Response("no", { status: 404 });
+      return new Response("unexpected", { status: 404 });
+    });
+    await writeFile(
+      join(package_dir, "bunfig.toml"),
+      Bun.TOML.stringify({
+        install: {
+          cache: false,
+          registry: `${root_url}/`,
+          linker,
+        },
+      }),
+    );
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        version: "0.0.1",
+        optionalDependencies: { BaR: "0.0.2" },
+      }),
+    );
+    async function install(...args: string[]) {
+      await using proc = spawn({
+        cmd: [bunExe(), ...args, "--no-progress", "--ignore-scripts"],
+        cwd: package_dir,
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const [err, out, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      return {
+        warnLines: err.split("\n").filter(l => l.startsWith("warn:")),
+        errorLines: err.split("\n").filter(l => l.startsWith("error:")),
+        failed: out.includes("Failed to install"),
+        // The package is left out. No dangling link to it either.
+        linked: entryExists(join(package_dir, "node_modules", "BaR")),
+        exitCode,
+      };
     }
+    const warned = {
+      warnLines: [`warn: GET ${root_url}/BaR-0.0.2.tgz - 404`],
+      errorLines: [],
+      failed: false,
+      linked: false,
+    };
+
+    // The first install resolves BaR and saves the lockfile. Its tarball fails while resolving.
+    expect(await install("install")).toEqual({ ...warned, exitCode: 0 });
+    await access(join(package_dir, "bun.lock"));
+
+    urls.length = 0;
+    expect(await install("install")).toEqual({ ...warned, exitCode: 0 });
+    expect(urls).toEqual(["/BaR-0.0.2.tgz"]);
+
+    // A package that the user asked for fails the command, optional or not.
+    expect(await install("add", "--optional", "BaR@0.0.2")).toEqual({ ...warned, exitCode: 1 });
+  });
+
+  // The dependent is a store entry in the isolated linker. It keeps its links across installs, so
+  // a repeat install reports no changes.
+  it("a dependency whose optional dependency's tarball fails installs once", async () => {
+    const tarball = await new Bun.Archive(
+      {
+        "package/package.json": JSON.stringify({
+          name: "pkg",
+          version: "1.0.0",
+          optionalDependencies: { BaR: "0.0.2" },
+        }),
+      },
+      { compress: "gzip" },
+    ).bytes();
+    setHandler(async request => {
+      const { pathname } = new URL(request.url);
+      const manifest = (name: string, version: string, extra: object) =>
+        Response.json({
+          name,
+          "dist-tags": { latest: version },
+          versions: { [version]: { name, version, ...extra, dist: { tarball: `${root_url}/${name}-${version}.tgz` } } },
+        });
+      if (pathname === "/BaR") return manifest("BaR", "0.0.2", {});
+      if (pathname === "/pkg") return manifest("pkg", "1.0.0", { optionalDependencies: { BaR: "0.0.2" } });
+      if (pathname === "/pkg-1.0.0.tgz") return new Response(tarball);
+      return new Response("no", { status: 404 });
+    });
+    await writeFile(
+      join(package_dir, "bunfig.toml"),
+      Bun.TOML.stringify({ install: { cache: false, registry: `${root_url}/`, linker } }),
+    );
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { pkg: "1.0.0" } }),
+    );
+    async function install() {
+      await using proc = spawn({
+        cmd: [bunExe(), "install", "--no-progress", "--ignore-scripts"],
+        cwd: package_dir,
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const [err, out, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      return {
+        warnLines: err.split("\n").filter(l => l.startsWith("warn:")),
+        errorLines: err.split("\n").filter(l => l.startsWith("error:")),
+        summary: out.includes("no changes") ? "no changes" : out.includes("installed") ? "installed" : out,
+        linked: entryExists(join(package_dir, "node_modules", "BaR")),
+        exitCode,
+      };
+    }
+    const warned = {
+      warnLines: [`warn: GET ${root_url}/BaR-0.0.2.tgz - 404`],
+      errorLines: [],
+      linked: false,
+      exitCode: 0,
+    };
+    expect(await install()).toEqual({ ...warned, summary: "installed" });
+    expect(await install()).toEqual({ ...warned, summary: "no changes" });
+    expect(await file(join(package_dir, "node_modules", "pkg", "package.json")).json()).toMatchObject({
+      name: "pkg",
+      version: "1.0.0",
+    });
   });
 });

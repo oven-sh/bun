@@ -80,6 +80,7 @@ pub trait RunTasksCallbacks {
     // `package_id: PackageID` otherwise. Static dispatch via two trait
     // methods lets impls receive the correctly-typed id without a
     // `Task::Id` round-trip pun.
+    // `is_required == false`: only optional dependencies need the download.
     fn on_package_download_error_store(
         _ctx: &mut Self::Ctx,
         _task_id: Task::Id,
@@ -87,6 +88,7 @@ pub trait RunTasksCallbacks {
         _resolution: &bun_install::Resolution,
         _err: crate::Error,
         _url: &[u8],
+        _is_required: bool,
     ) {
         unreachable!()
     }
@@ -97,6 +99,7 @@ pub trait RunTasksCallbacks {
         _resolution: &bun_install::Resolution,
         _err: crate::Error,
         _url: &[u8],
+        _is_required: bool,
     ) {
         unreachable!()
     }
@@ -133,9 +136,9 @@ struct ErasedCallbacks {
     is_store_installer: bool,
     on_package_manifest_error: fn(*mut (), &[u8], crate::Error, &[u8]),
     on_package_download_error_store:
-        fn(*mut (), Task::Id, &[u8], &bun_install::Resolution, crate::Error, &[u8]),
+        fn(*mut (), Task::Id, &[u8], &bun_install::Resolution, crate::Error, &[u8], bool),
     on_package_download_error_pkg:
-        fn(*mut (), PackageID, &[u8], &bun_install::Resolution, crate::Error, &[u8]),
+        fn(*mut (), PackageID, &[u8], &bun_install::Resolution, crate::Error, &[u8], bool),
     on_extract_package_installer:
         fn(*mut (), Task::Id, DependencyID, &mut bun_install::ExtractData, Options::LogLevel),
     on_extract_store_installer: fn(*mut (), Task::Id),
@@ -163,19 +166,30 @@ impl ErasedCallbacks {
             on_package_manifest_error: |c, name, err, url| {
                 C::on_package_manifest_error(ctx::<C>(c), name, err, url)
             },
-            on_package_download_error_store: |c, task_id, name, resolution, err, url| {
-                C::on_package_download_error_store(ctx::<C>(c), task_id, name, resolution, err, url)
-            },
-            on_package_download_error_pkg: |c, package_id, name, resolution, err, url| {
-                C::on_package_download_error_pkg(
-                    ctx::<C>(c),
-                    package_id,
-                    name,
-                    resolution,
-                    err,
-                    url,
-                )
-            },
+            on_package_download_error_store:
+                |c, task_id, name, resolution, err, url, is_required| {
+                    C::on_package_download_error_store(
+                        ctx::<C>(c),
+                        task_id,
+                        name,
+                        resolution,
+                        err,
+                        url,
+                        is_required,
+                    )
+                },
+            on_package_download_error_pkg:
+                |c, package_id, name, resolution, err, url, is_required| {
+                    C::on_package_download_error_pkg(
+                        ctx::<C>(c),
+                        package_id,
+                        name,
+                        resolution,
+                        err,
+                        url,
+                        is_required,
+                    )
+                },
             on_extract_package_installer: |c, task_id, dependency_id, data, log_level| {
                 C::on_extract_package_installer(
                     ctx::<C>(c),
@@ -785,6 +799,27 @@ fn run_tasks_erased(
                     let is_required = manager.is_network_task_required(task.task_id);
                     manager.mark_network_task_failed(task.task_id);
 
+                    if !is_required {
+                        bun_ast::add_warning_pretty!(
+                            manager.log_mut(),
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            "{} downloading tarball <b>{}@{}<r>",
+                            DownloadFailure(err.name(), &task.response),
+                            bstr::BStr::new(extract.name.slice()),
+                            extract
+                                .resolution
+                                .fmt(&manager.lockfile.buffers.string_bytes, PathSep::Auto,),
+                        );
+                    }
+
+                    fail_update_requests(
+                        manager,
+                        task.task_id,
+                        extract.name.slice(),
+                        Some(extract.dependency_id),
+                    );
+
                     if cb.has_on_package_download_error {
                         if cb.is_store_installer {
                             (cb.on_package_download_error_store)(
@@ -794,6 +829,7 @@ fn run_tasks_erased(
                                 &extract.resolution,
                                 err,
                                 &task.url_buf,
+                                is_required,
                             );
                         } else {
                             let package_id = manager.lockfile.buffers.resolutions
@@ -805,6 +841,7 @@ fn run_tasks_erased(
                                 &extract.resolution,
                                 err,
                                 &task.url_buf,
+                                is_required,
                             );
                         }
                         continue;
@@ -822,25 +859,7 @@ fn run_tasks_erased(
                                 .resolution
                                 .fmt(&manager.lockfile.buffers.string_bytes, PathSep::Auto,),
                         );
-                    } else {
-                        bun_ast::add_warning_pretty!(
-                            manager.log_mut(),
-                            None,
-                            bun_ast::Loc::EMPTY,
-                            "{} downloading tarball <b>{}@{}<r>",
-                            DownloadFailure(err.name(), &task.response),
-                            bstr::BStr::new(extract.name.slice()),
-                            extract
-                                .resolution
-                                .fmt(&manager.lockfile.buffers.string_bytes, PathSep::Auto,),
-                        );
                     }
-                    fail_update_requests(
-                        manager,
-                        task.task_id,
-                        extract.name.slice(),
-                        Some(extract.dependency_id),
-                    );
 
                     if let Some(removed) = manager.task_queue.remove(&task.task_id) {
                         drop(removed);
@@ -859,6 +878,24 @@ fn run_tasks_erased(
                     // `continue`s from the callback) is covered too.
                     let is_required = manager.is_network_task_required(task.task_id);
                     manager.mark_network_task_failed(task.task_id);
+
+                    if !is_required {
+                        bun_ast::add_warning_pretty!(
+                            manager.log_mut(),
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            "<r><yellow><b>GET<r><yellow> {}<d> - {}<r>",
+                            bstr::BStr::new(metadata.url.slice()),
+                            response.status_code,
+                        );
+                    }
+
+                    fail_update_requests(
+                        manager,
+                        task.task_id,
+                        extract.name.slice(),
+                        Some(extract.dependency_id),
+                    );
 
                     if cb.has_on_package_download_error {
                         let err = match response.status_code {
@@ -879,6 +916,7 @@ fn run_tasks_erased(
                                 &extract.resolution,
                                 err,
                                 &task.url_buf,
+                                is_required,
                             );
                         } else {
                             let package_id = manager.lockfile.buffers.resolutions
@@ -890,6 +928,7 @@ fn run_tasks_erased(
                                 &extract.resolution,
                                 err,
                                 &task.url_buf,
+                                is_required,
                             );
                         }
                         continue;
@@ -904,22 +943,7 @@ fn run_tasks_erased(
                             bstr::BStr::new(metadata.url.slice()),
                             response.status_code,
                         );
-                    } else {
-                        bun_ast::add_warning_pretty!(
-                            manager.log_mut(),
-                            None,
-                            bun_ast::Loc::EMPTY,
-                            "<r><yellow><b>GET<r><yellow> {}<d> - {}<r>",
-                            bstr::BStr::new(metadata.url.slice()),
-                            response.status_code,
-                        );
                     }
-                    fail_update_requests(
-                        manager,
-                        task.task_id,
-                        extract.name.slice(),
-                        Some(extract.dependency_id),
-                    );
 
                     if let Some(removed) = manager.task_queue.remove(&task.task_id) {
                         drop(removed);
@@ -1166,6 +1190,7 @@ fn run_tasks_erased(
                                 resolution,
                                 err,
                                 fail_url,
+                                true,
                             );
                         } else {
                             (cb.on_package_download_error_pkg)(
@@ -1175,6 +1200,7 @@ fn run_tasks_erased(
                                 resolution,
                                 err,
                                 fail_url,
+                                true,
                             );
                         }
                         continue;
@@ -1365,6 +1391,7 @@ fn run_tasks_erased(
                                     res,
                                     err,
                                     url,
+                                    true,
                                 );
                             }
                         }
@@ -1386,6 +1413,7 @@ fn run_tasks_erased(
                                 &clone.res,
                                 err,
                                 url,
+                                true,
                             );
                         }
                     } else if log_level != Options::LogLevel::Silent {
@@ -1554,6 +1582,7 @@ fn run_tasks_erased(
                             resolution,
                             err,
                             manager.lockfile.str(repo),
+                            true,
                         );
                     } else {
                         bun_ast::add_error_pretty!(

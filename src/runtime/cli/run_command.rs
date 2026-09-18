@@ -296,14 +296,11 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         for part in passthrough {
             copy_script.push(b' ');
             if cfg!(windows) && use_system_shell && bun_which::batch_arg_has_cmd_metachars(part) {
-                if !silent {
-                    pretty_errorln!(
-                        "<r><red>error<r>: Failed to run script <b>{}<r>: argument {} contains a cmd.exe special character and cannot be passed to the system shell",
-                        bstr::BStr::new(name),
-                        bun_core::fmt::quote(&part[..]),
-                    );
-                    Output::flush();
-                }
+                pretty_errorln!(
+                    "<r><red>error<r>: Failed to run script <b>{}<r>: argument {} contains a cmd.exe special character and cannot be passed to the system shell",
+                    bstr::BStr::new(name),
+                    bun_core::fmt::quote(&part[..]),
+                );
                 Global::exit(1);
             }
             if needs_escape_utf8_ascii_latin1(part) {
@@ -341,13 +338,11 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             ) {
                 Ok(c) => c,
                 Err(err) => {
-                    if !silent {
-                        pretty_errorln!(
-                            "<r><red>error<r>: Failed to run script <b>{}<r> due to error <b>{}<r>",
-                            bstr::BStr::new(name),
-                            bstr::BStr::new(err.name()),
-                        );
-                    }
+                    pretty_errorln!(
+                        "<r><red>error<r>: Failed to run script <b>{}<r> due to error <b>{}<r>",
+                        bstr::BStr::new(name),
+                        bstr::BStr::new(err.name()),
+                    );
                     Global::exit(1);
                 }
             };
@@ -418,26 +413,20 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             ..Default::default()
         }) {
             Err(err) => {
-                if !silent {
-                    pretty_errorln!(
-                        "<r><red>error<r>: Failed to run script <b>{}<r> due to error <b>{}<r>",
-                        bstr::BStr::new(name),
-                        bstr::BStr::new(err.name()),
-                    );
-                }
-                Output::flush();
-                return Ok(());
+                pretty_errorln!(
+                    "<r><red>error<r>: Failed to run script <b>{}<r> due to error <b>{}<r>",
+                    bstr::BStr::new(name),
+                    bstr::BStr::new(err.name()),
+                );
+                Global::exit(1);
             }
             Ok(Err(err)) => {
-                if !silent {
-                    pretty_errorln!(
-                        "<r><red>error<r>: Failed to run script <b>{}<r> due to error:\n{}",
-                        bstr::BStr::new(name),
-                        err,
-                    );
-                }
-                Output::flush();
-                return Ok(());
+                pretty_errorln!(
+                    "<r><red>error<r>: Failed to run script <b>{}<r> due to error:\n{}",
+                    bstr::BStr::new(name),
+                    err,
+                );
+                Global::exit(1);
             }
             Ok(Ok(result)) => result,
         };
@@ -519,16 +508,12 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             }
 
             SpawnStatus::Err(ref err) => {
-                if !silent {
-                    pretty_errorln!(
-                        "<r><red>error<r>: Failed to run script <b>{}<r> due to error:\n{}",
-                        bstr::BStr::new(name),
-                        err,
-                    );
-                }
-
-                Output::flush();
-                return Ok(());
+                pretty_errorln!(
+                    "<r><red>error<r>: Failed to run script <b>{}<r> due to error:\n{}",
+                    bstr::BStr::new(name),
+                    err,
+                );
+                Global::exit(1);
             }
 
             _ => {}

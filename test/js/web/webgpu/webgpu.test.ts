@@ -262,8 +262,11 @@ describe.skipIf(!hasAdapter)("with a device", () => {
     await expect(
       adapter.requestDevice({ requiredLimits: { minUniformBufferOffsetAlignment: 300 } }),
     ).rejects.toMatchObject({ name: "OperationError" });
-    // A key that reads as an array index is a limit name like any other.
+    // A key that reads as an array index is a limit name like any other, and so is one that is not ASCII.
     await expect(adapter.requestDevice({ requiredLimits: { 0: 1 } })).rejects.toMatchObject({
+      name: "OperationError",
+    });
+    await expect(adapter.requestDevice({ requiredLimits: { maxBindGröups: 1 } })).rejects.toMatchObject({
       name: "OperationError",
     });
 
@@ -410,6 +413,22 @@ describe.skipIf(!hasAdapter)("with a device", () => {
     expect(readback.mapState).toBe("mapped");
     expect(Array.from(new Uint32Array(readback.getMappedRange()))).toEqual([1, 2, 3, 4]);
     readback.unmap();
+
+    // unmap() of a pending map leaves the buffer unmapped at once: a submission in the same task
+    // can write it, and the next map waits for that submission.
+    const other = device.createBuffer({ size: 16, usage: GPUBufferUsage.COPY_SRC, mappedAtCreation: true });
+    new Uint32Array(other.getMappedRange()).set([9, 8, 7, 6]);
+    other.unmap();
+    const target = device.createBuffer({ size: 16, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+    const cancelled = target.mapAsync(GPUMapMode.READ);
+    target.unmap();
+    const copy = device.createCommandEncoder();
+    copy.copyBufferToBuffer(other, 0, target, 0, 16);
+    expect(await validationError(device, () => device.queue.submit([copy.finish()]))).toBeNull();
+    await expect(cancelled).rejects.toMatchObject({ name: "AbortError" });
+    await target.mapAsync(GPUMapMode.READ);
+    expect(Array.from(new Uint32Array(target.getMappedRange()))).toEqual([9, 8, 7, 6]);
+    target.unmap();
 
     // Only unmap() detaches a mapped range. A transfer copies it, so the writes are not lost.
     await upload.mapAsync(GPUMapMode.WRITE);
@@ -1200,21 +1219,24 @@ describe.skipIf(!hasAdapter)("with a device", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("a shader override can be addressed by its numeric id", async () => {
+  test("a shader override can be addressed by its numeric id, and by a name that is not ASCII", async () => {
     const device = await requestDevice();
     const module = device.createShaderModule({
       code: /* wgsl */ `
         @id(0) override size: u32 = 1;
+        override größe: u32 = 1;
+        override π: u32 = 1;
         @group(0) @binding(0) var<storage, read_write> out: array<u32>;
-        @compute @workgroup_size(1) fn main() { out[0] = size; }`,
+        @compute @workgroup_size(1) fn main() { out[0] = size * größe * π; }`,
     });
     const out = device.createBuffer({ size: 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
     const readback = device.createBuffer({ size: 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
     // The numeric id is the only way to address an override that has one, and JSC keeps such a
-    // key as an array index, where a lookup by name does not find it.
+    // key as an array index, where a lookup by name does not find it. A WGSL name can be any
+    // Unicode identifier.
     const pipeline = device.createComputePipeline({
       layout: "auto",
-      compute: { module, constants: { 0: 7 } },
+      compute: { module, constants: { 0: 7, größe: 3, π: 5 } },
     });
     const bindGroup = device.createBindGroup({
       layout: pipeline.getBindGroupLayout(0),
@@ -1229,7 +1251,7 @@ describe.skipIf(!hasAdapter)("with a device", () => {
     encoder.copyBufferToBuffer(out, 0, readback, 0, 4);
     device.queue.submit([encoder.finish()]);
     await readback.mapAsync(GPUMapMode.READ);
-    expect(new Uint32Array(readback.getMappedRange())[0]).toBe(7);
+    expect(new Uint32Array(readback.getMappedRange())[0]).toBe(105);
     readback.unmap();
     device.destroy();
   });

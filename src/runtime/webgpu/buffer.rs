@@ -50,9 +50,9 @@ pub struct GPUBuffer {
     map: JsCell<MapState>,
     /// Bumped by every `mapAsync()`, `unmap()` and `destroy()`: tells a completion if it is still wanted.
     map_generation: Cell<u32>,
-    /// wgpu-core has a map request. Until it completes, nothing here touches wgpu-core's map state (its map and unmap race).
+    /// No map request can go to wgpu-core yet: it has one, or it can still act on one that was given up (see `abort_in_flight`).
     in_flight: Cell<bool>,
-    /// The current `mapAsync()`, held back while an aborted one is still in flight.
+    /// The current `mapAsync()`, held back while `in_flight`.
     queued: Cell<Option<MapRequest>>,
     destroyed: Cell<bool>,
     /// Creation failed validation: nothing is mapped in wgpu-core, so mapped ranges are zeroed memory.
@@ -120,11 +120,11 @@ impl Waiter for MapWait {
         let Some(buffer) = this_value.as_class_ref::<GPUBuffer>() else {
             return Ok(());
         };
-        buffer.in_flight.set(false);
         let result = result
             .unwrap_or_else(|| Err((true, String::from("mapAsync: the map did not complete"))));
 
         if buffer.is_current(&js.request) {
+            buffer.in_flight.set(false);
             match result {
                 Ok(()) => {
                     buffer.map.set(MapState::Mapped {
@@ -144,12 +144,8 @@ impl Waiter for MapWait {
             return Ok(());
         }
 
-        // `unmap()` or `destroy()` gave up on this request: if it mapped anyway, unmap it now.
-        if result.is_ok() && !buffer.destroyed.get() {
-            let device = &buffer.device.raw;
-            let _ = device.exclusive(|| instance().buffer_unmap(buffer.raw.id()));
-        }
-        buffer.issue_queued(cx, this_value)
+        // `unmap()`, `destroy()` or the end of its script gave up on this request, and `abort_in_flight` took care of the rest.
+        Ok(())
     }
 
     fn stopped(js: &MapWaitJs, global: &JSGlobalObject) -> bool {
@@ -157,16 +153,32 @@ impl Waiter for MapWait {
         if let Some(buffer) = this_value.as_class_ref::<GPUBuffer>() {
             if buffer.is_current(&js.request) {
                 buffer.forget_pending(global, this_value);
+                buffer.abort_in_flight(global, this_value);
             }
         }
-        // wgpu-core still has the request.
-        true
+        false
     }
 
-    fn abandon(result: Option<MapResult>, js: MapWaitJs, cx: &JsThread<'_>) -> JsResult<()> {
+    fn abandon(_result: Option<MapResult>, js: MapWaitJs, cx: &JsThread<'_>) -> JsResult<()> {
         Self::stopped(&js, cx.global());
-        // Not current now: the rest is what `settle` does for a request that `unmap()` gave up on.
-        Self::settle(result, js, cx)
+        Ok(())
+    }
+}
+
+/// Ends the hold that [`GPUBuffer::abort_in_flight`] puts on a buffer.
+struct MapFence;
+
+impl Waiter for MapFence {
+    type Result = ();
+    type Js = Strong;
+
+    fn settle(_result: Option<()>, js: Strong, cx: &JsThread<'_>) -> JsResult<()> {
+        let this_value = js.get();
+        let Some(buffer) = this_value.as_class_ref::<GPUBuffer>() else {
+            return Ok(());
+        };
+        buffer.in_flight.set(false);
+        buffer.issue_queued(cx, this_value)
     }
 }
 
@@ -392,6 +404,26 @@ impl GPUBuffer {
         js::pending_map_set_cached(this_value, global, JSValue::UNDEFINED);
     }
 
+    /// Takes back the request that wgpu-core has, so that the buffer is unmapped there at once and a submission in the same task can use it. The next `mapAsync()` still has to wait. wgpu-core keeps the buffer on a list of maps to do, and when it gets to that entry it maps whatever request the buffer has by then, which can be before the GPU is done with the buffer. Every entry of now is gone once the work submitted so far is done: that is when the fence ends the hold.
+    fn abort_in_flight(&self, global: &JSGlobalObject, this_value: JSValue) {
+        debug_assert!(self.in_flight.get());
+        if !self.destroyed.get() {
+            let device = &self.device.raw;
+            let _ = device.exclusive(|| instance().buffer_unmap(self.raw.id()));
+        }
+        let slot = self.device.waits.slot::<()>();
+        {
+            let slot = Arc::clone(&slot);
+            instance().queue_on_submitted_work_done(
+                self.device.raw.queue_id(),
+                Box::new(move || slot.fill(())),
+            );
+        }
+        // In the realm's own context: this is no script's wait.
+        let cx = global.js_thread(global.bun_vm().root_context());
+        wait::wait::<MapFence>(&self.device, &cx, slot, Strong::create(this_value, global));
+    }
+
     /// Issues the `mapAsync()` that had to wait for the one in flight, in the context of its own caller.
     fn issue_queued(&self, cx: &JsThread<'_>, this_value: JSValue) -> JsResult<()> {
         let Some(queued) = self.queued.take() else {
@@ -553,11 +585,15 @@ impl GPUBuffer {
     ) -> JsResult<bool> {
         self.map_generation
             .set(self.map_generation.get().wrapping_add(1));
-        self.queued.set(None);
+        // A pending request that was still held back never reached wgpu-core.
+        let issued = self.queued.take().is_none();
         self.device.untrack_mapped(this_value);
         let (write, ranges) = match self.map.replace(MapState::Unmapped) {
             MapState::Unmapped => return Ok(false),
             MapState::Pending => {
+                if issued {
+                    self.abort_in_flight(global, this_value);
+                }
                 self.settle_pending(
                     global,
                     this_value,

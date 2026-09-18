@@ -184,18 +184,6 @@ impl Held {
     }
 }
 
-/// `Some(index)` if `key` spells an array index. JSC stores such a property by index, and a lookup by name does not find it.
-fn array_index(key: &[u8]) -> Option<u32> {
-    let canonical = matches!(key, [b'0'] | [b'1'..=b'9', ..]) && key.len() <= 10;
-    if !canonical || !key.iter().all(u8::is_ascii_digit) {
-        return None;
-    }
-    let index = key
-        .iter()
-        .fold(0u64, |n, digit| n * 10 + u64::from(digit - b'0'));
-    u32::try_from(index).ok().filter(|i| *i != u32::MAX)
-}
-
 /// Runs `f(key, value)` on each entry of a WebIDL `record`: its own enumerable string keys, in order. `f` returns `false` to stop.
 pub(crate) fn for_each_entry<F>(
     global: &JSGlobalObject,
@@ -212,12 +200,10 @@ where
     let keys = record.keys(global)?;
     let mut iter = keys.array_iterator(global)?;
     while let Some(key) = iter.next()? {
-        let name = to_utf8(global, key)?;
-        let value = match array_index(&name) {
-            Some(index) => record.get_index(global, index)?,
-            None => record.get(global, &*name)?.unwrap_or(JSValue::UNDEFINED),
-        };
-        if !f(&name, value)? {
+        // Looked up as a string. A lookup by bytes takes them for Latin-1, and does not find a key that spells an array index.
+        let name = key.to_bun_string(global)?;
+        let value = record.get_own(global, &name)?.unwrap_or(JSValue::UNDEFINED);
+        if !f(&name.to_utf8(), value)? {
             break;
         }
     }

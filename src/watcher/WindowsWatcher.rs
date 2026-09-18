@@ -368,10 +368,17 @@ impl WindowsWatcher {
     }
 
     pub(crate) fn stop(&mut self) {
-        // SAFETY: handles were opened in init() and are valid until stop() is called once.
+        // Idempotent: clear the fields so a repeated call skips the close.
+        let dir_handle = std::mem::replace(&mut self.watcher.dir_handle, w::INVALID_HANDLE_VALUE);
+        let iocp = std::mem::replace(&mut self.iocp, w::INVALID_HANDLE_VALUE);
+        // SAFETY: each handle was opened in init() and is closed at most once.
         unsafe {
-            w::CloseHandle(self.watcher.dir_handle);
-            w::CloseHandle(self.iocp);
+            if dir_handle != w::INVALID_HANDLE_VALUE {
+                w::CloseHandle(dir_handle);
+            }
+            if iocp != w::INVALID_HANDLE_VALUE {
+                w::CloseHandle(iocp);
+            }
         }
     }
 }

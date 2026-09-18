@@ -668,6 +668,25 @@ pub fn add_pre_exit_callback(function: ExitFn) {
     }
 }
 
+/// Run at the very top of `exit()`, before any heap teardown. `bun_watcher`
+/// registers its `stop_all_for_exit` here (it sits above `bun_core`).
+static EARLY_EXIT_CALLBACKS: crate::Mutex<Vec<ExitFn>> = crate::Mutex::new(Vec::new());
+
+pub fn add_early_exit_callback(function: ExitFn) {
+    let mut cbs = EARLY_EXIT_CALLBACKS.lock();
+    if !cbs.iter().any(|f| *f as usize == function as usize) {
+        cbs.push(function);
+    }
+}
+
+fn run_early_exit_callbacks() {
+    // Snapshot under lock, run outside it; callbacks can block.
+    let cbs: Vec<ExitFn> = EARLY_EXIT_CALLBACKS.lock().clone();
+    for callback in &cbs {
+        callback();
+    }
+}
+
 fn run_exit_callbacks() {
     // Drain under lock, run outside it (callbacks may call `Bun__atexit`).
     let cbs: Vec<ExitFn> = core::mem::take(&mut *ON_EXIT_CALLBACKS.lock());
@@ -683,7 +702,7 @@ extern "C" fn bun_is_exiting() -> c_int {
     is_exiting() as c_int
 }
 
-fn is_exiting() -> bool {
+pub fn is_exiting() -> bool {
     IS_EXITING.load(Ordering::Relaxed)
 }
 
@@ -714,6 +733,19 @@ pub fn exit(code: u32) -> ! {
     // If we are crashing, allow the crash handler to finish it's work.
     // MOVE_DOWN: bun_crash_handler::sleep_forever_if_another_thread_is_crashing → bun_core.
     crate::sleep_forever_if_another_thread_is_crashing();
+
+    // Stop background threads (the file watcher) before the heap teardown /
+    // ASAN poison below can pull memory out from under them.
+    run_early_exit_callbacks();
+
+    // Test-only linger so the hot-reload-exit-race test's delayed
+    // bust_dir_cache lands before the process dies.
+    #[cfg(debug_assertions)]
+    if let Some(ms) = crate::env_var::BUN_INTERNAL_GLOBALEXIT_LINGER_MS.get() {
+        if ms != 0 {
+            std::thread::sleep(std::time::Duration::from_millis(ms));
+        }
+    }
 
     #[cfg(debug_assertions)]
     {

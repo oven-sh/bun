@@ -171,6 +171,12 @@ new!(pub NODE_DISABLE_COMPILE_CACHE: string, "NODE_DISABLE_COMPILE_CACHE", {});
 // child's CLI entrypoint checks this before anything else and hands off to
 // C++ Bun__WebView__hostMain. Never returns — no JSC, no VM.
 new!(pub BUN_INTERNAL_WEBVIEW_HOST: string, "BUN_INTERNAL_WEBVIEW_HOST", {});
+// Test-only hooks (call sites are `cfg(debug_assertions)`): widen the
+// microsecond-wide watcher-vs-exit race so the `hot-reload-exit-race`
+// regression test can trigger it deterministically.
+new!(pub BUN_INTERNAL_WATCHER_BUSTDIRCACHE_DELAY_MS: unsigned, "BUN_INTERNAL_WATCHER_BUSTDIRCACHE_DELAY_MS", { deser: { error_handling: NotSet } });
+new!(pub BUN_INTERNAL_GLOBALEXIT_FAST_PATH_TO_TRANSPILER_DEINIT: boolean, "BUN_INTERNAL_GLOBALEXIT_FAST_PATH_TO_TRANSPILER_DEINIT", { default: false });
+new!(pub BUN_INTERNAL_GLOBALEXIT_LINGER_MS: unsigned, "BUN_INTERNAL_GLOBALEXIT_LINGER_MS", { deser: { error_handling: NotSet } });
 new!(pub NODE_PENDING_DEPRECATION: string, "NODE_PENDING_DEPRECATION", {});
 new!(pub NODE_PRESERVE_SYMLINKS_MAIN: boolean, "NODE_PRESERVE_SYMLINKS_MAIN", { default: false });
 new!(pub NODE_USE_SYSTEM_CA: boolean, "NODE_USE_SYSTEM_CA", { default: false });

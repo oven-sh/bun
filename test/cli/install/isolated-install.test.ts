@@ -728,7 +728,13 @@ describe("failed script of a workspace linked only as an optional dependency", (
           lstatSync(link).isSymbolicLink(),
           file(join(link, "src.txt")).text(),
         ]),
-      ).toEqual([["x", "y"], "keep me", { name: "x", version: "1.0.0", scripts: { postinstall: "exit 1" } }, true, "keep me"]);
+      ).toEqual([
+        ["x", "y"],
+        "keep me",
+        { name: "x", version: "1.0.0", scripts: { postinstall: "exit 1" } },
+        true,
+        "keep me",
+      ]);
     });
   }
 });

@@ -388,13 +388,9 @@ pub(crate) fn codegen_function(
 // Context
 // =============================================================================
 
-/// The temporaries in scope at the current point of codegen.
-///
-/// Upstream copies the whole map on entry to each block and puts the copy back
-/// on exit. Here a block records a [`TemporariesMark`] on entry and restores to
-/// it on exit. Codegen never removes an entry, so the entries a block added are
-/// the tail of the map past the mark, and the values it replaced are in
-/// `replaced` past the mark.
+/// The temporaries in scope. A block takes a mark on entry and restores to it
+/// on exit. Nothing removes an entry, so a restore is a truncate plus the
+/// replay of `replaced`.
 #[derive(Default)]
 struct Temporaries {
     map: IdMap<DeclarationId, Option<Expr>>,
@@ -429,8 +425,6 @@ impl Temporaries {
         }
     }
 
-    /// Put the map back to its state at `mark`. Every entry added since then
-    /// is dropped, and every value replaced since then is put back.
     fn restore(&mut self, mark: TemporariesMark) {
         for (id, previous) in self.replaced.drain(mark.replaced..).rev() {
             self.map.insert(id, previous);
@@ -586,8 +580,8 @@ fn codegen_reactive_function(
     })
 }
 
-/// Codegen for a function nested in the one `cx` is for. The nested function
-/// sees the temporaries of `cx`. It gets its own declarations and cache slots.
+/// The nested function sees the temporaries of `cx` and gets its own
+/// declarations and cache slots.
 fn codegen_nested_function(
     cx: &mut Context,
     func: &ReactiveFunction,

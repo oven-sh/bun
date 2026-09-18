@@ -806,6 +806,39 @@ describe("Bun.semver.satisfies()", () => {
     }
   });
 
+  test("space-separated comparators are an intersection, not alternatives", () => {
+    // In npm's range grammar only "||" starts a new alternative; whitespace between
+    // comparators is an intersection. Comparators starting with a digit, "x", "*",
+    // "=", or "v" used to begin a new "||" group. Every expectation matches node-semver.
+    const cases: [version: string, range: string, expected: boolean][] = [
+      ["2.5.0", "1.x 2.x", false],
+      ["1.0.1", "<1.0.0 1.x", false],
+      ["1.2.3", ">=2.0.0 1.2.3", false],
+      ["1.2.3", "1.2.3 4.5.6", false],
+      ["4.5.6", "1.2.3 4.5.6", false],
+      ["1.2.3", ">=2.0.0 =1.2.3", false],
+      ["1.2.3", ">=2.0.0 v1.2.3", false],
+      ["1.0.0", ">=2.0.0 *", false],
+      ["1.0.0", ">=2.0.0 x", false],
+      ["1.0.0", ">=2.0.0 x.x.x", false],
+      ["1.5.0", ">=1.0.0 1.x <1.4.0", false],
+      ["4.5.6", "4.5.6 7.8.9 || 1.2.3", false],
+      // the intersection holds, or an "||" alternative holds
+      ["1.3.0", ">=1.0.0 1.x <1.4.0", true],
+      ["2.5.0", "1.x || 2.x", true],
+      ["1.0.1", "<1.0.0 || 1.x", true],
+      ["1.2.3", ">=2.0.0 || 1.2.3", true],
+      ["1.2.3", "1.2.3 4.5.6 || 1.2.3", true],
+      ["1.2.3", "~1.2.1 1.2.3", true],
+      ["1.2.3", "~1.2.1 =1.2.3", true],
+      ["1.2.3", ">=1.2.1 1.2.3", true],
+      ["1.2.3", "1.2.3 >=1.2.1", true],
+    ];
+    expect(cases.map(([version, range]) => ({ version, range, satisfies: satisfies(version, range) }))).toEqual(
+      cases.map(([version, range, expected]) => ({ version, range, satisfies: expected })),
+    );
+  });
+
   test("pre-release snapshot", () => {
     expect(unsortedPrereleases.sort(Bun.semver.order)).toMatchSnapshot();
   });

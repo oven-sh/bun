@@ -452,9 +452,11 @@ pub(crate) fn report_offline_misses(
             continue;
         }
         missed.unset(package_id);
-        // A miss that the walk does not reach at all is judged as before, by the dependency of its slot.
+        // The dependency of its slot judges, as before, a miss that the walk can not: unreached, or a peer of an installed package.
+        let walk_can_not_judge =
+            !everything.seen.is_set(package_id) || installed.peers.is_set(package_id);
         let is_error = installed.required.is_set(package_id)
-            || (!everything.seen.is_set(package_id) && slot_is_required.is_set(package_id));
+            || (walk_can_not_judge && slot_is_required.is_set(package_id));
         if is_error {
             reported += 1;
             log_offline_miss(this, miss);

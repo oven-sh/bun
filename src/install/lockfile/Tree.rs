@@ -620,6 +620,8 @@ pub(crate) struct PlacedPackages {
     pub(crate) required: DynamicBitSet,
     /// Any placed dependency resolves to the package.
     pub(crate) seen: DynamicBitSet,
+    /// A peer dependency without `Behavior::OPTIONAL` of a walked package resolves to the package.
+    pub(crate) peers: DynamicBitSet,
 }
 
 /// Walks what the linkers place, from the root. Below a `not_installed` package only if it is required.
@@ -640,6 +642,7 @@ pub(crate) fn placed_packages(
     let mut placed = PlacedPackages {
         required: DynamicBitSet::init_empty(pkg_dependencies.len())?,
         seen: DynamicBitSet::init_empty(pkg_dependencies.len())?,
+        peers: DynamicBitSet::init_empty(pkg_dependencies.len())?,
     };
     let mut queued = DynamicBitSet::init_empty(pkg_dependencies.len())?;
     let mut queue: Vec<PackageID> = vec![0];
@@ -651,8 +654,6 @@ pub(crate) fn placed_packages(
             let pkg_id = resolutions[dep_id as usize];
             let behavior = dependencies[dep_id as usize].behavior;
             if pkg_id as usize >= pkg_dependencies.len()
-                // The linkers can bind a peer to another package than the one it resolves to.
-                || behavior.is_peer()
                 // `is_filtered_dependency_or_workspace` would print this package under `--verbose`.
                 || pkg_metas[pkg_id as usize].is_disabled(manager.options.cpu, manager.options.os)
                 || is_filtered_dependency_or_workspace(
@@ -669,8 +670,15 @@ pub(crate) fn placed_packages(
             {
                 continue;
             }
-            placed.seen.set(pkg_id as usize);
             let is_optional = behavior.contains(crate::dependency::Behavior::OPTIONAL);
+            if behavior.is_peer() {
+                // Not followed: a linker can bind a peer to another package than the one it resolves to.
+                if !is_optional {
+                    placed.peers.set(pkg_id as usize);
+                }
+                continue;
+            }
+            placed.seen.set(pkg_id as usize);
             if !is_optional {
                 placed.required.set(pkg_id as usize);
             }

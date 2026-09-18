@@ -1309,7 +1309,10 @@ declare module "bun:sqlite" {
    */
   export interface Changes {
     /**
-     * The number of rows changed by the last `run` or `exec` call.
+     * The number of rows that the last `run` or `exec` call inserted, updated, or deleted itself.
+     *
+     * Rows that a trigger or a foreign key action such as `ON DELETE CASCADE` changes do not count.
+     * {@link Database.run} with several statements in one string reports the sum of the statements.
      */
     changes: number;
 

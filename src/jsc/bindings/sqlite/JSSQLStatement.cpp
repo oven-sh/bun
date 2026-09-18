@@ -1469,6 +1469,18 @@ static bool isSkippedInSQLiteQuery(const char c)
     return c == ' ' || c == ';' || (c >= '\t' && c <= '\r');
 }
 
+// Rows the statement changed itself. The sqlite3_total_changes() delta also counts what triggers, foreign
+// key actions and virtual table shadow tables write. sqlite3_changes64() is set only by INSERT, UPDATE and
+// DELETE. After another statement it is the count of an earlier write, or of the nested FTS5 flush that a
+// COMMIT, SAVEPOINT or RELEASE runs (those are read-only, and the flush moves sqlite3_total_changes()).
+static sqlite3_int64 directChangesSince(sqlite3_stmt* stmt, int totalChangesBefore)
+{
+    sqlite3* db = sqlite3_db_handle(stmt);
+    if (sqlite3_stmt_readonly(stmt) || sqlite3_total_changes(db) == totalChangesBefore)
+        return 0;
+    return sqlite3_changes64(db);
+}
+
 // This runs a query one-off
 // without the overhead of a long-lived statement object
 // does not return anything
@@ -1541,7 +1553,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteFunction, (JSC::JSGlobalObject * l
     bool strict = internalFlagsValue.isInt32() && (internalFlagsValue.asInt32() & kStrictFlag) != 0;
     bool safeIntegers = internalFlagsValue.isInt32() && (internalFlagsValue.asInt32() & kSafeIntegersFlag) != 0;
 
-    const int total_changes_before = sqlite3_total_changes(db);
+    sqlite3_int64 changes = 0;
 
     while (sqlStringHead && sqlStringHead < end) {
         if (isSkippedInSQLiteQuery(*sqlStringHead)) [[unlikely]] {
@@ -1599,9 +1611,13 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteFunction, (JSC::JSGlobalObject * l
             didSetBindings = true;
         }
 
+        const int total_changes_before = sqlite3_total_changes(db);
+
         do {
             rc = sqlite3_step(sql.stmt);
         } while (rc == SQLITE_ROW);
+
+        changes += directChangesSince(sql.stmt, total_changes_before);
 
         didExecuteAny = true;
         sqlStringHead = tail;
@@ -1618,9 +1634,8 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteFunction, (JSC::JSGlobalObject * l
     }
 
     if (auto* diff = dynamicDowncast<JSC::InternalFieldTuple>(diffValue)) {
-        const int total_changes_after = sqlite3_total_changes(db);
         int64_t last_insert_rowid = sqlite3_last_insert_rowid(db);
-        diff->putInternalField(vm, 0, JSC::jsNumber(total_changes_after - total_changes_before));
+        diff->putInternalField(vm, 0, JSC::jsNumber(changes));
         if (safeIntegers) {
             auto* bigInt = JSBigInt::createFrom(lexicalGlobalObject, last_insert_rowid);
             RETURN_IF_EXCEPTION(scope, {});
@@ -2656,9 +2671,8 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRun, (JSC::JSGlob
     }
 
     if (auto* diff = dynamicDowncast<JSC::InternalFieldTuple>(diffValue)) {
-        const int total_changes_after = sqlite3_total_changes(db);
         int64_t last_insert_rowid = sqlite3_last_insert_rowid(db);
-        diff->putInternalField(vm, 0, JSC::jsNumber(total_changes_after - total_changes_before));
+        diff->putInternalField(vm, 0, JSC::jsNumber(directChangesSince(stmt, total_changes_before)));
         if (castedThis->useBigInt64) {
             JSValue lastRowIdBigInt = JSBigInt::createFrom(lexicalGlobalObject, last_insert_rowid);
             RETURN_IF_EXCEPTION(scope, {});

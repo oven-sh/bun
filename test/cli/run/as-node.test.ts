@@ -113,6 +113,9 @@ describe("fake node cli", () => {
     expect(result.success).toBe(false);
   });
 
+  // These tests are not concurrent. In a debug build each `bun --bun` deletes and makes again the
+  // directory of the `node` shim, so a concurrent one can fail with `Script not found "node"`.
+
   // `node ./pkg`, `node .`, `node ./entry` and `node ./bin/link` do not name the file that runs.
   describe("an entry point that does not name the file that runs", () => {
     const cjs = `console.log(JSON.stringify({
@@ -148,7 +151,7 @@ describe("fake node cli", () => {
       },
     ];
 
-    test.concurrent.each(entryPoints)("CommonJS, $name", async ({ pkg, file, cwd, arg, argv1 }) => {
+    test.each(entryPoints)("CommonJS, $name", async ({ pkg, file, cwd, arg, argv1 }) => {
       using temp = tempDir("fake-node-main", { "pkg/package.json": JSON.stringify(pkg), [file]: cjs });
       const result = await runAsNode(join(temp, cwd), [arg]);
       expect({ ...result, stdout: parse(result.stdout) }).toEqual({
@@ -164,7 +167,7 @@ describe("fake node cli", () => {
       });
     });
 
-    test.concurrent.each(entryPoints)("ESM, $name", async ({ pkg, file, cwd, arg, argv1 }) => {
+    test.each(entryPoints)("ESM, $name", async ({ pkg, file, cwd, arg, argv1 }) => {
       using temp = tempDir("fake-node-main", {
         "pkg/package.json": JSON.stringify({ ...pkg, type: "module" }),
         [file]: esm,
@@ -182,7 +185,7 @@ describe("fake node cli", () => {
       });
     });
 
-    test.concurrent("CommonJS, a symlink", async () => {
+    test("CommonJS, a symlink", async () => {
       using temp = tempDir("fake-node-main", { "pkg/package.json": "{}", "pkg/cli.js": cjs });
       mkdirSync(join(temp, "bin"));
       symlinkSync(join("..", "pkg", "cli.js"), join(temp, "bin", "link"));
@@ -200,7 +203,7 @@ describe("fake node cli", () => {
       });
     });
 
-    test.concurrent("a package.json that does not parse adds no output", async () => {
+    test("a package.json that does not parse adds no output", async () => {
       using temp = tempDir("fake-node-main", {
         "pkg/package.json": "{",
         "pkg/index.js": "console.log(require.main === module);",
@@ -208,7 +211,7 @@ describe("fake node cli", () => {
       expect(await runAsNode(String(temp), ["./pkg"])).toEqual({ stdout: "true\n", stderr: "", exitCode: 0 });
     });
 
-    test.concurrent("cron execution mode still calls scheduled()", async () => {
+    test("cron execution mode still calls scheduled()", async () => {
       using temp = tempDir("fake-node-main", {
         "pkg/package.json": JSON.stringify({ type: "module" }),
         "pkg/index.js": "export default { scheduled(controller) { console.log(controller.cron); } };",
@@ -217,7 +220,7 @@ describe("fake node cli", () => {
       expect(result).toEqual({ stdout: "* * * * *\n", stderr: "", exitCode: 0 });
     });
 
-    test.concurrent("the Bun shell `$1` is process.argv[1]", async () => {
+    test("the Bun shell `$1` is process.argv[1]", async () => {
       using temp = tempDir("fake-node-main", {
         "pkg/package.json": JSON.stringify({ type: "module" }),
         "pkg/index.js": "console.log(JSON.stringify([process.argv[1], (await Bun.$`echo $1`.text()).trim()]));",
@@ -247,20 +250,20 @@ describe("fake node cli", () => {
       exitCode: 0,
     });
 
-    test.concurrent("when the entry point is a directory", async () => {
+    test("when the entry point is a directory", async () => {
       using temp = tempDir("fake-node-asset", files);
       const result = await runAsNode(String(temp), ["./pkg"]);
       expect({ ...result, stdout: parse(result.stdout) }).toEqual(loaded(temp));
     });
 
     // On Windows the module loader names the entry point with `\`.
-    test.concurrent("when the entry point is an absolute path with `/`", async () => {
+    test("when the entry point is an absolute path with `/`", async () => {
       using temp = tempDir("fake-node-asset", files);
       const result = await runAsNode(String(temp), [join(temp, "pkg", "index.js").replaceAll("\\", "/")]);
       expect({ ...result, stdout: parse(result.stdout) }).toEqual(loaded(temp));
     });
 
-    test.concurrent("when the entry point is a symlink", async () => {
+    test("when the entry point is a symlink", async () => {
       using temp = tempDir("fake-node-asset", files);
       mkdirSync(join(temp, "bin"));
       symlinkSync(join("..", "pkg", "index.js"), join(temp, "bin", "link"));

@@ -1563,6 +1563,10 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
         for _dep_id in deps.begin()..deps.end() {
             let dep_id: DependencyID = _dep_id;
             let dep = lockfile.buffers.dependencies[dep_id as usize].clone();
+            // `append_bundled_dependencies`: pnpm has no package entry for a bundled dependency.
+            if dep.behavior.is_bundled() {
+                continue;
+            }
             let string_buf = string_bytes!(lockfile);
             let dep_name = dep.name.slice(string_buf);
             if let Some(peer_pkg_id) = resolve_peer_like_bun_lock(lockfile, &dep) {
@@ -1777,6 +1781,48 @@ fn declared_package_peers(
     Ok(peers)
 }
 
+/// pnpm names a bundled dependency on the `packages:` entry only: no snapshot edge, no version, no range.
+fn append_bundled_dependencies(
+    lockfile: &mut Lockfile,
+    package_obj: &Expr,
+    off: usize,
+) -> Result<(), AllocError> {
+    let Some(mut names) = package_obj
+        .get(b"bundledDependencies")
+        .and_then(|bundled| bundled.as_array())
+    else {
+        return Ok(());
+    };
+
+    while let Some(item) = names.next() {
+        // pnpm copies the manifest's list as written. Only a `node_modules` folder name can be a shipped copy.
+        let Some(name_str) =
+            as_string(&item).filter(|name| dependency::is_safe_install_folder_name(name))
+        else {
+            continue;
+        };
+        let name_hash = semver::string::Builder::string_hash(name_str);
+
+        // An edge under this name is a declared peer. It stays a peer, as in a fresh install.
+        if lockfile.buffers.dependencies[off..]
+            .iter()
+            .any(|dep| dep.name_hash == name_hash)
+        {
+            continue;
+        }
+
+        let name = sbuf!(lockfile).append_external_with_hash(name_str, name_hash)?;
+        lockfile.buffers.dependencies.push(Dependency {
+            name: name.value,
+            name_hash: name.hash,
+            behavior: dependency::Behavior::PROD | dependency::Behavior::BUNDLED,
+            version: Default::default(),
+        });
+    }
+
+    Ok(())
+}
+
 fn parse_append_package_dependencies(
     lockfile: &mut Lockfile,
     package_obj: &Expr,
@@ -1913,6 +1959,8 @@ fn parse_append_package_dependencies(
         });
         has_unbound_peers = true;
     }
+
+    append_bundled_dependencies(lockfile, package_obj, off)?;
 
     let end = lockfile.buffers.dependencies.len();
 

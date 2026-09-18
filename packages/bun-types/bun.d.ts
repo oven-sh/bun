@@ -10433,6 +10433,9 @@ declare module "bun" {
      * `packages`, because they could not be resolved. The package's tarball
      * ships them. A bundled dependency that was resolved has an entry with
      * `bundled: true` instead.
+     *
+     * A name that is in no dependency group comes from a migrated lockfile
+     * that records no version for it (pnpm).
      */
     bundledDependencies?: string[];
   };

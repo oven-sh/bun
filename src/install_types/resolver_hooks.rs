@@ -560,6 +560,13 @@ impl Dependency {
         }
         lhs.name.slice(string_buf).cmp(rhs.name.slice(string_buf))
     }
+
+    /// A bundled dependency from a migrated lockfile that records no range for it. bun never resolves it.
+    pub fn is_bundled_without_range(&self) -> bool {
+        self.behavior.is_bundled()
+            && self.version.tag == DependencyVersionTag::Uninitialized
+            && self.version.literal.is_empty()
+    }
 }
 
 // ─── npm::{Negatable, OperatingSystem, Libc, Architecture} ────────────────

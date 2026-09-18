@@ -537,6 +537,7 @@ The migration process handles:
 - Converts `pnpm-lock.yaml` (lockfile versions 7–9, including pnpm 11's multi-document files) to `bun.lock`
 - Preserves resolved versions and integrity hashes
 - Preserves peer dependency ranges and `peerDependenciesMeta`, so the next `bun install` leaves the migrated lockfile unchanged
+- Preserves the `bundledDependencies` names of a package, so `bun prune` keeps the copies its tarball ships
 - Migrates git, GitHub, tarball URL, `file:`, and `npm:` alias dependencies, including transitive ones
 - Resolves pnpm named registries (`name@registry:version`) via `namedRegistries` in `pnpm-workspace.yaml`
 - Converts injected workspace packages (`dependenciesMeta.*.injected`) to ordinary workspace dependencies
@@ -611,6 +612,7 @@ Bun migrates the following pnpm configuration from both `pnpm-lock.yaml` and `pn
 - Every workspace in `pnpm-lock.yaml` must have its `package.json` on disk (in Docker, copy them in before `bun install`)
 - Relative `link:` dependencies and git dependencies with a sub-directory (`resolution.path`) are not supported
 - If migration fails for any of these reasons, Bun prints why and resolves from scratch instead
+- `bundledDependencies: true` is not migrated, because `pnpm-lock.yaml` does not name the packages it covers
 
 After migration, you can safely remove `pnpm-lock.yaml` and `pnpm-workspace.yaml` files.
 

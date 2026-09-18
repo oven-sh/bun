@@ -780,6 +780,11 @@ pub fn enqueue_dependency_with_main_and_success_fn(
         return Ok(());
     }
 
+    // An override for its name would otherwise give it a version.
+    if dependency.is_bundled_without_range() {
+        return Ok(());
+    }
+
     let mut name = dependency.realname();
     let mut name_hash = match dependency.version.tag {
         dependency::version::Tag::DistTag

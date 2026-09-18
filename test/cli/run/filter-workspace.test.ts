@@ -1113,17 +1113,12 @@ describe.skipIf(!isWindows).each([
   );
 });
 
-// #42962: on Windows the console Ctrl handler runs on a thread the console
-// creates and only sets a flag. The parent's run loop blocks in uv_run until
-// some I/O completion arrives, so with a quiet child nothing ever wakes it, the
-// flag is never read, and the whole tree (parent, `bun exec`, leaf) outlives
-// the Ctrl+C. The handler must wake the loop itself.
+// #42962: the console Ctrl handler runs on its own thread. With a quiet child
+// nothing else wakes the parent's uv_run, so the handler must wake the loop.
 //
-// A real CTRL_C_EVENT has to reach the parent's console, and the test runner's
-// console is shared with everything else, so a helper detaches from it, allocs
-// a fresh console, spawns the parent on that console, and sends the event
-// there once the leaf is up. The helper reports through a file: AllocConsole
-// rebinds the std handles, so its stdout is not reliable afterwards.
+// The helper allocates a fresh console, spawns the parent on it, and sends a
+// real CTRL_C_EVENT there once the leaf is up. It reports through a file:
+// AllocConsole rebinds the std handles, so its stdout is not reliable.
 describe.skipIf(!isWindows).each([
   { via: "--filter", argv: ["--filter", "*", "dev"] },
   { via: "run --parallel", argv: ["run", "--parallel", "dev"] },

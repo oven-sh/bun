@@ -801,7 +801,7 @@ function expectWorkerCoverage(stderr: string, lcov: string) {
   expect(helpers).toMatch(/FNF:2\nFNH:2\n/);
 }
 
-test.concurrent("coverage counts code that runs in a Worker", async () => {
+test("coverage counts code that runs in a Worker", async () => {
   using dir = tempDir("cov-worker", workerCoverageFixture);
   await using proc = Bun.spawn({
     cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=text", "--coverage-reporter=lcov", "./worker.test.ts"],
@@ -815,7 +815,7 @@ test.concurrent("coverage counts code that runs in a Worker", async () => {
   expect(exitCode).toBe(0);
 });
 
-test.concurrent("--parallel: coverage counts code that runs in a Worker", async () => {
+test("--parallel: coverage counts code that runs in a Worker", async () => {
   using dir = tempDir("cov-worker-parallel", workerCoverageFixture);
   await using proc = Bun.spawn({
     cmd: [

@@ -576,6 +576,7 @@ describe("Bun.semver.satisfies()", () => {
         ["<x >=1", "1.2.3", false],
         ["<=x <x", "1.2.3", false],
         ["^1.0.0 >*", "1.2.3", false],
+        // The version goes first: a bare version after another comparator is read as an alternative today (#32993).
         ["1.0.0 <x", "1.0.0", false],
         ["<x || 1.0.0", "1.0.0", true],
         ["<x || 1.0.0", "2.0.0", false],
@@ -616,6 +617,11 @@ describe("Bun.semver.satisfies()", () => {
         ["<foo", "1.0.0", true],
         ["< v", "1.0.0", true],
         [">^1.0.0", "2.0.0", true],
+        // text that starts with a wildcard character is still text
+        [">xenial", "1.0.0", true],
+        ["<xstate", "1.0.0", true],
+        [">*next", "1.0.0", true],
+        [">x.1.2.3", "1.0.0", true],
       ]);
     });
   });

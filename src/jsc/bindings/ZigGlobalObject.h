@@ -848,13 +848,10 @@ public:
             JSC::WriteBarrier<JSC::Unknown> promise; // JSPromise
             JSC::WriteBarrier<JSC::Unknown> rejectionOwner; // JSModuleGraph or null
         };
-        // In rejection order. remove() leaves a hole (an empty promise) in place of
-        // any entry but the last, so the entries after it keep their index.
+        // In rejection order. remove() leaves a hole (an empty promise) unless the entry is the last.
         WTF::Vector<Entry> m_entries;
         unsigned m_holes { 0 };
-        // promise -> index, for m_entries[0..m_indexed). remove() extends it only when
-        // it has to search a long queue, so handling the newest rejection, or one of
-        // a few, does not build it.
+        // promise -> index for m_entries[0..m_indexed), extended by remove() only to search a long queue.
         WTF::HashMap<JSC::JSPromise*, unsigned> m_indices;
         unsigned m_indexed { 0 };
     };

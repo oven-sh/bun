@@ -3358,8 +3358,7 @@ static constexpr unsigned rejectedPromiseScanLimit = 16;
 void GlobalObject::RejectedPromiseQueue::append(JSC::VM& vm, JSC::JSCell* owner, JSC::JSPromise* promise, JSC::JSObject* rejectionOwner)
 {
     WTF::Locker locker { owner->cellLock() };
-    // Full, and at least half of it is holes: squeeze them out instead of growing.
-    // Costs what the reallocation would have, so append() stays amortized O(1).
+    // Full and at least half holes: compact instead of growing, for the same amortized cost.
     if (m_holes && m_entries.size() == m_entries.capacity() && m_holes >= m_entries.size() / 2) {
         m_entries.removeAllMatching([](Entry& entry) { return !entry.promise; });
         m_holes = 0;
@@ -3374,8 +3373,7 @@ void GlobalObject::RejectedPromiseQueue::append(JSC::VM& vm, JSC::JSCell* owner,
 bool GlobalObject::RejectedPromiseQueue::remove(JSC::JSCell* owner, JSC::JSPromise* promise)
 {
     WTF::Locker locker { owner->cellLock() };
-    // Newest first: the newest rejection is the usual one to be handled. A long
-    // queue is scanned no further than that entry.
+    // Newest first: the newest rejection is the usual one to be handled.
     unsigned size = m_entries.size();
     unsigned scanFrom = size <= rejectedPromiseScanLimit ? 0 : size - 1;
     unsigned index = size;
@@ -3412,8 +3410,7 @@ bool GlobalObject::RejectedPromiseQueue::remove(JSC::JSCell* owner, JSC::JSPromi
         ++m_holes;
         return true;
     }
-    // The last entry is never a hole, so a loop that rejects and then handles
-    // one promise at a time keeps reusing the same slot.
+    // The last entry is never a hole, so a reject-then-handle loop reuses one slot.
     m_entries.removeLast();
     while (!m_entries.isEmpty() && !m_entries.last().promise) {
         m_entries.removeLast();

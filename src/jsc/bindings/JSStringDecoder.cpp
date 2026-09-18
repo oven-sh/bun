@@ -107,8 +107,6 @@ static inline JSStringDecoder* jsStringDecoderCast(JSGlobalObject* globalObject,
 void JSStringDecoder::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
     Base::finishCreation(vm);
-    // Node assigns `this.encoding = normalizeEncoding(encoding)` in the constructor, producing an
-    // enumerable own data property (so Object.hasOwn / spread / JSON.stringify all see it).
     putDirect(vm, WebCore::clientData(vm)->builtinNames().encodingPublicName(), convertEnumerationToJS<BufferEncodingType>(*globalObject, m_encoding), 0);
 }
 

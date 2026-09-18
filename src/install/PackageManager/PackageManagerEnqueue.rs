@@ -71,6 +71,23 @@ const MS_PER_S: f64 = bun_core::time::MS_PER_S as f64;
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+fn features_for_dependency(this: &PackageManager, dep_id: DependencyID) -> Features {
+    let packages = this.lockfile.packages.slice();
+    let resolutions = packages.items_resolution();
+    let dependencies_lists = packages.items_dependencies();
+    for (resolution, dependencies) in resolutions.iter().zip(dependencies_lists.iter()) {
+        if dependencies.contains(dep_id) {
+            return match resolution.tag {
+                ResolutionTag::Root | ResolutionTag::Workspace | ResolutionTag::Folder => {
+                    this.options.local_package_features
+                }
+                _ => this.options.remote_package_features,
+            };
+        }
+    }
+    this.options.remote_package_features
+}
+
 pub fn enqueue_dependency_with_main(
     this: &mut PackageManager,
     id: DependencyID,
@@ -994,7 +1011,11 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                 }
                                 return Ok(());
                             } else if err == crate::Error::MissingPackageJSON {
-                                if dependency.behavior.is_required() {
+                                if dependency.behavior.is_required()
+                                    && dependency
+                                        .behavior
+                                        .is_enabled(features_for_dependency(this, id))
+                                {
                                     if let Some(fail) = fail_fn {
                                         fail(this, dependency, id, err);
                                     } else if version.tag == dependency::version::Tag::Folder {
@@ -1655,7 +1676,11 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                         result.package.meta.id,
                     );
                 }
-            } else if dependency.behavior.is_required() {
+            } else if dependency.behavior.is_required()
+                && dependency
+                    .behavior
+                    .is_enabled(features_for_dependency(this, id))
+            {
                 if dependency_tag == dependency::version::Tag::Workspace {
                     bun_ast::add_error_pretty!(
                         this.log_mut(),

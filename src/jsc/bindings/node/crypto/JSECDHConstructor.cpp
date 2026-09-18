@@ -43,6 +43,15 @@ JSC_DEFINE_HOST_FUNCTION(callECDH, (JSC::JSGlobalObject * lexicalGlobalObject, J
     return JSValue::encode(result);
 }
 
+// A name too long to convert to UTF-8 (`utf8()` asserts that the conversion worked) is not a curve.
+static int curveNidFromShortName(const WTF::String& name)
+{
+    auto nameUtf8 = name.tryGetUTF8();
+    if (!nameUtf8) [[unlikely]]
+        return NID_undef;
+    return OBJ_sn2nid(nameUtf8->characters());
+}
+
 JSC_DEFINE_HOST_FUNCTION(constructECDH, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
@@ -59,9 +68,7 @@ JSC_DEFINE_HOST_FUNCTION(constructECDH, (JSC::JSGlobalObject * globalObject, JSC
     WTF::String curveString = curveValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    auto curve = curveString.utf8();
-
-    int nid = OBJ_sn2nid(curve.data());
+    int nid = curveNidFromShortName(curveString);
     if (nid == NID_undef) {
         return Bun::ERR::CRYPTO_INVALID_CURVE(scope, globalObject);
     }
@@ -99,7 +106,7 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHConvertKey, (JSC::JSGlobalObject * lexicalGlobalO
 
     auto buffer = keyView->span();
 
-    int nid = OBJ_sn2nid(curveName.utf8().data());
+    int nid = curveNidFromShortName(curveName);
     if (nid == NID_undef)
         return Bun::ERR::CRYPTO_INVALID_CURVE(scope, lexicalGlobalObject);
 

@@ -50,6 +50,7 @@ describe.concurrent("a .only with no test that can run does not focus the file",
           test("sibling", () => {});
         });
       `,
+      // unlike in Jest, a describe.only inside describe.skip stays skipped
       "nested-in-describe-skip.test.ts": `
         test("plain", () => {});
         describe.skip("skipped", () => {

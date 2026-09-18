@@ -845,10 +845,21 @@ public:
 
     private:
         struct Entry {
-            JSC::WriteBarrier<JSC::Unknown> promise; // JSPromise
+            JSC::WriteBarrier<JSC::JSPromise> promise; // null once removed
             JSC::WriteBarrier<JSC::Unknown> rejectionOwner; // JSModuleGraph or null
         };
+        bool removeSlow(JSC::JSPromise*);
+        void removeAt(unsigned index);
+        void compact();
+
+        // In rejection order. remove() nulls an entry where it is, so nothing moves. Of the
+        // entries from m_begin on, the first and the last are never null.
         WTF::Vector<Entry> m_entries;
+        unsigned m_begin { 0 }; // every entry before this one is null
+        unsigned m_nullCount { 0 }; // null entries after m_begin
+        // Where each promise is in m_entries. Empty until a removal has more entries to search
+        // than it scans; from then on kept current, until the queue is empty.
+        WTF::HashMap<JSC::JSPromise*, unsigned> m_indexes;
     };
 
 private:

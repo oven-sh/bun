@@ -9,7 +9,7 @@
     "stats": {
       "dirs": 250,
       "files": 1513,
-      "excluded": 366
+      "excluded": 367
     }
   },
   "dirs": [
@@ -476,6 +476,7 @@
     "js/node/process/process-stdin.test.ts",
     "js/node/process/process-stdio-stack-overflow.test.ts",
     "js/node/process/process-stdio.test.ts",
+    "js/node/process/process-unhandled-rejections.test.ts",
     "js/node/process/process.test.js",
     "js/node/quic/quic-endpoint.test.ts",
     "js/node/readline/readline_never_unrefs.test.ts",

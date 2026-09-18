@@ -131,6 +131,7 @@ js/node/process/dlopen-duplicate-load.test.ts
 js/node/process/process-on.test.ts
 js/node/process/process-stdio-stack-overflow.test.ts
 js/node/process/process-stdio.test.ts
+js/node/process/process-unhandled-rejections.test.ts
 js/node/process/stdin/process-stdin-stale-hup.test.ts
 js/node/process/stdin/stdin-fixtures.test.ts
 js/node/promise/reject-tostring.test.ts

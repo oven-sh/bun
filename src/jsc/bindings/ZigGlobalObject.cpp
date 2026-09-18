@@ -3340,39 +3340,150 @@ RefPtr<Performance> GlobalObject::performance()
 
 extern "C" void Bun__handleRejectedPromise(Zig::GlobalObject* JSGlobalObject, JSC::JSPromise* promise, JSC::EncodedJSValue rejectionOwner);
 
-void GlobalObject::RejectedPromiseQueue::append(JSC::VM& vm, JSC::JSCell* owner, JSC::JSPromise* promise, JSC::JSObject* rejectionOwner)
+// append() and remove() run once for every promise that is rejected before it has a handler
+// (each `await` of an async function that throws), so the paths through them that such a
+// promise takes are inlined into promiseRejectionTracker() and everything else is kept out.
+ALWAYS_INLINE void GlobalObject::RejectedPromiseQueue::append(JSC::VM& vm, JSC::JSCell* owner, JSC::JSPromise* promise, JSC::JSObject* rejectionOwner)
 {
     WTF::Locker locker { owner->cellLock() };
+    if (!m_indexes.isEmpty()) [[unlikely]]
+        m_indexes.add(promise, m_entries.size());
     m_entries.append({});
     m_entries.last().promise.set(vm, owner, promise);
     m_entries.last().rejectionOwner.set(vm, owner, rejectionOwner ? JSValue(rejectionOwner) : jsNull());
 }
 
-bool GlobalObject::RejectedPromiseQueue::remove(JSC::JSCell* owner, JSC::JSPromise* promise)
+ALWAYS_INLINE bool GlobalObject::RejectedPromiseQueue::remove(JSC::JSCell* owner, JSC::JSPromise* promise)
 {
     WTF::Locker locker { owner->cellLock() };
-    return m_entries.removeFirstMatching([&](Entry& entry) { return entry.promise.get() == promise; });
+    if (m_entries.isEmpty())
+        return false;
+    // No search when the newest rejection is the one handled (an `await` of a promise that is
+    // already rejected), or the oldest (Promise.all() over calls that have already failed).
+    if (m_indexes.isEmpty()) [[likely]] {
+        unsigned last = m_entries.size() - 1;
+        if (m_entries[last].promise.get() == promise) {
+            removeAt(last);
+            return true;
+        }
+        if (m_entries[m_begin].promise.get() == promise) {
+            removeAt(m_begin);
+            return true;
+        }
+    }
+    return removeSlow(promise);
+}
+
+NEVER_INLINE bool GlobalObject::RejectedPromiseQueue::removeSlow(JSC::JSPromise* promise)
+{
+    // Up to here a scan takes fewer instructions than m_indexes does to build and keep current.
+    static constexpr unsigned maxEntriesToScan = 64;
+
+    unsigned size = m_entries.size();
+    if (m_indexes.isEmpty()) {
+        if (size - m_begin <= maxEntriesToScan) {
+            for (unsigned i = m_begin; i < size; ++i) {
+                if (m_entries[i].promise.get() == promise) {
+                    removeAt(i);
+                    return true;
+                }
+            }
+            return false;
+        }
+        m_indexes.clear(); // it is empty, but reserveInitialCapacity() wants the table of an earlier use gone
+        m_indexes.reserveInitialCapacity(size - m_begin - m_nullCount);
+        for (unsigned i = m_begin; i < size; ++i) {
+            if (auto* queued = m_entries[i].promise.get())
+                m_indexes.add(queued, i);
+        }
+    }
+    auto it = m_indexes.find(promise);
+    if (it == m_indexes.end())
+        return false;
+    unsigned index = it->value;
+    m_indexes.remove(it);
+    removeAt(index);
+    return true;
+}
+
+// `index` is already out of m_indexes.
+ALWAYS_INLINE void GlobalObject::RejectedPromiseQueue::removeAt(unsigned index)
+{
+    static constexpr unsigned minNullEntriesToCompact = 1024;
+
+    ASSERT(m_entries[index].promise);
+    if (index != m_entries.size() - 1) {
+        m_entries[index].promise.clear();
+        m_entries[index].rejectionOwner.clear();
+        if (index == m_begin) {
+            while (!m_entries[++m_begin].promise)
+                --m_nullCount;
+        } else
+            ++m_nullCount;
+        // A queue that is never empty (one rejection that nobody handles, others that come and
+        // go behind it) would otherwise grow by an entry for each rejection.
+        unsigned nullCount = m_begin + m_nullCount;
+        if (nullCount >= minNullEntriesToCompact && nullCount > m_entries.size() - nullCount) [[unlikely]]
+            compact();
+    } else if (index != m_begin) {
+        m_entries.removeLast();
+        while (!m_entries.last().promise) {
+            m_entries.removeLast();
+            --m_nullCount;
+        }
+    } else {
+        m_entries.shrink(0);
+        m_begin = 0;
+        m_nullCount = 0;
+    }
+    ASSERT(m_entries.isEmpty() || (m_entries[m_begin].promise && m_entries.last().promise));
+    ASSERT(m_indexes.isEmpty() || m_indexes.size() == m_entries.size() - m_begin - m_nullCount);
+}
+
+NEVER_INLINE void GlobalObject::RejectedPromiseQueue::compact()
+{
+    bool isIndexed = !m_indexes.isEmpty();
+    unsigned size = 0;
+    for (unsigned i = m_begin, end = m_entries.size(); i < end; ++i) {
+        auto* promise = m_entries[i].promise.get();
+        if (!promise)
+            continue;
+        if (i != size) {
+            m_entries[size].promise.setWithoutWriteBarrier(promise);
+            m_entries[size].rejectionOwner.setWithoutWriteBarrier(m_entries[i].rejectionOwner.get());
+            if (isIndexed)
+                m_indexes.set(promise, size);
+        }
+        ++size;
+    }
+    m_entries.shrink(size);
+    m_begin = 0;
+    m_nullCount = 0;
 }
 
 void GlobalObject::RejectedPromiseQueue::drainTo(JSC::JSCell* owner, JSC::MarkedArgumentBuffer& promises, JSC::MarkedArgumentBuffer& rejectionOwners)
 {
     WTF::Locker locker { owner->cellLock() };
-    promises.ensureCapacity(promises.size() + m_entries.size());
-    rejectionOwners.ensureCapacity(rejectionOwners.size() + m_entries.size());
-    for (Entry& entry : m_entries) {
-        if (entry.promise.get().isCell()) {
-            promises.append(entry.promise.get());
+    auto entries = m_entries.subspan(m_begin);
+    promises.ensureCapacity(promises.size() + entries.size());
+    rejectionOwners.ensureCapacity(rejectionOwners.size() + entries.size());
+    for (const Entry& entry : entries) {
+        if (auto* promise = entry.promise.get()) {
+            promises.append(promise);
             rejectionOwners.append(entry.rejectionOwner.get());
         }
     }
     m_entries.clear();
+    m_indexes.clear();
+    m_begin = 0;
+    m_nullCount = 0;
 }
 
 template<typename Visitor>
 void GlobalObject::RejectedPromiseQueue::visit(JSC::JSCell* owner, Visitor& visitor)
 {
     WTF::Locker locker { owner->cellLock() };
-    for (auto& entry : m_entries) {
+    for (const Entry& entry : m_entries.subspan(m_begin)) {
         visitor.append(entry.promise);
         visitor.append(entry.rejectionOwner);
     }

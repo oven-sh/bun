@@ -8,25 +8,30 @@ use bun_ast::Loc;
 // they are unit-testable without the Expr-carrying struct.
 // ──────────────────────────────────────────────────────────────────────────
 
-#[inline]
-pub(crate) fn should_skip_line(line: &[u8]) -> bool {
-    if line.is_empty()
-        // comments
-        || line[0] == b';'
-        || line[0] == b'#'
-    {
-        return true;
-    }
-
-    // check the rest is whitespace
-    for &c in line {
-        match c {
-            b' ' | b'\t' | b'\n' | b'\r' => {}
-            b'#' | b';' => return true,
-            _ => return false,
+/// npm's `ini` trims keys, values and section names with
+/// `String.prototype.trim`, so the set is wider than ASCII whitespace.
+pub(crate) fn trim_js_whitespace(mut s: &[u8]) -> &[u8] {
+    use bun_core::strings::is_js_whitespace;
+    loop {
+        match bstr::decode_utf8(s) {
+            (Some(c), n) if is_js_whitespace(c as u32) => s = &s[n..],
+            _ => break,
         }
     }
-    true
+    loop {
+        match bstr::decode_last_utf8(s) {
+            (Some(c), n) if is_js_whitespace(c as u32) => s = &s[..s.len() - n],
+            _ => break,
+        }
+    }
+    s
+}
+
+#[inline]
+pub(crate) fn should_skip_line(line: &[u8]) -> bool {
+    let line = trim_js_whitespace(line);
+    // empty or a comment
+    line.is_empty() || line[0] == b';' || line[0] == b'#'
 }
 
 #[inline]
@@ -143,7 +148,7 @@ mod draft {
 
     use super::{
         ConfigItem, ConfigOpt, IniOption, NODE_LINKER_MAP, NodeLinker, is_quoted, next_dot,
-        should_skip_line,
+        should_skip_line, trim_js_whitespace,
     };
 
     type OOM<T> = Result<T, AllocError>;
@@ -245,13 +250,9 @@ mod draft {
                             break 'treat_as_key;
                         };
                         // Make sure the rest is just whitespace
-                        if close_bracket_idx + 1 < line.len() {
-                            for &c in &line[close_bracket_idx + 1..] {
-                                if !matches!(c, b' ' | b'\t') {
-                                    treat_as_key = true;
-                                    break 'treat_as_key;
-                                }
-                            }
+                        if !trim_js_whitespace(&line[close_bracket_idx + 1..]).is_empty() {
+                            treat_as_key = true;
+                            break 'treat_as_key;
                         }
                         let offset = i32::try_from(line.as_ptr() as usize - src.as_ptr() as usize)
                             .unwrap()
@@ -426,7 +427,7 @@ mod draft {
             offset_: i32,
         ) -> OOM<PrepareResult<'a>> {
             let mut offset = offset_;
-            let mut val = bun_core::trim(val_, b" \n\r\t");
+            let mut val = trim_js_whitespace(val_);
 
             if is_quoted(val) {
                 'out: {

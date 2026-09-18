@@ -111,10 +111,7 @@ pub struct ClientSession {
     /// `onData` only re-arms the idle timer when this is true so a server
     /// can't keep a stalled upload alive forever with bare PINGs.
     pub(crate) stream_progressed: bool,
-    /// The socket timer is armed for a stream's `awaiting_continue`, not for
-    /// the idle timeout, so its firing must not fail the session. Recorded by
-    /// `rearm_timeout` rather than derived when the timer fires: the held
-    /// stream can be gone by then (RST_STREAM does not re-arm).
+    /// The armed socket timer is for a held body, not the idle timeout. Only `rearm_timeout` sets it.
     continue_timer_armed: bool,
     pub(crate) goaway_last_stream_id: u31,
     pub(crate) fatal_error: Option<Error>,
@@ -276,9 +273,7 @@ impl ClientSession {
         Self::enter(this, |s| s.fail_streams(err));
     }
 
-    /// Socket onTimeout / onLongTimeout entry point. False when it was the
-    /// idle timeout that fired: the caller then fails the session through
-    /// [`Self::on_close`]. See [`Self::release_held_bodies`].
+    /// Socket timeout entry point. False: the idle timeout fired, and the caller fails the session.
     pub(crate) fn on_timeout(this: SessionPtr) -> bool {
         Self::enter(this, |s| s.release_held_bodies())
     }
@@ -690,12 +685,7 @@ impl ClientSession {
         for &c in &self.pending_attach {
             fold(pending_client_mut(c).effective_idle_timeout_seconds());
         }
-        // RFC 9110 §10.1.1: a client SHOULD NOT wait indefinitely for
-        // `100 Continue`. The socket timer is this thread's only clock, so
-        // while a request body is held it is armed for its next tick (at most
-        // one 4 s wheel period away) and its firing runs `release_held_bodies`
-        // instead of failing the session. Re-arming within a period does not
-        // move that tick, so traffic on sibling streams cannot postpone it.
+        // A held body takes the next tick. Re-arming never moves a tick, so siblings cannot postpone it.
         self.continue_timer_armed = holds_body;
         if holds_body {
             self.socket.set_timeout(1);
@@ -952,11 +942,7 @@ impl ClientSession {
         self.maybe_release();
     }
 
-    /// The socket timer fired. False when it was the idle timeout. Otherwise
-    /// `rearm_timeout` armed it for a held request body: send every body held
-    /// for `EXPECT_CONTINUE_TIMEOUT` as if `100 Continue` had arrived. A body
-    /// held for less waits for the next tick, 4 s later. The idle timeout
-    /// does not run during the hold. It starts again here, as after a write.
+    /// False if the idle timeout fired. Else sends bodies held for `EXPECT_CONTINUE_TIMEOUT`, restarts idle.
     fn release_held_bodies(&mut self) -> bool {
         if !self.continue_timer_armed {
             return false;

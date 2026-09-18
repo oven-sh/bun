@@ -51,10 +51,9 @@ pub struct Stream {
     /// delivery. Subsequent HEADERS are trailers and decoded-then-dropped.
     pub(crate) headers_ready: bool,
     pub(crate) headers_end_stream: bool,
-    /// Expect: 100-continue is in effect: hold the request body until
-    /// `100 Continue` or a final status arrives, or until the session's socket
-    /// timer finds it held for `EXPECT_CONTINUE_TIMEOUT`. Holds the time the
-    /// HEADERS were queued.
+    /// Expect: 100-continue is in effect: hold the request body until a 1xx
+    /// or final status arrives.
+    /// The time the HEADERS were queued. `EXPECT_CONTINUE_TIMEOUT` later, a timer tick ends the hold too.
     pub(crate) awaiting_continue: Option<Instant>,
     pub(crate) fatal_error: Option<Error>,
     /// DATA bytes consumed since the last WINDOW_UPDATE for this stream.

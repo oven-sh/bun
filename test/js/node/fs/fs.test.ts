@@ -916,6 +916,78 @@ describe("writeFile with a preallocate-sized buffer", () => {
   });
 });
 
+describe("truncate", () => {
+  it("shrinks and extends a file by path", () => {
+    const path = join(tmpdirSync(), "truncate-by-path.txt");
+    writeFileSync(path, "hello world");
+    fs.truncateSync(path, 5);
+    expect(readFileSync(path, "utf8")).toBe("hello");
+    fs.truncateSync(path, 8);
+    expect(readFileSync(path)).toEqual(Buffer.from("hello\0\0\0"));
+    fs.truncateSync(path);
+    expect(readFileSync(path, "utf8")).toBe("");
+  });
+
+  // Node implements fs.truncate(path) as open(path, 'r+') + ftruncate, so a
+  // missing path throws an ENOENT tagged with syscall "open", not "truncate".
+  // https://github.com/oven-sh/bun/issues/40341
+  function expectOpenENOENT(err: any, missing: string) {
+    expect({
+      code: err.code,
+      syscall: err.syscall,
+      path: err.path,
+    }).toEqual({
+      code: "ENOENT",
+      syscall: "open",
+      path: missing,
+    });
+    expect(err.message).toContain(`open '${missing}'`);
+  }
+
+  // Node opens with 'r+', so a write-only file fails EACCES at the open.
+  it.skipIf(isWindows || process.getuid?.() === 0)(
+    "truncateSync on a write-only file reports EACCES from open, like Node",
+    () => {
+      const file = join(tmpdirSync(), "write-only.txt");
+      writeFileSync(file, "hello");
+      fs.chmodSync(file, 0o222);
+      try {
+        fs.truncateSync(file);
+        expect.unreachable();
+      } catch (err: any) {
+        expect({ code: err.code, syscall: err.syscall }).toEqual({ code: "EACCES", syscall: "open" });
+      }
+    },
+  );
+
+  it("truncateSync on a missing path reports syscall open", () => {
+    const missing = join(tmpdirSync(), "does-not-exist.txt");
+    try {
+      fs.truncateSync(missing);
+      expect.unreachable();
+    } catch (err) {
+      expectOpenENOENT(err, missing);
+    }
+  });
+
+  it("callback truncate on a missing path reports syscall open", async () => {
+    const missing = join(tmpdirSync(), "does-not-exist.txt");
+    const { promise, resolve } = Promise.withResolvers<any>();
+    fs.truncate(missing, resolve);
+    expectOpenENOENT(await promise, missing);
+  });
+
+  it("promises.truncate on a missing path reports syscall open", async () => {
+    const missing = join(tmpdirSync(), "does-not-exist.txt");
+    try {
+      await _promises.truncate(missing);
+      expect.unreachable();
+    } catch (err) {
+      expectOpenENOENT(err, missing);
+    }
+  });
+});
+
 describe("copyFileSync", () => {
   it("should work for files < 128 KB", () => {
     const tempdir = tmpdirTestMkdir();

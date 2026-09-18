@@ -98,9 +98,7 @@ impl Signals {
             .is_some_and(|a| {
                 matches!(
                     BodyReceiveMode::from_u8(a.load(Ordering::Acquire)),
-                    BodyReceiveMode::Flowing
-                        | BodyReceiveMode::Paused
-                        | BodyReceiveMode::Unclaimed
+                    BodyReceiveMode::Flowing | BodyReceiveMode::Paused | BodyReceiveMode::Unclaimed
                 )
             })
     }

@@ -4734,18 +4734,12 @@ impl NodeFS {
     }
 
     /// Cuts the old tail of a copy destination at `wrote`, then gives it the mode of the source.
-    /// A FIFO or a device that was already at the destination path is not a copy, so it keeps
-    /// its mode. Linux refuses to truncate anything but a regular file, so a successful
-    /// `ftruncate` answers the question there at no cost. POSIX leaves the result unspecified
-    /// for other file types, so the other kernels ask `fstat`. The FICLONE paths call `fchmod`
-    /// directly: the kernel clones only into a regular file.
-    ///
-    /// Node differs: libuv's `uv__fs_copyfile` runs `ftruncate(dstfd, 0)` first, which fails with
-    /// EINVAL on such a destination, so it throws and unlinks the path. Bun writes the data to
-    /// it (`copyFile(x, "/dev/stdout")` works, on Linux since v1.3.5) and does not unlink it.
+    /// A FIFO or a device that was already at the destination path keeps its mode. Node fails
+    /// such a copy with EINVAL and unlinks the path. Bun writes the data to it.
     #[cfg(not(windows))]
     fn truncate_and_copy_mode(dest_fd: FD, wrote: u64, mode: Mode) {
         let truncated = Syscall::ftruncate(dest_fd, (wrote & ((1u64 << 63) - 1)) as i64).is_ok();
+        // Linux truncates only a regular file. POSIX leaves other file types unspecified.
         let is_regular = (cfg!(any(target_os = "linux", target_os = "android")) && truncated)
             || matches!(Syscall::fstat(dest_fd), Ok(st) if sys::S::ISREG(st.st_mode as u32));
         if is_regular {

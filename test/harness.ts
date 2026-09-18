@@ -318,6 +318,62 @@ export async function expectMaxObjectTypeCount(
   expect(heapStats().objectTypeCounts[type] ?? 0).toBeLessThanOrEqual(count);
 }
 
+// ASAN's quarantine pins freed blocks and keeps RSS at peak.
+export function withoutAsanQuarantine(env: NodeJS.Dict<string>): NodeJS.Dict<string> {
+  return {
+    ...env,
+    ASAN_OPTIONS: [env.ASAN_OPTIONS, "quarantine_size_mb=0", "thread_local_quarantine_size_kb=0"]
+      .filter(Boolean)
+      .join(":"),
+  };
+}
+
+// Runs the command passed as a JSON array in the last argument and prints one
+// JSON line: the command's output, exit status, and peak RSS in bytes.
+const maxRSSSpawner = /* js */ `
+  const proc = Bun.spawn({ cmd: JSON.parse(process.argv.at(-1)), stdout: "pipe", stderr: "pipe" });
+  process.on("SIGTERM", () => proc.kill());
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { signalCode } = proc;
+  console.log(JSON.stringify({ stdout, stderr, exitCode, signalCode, maxRSS: proc.resourceUsage().maxRSS }));
+`;
+
+/**
+ * Runs `cmd` and returns its output, exit status, and peak RSS in bytes.
+ *
+ * On Linux, `resourceUsage().maxRSS` of a process that the test spawned
+ * itself is not that process's own peak, because `ru_maxrss` survives exec.
+ * The child starts from the high-water mark of its spawner (`exec_mmap` ->
+ * `setmax_mm_hiwater_rss`), so the number is max(test runner peak, child
+ * peak). Here the spawner is a small bun process. The inherited mark is then
+ * a fixed floor (~30 MB release, ~320 MB debug+ASAN), not whatever the test
+ * runner allocated so far.
+ */
+export async function runCommandMaxRSS(options: { cmd: string[]; cwd?: string; env?: NodeJS.Dict<string> }) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", maxRSSSpawner, JSON.stringify(options.cmd)],
+    cwd: options.cwd,
+    env: options.env ?? bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+  const result: {
+    stdout: string;
+    stderr: string;
+    exitCode: number;
+    signalCode: NodeJS.Signals | null;
+    maxRSS: number;
+  } = JSON.parse(stdout);
+  // Guard the unit: any bun process peaks well above 1 MiB in bytes but under
+  // 1_048_576 in kB; a failure here means maxRSS regressed to kB and every
+  // upper bound on it is vacuous.
+  expect(result.maxRSS).toBeGreaterThan(1024 * 1024);
+  return result;
+}
+
 /**
  * Peak RSS of a bun process that runs `fixture`, whose only stdout line is
  * the JSON `expected` (the transfer's completion result), and the peak RSS of
@@ -325,16 +381,15 @@ export async function expectMaxObjectTypeCount(
  * the assertion is about the payload, not the runtime's fixed footprint.
  */
 export async function runFixtureMaxRSS(fixture: string, expected: unknown) {
-  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, stderr, exitCode, maxRSS } = await runCommandMaxRSS({
+    cmd: [bunExe(), "-e", fixture],
+    // With the quarantine on, the delta of a fixture that moves 128 MB is the
+    // size of the quarantine (256 MB), whatever the fixture holds.
+    env: withoutAsanQuarantine(bunEnv),
+  });
   expect(stderr).toBe("");
   expect(JSON.parse(stdout.trim())).toEqual(expected);
   expect(exitCode).toBe(0);
-  const maxRSS = proc.resourceUsage()!.maxRSS;
-  // Guard the unit: any bun process peaks well above 1 MiB in bytes but under
-  // 1_048_576 in kB; a failure here means maxRSS regressed to kB and every
-  // bounded-memory assertion below is vacuous.
-  expect(maxRSS).toBeGreaterThan(1024 * 1024);
   return maxRSS;
 }
 
@@ -349,13 +404,7 @@ export async function expectRssDeltaBelow(
 ): Promise<void> {
   await using proc = Bun.spawn({
     cmd: [bunExe(), ...cmd],
-    env: {
-      ...bunEnv,
-      // ASAN's quarantine pins freed blocks and keeps RSS at peak.
-      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0", "thread_local_quarantine_size_kb=0"]
-        .filter(Boolean)
-        .join(":"),
-    },
+    env: withoutAsanQuarantine(bunEnv),
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -368,11 +417,10 @@ export async function expectRssDeltaBelow(
 
 let emptyBunMaxRSS: Promise<number> | undefined;
 export function emptyProcessMaxRSS() {
-  return (emptyBunMaxRSS ??= (async () => {
-    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", ""], env: bunEnv });
-    await proc.exited;
-    return proc.resourceUsage()!.maxRSS;
-  })());
+  return (emptyBunMaxRSS ??= runCommandMaxRSS({
+    cmd: [bunExe(), "-e", ""],
+    env: withoutAsanQuarantine(bunEnv),
+  }).then(({ maxRSS }) => maxRSS));
 }
 
 // we must ensure that finalizers are run

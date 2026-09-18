@@ -35,6 +35,10 @@ size_t simdutf__utf8_length_from_latin1(const char* input, size_t length) {
   return simdutf::utf8_length_from_latin1(input, length);
 }
 
+size_t simdutf__convert_latin1_to_utf8(const char* input, size_t length, char* output) {
+  return simdutf::convert_latin1_to_utf8(input, length, output);
+}
+
 size_t simdutf__utf16_length_from_utf8(const char* input, size_t length) {
   return simdutf::utf16_length_from_utf8(input, length);
 }

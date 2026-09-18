@@ -439,3 +439,76 @@ describe.each(["hoisted", "isolated"])("linker=%s", linker => {
     }
   });
 });
+
+// A download that fails at the connection level halves the number of concurrent requests for the
+// rest of the install (#2536). Only `bun install` does that: the runtime's auto-install shares the
+// cap with fetch() and leaves it alone (run-autoinstall.test.ts).
+it("halves the concurrent requests after a dropped connection", async () => {
+  // Closes every connection before it answers.
+  using dropped = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: {
+      open(socket) {
+        socket.end();
+      },
+      data() {},
+    },
+  });
+  const manifest = (name: string, dependencies?: Record<string, string>) =>
+    Response.json({
+      name,
+      "dist-tags": { latest: "0.0.2" },
+      versions: {
+        "0.0.2": { name, version: "0.0.2", dependencies, dist: { tarball: `${root_url}/${name}-0.0.2.tgz` } },
+      },
+    });
+  // BaR needs 8 packages, so the install wants their 8 manifests at once.
+  const dependencies = Object.fromEntries(Array.from({ length: 8 }, (_, i) => [`dep-${i}`, "0.0.2"]));
+  let droppedOnce = false;
+  let inFlight = 0;
+  let peak = 0;
+  const half = Promise.withResolvers<void>();
+  const all = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  setHandler(async request => {
+    const { pathname } = new URL(request.url);
+    if (pathname.endsWith(".tgz")) return new Response(file(join(import.meta.dir, "bar-0.0.2.tgz")));
+    if (pathname === "/BaR") {
+      if (droppedOnce) return manifest("BaR", dependencies);
+      droppedOnce = true;
+      return Response.redirect(`http://127.0.0.1:${dropped.port}/BaR`, 302);
+    }
+    // Holds the 8 manifests to count how many of them are in flight at once.
+    peak = Math.max(peak, ++inFlight);
+    if (inFlight === 4) half.resolve();
+    if (inFlight === 8) all.resolve();
+    await release.promise;
+    inFlight--;
+    return manifest(pathname.slice(1));
+  });
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { BaR: "0.0.2" } }),
+  );
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install", "--network-concurrency=8", "--linker=hoisted"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const output = Promise.all([stderr.text(), stdout.text(), exited]);
+  // `exited`: an install that ends early must not leave this test waiting.
+  await Promise.race([half.promise, exited]);
+  // The lowered cap keeps the other 4 manifests in the client, and no event reports that. Give a
+  // fifth request a bounded time to arrive. It arrives at once when the cap is still 8.
+  await Promise.race([all.promise, exited, Bun.sleep(500)]);
+  release.resolve();
+
+  const [err, out, exitCode] = await output;
+  expect(err).not.toContain("error:");
+  expect(out).toContain("9 packages installed");
+  expect({ peak, exitCode }).toEqual({ peak: 4, exitCode: 0 });
+});

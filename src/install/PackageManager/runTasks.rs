@@ -1983,6 +1983,9 @@ fn fail_update_requests(
 /// The first failed download in a `run_tasks` pass halves the number of
 /// concurrent requests (down to the configured minimum).
 fn throttle_after_network_error(manager: &PackageManager, has_network_error: &mut bool) {
+    if !manager.options.throttle_after_network_error {
+        return;
+    }
     if core::mem::replace(has_network_error, true) {
         return;
     }

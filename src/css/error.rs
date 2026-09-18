@@ -221,9 +221,9 @@ pub enum PrinterErrorKind {
     /// the configured targets exceeded the expansion limit.
     maximum_nesting_expansion,
     /// Serializing a style rule once per vendor prefix re-serializes its whole
-    /// body in every pass, so nesting vendor-prefixed multi-selector rules
-    /// expands the output multiplicatively with depth. The total bytes emitted
-    /// by those duplicate passes exceeded the expansion limit.
+    /// body in every pass when nesting is preserved, so nesting vendor-prefixed
+    /// multi-selector rules expands the output multiplicatively with depth. The
+    /// total bytes emitted by the duplicate passes exceeded the expansion limit.
     maximum_vendor_prefix_expansion,
     no_import_records,
 }

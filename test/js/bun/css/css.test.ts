@@ -2420,6 +2420,37 @@ describe("css tests", () => {
         rule("border-left-width: 3px; border-left: 1dvh solid #00f;"),
       );
       compiled("border-left-width: 3px; border-left: 1px solid #00f", rule("border-left: 1px solid #00f;"));
+      // So does the `border` shorthand.
+      compiled("border-inline: 3px solid red; border: 1px solid #00f", rule("border: 1px solid #00f;"));
+      compiled(
+        "border-inline: 3px solid red; border: 1dvh solid #00f",
+        rule("border-left: 3px solid red; border-right: 3px solid red; border: 1dvh solid #00f;"),
+      );
+      compiled(
+        "border-block-start: 3px solid red; border: 1dvh solid #00f",
+        rule("border-top: 3px solid red; border: 1dvh solid #00f;"),
+      );
+      compiled(
+        "border-top: 3px solid red; border: 1dvh solid #00f",
+        rule("border-top: 3px solid red; border: 1dvh solid #00f;"),
+      );
+      compiled(
+        "border: 1px solid red; border: 1dvh solid #00f",
+        rule("border: 1px solid red; border: 1dvh solid #00f;"),
+      );
+      compiled("border-inline-start: 3px solid red; border: 1dvh solid #00f", rule("border: 1dvh solid #00f;"));
+      // A logical side shorthand gets no such fallback: it would go into the ltr/rtl rules and
+      // override the rule itself, where an equal pair lands.
+      compiled(
+        "border-inline-start-color: red; border-inline: 1px solid lab(40% 56.6 39)",
+        rule(
+          "border-left: 1px solid #b32323; border-left: 1px solid lab(40% 56.6 39); border-right: 1px solid #b32323; border-right: 1px solid lab(40% 56.6 39);",
+        ),
+      );
+      compiled(
+        "border-inline-start-width: 3px; border-inline: 1dvh solid red",
+        rule("border-left: 1dvh solid red; border-right: 1dvh solid red;"),
+      );
       compiled(
         "border-inline-start-color: red; border-left-color: lab(40% 56.6 39)",
         rule("border-left-color: #b32323; border-left-color: lab(40% 56.6 39);") + rtl("border-right-color: red;"),

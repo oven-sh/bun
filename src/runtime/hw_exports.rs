@@ -145,7 +145,6 @@ pub fn specifier_is_eval_entry_point(this: &mut VirtualMachine, specifier: JSVal
     false
 }
 
-/// Exported as `Bun__VM__specifierIsEntryPoint`.
 // HOST_EXPORT(Bun__VM__specifierIsEntryPoint, c)
 pub fn specifier_is_entry_point(this: &mut VirtualMachine, specifier: JSValue) -> bool {
     if this.main().is_empty() {

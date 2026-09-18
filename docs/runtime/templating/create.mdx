@@ -201,7 +201,7 @@ You can specify pre- and post-install setup scripts in the `"bun-create"` sectio
 }
 ```
 
-`preinstall` and `postinstall` accept a string or an array of strings. An array of commands runs in order.
+`preinstall` and `postinstall` accept a string or an array of strings. An array of commands runs in order. Each command runs through the shell in the destination folder, like a `package.json` script. If a command exits with a non-zero code, `bun create` stops with that code. The hooks run even when the template has no dependencies. `--no-install` skips them.
 
 | Field         | Description                                                                                 |
 | ------------- | ------------------------------------------------------------------------------------------- |

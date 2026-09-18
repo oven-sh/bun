@@ -2926,15 +2926,22 @@ impl PackageManifest {
                                         dep_name.value.slice(string_buf)
                                             == this_names[j].value.slice(string_buf)
                                     );
-                                    debug_assert!(dep_name.value.slice(string_buf) == stored[j].0);
+                                    // Through a `String`: its inline form ends at the first NUL.
+                                    let source = stored[j].0;
+                                    debug_assert!(
+                                        dep_name.value.slice(string_buf)
+                                            == SemverString::init(source, source).slice(source)
+                                    );
                                 }
                                 for (j, dep_version) in value_dependencies.iter().enumerate() {
                                     debug_assert!(
                                         dep_version.value.slice(string_buf)
                                             == this_versions[j].value.slice(string_buf)
                                     );
+                                    let source = stored[j].1;
                                     debug_assert!(
-                                        dep_version.value.slice(string_buf) == stored[j].1
+                                        dep_version.value.slice(string_buf)
+                                            == SemverString::init(source, source).slice(source)
                                     );
                                 }
                             }

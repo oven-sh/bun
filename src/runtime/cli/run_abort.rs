@@ -78,9 +78,8 @@ pub(crate) fn install(loop_: *mut bun_uws::Loop) {
             for (i, sig) in SIGNALS.into_iter().enumerate() {
                 let mut previous: libc::sigaction = bun_core::ffi::zeroed();
                 libc::sigaction(sig, core::ptr::null(), &raw mut previous);
-                // An inherited SIG_IGN stays for SIGTERM and SIGHUP (`nohup`).
-                // SIGINT is always hooked: a shell without job control starts
-                // every `&` job with it ignored, and `kill -INT $!` must work.
+                // SIGTERM and SIGHUP keep an inherited SIG_IGN (`nohup`). SIGINT does
+                // not: a shell without job control starts `&` jobs with it ignored.
                 if sig == libc::SIGINT || previous.sa_sigaction != libc::SIG_IGN {
                     libc::sigaction(sig, &raw const action, core::ptr::null_mut());
                     hooked |= 1 << i;

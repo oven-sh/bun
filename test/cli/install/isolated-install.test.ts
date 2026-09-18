@@ -679,9 +679,10 @@ describe("isolated workspaces", () => {
 });
 
 // https://github.com/oven-sh/bun/issues/43221
-describe("failed script of a workspace linked only as an optional dependency", () => {
-  for (const linker of ["isolated", "hoisted"] as const) {
-    test(`${linker}: keeps the workspace folder and its link`, async () => {
+describe.each(["isolated", "hoisted"] as const)(
+  "failed script of a workspace linked only as an optional dependency (%s)",
+  linker => {
+    test("keeps the workspace folder and its link", async () => {
       const { packageDir } = await registry.createTestDir({
         bunfigOpts: { linker },
         files: {
@@ -704,7 +705,7 @@ describe("failed script of a workspace linked only as an optional dependency", (
       });
 
       await using proc = spawn({
-        cmd: [bunExe(), "install", "--filter", "y"],
+        cmd: [bunExe(), "install", "--filter", "y", "--verbose"],
         cwd: packageDir,
         env: bunEnv,
         stdout: "pipe",
@@ -713,6 +714,7 @@ describe("failed script of a workspace linked only as an optional dependency", (
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
       expect(stderr).not.toContain("error:");
+      expect(stderr).toContain("skipping optional dependency 'x' due to failed 'postinstall' script");
       expect(stdout).toContain("bun install v1.");
       expect(exitCode).toBe(0);
 
@@ -736,7 +738,65 @@ describe("failed script of a workspace linked only as an optional dependency", (
         "keep me",
       ]);
     });
-  }
+  },
+);
+
+// The isolated linker does not run the scripts of a `link:` package, so only the hoisted linker is covered.
+test("failed script of a bun link target linked only as an optional dependency keeps the target and its links", async () => {
+  const { packageDir } = await registry.createTestDir({
+    bunfigOpts: { linker: "hoisted" },
+    files: {
+      "package.json": JSON.stringify({
+        name: "optional-link-dep",
+        optionalDependencies: { x: "link:x" },
+        trustedDependencies: ["x"],
+      }),
+      "linked/x/package.json": JSON.stringify({
+        name: "x",
+        version: "1.0.0",
+        scripts: { postinstall: "exit 1" },
+      }),
+      "linked/x/src.txt": "keep me",
+    },
+  });
+  // `bun link` registers in $BUN_INSTALL/install/global. Keep it per test.
+  const env = { ...bunEnv, BUN_INSTALL: join(packageDir, ".bun-install") };
+
+  await using link = spawn({
+    cmd: [bunExe(), "link"],
+    cwd: join(packageDir, "linked", "x"),
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(await link.stdout.text()).toContain('Success! Registered "x"');
+  expect(await link.exited).toBe(0);
+
+  await using proc = spawn({
+    cmd: [bunExe(), "install", "--verbose"],
+    cwd: packageDir,
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).not.toContain("error:");
+  expect(stderr).toContain("skipping optional dependency 'x' due to failed 'postinstall' script");
+  expect(stdout).toContain("bun install v1.");
+  expect(exitCode).toBe(0);
+
+  const globalLink = join(packageDir, ".bun-install", "install", "global", "node_modules", "x");
+  const projectLink = join(packageDir, "node_modules", "x");
+  expect(
+    await Promise.all([
+      file(join(packageDir, "linked", "x", "src.txt")).text(),
+      lstatSync(globalLink).isSymbolicLink(),
+      file(join(globalLink, "src.txt")).text(),
+      lstatSync(projectLink).isSymbolicLink(),
+      file(join(projectLink, "src.txt")).text(),
+    ]),
+  ).toEqual(["keep me", true, "keep me", true, "keep me"]);
 });
 
 describe("optional peers", () => {

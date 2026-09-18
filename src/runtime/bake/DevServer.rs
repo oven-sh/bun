@@ -1815,7 +1815,7 @@ impl RequestEnsureRouteBundledCtx {
         unsafe { &mut *self.dev }
     }
 
-    fn on_defer(&mut self, bundle_field: BundleQueueType) -> JsResult<()> {
+    fn on_defer(&mut self, bundle_field: BundleQueueType) -> JsResult<Deferral> {
         // Note: reshaped for borrowck — captured args before re-borrowing dev
         let route_bundle_index = self.route_bundle_index;
         let kind = self.kind;
@@ -1832,15 +1832,14 @@ impl RequestEnsureRouteBundledCtx {
             }
             BundleQueueType::NextBundle => &raw mut dev.next_bundle.requests,
         };
-        self.dev_mut().defer_request(
+        Ok(self.dev_mut().defer_request(
             // SAFETY: `requests_array` points into `*self.dev`, which outlives this call.
             unsafe { &mut *requests_array },
             route_bundle_index,
             kind,
             req,
             resp,
-        )?;
-        Ok(())
+        )?)
     }
 
     fn on_loaded(&mut self) -> JsResult<()> {
@@ -1882,7 +1881,7 @@ impl RequestEnsureRouteBundledCtx {
 }
 
 impl EnsureRouteCtx for RequestEnsureRouteBundledCtx {
-    fn on_defer(&mut self, b: BundleQueueType) -> JsResult<()> {
+    fn on_defer(&mut self, b: BundleQueueType) -> JsResult<Deferral> {
         Self::on_defer(self, b)
     }
     fn on_loaded(&mut self) -> JsResult<()> {
@@ -1902,8 +1901,16 @@ enum BundleQueueType {
     CurrentBundle,
 }
 
+/// What `EnsureRouteCtx::on_defer` did with the request.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Deferral {
+    Parked,
+    /// The response was already written (413, 400). Nothing waits for a bundle.
+    Answered,
+}
+
 trait EnsureRouteCtx {
-    fn on_defer(&mut self, bundle_field: BundleQueueType) -> JsResult<()>;
+    fn on_defer(&mut self, bundle_field: BundleQueueType) -> JsResult<Deferral>;
     fn on_loaded(&mut self) -> JsResult<()>;
     fn on_plugin_error(&mut self) -> JsResult<()>;
     fn to_dev_response(&mut self) -> DevResponse<'_>;
@@ -1922,8 +1929,10 @@ fn ensure_route_is_bundled<Ctx: EnsureRouteCtx>(
             route_bundle::State::Unqueued => {
                 // We already are bundling something, defer the request
                 if dev.current_bundle.is_some() {
+                    if ctx.on_defer(BundleQueueType::NextBundle)? == Deferral::Answered {
+                        return Ok(());
+                    }
                     dev.next_bundle.route_queue.put(route_bundle_index, ())?;
-                    ctx.on_defer(BundleQueueType::NextBundle)?;
                     dev.route_bundle_ptr(route_bundle_index).server_state =
                         route_bundle::State::DeferredToNextBundle;
                     return Ok(());
@@ -1983,8 +1992,10 @@ fn ensure_route_is_bundled<Ctx: EnsureRouteCtx>(
                             break 'plugin;
                         }
                         PluginState::Pending => {
+                            if ctx.on_defer(BundleQueueType::NextBundle)? == Deferral::Answered {
+                                return Ok(());
+                            }
                             dev.next_bundle.route_queue.put(route_bundle_index, ())?;
-                            ctx.on_defer(BundleQueueType::NextBundle)?;
                             dev.route_bundle_ptr(route_bundle_index).server_state =
                                 route_bundle::State::DeferredToNextBundle;
                             return Ok(());
@@ -2019,8 +2030,11 @@ fn ensure_route_is_bundled<Ctx: EnsureRouteCtx>(
                     }
                 }
 
+                // `finalize_bundle` settles a route only through its waiters.
+                if ctx.on_defer(BundleQueueType::NextBundle)? == Deferral::Answered {
+                    return Ok(());
+                }
                 dev.next_bundle.route_queue.put(route_bundle_index, ())?;
-                ctx.on_defer(BundleQueueType::NextBundle)?;
                 dev.route_bundle_ptr(route_bundle_index).server_state =
                     route_bundle::State::Bundling;
 
@@ -2095,7 +2109,7 @@ impl DevServer {
         kind: deferred_request::HandlerKind,
         req: ReqOrSaved,
         resp: AnyResponse,
-    ) -> crate::Result<()> {
+    ) -> crate::Result<Deferral> {
         let deferred_slot = self.deferred_request_pool.claim();
         let deferred_node_ptr: *mut deferred_request::Node = deferred_slot.addr().as_ptr();
         // Precompute the data slot pointer (used inside the initializer for
@@ -2151,10 +2165,10 @@ impl DevServer {
                                     Some(method),
                                 )? {
                                 Some(saved) => saved,
-                                // Abort the deferral on failure.
+                                // The response was already written (413, 400).
                                 // `deferred_slot` drops here, releasing the
                                 // still-uninitialized slot without `drop_in_place`.
-                                None => return Ok(()),
+                                None => return Ok(Deferral::Answered),
                             }
                         }
                         _ => unreachable!(),
@@ -2200,7 +2214,7 @@ impl DevServer {
 
         // SAFETY: `deferred_ptr` was just initialized via `deferred_slot.write()`.
         unsafe { requests_array.prepend(&mut *deferred_ptr) };
-        Ok(())
+        Ok(Deferral::Parked)
     }
 }
 
@@ -6388,7 +6402,7 @@ impl<'a> PromiseEnsureRouteBundledCtx<'a> {
         jsc::JSPromiseStrong::from_value(value, self.global)
     }
 
-    fn on_defer(&mut self, bundle_field: BundleQueueType) -> JsResult<()> {
+    fn on_defer(&mut self, bundle_field: BundleQueueType) -> JsResult<Deferral> {
         let route_bundle_index = self.route_bundle_index;
         match bundle_field {
             BundleQueueType::CurrentBundle => {
@@ -6403,7 +6417,7 @@ impl<'a> PromiseEnsureRouteBundledCtx<'a> {
                         .put(route_bundle_index, ())
                         .expect("oom");
                     self.p = Some(cb.promise.strong.get());
-                    return Ok(());
+                    return Ok(Deferral::Parked);
                 }
                 let strong_promise = self.ensure_promise();
                 let cb = self
@@ -6416,7 +6430,7 @@ impl<'a> PromiseEnsureRouteBundledCtx<'a> {
                     .put(route_bundle_index, ())
                     .expect("oom");
                 cb.promise.strong = strong_promise;
-                Ok(())
+                Ok(Deferral::Parked)
             }
             BundleQueueType::NextBundle => {
                 if self.dev_mut().next_bundle.promise.strong.has_value() {
@@ -6427,7 +6441,7 @@ impl<'a> PromiseEnsureRouteBundledCtx<'a> {
                         .put(route_bundle_index, ())
                         .expect("oom");
                     self.p = Some(self.dev_mut().next_bundle.promise.strong.get());
-                    return Ok(());
+                    return Ok(Deferral::Parked);
                 }
                 let strong_promise = self.ensure_promise();
                 self.dev_mut()
@@ -6437,7 +6451,7 @@ impl<'a> PromiseEnsureRouteBundledCtx<'a> {
                     .put(route_bundle_index, ())
                     .expect("oom");
                 self.dev_mut().next_bundle.promise.strong = strong_promise;
-                Ok(())
+                Ok(Deferral::Parked)
             }
         }
     }
@@ -6470,7 +6484,7 @@ impl<'a> PromiseEnsureRouteBundledCtx<'a> {
 }
 
 impl<'a> EnsureRouteCtx for PromiseEnsureRouteBundledCtx<'a> {
-    fn on_defer(&mut self, bundle_field: BundleQueueType) -> JsResult<()> {
+    fn on_defer(&mut self, bundle_field: BundleQueueType) -> JsResult<Deferral> {
         PromiseEnsureRouteBundledCtx::on_defer(self, bundle_field)
     }
     fn on_loaded(&mut self) -> JsResult<()> {

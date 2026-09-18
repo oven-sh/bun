@@ -141,36 +141,52 @@ test("bunfig password value is masked in config error output", async () => {
   expect(coloredExit).toBe(1);
 });
 
-test.concurrent("bunfig token value is masked when the error is on a long line", async () => {
+describe.concurrent("bunfig token value is masked when the error is on a long line", () => {
   // The key is more than 40 bytes before the error and more than 80 bytes
-  // of comment follow it, so the excerpt window would cut `token = ` away.
+  // follow it, so the excerpt window would cut `token = ` away.
   const secret = Buffer.alloc(72, "SECRET").toString();
   const masked = Buffer.alloc(secret.length, "*").toString();
-  const padding = Buffer.alloc(120, "x").toString();
-  using dir = tempDir("redacted-bunfig-long-line", {
-    "bunfig.toml": `[install]\ntoken = "${secret}" ] # ${padding}\n`,
-    "package.json": "{}",
-  });
+  const cases = [
+    {
+      title: "toml syntax error",
+      bunfig: `[install]\ntoken = "${secret}" ] # ${Buffer.alloc(120, "x").toString()}\n`,
+      error: "Expected a newline or end of file after a key/value pair",
+    },
+    {
+      title: "bunfig validation error",
+      bunfig: `install = { registry = { token = "${secret}" }, cafile = 1, ca = "${Buffer.alloc(90, "x").toString()}" }\n`,
+      error: "Invalid cafile. Expected a string.",
+    },
+  ];
 
-  for (const env of [
-    { ...bunEnv, NO_COLOR: "1" },
-    { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: "1" },
-  ]) {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "install"],
-      cwd: String(dir),
-      env,
-      stdout: "pipe",
-      stderr: "pipe",
+  for (const { title, bunfig, error } of cases) {
+    test(title, async () => {
+      using dir = tempDir("redacted-bunfig-long-line", {
+        "bunfig.toml": bunfig,
+        "package.json": "{}",
+      });
+
+      for (const env of [
+        { ...bunEnv, NO_COLOR: "1" },
+        { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: "1" },
+      ]) {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "install"],
+          cwd: String(dir),
+          env,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+
+        const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+        expect(out).not.toContain("SECRET");
+        expect(err).not.toContain("SECRET");
+        expect(err).toContain(`"${masked}"`);
+        expect(err).toContain(error);
+        expect(exitCode).toBe(1);
+      }
     });
-
-    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-    expect(out).not.toContain("SECRET");
-    expect(err).not.toContain("SECRET");
-    expect(err).toContain(`"${masked}"`);
-    expect(err).toContain("Expected a newline or end of file after a key/value pair");
-    expect(exitCode).toBe(1);
   }
 });
 

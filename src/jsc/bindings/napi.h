@@ -504,9 +504,10 @@ public:
     inline bool isFinishingFinalizers() const { return m_isFinishingFinalizers; }
 
     // Node's env->can_call_into_js(). False for the whole of cleanup(): on_exit() stops the handle first.
+    // And while a completion runs for a Bun.ModuleGraph context that has stopped (see below).
     inline bool canCallIntoJS() const
     {
-        return !WebCore::clientData(m_vm)->isStoppingOrStopped(m_vm);
+        return !m_isCompletingForStoppedContext && !WebCore::clientData(m_vm)->isStoppingOrStopped(m_vm);
     }
 
     // The status of a call that Node refuses because !can_call_into_js().
@@ -603,6 +604,14 @@ private:
     // The entry cleanup() is currently calling, if any (see BoundFinalizer::deactivate).
     const BoundFinalizer* m_currentFinalizer = nullptr;
     bool m_isFinishingFinalizers = false;
+
+public:
+    // Set while a completion (async work's complete, a threadsafe function's call_js) runs for a
+    // Bun.ModuleGraph context that has stopped. The addon's callback has to run, since it owns
+    // memory only it can free; what it may not do is run that graph's script.
+    bool m_isCompletingForStoppedContext = false;
+
+private:
     JSC::VM& m_vm;
     const ::BunVmHandleRef* m_vmHandle;
     Napi::HookSet m_cleanupHooks;

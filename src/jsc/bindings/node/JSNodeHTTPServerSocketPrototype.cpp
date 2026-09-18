@@ -1,6 +1,7 @@
 #include "JSNodeHTTPServerSocketPrototype.h"
 #include "JSNodeHTTPServerSocket.h"
 #include "JSSocketAddressDTO.h"
+#include "AsyncContextFrame.h"
 #include "ZigGlobalObject.h"
 #include "ZigGeneratedClasses.h"
 #include "helpers.h"
@@ -18,6 +19,16 @@ namespace Bun {
 
 using namespace JSC;
 using namespace WebCore;
+
+// ondata / ondrain / onclose continue the Bun.ModuleGraph whose script set them (nothing, outside a
+// graph: the socket's events arrive in nobody's async context, as in node). Reading one back gives
+// the function that was set.
+static JSValue storedCallback(JSObject* stored)
+{
+    if (auto* wrapper = dynamicDowncast<AsyncContextFrame>(stored))
+        return wrapper->callback.get();
+    return stored;
+}
 
 // Declare custom getters/setters and host functions
 JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterOnClose);
@@ -398,7 +409,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterOnClose, (JSC::JSGlobalObje
     }
 
     if (thisObject->functionToCallOnClose) {
-        return JSValue::encode(thisObject->functionToCallOnClose.get());
+        return JSValue::encode(storedCallback(thisObject->functionToCallOnClose.get()));
     }
 
     return JSValue::encode(JSC::jsUndefined());
@@ -412,7 +423,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterOnDrain, (JSC::JSGlobalObje
     }
 
     if (thisObject->functionToCallOnDrain) {
-        return JSValue::encode(thisObject->functionToCallOnDrain.get());
+        return JSValue::encode(storedCallback(thisObject->functionToCallOnDrain.get()));
     }
 
     return JSValue::encode(JSC::jsUndefined());
@@ -438,7 +449,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsNodeHttpServerSocketSetterOnDrain, (JSC::JSGlobalObje
         return false;
     }
 
-    thisObject->functionToCallOnDrain.set(vm, thisObject, value.getObject());
+    thisObject->functionToCallOnDrain.set(vm, thisObject, AsyncContextFrame::withGraphContextIfNeeded(globalObject, value).getObject());
     return true;
 }
 
@@ -450,7 +461,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterOnData, (JSC::JSGlobalObjec
     }
 
     if (thisObject->functionToCallOnData) {
-        return JSValue::encode(thisObject->functionToCallOnData.get());
+        return JSValue::encode(storedCallback(thisObject->functionToCallOnData.get()));
     }
 
     return JSValue::encode(JSC::jsUndefined());
@@ -476,7 +487,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsNodeHttpServerSocketSetterOnData, (JSC::JSGlobalObjec
         return false;
     }
 
-    thisObject->functionToCallOnData.set(vm, thisObject, value.getObject());
+    thisObject->functionToCallOnData.set(vm, thisObject, AsyncContextFrame::withGraphContextIfNeeded(globalObject, value).getObject());
     return true;
 }
 
@@ -500,7 +511,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsNodeHttpServerSocketSetterOnClose, (JSC::JSGlobalObje
         return false;
     }
 
-    thisObject->functionToCallOnClose.set(vm, thisObject, value.getObject());
+    thisObject->functionToCallOnClose.set(vm, thisObject, AsyncContextFrame::withGraphContextIfNeeded(globalObject, value).getObject());
     return true;
 }
 

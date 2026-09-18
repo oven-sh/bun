@@ -18,7 +18,7 @@ import {
   toBeWorkspaceLink,
   toHaveBins,
 } from "harness";
-import { dirname, join, resolve, sep } from "path";
+import { basename, dirname, join, resolve, sep } from "path";
 import {
   createTestContext,
   destroyTestContext,
@@ -12159,4 +12159,144 @@ it.concurrent.each([
 
   expect(err).toContain("error: Invalid package name");
   expect({ exitCode, signalCode: proc.signalCode }).toEqual({ exitCode: 1, signalCode: null });
+});
+
+// A registry response is remote data, so none of these shapes breaks an invariant. The release build
+// tolerates each one. A build with debug assertions used to abort on each one.
+describe.concurrent("registry manifest with an unexpected shape", () => {
+  function manifestOf(ctx: TestContext, name: string, version: string, fields: object = {}) {
+    return {
+      name,
+      "dist-tags": { latest: version },
+      versions: {
+        [version]: { name, version, dist: { tarball: `${ctx.registry_url}${name}-${version}.tgz` }, ...fields },
+      },
+    };
+  }
+
+  // Serves `manifests[name]` for a package and the fixture tarball of the same file name for a `.tgz` URL.
+  async function installFrom(ctx: TestContext, manifests: Record<string, object>, args = ["install"]) {
+    const urls: string[] = [];
+    setContextHandler(ctx, request => {
+      urls.push(request.url);
+      const pathname = new URL(request.url).pathname;
+      if (pathname.endsWith(".tgz")) {
+        return new Response(file(join(import.meta.dir, basename(pathname))));
+      }
+      const manifest = manifests[pathname.slice(`/${ctx.id}/`.length)];
+      return manifest ? Response.json(manifest) : new Response("Not Found", { status: 404 });
+    });
+    await writeFile(
+      join(ctx.package_dir, "package.json"),
+      JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { bar: "0.0.2" } }),
+    );
+    await using proc = spawn({
+      cmd: [bunExe(), ...args],
+      cwd: ctx.package_dir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const installed = (await readdirSorted(join(ctx.package_dir, "node_modules"))).filter(name => name !== ".cache");
+    return { err, exitCode, urls: urls.sort(), installed };
+  }
+
+  it("skips a dependency whose value is not a string", async () => {
+    await withContext(defaultOpts, async ctx => {
+      const { err, exitCode, urls, installed } = await installFrom(ctx, {
+        bar: manifestOf(ctx, "bar", "0.0.2", {
+          dependencies: { "null-value": null, baz: "0.0.3", "number-value": 1 },
+          optionalDependencies: { "boolean-value": false },
+          peerDependencies: { "object-value": {} },
+        }),
+        baz: manifestOf(ctx, "baz", "0.0.3"),
+      });
+      expect(err).not.toContain("error:");
+      expect(urls).toEqual([
+        `${ctx.registry_url}bar`,
+        `${ctx.registry_url}bar-0.0.2.tgz`,
+        `${ctx.registry_url}baz`,
+        `${ctx.registry_url}baz-0.0.3.tgz`,
+      ]);
+      expect(installed).toEqual(["bar", "baz"]);
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  it.each([
+    ["no dist", {}],
+    ["an empty dist", { dist: {} }],
+    ["a dist that is not an object", { dist: "bar-0.0.2.tgz" }],
+    ["a dist.tarball that is not a string", { dist: { tarball: null } }],
+  ])("downloads from the default tarball URL for a version with %s", async (_name, fields) => {
+    await withContext(defaultOpts, async ctx => {
+      const manifest = manifestOf(ctx, "bar", "0.0.2");
+      manifest.versions["0.0.2"] = { name: "bar", version: "0.0.2", ...fields } as any;
+      const { err, exitCode, urls, installed } = await installFrom(ctx, { bar: manifest });
+      expect(err).not.toContain("error:");
+      expect(urls).toEqual([`${ctx.registry_url}bar`, `${ctx.registry_url}bar/-/bar-0.0.2.tgz`]);
+      expect(installed).toEqual(["bar"]);
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  // `Version::parse` rejects each of these keys. npm skips such a key and prints nothing.
+  const invalidVersionKeys = ["not-a-version", "1.0.0.1", "", "latest"];
+  const skipWarnings = invalidVersionKeys.map(
+    key => `warn: Skipping version ${JSON.stringify(key)} of "bar": not a valid semver version`,
+  );
+
+  it.each<[string, string, string[]]>([
+    ["install", "nothing", []],
+    ["add bar", "nothing", []],
+    ["install --verbose", "a warning for each key", skipWarnings],
+  ])("bun %s skips versions keys that are not versions and logs %s", async (command, _logs, logged) => {
+    await withContext(defaultOpts, async ctx => {
+      const manifest = manifestOf(ctx, "bar", "0.0.2");
+      for (const key of invalidVersionKeys) manifest.versions[key] = manifest.versions["0.0.2"];
+      const { err, exitCode, urls, installed } = await installFrom(ctx, { bar: manifest }, command.split(" "));
+      expect({
+        logged: err.split(/\r?\n/).filter(line => /^(error|warn): /.test(line)),
+        urls,
+        installed,
+        exitCode,
+      }).toEqual({
+        logged,
+        urls: [`${ctx.registry_url}bar`, `${ctx.registry_url}bar-0.0.2.tgz`],
+        installed: ["bar"],
+        exitCode: 0,
+      });
+    });
+  });
+
+  it("installs from a manifest with two keys for one version", async () => {
+    await withContext(defaultOpts, async ctx => {
+      const manifest = manifestOf(ctx, "bar", "0.0.2");
+      manifest.versions["00.0.2"] = manifest.versions["0.0.2"];
+      const { err, exitCode, urls, installed } = await installFrom(ctx, { bar: manifest });
+      expect(err).not.toContain("error:");
+      expect(urls).toEqual([`${ctx.registry_url}bar`, `${ctx.registry_url}bar-0.0.2.tgz`]);
+      expect(installed).toEqual(["bar"]);
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  it("installs from a manifest with dependencies, no dist-tags and no tarball URL", async () => {
+    await withContext(defaultOpts, async ctx => {
+      const { err, exitCode, urls, installed } = await installFrom(ctx, {
+        bar: { name: "bar", versions: { "0.0.2": { name: "bar", version: "0.0.2", dependencies: { baz: "0.0.3" } } } },
+        baz: manifestOf(ctx, "baz", "0.0.3"),
+      });
+      expect(err).not.toContain("error:");
+      expect(urls).toEqual([
+        `${ctx.registry_url}bar`,
+        `${ctx.registry_url}bar/-/bar-0.0.2.tgz`,
+        `${ctx.registry_url}baz`,
+        `${ctx.registry_url}baz-0.0.3.tgz`,
+      ]);
+      expect(installed).toEqual(["bar", "baz"]);
+      expect(exitCode).toBe(0);
+    });
+  });
 });

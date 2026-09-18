@@ -2419,6 +2419,17 @@ fn get_or_put_resolved_package_with_find_result(
     let this: &mut PackageManager = unsafe { &mut *guard.0 };
     // The scopeguard runs on ALL exits, never disarmed.
 
+    // `remote_package_features` only lacks groups that no remote package has.
+    let placed = behavior.is_placed(this.options.local_package_features);
+    // `is_filtered_dependency_or_workspace` filters this package and everything below it.
+    let unplaced = !this.options.runtime_auto_install
+        && (!placed
+            || package.is_disabled(this.options.cpu, this.options.os)
+            || this.lockfile.is_in_unplaced_subtree(dependency_id));
+    if unplaced {
+        this.lockfile.mark_unplaced_subtree(package.dependencies);
+    }
+
     // non-null if the package is in "patchedDependencies"
     let mut name_and_version_hash: Option<u64> = None;
     let mut patchfile_hash: Option<u64> = None;
@@ -2432,6 +2443,12 @@ fn get_or_put_resolved_package_with_find_result(
         // Is this package already in the cache?
         // We don't need to download the tarball, but we should enqueue dependencies
         install::PreinstallState::Done => Some(ResolvedPackageResult {
+            package,
+            is_first_time: true,
+            task: None,
+        }),
+        // If a placed dependency needs it too, the install phase fetches and patches it.
+        _ if unplaced => Some(ResolvedPackageResult {
             package,
             is_first_time: true,
             task: None,

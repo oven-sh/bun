@@ -734,7 +734,7 @@ impl Lockfile {
 
         let dep = &self.buffers.dependencies[dep_id as usize];
 
-        dep.behavior.is_bundled() || !dep.behavior.is_enabled(features)
+        !dep.behavior.is_placed(features)
     }
 
     pub fn resolve_catalog_dependency(&self, dep: &Dependency) -> Option<DependencyVersion> {
@@ -950,6 +950,19 @@ impl Lockfile {
         }
     }
 
+    /// The workspaces whose dependency lists `request` names: the ones that received it under `--filter` / `-r`, else the cwd's.
+    pub(crate) fn workspaces_of_update_request(
+        &self,
+        pending: Option<&crate::package_manager_real::add_remove_with_filter::PendingWrite>,
+        workspace_name_hash: Option<PackageNameHash>,
+        request: &UpdateRequest,
+    ) -> Vec<PackageID> {
+        match pending {
+            Some(pending) => pending.workspace_ids_receiving(self, request.name_hash),
+            None => vec![self.get_workspace_package_id(workspace_name_hash)],
+        }
+    }
+
     /// Re-runnable: package_json_write_back binds again after re-deriving the declared columns.
     #[cold]
     #[inline(never)]
@@ -963,19 +976,12 @@ impl Lockfile {
         let string_buf = self.buffers.string_bytes.as_slice();
         let string_buf_ptr = bun_ptr::RawSlice::new(string_buf);
         let slice = self.packages.slice();
-        let cwd_workspace = [self.get_workspace_package_id(workspace_name_hash)];
 
         'request_updated: for update in updates.iter_mut() {
             update.e_string = None;
-            let filtered: Vec<PackageID>;
-            let workspace_ids: &[PackageID] = match pending {
-                Some(pending) => {
-                    filtered = pending.workspace_ids_receiving(self, update.name_hash);
-                    &filtered
-                }
-                None => &cwd_workspace,
-            };
-            for &workspace_package_id in workspace_ids {
+            let workspace_ids =
+                self.workspaces_of_update_request(pending, workspace_name_hash, update);
+            for &workspace_package_id in &workspace_ids {
                 let dep_list = slice.items_dependencies()[workspace_package_id as usize];
                 let res_list = slice.items_resolutions()[workspace_package_id as usize];
                 let workspace_deps: &[Dependency] =
@@ -2201,6 +2207,26 @@ impl Lockfile {
         self.exact_pinned.set(i);
     }
 
+    /// See `Scratch::unplaced_subtree`.
+    pub(crate) fn mark_unplaced_subtree(&mut self, dependencies: DependencySlice) {
+        let range = bun_collections::bit_set::Range {
+            start: dependencies.begin() as usize,
+            end: dependencies.end() as usize,
+        };
+        let unplaced_subtree = &mut self.scratch.unplaced_subtree;
+        if unplaced_subtree.bit_length() < range.end {
+            bun_core::handle_oom(unplaced_subtree.resize(range.end, false));
+        }
+        unplaced_subtree.set_range_value(range, true);
+    }
+
+    #[inline]
+    pub(crate) fn is_in_unplaced_subtree(&self, id: DependencyID) -> bool {
+        self.scratch
+            .unplaced_subtree
+            .is_set_allow_out_of_bound(id as usize, false)
+    }
+
     pub(crate) fn get_package_id(
         &self,
         name_hash: u64,
@@ -2544,6 +2570,8 @@ impl Lockfile {
 pub struct Scratch {
     pub(crate) duplicate_checker_map: DuplicateCheckerMap,
     pub(crate) dependency_list_queue: DependencyQueue,
+    /// `bit[dependency_id]`: this resolve reached it below a dependency that the installers filter.
+    pub(crate) unplaced_subtree: DynamicBitSet,
 }
 
 pub(crate) type DuplicateCheckerMap =
@@ -2555,6 +2583,7 @@ impl Scratch {
         Scratch {
             dependency_list_queue: DependencyQueue::init(),
             duplicate_checker_map: DuplicateCheckerMap::default(),
+            unplaced_subtree: DynamicBitSet::default(),
         }
     }
 }

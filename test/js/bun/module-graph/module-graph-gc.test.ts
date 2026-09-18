@@ -3,7 +3,7 @@
 import { generateHeapSnapshotForDebugging, heapStats, jscDescribe } from "bun:jsc";
 import { afterAll, describe, expect, jest, test } from "bun:test";
 import { rmSync } from "fs";
-import { bunEnv, bunExe, isArm64, isIntelMacOS, isLinux, tempDir } from "harness";
+import { bunEnv, bunExe, isArm64, isLinux, tempDir } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { join } from "path";
 
@@ -119,9 +119,9 @@ class Heap {
       this.#reachedFrom.set(roots[i], undefined);
       queue.push(roots[i]);
     }
-    for (let at = queue.shift(); at !== undefined; at = queue.shift())
-      for (const [child, edge] of outgoing.get(at) ?? [])
-        if (!this.#reachedFrom.has(child)) (this.#reachedFrom.set(child, [at, edge]), queue.push(child));
+    for (let i = 0; i < queue.length; i++)
+      for (const [child, edge] of outgoing.get(queue[i]) ?? [])
+        if (!this.#reachedFrom.has(child)) (this.#reachedFrom.set(child, [queue[i], edge]), queue.push(child));
   }
 
   /** The shortest path from a root to the cell at `address`, or undefined when no root reaches it. */
@@ -159,7 +159,11 @@ function heapFromTimer(): Promise<Heap> {
 
 const addressOf = (object: object) => BigInt(/0x[0-9a-fA-F]+/.exec(jscDescribe(object))![0]);
 
-/** Lifetimes by name: `track` an object, then ask which are still kept alive. */
+/** Lifetimes by name: `track` an object, then ask which are gone or still kept alive.
+ *  A finalized object is gone, and that is all most runs need. One that is not finalized after a
+ *  few collections is looked up in the heap (its cell is its own for as long as it is not
+ *  collected): kept alive only if a root reaches it. A snapshot is slow on a debug build, so it
+ *  is taken only then. */
 class Lifetimes {
   #finalized = new Set<string>();
   #registry = new FinalizationRegistry<string>(name => this.#finalized.add(name));
@@ -169,55 +173,65 @@ class Lifetimes {
     this.#address.set(name, addressOf(object));
     return object;
   }
-  /** Of `names`, those a root still reaches, each with its path. A finalized one is gone; one
-   *  that is not is looked up by its cell, which is its own for as long as it is not collected. */
-  async #kept(names: string[]): Promise<string[]> {
+  #notFinalized(names: string[]): string[] {
     const untracked = names.filter(name => !this.#address.has(name));
     if (untracked.length) throw new Error("never tracked: " + untracked.join(", "));
-    if (names.every(name => this.#finalized.has(name))) return [];
-    const heap = await heapFromTimer();
-    return names.flatMap(name => {
-      if (this.#finalized.has(name)) return [];
-      const path = heap.pathTo(this.#address.get(name)!);
-      return path === undefined ? [] : [`${name}: ${path}`];
-    });
+    return names.filter(name => !this.#finalized.has(name));
   }
-  /** Collects until nothing keeps any of `names` alive (bounded); returns those still kept, with what keeps them. */
-  async stillAlive(...names: string[]): Promise<string[]> {
-    let kept: string[] = [];
-    for (let i = 0; i < 20; i++) {
-      await collect();
-      kept = await this.#kept(names);
-      if (!kept.length) return [];
+  /** Of `names`, those a root reaches, each with its path. */
+  async #kept(names: string[]): Promise<Map<string, string>> {
+    const heap = await heapFromTimer();
+    const kept = new Map<string, string>();
+    for (const name of this.#notFinalized(names)) {
+      const path = heap.pathTo(this.#address.get(name)!);
+      if (path !== undefined) kept.set(name, path);
     }
     return kept;
   }
-  /** Collects a few times; whether something still keeps `name` alive after all of them. */
+  /** Collects until nothing keeps any of `names` alive (bounded); returns those still kept, with what keeps them. */
+  async stillAlive(...names: string[]): Promise<string[]> {
+    let waiting = this.#notFinalized(names);
+    for (let i = 0; i < 100 && waiting.length; i++) {
+      await collect();
+      waiting = this.#notFinalized(waiting);
+      // Not finalized after a few collections: from here on only what a root reaches is waited for.
+      if (i === 4 && waiting.length) waiting = [...(await this.#kept(waiting)).keys()];
+    }
+    if (!waiting.length) return [];
+    return [...(await this.#kept(waiting))].map(([name, path]) => `${name}: ${path}`);
+  }
+  /** Collects a few times; whether `name` survived all of them. */
   async survives(name: string): Promise<boolean> {
     for (let i = 0; i < 5; i++) {
       await collect();
     }
-    return (await this.#kept([name])).length > 0;
+    return this.#notFinalized([name]).length > 0;
   }
 }
 
-const count = async (type: string) => (await heapFromTimer()).counts([type])[type];
-/** Collects until the count of each type is at most its limit (bounded); returns the counts. */
+const count = (type: string) => heapStats().objectTypeCounts[type] ?? 0;
+/** Collects until the count of each type is at most its limit (bounded); returns the counts. When
+ *  the collector's own counts stay above a limit, what counts is the cells a root reaches. */
 async function settle(limits: Record<string, number>): Promise<Record<string, number>> {
   const types = Object.keys(limits);
-  let now = (await heapFromTimer()).counts(types);
-  for (let i = 0; i < 20 && types.some(type => now[type] > limits[type]); i++) {
+  const counts = () => {
+    const all = heapStats().objectTypeCounts;
+    return Object.fromEntries(types.map(type => [type, all[type] ?? 0]));
+  };
+  let now = counts();
+  for (let i = 0; i < 10 && types.some(type => now[type] > limits[type]); i++) {
     await collect();
-    now = (await heapFromTimer()).counts(types);
+    now = counts();
   }
-  return now;
+  return types.some(type => now[type] > limits[type]) ? (await heapFromTimer()).counts(types) : now;
 }
 /** The counts after what is already garbage has been collected. */
 async function baselineOf(...types: string[]): Promise<Record<string, number>> {
   for (let i = 0; i < 5; i++) {
     await collect();
   }
-  return (await heapFromTimer()).counts(types);
+  const all = heapStats().objectTypeCounts;
+  return Object.fromEntries(types.map(type => [type, all[type] ?? 0]));
 }
 
 async function accepts(port: number): Promise<boolean> {
@@ -328,7 +342,8 @@ describe("ModuleGraph GC: what a graph's code made keeps the graph alive, and on
       })();
       // Plain data the module made does not reference its module; everything else does.
       const keepsAlive = what !== "an object created by the graph's module";
-      expect(await lifetimes.survives("graph")).toBe(keepsAlive);
+      if (keepsAlive) expect(await lifetimes.survives("graph")).toBe(true);
+      else expect(await lifetimes.stillAlive("graph")).toEqual([]);
       expect(typeof box.held).toMatch(/object|function/);
       box.held = undefined;
       expect(await lifetimes.stillAlive("graph")).toEqual([]);
@@ -378,8 +393,8 @@ describe("ModuleGraph GC: cells a graph made go with it", () => {
         graphs.push(graph);
       }
       // Eight graphs' worth exist now.
-      expect((await count("ModuleGraph")) - baseline.ModuleGraph).toBeGreaterThanOrEqual(8);
-      expect((await count("Module")) - baseline.Module).toBeGreaterThanOrEqual(16);
+      expect(count("ModuleGraph") - baseline.ModuleGraph).toBeGreaterThanOrEqual(8);
+      expect(count("Module") - baseline.Module).toBeGreaterThanOrEqual(16);
     })();
 
     const after = await settle(baseline);
@@ -458,10 +473,7 @@ describe("ModuleGraph GC: what the graph's context owns", () => {
     expect(await accepts(state.httpPort)).toBe(false);
   });
 
-  // TODO: fails on every build on the macOS x64 CI lane and nowhere else. Its own heap snapshot there shows the
-  // graph's cycle (the Timeout, its callback, tick's closure, the module records) with nothing in the heap and no
-  // root reaching it. What holds it is not established: that needs a debugger on that platform.
-  test.todoIf(isIntelMacOS)("a repeating timer keeps its graph alive; clearing it lets the graph go", async () => {
+  test("a repeating timer keeps its graph alive; clearing it lets the graph go", async () => {
     const lifetimes = new Lifetimes();
     const state = control();
     await (async () => {

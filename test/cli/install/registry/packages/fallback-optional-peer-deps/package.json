@@ -1,0 +1,45 @@
+{
+	"name": "fallback-optional-peer-deps",
+	"versions": {
+		"1.0.0": {
+			"name": "fallback-optional-peer-deps",
+			"version": "1.0.0",
+			"dependencies": {
+				"no-deps": "2.0.0"
+			},
+			"peerDependencies": {
+				"no-deps": "*"
+			},
+			"peerDependenciesMeta": {
+				"no-deps": {
+					"optional": true
+				}
+			},
+			"_id": "fallback-optional-peer-deps@1.0.0",
+			"_nodeVersion": "22.2.0",
+			"_npmVersion": "10.8.1",
+			"dist": {
+				"integrity": "sha512-fLRicgW76EGoylVmvae74cgI/hM7jBTWVve4hpDzQ3iE8bNc7HvZm0M42nCMX/YR6fZ8QiQTCELb9TCTOAn9ng==",
+				"shasum": "e7c4f8ad21f77269514adba5be2e3b31448ff1db",
+				"tarball": "http://localhost:4873/fallback-optional-peer-deps/-/fallback-optional-peer-deps-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"fallback-optional-peer-deps-1.0.0.tgz": {
+			"shasum": "e7c4f8ad21f77269514adba5be2e3b31448ff1db",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "",
+	"_id": "fallback-optional-peer-deps",
+	"readme": "ERROR: No README data found!"
+}

@@ -2832,6 +2832,44 @@ describe("expect()", () => {
     expect(deepArray).not.toContainAllValues(["duck", [{ foo: "bar" }]]);
   });
 
+  test("toContainAllValues with a repeated value", () => {
+    // A repeated expected value does not stand in for an object value that expected lacks.
+    expect({ a: 1, b: 2 }).not.toContainAllValues([1, 1]);
+    expect({ id: 7, role: "admin", ok: true }).not.toContainAllValues([7, 7, 7]);
+    expect({ a: 1, b: "x" }).not.toContainAllValues([expect.any(Number), 1]);
+    expect(() => expect({ a: 1, b: 2 }).toContainAllValues([1, 1])).toThrow(
+      isBun ? "Expected to contain all values" : "Expected object to contain all values",
+    );
+
+    // Repeated values that are on both sides still match.
+    expect({ a: 1, b: 1 }).toContainAllValues([1, 1]);
+    expect({ a: 1, b: 1, c: 2 }).toContainAllValues([2, 1, 1]);
+    expect({ a: { x: 1 }, b: { x: 1 } }).toContainAllValues([{ x: 1 }, { x: 1 }]);
+    expect({ a: 1, b: "x" }).toContainAllValues([expect.any(String), expect.any(Number)]);
+    expect(() => expect({ a: 1, b: 1 }).not.toContainAllValues([1, 1])).toThrow(
+      isBun ? "Expected to not contain all values" : "Expected object to not contain all values",
+    );
+
+    // The same set of values with a different count does not match.
+    expect({ a: 1, b: 1 }).not.toContainAllValues([1]);
+    expect({ a: 1 }).not.toContainAllValues([1, 1]);
+
+    expect({}).toContainAllValues([]);
+    expect({}).not.toContainAllValues([1]);
+    expect({ a: 1 }).not.toContainAllValues([]);
+    if (isBun) {
+      // jest-extended 5.0.0 and later fail a received value that is not a plain object.
+      expect([]).toContainAllValues([]);
+      expect([1, 2]).toContainAllValues([2, 1]);
+    }
+
+    if (isBun) {
+      // jest-extended only checks that each object value is in expected, so it passes these.
+      expect({ a: 1, b: 1 }).not.toContainAllValues([1, 2]);
+      expect({ a: 1, b: 2 }).not.toContainAllValues([expect.any(Number), "zzz"]);
+    }
+  });
+
   test("toContainAnyValues", () => {
     let o = { a: "foo", b: "bar", c: "baz" };
     expect(o).toContainAnyValues(["qux", "foo"]);

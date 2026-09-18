@@ -1094,7 +1094,7 @@ impl PublishCommand {
             }
         }
 
-        let _ = bun_core::spawn_sync_inherit(&[open::OPENER, auth_url.as_bytes()]);
+        let _ = open::try_open_url(auth_url.as_bytes());
     }
 
     fn get_otp<const DIRECTORY_PUBLISH: bool>(

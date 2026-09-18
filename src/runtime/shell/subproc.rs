@@ -685,7 +685,7 @@ impl ShellSubprocess {
 
         // SAFETY: `interp` is the live owning interpreter (see `SpawnArgs::interp`).
         let foreground = !unsafe { &*interp }.in_background(cmd_parent.id);
-        let ctrl_c_child = foreground.then(bun_spawn::ctrl_c::Child::enter);
+        let mut ctrl_c_child = foreground.then(bun_spawn::ctrl_c::Child::enter);
         // SAFETY: `spawn_args.argv` / `env_array` are local null-terminated
         // C-string arrays with argv[0] non-null; valid for this call.
         let spawn_result = match unsafe {
@@ -735,6 +735,10 @@ impl ShellSubprocess {
         };
 
         let mut spawn_result = spawn_result;
+        #[cfg(unix)]
+        if let Some(child) = ctrl_c_child.as_mut() {
+            child.set_pid(spawn_result.pid);
+        }
 
         // Note: Stdio impls Drop, so move out via mem::replace instead of clone.
         let stdio0 = core::mem::replace(&mut stdio_guard[0], Stdio::Ignore);

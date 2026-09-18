@@ -2209,10 +2209,9 @@ describe("auto-discovered bunfig.toml [run] section", () => {
 
 describe.concurrent("--shell and [run] shell pick the interpreter", () => {
   // `echo $0` tells the shells apart. A POSIX shell prints its own path. The
-  // Bun shell does not. On Windows cmd.exe expands %COMSPEC% to its own path
-  // and the Bun shell prints it as written.
-  const probe = isWindows ? "echo %COMSPEC%" : "echo $0";
-  const systemShell = isWindows ? /cmd\.exe/i : /\/(bash|sh|zsh)\b/;
+  // Bun shell does not. Windows always runs the Bun shell here.
+  const probe = "echo $0";
+  const systemShell = /\/(bash|sh|zsh)\b/;
   const pkg = JSON.stringify({ scripts: { one: probe, two: probe } });
 
   test.each([
@@ -2227,7 +2226,7 @@ describe.concurrent("--shell and [run] shell pick the interpreter", () => {
     expect(r.exitCode).toBe(0);
   });
 
-  test.each([
+  test.skipIf(isWindows).each([
     ["--parallel", ["run", "--shell=system", "--parallel", "one"]],
     ["--sequential", ["run", "--shell=system", "--sequential", "one"]],
   ])("--shell=system %s runs the scripts in the system shell", async (_, args) => {
@@ -2273,4 +2272,39 @@ describe.concurrent("--shell and [run] shell pick the interpreter", () => {
     expectPrefixed(r.stdout, "env", "[]");
     expect(r.exitCode).toBe(0);
   });
+
+  // The abort sends SIGINT to each script's child. Under the Bun shell that
+  // child is a `bun exec` hop, which must pass the signal on to the program.
+  test.skipIf(isWindows)("--shell=bun: a failure aborts the other script and its program", async () => {
+    using dir = tempDir("mr-shell-bun-abort", {
+      "slow.js": `await Bun.write("pid.txt", String(process.pid)); await Bun.sleep(30000);`,
+      "fail.js": `while (!(await Bun.file("pid.txt").exists())) await Bun.sleep(20); process.exit(1);`,
+      "package.json": JSON.stringify({
+        scripts: { slow: `${bunExe()} slow.js`, fail: `${bunExe()} fail.js` },
+      }),
+    });
+    const start = Date.now();
+    const r = await runMulti(["run", "--shell=bun", "--parallel", "slow", "fail"], String(dir));
+    const elapsed = Date.now() - start;
+    expectExited(r.stderr, "fail", 1);
+    expect(elapsed).toBeLessThan(15000);
+    expect(r.exitCode).not.toBe(0);
+    const pid = Number(await Bun.file(path.join(String(dir), "pid.txt")).text());
+    expect(pid).toBeGreaterThan(0);
+    expect(await programGone(pid)).toBe(true);
+  });
 });
+
+/** The program is gone once the signal lands. Poll, do not sleep. */
+async function programGone(pid: number): Promise<boolean> {
+  const deadline = Date.now() + 10000;
+  while (Date.now() < deadline) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return true;
+    }
+    await Bun.sleep(50);
+  }
+  return false;
+}

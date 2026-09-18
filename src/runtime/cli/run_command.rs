@@ -219,9 +219,12 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
     /// The interpreter that `--filter`, `--parallel` and `--sequential` spawn
     /// each script with: argv[0] and the arguments that go before the script.
-    /// `<shell> -c`, `cmd.exe /c`, or `<bun> exec --no-env-file`. With
-    /// `use_system_shell == false` no system shell is looked up, so
+    /// `<sh> -c` for the system shell, `<bun> exec --no-env-file` for the Bun
+    /// shell. With the Bun shell no system shell is looked up, so
     /// `--shell=bun` works on an image that has none.
+    ///
+    /// Windows always uses the Bun shell here: `cmd.exe /c <script>` as one
+    /// argument loses the quotes in the script.
     ///
     /// The envp the runner hands to the child is the whole environment the
     /// script gets. `--no-env-file` stops the `bun exec` hop from loading the
@@ -232,12 +235,12 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         path: &[u8],
         cwd: &[u8],
     ) -> crate::Result<(&'static ZStr, &'static [&'static ::core::ffi::CStr])> {
-        if !use_system_shell {
+        if cfg!(windows) || !use_system_shell {
             let bun = bun_core::self_exe_path().map_err(|_| crate::Error::MissingShell)?;
             return Ok((bun, &[c"exec", c"--no-env-file"]));
         }
         let shell = Self::find_shell(path, cwd).ok_or(crate::Error::MissingShell)?;
-        Ok((shell, if cfg!(windows) { &[c"/c"] } else { &[c"-c"] }))
+        Ok((shell, &[c"-c"]))
     }
 
     // Look for invocations of any: `yarn run` / `yarn $cmd` / `pnpm run` /

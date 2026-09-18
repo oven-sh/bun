@@ -1314,10 +1314,9 @@ describe("auto-discovered bunfig.toml [run] section", () => {
 
 describe("--shell and [run] shell pick the interpreter for --filter", () => {
   // `echo $0` tells the shells apart. A POSIX shell prints its own path. The
-  // Bun shell does not. On Windows cmd.exe expands %COMSPEC% to its own path
-  // and the Bun shell prints it as written.
-  const probe = isWindows ? "echo %COMSPEC%" : "echo $0";
-  const systemShell = isWindows ? /cmd\.exe/i : /\/(bash|sh|zsh)\b/;
+  // Bun shell does not. Windows always runs the Bun shell here.
+  const probe = "echo $0";
+  const systemShell = /\/(bash|sh|zsh)\b/;
 
   function workspace(prefix: string, bunfig?: string) {
     return tempDir(prefix, {
@@ -1350,7 +1349,7 @@ describe("--shell and [run] shell pick the interpreter for --filter", () => {
     expect(r.exitCode).toBe(0);
   });
 
-  test("--shell=system runs the script in the system shell", () => {
+  test.skipIf(isWindows)("--shell=system runs the script in the system shell", () => {
     using dir = workspace("filter-shell-system");
     const r = run(String(dir), ["run", "--shell=system", "--filter", "dep0", "probe"]);
     expect(r.stdout).toMatch(systemShell);
@@ -1365,7 +1364,7 @@ describe("--shell and [run] shell pick the interpreter for --filter", () => {
     expect(r.exitCode).toBe(0);
   });
 
-  test('[run] shell = "system" runs the script in the system shell', () => {
+  test.skipIf(isWindows)('[run] shell = "system" runs the script in the system shell', () => {
     using dir = workspace("filter-bunfig-shell-system", '[run]\nshell = "system"\n');
     const r = run(String(dir), ["run", "--filter", "dep0", "probe"]);
     expect(r.stdout).toMatch(systemShell);
@@ -1405,5 +1404,46 @@ describe("--shell and [run] shell pick the interpreter for --filter", () => {
     const r = run(String(dir), ["run", shell, "--filter", "dep0", "env"]);
     expect(r.stdout).toContain("dep0 env: []");
     expect(r.exitCode).toBe(0);
+  });
+
+  // SIGINT to the runner makes it send SIGINT to each script's child. Under
+  // the Bun shell that child is a `bun exec` hop, which must pass the signal
+  // on to the program.
+  test.skipIf(isWindows)("--shell=bun: SIGINT to the runner reaches the program", async () => {
+    using dir = tempDir("filter-shell-bun-abort", {
+      "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
+      packages: {
+        dep0: {
+          // The runner acts on the signal when its loop wakes, so the script keeps it awake.
+          "slow.js": `await Bun.write("pid.txt", String(process.pid)); setInterval(() => console.log("tick"), 100);`,
+          "package.json": JSON.stringify({ name: "dep0", scripts: { slow: `${bunExe()} slow.js` } }),
+        },
+      },
+    });
+    const pidFile = join(String(dir), "packages", "dep0", "pid.txt");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--shell=bun", "--filter", "dep0", "slow"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const deadline = Date.now() + 10000;
+    while (!existsSync(pidFile) && Date.now() < deadline) await Bun.sleep(20);
+    const pid = Number(await Bun.file(pidFile).text());
+    expect(pid).toBeGreaterThan(0);
+    proc.kill("SIGINT");
+    await proc.exited;
+    let alive = true;
+    const gone = Date.now() + 10000;
+    while (alive && Date.now() < gone) {
+      try {
+        process.kill(pid, 0);
+        await Bun.sleep(50);
+      } catch {
+        alive = false;
+      }
+    }
+    expect(alive).toBe(false);
   });
 });

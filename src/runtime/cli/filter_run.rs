@@ -320,7 +320,7 @@ struct State<'a> {
     last_lines_written: usize,
     pretty_output: bool,
     shell_bin: &'static ZStr, // intentionally leaked (process exits)
-    /// The arguments between `shell_bin` and the script: `-c`, `/c`, or
+    /// The arguments between `shell_bin` and the script: `-c` or
     /// `exec --no-env-file`.
     shell_args: &'static [&'static core::ffi::CStr],
     aborted: bool,
@@ -866,17 +866,6 @@ pub(crate) fn run_scripts_with_filter(
 
             for part in &ctx.passthrough {
                 copy_script.push(b' ');
-                if cfg!(windows)
-                    && ctx.debug.use_system_shell
-                    && bun_which::batch_arg_has_cmd_metachars(part)
-                {
-                    bun_core::pretty_errorln!(
-                        "<r><red>error<r>: Failed to run script <b>{}<r>: argument {} contains a cmd.exe special character and cannot be passed to the system shell",
-                        bstr::BStr::new(script_name),
-                        bun_core::fmt::quote(&part[..]),
-                    );
-                    Global::exit(1);
-                }
                 if crate::shell::needs_escape_utf8_ascii_latin1(part) {
                     crate::shell::escape_8bit::<true, false>(part, &mut copy_script)?;
                 } else {

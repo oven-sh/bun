@@ -4,10 +4,14 @@
 //! console), so while a foreground child is alive it is the child's to handle
 //! and we only note that it happened; with none alive it kills us as usual.
 //! Whether that Ctrl+C then ends *us* is decided by the caller from how the
-//! job exited (`child_died_of_it` / `exit_like_child`). Like bash, nothing is
-//! forwarded: a SIGINT sent to this pid alone does not reach the child.
+//! job exited (`child_died_of_it` / `exit_like_child`). Like bash, a SIGINT
+//! sent to this pid alone is not forwarded, with one exception: a SIGINT our
+//! parent sends by kill(2) (`bun run --filter` / `--parallel` aborting its
+//! scripts, a supervisor) is meant for the job, and the terminal did not
+//! deliver it to the children, so we pass it on to them. `sh -c <cmd>` gets
+//! the same result by exec'ing the single command.
 
-use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
 
 use crate::process::Status;
 
@@ -15,6 +19,10 @@ use crate::process::Status;
 static CHILDREN: AtomicU32 = AtomicU32::new(0);
 /// A Ctrl+C arrived while `CHILDREN > 0` and was left to them.
 static RECEIVED: AtomicBool = AtomicBool::new(false);
+/// Pids of the live foreground children, for the handler to forward to. A
+/// zero slot is free. A child past the last slot is not forwarded to.
+#[cfg(unix)]
+static PIDS: [AtomicI32; 64] = [const { AtomicI32::new(0) }; 64];
 
 /// Process-lifetime; the handler is inert while no `Child` is alive. Not
 /// inherited by children: a caught signal resets to `SIG_DFL` on exec, and a
@@ -27,7 +35,7 @@ pub fn install() {
         unsafe {
             let mut sa: libc::sigaction = bun_core::ffi::zeroed();
             sa.sa_sigaction = handler as *const () as usize;
-            sa.sa_flags = libc::SA_RESTART;
+            sa.sa_flags = libc::SA_RESTART | libc::SA_SIGINFO;
             libc::sigemptyset(&raw mut sa.sa_mask);
             libc::sigaction(libc::SIGINT, &raw const sa, core::ptr::null_mut());
         }
@@ -39,9 +47,27 @@ pub fn install() {
 }
 
 #[cfg(unix)]
-extern "C" fn handler(sig: core::ffi::c_int) {
+extern "C" fn handler(
+    sig: core::ffi::c_int,
+    info: *const libc::siginfo_t,
+    _context: *mut core::ffi::c_void,
+) {
     if CHILDREN.load(Ordering::SeqCst) > 0 {
         RECEIVED.store(true, Ordering::SeqCst);
+        // `si_pid` is 0 for a signal the kernel generated (the terminal's
+        // Ctrl+C), the sender's pid for kill(2). Only `kill` and `getppid`
+        // are called here: both are async-signal-safe.
+        // SAFETY: `info` is the siginfo the kernel passes to an SA_SIGINFO handler.
+        let sender = unsafe { (*info).si_pid() };
+        if sender != 0 && sender == unsafe { libc::getppid() } {
+            for slot in PIDS.iter() {
+                let pid = slot.load(Ordering::SeqCst);
+                if pid > 0 {
+                    // SAFETY: `kill` on a pid we spawned and have not reaped.
+                    unsafe { libc::kill(pid, sig) };
+                }
+            }
+        }
         return;
     }
     // SAFETY: SIG_DFL is a valid disposition; SIGINT is blocked while we run,
@@ -64,12 +90,30 @@ extern "system" fn handler(ctrl_type: bun_sys::windows::DWORD) -> bun_sys::windo
 }
 
 /// A live foreground child. Enter before spawning so there is no window in
-/// which a Ctrl+C kills us with the child already created.
-pub struct Child(());
+/// which a Ctrl+C kills us with the child already created. `set_pid` after
+/// the spawn makes the child a forwarding target.
+pub struct Child {
+    #[cfg(unix)]
+    slot: Option<usize>,
+}
 impl Child {
     pub fn enter() -> Self {
         CHILDREN.fetch_add(1, Ordering::SeqCst);
-        Self(())
+        Self {
+            #[cfg(unix)]
+            slot: None,
+        }
+    }
+
+    #[cfg(unix)]
+    pub fn set_pid(&mut self, pid: i32) {
+        if self.slot.is_some() {
+            return;
+        }
+        self.slot = PIDS.iter().position(|slot| {
+            slot.compare_exchange(0, pid, Ordering::SeqCst, Ordering::SeqCst)
+                .is_ok()
+        });
     }
 
     pub fn alive() -> u32 {
@@ -78,6 +122,10 @@ impl Child {
 }
 impl Drop for Child {
     fn drop(&mut self) {
+        #[cfg(unix)]
+        if let Some(slot) = self.slot {
+            PIDS[slot].store(0, Ordering::SeqCst);
+        }
         CHILDREN.fetch_sub(1, Ordering::SeqCst);
     }
 }

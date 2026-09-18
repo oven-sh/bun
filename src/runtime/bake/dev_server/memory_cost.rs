@@ -172,6 +172,7 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
             client_components_removed: _,
             failures_removed: _,
             client_components_affected: _,
+            framework_client_entries_affected: _,
             failures_added: _,
         } = &dev.incremental_result;
         // .had_adjusted_edges (bool — no heap)
@@ -185,6 +186,9 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
         other_bytes += memory_cost_array_list(&dev.incremental_result.failures_removed);
         // .client_components_affected
         other_bytes += memory_cost_array_list(&dev.incremental_result.client_components_affected);
+        // .framework_client_entries_affected
+        other_bytes +=
+            memory_cost_array_list(&dev.incremental_result.framework_client_entries_affected);
         // .failures_added
         other_bytes += memory_cost_array_list(&dev.incremental_result.failures_added);
         // .html_routes_soft_affected

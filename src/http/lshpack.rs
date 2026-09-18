@@ -127,9 +127,8 @@ impl HPACK {
         lshpack_wrapper_enc_set_max_capacity(self, max_capacity as c_uint);
     }
 
-    /// Adjust the decoder's dynamic-table capacity after init: the limit on the
-    /// peer's RFC 7541 §6.3 Dynamic Table Size Updates, and the table's size
-    /// until the peer sends one. Evicts entries to fit.
+    /// Sets the limit on the peer's RFC 7541 §6.3 size updates and the current
+    /// table size, both. Evicts entries to fit.
     pub fn set_decoder_max_capacity(&mut self, max_capacity: u32) {
         lshpack_wrapper_dec_set_max_capacity(self, max_capacity as c_uint);
     }

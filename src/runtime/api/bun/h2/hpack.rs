@@ -1,43 +1,32 @@
 //! HPACK coder (RFC 7541) over the lshpack binding — the only reused piece in the rewrite.
 //!
-//! Centralizes the dynamic-table-size handling. Each table belongs to the side that decodes with
-//! it: the encoder's table follows the PEER's SETTINGS_HEADER_TABLE_SIZE, and every change is
-//! announced with a §6.3 Dynamic Table Size Update at the start of the next header block so the
-//! peer's decoder evicts in lockstep. The decoder's table follows OUR setting, from the moment
-//! the peer acknowledges it. Decode results alias a shared buffer and MUST be copied before the
-//! next call (see lshpack.rs).
+//! Centralizes the dynamic-table-size handling: the encoder follows the PEER's
+//! SETTINGS_HEADER_TABLE_SIZE and announces each change with a §6.3 Dynamic Table Size Update at
+//! the start of the next header block. The decoder follows OUR setting once the peer ACKs it.
+//! Decode results alias a shared buffer and MUST be copied before the next call (see lshpack.rs).
 
 #![allow(dead_code)]
 
 use bun_http::lshpack::{DecodeResult, HpackError, HpackHandle};
 
-/// RFC 9113 §6.5.2: SETTINGS_HEADER_TABLE_SIZE in both directions until a SETTINGS frame says
-/// otherwise.
+/// RFC 9113 §6.5.2: the initial SETTINGS_HEADER_TABLE_SIZE of both sides.
 pub const DEFAULT_HEADER_TABLE_SIZE: u32 = 4096;
 
-/// Upper bound of the encoder's dynamic table, whatever the peer allows: a peer that advertises a
-/// huge table must not make this side retain that much header history. Node's default
+/// A peer must not decide how much header history this side retains. Node's default
 /// `maxDeflateDynamicTableSize`.
 pub const MAX_ENCODER_TABLE_SIZE: u32 = 4096;
 
 pub struct Coder {
     hpack: HpackHandle,
-    /// Capacity of the encoder's dynamic table.
     enc_capacity: u32,
-    /// `Some` while the peer's decoder has not been told about a capacity change: the smallest
-    /// capacity the encoder had since the last header block that reached the transport. The
-    /// peer's decoder evicts at each of its SETTINGS, so RFC 7541 §4.2 wants that minimum
-    /// signaled before the final value.
+    /// `Some` while a capacity change is not announced: the smallest capacity since the last
+    /// block that was sent. RFC 7541 §4.2 wants that minimum signaled before the final value.
     unannounced_min: Option<u32>,
-    /// Limit of the decoder's dynamic table: our SETTINGS_HEADER_TABLE_SIZE that the peer
-    /// acknowledged last.
+    /// Our SETTINGS_HEADER_TABLE_SIZE that the peer ACKed last.
     dec_capacity: u32,
 }
 
 impl Coder {
-    /// Both tables start at the protocol default. The encoder moves with
-    /// [`Self::set_peer_header_table_size`], the decoder with
-    /// [`Self::set_acked_header_table_size`].
     pub fn new() -> Self {
         Coder {
             hpack: HpackHandle::new(DEFAULT_HEADER_TABLE_SIZE),
@@ -47,10 +36,8 @@ impl Coder {
         }
     }
 
-    /// The peer acknowledged a SETTINGS frame of ours that carried this
-    /// SETTINGS_HEADER_TABLE_SIZE. Until the ACK the peer's encoder still works against the
-    /// previous value, so the decoder must not move earlier. From the ACK on, the value bounds
-    /// the peer's §6.3 size updates.
+    /// Call on the SETTINGS ACK, not when the SETTINGS frame is sent: until the ACK the peer's
+    /// encoder still works against the previous value.
     pub fn set_acked_header_table_size(&mut self, size: u32) {
         if size == self.dec_capacity {
             return;
@@ -59,13 +46,11 @@ impl Coder {
         self.dec_capacity = size;
     }
 
-    /// Capacity of the encoder's dynamic table: the peer's value, capped.
     pub fn encoder_capacity(&self) -> u32 {
         self.enc_capacity
     }
 
-    /// One SETTINGS_HEADER_TABLE_SIZE entry from the peer; call it for every entry, in wire
-    /// order. Evicts right away, like the peer's decoder did when it sent the value.
+    /// Call for every SETTINGS_HEADER_TABLE_SIZE entry of the peer, in wire order.
     pub fn set_peer_header_table_size(&mut self, size: u32) {
         let capacity = size.min(MAX_ENCODER_TABLE_SIZE);
         if capacity == self.enc_capacity && self.unannounced_min.is_none() {
@@ -79,27 +64,18 @@ impl Coder {
         });
     }
 
-    /// Call at the start of every outbound header block, before its first field: appends the
-    /// §6.3 size update(s) the peer's decoder still has to see. They stay pending until
-    /// [`Self::size_update_sent`], so a block that is built but never sent does not lose them.
-    ///
-    /// More than one block can carry them: a block opened while another one is still being built,
-    /// or the block after a dropped one. An update to the minimum makes the peer evict down to
-    /// it each time it arrives, so the encoder evicts the same way each time it writes one.
-    pub fn write_pending_size_update(&mut self, block: &mut Vec<u8>) {
+    /// Call at the start of every outbound header block. The update stays pending until
+    /// [`Self::size_update_sent`], so a block that is built but never sent does not lose it.
+    pub fn write_pending_size_update(&self, block: &mut Vec<u8>) {
         let Some(min) = self.unannounced_min else {
             return;
         };
         if min < self.enc_capacity {
-            self.hpack.set_encoder_max_capacity(min);
-            self.hpack.set_encoder_max_capacity(self.enc_capacity);
             write_table_size_update(block, min);
         }
         write_table_size_update(block, self.enc_capacity);
     }
 
-    /// The header block opened with [`Self::write_pending_size_update`] was handed to the
-    /// transport.
     pub fn size_update_sent(&mut self) {
         self.unannounced_min = None;
     }
@@ -122,10 +98,9 @@ impl Coder {
         self.hpack.decode(src)
     }
 
-    /// True when `block` holds §6.3 size updates and nothing else, all within the acknowledged
-    /// limit. Such a block is valid and has no fields. lshpack applies the updates and then
-    /// fails [`Self::decode`] because no field follows, so a caller asks this after that failure.
-    /// Every other failure of `decode` makes this false.
+    /// True when `block` is only §6.3 size updates within the ACKed limit: a valid block with no
+    /// field. lshpack applies such updates and then fails [`Self::decode`] because no field
+    /// follows, so ask this after that failure.
     pub fn is_size_update_only(&self, block: &[u8]) -> bool {
         let mut rest = block;
         if rest.is_empty() {

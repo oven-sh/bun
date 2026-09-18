@@ -1068,8 +1068,7 @@ pub struct H2FrameParser {
     /// a header block already in flight when the limit is lowered must not be rejected; the
     /// engine raises/lowers its own limit as ACKs arrive).
     enforced_max_header_list_size: Cell<u32>,
-    /// The engine decoder's table limit: our SETTINGS_HEADER_TABLE_SIZE that the peer ACKed last.
-    /// Mirrored here so `state` never needs the engine borrow.
+    /// The engine decoder's table limit, mirrored so `state` never needs the engine borrow.
     acked_header_table_size: Cell<u32>,
     // only available after receiving settings or ACK
     remote_settings: Cell<Option<FullSettingsPayload>>,
@@ -2025,8 +2024,8 @@ impl H2FrameParser {
         })
     }
 
-    /// Opens an outbound header block: the peer's decoder learns about a changed dynamic table
-    /// size here and nowhere else (RFC 7541 §4.2). Pair with `header_block_sent`.
+    /// Call before the first field of every outbound header block. Pair with
+    /// `header_block_sent`.
     fn begin_header_block(&self, encoded_headers: &mut Vec<u8>) {
         self.hpack.with_mut(|hpack| {
             if let Some(hpack) = hpack.as_mut() {
@@ -2035,9 +2034,8 @@ impl H2FrameParser {
         });
     }
 
-    /// The block opened with `begin_header_block` was written. A block that is dropped before
-    /// this (a header that fails validation, an option that throws) keeps the size update pending
-    /// for the next one.
+    /// Call after the block's frames are written. A block that is dropped before this keeps the
+    /// size update pending for the next one.
     fn header_block_sent(&self) {
         self.hpack.with_mut(|hpack| {
             if let Some(hpack) = hpack.as_mut() {
@@ -7694,7 +7692,6 @@ impl H2FrameParser {
             unsafe { bun_jsc::AbortHandle::arm_owner(this, context) };
         }
 
-        // Our own headerTableSize sizes the engine's decoder. This encoder follows the peer's.
         this_ref
             .hpack
             .set(Some(crate::api::h2::hpack::Coder::new()));

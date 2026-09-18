@@ -172,9 +172,7 @@ pub trait Sink {
     }
     /// A SETTINGS entry with an id outside the standard registry (node's remoteCustomSettings).
     fn on_remote_custom_setting(&self, _id: u16, _value: u32) {}
-    /// Transition shim while the outbound path still flows through the embedder's legacy encoder:
-    /// one SETTINGS_HEADER_TABLE_SIZE entry from the peer, for every entry in wire order, so that
-    /// encoder can follow it (`hpack::Coder::set_peer_header_table_size`).
+    /// One SETTINGS_HEADER_TABLE_SIZE entry from the peer, called per entry in wire order.
     fn on_remote_header_table_size(&self, _size: u32) {}
     /// One decoded header field. `name`/`value` alias a shared buffer — copy before returning.
     fn on_header(&self, _stream_id: u32, _name: &[u8], _value: &[u8], _never_index: bool) {}
@@ -729,8 +727,7 @@ impl Connection {
                     return true;
                 }
                 self.remote_settings.apply(sid, value);
-                // The peer's HEADER_TABLE_SIZE governs OUR encoder. Every entry counts, not only
-                // the last one: the peer's decoder evicts at each (RFC 7541 §4.2).
+                // Per entry, not once per frame: the peer's decoder evicts at each (RFC 7541 §4.2).
                 if sid == SettingId::HeaderTableSize {
                     self.hpack.set_peer_header_table_size(value);
                     sink.on_remote_header_table_size(value);
@@ -1217,8 +1214,7 @@ impl Connection {
                     }
                     sink.on_header(target, h.name, h.value, h.never_index);
                 }
-                // A block of size updates and no field, for example empty trailers right after
-                // a table size change. The decoder has applied the updates.
+                // Size updates and no field, for example empty trailers. lshpack applied them.
                 Err(_) if off == 0 && self.hpack.is_size_update_only(&block) => break,
                 Err(_) => {
                     // §4.3: a header-block decoding error is a connection COMPRESSION_ERROR.

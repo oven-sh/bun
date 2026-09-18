@@ -23,6 +23,8 @@ pub(crate) fn find_all_imported_parts_in_js_order(
     // files that run something when loaded; the rest (and every file without
     // code splitting) map to `u32::MAX`.
     let mut chunk_of_file: Vec<u32> = vec![u32::MAX; this.graph.files.len()];
+    // Per chunk, how many of its files run something when loaded.
+    let mut files_that_run: Vec<u32> = vec![0; chunks.len()];
     if this.graph.code_splitting {
         for (chunk_index, chunk) in chunks.iter().enumerate() {
             if !matches!(chunk.content, chunk::Content::Javascript(_)) {
@@ -31,6 +33,7 @@ pub(crate) fn find_all_imported_parts_in_js_order(
             for &source_index in chunk.files_with_parts_in_chunk.keys() {
                 if !this.loading_file_has_no_side_effects(source_index) {
                     chunk_of_file[source_index as usize] = chunk_index as u32;
+                    files_that_run[chunk_index] += 1;
                 }
             }
         }
@@ -39,6 +42,7 @@ pub(crate) fn find_all_imported_parts_in_js_order(
     struct Ctx<'a, 'f> {
         inner: crate::linker_context_mod::GenerateChunkCtx<'a>,
         chunk_of_file: &'f [u32],
+        files_that_run: &'f [u32],
     }
 
     // One chunk per task. Each task writes only its own `Chunk` and, for
@@ -54,6 +58,7 @@ pub(crate) fn find_all_imported_parts_in_js_order(
             chunks: bun_ptr::BackRef::new(&*chunks),
         },
         chunk_of_file: &chunk_of_file,
+        files_that_run: &files_that_run,
     };
     let chunks_len = chunks.len();
     this.worker_pool().each_ptr(
@@ -73,6 +78,7 @@ pub(crate) fn find_all_imported_parts_in_js_order(
                 &mut Vec::new(),
                 u32::try_from(index).expect("int cast"),
                 ctx.chunk_of_file,
+                ctx.files_that_run,
                 chunks_len,
             ));
         },
@@ -94,6 +100,7 @@ pub(crate) fn find_imported_parts_in_js_order(
     parts_prefix_shared: &mut Vec<PartRange>,
     chunk_index: u32,
     chunk_of_file: &[u32],
+    files_that_run: &[u32],
     chunks_len: usize,
 ) -> Result<(), bun_alloc::AllocError> {
     let mut chunk_order_array: Vec<Order> =
@@ -143,7 +150,7 @@ pub(crate) fn find_imported_parts_in_js_order(
     let entry_point_chunk_indices: *mut [u32] =
         this.graph.files.slice().split_raw().entry_point_chunk_index;
 
-    let (files_in_chunk_order, parts_in_chunk_order, reached_chunks) = {
+    let (files_in_chunk_order, parts_in_chunk_order, reached_chunks, directly_reached) = {
         let mut visitor = FindImportedPartsVisitor {
             files: Vec::new(),
             part_ranges: core::mem::take(part_ranges_shared),
@@ -158,6 +165,11 @@ pub(crate) fn find_imported_parts_in_js_order(
             entry_point_chunk_indices,
             stack: Vec::new(),
             chunk_of_file,
+            files_that_run,
+            open_files: vec![0; chunks_len],
+            inside_other_chunks: Vec::new(),
+            reached_early: Vec::new(),
+            directly_reached: AutoBitSet::init_empty(chunks_len)?,
             reached_chunks: Vec::new(),
             reached_chunk_set: AutoBitSet::init_empty(chunks_len)?,
         };
@@ -180,7 +192,18 @@ pub(crate) fn find_imported_parts_in_js_order(
         *parts_prefix_shared = visitor.parts_prefix;
         // visitor.visited dropped implicitly
 
-        (visitor.files, parts_in_chunk_order, visitor.reached_chunks)
+        let directly_reached: Vec<u32> = visitor
+            .reached_chunks
+            .iter()
+            .copied()
+            .filter(|&other| visitor.directly_reached.is_set(other as usize))
+            .collect();
+        (
+            visitor.files,
+            parts_in_chunk_order,
+            visitor.reached_chunks,
+            directly_reached,
+        )
     };
 
     match &mut chunk.content {
@@ -188,6 +211,7 @@ pub(crate) fn find_imported_parts_in_js_order(
             js.files_in_chunk_order = files_in_chunk_order.into_boxed_slice();
             js.parts_in_chunk_in_order = parts_in_chunk_order.into_boxed_slice();
             js.reached_chunks_in_order = reached_chunks.into_boxed_slice();
+            js.directly_reached_chunks = directly_reached.into_boxed_slice();
         }
         // Caller only invokes this for `.javascript` chunks (see
         // `find_all_imported_parts_in_js_order`).
@@ -225,6 +249,15 @@ pub(crate) struct FindImportedPartsVisitor<'a, 'ctx> {
     /// The chunk of each file that runs something when loaded; `u32::MAX`
     /// for the others (and everywhere without code splitting).
     chunk_of_file: &'a [u32],
+    files_that_run: &'a [u32],
+    /// Per other chunk not reached yet, how many of its `files_that_run` the walk is inside of.
+    open_files: Vec<u32>,
+    /// The files with side effects of other chunks the walk is inside of, outermost first.
+    inside_other_chunks: Vec<IndexInt>,
+    /// The chunks recorded ahead of what their files import and not left yet: `(chunk, index in reached_chunks, stays)`.
+    reached_early: Vec<(u32, usize, bool)>,
+    /// The other chunks whose first such file the walk entered while `inside_other_chunks` was empty.
+    directly_reached: AutoBitSet,
     /// `JavaScriptChunk::reached_chunks_in_order` under construction.
     reached_chunks: Vec<u32>,
     reached_chunk_set: AutoBitSet,
@@ -365,12 +398,25 @@ impl<'a, 'ctx> FindImportedPartsVisitor<'a, 'ctx> {
                         // first file with side effects finishes here exactly
                         // when the unbundled module would have run them.
                         let other = self.chunk_of_file[source_index as usize];
-                        if other != u32::MAX
-                            && other != self.chunk_index
-                            && !self.reached_chunk_set.is_set(other as usize)
-                        {
-                            self.reached_chunk_set.set(other as usize);
-                            self.reached_chunks.push(other);
+                        if other != u32::MAX && other != self.chunk_index {
+                            self.inside_other_chunks.pop();
+                            if !self.reached_chunk_set.is_set(other as usize) {
+                                self.reached_chunk_set.set(other as usize);
+                                self.reached_chunks.push(other);
+                            } else if let Some(&(chunk, at, false)) = self.reached_early.last()
+                                && chunk == other
+                            {
+                                // It cannot bring in something its files import: back to where its first file finishes.
+                                self.reached_chunks.remove(at);
+                                self.reached_chunks.push(other);
+                            }
+                            if self
+                                .reached_early
+                                .last()
+                                .is_some_and(|early| early.0 == other)
+                            {
+                                self.reached_early.pop();
+                            }
                         }
                     }
                     continue;
@@ -396,6 +442,43 @@ impl<'a, 'ctx> FindImportedPartsVisitor<'a, 'ctx> {
                             &self.c.graph.files.items_entry_bits()[source_index as usize],
                         )
                     };
+
+                    // A chunk whose files are all being evaluated goes ahead of what they import, so the loader is inside it too.
+                    if !is_file_in_chunk {
+                        let other = self.chunk_of_file[source_index as usize];
+                        if other != u32::MAX && other != self.chunk_index {
+                            if !self.reached_chunk_set.is_set(other as usize) {
+                                let entry_bits = self.c.graph.files.items_entry_bits();
+                                match self.inside_other_chunks.last() {
+                                    None => self.directly_reached.set(other as usize),
+                                    // The chunk that gets to this one will not import it (it loads in places this one does not).
+                                    Some(&importer)
+                                        if self.chunk_of_file[importer as usize] != other
+                                            && !entry_bits[importer as usize]
+                                                .subset_of(&entry_bits[source_index as usize]) =>
+                                    {
+                                        for early in self.reached_early.iter_mut() {
+                                            early.2 = false;
+                                        }
+                                    }
+                                    Some(_) => {}
+                                }
+                                self.open_files[other as usize] += 1;
+                                if self.open_files[other as usize]
+                                    == self.files_that_run[other as usize]
+                                {
+                                    self.reached_chunk_set.set(other as usize);
+                                    self.reached_early.push((
+                                        other,
+                                        self.reached_chunks.len(),
+                                        true,
+                                    ));
+                                    self.reached_chunks.push(other);
+                                }
+                            }
+                            self.inside_other_chunks.push(source_index);
+                        }
+                    }
 
                     // Wrapped files can't be split because they are all inside the wrapper
                     let can_be_split = self.flags[source_index as usize].wrap == Wrap::None;

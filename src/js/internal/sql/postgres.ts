@@ -60,6 +60,9 @@ const POSTGRES_ARRAY_TYPES = {
   1231: "NUMERIC", // numeric_array
   791: "MONEY", // money_array
 
+  // UUID
+  2951: "UUID", // uuid_array
+
   // OID types
   1028: "OID", // oid_array
   1010: "TID", // tid_array

@@ -1,7 +1,7 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { spawnSync } from "child_process";
 import { chmodSync, mkdirSync } from "fs";
-import { bunEnv, bunExe, isLinux, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir, tmpdirSync } from "harness";
 import { join } from "path";
 
 describe.concurrent("run-shell", () => {
@@ -87,16 +87,23 @@ test.skipIf(isWindows)(
 // the filter), `error` is a compile failure of the helper itself.
 const hidePaths: { bin: string } | { skip: true } | { error: string } = (() => {
   if (!isLinux) return { skip: true };
-  const bin = join(tempDirWithFiles("hide-paths", {}), "hide-paths");
-  const compile = spawnSync("cc", ["-O0", "-o", bin, join(import.meta.dir, "hide-paths.c")], { stdio: "pipe" });
-  if ((compile.error as NodeJS.ErrnoException | undefined)?.code === "ENOENT") return { skip: true };
-  if (compile.status !== 0) {
-    const stderr = compile.stderr?.toString() ?? "";
-    // A missing header or libc means this host cannot build C. Anything else is a bug in the helper.
-    return stderr.includes("No such file or directory") ? { skip: true } : { error: stderr };
-  }
-  // Probe: the helper runs itself with no arguments, which prints the usage and exits 2. 77 means skip.
-  return spawnSync(bin, ["/hide-paths-probe", "--", bin], { stdio: "pipe" }).status === 2 ? { bin } : { skip: true };
+  const dir = tempDir("hide-paths", {});
+  const result = ((): typeof hidePaths => {
+    const bin = join(String(dir), "hide-paths");
+    const compile = spawnSync("cc", ["-O0", "-o", bin, join(import.meta.dir, "hide-paths.c")], { stdio: "pipe" });
+    if ((compile.error as NodeJS.ErrnoException | undefined)?.code === "ENOENT") return { skip: true };
+    if (compile.status !== 0) {
+      const stderr = compile.stderr?.toString() ?? "";
+      // A missing header or libc means this host cannot build C. Anything else is a bug in the helper.
+      return stderr.includes("No such file or directory") ? { skip: true } : { error: stderr };
+    }
+    // Probe: the helper runs itself with no arguments, which prints the usage and exits 2. 77 means skip.
+    return spawnSync(bin, ["/hide-paths-probe", "--", bin], { stdio: "pipe" }).status === 2 ? { bin } : { skip: true };
+  })();
+  // The tests need the binary until the file ends. Every other outcome is done with the directory now.
+  if ("bin" in result) afterAll(() => dir[Symbol.dispose]());
+  else dir[Symbol.dispose]();
+  return result;
 })();
 
 // A FROM-scratch or distroless image has no /bin/sh. `--shell=bun` must not need one. Every path

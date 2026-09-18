@@ -1286,7 +1286,12 @@ impl NodeHTTPResponse {
         // last ref when the JS wrapper has already finalized; nothing between
         // them reads `raw_response`, so clearing first avoids a post-destroy write.
         if EVENT == AbortEvent::Abort {
-            self.mark_request_as_done_if_necessary();
+            if self.flags.get().contains(Flags::ENDED) {
+                // An ended response that was still draining is over now: `finished` reads true, as after a drain.
+                self.on_request_complete();
+            } else {
+                self.mark_request_as_done_if_necessary();
+            }
             self.raw_response.set(None);
         }
     }

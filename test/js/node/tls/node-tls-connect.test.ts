@@ -1080,6 +1080,32 @@ describe("a TLS socket over a Duplex transport follows that transport's teardown
     expect(client.destroyed).toBe(true);
   });
 
+  it("tls.connect({ socket }) reports the aborted handshake when the transport ends in the same tick", async () => {
+    // An ended transport is not a destroyed one. Its EOF reaches the TLS socket
+    // once the engine starts and cuts the handshake short, and the transport's
+    // own 'close' must not take the socket down ahead of that error.
+    const transport = makeTransport();
+    const client = tls.connect({ socket: transport, rejectUnauthorized: false });
+    const teardown = recordTeardown(client);
+    transport.push(null);
+    transport.end();
+    expect(await teardown).toEqual(["error:ECONNRESET", "close:true"]);
+    expect(client.destroyed).toBe(true);
+  });
+
+  it("tls.connect({ socket }) closes without an error when a transport that had already ended is destroyed", async () => {
+    // That EOF predates the wrap, so none is on its way to the TLS socket.
+    const transport = makeTransport();
+    transport.push(null);
+    transport.resume();
+    await once(transport, "end");
+    const client = tls.connect({ socket: transport, rejectUnauthorized: false });
+    const teardown = recordTeardown(client);
+    transport.destroy();
+    expect(await teardown).toEqual(["close:false"]);
+    expect(client.destroyed).toBe(true);
+  });
+
   it("a server wrap closes when the transport is destroyed after the engine started", async () => {
     // The engine is up and its handshake is still pending. The aborted
     // handshake must not surface as an ECONNRESET instead of the close.

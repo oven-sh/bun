@@ -270,17 +270,20 @@ function destroyNT(self, err) {
   self.destroy(err);
 }
 // Node's wrap 'close' -> destroy(): https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L739-L741
-function onUpgradedClose(self, connection) {
+function onUpgradedClose(self, connection, endedBeforeUpgrade) {
   if (self[kupgraded] !== connection) return;
   // The stream-level engine reads its transport with no backpressure, so the
   // transport can close after the peer's EOF with plaintext still unread.
-  if ((self[kended] || self[kOnreadPendingEnd]) && !self.readableEnded) self.once("end", self[kOnUpgradedClose]);
+  // An EOF from before the engine started is only staged there: this socket still gets it.
+  const eofDue = self[kended] || self[kOnreadPendingEnd] || (connection.readableEnded && !endedBeforeUpgrade);
+  if (eofDue && !self.readableEnded) self.once("end", self[kOnUpgradedClose]);
   else self.destroy();
 }
 // Armed ahead of the stream-level engine's own 'close' thunk: that thunk aborts
 // a pending handshake, which a socket destroyed first does not report.
 function destroyWhenUpgradedCloses(self, connection) {
-  connection.once("close", (self[kOnUpgradedClose] = onUpgradedClose.bind(null, self, connection)));
+  const listener = onUpgradedClose.bind(null, self, connection, connection.readableEnded);
+  connection.once("close", (self[kOnUpgradedClose] = listener));
 }
 let addAbortListener;
 function destroyWhenAborted(err) {

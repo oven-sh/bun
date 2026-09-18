@@ -1632,6 +1632,15 @@ class ChildProcess extends EventEmitter {
           });
           return value;
         },
+        set: function (value) {
+          this.#stdin = value;
+          Object.defineProperty(this, "stdin", {
+            value,
+            enumerable: true,
+            configurable: true,
+            writable: true,
+          });
+        },
         enumerable: true,
         configurable: true,
       },
@@ -1646,6 +1655,15 @@ class ChildProcess extends EventEmitter {
             writable: true,
           });
           return value;
+        },
+        set: function (value) {
+          this.#stdout = value;
+          Object.defineProperty(this, "stdout", {
+            value,
+            enumerable: true,
+            configurable: true,
+            writable: true,
+          });
         },
         enumerable: true,
         configurable: true,
@@ -1662,6 +1680,15 @@ class ChildProcess extends EventEmitter {
           });
           return value;
         },
+        set: function (value) {
+          this.#stderr = value;
+          Object.defineProperty(this, "stderr", {
+            value,
+            enumerable: true,
+            configurable: true,
+            writable: true,
+          });
+        },
         enumerable: true,
         configurable: true,
       },
@@ -1676,6 +1703,15 @@ class ChildProcess extends EventEmitter {
             writable: true,
           });
           return value;
+        },
+        set: function (value) {
+          this.#stdioObject = value;
+          Object.defineProperty(this, "stdio", {
+            value,
+            enumerable: true,
+            configurable: true,
+            writable: true,
+          });
         },
         enumerable: true,
         configurable: true,

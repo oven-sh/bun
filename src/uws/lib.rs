@@ -1253,12 +1253,27 @@ pub mod ssl_wrapper {
         1
     }
 
+    /// The process-wide default CA store, with a new reference that the caller owns: the bundled roots, OpenSSL's
+    /// default paths, `NODE_EXTRA_CA_CERTS` and, with `--use-system-ca`, the system store. Every context with no
+    /// `ca` shares it, so nothing may be added to it. `None` if it failed to load.
+    pub fn shared_default_ca_store() -> Option<NonNull<boring_sys::X509_STORE>> {
+        NonNull::new(us_get_shared_default_ca_store())
+    }
+
+    /// A new store with the same contents, for a context that adds to its store. The caller owns it.
+    pub fn default_ca_store() -> Option<NonNull<boring_sys::X509_STORE>> {
+        NonNull::new(us_get_default_ca_store())
+    }
+
     unsafe extern "C" {
         /// Process-wide bundled root store from `root_certs.cpp` — built once and
         /// up_ref'd per consumer so the ~150-cert load happens once total, not per
         /// CTX. Returns null if root loading fails (treated as "no roots").
         // safe: no args; idempotent lazy init reading a process global — no preconditions.
         safe fn us_get_shared_default_ca_store() -> *mut boring_sys::X509_STORE;
+        /// Same `root_certs.cpp` inputs, but a new store on every call. Null if an allocation fails.
+        // safe: no args; the lazy inits it reads are `std::call_once` — no preconditions.
+        safe fn us_get_default_ca_store() -> *mut boring_sys::X509_STORE;
         /// Implemented in uSockets C; reads
         /// `SSL_get_verify_result` and maps it onto the C `us_bun_verify_error_t`.
         fn us_ssl_socket_verify_error_from_ssl(ssl: *mut boring_sys::SSL) -> us_bun_verify_error_t;

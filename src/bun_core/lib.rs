@@ -2021,7 +2021,7 @@ pub(crate) mod strings_impl {
         while i + 2 < text.len() {
             match text[i] {
                 b'\n' => return None,
-                b'\\' if q == b'"' => i += 2,
+                b'\\' if q == b'"' && text[i + 1] != b'\n' => i += 2,
                 c if c == q && text[i + 1] == q && text[i + 2] == q => return Some(i),
                 _ => i += 1,
             }

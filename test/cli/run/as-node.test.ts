@@ -97,6 +97,51 @@ describe("fake node cli", () => {
     );
   });
 
+  // Node sets `process.argv[1]` to `path.resolve()` of the script argument.
+  describe("process.argv[1] is the resolved path of the script", () => {
+    const scripts: [name: string, script: (temp: string) => string, resolved: string][] = [
+      ["a directory with a trailing separator", () => "./pkg/", "pkg"],
+      ["an absolute path with `.` and `..`", temp => `${temp}/./pkg/../index.js`, "index.js"],
+      ["an absolute path with a repeated separator", temp => `${temp}//index.js`, "index.js"],
+      ["an absolute path with `/` separators", temp => join(temp, "index.js").replaceAll("\\", "/"), "index.js"],
+    ];
+    test.each(scripts)("%s", (_, script, resolved) => {
+      using temp = tempDir("fake-node", {
+        "index.js": "console.log(process.argv[1])",
+        "pkg/index.js": "console.log(process.argv[1])",
+      });
+      expect(fakeNodeRun(temp, script(String(temp))).stdout).toBe(join(temp, resolved));
+    });
+
+    const mainModules: [name: string, script: (temp: string) => string][] = [
+      // The launcher that pnpm writes to `node_modules/.bin` runs `node "$basedir/../pkg/cli.mjs"`.
+      ["through `node_modules/.bin/..`", temp => `${temp}/node_modules/.bin/../pkg/cli.mjs`],
+      // Git Bash and MSYS2 pass a Windows path with `/` separators.
+      ["with `/` separators", temp => join(temp, "node_modules", "pkg", "cli.mjs").replaceAll("\\", "/")],
+    ];
+    test.each(mainModules)("an ES module that runs %s finds that it is the main module", (_, script) => {
+      using temp = tempDir("fake-node", {
+        "node_modules/.bin/pkg": "",
+        "node_modules/pkg/cli.mjs": `
+          import { fileURLToPath } from "node:url";
+          console.log(process.argv[1] === fileURLToPath(import.meta.url));
+        `,
+      });
+      expect(fakeNodeRun(temp, script(String(temp))).stdout).toBe("true");
+    });
+
+    // Node resolves the entry from that path too, so `node ./pkg/` runs the file that `node ./pkg` runs.
+    // Beside `pkg.js` that is Node's choice. Beside `pkg.ts` Node runs `pkg/index.js`, because it does
+    // not try `.ts` (see "entrypoint file extension picking").
+    test.each(["pkg.js", "pkg.ts"])("a trailing separator does not select the directory over %s", sibling => {
+      using temp = tempDir("fake-node", {
+        [sibling]: "console.log('sibling')",
+        "pkg/index.js": "console.log('directory')",
+      });
+      expect([fakeNodeRun(temp, "./pkg").stdout, fakeNodeRun(temp, "./pkg/").stdout]).toEqual(["sibling", "sibling"]);
+    });
+  });
+
   // Bare `node` now matches Node.js: a TTY stdin enters the REPL, a
   // non-TTY stdin (pipe) prints "Missing script". fakeNodeRun's default
   // stdin is platform-dependent (Windows may inherit a console), so pin

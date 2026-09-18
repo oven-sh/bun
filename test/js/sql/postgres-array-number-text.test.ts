@@ -16,22 +16,37 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
 
   // float8[], json[] and jsonb[] are text on every path. float4[] is text unless Bun knows the
   // result columns before it sends Bind. Then it asks for float4[] in binary.
-  // - simple: the simple protocol.
-  // - extended: the first run of a query with no parameter. Bind goes out before the columns are known.
+  // - simple: the simple protocol. sql.unsafe(query) with no values uses it too.
+  // - extended: the first run of a tagged template with no parameter. Bind goes out before the columns are known.
   // - parameter: Bun waits for the statement description, so it knows the columns before Bind.
   const textPaths = ["simple", "extended"] as const;
   const paths = [...textPaths, "parameter"] as const;
 
+  function run(sql: SQL, query: string, path: (typeof paths)[number]) {
+    if (path === "simple") return sql.unsafe(query).simple();
+    if (path === "extended") return sql`${sql.unsafe(query)}`;
+    return sql.unsafe(`${query} where $1 = 1`, [1]);
+  }
+
   // Returns the decoded array next to the text the server sends for it.
   async function decode(sql: SQL, array: string, path: (typeof paths)[number]) {
-    const query = `select v, v::text as wire from (select ${array} as v) t`;
-    const [row] = await (path === "simple"
-      ? sql.unsafe(query).simple()
-      : path === "extended"
-        ? sql.unsafe(query)
-        : sql.unsafe(`${query} where $1 = 1`, [1]));
+    const [row] = await run(sql, `select v, v::text as wire from (select ${array} as v) t`, path);
     return row;
   }
+
+  // Only the simple protocol accepts two statements in one query, so this tells the two paths apart.
+  test("the extended path does not use the simple protocol", async () => {
+    await container.ready;
+    await using sql = new SQL({ url: url(), max: 1 });
+
+    expect(await run(sql, "select 1 as a; select 2 as b", "simple")).toEqual([[{ a: 1 }], [{ b: 2 }]]);
+    expect(
+      await run(sql, "select 1 as a; select 2 as b", "extended").then(
+        rows => ({ rows }),
+        err => ({ errno: err.errno }),
+      ),
+    ).toEqual({ errno: "42601" });
+  });
 
   test.each(paths)("float8[] exponent form with no decimal point (%s)", async path => {
     await container.ready;
@@ -103,10 +118,17 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
   });
 });
 
-// Fault-injection test: a healthy server never sends a malformed number, so a mock pins the
-// bytes. The element must reject. It must not decode as its valid prefix ("1e" as 1).
-describe.concurrent("malformed number element in a text array", () => {
-  const OID = { json_array: 199, int4_array: 1007, float4_array: 1021, float8_array: 1022 } as const;
+// Fault-injection test: a healthy server never sends a malformed number or JSON keyword, so a
+// mock pins the bytes. The element must reject. It must not decode as its valid prefix ("1e" as 1).
+describe.concurrent("malformed element in a text array", () => {
+  const OID = {
+    json_array: 199,
+    int4_array: 1007,
+    int8_array: 1016,
+    float4_array: 1021,
+    float8_array: 1022,
+    oid_array: 1028,
+  } as const;
   let mock: { port: number; server: net.Server };
 
   // Answers a simple query `{"type": ..., "text": ...}` with one row: one column of that array type with that text.
@@ -147,8 +169,12 @@ describe.concurrent("malformed number element in a text array", () => {
     ["float8_array", "{-}"],
     ["float4_array", "{1e}"],
     ["int4_array", "{1e5}"],
+    ["int8_array", "{1e5}"],
+    ["oid_array", "{1e5}"],
     ["json_array", "{1e}"],
     ["json_array", "{-}"],
+    ["json_array", "{[null5]}"],
+    ["json_array", "{truetrue}"],
   ] as const)("%s %s rejects", async (type, text) => {
     expect(await decode(type, text)).toEqual({ code: "ERR_POSTGRES_UNSUPPORTED_ARRAY_FORMAT" });
   });

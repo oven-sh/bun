@@ -2036,6 +2036,107 @@ it("reload() backs out cleanly when a handler getter closes the socket mid-reloa
   void stderr;
 });
 
+it.each(["end", "terminate"])(
+  "reload() backs out when the top-level socket getter %ss the socket mid-reload",
+  async verb => {
+    // reload() reads opts.socket before it reads the current handlers. A
+    // getter on that property can run JS that closes the socket and drops
+    // its handlers, so reading them with an unchecked accessor panicked with
+    // "No handlers set on Socket". reload() must back out instead.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const h = { data() {}, open() {}, close() {}, error() {} };
+          const listener = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { ...h } });
+          const sock = await Bun.connect({ hostname: "127.0.0.1", port: listener.port, socket: { ...h } });
+          // Let the event loop idle once so the socket is fully settled. On a
+          // settled socket end()/terminate() closes it and drops its handlers
+          // synchronously, which is what triggers the bug from inside reload().
+          await Bun.sleep(20);
+          sock.reload({
+            get socket() {
+              sock.${verb}();
+              return h;
+            },
+          });
+          console.log("reload-ok");
+          sock.end();
+          listener.stop(true);
+          process.exit(0);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe("reload-ok");
+    expect(exitCode).toBe(0);
+    void stderr;
+  },
+);
+
+it("upgradeTLS() backs out when an option getter re-enters upgradeTLS on the same socket", async () => {
+  // upgradeTLS() captured the raw us_socket_t, then ran user JS through the
+  // option getters. A getter that re-entered upgradeTLS on the same socket
+  // adopted the fd and freed that socket, so the outer call then adopted a
+  // freed socket and a later write used it after free. The outer call must
+  // re-check the socket after parsing the options and back out.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const h = { data() {}, open() {}, close() {}, error() {}, handshake() {}, drain() {} };
+        const listener = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { ...h } });
+        const sock = await Bun.connect({ hostname: "127.0.0.1", port: listener.port, socket: { ...h } });
+        // Settle the socket first: upgradeTLS only adopts an established fd.
+        await Bun.sleep(20);
+        let inner = null;
+        let reentered = false;
+        const opts = {
+          data: {},
+          socket: { ...h },
+          get tls() {
+            if (!reentered) {
+              reentered = true;
+              try {
+                inner = sock.upgradeTLS({ data: {}, socket: { ...h }, tls: true });
+              } catch {}
+            }
+            return true;
+          },
+        };
+        let outerThrew = false;
+        try {
+          const r = sock.upgradeTLS(opts);
+          if (r && r[0]) r[0].write("a");
+          if (r && r[1]) r[1].write("b");
+        } catch {
+          outerThrew = true;
+        }
+        if (inner && inner[0]) inner[0].write("c");
+        if (inner && inner[1]) inner[1].write("d");
+        try { sock.write("z"); } catch {}
+        console.log("upgrade-ok:" + outerThrew);
+        listener.stop(true);
+        process.exit(0);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim()).toBe("upgrade-ok:true");
+  expect(exitCode).toBe(0);
+  void stderr;
+});
+
 it("node:net connect() reusing a server-accepted handle keeps the listener's handlers working", async () => {
   // A Bun.listen()-accepted socket wrapper does not own its handlers — they
   // live inside the listener. Reusing such a wrapper as the handle for an

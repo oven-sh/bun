@@ -199,11 +199,11 @@ extern "C" bool Bun__JSCTaskScheduler__hasPendingWork(JSC::VM* vm)
     auto& scheduler = clientData->deferredWorkTimer;
     Locker<Lock> holder { scheduler.m_lock };
     for (auto& ticket : scheduler.m_pendingTicketsKeepingEventLoopAlive) {
-        if (ticket.value == loopKind)
+        if (ticket.value.loopKind == loopKind)
             return true;
     }
     for (auto& ticket : scheduler.m_pendingTicketsOther) {
-        if (ticket.value == loopKind)
+        if (ticket.value.loopKind == loopKind)
             return true;
     }
     return false;

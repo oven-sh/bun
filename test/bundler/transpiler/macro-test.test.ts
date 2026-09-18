@@ -640,6 +640,43 @@ describe("a hostile macro", () => {
     expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
     expect(stdout.replace(/\s+/g, "")).toContain(`varv=["timed-out",true];`);
   });
+
+  // require() runs the macro in the program's own VM. The program's Atomics.waitAsync ticket (no timeout,
+  // nobody notifies) belongs to the regular loop: it must not read as work the macro is still waiting for.
+  test.concurrent("a JSC ticket the program registered does not keep a macro's wait alive", async () => {
+    using dir = tempDir("macro-hostile-ticket", {
+      "m.ts": `export function never() { return new Promise(() => {}); }`,
+      "uses.ts": `import { never } from "./m.ts" with { type: "macro" };\nexport const v = never();\n`,
+      "index.ts": [
+        `Atomics.waitAsync(new Int32Array(new SharedArrayBuffer(4)), 0, 0);`,
+        `try {`,
+        `  require("./uses.ts");`,
+        `  console.log("required");`,
+        `} catch (e) {`,
+        `  console.log("require failed: " + String(e.message).split("\\n")[0]);`,
+        `}`,
+        `process.exit(0);`,
+      ].join("\n"),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "index.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 20_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // stderr rides along so a failure shows what the child printed.
+    expect({ lastLine: stdout.trim().split("\n").pop(), exitCode, signalCode: proc.signalCode, stderr }).toEqual({
+      lastLine:
+        "require failed: macro returned a promise that never settles: no timer, I/O, or task is keeping the event loop alive",
+      exitCode: 0,
+      signalCode: null,
+      stderr: expect.any(String),
+    });
+  });
 });
 
 // A module that is not the entry point is transpiled on a worker thread, where no VM exists yet. The

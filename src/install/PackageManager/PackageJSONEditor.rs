@@ -1438,7 +1438,8 @@ pub(crate) fn edit(
             //       loop) — backed by `manager.ast_arena`, which is process-lifetime; or
             //   (b) a pre-existing slot from the parsed `current_package_json` input tree
             //       (`value.expr.data.e_string()` / `v.data.e_string()` in the earlier
-            //       dependency-group scan) — backed by the thread-local Expr
+            //       dependency-group scan, or `declared_slots_of_resolved_name`, which also
+            //       fills `also_declared`) — backed by the thread-local Expr
             //       Store, which the *caller* guarantees stays live for the duration of `edit`
             //       (it owns the parsed tree).
             // Note: `ExprDisabler::scope()` at function entry is a debug guard that *forbids*

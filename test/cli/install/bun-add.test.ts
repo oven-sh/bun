@@ -3019,7 +3019,7 @@ describe("a spec without a name that resolves to a dependency package.json alrea
     ]);
 
     const { err, exitCode } = await run(project, "add", first, second);
-    expect(err).toContain(`error: "${first}" and "${second}" both resolve to "pkga"; add one of them`);
+    expect(err).toContain(`error: "${first}" and "${second}" both resolve to "pkga"\nnote: add one of them`);
     expect(exitCode).toBe(1);
     expect(await file(join(project, "package.json")).text()).toBe(before);
     expect(await Bun.file(join(project, "bun.lock")).exists()).toBeFalse();

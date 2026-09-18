@@ -1,4 +1,3 @@
-use bstr::BStr;
 use bun_collections::bit_set::Range as BitRange;
 use bun_collections::{DynamicBitSet, index_sort};
 use bun_core::{Global, Output, strings};
@@ -118,13 +117,14 @@ pub(crate) fn fold_resolved_positionals(manager: &mut PackageManager) {
             );
             Output::flush();
             Output::err_generic(
-                "\"{}\" and \"{}\" both resolve to \"{}\"; add one of them",
+                "{} and {} both resolve to {}",
                 (
-                    BStr::new(first.version_buf()),
-                    BStr::new(second.version_buf()),
-                    BStr::new(row.name.slice(buf)),
+                    bun_core::fmt::quote(first.version_buf()),
+                    bun_core::fmt::quote(second.version_buf()),
+                    bun_core::fmt::quote(row.name.slice(buf)),
                 ),
             );
+            bun_core::note!("add one of them");
             Global::crash();
         }
         if declared.is_empty() {

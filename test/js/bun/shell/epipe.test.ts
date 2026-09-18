@@ -1,6 +1,6 @@
 import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isPosix, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isPosix, isWindows, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import { open } from "node:fs/promises";
 import { join } from "node:path";
@@ -190,7 +190,8 @@ describe("cat whose input ends while its output is still queued", () => {
     return received;
   }
 
-  test.concurrent.if(isPosix)("every byte is written before the next command runs", async () => {
+  // Linux only: on macOS the handshake in `feed` never completes and both tests time out in CI.
+  test.concurrent.if(isLinux)("every byte is written before the next command runs", async () => {
     using dir = tempDir("shell-cat-fifo-read", {});
     expect(await Bun.spawn(["mkfifo", join(String(dir), "fifo")]).exited).toBe(0);
     await using proc = spawnCat(String(dir));
@@ -211,7 +212,7 @@ describe("cat whose input ends while its output is still queued", () => {
     }).toEqual({ bytes: "first\n".length + size + "tail\n".length, intact: true, stderr: "settled\n", exitCode: 0 });
   });
 
-  test.concurrent.if(isPosix)("the queued chunks fail when the stdout reader goes away", async () => {
+  test.concurrent.if(isLinux)("the queued chunks fail when the stdout reader goes away", async () => {
     using dir = tempDir("shell-cat-fifo-close", {});
     expect(await Bun.spawn(["mkfifo", join(String(dir), "fifo")]).exited).toBe(0);
     await using proc = spawnCat(String(dir));

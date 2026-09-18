@@ -955,7 +955,8 @@ impl ClientSession {
     /// The socket timer fired. False when it was the idle timeout. Otherwise
     /// `rearm_timeout` armed it for a held request body: send every body held
     /// for `EXPECT_CONTINUE_TIMEOUT` as if `100 Continue` had arrived. A body
-    /// held for less waits for the next tick, 4 s later.
+    /// held for less waits for the next tick, 4 s later. The idle timeout
+    /// does not run during the hold. It starts again here, as after a write.
     fn release_held_bodies(&mut self) -> bool {
         if !self.continue_timer_armed {
             return false;

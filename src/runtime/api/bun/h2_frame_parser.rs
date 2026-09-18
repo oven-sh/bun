@@ -2001,21 +2001,23 @@ impl H2FrameParser {
 
     /// Call before the first field of every outbound header block. Pair with
     /// `commit_header_block`.
-    fn begin_header_block(&self, encoded_headers: &mut Vec<u8>) {
-        self.hpack.with_mut(|hpack| {
-            if let Some(hpack) = hpack.as_mut() {
-                hpack.write_pending_size_update(encoded_headers);
-            }
-        });
+    fn begin_header_block(
+        &self,
+        encoded_headers: &mut Vec<u8>,
+    ) -> crate::api::h2::hpack::AnnouncedAt {
+        self.hpack.with_mut(|hpack| match hpack.as_mut() {
+            Some(hpack) => hpack.write_pending_size_update(encoded_headers),
+            None => Default::default(),
+        })
     }
 
     /// Call when nothing can drop the block any more, before its first frame byte is written. A
     /// JS transport can deliver a peer SETTINGS frame during that write, and its size update
     /// belongs to the next block.
-    fn commit_header_block(&self) {
+    fn commit_header_block(&self, announced: crate::api::h2::hpack::AnnouncedAt) {
         self.hpack.with_mut(|hpack| {
             if let Some(hpack) = hpack.as_mut() {
-                hpack.size_update_committed();
+                hpack.size_update_committed(announced);
             }
         });
     }
@@ -5595,7 +5597,7 @@ impl H2FrameParser {
         if encoded_headers.try_reserve(16384).is_err() {
             return Err(global_object.throw(format_args!("Failed to allocate header buffer")));
         }
-        self.begin_header_block(&mut encoded_headers);
+        let announced = self.begin_header_block(&mut encoded_headers);
         // max header name length for lshpack
         let mut name_buffer = [0u8; 4096];
 
@@ -5807,7 +5809,7 @@ impl H2FrameParser {
 
         bun_output::scoped_log!(H2FrameParser, "trailers encoded_size {}", encoded_size);
 
-        self.commit_header_block();
+        self.commit_header_block(announced);
         let mut writer = self.to_writer();
 
         if encoded_size <= actual_max_frame_size {
@@ -6059,7 +6061,7 @@ impl H2FrameParser {
 
         let mut name_buffer = [0u8; 4096];
         let mut encoded_headers: Vec<u8> = Vec::new();
-        self.begin_header_block(&mut encoded_headers);
+        let announced = self.begin_header_block(&mut encoded_headers);
         let mut single_value_headers = [false; SINGLE_VALUE_HEADERS_LEN];
 
         // A PUSH_PROMISE carries a REQUEST, so request pseudo-headers are valid even on the server.
@@ -6215,7 +6217,7 @@ impl H2FrameParser {
             }
         }
 
-        self.commit_header_block();
+        self.commit_header_block(announced);
         let max_frame =
             self.remote_settings
                 .get()
@@ -6466,7 +6468,7 @@ impl H2FrameParser {
         if encoded_headers.try_reserve(16384).is_err() {
             return Err(global_object.throw(format_args!("Failed to allocate header buffer")));
         }
-        self.begin_header_block(&mut encoded_headers);
+        let announced = self.begin_header_block(&mut encoded_headers);
         // max header name length for lshpack
         let mut name_buffer = [0u8; 4096];
         let stream_id: u32 = if stream_id.is_number() {
@@ -7136,7 +7138,7 @@ impl H2FrameParser {
                 }
             }
 
-            self.commit_header_block();
+            self.commit_header_block(announced);
             let frame = FrameHeader {
                 type_: FrameType::HTTP_FRAME_HEADERS as u8,
                 flags,
@@ -7181,7 +7183,7 @@ impl H2FrameParser {
             let first_chunk_size = actual_max_frame_size - priority_overhead;
             let headers_flags = flags & !(HeadersFrameFlags::END_HEADERS as u8);
 
-            self.commit_header_block();
+            self.commit_header_block(announced);
             let headers_frame = FrameHeader {
                 type_: FrameType::HTTP_FRAME_HEADERS as u8,
                 flags: headers_flags

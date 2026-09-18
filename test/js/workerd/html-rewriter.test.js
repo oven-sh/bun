@@ -1875,11 +1875,17 @@ describe("HTMLRewriter", () => {
       });
     });
 
-    it("that expands to more than 256 alternatives is rejected", () => {
-      // `:not(a.b)` is "not a, or not b", and each one more doubles the combinations.
+    it("that expands past the size limit is rejected", () => {
+      // `:not(a.b)` is "not a, or not b". One more doubles the combinations, and each
+      // combination repeats the rest of the selector: the limit is 4096 simple selectors.
       const selector = count => Buffer.alloc(count * 9, ":not(a.b)").toString();
       expect(matchedIds(selector(8))).toEqual(["main", "div", "span", "plain"]);
       expect(() => new HTMLRewriter().on(selector(9), {})).toThrow("Unsupported syntax in selector.");
+
+      const descendants = Buffer.alloc(1100 * 2, " x").toString();
+      expect(() => new HTMLRewriter().on(":not(a.b)" + descendants, {})).toThrow("Unsupported syntax in selector.");
+      // The same length with a single combination has no limit.
+      expect(() => new HTMLRewriter().on(":not(a, b)" + descendants, {})).not.toThrow();
     });
 
     it("with a combinator inside is rejected", () => {

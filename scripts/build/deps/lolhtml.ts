@@ -27,7 +27,7 @@ import type { Dependency } from "../source.ts";
 // base commit is recorded here so a rebase onto a new upstream tag is
 // `git rebase --onto <new-tag> <LOLHTML_UPSTREAM_BASE> bun` in the fork.
 const LOLHTML_UPSTREAM_BASE = "608cc4a66b7ab4fcbe1bbdeb25df8f265572b11c"; // v3.0.1
-const LOLHTML_COMMIT = "81c8bc1bb8c1061960cecd4d99c01cfc27ff3a04";
+const LOLHTML_COMMIT = "9a1b7d1186c310c6465f48cb27ca7f72c36aa233";
 void LOLHTML_UPSTREAM_BASE;
 
 export const lolhtml: Dependency = {

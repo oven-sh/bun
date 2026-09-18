@@ -915,6 +915,10 @@ describe("insecureHTTPParser: Transfer-Encoding without a final chunked coding",
     if (options.insecure) serverOptions.insecureHTTPParser = true;
     if (options.httpValidation) serverOptions.httpValidation = options.httpValidation;
     await using server = createServer(serverOptions, (req, res) => {
+      if (req.url === "/barrier") {
+        res.end();
+        return;
+      }
       let body = "";
       req.on("data", d => (body += d));
       req.on("end", () => {
@@ -942,8 +946,15 @@ describe("insecureHTTPParser: Transfer-Encoding without a final chunked coding",
 
     const head = `POST /p HTTP/1.1\r\nHost: x\r\n${teFields}\r\n\r\n`;
     if (options.splitHead) {
-      await new Promise<void>(resolve => socket.write(head.slice(0, 20), () => resolve()));
-      socket.write(head.slice(20));
+      // A partial head emits nothing on the server, so a whole request on a second connection
+      // is the barrier: the server has read the first part once it has answered and closed
+      // that connection. Then the second part reaches the parser in its own read.
+      socket.write(head.slice(0, 20));
+      const barrier = connect(port, "127.0.0.1");
+      barrier.resume();
+      barrier.end("GET /barrier HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+      await once(barrier, "close");
+      socket.write(head.slice(20) + rawBody.slice(0, 4));
     } else if (options.bodyAfterRequest) {
       socket.write(head);
     } else {
@@ -951,7 +962,7 @@ describe("insecureHTTPParser: Transfer-Encoding without a final chunked coding",
     }
     await dispatched.promise;
     // A chunked body ends at its 0-size chunk, an unframed one at the FIN.
-    socket.end(options.bodyAfterRequest || options.splitHead ? rawBody : rawBody.slice(4));
+    socket.end(options.bodyAfterRequest ? rawBody : rawBody.slice(4));
     await closed;
     return { events, raw };
   }
@@ -1045,5 +1056,50 @@ describe("insecureHTTPParser: Transfer-Encoding without a final chunked coding",
   test.concurrent("insecureHTTPParser still rejects Transfer-Encoding with Content-Length (Bun)", async () => {
     const { events } = await run("Transfer-Encoding: gzip\r\nContent-Length: 5", { insecure: true });
     expect(events).toEqual(["clientError HPE_INVALID_TRANSFER_ENCODING"]);
+  });
+
+  // llhttp takes its upgrade verdict before the Transfer-Encoding one, so a CONNECT or an accepted
+  // Upgrade never reads a body until EOF: the bytes after the head belong to the tunnel. Bun still
+  // fires the deferred clientError for them (Node does not, that is a separate divergence); what this
+  // guards is that the tunnel starts and the connection settles without a FIN from the client.
+  test.concurrent.each([
+    [
+      "CONNECT",
+      "connect",
+      "CONNECT example.com:80 HTTP/1.1\r\nHost: example.com:80\r\nTransfer-Encoding: gzip\r\n\r\n",
+      [`connect example.com:80 head=${JSON.stringify(rawBody)}`, "clientError HPE_INVALID_TRANSFER_ENCODING"],
+    ],
+    [
+      "Upgrade",
+      "upgrade",
+      "GET /u HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: x\r\nTransfer-Encoding: gzip\r\n\r\n",
+      ['upgrade /u head=""', "clientError HPE_INVALID_TRANSFER_ENCODING"],
+    ],
+  ])("insecureHTTPParser does not read a %s request's body until EOF", async (_name, event, head, expected) => {
+    const events: string[] = [];
+    await using server = createServer({ insecureHTTPParser: true }, (req, res) => {
+      events.push(`request ${req.method} ${req.url}`);
+      req.on("end", () => events.push("end"));
+    });
+    server.httpAllowHalfOpen = true;
+    server.on(event, (req, socket, tunnelHead: Buffer) => {
+      events.push(`${event} ${req.url} head=${JSON.stringify(tunnelHead.toString())}`);
+      socket.write("HTTP/1.1 200 OK\r\n\r\n");
+    });
+    server.on("clientError", (err: any, socket) => {
+      events.push(`clientError ${err.code}`);
+      socket.destroy();
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+    const socket = connect(port, "127.0.0.1");
+    socket.on("error", () => {});
+    socket.resume();
+    const closed = new Promise<void>(resolve => socket.on("close", () => resolve()));
+    await once(socket, "connect");
+    socket.write(head + rawBody);
+    // No socket.end(): the connection must settle on its own.
+    await closed;
+    expect(events).toEqual(expected);
   });
 });

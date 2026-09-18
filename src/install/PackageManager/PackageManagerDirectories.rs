@@ -338,7 +338,22 @@ unsafe fn ensure_cache_directory(this: *mut PackageManager) -> Dir {
             unsafe { (*this).cache_directory_path = ZBox::from_bytes(&cache_dir.path) };
 
             match Dir::cwd().make_open_path(&cache_dir.path, Default::default()) {
-                Ok(d) => return d,
+                Ok(d) => {
+                    if is_trusted_cache_root(d.fd()) {
+                        return d;
+                    }
+                    bun_core::pretty_errorln!(
+                        "<r><yellow>warn<r>: ignoring install cache at <b>{}<r> because it is not a directory owned by the current user or is writable by other users. Set $BUN_INSTALL_CACHE_DIR to a directory only you can write to, or remove it.",
+                        bun_fmt::s(&cache_dir.path)
+                    );
+                    drop(d);
+                    // SAFETY: narrow `&mut enable` projection; disjoint from
+                    // any `&options.{registries,scope}` the caller may hold.
+                    unsafe { (*this).options.enable.set(Enable::CACHE, false) };
+                    // SAFETY: see fn safety contract.
+                    unsafe { (*this).cache_directory_path = ZBox::from_bytes(b"") };
+                    continue;
+                }
                 Err(_) => {
                     // SAFETY: narrow `&mut enable` projection; disjoint from
                     // any `&options.{registries,scope}` the caller may hold.
@@ -370,6 +385,22 @@ unsafe fn ensure_cache_directory(this: *mut PackageManager) -> Dir {
             }
         }
     }
+}
+
+/// Cache hits never re-verify integrity, so refuse a shared cache root that
+/// another user can write to; the caller falls back to `node_modules/.cache`.
+#[cfg(unix)]
+fn is_trusted_cache_root(dir: Fd) -> bool {
+    match sys::fstat(dir) {
+        Ok(st) => sys::stat_is_owner_only_writable_dir(&st, bun_sys::c::getuid()),
+        Err(_) => false,
+    }
+}
+
+#[cfg(not(unix))]
+#[inline(always)]
+fn is_trusted_cache_root(_dir: Fd) -> bool {
+    true
 }
 
 pub struct CacheDir {
@@ -513,6 +544,15 @@ impl<'a> ByteCursor<'a> {
         self.buf[at] = 0;
         ZStr::from_buf(self.buf, at)
     }
+}
+
+/// `<base>_patch_hash=<hex>`: the derived entry `apply_package_patch` writes
+/// next to the unpatched `base` extraction.
+pub fn patched_cache_folder_name<'a>(buf: &'a mut [u8], base: &[u8], patch_hash: u64) -> &'a ZStr {
+    let mut w = ByteCursor::new(buf);
+    w.put(base);
+    w.put_patch_hash(Some(patch_hash));
+    w.finish_z()
 }
 
 pub fn cached_git_folder_name_print<'a>(
@@ -751,16 +791,40 @@ pub fn cached_tarball_folder_name(
     )
 }
 
+/// `true` iff `subpath` under `dir` is a real directory (not a symlink or
+/// junction), so a link planted at the predictable cache-entry name is treated
+/// as absent and re-fetched. Windows `lstatat` maps junctions to `S_IFDIR`,
+/// hence the explicit `FILE_ATTRIBUTE_REPARSE_POINT` query there.
+pub fn cache_entry_is_dir(dir: Fd, subpath: &ZStr) -> bool {
+    #[cfg(windows)]
+    {
+        match sys::get_file_attributes_at(dir, subpath) {
+            Some(a) => a.is_directory && !a.is_reparse_point,
+            None => false,
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        match sys::lstatat(dir, subpath) {
+            Ok(st) => bun_sys::S::ISDIR(st.st_mode as _),
+            Err(_) => false,
+        }
+    }
+}
+
 pub fn is_folder_in_cache(this: &mut PackageManager, folder_path: &ZStr) -> bool {
-    sys::directory_exists_at(get_cache_directory(this), folder_path).unwrap_or(false)
+    cache_entry_is_dir(get_cache_directory(this), folder_path)
 }
 
 /// Cache hit for an unpatched entry: npm folders must contain `package.json`, git checkouts the `.bun-tag` written last.
 pub fn is_package_in_cache_at(cache_dir: Fd, folder_path: &ZStr, tag: ResolutionTag) -> bool {
+    if !cache_entry_is_dir(cache_dir, folder_path) {
+        return false;
+    }
     let marker: &[u8] = match tag {
         ResolutionTag::Npm => b"package.json",
         ResolutionTag::Git => b".bun-tag",
-        _ => return sys::directory_exists_at(cache_dir, folder_path).unwrap_or(false),
+        _ => return true,
     };
     let mut buf = bun_paths::path_buffer_pool::get();
     let marker_path = path::resolve_path::join_z_buf::<path::platform::Auto>(

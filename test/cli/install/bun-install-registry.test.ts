@@ -10822,11 +10822,12 @@ describe("manifest conditional requests", () => {
       { accept, authorization, ifNoneMatch: null, ifModifiedSince: null, status: 200 },
       { accept, authorization, ifNoneMatch: etag, ifModifiedSince: null, status: 304 },
     ]);
-    expect(tarballRequests()).toBe(1);
+    // --force re-downloads the tarball to re-verify it against the lockfile integrity.
+    expect(tarballRequests()).toBe(2);
 
     await install();
     expect(requests).toHaveLength(2);
-    expect(tarballRequests()).toBe(1);
+    expect(tarballRequests()).toBe(2);
   });
 
   test("a changed etag returns 200 and the new etag is cached", async () => {
@@ -10857,7 +10858,7 @@ describe("manifest conditional requests", () => {
       { accept, authorization, ifNoneMatch: null, ifModifiedSince: null, status: 200 },
       { accept, authorization, ifNoneMatch: null, ifModifiedSince: lastModified, status: 304 },
     ]);
-    expect(tarballRequests()).toBe(1);
+    expect(tarballRequests()).toBe(2);
   });
 
   test("no validators means every --force install refetches unconditionally", async () => {

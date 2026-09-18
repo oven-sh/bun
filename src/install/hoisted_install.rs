@@ -420,6 +420,12 @@ pub(crate) fn install_hoisted_packages(
                     }
                     set
                 },
+                #[cfg(unix)]
+                parallel_tasks: Vec::new(),
+                #[cfg(unix)]
+                parallel_wait_group: bun_threading::WaitGroup::init(),
+                #[cfg(unix)]
+                parallel_batch: bun_threading::thread_pool::Batch::default(),
             };
         };
 
@@ -471,6 +477,8 @@ pub(crate) fn install_hoisted_packages(
             for dependency_id in remaining {
                 installer.install_package(*dependency_id, log_level);
             }
+
+            installer.schedule_parallel_batch();
 
             run_tasks::run_tasks::<HoistedRunTasksCallbacks>(
                 this,
@@ -560,6 +568,65 @@ pub(crate) fn install_hoisted_packages(
         this.tick_lifecycle_scripts();
         this.report_slow_lifecycle_scripts();
 
+        // Must precede the pending-install drain and bin linking below, which need these on disk.
+        if installer.complete_parallel_installs(log_level) {
+            struct DrainClosure<'a, 'b> {
+                installer: &'a mut PackageInstaller<'b>,
+                err: Option<crate::Error>,
+                manager: *mut PackageManager,
+            }
+            impl<'a, 'b> DrainClosure<'a, 'b> {
+                pub(crate) fn is_done(closure: &mut Self) -> bool {
+                    // SAFETY: see the sibling `Closure::is_done` above.
+                    let manager = unsafe { &mut *closure.manager };
+                    let log_level = manager.options.log_level;
+                    if let Err(err) = run_tasks::run_tasks::<HoistedRunTasksCallbacks>(
+                        manager,
+                        closure.installer,
+                        true,
+                        log_level,
+                    ) {
+                        closure.err = Some(err);
+                    }
+                    if closure.err.is_some() {
+                        return true;
+                    }
+
+                    manager.report_slow_lifecycle_scripts();
+
+                    if PackageManager::verbose_install() {
+                        let pending_task_count = manager.pending_task_count();
+                        if pending_task_count > 0
+                            && PackageManager::has_enough_time_passed_between_waiting_messages()
+                        {
+                            bun_core::pretty_errorln!(
+                                "<d>[PackageManager]<r> waiting for {} tasks\n",
+                                pending_task_count
+                            );
+                        }
+                    }
+
+                    manager.pending_task_count() == 0
+                }
+            }
+            let mgr: *mut PackageManager = mgr_ptr;
+            let mut drain_closure = DrainClosure {
+                installer: &mut installer,
+                err: None,
+                manager: mgr,
+            };
+            // is_done() is what submits the rerouted batch; never sleep on work that was not submitted.
+            if !DrainClosure::is_done(&mut drain_closure) {
+                // SAFETY: see the sibling `sleep_until` call above.
+                unsafe {
+                    PackageManager::sleep_until(mgr, &mut drain_closure, DrainClosure::is_done)
+                };
+            }
+            if let Some(err) = drain_closure.err {
+                return Err(err);
+            }
+        }
+
         // Index instead of `.iter()` so the immutable borrow of
         // `installer.trees` doesn't overlap `&mut self`.
         for tree_idx in 0..installer.trees.len() {
@@ -567,6 +634,11 @@ pub(crate) fn install_hoisted_packages(
             // force = true
             installer.install_available_packages::<true>(log_level);
         }
+        #[cfg(unix)]
+        debug_assert!(
+            installer.parallel_tasks.is_empty() && installer.parallel_batch.len == 0,
+            "a parallel link task was enqueued after complete_parallel_installs() and would never be replayed"
+        );
 
         // .monotonic is okay because this value is only accessed on this thread.
         this.finished_installing.store(true, Ordering::Relaxed);

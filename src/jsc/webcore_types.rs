@@ -826,6 +826,24 @@ pub mod store {
     // S3
     // ────────────────────────────────────────────────────────────────────
 
+    /// `s3://bucket/key` → `Some((bucket, key))`; anything else (including `s3://name` / `s3://name/`) → `None`.
+    pub fn s3_url_bucket_and_key(path: &[u8]) -> Option<(&[u8], &[u8])> {
+        let url = bun_url::URL::parse(path);
+        if !url.is_s3() {
+            return None;
+        }
+        let mut after = url.s3_path();
+        if let [b'/' | b'\\', rest @ ..] = after {
+            after = rest;
+        }
+        let end = bun_core::strings::index_of_any(after, b"/\\")?;
+        let (bucket, key) = (&after[..end], &after[end + 1..]);
+        if bucket.is_empty() || key.is_empty() {
+            return None;
+        }
+        Some((bucket, key))
+    }
+
     /// An S3 blob store. Data-only at this tier;
     /// I/O methods (`unlink`/`stat`/`listObjects`/`getCredentialsWithOptions`)
     /// live in `bun_runtime` because they reach the HTTP client / event loop.
@@ -855,7 +873,11 @@ pub mod store {
         }
 
         pub fn path(&self) -> &[u8] {
-            let mut path_name = bun_url::URL::parse(self.pathlike.slice()).s3_path();
+            let raw = self.pathlike.slice();
+            if let Some((_, key)) = s3_url_bucket_and_key(raw) {
+                return key;
+            }
+            let mut path_name = bun_url::URL::parse(raw).s3_path();
             // normalize start and ending
             if bun_core::strings::ends_with(path_name, b"/") {
                 path_name = &path_name[0..path_name.len()];
@@ -873,8 +895,11 @@ pub mod store {
         pub fn init(
             pathlike: PathLike<'static>,
             mime_type: Option<MimeType>,
-            credentials: bun_s3_signing::S3Credentials,
+            mut credentials: bun_s3_signing::S3Credentials,
         ) -> S3 {
+            if let Some((bucket, _)) = s3_url_bucket_and_key(pathlike.slice()) {
+                credentials.bucket = Box::<[u8]>::from(bucket);
+            }
             S3 {
                 credentials: Some(RefPtr::new(credentials)),
                 pathlike,

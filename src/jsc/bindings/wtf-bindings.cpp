@@ -238,8 +238,7 @@ extern "C" size_t WTF__base64URLEncode(const char* __restrict inputDataBuffer, s
     return simdutf::binary_to_base64(inputDataBuffer, inputDataBufferSize, destinationDataBuffer, simdutf::base64_url);
 }
 
-// `Date.parse` without a VM: the V8 date parser that JSC runs for Bun (JSC::Options::useV8DateParser).
-// A date-time with no time zone reads as UTC.
+// JS `Date.parse` with no VM, except that a date-time with no time zone reads as UTC.
 extern "C" double Bun__parseDateTimeString(const Latin1Character* string, size_t length)
 {
     bool isLocalTime = false;

@@ -739,8 +739,7 @@ pub struct PackageVersion {
     pub(crate) has_install_script: bool,
     pub(crate) _padding_tail: [u8; 2],
 
-    /// Unix timestamp when this version was published. 0 when the registry gives none,
-    /// infinity when it gives one that is not a date (see `publish_timestamp_ms_from_json`).
+    /// Unix timestamp when this version was published, or `NO_PUBLISH_TIME` / `UNREADABLE_PUBLISH_TIME`
     pub(crate) publish_timestamp_ms: f64,
 }
 
@@ -767,7 +766,7 @@ impl Default for PackageVersion {
             libc: Libc::NONE,
             has_install_script: false,
             _padding_tail: [0; 2],
-            publish_timestamp_ms: 0.0,
+            publish_timestamp_ms: Self::NO_PUBLISH_TIME,
         }
     }
 }
@@ -777,9 +776,13 @@ impl PackageVersion {
         self.bundled_dependencies.is_invalid()
     }
 
-    /// The registry gave a publish time that is not a date, so minimum-release-age cannot tell the age.
+    /// The registry gives no publish time. The version passes minimum-release-age.
+    pub(crate) const NO_PUBLISH_TIME: f64 = 0.0;
+    /// The registry gives a publish time that is not a date. The version never passes minimum-release-age.
+    pub(crate) const UNREADABLE_PUBLISH_TIME: f64 = f64::INFINITY;
+
     pub(crate) fn has_unreadable_publish_time(&self) -> bool {
-        self.publish_timestamp_ms.is_infinite()
+        self.publish_timestamp_ms == Self::UNREADABLE_PUBLISH_TIME
     }
 
     /// Used by `Package.fromNPM` to walk dependency groups by name.
@@ -1666,8 +1669,7 @@ impl PackageManifest {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum FindVersionError {
     NotFound,
-    /// `unreadable_publish_time`: minimum-release-age blocked the newest candidate because the
-    /// registry's publish time for it is not a date, and not because the version is new.
+    /// `unreadable_publish_time`: the newest blocked candidate has `UNREADABLE_PUBLISH_TIME`, it is not new.
     TooRecent {
         unreadable_publish_time: bool,
     },
@@ -1999,19 +2001,17 @@ impl PackageManifest {
     }
 }
 
-/// A version's entry in the packument's `time` object, as `PackageVersion::publish_timestamp_ms`.
-/// Follows npm's `!time[v] || Date.parse(time[v]) <= before`: a falsy entry is no publish time
-/// (0, passes minimum-release-age like a missing entry), and what is not a date never passes
-/// (infinity). Stricter than npm in one place: only a string is read as a date, so `2020` or
-/// `["2020-01-01"]`, which `Date.parse` stringifies into dates, do not pass.
-fn publish_timestamp_ms_from_json(entry: &JSON::E::JsonValue) -> f64 {
+/// npm's `!time[v] || Date.parse(time[v]) <= before`, except that only a string is read as a date.
+fn publish_timestamp_ms_from_json(time_entry: &JSON::E::JsonValue) -> f64 {
     use JSON::E::JsonValue;
-    match entry {
-        JsonValue::Null | JsonValue::Boolean(false) => 0.0,
-        JsonValue::Number(n) if n.value() == 0.0 => 0.0,
-        JsonValue::String(s) if s.slice().is_empty() => 0.0,
-        JsonValue::String(s) => bun_core::wtf::parse_date(s.slice()).unwrap_or(f64::INFINITY),
-        _ => f64::INFINITY,
+    match time_entry {
+        JsonValue::Null | JsonValue::Boolean(false) => PackageVersion::NO_PUBLISH_TIME,
+        JsonValue::Number(n) if n.value() == 0.0 => PackageVersion::NO_PUBLISH_TIME,
+        JsonValue::String(s) if s.slice().is_empty() => PackageVersion::NO_PUBLISH_TIME,
+        JsonValue::String(s) => {
+            bun_core::wtf::parse_date(s.slice()).unwrap_or(PackageVersion::UNREADABLE_PUBLISH_TIME)
+        }
+        _ => PackageVersion::UNREADABLE_PUBLISH_TIME,
     }
 }
 

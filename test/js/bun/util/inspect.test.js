@@ -1097,6 +1097,170 @@ describe("depth cap applies to Map/Set/Array and Error cause chains", () => {
     );
   });
 
+  describe("an object with nothing to print past max_depth", () => {
+    class Empty {}
+    class Child extends Empty {}
+    // The pre-class pattern: the prototype carries an enumerable `constructor`.
+    function Old() {}
+    Old.prototype = { constructor: Old };
+    const emptied = { a: 1 };
+    delete emptied.a;
+    // Enough adds and deletes to leave a dictionary-mode structure behind.
+    const emptiedMap = {};
+    for (let i = 0; i < 100; i++) emptiedMap["k" + i] = i;
+    for (let i = 0; i < 100; i++) delete emptiedMap["k" + i];
+    // An empty object with `count` prototypes, the last of which is `last`.
+    const withPrototypes = (count, last) => {
+      let object = last;
+      for (let i = 0; i < count; i++) object = Object.create(object);
+      return object;
+    };
+    const empty = {
+      plain: {},
+      instance: new Empty(),
+      subclass: new Child(),
+      oldStyleInstance: new Old(),
+      nullProto: Object.create(null),
+      created: Object.create(Empty.prototype),
+      emptied,
+      emptiedMap,
+      frozen: Object.freeze({}),
+      proxy: new Proxy({}, {}),
+      headers: new Headers(),
+      // The formatter reads four prototypes and no more.
+      keyOnFifthPrototype: withPrototypes(5, { leaf: 1 }),
+    };
+    const expected = {
+      plain: "{}",
+      instance: "Empty {}",
+      subclass: "Child {}",
+      oldStyleInstance: "Old {}",
+      nullProto: "[Object: null prototype] {}",
+      created: "Empty {}",
+      emptied: "{}",
+      emptiedMap: "{}",
+      frozen: "{}",
+      proxy: "{}",
+      headers: "Headers {}",
+      keyOnFifthPrototype: "{}",
+    };
+
+    it.each(Object.keys(empty))("%s prints the same text as inside the cap", key => {
+      expect(Bun.inspect(empty[key])).toBe(expected[key]);
+      expect(Bun.inspect({ v: empty[key] }, { depth: 0 })).toBe(`{\n  v: ${expected[key]},\n}`);
+      expect(Bun.inspect({ v: empty[key] }, { depth: 0, sorted: true })).toBe(`{\n  v: ${expected[key]},\n}`);
+      expect(Bun.inspect({ v: empty[key] }, { depth: 0, compact: true })).toBe(`{ v: ${expected[key]} }`);
+      expect(Bun.inspect([[[empty[key]]]], { depth: 2, compact: true })).toBe(`[ [ [ ${expected[key]} ] ] ]`);
+    });
+
+    it("an object with something to print is still a marker", () => {
+      const value = {
+        full: { x: 1 },
+        symbolKey: { [Symbol("s")]: 1 },
+        nonEnumerable: Object.defineProperty({}, "x", { value: 1 }),
+        getter: {
+          get x() {
+            return 1;
+          },
+        },
+        method: new (class WithMethod {
+          m() {}
+        })(),
+        inherited: Object.create({ x: 1 }),
+        keyOnFourthPrototype: withPrototypes(4, { leaf: 1 }),
+        indexed: { 0: 1 },
+        proxy: new Proxy({ x: 1 }, {}),
+        headers: new Headers({ a: "b" }),
+      };
+      // Inside the cap the formatter prints a property for each of these.
+      for (const key of Object.keys(value)) expect(Bun.inspect(value[key])).toContain(": ");
+      expect(Bun.inspect(value, { depth: 0 })).toBe(
+        "{\n  full: [Object ...],\n  symbolKey: [Object ...],\n  nonEnumerable: [Object ...],\n  getter: [Object ...],\n" +
+          "  method: [Object ...],\n  inherited: [Object ...],\n  keyOnFourthPrototype: [Object ...],\n" +
+          "  indexed: [Object ...],\n  proxy: [Object ...],\n  headers: Headers [Object ...],\n}",
+      );
+    });
+
+    it("sorted mode reads own properties only, inside the cap and past it", () => {
+      class WithMethod {
+        m() {}
+      }
+      for (const [value, text] of [
+        [new WithMethod(), "WithMethod {}"],
+        [Object.create({ x: 1 }), "{}"],
+      ]) {
+        expect(Bun.inspect(value, { sorted: true })).toBe(text);
+        expect(Bun.inspect({ v: value }, { depth: 0, sorted: true })).toBe(`{\n  v: ${text},\n}`);
+      }
+      expect(Bun.inspect({ v: { x: 1 } }, { depth: 0, sorted: true })).toBe("{\n  v: [Object ...],\n}");
+    });
+
+    it("an own enumerable constructor property is content", () => {
+      expect(Bun.inspect({ v: { constructor: Empty } }, { depth: 0 })).toBe("{\n  v: [Object ...],\n}");
+      expect(Bun.inspect({ v: JSON.parse('{"constructor":1}') }, { depth: 0 })).toBe("{\n  v: [Object ...],\n}");
+    });
+
+    it("does not run user code to find out", () => {
+      let ownKeysCalls = 0;
+      const handler = {
+        ownKeys() {
+          ownKeysCalls++;
+          return [];
+        },
+      };
+      const value = Object.create(new Proxy({}, handler));
+      expect(Bun.inspect(value)).toBe("{}");
+      expect(ownKeysCalls).toBe(1);
+      expect(Bun.inspect({ v: value }, { depth: 0 })).toBe("{\n  v: [Object ...],\n}");
+      expect(ownKeysCalls).toBe(1);
+    });
+
+    it("console.log prints it as empty", async () => {
+      const src = `
+        class Foo {}
+        class Private { #x = 1; static read(p) { return p.#x; } }
+        // A different private field on the object and on each of its four prototypes.
+        // Only then does the formatter read a fifth prototype, so this one is not empty.
+        let stamped = { leaf: 1 };
+        for (let i = 0; i < 5; i++) {
+          stamped = Object.create(stamped);
+          new (class extends function (o) { return o; } { #p = 1; constructor(o) { super(o); } })(stamped);
+        }
+        console.log(Bun.inspect(stamped, { compact: true }));
+        console.log({ a: { b: { plain: {}, inst: new Foo(), nul: Object.create(null), priv: new Private(), stamped, full: { x: 1 } } } });
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", src],
+        // A debug build prints private fields. A release build never does.
+        env: { ...bunEnv, BUN_JSC_showPrivateScriptsInStackTraces: "0" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout:
+          "{ leaf: 1 }\n" +
+          "{\n  a: {\n    b: {\n      plain: {},\n      inst: Foo {},\n      nul: [Object: null prototype] {},\n" +
+          "      priv: Private {},\n      stamped: [Object ...],\n      full: [Object ...],\n    },\n  },\n}\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
+
+  it("a marker in single-line mode has one space before it", () => {
+    const o = { x: { y: 1 } };
+    const opts = { depth: 0, compact: true };
+    expect(Bun.inspect({ a: o, b: o }, opts)).toBe("{ a: [Object ...], b: [Object ...] }");
+    expect(Bun.inspect([o, o], opts)).toBe("[ [Object ...], [Object ...] ]");
+    expect(Bun.inspect(new Map([["k", o]]), opts)).toBe('Map(1) { "k": [Object ...] }');
+    expect(Bun.inspect(new Map([[o, 1]]), opts)).toBe("Map(1) { [Object ...]: 1 }");
+    expect(Bun.inspect(new Set([o]), opts)).toBe("Set(1) { [Object ...] }");
+    expect(Bun.inspect({ a: { b: { c: { d: 1 } } } }, { depth: 2, compact: true })).toBe(
+      "{ a: { b: { c: [Object ...] } } }",
+    );
+  });
+
   it("console.log of deeply nested Map/Set/Array/Error does not blow up or throw", async () => {
     const src = `
       let m = new Map([["leaf", 1]]);

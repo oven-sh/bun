@@ -1868,9 +1868,7 @@ fn warn_unmet_peer_dependency(
     );
 }
 
-/// `<registry>/` is the registry root, not a packument, so a registry
-/// dependency with an empty name never resolves. An unmet peer only warns, as
-/// in `warn_unmet_peer_dependency`.
+/// `<registry>/` is the registry root, not a packument, so an empty registry name never resolves.
 #[cold]
 #[inline(never)]
 fn report_empty_registry_name(

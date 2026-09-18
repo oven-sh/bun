@@ -193,8 +193,7 @@ impl ExtractTarball {
         let name: &[u8] = if !self.name.slice().is_empty() {
             self.name.slice()
         } else {
-            // A tarball package whose package.json has no `name` (installed from a
-            // lockfile), or a dependency under an empty key before its package.json is read.
+            // A tarball package with no package.json `name`, or a dependency under an empty key.
             b"unnamed-package"
         };
         let basename: &[u8] = 'brk: {

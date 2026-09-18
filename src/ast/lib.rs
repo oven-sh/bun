@@ -800,9 +800,7 @@ impl Location {
                 Some(tracker) => tracker.error_position(source, r.loc),
                 None => source.init_error_position(r.loc),
             };
-            // Mask secrets before the window below. The masking finds a
-            // secret by the key in front of it, and the window can cut the
-            // key away. `redacted_source` keeps the byte length.
+            // Mask before the window: it can cut away the key that marks a secret.
             let masked: Cow<'_, [u8]> = if redact_sensitive_information {
                 alloc_print(format_args!(
                     "{}",

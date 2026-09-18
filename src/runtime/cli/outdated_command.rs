@@ -36,7 +36,7 @@ struct GroupedOutdatedInfo {
 
 /// Terminal columns that `text` takes, as `Bun.stringWidth` counts them.
 /// `clone_utf8` transcodes to UTF-16 because only that width groups grapheme
-/// clusters. The UTF-8 width counts each code point of a flag or a ZWJ sequence.
+/// clusters. The UTF-8 width sums code points: 4 for a ZWJ pair, 1 for a keycap.
 fn visible_width(text: &[u8]) -> usize {
     bun_core::String::clone_utf8(text).visible_width_exclude_ansi_colors(false)
 }

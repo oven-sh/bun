@@ -2027,9 +2027,6 @@ pub mod dir_entry_accessor {
                     );
                 }
             }
-            // TODO do we want to propagate ENOTDIR through the 'Maybe' to match the SyscallAccessor?
-            // The glob implementation specifically checks for this error when dealing with symlinks
-            // return Err(SysError::from_code(E::NOTDIR, Syscall::Tag::open));
             let res = FS::instance()
                 .fs
                 .read_directory(path, None, 0, false)
@@ -2042,7 +2039,12 @@ pub mod dir_entry_accessor {
                     let value = unsafe { &*p };
                     Ok(Ok(DirEntryHandle { value: Some(value) }))
                 }
-                EntriesOption::Err(err) => Err(err.original_err.into_core()),
+                // The glob walker reads ENOTDIR and ENOENT from the `Maybe`, like
+                // `SyscallAccessor` reports them, so they must not escape as the outer error.
+                EntriesOption::Err(err) => match err.original_err {
+                    crate::Error::Sys(errno) => Ok(Err(SysError::new(errno, Syscall::Tag::open))),
+                    other => Err(other.into_core()),
+                },
             }
         }
 

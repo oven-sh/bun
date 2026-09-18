@@ -71,8 +71,7 @@ declare module "bun" {
    *
    * If the upload fails, the pending `flush()` and `end()` promises reject
    * with the error. If neither is pending, the next `flush()` or `end()` call
-   * rejects with it. Bun reports a failure once. A `write()` call that starts
-   * after the failure returns `0`.
+   * rejects with it.
    */
   interface NetworkSink extends FileSink {
     /**

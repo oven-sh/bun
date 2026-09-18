@@ -2156,6 +2156,7 @@ describe.concurrent("s3 writer() upload failure with no pending promise", () => 
     const createDenied = Promise.withResolvers();
     const requests = [];
     const server = Bun.serve({
+      hostname: "127.0.0.1",
       port: 0,
       async fetch(req) {
         const url = new URL(req.url);
@@ -2224,13 +2225,20 @@ describe.concurrent("s3 writer() upload failure with no pending promise", () => 
 
   it.each([
     [
-      // close() after the caller has seen the failure is cleanup, as in a finally block.
+      // The second end() sees an ended writer. close() after that is cleanup, as in a finally block.
       "end() after a part upload failed",
       `${partUploadFailed}
        const write = writer.write("hello");
        const end = await settle(writer.end());
+       const secondEnd = await settle(writer.end());
        const close = String(writer.close());`,
-      { write: 0, end: { ...accessDenied, path: "obj" }, close: "undefined", requests: ["create", "part"] },
+      {
+        write: 0,
+        end: { ...accessDenied, path: "obj" },
+        secondEnd: "resolved 0",
+        close: "undefined",
+        requests: ["create", "part"],
+      },
     ],
     [
       "flush() after a part upload failed",
@@ -2322,8 +2330,10 @@ describe.concurrent("s3 writer() upload failure with no pending promise", () => 
         // The S3 client honors the proxy environment; the stub is on loopback.
         HTTP_PROXY: undefined,
         HTTPS_PROXY: undefined,
+        ALL_PROXY: undefined,
         http_proxy: undefined,
         https_proxy: undefined,
+        all_proxy: undefined,
         // A client with no credentials in its options reads them from the environment.
         S3_ACCESS_KEY_ID: undefined,
         S3_SECRET_ACCESS_KEY: undefined,

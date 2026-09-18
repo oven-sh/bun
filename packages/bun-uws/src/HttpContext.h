@@ -641,6 +641,14 @@ private:
                 /* We might respond in the handler, so do not change timeout after this */
                 httpResponseData->inStream(static_cast<HttpResponse<SSL>*>(user), data.data(), data.length(), fin, httpResponseData->userData);
 
+                /* The body handler may have upgraded this socket (node:http:
+                 * wss.handleUpgrade from req.on("end") of an Upgrade request with a
+                 * body). upgrade() destroyed httpResponseData, so touch nothing of
+                 * it and stop parsing. onData differs between closed and upgraded. */
+                if (httpContextData->upgradedWebSocket) {
+                    return nullptr;
+                }
+
                 /* Was the socket closed? */
                 if (us_socket_is_closed((struct us_socket_t *) user)) {
                     return nullptr;

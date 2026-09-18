@@ -385,3 +385,96 @@ pub(crate) fn encode_indexed(
         free: encoded_wrap_free!(libc::free),
     })
 }
+
+/// 1-bit indexed PNG: `bits` is `h` rows of `w.div_ceil(8)` bytes, MSB first; a set bit selects `palette[1]`.
+pub(crate) fn encode_bilevel(
+    bits: &[u8],
+    w: u32,
+    h: u32,
+    palette: [[u8; 4]; 2],
+) -> Result<codecs::Encoded, codecs::Error> {
+    let stride = (w as usize).div_ceil(8);
+    if w == 0 || h == 0 || bits.len() != stride * h as usize {
+        return Err(codecs::Error::EncodeFailed);
+    }
+
+    // SAFETY: spng_ctx_new is safe to call; null return = OOM.
+    let ctx = unsafe { spng_ctx_new(SPNG_CTX_ENCODER) };
+    if ctx.is_null() {
+        return Err(codecs::Error::OutOfMemory);
+    }
+    let _ctx_guard = scopeguard::guard(ctx, |c| {
+        // SAFETY: ctx was returned non-null by spng_ctx_new and is freed exactly once here.
+        unsafe { spng_ctx_free(c) }
+    });
+
+    // SAFETY: ctx is valid.
+    let _ = unsafe { spng_set_option(ctx, SPNG_ENCODE_TO_BUFFER, 1) };
+
+    let ihdr = Ihdr {
+        width: w,
+        height: h,
+        bit_depth: 1,
+        color_type: SPNG_COLOR_TYPE_INDEXED,
+        ..Default::default()
+    };
+    // SAFETY: ctx is valid; ihdr is fully initialised.
+    if unsafe { spng_set_ihdr(ctx, &raw const ihdr) } != 0 {
+        return Err(codecs::Error::EncodeFailed);
+    }
+
+    let mut plte = Plte {
+        n_entries: 2,
+        entries: [[0u8; 4]; 256],
+    };
+    let mut trns = Trns {
+        gray: 0,
+        red: 0,
+        green: 0,
+        blue: 0,
+        n_type3_entries: 2,
+        type3_alpha: [0u8; 256],
+    };
+    for (i, [r, g, b, a]) in palette.into_iter().enumerate() {
+        plte.entries[i] = [r, g, b, 255];
+        trns.type3_alpha[i] = a;
+    }
+    // SAFETY: ctx is valid; plte is fully initialised.
+    if unsafe { spng_set_plte(ctx, &raw const plte) } != 0 {
+        return Err(codecs::Error::EncodeFailed);
+    }
+    let has_alpha = palette.iter().any(|c| c[3] != 255);
+    // SAFETY: ctx is valid; trns is fully initialised.
+    if has_alpha && unsafe { spng_set_trns(ctx, &raw const trns) } != 0 {
+        return Err(codecs::Error::EncodeFailed);
+    }
+
+    // SAFETY: ctx is valid; `bits` is a readable buffer of exactly the packed
+    // image size checked above.
+    if unsafe {
+        spng_encode_image(
+            ctx,
+            bits.as_ptr(),
+            bits.len(),
+            SPNG_FMT_PNG,
+            SPNG_ENCODE_FINALIZE,
+        )
+    } != 0
+    {
+        return Err(codecs::Error::EncodeFailed);
+    }
+
+    let mut len: usize = 0;
+    let mut err: c_int = 0;
+    // SAFETY: ctx is valid; len/err are valid out-ptrs.
+    let buf = unsafe { spng_get_png_buffer(ctx, &raw mut len, &raw mut err) };
+    if buf.is_null() {
+        return Err(codecs::Error::EncodeFailed);
+    }
+    // SAFETY: buf is non-null and points to `len` bytes owned by us (malloc'd by libspng).
+    let bytes = unsafe { NonNull::new_unchecked(core::ptr::slice_from_raw_parts_mut(buf, len)) };
+    Ok(codecs::Encoded {
+        bytes,
+        free: encoded_wrap_free!(libc::free),
+    })
+}

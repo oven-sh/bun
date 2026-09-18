@@ -210,6 +210,7 @@ bun upgrade --canary
   - [JSONL](https://bun.com/docs/runtime/jsonl)
   - [Markdown](https://bun.com/docs/runtime/markdown)
   - [Image processing](https://bun.com/docs/runtime/image)
+  - [QR codes (`Bun.QR`)](https://bun.com/docs/runtime/qr)
   - [Utils](https://bun.com/docs/runtime/utils)
   - [Node-API](https://bun.com/docs/runtime/node-api)
   - [Glob (`Bun.Glob`)](https://bun.com/docs/runtime/glob)

@@ -2978,7 +2978,37 @@ describe("a spec without a name that resolves to a dependency package.json alrea
     }
   });
 
-  test.concurrent("two specs in one command that resolve to one name are refused", async () => {
+  // A folder in both `dependencies` and `devDependencies` is written to bun.lock twice by a plain install, so that pair uses tarballs.
+  test.concurrent.each([
+    { kind: "folder", groups: ["dependencies", "optionalDependencies"] },
+    { kind: "tarball", groups: ["dependencies", "devDependencies"] },
+  ] as { kind: Kind; groups: string[] }[])(
+    "bun add <$kind>, declared: $groups.0 and $groups.1",
+    async ({ kind, groups }) => {
+      using dir = tempDir("bun-add-declared-name", {});
+      const project = String(dir);
+      const oldSpec = await (await source(project, kind, "old-pkga", "1.0.0"))(project, "file:");
+      const declared = Object.fromEntries(groups.map(group => [group, { pkga: oldSpec }]));
+      await Bun.write(join(project, "package.json"), JSON.stringify({ name: "app", ...declared }));
+      await ok(project, "install");
+
+      const spec = await (await source(project, kind, "new-pkga", "2.0.0"))(project, "");
+      await ok(project, "add", spec);
+      const after = await settled(project);
+      // Each entry takes the spec, so the row bun.lock keeps for the name agrees with package.json whichever group wins.
+      expect(JSON.parse(after.packageJson)).toEqual({
+        name: "app",
+        ...Object.fromEntries(groups.map(group => [group, { pkga: spec }])),
+      });
+      expect(after.installed).toBe("2.0.0");
+    },
+  );
+
+  test.concurrent.each([
+    ["./a-v1", "./a-v2"],
+    ["./a-v1", "pkga@./a-v2"],
+    ["pkga@./a-v2", "./a-v1"],
+  ])("bun add %s %s is refused: one package, two specs", async (first, second) => {
     using dir = tempDir("bun-add-declared-name", {});
     const project = String(dir);
     const before = JSON.stringify({ name: "app" });
@@ -2988,11 +3018,27 @@ describe("a spec without a name that resolves to a dependency package.json alrea
       Bun.write(join(project, "a-v2", "package.json"), manifest("2.0.0")),
     ]);
 
-    const { err, exitCode } = await run(project, "add", "./a-v1", "./a-v2");
-    expect(err).toContain('error: "./a-v1" and "./a-v2" both resolve to "pkga"; add one of them');
+    const { err, exitCode } = await run(project, "add", first, second);
+    expect(err).toContain(`error: "${first}" and "${second}" both resolve to "pkga"; add one of them`);
     expect(exitCode).toBe(1);
     expect(await file(join(project, "package.json")).text()).toBe(before);
     expect(await Bun.file(join(project, "bun.lock")).exists()).toBeFalse();
+  });
+
+  test.concurrent("two folders without a package name do not count as one package", async () => {
+    using dir = tempDir("bun-add-declared-name", {});
+    const project = String(dir);
+    await Promise.all([
+      Bun.write(join(project, "package.json"), JSON.stringify({ name: "app" })),
+      Bun.write(join(project, "a", "package.json"), JSON.stringify({ version: "1.0.0" })),
+      Bun.write(join(project, "b", "package.json"), JSON.stringify({ version: "2.0.0" })),
+    ]);
+
+    // The installer rejects a package without a name. It is the one to say so.
+    const { err, exitCode } = await run(project, "add", "./a", "./b");
+    expect(err).toContain("error: refusing to install dependency with unsafe name");
+    expect(err).not.toContain("both resolve to");
+    expect(exitCode).toBe(1);
   });
 });
 

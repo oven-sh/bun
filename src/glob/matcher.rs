@@ -208,9 +208,7 @@ fn glob_match_impl(
                             state.wildcard.glob_index = state.glob_index;
                             state.wildcard.path_index = state.path_index
                                 + if (state.path_index as usize) < path.len() {
-                                    u32::from(strings::wtf8_byte_sequence_length(
-                                        path[state.path_index as usize],
-                                    ))
+                                    u32::from(rune_len_at(path, state.path_index as usize))
                                 } else {
                                     1
                                 };
@@ -265,9 +263,7 @@ fn glob_match_impl(
                                 if !is_separator(path[state.path_index as usize]) {
                                     state.glob_index += 1;
                                     state.path_index +=
-                                        u32::from(strings::wtf8_byte_sequence_length(
-                                            path[state.path_index as usize],
-                                        ));
+                                        u32::from(rune_len_at(path, state.path_index as usize));
                                     continue 'main_loop;
                                 }
                                 break 'fallthrough;
@@ -292,7 +288,7 @@ fn glob_match_impl(
                                 let mut is_match = false;
 
                                 // source unicode char to match against the target + its byte length in `path`
-                                let (c, len) = decode_wtf8_rune_at(path, state.path_index as usize);
+                                let (c, len) = decode_rune_at(path, state.path_index as usize);
 
                                 while (state.glob_index as usize) < glob.len()
                                     && (first || glob[state.glob_index as usize] != b']')
@@ -619,15 +615,20 @@ fn unescape(c: &mut u8, glob: &[u8], glob_index: &mut u32) -> bool {
     true
 }
 
-/// Decodes the WTF-8 codepoint at `bytes[idx]`, returning `(codepoint, byte_len)`.
+/// Byte length of the codepoint at `bytes[idx]`; see [`decode_rune_at`].
 #[inline(always)]
-fn decode_wtf8_rune_at(bytes: &[u8], idx: usize) -> (u32, u8) {
-    let len = strings::wtf8_byte_sequence_length(bytes[idx]);
-    let mut buf = [0u8; 4];
-    let n = (bytes.len() - idx).min(4);
-    buf[..n].copy_from_slice(&bytes[idx..idx + n]);
-    let cp = strings::decode_wtf8_rune_t::<u32>(buf, len, 0xFFFD);
-    (cp, len)
+fn rune_len_at(bytes: &[u8], idx: usize) -> u8 {
+    decode_rune_at(bytes, idx).1
+}
+
+/// Decodes the codepoint at `bytes[idx]`, returning `(codepoint, byte_len)`.
+/// A directory entry need not be valid UTF-8, so this decodes the way the
+/// entry's name is decoded for JS: an ill-formed sequence is one U+FFFD over
+/// its maximal subpart, and `byte_len` never passes the end of `bytes`.
+#[inline(always)]
+fn decode_rune_at(bytes: &[u8], idx: usize) -> (u32, u8) {
+    let r = strings::utf8_codepoint_with_fffd(&bytes[idx..]);
+    (r.code_point, r.len)
 }
 
 /// Unescapes the character if needed
@@ -658,7 +659,7 @@ fn get_unicode(c: &mut u32, clen: &mut u8, glob: &[u8], glob_index: &mut u32) ->
                 b'r' => b'\r' as u32,
                 b't' => b'\t' as u32,
                 _ => 'brk: {
-                    let (cp, len) = decode_wtf8_rune_at(glob, *glob_index as usize);
+                    let (cp, len) = decode_rune_at(glob, *glob_index as usize);
                     *clen = len;
                     break 'brk cp;
                 }
@@ -666,7 +667,7 @@ fn get_unicode(c: &mut u32, clen: &mut u8, glob: &[u8], glob_index: &mut u32) ->
         }
         // multi-byte sequences
         _ => {
-            let (cp, len) = decode_wtf8_rune_at(glob, *glob_index as usize);
+            let (cp, len) = decode_rune_at(glob, *glob_index as usize);
             *clen = len;
             *c = cp;
         }

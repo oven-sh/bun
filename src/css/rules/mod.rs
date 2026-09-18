@@ -406,13 +406,33 @@ impl<R> CssRule<R> {
     /// is set (a non-final vendor prefix pass of an ancestor style rule) and
     /// emitted only in the ancestor's final pass: a style rule with its own
     /// vendor prefixes overrides `Printer::vendor_prefix`, so its output is
-    /// identical in every ancestor pass.
+    /// identical in every ancestor pass. A rule that prints nothing but such
+    /// rules (a block at-rule, or a style rule with no declarations) is
+    /// deferred with them, or the at-rule would print an empty block.
     fn is_deferred_to_final_prefix_pass(&self) -> bool {
-        match self {
-            CssRule::Style(style) => !style.vendor_prefix.is_empty(),
-            CssRule::Nesting(nesting) => !nesting.style.vendor_prefix.is_empty(),
-            _ => false,
-        }
+        let rules = match self {
+            CssRule::Style(style) | CssRule::Nesting(nesting::NestingRule { style, .. }) => {
+                if !style.vendor_prefix.is_empty() {
+                    return true;
+                }
+                if !style.declarations.is_empty() {
+                    return false;
+                }
+                &style.rules
+            }
+            CssRule::Media(rule) => &rule.rules,
+            CssRule::Supports(rule) => &rule.rules,
+            CssRule::Container(rule) => &rule.rules,
+            CssRule::Scope(rule) => &rule.rules,
+            CssRule::StartingStyle(rule) => &rule.rules,
+            CssRule::MozDocument(rule) => &rule.rules,
+            // Not `@layer`: an empty block still declares the layer's order.
+            _ => return false,
+        };
+        !rules.v.is_empty()
+            && rules.v.iter().all(|rule| {
+                matches!(rule, CssRule::Ignored) || rule.is_deferred_to_final_prefix_pass()
+            })
     }
 }
 

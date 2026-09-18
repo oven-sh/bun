@@ -242,7 +242,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 b"Parameter decorators only work when experimental decorators are enabled",
                                 Box::new([bun_ast::Data {
                                     text: std::borrow::Cow::Borrowed(
-                                        b"You can enable experimental decorators by adding \"experimentalDecorators\": true to your \"tsconfig.json\" file.",
+                                        b"You can enable experimental decorators by adding \"experimentalDecorators\": true to your \"tsconfig.json\" file. Bun found no tsconfig.json that enables them for this file.",
                                     ),
                                     ..Default::default()
                                 }]),

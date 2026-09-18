@@ -139,9 +139,12 @@ impl QuicStream {
         session_handle: JSValue,
         raw: *mut lsquic::lsquic_stream,
     ) -> JsResult<(*mut QuicStream, JSValue)> {
+        // `raw` stays null until `bind_raw` below: if an allocation fails
+        // first, `create` returns Err, lsquic keeps a null ctx, and the
+        // orphan wrapper's `finalize` must not touch the stream.
         let stream = QuicStream {
             vtable,
-            raw: Cell::new(raw),
+            raw: Cell::new(null_mut()),
             session: Cell::new(session),
             session_js: JsCell::new(Some(Strong::create(session_handle, global))),
             this_value: JsCell::new(JsRef::empty()),

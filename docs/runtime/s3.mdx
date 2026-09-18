@@ -177,6 +177,25 @@ for (let i = 0; i < 10; i++) {
 await writer.end();
 ```
 
+`end()` stores the bytes written so far under the key, also when you call it from a `catch` block. If the source of the data fails before the data is complete, pass the error to `end()`. The argument must be `instanceof Error`. With any other value, `end()` completes the upload as it does without an argument.
+
+With an error, Bun does not complete the upload, so it does not create or replace the object under the key. An object that is already under the key stays as it is. Bun cancels the parts that wait in the queue. If S3 has already returned an upload id, Bun sends `AbortMultipartUpload` for it. The promise that `end(error)` returns and a pending `flush()` reject with `error`. Bun marks these rejections as handled, so you do not have to await them.
+
+```ts s3.ts icon="/icons/typescript.svg"
+const writer = s3file.writer();
+try {
+  for await (const chunk of source) {
+    writer.write(chunk);
+    await writer.flush();
+  }
+} catch (error) {
+  // Discard the incomplete upload
+  writer.end(error instanceof Error ? error : new Error("The source failed", { cause: error }));
+  throw error;
+}
+await writer.end();
+```
+
 ---
 
 ## Presigning URLs

@@ -392,6 +392,90 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand }) => {
     }
   });
 
+  // release() during a reserved.begin() must not hand the connection to the next
+  // holder while the transaction is still open: the nested COMMIT would then commit
+  // the other holder's work. The other transaction's ROLLBACK would roll back nothing.
+  test.each([
+    { outcome: "commits", endCommand: "COMMIT" },
+    { outcome: "rolls back", endCommand: "ROLLBACK" },
+  ])("reserved.release() hands the connection back after the reserved transaction $outcome", async ({ endCommand }) => {
+    const received: Received[] = [];
+    const { port, server } = await mockServer(received);
+    const sql = new SQL(options(port));
+    try {
+      const reserved = await sql.reserve();
+      const started = Promise.withResolvers<void>();
+      const gate = Promise.withResolvers<void>();
+      const nested = reserved
+        .begin(async tx => {
+          await tx.unsafe("SELECT 'N1'");
+          started.resolve();
+          await gate.promise;
+          await tx.unsafe("SELECT 'N2 after release'");
+          if (endCommand === "ROLLBACK") throw new Error("nested-app-error");
+          return "nested";
+        })
+        .catch(err => err.message);
+      await started.promise;
+      const released = reserved.release();
+      // max: 1, so this transaction runs only once the pool has the connection back.
+      const other = sql.begin(async tx => {
+        await tx.unsafe("SELECT 'OTHER'");
+        return "other";
+      });
+      gate.resolve();
+      expect(await nested).toBe(endCommand === "ROLLBACK" ? "nested-app-error" : "nested");
+      await released;
+      expect(await other).toBe("other");
+      expect(received).toEqual([
+        { conn: 0, sql: beginCommand },
+        { conn: 0, sql: "SELECT 'N1'" },
+        { conn: 0, sql: "SELECT 'N2 after release'" },
+        { conn: 0, sql: endCommand },
+        { conn: 0, sql: beginCommand },
+        { conn: 0, sql: "SELECT 'OTHER'" },
+        { conn: 0, sql: "COMMIT" },
+      ]);
+    } finally {
+      await sql.close({ timeout: 0 }).catch(() => {});
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
+
+  test("reserved.release() closes the handle at once while the reserved transaction still runs", async () => {
+    const received: Received[] = [];
+    const { port, server } = await mockServer(received);
+    const sql = new SQL(options(port));
+    try {
+      const reserved = await sql.reserve();
+      const started = Promise.withResolvers<void>();
+      const gate = Promise.withResolvers<void>();
+      const nested = reserved.begin(async tx => {
+        await tx.unsafe("SELECT 'N1'");
+        started.resolve();
+        await gate.promise;
+        return "nested";
+      });
+      await started.promise;
+      const released = reserved.release();
+      const rejected = await Promise.allSettled([reserved`SELECT 'late'`, reserved.begin(async () => {})]);
+      expect(rejected.map(r => r.status)).toEqual(["rejected", "rejected"]);
+      gate.resolve();
+      expect(await nested).toBe("nested");
+      await released;
+      // The second release() is a no-op.
+      await reserved.release();
+      expect(received).toEqual([
+        { conn: 0, sql: beginCommand },
+        { conn: 0, sql: "SELECT 'N1'" },
+        { conn: 0, sql: "COMMIT" },
+      ]);
+    } finally {
+      await sql.close({ timeout: 0 }).catch(() => {});
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
+
   // Runs in a child process: bun:test would turn any unhandled rejection into a test
   // failure, and the second half of this contract is that one rejection IS reported.
   test("a rejected reserved begin() is reported as unhandled only when the caller ignores it", async () => {

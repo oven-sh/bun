@@ -510,6 +510,13 @@ const SQL: typeof Bun.SQL = function SQL(
 
       return Promise.$resolve(undefined);
     };
+    function releaseToPool() {
+      // Use adapter method to detach connection close handler
+      if (pool.detachConnectionCloseHandler) {
+        pool.detachConnectionCloseHandler(pooledConnection, onClose);
+      }
+      releaseReservation();
+    }
     reserved_sql.release = () => {
       if (state.connectionState & ReservedConnectionState.released) {
         return Promise.$resolve(undefined);
@@ -517,11 +524,12 @@ const SQL: typeof Bun.SQL = function SQL(
       // just release the connection back to the pool
       state.connectionState |= ReservedConnectionState.closed;
       state.connectionState &= ~ReservedConnectionState.acceptQueries;
-      // Use adapter method to detach connection close handler
-      if (pool.detachConnectionCloseHandler) {
-        pool.detachConnectionCloseHandler(pooledConnection, onClose);
+      if (reservedTransaction.size > 0) {
+        // A reserved.begin() still owns the connection. The next holder from the
+        // pool must not share it until that transaction has committed or rolled back.
+        return Promise.all(Array.from(reservedTransaction)).then(releaseToPool);
       }
-      releaseReservation();
+      releaseToPool();
       return Promise.$resolve(undefined);
     };
     // this dont need to be async dispose only disposable but we keep compatibility with other types of sql functions

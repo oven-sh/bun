@@ -123,6 +123,46 @@ impl crate::generics::CssEql for SupportsCondition {
 }
 
 impl SupportsCondition {
+    /// The features that the condition tests for. The rules inside the
+    /// `@supports` block can use them without fallbacks.
+    pub(crate) fn get_supported_features(&self, arena: &bun_alloc::Arena) -> css::Features {
+        self.supported_features(arena).unwrap_or_default()
+    }
+
+    /// `None` if the condition contains `not` or `or`. Nothing is inferred then.
+    fn supported_features(&self, arena: &bun_alloc::Arena) -> Option<css::Features> {
+        match self {
+            SupportsCondition::And(conditions) => {
+                let mut features = css::Features::empty();
+                for condition in conditions {
+                    features |= condition.supported_features(arena)?;
+                }
+                Some(features)
+            }
+            // `parse_in_parens` keeps a `(property: value)` group as the raw
+            // text of an `Unknown`, so scan it like a declaration value.
+            SupportsCondition::Declaration(Declaration { value, .. })
+            | SupportsCondition::Unknown(value) => {
+                let mut input = css::ParserInput::new(value, arena);
+                let mut parser = css::Parser::new(
+                    &mut input,
+                    None,
+                    css::css_parser::ParserOpts::default(),
+                    None,
+                );
+                let tokens =
+                    css::TokenList::parse(&mut parser, &css::ParserOptions::default(None), 0);
+                Some(
+                    tokens
+                        .map(|tokens| tokens.get_features())
+                        .unwrap_or_default(),
+                )
+            }
+            SupportsCondition::Not(_) | SupportsCondition::Or(_) => None,
+            SupportsCondition::Selector(_) => Some(css::Features::empty()),
+        }
+    }
+
     fn needs_parens(&self, parent: &SupportsCondition) -> bool {
         match self {
             SupportsCondition::Not(_) => true,
@@ -432,7 +472,19 @@ impl<R> SupportsRule<R> {
         // behind it multiply against the enclosing nesting levels exactly like
         // plain nested rules — leaving them unvisited here lets the printer
         // expand them exponentially.
-        self.rules.minify(context, parent_is_unused)
+        //
+        // The nested rules need no fallbacks for the features the condition
+        // tests for, so exclude those features while minifying them.
+        let exclude = context.targets.exclude;
+        context
+            .targets
+            .exclude
+            .insert(self.condition.get_supported_features(context.arena));
+        context.handler_context.targets = context.targets;
+        let result = self.rules.minify(context, parent_is_unused);
+        context.targets.exclude = exclude;
+        context.handler_context.targets = context.targets;
+        result
     }
 }
 
@@ -443,10 +495,18 @@ impl<R> SupportsRule<R> {
 
         dest.write_str(b"@supports ")?;
         self.condition.to_css(dest)?;
+
+        // Don't downlevel the features the condition tests for inside the block.
+        let exclude = dest.targets.exclude;
+        dest.targets
+            .exclude
+            .insert(self.condition.get_supported_features(dest.arena));
         dest.block(|d| {
             d.newline()?;
             self.rules.to_css(d)
-        })
+        })?;
+        dest.targets.exclude = exclude;
+        Ok(())
     }
 }
 

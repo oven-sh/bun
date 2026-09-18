@@ -1133,22 +1133,11 @@ fn overwrite_package_in_node_modules_folder(
     cache_dir_subpath: &[u8],
     node_modules_folder_path: &[u8],
 ) -> Result<(), crate::Error> {
-    // The copy lands in a staging folder next to `node_modules_folder_path`
-    // and is swapped into place once it is complete, so a copy that fails
-    // part-way (ENOSPC, an unreadable cache file, an I/O error) leaves the
-    // installed package as it was. A sibling keeps the swap on one filesystem.
+    // The copy lands in a sibling staging folder (same filesystem) and is
+    // swapped in once it is complete, so a failed copy leaves the package as
+    // it was. The parent is detached from the global store first, so the
+    // staging folder is never written through a symlink into the shared cache.
     let parent = resolve_path::dirname::<platform::Auto>(node_modules_folder_path);
-
-    // With the isolated linker's global virtual store, a nested path such as
-    // `node_modules/.bun/<storepath>/node_modules/<pkg>` is reached *through*
-    // a symlink that points into `<cache>/links/`, so a sibling of the
-    // destination would be written into the shared global entry underneath
-    // every other project. Detach the parent first: walk up the path to find
-    // the first symlink ancestor, replace it with a real directory, and
-    // recreate the path below it so the copy lands in a project-local tree.
-    // A symlink at `node_modules_folder_path` itself (the isolated linker's
-    // top-level link) is renamed aside by the swap below. The parent may
-    // also be missing when a hoisted workspace dependency is patched by name.
     if !parent.is_empty() {
         detach_module_folder_from_shared_store(parent);
         let _ = Fd::cwd().make_path(parent);
@@ -1228,10 +1217,9 @@ fn overwrite_package_in_node_modules_folder(
         return Err(e.into());
     }
 
-    // Swap without a window in which neither copy exists: move the installed
-    // package aside, move the staging folder into place, then delete the old
-    // package. `rename` does not follow a symlink at the leaf, so the
-    // isolated linker's top-level link is moved aside as a link.
+    // Move the old package aside (a leaf symlink moves as a link), then the
+    // staging folder into place, so the destination is never deleted before
+    // the new copy is in place.
     let mut oldname_buf = bun_paths::path_buffer_pool::get();
     let oldname = bun_paths::fs::FileSystem::tmpname(
         b"patch_old",

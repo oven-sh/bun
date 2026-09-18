@@ -1,7 +1,8 @@
 use core::ffi::c_ulong;
+use core::ops::Range;
 use std::io::Write as _;
 
-use bun_collections::{HashMap, StringHashMap};
+use bun_collections::{HashMap, StringHashMap, StringSet};
 use bun_core::output as bun_output;
 use bun_core::printer as js_printer;
 use bun_core;
@@ -12,6 +13,7 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_sys::{self};
 use bun_wyhash::hash;
 
+use super::bun_test::BunTest;
 use super::diff_format::DiffFormatter;
 use super::expect::Expect;
 use super::jest::{FileColumns as _, Jest};
@@ -33,6 +35,10 @@ pub struct Snapshots {
     // LIFETIMES.tsv said `HashMap<usize, String>`; overridden per §Strings (data is bytes) → Box<[u8]>.
     // Key is u64 to match `bun.hash`'s return type (avoids a narrowing cast).
     values: HashMap<u64, Box<[u8]>>,
+    /// With `--update-snapshots`: the entries `file_buf` had when it was read, in file order.
+    existing: Vec<ExistingEntry>,
+    existing_by_hash: HashMap<u64, usize>,
+    unfinished_tests: UnfinishedTests,
     counts: StringHashMap<usize>,
     _current_file: Option<File>,
     /// Directory whose `__snapshots__/` was last created (or found existing);
@@ -62,6 +68,9 @@ impl Snapshots {
             failed: 0,
             file_buf: Vec::new(),
             values: HashMap::new(),
+            existing: Vec::new(),
+            existing_by_hash: HashMap::new(),
+            unfinished_tests: UnfinishedTests::NotDone,
             counts: StringHashMap::new(),
             _current_file: None,
             snapshot_dir_path: None,
@@ -106,6 +115,137 @@ impl InlineSnapshotToWrite {
 pub struct File {
     pub(crate) id: FileId,
     pub(crate) file: bun_sys::File,
+}
+
+struct ExistingEntry {
+    key: Box<[u8]>,
+    /// The statement, the line break after it and the blank line above it.
+    range: Range<usize>,
+    /// The value literal, quotes included.
+    value_range: Range<usize>,
+    taken: bool,
+    new_value: Option<Box<[u8]>>,
+}
+
+impl ExistingEntry {
+    /// A key is the name of its test, then `: hint` when the snapshot has one, then a counter.
+    fn is_of_one_of(&self, tests: &StringSet) -> bool {
+        let Some(space) = strings::last_index_of_char(&self.key, b' ') else {
+            return false;
+        };
+        let (name, counter) = (&self.key[..space], &self.key[space + 1..]);
+        if counter.is_empty() || !counter.iter().all(u8::is_ascii_digit) {
+            return false;
+        }
+        let mut end = name.len();
+        loop {
+            if tests.contains(&name[..end]) {
+                return true;
+            }
+            match strings::last_index_of(&name[..end], b": ") {
+                Some(hint_start) => end = hint_start,
+                None => return false,
+            }
+        }
+    }
+}
+
+/// The tests of the current test file that did not run to a pass, over every run of the file.
+#[derive(Default)]
+enum UnfinishedTests {
+    /// No run of the file is done: every entry stays.
+    #[default]
+    NotDone,
+    /// A run could not list its tests: every entry stays.
+    Unknown,
+    Names(StringSet),
+}
+
+fn in_backticks(bytes: &[u8]) -> strings::QuoteEscapeFormat<'_> {
+    strings::format_escapes(
+        bytes,
+        strings::QuoteEscapeFormatFlags {
+            quote_char: b'`',
+            ..Default::default()
+        },
+    )
+}
+
+/// The index after the closing quote of the string literal that starts at `start`.
+fn string_literal_end(text: &[u8], start: usize) -> Option<usize> {
+    let quote = *text
+        .get(start)
+        .filter(|c| matches!(c, b'`' | b'"' | b'\''))?;
+    let mut at = start + 1;
+    while let Some(found) = strings::index_of_any(text.get(at..)?, &[quote, b'\\']) {
+        at += found;
+        if text[at] == quote {
+            return Some(at + 1);
+        }
+        at += 2;
+    }
+    None
+}
+
+/// Whether `text` is only whitespace, `;` and comments: no part of a statement.
+fn is_between_statements(mut text: &[u8]) -> bool {
+    loop {
+        text = strings::trim_left(text, b" \t\r\n;");
+        if text.starts_with(b"//") {
+            text = match strings::index_of_char_usize(text, b'\n') {
+                Some(line_end) => &text[line_end..],
+                None => &[],
+            };
+        } else if text.starts_with(b"/*") {
+            match strings::index_of(&text[2..], b"*/") {
+                Some(comment_end) => text = &text[2 + comment_end + 2..],
+                None => return false,
+            }
+        } else {
+            return text.is_empty();
+        }
+    }
+}
+
+/// The range of an entry (its statement, the rest of its line, the blank line above) and of its value literal.
+fn entry_ranges(
+    text: &[u8],
+    floor: usize,
+    stmt_loc: bun_ast::Loc,
+    value_loc: bun_ast::Loc,
+    next_stmt_loc: Option<bun_ast::Loc>,
+) -> Option<(Range<usize>, Range<usize>)> {
+    let offset = |loc: bun_ast::Loc| usize::try_from(loc.start).ok();
+    let (stmt_start, value_start) = (offset(stmt_loc)?, offset(value_loc)?);
+    let value_end = string_literal_end(text, value_start)?;
+    let next_stmt_start = next_stmt_loc.map_or(Some(text.len()), offset)?;
+    // The parser folds `(value)` and `value || other` to the literal. Such a statement goes on after the literal.
+    if stmt_start < floor
+        || value_start <= stmt_start
+        || !is_between_statements(text.get(value_end..next_stmt_start)?)
+    {
+        return None;
+    }
+
+    let above = &text[..stmt_start];
+    let blank_line = if above.ends_with(b"\n\r\n") {
+        2
+    } else {
+        usize::from(above.ends_with(b"\n\n"))
+    };
+    let mut end = value_end;
+    while matches!(text.get(end), Some(b' ' | b'\t')) {
+        end += 1;
+    }
+    end += usize::from(text.get(end) == Some(&b';'));
+    let line_end = strings::index_of_char_usize(&text[end..], b'\n')
+        .map_or(text.len(), |line_break| end + line_break + 1);
+    // A comment after the entry on its line goes with it, unless the next statement starts on this line.
+    if line_end <= next_stmt_start && is_between_statements(&text[end..line_end]) {
+        end = line_end;
+    }
+    let start = (stmt_start - blank_line).max(floor);
+    Some((start..end, value_start..value_end))
 }
 
 impl Snapshots {
@@ -176,6 +316,19 @@ impl Snapshots {
         // immutably for the whole fn body (NLL limitation with returned borrows), preventing
         // the later `insert`. Probe with `contains_key` first; re-lookup on hit.
         if self.values.contains_key(&name_hash) {
+            // `--update-snapshots` takes the first value of a run for a key. A later one compares with it.
+            if let Some(&index) = self.existing_by_hash.get(&name_hash)
+                && !self.existing[index].taken
+            {
+                self.existing[index].taken = true;
+                if **self.values.get(&name_hash).unwrap() != *target_value {
+                    self.existing[index].new_value = Some(Box::<[u8]>::from(target_value));
+                    self.values
+                        .insert(name_hash, Box::<[u8]>::from(target_value));
+                }
+                self.added += 1;
+                return Ok(None);
+            }
             return Ok(Some(&**self.values.get(&name_hash).unwrap()));
         }
 
@@ -198,20 +351,8 @@ impl Snapshots {
         write!(
             self.file_buf,
             "\nexports[`{}`] = `{}`;\n",
-            strings::format_escapes(
-                &name_with_counter,
-                strings::QuoteEscapeFormatFlags {
-                    quote_char: b'`',
-                    ..Default::default()
-                }
-            ),
-            strings::format_escapes(
-                target_value,
-                strings::QuoteEscapeFormatFlags {
-                    quote_char: b'`',
-                    ..Default::default()
-                }
-            ),
+            in_backticks(&name_with_counter),
+            in_backticks(target_value),
         )
         .map_err(|_| crate::Error::WriteError)?;
 
@@ -286,17 +427,26 @@ impl Snapshots {
             _ => return Err(crate::Error::ParseError),
         };
 
-        if ast.exports_ref.is_empty() {
+        if ast.exports_ref.is_empty() && !self.update_snapshots {
             return Ok(());
         }
         let exports_ref = ast.exports_ref;
 
         // TODO: when common js transform changes, keep this updated or add flag to support this version
 
+        let mut found: Vec<(Box<[u8]>, bun_ast::Loc, bun_ast::Loc)> = Vec::new();
+        let mut statements = 0usize;
         for part in ast.parts.as_mut_slice() {
             // `part.stmts` is an arena-owned `StoreSlice<Stmt>`; arena outlives this
             // loop and `ast` is owned here, so unique access is upheld.
             for stmt in part.stmts.slice_mut() {
+                let stmt_loc = stmt.loc;
+                statements += usize::from(!matches!(
+                    stmt.data,
+                    bun_ast::StmtData::SComment(_)
+                        | bun_ast::StmtData::SDirective(_)
+                        | bun_ast::StmtData::SEmpty(_)
+                ));
                 match &mut stmt.data {
                     bun_ast::StmtData::SExpr(expr) => {
                         if let bun_ast::ExprData::EBinary(e_binary) = &mut expr.value.data {
@@ -319,6 +469,7 @@ impl Snapshots {
                                         if let bun_ast::ExprData::EString(index) =
                                             &mut e_index.index.data
                                         {
+                                            let value_loc = right.loc;
                                             if let bun_ast::ExprData::EString(value_string) =
                                                 &mut right.data
                                             {
@@ -328,6 +479,10 @@ impl Snapshots {
                                                     Box::<[u8]>::from(value);
                                                 let name_hash: u64 = hash(key);
                                                 self.values.insert(name_hash, value_clone);
+                                                if self.update_snapshots {
+                                                    let key = Box::<[u8]>::from(key);
+                                                    found.push((key, stmt_loc, value_loc));
+                                                }
                                             }
                                         }
                                     }
@@ -341,14 +496,42 @@ impl Snapshots {
         }
 
         let _ = &mut ast;
+        // `--update-snapshots` cannot place a statement that is not an entry, for example a value with `${}`.
+        if self.update_snapshots && found.len() != statements {
+            return Err(crate::Error::ParseError);
+        }
+        let mut found = found.into_iter().peekable();
+        while let Some((key, stmt_loc, value_loc)) = found.next() {
+            let floor = self.existing.last().map_or(0, |e| e.range.end);
+            let next_stmt_loc = found.peek().map(|next| next.1);
+            let (range, value_range) =
+                entry_ranges(&self.file_buf, floor, stmt_loc, value_loc, next_stmt_loc)
+                    .ok_or(crate::Error::ParseError)?;
+            self.existing_by_hash
+                .insert(hash(&key), self.existing.len());
+            self.existing.push(ExistingEntry {
+                key,
+                range,
+                value_range,
+                taken: false,
+                new_value: None,
+            });
+        }
         Ok(())
     }
 
     pub(crate) fn write_snapshot_file(&mut self) -> Result<(), Error> {
         if let Some(file) = self._current_file.take() {
+            if self.update_snapshots {
+                self.apply_updates()?;
+            }
             file.file
                 .write_all(&self.file_buf)
                 .map_err(|_| crate::Error::FailedToWriteSnapshotFile)?;
+            if self.update_snapshots {
+                bun_sys::ftruncate(file.file.handle, self.file_buf.len() as i64)
+                    .map_err(|_| crate::Error::FailedToWriteSnapshotFile)?;
+            }
             let _ = file.file.close();
             self.file_buf.clear();
             self.file_buf.shrink_to_fit();
@@ -358,6 +541,59 @@ impl Snapshots {
             self.counts.clear();
         }
         Ok(())
+    }
+
+    /// Rewrites `file_buf` around the entries it had: a new value in place, an entry no test takes removed.
+    fn apply_updates(&mut self) -> Result<(), Error> {
+        let unfinished_tests = match core::mem::take(&mut self.unfinished_tests) {
+            UnfinishedTests::Names(names) => Some(names),
+            UnfinishedTests::NotDone | UnfinishedTests::Unknown => None,
+        };
+        let existing = core::mem::take(&mut self.existing);
+        self.existing_by_hash.clear();
+
+        let mut contents: Vec<u8> = Vec::with_capacity(self.file_buf.len());
+        let mut copied = 0usize;
+        for entry in &existing {
+            let obsolete = !entry.taken
+                && unfinished_tests
+                    .as_ref()
+                    .is_some_and(|tests| !entry.is_of_one_of(tests));
+            if obsolete {
+                contents.extend_from_slice(&self.file_buf[copied..entry.range.start]);
+                copied = entry.range.end;
+            } else if let Some(value) = &entry.new_value {
+                contents.extend_from_slice(&self.file_buf[copied..entry.value_range.start]);
+                copied = entry.value_range.end;
+                write!(contents, "`{}`", in_backticks(value))
+                    .map_err(|_| crate::Error::WriteError)?;
+            }
+        }
+        contents.extend_from_slice(&self.file_buf[copied..]);
+        self.file_buf = contents;
+        Ok(())
+    }
+
+    /// With `--update-snapshots`, the entries of a test that did not run to a pass stay in the file.
+    pub(crate) fn note_unfinished_tests(&mut self, buntest: &BunTest) {
+        let current = self._current_file.as_ref();
+        if !self.update_snapshots || current.is_none_or(|file| file.id != buntest.file_id) {
+            return;
+        }
+        // A later run of the same file can register fewer tests: its modules are in the module cache.
+        self.unfinished_tests = match (
+            core::mem::take(&mut self.unfinished_tests),
+            buntest.unfinished_test_names(),
+        ) {
+            (UnfinishedTests::Unknown, _) | (_, None) => UnfinishedTests::Unknown,
+            (UnfinishedTests::NotDone, Some(names)) => UnfinishedTests::Names(names),
+            (UnfinishedTests::Names(mut all), Some(names)) => {
+                for name in names.keys() {
+                    bun_core::handle_oom(all.insert(name));
+                }
+                UnfinishedTests::Names(all)
+            }
+        };
     }
 
     pub(crate) fn add_inline_snapshot_to_write(
@@ -879,10 +1115,7 @@ impl Snapshots {
             // SAFETY: buf[pos] == 0 written above
             let snapshot_file_path = ZStr::from_buf(&buf[..], pos);
 
-            let mut flags: i32 = bun_sys::O::CREAT | bun_sys::O::RDWR;
-            if self.update_snapshots {
-                flags |= bun_sys::O::TRUNC;
-            }
+            let flags: i32 = bun_sys::O::CREAT | bun_sys::O::RDWR;
             let fd = match bun_sys::open(snapshot_file_path, flags, 0o644) {
                 bun_sys::Result::Ok(fd) => fd,
                 bun_sys::Result::Err(err) => return Ok(bun_sys::Result::Err(err)),
@@ -893,24 +1126,30 @@ impl Snapshots {
                 file: bun_sys::File::from_fd(fd),
             };
 
-            if self.update_snapshots {
+            let length = file.file.get_end_pos().map_err(Error::from)?;
+            if length == 0 {
                 self.file_buf.extend_from_slice(Self::FILE_HEADER);
             } else {
-                let length = file.file.get_end_pos().map_err(Error::from)?;
-                if length == 0 {
-                    self.file_buf.extend_from_slice(Self::FILE_HEADER);
-                } else {
-                    let mut tmp = vec![0u8; length];
-                    let _ = file.file.pread_all(&mut tmp, 0).map_err(Error::from)?;
-                    #[cfg(windows)]
-                    {
-                        file.file.seek_to(0).map_err(Error::from)?;
-                    }
-                    self.file_buf.extend_from_slice(&tmp);
+                let mut tmp = vec![0u8; length];
+                let _ = file.file.pread_all(&mut tmp, 0).map_err(Error::from)?;
+                #[cfg(windows)]
+                {
+                    file.file.seek_to(0).map_err(Error::from)?;
                 }
+                self.file_buf.extend_from_slice(&tmp);
             }
 
-            self.parse_file(&file)?;
+            if let Err(err) = self.parse_file(&file) {
+                if !self.update_snapshots {
+                    return Err(err);
+                }
+                // `--update-snapshots` replaces a file it cannot read.
+                self.file_buf.clear();
+                self.file_buf.extend_from_slice(Self::FILE_HEADER);
+                self.values.clear();
+                self.existing.clear();
+                self.existing_by_hash.clear();
+            }
             self._current_file = Some(file);
         }
 

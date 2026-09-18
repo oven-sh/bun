@@ -54,6 +54,21 @@ ssh <admin>@<host> 'darwin-ci/host.sh <hostname> tart --tags <tailscale tags>'
 Approve the Tailscale login it prints, reboot when it asks, run the same
 command again, and check the agent appears under `queue=test-darwin`.
 
+## Updating the scripts on a host
+
+The agent runs the hooks from the copy in `/usr/local/share/darwin-ci`, not
+from the job's checkout, so a change under `scripts/darwin-ci` reaches a host
+only once that copy is refreshed. No agent restart is needed: every job starts
+a fresh `hooks/command.ts`.
+
+```sh
+rsync -a --delete scripts/darwin-ci/ <admin>@<host>:darwin-ci/
+ssh <admin>@<host> '/usr/local/bin/bun darwin-ci/main.ts install-self'
+```
+
+A change to `lib/agent.ts` needs `install-agent` too, and a change to what the
+guest image contains needs `bake`.
+
 ## Removing a host
 
 Unload the agent (`launchctl bootout` the `com.buildkite.buildkite-agent`

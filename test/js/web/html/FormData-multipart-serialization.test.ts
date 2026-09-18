@@ -136,7 +136,8 @@ describe("multipart serialization (new Response(formData))", () => {
       ["dup", "first"],
       ["dup", "second"],
       ["unicode name ☺", "ünïcode välue 😊"],
-      ["blob", { file: true, name: undefined, type: "", text: "blob-bytes" }],
+      // Parsed entries are Files, so .name is a string even for an unnamed Blob.
+      ["blob", { file: true, name: expect.any(String), type: "", text: "blob-bytes" }],
       ["file", { file: true, name: "日本語ファイル名.html", type: "text/html;charset=utf-8", text: "<p>hi</p>" }],
     ]);
   });

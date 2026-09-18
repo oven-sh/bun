@@ -145,6 +145,15 @@ pub fn specifier_is_eval_entry_point(this: &mut VirtualMachine, specifier: JSVal
     false
 }
 
+/// Called once by JSCommonJSModule.cpp for the root CJS module so the run command reports
+/// origin `uncaughtException`. `main()` compare filters out an ESM entry that `import`s CJS.
+// HOST_EXPORT(Bun__VM__noteCommonJSEvaluation, c)
+pub fn note_commonjs_evaluation(this: &mut VirtualMachine, specifier: JSValue) {
+    if !this.entry_point_result.evaluated_as_cjs && specifier_is_entry_point(this, specifier) {
+        this.entry_point_result.evaluated_as_cjs = true;
+    }
+}
+
 // HOST_EXPORT(Bun__VM__specifierIsEntryPoint, c)
 pub fn specifier_is_entry_point(this: &mut VirtualMachine, specifier: JSValue) -> bool {
     if this.main().is_empty() {
@@ -161,15 +170,6 @@ pub fn specifier_is_entry_point(this: &mut VirtualMachine, specifier: JSValue) -
     // Under the `node` shim `main()` is a symlink, and the module is keyed by its real path.
     crate::api::bun_object::resolved_main_path(this)
         .is_some_and(|resolved| specifier_str.eql(resolved))
-}
-
-/// Called once by JSCommonJSModule.cpp for the root CJS module so the run command reports
-/// origin `uncaughtException`. `main()` compare filters out an ESM entry that `import`s CJS.
-// HOST_EXPORT(Bun__VM__noteCommonJSEvaluation, c)
-pub fn note_commonjs_evaluation(this: &mut VirtualMachine, specifier: JSValue) {
-    if !this.entry_point_result.evaluated_as_cjs && specifier_is_entry_point(this, specifier) {
-        this.entry_point_result.evaluated_as_cjs = true;
-    }
 }
 
 /// `export fn Bun__closeChildIPC(global)` — defers the actual socket close to

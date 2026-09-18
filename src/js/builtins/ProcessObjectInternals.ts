@@ -366,13 +366,11 @@ export function initializeNextTickQueue(process: typeof globalThis.process, next
           var restoreGraph = $getInternalField($asyncContext, 1);
           var graph = tock.graph;
           $putInternalField($asyncContext, 0, tock.frame);
-          // Comparing with undefined first spares the JIT two type checks on every tick that has no graph.
+          // A compare with undefined needs no JIT type check. graph !== restoreGraph needs two, on every tick.
           var swapGraph = false;
           if (graph !== undefined || restoreGraph !== undefined) {
-            if (graph !== restoreGraph) {
-              swapGraph = true;
-              $putInternalField($asyncContext, 1, graph);
-            }
+            swapGraph = true;
+            $putInternalField($asyncContext, 1, graph);
           }
           // No catch and no finally: what a tick throws leaves this function as it was thrown, with
           // the tick's context still current. JSNextTickQueue::drain reports it there (so an

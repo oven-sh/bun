@@ -3,7 +3,7 @@ import { install_test_helpers } from "bun:internal-for-testing";
 import { beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isLinux, isWindows, tempDir, tmpdirSync } from "harness";
-import { dirname, join } from "path";
+import { dirname, join, parse, relative } from "path";
 
 let cwd: string;
 
@@ -193,6 +193,36 @@ async function expectOnlyPkg1Found(dir: string) {
   expect(exitCode).toBe(0);
   expect(Object.values(install_test_helpers.parseLockfile(dir).workspace_paths)).toEqual(["pkgs/pkg1"]);
 }
+
+// A test cannot write to the root of the filesystem, so the root package.json here is only a
+// path: `workspaceMembers` takes its text as an argument and reads nothing but the members
+// from disk. The entries name the same real directories by their path from either root.
+describe.each([
+  ["the root of the filesystem", (dir: string) => parse(dir).root],
+  ["a directory", (dir: string) => dir],
+])("workspaces of a package.json in %s", (_, rootOf) => {
+  test.each([
+    ["path", (pkgs: string) => [`${pkgs}/a`, `${pkgs}/b`]],
+    ["glob", (pkgs: string) => [`${pkgs}/*`]],
+    // The parent of the first directory in `pkgs` is the root again. It is not a member.
+    ["the root itself and path", (pkgs: string) => [`${pkgs.split("/")[0]}/..`, `${pkgs}/a`, `${pkgs}/b`]],
+  ])("%s entries resolve", (_, entries) => {
+    using dir = tempDir("workspace-root-directory", {
+      "pkgs/a/package.json": JSON.stringify({ name: "a" }),
+      "pkgs/b/package.json": JSON.stringify({ name: "b" }),
+    });
+    const root = rootOf(String(dir));
+    // `<dir>/pkgs` from the root, spelled the way a `workspaces` entry is.
+    const pkgs = relative(root, join(String(dir), "pkgs")).replaceAll("\\", "/");
+
+    const members = install_test_helpers.workspaceMembers(join(root, "package.json"), rootPackageJson(entries(pkgs)));
+
+    expect(members).toEqual([
+      { path: `${pkgs}/a`, name: "a" },
+      { path: `${pkgs}/b`, name: "b" },
+    ]);
+  });
+});
 
 describe.concurrent("workspaces entries longer than the path buffer", () => {
   test("path entry fails with ENAMETOOLONG", async () => {

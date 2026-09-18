@@ -224,11 +224,17 @@ fn process_workspace_name(
     Ok(entry)
 }
 
+// Both directories come from `path::dirname`, which keeps the filesystem root (`/`, `C:\`).
+// `source.path.name().dir` does not: it is empty for `/package.json`, and for
+// `C:\package.json` it is `C:`, which is relative to the cwd on that drive.
+
 fn workspace_dir_of(abs_package_json_path: &[u8]) -> &[u8] {
-    strings::without_suffix_comptime(
-        abs_package_json_path,
-        const_format::concatcp!(SEP_STR, "package.json").as_bytes(),
-    )
+    path::dirname(abs_package_json_path).unwrap_or_default()
+}
+
+pub(crate) fn package_json_dir(source: &bun_ast::Source) -> &[u8] {
+    path::dirname(source.path.text)
+        .unwrap_or_else(|| bun_resolver::fs::FileSystem::instance().top_level_dir())
 }
 
 fn relative_workspace_path<'b>(
@@ -269,7 +275,7 @@ impl WorkspaceMap {
         let mut filepath_buf_os = path::path_buffer_pool::get();
         let filepath_buf: &mut [u8] = &mut filepath_buf_os.0[..];
         let mut rel_path_buf = path::path_buffer_pool::get();
-        let root_dir: &[u8] = source.path.name().dir;
+        let root_dir: &[u8] = package_json_dir(source);
 
         let scratch = Arena::new();
 
@@ -305,11 +311,7 @@ impl WorkspaceMap {
             let processed = match abs_package_json_path {
                 Some(abs_package_json_path) => {
                     // skip root package.json
-                    if strings::eql_long(
-                        resolve_path::dirname::<path::platform::Auto>(abs_package_json_path),
-                        root_dir,
-                        true,
-                    ) {
+                    if workspace_dir_of(abs_package_json_path) == root_dir {
                         continue;
                     }
 
@@ -428,16 +430,12 @@ impl WorkspaceMap {
                     ))
                 };
 
-                let mut cwd = resolve_path::dirname::<path::platform::Auto>(source.path.text);
-                if cwd.is_empty() {
-                    cwd = bun_resolver::fs::FileSystem::instance().top_level_dir();
-                }
                 // GlobWalker::init_with_cwd is now an associated constructor
                 // returning `Result<Maybe<Self>>`; arena param dropped (heap-backed),
                 // ignore filter supplied as final arg.
                 let mut walker = match GlobWalker::init_with_cwd(
                     glob_pattern,
-                    cwd,
+                    root_dir,
                     false,
                     false,
                     false,
@@ -531,7 +529,7 @@ impl WorkspaceMap {
                     let processed = match resolve_path::join_abs_string_buf_checked::<
                         path::platform::Auto,
                     >(
-                        cwd, filepath_buf, &[entry_dir, b"package.json"]
+                        root_dir, filepath_buf, &[entry_dir, b"package.json"]
                     ) {
                         Some(abs_package_json_path) => {
                             process_workspace_name(json_cache, abs_package_json_path, log)
@@ -622,6 +620,38 @@ impl WorkspaceMap {
 
         Ok(workspace_names.count() as u32)
     }
+}
+
+/// For `bun:internal-for-testing`: the `(path, name)` of each member of the `workspaces` in
+/// `source`. The package.json that `source` names does not have to exist, so a test can put
+/// the workspace root where it cannot write, such as the filesystem root.
+pub fn members_for_testing(
+    source: &bun_ast::Source,
+    log: &mut bun_ast::Log,
+) -> crate::Result<Vec<(Box<[u8]>, Box<[u8]>)>> {
+    crate::initialize_store();
+    let package_json = crate::bun_json::ParsedJson::parse_package_json(source, log)?;
+    let mut members = WorkspaceMap::init();
+    if let Some(workspaces) = package_json.root.as_property(b"workspaces") {
+        let value_loc = super::value_loc_of(source, workspaces.loc);
+        if let Some(names) = NamesArray::from_expr(&workspaces.expr, value_loc) {
+            members.process_names_array(
+                &mut WorkspacePackageJSONCache::default(),
+                log,
+                names,
+                source,
+                workspaces.loc,
+                None,
+                MissingWorkspace::Error,
+            )?;
+        }
+    }
+    Ok(members
+        .keys()
+        .iter()
+        .zip(members.values())
+        .map(|(path, entry)| (path.clone(), entry.name.clone()))
+        .collect())
 }
 
 const IGNORED_PATHS: &[&[u8]] = &[b"node_modules", b".git", b"CMakeFiles"];

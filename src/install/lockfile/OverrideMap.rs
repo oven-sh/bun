@@ -22,7 +22,7 @@ use super::override_selector::{
     PackageSelector, Selector, SelectorError, parse_package_segment, parse_selector,
 };
 use super::package::PackageColumns as _;
-use super::package::workspace_map::WorkspaceMap;
+use super::package::workspace_map::{WorkspaceMap, package_json_dir};
 use super::package::{DependencyGroup, value_loc_of};
 use super::{Lockfile, StringBuilder, package::Package};
 // LAYERING NOTE: package.json is parsed by `bun_parsers::json` which
@@ -1220,7 +1220,7 @@ fn workspace_ref_literal(
     if workspace_names.count() == 0 {
         return Ok(None);
     }
-    let root_dir: &[u8] = source.path.name().dir;
+    let root_dir: &[u8] = package_json_dir(source);
     let mut path_buf = bun_paths::path_buffer_pool::get();
     let mut found: Option<Vec<u8>> = None;
     for relative_dir in workspace_names.keys() {

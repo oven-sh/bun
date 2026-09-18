@@ -142,6 +142,12 @@ export const install_test_helpers = $rust("install_binding.rs", "bun_install_js_
    * Returns the lockfile at the given path as an object.
    */
   parseLockfile: (cwd: string) => any;
+  /**
+   * Returns the members of the "workspaces" in a package.json, each with its path from the workspace root.
+   * Throws what `bun install` reports. The package.json at `packageJsonPath` does not have to exist,
+   * so the workspace root can be a directory that a test cannot write to.
+   */
+  workspaceMembers: (packageJsonPath: string, packageJson: string) => { path: string; name: string }[];
 };
 
 export const jscInternals = $cpp("JSCTestingHelpers.cpp", "createJSCTestingHelpers");

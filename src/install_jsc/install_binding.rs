@@ -5,7 +5,7 @@ pub mod bun_install_js_bindings {
 
     pub fn generate(global: &JSGlobalObject) -> JSValue {
         use bun_jsc::JSFunction;
-        let obj = JSValue::create_empty_object(global, 1);
+        let obj = JSValue::create_empty_object(global, 2);
         obj.put(
             global,
             b"parseLockfile",
@@ -19,7 +19,46 @@ pub mod bun_install_js_bindings {
                 Default::default(),
             ),
         );
+        obj.put(
+            global,
+            b"workspaceMembers",
+            JSFunction::create(
+                global,
+                "workspaceMembers",
+                __jsc_host_js_workspace_members,
+                2,
+                Default::default(),
+            ),
+        );
         obj
+    }
+
+    #[bun_jsc::host_fn]
+    fn js_workspace_members(
+        global: &JSGlobalObject,
+        frame: &bun_jsc::CallFrame,
+    ) -> bun_jsc::JsResult<JSValue> {
+        use bun_install::lockfile::package::workspace_map::members_for_testing;
+        use bun_jsc::LogJsc as _;
+        use bun_jsc::bun_string_jsc::create_utf8_for_js;
+
+        let package_json_path = frame.argument(0).to_utf8(global)?;
+        let package_json = frame.argument(1).to_utf8(global)?;
+        let source =
+            bun_ast::Source::init_path_string(package_json_path.slice(), package_json.slice());
+
+        let mut log = bun_ast::Log::init();
+        match members_for_testing(&source, &mut log) {
+            Ok(members) => {
+                JSValue::create_array_from_iter(global, members.iter(), |(path, name)| {
+                    let member = JSValue::create_empty_object(global, 2);
+                    member.put(global, b"path", create_utf8_for_js(global, path)?);
+                    member.put(global, b"name", create_utf8_for_js(global, name)?);
+                    Ok(member)
+                })
+            }
+            Err(err) => Err(global.throw_value(log.to_js(global, format_args!("{}", err.name()))?)),
+        }
     }
 
     // Lives at module scope (not in an `impl`) because the

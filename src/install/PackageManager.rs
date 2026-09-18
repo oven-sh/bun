@@ -1797,7 +1797,7 @@ pub fn init(
                                 child_cwd
                             } else {
                                 resolve_path::relative_normalized::<platform::Auto, true>(
-                                    json_source.path.name().dir,
+                                    Package::WorkspaceMap::package_json_dir(&json_source),
                                     child_cwd,
                                 )
                             };

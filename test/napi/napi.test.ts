@@ -15,6 +15,27 @@ import {
 } from "harness";
 import { join } from "path";
 
+// A compiled Windows exe that had its .node addons statically merged
+// carries them in per-addon `.bnN` sections plus a `.bunL` metadata
+// section. Presence of `.bunL` is how we tell the merge happened rather
+// than silently falling back to tmpfile extraction.
+function peHasSection(exePath: string, name: string): boolean {
+  const buf = readFileSync(exePath);
+  if (buf.readUInt16LE(0) !== 0x5a4d /* MZ */) return false;
+  const peOff = buf.readUInt32LE(0x3c);
+  if (buf.readUInt32LE(peOff) !== 0x4550 /* PE\0\0 */) return false;
+  const nSect = buf.readUInt16LE(peOff + 6);
+  const optSize = buf.readUInt16LE(peOff + 20);
+  const shOff = peOff + 24 + optSize;
+  for (let i = 0; i < nSect; i++) {
+    const off = shOff + i * 40;
+    const raw = buf.subarray(off, off + 8);
+    const s = raw.subarray(0, raw.indexOf(0) === -1 ? 8 : raw.indexOf(0)).toString("latin1");
+    if (s === name) return true;
+  }
+  return false;
+}
+
 // The napi-app addons don't link against bun, so existing binaries stay valid
 // across bun builds. `bun install` runs a full `node-gyp rebuild` (clean + build
 // of every target), so skip it when every target's .node output already exists
@@ -159,7 +180,21 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
             expect(result.success).toBeTrue();
             const extractedCount = () => readdirSync(String(tmpdir)).filter(f => f.endsWith(".node")).length;
             const count = extractedCount();
-            expect(count).toBeGreaterThan(0);
+            if (isWindows) {
+              // On Windows the addons are merged into the exe instead of being
+              // extracted: all of this fixture's node-gyp addons qualify, so
+              // none reaches the temp dir. (The merge grows the exe's header
+              // area when bun.exe has fewer spare section-header slots than
+              // the addons need.)
+              expect(
+                peHasSection(exe, ".bunL"),
+                ".node addon should be statically linked into the compiled exe",
+              ).toBeTrue();
+              expect(peHasSection(exe, ".bn0")).toBeTrue();
+              expect(count, `extracted to temp: ${JSON.stringify(readdirSync(String(tmpdir)))}`).toBe(0);
+            } else {
+              expect(count).toBeGreaterThan(0);
+            }
             const again = runSelf();
             expect(again.stdout.toString().trim()).toBe("hello world!");
             expect(again.success).toBeTrue();
@@ -168,6 +203,59 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
           // CI runs tests under bun-profile (~700 MB on linux with ThinLTO
           // DWARF); --compile copies+reads+rewrites the whole thing to /tmp,
           // which on debian/ubuntu is disk-backed gp3.
+          30 * 1000,
+        );
+
+        // The flag only affects the Windows PE path; elsewhere this test would
+        // duplicate the one above. It exercises the extract-to-tempfile +
+        // LoadLibraryExW fallback that unmergeable addons also take.
+        it.skipIf(!isWindows)(
+          "should work with --compile when static addon linking is disabled",
+          async () => {
+            await using dir = tempDir("napi-app-compile-no-link-" + format, {
+              "package.json": JSON.stringify({
+                name: "napi-app",
+                version: "1.0.0",
+                type: format === "esm" ? "module" : "commonjs",
+              }),
+            });
+
+            const exe = join(dir, "main.exe");
+            const build = spawnSync({
+              cmd: [
+                bunExe(),
+                "build",
+                "--target=" + target,
+                "--format=" + format,
+                "--compile",
+                join(__dirname, "napi-app", "main.js"),
+              ],
+              cwd: dir,
+              env: { ...bunEnv, BUN_FEATURE_FLAG_DISABLE_PE_ADDON_LINK: "1" },
+              stdout: "inherit",
+              stderr: "inherit",
+            });
+            expect(build.success).toBeTrue();
+            expect(peHasSection(exe, ".bunL")).toBeFalse();
+            await using tmpdir = tempDir("napi-app-no-link-tmp", {});
+            const result = spawnSync({
+              cmd: [exe, "self"],
+              env: {
+                ...bunEnv,
+                BUN_TMPDIR: String(tmpdir),
+                TMPDIR: String(tmpdir),
+                BUN_FEATURE_FLAG_DISABLE_PE_ADDON_LINK: "1",
+              },
+              stdin: "inherit",
+              stderr: "inherit",
+              stdout: "pipe",
+            });
+            const stdout = result.stdout.toString().trim();
+            expect(stdout).toBe("hello world!");
+            expect(result.success).toBeTrue();
+            expect(readdirSync(String(tmpdir)).filter(f => f.endsWith(".node")).length).toBeGreaterThan(0);
+          },
+          // Same --compile workload as the sibling above; see its timeout note.
           30 * 1000,
         );
       }
@@ -205,6 +293,115 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       });
     });
   });
+
+  const unwindFixture = join(__dirname, "napi-app/unwind-fixture.js");
+  const cxxExpectedLine = "cxx: caught boom, destructors: 2, custom 42, destructors: 3\n";
+  const unwindExpectedStdout =
+    (isWindows ? "seh: caught\nlongjmp: 3\nfinally: 12\n" : "seh: unsupported\nlongjmp: 3\nfinally: unsupported\n") +
+    cxxExpectedLine;
+
+  // Baseline for the --compile test below: the addon loaded as a regular DLL.
+  it("unwind_addon, cxx_eh_addon: SEH, longjmp and C++ exceptions work when loaded normally", async () => {
+    await using proc = spawn({
+      cmd: [bunExe(), unwindFixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: unwindExpectedStdout, stderr: "", exitCode: 0 });
+  });
+
+  // A merged addon's code lives inside bun.exe's own image instead of a module
+  // of its own, so the OS only finds its unwind info if the merge makes it
+  // reachable. `__except` dispatch and longjmp (RtlUnwindEx on MSVC) both walk
+  // addon frames and crash the process without it, and the __finally case
+  // additionally needs bun's handler trampoline to cope with Windows invoking
+  // it a second time for the same frame. The C++ line needs the addon's
+  // statically linked throw to learn the addon's own image base. The second
+  // run forces the extract-to-tempfile + LoadLibrary path on the same exe as a
+  // control.
+  it.skipIf(!isWindows)(
+    "unwind_addon, cxx_eh_addon: SEH, longjmp, collided unwinds and C++ exceptions work inside a statically merged --compile exe",
+    async () => {
+      await using dir = tempDir("napi-unwind-compile", {});
+      const exe = join(dir, "unwind.exe");
+      const build = spawnSync({
+        cmd: [bunExe(), "build", "--compile", unwindFixture, "--outfile", exe],
+        cwd: dir,
+        env: bunEnv,
+        stdout: "inherit",
+        stderr: "inherit",
+      });
+      expect(build.success).toBeTrue();
+      // Both addons have to be merged (.bn0 and .bn1); otherwise a line below
+      // would only be testing the tempfile fallback.
+      expect(peHasSection(exe, ".bunL")).toBeTrue();
+      expect(peHasSection(exe, ".bn0")).toBeTrue();
+      expect(peHasSection(exe, ".bn1"), "the second addon was not merged into the exe").toBeTrue();
+
+      for (const [mode, env] of [
+        ["merged", bunEnv],
+        ["tempfile fallback", { ...bunEnv, BUN_FEATURE_FLAG_DISABLE_PE_ADDON_LINK: "1" }],
+      ] as const) {
+        const result = spawnSync({
+          cmd: [exe],
+          env,
+          stdin: "inherit",
+          stderr: "inherit",
+          stdout: "pipe",
+        });
+        expect(result.stdout.toString(), mode).toBe(unwindExpectedStdout);
+        expect(result.success, mode).toBeTrue();
+      }
+    },
+    // Same --compile workload as the tests above; see the timeout note there.
+    30 * 1000,
+  );
+
+  const workersFixture = join(__dirname, "napi-app/linked-addon-workers-fixture.js");
+
+  it("the same addon loaded from four Workers and the main thread at once works on every thread", async () => {
+    await using proc = spawn({
+      cmd: [bunExe(), workersFixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok 5\n", stderr: "", exitCode: 0 });
+  });
+
+  // On Windows the compiled exe binds the merged addon on whichever thread's
+  // dlopen comes first, while the other four wait for the binder lock and then
+  // replay the registration it published. The flag run is the same exe on the
+  // extract-to-tempfile path; elsewhere both runs take that path.
+  it(
+    "the same addon loaded from four Workers at once works inside a --compile exe",
+    async () => {
+      await using dir = tempDir("napi-workers-compile", {});
+      const exe = join(dir, "workers" + (isWindows ? ".exe" : ""));
+      const build = spawnSync({
+        cmd: [bunExe(), "build", "--compile", workersFixture, "--outfile", exe],
+        cwd: dir,
+        env: bunEnv,
+        stdout: "inherit",
+        stderr: "inherit",
+      });
+      expect(build.success).toBeTrue();
+      if (isWindows) expect(peHasSection(exe, ".bunL"), "unwind_addon.node was not merged into the exe").toBeTrue();
+
+      const modes: [string, Record<string, string>][] = [["default", bunEnv]];
+      if (isWindows) modes.push(["tempfile fallback", { ...bunEnv, BUN_FEATURE_FLAG_DISABLE_PE_ADDON_LINK: "1" }]);
+      for (const [mode, env] of modes) {
+        const result = spawnSync({ cmd: [exe], env, stdin: "inherit", stderr: "inherit", stdout: "pipe" });
+        expect(result.stdout.toString(), mode).toBe("ok 5\n");
+        expect(result.success, mode).toBeTrue();
+      }
+    },
+    // Same --compile workload as the tests above; see the timeout note there.
+    30 * 1000,
+  );
 
   describe("issue_7685", () => {
     it("works", async () => {

@@ -6080,6 +6080,133 @@ it("fs.statfs (callback) should work with bigint", async () => {
   }
 });
 
+// Node builds every statfs result, number or bigint, with one class:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/utils.js#L705-L722
+describe("StatFs, the class of a fs.statfs result", () => {
+  const fields = { type: 1, bsize: 2, frsize: 3, blocks: 4, bfree: 5, bavail: 6, files: 7, ffree: 8 };
+  const args = Object.values(fields);
+
+  it("is the constructor of the result of every statfs function", async () => {
+    const results = {
+      "statfsSync": statfsSync(import.meta.path),
+      "statfsSync bigint": statfsSync(import.meta.path, { bigint: true }),
+      "statfs": await promisify(fs.statfs)(import.meta.path),
+      "statfs bigint": await promisify(fs.statfs)(import.meta.path, { bigint: true }),
+      "promises.statfs": await fs.promises.statfs(import.meta.path),
+      "promises.statfs bigint": await fs.promises.statfs(import.meta.path, { bigint: true }),
+    };
+    const StatFs = results.statfsSync.constructor;
+
+    expect({ name: StatFs.name, length: StatFs.length }).toEqual({ name: "StatFs", length: 8 });
+    expect(Object.getOwnPropertyDescriptor(StatFs.prototype, "constructor")).toEqual({
+      value: StatFs,
+      writable: true,
+      enumerable: false,
+      configurable: true,
+    });
+
+    const observed = Object.entries(results).map(([from, result]) => ({
+      from,
+      constructor: result.constructor === StatFs,
+      prototype: Object.getPrototypeOf(result) === StatFs.prototype,
+      instanceof: result instanceof StatFs,
+      label: inspect(result).slice(0, inspect(result).indexOf("{") + 1),
+    }));
+    expect(observed).toEqual(
+      Object.keys(results).map(from => ({
+        from,
+        constructor: true,
+        prototype: true,
+        instanceof: true,
+        label: "StatFs {",
+      })),
+    );
+  });
+
+  it("builds an object with the eight fields", () => {
+    const StatFs = statfsSync(import.meta.path).constructor as new (...args: unknown[]) => Record<string, unknown>;
+
+    const constructed = new StatFs(...args);
+    expect(Object.getPrototypeOf(constructed)).toBe(StatFs.prototype);
+    expect(Object.entries(constructed)).toEqual(Object.entries(fields));
+
+    expect(Object.entries(new StatFs())).toEqual(Object.keys(fields).map(key => [key, undefined]));
+
+    // @ts-expect-error
+    expect(() => StatFs(...args)).toThrow(new TypeError("Class constructor StatFs cannot be invoked without 'new'"));
+  });
+
+  it("gives a subclass instance and a Reflect.construct result the prototype of newTarget", () => {
+    const StatFs = statfsSync(import.meta.path).constructor as new (...args: unknown[]) => Record<string, unknown>;
+
+    class Sub extends StatFs {
+      get custom() {
+        return 42;
+      }
+    }
+    const sub = new Sub(...args);
+    expect(Object.getPrototypeOf(sub)).toBe(Sub.prototype);
+    expect(sub).toBeInstanceOf(StatFs);
+    expect({ ...sub, custom: sub.custom }).toEqual({ ...fields, custom: 42 });
+
+    function F() {}
+    const reflected = Reflect.construct(StatFs, args, F);
+    expect(Object.getPrototypeOf(reflected)).toBe(F.prototype);
+    expect({ ...reflected }).toEqual(fields);
+  });
+
+  // The realm of a function defined in a context is the context's global object. That is not
+  // the Bun global that holds the StatFs structure.
+  it("accepts a newTarget that belongs to a node:vm context", async () => {
+    const script = /*js*/ `
+      const vm = require("node:vm");
+      const StatFs = require("node:fs").statfsSync(".").constructor;
+      const args = ${JSON.stringify(args)};
+      const context = vm.createContext({ StatFs, args });
+      const [S, s] = vm.runInContext(
+        "class S extends StatFs { get custom() { return 42; } }; [S, new S(...args)]",
+        context,
+      );
+      const result = {
+        "class extends": {
+          prototype: Object.getPrototypeOf(s) === S.prototype,
+          instanceof: s instanceof StatFs,
+          ffree: s.ffree,
+          custom: s.custom,
+        },
+      };
+      // A bound function has no "prototype", so the object gets the prototype of the constructor.
+      for (const source of ["(function F() {})", "(function F() {}).bind(null)", "new Proxy(function F() {}, {})"]) {
+        const newTarget = vm.runInContext(source, context);
+        const object = Reflect.construct(StatFs, args, newTarget);
+        result[source] = {
+          prototype: Object.getPrototypeOf(object) === (newTarget.prototype ?? StatFs.prototype),
+          ffree: object.ffree,
+        };
+      }
+      console.log(JSON.stringify(result));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: JSON.stringify({
+        "class extends": { prototype: true, instanceof: true, ffree: 8, custom: 42 },
+        "(function F() {})": { prototype: true, ffree: 8 },
+        "(function F() {}).bind(null)": { prototype: true, ffree: 8 },
+        "new Proxy(function F() {}, {})": { prototype: true, ffree: 8 },
+      }),
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+});
+
 // Regression for oven-sh/bun#31510: the non-bigint statfs path stored block
 // counts as i32, so values above i32::MAX (e.g. `bavail` on a filesystem past
 // ~8 TiB) wrapped negative. We can't mount a multi-TiB filesystem in CI, so we

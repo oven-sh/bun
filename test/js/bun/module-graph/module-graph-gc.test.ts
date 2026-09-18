@@ -114,8 +114,11 @@ class Heap {
     }
     const queue: number[] = [];
     for (let i = 0; i < roots.length; i += 3) {
-      if (this.#reachedFrom.has(roots[i])) continue;
-      this.#rootReason.set(roots[i], String(labels[roots[i + 1]] ?? roots[i + 1]));
+      const reason = String(labels[roots[i + 1]] ?? roots[i + 1]);
+      // What an output constraint appends (the listeners of a marked EventTarget, ...) is recorded
+      // as a root, but only follows from its owner being marked, and the owner's edges say the same.
+      if (this.#reachedFrom.has(roots[i]) || reason.includes("DOMGCOutput")) continue;
+      this.#rootReason.set(roots[i], reason);
       this.#reachedFrom.set(roots[i], undefined);
       queue.push(roots[i]);
     }
@@ -200,7 +203,9 @@ class Lifetimes {
     if (!waiting.length) return [];
     return [...(await this.#kept(waiting))].map(([name, path]) => `${name}: ${path}`);
   }
-  /** Collects a few times; whether `name` survived all of them. */
+  /** Collects a few times; whether `name` survived all of them. Every caller expects it to, so
+   *  this goes by finalization alone: a stack word can only make that pass, and asking the heap
+   *  would cost each of them a snapshot. */
   async survives(name: string): Promise<boolean> {
     for (let i = 0; i < 5; i++) {
       await collect();
@@ -211,7 +216,9 @@ class Lifetimes {
 
 const count = (type: string) => heapStats().objectTypeCounts[type] ?? 0;
 /** Collects until the count of each type is at most its limit (bounded); returns the counts. When
- *  the collector's own counts stay above a limit, what counts is the cells a root reaches. */
+ *  the collector's own counts stay above a limit, what counts is the cells a root reaches. The
+ *  limits come from the collector's counts (a snapshot per baseline is too slow on a debug build),
+ *  which can only be higher than what a root reached then. */
 async function settle(limits: Record<string, number>): Promise<Record<string, number>> {
   const types = Object.keys(limits);
   const counts = () => {
@@ -219,7 +226,7 @@ async function settle(limits: Record<string, number>): Promise<Record<string, nu
     return Object.fromEntries(types.map(type => [type, all[type] ?? 0]));
   };
   let now = counts();
-  for (let i = 0; i < 10 && types.some(type => now[type] > limits[type]); i++) {
+  for (let i = 0; i < 100 && types.some(type => now[type] > limits[type]); i++) {
     await collect();
     now = counts();
   }

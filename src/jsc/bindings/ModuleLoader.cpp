@@ -669,7 +669,8 @@ static bool threwAsCommonJS(JSC::ModuleRegistryEntry* entry)
 // A failed require() drops its module from the require map, but the registry
 // entry keeps the error and JSModuleLoader::loadModule replays it on every later
 // load. Only a failed entry is removed: a pending or loaded one may belong to an
-// in-flight import().
+// in-flight import(). The retry reads the file again, as `delete require.cache[key]`
+// does, so the --isolate source cache is dropped with the entry.
 static void evictFailedModuleRegistryEntry(JSC::VM& vm, JSC::JSModuleLoader* loader, const WTF::String& specifier)
 {
     auto key = JSC::Identifier::fromString(vm, specifier);
@@ -677,6 +678,7 @@ static void evictFailedModuleRegistryEntry(JSC::VM& vm, JSC::JSModuleLoader* loa
     if (!entry || !threwAsCommonJS(entry))
         return;
     loader->removeEntry(key);
+    Bun::IsolatedModuleCache::evict(vm, specifier);
 }
 
 JSValue fetchCommonJSModule(

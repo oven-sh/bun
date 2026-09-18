@@ -1781,27 +1781,27 @@ test.concurrent("--isolate: require(esm) caches a BunTranspiledModule SourceProv
 });
 
 // A module that throws while being evaluated is retried by the next require().
-// Under --isolate the first attempt leaves its SourceProvider in the cache, so
-// the retry is served from there; it still has to get rid of the failed module
-// registry entry the first attempt left behind, or it rethrows the stored error.
+// Under --isolate the first attempt leaves its SourceProvider in the cache and
+// a failed entry in the module registry. The retry drops both, so it reads the
+// file from disk again instead of rethrowing the stored error.
 test.concurrent("--isolate: require() retries a cached module that threw", async () => {
   using dir = tempDir("isolate-require-retry", {
     // No CommonJS or ES module syntax on purpose: such files load through the
     // module registry.
-    "flaky.js": `
-      globalThis.evaluations = (globalThis.evaluations ?? 0) + 1;
-      if (globalThis.evaluations === 1) throw new Error("fail " + globalThis.evaluations);
-    `,
+    "flaky.js": `throw new Error("fail 1");`,
     "a.test.ts": `
       import { test, expect } from "bun:test";
+      import { writeFileSync } from "node:fs";
       import { isolatedModuleCacheSourceType } from "bun:internal-for-testing";
 
       test("second require() evaluates the module again", () => {
         const path = require.resolve("./flaky.js");
         expect(() => require("./flaky.js")).toThrow("fail 1");
-        expect(isolatedModuleCacheSourceType(path)).not.toBeNull();
+        expect(isolatedModuleCacheSourceType(path)).toBe("BunTranspiledModule");
+        writeFileSync(path, "globalThis.fixed = true;");
         require("./flaky.js");
-        expect(globalThis.evaluations).toBe(2);
+        expect(globalThis.fixed).toBe(true);
+        expect(isolatedModuleCacheSourceType(path)).toBe("BunTranspiledModule");
       });
     `,
   });

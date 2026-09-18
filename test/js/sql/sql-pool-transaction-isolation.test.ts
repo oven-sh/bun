@@ -131,10 +131,16 @@ const adapters: Array<{
 ];
 
 // Ways to hold a pool slot. `use` keeps running after the connection under it closed.
-const slotHolders: Array<{ name: string; hold: (sql: SQL, use: (handle: SQL) => Promise<void>) => Promise<void> }> = [
-  { name: "sql.begin() callback", hold: (sql, use) => sql.begin(use) },
+// A transaction rejects when its connection closes. A reservation has nothing to reject.
+const slotHolders: Array<{
+  name: string;
+  rejects: boolean;
+  hold: (sql: SQL, use: (handle: SQL) => Promise<void>) => Promise<void>;
+}> = [
+  { name: "sql.begin() callback", rejects: true, hold: (sql, use) => sql.begin(use) },
   {
     name: "sql.reserve() handle",
+    rejects: false,
     hold: async (sql, use) => {
       await using reserved = await sql.reserve();
       await use(reserved);
@@ -142,6 +148,7 @@ const slotHolders: Array<{ name: string; hold: (sql: SQL, use: (handle: SQL) => 
   },
   {
     name: "reserved.begin() callback",
+    rejects: true,
     hold: async (sql, use) => {
       await using reserved = await sql.reserve();
       await reserved.begin(use);
@@ -386,10 +393,43 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand, closed
     }
   });
 
+  // A graceful close() waits for the work the pool still counts. The abandoned transaction
+  // must not be part of it. Nothing is left to close, so close() settles in microtasks, and
+  // one turn of the event loop tells the two outcomes apart without a wait on time.
+  test("sql.close() does not wait for a sql.begin() callback that lost its connection", async () => {
+    const received: Received[] = [];
+    const { port, server } = await mockServer(received);
+    const sql = new SQL(options(port));
+    const callbackMayReturn = Promise.withResolvers<void>();
+    try {
+      let callbackReturned = false;
+      const abandoned = sql.begin(async tx => {
+        await tx.unsafe("SELECT 'KILL'").catch(() => {});
+        await callbackMayReturn.promise;
+        callbackReturned = true;
+      });
+      expect(
+        await abandoned.then(
+          () => null,
+          e => e?.code,
+        ),
+      ).toBe(closedCode);
+
+      const closedAfterCallbackReturned = sql.close().then(() => callbackReturned);
+      await new Promise<void>(resolve => setImmediate(resolve));
+      callbackMayReturn.resolve();
+      expect(await closedAfterCallbackReturned).toBe(false);
+    } finally {
+      callbackMayReturn.resolve();
+      await sql.close({ timeout: 0 }).catch(() => {});
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
+
   // The slot reconnects and serves other callers. A statement from the holder that lost
   // the connection must not reach the new one: it would run outside its transaction, or
   // inside the transaction of whoever has the slot by then.
-  test.each(slotHolders)("a $name that outlives its connection cannot query the next one", async ({ hold }) => {
+  test.each(slotHolders)("a $name that outlives its connection cannot query the next one", async holder => {
     const received: Received[] = [];
     const { port, server } = await mockServer(received);
     const sql = new SQL(options(port));
@@ -399,7 +439,7 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand, closed
     const stowaways = Promise.withResolvers<PromiseSettledResult<unknown>[]>();
     try {
       let holding = false;
-      const held = hold(sql, async handle => {
+      const holderSettled = holder.hold(sql, async handle => {
         holding = true;
         await handle.unsafe("SELECT 'KILL'").catch(() => {});
         connectionLost.resolve();
@@ -416,10 +456,15 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand, closed
         } catch (err) {
           stowaways.reject(err);
         }
-      }).catch(err => {
-        // begin() rejects when its connection closes. A rejection before `use` ran is a setup failure.
-        if (!holding) connectionLost.reject(err);
       });
+      const held = holderSettled.then(
+        () => "fulfilled",
+        err => {
+          // A rejection before `use` ran is a setup failure. Nothing else would end the wait below.
+          if (!holding) connectionLost.reject(err);
+          return err?.code;
+        },
+      );
 
       await connectionLost.promise;
       await sql.unsafe("SELECT 'reconnect'");
@@ -428,8 +473,8 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand, closed
       const outcomes = (await stowaways.promise).map(result =>
         result.status === "rejected" ? result.reason?.code : "sent",
       );
-      await held;
-      expect({ outcomes, received: received.filter(({ conn }) => conn === 1) }).toEqual({
+      expect({ held: await held, outcomes, received: received.filter(({ conn }) => conn === 1) }).toEqual({
+        held: holder.rejects ? closedCode : "fulfilled",
         outcomes: [closedCode, closedCode, closedCode],
         received: [{ conn: 1, sql: "SELECT 'reconnect'" }],
       });

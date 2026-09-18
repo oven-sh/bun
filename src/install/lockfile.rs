@@ -861,34 +861,42 @@ impl Lockfile {
         0
     }
 
-    /// Does the root or a workspace depend on package `id` directly?
-    pub(crate) fn is_workspace_declared_package(&self, id: PackageID) -> bool {
+    /// The root, the workspaces, and the `file:` packages they reach through `file:` packages only.
+    pub(crate) fn local_packages(&self) -> DynamicBitSet {
         let packages = self.packages.slice();
+        let package_resolutions = packages.items_resolution();
+        let resolution_lists = packages.items_resolutions();
         let resolutions = self.buffers.resolutions.as_slice();
-        for (pkg_id, res_list) in packages.items_resolutions().iter().enumerate() {
-            let tag = packages.items_resolution()[pkg_id].tag;
-            if tag != ResolutionTag::Workspace && tag != ResolutionTag::Root {
-                continue;
-            }
-            if res_list.get(resolutions).contains(&id) {
-                return true;
+
+        let mut local = bun_core::handle_oom(DynamicBitSet::init_empty(packages.len()));
+        let mut declarers: Vec<PackageID> = Vec::new();
+        for (pkg_id, resolution) in package_resolutions.iter().enumerate() {
+            if resolution.tag == ResolutionTag::Workspace || resolution.tag == ResolutionTag::Root {
+                local.set(pkg_id);
+                declarers.push(PackageID::try_from(pkg_id).expect("int cast"));
             }
         }
-        false
+        while let Some(declarer) = declarers.pop() {
+            for &pkg_id in resolution_lists[declarer as usize].get(resolutions) {
+                let Some(resolution) = package_resolutions.get(pkg_id as usize) else {
+                    continue;
+                };
+                if resolution.tag != ResolutionTag::Folder || local.is_set(pkg_id as usize) {
+                    continue;
+                }
+                local.set(pkg_id as usize);
+                declarers.push(pkg_id);
+            }
+        }
+        local
     }
 
-    /// Is dependency `id` declared by the root, a workspace, or a `file:` package
-    /// one of them depends on directly? Checked, not assumed: a migrated lockfile
-    /// can carry dependencies for a folder that a registry package shipped.
+    /// Is dependency `id` declared by one of `local_packages`?
     pub(crate) fn is_dependency_of_local_package(&self, id: DependencyID) -> bool {
         let Some(parent_id) = self.get_parent_pkg_of_dependency(id) else {
             return false;
         };
-        match self.packages.items_resolution()[parent_id as usize].tag {
-            ResolutionTag::Root | ResolutionTag::Workspace => true,
-            ResolutionTag::Folder => self.is_workspace_declared_package(parent_id),
-            _ => false,
-        }
+        self.local_packages().is_set(parent_id as usize)
     }
 
     /// May the folder path of dependency `id` leave its package directory? Yes
@@ -3365,7 +3373,7 @@ impl Lockfile {
             if resolution.tag == ResolutionTag::Npm {
                 return true;
             }
-            return self.declared_by_root_or_workspace(alias, resolution);
+            return self.declared_by_local_package(alias, resolution);
         }
 
         // Only allow default trusted dependencies for npm packages. Check the
@@ -3402,17 +3410,23 @@ impl Lockfile {
         url == canonical_url.as_slice()
     }
 
-    fn declared_by_root_or_workspace(&self, alias: &[u8], resolution: &Resolution) -> bool {
+    /// Does one of `local_packages` depend on `resolution` as `alias`? A `file:`
+    /// declarer only counts for a dependency that is itself in `local_packages`
+    /// and whose package name is `alias`.
+    fn declared_by_local_package(&self, alias: &[u8], resolution: &Resolution) -> bool {
         let buf = self.buffers.string_bytes.as_slice();
         let packages = self.packages.slice();
+        let names = packages.items_name();
         let resolutions = packages.items_resolution();
         let dependencies_lists = packages.items_dependencies();
-        for (pkg_resolution, dependencies) in resolutions.iter().zip(dependencies_lists.iter()) {
-            if pkg_resolution.tag != ResolutionTag::Workspace
-                && pkg_resolution.tag != ResolutionTag::Root
-            {
+        let local = self.local_packages();
+        for (pkg_id, dependencies) in dependencies_lists.iter().enumerate() {
+            if !local.is_set(pkg_id) {
                 continue;
             }
+            let declarer_tag = resolutions[pkg_id].tag;
+            let is_root_or_workspace =
+                declarer_tag == ResolutionTag::Root || declarer_tag == ResolutionTag::Workspace;
             for dep_id in dependencies.begin()..dependencies.end() {
                 let dep = &self.buffers.dependencies[dep_id as usize];
                 if dep.name.slice(buf) != alias {
@@ -3420,6 +3434,12 @@ impl Lockfile {
                 }
                 let package_id = self.buffers.resolutions[dep_id as usize];
                 if package_id == invalid_package_id || package_id as usize >= resolutions.len() {
+                    continue;
+                }
+                if !is_root_or_workspace
+                    && (!local.is_set(package_id as usize)
+                        || names[package_id as usize].slice(buf) != alias)
+                {
                     continue;
                 }
                 if resolutions[package_id as usize].eql(resolution, buf, buf) {

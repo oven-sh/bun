@@ -51,6 +51,11 @@ A curated list of popular npm packages with lifecycle scripts is allowed by defa
   (such as `file:`, `link:`, `git:`, or `github:` dependencies), you must explicitly add them to `trustedDependencies`
   to run their lifecycle scripts, even if the package name matches an entry in the default list. This prevents malicious
   packages from spoofing trusted package names through local file paths or git repositories.
+
+A `trustedDependencies` entry for a package from one of these sources applies only when your `package.json` or a
+workspace declares that dependency. The one exception is a `file:` directory that another `file:` directory of yours
+declares under the directory's own package name: the entry applies at any depth of such a chain.
+
 </Note>
 
 ### Behavior of the `trustedDependencies` field

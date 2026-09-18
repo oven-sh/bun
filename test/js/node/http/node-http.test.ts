@@ -1338,6 +1338,25 @@ describe("node:http", () => {
     await promise;
   });
 
+  test.skipIf(process.platform === "win32")(
+    "request to a missing socketPath emits 'socket' before 'error'",
+    async () => {
+      const socketPath = `${tmpdir()}/bun-missing-${Math.random().toString(32)}.sock`;
+      const events: string[] = [];
+      const err = await new Promise<NodeJS.ErrnoException>(resolve => {
+        const req = request({ socketPath, path: "/", agent: false }, res => res.resume());
+        req.on("socket", () => events.push("socket"));
+        req.on("error", e => {
+          events.push("error:" + (req.socket ? "with-socket" : "no-socket"));
+          resolve(e);
+        });
+        req.end();
+      });
+      expect(err.code).toBe("ENOENT");
+      expect(events).toEqual(["socket", "error:with-socket"]);
+    },
+  );
+
   test("should not decompress gzip, issue#4397", async () => {
     using server = Bun.serve({
       port: 0,

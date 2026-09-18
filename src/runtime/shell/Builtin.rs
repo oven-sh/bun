@@ -812,18 +812,27 @@ impl Builtin {
         use std::io::Write as _;
         let mut buf = Vec::new();
         let _ = buf.write_fmt(args);
-        if let Some(_safeguard) = interp.as_cmd(cmd).io.stderr.needs_io() {
+        if interp.as_cmd(cmd).io.stderr.needs_io().is_some() {
             // Only the `Fd` arm transitions state.
             interp.as_cmd_mut(cmd).state = CmdState::WaitingWriteErr;
-            let child = io_writer::ChildPtr::new(cmd, io_writer::WriterTag::Cmd);
-            // SAFETY: `OutKind::Fd` guaranteed by `needs_io()`.
-            if let OutKind::Fd(fd) = &interp.as_cmd(cmd).io.stderr {
-                return fd.writer.enqueue(child, fd.captured, &buf);
-            }
-            unreachable!()
         }
-        // No-IO path: append to the shell env's captured stderr and finish
-        // synchronously with exit 1 (Cmd::on_io_writer_chunk's behaviour).
+        if let Some(y) = Self::cmd_write_stderr(interp, cmd, &buf) {
+            return y;
+        }
+        // No-IO path: finish synchronously with exit 1
+        // (Cmd::on_io_writer_chunk's behaviour).
+        let parent = interp.as_cmd(cmd).base.parent;
+        interp.child_done(parent, cmd, 1)
+    }
+
+    /// Writes `buf` to the *Cmd's* `io.stderr`. `Some`: the write is
+    /// asynchronous and completes in `Cmd::on_io_writer_chunk`.
+    pub(crate) fn cmd_write_stderr(interp: &Interpreter, cmd: NodeId, buf: &[u8]) -> Option<Yield> {
+        if let OutKind::Fd(fd) = &interp.as_cmd(cmd).io.stderr {
+            let child = io_writer::ChildPtr::new(cmd, io_writer::WriterTag::Cmd);
+            return Some(fd.writer.enqueue(child, fd.captured, buf));
+        }
+        // No-IO path: append to the shell env's captured stderr.
         if let OutKind::Pipe = &interp.as_cmd(cmd).io.stderr {
             // SAFETY: single trampoline frame; no other borrow of the env's
             // (or its parent's) stderr buffer is live.
@@ -834,10 +843,9 @@ impl Builtin {
                     .shell_mut()
                     .buffered_stderr_mut()
             };
-            stderr.append_slice(&buf);
+            stderr.append_slice(buf);
         }
-        let parent = interp.as_cmd(cmd).base.parent;
-        interp.child_done(parent, cmd, 1)
+        None
     }
 
     /// Finish the builtin with `exit_code` and signal the owning Cmd.

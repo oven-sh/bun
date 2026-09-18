@@ -522,8 +522,8 @@ describe("bunshell", () => {
     );
   });
 
-  // The target keeps the bytes that fit. A command that would exit 0 exits 1
-  // and the shell reports the short write on its own stderr.
+  // The target keeps the bytes that fit. The shell reports the short write on
+  // its own stderr, and a command that would exit 0 exits 1.
   describe.concurrent("redirect into a Buffer that is too small", () => {
     const writeError = (argv0: string) => `${argv0}: write error: No space left on device\n`;
     // The shell runs a subprocess under the path that `which` resolves, so the report names that path.
@@ -603,13 +603,13 @@ describe("bunshell", () => {
       });
     });
 
-    test("builtin: its own failure is the only one reported", async () => {
+    test("builtin that also fails on its own", async () => {
       using dir = tempDir("shell-redirect-overflow", { "a-long-file-name.txt": "" });
       const buf = Buffer.alloc(4);
       const r = await $`ls a-long-file-name.txt missing > ${buf}`.cwd(String(dir)).quiet();
       expect({ written: buf.toString("latin1"), stderr: r.stderr.toString(), exitCode: r.exitCode }).toEqual({
         written: "a-lo",
-        stderr: "ls: missing: No such file or directory\n",
+        stderr: "ls: missing: No such file or directory\n" + writeError("ls"),
         exitCode: 1,
       });
     });
@@ -659,9 +659,34 @@ describe("bunshell", () => {
       const r = await $`${BUN} -e ${'process.stdout.write("hello world"); process.exitCode = 5'} > ${buf}`.quiet();
       expect({ written: buf.toString("latin1"), stderr: r.stderr.toString(), exitCode: r.exitCode }).toEqual({
         written: "hell",
-        stderr: "",
+        stderr: writeError(await resolvedBun()),
         exitCode: 5,
       });
+    });
+
+    test("subprocess that exits after the shell starts the report", async () => {
+      // A command that is only a command substitution has an exit code before
+      // it runs. So the Cmd finishes when the pipes close, and the process
+      // exit arrives while the report is still on its way to the stderr fd.
+      await using proc = Bun.spawn({
+        cmd: [
+          BUN,
+          "-e",
+          `import { $ } from "bun";
+           const resolved = (await $\`which \${process.execPath}\`.text()).trimEnd();
+           const buf = Buffer.alloc(4);
+           const r = await $\`$(echo \${process.execPath} -e 'process.stdout.write("hello-world")') > \${buf}\`.nothrow();
+           console.log(JSON.stringify({ resolved, written: buf.toString("latin1"), stderr: r.stderr.toString(), exitCode: r.exitCode }));`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const { resolved, ...result } = JSON.parse(stdout);
+      expect(stderr).toBe(writeError(resolved));
+      expect(result).toEqual({ written: "hell", stderr: writeError(resolved), exitCode: 1 });
+      expect(exitCode).toBe(0);
     });
   });
 

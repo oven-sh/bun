@@ -28,7 +28,8 @@ pub struct Cmd {
     pub(crate) exec: Exec,
     pub(crate) exit_code: Option<ExitCode>,
     /// A `> ${buf}` target was too small for the output of the builtin or the
-    /// subprocess. [`Cmd::next`] fails a command that would otherwise exit 0.
+    /// subprocess. [`Cmd::next`] reports it, and exits 1 where the command
+    /// would exit 0.
     pub(crate) redirect_overflow: bool,
 }
 
@@ -298,10 +299,18 @@ impl Cmd {
                 CmdState::WaitingWriteErr => return Yield::suspended(),
                 CmdState::Done => {
                     let me = interp.as_cmd_mut(this);
-                    let exit = me.exit_code.unwrap_or(0);
-                    if exit == 0 && core::mem::take(&mut me.redirect_overflow) {
-                        return Self::write_redirect_overflow_error(interp, this);
+                    if core::mem::take(&mut me.redirect_overflow) {
+                        if me.exit_code.unwrap_or(0) == 0 {
+                            me.exit_code = Some(1);
+                        }
+                        // An asynchronous write comes back here through
+                        // `on_io_writer_chunk`, with the flag cleared.
+                        if let Some(y) = Self::write_redirect_overflow_error(interp, this) {
+                            return y;
+                        }
                     }
+                    let me = interp.as_cmd(this);
+                    let exit = me.exit_code.unwrap_or(0);
                     let parent = me.base.parent;
                     return interp.child_done(parent, this, exit);
                 }
@@ -309,34 +318,32 @@ impl Cmd {
         }
     }
 
-    /// Reports the overflow like a command whose stdout is a full device, then
-    /// exits 1.
-    fn write_redirect_overflow_error(interp: &Interpreter, this: NodeId) -> Yield {
-        let argv0: Vec<u8> = interp
+    /// Reports the overflow like a command whose stdout is a full device.
+    fn write_redirect_overflow_error(interp: &Interpreter, this: NodeId) -> Option<Yield> {
+        let mut message: Vec<u8> = interp
             .as_cmd(this)
             .args
             .first()
-            .map(|a| a.strip_suffix(&[0]).unwrap_or(a).to_vec())
+            .map(|argv0| argv0.strip_suffix(&[0]).unwrap_or(argv0).to_vec())
             .unwrap_or_default();
-        Builtin::cmd_write_failing_error(
-            interp,
-            this,
-            format_args!(
-                "{}: write error: No space left on device\n",
-                bstr::BStr::new(&argv0)
-            ),
-        )
+        message.extend_from_slice(b": write error: No space left on device\n");
+        Builtin::cmd_write_stderr(interp, this, &message)
     }
 
-    /// IOWriter completion callback for the error message written in
-    /// `WaitingWriteErr`: throw on write failure, otherwise finish the Cmd
-    /// with exit code 1.
+    /// IOWriter completion callback for a message on the Cmd's stderr. For the
+    /// one written in `WaitingWriteErr`: throw on write failure, otherwise
+    /// finish the Cmd with exit code 1.
     pub(crate) fn on_io_writer_chunk(
         interp: &Interpreter,
         this: NodeId,
         _written: usize,
         e: Option<bun_sys::SystemError>,
     ) -> Yield {
+        // The overflow report of a finished command: `next` ends the command
+        // with its exit code, whether or not stderr took the message.
+        if matches!(interp.as_cmd(this).state, CmdState::Done) {
+            return Yield::Next(this);
+        }
         if let Some(err) = e {
             interp.throw(crate::shell::ShellErr::from_system(err));
             return Yield::Failed(this);

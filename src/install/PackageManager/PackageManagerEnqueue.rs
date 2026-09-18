@@ -21,7 +21,7 @@ use crate::dependency;
 use crate::dependency::{DependencyExt as _, TagExt as _, VersionExt as _};
 use crate::lockfile::PackageIndexEntry;
 use crate::lockfile::package::Package;
-use crate::lockfile::tree::is_filtered_dependency_or_workspace;
+use crate::lockfile::tree::placed_packages;
 use crate::lockfile_real as Lockfile;
 use crate::package_manager_real::{
     self, FailFn, PackageManager, SuccessFn, TaskCallbackList, WorkspaceFilter,
@@ -417,58 +417,45 @@ pub(crate) fn report_offline_misses(
     let this: &PackageManager = this;
     let lockfile: &Lockfile::Lockfile = &this.lockfile;
     let dependencies = lockfile.buffers.dependencies.as_slice();
-    let resolutions = lockfile.buffers.resolutions.as_slice();
 
     let package_count = lockfile.packages.len();
     let mut missed = DynamicBitSet::init_empty(package_count).unwrap_or_oom();
+    let mut slot_is_required = DynamicBitSet::init_empty(package_count).unwrap_or_oom();
     for miss in &misses {
         missed.set(miss.package_id as usize);
-    }
-
-    // Stop at a missed package: it is not installed, so nothing is required through it.
-    let mut required = DynamicBitSet::init_empty(package_count).unwrap_or_oom();
-    let mut visited = DynamicBitSet::init_empty(package_count).unwrap_or_oom();
-    let package_dependencies = lockfile.packages.items_dependencies();
-    let package_metas = lockfile.packages.items_meta();
-    let mut stack: Vec<PackageID> = vec![0];
-    visited.set(0);
-    while let Some(parent_id) = stack.pop() {
-        let slice = package_dependencies[parent_id as usize];
-        for dependency_id in slice.begin()..slice.end() {
-            let package_id = resolutions[dependency_id as usize];
-            if package_id as usize >= package_count
-                // `is_filtered_dependency_or_workspace` tests this too, and prints it with --verbose.
-                || package_metas[package_id as usize].is_disabled(this.options.cpu, this.options.os)
-                || is_filtered_dependency_or_workspace(
-                    dependency_id,
-                    parent_id,
-                    workspace_filters,
-                    install_root_dependencies,
-                    this,
-                    lockfile,
-                    resolutions,
-                )
-                || (parent_id == 0
-                    && packages_to_install.is_some_and(|packages| !packages.contains(&package_id)))
-            {
-                continue;
-            }
-            if missed.is_set(package_id as usize) {
-                let behavior = dependencies[dependency_id as usize].behavior;
-                if !behavior.is_optional() && !behavior.is_optional_peer() {
-                    required.set(package_id as usize);
-                }
-            } else if !visited.is_set(package_id as usize) {
-                visited.set(package_id as usize);
-                stack.push(package_id);
-            }
+        if dependencies[miss.dependency_id as usize]
+            .behavior
+            .is_required()
+        {
+            slot_is_required.set(miss.package_id as usize);
         }
     }
 
+    let walk = |not_installed: Option<&DynamicBitSet>| {
+        placed_packages(
+            lockfile,
+            this,
+            workspace_filters,
+            install_root_dependencies,
+            packages_to_install,
+            not_installed,
+        )
+        .unwrap_or_oom()
+    };
+    let installed = walk(Some(&missed));
+    let everything = walk(None);
+
     let mut reported = 0;
     for &miss in &misses {
-        if required.is_set(miss.package_id as usize) {
-            required.unset(miss.package_id as usize);
+        let package_id = miss.package_id as usize;
+        if !missed.is_set(package_id) {
+            continue;
+        }
+        missed.unset(package_id);
+        // A miss that the walk does not reach at all is judged as before, by the dependency of its slot.
+        let is_error = installed.required.is_set(package_id)
+            || (!everything.seen.is_set(package_id) && slot_is_required.is_set(package_id));
+        if is_error {
             reported += 1;
             log_offline_miss(this, miss);
         }

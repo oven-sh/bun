@@ -372,6 +372,21 @@ describe.concurrent("--offline with an optional dependency that is not in the ca
       expect(code).toBe(0);
     });
 
+    it("skips an optional dependency that has no dependencies", async () => {
+      const { err, code, ...result } = await installOfflineAfterOnline(linker, {
+        manifest: { dependencies: { "uses-leaf": "1.0.0" }, optionalDependencies: { plain: "1.0.0" } },
+        evict: cacheEntriesOf("plain"),
+      });
+      expect(err).not.toContain("error:");
+      expect(result).toEqual({
+        installed: ["leaf", "uses-leaf"],
+        requests: [],
+        lockfileChanged: false,
+        versions: {},
+      });
+      expect(code).toBe(0);
+    });
+
     it("does not report what is below the optional dependency", async () => {
       const { err, code, ...result } = await installOfflineAfterOnline(linker, {
         manifest: { dependencies: { host: "1.0.0" } },
@@ -433,6 +448,21 @@ describe.concurrent("--offline with an optional dependency that is not in the ca
         evict: cacheEntriesOf(...evict),
       });
       expect(r.err).toContain(`error: --offline: "${missing}" is not in the cache`);
+      expect(r.requests).toEqual([]);
+      expect(r.code).toBe(1);
+    });
+
+    it("names every required package that an empty cache lacks", async () => {
+      const r = await installOfflineAfterOnline(linker, {
+        manifest: { dependencies: { host: "1.0.0", "uses-leaf": "1.0.0" } },
+        evict: () => true,
+      });
+      // native is optional for host. leaf is below it, but uses-leaf requires leaf too.
+      expect(Array.from(r.err.matchAll(/--offline: "(.+)" is not in the cache/g), match => match[1]).sort()).toEqual([
+        "host",
+        "leaf",
+        "uses-leaf",
+      ]);
       expect(r.requests).toEqual([]);
       expect(r.code).toBe(1);
     });

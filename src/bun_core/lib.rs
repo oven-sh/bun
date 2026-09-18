@@ -2063,9 +2063,18 @@ pub(crate) mod strings_impl {
                 crate::strings::index_of_char_usize(rest, b'\n').unwrap_or(rest.len()),
             ));
         }
-        // skip the separator, or the closing quote of a quoted key
-        if !whitespace || text[offset] == b'=' || text[offset] == b':' {
-            offset += 1;
+        match text[offset] {
+            // a quote here is the value, unless a separator follows it (quoted key)
+            b'"' | b'\'' => {
+                let mut sep = offset + 1;
+                while sep < text.len() && text[sep].is_ascii_whitespace() {
+                    sep += 1;
+                }
+                if sep < text.len() && matches!(text[sep], b'=' | b':') {
+                    offset = sep + 1;
+                }
+            }
+            _ => offset += 1,
         }
 
         let mut end = offset;

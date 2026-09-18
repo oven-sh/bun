@@ -2070,7 +2070,7 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                                 }
 
                                 // TOML quoted key: `"token" = "..."`
-                                if RedactedKeywords::has(inner) {
+                                if RedactedKeywords::has(inner.trim_ascii()) {
                                     should_redact_value = true;
                                     break 'try_redact;
                                 }

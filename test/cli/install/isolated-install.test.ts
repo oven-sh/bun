@@ -678,6 +678,134 @@ describe("isolated workspaces", () => {
   });
 });
 
+// https://github.com/oven-sh/bun/issues/43221
+describe.each(["isolated", "hoisted"] as const)(
+  "failed script of a workspace linked only as an optional dependency (%s)",
+  linker => {
+    test("keeps the workspace folder and its link", async () => {
+      const { packageDir } = await registry.createTestDir({
+        bunfigOpts: { linker },
+        files: {
+          "package.json": JSON.stringify({
+            name: "monorepo-optional-workspace",
+            workspaces: ["packages/*"],
+          }),
+          "packages/x/package.json": JSON.stringify({
+            name: "x",
+            version: "1.0.0",
+            scripts: { postinstall: "exit 1" },
+          }),
+          "packages/x/src.txt": "keep me",
+          "packages/y/package.json": JSON.stringify({
+            name: "y",
+            version: "1.0.0",
+            optionalDependencies: { x: "workspace:*" },
+          }),
+        },
+      });
+
+      await using proc = spawn({
+        cmd: [bunExe(), "install", "--filter", "y", "--verbose"],
+        cwd: packageDir,
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).not.toContain("error:");
+      expect(stderr).toContain("skipping optional dependency 'x' due to failed 'postinstall' script");
+      expect(stdout).toContain("bun install v1.");
+      expect(exitCode).toBe(0);
+
+      const link =
+        linker === "isolated"
+          ? join(packageDir, "packages", "y", "node_modules", "x")
+          : join(packageDir, "node_modules", "x");
+      expect(
+        await Promise.all([
+          readdirSorted(join(packageDir, "packages")),
+          file(join(packageDir, "packages", "x", "src.txt")).text(),
+          file(join(packageDir, "packages", "x", "package.json")).json(),
+          lstatSync(link).isSymbolicLink(),
+          file(join(link, "src.txt")).text(),
+        ]),
+      ).toEqual([
+        ["x", "y"],
+        "keep me",
+        { name: "x", version: "1.0.0", scripts: { postinstall: "exit 1" } },
+        true,
+        "keep me",
+      ]);
+    });
+  },
+);
+
+// The isolated linker does not run the scripts of a `link:` package, so only the hoisted linker is covered.
+test("failed script of a bun link target linked only as an optional dependency keeps the target and its links", async () => {
+  const { packageDir } = await registry.createTestDir({
+    bunfigOpts: { linker: "hoisted" },
+    files: {
+      "package.json": JSON.stringify({
+        name: "optional-link-dep",
+        optionalDependencies: { x: "link:x" },
+        trustedDependencies: ["x"],
+      }),
+      "linked/x/package.json": JSON.stringify({
+        name: "x",
+        version: "1.0.0",
+        scripts: { postinstall: "exit 1" },
+      }),
+      "linked/x/src.txt": "keep me",
+    },
+  });
+  // `bun link` registers in the global link dir. Keep it per test.
+  const globalDir = join(packageDir, ".bun-install");
+  const env = { ...bunEnv, BUN_INSTALL: globalDir, BUN_INSTALL_GLOBAL_DIR: join(globalDir, "install", "global") };
+
+  await using link = spawn({
+    cmd: [bunExe(), "link"],
+    cwd: join(packageDir, "linked", "x"),
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [linkStdout, linkStderr, linkExitCode] = await Promise.all([
+    link.stdout.text(),
+    link.stderr.text(),
+    link.exited,
+  ]);
+  expect(linkStderr).not.toContain("error:");
+  expect(linkStdout).toContain('Success! Registered "x"');
+  expect(linkExitCode).toBe(0);
+
+  await using proc = spawn({
+    cmd: [bunExe(), "install", "--verbose"],
+    cwd: packageDir,
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).not.toContain("error:");
+  expect(stderr).toContain("skipping optional dependency 'x' due to failed 'postinstall' script");
+  expect(stdout).toContain("bun install v1.");
+  expect(exitCode).toBe(0);
+
+  const globalLink = join(packageDir, ".bun-install", "install", "global", "node_modules", "x");
+  const projectLink = join(packageDir, "node_modules", "x");
+  expect(
+    await Promise.all([
+      file(join(packageDir, "linked", "x", "src.txt")).text(),
+      lstatSync(globalLink).isSymbolicLink(),
+      file(join(globalLink, "src.txt")).text(),
+      lstatSync(projectLink).isSymbolicLink(),
+      file(join(projectLink, "src.txt")).text(),
+    ]),
+  ).toEqual(["keep me", true, "keep me", true, "keep me"]);
+});
+
 describe("optional peers", () => {
   const tests = [
     // non-optional versions

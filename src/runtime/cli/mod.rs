@@ -1835,8 +1835,9 @@ Then select \"React\" from the list of frameworks.\n"
         // if template_name is "next" — redirect to next-app.
         if template_name == b"next" {
             pretty_errorln!(
-                "<yellow>warn: No template <b>create-next<r> found.\n\
-To create a project with the official Next.js scaffolding tool, run\n\
+                "\
+<yellow>warn: No template <b>create-next<r> found.
+To create a project with the official Next.js scaffolding tool, run
   <b>bun create next-app <cyan>[destination]<r>"
             );
             Global::exit(1);

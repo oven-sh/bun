@@ -909,10 +909,9 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         // `framework` iter does not lock `*dev`.
         // SAFETY: `dev_ptr` is the live `Box<DevServer>` heap address; `framework`
         // is read-only here and disjoint from the fields mutated in the loop body.
-        for (i, fsr) in unsafe { &(*dev_ptr).framework }
+        for fsr in unsafe { &(*dev_ptr).framework }
             .file_system_router_types
             .iter()
-            .enumerate()
         {
             let mut buf = paths::path_buffer_pool::get();
             let joined_root = paths::resolve_path::join_abs_string_buf::<paths::platform::Auto>(
@@ -936,6 +935,9 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
                 incremental_graph::RouteKind::Route,
             )?;
 
+            // Types with a missing root were skipped above, so this is not the config index.
+            let type_index =
+                framework_router::TypeIndex::init(u8::try_from(types.len()).expect("int cast"));
             types.push(framework_router::Type {
                 abs_root: strings::without_trailing_slash(entry.abs_path).into(),
                 ignore_underscores: fsr.ignore_underscores,
@@ -968,7 +970,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
             unsafe { &mut (*dev_ptr).route_lookup }.put(
                 server_file,
                 RouteIndexAndRecurseFlag::new(
-                    framework_router::RouteIndex::init(u32::try_from(i).expect("int cast")),
+                    framework_router::Type::root_route_index(type_index),
                     true,
                 ),
             )?;

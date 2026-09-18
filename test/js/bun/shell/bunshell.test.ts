@@ -718,6 +718,26 @@ describe("bunshell", () => {
       .stdout("\n/Documents\n")
       .runAsTest("empty $HOME or $USERPROFILE");
 
+    test.skipIf(isWindows)("unset $HOME falls back to the passwd home like os.homedir()", async () => {
+      const env: Record<string, string | undefined> = { ...bunEnv };
+      delete env.HOME;
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const { $ } = Bun; console.log(JSON.stringify([require("os").homedir(), (await $\`echo ~ a ~/x\`.text()).trim()]))`,
+        ],
+        env,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      const [home, expanded] = JSON.parse(stdout);
+      expect(home).not.toBe("");
+      expect(expanded).toBe(`${home} a ${home}/x`);
+      expect(exitCode).toBe(0);
+    });
+
     describe("modified $HOME or $USERPROFILE", async () => {
       TestBuilder.command`HOME=lmao USERPROFILE=lmao && echo ~`.stdout("lmao\n").runAsTest("1");
 

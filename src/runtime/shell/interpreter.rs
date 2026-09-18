@@ -2159,25 +2159,34 @@ impl ShellExecEnv {
     }
 
     /// Looks up `$HOME` (`$USERPROFILE` on Windows) in `shell_env` first, then
-    /// `export_env`. Falls back to `""` (or `/data/local/tmp` on Android) so
-    /// `cd` with no args / `~` expansion never sees a null.
-    pub(crate) fn get_homedir(&self) -> crate::shell::env_str::EnvStr {
+    /// `export_env`.
+    pub(crate) fn get_home_env(&self) -> Option<crate::shell::env_str::EnvStr> {
         use crate::shell::env_str::EnvStr;
         let key = if cfg!(windows) {
             EnvStr::init_slice(b"USERPROFILE")
         } else {
             EnvStr::init_slice(b"HOME")
         };
-        self.shell_env
-            .get(key)
-            .or_else(|| self.export_env.get(key))
-            .unwrap_or_else(|| {
-                EnvStr::init_slice(if bun_core::env::IS_ANDROID {
-                    b"/data/local/tmp"
-                } else {
-                    b""
-                })
-            })
+        self.shell_env.get(key).or_else(|| self.export_env.get(key))
+    }
+
+    /// The home directory for `~` expansion: [`Self::get_home_env`], then the
+    /// passwd entry (what `os.homedir()` does). Falls back to `""` (or
+    /// `/data/local/tmp` on Android) so expansion never sees a null.
+    pub(crate) fn get_homedir(&self) -> crate::shell::env_str::EnvStr {
+        use crate::shell::env_str::EnvStr;
+        if let Some(home) = self.get_home_env() {
+            return home;
+        }
+        #[cfg(unix)]
+        if let Ok(Some(dir)) = bun_sys::os::passwd_home_dir() {
+            return EnvStr::init_ref_counted(dir.into_boxed_slice());
+        }
+        EnvStr::init_slice(if bun_core::env::IS_ANDROID {
+            b"/data/local/tmp"
+        } else {
+            b""
+        })
     }
 }
 

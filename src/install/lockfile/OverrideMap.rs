@@ -68,8 +68,7 @@ fn cmp_range_text(l: &ScopedOverride, r: &ScopedOverride, buf: &[u8]) -> Orderin
     })
 }
 
-/// dependency id -> owning package id, filled lazily as packages are appended. A package gets new rows when the folder
-/// resolver reads its package.json again, so a lookup trusts an entry only while that package still holds the row.
+/// dependency id -> owning package id, filled lazily. Checked on use: the folder resolver replaces a package's rows.
 #[derive(Default)]
 struct OwnerIndex {
     by_dep: Vec<PackageID>,

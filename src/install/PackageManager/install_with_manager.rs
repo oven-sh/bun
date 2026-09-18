@@ -607,7 +607,7 @@ pub fn install_with_manager(
     let mut named = NamedUpdates::default();
     let mut unsatisfied: Vec<(DependencyID, PackageID)> = Vec::new();
     if !needs_new_lockfile {
-        // Found while every row is still bound. `bun update <name>` and `bun audit --fix` take the rows they plan first.
+        // Found while every row is bound: `bun update <name>` and `bun audit --fix` take the rows they plan first.
         unsatisfied = unsatisfied_rows(&manager.lockfile);
         if named_update {
             named = enqueue_named_updates(
@@ -721,8 +721,7 @@ pub fn install_with_manager(
         super::package_json_write_back::edit_after_resolve(manager)?;
 
         if manager.options.security_scanner.is_some() {
-            // `bun add` and `bun update <name>` scan what the command reaches, so the packages that the rows above
-            // resolved to are seeds too. They stay out of `redirect_moved_edges`: no other row follows them.
+            // Seeds only, not `redirect_moved_edges` input: no other row follows what an unsatisfied row resolved to.
             let seeds = [named.moved.as_slice(), unsatisfied.as_slice()].concat();
             run_security_scanner(manager, ctx, original_cwd, &lockfile_before_clean, &seeds);
         }
@@ -1561,10 +1560,7 @@ fn enqueue_transitive(
     transitive.enqueue_tracked(manager)
 }
 
-/// Rows bound to an npm package that the row does not accept (another package, or a version outside its range), each
-/// with that package. bun.lock records where each package is placed, not which package each row chose, so loading
-/// binds a row to the nearest placement of its name. When two branches merge, or bun.lock is edited by hand, that
-/// placement can hold what another row put there.
+/// Rows that a merged or edited bun.lock binds to an npm package they do not accept, each with that package.
 fn unsatisfied_rows(lockfile: &Lockfile) -> Vec<(DependencyID, PackageID)> {
     let buf = lockfile.buffers.string_bytes.as_slice();
     let dependencies = lockfile.buffers.dependencies.as_slice();
@@ -1588,7 +1584,7 @@ fn unsatisfied_rows(lockfile: &Lockfile) -> Vec<(DependencyID, PackageID)> {
                 continue;
             }
             let dep = &dependencies[dep_id as usize];
-            // A peer binds to the highest version present when none satisfies it. A bundled copy ships in its parent's tarball.
+            // A peer binds to the highest version present when none fits. A bundled copy ships in its parent's tarball.
             if dep.behavior.is_peer() || dep.behavior.is_bundled() {
                 continue;
             }
@@ -1621,8 +1617,7 @@ fn unsatisfied_rows(lockfile: &Lockfile) -> Vec<(DependencyID, PackageID)> {
                 continue;
             }
 
-            // One owner can list a name in two groups. Both rows share one folder, and the hoister gives it to the row
-            // it sorts first.
+            // Two rows of one owner with one name share a folder, and the hoister gives it to the row it sorts first.
             let shares_a_folder = (slice.begin()..slice.end()).any(|sibling_id| {
                 let sibling = &dependencies[sibling_id as usize];
                 sibling.name_hash == dep.name_hash
@@ -1633,8 +1628,7 @@ fn unsatisfied_rows(lockfile: &Lockfile) -> Vec<(DependencyID, PackageID)> {
                 continue;
             }
 
-            // A plain row resolves to what an `npm:` alias of its name asks for when the alias fits its range. The
-            // alias is a row or a catalog entry (an override is the requested range above).
+            // A plain row can resolve through an `npm:` alias of its name, held by a row or a catalog entry.
             if dep.version.tag == DependencyVersionTag::Npm && !dep.version.npm().is_alias {
                 let aliases = aliases.get_or_insert_with(|| npm_aliases(lockfile));
                 let first = aliases.partition_point(|&(name_hash, _)| name_hash < dep.name_hash);
@@ -1692,8 +1686,7 @@ fn npm_aliases(lockfile: &Lockfile) -> Vec<(PackageNameHash, &DependencyVersion)
     aliases
 }
 
-/// Resolves each row again, the way the differ does for a row whose range changed in package.json. A row that another
-/// pass took since the scan leaves `rows`.
+/// Resolves each row again. A row that another pass took since the scan leaves `rows`.
 #[cold]
 #[inline(never)]
 fn enqueue_unsatisfied_rows(

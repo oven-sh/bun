@@ -758,8 +758,7 @@ fn resolve_from_appended_task(
     Some(pkg_id)
 }
 
-/// A plain dependency resolves to what `aliased`, an `npm:` alias of its name, asks for when one end of a range of
-/// the alias satisfies its own range. `aliased` is always tag == Npm.
+/// Whether a plain dependency with range `group` resolves through `aliased`, an `npm:` alias of its name (tag == Npm).
 pub(crate) fn follows_npm_alias(
     group: &Semver::query::Group,
     aliased: &dependency::Version,

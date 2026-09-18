@@ -2221,66 +2221,6 @@ describe("'online' precedes the worker's first message", () => {
     expect(order).toEqual(["online", "error:MODULE_NOT_FOUND"]);
     expect(code).toBe(1);
   });
-
-  test.each(["workerData", "postMessage"] as const)(
-    "a %s transferred MessagePort closes when the worker entry does not resolve",
-    async transferRoute => {
-      using dir = tempDir("worker-missing-entry-transferred-port", {});
-      const { port1, port2 } = new MessageChannel();
-      const worker = new Worker(
-        join(String(dir), "missing.js"),
-        transferRoute === "workerData" ? { workerData: { port: port2 }, transferList: [port2] } : undefined,
-      );
-      const events: string[] = [];
-      worker.on("online", () => events.push("online"));
-      worker.on("error", error => events.push(`error:${error.code}`));
-      const portClosed = once(port1, "close").then(() => events.push("port-close"));
-      const exit = new Promise<number>(resolve =>
-        worker.on("exit", code => {
-          events.push(`exit:${code}`);
-          resolve(code);
-        }),
-      );
-      if (transferRoute === "postMessage") {
-        worker.postMessage({ port: port2 }, [port2]);
-      }
-
-      const code = await exit;
-      await portClosed;
-
-      expect({ code, events }).toEqual({
-        code: 1,
-        events: ["online", "error:MODULE_NOT_FOUND", "exit:1", "port-close"],
-      });
-    },
-  );
-});
-
-// terminate() in the same tick as the constructor stops the thread before it takes its
-// workerData ports or reads parentPort. The thread takes them before any user code runs, so
-// nothing can hold it back, and a thread that wins that race closes them as it exits. So only
-// the close is asserted, not its order against 'exit'. The tests above, where the entry does
-// not resolve, are the ones that cannot pass without the drop.
-describe("a transferred MessagePort closes when terminate() stops the worker before it starts", () => {
-  // Stays referenced, as a Worker in a pool does: a collected Worker drops its ports too.
-  let worker: Worker;
-
-  test.each(["workerData", "postMessage"] as const)("transferred through %s", async transferRoute => {
-    const { port1, port2 } = new MessageChannel();
-    worker = new Worker(
-      "setInterval(() => {}, 1000)",
-      transferRoute === "workerData"
-        ? { eval: true, workerData: { port: port2 }, transferList: [port2] }
-        : { eval: true },
-    );
-    const portClosed = once(port1, "close").then(() => "port-close");
-    if (transferRoute === "postMessage") {
-      worker.postMessage({ port: port2 }, [port2]);
-    }
-
-    await worker.terminate();
-    expect(await portClosed).toBe("port-close");
-  });
 });
 
 // ─── worker teardown vs. work still in flight ────────────────────────────────

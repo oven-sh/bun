@@ -282,7 +282,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_suspendThreadAndSignalForTesting, (JSC::JSGl
                 usleep(static_cast<useconds_t>(holdMilliseconds) * 1000);
                 bool moved = WTF::atomicLoad(&slots[0]) != before;
                 thread->resume(locker);
-                result = sendError ? 3 : moved ? 1 : 0;
+                result = sendError ? 3 : moved ? 1
+                                               : 0;
             }
         }
         WTF::atomicStore(&slots[1], result);

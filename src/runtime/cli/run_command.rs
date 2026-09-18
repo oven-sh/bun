@@ -217,19 +217,11 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         })
     }
 
-    /// The interpreter that `--filter`, `--parallel` and `--sequential` spawn
-    /// each script with: argv[0] and the arguments that go before the script.
-    /// `<sh> -c` for the system shell, `<bun> exec --no-env-file` for the Bun
-    /// shell. With the Bun shell no system shell is looked up, so
-    /// `--shell=bun` works on an image that has none.
-    ///
-    /// Windows always uses the Bun shell here: `cmd.exe /c <script>` as one
-    /// argument loses the quotes in the script.
-    ///
-    /// The envp the runner hands to the child is the whole environment the
-    /// script gets. `--no-env-file` stops the `bun exec` hop from loading the
-    /// package directory's `.env` files on top of it, as plain `bun run` and
-    /// `sh -c` never do.
+    /// argv[0] and the arguments before the script for the `--filter`,
+    /// `--parallel` and `--sequential` runners: `<sh> -c`, or
+    /// `<bun> exec --no-env-file` (the runner's envp is the whole script
+    /// environment). Windows always takes the Bun shell: `cmd.exe /c <script>`
+    /// loses the quotes in the script.
     pub(crate) fn script_shell_argv(
         use_system_shell: bool,
         path: &[u8],

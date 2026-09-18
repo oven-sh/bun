@@ -345,8 +345,6 @@ struct State<'a> {
     remaining_scripts: usize,
     max_label_len: usize,
     shell_bin: &'static bun::ZStr,
-    /// The arguments between `shell_bin` and the script: `-c` or
-    /// `exec --no-env-file`.
     shell_args: &'static [&'static core::ffi::CStr],
     aborted: bool,
     no_exit_on_error: bool,

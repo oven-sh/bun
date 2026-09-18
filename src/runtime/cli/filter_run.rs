@@ -320,8 +320,6 @@ struct State<'a> {
     last_lines_written: usize,
     pretty_output: bool,
     shell_bin: &'static ZStr, // intentionally leaked (process exits)
-    /// The arguments between `shell_bin` and the script: `-c` or
-    /// `exec --no-env-file`.
     shell_args: &'static [&'static core::ffi::CStr],
     aborted: bool,
     // Raw `*mut` — process-lifetime singleton owned

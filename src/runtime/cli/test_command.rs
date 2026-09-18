@@ -2866,7 +2866,7 @@ impl TestCommand {
         let repeat_count = reporter.repeat_count;
         let mut repeat_index: u32 = 0;
         // The first run that registered a test, and how many: (index, count).
-        // A later run that registers none gets a warning instead of silence.
+        // A later run that registers fewer gets a warning instead of silence.
         let mut first_run_with_tests: Option<(u32, u32)> = None;
         vm.on_unhandled_rejection_ctx = None;
         vm.on_unhandled_rejection = jest::on_unhandled_rejection::on_unhandled_rejection;
@@ -3044,11 +3044,13 @@ impl TestCommand {
                 None if tests_this_run > 0 => {
                     first_run_with_tests = Some((repeat_index, tests_this_run));
                 }
-                Some((first_index, first_tests)) if tests_this_run == 0 => {
+                Some((first_index, first_tests)) if tests_this_run < first_tests => {
                     reporter.jest.current_file.print_if_needed();
                     pretty_error!(
-                        "<r><yellow>warn<r>: {} registered 0 tests on run #{} (run #{} registered {}). A module that stays cached between runs registers its tests once.\n",
+                        "<r><yellow>warn<r>: {} registered {} test{} on run #{} (run #{} registered {}). A module that stays cached between runs registers its tests once.\n",
                         bstr::BStr::new(file_title),
+                        tests_this_run,
+                        if tests_this_run == 1 { "" } else { "s" },
                         repeat_index + 1,
                         first_index + 1,
                         first_tests,

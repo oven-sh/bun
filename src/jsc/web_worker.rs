@@ -205,7 +205,12 @@ pub fn join_child_workers(parent: &mut VirtualMachine) {
 /// `workerGlobalScopeDestroyed` task still runs on this thread's loop later
 /// and finds no thread left to join. `worker.terminate()` asks the same of
 /// a child, so a child a test already stopped is only waited for here.
+///
+/// Parent thread only: `child_workers` is touched on no other thread. As
+/// with `join()`, a child blocked in a native call is waited for as long as
+/// that call takes.
 pub fn terminate_and_join_child_workers(parent: &VirtualMachine) {
+    debug_assert!(core::ptr::eq(parent, VirtualMachine::get()));
     for &child in &parent.child_workers {
         WebWorker::request_termination(child);
         WebWorker::join(child);

@@ -1560,10 +1560,17 @@ static WORKER_COVERAGE_REPORTS: bun_threading::Guarded<Vec<CodeCoverageReport<'s
 /// # Safety
 /// `vm` is the live worker VM on its own thread; its JSC VM is alive.
 pub(crate) unsafe fn collect_worker_coverage(vm: *mut VirtualMachine) {
-    let Some(runner) = jest::Jest::runner() else {
+    let Some(runner) = jest::Jest::runner_ptr() else {
         return;
     };
-    let opts = &runner.test_options.coverage;
+    // `test_options` is a shared borrow of the CLI's options, set once
+    // before any test runs. Read through a raw pointer from this (worker)
+    // thread, as `BunTest__shouldGenerateCodeCoverage` does, so no `&mut
+    // TestRunner` aliases the main thread's.
+    // SAFETY: the runner outlives the test run, and `RUNNER` is cleared
+    // before the main thread tears down, so a worker that shuts down after
+    // that reads `None` above.
+    let opts: &CodeCoverageOptions = unsafe { &(*runner.as_ptr()).test_options.coverage };
     if !opts.enabled {
         return;
     }

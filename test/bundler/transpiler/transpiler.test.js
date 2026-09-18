@@ -5257,7 +5257,7 @@ describe.concurrent("minify.identifiers on an empty source or a data loader", ()
 });
 
 // The printer aborted the process on this input, so it runs in a subprocess.
-it('a data loader source whose only key is "default" is only `export default`', async () => {
+it.concurrent('a data loader source whose only key is "default" is only `export default`', async () => {
   const result = await bunRun([
     "-e",
     `const transpiler = new Bun.Transpiler({ minify: { whitespace: true } });

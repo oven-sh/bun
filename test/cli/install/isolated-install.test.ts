@@ -759,8 +759,9 @@ test("failed script of a bun link target linked only as an optional dependency k
       "linked/x/src.txt": "keep me",
     },
   });
-  // `bun link` registers in $BUN_INSTALL/install/global. Keep it per test.
-  const env = { ...bunEnv, BUN_INSTALL: join(packageDir, ".bun-install") };
+  // `bun link` registers in the global link dir. Keep it per test.
+  const globalDir = join(packageDir, ".bun-install");
+  const env = { ...bunEnv, BUN_INSTALL: globalDir, BUN_INSTALL_GLOBAL_DIR: join(globalDir, "install", "global") };
 
   await using link = spawn({
     cmd: [bunExe(), "link"],

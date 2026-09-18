@@ -2064,7 +2064,6 @@ describe.concurrent("bundler", () => {
         })()
       `,
     },
-    format: "iife",
     minifyIdentifiers: true,
     bundling: false,
     run: {
@@ -2652,7 +2651,6 @@ describe.concurrent("bundler", () => {
         b
       `,
     },
-    format: "iife",
     minifySyntax: true,
     minifyWhitespace: true,
     bundling: false,

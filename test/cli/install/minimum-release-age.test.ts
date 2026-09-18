@@ -2390,9 +2390,12 @@ describe("minimum-release-age", () => {
       using cache = tempDir("odd-publish-time-cache", {});
       const cacheDir = String(cache);
       // bun saves the manifest from a thread pool task and does not wait for it at exit.
-      do {
+      let cached = false;
+      for (let attempt = 0; attempt < 5 && !cached; attempt++) {
         await install({ [name]: "1.0.0" }, fiveDayGate, {}, { cacheDir });
-      } while (!readdirSync(cacheDir).some(file => file.endsWith(".npm")));
+        cached = readdirSync(cacheDir).some(file => file.endsWith(".npm"));
+      }
+      if (!cached) throw new Error(`5 installs of ${name}@1.0.0 left no .npm manifest in ${cacheDir}`);
       const requests = oddTimeManifestRequests.get(name);
 
       const { stderr, exitCode } = await install(

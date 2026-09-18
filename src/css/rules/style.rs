@@ -93,6 +93,9 @@ const MAX_PREFIX_EXPANSION_BYTES: usize = 64 << 20;
 
 impl<R> StyleRule<R> {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+        // With nesting compiled away, this rule prints inside a pass of its
+        // parent, and the parent's selectors in later siblings still need it.
+        let parent_pass = dest.vendor_prefix;
         if self.vendor_prefix.is_empty() {
             self.to_css_base(dest, true)?;
         } else {
@@ -152,7 +155,7 @@ impl<R> StyleRule<R> {
                 }
             }
 
-            dest.vendor_prefix = VendorPrefix::empty();
+            dest.vendor_prefix = parent_pass;
         }
         Ok(())
     }

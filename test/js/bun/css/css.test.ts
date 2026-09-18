@@ -5829,6 +5829,63 @@ describe("css tests", () => {
         safari: 14 << 16,
       },
     );
+    // With nesting compiled away, `.k` prints in its own prefix passes inside
+    // the last pass of `.p`. The sibling after it must print in that pass of
+    // `.p` again, like a sibling before it.
+    prefix_test(
+      ".p:fullscreen { & .k:fullscreen { color: red } & .j { color: blue } }",
+      `
+      .p:-webkit-full-screen .j {
+        color: #00f;
+      }
+
+      .p:-webkit-full-screen .k:-webkit-full-screen {
+        color: red;
+      }
+
+      .p:fullscreen .k:fullscreen {
+        color: red;
+      }
+
+      .p:fullscreen .j {
+        color: #00f;
+      }
+      `,
+      {
+        safari: 14 << 16,
+      },
+    );
+    prefix_test(
+      ".p:fullscreen { & .k:fullscreen { inset-inline-start: 1px } & .j { color: blue } }",
+      `
+      .p:-webkit-full-screen .j {
+        color: #00f;
+      }
+
+      .p:-webkit-full-screen .k:-webkit-full-screen:not(:lang(${rtl_langs})) {
+        left: 1px;
+      }
+
+      .p:fullscreen .k:fullscreen:not(:lang(${rtl_langs})) {
+        left: 1px;
+      }
+
+      .p:-webkit-full-screen .k:-webkit-full-screen:lang(${rtl_langs}) {
+        right: 1px;
+      }
+
+      .p:fullscreen .k:fullscreen:lang(${rtl_langs}) {
+        right: 1px;
+      }
+
+      .p:fullscreen .j {
+        color: #00f;
+      }
+      `,
+      {
+        safari: 14 << 16,
+      },
+    );
 
     prefix_test(
       "a:dir(rtl)::after {color:red}",

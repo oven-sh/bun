@@ -50,6 +50,15 @@ fn debug_thread_stamp() -> u64 {
     ID.with(|id| *id)
 }
 
+/// What [`MimallocArena::usage`] measures.
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+pub struct ArenaUsage {
+    /// Bytes of the blocks in use.
+    pub allocated: usize,
+    /// Bytes of the blocks, in use or free, that the heap's pages have made available.
+    pub committed: usize,
+}
+
 /// A mimalloc heap. Owns a `mi_heap_t`; all allocations are bulk-freed on
 /// `Drop` via `mi_heap_destroy`.
 ///
@@ -277,6 +286,11 @@ impl MimallocArena {
     /// in this heap. Walks the heap's areas (not its individual blocks); cost
     /// is O(areas), which is cheap. Intended for GC `estimatedSize` reporting.
     pub fn allocated_bytes(&self) -> usize {
+        self.usage().allocated
+    }
+
+    /// One walk of the heap's areas: [`Self::allocated_bytes`] and what the pages hold for it.
+    pub fn usage(&self) -> ArenaUsage {
         extern "C" fn visit(
             _heap: *const mimalloc::Heap,
             area: *const mimalloc::mi_heap_area_t,
@@ -285,24 +299,25 @@ impl MimallocArena {
             arg: *mut c_void,
         ) -> bool {
             // SAFETY: mimalloc passes a valid `area` for each heap area when
-            // `visit_all_blocks == false`; `arg` is the `&mut usize` we passed.
+            // `visit_all_blocks == false`; `arg` is the `&mut ArenaUsage` we passed.
             unsafe {
-                let total = &mut *arg.cast::<usize>();
-                *total += (*area).used.saturating_mul((*area).full_block_size);
+                let usage = &mut *arg.cast::<ArenaUsage>();
+                usage.allocated += (*area).used.saturating_mul((*area).full_block_size);
+                usage.committed += (*area).committed;
             }
             true
         }
-        let mut total: usize = 0;
+        let mut usage = ArenaUsage::default();
         // SAFETY: `self.heap` is live; `visit` upholds the callback contract.
         unsafe {
             mimalloc::mi_heap_visit_blocks(
                 self.heap_ptr(),
                 false,
                 Some(visit),
-                (&raw mut total).cast(),
+                (&raw mut usage).cast(),
             );
         }
-        total
+        usage
     }
 
     /// `mi_heap_malloc[_aligned]` on this

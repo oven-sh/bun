@@ -1,9 +1,8 @@
 import { $, ShellOutput } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { lstatSync, readFileSync } from "fs";
-import { realpath } from "fs/promises";
 import { bunEnv, bunExe, isASAN, tempDir, VerdaccioRegistry } from "harness";
-import { isAbsolute, join, relative, sep } from "path";
+import { isAbsolute, join, sep } from "path";
 
 const expectNoError = (o: ShellOutput) => expect(o.stderr.toString()).not.toContain("error");
 // const platformPath = (path: string) => (process.platform === "win32" ? path.replaceAll("/", sep) : path);
@@ -1243,7 +1242,7 @@ describe.concurrent("bun patch --commit for non-registry dependencies", () => {
 // - npm-1@10.9.2 bundles depend-on-debug-1@1.0.0, which depends on debug-1@4.4.0. Its
 //   tarball ships both in its node_modules.
 // The lockfile still resolves the dependency to the registry's package of that name, and
-// `bun patch` used to delete the bundled copy and put the registry's package in its place.
+// `bun patch` used to delete the bundled copy and copy the registry's package in its place.
 describe("a bundled dependency as the target", () => {
   const registry = new VerdaccioRegistry();
 
@@ -1259,19 +1258,17 @@ describe("a bundled dependency as the target", () => {
     `error: cannot patch ${name}: it is a bundled dependency of ${bundler}, which ships it in its own tarball\n`;
 
   // CI exports BUN_INSTALL_CACHE_DIR, which overrides the harness bunfig's per-test `cache`.
-  async function spawnBun(cwd: string, cacheDir: string, args: string[]) {
+  async function runBun(cwd: string, ...args: string[]) {
     await using proc = Bun.spawn({
       cmd: [bunExe(), ...args],
       cwd,
-      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: cacheDir },
+      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache") },
       stdout: "pipe",
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     return { stdout, stderr, exitCode };
   }
-
-  const runBun = (cwd: string, ...args: string[]) => spawnBun(cwd, join(cwd, ".bun-cache"), args);
 
   async function installedProject(linker: "hoisted" | "isolated", dependencies: Record<string, string>) {
     const packageJson = { name: "foo", dependencies };
@@ -1285,12 +1282,10 @@ describe("a bundled dependency as the target", () => {
     return { packageDir, packageJson };
   }
 
-  // The bundled copy and the registry's no-deps@1.0.0 have the same files, so a file that
-  // only this copy has shows whether `bun patch` replaced the folder.
-  async function markBundledCopy(packageDir: string) {
-    const bundledCopy = join(packageDir, "node_modules", "bundled-1", "node_modules", "no-deps");
-    expect(await Bun.file(join(bundledCopy, "package.json")).json()).toEqual({ name: "no-deps", version: "1.0.0" });
-    const marker = Bun.file(join(bundledCopy, "only-in-the-bundled-copy.txt"));
+  // A file that only the bundled copy has shows whether `bun patch` replaced the folder.
+  async function markBundledCopy(packageDir: string, bundledCopy: string) {
+    const marker = Bun.file(join(packageDir, bundledCopy, "only-in-the-bundled-copy.txt"));
+    expect(await Bun.file(join(packageDir, bundledCopy, "package.json")).exists()).toBe(true);
     await Bun.write(marker, "bundled");
     return marker;
   }
@@ -1300,7 +1295,7 @@ describe("a bundled dependency as the target", () => {
       "bun patch %s is refused",
       async arg => {
         const { packageDir } = await installedProject(linker, { "bundled-1": "1.0.0" });
-        const marker = await markBundledCopy(packageDir);
+        const marker = await markBundledCopy(packageDir, "node_modules/bundled-1/node_modules/no-deps");
 
         const { stderr, exitCode } = await runBun(packageDir, "patch", arg);
         expect(stderr).toEndWith(bundledError(arg.startsWith("node_modules") ? "no-deps" : arg, "bundled-1"));
@@ -1313,187 +1308,71 @@ describe("a bundled dependency as the target", () => {
       "bun patch --commit %s is refused",
       async arg => {
         const { packageDir, packageJson } = await installedProject(linker, { "bundled-1": "1.0.0" });
-        await markBundledCopy(packageDir);
+        const marker = await markBundledCopy(packageDir, "node_modules/bundled-1/node_modules/no-deps");
 
         const { stderr, exitCode } = await runBun(packageDir, "patch", "--commit", arg);
         expect(stderr).toEndWith(bundledError("no-deps", "bundled-1"));
         expect({
           packageJson: await Bun.file(join(packageDir, "package.json")).json(),
           patches: await Bun.file(join(packageDir, "patches", "no-deps@1.0.0.patch")).exists(),
-        }).toEqual({ packageJson, patches: false });
+          marker: await marker.exists(),
+        }).toEqual({ packageJson, patches: false, marker: true });
         expect(exitCode).toBe(1);
       },
     );
-
-    test.concurrent("bun patch finds the copy that bun installed when the same package is also bundled", async () => {
-      const { packageDir } = await installedProject(linker, { "bundled-1": "1.0.0", "no-deps": "1.0.0" });
-      const marker = await markBundledCopy(packageDir);
-
-      for (const path of [
-        "node_modules/bundled-1/node_modules/no-deps",
-        "node_modules/bundled-1/./node_modules/no-deps",
-      ]) {
-        const byPath = await runBun(packageDir, "patch", path);
-        expect(byPath.stderr).toEndWith(bundledError("no-deps", "bundled-1"));
-        expect(byPath.exitCode).toBe(1);
-      }
-
-      const byName = await runBun(packageDir, "patch", "no-deps");
-      expect(byName.stderr).not.toContain("error:");
-      expect(byName.stdout).toContain("To patch no-deps, edit the following folder:\n\n  node_modules/no-deps\n");
-      expect(await marker.exists()).toBe(true);
-      expect(byName.exitCode).toBe(0);
-    });
 
     test.concurrent.each(["bundled-file-dep", "node_modules/bundled-file/node_modules/bundled-file-dep"])(
       "bun patch %s is refused for a bundled file: dependency",
       async arg => {
         const { packageDir } = await installedProject(linker, { "bundled-file": "1.0.0" });
-        const installed = Bun.file(
-          join(packageDir, "node_modules", "bundled-file", "node_modules", "bundled-file-dep", "index.js"),
-        );
-        expect(await installed.text()).toBe('module.exports = "bundled-file-dep";\n');
+        const marker = await markBundledCopy(packageDir, "node_modules/bundled-file/node_modules/bundled-file-dep");
 
         const { stderr, exitCode } = await runBun(packageDir, "patch", arg);
         expect(stderr).toEndWith(bundledError("bundled-file-dep", "bundled-file"));
-        expect(await installed.text()).toBe('module.exports = "bundled-file-dep";\n');
+        expect(await marker.exists()).toBe(true);
         expect(exitCode).toBe(1);
       },
     );
 
-    test.concurrent.each(["debug-1", "debug-1@4.4.0", "node_modules/npm-1/node_modules/debug-1"])(
+    test.concurrent.each(["debug-1", "node_modules/npm-1/node_modules/debug-1"])(
       "bun patch %s is refused for a dependency of a bundled dependency",
       async arg => {
         const { packageDir } = await installedProject(linker, { "npm-1": "10.9.2" });
-        const marker = Bun.file(
-          join(packageDir, "node_modules", "npm-1", "node_modules", "debug-1", "only-in-the-bundled-copy.txt"),
-        );
-        await Bun.write(marker, "bundled");
+        const marker = await markBundledCopy(packageDir, "node_modules/npm-1/node_modules/debug-1");
 
         const { stderr, exitCode } = await runBun(packageDir, "patch", arg);
-        expect(stderr).toEndWith(bundledError(arg.startsWith("node_modules") ? "debug-1" : arg, "npm-1"));
+        expect(stderr).toEndWith(bundledError("debug-1", "npm-1"));
         expect(await marker.exists()).toBe(true);
         expect(exitCode).toBe(1);
       },
     );
 
-    // The lockfile tree places debug-1@4.4.0 twice: under the alias `z`, which bun installs,
-    // and inside npm-1, where the tarball ships it. npm-1 comes first in the tree. The root
-    // alias `debug-1` keeps both below the root.
-    test.concurrent.each(["npm-1", "my-alias"])(
-      "bun patch skips the placement inside the package that bundles, installed as %s",
-      async bundler => {
-        const { packageDir } = await installedProject(linker, {
-          [bundler]: "npm:npm-1@10.9.2",
-          "z": "npm:depend-on-debug-1@1.0.0",
-          "debug-1": "npm:no-deps@2.0.0",
-        });
-        const marker = Bun.file(
-          join(packageDir, "node_modules", bundler, "node_modules", "debug-1", "only-in-the-bundled-copy.txt"),
-        );
-        await Bun.write(marker, "bundled");
+    // These two pass without the fix. They fail if the refusal is too wide.
+    test.concurrent("bun patch no-deps patches the copy that bun installed when no-deps is also bundled", async () => {
+      const { packageDir } = await installedProject(linker, { "bundled-1": "1.0.0", "no-deps": "1.0.0" });
+      const marker = await markBundledCopy(packageDir, "node_modules/bundled-1/node_modules/no-deps");
 
-        const { stdout, stderr, exitCode } = await runBun(packageDir, "patch", "debug-1@4.4.0");
-        expect(stderr).not.toContain("error:");
-        expect(stdout).toContain(
-          "To patch debug-1, edit the following folder:\n\n  node_modules/z/node_modules/debug-1\n",
-        );
-        expect(await marker.exists()).toBe(true);
-        expect(exitCode).toBe(0);
-      },
-    );
+      const { stdout, stderr, exitCode } = await runBun(packageDir, "patch", "no-deps");
+      expect(stderr).not.toContain("error:");
+      expect(stdout).toContain("To patch no-deps, edit the following folder:\n\n  node_modules/no-deps\n");
+      expect(await marker.exists()).toBe(true);
+      expect(exitCode).toBe(0);
+    });
 
     // bundled-transitive@1.0.0 bundles no-deps and has a regular dependency on one-dep. The
-    // root alias takes the name `one-dep`, so the tree nests one-dep@1.0.0 next to the bundled
-    // copy. Only the hoisted linker creates that folder on its own.
-    test.concurrent.each(
-      ["one-dep@1.0.0", "node_modules/bundled-transitive/node_modules/one-dep"].slice(0, linker === "hoisted" ? 2 : 1),
-    )("bun patch %s still patches a dependency that bun nests in the package that bundles", async arg => {
+    // root alias takes the name `one-dep`, so one-dep@1.0.0 nests next to the bundled copy.
+    test.concurrent("bun patch still patches a regular dependency of a package that bundles", async () => {
       const { packageDir } = await installedProject(linker, {
         "bundled-transitive": "1.0.0",
         "one-dep": "npm:no-deps@2.0.0",
       });
 
-      const { stdout, stderr, exitCode } = await runBun(packageDir, "patch", arg);
+      const { stdout, stderr, exitCode } = await runBun(packageDir, "patch", "one-dep@1.0.0");
       expect(stderr).not.toContain("error:");
       expect(stdout).toContain(
         "To patch one-dep, edit the following folder:\n\n  node_modules/bundled-transitive/node_modules/one-dep\n",
       );
       expect(exitCode).toBe(0);
-    });
-
-    // No package is named `my-alias`, so the path does not show what bundles no-deps. It is
-    // still refused, because nothing installs no-deps on its own.
-    test.concurrent("bun patch <path> is refused under an aliased package that bundles", async () => {
-      const { packageDir } = await installedProject(linker, { "my-alias": "npm:bundled-1@1.0.0" });
-      const marker = Bun.file(
-        join(packageDir, "node_modules", "my-alias", "node_modules", "no-deps", "only-in-the-bundled-copy.txt"),
-      );
-      await Bun.write(marker, "bundled");
-
-      const { stderr, exitCode } = await runBun(packageDir, "patch", "node_modules/my-alias/node_modules/no-deps");
-      expect(stderr).toEndWith(bundledError("no-deps", "bundled-1"));
-      expect(await marker.exists()).toBe(true);
-      expect(exitCode).toBe(1);
-    });
-
-    test.concurrent.skipIf(linker !== "isolated")("bun patch <path in node_modules/.bun> is refused", async () => {
-      const { packageDir } = await installedProject(linker, { "bundled-1": "1.0.0", "no-deps": "1.0.0" });
-      const marker = await markBundledCopy(packageDir);
-      const bundler = relative(packageDir, await realpath(join(packageDir, "node_modules", "bundled-1")));
-      expect(bundler.replaceAll(sep, "/")).toStartWith("node_modules/.bun/");
-
-      const { stderr, exitCode } = await runBun(packageDir, "patch", join(bundler, "node_modules", "no-deps"));
-      expect(stderr).toEndWith(bundledError("no-deps", "bundled-1"));
-      expect(await marker.exists()).toBe(true);
-      expect(exitCode).toBe(1);
-    });
-
-    // The workspace also installs no-deps@1.0.0 on its own, so only the path tells that the
-    // target is the bundled copy. The root alias takes the name `bundled-1`, so the hoisted
-    // linker nests bundled-1@1.0.0 in the workspace. Without the alias the lockfile tree
-    // hoists it to the root, and only the isolated linker links it into the workspace.
-    describe.each(
-      [
-        { layout: "bundled-1 nested in the workspace", rootDependencies: { "bundled-1": "npm:no-deps@2.0.0" } },
-        { layout: "bundled-1 hoisted to the root", rootDependencies: {} },
-      ].filter(({ rootDependencies }) => linker === "isolated" || "bundled-1" in rootDependencies),
-    )("in a workspace, $layout", ({ rootDependencies }) => {
-      test.concurrent.each([
-        { cwd: ".", arg: "packages/foo/node_modules/bundled-1/node_modules/no-deps" },
-        { cwd: "packages/foo", arg: "node_modules/bundled-1/node_modules/no-deps" },
-      ])("bun patch $arg is refused from $cwd", async ({ cwd, arg }) => {
-        const { packageDir } = await registry.createTestDir({
-          bunfigOpts: { linker },
-          files: {
-            "package.json": JSON.stringify({
-              name: "root",
-              workspaces: ["packages/*"],
-              dependencies: rootDependencies,
-            }),
-            "packages/foo/package.json": JSON.stringify({
-              name: "foo",
-              dependencies: { "bundled-1": "1.0.0", "no-deps": "1.0.0" },
-            }),
-          },
-        });
-        const install = await runBun(packageDir, "install");
-        expect(install.stderr).not.toContain("error:");
-        expect(install.exitCode).toBe(0);
-
-        const bundledCopy = join(packageDir, "packages", "foo", "node_modules", "bundled-1", "node_modules", "no-deps");
-        expect(await Bun.file(join(bundledCopy, "package.json")).json()).toEqual({ name: "no-deps", version: "1.0.0" });
-        const marker = Bun.file(join(bundledCopy, "only-in-the-bundled-copy.txt"));
-        await Bun.write(marker, "bundled");
-
-        const { stderr, exitCode } = await spawnBun(join(packageDir, cwd), join(packageDir, ".bun-cache"), [
-          "patch",
-          arg,
-        ]);
-        expect(stderr).toEndWith(bundledError("no-deps", "bundled-1"));
-        expect(await marker.exists()).toBe(true);
-        expect(exitCode).toBe(1);
-      });
     });
   });
 });

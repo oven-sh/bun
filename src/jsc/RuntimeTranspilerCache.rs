@@ -63,7 +63,8 @@ bun_core::declare_scope!(cache, visible);
 /// Version 33: The cached ESM record keeps the namespace of an import that a plugin
 /// `onResolve` rewrote (`namespace:path`). Older entries request the bare path, and
 /// the cache-HIT path reinstates #33904 for them.
-const EXPECTED_VERSION: u32 = 33;
+/// Version 34: A parameter decorator is a parse error when experimental decorators are off.
+const EXPECTED_VERSION: u32 = 34;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a

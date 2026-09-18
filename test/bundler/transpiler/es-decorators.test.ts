@@ -691,6 +691,121 @@ describe("ES Decorators", () => {
     });
   });
 
+  describe("parameter decorators", () => {
+    // Standard decorators have no parameter decorators. Only the TypeScript
+    // experimental decorator lowering runs them.
+    const source = `
+      const seen = [];
+      function dec(target, key, index) {
+        seen.push(String(key) + ":" + index);
+      }
+      class A {
+        constructor(@dec a) {}
+        m(@dec x) {}
+      }
+      console.log(seen.join(","));
+    `;
+    const tsError = "error: Parameter decorators only work when experimental decorators are enabled";
+    const tsNote = `note: You can enable experimental decorators by adding "experimentalDecorators": true to your "tsconfig.json" file. That option is not set for this file.`;
+    const jsError = "error: Parameter decorators are not allowed in JavaScript";
+
+    function count(haystack: string, needle: string) {
+      return haystack.split(needle).length - 1;
+    }
+
+    // tsconfig.json extends tsconfig.base.json. A flag that the child sets wins over the base.
+    function extendsChain(base: object, child: object) {
+      return {
+        "tsconfig.base.json": JSON.stringify({ compilerOptions: base }),
+        "tsconfig.json": JSON.stringify({ extends: "./tsconfig.base.json", compilerOptions: child }),
+      };
+    }
+
+    test.concurrent.each([
+      ["no tsconfig.json", {}],
+      ["a tsconfig.json without experimentalDecorators", { "tsconfig.json": JSON.stringify({ compilerOptions: {} }) }],
+      [
+        "a child config that clears experimentalDecorators",
+        extendsChain({ experimentalDecorators: true }, { experimentalDecorators: false }),
+      ],
+      [
+        "a child config that clears emitDecoratorMetadata",
+        extendsChain({ emitDecoratorMetadata: true }, { emitDecoratorMetadata: false }),
+      ],
+    ])("bun run rejects them in TypeScript with %s", async (_name, configs) => {
+      using dir = tempDir("es-dec-param-run", { ...configs, "test.ts": source });
+      const { stdout, stderr, exitCode } = await runIn(String(dir), ["test.ts"]);
+      // One error for each decorated parameter: the constructor's and the method's.
+      expect({ errors: count(stderr, tsError), notes: count(stderr, tsNote) }).toEqual({ errors: 2, notes: 2 });
+      expect(stdout).toBe("");
+      expect(exitCode).toBe(1);
+    });
+
+    test.concurrent("bun build rejects them in TypeScript", async () => {
+      using dir = tempDir("es-dec-param-build", {
+        "tsconfig.json": JSON.stringify({ compilerOptions: {} }),
+        "test.ts": source,
+      });
+      const { stdout, stderr, exitCode } = await runIn(String(dir), ["build", "test.ts"]);
+      expect({ errors: count(stderr, tsError), notes: count(stderr, tsNote) }).toEqual({ errors: 2, notes: 2 });
+      expect(stdout).toBe("");
+      expect(exitCode).toBe(1);
+    });
+
+    test.concurrent.each(["run", "build"])("bun %s rejects them in JavaScript", async command => {
+      using dir = tempDir("es-dec-param-js", {
+        // JavaScript files use standard decorators even with this flag.
+        "tsconfig.json": JSON.stringify({ compilerOptions: { experimentalDecorators: true } }),
+        "test.js": source,
+      });
+      const { stdout, stderr, exitCode } = await runIn(String(dir), [command, "test.js"]);
+      expect(count(stderr, jsError)).toBe(2);
+      expect(stderr).not.toContain("experimentalDecorators");
+      expect(stdout).toBe("");
+      expect(exitCode).toBe(1);
+    });
+
+    test.each([
+      ["ts", "Parameter decorators only work when experimental decorators are enabled"],
+      ["js", "Parameter decorators are not allowed in JavaScript"],
+    ] as const)("Bun.Transpiler rejects them with the %s loader", (loader, message) => {
+      const transpiler = new Bun.Transpiler({ loader });
+      let error: BuildMessage | undefined;
+      try {
+        transpiler.transformSync("class A {\n  m(a, @dec b) {}\n}");
+      } catch (e) {
+        error = e as BuildMessage;
+      }
+      // The error points at the "@".
+      expect({ message: error?.message, line: error?.position?.line, column: error?.position?.column }).toEqual({
+        message,
+        line: 2,
+        column: 8,
+      });
+    });
+
+    test.concurrent.each([
+      ["in tsconfig.json", { "tsconfig.json": JSON.stringify({ compilerOptions: { experimentalDecorators: true } }) }],
+      ["only in the child config of an extends chain", extendsChain({}, { experimentalDecorators: true })],
+      ["only in the base config of an extends chain", extendsChain({ experimentalDecorators: true }, {})],
+    ])("they still run with experimentalDecorators %s", async (_name, configs) => {
+      using dir = tempDir("es-dec-param-experimental", { ...configs, "test.ts": source });
+      const { stdout, stderr, exitCode } = await runIn(String(dir), ["test.ts"]);
+      expect(filterStderr(stderr)).toBe("");
+      expect(stdout).toBe("m:0,undefined:0\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("Bun.Transpiler still lowers them with experimentalDecorators", () => {
+      const transpiler = new Bun.Transpiler({
+        loader: "ts",
+        tsconfig: { compilerOptions: { experimentalDecorators: true } },
+      });
+      // __legacyDecorateParamTS(0, dec), once for the constructor and once for the method.
+      expect(count(transpiler.transformSync(source), "(0, dec)")).toBe(2);
+    });
+  });
+
   describe("extends clause", () => {
     test("decorator on class with extends", async () => {
       const { stdout, stderr, exitCode } = await runDecorator(`

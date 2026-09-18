@@ -11,6 +11,7 @@ import {
   minify_error_test_with_options,
   minify_test,
   minifyTestWithOptions as minify_test_with_options,
+  minifyTest,
   ParserFlags,
   ParserOptions,
   prefix_test,
@@ -5331,6 +5332,148 @@ describe("css tests", () => {
     );
     minify_test(":nth-last-child(1 of li.important) {width: 20px}", ":nth-last-child(1 of li.important){width:20px}");
     minify_test(":nth-last-child(1 of.important) {width: 20px}", ":nth-last-child(1 of .important){width:20px}");
+    // The of-list prints like the lists in :is() and :not().
+    minify_test(":nth-child(2 of .a > .b, .c ~ .d) {width: 20px}", ":nth-child(2 of .a>.b,.c~.d){width:20px}");
+    minify_test(':nth-child(2 of [foo="bar"]) {width: 20px}', ":nth-child(2 of [foo=bar]){width:20px}");
+    // The of-list is not a relative selector list, so a leading `:scope` stays.
+    minify_test(":nth-child(2 of :scope > .a) {width: 20px}", ":nth-child(2 of :scope>.a){width:20px}");
+    // Vendor prefix passes do not look inside the of-list, so `:is()` there stays `:is()`.
+    minify_test(
+      "input:-webkit-autofill:nth-child(1 of :is(.a > .b)) {width: 20px}",
+      "input:-webkit-autofill:nth-child(1 of :is(.a>.b)){width:20px}",
+    );
+    minify_test(
+      "input:nth-child(1 of :is(.a > .b)):-webkit-autofill {width: 20px}",
+      "input:nth-child(1 of :is(.a>.b)):-webkit-autofill{width:20px}",
+    );
+    minify_test(
+      "input:-webkit-autofill:nth-child(1 of :is(.a, .b)) {width: 20px}",
+      "input:-webkit-autofill:nth-child(1 of :is(.a,.b)){width:20px}",
+    );
+    minify_test(
+      "input:-moz-read-only:nth-child(1 of :-webkit-any(.a, .b)) {width: 20px}",
+      "input:-moz-read-only:nth-child(1 of :-webkit-any(.a,.b)){width:20px}",
+    );
+
+    describe("& inside a functional pseudo", () => {
+      // Chrome 95 has no CSS nesting, so `&` becomes the parent selector.
+      const chrome95 = { chrome: 95 << 16 };
+
+      // A nested selector that holds `&` only inside a functional pseudo contains the nesting
+      // selector: it gets no implicit `& ` prefix, and `@nest` accepts it.
+      describe.each([
+        [":nth-child(1 of &)", ":nth-child(1 of .foo)"],
+        [":nth-last-child(1 of &)", ":nth-last-child(1 of .foo)"],
+        ["::cue(&)", "::cue(.foo)"],
+        ["video::cue-region(& b)", "video::cue-region(.foo b)"],
+        [":host(&)", ":host(.foo)"],
+        ["::slotted(&)", "::slotted(.foo)"],
+        [":is(&,.x)", ":is(.foo,.x)"],
+        [":where(&)", ":where(.foo)"],
+        [":not(&)", ":not(.foo)"],
+        [":has(&)", ":has(.foo)"],
+      ])("%s", (selector, lowered) => {
+        test("nesting kept", () => {
+          expect(minifyTest(`.foo { ${selector} { color: red } }`, "")).toBe(`.foo{${selector}{color:red}}`);
+        });
+        test("nesting compiled away", () => {
+          expect(minifyTest(`.foo { ${selector} { color: red } }`, "", chrome95)).toBe(`${lowered}{color:red}`);
+        });
+        test("@nest", () => {
+          expect(minifyTest(`.foo { @nest ${selector} { color: red } }`, "", chrome95)).toBe(`${lowered}{color:red}`);
+        });
+      });
+
+      describe.each([
+        [".bar { &:nth-child(2 of & > .x) { color: red } }", ".bar:nth-child(2 of .bar>.x){color:red}"],
+        [".foo { :nth-last-child(2n of .x &) { color: red } }", ":nth-last-child(2n of .x .foo){color:red}"],
+        [".a, .b { :nth-child(1 of &) { color: red } }", ":nth-child(1 of :is(.a,.b)){color:red}"],
+        [".a { .b { :nth-child(1 of &) { color: red } } }", ":nth-child(1 of .a .b){color:red}"],
+        ["div { :nth-child(1 of &.x) { color: red } }", ":nth-child(1 of div.x){color:red}"],
+        [".foo { :nth-child(1 of :not(&)) { color: red } }", ":nth-child(1 of :not(.foo)){color:red}"],
+        [".foo { :is(:nth-child(1 of &), .x) { color: red } }", ":is(:nth-child(1 of .foo),.x){color:red}"],
+        // Without `&` the implicit `& ` prefix stays.
+        [".foo { :nth-child(1 of .x) { color: red } }", ".foo :nth-child(1 of .x){color:red}"],
+        [".foo { ::cue(b) { color: red } }", ".foo ::cue(b){color:red}"],
+        // At the top level `&` is `:scope`.
+        [":nth-child(1 of &) { color: red }", ":nth-child(1 of :scope){color:red}"],
+      ])("%s", (source, expected) => {
+        test("nesting compiled away", () => {
+          expect(minifyTest(source, "", chrome95)).toBe(expected);
+        });
+      });
+
+      // Safari 8 needs `:-webkit-full-screen`, so the parent rule prints once per prefix. The
+      // parent follows that prefix pass also when `&` sits in the of-list. `:is()` written in
+      // the of-list keeps its spelling.
+      describe.each([
+        [
+          ":fullscreen { :nth-child(1 of &) { color: red } }",
+          ":nth-child(1 of :-webkit-full-screen){color:red}:nth-child(1 of :fullscreen){color:red}",
+        ],
+        [
+          ":fullscreen { :nth-child(1 of & > :is(.a, .b)) { color: red } }",
+          ":nth-child(1 of :-webkit-full-screen>:is(.a,.b)){color:red}:nth-child(1 of :fullscreen>:is(.a,.b)){color:red}",
+        ],
+      ])("%s", (source, expected) => {
+        test("prefix passes", () => {
+          expect(minifyTest(source, "", { safari: 8 << 16 })).toBe(expected);
+        });
+      });
+
+      test("the parent's own :is() prints the same inside the of-list as outside it", () => {
+        const safari8 = { safari: 8 << 16 };
+        // Derived from a control on the same build, so this does not pin how `:is()` is downleveled.
+        const control = minifyTest(".p:is(.a, .b) { div { color: red } }", "", safari8);
+        expect(control).toContain(" div{");
+        expect(minifyTest(".p:is(.a, .b) { :nth-child(1 of &) { color: red } }", "", safari8)).toBe(
+          control.replace(/([^{}]+) div\{/g, ":nth-child(1 of $1){"),
+        );
+      });
+
+      test("each & in the of-list counts against the nesting expansion budget", () => {
+        const depth = 12;
+        const nested = "&:nth-child(1 of & &) {";
+        const source =
+          ".a {" +
+          Buffer.alloc(nested.length * depth, nested).toString() +
+          "color: red" +
+          Buffer.alloc(depth + 1, "}").toString();
+        expect(() => minifyTest(source, "", chrome95)).toThrow("Maximum nesting expansion exceeded");
+      });
+    });
+
+    // `&` inside the :host() or ::slotted() of a parent selector is the grandparent. It used to
+    // resolve to the parent itself, and the printer recursed until the stack overflowed, so
+    // this runs in a child process.
+    test("& inside :host() and ::slotted() of a parent selector", async () => {
+      const cases = [
+        [".a { :host(&) { color: red } }", ":host(.a){color:red}"],
+        [".a { :host(&) { .c { color: red } } }", ":host(.a) .c{color:red}"],
+        [".a { :host(&) { .c { &.d { color: red } } } }", ":host(.a) .c.d{color:red}"],
+        [".a { ::slotted(&) { color: red } }", "::slotted(.a){color:red}"],
+        [".a { ::slotted(&) { &:hover { color: red } } }", "::slotted(.a):hover{color:red}"],
+      ];
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const { minifyTest } = require("bun:internal-for-testing").cssInternals;
+const sources = ${JSON.stringify(cases.map(([source]) => source))};
+console.log(JSON.stringify(sources.map(source => minifyTest(source, "", { chrome: 95 << 16 }))));`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+        stdout: JSON.stringify(cases.map(([, expected]) => expected)),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
 
     minify_test('[foo="baz"] {color:red}', "[foo=baz]{color:red}");
     minify_test('[foo="foo bar"] {color:red}', "[foo=foo\\ bar]{color:red}");

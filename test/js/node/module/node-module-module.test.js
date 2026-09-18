@@ -1015,7 +1015,7 @@ console.log("survived", require("./late.js"));`,
         for (let i = 0; i < snapshot.edges.length; i += 4) {
           if (moduleIds.has(snapshot.edges[i]) && moduleIds.has(snapshot.edges[i + 1])) moduleEdges++;
         }
-        console.log(JSON.stringify({ moduleEdges, children: module.children.length }));
+        console.log(JSON.stringify({ moduleNodes: moduleIds.size, moduleEdges, children: module.children.length }));
       `,
     });
     await using proc = Bun.spawn({
@@ -1028,7 +1028,9 @@ console.log("survived", require("./late.js"));`,
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     if (exitCode !== 0) expect(stderr).toBe("");
     expect(exitCode).toBe(0);
-    const { moduleEdges, children } = JSON.parse(stdout);
+    const { moduleNodes, moduleEdges, children } = JSON.parse(stdout);
+    // The snapshot must have found at least the parent and the child.
+    expect(moduleNodes).toBeGreaterThanOrEqual(2);
     expect(children).toBe(1);
     // The parent points at the child once. A few more Module-to-Module edges
     // can exist (the entry point and the parent pointers), but not one per call.

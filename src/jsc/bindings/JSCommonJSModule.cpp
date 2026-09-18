@@ -1054,13 +1054,14 @@ JSCommonJSModule* JSCommonJSModule::create(
 size_t JSCommonJSModule::estimatedSize(JSC::JSCell* cell, JSC::VM& vm)
 {
     auto* thisObject = uncheckedDowncast<JSCommonJSModule>(cell);
-    size_t additionalSize = thisObject->m_children.capacity() * sizeof(WriteBarrier<Unknown>);
+    size_t additionalSize = 0;
     if (!thisObject->sourceCode.isNull() && !thisObject->sourceCode.view().isEmpty()) {
         additionalSize += thisObject->sourceCode.view().length();
         if (!thisObject->sourceCode.view().is8Bit()) {
             additionalSize *= 2;
         }
     }
+    additionalSize += thisObject->m_children.capacity() * sizeof(WriteBarrier<Unknown>);
     return Base::estimatedSize(cell, vm) + additionalSize;
 }
 

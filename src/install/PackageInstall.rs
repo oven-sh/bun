@@ -249,21 +249,22 @@ impl Step {
     }
 }
 
-/// Where a package is linked to before being renamed onto its real path, which
-/// later installs take as proof that it is installed: `@scope/name` becomes
-/// `@scope/.bun-tmp-<hash>`. Hashed because a name may already be NAME_MAX long,
-/// deterministic so the next install of the package removes a stale one.
+/// Where a package is linked before the rename onto its real path, whose existence later
+/// installs take as proof of a complete install: `@scope/name` becomes `@scope/.bun-tmp-<hash>`.
+/// Hashed as a name can be NAME_MAX long, seeded per process as two installs can run at once.
 pub(crate) struct StagingPath<'a>(pub(crate) &'a [u8]);
 
 impl core::fmt::Display for StagingPath<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        static SEED: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+        let seed = *SEED.get_or_init(bun_core::fast_random);
         let name_start = strings::last_index_of_char(self.0, b'/').map_or(0, |slash| slash + 1);
         let scope = &self.0[..name_start];
         write!(
             f,
             "{}.bun-tmp-{:016x}",
             bstr::BStr::new(scope),
-            bun_wyhash::hash(self.0)
+            bun_wyhash::hash_with_seed(seed, self.0)
         )
     }
 }
@@ -2380,7 +2381,6 @@ impl<'a> PackageInstall<'a> {
 
         let dest = self.destination_dir_subpath;
         let mut staging_buf = path::path_buffer_pool::get();
-        // A stale staging directory may hold files of another version, which the backends keep.
         if let Ok(staging) = bun_core::fmt::buf_print_z(
             &mut staging_buf[..],
             format_args!("{}", StagingPath(dest.as_bytes())),
@@ -2397,7 +2397,7 @@ impl<'a> PackageInstall<'a> {
             }
             let _ = destination_dir.delete_tree(staging.as_bytes());
         }
-        // No staging here (a stale one in the way, `dest` occupied, rename refused): link in place.
+        // Staging did not work (`dest` is occupied, the rename is refused): link in place.
         self.install_into(destination_dir, dest, method, resolution_tag)
     }
 

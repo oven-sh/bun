@@ -413,7 +413,7 @@ impl<'a> Installer<'a> {
                 | ResolutionTag::LocalTarball
                 | ResolutionTag::RemoteTarball
         ) {
-            // A failed link only ever wrote to the staging directory.
+            // A staged link that failed only wrote to the staging directory.
             let mut staging = AutoPath::init_top_level_dir();
             self.append_real_store_path(&mut staging, entry_id, Which::Staging);
             let _ = Fd::cwd().delete_tree(staging.slice());

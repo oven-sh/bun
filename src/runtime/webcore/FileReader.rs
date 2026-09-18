@@ -137,19 +137,33 @@ impl Lazy {
 
         let fd: Fd = match &file.pathlike {
             PathOrFileDescriptor::Fd(pl_fd) => {
-                if pl_fd.stdio_tag().is_some() {
-                    'brk: {
-                        #[cfg(unix)]
-                        {
-                            let rc = open_as_nonblocking_tty(pl_fd.native(), sys::O::RDONLY);
-                            if rc > -1 {
-                                is_nonblocking = true;
-                                file.is_atty = Some(true);
-                                break 'brk Fd::from_native(rc);
-                            }
-                        }
-                        break 'brk *pl_fd;
+                // A tty is polled through a private O_NONBLOCK reopen, which
+                // leaves the caller's fd flags alone. Fallback: stdio polls the
+                // shared fd, any other fd polls a dup the reader owns.
+                #[cfg(not(unix))]
+                let reopened_tty: Option<Fd> = None;
+                #[cfg(unix)]
+                let reopened_tty: Option<Fd> = {
+                    let is_tty = pl_fd.stdio_tag().is_some()
+                        || *file.is_atty.get_or_insert_with(|| sys::isatty(*pl_fd));
+                    let rc = if is_tty {
+                        open_as_nonblocking_tty(pl_fd.native(), sys::O::RDONLY)
+                    } else {
+                        -1
+                    };
+                    if rc > -1 {
+                        is_nonblocking = true;
+                        file.is_atty = Some(true);
+                        Some(Fd::from_native(rc))
+                    } else {
+                        None
                     }
+                };
+
+                if let Some(fd) = reopened_tty {
+                    fd
+                } else if pl_fd.stdio_tag().is_some() {
+                    *pl_fd
                 } else {
                     let duped = sys::dup_with_flags(*pl_fd, 0);
 

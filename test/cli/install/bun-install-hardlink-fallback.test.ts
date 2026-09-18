@@ -4,7 +4,7 @@
 // does for EXDEV. https://github.com/oven-sh/bun/issues/36852
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isMusl, tempDir } from "harness";
-import { cpSync, statSync } from "node:fs";
+import { cpSync, lstatSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
@@ -95,5 +95,97 @@ describe.skipIf(!isLinux || isMusl || !cc)("hardlink backend falls back to copyf
         expect(statSync(installedLocal).nlink).toBe(1);
       });
     }
+  }
+});
+
+const symlinkShimC = (errno: string) => /* c */ `
+#define _GNU_SOURCE
+#include <errno.h>
+
+int symlink(const char *target, const char *linkpath) {
+  (void)target; (void)linkpath;
+  errno = ${errno};
+  return -1;
+}
+
+int symlinkat(const char *target, int newdirfd, const char *linkpath) {
+  (void)target; (void)newdirfd; (void)linkpath;
+  errno = ${errno};
+  return -1;
+}
+`;
+
+// The same FUSE filesystems also reject symlink creation, which the bin
+// linker uses for node_modules/.bin entries. It must fall back to copying
+// the bin target. https://github.com/oven-sh/bun/issues/40143
+describe.skipIf(!isLinux || isMusl || !cc)("bin linker falls back to copying when symlink fails", () => {
+  const cliJs = "#!/usr/bin/env node\nconsole.log('localdep bin ran');\n";
+
+  for (const errno of ["EACCES", "EPERM"]) {
+    test.concurrent(`symlink fails with ${errno}`, async () => {
+      using dir = tempDir(`symlink-${errno}`, {
+        "shim.c": symlinkShimC(errno),
+        "package.json": JSON.stringify({
+          name: "symlink-fallback-test",
+          dependencies: { localdep: "file:./localdep" },
+        }),
+        "localdep/package.json": JSON.stringify({
+          name: "localdep",
+          version: "1.2.3",
+          bin: { "localdep-bin": "cli.js" },
+        }),
+        "localdep/cli.js": cliJs,
+      });
+
+      {
+        await using compile = Bun.spawn({
+          cmd: [cc!, "-shared", "-fPIC", "-o", "shim.so", "shim.c"],
+          cwd: String(dir),
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [compileOut, compileErr, compileExit] = await Promise.all([
+          compile.stdout.text(),
+          compile.stderr.text(),
+          compile.exited,
+        ]);
+        if (compileExit !== 0) {
+          throw new Error(`shim compile failed: ${compileOut}${compileErr}`);
+        }
+      }
+
+      const env = {
+        ...bunEnv,
+        BUN_INSTALL_CACHE_DIR: join(String(dir), "cache"),
+        LD_PRELOAD: [join(String(dir), "shim.so"), bunEnv.LD_PRELOAD].filter(Boolean).join(":"),
+      };
+
+      // Run twice: the first install hits the fresh-install path (.bin does
+      // not exist yet), the second hits the path where the destination
+      // already exists as a regular file from the previous fallback copy.
+      for (const run of ["fresh", "reinstall"]) {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "install"],
+          cwd: String(dir),
+          env,
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ run, failedToLink: stderr.includes("Failed to link") || stderr.includes(errno) }).toEqual({
+          run,
+          failedToLink: false,
+        });
+        expect(exitCode).toBe(0);
+
+        const bin = join(String(dir), "node_modules", ".bin", "localdep-bin");
+        const stat = lstatSync(bin);
+        expect(stat.isSymbolicLink()).toBe(false);
+        expect(stat.isFile()).toBe(true);
+        // The copy must be executable.
+        expect(stat.mode & 0o100).toBe(0o100);
+        expect(await Bun.file(bin).text()).toBe(cliJs);
+      }
+    });
   }
 });

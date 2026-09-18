@@ -10,11 +10,14 @@
 // (`_mi_heap_realloc_zero`) during `std.fmt.allocPrint`.
 //
 // The fix migrates the WebSocket upgrade client FFI from ZigString to
-// BunString and decodes every input with `bun.String.toUTF8(allocator)`.
+// BunString and decodes host, path and protocol to UTF-8. Header values are
+// ByteStrings (https://fetch.spec.whatwg.org/#concept-header-value) and are
+// isomorphic-encoded: one byte per code unit, the same as `fetch()`.
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { once } from "node:events";
 import net from "node:net";
+import { basename } from "node:path";
 
 // "path-\u{1F525}" forces JSC to materialize the backing StringImpl as
 // 16-bit UTF-16, which is the other half of the regression path.
@@ -61,7 +64,7 @@ afterEach(async () => {
 });
 
 describe("WebSocket upgrade with non-ASCII inputs", () => {
-  test("Latin1 header value with high bytes is sent as UTF-8 without crashing", async () => {
+  test("Latin1 header value with high bytes is isomorphic-encoded on the wire, like fetch()", async () => {
     // Spin up a trivial TCP listener that captures the raw upgrade request
     // bytes. We only need to inspect what the client *sent*; we don't need
     // the WebSocket handshake to complete, so the server destroys the socket
@@ -77,16 +80,20 @@ describe("WebSocket upgrade with non-ASCII inputs", () => {
           socket.destroy();
         }
       });
-      socket.on("error", () => {});
+      socket.once("error", gotRequest.reject);
     });
 
     // "vàlüé-ñ" contains U+00E0, U+00FC, U+00E9, U+00F1 — all in Latin1
     // range, so the underlying WTFStringImpl stays 8-bit.
     const latin1Value = "vàlüé-ñ";
+    // path.basename returns a 16-bit-backed string whose code units are all
+    // <= 0xFF. It passes ByteString validation but is not 8-bit in memory.
+    const utf16BackedValue = basename("café.txt");
     const wsDone = Promise.withResolvers<void>();
     const ws = new WebSocket(`ws://127.0.0.1:${port}/`, {
       headers: {
         "X-Latin1": latin1Value,
+        "X-Utf16": utf16BackedValue,
       },
     });
     ws.onerror = () => wsDone.resolve();
@@ -95,12 +102,49 @@ describe("WebSocket upgrade with non-ASCII inputs", () => {
     const request = await gotRequest.promise;
     await wsDone.promise;
 
-    // Before the fix, the upgrade request buffer would either contain raw
-    // Latin1 bytes (0xE0, 0xFC, 0xE9, 0xF1) or be completely corrupted and
-    // crash the runtime. With the fix, the header is emitted as proper UTF-8.
-    const body = request.toString("utf8");
-    expect(body).toContain("X-Latin1:");
-    expect(body).toContain(latin1Value);
+    // Header values are ByteStrings: U+00E0 goes out as the single byte 0xE0,
+    // not the UTF-8 pair 0xC3 0xA0. This matches fetch(), Node and Deno.
+    const lines = request.toString("latin1").split("\r\n");
+    const wire = (name: string) => {
+      const line = lines.find(l => l.startsWith(name + ":"));
+      expect(line).toBeDefined();
+      return Buffer.from(line!, "latin1").subarray(name.length + 2);
+    };
+    expect(wire("X-Latin1")).toEqual(Buffer.from(latin1Value, "latin1"));
+    expect(wire("X-Latin1").toString("latin1")).toBe(latin1Value);
+    expect(wire("X-Utf16")).toEqual(Buffer.from(utf16BackedValue, "latin1"));
+  });
+
+  test("Latin1 header value round-trips through a Bun.serve upgrade handler", async () => {
+    const latin1Value = "café-ñ";
+    const gotHeader = Promise.withResolvers<string | null>();
+    using server = Bun.serve({
+      port: 0,
+      fetch(req, server) {
+        gotHeader.resolve(req.headers.get("x-latin1"));
+        if (server.upgrade(req)) return;
+        return new Response("not upgraded", { status: 400 });
+      },
+      websocket: {
+        open(ws) {
+          ws.close();
+        },
+        message() {},
+      },
+    });
+
+    const wsDone = Promise.withResolvers<void>();
+    const ws = new WebSocket(`ws://127.0.0.1:${server.port}/`, {
+      headers: { "X-Latin1": latin1Value },
+    });
+    ws.onerror = e => {
+      gotHeader.reject(e);
+      wsDone.resolve();
+    };
+    ws.onclose = () => wsDone.resolve();
+
+    expect(await gotHeader.promise).toBe(latin1Value);
+    await wsDone.promise;
   });
 
   test("UTF-16 URL path is decoded to UTF-8 without crashing", async () => {

@@ -12,6 +12,7 @@ use crate::lockfile_real::{Lockfile, StringBuilder, pruned_workspaces};
 use crate::package_manager::workspace_package_json_cache::{
     GetJSONOptions, WorkspacePackageJSONCache,
 };
+use crate::package_manager::workspace_selection::strip_negations;
 
 bun_output::declare_scope!(Lockfile, hidden);
 
@@ -246,6 +247,24 @@ fn relative_workspace_path<'b>(
     &buf[..len]
 }
 
+/// A `workspaces` entry with an odd number of leading `!`. It only removes directories that the
+/// globs before it matched, so it is never walked for members of its own.
+pub fn is_negated_pattern(pattern: &[u8]) -> bool {
+    strip_negations(pattern).1
+}
+
+/// The first of `later_patterns` (the `workspaces` globs after the one that matched
+/// `workspace_dir`) that removes `workspace_dir`, a path relative to the workspace root.
+pub fn negated_by<'a>(later_patterns: &'a [Box<[u8]>], workspace_dir: &[u8]) -> Option<&'a [u8]> {
+    later_patterns
+        .iter()
+        .map(|pattern| &**pattern)
+        .find(|pattern| {
+            let result = glob::r#match(pattern, workspace_dir);
+            result.is_negated() && !result.matches()
+        })
+}
+
 impl WorkspaceMap {
     pub(crate) fn process_names_array(
         &mut self,
@@ -412,6 +431,9 @@ impl WorkspaceMap {
         if workspace_globs.len() > 0 {
             let mut arena = Arena::new();
             for (i, user_pattern) in workspace_globs.iter().enumerate() {
+                if is_negated_pattern(user_pattern) {
+                    continue;
+                }
                 // walker/iter borrow `&arena` and Drop at scope exit,
                 // so resetting here (top of next iter) ensures they drop before invalidation.
                 // Last iter's allocs are freed when `arena` itself drops after the loop.
@@ -474,7 +496,7 @@ impl WorkspaceMap {
                     return Err(crate::Error::GlobError);
                 }
 
-                'next_match: loop {
+                loop {
                     let matched_path_owned = match iter.next()? {
                         Ok(Some(r)) => r,
                         Ok(None) => break,
@@ -505,19 +527,16 @@ impl WorkspaceMap {
                             strings::without_suffix_comptime(matched_path, b"package.json"),
                         );
 
-                        // check if it's negated by any remaining patterns
-                        for next_pattern in &workspace_globs[i + 1..] {
-                            let result =
-                                glob::r#match(next_pattern, matched_path_without_package_json);
-                            if result.is_negated() && !result.matches() {
-                                bun_output::scoped_log!(
-                                    Lockfile,
-                                    "skipping negated path: {}, {}\n",
-                                    BStr::new(matched_path_without_package_json),
-                                    BStr::new(next_pattern)
-                                );
-                                continue 'next_match;
-                            }
+                        if let Some(next_pattern) =
+                            negated_by(&workspace_globs[i + 1..], matched_path_without_package_json)
+                        {
+                            bun_output::scoped_log!(
+                                Lockfile,
+                                "skipping negated path: {}, {}\n",
+                                BStr::new(matched_path_without_package_json),
+                                BStr::new(next_pattern)
+                            );
+                            continue;
                         }
                     }
 

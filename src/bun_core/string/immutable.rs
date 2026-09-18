@@ -403,10 +403,6 @@ pub fn contains_any(slice: &[u8], chars: &[u8]) -> bool {
     index_of_any(slice, chars).is_some()
 }
 
-pub fn index_of_any16(self_: &[u16], chars: &[u16]) -> Option<usize> {
-    index_of_any_t(self_, chars)
-}
-
 pub fn index_of_any_t<T: crate::NoUninit + Eq>(str: &[T], chars: &[T]) -> Option<usize> {
     if let (Lanes::U8(s), Lanes::U8(c)) = (lanes(str), lanes(chars)) {
         return index_of_any(s, c);

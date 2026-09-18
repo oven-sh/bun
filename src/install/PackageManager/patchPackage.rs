@@ -1252,12 +1252,12 @@ fn node_modules_folder_for_dependency_id(
     }
 }
 
-/// Exits when `pkg_id` resolves to a folder on disk (a `file:` directory or a
-/// workspace member). `bun install` links such a folder in place and never
-/// applies a patch to it: `patched_package_missing_from_cache` finds the folder
-/// itself. `compute_cache_dir_and_subpath` also resolves every folder against
-/// the project root, which is the wrong base for a `file:` path a registry
-/// package declares.
+/// Exits when `pkg_id` resolves to a folder on disk (a `file:` directory, a
+/// workspace member or a `link:` target). `bun install` links such a folder in
+/// place and never applies a patch to it: `patched_package_missing_from_cache`
+/// finds the folder itself. `compute_cache_dir_and_subpath` also resolves every
+/// `file:` folder against the project root, which is the wrong base for a path
+/// a registry package declares.
 fn crash_if_folder_target(lockfile: &Lockfile, pkg_id: PackageID, name: &[u8]) {
     let strbuf = lockfile.buffers.string_bytes.as_slice();
     let resolution = &lockfile.packages.items_resolution()[pkg_id as usize];
@@ -1272,6 +1272,14 @@ fn crash_if_folder_target(lockfile: &Lockfile, pkg_id: PackageID, name: &[u8]) {
                 "edit <b>{}<r> directly",
                 bstr::BStr::new(resolution.workspace().slice(strbuf)),
             );
+            Global::crash();
+        }
+        ResolutionTag::Symlink => {
+            bun_core::pretty_errorln!(
+                "<r><red>error<r>: cannot patch <b>{}<r>: it is a link: dependency, and bun install never applies a patch to one",
+                bstr::BStr::new(name),
+            );
+            bun_core::note!("edit the linked folder directly");
             Global::crash();
         }
         _ => return,

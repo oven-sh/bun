@@ -1383,6 +1383,44 @@ describe("a folder dependency as the target", () => {
     expect(lstatSync(join(packageDir, "node_modules", "member")).isSymbolicLink()).toBe(true);
   });
 
+  test.concurrent("bun patch <name> refuses a link: dependency", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: {
+        "package.json": JSON.stringify({ name: "proj", dependencies: { lib: "link:lib" } }),
+        "lib/package.json": JSON.stringify({ name: "lib", version: "1.0.0" }),
+        "lib/index.js": 'module.exports = "lib";\n',
+      },
+    });
+    const env = {
+      ...bunEnv,
+      BUN_INSTALL: join(packageDir, ".bun"),
+      BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache"),
+    };
+    async function run(cwd: string, ...args: string[]) {
+      await using proc = Bun.spawn({ cmd: [bunExe(), ...args], cwd, env, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+    const link = await run(join(packageDir, "lib"), "link");
+    expect(link.stderr).not.toContain("error:");
+    expect(link.exitCode).toBe(0);
+    const install = await run(packageDir, "install");
+    expect(install.stderr).not.toContain("error:");
+    expect(install.exitCode).toBe(0);
+
+    const refusal =
+      "error: cannot patch lib: it is a link: dependency, and bun install never applies a patch to one\n" +
+      "note: edit the linked folder directly\n";
+    for (const args of [["lib"], ["--commit", "node_modules/lib"]]) {
+      const { stdout, stderr, exitCode } = await run(packageDir, "patch", ...args);
+      expect(stderr).toEndWith(refusal);
+      expect(stdout).not.toContain("To patch");
+      expect(exitCode).toBe(1);
+    }
+    expect(lstatSync(join(packageDir, "node_modules", "lib")).isSymbolicLink()).toBe(true);
+  });
+
   // The remedy the note names: patch the package that ships the folder.
   test.concurrent("bun patch bundled-file carries an edit to the shipped folder", async () => {
     const packageDir = await createProjectWithShippedFolder();

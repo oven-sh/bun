@@ -514,126 +514,87 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::
     return functionName;
 }
 
+// functionName(vm, lexicalGlobalObject, object) for the end of a collection, where nothing may be
+// allocated in the heap and no script may run: data properties and what the function itself knows.
+static String functionNameWithoutGC(JSC::VM& vm, JSC::JSObject* object)
+{
+    for (const JSC::Identifier* propertyName : { &vm.propertyNames->name, &vm.propertyNames->displayName }) {
+        unsigned attributes;
+        PropertyOffset offset = object->structure()->getConcurrently(propertyName->impl(), attributes);
+        if (offset == invalidOffset || (attributes & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessorOrValue)))
+            continue;
+        JSValue name = object->getDirect(offset);
+        if (name && name.isString()) {
+            auto str = asString(name)->tryGetValueWithoutGC();
+            if (!str->isEmpty())
+                return str;
+        }
+    }
+
+    if (auto* function = dynamicDowncast<JSC::JSFunction>(object)) {
+        auto str = function->nameWithoutGC(vm);
+        if (str.isEmpty() && !function->isHostFunction())
+            return function->jsExecutable()->ecmaNameWithoutGC();
+        return str;
+    }
+    if (auto* function = dynamicDowncast<JSC::InternalFunction>(object))
+        return function->name();
+    return emptyString();
+}
+
+// A stack is materialized on access or at the end of a collection (FinalizerSafety), and must read
+// the same either way: only how the callee's name is looked up differs between the two.
 String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, const JSC::StackFrame& frame, FinalizerSafety finalizerSafety, unsigned int* flags)
 {
     bool isConstructor = false;
-    if (finalizerSafety == FinalizerSafety::MustNotTriggerGC) {
-
-        if (auto* callee = frame.callee()) {
-            if (auto* object = callee->getObject()) {
-                auto jstype = object->type();
-                Structure* structure = object->structure();
-
-                auto setTypeFlagsIfNecessary = [&]() {
-                    if (flags) {
-                        if (jstype == JSC::JSFunctionType || jstype == JSC::InternalFunctionType) {
-                            *flags |= static_cast<unsigned int>(FunctionNameFlags::Function);
-                        }
-                    }
-                };
-
-                // First try the "name" property.
-                {
-                    unsigned attributes;
-                    PropertyOffset offset = structure->getConcurrently(vm.propertyNames->name.impl(), attributes);
-                    if (offset != invalidOffset && !(attributes & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessorOrValue))) {
-                        JSValue name = object->getDirect(offset);
-                        if (name && name.isString()) {
-                            auto str = asString(name)->tryGetValueWithoutGC();
-                            if (!str->isEmpty()) {
-                                setTypeFlagsIfNecessary();
-                                return str;
-                            }
-                        }
-                    }
-                }
-
-                // Then try the "displayName" property.
-                {
-                    unsigned attributes;
-                    PropertyOffset offset = structure->getConcurrently(vm.propertyNames->displayName.impl(), attributes);
-                    if (offset != invalidOffset && !(attributes & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessorOrValue))) {
-                        JSValue name = object->getDirect(offset);
-                        if (name && name.isString()) {
-                            auto str = asString(name)->tryGetValueWithoutGC();
-                            if (!str->isEmpty()) {
-                                setTypeFlagsIfNecessary();
-                                return str;
-                            }
-                        }
-                    }
-                }
-
-                // Lastly, try type-specific properties.
-                if (jstype == JSC::JSFunctionType) {
-                    auto* function = uncheckedDowncast<JSC::JSFunction>(object);
-                    auto str = function->nameWithoutGC(vm);
-                    if (str.isEmpty() && !function->isHostFunction()) {
-                        setTypeFlagsIfNecessary();
-                        return function->jsExecutable()->ecmaNameWithoutGC();
-                    }
-                    setTypeFlagsIfNecessary();
-                    return str;
-                } else if (jstype == JSC::InternalFunctionType) {
-                    auto str = uncheckedDowncast<JSC::InternalFunction>(object)->name();
-                    setTypeFlagsIfNecessary();
-                    return str;
-                }
-            }
-        }
-
-        return emptyString();
-    }
-
     WTF::String functionName;
+    JSC::JSObject* callee = frame.callee() ? frame.callee()->getObject() : nullptr;
+    const auto calleeName = [&]() -> String {
+        if (finalizerSafety == FinalizerSafety::MustNotTriggerGC)
+            return functionNameWithoutGC(vm, callee);
+        return Zig::functionName(vm, lexicalGlobalObject, callee);
+    };
+
     if (frame.hasLineAndColumnInfo()) {
         auto* codeblock = frame.codeBlock();
         if (codeblock->isConstructor()) {
             isConstructor = true;
         }
 
-        if (finalizerSafety == FinalizerSafety::NotInFinalizer) {
-            auto codeType = codeblock->codeType();
-            switch (codeType) {
-            case JSC::CodeType::FunctionCode:
-            case JSC::CodeType::EvalCode: {
-                if (flags) {
-                    if (codeType == JSC::CodeType::EvalCode) {
-                        *flags |= static_cast<unsigned int>(FunctionNameFlags::Eval);
-                    } else if (codeType == JSC::CodeType::FunctionCode) {
-                        *flags |= static_cast<unsigned int>(FunctionNameFlags::Function);
-                    }
+        auto codeType = codeblock->codeType();
+        switch (codeType) {
+        case JSC::CodeType::FunctionCode:
+        case JSC::CodeType::EvalCode: {
+            if (flags) {
+                if (codeType == JSC::CodeType::EvalCode) {
+                    *flags |= static_cast<unsigned int>(FunctionNameFlags::Eval);
+                } else if (codeType == JSC::CodeType::FunctionCode) {
+                    *flags |= static_cast<unsigned int>(FunctionNameFlags::Function);
                 }
-                if (auto* callee = frame.callee()) {
-                    if (auto* object = callee->getObject()) {
-                        functionName = Zig::functionName(vm, lexicalGlobalObject, object);
+            }
+            if (callee) {
+                functionName = calleeName();
 
-                        if (flags) {
-                            if (auto* unlinkedCodeBlock = codeblock->unlinkedCodeBlock()) {
-                                if (unlinkedCodeBlock->isBuiltinFunction()) {
-                                    *flags |= static_cast<unsigned int>(FunctionNameFlags::Builtin);
-                                }
-                            }
+                if (flags) {
+                    if (auto* unlinkedCodeBlock = codeblock->unlinkedCodeBlock()) {
+                        if (unlinkedCodeBlock->isBuiltinFunction()) {
+                            *flags |= static_cast<unsigned int>(FunctionNameFlags::Builtin);
                         }
                     }
                 }
-                break;
             }
-            default: {
-                break;
-            }
-            }
+            break;
+        }
+        default: {
+            break;
+        }
+        }
 
-            if (functionName.isEmpty()) {
-                functionName = Zig::functionName(vm, codeblock);
-            }
+        if (functionName.isEmpty()) {
+            functionName = Zig::functionName(vm, codeblock);
         }
-    } else {
-        if (auto* callee = frame.callee()) {
-            if (auto* object = callee->getObject()) {
-                functionName = Zig::functionName(vm, lexicalGlobalObject, object);
-            }
-        }
+    } else if (callee) {
+        functionName = calleeName();
     }
 
     if ((flags && (*flags & static_cast<unsigned int>(FunctionNameFlags::AddNewKeyword))) && isConstructor && !functionName.isEmpty()) {

@@ -547,13 +547,63 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
     RELEASE_AND_RETURN(scope, formatStackTraceToJSValue(vm, globalObject, lexicalGlobalObject, errorObject, callSitesArray, prepareStackTrace));
 }
 
-static String computeErrorInfoToString(JSC::VM& vm, Vector<StackFrame>& stackTrace, OrdinalNumber& line, OrdinalNumber& column, String& sourceURL)
+// The rest of this file's hook for the end of a collection: nothing may be allocated in the heap and
+// no script may run there (as Zig::functionName does for FinalizerSafety::MustNotTriggerGC).
+
+// The value of a data property of `object` itself; empty if it has none by that name.
+static JSValue dataPropertyWithoutGC(JSC::JSObject* object, const JSC::Identifier& name)
 {
+    unsigned attributes;
+    PropertyOffset offset = object->structure()->getConcurrently(name.impl(), attributes);
+    if (offset == invalidOffset || (attributes & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessorOrValue)))
+        return {};
+    return object->getDirect(offset);
+}
 
-    Zig::GlobalObject* globalObject = nullptr;
-    JSC::JSGlobalObject* lexicalGlobalObject = nullptr;
+// JSValue::toWTFString() for the primitives that need neither the heap nor a throw.
+static String primitiveToStringWithoutGC(JSValue value)
+{
+    if (value.isString())
+        return asString(value)->tryGetValueWithoutGC();
+    if (value.isInt32())
+        return String::number(value.asInt32());
+    if (value.isDouble())
+        return String::number(value.asDouble());
+    if (value.isBoolean())
+        return value.asBoolean() ? "true"_s : "false"_s;
+    if (value.isNull())
+        return "null"_s;
+    if (value.isUndefined())
+        return "undefined"_s;
+    return {};
+}
 
-    return computeErrorInfoWithoutPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, nullptr);
+// formatStackTrace() takes "no error object" to mean the end of a collection, so the error is only
+// read here, for the header a stack materialized on access gets from
+// ErrorInstance::sanitizedNameString / sanitizedMessageString.
+static String computeErrorInfoToString(JSC::VM& vm, Vector<StackFrame>& stackTrace, OrdinalNumber& line, OrdinalNumber& column, String& sourceURL, JSC::JSObject* errorInstance)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    WTF::String name = "Error"_s;
+    WTF::String message;
+    if (errorInstance) {
+        if (JSValue value = dataPropertyWithoutGC(errorInstance, vm.propertyNames->message))
+            message = primitiveToStringWithoutGC(value);
+        JSC::JSObject* object = errorInstance;
+        for (unsigned depth = 0; object && depth < 2; depth++) {
+            if (JSValue value = dataPropertyWithoutGC(object, vm.propertyNames->name)) {
+                if (!value.isUndefined()) {
+                    WTF::String found = primitiveToStringWithoutGC(value);
+                    if (!found.isNull())
+                        name = found;
+                }
+                break;
+            }
+            object = object->getPrototypeDirect().getObject();
+        }
+    }
+
+    RELEASE_AND_RETURN(scope, Bun::formatStackTrace(vm, defaultGlobalObject(), nullptr, name, message, line, column, sourceURL, stackTrace, nullptr));
 }
 
 static JSValue computeErrorInfoToJSValueWithoutSkipping(JSC::VM& vm, Vector<StackFrame>& stackTrace, OrdinalNumber& line, OrdinalNumber& column, String& sourceURL, JSObject* errorInstance, void* bunErrorData)
@@ -606,7 +656,7 @@ static JSValue computeErrorInfoToJSValue(JSC::VM& vm, Vector<StackFrame>& stackT
     return computeErrorInfoToJSValueWithoutSkipping(vm, stackTrace, line, column, sourceURL, errorInstance, bunErrorData);
 }
 
-WTF::String computeErrorInfoWrapperToString(JSC::VM& vm, Vector<StackFrame>& stackTrace, unsigned int& line_in, unsigned int& column_in, String& sourceURL, void* bunErrorData)
+WTF::String computeErrorInfoWrapperToString(JSC::VM& vm, Vector<StackFrame>& stackTrace, unsigned int& line_in, unsigned int& column_in, String& sourceURL, JSC::JSObject* errorInstance, void* bunErrorData)
 {
     UNUSED_PARAM(bunErrorData);
 
@@ -635,7 +685,7 @@ WTF::String computeErrorInfoWrapperToString(JSC::VM& vm, Vector<StackFrame>& sta
     JSC::SuspendExceptionScope suspendExceptionScope(vm);
 
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    WTF::String result = computeErrorInfoToString(vm, stackTrace, line, column, sourceURL);
+    WTF::String result = computeErrorInfoToString(vm, stackTrace, line, column, sourceURL, errorInstance);
     if (scope.exception()) {
         // The onComputeErrorInfo hook cannot propagate a throw.
         (void)scope.tryClearException();

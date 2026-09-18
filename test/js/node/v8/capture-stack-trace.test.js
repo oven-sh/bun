@@ -1387,6 +1387,86 @@ test("lazy error-info materialization does not store an empty stack value when t
   expect(exitCode).toBe(0);
 });
 
+// An unread stack is turned into a string at the end of a collection once a few have passed
+// (ErrorInstance::reconcileWeakReferencesAtGCEnd). What `.stack` says must not depend on that.
+test("a stack that a collection materializes reads the same as one materialized on access", async () => {
+  const src = `
+    class Custom extends Error {}
+    class Named extends Error {}
+    Named.prototype.name = "Named";
+    const part = String(process.pid % 7);
+    const shapes = {
+      "TypeError with a message": () => new TypeError("boom"),
+      "message that is a rope": () => new RangeError("part " + part + " of " + part.repeat(40)),
+      "no message": () => new Error(),
+      "own name": () => Object.assign(new Error("boom"), { name: "Renamed" }),
+      "empty own name": () => Object.assign(new Error("boom"), { name: "" }),
+      "subclass": () => new Custom("boom"),
+      "subclass with a name on its prototype": () => new Named("boom"),
+      "name is an accessor": () => Object.defineProperty(new Error("boom"), "name", { get: () => "FromGetter" }),
+      "message is a number": () => Object.assign(new Error(), { message: 42.5 }),
+      "message is null": () => Object.assign(new Error(), { message: null }),
+      // Frames whose text says more than a function name and a position.
+      "created in a constructor": () => new (class Widget { constructor() { this.error = new Error("boom"); } })().error,
+      "created in an anonymous function in eval": () => (0, eval)("(function () { const error = new Error('boom'); return error; })")(),
+      "created under a builtin": () => [0].map(() => { const error = new Error("boom"); return error; })[0],
+    };
+    function throwIt(make) {
+      throw make();
+    }
+    function capture(make) {
+      try {
+        throwIt(make);
+      } catch (error) {
+        return error;
+      }
+    }
+    // The same trace three times per shape: read on access, read after the collections, and one to
+    // see which way the second went (a prepareStackTrace is consulted only if the stack is not a string yet).
+    const cases = Object.entries(shapes).map(([shape, make]) => ({ shape, expected: capture(make).stack, materialized: capture(make), witness: capture(make) }));
+    for (let i = 0; i < 6; i++) {
+      Bun.gc(true);
+      await new Promise(resolve => setImmediate(resolve));
+    }
+    const columns = text => text.replace(/:\\d+:\\d+/g, "");
+    const rows = {};
+    for (const { shape, expected, materialized, witness } of cases) {
+      let consulted = false;
+      const builtin = Error.prepareStackTrace;
+      Error.prepareStackTrace = () => ((consulted = true), "");
+      void witness.stack;
+      Error.prepareStackTrace = builtin;
+      rows[shape] = { materializedByACollection: !consulted, header: materialized.stack.split("\\n")[0], sameText: columns(materialized.stack) === columns(expected) };
+    }
+    console.log(JSON.stringify(rows));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const row = header => ({ materializedByACollection: true, header, sameText: true });
+  expect(JSON.parse(stdout)).toEqual({
+    "TypeError with a message": row("TypeError: boom"),
+    "message that is a rope": row(expect.stringMatching(/^RangeError: part (\d) of \1{40}$/)),
+    "no message": row("Error"),
+    "own name": row("Renamed: boom"),
+    "empty own name": row("boom"),
+    "subclass": row("Error: boom"),
+    "subclass with a name on its prototype": row("Named: boom"),
+    "name is an accessor": row("Error: boom"),
+    "message is a number": row("Error: 42.5"),
+    "message is null": row("Error: null"),
+    "created in a constructor": row("Error: boom"),
+    "created in an anonymous function in eval": row("Error: boom"),
+    "created under a builtin": row("Error: boom"),
+  });
+  expect(exitCode).toBe(0);
+});
+
 // An error holds the functions in its trace weakly. These functions are strict, so the call sites do
 // not retain them either, and they are garbage by the time `.stack` is first read. The `finally`
 // blocks keep each `return` out of tail position, so every frame stays in the trace.

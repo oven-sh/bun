@@ -2059,6 +2059,22 @@ describe.concurrent("socket torn down with a write still in flight", () => {
         "close true",
       ]);
     });
+
+    // The stream swallows the throw before it queues 'error', in Node too. The writes still settle.
+    it("destroy(err, cb) with a cb that throws", async () => {
+      const err = Object.assign(new Error("boom"), { code: "EBOOM" });
+      const teardown = (holder: Socket) => {
+        // @ts-expect-error the callback argument is undocumented
+        holder.destroy(err, () => {
+          throw new Error("from the destroy callback");
+        });
+      };
+      expect(await inFlightWriteEvents(side, teardown)).toEqual([
+        "write ECANCELED write",
+        "queued EBOOM",
+        "close true",
+      ]);
+    });
   });
 });
 

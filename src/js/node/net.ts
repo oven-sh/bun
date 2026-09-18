@@ -264,6 +264,14 @@ function takeInFlightWrite(self) {
 function cancelWriteNT(callback) {
   callback(new ErrnoException(uv().UV_ECANCELED, "write"));
 }
+// The cancel follows the 'error' tick that callback(err) queues. A destroy(err, cb) callback that throws must not lose it.
+function finishDestroy(callback, err, canceledWrite) {
+  try {
+    callback(err);
+  } finally {
+    if (canceledWrite && err) process.nextTick(cancelWriteNT, canceledWrite);
+  }
+}
 // Shared-fd TLS pair teardown: mirrors node's close ordering, where the
 // close-callbacks phase runs after the check phase (lib/net.js close path in
 // node v26.3.0), so destroy()-time setImmediates still see the pair alive.
@@ -2281,11 +2289,9 @@ Socket.prototype._destroy = function _destroy(err, callback) {
       this._handle = null;
       this._sockname = null;
     }
-    callback(err);
-    if (canceledWrite && err) process.nextTick(cancelWriteNT, canceledWrite);
+    finishDestroy(callback, err, canceledWrite);
   } else {
-    callback(err);
-    if (canceledWrite && err) process.nextTick(cancelWriteNT, canceledWrite);
+    finishDestroy(callback, err, canceledWrite);
     process.nextTick(emitCloseNT, this, err ? true : false);
   }
 

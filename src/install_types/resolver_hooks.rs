@@ -1261,7 +1261,6 @@ impl Features {
         dev_dependencies: true,
         is_workspace: true,
         optional_dependencies: true,
-        trusted_dependencies: true,
         ..Self::base()
     };
 

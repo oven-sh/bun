@@ -2057,38 +2057,46 @@ fn parse_data_loader<'a>(
                 }
 
                 decls.truncate(count);
-                let stmt0 = bun_ast::Stmt::alloc(
-                    bun_ast::S::Local {
-                        decls: bun_ast::G::DeclList::move_from_list(decls),
-                        kind: bun_ast::S::Kind::KVar,
-                        ..Default::default()
-                    },
-                    bun_ast::Loc { start: 0 },
-                );
-                let stmt1 = bun_ast::Stmt::alloc(
-                    bun_ast::S::ExportClause {
-                        items: bun_ast::StoreSlice::new_mut(&mut export_clauses[..count]),
-                        is_single_line: false,
-                    },
-                    bun_ast::Loc { start: 0 },
-                );
-                let stmt2 = bun_ast::Stmt::alloc(
-                    bun_ast::S::ExportDefault {
-                        value: bun_ast::StmtOrExpr::Expr(expr),
-                        default_name: bun_ast::LocRef {
-                            loc: bun_ast::Loc::default(),
-                            ref_: bun_ast::Ref::NONE,
-                        },
-                    },
-                    bun_ast::Loc { start: 0 },
-                );
+                symbols.truncate(count);
 
-                let stmts =
-                    bun_ast::StoreSlice::new_mut(arena.alloc_slice_copy(&[stmt0, stmt1, stmt2]));
-                break 'parts Box::new([bun_ast::Part {
-                    stmts,
-                    ..Default::default()
-                }]);
+                // A `var` with no declaration cannot be printed. A file where
+                // no key gets a named export (`{"default": 1}`) is only the
+                // `export default` below.
+                if count > 0 {
+                    let stmt0 = bun_ast::Stmt::alloc(
+                        bun_ast::S::Local {
+                            decls: bun_ast::G::DeclList::move_from_list(decls),
+                            kind: bun_ast::S::Kind::KVar,
+                            ..Default::default()
+                        },
+                        bun_ast::Loc { start: 0 },
+                    );
+                    let stmt1 = bun_ast::Stmt::alloc(
+                        bun_ast::S::ExportClause {
+                            items: bun_ast::StoreSlice::new_mut(&mut export_clauses[..count]),
+                            is_single_line: false,
+                        },
+                        bun_ast::Loc { start: 0 },
+                    );
+                    let stmt2 = bun_ast::Stmt::alloc(
+                        bun_ast::S::ExportDefault {
+                            value: bun_ast::StmtOrExpr::Expr(expr),
+                            default_name: bun_ast::LocRef {
+                                loc: bun_ast::Loc::default(),
+                                ref_: bun_ast::Ref::NONE,
+                            },
+                        },
+                        bun_ast::Loc { start: 0 },
+                    );
+
+                    let stmts = bun_ast::StoreSlice::new_mut(
+                        arena.alloc_slice_copy(&[stmt0, stmt1, stmt2]),
+                    );
+                    break 'parts Box::new([bun_ast::Part {
+                        stmts,
+                        ..Default::default()
+                    }]);
+                }
             }
         }
 

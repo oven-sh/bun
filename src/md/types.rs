@@ -157,7 +157,6 @@ pub enum LineType {
     Hr,
     Atxheader,
     Setextunderline,
-    Setextheader,
     Indentedcode,
     Fencedcode,
     Html,
@@ -235,32 +234,6 @@ pub struct Flags {
     pub(crate) tasklists: bool,
     pub(crate) latex_math: bool,
     pub(crate) wiki_links: bool,
-}
-
-impl Flags {
-    // Private base of field defaults so the named presets below
-    // can use struct-update syntax in const context.
-    const DEFAULTS: Flags = Flags {
-        collapse_whitespace: false,
-        permissive_atx_headers: false,
-        permissive_url_autolinks: false,
-        permissive_www_autolinks: false,
-        permissive_email_autolinks: false,
-        no_indented_code_blocks: false,
-        no_html_blocks: false,
-        no_html_spans: false,
-        tables: true,
-        strikethrough: true,
-        tasklists: true,
-        latex_math: false,
-        wiki_links: false,
-    };
-}
-
-impl Default for Flags {
-    fn default() -> Self {
-        Self::DEFAULTS
-    }
 }
 
 pub(crate) const TABLE_MAXCOLCOUNT: u32 = 128;

@@ -12,6 +12,7 @@ use super::settings::{self, Settings};
 use super::stream::{self, State};
 use super::wire::{self, ErrorCode, FrameHeader, FrameType, SettingId};
 use bun_collections::HashMap;
+use bun_http_types::parse_content_length_strict;
 use std::num::NonZeroU32;
 
 /// Pseudo-header presence bits shared by the per-field decode loop and the RFC 9113 §8.3.1
@@ -59,22 +60,6 @@ impl Stream {
             recv_body_bytes: 0,
         }
     }
-}
-
-/// RFC 9110 §8.6: `content-length` is 1*DIGIT. Anything else, or a value that does not fit
-/// in a u64, is rejected.
-fn parse_content_length(value: &[u8]) -> Option<u64> {
-    if value.is_empty() {
-        return None;
-    }
-    let mut n: u64 = 0;
-    for &c in value {
-        if !c.is_ascii_digit() {
-            return None;
-        }
-        n = n.checked_mul(10)?.checked_add(u64::from(c - b'0'))?;
-    }
-    Some(n)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -759,12 +744,14 @@ impl Connection {
                 }
             }
         }
-        let snapshot = self.remote_settings;
-        sink.on_remote_settings(&snapshot);
+        // §6.5.3: ACK first. on_remote_settings flushes DATA the enlarged window
+        // unblocked, and the peer enforces its old receive window until it sees the ACK.
         self.send_settings_ack(sink);
         if self.note_outbound_ack(sink) {
             return true;
         }
+        let snapshot = self.remote_settings;
+        sink.on_remote_settings(&snapshot);
         false
     }
 
@@ -805,10 +792,7 @@ impl Connection {
         echo.copy_from_slice(&payload[..8]);
         self.send_ping_ack(sink, &echo);
         sink.on_ping(&echo, false);
-        if self.note_outbound_ack(sink) {
-            return true;
-        }
-        false
+        self.note_outbound_ack(sink)
     }
 
     fn handle_go_away(&mut self, sink: &impl Sink, payload: &[u8]) -> bool {
@@ -1212,7 +1196,7 @@ impl Connection {
                                         malformed = true;
                                     }
                                 }
-                                b"content-length" => match parse_content_length(value_b) {
+                                b"content-length" => match parse_content_length_strict(value_b) {
                                     Some(n) if content_length.is_none() => {
                                         content_length = Some(n);
                                     }

@@ -12,7 +12,6 @@ use bun_install::npm::{self, PackageManifest};
 use bun_js_parser as ast;
 use bun_js_printer as JSPrinter;
 use bun_parsers::json as JSON;
-use bun_paths::PathBuffer;
 use bun_semver as Semver;
 use bun_url::URL; // bumpalo::Bump re-export
 
@@ -79,12 +78,12 @@ pub(crate) fn view(
 
     let scope = manager.scope_for_package_name(name);
 
-    let mut url_buf = PathBuffer::uninit();
+    let mut url_buf = bun_paths::path_buffer_pool::get();
     let encoded_name = buf_print(
         url_buf.0.as_mut_slice(),
         format_args!("{}", bun_fmt::dependency_url(name)),
     );
-    let mut path_buf = PathBuffer::uninit();
+    let mut path_buf = bun_paths::path_buffer_pool::get();
     // Always fetch the full registry manifest, not a specific version
     let url_slice = buf_print(
         path_buf.0.as_mut_slice(),
@@ -129,7 +128,6 @@ pub(crate) fn view(
         header_buf,
         b"",
         http_proxy,
-        None,
         http::FetchRedirect::Follow,
     );
     req.client.flags.reject_unauthorized = manager.tls_reject_unauthorized();
@@ -207,11 +205,7 @@ pub(crate) fn view(
                         // Parse as semver query and find best version
                         let sliced_literal = Semver::SlicedString::init(version, version);
                         let query = Semver::query::parse(version, sliced_literal)?;
-                        // `defer query.deinit()` — handled by Drop
-                        // Use the same pattern as outdated_command: findBestVersion(query.head, string_buf)
-                        if let Some(result) =
-                            parsed_manifest.find_best_version(&query, &parsed_manifest.string_buf)
-                        {
+                        if let Some(result) = parsed_manifest.find_best_version(&query, version) {
                             break 'brk2 result.version;
                         }
                     }

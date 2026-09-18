@@ -932,8 +932,6 @@ pub const fn hash_const(seed: u64, input: &[u8]) -> u64 {
 }
 
 /// Integer-to-integer hashing (same width in, same width out).
-/// We cover the dedicated widths (16/32/64) via a sealed trait.
-/// All current callers pass `u32`.
 #[inline]
 pub fn hash_int<T: HashInt>(input: T) -> T {
     T::hash_int(input)
@@ -941,18 +939,6 @@ pub fn hash_int<T: HashInt>(input: T) -> T {
 
 pub trait HashInt: Copy {
     fn hash_int(self) -> Self;
-}
-
-// Source: https://github.com/skeeto/hash-prospector
-impl HashInt for u16 {
-    #[inline]
-    fn hash_int(self) -> u16 {
-        let mut x = self;
-        x = (x ^ (x >> 7)).wrapping_mul(0x2993);
-        x = (x ^ (x >> 5)).wrapping_mul(0xe877);
-        x = (x ^ (x >> 9)).wrapping_mul(0x0235);
-        x ^ (x >> 10)
-    }
 }
 
 // Source: https://github.com/skeeto/hash-prospector
@@ -964,19 +950,6 @@ impl HashInt for u32 {
         x = (x ^ (x >> 11)).wrapping_mul(0xac4c_1b51);
         x = (x ^ (x >> 15)).wrapping_mul(0x3184_8bab);
         x ^ (x >> 14)
-    }
-}
-
-// Source: https://github.com/jonmaiga/mx3
-impl HashInt for u64 {
-    #[inline]
-    fn hash_int(self) -> u64 {
-        const C: u64 = 0xbea2_25f9_eb34_556d;
-        let mut x = self;
-        x = (x ^ (x >> 32)).wrapping_mul(C);
-        x = (x ^ (x >> 29)).wrapping_mul(C);
-        x = (x ^ (x >> 32)).wrapping_mul(C);
-        x ^ (x >> 29)
     }
 }
 

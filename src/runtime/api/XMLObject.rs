@@ -3,14 +3,15 @@
 //! `parse` builds one of two shapes from `bun_parsers::xml` (see bun.d.ts
 //! for the user-facing description): the compact object (default) —
 //! `{ [root]: value }` where an element with no attributes and no child
-//! elements is its trimmed text, and otherwise an object with `"@name"`
+//! elements is its text, exactly, and otherwise an object with `"@name"`
 //! attribute keys, one key per distinct child element name (an array when
-//! the name repeats), and `"#text"` — or, with `{ compact: false }`, the node
-//! tree `{ name, attributes, children }`. `stringify` accepts either shape
-//! and always emits well-formed XML or throws.
+//! the name repeats), and `"#text"` — or, with
+//! `{ compact: false }`, the node tree `{ name, attributes, children }` whose
+//! children also include `{ comment }` and `{ target, data }`. `stringify`
+//! accepts either shape and always emits well-formed XML or throws.
 
 use bun_collections::HashMap;
-use bun_core::{OwnedString, String as BunString};
+use bun_core::String as BunString;
 use bun_core::{StackCheck, strings};
 use bun_js_parser_jsc::ExprJsc;
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult, wtf};
@@ -28,10 +29,12 @@ pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
 
 #[bun_jsc::host_fn]
 pub(crate) fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    // A function here is reserved for a reviver; reject it rather than read
+    // it as an options object with no keys.
     let options = frame.argument(1);
     let compact = if options.is_undefined_or_null() {
         true
-    } else if options.is_object() {
+    } else if options.is_object() && !options.is_callable() {
         options
             .get_boolean_strict(global, "compact")?
             .unwrap_or(true)
@@ -49,9 +52,9 @@ pub(crate) fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
         global,
         frame,
         b"input.xml",
-        true,
-        true,
-        true,
+        super::BlobOrBufferInput::Bytes,
+        super::NullishInput::Throw,
+        super::StringInput::AsIs,
         |arena, log, source, source_encoding| {
             let encoding = match source_encoding {
                 super::SourceEncoding::Bytes => xml::InputEncoding::Bytes,
@@ -60,12 +63,13 @@ pub(crate) fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
                 super::SourceEncoding::Utf16Text => xml::InputEncoding::Text,
             };
             bun_core::analytics::Features::xml_parse_inc();
+            let options = xml::Options { compact, encoding };
             let mut result = if source_encoding == super::SourceEncoding::Utf16Text {
                 // The scaffold hands the string's code units over as bytes.
                 let units: &[u16] = bytemuck::cast_slice(&source.contents);
-                XML::parse_utf16(source, units, log, arena, compact)
+                XML::parse_utf16(source, units, log, arena, options)
             } else {
-                XML::parse(source, log, arena, xml::Options { compact, encoding })
+                XML::parse(source, log, arena, options)
             };
             let utf8;
             let utf8_source;
@@ -143,7 +147,8 @@ fn stringify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     };
 
     let result = if is_node(global, root)? {
-        stringifier.stringify_node(global, root)
+        let name = root.get(global, "name")?;
+        stringifier.stringify_node(global, root, name)
     } else {
         stringifier.stringify_compact_document(global, root)
     };
@@ -203,8 +208,7 @@ type StringifyResult<T> = Result<T, StringifyError>;
 enum Space {
     Minified,
     Number(u32),
-    /// +1 WTF ref owned for the lifetime of the `Stringifier`.
-    Str(OwnedString),
+    Str(bun_core::String),
 }
 
 impl Space {
@@ -219,7 +223,7 @@ impl Space {
             return Ok(Space::Number(if n > 10.0 { 10 } else { n as u32 }));
         }
         if space.is_string() {
-            let str = OwnedString::new(space.to_bun_string(global)?);
+            let str = space.to_bun_string(global)?;
             if str.length() == 0 {
                 return Ok(Space::Minified);
             }
@@ -239,7 +243,7 @@ enum Scalar {
     Skip,
     /// An empty element / absent text (null).
     Empty,
-    Text(OwnedString),
+    Text(bun_core::String),
 }
 
 struct Stringifier {
@@ -279,13 +283,19 @@ impl Stringifier {
 
     // ── node tree ──────────────────────────────────────────────────────────
 
-    /// `{ name, attributes, children }` → `<name ...>children</name>`.
-    fn stringify_node(&mut self, global: &JSGlobalObject, node: JSValue) -> StringifyResult<()> {
+    /// `{ name, attributes, children }` → `<name ...>children</name>`;
+    /// `name` is the node's already-fetched `name` property.
+    fn stringify_node(
+        &mut self,
+        global: &JSGlobalObject,
+        node: JSValue,
+        name: Option<JSValue>,
+    ) -> StringifyResult<()> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(StringifyError::StackOverflow);
         }
         self.mark_visiting(global, node)?;
-        let result = self.stringify_node_inner(global, node);
+        let result = self.stringify_node_inner(global, node, name);
         self.visiting.remove(&node);
         result
     }
@@ -294,19 +304,20 @@ impl Stringifier {
         &mut self,
         global: &JSGlobalObject,
         node: JSValue,
+        name: Option<JSValue>,
     ) -> StringifyResult<()> {
-        let name = match node.get(global, "name")? {
-            Some(name) if name.is_string() => OwnedString::new(name.to_bun_string(global)?),
+        let name = match name {
+            Some(name) if name.is_string() => name.to_bun_string(global)?,
             _ => {
                 return Err(global
-                    .throw(format_args!("XML.stringify: element children must be strings or {{ name, attributes, children }} nodes with a string name"))
+                    .throw(format_args!("XML.stringify: element children must be strings, {{ name, attributes, children }} elements, {{ comment }} or {{ target, data }}"))
                     .into());
             }
         };
         self.check_name(global, &name, "element")?;
 
         self.builder.append_lchar(b'<');
-        self.builder.append_string(*name);
+        self.builder.append_string(&name);
 
         if let Some(attributes) = node.get(global, "attributes")? {
             if !attributes.is_null() {
@@ -317,13 +328,13 @@ impl Stringifier {
                         ))
                         .into());
                 }
-                let mut iter = jsc::JSPropertyIterator::init(
+                let iter = jsc::JSPropertyIterator::init(
                     global,
                     attributes.to_object(global)?,
                     iter_options(),
                 )?;
-                while let Some(attr_name) = iter.next()? {
-                    match self.scalar(global, iter.value, "an attribute value")? {
+                while let Some((attr_name, prop_value)) = iter.next()? {
+                    match self.scalar(global, prop_value, "an attribute value")? {
                         Scalar::Skip | Scalar::Empty => {}
                         Scalar::Text(text) => self.append_attribute(global, &attr_name, &text)?,
                     }
@@ -385,8 +396,13 @@ impl Stringifier {
             }
             if child.is_object() && !child.is_array() && !child.is_date() {
                 // Inside `children` there is no compact/node ambiguity: any
-                // object is a node and must have a name.
-                self.stringify_node(global, child)?;
+                // object is an element (`name`), a comment (`comment`) or a
+                // processing instruction (`target`).
+                let name = child.get(global, "name")?;
+                if name.is_none() && self.stringify_markup(global, child)? {
+                    continue;
+                }
+                self.stringify_node(global, child, name)?;
             } else if child.is_array() {
                 return Err(global
                     .throw(format_args!(
@@ -404,8 +420,114 @@ impl Stringifier {
             self.indent -= 1;
             self.newline();
         }
-        self.append_end_tag(*name);
+        self.append_end_tag(&name);
         Ok(())
+    }
+
+    /// `{ comment }` → `<!--comment-->`, `{ target, data }` → `<?target data?>`;
+    /// `false` if `child` is neither.
+    fn stringify_markup(
+        &mut self,
+        global: &JSGlobalObject,
+        child: JSValue,
+    ) -> StringifyResult<bool> {
+        if let Some(comment) = child.get(global, "comment")? {
+            if child.get(global, "target")?.is_some() {
+                return Err(global.throw(format_args!("XML.stringify: a child with both 'comment' and 'target' is neither a comment nor a processing instruction")).into());
+            }
+            if !comment.is_string() {
+                return Err(global
+                    .throw(format_args!(
+                        "XML.stringify: a comment node's 'comment' must be a string"
+                    ))
+                    .into());
+            }
+            let text = comment.to_bun_string(global)?;
+            let len = text.length();
+            let mut i = 0;
+            let mut prev_dash = false;
+            while i < len {
+                let (cp, w) = code_point_at(&text, i);
+                i += w;
+                if !xml::is_xml_char(cp) {
+                    return Err(global
+                        .throw(format_args!(
+                            "XML.stringify: XML cannot represent the character U+{:04X}",
+                            cp
+                        ))
+                        .into());
+                }
+                if cp == 0x2D && (prev_dash || i == len) {
+                    return Err(global
+                        .throw(format_args!(
+                            "XML.stringify: a comment cannot contain '--' or end with '-'"
+                        ))
+                        .into());
+                }
+                prev_dash = cp == 0x2D;
+            }
+            self.builder.append_latin1(b"<!--");
+            self.builder.append_string(&text);
+            self.builder.append_latin1(b"-->");
+            return Ok(true);
+        }
+        if let Some(target) = child.get(global, "target")? {
+            if !target.is_string() {
+                return Err(global
+                    .throw(format_args!(
+                        "XML.stringify: a processing instruction's 'target' must be a string"
+                    ))
+                    .into());
+            }
+            let target = target.to_bun_string(global)?;
+            self.check_name(global, &target, "processing instruction target")?;
+            if target.length() == 3 {
+                let lower = |i| target.char_at(i) | 0x20;
+                if lower(0) == u16::from(b'x')
+                    && lower(1) == u16::from(b'm')
+                    && lower(2) == u16::from(b'l')
+                {
+                    return Err(global.throw(format_args!("XML.stringify: 'xml' is reserved and cannot be a processing instruction target")).into());
+                }
+            }
+            self.builder.append_latin1(b"<?");
+            self.builder.append_string(&target);
+            match child.get(global, "data")? {
+                None => {}
+                Some(data) if data.is_null() => {}
+                Some(data) if data.is_string() => {
+                    let data = data.to_bun_string(global)?;
+                    let len = data.length();
+                    if len > 0 {
+                        let mut i = 0;
+                        let mut prev_q = false;
+                        while i < len {
+                            let (cp, w) = code_point_at(&data, i);
+                            i += w;
+                            if !xml::is_xml_char(cp) {
+                                return Err(global.throw(format_args!("XML.stringify: XML cannot represent the character U+{:04X}", cp)).into());
+                            }
+                            if prev_q && cp == 0x3E {
+                                return Err(global.throw(format_args!("XML.stringify: processing instruction data cannot contain '?>'")).into());
+                            }
+                            prev_q = cp == 0x3F;
+                        }
+                        self.builder.append_lchar(b' ');
+                        self.builder.append_string(&data);
+                    }
+                }
+                Some(_) => {
+                    return Err(global
+                        .throw(format_args!(
+                            "XML.stringify: a processing instruction's 'data' must be a string"
+                        ))
+                        .into());
+                }
+            }
+            self.builder.append_latin1(b"?>");
+            return Ok(true);
+        }
+        Ok(false)
     }
 
     // ── compact object ─────────────────────────────────────────────────────
@@ -427,15 +549,15 @@ impl Stringifier {
         global: &JSGlobalObject,
         document: JSValue,
     ) -> StringifyResult<()> {
-        let mut root: Option<(OwnedString, JSValue)> = None;
-        let mut iter =
+        let mut root: Option<(bun_core::StringView<'_>, JSValue)> = None;
+        let iter =
             jsc::JSPropertyIterator::init(global, document.to_object(global)?, iter_options())?;
-        while let Some(key) = iter.next()? {
-            let value = iter.value.unwrap_boxed_primitive(global)?;
+        while let Some((key, prop_value)) = iter.next()? {
+            let value = prop_value.unwrap_boxed_primitive(global)?;
             if skipped(value) {
                 continue;
             }
-            if key.has_prefix_comptime(b"@") || key.has_prefix_comptime(b"#") {
+            if key.starts_with_ascii(b"@") || key.starts_with_ascii(b"#") {
                 return Err(global
                     .throw(format_args!(
                         "XML.stringify: the top-level object is the document, so it can only contain the root element (found '{}')",
@@ -453,7 +575,7 @@ impl Stringifier {
                     .throw(format_args!("XML.stringify: the root element '{}' cannot be an array (an XML document has exactly one root element)", key))
                     .into());
             }
-            root = Some((OwnedString::new(key.dupe_ref()), value));
+            root = Some((key, value));
         }
         let Some((name, value)) = root else {
             return Err(global
@@ -554,14 +676,14 @@ impl Stringifier {
         self.check_name(global, name, "element")?;
         match self.scalar(global, value, "element content")? {
             Scalar::Skip => {}
-            Scalar::Empty => self.append_empty_element(*name),
-            Scalar::Text(text) if text.length() == 0 => self.append_empty_element(*name),
+            Scalar::Empty => self.append_empty_element(name),
+            Scalar::Text(text) if text.length() == 0 => self.append_empty_element(name),
             Scalar::Text(text) => {
                 self.builder.append_lchar(b'<');
-                self.builder.append_string(*name);
+                self.builder.append_string(name);
                 self.builder.append_lchar(b'>');
                 self.append_text(global, &text)?;
-                self.append_end_tag(*name);
+                self.append_end_tag(name);
             }
         }
         Ok(())
@@ -579,28 +701,27 @@ impl Stringifier {
 
         // Pass 1: the start tag with `@` attributes; note what content follows.
         self.builder.append_lchar(b'<');
-        self.builder.append_string(*name);
+        self.builder.append_string(name);
         let mut has_elements = false;
         let mut has_text = false;
-        let mut iter = jsc::JSPropertyIterator::init(global, object, iter_options())?;
-        while let Some(key) = iter.next()? {
-            let child = iter.value;
+        let iter = jsc::JSPropertyIterator::init(global, object, iter_options())?;
+        while let Some((key, child)) = iter.next()? {
             if skipped(child) {
                 continue;
             }
-            if key.has_prefix_comptime(b"@") {
+            if key.starts_with_ascii(b"@") {
                 match self.scalar(global, child, "an attribute value")? {
                     Scalar::Skip | Scalar::Empty => {}
                     Scalar::Text(text) => {
                         self.append_attribute(global, &key.substring(1), &text)?
                     }
                 }
-            } else if key.eql_comptime("#text") {
+            } else if key.eq_ascii(b"#text") {
                 match self.scalar(global, child, "#text")? {
                     Scalar::Text(text) if text.length() > 0 => has_text = true,
                     _ => {}
                 }
-            } else if key.has_prefix_comptime(b"#") {
+            } else if key.starts_with_ascii(b"#") {
                 return Err(global
                     .throw(format_args!("XML.stringify: unknown key '{}' (keys starting with '#' are reserved; text content is \"#text\")", key))
                     .into());
@@ -621,13 +742,12 @@ impl Stringifier {
         if pretty {
             self.indent += 1;
         }
-        let mut iter = jsc::JSPropertyIterator::init(global, object, iter_options())?;
-        while let Some(key) = iter.next()? {
-            let child = iter.value;
-            if skipped(child) || key.has_prefix_comptime(b"@") {
+        let iter = jsc::JSPropertyIterator::init(global, object, iter_options())?;
+        while let Some((key, child)) = iter.next()? {
+            if skipped(child) || key.starts_with_ascii(b"@") {
                 continue;
             }
-            if key.eql_comptime("#text") {
+            if key.eq_ascii(b"#text") {
                 if let Scalar::Text(text) = self.scalar(global, child, "#text")? {
                     self.append_text(global, &text)?;
                 }
@@ -645,7 +765,7 @@ impl Stringifier {
             self.indent -= 1;
             self.newline();
         }
-        self.append_end_tag(*name);
+        self.append_end_tag(name);
         Ok(())
     }
 
@@ -666,7 +786,7 @@ impl Stringifier {
             return Ok(Scalar::Empty);
         }
         if value.is_string() || value.is_number() || value.is_boolean() || value.is_big_int() {
-            return Ok(Scalar::Text(OwnedString::new(value.to_bun_string(global)?)));
+            return Ok(Scalar::Text(value.to_bun_string(global)?));
         }
         if value.is_date() {
             let mut buf = [0u8; 64];
@@ -677,7 +797,7 @@ impl Stringifier {
                     ))
                     .into());
             };
-            return Ok(Scalar::Text(OwnedString::new(BunString::clone_utf8(iso))));
+            return Ok(Scalar::Text(BunString::clone_utf8(iso)));
         }
         Err(global
             .throw(format_args!(
@@ -721,13 +841,13 @@ impl Stringifier {
 
     // ── output pieces ──────────────────────────────────────────────────────
 
-    fn append_empty_element(&mut self, name: BunString) {
+    fn append_empty_element(&mut self, name: &BunString) {
         self.builder.append_lchar(b'<');
         self.builder.append_string(name);
         self.builder.append_latin1(b"/>");
     }
 
-    fn append_end_tag(&mut self, name: BunString) {
+    fn append_end_tag(&mut self, name: &BunString) {
         self.builder.append_latin1(b"</");
         self.builder.append_string(name);
         self.builder.append_lchar(b'>');
@@ -744,7 +864,7 @@ impl Stringifier {
     ) -> StringifyResult<()> {
         self.check_name(global, name, "attribute")?;
         self.builder.append_lchar(b' ');
-        self.builder.append_string(*name);
+        self.builder.append_string(name);
         self.builder.append_latin1(b"=\"");
         self.append_escaped(global, value, true)?;
         self.builder.append_lchar(b'"');
@@ -805,13 +925,9 @@ impl Stringifier {
             }
             Space::Str(s) => {
                 self.builder.append_lchar(b'\n');
-                let clamped: BunString = if s.length() > 10 {
-                    s.substring_with_len(0, 10)
-                } else {
-                    **s
-                };
+                let clamped = s.trunc(10);
                 for _ in 0..self.indent {
-                    self.builder.append_string(clamped);
+                    self.builder.append_string(&clamped);
                 }
             }
         }

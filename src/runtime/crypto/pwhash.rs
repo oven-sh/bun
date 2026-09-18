@@ -1,8 +1,8 @@
 //! Password hashing for `Bun.password` (argon2 / bcrypt). Neither algorithm is
 //! provided by BoringSSL, so this module implements the API surface that
 //! `PasswordObject` consumes (`str_hash` / `str_verify` / `Params` / `Mode` /
-//! `Encoding`) and routes to the pure-Rust `rust-argon2` and `bcrypt` crates
-//! from crates.io.
+//! `Encoding`) and routes to the pure-Rust `rust-argon2` (vendored, patched to
+//! verify legacy `m < 8` hashes) and `bcrypt` crates.
 //!
 //!   * argon2: PHC string format only (`str_hash` rejects `.crypt`), 32-byte
 //!     random salt, 32-byte tag, version 0x13.

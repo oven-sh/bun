@@ -85,8 +85,8 @@ public:
 
     /* node:http server compat: whether the request currently being received on
      * this connection has exceeded server.headersTimeout / server.requestTimeout
-     * (both in milliseconds; 0 disables the respective check). */
-    bool isRequestTimedOut(uint64_t headersTimeoutMs, uint64_t requestTimeoutMs) const;
+     * (ms; 0 disables a check). Reports a given message at most once. */
+    bool isRequestTimedOut(uint64_t headersTimeoutMs, uint64_t requestTimeoutMs);
 
     /* node:http server compat - HTTP/1.1 pipelining. Responses for requests
      * that were parsed while an earlier response on this connection was still
@@ -151,12 +151,7 @@ public:
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
 
-        return WebCore::subspaceForImpl<JSNodeHTTPServerSocket, WebCore::UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForJSNodeHTTPServerSocket.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSNodeHTTPServerSocket = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForJSNodeHTTPServerSocket.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForJSNodeHTTPServerSocket = std::forward<decltype(space)>(space); });
+        return WebCore::subspaceForImpl<JSNodeHTTPServerSocket, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForJSNodeHTTPServerSocket, m_subspaceForJSNodeHTTPServerSocket));
     }
 
     void detach();

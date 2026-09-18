@@ -807,6 +807,122 @@ describe("--dry-run", async () => {
   });
 });
 
+describe.concurrent("credentials in the registry url", () => {
+  // Records every request, so a test can assert exactly what `bun publish` sent (one authenticated PUT, or nothing).
+  function registryMock() {
+    const requests: { method: string; pathname: string; authorization: string | null }[] = [];
+    const server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        requests.push({
+          method: req.method,
+          pathname: new URL(req.url).pathname,
+          authorization: req.headers.get("authorization"),
+        });
+        return new Response("OK", { status: 200 });
+      },
+    });
+    return {
+      requests,
+      port: server.port,
+      [Symbol.dispose]: () => server.stop(true),
+    };
+  }
+
+  async function packageDirFor(name: string) {
+    const packageDir = tmpdirSync();
+    await write(join(packageDir, "package.json"), JSON.stringify({ name, version: "1.0.0" }));
+    return packageDir;
+  }
+
+  const basicAuth = `Basic ${Buffer.from("pubuser:hunter2").toString("base64")}`;
+
+  test("--registry with user:pass@ publishes with Basic auth", async () => {
+    using mock = registryMock();
+    const packageDir = await packageDirFor("userinfo-flag-pkg");
+
+    const { out, err, exitCode } = await publish(
+      env,
+      packageDir,
+      "--registry",
+      `http://pubuser:hunter2@localhost:${mock.port}/`,
+    );
+    expect(err).not.toContain("error:");
+    expect(out).toContain(`Registry: http://localhost:${mock.port}/\n`);
+    expect(out).toContain(" + userinfo-flag-pkg@1.0.0");
+    expect(out).not.toContain("hunter2");
+    expect(err).not.toContain("hunter2");
+    expect(mock.requests).toEqual([{ method: "PUT", pathname: "/userinfo-flag-pkg", authorization: basicAuth }]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("--registry with :token@ publishes with a Bearer token", async () => {
+    using mock = registryMock();
+    const packageDir = await packageDirFor("userinfo-token-pkg");
+
+    const { out, err, exitCode } = await publish(
+      env,
+      packageDir,
+      "--registry",
+      `http://:publish-token@localhost:${mock.port}/`,
+    );
+    expect(err).not.toContain("error:");
+    expect(out).toContain(" + userinfo-token-pkg@1.0.0");
+    expect(out).not.toContain("publish-token");
+    expect(mock.requests).toEqual([
+      { method: "PUT", pathname: "/userinfo-token-pkg", authorization: "Bearer publish-token" },
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test.each(["npm_config_registry", "NPM_CONFIG_REGISTRY", "BUN_CONFIG_REGISTRY"])(
+    "%s with user:pass@ publishes with Basic auth",
+    async key => {
+      using mock = registryMock();
+      const packageDir = await packageDirFor("userinfo-env-pkg");
+
+      const { out, err, exitCode } = await publish(
+        { ...env, [key]: `http://pubuser:hunter2@localhost:${mock.port}/` },
+        packageDir,
+      );
+      expect(err).not.toContain("error:");
+      expect(out).toContain(`Registry: http://localhost:${mock.port}/\n`);
+      expect(out).toContain(" + userinfo-env-pkg@1.0.0");
+      expect(out).not.toContain("hunter2");
+      expect(err).not.toContain("hunter2");
+      expect(mock.requests).toEqual([{ method: "PUT", pathname: "/userinfo-env-pkg", authorization: basicAuth }]);
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  test("no credentials at all fails before sending a request", async () => {
+    using mock = registryMock();
+    const packageDir = await packageDirFor("no-credentials-pkg");
+
+    const { err, exitCode } = await publish(env, packageDir, "--registry", `http://localhost:${mock.port}/`);
+    expect(err).toBe("error: missing authentication (run `bunx npm login`)\n");
+    expect(mock.requests).toEqual([]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("no credentials at all fails before sending a request (tarball path)", async () => {
+    using mock = registryMock();
+    const packageDir = await packageDirFor("no-credentials-tarball-pkg");
+    await pack(packageDir, env);
+
+    const { err, exitCode } = await publish(
+      env,
+      packageDir,
+      "./no-credentials-tarball-pkg-1.0.0.tgz",
+      "--registry",
+      `http://localhost:${mock.port}/`,
+    );
+    expect(err).toBe("error: missing authentication (run `bunx npm login`)\n");
+    expect(mock.requests).toEqual([]);
+    expect(exitCode).toBe(1);
+  });
+});
+
 describe("lifecycle scripts", async () => {
   const script = `const fs = require("fs");
     fs.writeFileSync(process.argv[2] + ".txt", \`
@@ -1068,12 +1184,12 @@ it("$npm_command is accurate during publish", async () => {
   expect(out.split("\n")).toEqual([
     `bun publish ${Bun.version_with_sha}`,
     ``,
-    `packed 95B package.json`,
+    `packed 107B package.json`,
     ``,
     `Total files: 1`,
     expect.stringContaining(`Shasum: `),
     expect.stringContaining(`Integrity: sha512-`),
-    `Unpacked size: 95B`,
+    `Unpacked size: 107B`,
     expect.stringContaining(`Packed size: `),
     `Tag: simpletag`,
     `Access: default`,

@@ -91,7 +91,6 @@ const noUnify: readonly string[] = [
   "src/jsc/bindings/webcrypto/CryptoAlgorithmAES_KW.cpp",
   "src/jsc/bindings/webcrypto/CryptoAlgorithmECDSA.cpp",
   "src/jsc/bindings/webcrypto/CryptoAlgorithmHMAC.cpp",
-  "src/jsc/bindings/webcrypto/CryptoAlgorithmRSAES_PKCS1_v1_5.cpp",
   "src/jsc/bindings/webcrypto/CryptoAlgorithmRSASSA_PKCS1_v1_5.cpp",
   "src/jsc/bindings/webcrypto/CryptoAlgorithmRSA_OAEP.cpp",
   "src/jsc/bindings/webcrypto/CryptoAlgorithmRSA_PSS.cpp",

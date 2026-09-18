@@ -111,6 +111,7 @@ The 16-hex `entry_hash` suffix encodes the entry's **resolved dependency closure
 An entry only lives in the global store when it can be safely shared. Entries fall back to a per-project `node_modules/.bun/<storepath>/` directory when:
 
 - the package has a **patch** applied via `bun patch` — the patched contents are project-specific;
+- `bun patch <pkg>` made an **editable copy** of the package (the entry holds a `.bun-patch` file until `bun patch --commit` or a forced install builds the package again);
 - the package is listed in **`trustedDependencies`** (or trusted via `bun add --trust`) — its lifecycle script may mutate the install directory, and a script running through the project symlink would mutate the shared copy;
 - the package, or **any** dependency it links to, is a `workspace:`, `file:`, or `link:` dependency — those resolve to project-local paths that other projects can't see.
 

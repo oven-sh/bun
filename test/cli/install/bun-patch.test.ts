@@ -1,8 +1,8 @@
 import { $, ShellOutput } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { lstatSync, readdirSync, readFileSync, readlinkSync } from "fs";
+import { lstatSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync } from "fs";
 import { bunEnv, bunExe, isASAN, tempDir, VerdaccioRegistry } from "harness";
-import { isAbsolute, join, sep } from "path";
+import { isAbsolute, join, relative, sep } from "path";
 
 const expectNoError = (o: ShellOutput) => expect(o.stderr.toString()).not.toContain("error");
 // const platformPath = (path: string) => (process.platform === "win32" ? path.replaceAll("/", sep) : path);
@@ -438,31 +438,270 @@ describe("isolated linker: package with no folder at its hoisted path", () => {
     );
   });
 
-  // With the global store `node_modules/.bun/<entry>` is a link into the cache. An install puts
-  // that link back over a directory it finds there, so a copy made in the store folder would
-  // lose its edits. The copy stays at the hoisted path, which an install does not touch.
-  test.concurrent("a package in the global store", async () => {
-    const { packageDir } = await registry.createTestDir({
-      bunfigOpts: { linker: "isolated", globalStore: true },
-      files: {
-        "package.json": JSON.stringify({ name: "app", dependencies: { "one-fixed-dep": "1.0.0" } }),
-      },
+  // With the global store `node_modules/.bun/<entry>` is a link into `<cache>/links`, which all
+  // projects share. `bun patch` puts a directory in place of the link and marks it with a
+  // `.bun-patch` file. An install keeps a marked entry. It used to put the link back.
+  describe("in the global store", () => {
+    // "no-deps@1.0.0", "@types/is-number@2.0.0"
+    const nameOf = (id: string) => id.slice(0, id.lastIndexOf("@"));
+    const entry = (id: string) => join("node_modules", ".bun", id.replaceAll("/", "+"));
+    const folderOf = (id: string) => storeFolder(id.replaceAll("/", "+"), nameOf(id));
+    const marker = (packageDir: string, id: string) => kind(packageDir, entry(id), ".bun-patch");
+    const hint = (name: string) =>
+      `To load your changes in the packages that depend on ${name} before that, run:\n\n  bun install\n`;
+    const loadDependency = "console.log(JSON.stringify(require('one-fixed-dep').dependencies['no-deps']))";
+    const original = '{"name":"no-deps","version":"1.0.0"}\n';
+
+    async function installInGlobalStore(dependencies: Record<string, string>, ...ids: string[]) {
+      const { packageDir, packageJson } = await registry.createTestDir({
+        bunfigOpts: { linker: "isolated", globalStore: true },
+        files: { "package.json": JSON.stringify({ name: "app", dependencies }) },
+      });
+      await runOk(packageDir, "install");
+      expect(ids.map(id => kind(packageDir, entry(id)))).toEqual(ids.map(() => "link"));
+      return { packageDir, packageJson, shared: sharedStore(packageDir) };
+    }
+
+    // Every file and link in `<cache>/links`.
+    function sharedStore(packageDir: string) {
+      const links = join(packageDir, ".bun-cache", "links");
+      return Object.fromEntries(
+        readdirSync(links, { recursive: true, withFileTypes: true }).map(dirent => {
+          const path = join(dirent.parentPath, dirent.name);
+          const content = dirent.isSymbolicLink()
+            ? `link to ${readlinkSync(path)}`
+            : dirent.isFile()
+              ? readFileSync(path, "utf8")
+              : "directory";
+          return [relative(links, path), content];
+        }),
+      );
+    }
+
+    async function refused(packageDir: string, ...args: string[]) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "patch", ...args],
+        cwd: packageDir,
+        env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache") },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
+      expect(stderr).toContain("is inside the global store, which all projects share\n");
+      expect(exitCode).toBe(1);
+      return stderr;
+    }
+
+    async function expectCommitted(packageDir: string, id: string) {
+      const patchFile = `patches/${id.replaceAll("/", "%2F")}.patch`;
+      expect(await Bun.file(join(packageDir, patchFile)).text()).toContain("+module.exports = 'patched';");
+      expect((await Bun.file(join(packageDir, "package.json")).json()).patchedDependencies).toEqual({
+        [id]: patchFile,
+      });
+      expect({
+        marker: marker(packageDir, id),
+        store: await Bun.file(join(packageDir, folderOf(id), "index.js")).text(),
+      }).toEqual({ marker: "missing", store: patched });
+    }
+
+    test.concurrent("a transitive dependency", async () => {
+      const ids = ["no-deps@1.0.0", "one-fixed-dep@1.0.0"];
+      const { packageDir, packageJson, shared } = await installInGlobalStore({ "one-fixed-dep": "1.0.0" }, ...ids);
+      const folder = folderOf("no-deps@1.0.0");
+      const layout = async () => ({
+        hoistedPath: kind(packageDir, "node_modules", "no-deps"),
+        entry: kind(packageDir, entry("no-deps@1.0.0")),
+        marker: marker(packageDir, "no-deps@1.0.0"),
+        dependent: kind(packageDir, entry("one-fixed-dep@1.0.0")),
+        loaded: await runOk(packageDir, "-e", loadDependency),
+      });
+
+      const stdout = await runOk(packageDir, "patch", "no-deps");
+      expect(stdout).toContain(`bun patch --commit '${folder}'\n\n${hint("no-deps")}`);
+      await Bun.write(join(packageDir, folder, "index.js"), patched);
+      // The dependent is an entry of the shared store, so it links to the shared package.
+      expect(await layout()).toEqual({
+        hoistedPath: "missing",
+        entry: "directory",
+        marker: "file",
+        dependent: "link",
+        loaded: original,
+      });
+
+      // The install moves the dependent into the project, where it links to the copy.
+      await runOk(packageDir, "install");
+      expect(await layout()).toEqual({
+        hoistedPath: "missing",
+        entry: "directory",
+        marker: "file",
+        dependent: "directory",
+        loaded: '"patched"\n',
+      });
+
+      await runOk(packageDir, "patch", "--commit", "no-deps");
+      await expectCommitted(packageDir, "no-deps@1.0.0");
+      expect(await layout()).toEqual({
+        hoistedPath: "missing",
+        entry: "directory",
+        marker: "missing",
+        dependent: "directory",
+        loaded: '"patched"\n',
+      });
+
+      // Without the patch, both packages return to the shared store.
+      const root = await Bun.file(packageJson).json();
+      delete root.patchedDependencies;
+      await Bun.write(packageJson, JSON.stringify(root));
+      await runOk(packageDir, "install");
+      expect(await layout()).toEqual({
+        hoistedPath: "missing",
+        entry: "link",
+        marker: "missing",
+        dependent: "link",
+        loaded: original,
+      });
+      expect(sharedStore(packageDir)).toEqual(shared);
     });
-    await runOk(packageDir, "install");
-    expect(kind(packageDir, "node_modules", ".bun", "no-deps@1.0.0")).toBe("link");
 
-    await patch(packageDir, "no-deps", "no-deps", "node_modules/no-deps");
-    await Bun.write(join(packageDir, "node_modules", "no-deps", "index.js"), patched);
-    await runOk(packageDir, "install");
+    // `one-one-dep` depends on `one-dep`, which depends on `no-deps`. The link from `one-dep` to
+    // `no-deps` is in the shared entry, so the install has to make it again next to the copy.
+    test.concurrent("the store folder as a path, for a package with a dependency", async () => {
+      const { packageDir, shared } = await installInGlobalStore({ "one-one-dep": "1.0.0" }, "one-dep@1.0.0");
+      const folder = folderOf("one-dep@1.0.0");
+      const dependency = join(entry("one-dep@1.0.0"), "node_modules", "no-deps");
 
-    expect({
-      storeEntry: kind(packageDir, "node_modules", ".bun", "no-deps@1.0.0"),
-      globalStore: await Bun.file(join(packageDir, storeFolder("no-deps@1.0.0", "no-deps"), "index.js")).text(),
-      copy: await Bun.file(join(packageDir, "node_modules", "no-deps", "index.js")).text(),
-    }).toEqual({
-      storeEntry: "link",
-      globalStore: expect.not.stringContaining("patched"),
-      copy: patched,
+      await patch(packageDir, folder, "one-dep", folder);
+      await Bun.write(join(packageDir, folder, "index.js"), patched);
+      await runOk(packageDir, "install");
+      expect({
+        entry: kind(packageDir, entry("one-dep@1.0.0")),
+        marker: marker(packageDir, "one-dep@1.0.0"),
+        copy: kind(packageDir, folder, "index.js"),
+        dependency: kind(packageDir, dependency),
+      }).toEqual({ entry: "directory", marker: "file", copy: "file", dependency: "link" });
+      expect({
+        copy: await Bun.file(join(packageDir, folder, "index.js")).text(),
+        dependencyVersion: (await Bun.file(join(packageDir, dependency, "package.json")).json()).version,
+      }).toEqual({ copy: patched, dependencyVersion: "1.0.1" });
+
+      await runOk(packageDir, "patch", "--commit", folder);
+      await expectCommitted(packageDir, "one-dep@1.0.0");
+      expect(sharedStore(packageDir)).toEqual(shared);
+    });
+
+    // The hoisted tree puts this copy at `node_modules/one-fixed-dep/node_modules/no-deps`. That
+    // path goes through two links, so the copy was made in the shared entry of the dependent.
+    test.concurrent("a dependency that the hoisted tree nests under its dependent", async () => {
+      const dependencies = { "one-fixed-dep": "1.0.0", "no-deps": "2.0.0" };
+      const { packageDir, shared } = await installInGlobalStore(dependencies, "no-deps@1.0.0");
+      const folder = folderOf("no-deps@1.0.0");
+
+      const stdout = await runOk(packageDir, "patch", "no-deps@1.0.0");
+      expect(sharedStore(packageDir)).toEqual(shared);
+      expect(stdout).toContain(`bun patch --commit '${folder}'`);
+      await Bun.write(join(packageDir, folder, "index.js"), patched);
+
+      await runOk(packageDir, "patch", "--commit", "no-deps@1.0.0");
+      await expectCommitted(packageDir, "no-deps@1.0.0");
+      const load = "console.log(require('one-fixed-dep').dependencies['no-deps'], require('no-deps').version)";
+      expect(await runOk(packageDir, "-e", load)).toBe("patched 2.0.0\n");
+      expect(sharedStore(packageDir)).toEqual(shared);
+    });
+
+    // The link of the entry is three folders above `@types/is-number`.
+    test.concurrent("a scoped package", async () => {
+      const id = "@types/is-number@2.0.0";
+      const { packageDir, shared } = await installInGlobalStore({ "two-range-deps": "1.0.0" }, id);
+
+      await patch(packageDir, "@types/is-number", "@types/is-number", folderOf(id));
+      expect(marker(packageDir, id)).toBe("file");
+      await Bun.write(join(packageDir, folderOf(id), "index.js"), patched);
+      await runOk(packageDir, "install");
+      expect(await Bun.file(join(packageDir, folderOf(id), "index.js")).text()).toBe(patched);
+
+      await runOk(packageDir, "patch", "--commit", "@types/is-number");
+      await expectCommitted(packageDir, id);
+      expect(sharedStore(packageDir)).toEqual(shared);
+    });
+
+    test.concurrent("install --force builds the package again and removes the mark", async () => {
+      const id = "no-deps@1.0.0";
+      const { packageDir, shared } = await installInGlobalStore({ "one-fixed-dep": "1.0.0" }, id);
+      const index = join(packageDir, folderOf(id), "index.js");
+      const pristine = await Bun.file(index).text();
+
+      await patch(packageDir, "no-deps", "no-deps", folderOf(id));
+      await Bun.write(index, patched);
+      await runOk(packageDir, "install", "--force");
+      expect({ marker: marker(packageDir, id), copy: await Bun.file(index).text() }).toEqual({
+        marker: "missing",
+        copy: pristine,
+      });
+
+      await runOk(packageDir, "install");
+      expect(kind(packageDir, entry(id))).toBe("link");
+      expect(sharedStore(packageDir)).toEqual(shared);
+    });
+
+    // The entry is a directory already, so `bun patch` replaces no link. It marks the entry all the same.
+    test.concurrent("a copy that was made before the global store was enabled", async () => {
+      const id = "no-deps@1.0.0";
+      const { packageDir } = await registry.createTestDir({
+        bunfigOpts: { linker: "isolated" },
+        files: { "package.json": JSON.stringify({ name: "app", dependencies: { "one-fixed-dep": "1.0.0" } }) },
+      });
+      await runOk(packageDir, "install");
+
+      const stdout = await runOk(packageDir, "patch", "no-deps");
+      expect(stdout).toContain(`bun patch --commit '${folderOf(id)}'`);
+      expect(stdout).not.toContain(hint("no-deps"));
+      await Bun.write(join(packageDir, folderOf(id), "index.js"), patched);
+
+      await registry.writeBunfig(packageDir, { linker: "isolated", globalStore: true });
+      await runOk(packageDir, "install");
+      expect({
+        entry: kind(packageDir, entry(id)),
+        marker: marker(packageDir, id),
+        dependent: kind(packageDir, entry("one-fixed-dep@1.0.0")),
+        loaded: await runOk(packageDir, "-e", loadDependency),
+      }).toEqual({ entry: "directory", marker: "file", dependent: "directory", loaded: '"patched"\n' });
+    });
+
+    test.concurrent("a folder that is inside the shared store", async () => {
+      const ids = ["no-deps@1.0.0", "one-fixed-dep@1.0.0"];
+      const { packageDir, shared } = await installInGlobalStore({ "one-fixed-dep": "1.0.0" }, ...ids);
+      const note =
+        "note: use 'bun patch <name>@<version>', or the folder node_modules/.bun/<name>@<version>/node_modules/<name>\n";
+
+      // The link from the dependent to the package is a file of the shared entry of the dependent.
+      const linkOfDependent = `${entry("one-fixed-dep@1.0.0").replaceAll(sep, "/")}/node_modules/no-deps`;
+      expect(await refused(packageDir, linkOfDependent)).toContain(
+        `error: "${linkOfDependent}" is inside the global store, which all projects share\n${note}`,
+      );
+      // A backslash path is read as a package name, so the real path uses `/` on Windows too.
+      const realFolder = realpathSync(join(packageDir, folderOf("no-deps@1.0.0"))).replaceAll(sep, "/");
+      expect(await refused(packageDir, realFolder)).toContain(note);
+
+      // `--commit` moves `node_modules` out of the folder for the diff. `bun patch` did not prepare this one.
+      expect(await refused(packageDir, "--commit", "node_modules/one-fixed-dep")).toContain(
+        "note: run 'bun patch <name>@<version>' first, it makes a copy of the package in this project\n",
+      );
+
+      expect(ids.map(id => kind(packageDir, entry(id)))).toEqual(["link", "link"]);
+      expect(sharedStore(packageDir)).toEqual(shared);
+    });
+
+    // `--lockfile-only` does not link the entry again, so only the hoisted path is left.
+    test.concurrent("a package with no store entry in the project", async () => {
+      const dependencies = { "one-fixed-dep": "1.0.0", "no-deps": "2.0.0" };
+      const { packageDir, shared } = await installInGlobalStore(dependencies, "no-deps@1.0.0");
+      rmSync(join(packageDir, entry("no-deps@1.0.0")));
+
+      expect(await refused(packageDir, "--lockfile-only", "no-deps@1.0.0")).toContain(
+        'error: "node_modules/one-fixed-dep/node_modules/no-deps" is inside the global store, which all projects share\n' +
+          "note: run 'bun install' first, it links the package into this project\n",
+      );
+      expect(sharedStore(packageDir)).toEqual(shared);
     });
   });
 });

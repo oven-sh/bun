@@ -1131,6 +1131,41 @@ pub(crate) fn build_store(
     })
 }
 
+/// The global virtual store is `<cache>/links`.
+pub(crate) const GLOBAL_STORE_DIR: &[u8] = b"links";
+
+/// `bun patch` writes this file into the `node_modules/.bun/<entry>` that holds the copy of the package.
+pub(crate) const PATCH_COPY_MARKER: &[u8] = b".bun-patch";
+
+/// The names of the store entries that hold a `bun patch` copy. A link into the global store is never one.
+fn marked_patch_entries() -> sys::Result<Vec<Box<[u8]>>> {
+    let mut names = Vec::new();
+    let store_dir = match sys::open_dir_for_iteration(Fd::cwd(), b"node_modules/.bun") {
+        Ok(store_dir) => store_dir,
+        Err(err) if err.get_errno() == sys::Errno::ENOENT => return Ok(names),
+        Err(err) => return Err(err),
+    };
+    let store_dir = scopeguard::guard(store_dir, |fd| {
+        use bun_sys::FdExt as _;
+        fd.close();
+    });
+    let mut marker = AutoRelPath::init();
+    let mut entries = sys::iterate_dir(*store_dir);
+    while let Some(entry) = entries.next()? {
+        if entry.kind == sys::EntryKind::SymLink {
+            continue;
+        }
+        let name = entry.name.slice_u8();
+        marker.set_length(0);
+        marker.append(name).assume_ok();
+        marker.append(PATCH_COPY_MARKER).assume_ok();
+        if sys::exists_at(*store_dir, marker.slice_z()) {
+            names.push(name.into());
+        }
+    }
+    Ok(names)
+}
+
 /// Runs on main thread
 pub(crate) fn install_isolated_packages(
     manager: &mut PackageManager,
@@ -1191,6 +1226,20 @@ pub(crate) fn install_isolated_packages(
             let trusted_from_update = manager.find_trusted_dependencies_from_update_requests();
 
             let mut states = vec![State::Unvisited; store.entries.len()].into_boxed_slice();
+
+            // A missed mark lets this install delete the copy, so the error ends it.
+            let patch_entries = match marked_patch_entries() {
+                Ok(patch_entries) => patch_entries,
+                Err(err) => {
+                    Output::err(
+                        err,
+                        "failed to read './node_modules/.bun'",
+                        format_args!(""),
+                    );
+                    Global::exit(1);
+                }
+            };
+            let mut store_path: Vec<u8> = Vec::new();
 
             // Iterative DFS so dependency cycles (which the isolated graph permits)
             // can't overflow the stack and are handled deterministically: a back-edge
@@ -1289,6 +1338,19 @@ pub(crate) fn install_isolated_packages(
                                 ) || trusted_from_update.contains(&pkg_id)
                                 {
                                     break 'eligible false;
+                                }
+                                // A package that `bun patch` prepared stays in the project, like a patched one.
+                                if !patch_entries.is_empty() {
+                                    store_path.clear();
+                                    write!(
+                                        store_path,
+                                        "{}",
+                                        store::entry::fmt_store_path(id, &store, lockfile)
+                                    )
+                                    .expect("formatting into a Vec is infallible");
+                                    if patch_entries.iter().any(|entry| **entry == *store_path) {
+                                        break 'eligible false;
+                                    }
                                 }
                                 break 'eligible true;
                             }
@@ -1660,7 +1722,7 @@ pub(crate) fn install_isolated_packages(
             // a `&ZStr` for `Installer.global_store_path` below.
             let joined = paths::resolve_path::join_abs_string::<paths::platform::Auto>(
                 cache_dir_path,
-                &[b"links"],
+                &[GLOBAL_STORE_DIR],
             );
             let mut owned = joined.to_vec();
             owned.push(0);

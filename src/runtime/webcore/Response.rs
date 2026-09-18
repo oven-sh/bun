@@ -17,6 +17,7 @@ use bun_http_types::Method::Method;
 
 use super::body::{Body, BodyMixin, Value as BodyValue, ValueError as BodyValueError};
 use super::{FetchHeaders, ReadableStream, Request};
+use crate::generated_classes::js_Response;
 
 // Codegen (`generated_classes.rs`) re-exports `Blob` from
 // `crate::webcore::response` because the `.classes.ts` source path is
@@ -156,8 +157,8 @@ impl BodyAbortListener {
                 }
             }
             let err = BodyValueError::JSValue(bun_jsc::strong::Optional::create(reason, &global));
-            // R-2: re-derive after `error()` ran JS.
-            let _ = response.get_body_value().to_error_instance(err, &global);
+            // R-2: `fail_body` re-derives the body value after `error()` ran JS.
+            let _ = response.fail_body(err, &global);
         }
     }
 }
@@ -280,6 +281,10 @@ impl crate::webcore::body::BodyOwnerJs for Response {
     #[inline]
     fn stream_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue) {
         js::stream_set_cached(this, global, value)
+    }
+    #[inline]
+    fn body_error_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue) {
+        js_Response::body_error_set_cached(this, global, value)
     }
 }
 
@@ -467,6 +472,20 @@ impl Response {
         <Self as BodyMixin>::check_body_stream_ref(self, global_object)
     }
 
+    #[inline]
+    fn check_body_error_ref(&self, global_object: &JSGlobalObject) {
+        <Self as BodyMixin>::check_body_error_ref(self, global_object)
+    }
+
+    #[inline]
+    pub(crate) fn fail_body(
+        &self,
+        err: BodyValueError,
+        global_object: &JSGlobalObject,
+    ) -> JsResult<()> {
+        <Self as BodyMixin>::fail_body(self, err, global_object)
+    }
+
     pub fn to_js(&self, global_object: &JSGlobalObject) -> JSValue {
         self.calculate_estimated_byte_size();
         // `bun_jsc::generated::JSResponse::to_js` ⇒ `Response__create` (C++
@@ -481,6 +500,8 @@ impl Response {
         self.js_ref.set(JsRef::init_weak(js_value));
 
         self.check_body_stream_ref(global_object);
+        // A body that failed before it had a wrapper: the clone of a failed Response.
+        self.check_body_error_ref(global_object);
         js_value
     }
 

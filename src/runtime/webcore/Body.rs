@@ -486,9 +486,9 @@ impl PartialEq for Action {
     }
 }
 
-/// Per-class codegen'd cached-slot accessors for the `body` and `stream`
-/// JS-side properties, plus the weak `JsRef` back-pointer. Both `Request` and
-/// `Response` forward these 1:1 to `bun_jsc::generated::JS{Request,Response}`.
+/// Per-class codegen'd cached-slot accessors for the `body`, `stream` and
+/// `bodyError` JS-side properties, plus the weak `JsRef` back-pointer. Both
+/// `Request` and `Response` forward these 1:1 to their codegen'd module.
 pub(crate) trait BodyOwnerJs {
     /// `self.js_ref.get().try_get()` — the live JS wrapper, if any.
     fn js_ref(&self) -> Option<JSValue>;
@@ -497,6 +497,7 @@ pub(crate) trait BodyOwnerJs {
     fn body_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
     fn stream_get_cached(this: JSValue) -> Option<JSValue>;
     fn stream_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
+    fn body_error_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -605,7 +606,12 @@ pub enum ValueError {
     /// error" to TypeError, so use this for fetch-layer rejections that
     /// callers feature-detect via `err instanceof TypeError`.
     TypeError(BunString),
+    /// GC-roots the error.
     JSValue(jsc::strong::Optional),
+    /// After [`Self::downgrade`]: a visited slot of the body owner's wrapper
+    /// keeps the error alive; observed through a real `JSC::Weak`, so it
+    /// reads `None` once the error is collected.
+    WeakJSValue(jsc::Weak<()>),
 }
 
 impl ValueError {
@@ -613,6 +619,25 @@ impl ValueError {
     // per PORTING.md (never expose `pub fn deinit(&mut self)`).
     pub fn reset(&mut self) {
         *self = ValueError::JSValue(jsc::strong::Optional::empty());
+    }
+
+    /// Release the GC root on a `JSValue` error while keeping it readable via
+    /// `Weak`. `adopt` stores the error in a slot that the body owner's wrapper
+    /// visits, which keeps it alive from here. A primitive stays rooted: it
+    /// references nothing, and `Weak` holds objects only.
+    pub(crate) fn downgrade(
+        &mut self,
+        global_object: &JSGlobalObject,
+        adopt: impl FnOnce(JSValue),
+    ) {
+        let ValueError::JSValue(strong) = self else {
+            return;
+        };
+        let Some(js_value) = strong.get().filter(|value| value.is_object()) else {
+            return;
+        };
+        adopt(js_value);
+        *self = ValueError::WeakJSValue(jsc::Weak::create_passive(js_value, global_object));
     }
 }
 
@@ -648,6 +673,9 @@ impl ValueError {
             ValueError::JSValue(js_value) => {
                 return js_value.get().unwrap_or(JSValue::UNDEFINED);
             }
+            ValueError::WeakJSValue(js_value) => {
+                return js_value.get().unwrap_or(JSValue::UNDEFINED);
+            }
         };
         *self = ValueError::JSValue(jsc::strong::Optional::create(js_value, global_object));
         js_value
@@ -668,6 +696,11 @@ impl ValueError {
                 }
                 ValueError::JSValue(jsc::strong::Optional::empty())
             }
+            // The copy's owner downgrades it again once it has a wrapper.
+            ValueError::WeakJSValue(js_ref) => ValueError::JSValue(match js_ref.get() {
+                Some(js_value) => jsc::strong::Optional::create(js_value, global_object),
+                None => jsc::strong::Optional::empty(),
+            }),
             ValueError::AbortReason(r) => ValueError::AbortReason(*r),
         }
     }
@@ -1387,8 +1420,27 @@ impl Value {
 
             return Ok(());
         }
-        *self = Value::Error(err);
+        // A read already spent this body. A late failure (fetch reports an
+        // abort again after the abort listener rejected the pending read) must
+        // not make it readable again, nor park an error nothing will take.
+        if !matches!(self, Value::Used) {
+            *self = Value::Error(err);
+        }
         Ok(())
+    }
+
+    /// If the body already failed, take its error. The read spends the body,
+    /// as it does any other, so the error does not stay behind: after
+    /// [`ValueError::to_js`] a `Strong` holds it, script can see it from now
+    /// on, and a reader that holds only the `Value` cannot hand it to the
+    /// owner's wrapper.
+    pub(crate) fn take_error(&mut self, global_object: &JSGlobalObject) -> Option<JSValue> {
+        let Value::Error(err) = self else {
+            return None;
+        };
+        let js_err = err.to_js(global_object);
+        *self = Value::Used;
+        Some(js_err)
     }
 
     // mutates self to Null and is called explicitly at specific protocol points.
@@ -1692,6 +1744,30 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 }
             }
         }
+    }
+
+    /// Migrate a failed body's error from its `Strong` into the GC-traced
+    /// `js.gc.bodyError` slot. The error can reach this very owner (an abort
+    /// reason, what an HTMLRewriter handler threw), and a `Strong` is a root:
+    /// that cycle would never be collected.
+    fn check_body_error_ref(&self, global_object: &JSGlobalObject) {
+        let Value::Error(err) = self.get_body_value() else {
+            return;
+        };
+        let Some(js_value) = self.js_ref() else {
+            return;
+        };
+        err.downgrade(global_object, |js_err| {
+            Self::body_error_set_cached(js_value, global_object, js_err);
+        });
+    }
+
+    /// [`Value::to_error_instance`] on this owner's body. What the body keeps
+    /// of `err` until something reads it is not left as a GC root.
+    fn fail_body(&self, err: ValueError, global_object: &JSGlobalObject) -> JsResult<()> {
+        let result = self.get_body_value().to_error_instance(err, global_object);
+        self.check_body_error_ref(global_object);
+        result
     }
 
     /// After `clone()` replaced this body's stream: point the wrapper's cached
@@ -2264,10 +2340,6 @@ fn handle_body_stream_unusable(
 /// reader must call this before its `Locked` handling: `Value::Error` would
 /// otherwise fall through to `use_as_any_blob_*` and resolve empty.
 fn handle_body_error(value: &mut Value, global_object: &JSGlobalObject) -> Option<JSValue> {
-    let Value::Error(err) = value else {
-        return None;
-    };
-    let js = err.to_js(global_object);
-    *value = Value::Used;
+    let js = value.take_error(global_object)?;
     Some(JSPromise::rejected_promise(global_object, js).to_js())
 }

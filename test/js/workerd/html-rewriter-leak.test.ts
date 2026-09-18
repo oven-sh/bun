@@ -904,6 +904,200 @@ describe("an output Response that outlives its rewrite does not keep the handler
   });
 });
 
+// An input that stays open. A rewrite that fails cancels it, which is how a
+// test learns of the failure without reading the output.
+const openInput = () => {
+  let controller!: ReadableStreamDefaultController;
+  const cancelled = Promise.withResolvers<void>();
+  const stream = new ReadableStream({
+    start: c => void (controller = c),
+    cancel: () => cancelled.resolve(),
+  });
+  return {
+    stream,
+    cancelled: cancelled.promise,
+    send: (html: string) => controller.enqueue(new TextEncoder().encode(html)),
+    fail: (error: unknown) => controller.error(error),
+  };
+};
+
+// A rewrite that fails while nothing reads its output leaves the error in the
+// body of the output Response, for whoever reads it later. The body held that
+// error by a Strong, which is a GC root. An error that reaches the Response
+// (`error.response = response`, a `cause` chain) closed a cycle through the
+// root, and the Response, the transform, both streams and the lol-html parser
+// were never collected. The error now sits in a visited slot of the wrapper
+// that owns the body, and the body holds it weakly: an ordinary cycle.
+describe("a failed rewrite whose error reaches its output Response does not pin it", () => {
+  const N = 100;
+  type Failure = Error & { response?: Response; clone?: Response; request?: Request; requestClone?: Request };
+
+  // Each fails a rewrite with an error that references the output Response, and reads nothing.
+  const failures: Record<string, () => Promise<void>> = {
+    "an error that a handler throws": async () => {
+      const input = openInput();
+      const holder: { response?: Response } = {};
+      holder.response = new HTMLRewriter()
+        .on("p", {
+          element() {
+            throw Object.assign(new Error("handler failed"), { response: holder.response });
+          },
+        })
+        .transform(new Response(input.stream));
+      input.send("<p>x</p>");
+      await input.cancelled;
+    },
+    "the rejection of a handler that suspended the rewrite": async () => {
+      const input = openInput();
+      const holder: { response?: Response } = {};
+      holder.response = new HTMLRewriter()
+        .on("p", {
+          async element() {
+            // Still pending after a microtask checkpoint, so the rewrite suspends on it.
+            await new Promise(resolve => setImmediate(resolve));
+            throw Object.assign(new Error("handler failed"), { response: holder.response });
+          },
+        })
+        .transform(new Response(input.stream));
+      input.send("<p>x</p>");
+      await input.cancelled;
+    },
+    "the error of the input stream": async () => {
+      const input = openInput();
+      const response = new HTMLRewriter().on("p", { element() {} }).transform(new Response(input.stream));
+      input.fail(Object.assign(new Error("input failed"), { response }));
+      // The pump's read() rejects and fails the rewrite in microtasks, all of them before the next turn.
+      await new Promise(resolve => setImmediate(resolve));
+    },
+    // clone() copies the failed body: the copy holds the error too, in a second Response.
+    "an error that reaches a clone of the failed Response too": async () => {
+      const input = openInput();
+      const failure: Failure = new Error("handler failed");
+      const response = new HTMLRewriter()
+        .on("p", {
+          element() {
+            throw failure;
+          },
+        })
+        .transform(new Response(input.stream));
+      input.send("<p>x</p>");
+      await input.cancelled;
+      failure.response = response;
+      failure.clone = response.clone();
+    },
+    // So does a Request made from the failed Response, and so does its clone.
+    "an error that reaches the Requests that copied the failed body": async () => {
+      const input = openInput();
+      const failure: Failure = new Error("handler failed");
+      const response = new HTMLRewriter()
+        .on("p", {
+          element() {
+            throw failure;
+          },
+        })
+        .transform(new Response(input.stream));
+      input.send("<p>x</p>");
+      await input.cancelled;
+      failure.request = new Request("http://localhost/", response);
+      failure.requestClone = failure.request.clone();
+    },
+  };
+
+  const bodyOwners = () => {
+    Bun.gc(true);
+    const { Response = 0, Request = 0 } = heapStats().objectTypeCounts;
+    return Response + Request;
+  };
+
+  test.each(Object.entries(failures))("%s", async (_, once) => {
+    for (let i = 0; i < 10; i++) await once();
+    const before = bodyOwners();
+    for (let i = 0; i < N; i++) await once();
+
+    // Unfixed: every output Response stays, and every copy: N or 2 * N.
+    expect(bodyOwners() - before).toBeLessThan(N / 4);
+  });
+});
+
+// The other half of holding the error weakly: the slot of the wrapper is all
+// that keeps it alive until something reads the body. (Passes before the
+// change too: a Strong cannot die.) A primitive is not an object that a weak
+// handle can hold, so the body keeps a Strong on it.
+test("the error of a failed rewrite stays alive while only the unread body holds it", async () => {
+  const failWith = async (thrown: () => unknown) => {
+    const input = openInput();
+    const response = new HTMLRewriter()
+      .on("p", {
+        element() {
+          throw thrown();
+        },
+      })
+      .transform(new Response(input.stream));
+    input.send("<p>x</p>");
+    await input.cancelled;
+    return response;
+  };
+  // Made inside the handler: once it returns, nothing but the failed body holds these.
+  const failed = {
+    text: await failWith(() => Object.assign(new Error("read by text()"), { detail: { id: 1 } })),
+    body: await failWith(() => Object.assign(new Error("read by a reader"), { detail: { id: 2 } })),
+    clone: await failWith(() => Object.assign(new Error("read by a clone"), { detail: { id: 3 } })),
+    rewriter: await failWith(() => Object.assign(new Error("read by a rewriter"), { detail: { id: 4 } })),
+    string: await failWith(() => "a string"),
+    number: await failWith(() => 42),
+  };
+  // A Request that copies the failed body holds the error the same way.
+  const request = new Request(
+    "http://localhost/",
+    await failWith(() => Object.assign(new Error("read by a Request"), { detail: { id: 5 } })),
+  );
+
+  // A full collection, then garbage in the cell size of an Error, so that an
+  // error collected by mistake is reused and cannot arrive intact by luck.
+  Bun.gc(true);
+  const junk: unknown[] = [];
+  for (let i = 0; i < 20_000; i++) junk.push(Object.assign(new Error("junk"), { detail: { id: -i } }));
+  Bun.gc(true);
+
+  const shape = (error: any) =>
+    error instanceof Error ? { message: error.message, detail: (error as any).detail } : error;
+  const thrownBy = (fn: () => unknown) => {
+    try {
+      return fn();
+    } catch (error) {
+      return error;
+    }
+  };
+  expect({
+    text: shape(await failed.text.text().catch(error => error)),
+    body: shape(
+      await failed.body
+        .body!.getReader()
+        .read()
+        .catch(error => error),
+    ),
+    clone: shape(
+      await failed.clone
+        .clone()
+        .text()
+        .catch(error => error),
+    ),
+    rewriter: shape(thrownBy(() => new HTMLRewriter().transform(failed.rewriter))),
+    request: shape(await request.text().catch(error => error)),
+    string: await failed.string.text().catch(error => error),
+    number: await failed.number.text().catch(error => error),
+  }).toEqual({
+    text: { message: "read by text()", detail: { id: 1 } },
+    body: { message: "read by a reader", detail: { id: 2 } },
+    clone: { message: "read by a clone", detail: { id: 3 } },
+    rewriter: { message: "read by a rewriter", detail: { id: 4 } },
+    request: { message: "read by a Request", detail: { id: 5 } },
+    string: "a string",
+    number: 42,
+  });
+  expect(junk).toHaveLength(20_000);
+});
+
 // The other half of holding the handlers by a visited slot: they have to stay
 // alive for exactly as long as something can still invoke them. These pass
 // before the change too (a protected value cannot die): they guard the slots.

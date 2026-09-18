@@ -568,9 +568,8 @@ impl Group {
             && !self.head.head.range.has_left()
     }
 
-    /// npm's `includePrerelease`: a prerelease only has to satisfy the comparators. The option
-    /// also changes how node-semver desugars a range, so parse the range with
-    /// `parse_including_prerelease`.
+    /// npm's `includePrerelease`: a prerelease only has to satisfy the comparators. Parse the
+    /// range with `parse_including_prerelease`.
     #[inline]
     pub fn satisfies_including_prerelease(
         &self,
@@ -828,10 +827,8 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
     parse_with(input, sliced, false)
 }
 
-/// `parse` under node-semver's `includePrerelease` option, for a range that
-/// `Group::satisfies_including_prerelease` evaluates. There `>1` starts at `2.0.0-0`, so a
-/// prerelease of 2.0.0 satisfies it. The other lower bounds that node-semver derives with a `-0`
-/// in this mode (`1.x`, `>=1`, `^1`) parse as in `parse`.
+/// `parse` for `Group::satisfies_including_prerelease`. With node-semver's `includePrerelease`
+/// option `>1` starts at `2.0.0-0`, not at `2.0.0`.
 pub fn parse_including_prerelease(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
     parse_with(input, sliced, true)
 }

@@ -116,8 +116,37 @@ function runInNewContext(code, context, options) {
   } else {
     options = { ...options };
   }
-  context = createContext(context, options);
+  context = createContext(context, getContextOptions(options));
   return createScript(code, options).runInNewContext(context, options);
+}
+
+// Mirrors Node's lib/vm.js getContextOptions.
+function getContextOptions(options) {
+  if (!options) return {};
+  const { contextName, contextOrigin, contextCodeGeneration, microtaskMode } = options;
+  if (contextName !== undefined) validateString(contextName, "options.contextName");
+  if (contextOrigin !== undefined) validateString(contextOrigin, "options.contextOrigin");
+  const contextOptions: any = {
+    name: contextName,
+    origin: contextOrigin,
+    codeGeneration: undefined,
+    microtaskMode,
+  };
+  if (contextCodeGeneration !== undefined) {
+    validateObject(contextCodeGeneration, "options.contextCodeGeneration");
+    const { strings, wasm } = contextCodeGeneration;
+    const codeGeneration: any = {};
+    if (strings !== undefined) {
+      validateBoolean(strings, "options.contextCodeGeneration.strings");
+      codeGeneration.strings = strings;
+    }
+    if (wasm !== undefined) {
+      validateBoolean(wasm, "options.contextCodeGeneration.wasm");
+      codeGeneration.wasm = wasm;
+    }
+    contextOptions.codeGeneration = codeGeneration;
+  }
+  return contextOptions;
 }
 
 function createScript(code, options) {

@@ -345,8 +345,10 @@ static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVM
         }
     }
 
-    // Set the contextified object before evaluating
-    globalObject->setContextifiedObject(contextifiedObject);
+    // A DONT_CONTEXTIFY context has no sandbox; its global is used directly.
+    if (!globalObject->isNotContextified()) {
+        globalObject->setContextifiedObject(contextifiedObject);
+    }
 
     NakedPtr<JSC::Exception> exception;
     JSValue result {};
@@ -550,6 +552,13 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInNewContext, (JSGlobalObject * globalObject, 
     getNodeVMContextOptions(globalObject, vm, scope, contextOptionsArg, contextOptions, "contextCodeGeneration", &importer);
     RETURN_IF_EXCEPTION(scope, {});
 
+    // vm.ts runInNewContext() passes the DONT_CONTEXTIFY global created by createContext().
+    if (auto* proxy = dynamicDowncast<JSC::JSGlobalProxy>(contextObjectValue)) {
+        if (auto* existing = dynamicDowncast<NodeVMGlobalObject>(proxy->target()); existing && existing->isNotContextified()) {
+            RELEASE_AND_RETURN(scope, runInContext(existing, script, proxy, contextOptionsArg));
+        }
+    }
+
     contextOptions.notContextified = notContextified;
 
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
@@ -560,10 +569,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInNewContext, (JSGlobalObject * globalObject, 
     RETURN_IF_EXCEPTION(scope, {});
 
     if (notContextified) {
-        auto* specialSandbox = NodeVMSpecialSandbox::create(vm, targetContext);
-        RETURN_IF_EXCEPTION(scope, {});
-        targetContext->setSpecialSandbox(specialSandbox);
-        RELEASE_AND_RETURN(scope, runInContext(targetContext, script, targetContext->specialSandbox(), callFrame->argument(1)));
+        RELEASE_AND_RETURN(scope, runInContext(targetContext, script, targetContext->globalThis(), callFrame->argument(1)));
     }
 
     RELEASE_AND_RETURN(scope, runInContext(targetContext, script, context, callFrame->argument(1)));

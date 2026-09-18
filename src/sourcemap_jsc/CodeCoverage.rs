@@ -118,7 +118,6 @@ impl<'a> Report<'a> {
                     vm,
                     source_id,
                     (&raw mut generator).cast::<c_void>(),
-                    ignore_sourcemap_,
                     Generator::do_,
                 )
             };
@@ -575,8 +574,7 @@ unsafe extern "C" {
         vm: *mut VM,
         source_id: i32,
         ctx: *mut c_void,
-        ignore_sourcemap: bool,
-        cb: extern "C" fn(&mut Generator, *const BasicBlockRange, usize, usize, bool),
+        cb: extern "C" fn(&mut Generator, *const BasicBlockRange, usize, usize),
     ) -> bool;
 }
 
@@ -595,7 +593,6 @@ impl Generator {
         blocks_ptr: *const BasicBlockRange,
         blocks_len: usize,
         function_start_offset: usize,
-        _ignore_sourcemap: bool,
     ) {
         // The C++ side (CodeCoverage.cpp) invokes this callback with `(nullptr, 0, 0)` when
         // basicBlocks is empty. `core::slice::from_raw_parts` requires a non-null, aligned

@@ -464,6 +464,11 @@ impl PackageManager {
         }
 
         if any_outside {
+            if log_level != LogLevel::Silent {
+                bun_core::note!(
+                    "to depend on a directory outside the project, declare it as \"file:../that/directory\", or run `bun link` in it"
+                );
+            }
             self.crash();
         }
     }
@@ -489,9 +494,10 @@ fn workspace_containment<'b>(
     workspace_path: &[u8],
     real_dir_buf: &'b mut bun_paths::PathBuffer,
 ) -> Containment<'b> {
-    // The installer creates these itself, so the path resolves elsewhere mid-install.
+    // The installer creates these itself, so the path resolves elsewhere mid-install. The
+    // compare is caseless because macOS and Windows open either spelling.
     for component in strings::split_any(workspace_path, b"/\\") {
-        if component == b"node_modules" {
+        if component.eq_ignore_ascii_case(b"node_modules") {
             return Containment::Refused("is inside node_modules");
         }
     }
@@ -502,9 +508,9 @@ fn workspace_containment<'b>(
         return Containment::Refused("is too long");
     };
 
-    let real_dir =
+    let (real_dir, dropped_dotdot) =
         match real_path_of_nearest_existing_dir(&mut abs_dir_buf.0, abs_dir_len, real_dir_buf) {
-            Ok(real_dir) => real_dir,
+            Ok(resolved) => resolved,
             Err(err) => return Containment::Failed(err),
         };
     let real_root = match real_root {
@@ -516,7 +522,7 @@ fn workspace_containment<'b>(
             };
             let mut real_root_buf = bun_paths::path_buffer_pool::get();
             match real_path_of_nearest_existing_dir(&mut root_buf.0, root_len, &mut real_root_buf) {
-                Ok(root) => real_root.insert(Box::from(root)),
+                Ok((root, _)) => real_root.insert(Box::from(root)),
                 Err(err) => return Containment::Failed(err),
             }
         }
@@ -524,12 +530,20 @@ fn workspace_containment<'b>(
 
     if resolve_path::is_parent_or_equal(real_root, real_dir) != resolve_path::ParentEqual::Unrelated
     {
+        // The `..` applies to a directory that does not exist yet, so where the path lands
+        // is whatever the install creates there.
+        if dropped_dotdot {
+            return Containment::Refused(
+                "has a \"..\" component below a directory that does not exist",
+            );
+        }
         return Containment::Inside;
     }
     Containment::Outside(real_dir)
 }
 
-/// Writes `<root>/<path>` and a NUL, not normalized: the OS applies `..` to a symlink target.
+/// Writes `<root>/<path>` and a NUL. Not normalized: on POSIX a `..` applies to the target
+/// of the symlink before it, so only the OS can resolve the path the linker opens.
 fn write_absolute_path(buf: &mut [u8], root: &[u8], path: &[u8]) -> Option<usize> {
     let root: &[u8] = if bun_paths::is_absolute(path) {
         b""
@@ -550,18 +564,20 @@ fn write_absolute_path(buf: &mut [u8], root: &[u8], path: &[u8]) -> Option<usize
     Some(len)
 }
 
-/// `bun.lock` can list a missing workspace, so the nearest existing directory stands in.
+/// `bun.lock` can list a missing workspace, so the nearest existing directory stands in. The
+/// flag says whether a `..` was among the components dropped to reach it.
 fn real_path_of_nearest_existing_dir<'b>(
     buf: &mut [u8],
     len: usize,
     out: &'b mut bun_paths::PathBuffer,
-) -> bun_sys::Maybe<&'b [u8]> {
+) -> bun_sys::Maybe<(&'b [u8], bool)> {
     let mut len = len;
+    let mut dropped_dotdot = false;
     loop {
         // SAFETY: `buf[len]` is the NUL this function maintains.
         let path = bun_core::ZStr::from_buf(buf, len);
         let err = match bun_sys::realpath(path, out) {
-            Ok(real) => return Ok(real),
+            Ok(real) => return Ok((real, dropped_dotdot)),
             Err(err) => err,
         };
         let parent_len = match (err.get_errno(), bun_paths::dirname(&buf[..len])) {
@@ -570,6 +586,7 @@ fn real_path_of_nearest_existing_dir<'b>(
             }
             _ => return Err(err),
         };
+        dropped_dotdot |= bun_paths::basename(&buf[..len]) == b"..";
         len = parent_len;
         buf[len] = 0;
     }

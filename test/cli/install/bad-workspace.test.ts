@@ -351,12 +351,15 @@ describe.concurrent("workspace packages outside the workspace root", () => {
     await expectRejected(String(dir), "../victim");
   });
 
-  // The clone ships `sym -> .`, so the OS applies the `..` to the root itself and the path
-  // names the sibling. A lexical check would collapse `sym/..` first and see `<root>/victim`.
-  // POSIX only: Win32 collapses `sym\..` before the filesystem sees it, so the path stays
-  // inside the root there and the install fails with ENOENT instead.
-  test.skipIf(isWindows)("a bun.lock path that leaves the root through a symlink and .. is rejected", async () => {
-    using dir = tempDir("bad-workspace-lockfile-symlink-dotdot", {
+  // A `..` resolves against whatever the component before it turns out to be, and the clone
+  // picks that: `sym -> .` makes `sym/..` the root's parent, and a `missing` directory that
+  // the install creates itself does the same. The message differs by platform, because Win32
+  // collapses a `..` before the filesystem sees it, so assert only that the path is named.
+  test.each([
+    ["a symlink", "sym/../victim", true],
+    ["a directory the install creates", "missing/../../victim", false],
+  ])("a bun.lock path with a .. component below %s is refused", async (_name, workspacePath, needsSymlink) => {
+    using dir = tempDir("bad-workspace-lockfile-dotdot", {
       ...SIBLING_PROJECTS,
       "clone/package.json": cloneRoot({ dependencies: { tool: "workspace:tools/tool" } }),
       "clone/tools/tool/package.json": JSON.stringify({ name: "tool" }),
@@ -365,20 +368,22 @@ describe.concurrent("workspace packages outside the workspace root", () => {
         configVersion: 1,
         workspaces: {
           "": { name: "root", dependencies: { tool: "workspace:tools/tool" } },
-          "sym/../victim": { name: "victim", dependencies: { inner: "^1.0.0" } },
+          [workspacePath]: { name: "victim", dependencies: { inner: "^1.0.0" } },
           "packages/inner": { name: "inner", version: "1.99.0" },
-          "tools/tool": { name: "tool", dependencies: { anything: "workspace:sym/../victim" } },
+          "tools/tool": { name: "tool", dependencies: { anything: `workspace:${workspacePath}` } },
         },
         packages: {
-          anything: ["victim@workspace:sym/../victim"],
+          anything: [`victim@workspace:${workspacePath}`],
           inner: ["inner@workspace:packages/inner"],
           tool: ["tool@workspace:tools/tool"],
         },
       }),
     });
-    symlinkSync(join(String(dir), "clone"), join(String(dir), "clone", "sym"), "junction");
+    if (needsSymlink) {
+      symlinkSync(join(String(dir), "clone"), join(String(dir), "clone", "sym"), "junction");
+    }
 
-    await expectRejected(String(dir), "sym/../victim");
+    await expectRefused(String(dir), `error: workspace "${workspacePath}" `, ["--linker", "isolated"]);
   });
 
   // The path is in `workspace_paths` from the manifest parse, which the isolated linker
@@ -406,30 +411,31 @@ describe.concurrent("workspace packages outside the workspace root", () => {
   // link to `packages/a`, and `packages/a/esc` is a link the clone ships, so the path
   // resolves to the sibling only after the install starts. A workspace is never inside
   // `node_modules`, so the path is refused by its spelling.
-  test("a workspace path inside node_modules is refused", async () => {
+  // macOS and Windows open either spelling of the directory, so the refusal is caseless.
+  test.each(["node_modules/a/esc", "Node_Modules/a/esc"])("a workspace path inside %s is refused", async entry => {
     using dir = tempDir("bad-workspace-inside-node-modules", {
       ...SIBLING_PROJECTS,
       "clone/packages/a/package.json": JSON.stringify({ name: "a", version: "1.0.0" }),
-      "clone/package.json": cloneRoot({ dependencies: { b: "workspace:node_modules/a/esc" } }),
+      "clone/package.json": cloneRoot({ dependencies: { b: `workspace:${entry}` } }),
       "clone/bun.lock": JSON.stringify({
         lockfileVersion: 2,
         configVersion: 1,
         workspaces: {
-          "": { name: "root", dependencies: { b: "workspace:node_modules/a/esc" } },
-          "node_modules/a/esc": { name: "victim", dependencies: { inner: "^1.0.0" } },
+          "": { name: "root", dependencies: { b: `workspace:${entry}` } },
+          [entry]: { name: "victim", dependencies: { inner: "^1.0.0" } },
           "packages/a": { name: "a", version: "1.0.0" },
           "packages/inner": { name: "inner", version: "1.99.0" },
         },
         packages: {
           a: ["a@workspace:packages/a"],
-          b: ["victim@workspace:node_modules/a/esc"],
+          b: [`victim@workspace:${entry}`],
           inner: ["inner@workspace:packages/inner"],
         },
       }),
     });
     symlinkSync(join(String(dir), "victim"), join(String(dir), "clone", "packages", "a", "esc"), "junction");
 
-    await expectRefused(String(dir), `error: workspace "node_modules/a/esc" is inside node_modules\n`);
+    await expectRefused(String(dir), `error: workspace "${entry}" is inside node_modules\n`);
   });
 
   // `bun prune` deletes inside the same `<workspace>/node_modules` directories, so it
@@ -464,7 +470,7 @@ describe.concurrent("workspace packages outside the workspace root", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stderr).toContain(`error: workspace "../victim" is outside the workspace root`);
     expect(readdirSync(join(String(dir), "victim", "node_modules"))).toEqual(["keep"]);

@@ -274,8 +274,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_suspendThreadAndSignalForTesting, (JSC::JSGl
         {
             WTF::ThreadSuspendLocker locker;
             if (thread->suspend(locker)) {
-                // The suspended thread can hold any lock, the allocator's included, so this only
-                // makes syscalls and reads memory until the resume.
+                // No allocation until the resume: the suspended thread may hold the allocator lock.
                 if (threadDirected)
                     pthread_kill(handle, signalNumber);
                 else

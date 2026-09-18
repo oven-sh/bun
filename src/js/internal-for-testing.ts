@@ -696,11 +696,9 @@ export const isMemoryPressureWatcherInstalled: () => boolean = $newCppFunction(
 export const spawnThreadsForTesting: (iterations: number, fd: number, parallelism: number, detach?: boolean) => number =
   $newCppFunction("InternalForTesting.cpp", "jsFunction_spawnThreadsForTesting", 4);
 
-// Linux only. A helper thread suspends the calling thread the way the GC does, sends `signal`
-// while it is suspended (to the process with kill(2), or to that thread with pthread_kill() when
-// `threadDirected`), keeps it suspended for `holdMilliseconds`, then resumes it. `state` is an
-// Int32Array over a SharedArrayBuffer: the caller keeps incrementing state[0]; state[1] becomes 1
-// if that counter moved during the suspension; state[2] becomes 1 once the thread is resumed.
+// Linux only. Suspends the calling thread with WTF::Thread::suspend, sends `signal` during the
+// suspension (kill(2), or pthread_kill() when `threadDirected`), and resumes after `holdMilliseconds`.
+// `state` (shared Int32Array): [0] caller's counter, [1] set if it moved while suspended, [2] set on resume.
 export const suspendThreadAndSignalForTesting: (
   state: Int32Array,
   signal: number,

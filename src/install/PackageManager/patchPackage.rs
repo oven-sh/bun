@@ -48,23 +48,14 @@ fn print_resolution_label<'a>(
 
 #[derive(Clone, Copy)]
 enum FolderLookupError {
-    /// No package of that name has the folder's version.
     NotInLockfile,
-    /// Every package of that name has a git, tarball or folder resolution,
-    /// and there is more than one. The folder's version cannot tell them
-    /// apart.
+    /// Several non-npm packages of that name. Their labels are not versions.
     Ambiguous,
 }
 
-/// Finds the lockfile package that `bun patch <path>` targets, from the `name`
-/// and `version` of the folder's package.json. The version is the label of an
-/// npm resolution only, so when the lockfile has npm packages of that name,
-/// one of them has to have that version. A package with another resolution
-/// (git, tarball, folder) has a URL or path as its label, which the
-/// package.json does not carry, so it is taken only when it is the single
-/// package of that name. A folder that bun did not install, such as a copy
-/// that another package ships inside its tarball, has no match when its
-/// version is not in the lockfile.
+/// The lockfile package behind a `bun patch <path>` folder. Only an npm label
+/// is a version, so a non-npm package is taken only as the single package of
+/// that name.
 fn package_for_folder(
     lockfile: &Lockfile,
     name_hash: u64,

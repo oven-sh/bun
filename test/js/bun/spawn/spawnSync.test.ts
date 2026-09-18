@@ -232,8 +232,7 @@ describe("uid/gid", () => {
 // still unregister from the loop it was registered with. Before the fix the
 // EPOLL_CTL_DEL went to the private loop, so the main loop kept a stale
 // entry for the dup'd fd number. The next `Bun.file(2).writer()` dups to the
-// same number, EPOLL_CTL_ADD fails with EEXIST, and the fd is closed twice:
-// once by FileSink::setup and once by the writer's Drop through the Closer.
+// same number and EPOLL_CTL_ADD fails with EEXIST.
 test.skipIf(!isLinux)("a writer finalized during spawnSync does not break the next writer on the same fd", async () => {
   // A file, not `-e`: run through `-e`, the collection that `Bun.gc(false)`
   // requests does not finalize the writers inside spawnSync (their dups stay

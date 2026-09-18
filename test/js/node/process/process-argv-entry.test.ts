@@ -113,6 +113,60 @@ describe.concurrent("process.argv[1] is path.resolve of the entry argument", () 
       expect(exitCode).toBe(0);
     });
 
+    test.each([
+      ["file in a symlinked directory", join("linked", "entry.js")],
+      ["extension added in a symlinked directory", join("linked", "entry")],
+      ["symlinked directory with package.json main", "linked"],
+      ["symlinked package directory", join("node_modules", "pkg")],
+    ])("resolver path (%s)", async (_label, arg) => {
+      using dir = tempDir("argv-symlink-dir", {
+        "real/entry.js": printEntry,
+        "real/package.json": JSON.stringify({ main: "entry.js" }),
+        "node_modules/.keep": "",
+      });
+      const root = String(dir);
+      const entryPath = join(root, "real", "entry.js");
+      symlinkSync("real", join(root, "linked"));
+      symlinkSync(join("..", "real"), join(root, "node_modules", "pkg"));
+
+      const { stdout, stderr, exitCode } = await run(root, arg);
+
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({
+        argv1: join(root, arg),
+        url: pathToFileURL(entryPath).href,
+        metaMain: true,
+        bunMain: entryPath,
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    test("absolute path when the cwd was deleted", async () => {
+      using dir = tempDir("argv-symlink-nocwd", { "foo.mjs": printEntry });
+      using goneDir = tempDir("argv-symlink-gone", {});
+      const gone = String(goneDir);
+      const fooPath = join(String(dir), "foo.mjs");
+      const barPath = join(String(dir), "bar.mjs");
+      symlinkSync("foo.mjs", barPath);
+
+      await using proc = Bun.spawn({
+        cmd: ["/bin/sh", "-c", `cd "${gone}" && rmdir "${gone}" && exec "${bunExe()}" "${barPath}"`],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({
+        argv1: barPath,
+        url: pathToFileURL(fooPath).href,
+        metaMain: true,
+        bunMain: fooPath,
+      });
+      expect(exitCode).toBe(0);
+    });
+
     test("Bun.$ positional $1 agrees with process.argv[1]", async () => {
       using dir = tempDir("argv-symlink-shell", {
         "foo.mjs": `

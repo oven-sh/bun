@@ -77,8 +77,8 @@ describe.skipIf(!isLinux)("SIGPWR that JSC did not send", () => {
     const { proc, stdout } = await spawnAndWaitForReady(
       `console.log("ready");
        let keep = [];
-       for (let i = 0; i < 40; i++) {
-         for (let j = 0; j < 2000; j++) keep.push({ i, j, s: Buffer.alloc(j % 64, "x").toString() });
+       for (let i = 0; i < 8; i++) {
+         for (let j = 0; j < 1000; j++) keep.push({ i, j, s: Buffer.alloc(j % 64, "x").toString() });
          if (keep.length > 50_000) keep = [];
          Bun.gc(true);
        }

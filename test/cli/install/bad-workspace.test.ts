@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from "bun";
 import { install_test_helpers } from "bun:internal-for-testing";
 import { beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isLinux, isWindows, tempDir, tmpdirSync } from "harness";
 import { dirname, join } from "path";
 
@@ -215,17 +215,28 @@ describe.concurrent("workspace packages outside the workspace root", () => {
     return existsSync(path) ? readFileSync(path, "utf8") : undefined;
   }
 
-  // The install fails, names the workspace, and writes nothing.
+  function readdirIfExists(path: string) {
+    return existsSync(path) ? readdirSync(path).sort() : undefined;
+  }
+
+  // The install fails, names the workspace path, and writes nothing.
   async function expectRejected(dir: string, workspacePath: string, args: string[] = []) {
+    await expectRefused(
+      dir,
+      `error: workspace "${workspacePath}" is outside the workspace root: it resolves to "${join(dir, "victim")}"\n`,
+      args,
+    );
+  }
+
+  async function expectRefused(dir: string, message: string, args: string[] = []) {
     const clone = join(dir, "clone");
     const lockfileBefore = readIfExists(join(clone, "bun.lock"));
+    const victimNodeModulesBefore = readdirIfExists(join(dir, "victim", "node_modules"));
 
     const { stderr, exitCode } = await runInstall(clone, args);
 
-    expect(stderr).toContain(
-      `error: workspace "victim" (${workspacePath}) is outside the workspace root: it resolves to "${join(dir, "victim")}"\n`,
-    );
-    expect(existsSync(join(dir, "victim", "node_modules"))).toBe(false);
+    expect(stderr).toContain(message);
+    expect(readdirIfExists(join(dir, "victim", "node_modules"))).toEqual(victimNodeModulesBefore);
     expect(existsSync(join(clone, "node_modules"))).toBe(false);
     expect(readIfExists(join(clone, "bun.lock"))).toBe(lockfileBefore);
     expect(exitCode).toBe(1);
@@ -338,6 +349,124 @@ describe.concurrent("workspace packages outside the workspace root", () => {
     });
 
     await expectRejected(String(dir), "../victim");
+  });
+
+  // The clone ships `sym -> .`, so the OS applies the `..` to the root itself and the path
+  // names the sibling. A lexical check would collapse `sym/..` first and see `<root>/victim`.
+  test("a bun.lock path that leaves the root through a symlink and .. is rejected", async () => {
+    using dir = tempDir("bad-workspace-lockfile-symlink-dotdot", {
+      ...SIBLING_PROJECTS,
+      "clone/package.json": cloneRoot({ dependencies: { tool: "workspace:tools/tool" } }),
+      "clone/tools/tool/package.json": JSON.stringify({ name: "tool" }),
+      "clone/bun.lock": JSON.stringify({
+        lockfileVersion: 2,
+        configVersion: 1,
+        workspaces: {
+          "": { name: "root", dependencies: { tool: "workspace:tools/tool" } },
+          "sym/../victim": { name: "victim", dependencies: { inner: "^1.0.0" } },
+          "packages/inner": { name: "inner", version: "1.99.0" },
+          "tools/tool": { name: "tool", dependencies: { anything: "workspace:sym/../victim" } },
+        },
+        packages: {
+          anything: ["victim@workspace:sym/../victim"],
+          inner: ["inner@workspace:packages/inner"],
+          tool: ["tool@workspace:tools/tool"],
+        },
+      }),
+    });
+    symlinkSync(join(String(dir), "clone"), join(String(dir), "clone", "sym"), "junction");
+
+    await expectRejected(String(dir), "sym/../victim");
+  });
+
+  // The path is in `workspace_paths` from the manifest parse, which the isolated linker
+  // iterates when it replaces an existing `node_modules`. The target has no package.json,
+  // so no package resolves for it, and an optional dependency does not fail the install.
+  test("an optional workspace: path that leaves the root is rejected", async () => {
+    using dir = tempDir("bad-workspace-optional-unresolved", {
+      "victim/node_modules/keep/package.json": JSON.stringify({ name: "keep", version: "1.0.0" }),
+      "clone/packages/inner/package.json": JSON.stringify({ name: "inner", version: "1.99.0" }),
+      "clone/node_modules/.keep": "",
+      "clone/package.json": cloneRoot({ optionalDependencies: { anything: "workspace:../victim" } }),
+    });
+
+    const clone = join(String(dir), "clone");
+    const { stderr, exitCode } = await runInstall(clone, ["--linker", "isolated"]);
+
+    expect(stderr).toContain(`error: workspace "../victim" is outside the workspace root`);
+    // The sibling's own node_modules is where the isolated linker moves the old tree to.
+    expect(readdirSync(join(String(dir), "victim", "node_modules"))).toEqual(["keep"]);
+    expect(readdirSync(join(clone, "node_modules"))).toEqual([".keep"]);
+    expect(exitCode).toBe(1);
+  });
+
+  // `node_modules/a` does not exist when the check runs: the hoisted linker creates it as a
+  // link to `packages/a`, and `packages/a/esc` is a link the clone ships, so the path
+  // resolves to the sibling only after the install starts. A workspace is never inside
+  // `node_modules`, so the path is refused by its spelling.
+  test("a workspace path inside node_modules is refused", async () => {
+    using dir = tempDir("bad-workspace-inside-node-modules", {
+      ...SIBLING_PROJECTS,
+      "clone/packages/a/package.json": JSON.stringify({ name: "a", version: "1.0.0" }),
+      "clone/package.json": cloneRoot({ dependencies: { b: "workspace:node_modules/a/esc" } }),
+      "clone/bun.lock": JSON.stringify({
+        lockfileVersion: 2,
+        configVersion: 1,
+        workspaces: {
+          "": { name: "root", dependencies: { b: "workspace:node_modules/a/esc" } },
+          "node_modules/a/esc": { name: "victim", dependencies: { inner: "^1.0.0" } },
+          "packages/a": { name: "a", version: "1.0.0" },
+          "packages/inner": { name: "inner", version: "1.99.0" },
+        },
+        packages: {
+          a: ["a@workspace:packages/a"],
+          b: ["victim@workspace:node_modules/a/esc"],
+          inner: ["inner@workspace:packages/inner"],
+        },
+      }),
+    });
+    symlinkSync(join(String(dir), "victim"), join(String(dir), "clone", "packages", "a", "esc"), "junction");
+
+    await expectRefused(String(dir), `error: workspace "node_modules/a/esc" is inside node_modules\n`);
+  });
+
+  // `bun prune` deletes inside the same `<workspace>/node_modules` directories, so it
+  // checks the paths as well. The manifest and the lockfile agree here, so the frozen
+  // lockfile check that runs first is happy.
+  test("bun prune refuses a workspace outside the root", async () => {
+    using dir = tempDir("bad-workspace-prune-sibling", {
+      "victim/package.json": JSON.stringify({ name: "victim", version: "1.0.0" }),
+      "victim/node_modules/keep/package.json": JSON.stringify({ name: "keep", version: "1.0.0" }),
+      "clone/packages/inner/package.json": JSON.stringify({ name: "inner", version: "1.99.0" }),
+      "clone/node_modules/.keep": "",
+      "clone/package.json": JSON.stringify({ name: "root", workspaces: ["packages/*", "../victim"] }),
+      "clone/bun.lock": JSON.stringify({
+        lockfileVersion: 2,
+        configVersion: 1,
+        workspaces: {
+          "": { name: "root" },
+          "../victim": { name: "victim", version: "1.0.0" },
+          "packages/inner": { name: "inner", version: "1.99.0" },
+        },
+        packages: {
+          inner: ["inner@workspace:packages/inner"],
+          victim: ["victim@workspace:../victim"],
+        },
+      }),
+    });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "prune"],
+      cwd: join(String(dir), "clone"),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain(`error: workspace "../victim" is outside the workspace root`);
+    expect(readdirSync(join(String(dir), "victim", "node_modules"))).toEqual(["keep"]);
+    expect(exitCode).toBe(1);
   });
 
   async function expectInstalled(dir: string, workspacePaths: string[]) {

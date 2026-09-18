@@ -1302,6 +1302,58 @@ describe("handleUpgrade on a node:http upgrade socket", () => {
     expect(await Promise.race([closed.promise, clientClosed])).toBe(1000);
   });
 
+  // server.upgrade(res, { headers }) converts `headers` after it checks that
+  // the response is still open. The conversion runs user code (a getter, a
+  // toString(), an iterator). If that code ends the response, upgrade() must
+  // return false and write nothing: the header bytes used to land after the
+  // finished response.
+  describe.each([
+    [
+      "a getter",
+      (end: () => void) => ({
+        get "x-a"() {
+          end();
+          return "1";
+        },
+      }),
+    ],
+    [
+      "a toString()",
+      (end: () => void) => ({
+        "x-a": {
+          toString() {
+            end();
+            return "1";
+          },
+        },
+      }),
+    ],
+    [
+      "an iterator",
+      (end: () => void) => ({
+        *[Symbol.iterator]() {
+          end();
+          yield ["x-a", "1"];
+        },
+      }),
+    ],
+  ])("when %s in options.headers ends the response", (_, headers) => {
+    it("returns false and writes nothing", async () => {
+      await using upgrade = await receiveUpgrade(upgradeRequest());
+      const { socket } = upgrade;
+      const internals = Symbol.for("::bunternal::");
+      const res = socket[internals];
+      const bunServer = socket.server[internals];
+
+      expect(bunServer.upgrade(res, { data: {}, headers: headers(() => res.end()) })).toBe(false);
+
+      // Anything upgrade() wrote is already on the socket. Close it so that
+      // the client sees the whole exchange.
+      socket.destroy();
+      expect(await upgrade.received()).toMatch(/^HTTP\/1\.1 200 OK\r\n(?:[^\r\n]+\r\n)*Content-Length: 0\r\n\r\n$/);
+    });
+  });
+
   it("returns without calling back when the socket was destroyed before handleUpgrade()", async () => {
     await using upgrade = await receiveUpgrade(upgradeRequest());
     const { req, socket, head } = upgrade;

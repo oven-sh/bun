@@ -2116,6 +2116,62 @@ describe("bundler", () => {
     }).toEqual({ notOnDisk: true, inFiles: true, doubledSlash: true });
   });
 
+  // The resolver remembers a directory that it did not find. A plugin can name a path in a directory that does
+  // not exist yet and create the directory later, so the bundler asks the resolver only about a path on disk.
+  test.concurrent("plugin/onResolve path in a directory that a plugin creates later", async () => {
+    using dir = tempDir("plugin-resolved-file-late-directory", {
+      ...fakeJsxRuntimes,
+      "entry.js": `
+        import "alias/virtual";
+        import "./creates-directory.js";
+      `,
+      "creates-directory.js": `console.log("replaced by onLoad");`,
+      "empty.js": ``,
+    });
+    const root = String(dir);
+    const virtualModuleParsed = Promise.withResolvers<void>();
+
+    const result = await Bun.build({
+      entrypoints: [join(root, "entry.js")],
+      throw: false,
+      plugins: [
+        {
+          name: "late-directory",
+          setup(build) {
+            build.onResolve({ filter: /^alias\/virtual$/ }, () => ({ path: join(root, "generated", "virtual.js") }));
+            build.onLoad({ filter: /generated[\\/]virtual\.js$/ }, () => ({
+              contents: `import "alias/virtual-parsed";`,
+              loader: "js",
+            }));
+            // The bundler offers this import only after it parsed the virtual module.
+            build.onResolve({ filter: /^alias\/virtual-parsed$/ }, () => {
+              virtualModuleParsed.resolve();
+              return { path: join(root, "empty.js") };
+            });
+            build.onLoad({ filter: /creates-directory\.js$/ }, async () => {
+              await virtualModuleParsed.promise;
+              await Bun.write(
+                join(root, "generated", "tsconfig.json"),
+                JSON.stringify({ compilerOptions: { jsx: "react-jsx", jsxImportSource: "preact" } }),
+              );
+              await Bun.write(join(root, "generated", "component.tsx"), `console.log((() => <div />)());`);
+              return { contents: `import "./generated/component.tsx";`, loader: "js" };
+            });
+          },
+        },
+      ],
+    });
+    expect({ success: result.success, logs: result.logs.map(log => log.message) }).toEqual({
+      success: true,
+      logs: [],
+    });
+    const text = await result.outputs[0].text();
+    expect({ usesPreact: text.includes(`"preact"`), usesReact: text.includes(`"react"`) }).toEqual({
+      usesPreact: true,
+      usesReact: false,
+    });
+  });
+
   // The resolver lists a directory once. The bundler asks it about a file that onResolve named only after
   // onLoad ran, so a file that onLoad writes next to the module is in that list.
   test.concurrent("plugin/onLoad can write a file that the module it loads imports", async () => {

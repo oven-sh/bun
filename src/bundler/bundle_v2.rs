@@ -4619,6 +4619,10 @@ pub mod bv2_impl {
             {
                 return;
             }
+            // The resolver remembers a directory that it did not find, and a plugin can create that directory later.
+            if strings::contains_char(task.path.text, 0) || !bun_sys::exists(task.path.text) {
+                return;
+            }
             let transpiler = self.transpiler_for_target(task.known_target);
             let Ok(result) = transpiler.resolver.resolve(
                 task.path.name().dir_with_trailing_slash(),

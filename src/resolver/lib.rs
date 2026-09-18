@@ -1450,14 +1450,12 @@ pub mod fs {
                         core::ptr::null_mut(),
                     )
                 };
-                // Dangling link / loop / EACCES: `cache.kind` is already set
-                // from the link's own directory bit, which is correct for all
-                // of those. `Entry.kind`/`Entry.symlink` swallow errors and
-                // fall back to the `.file` placeholder anyway, so returning
-                // the half-populated cache is strictly better than `try`.
-                // Empty `cache.symlink` makes the resolver fall back to
-                // `parent.abs_real_path + base`.
                 if handle == w::INVALID_HANDLE_VALUE {
+                    if is_dangling_link_error(w::get_last_errno()) {
+                        cache.kind = EntryKind::Dangling;
+                        return Ok(cache);
+                    }
+                    // anything else keeps the kind from the link's own directory bit
                     return Ok(cache);
                 }
                 scopeguard::defer! {
@@ -1493,14 +1491,15 @@ pub mod fs {
                 let mut symlink: &[u8] = b"";
 
                 if is_symlink {
-                    let file: Fd = if let Some(valid) = existing_fd.unwrap_valid() {
-                        valid
+                    let opened: bun_sys::Maybe<Fd> = if let Some(valid) = existing_fd.unwrap_valid()
+                    {
+                        Ok(valid)
                     } else if store_fd {
                         bun_sys::open_file_absolute_z(
                             absolute_path_c,
                             bun_sys::OpenFlags::READ_ONLY,
-                        )?
-                        .into_raw()
+                        )
+                        .map(bun_sys::File::into_raw)
                     } else {
                         // O_PATH is
                         // Linux-only; macOS/BSD use O_RDONLY. Both add O_NOCTTY|O_CLOEXEC.
@@ -1508,7 +1507,15 @@ pub mod fs {
                         let flags = bun_sys::O::PATH | bun_sys::O::CLOEXEC | bun_sys::O::NOCTTY;
                         #[cfg(not(any(target_os = "linux", target_os = "android")))]
                         let flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NOCTTY;
-                        bun_sys::open(absolute_path_c, flags, 0)?
+                        bun_sys::open(absolute_path_c, flags, 0)
+                    };
+                    let file: Fd = match opened {
+                        Ok(file) => file,
+                        Err(err) if is_dangling_link_error(err.get_errno()) => {
+                            cache.kind = EntryKind::Dangling;
+                            return Ok(cache);
+                        }
+                        Err(err) => return Err(err.into()),
                     };
                     FileSystem::set_max_fd(file.native());
 
@@ -1546,6 +1553,14 @@ pub mod fs {
                 Ok(cache)
             }
         }
+    }
+
+    /// How `stat()` fails on a link to nothing or a loop; other errors surface when the entry is read.
+    fn is_dangling_link_error(errno: bun_sys::E) -> bool {
+        matches!(
+            errno,
+            bun_sys::E::ENOENT | bun_sys::E::ENOTDIR | bun_sys::E::ELOOP
+        )
     }
 
     impl crate::fs_full::EntryKindResolver for RealFS {
@@ -1924,6 +1939,8 @@ pub mod dir_entry_accessor {
                 let fskind = match kind {
                     EntryKind::File => bun_sys::FileKind::File,
                     EntryKind::Dir => bun_sys::FileKind::Directory,
+                    // The walker gets to apply its own broken-symlink handling.
+                    EntryKind::Dangling => bun_sys::FileKind::SymLink,
                 };
                 // `Entry::kind` resolved through symlinks above; a non-empty
                 // cached realpath is what records the entry as a symlink.

@@ -989,6 +989,106 @@ describe("copyFileSync", () => {
     await expect(fs.promises.copyFile(src, dest)).rejects.toThrow(expected);
   });
 
+  // libuv gives the destination its mode before it writes the data, so the
+  // kernel clears set-uid and set-gid on the write when the caller may not keep them.
+  it.skipIf(isWindows)("does not carry set-uid or set-gid over for an unprivileged caller", async () => {
+    using dir = tempDir("copyfile-set-id", {});
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        import fs from "node:fs";
+        import { promisify } from "node:util";
+
+        // macOS refuses set-gid when the caller is not in the group of the file.
+        const setId = process.platform === "linux" ? 0o6000 : 0o4000;
+        fs.writeFileSync("small", "small");
+        // Above the macOS clonefile threshold.
+        fs.writeFileSync("large", Buffer.alloc(256 * 1024, "a"));
+        fs.chmodSync("small", setId | 0o755);
+        fs.chmodSync("large", setId | 0o755);
+
+        if (process.getuid() === 0) {
+          // Root can keep the bits. Copy as an unprivileged uid instead. The paths are
+          // relative, so that uid needs no access to the parents of the cwd.
+          fs.chmodSync(".", 0o777);
+          process.seteuid(65534);
+        }
+
+        // An existing destination that the group or others could not read is emptied
+        // before the new mode goes on. Any other is overwritten in place, then cut.
+        for (const [name, oldMode] of [["existing-narrow", 0o600], ["existing-wide", 0o777]]) {
+          fs.writeFileSync(name, "longer than the source");
+          fs.chmodSync(name, oldMode);
+          fs.copyFileSync("small", name);
+        }
+        fs.copyFileSync("small", "sync");
+        fs.copyFileSync("large", "sync-large");
+        fs.copyFileSync("small", "excl", fs.constants.COPYFILE_EXCL);
+        fs.copyFileSync("small", "ficlone", fs.constants.COPYFILE_FICLONE);
+        await promisify(fs.copyFile)("small", "callback");
+        await fs.promises.copyFile("small", "promises");
+
+        const mode = path => (fs.statSync(path).mode & 0o7777).toString(8);
+        console.log(
+          JSON.stringify({
+            source: mode("small"),
+            existingNarrow: [mode("existing-narrow"), fs.readFileSync("existing-narrow", "utf8")],
+            existingWide: [mode("existing-wide"), fs.readFileSync("existing-wide", "utf8")],
+            sync: mode("sync"),
+            syncLarge: mode("sync-large"),
+            syncLargeSize: fs.statSync("sync-large").size,
+            excl: mode("excl"),
+            ficlone: mode("ficlone"),
+            callback: mode("callback"),
+            promises: mode("promises"),
+          }),
+        );
+        `,
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      source: isLinux ? "6755" : "4755",
+      existingNarrow: ["755", "small"],
+      existingWide: ["755", "small"],
+      sync: "755",
+      syncLarge: "755",
+      syncLargeSize: 256 * 1024,
+      excl: "755",
+      ficlone: "755",
+      callback: "755",
+      promises: "755",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  it.skipIf(isWindows)("leaves the file alone when the source and the destination are the same file", async () => {
+    using dir = tempDir("copyfile-same-file", { "file.txt": "hello world" });
+    const file = join(String(dir), "file.txt");
+    const hardlink = join(String(dir), "hardlink.txt");
+    const symlink = join(String(dir), "symlink.txt");
+    fs.linkSync(file, hardlink);
+    symlinkSync(file, symlink);
+
+    for (const dest of [file, hardlink, symlink]) {
+      copyFileSync(file, dest);
+      copyFileSync(file, dest, fs.constants.COPYFILE_FICLONE);
+      await fs.promises.copyFile(file, dest);
+      // Without reflink support this used to fail and then unlink the destination,
+      // which is the source.
+      if (isLinux) copyFileSync(file, dest, fs.constants.COPYFILE_FICLONE_FORCE);
+      expect(readFileSync(file, "utf8")).toBe("hello world");
+    }
+  });
+
   // CopyFileW fails with ERROR_BAD_NET_NAME (or ERROR_BAD_NETPATH); neither is
   // in the Win32→errno table, so this is the UNKNOWN path.
   it.if(isWindows)("throws for a destination on a nonexistent UNC share", async () => {

@@ -4733,6 +4733,54 @@ impl NodeFS {
         Ok(())
     }
 
+    /// Runs between `open(dest)` and the copy. It gives the destination the source's
+    /// mode before any data is written, as libuv's `uv__fs_copyfile` does. The kernel
+    /// then decides about set-uid and set-gid: a write by a caller that may not keep
+    /// them clears them. An `fchmod` after the data puts them back.
+    /// https://github.com/libuv/libuv/blob/v1.52.1/src/unix/fs.c#L1277-L1340
+    ///
+    /// libuv also empties the destination first. Here the copy overwrites it in place,
+    /// which is much cheaper for an existing file, and `truncate_old_tail` cuts the rest.
+    ///
+    /// Returns `None` when `dest_fd` is the source file, else the number of old bytes
+    /// that are still in the destination.
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+    fn prepare_copy_file_dest(
+        src_stat: &sys::Stat,
+        dest_fd: FD,
+        exclusive: bool,
+    ) -> Maybe<Option<u64>> {
+        let mut old_size: u64 = 0;
+        // `O_EXCL` just created the destination: it is empty and it is not the source.
+        if !exclusive {
+            let dest_stat = Syscall::fstat(dest_fd)?;
+            // An inode number of 0 means the filesystem reports no identity.
+            if dest_stat.st_ino != 0
+                && dest_stat.st_ino == src_stat.st_ino
+                && dest_stat.st_dev == src_stat.st_dev
+            {
+                return Ok(None);
+            }
+            old_size = dest_stat.st_size.max(0) as u64;
+            // The new mode must not let the group or others read old bytes that the old
+            // mode kept from them.
+            if old_size > 0 && (src_stat.st_mode & !dest_stat.st_mode & 0o044) != 0 {
+                Syscall::ftruncate(dest_fd, 0)?;
+                old_size = 0;
+            }
+        }
+        let _ = Syscall::fchmod(dest_fd, src_stat.st_mode as Mode);
+        Ok(Some(old_size))
+    }
+
+    /// The copy wrote `new_size` bytes over a destination that held `old_size` bytes.
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+    fn truncate_old_tail(dest_fd: FD, old_size: u64, new_size: u64) {
+        if old_size > new_size {
+            let _ = Syscall::ftruncate(dest_fd, (new_size & ((1u64 << 63) - 1)) as i64);
+        }
+    }
+
     pub(crate) fn copy_file(&mut self, args: &args::CopyFile, _: Flavor) -> Maybe<ret::CopyFile> {
         match self.copy_file_inner(args) {
             Ok(_) => Ok(()),
@@ -4781,9 +4829,14 @@ impl NodeFS {
                     });
                 }
 
+                // clonefile() turns set-uid and set-gid off and the chmod() after it turns
+                // them back on for any caller. A file that has them takes the write path,
+                // where the kernel decides.
+                let has_set_id = stat_.st_mode & (libc::S_ISUID | libc::S_ISGID) != 0;
+
                 // 64 KB is about the break-even point for clonefile() to be worth it
                 // at least, on an M1 with an NVME SSD.
-                if stat_.st_size > 128 * 1024 {
+                if stat_.st_size > 128 * 1024 && !has_set_id {
                     if !args.mode.shouldnt_overwrite() {
                         // clonefile() will fail if it already exists
                         let _ = Syscall::unlink(dest);
@@ -4806,12 +4859,6 @@ impl NodeFS {
                     let _close_src = scopeguard::guard(src_fd, |fd| fd.close());
 
                     let mut flags: i32 = sys::O::CREAT | sys::O::WRONLY;
-                    // VERIFY-FIX(round1): was `usize` then passed as `&mut (wrote as u64)` —
-                    // that wrote into a discarded temporary so the deferred ftruncate
-                    // always saw 0. The scopeguard variant also double-borrowed `wrote`.
-                    // There are no early returns between open(dest) and the
-                    // `copy_file_using_read_write_loop` call, so inlining the
-                    // cleanup after it is equivalent.
                     let mut wrote: u64 = 0;
                     if args.mode.shouldnt_overwrite() {
                         flags |= sys::O::EXCL;
@@ -4820,6 +4867,16 @@ impl NodeFS {
                     let dest_fd = match Syscall::open(dest, flags, stat_.st_mode as Mode) {
                         Ok(result) => result,
                         Err(err) => return Err(err.with_path(args.dest.slice())),
+                    };
+                    let _close_dest = scopeguard::guard(dest_fd, |fd| fd.close());
+
+                    let Some(old_size) = Self::prepare_copy_file_dest(
+                        &stat_,
+                        dest_fd,
+                        args.mode.shouldnt_overwrite(),
+                    )?
+                    else {
+                        return Ok(());
                     };
 
                     let result = Self::copy_file_using_read_write_loop(
@@ -4830,9 +4887,7 @@ impl NodeFS {
                         stat_.st_size.max(0) as usize,
                         &mut wrote,
                     );
-                    let _ = Syscall::ftruncate(dest_fd, (wrote & ((1u64 << 63) - 1)) as i64);
-                    let _ = Syscall::fchmod(dest_fd, stat_.st_mode as u32);
-                    dest_fd.close();
+                    Self::truncate_old_tail(dest_fd, old_size, wrote);
                     return result;
                 }
             }
@@ -4909,6 +4964,9 @@ impl NodeFS {
                 }
             }
             let _ = Syscall::ftruncate(dest_fd, 0);
+            // Before the data, so the write clears set-uid and set-gid for a caller that
+            // may not keep them. Same order as libuv's `uv__fs_copyfile`.
+            let _ = Syscall::fchmod(dest_fd, stat_.st_mode as Mode);
 
             // FreeBSD 13+ has copy_file_range(2). Try the kernel-side copy
             // first; fall back to read/write on cross-device or unsupported
@@ -4931,7 +4989,6 @@ impl NodeFS {
                 match sys::get_errno(rc) {
                     E::SUCCESS => {
                         if rc == 0 {
-                            let _ = Syscall::fchmod(dest_fd, stat_.st_mode as Mode);
                             return Ok(());
                         }
                     }
@@ -4960,7 +5017,6 @@ impl NodeFS {
                 let _ = sys::unlink(dest);
                 return Err(err);
             }
-            let _ = Syscall::fchmod(dest_fd, stat_.st_mode as Mode);
             return Ok(());
         }
 
@@ -4985,7 +5041,7 @@ impl NodeFS {
             }
 
             let mut flags: i32 = sys::O::CREAT | sys::O::WRONLY;
-            // VERIFY-FIX(round1): `wrote` is read by the deferred-close scopeguard
+            // VERIFY-FIX(round1): `wrote` is read by the deferred-truncate scopeguard
             // *after* the copy loops below mutate it. As a `usize` captured by-copy
             // the guard always saw 0, and the `&mut (wrote as u64)` call sites
             // wrote into discarded temporaries. `Cell<u64>` lets the guard borrow
@@ -4997,6 +5053,13 @@ impl NodeFS {
             }
 
             let dest_fd = Syscall::open(dest, flags, stat_.st_mode as Mode)?;
+            let _close_dest = scopeguard::guard(dest_fd, |fd| fd.close());
+
+            let Some(old_size) =
+                Self::prepare_copy_file_dest(&stat_, dest_fd, args.mode.shouldnt_overwrite())?
+            else {
+                return Ok(());
+            };
 
             let mut size: usize = stat_.st_size.max(0) as usize;
 
@@ -5007,13 +5070,12 @@ impl NodeFS {
                     sys::Tag::ioctl_ficlone,
                     dest,
                 ) {
-                    dest_fd.close();
                     // This is racey, but it's the best we can do
                     let _ = sys::unlink(dest);
                     return err;
                 }
-                let _ = Syscall::fchmod(dest_fd, stat_.st_mode as u32);
-                dest_fd.close();
+                // FICLONE does not shrink a longer destination.
+                Self::truncate_old_tail(dest_fd, old_size, size as u64);
                 return Ok(());
             }
 
@@ -5021,8 +5083,7 @@ impl NodeFS {
             if sys::S::ISREG(stat_.st_mode as u32) && sys::copy_file::can_use_ioctl_ficlone() {
                 let rc = sys::linux::ioctl_ficlone(dest_fd, src_fd);
                 if rc == 0 {
-                    let _ = Syscall::fchmod(dest_fd, stat_.st_mode as u32);
-                    dest_fd.close();
+                    Self::truncate_old_tail(dest_fd, old_size, size as u64);
                     return Ok(());
                 }
                 // If this fails for any reason, we say it's disabled
@@ -5030,14 +5091,10 @@ impl NodeFS {
                 sys::copy_file::disable_ioctl_ficlone();
             }
 
-            let _close_dest =
-                scopeguard::guard((dest_fd, stat_.st_mode, &wrote), |(fd, m, wrote)| {
-                    // ftruncate/fchmod take only ints — no memory-safety preconditions; route
-                    // through the existing `bun_sys` safe wrappers (same as lines above).
-                    let _ = Syscall::ftruncate(fd, (wrote.get() & ((1u64 << 63) - 1)) as i64);
-                    let _ = Syscall::fchmod(fd, m as u32);
-                    fd.close();
-                });
+            // Declared after `_close_dest`, so it runs first.
+            let _truncate_dest = scopeguard::guard(&wrote, |wrote| {
+                Self::truncate_old_tail(dest_fd, old_size, wrote.get());
+            });
 
             let mut off_in_copy: i64 = 0;
             let mut off_out_copy: i64 = 0;

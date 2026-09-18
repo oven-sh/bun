@@ -451,7 +451,9 @@ describe.concurrent("workspace packages outside the workspace root", () => {
   // creates, so the path names a directory nobody can resolve yet. The `node_modules`
   // refusal above only reads the spelling, which this path does not have. The second
   // spelling ends in a separator, which makes `lstat` follow the link instead of reading it.
-  test.each(["nm/a/esc", "nm/"])(
+  // That one is POSIX only: on Windows the dependency does not resolve at all, and the
+  // install fails with "Workspace dependency not found" before the check runs.
+  test.each(isWindows ? ["nm/a/esc"] : ["nm/a/esc", "nm/"])(
     "a workspace path %s through a symlink that does not resolve is refused",
     async entry => {
       using dir = tempDir("bad-workspace-dangling-symlink", {

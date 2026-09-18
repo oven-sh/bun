@@ -7,6 +7,9 @@ use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 use super::diff::print_diff::{print_diff_main, DiffConfig};
 use super::pretty_format::{FormatOptions, JestPrettyFormat, MessageLevel};
 
+/// [`FormatOptions::shared_reference_budget`] of each side.
+const SHARED_REFERENCE_BUDGET_MIB: usize = 1;
+
 /// Renders a Jest-style diff of two already-formatted values. Formatting a JS value runs user code
 /// (getters, Proxy traps) and can throw, so it happens up front in [`DiffFormatter::new`], never
 /// inside `Display::fmt`.
@@ -14,6 +17,8 @@ pub struct DiffFormatter<'a> {
     pub(crate) received_string: Cow<'a, [u8]>,
     pub(crate) expected_string: Cow<'a, [u8]>,
     pub(crate) not: bool,
+    /// A side spent [`SHARED_REFERENCE_BUDGET_MIB`] and abbreviated values that it had printed.
+    pub(crate) abbreviated: bool,
 }
 
 impl<'a> DiffFormatter<'a> {
@@ -28,9 +33,10 @@ impl<'a> DiffFormatter<'a> {
             add_newline: false,
             flush: false,
             quote_strings: true,
+            shared_reference_budget: SHARED_REFERENCE_BUDGET_MIB * 1024 * 1024,
         };
         let mut received_buf: Vec<u8> = Vec::new();
-        JestPrettyFormat::format(
+        let received_abbreviated = JestPrettyFormat::format(
             MessageLevel::Debug,
             global_this,
             core::slice::from_ref(&received),
@@ -39,7 +45,7 @@ impl<'a> DiffFormatter<'a> {
             fmt_options,
         )?;
         let mut expected_buf: Vec<u8> = Vec::new();
-        JestPrettyFormat::format(
+        let expected_abbreviated = JestPrettyFormat::format(
             MessageLevel::Debug,
             global_this,
             core::slice::from_ref(&expected),
@@ -51,6 +57,7 @@ impl<'a> DiffFormatter<'a> {
             received_string: Cow::Owned(trim_one_newline(received_buf)),
             expected_string: Cow::Owned(trim_one_newline(expected_buf)),
             not,
+            abbreviated: received_abbreviated || expected_abbreviated,
         })
     }
 
@@ -59,6 +66,7 @@ impl<'a> DiffFormatter<'a> {
             received_string: Cow::Borrowed(received),
             expected_string: Cow::Borrowed(expected),
             not,
+            abbreviated: false,
         }
     }
 }
@@ -83,7 +91,14 @@ impl<'a> fmt::Display for DiffFormatter<'a> {
             &self.expected_string,
             f,
             &diff_config,
-        )
+        )?;
+        if self.abbreviated {
+            write!(
+                f,
+                "\n\nnote: [Array], [Object], [Map] and [Set] stand for values that are printed in full earlier in the same output. The output for repeated values is limited to {SHARED_REFERENCE_BUDGET_MIB} MiB."
+            )?;
+        }
+        Ok(())
     }
 }
 

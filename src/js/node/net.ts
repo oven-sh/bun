@@ -130,6 +130,7 @@ const upgradeDuplexToTLS = $newRustFunction("runtime/socket/socket.rs", "jsUpgra
 const upgradeTLSDeferred = $newRustFunction("runtime/socket/socket.rs", "jsUpgradeTLSDeferred", 2);
 const isNamedPipeSocket = $newRustFunction("runtime/socket/socket.rs", "jsIsNamedPipeSocket", 1);
 const getBufferedAmount = $newRustFunction("runtime/socket/socket.rs", "jsGetBufferedAmount", 1);
+const abortFileSink = $newRustFunction("runtime/webcore/FileSink.rs", "jsAbort", 1);
 
 const bunTlsSymbol = Symbol.for("::buntls::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
@@ -152,6 +153,8 @@ const kSetNoDelay = Symbol("kSetNoDelay");
 const kSetTOS = Symbol("kSetTOS");
 const kSetKeepAlive = Symbol("kSetKeepAlive");
 const kSyncWriteFd = Symbol("kSyncWriteFd");
+const kSyncWriteSink = Symbol("kSyncWriteSink");
+const kSyncWriteCallback = Symbol("kSyncWriteCallback");
 const kSetKeepAliveInitialDelay = Symbol("kSetKeepAliveInitialDelay");
 const kConnectOptions = Symbol("connect-options");
 const kAttach = Symbol("kAttach");
@@ -252,6 +255,9 @@ function endNT(socket, callback, err) {
 }
 function emitCloseNT(self, hasError) {
   self.emit("close", hasError);
+}
+function cancelWriteNT(callback) {
+  callback(new ErrnoException(uv().UV_ECANCELED, "write"));
 }
 // Shared-fd TLS pair teardown: mirrors node's close ordering, where the
 // close-callbacks phase runs after the check phase (lib/net.js close path in
@@ -2206,12 +2212,26 @@ Socket.prototype._destroy = function _destroy(err, callback) {
   // libuv handle here). Leave stdio fds 0-2 open: process.stdout/stderr and
   // other wrappers share them, matching SyncWriteStream's autoClose gate.
   const syncFd = this[kSyncWriteFd];
+  let canceledWrite;
   if (syncFd !== undefined) {
     this[kSyncWriteFd] = undefined;
     // Drop the instance overrides so a later connect() on this (reusable)
     // socket goes through the fresh handle's normal write path.
     delete this._write;
     delete this._writev;
+    const sink = this[kSyncWriteSink];
+    if (sink !== undefined) {
+      this[kSyncWriteSink] = undefined;
+      canceledWrite = this[kSyncWriteCallback];
+      this[kSyncWriteCallback] = undefined;
+      try {
+        // libuv cancels a write request still queued when its handle closes: the tail is dropped.
+        if (canceledWrite !== undefined) abortFileSink(sink);
+        else sink.end();
+      } catch (e) {
+        err ||= e;
+      }
+    }
     if (syncFd > 2) {
       try {
         require("node:fs").closeSync(syncFd);
@@ -2266,8 +2286,11 @@ Socket.prototype._destroy = function _destroy(err, callback) {
       this._sockname = null;
     }
     callback(err);
+    if (canceledWrite !== undefined) process.nextTick(cancelWriteNT, canceledWrite);
   } else {
     callback(err);
+    // Node's order: 'error', then the canceled write's callback, then 'close'.
+    if (canceledWrite !== undefined) process.nextTick(cancelWriteNT, canceledWrite);
     process.nextTick(emitCloseNT, this, err ? true : false);
   }
 
@@ -2568,44 +2591,100 @@ Object.defineProperty(Socket.prototype, "remoteFamily", {
 });
 
 function fdSyncWrite(chunk, encoding, callback) {
-  const fs = require("node:fs");
   // node's _writeGeneric restarts the idle timer on every write.
   this._unrefTimer();
+  let buf;
   try {
-    const buf = typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk;
-    let offset = 0;
-    while (offset < buf.length) {
-      offset += fs.writeSync(this[kSyncWriteFd], buf, offset);
-    }
-    // No native handle on this path, so feed bytesWritten/_bytesDispatched
-    // directly (node accounts these via the libuv handle).
-    this[kBytesWritten] = (this[kBytesWritten] || 0) + offset;
-    callback();
+    buf = typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk;
   } catch (err) {
     callback(err);
+    return;
   }
+  fdWrite(this, buf, callback);
 }
 
 function fdSyncWritev(data, callback) {
-  const fs = require("node:fs");
   this._unrefTimer();
+  let buf;
   try {
-    let total = 0;
-    for (let i = 0; i < data.length; i++) {
+    const n = data.length;
+    const bufs = $newArrayWithSize(n);
+    for (let i = 0; i < n; i++) {
       const { chunk, encoding } = data[i];
-      const buf = typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk;
-      let offset = 0;
-      while (offset < buf.length) {
-        offset += fs.writeSync(this[kSyncWriteFd], buf, offset);
-      }
-      total += offset;
+      bufs[i] = typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk;
     }
-    // See fdSyncWrite: no native handle to account these on.
-    this[kBytesWritten] = (this[kBytesWritten] || 0) + total;
-    callback();
+    buf = Buffer.concat(bufs);
   } catch (err) {
     callback(err);
+    return;
   }
+  fdWrite(this, buf, callback);
+}
+
+function fdWrite(self, buf, callback) {
+  const sink = self[kSyncWriteSink];
+  if (sink !== undefined) {
+    fdSinkWrite(self, sink, buf, callback);
+    return;
+  }
+  const fs = require("node:fs");
+  let offset = 0;
+  try {
+    while (offset < buf.length) {
+      offset += fs.writeSync(self[kSyncWriteFd], buf, offset);
+    }
+  } catch (err) {
+    if (process.platform === "win32" || err?.code !== "EAGAIN") {
+      callback(err);
+      return;
+    }
+    // Full O_NONBLOCK pipe: a FileSink polls the fd and drains the tail, as node's pipe handle does.
+    let newSink;
+    try {
+      newSink = self[kSyncWriteSink] = Bun.file(self[kSyncWriteFd]).writer();
+    } catch (e) {
+      callback(e);
+      return;
+    }
+    self[kBytesWritten] = (self[kBytesWritten] || 0) + offset;
+    fdSinkWrite(self, newSink, offset === 0 ? buf : buf.subarray(offset), callback);
+    return;
+  }
+  // No native handle on this path, so account bytesWritten/_bytesDispatched here.
+  self[kBytesWritten] = (self[kBytesWritten] || 0) + offset;
+  callback();
+}
+
+// The callback runs once every byte reached the fd, like a libuv write request.
+function fdSinkWrite(self, sink, buf, callback) {
+  let result;
+  try {
+    result = sink.write(buf);
+    // The sink only buffers a short chunk; push it to the fd now.
+    if (!$isPromise(result)) result = sink.flush();
+  } catch (err) {
+    callback(err);
+    return;
+  }
+  // Node counts a write when it is dispatched to the handle, not when it completes.
+  self[kBytesWritten] = (self[kBytesWritten] || 0) + buf.length;
+  if (!$isPromise(result)) {
+    callback();
+    return;
+  }
+  self[kSyncWriteCallback] = callback;
+  result.$then(
+    () => settleSinkWrite(self),
+    err => settleSinkWrite(self, err),
+  );
+}
+
+function settleSinkWrite(self, err?) {
+  const callback = self[kSyncWriteCallback];
+  // destroy() took it to settle it with ECANCELED.
+  if (callback === undefined) return;
+  self[kSyncWriteCallback] = undefined;
+  callback(err);
 }
 
 Socket.prototype.resetAndDestroy = function resetAndDestroy() {

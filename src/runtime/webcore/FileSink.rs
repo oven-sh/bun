@@ -273,7 +273,37 @@ pub(crate) extern "C" fn Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(
     }
 }
 
+/// For `destroy()` on a `net.Socket` over an adopted fd: libuv drops a write still queued at close.
+pub(crate) fn js_abort(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    if let Some(wrapper) = JSSink::from_js(frame.argument(0)) {
+        let this = wrapper.cast::<FileSink>();
+        // SAFETY: `from_js` returned the live wrapper's sink, and `JSSink<FileSink>` is
+        // `repr(transparent)` over the `FileSink` allocation that `to_js` handed to it.
+        unsafe {
+            (*this).writer.with_mut(|w| w.outgoing.reset());
+            FileSink::abort(this, sys::Errno::ECANCELED);
+            // JS is on the stack: the promise settles from a task, as in `end_from_js`.
+            (*this).run_pending_later();
+            FileSink::clear_keep_alive_ref(this);
+        }
+    }
+    Ok(JSValue::UNDEFINED)
+}
+
 impl FileSink {
+    /// Closes the writer undrained. The caller settles the pending write, which fails with `errno`.
+    unsafe fn abort(this: *mut FileSink, errno: sys::Errno) {
+        // SAFETY: the caller holds a ref on the canonical live `*mut FileSink`; `close` re-enters
+        // `on_close` through the writer's backref, not through this `JsCell` borrow.
+        unsafe {
+            (*this).done.set(true);
+            (*this).writer.with_mut(|w| w.close());
+            (*this).pending.with_mut(|p| {
+                p.result = streams::Writable::Err(sys::Error::from_code(errno, sys::Tag::write));
+            });
+        }
+    }
+
     /// `bun.spawn`'s subprocess exited while this `FileSink` was its stdin.
     ///
     /// Takes the canonical `*mut FileSink` (not `&mut self`): `writer.close()`
@@ -314,17 +344,7 @@ impl FileSink {
                 }
             }
 
-            // SAFETY(JsCell): `IOWriter::close` does not call into JS directly; the
-            // `on_close` re-entry it triggers goes via the stored `*mut FileSink`
-            // backref, not through this `JsCell` borrow.
-            (*this).writer.with_mut(|w| w.close());
-
-            (*this).pending.with_mut(|p| {
-                p.result = streams::Writable::Err(sys::Error::from_code(
-                    sys::Errno::EPIPE,
-                    sys::Tag::write,
-                ));
-            });
+            FileSink::abort(this, sys::Errno::EPIPE);
             FileSink::run_pending(this);
 
             // `writer.close()` → `onClose` already released this above; kept for

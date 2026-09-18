@@ -1781,8 +1781,7 @@ fn declared_package_peers(
     Ok(peers)
 }
 
-/// pnpm resolves nothing for a dependency the tarball bundles: the `packages:` entry names it and no
-/// snapshot has an edge for it. The edge stays unresolved and has no range, because pnpm records none.
+/// pnpm names a bundled dependency on the `packages:` entry only: no snapshot edge, no version, no range.
 fn append_bundled_dependencies(
     lockfile: &mut Lockfile,
     package_obj: &Expr,

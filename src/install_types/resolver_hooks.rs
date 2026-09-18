@@ -561,8 +561,7 @@ impl Dependency {
         lhs.name.slice(string_buf).cmp(rhs.name.slice(string_buf))
     }
 
-    /// A bundled dependency that a migrated lockfile names without a range. It is never resolved, and
-    /// bun.lock lists only its name, under `bundledDependencies`.
+    /// A bundled dependency from a migrated lockfile that records no range for it. bun never resolves it.
     pub fn is_bundled_without_range(&self) -> bool {
         self.behavior.is_bundled()
             && self.version.tag == DependencyVersionTag::Uninitialized

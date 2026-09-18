@@ -42,6 +42,154 @@ describe("bun", () => {
   });
 });
 
+// https://github.com/oven-sh/bun/issues/13984
+describe.concurrent("process.argv passthrough", () => {
+  const argvJs = `process.stdout.write(JSON.stringify(process.argv.slice(2)));`;
+
+  async function spawnArgv(cmd: string[], cwd: string) {
+    await using proc = Bun.spawn({ cmd, env: bunEnv, cwd, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test.each([
+    // [argv after bunExe, expected process.argv.slice(2)]
+    [
+      ["<file>", "--", "rest"],
+      ["--", "rest"],
+    ],
+    [["<file>", "--"], ["--"]],
+    [
+      ["<file>", "--", "--", "rest"],
+      ["--", "--", "rest"],
+    ],
+    [
+      ["<file>", "foo", "--", "rest"],
+      ["foo", "--", "rest"],
+    ],
+    [
+      ["<file>", "--", "--watch"],
+      ["--", "--watch"],
+    ],
+    [
+      ["run", "<file>", "--", "rest"],
+      ["--", "rest"],
+    ],
+    [["run", "<file>", "--"], ["--"]],
+    [
+      ["run", "<file>", "foo", "--", "rest"],
+      ["foo", "--", "rest"],
+    ],
+    [
+      ["--", "<file>", "--", "rest"],
+      ["--", "rest"],
+    ],
+  ] as const)("bun %j -> %j", async (args, expected) => {
+    using dir = tempDir("argv-passthrough", { "argv.js": argvJs });
+    const cmd = [bunExe(), ...args.map(a => (a === "<file>" ? "argv.js" : a))];
+    expect(await spawnArgv(cmd, String(dir))).toEqual({
+      stdout: JSON.stringify(expected),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.each([
+    [
+      ["--", "a", "b"],
+      ["a", "b"],
+    ],
+    [
+      ["a", "b"],
+      ["a", "b"],
+    ],
+    [
+      ["--", "--", "a"],
+      ["--", "a"],
+    ],
+  ] as const)("package.json script: bun run go %j -> %j (npm compat)", async (extra, expected) => {
+    using dir = tempDir("argv-script", {
+      "argv.js": argvJs,
+      "package.json": JSON.stringify({
+        scripts: { go: `${JSON.stringify(bunExe())} argv.js` },
+      }),
+    });
+    expect(await spawnArgv([bunExe(), "--silent", "run", "go", ...extra], String(dir))).toEqual({
+      stdout: JSON.stringify(expected),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("bun-shell script: $N positionals are the stripped passthrough, main script only", async () => {
+    using dir = tempDir("argv-shell-positional", {
+      "package.json": JSON.stringify({
+        scripts: { prego: "echo pre:$1", go: "echo $1.$2", postgo: "echo post:$1" },
+      }),
+    });
+    const { stdout, stderr, exitCode } = await spawnArgv(
+      [bunExe(), "--silent", "--shell=bun", "run", "go", "--", "foo", "bar"],
+      String(dir),
+    );
+    expect({ stdout: stdout.replaceAll("\r\n", "\n"), stderr, exitCode }).toEqual({
+      stdout: "pre:\nfoo.bar foo bar\npost:\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("--filter appends passthrough to the main script only, not pre/post", async () => {
+    using dir = tempDir("argv-filter-lifecycle", {
+      "package.json": JSON.stringify({ name: "root", workspaces: ["pkg"] }),
+      pkg: {
+        "package.json": JSON.stringify({
+          name: "pkg",
+          scripts: { prego: "echo pre", go: "echo main", postgo: "echo post" },
+        }),
+      },
+    });
+    const { stdout, stderr, exitCode } = await spawnArgv(
+      [bunExe(), "run", "--filter", "pkg", "go", "--", "x", "y"],
+      String(dir),
+    );
+    expect({ stdout: stdout.replaceAll("\r\n", "\n"), stderr, exitCode }).toEqual({
+      stdout: [
+        "pkg prego: pre",
+        "pkg prego: Exited with code 0",
+        "pkg go: main x y",
+        "pkg go: Exited with code 0",
+        "pkg postgo: post",
+        "pkg postgo: Exited with code 0",
+        "",
+      ].join("\n"),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("node_modules/.bin binary still strips one leading --", async () => {
+    const binName = isWindows ? "mybin.cmd" : "mybin";
+    const binBody = isWindows
+      ? `@"${bunExe()}" "%~dp0\\..\\mybin\\argv.js" %*\r\n`
+      : `#!/bin/sh\nexec "${bunExe()}" "$(dirname "$0")/../mybin/argv.js" "$@"\n`;
+    using dir = tempDir("argv-bin", {
+      "package.json": JSON.stringify({ name: "consumer" }),
+      "node_modules": {
+        ".bin": { [binName]: binBody },
+        "mybin": { "argv.js": argvJs },
+      },
+    });
+    if (!isWindows) {
+      chmodSync(join(String(dir), "node_modules", ".bin", binName), 0o755);
+    }
+    expect(await spawnArgv([bunExe(), "--silent", "run", "mybin", "--", "a", "b"], String(dir))).toEqual({
+      stdout: JSON.stringify(["a", "b"]),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
 test.if(isWindows)("[windows] A file in drive root runs", async () => {
   const path = "C:\\root-file" + Math.random().toString().slice(2) + ".js";
   try {

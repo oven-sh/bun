@@ -18,6 +18,8 @@ bun_output::declare_scope!(Lockfile, hidden);
 
 pub(crate) struct WorkspaceMap {
     map: Map,
+    /// `process_names_array` rejected an entry that is outside the workspace root.
+    pub(crate) rejected_outside_root: bool,
 }
 
 type Map = StringArrayHashMap<Entry>;
@@ -39,6 +41,7 @@ impl WorkspaceMap {
     pub(crate) fn init() -> WorkspaceMap {
         WorkspaceMap {
             map: Map::default(),
+            rejected_outside_root: false,
         }
     }
 
@@ -434,6 +437,7 @@ impl WorkspaceMap {
                         source,
                         arr.item_loc(source, i),
                     ) {
+                        workspace_names.rejected_outside_root = true;
                         continue;
                     }
 
@@ -513,6 +517,7 @@ impl WorkspaceMap {
                 source,
                 arr.item_loc(source, i),
             ) {
+                workspace_names.rejected_outside_root = true;
                 continue;
             }
 
@@ -675,6 +680,7 @@ impl WorkspaceMap {
                                 source,
                                 *pattern_loc,
                             ) {
+                                workspace_names.rejected_outside_root = true;
                                 // One error per pattern.
                                 break;
                             }
@@ -730,6 +736,7 @@ impl WorkspaceMap {
                         source,
                         *pattern_loc,
                     ) {
+                        workspace_names.rejected_outside_root = true;
                         break;
                     }
 

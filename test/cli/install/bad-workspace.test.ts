@@ -328,13 +328,14 @@ describe.concurrent("workspaces entries outside the workspace root", () => {
   };
 
   // The install fails, names the entry, and leaves both projects as they were.
-  async function expectRejected(dir: string, message: string) {
-    const { stderr, exitCode } = await runInstall(join(dir, "clone"));
+  async function expectRejected(dir: string, message: string, cwd = join(dir, "clone")) {
+    const { stderr, exitCode } = await runInstall(cwd);
 
     expect(stderr).toContain(`error: ${message}\n`);
     expect(exitCode).toBe(1);
     expect(existsSync(join(dir, "victim", "node_modules"))).toBe(false);
     expect(existsSync(join(dir, "clone", "bun.lock"))).toBe(false);
+    expect(existsSync(join(cwd, "bun.lock"))).toBe(false);
   }
 
   test("a listed sibling directory is rejected", async () => {
@@ -398,6 +399,36 @@ describe.concurrent("workspaces entries outside the workspace root", () => {
     await expectRejected(
       String(dir),
       `Workspace "${join("up", "victim")}" is outside the workspace root: it resolves to "${victim}"`,
+    );
+  });
+
+  // The search for the root, upward from a member, reads the same manifest. It must not
+  // take the rejected entry as "this is not a workspace root" and install the member alone.
+  test("an install inside a member reports a listed sibling directory", async () => {
+    using dir = tempDir("bad-workspace-sibling-from-member", {
+      ...SIBLING_PROJECTS,
+      "clone/package.json": rootPackageJson(["packages/*", "../victim"]),
+    });
+
+    await expectRejected(
+      String(dir),
+      `Workspace "../victim" is outside the workspace root`,
+      join(String(dir), "clone", "packages", "inner"),
+    );
+  });
+
+  test("an install inside a member reports a glob under a symlink that leaves the root", async () => {
+    using dir = tempDir("bad-workspace-symlink-from-member", {
+      ...SIBLING_PROJECTS,
+      "clone/package.json": rootPackageJson(["packages/*", "up/*"]),
+    });
+    const victim = join(String(dir), "victim");
+    symlinkSync(String(dir), join(String(dir), "clone", "up"), "junction");
+
+    await expectRejected(
+      String(dir),
+      `Workspace "${join("up", "victim")}" is outside the workspace root: it resolves to "${victim}"`,
+      join(String(dir), "clone", "packages", "inner"),
     );
   });
 

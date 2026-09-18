@@ -324,6 +324,75 @@ describe("url", () => {
     // A path whose first segment merely starts with "." gets no guard.
     expect(util.inspect(new URL("foo:/.foo"), { showHidden: true })).toContain("pathname_start: 4,");
   });
+
+  describe("pathname setter removes ASCII tab and newline before looking at the leading slash", () => {
+    // https://url.spec.whatwg.org/#concept-basic-url-parser removes tab, LF and CR from the value first, so
+    // "\n/x" is the same assignment as "/x". Expected values are Node 26's. On a host-less URL the unstripped
+    // value used to reparse as "//evil.com/y", which made evil.com the host.
+    test.each<[href: string, value: string, expected: { href: string; host: string; pathname: string }]>([
+      ["foo:/a", "\n/evil.com/y", { href: "foo:/evil.com/y", host: "", pathname: "/evil.com/y" }],
+      ["foo:/a", "\t/evil.com/y", { href: "foo:/evil.com/y", host: "", pathname: "/evil.com/y" }],
+      ["foo:/a", "\r/evil.com/y", { href: "foo:/evil.com/y", host: "", pathname: "/evil.com/y" }],
+      ["foo:/a", "\t\n\r/evil.com/y", { href: "foo:/evil.com/y", host: "", pathname: "/evil.com/y" }],
+      // Two leading slashes on a host-less URL get the /. guard instead of becoming an empty host.
+      ["foo:/a", "\n//evil.com/y", { href: "foo:/.//evil.com/y", host: "", pathname: "//evil.com/y" }],
+      ["foo:/a", "\tevil.com/y", { href: "foo:/evil.com/y", host: "", pathname: "/evil.com/y" }],
+      ["foo:/.//p", "\t/x", { href: "foo:/x", host: "", pathname: "/x" }],
+      ["foo:/.//p", "\t//x", { href: "foo:/.//x", host: "", pathname: "//x" }],
+      ["foo://host/a", "\n/x/y", { href: "foo://host/x/y", host: "host", pathname: "/x/y" }],
+      // A value that strips down to "" empties the path of a non-special URL with a host.
+      ["foo://host/a", "\t", { href: "foo://host", host: "host", pathname: "" }],
+      ["http://h/", "\t/x", { href: "http://h/x", host: "h", pathname: "/x" }],
+      ["http://h/", "\n/x", { href: "http://h/x", host: "h", pathname: "/x" }],
+      ["http://h/", "\r/x", { href: "http://h/x", host: "h", pathname: "/x" }],
+      ["http://h/", "\t//x", { href: "http://h//x", host: "h", pathname: "//x" }],
+      ["http://h/", "\t\\x", { href: "http://h/x", host: "h", pathname: "/x" }],
+      ["http://h/", "\tx", { href: "http://h/x", host: "h", pathname: "/x" }],
+      ["http://h/", "\t/a\tb/\nc", { href: "http://h/ab/c", host: "h", pathname: "/ab/c" }],
+      ["http://h/", "/x\n", { href: "http://h/x", host: "h", pathname: "/x" }],
+      ["file:///a", "\t/x", { href: "file:///x", host: "", pathname: "/x" }],
+    ])("new URL(%p).pathname = %p", (href, value, expected) => {
+      const url = new URL(href);
+      url.pathname = value;
+      expect({ href: url.href, host: url.host, pathname: url.pathname }).toEqual(expected);
+    });
+  });
+
+  describe("host and hostname setters remove ASCII tab and newline before looking at the value", () => {
+    // Same parser rule as the pathname setter above; expected values are Node 26's. The host setter used to count
+    // the port digits in the raw value, so a tab after the colon dropped or truncated the port, and a value
+    // that is only whitespace skipped the empty-value no-op and reparsed "http:///p" with "p" as the host.
+    test.each<
+      [
+        href: string,
+        setter: "host" | "hostname",
+        value: string,
+        expected: { href: string; host: string; pathname: string },
+      ]
+    >([
+      ["http://h/p", "host", "x.com:\t81", { href: "http://x.com:81/p", host: "x.com:81", pathname: "/p" }],
+      ["http://h/p", "host", "x.com:8\n1", { href: "http://x.com:81/p", host: "x.com:81", pathname: "/p" }],
+      ["http://h/p", "host", "x.com:\r81\r", { href: "http://x.com:81/p", host: "x.com:81", pathname: "/p" }],
+      ["http://h/p", "host", "[::2]:\t81", { href: "http://[::2]:81/p", host: "[::2]:81", pathname: "/p" }],
+      // With a state override the port ends at the first non-digit, so only the "8" is taken.
+      ["http://h/p", "host", "x.com:\t8a", { href: "http://x.com:8/p", host: "x.com:8", pathname: "/p" }],
+      ["http://h/p", "host", "x.com:\t80", { href: "http://x.com/p", host: "x.com", pathname: "/p" }],
+      ["foo://h/p", "host", "x.com:\t81", { href: "foo://x.com:81/p", host: "x.com:81", pathname: "/p" }],
+      ["foo:/p", "host", "x.com:\n81", { href: "foo://x.com:81/p", host: "x.com:81", pathname: "/p" }],
+      // A file URL cannot take a port, so this assignment is a no-op rather than a host change.
+      ["file:///p", "host", "x.com:\t81", { href: "file:///p", host: "", pathname: "/p" }],
+      ["http://h/p", "host", "\t", { href: "http://h/p", host: "h", pathname: "/p" }],
+      ["http://h/p", "host", "\n", { href: "http://h/p", host: "h", pathname: "/p" }],
+      ["http://h/p", "hostname", "\r", { href: "http://h/p", host: "h", pathname: "/p" }],
+      ["http://h/p", "hostname", "\t\n\r", { href: "http://h/p", host: "h", pathname: "/p" }],
+      ["http://h/p", "hostname", "\tx.com\n", { href: "http://x.com/p", host: "x.com", pathname: "/p" }],
+    ])("new URL(%p).%s = %p", (href, setter, value, expected) => {
+      const url = new URL(href);
+      url[setter] = value;
+      expect({ href: url.href, host: url.host, pathname: url.pathname }).toEqual(expected);
+    });
+  });
+
   it("works", () => {
     const inputs = [
       [

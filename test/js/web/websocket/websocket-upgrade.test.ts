@@ -188,9 +188,9 @@ describe("WebSocket upgrade", () => {
   });
 
   // The client parsed the 101 response into 128 header slots and failed the
-  // handshake with "Invalid response" when the response had more fields. Only
-  // the size of the head is limited (--max-http-header-size).
-  describe("101 response head", () => {
+  // handshake with "Invalid response" when the response had more fields. The
+  // limit is now 2000 fields, the default of Node's maxHeadersCount.
+  describe("101 response with more than 128 header fields", () => {
     type RawSocket = Socket<{ request: string }>;
 
     // A raw TCP server that calls `respond` with each complete upgrade request.
@@ -211,7 +211,11 @@ describe("WebSocket upgrade", () => {
     }
 
     // The three fields the handshake needs, then fillers, `count` in total.
-    function responseFields(request: string, count: number): [string, string][] {
+    function responseFields(
+      request: string,
+      count: number,
+      fillerName = (i: number) => `x-${String(i).padStart(4, "0")}`,
+    ): [string, string][] {
       const key = /^Sec-WebSocket-Key:\s*(\S+)/im.exec(request)![1];
       const accept = createHash("sha1")
         .update(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
@@ -221,7 +225,7 @@ describe("WebSocket upgrade", () => {
         ["Connection", "Upgrade"],
         ["Sec-WebSocket-Accept", accept],
       ];
-      for (let i = fields.length; i < count; i++) fields.push([`x-${String(i).padStart(4, "0")}`, "v"]);
+      for (let i = fields.length; i < count; i++) fields.push([fillerName(i), "v"]);
       return fields;
     }
 
@@ -332,28 +336,27 @@ describe("WebSocket upgrade", () => {
       }
     });
 
-    // The default of --max-http-header-size.
-    const maxHeaderSize = 16 * 1024;
-
     test.concurrent.each([
-      [maxHeaderSize, "opens"],
-      [maxHeaderSize + 1, "fails"],
-    ])("a head of %i bytes that arrives in one write %s", async size => {
+      [2000, "opens"],
+      [2001, "fails"],
+    ])("a head with %i fields %s", async count => {
+      let sent: [string, string][] = [];
       using server = listen((socket, request) => {
-        const head = statusLine + fieldLines(responseFields(request, 3)) + "x-pad: \r\n\r\n";
-        const pad = Buffer.alloc(size - head.length, "p").toString();
-        socket.write(head.replace("x-pad: ", "x-pad: " + pad));
+        // One-letter names keep the head under --max-http-header-size (16 KB).
+        sent = responseFields(request, count, () => "x");
+        socket.write(statusLine + fieldLines(sent) + "\r\n");
         socket.flush();
       });
       const url = `ws://127.0.0.1:${server.port}/`;
 
       const ws = new WebSocket(url);
-      const { promise, resolve } = Promise.withResolvers<string>();
-      ws.addEventListener("open", () => resolve("open"));
-      ws.addEventListener("error", e => resolve((e as ErrorEvent).message));
       try {
-        expect(await promise).toBe(
-          size > maxHeaderSize ? `WebSocket connection to '${url}' failed: Invalid response` : "open",
+        const outcome = await handshakeThen(ws, "open").then(
+          opened => opened.rawHeaders,
+          (error: Error) => error.message,
+        );
+        expect(outcome).toEqual(
+          count > 2000 ? `WebSocket connection to '${url}' failed: Invalid response` : sent.flat(),
         );
       } finally {
         ws.close();

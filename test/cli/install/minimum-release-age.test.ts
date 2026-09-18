@@ -61,9 +61,10 @@ describe("minimum-release-age", () => {
     ...recentLegacyPublishTimes,
     ...oldLegacyPublishTimes,
     ...unsetPublishTimes,
-    // Only the expired cached manifest test asks for these two, so it can count their manifest requests.
+    // Only the expired cached manifest tests ask for these, so they can count and change what the registry serves.
     "odd-time-cached-unreadable": "yesterday",
     "odd-time-cached-recent": new Date(currentTime).toISOString(),
+    "odd-time-cached-then-fixed": "yesterday",
   };
   const oddTimeManifestRequests = new Map<string, number>();
 
@@ -772,6 +773,33 @@ describe("minimum-release-age", () => {
               ]),
             ),
             time: { "1.0.0": daysAgo(30), "2.0.0": oddPublishTimes[oddTimeName] },
+          });
+        }
+
+        // TEST PACKAGE: unreadable-between-rapid-releases. 1.3.0 is too recent, 1.2.0 has no readable time,
+        // and 1.1.0 came out 4 days before 1.3.0, inside the 5 day stability window.
+        if (url.pathname === "/unreadable-between-rapid-releases") {
+          const name = "unreadable-between-rapid-releases";
+          const time: Record<string, string> = {
+            "1.0.0": daysAgo(11.5),
+            "1.1.0": daysAgo(6),
+            "1.2.0": "yesterday",
+            "1.3.0": daysAgo(2),
+          };
+          return Response.json({
+            name,
+            "dist-tags": { latest: "1.3.0" },
+            versions: Object.fromEntries(
+              Object.keys(time).map(version => [
+                version,
+                {
+                  name,
+                  version,
+                  dist: { tarball: `${mockRegistryUrl}/${name}/-/${name}-${version}.tgz`, integrity: "sha512-fake==" },
+                },
+              ]),
+            ),
+            time,
           });
         }
 
@@ -2381,14 +2409,10 @@ describe("minimum-release-age", () => {
       expect(exitCode).toBe(1);
     });
 
-    // An exact version resolves from a manifest that is on disk but expired, with no request. Only a debug
-    // build reads BUN_CONFIG_MANIFEST_CACHE_CONTROL_TIMESTAMP, which makes the cached manifest count as expired.
-    test.skipIf(!isDebug).concurrent.each([
-      ["odd-time-cached-unreadable", "the publish time in the registry is not a valid date"],
-      ["odd-time-cached-recent", `${5 * SECONDS_PER_DAY} seconds`],
-    ])("%s: an exact version from an expired cached manifest is blocked with the same error", async (name, reason) => {
-      using cache = tempDir("odd-publish-time-cache", {});
-      const cacheDir = String(cache);
+    // An exact version resolves from a manifest that is on disk but expired. Only a debug build reads
+    // BUN_CONFIG_MANIFEST_CACHE_CONTROL_TIMESTAMP, which makes the cached manifest count as expired.
+    const expiredCache = { BUN_CONFIG_MANIFEST_CACHE_CONTROL_TIMESTAMP: "4294967295" };
+    async function cacheManifest(name: string, cacheDir: string) {
       // bun saves the manifest from a thread pool task and does not wait for it at exit.
       let cached = false;
       for (let attempt = 0; attempt < 5 && !cached; attempt++) {
@@ -2396,24 +2420,73 @@ describe("minimum-release-age", () => {
         cached = readdirSync(cacheDir).some(file => file.endsWith(".npm"));
       }
       if (!cached) throw new Error(`5 installs of ${name}@1.0.0 left no .npm manifest in ${cacheDir}`);
-      const requests = oddTimeManifestRequests.get(name);
+    }
 
-      const { stderr, exitCode } = await install(
-        { [name]: "2.0.0" },
-        fiveDayGate,
-        {},
-        {
-          cacheDir,
-          env: { BUN_CONFIG_MANIFEST_CACHE_CONTROL_TIMESTAMP: "4294967295" },
-        },
-      );
+    // A too-recent version ages, so the cached manifest is enough. A time that is not a date cannot
+    // change in the cache, so bun asks the registry again.
+    test.skipIf(!isDebug).concurrent.each([
+      ["odd-time-cached-recent", `${5 * SECONDS_PER_DAY} seconds`, 0],
+      ["odd-time-cached-unreadable", "the publish time in the registry is not a valid date", 1],
+    ])(
+      "%s: an exact version from an expired cached manifest is blocked with the same error",
+      async (name, reason, manifestRequests) => {
+        using cache = tempDir("odd-publish-time-cache", {});
+        await cacheManifest(name, String(cache));
+        const requests = oddTimeManifestRequests.get(name)!;
 
-      expect(stderr).toContain(
-        `error: No version matching "${name}" found for specifier "2.0.0" (blocked by minimum-release-age: ${reason})`,
-      );
-      expect(oddTimeManifestRequests.get(name)).toBe(requests);
-      expect(exitCode).toBe(1);
-    });
+        const { stderr, exitCode } = await install(
+          { [name]: "2.0.0" },
+          fiveDayGate,
+          {},
+          {
+            cacheDir: String(cache),
+            env: expiredCache,
+          },
+        );
+
+        expect(stderr).toContain(
+          `error: No version matching "${name}" found for specifier "2.0.0" (blocked by minimum-release-age: ${reason})`,
+        );
+        expect(oddTimeManifestRequests.get(name)).toBe(requests + manifestRequests);
+        expect(exitCode).toBe(1);
+      },
+    );
+
+    test
+      .skipIf(!isDebug)
+      .concurrent("an exact version installs after the registry corrects its publish time", async () => {
+        const name = "odd-time-cached-then-fixed";
+        using cache = tempDir("odd-publish-time-cache", {});
+        await cacheManifest(name, String(cache));
+        oddPublishTimes[name] = daysAgo(30);
+
+        const { stderr, exitCode, lockfile } = await install(
+          { [name]: "2.0.0" },
+          fiveDayGate,
+          {},
+          {
+            cacheDir: String(cache),
+            env: expiredCache,
+          },
+        );
+
+        expect(stderr).not.toContain("error:");
+        expect(lockfile).toContain(`${name}@2.0.0`);
+        expect(exitCode).toBe(0);
+      });
+
+    // The stability check compares 1.1.0 with the blocked 1.3.0, not with the unreadable 1.2.0 between them.
+    test.concurrent.each(["*", "latest"])(
+      "%s: an unreadable publish time between rapid releases does not end the stability check",
+      async specifier => {
+        const name = "unreadable-between-rapid-releases";
+        const { stderr, exitCode, lockfile } = await install({ [name]: specifier }, fiveDayGate);
+
+        expect(stderr).not.toContain("error:");
+        expect(lockfile).toContain(`${name}@1.0.0`);
+        expect(exitCode).toBe(0);
+      },
+    );
 
     test.concurrent("--minimum-release-age 0 installs a version with an unreadable publish time", async () => {
       const { stderr, exitCode, lockfile } = await install(

@@ -1592,6 +1592,17 @@ impl PackageManifest {
         package_version.publish_timestamp_ms > current_timestamp_ms - minimum_release_age_ms
     }
 
+    /// The stability check measures the next candidate against this. An unreadable time replaces no readable one.
+    fn newer_blocked<'a>(
+        prev: Option<&'a PackageVersion>,
+        blocked: &'a PackageVersion,
+    ) -> Option<&'a PackageVersion> {
+        match prev {
+            Some(prev) if blocked.has_unreadable_publish_time() => Some(prev),
+            _ => Some(blocked),
+        }
+    }
+
     fn search_version_list<'a>(
         &'a self,
         versions: &'a [Semver::Version],
@@ -1619,7 +1630,8 @@ impl PackageManifest {
                     if newest_filtered.is_none() {
                         *newest_filtered = Some(version);
                     }
-                    prev_package_blocked_from_age = Some(package);
+                    prev_package_blocked_from_age =
+                        Self::newer_blocked(prev_package_blocked_from_age, package);
                 }
                 // stability check - if the previous package is blocked from age, we need to check if the current package wasn't the cause
                 else if let Some(prev_package) = prev_package_blocked_from_age {
@@ -1791,7 +1803,8 @@ impl PackageManifest {
             }
 
             if Self::is_package_version_too_recent(package, min_age_ms) {
-                prev_package_blocked_from_age = Some(package);
+                prev_package_blocked_from_age =
+                    Self::newer_blocked(prev_package_blocked_from_age, package);
                 continue;
             }
 

@@ -1182,8 +1182,10 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                         if version.tag == dependency::version::Tag::Npm
                                             && version.npm().version.is_exact()
                                         {
-                                            if let Some(find_result) =
-                                                loaded_manifest.as_ref().unwrap().find_by_version(
+                                            if let Some(find_result) = loaded_manifest
+                                                .as_ref()
+                                                .unwrap()
+                                                .find_by_version(
                                                     version
                                                         .npm()
                                                         .version
@@ -1193,6 +1195,14 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                                         .left
                                                         .version,
                                                 )
+                                                // A cached "not a date" cannot become a date: fetch an expired manifest again.
+                                                .filter(|found| {
+                                                    !(expired
+                                                        && needs_extended_manifest
+                                                        && found
+                                                            .package
+                                                            .has_unreadable_publish_time())
+                                                })
                                             {
                                                 if let Some(min_age_ms) =
                                                     this.options.minimum_release_age_ms

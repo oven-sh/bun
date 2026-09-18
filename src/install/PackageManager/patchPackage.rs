@@ -1231,29 +1231,46 @@ fn overwrite_package_in_node_modules_folder(
     let mut old_z = bun_paths::Path::<u8>::from(old_path)?;
     let mut dest_z = bun_paths::Path::<u8>::from(node_modules_folder_path)?;
 
-    let has_old = match sys::renameat(Fd::cwd(), dest_z.slice_z(), Fd::cwd(), old_z.slice_z()) {
-        Ok(()) => true,
-        Err(e) if e.get_errno() == sys::E::ENOENT => false,
-        // overlayfs (Docker) refuses to rename a directory from a lower
-        // layer. The copy is complete, so delete the old package instead.
-        Err(e) if e.get_errno() == sys::E::EXDEV => {
-            if let Err(e) = Fd::cwd().delete_tree(node_modules_folder_path) {
+    let (has_old, dest_deleted) =
+        match sys::renameat(Fd::cwd(), dest_z.slice_z(), Fd::cwd(), old_z.slice_z()) {
+            Ok(()) => (true, false),
+            Err(e) if e.get_errno() == sys::E::ENOENT => (false, false),
+            // overlayfs (Docker) refuses to rename a directory from a lower
+            // layer. The copy is complete, so delete the old package instead.
+            Err(e) if e.get_errno() == sys::E::EXDEV => {
+                if let Err(e) = Fd::cwd().delete_tree(node_modules_folder_path) {
+                    let _ = Fd::cwd().delete_tree(staging_path);
+                    return Err(e.into());
+                }
+                (false, true)
+            }
+            Err(e) => {
                 let _ = Fd::cwd().delete_tree(staging_path);
                 return Err(e.into());
             }
-            false
-        }
-        Err(e) => {
-            let _ = Fd::cwd().delete_tree(staging_path);
-            return Err(e.into());
-        }
-    };
+        };
 
     if let Err(e) = sys::renameat(Fd::cwd(), staging_z.slice_z(), Fd::cwd(), dest_z.slice_z()) {
         if has_old {
-            let _ = sys::renameat(Fd::cwd(), old_z.slice_z(), Fd::cwd(), dest_z.slice_z());
+            if let Err(restore_err) =
+                sys::renameat(Fd::cwd(), old_z.slice_z(), Fd::cwd(), dest_z.slice_z())
+            {
+                bun_core::warn!(
+                    "failed to move the previous package folder back to {}, it is at {}: {}",
+                    bstr::BStr::new(node_modules_folder_path),
+                    bstr::BStr::new(old_path),
+                    restore_err
+                );
+            }
         }
-        let _ = Fd::cwd().delete_tree(staging_path);
+        if dest_deleted {
+            bun_core::warn!(
+                "the copy of the package is at {}",
+                bstr::BStr::new(staging_path)
+            );
+        } else {
+            let _ = Fd::cwd().delete_tree(staging_path);
+        }
         return Err(e.into());
     }
 

@@ -323,7 +323,8 @@ impl Loader {
     }
 
     pub fn get_http_proxy_for(&self, url: &URL<'_>) -> Option<URL<'_>> {
-        let proxy = URL::parse(self.proxy_env_for_scheme(url.is_http())?);
+        // `http://DOMAIN\user:pass@proxy:8080` is a domain login, as curl reads it.
+        let proxy = URL::parse_single_reader(self.proxy_env_for_scheme(url.is_http())?);
         if self.is_no_proxy(url.hostname, url.get_port_auto()) {
             return None;
         }
@@ -372,7 +373,7 @@ impl Loader {
         let value = self
             .get_lower_then_upper(b"all_proxy", b"ALL_PROXY")
             .filter(|p| !Self::is_emptyish(p))?;
-        let url = URL::parse(value);
+        let url = URL::parse_single_reader(value);
         (url.protocol.is_empty() || url.has_http_like_protocol()).then_some(value)
     }
 

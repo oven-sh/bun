@@ -32,6 +32,8 @@ pub enum ElfError {
     NoWritableLoadSegment,
     #[error("NewVaddrCollides")]
     NewVaddrCollides,
+    #[error("BunSectionAlreadyWritten")]
+    BunSectionAlreadyWritten,
 }
 
 pub struct ElfFile {
@@ -208,6 +210,7 @@ impl ElfFile {
     /// middle of a `PT_LOAD` segment — sections like `.dynamic`, `.got`,
     /// `.got.plt` come after it, and expanding in-place would invalidate their
     /// absolute virtual addresses.
+    /// A payload that an earlier call appended is replaced where it is (`bun_section_is_payload`).
     pub fn write_bun_section(&mut self, payload: &[u8]) -> Result<(), ElfError> {
         let ehdr = read_ehdr(&self.data);
         let bun_section = self.find_bun_section(ehdr)?;
@@ -266,17 +269,24 @@ impl ElfFile {
         // `new_file_offset` follows the segment's existing (vaddr - offset)
         // delta, so the kernel's mmap at `rw_phdr.p_offset → rw_phdr.p_vaddr`
         // covers our new payload continuously once we grow p_filesz.
-        let new_vaddr = align_up(max_vaddr_end, page_size);
-        let offset_in_segment = new_vaddr - rw_phdr.p_vaddr;
-        let new_file_offset = rw_phdr.p_offset + offset_in_segment;
+        // A payload from an earlier call keeps its address: BUN_COMPILED already holds it.
+        let replaces_payload =
+            self.bun_section_is_payload(ehdr, &bun_section, &rw_phdr, max_vaddr_end, page_size)?;
+        let new_vaddr = if replaces_payload {
+            bun_section_vaddr
+        } else {
+            align_up(max_vaddr_end, page_size)
+        };
 
         // Sanity: `max_vaddr_end` already reflects the RW segment's full
         // memsz range (the loop above folds every PT_LOAD), so new_vaddr is
         // past it by construction. This guard catches pathological inputs
         // (e.g. corrupt ELF with rw_phdr.p_vaddr past max_vaddr_end).
-        if new_vaddr < rw_phdr.p_vaddr + rw_phdr.p_memsz {
+        if !replaces_payload && new_vaddr < rw_phdr.p_vaddr + rw_phdr.p_memsz {
             return Err(ElfError::NewVaddrCollides);
         }
+        let offset_in_segment = new_vaddr - rw_phdr.p_vaddr;
+        let new_file_offset = rw_phdr.p_offset + offset_in_segment;
 
         // File layout after this function returns:
         //
@@ -297,6 +307,7 @@ impl ElfFile {
         // because that file range now lives inside the extended RW PT_LOAD.
         // Leaving it in place would mmap it into what was previously BSS
         // (zero-initialized statics), corrupting the process.
+        // A replaced payload ends the RW segment: `old_rw_file_end` is its end, and the tail is the same.
         let old_rw_file_end = rw_phdr.p_offset + rw_phdr.p_filesz;
         let old_file_size: u64 = self.data.len() as u64;
         if old_rw_file_end > old_file_size {
@@ -311,12 +322,11 @@ impl ElfFile {
 
         let total_new_size: u64 = move_dst_end;
 
-        // resize() zero-fills, so the explicit zero-fills below are
-        // partially redundant but harmless.
+        // Grow before the tail moves, shrink after: a smaller payload moves the tail down.
         let total_new_size_usz = usize::try_from(total_new_size).expect("int cast");
-        self.data
-            .reserve(total_new_size_usz.saturating_sub(self.data.len()));
-        self.data.resize(total_new_size_usz, 0);
+        if total_new_size_usz > self.data.len() {
+            self.data.resize(total_new_size_usz, 0);
+        }
 
         // Relocate the tail (non-ALLOC sections + old shdr table) past the
         // payload. Do this BEFORE zero-filling and writing the payload — if
@@ -330,13 +340,17 @@ impl ElfFile {
                 usize::try_from(move_dst_start).expect("int cast"),
             );
         }
+        self.data.truncate(total_new_size_usz);
 
         // Zero the bytes between the old RW file-content end and the payload
         // start. This entire range is now inside the extended PT_LOAD's
         // file-backed region; keeping it zero preserves BSS semantics.
-        self.data[usize::try_from(move_src_start).expect("int cast")
-            ..usize::try_from(new_file_offset).expect("int cast")]
-            .fill(0);
+        // The call that appended the payload being replaced already did this.
+        if !replaces_payload {
+            self.data[usize::try_from(move_src_start).expect("int cast")
+                ..usize::try_from(new_file_offset).expect("int cast")]
+                .fill(0);
+        }
 
         // Write the payload at the new location: [u64 LE size][data][zero padding]
         write_u64_le(
@@ -359,10 +373,13 @@ impl ElfFile {
         // (where BUN_COMPILED symbol points). At runtime, BUN_COMPILED.size will be
         // this vaddr (always non-zero), which the runtime dereferences as a pointer.
         // Non-standalone binaries have BUN_COMPILED.size = 0, so 0 means "no data".
-        write_u64_le(
-            &mut self.data[usize::try_from(bun_section_offset).expect("int cast")..][..8],
-            new_vaddr,
-        );
+        // A replaced payload keeps its vaddr, which BUN_COMPILED already holds.
+        if !replaces_payload {
+            write_u64_le(
+                &mut self.data[usize::try_from(bun_section_offset).expect("int cast")..][..8],
+                new_vaddr,
+            );
+        }
 
         // Update every section header whose sh_offset pointed into the moved
         // tail so tools like `readelf -S`, `objdump`, and `gdb` still find
@@ -376,7 +393,8 @@ impl ElfFile {
         if old_shdr_offset < move_src_start || old_shdr_offset + shdr_table_size > move_src_end {
             return Err(ElfError::InvalidElfFile);
         }
-        let new_shdr_offset: u64 = old_shdr_offset + (move_dst_start - move_src_start);
+        // Subtract first: a smaller payload moves the tail down.
+        let new_shdr_offset: u64 = old_shdr_offset - move_src_start + move_dst_start;
         self.write_ehdr_shoff(new_shdr_offset);
 
         let shnum = ehdr.e_shnum;
@@ -394,7 +412,7 @@ impl ElfFile {
                 && shdr.sh_offset >= move_src_start
                 && shdr.sh_offset < move_src_end
             {
-                shdr.sh_offset += move_dst_start - move_src_start;
+                shdr.sh_offset = shdr.sh_offset - move_src_start + move_dst_start;
             }
 
             write_struct(
@@ -404,7 +422,7 @@ impl ElfFile {
         }
 
         // Extend the existing writable PT_LOAD to cover the appended payload.
-        // Keep p_offset/p_vaddr/p_paddr/p_align unchanged; only grow filesz
+        // Keep p_offset/p_vaddr/p_paddr/p_align unchanged; only set filesz
         // and memsz. Equal values are fine — the extension is entirely
         // file-backed (no new BSS gap).
         //
@@ -431,6 +449,71 @@ impl ElfFile {
     }
 
     // --- Internal helpers ---
+
+    /// Whether `.bun` is a payload that an earlier `write_bun_section` appended, in the layout that it produces.
+    fn bun_section_is_payload(
+        &self,
+        ehdr: Elf64_Ehdr,
+        bun_section: &BunSectionInfo,
+        rw_phdr: &Elf64_Phdr,
+        max_vaddr_end: u64,
+        page_size: u64,
+    ) -> Result<bool, ElfError> {
+        let first_word = usize::try_from(bun_section.file_offset)
+            .ok()
+            .and_then(|offset| self.data.get(offset..)?.first_chunk::<8>())
+            .map(|bytes| u64::from_le_bytes(*bytes))
+            .ok_or(ElfError::InvalidElfFile)?;
+        // BUN_COMPILED as linked. A payload starts with its length, and `to_executable` writes no empty one.
+        if first_word == 0 {
+            return Ok(false);
+        }
+
+        // Where the linked image ends. `.tbss` takes no room in it.
+        let linked_end = (0..ehdr.e_shnum)
+            .filter(|&index| index != bun_section.section_index)
+            .map(|index| self.read_shdr(ehdr.e_shoff, index))
+            .filter(|shdr| {
+                shdr.sh_flags & SHF_ALLOC != 0
+                    && !(shdr.sh_type == SHT_NOBITS && shdr.sh_flags & SHF_TLS != 0)
+            })
+            .map(|shdr| shdr.sh_addr.saturating_add(shdr.sh_size))
+            .max()
+            .unwrap_or(0);
+        let rw_vaddr_end = rw_phdr.p_vaddr.checked_add(rw_phdr.p_memsz);
+        let payload_vaddr_end = bun_section
+            .size
+            .checked_next_multiple_of(page_size)
+            .and_then(|aligned_size| bun_section.vaddr.checked_add(aligned_size));
+
+        let is_length_then_bytes =
+            bun_section.size.checked_sub(size_of::<u64>() as u64) == Some(first_word);
+        let starts_a_page = bun_section.vaddr.is_multiple_of(page_size);
+        // 1.3.14 to 1.4.x left a second payload behind the one BUN_COMPILED points at: a page or more later.
+        let follows_linked_sections = bun_section
+            .vaddr
+            .checked_sub(linked_end)
+            .is_some_and(|gap| gap < page_size);
+        let offset_matches_segment = bun_section.vaddr.checked_sub(rw_phdr.p_vaddr)
+            == bun_section.file_offset.checked_sub(rw_phdr.p_offset);
+        let is_file_backed = rw_phdr.p_filesz == rw_phdr.p_memsz;
+        // Nothing is mapped past the payload, so a longer one runs into no other mapping.
+        let segment_is_highest = rw_vaddr_end == Some(max_vaddr_end);
+        let ends_segment = payload_vaddr_end == rw_vaddr_end;
+
+        if is_length_then_bytes
+            && starts_a_page
+            && follows_linked_sections
+            && offset_matches_segment
+            && is_file_backed
+            && segment_is_highest
+            && ends_segment
+        {
+            Ok(true)
+        } else {
+            Err(ElfError::BunSectionAlreadyWritten)
+        }
+    }
 
     /// Returns the file offset and section index of the `.bun` section.
     fn find_bun_section(&self, ehdr: Elf64_Ehdr) -> Result<BunSectionInfo, ElfError> {
@@ -467,6 +550,7 @@ impl ElfFile {
                     return Ok(BunSectionInfo {
                         file_offset: shdr.sh_offset,
                         vaddr: shdr.sh_addr,
+                        size: shdr.sh_size,
                         section_index: u16::try_from(i).expect("int cast"),
                     });
                 }
@@ -501,6 +585,8 @@ struct BunSectionInfo {
     file_offset: u64,
     /// Virtual address of the .bun section (sh_addr).
     vaddr: u64,
+    /// Size of the .bun section (sh_size).
+    size: u64,
     /// Index of the .bun section in the section header table.
     section_index: u16,
 }
@@ -666,6 +752,8 @@ const ELFDATA2LSB: u8 = 1;
 use bun_sys::elf::{PT_INTERP, PT_LOAD};
 const PF_W: u32 = 2;
 const SHT_NOBITS: u32 = 8;
+const SHF_ALLOC: u64 = 0x2;
+const SHF_TLS: u64 = 0x400;
 
 const EM_PPC64: u16 = 21;
 const EM_AARCH64: u16 = 183;

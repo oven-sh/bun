@@ -101,17 +101,23 @@ impl StreamingDecoder {
         unsafe { self.brotli.as_mut() }
     }
 
-    /// Consume all of `input`, appending decompressed bytes to `out`
-    /// (growing in 4096-byte steps). Returns `ShortRead` when more input is
-    /// required and `is_done` is false.
+    #[inline]
+    pub fn is_inflating(&self) -> bool {
+        matches!(self.state, ReaderState::Inflating)
+    }
+
+    /// Append decompressed bytes to `out` (growing in 4096-byte steps) until `input` is
+    /// consumed or `out.len()` reaches `max_output`. Returns the input bytes consumed.
+    /// Returns `ShortRead` when more input is required and `is_done` is false.
     pub fn decompress(
         &mut self,
         input: &[u8],
         out: &mut Vec<u8>,
+        max_output: usize,
         is_done: bool,
-    ) -> crate::Result<()> {
+    ) -> crate::Result<usize> {
         if matches!(self.state, ReaderState::End | ReaderState::Error) {
-            return Ok(());
+            return Ok(input.len());
         }
         debug_assert!(out.as_ptr() != input.as_ptr());
 
@@ -120,12 +126,16 @@ impl StreamingDecoder {
             self.state,
             ReaderState::Uninitialized | ReaderState::Inflating
         ) {
+            if out.len() >= max_output {
+                return Ok(total_in);
+            }
             if out.try_reserve(4096).is_err() {
                 self.state = ReaderState::Error;
                 return Err(crate::Error::OutOfMemory);
             }
+            let budget = max_output - out.len();
             let spare = out.spare_capacity_mut();
-            let out_len = spare.len();
+            let out_len = spare.len().min(budget);
             let mut next_out: *mut u8 = spare.as_mut_ptr().cast::<u8>();
 
             let next_in = &input[total_in..];
@@ -159,7 +169,7 @@ impl StreamingDecoder {
             match result {
                 c::BrotliDecoderResult::success => {
                     self.state = ReaderState::End;
-                    return Ok(());
+                    return Ok(input.len());
                 }
                 c::BrotliDecoderResult::err => {
                     self.state = ReaderState::Error;
@@ -192,7 +202,7 @@ impl StreamingDecoder {
                 }
             }
         }
-        Ok(())
+        Ok(total_in)
     }
 }
 

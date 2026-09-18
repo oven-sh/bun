@@ -176,6 +176,7 @@
 #include "JSURLSearchParams.h"
 
 #include "AsyncContextFrame.h"
+#include "ModuleGraph.h"
 #include "JavaScriptCore/InternalFieldTuple.h"
 #include "JavaScriptCore/JSAsyncFunctionGenerator.h"
 #include "JavaScriptCore/JSGenerator.h"
@@ -3166,6 +3167,15 @@ void JSC__VM__collectAsyncIdle(JSC::VM* vm)
     vm->heap.collectAsync(request);
 }
 
+bool JSC__VM__shrinkFootprintNow(JSC::VM* vm)
+{
+    JSC::JSLockHolder lock(*vm);
+    // Deleting code waits for a collection that is under way (Heap::preventCollection).
+    if (vm->heap.collectionScope())
+        return false;
+    return vm->shrinkFootprintNow({ JSC::VM::ShrinkFootprint::LeaveCollectionToCaller, JSC::VM::ShrinkFootprint::KeepCodeInUse });
+}
+
 void JSC__VM__setStartupJITDeferralScale(JSC::VM* vm, double scale)
 {
     vm->setStartupJITDeferralScale(scale);
@@ -3271,6 +3281,8 @@ extern "C" JSC::EncodedJSValue Bun__JSValue__call(JSC::JSGlobalObject* globalObj
     JSValue restoreAsyncContext;
     InternalFieldTuple* asyncContextData = nullptr;
     if (auto* wrapper = dynamicDowncast<AsyncContextFrame>(jsObject)) {
+        if (Bun::shouldDropCallbackOfStoppedModuleGraph(defaultGlobalObject(globalObject), wrapper->context.get())) [[unlikely]]
+            return JSValue::encode(jsUndefined());
         jsObject = wrapper->callback.get();
         asyncContextData = globalObject->m_asyncContextData.get();
         restoreAsyncContext = asyncContextData->getInternalField(0);
@@ -5783,6 +5795,16 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskJob(JSC::JSGlobalObject* arg0
         JSValue::decode(JSValue4)
     };
 
+    // A callback stored with its async context: the job runs the function in that context. One of
+    // a Bun.ModuleGraph that was disposed is not called, as on the other two routes a stored
+    // callback is called through (Bun__JSValue__call, AsyncContextFrame::call).
+    if (auto* wrapper = dynamicDowncast<AsyncContextFrame>(microtaskArgs[0])) {
+        if (Bun::shouldDropCallbackOfStoppedModuleGraph(globalObject, wrapper->context.get())) [[unlikely]]
+            return;
+        microtaskArgs[1] = wrapper->context.get();
+        microtaskArgs[0] = wrapper->callback.get();
+    }
+
     if (microtaskArgs[1].isEmpty()) {
         microtaskArgs[1] = jsUndefined();
     }
@@ -5822,7 +5844,7 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskJob(JSC::JSGlobalObject* arg0
 extern "C" WebCore::AbortSignal* WebCore__AbortSignal__new(JSC::JSGlobalObject* globalObject)
 {
     Zig::GlobalObject* thisObject = uncheckedDowncast<Zig::GlobalObject>(globalObject);
-    auto* context = thisObject->scriptExecutionContext();
+    auto* context = thisObject->currentScriptExecutionContext();
     RefPtr<WebCore::AbortSignal> abortSignal = WebCore::AbortSignal::create(context);
     return abortSignal.leakRef();
 }
@@ -5830,7 +5852,7 @@ extern "C" WebCore::AbortSignal* WebCore__AbortSignal__new(JSC::JSGlobalObject* 
 extern "C" JSC::EncodedJSValue WebCore__AbortSignal__create(JSC::JSGlobalObject* globalObject)
 {
     Zig::GlobalObject* thisObject = uncheckedDowncast<Zig::GlobalObject>(globalObject);
-    auto* context = thisObject->scriptExecutionContext();
+    auto* context = thisObject->currentScriptExecutionContext();
     auto abortSignal = WebCore::AbortSignal::create(context);
 
     return JSValue::encode(toJSNewlyCreated<IDLInterface<WebCore::AbortSignal>>(*globalObject, *uncheckedDowncast<JSDOMGlobalObject>(globalObject), WTF::move(abortSignal)));

@@ -1,58 +1,39 @@
 // shim for using process in browser
 var queue = [];
 var draining = false;
-var currentQueue;
-var queueIndex = -1;
 
-function cleanUpNextTick() {
-  if (!draining || !currentQueue) {
-    return;
-  }
-  draining = false;
-  if (currentQueue.length) {
-    queue = currentQueue.concat(queue);
+function scheduleDrain() {
+  if (typeof queueMicrotask === "function") {
+    queueMicrotask(drainQueue);
   } else {
-    queueIndex = -1;
-  }
-  if (queue.length) {
-    drainQueue();
+    Promise.resolve().then(drainQueue);
   }
 }
 
 function drainQueue() {
-  if (draining) {
-    return;
-  }
-  var timeout = setTimeout(cleanUpNextTick, 0);
   draining = true;
-  var len = queue.length;
-  while (len) {
-    currentQueue = queue;
-    queue = [];
-    while (++queueIndex < len) {
-      if (currentQueue) {
-        var item = currentQueue[queueIndex];
-        item.fun.apply(null, item.array);
-      }
+  var i = 0;
+  try {
+    // Callbacks queued while draining run in the same pass, like node.
+    for (; i < queue.length; i++) {
+      var item = queue[i];
+      item.fun.apply(null, item.args);
     }
-    queueIndex = -1;
-    len = queue.length;
+  } finally {
+    // On a throw, drop the callback that threw and keep the rest.
+    queue = queue.slice(i + 1);
+    draining = false;
+    if (queue.length) scheduleDrain();
   }
-  currentQueue = null;
-  draining = false;
-  clearTimeout(timeout, 0);
 }
 
-export function nextTick(fun) {
-  var args = new Array(arguments.length - 1);
-  if (arguments.length > 1) {
-    for (var i = 1; i < arguments.length; i++) {
-      args[i - 1] = arguments[i];
-    }
+export function nextTick(fun, ...args) {
+  if (typeof fun !== "function") {
+    throw new TypeError('The "callback" argument must be of type function. Received ' + typeof fun);
   }
   queue.push({ fun, args });
   if (queue.length === 1 && !draining) {
-    setTimeout(drainQueue, 0);
+    scheduleDrain();
   }
 }
 
@@ -74,6 +55,10 @@ export const removeAllListeners = noop;
 export const emit = noop;
 export const prependListener = noop;
 export const prependOnceListener = noop;
+export const emitWarning = function (warning, type) {
+  var name = typeof type === "string" ? type : (type && type.type) || "Warning";
+  console.warn(name + ": " + (warning && warning.message ? warning.message : warning));
+};
 
 export const listeners = function (name) {
   return [];
@@ -93,4 +78,29 @@ export const chdir = function (dir) {
 
 export const umask = function () {
   return 0;
+};
+
+export default {
+  nextTick,
+  title,
+  browser,
+  env,
+  argv,
+  version,
+  versions,
+  on,
+  addListener,
+  once,
+  off,
+  removeListener,
+  removeAllListeners,
+  emit,
+  prependListener,
+  prependOnceListener,
+  emitWarning,
+  listeners,
+  binding,
+  cwd,
+  chdir,
+  umask,
 };

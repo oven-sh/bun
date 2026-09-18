@@ -208,6 +208,15 @@ describe("fake node cli", () => {
       expect(await runAsNode(String(temp), ["./pkg"])).toEqual({ stdout: "true\n", stderr: "", exitCode: 0 });
     });
 
+    test.concurrent("cron execution mode still calls scheduled()", async () => {
+      using temp = tempDir("fake-node-main", {
+        "pkg/package.json": JSON.stringify({ type: "module" }),
+        "pkg/index.js": "export default { scheduled(controller) { console.log(controller.cron); } };",
+      });
+      const result = await runAsNode(String(temp), ["--cron-title=job", "--cron-period=* * * * *", "./pkg"]);
+      expect(result).toEqual({ stdout: "* * * * *\n", stderr: "", exitCode: 0 });
+    });
+
     test.concurrent("the Bun shell `$1` is process.argv[1]", async () => {
       using temp = tempDir("fake-node-main", {
         "pkg/package.json": JSON.stringify({ type: "module" }),

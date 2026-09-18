@@ -600,9 +600,7 @@ fn print_dependency_tree(
     // (alloc failures abort under global mimalloc).
 
     if let Some(dependents) = ctx.all_dependents.get(&current_pkg_id) {
-        // The implicit workspace-root entry (empty version) is hidden under a
-        // workspace. Drop it before counting so the last visible dependent gets
-        // the closing marker.
+        // Drop the hidden workspace-root entry before counting.
         let mut sorted_dependents: Vec<DependentInfo> = dependents
             .iter()
             .filter(|dep| !(parent_is_workspace && dep.version.is_empty()))

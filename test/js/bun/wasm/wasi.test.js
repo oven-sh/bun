@@ -163,3 +163,54 @@ it("path_* syscalls cannot escape the preopened directory", () => {
   );
   expect(wasi.FD_MAP.has(4)).toBe(true);
 });
+
+it("fd_prestat_get and fd_prestat_dir_name fail for fds that are not preopens", () => {
+  using dir = tempDir("wasi-prestat", {
+    "inside.txt": "inside",
+  });
+  const wasi = new WASI({ preopens: { "/": String(dir) } });
+  wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
+
+  const WASI_ESUCCESS = 0;
+  const WASI_EBADF = 8;
+  const WASI_EINVAL = 28;
+  const WASI_PREOPENTYPE_DIR = 0;
+  const WASI_RIGHT_FD_READ = BigInt(2);
+  const memory = Buffer.from(wasi.memory.buffer);
+  const view = new DataView(wasi.memory.buffer);
+  const preopenFd = 3;
+  const prestatPtr = 8;
+  const namePtr = 32;
+  const pathPtr = 1024;
+  const fdPtr = 16384;
+
+  // The preopen has a prestat that names it "/". Pre-fill the tag byte so the
+  // assertion fails if fd_prestat_get does not write it (the tag value is 0).
+  view.setUint8(prestatPtr, 0xff);
+  expect(wasi.wasiImport.fd_prestat_get(preopenFd, prestatPtr)).toBe(WASI_ESUCCESS);
+  expect(view.getUint8(prestatPtr)).toBe(WASI_PREOPENTYPE_DIR);
+  const nameLen = view.getUint32(prestatPtr + 4, true);
+  expect(nameLen).toBe(1);
+  expect(wasi.wasiImport.fd_prestat_dir_name(preopenFd, namePtr, nameLen)).toBe(WASI_ESUCCESS);
+  expect(memory.toString("utf8", namePtr, namePtr + nameLen)).toBe("/");
+
+  // stdio fds are open but are not preopens.
+  expect(wasi.wasiImport.fd_prestat_get(0, prestatPtr)).toBe(WASI_EINVAL);
+  expect(wasi.wasiImport.fd_prestat_dir_name(0, namePtr, 64)).toBe(WASI_EINVAL);
+
+  // A regular file fd from path_open is not a preopen either.
+  const pathLen = memory.write("inside.txt", pathPtr);
+  expect(wasi.wasiImport.path_open(preopenFd, 0, pathPtr, pathLen, 0, WASI_RIGHT_FD_READ, BigInt(0), 0, fdPtr)).toBe(
+    WASI_ESUCCESS,
+  );
+  const fileFd = view.getUint32(fdPtr, true);
+  try {
+    expect(wasi.wasiImport.fd_prestat_get(fileFd, prestatPtr)).toBe(WASI_EINVAL);
+    expect(wasi.wasiImport.fd_prestat_dir_name(fileFd, namePtr, 64)).toBe(WASI_EINVAL);
+  } finally {
+    expect(wasi.wasiImport.fd_close(fileFd)).toBe(WASI_ESUCCESS);
+  }
+
+  // An fd that is not open at all stays EBADF.
+  expect(wasi.wasiImport.fd_prestat_get(99, prestatPtr)).toBe(WASI_EBADF);
+});

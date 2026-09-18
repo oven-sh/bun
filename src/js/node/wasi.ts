@@ -946,15 +946,22 @@ var require_wasi = __commonJS({
           }),
           fd_prestat_get: wrap((fd, bufPtr) => {
             const stats = CHECK_FD(fd, BigInt(0));
+            // Only preopens have a prestat. uvwasi (Node) returns EINVAL here.
+            if (stats.fakePath === undefined) {
+              return constants_1.WASI_EINVAL;
+            }
             this.refreshMemory();
             this.view.setUint8(bufPtr, constants_1.WASI_PREOPENTYPE_DIR);
-            this.view.setUint32(bufPtr + 4, Buffer.byteLength(stats.fakePath ?? stats.path ?? ""), true);
+            this.view.setUint32(bufPtr + 4, Buffer.byteLength(stats.fakePath), true);
             return constants_1.WASI_ESUCCESS;
           }),
           fd_prestat_dir_name: wrap((fd, pathPtr, pathLen) => {
             const stats = CHECK_FD(fd, BigInt(0));
+            if (stats.fakePath === undefined) {
+              return constants_1.WASI_EINVAL;
+            }
             this.refreshMemory();
-            Buffer.from(this.memory.buffer).write(stats.fakePath ?? stats.path ?? "", pathPtr, pathLen, "utf8");
+            Buffer.from(this.memory.buffer).write(stats.fakePath, pathPtr, pathLen, "utf8");
             return constants_1.WASI_ESUCCESS;
           }),
           fd_pwrite: wrap((fd, iovs, iovsLen, offset, nwritten) => {

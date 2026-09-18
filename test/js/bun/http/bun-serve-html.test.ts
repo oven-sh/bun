@@ -1121,6 +1121,116 @@ test.concurrent("dev server started after process.chdir() reports bundle failure
   expect(exitCode).toBe(0);
 });
 
+// A rebuild changes the dev server's module graph before it ends: a file is
+// marked stale the moment one of its imports fails to resolve. A stylesheet
+// that the page links used to lose its place as a css root there, while its
+// route stays loaded until the rebuild ends. A request for the page in between
+// builds the <link> list from that graph. The page had no <link> for the
+// stylesheet, and when the stylesheet imports another one a debug build aborted
+// with "only CSS roots should be found by tracing".
+//
+// The plugin parks the rebuild inside onResolve. The bundler resolves the
+// imports of a file in order, so "./missing.css" has failed by then.
+test.concurrent("page request while a rebuild that fails a linked stylesheet is in flight", async () => {
+  const page = (title: string) =>
+    `<!DOCTYPE html><html><head><title>${title}</title><link rel="stylesheet" href="./index.css"></head><body><script type="module" src="./app.ts"></script></body></html>`;
+  using dir = tempDir("bun-serve-html-page-during-css-rebuild", {
+    "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
+    "index.html": page("one"),
+    "index.css": `@import "./child.css";\n.a { color: red; }\n`,
+    "child.css": `.c { color: blue; }\n`,
+    "parked.css": `.p { color: green; }\n`,
+    "app.ts": `console.log("app");`,
+    "plugin.ts": /*ts*/ `
+      import { join } from "node:path";
+      export default {
+        name: "park-bundle",
+        setup(build) {
+          build.onResolve({ filter: /parked\\.css$/ }, async () => {
+            globalThis.bundleParked.resolve();
+            await globalThis.releaseBundle.promise;
+            return { path: join(import.meta.dir, "parked.css") };
+          });
+        },
+      };
+    `,
+    "serve.ts": /*ts*/ `
+      import { writeFileSync } from "node:fs";
+      import index from "./index.html";
+
+      globalThis.bundleParked = Promise.withResolvers();
+      globalThis.releaseBundle = Promise.withResolvers();
+
+      using server = Bun.serve({ port: 0, development: true, routes: { "/": index } });
+      async function fetchPage() {
+        const response = await fetch(server.url);
+        const text = await response.text();
+        return {
+          status: response.status,
+          title: text.match(/<title>(.*?)<\\/title>/)?.[1] ?? null,
+          stylesheets: text.match(/<link rel="stylesheet"[^>]*>/g)?.length ?? 0,
+        };
+      }
+
+      const first = await fetchPage();
+
+      // The HMR socket tells when a rebuild has ended: 'u' is a hot update, 'e'
+      // is a list of errors.
+      const url = new URL("/_bun/hmr", server.url);
+      url.protocol = "ws:";
+      const ws = new WebSocket(url);
+      ws.binaryType = "arraybuffer";
+      let awaited = null;
+      ws.onmessage = ({ data }) => {
+        if (awaited?.kind === String.fromCharCode(new Uint8Array(data)[0])) awaited.resolve();
+      };
+      function nextMessage(kind) {
+        const { promise, resolve } = Promise.withResolvers();
+        awaited = { kind, resolve };
+        return promise;
+      }
+
+      // The server answers "set url" ('n' + route) with 'n'. It reads the
+      // messages of a socket in order, so the subscription ('s' + topics) is
+      // in place by then.
+      const subscribed = nextMessage("n");
+      ws.onopen = () => {
+        ws.send("she");
+        ws.send("n/");
+      };
+      await subscribed;
+
+      // The page is rendered once and then kept. This rebuild drops it, so the
+      // next request renders it again.
+      const htmlRebuilt = nextMessage("u");
+      writeFileSync("index.html", ${JSON.stringify(page("two"))});
+      await htmlRebuilt;
+
+      writeFileSync("index.css", '@import "./child.css";\\n@import "./missing.css";\\n@import "./parked.css";\\n.a { color: red; }\\n');
+      await globalThis.bundleParked.promise;
+      const duringRebuild = await fetchPage();
+
+      const cssRebuildFailed = nextMessage("e");
+      globalThis.releaseBundle.resolve();
+      await cssRebuildFailed;
+      const afterRebuild = await fetchPage();
+
+      ws.close();
+      console.log(JSON.stringify({ first, duringRebuild, afterRebuild }));
+    `,
+  });
+  const { stdout, stderr, exitCode } = await runServeFixture(dir);
+  expect({ stdout, exitCode }, stderr).toEqual({
+    stdout: JSON.stringify({
+      first: { status: 200, title: "one", stylesheets: 1 },
+      duringRebuild: { status: 200, title: "two", stylesheets: 1 },
+      afterRebuild: { status: 500, title: "Bun - Build Failed", stylesheets: 0 },
+    }),
+    exitCode: 0,
+  });
+  expect(stderr).toContain(`Could not resolve: "./missing.css"`);
+});
+
 test("wildcard static routes", async () => {
   await using dir = tempDir("bun-serve-html-error-handling", {
     "index.html": /*html*/ `

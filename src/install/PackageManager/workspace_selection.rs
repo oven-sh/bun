@@ -16,8 +16,7 @@ use crate::{PackageID, PackageNameHash};
 pub struct Candidate<'a> {
     pub name: &'a [u8],
     pub abs_posix_dir: &'a [u8],
-    /// Other directories that reach the same package (directory symlinks). A path selector
-    /// matches the candidate through any of them.
+    /// Directory symlinks that also reach this package. A path selector matches any of them.
     pub alias_posix_dirs: &'a [Box<[u8]>],
     pub is_root: bool,
 }

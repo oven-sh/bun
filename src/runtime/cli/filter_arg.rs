@@ -146,14 +146,12 @@ fn get_candidate_package_patterns<'a>(
 pub(crate) struct WorkspacePackage {
     pub(crate) package_json_path: Box<[u8]>,
     pub(crate) dir: Box<[u8]>,
-    /// Other paths the walk found for the same real directory (directory symlinks). A path
-    /// filter matches any of them.
+    /// Directory symlinks that also reach this package. A path filter matches any of them.
     alias_dirs: Vec<Box<[u8]>>,
     pub(crate) json: bun_resolver::PackageJSON,
 }
 
-/// Whether `dir` goes through a directory symlink below the workspace root: its real path is not
-/// the root's real path plus the same relative part.
+/// Whether `dir` goes through a directory symlink below the workspace root.
 fn is_link_path(root_dir: &[u8], root_real_dir: &[u8], dir: &[u8], real_dir: &[u8]) -> bool {
     let (Some(rel), Some(real_rel)) = (
         dir.strip_prefix(root_dir),
@@ -202,9 +200,7 @@ pub(crate) fn select_packages(
     let mut dir_is_link: Vec<bool> = Vec::new();
     // Each "workspaces" entry is walked on its own, so two entries can yield the same path.
     let mut seen_paths: StringHashMap<()> = StringHashMap::default();
-    // A directory symlink that a glob matches makes the walk find one package.json under two
-    // paths. Index into `discovered` by real directory, or `usize::MAX` when its package.json
-    // did not parse.
+    // Index into `discovered` by real directory. `usize::MAX` when its package.json did not parse.
     let mut by_real_dir: StringHashMap<usize> = StringHashMap::default();
     let mut dir_z_buf = path_buffer_pool::get();
     let mut real_dir_buf = path_buffer_pool::get();

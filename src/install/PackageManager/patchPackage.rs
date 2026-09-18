@@ -1248,12 +1248,7 @@ fn node_modules_folder_for_dependency_id(
 
 type IdPair = (DependencyID, PackageID);
 
-/// Returns the package that `name` (and `version`, when given) selects, the node_modules folder
-/// that holds it, and the name of its folder there.
-///
-/// `name` is the name of a dependency in package.json, which names the folder. An `npm:` alias
-/// installs a package under another name. When no dependency has `name`, it selects the
-/// dependencies that resolve to a package with that name, the name that keys the patch.
+/// Returns the package, the node_modules folder that holds it, and the name of its folder there.
 fn pkg_info_for_name_and_version(
     lockfile: &Lockfile,
     iterator: &mut NodeModulesIterator<'_>,
@@ -1306,8 +1301,7 @@ fn pkg_info_for_name_and_version(
         }
     }
 
-    // A fallback, not a union: an alias of another version somewhere in the tree does not make a
-    // name that selects a dependency ambiguous.
+    // Not a union: an alias of another version must not make a dependency's name ambiguous.
     if pairs.is_empty() {
         pairs = aliased;
     }

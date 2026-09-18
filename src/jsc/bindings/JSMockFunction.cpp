@@ -801,35 +801,53 @@ enum class MockResultType : uint8_t {
     Incomplete,
 };
 
-// Writes `type` and `value` into an existing `mock.results[i]` entry. The "incomplete" entry
-// of a running call is settled in place, like jest-mock does, because the implementation can
-// call mockClear() and replace the array the entry was pushed into.
-static void setMockResult(JSC::VM& vm, JSC::JSObject* result, MockResultType type, JSC::JSValue value)
+static JSC::JSString* mockResultTypeString(JSC::VM& vm, MockResultType type)
 {
     auto& commonStrings = Bun::commonStrings(vm);
-    JSC::JSString* typeString = nullptr;
     switch (type) {
     case MockResultType::Return:
-        typeString = commonStrings.mockResultReturnString();
-        break;
+        return commonStrings.mockResultReturnString();
     case MockResultType::Throw:
-        typeString = commonStrings.mockResultThrowString();
-        break;
+        return commonStrings.mockResultThrowString();
     case MockResultType::Incomplete:
-        typeString = commonStrings.mockResultIncompleteString();
-        break;
+        return commonStrings.mockResultIncompleteString();
     }
-
-    result->putDirectOffset(vm, 0, typeString);
-    result->putDirectOffset(vm, 1, value);
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 static JSC::JSObject* createMockResult(JSC::VM& vm, Zig::GlobalObject* globalObject, MockResultType type, JSC::JSValue value)
 {
     JSC::Structure* structure = globalObject->mockModule.mockResultStructure.getInitializedOnMainThread(globalObject);
     JSC::JSObject* result = JSC::constructEmptyObject(vm, structure);
-    setMockResult(vm, result, type, value);
+    result->putDirectOffset(vm, 0, mockResultTypeString(vm, type));
+    result->putDirectOffset(vm, 1, value);
     return result;
+}
+
+// Writes `type` and `value` into the "incomplete" entry of a call that just finished. The entry
+// is settled in place, like jest-mock does, because the implementation can call mockClear() and
+// replace the array the entry was pushed into.
+//
+// The implementation can also reach the entry through `fn.mock.results` and reshape it (define
+// an accessor, freeze it). Slot writes are only valid while the structure is still the one
+// createMockResult built. Otherwise settle through CreateDataProperty, which leaves a
+// non-writable or non-configurable property alone and never runs user code.
+static void settleMockResult(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSObject* result, MockResultType type, JSC::JSValue value)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::JSString* typeString = mockResultTypeString(vm, type);
+
+    JSC::Structure* structure = globalObject->mockModule.mockResultStructure.getInitializedOnMainThread(globalObject);
+    if (result->structure() == structure) [[likely]] {
+        result->putDirectOffset(vm, 0, typeString);
+        result->putDirectOffset(vm, 1, value);
+        return;
+    }
+
+    result->createDataProperty(globalObject, vm.propertyNames->type, typeString, false);
+    RETURN_IF_EXCEPTION(scope, void());
+    result->createDataProperty(globalObject, vm.propertyNames->value, value, false);
+    scope.release();
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsMockFunctionCall, (JSGlobalObject * lexicalGlobalObject, CallFrame* callframe))
@@ -942,8 +960,9 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionCall, (JSGlobalObject * lexicalGlobalObje
             JSValue returnValue = Bun::call(globalObject, result, callData, thisValue, args);
 
             if (auto* exc = topExceptionScope.exception()) {
-                setMockResult(vm, mockResult, MockResultType::Throw, exc->value());
                 (void)topExceptionScope.tryClearException();
+                settleMockResult(vm, globalObject, mockResult, MockResultType::Throw, exc->value());
+                RETURN_IF_EXCEPTION(scope, {});
                 JSC::throwException(globalObject, scope, exc);
                 return {};
             }
@@ -952,7 +971,8 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionCall, (JSGlobalObject * lexicalGlobalObje
                 returnValue = jsUndefined();
             }
 
-            setMockResult(vm, mockResult, MockResultType::Return, returnValue);
+            settleMockResult(vm, globalObject, mockResult, MockResultType::Return, returnValue);
+            RETURN_IF_EXCEPTION(scope, {});
             return JSValue::encode(returnValue);
         }
         case JSMockImplementation::Kind::ReturnValue: {

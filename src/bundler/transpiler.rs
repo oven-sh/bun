@@ -1469,6 +1469,48 @@ impl<'a> Transpiler<'a> {
                 break 'brk bun_ast::Source::init_path_string(path.text, contents);
             }
 
+            // `read_file_with_allocator` strips/transcodes BOMs; the raw-binary
+            // loaders need the file bytes verbatim.
+            if matches!(loader, options::Loader::Base64 | options::Loader::Dataurl) {
+                let publish_fd = this_parse.file_fd_ptr.is_some();
+                let read = match file_descriptor {
+                    Some(fd) => bun_sys::lseek(fd, 0, libc::SEEK_SET)
+                        .and_then(|_| bun_sys::File::borrow(&fd).read_to_end())
+                        .map(|b| (Some(fd), b)),
+                    None => bun_sys::File::openat(FD::cwd(), path.text, bun_sys::O::RDONLY, 0)
+                        .and_then(|f| {
+                            let body = f.read_to_end()?;
+                            let fd = publish_fd.then(|| f.into_raw());
+                            Ok((fd, body))
+                        }),
+                };
+                let (fd, body) = match read {
+                    Ok(v) => v,
+                    Err(err) => {
+                        let _ = log.add_error_fmt(
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            format_args!(
+                                "{} reading \"{}\"",
+                                bstr::BStr::new(err.name()),
+                                bstr::BStr::new(path.text),
+                            ),
+                        );
+                        return None;
+                    }
+                };
+                input_fd = fd;
+                if let (Some(fd), Some(file_fd_ptr)) = (fd, this_parse.file_fd_ptr.take()) {
+                    *file_fd_ptr = fd;
+                }
+                source_backing = resolver::cache::Contents::from(body);
+                // SAFETY: `source_backing` outlives every read through
+                // `source.contents` (moved into the returned `ParseResult`).
+                let contents: &'static [u8] =
+                    unsafe { bun_ptr::detach_lifetime_ref::<[u8]>(source_backing.as_slice()) };
+                break 'brk bun_ast::Source::init_path_string(path.text, contents);
+            }
+
             // Thread
             // `this_parse.arena` (the per-call `MimallocArena` from
             // `RuntimeTranspilerStore`) so the source bytes land in the
@@ -1829,6 +1871,16 @@ impl<'a> Transpiler<'a> {
             options::Loader::Text => {
                 return parse_text_loader(source, loader, source_backing, arena);
             }
+            options::Loader::Base64 | options::Loader::Dataurl => {
+                return parse_base64_or_dataurl_loader(
+                    source,
+                    loader,
+                    input_fd,
+                    source_backing,
+                    arena,
+                    &path,
+                );
+            }
             options::Loader::Md => {
                 return parse_md_loader(source, loader, source_backing, arena, log);
             }
@@ -1846,8 +1898,6 @@ impl<'a> Transpiler<'a> {
             options::Loader::Css => {}
             options::Loader::File
             | options::Loader::Napi
-            | options::Loader::Base64
-            | options::Loader::Dataurl
             | options::Loader::Bunsh
             | options::Loader::Sqlite
             | options::Loader::SqliteEmbedded
@@ -2158,6 +2208,61 @@ fn parse_text_loader<'a>(
         ast: bun_ast::Ast::from_parts(parts, arena),
         source: source.clone(),
         loader,
+        already_bundled: AlreadyBundled::None,
+        pending_imports: Default::default(),
+        runtime_transpiler_cache: None,
+        empty: false,
+        source_contents_backing: source_backing,
+    });
+}
+
+#[cold]
+#[inline(never)]
+fn parse_base64_or_dataurl_loader<'a>(
+    source: &bun_ast::Source,
+    loader: options::Loader,
+    input_fd: Option<FD>,
+    source_backing: resolver::cache::Contents,
+    arena: &'a Arena,
+    path: &bun_paths::fs::Path<'static>,
+) -> Option<ParseResult<'a>> {
+    use bun_resolver::data_url::DataURL;
+    let contents = &source.contents;
+    let encoded: Vec<u8> = if matches!(loader, options::Loader::Base64) {
+        bun_base64::encode_alloc(contents)
+    } else {
+        let mime = match DataURL::parse(path.text) {
+            Ok(Some(u)) if !u.mime_type.is_empty() => u.mime_type.to_vec(),
+            _ => DataURL::guess_mime_type(path.text, contents),
+        };
+        DataURL::encode_string_as_shortest_data_url(&mime, contents)
+    };
+    // SAFETY: ARENA — `arena` outlives the returned `ParseResult.ast` (the AST
+    // crate's `Str` convention erases `'bump` to `'static` for `E::String.data`).
+    let encoded: &'static [u8] =
+        unsafe { bun_ptr::detach_lifetime(arena.alloc_slice_copy(&encoded)) };
+    let expr = bun_ast::Expr::init(bun_ast::E::EString::init(encoded), bun_ast::Loc::EMPTY);
+    let stmt = bun_ast::Stmt::alloc(
+        bun_ast::S::ExportDefault {
+            value: bun_ast::StmtOrExpr::Expr(expr),
+            default_name: bun_ast::LocRef {
+                loc: bun_ast::Loc::default(),
+                ref_: bun_ast::Ref::NONE,
+            },
+        },
+        bun_ast::Loc { start: 0 },
+    );
+    let stmts = bun_ast::StoreSlice::new_mut(arena.alloc_slice_copy(&[stmt]));
+    let parts: Box<[bun_ast::Part]> = Box::new([bun_ast::Part {
+        stmts,
+        ..Default::default()
+    }]);
+
+    return Some(ParseResult {
+        ast: bun_ast::Ast::from_parts(parts, arena),
+        source: source.clone(),
+        loader,
+        input_fd,
         already_bundled: AlreadyBundled::None,
         pending_imports: Default::default(),
         runtime_transpiler_cache: None,
@@ -2935,6 +3040,8 @@ impl<'a> Transpiler<'a> {
             | options::Loader::Json5
             | options::Loader::Xml
             | options::Loader::Text
+            | options::Loader::Base64
+            | options::Loader::Dataurl
             | options::Loader::Md => {
                 // borrowck — `parse` consumes `&mut self`, so capture
                 // the option fields needed for `ParseOptions` first.
@@ -3032,9 +3139,6 @@ impl<'a> Transpiler<'a> {
                 output_file.value = crate::output_file::Value::Buffer {
                     bytes: writer.ctx.written().to_vec().into_boxed_slice(),
                 };
-            }
-            options::Loader::Dataurl | options::Loader::Base64 => {
-                bun_core::Output::panic(format_args!("TODO: dataurl, base64"));
             }
             options::Loader::Css => {
                 match self.build_css_output(

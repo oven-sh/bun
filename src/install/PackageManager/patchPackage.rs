@@ -49,13 +49,10 @@ fn print_resolution_label<'a>(
 #[derive(Clone, Copy)]
 enum FolderLookupError {
     NotInLockfile,
-    /// Several non-npm packages of that name. Their labels are not versions.
     Ambiguous,
 }
 
-/// The lockfile package behind a `bun patch <path>` folder. Only an npm label
-/// is a version, so a non-npm package is taken only as the single package of
-/// that name.
+/// Only an npm label is a version, so a non-npm package matches only as the single package of that name.
 fn package_for_folder(
     lockfile: &Lockfile,
     name_hash: u64,

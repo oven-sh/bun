@@ -61,6 +61,7 @@ for (let round = 0; round < 2; round++) {
   await new Promise<void>((resolve, reject) => {
     w.once("message", () => resolve());
     w.once("error", reject);
+    w.once("exit", code => reject(new Error(`worker exited with code ${code} before posting "up"`)));
   });
   await w.terminate();
 }

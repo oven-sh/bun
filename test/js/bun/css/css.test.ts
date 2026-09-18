@@ -2,6 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
+import { cssInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "path";
@@ -1541,6 +1542,10 @@ describe("css tests", () => {
       }
 
       @supports (color: lab(0% 0 0)) {
+        .foo:not(:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
+          border-right: var(--border-width) solid lab(40% 56.6 39);
+        }
+
         .foo:not(:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
           border-right: var(--border-width) solid lab(40% 56.6 39);
         }
@@ -1555,6 +1560,10 @@ describe("css tests", () => {
       }
 
       @supports (color: lab(0% 0 0)) {
+        .foo:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
+          border-left: var(--border-width) solid lab(40% 56.6 39);
+        }
+
         .foo:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
           border-left: var(--border-width) solid lab(40% 56.6 39);
         }
@@ -7908,6 +7917,485 @@ describe("css tests", () => {
           safari: 14 << 16,
         },
       );
+    });
+
+    // A color in an unparsed value (one with var()) gets its wider-gamut
+    // fallbacks as `@supports` rules after the style rule. Those rules print
+    // the selector in the same vendor prefix passes as the style rule, so the
+    // override reaches every browser that the base declaration reaches.
+    describe("@supports color fallbacks keep the vendor prefix passes of the rule", () => {
+      // Safari 15 to 16.3 has lab() and display-p3, and matches only `:-webkit-full-screen`.
+      const targets = { chrome: 80 << 16, safari: 14 << 16 };
+
+      prefix_test(
+        `
+          .f:fullscreen {
+            color: var(--x, lab(40% 56.6 39));
+          }
+        `,
+        indoc`
+          .f:-webkit-full-screen {
+            color: var(--x, #b32323);
+          }
+
+          .f:fullscreen {
+            color: var(--x, #b32323);
+          }
+
+          @supports (color: color(display-p3 0 0 0)) {
+            .f:-webkit-full-screen {
+              color: var(--x, color(display-p3 .643308 .192455 .167712));
+            }
+
+            .f:fullscreen {
+              color: var(--x, color(display-p3 .643308 .192455 .167712));
+            }
+          }
+
+          @supports (color: lab(0% 0 0)) {
+            .f:-webkit-full-screen {
+              color: var(--x, lab(40% 56.6 39));
+            }
+
+            .f:fullscreen {
+              color: var(--x, lab(40% 56.6 39));
+            }
+          }
+        `,
+        targets,
+      );
+
+      // A prefix that is in the source stays as written.
+      prefix_test(
+        `
+          .f:-webkit-full-screen {
+            color: var(--x, lab(40% 56.6 39));
+          }
+        `,
+        indoc`
+          .f:-webkit-full-screen {
+            color: var(--x, #b32323);
+          }
+
+          @supports (color: color(display-p3 0 0 0)) {
+            .f:-webkit-full-screen {
+              color: var(--x, color(display-p3 .643308 .192455 .167712));
+            }
+          }
+
+          @supports (color: lab(0% 0 0)) {
+            .f:-webkit-full-screen {
+              color: var(--x, lab(40% 56.6 39));
+            }
+          }
+        `,
+        targets,
+      );
+      prefix_test(
+        `
+          .f::-moz-selection {
+            color: var(--x, lab(40% 56.6 39));
+          }
+        `,
+        indoc`
+          .f::-moz-selection {
+            color: var(--x, #b32323);
+          }
+
+          @supports (color: lab(0% 0 0)) {
+            .f::-moz-selection {
+              color: var(--x, lab(40% 56.6 39));
+            }
+          }
+        `,
+        { firefox: 60 << 16 },
+      );
+
+      // Pseudo-elements, and !important declarations.
+      prefix_test(
+        `
+          .f::selection {
+            color: var(--x, lab(40% 56.6 39)) !important;
+          }
+        `,
+        indoc`
+          .f::-moz-selection {
+            color: var(--x, #b32323) !important;
+          }
+
+          .f::selection {
+            color: var(--x, #b32323) !important;
+          }
+
+          @supports (color: lab(0% 0 0)) {
+            .f::-moz-selection {
+              color: var(--x, lab(40% 56.6 39)) !important;
+            }
+
+            .f::selection {
+              color: var(--x, lab(40% 56.6 39)) !important;
+            }
+          }
+        `,
+        { firefox: 60 << 16 },
+      );
+
+      // Safari 10.1 to 13.1 has display-p3 and no `:is()`, so the
+      // `:-webkit-any()` copy is the only one that gives it the p3 color.
+      prefix_test(
+        `
+          .f:is(.a, .b) {
+            color: var(--x, lab(40% 56.6 39));
+          }
+        `,
+        indoc`
+          .f:-webkit-any(.a, .b) {
+            color: var(--x, #b32323);
+          }
+
+          .f:is(.a, .b) {
+            color: var(--x, #b32323);
+          }
+
+          @supports (color: color(display-p3 0 0 0)) {
+            .f:-webkit-any(.a, .b) {
+              color: var(--x, color(display-p3 .643308 .192455 .167712));
+            }
+
+            .f:is(.a, .b) {
+              color: var(--x, color(display-p3 .643308 .192455 .167712));
+            }
+          }
+
+          @supports (color: lab(0% 0 0)) {
+            .f:-webkit-any(.a, .b) {
+              color: var(--x, lab(40% 56.6 39));
+            }
+
+            .f:is(.a, .b) {
+              color: var(--x, lab(40% 56.6 39));
+            }
+          }
+        `,
+        { chrome: 80 << 16, safari: 13 << 16 },
+      );
+
+      // A rule with no prefix of its own prints once, as before.
+      prefix_test(
+        `
+          .f {
+            color: var(--x, lab(40% 56.6 39));
+          }
+        `,
+        indoc`
+          .f {
+            color: var(--x, #b32323);
+          }
+
+          @supports (color: color(display-p3 0 0 0)) {
+            .f {
+              color: var(--x, color(display-p3 .643308 .192455 .167712));
+            }
+          }
+
+          @supports (color: lab(0% 0 0)) {
+            .f {
+              color: var(--x, lab(40% 56.6 39));
+            }
+          }
+        `,
+        targets,
+      );
+
+      // The rule is split around the `@supports` rules when it has nested rules.
+      prefix_test(
+        `
+          .p:fullscreen {
+            color: var(--x, lab(40% 56.6 39));
+            & .k {
+              color: red;
+            }
+          }
+        `,
+        indoc`
+          .p:-webkit-full-screen {
+            color: var(--x, #b32323);
+          }
+
+          .p:fullscreen {
+            color: var(--x, #b32323);
+          }
+
+          @supports (color: color(display-p3 0 0 0)) {
+            .p:-webkit-full-screen {
+              color: var(--x, color(display-p3 .643308 .192455 .167712));
+            }
+
+            .p:fullscreen {
+              color: var(--x, color(display-p3 .643308 .192455 .167712));
+            }
+          }
+
+          @supports (color: lab(0% 0 0)) {
+            .p:-webkit-full-screen {
+              color: var(--x, lab(40% 56.6 39));
+            }
+
+            .p:fullscreen {
+              color: var(--x, lab(40% 56.6 39));
+            }
+          }
+
+          .p:-webkit-full-screen .k {
+            color: red;
+          }
+
+          .p:fullscreen .k {
+            color: red;
+          }
+        `,
+        targets,
+      );
+
+      // A nested rule with no prefix of its own prints in each pass of its
+      // parent. Its `@supports` rules follow it there, with the same parent prefix.
+      prefix_test(
+        `
+          .p:fullscreen {
+            & .k {
+              color: var(--x, lab(40% 56.6 39));
+            }
+          }
+        `,
+        indoc`
+          .p:-webkit-full-screen .k {
+            color: var(--x, #b32323);
+          }
+
+          @supports (color: color(display-p3 0 0 0)) {
+            .p:-webkit-full-screen .k {
+              color: var(--x, color(display-p3 .643308 .192455 .167712));
+            }
+          }
+
+          @supports (color: lab(0% 0 0)) {
+            .p:-webkit-full-screen .k {
+              color: var(--x, lab(40% 56.6 39));
+            }
+          }
+
+          .p:fullscreen .k {
+            color: var(--x, #b32323);
+          }
+
+          @supports (color: color(display-p3 0 0 0)) {
+            .p:fullscreen .k {
+              color: var(--x, color(display-p3 .643308 .192455 .167712));
+            }
+          }
+
+          @supports (color: lab(0% 0 0)) {
+            .p:fullscreen .k {
+              color: var(--x, lab(40% 56.6 39));
+            }
+          }
+        `,
+        targets,
+      );
+
+      // The prefix of the parent stays as written too.
+      prefix_test(
+        `
+          .p:-webkit-full-screen {
+            & .k {
+              color: var(--x, lab(40% 56.6 39));
+            }
+          }
+        `,
+        indoc`
+          .p:-webkit-full-screen .k {
+            color: var(--x, #b32323);
+          }
+
+          @supports (color: color(display-p3 0 0 0)) {
+            .p:-webkit-full-screen .k {
+              color: var(--x, color(display-p3 .643308 .192455 .167712));
+            }
+          }
+
+          @supports (color: lab(0% 0 0)) {
+            .p:-webkit-full-screen .k {
+              color: var(--x, lab(40% 56.6 39));
+            }
+          }
+        `,
+        targets,
+      );
+
+      // A nested rule with its own passes prints them all in the last pass of
+      // its parent. Its `@supports` rules print there too, and nowhere else.
+      prefix_test(
+        `
+          .p:fullscreen {
+            & .k:fullscreen {
+              color: var(--x, lab(40% 56.6 39));
+            }
+          }
+        `,
+        indoc`
+          .p:-webkit-full-screen .k:-webkit-full-screen {
+            color: var(--x, #b32323);
+          }
+
+          .p:fullscreen .k:fullscreen {
+            color: var(--x, #b32323);
+          }
+
+          @supports (color: color(display-p3 0 0 0)) {
+            .p:-webkit-full-screen .k:-webkit-full-screen {
+              color: var(--x, color(display-p3 .643308 .192455 .167712));
+            }
+
+            .p:fullscreen .k:fullscreen {
+              color: var(--x, color(display-p3 .643308 .192455 .167712));
+            }
+          }
+
+          @supports (color: lab(0% 0 0)) {
+            .p:-webkit-full-screen .k:-webkit-full-screen {
+              color: var(--x, lab(40% 56.6 39));
+            }
+
+            .p:fullscreen .k:fullscreen {
+              color: var(--x, lab(40% 56.6 39));
+            }
+          }
+        `,
+        targets,
+      );
+    });
+
+    // With nesting compiled away, a rule with several vendor prefix passes
+    // prints its nested rules in each pass. A nested rule with its own passes
+    // waits for the last pass of its parent. A rule around it that prints
+    // nothing else (an at-rule, or a style rule with no declarations) waits
+    // with it. An at-rule used to print as an empty block in the earlier passes.
+    describe("rules around a nested rule that waits for the last vendor prefix pass", () => {
+      const { minifyTest, prefixTest } = cssInternals;
+      // Safari 8 needs `:-webkit-full-screen` and has no nesting.
+      const safari8 = { safari: 8 << 16 };
+      const bothPasses = ":-webkit-full-screen :-webkit-full-screen{color:red}:fullscreen :fullscreen{color:red}";
+
+      test.each([
+        ["@media (min-width: 1px)", "@media (min-width:1px)"],
+        ["@supports (color: red)", "@supports (color: red)"],
+        ["@container (min-width: 1px)", "@container (width>=1px)"],
+        ["@starting-style", "@starting-style"],
+        ["@-moz-document url-prefix()", "@-moz-document url-prefix()"],
+      ])("%s does not print an empty block", (atRule, printed) => {
+        const output = minifyTest(`:fullscreen { ${atRule} { :fullscreen { color: red } } }`, "", safari8);
+        expect(output).toBe(`${printed}{${bothPasses}}`);
+      });
+
+      test("@scope does not print an empty block", () => {
+        // Rules in `@scope` are relative to the scope root, not to the outer rule.
+        const output = minifyTest(":fullscreen { @scope (.s) { :fullscreen { color: red } } }", "", safari8);
+        expect(output).toBe("@scope(.s){:scope :-webkit-full-screen{color:red}:scope :fullscreen{color:red}}");
+      });
+
+      test("at-rules nested in each other do not print empty blocks", () => {
+        const output = minifyTest(
+          ":fullscreen { @media (min-width: 1px) { @supports (color: red) { :fullscreen { color: red } } } }",
+          "",
+          safari8,
+        );
+        expect(output).toBe(`@media (min-width:1px){@supports (color: red){${bothPasses}}}`);
+      });
+
+      test("a style rule with no declarations inside the at-rule does not keep it in every pass", () => {
+        const output = minifyTest(
+          ":fullscreen { @media (min-width: 1px) { div { :fullscreen { color: red } } } }",
+          "",
+          safari8,
+        );
+        expect(output).toBe(
+          "@media (min-width:1px){:-webkit-full-screen div :-webkit-full-screen{color:red}:fullscreen div :fullscreen{color:red}}",
+        );
+      });
+
+      test("a removed duplicate rule inside the at-rule does not keep it in every pass", () => {
+        // The first `:fullscreen` rule is a duplicate of the last one, and the minifier removes it.
+        const output = minifyTest(
+          ":fullscreen { @media (min-width: 1px) { :fullscreen { color: red } ::selection { color: blue } :fullscreen { color: red } } }",
+          "",
+          safari8,
+        );
+        expect(output).toBe(`@media (min-width:1px){:fullscreen ::selection{color:#00f}${bothPasses}}`);
+      });
+
+      test("the @media rule that light-dark() adds does not print an empty block", () => {
+        const output = minifyTest(
+          ":fullscreen { :fullscreen { color-scheme: light dark; color: light-dark(red, blue) } }",
+          "",
+          safari8,
+        );
+        const base =
+          "{--buncss-light:initial;--buncss-dark: ;color-scheme:light dark;color:var(--buncss-light,red)var(--buncss-dark,#00f)}";
+        const dark = "{--buncss-light: ;--buncss-dark:initial}";
+        expect(output).toBe(
+          `:-webkit-full-screen :-webkit-full-screen${base}:fullscreen :fullscreen${base}` +
+            `@media (prefers-color-scheme:dark){:-webkit-full-screen :-webkit-full-screen${dark}:fullscreen :fullscreen${dark}}`,
+        );
+      });
+
+      test("an at-rule with a rule for every pass still prints in every pass", () => {
+        // `div` has no prefix of its own, so it takes the prefix of each outer pass.
+        const output = minifyTest(
+          ":fullscreen { @media (min-width: 1px) { div { color: green } :fullscreen { color: red } } }",
+          "",
+          safari8,
+        );
+        expect(output).toBe(
+          "@media (min-width:1px){:-webkit-full-screen div{color:green}}" +
+            `@media (min-width:1px){:fullscreen div{color:green}${bothPasses}}`,
+        );
+      });
+
+      test("an empty @layer block still prints in every pass", () => {
+        // An empty `@layer a {}` declares the order of layer `a`. Without it, the
+        // first pass would declare `b` before `a`. Only the first pass is checked.
+        const output = minifyTest(
+          ":fullscreen { @layer a { :fullscreen { color: red } } @layer b { div { color: green } } }",
+          "",
+          safari8,
+        );
+        expect(output).toStartWith("@layer a{}@layer b{:-webkit-full-screen div{color:green}}@layer a{");
+      });
+
+      test("pretty-printed output has no blank lines where an at-rule was skipped", () => {
+        const output = prefixTest(
+          ":fullscreen { color: green; @media (min-width: 1px) { :fullscreen { color: red } } }",
+          "",
+          safari8,
+        );
+        expect(output).toBe(
+          ":-webkit-full-screen {\n  color: green;\n}\n\n" +
+            ":fullscreen {\n  color: green;\n}\n\n" +
+            "@media (min-width: 1px) {\n" +
+            "  :-webkit-full-screen :-webkit-full-screen {\n    color: red;\n  }\n\n" +
+            "  :fullscreen :fullscreen {\n    color: red;\n  }\n}\n",
+        );
+      });
+
+      test("pretty-printed output has no blank lines where a style rule with no declarations was skipped", () => {
+        const output = prefixTest(":fullscreen { color: green; div { :fullscreen { color: red } } }", "", safari8);
+        expect(output).toBe(
+          ":-webkit-full-screen {\n  color: green;\n}\n\n" +
+            ":fullscreen {\n  color: green;\n}\n\n" +
+            ":-webkit-full-screen div :-webkit-full-screen {\n  color: red;\n}\n\n" +
+            ":fullscreen div :fullscreen {\n  color: red;\n}\n",
+        );
+      });
     });
 
     // rgb()/hsl() whose alpha is only known at runtime (var(), calc(var()), ...)

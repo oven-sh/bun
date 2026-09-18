@@ -202,6 +202,10 @@ impl Taskable for YesTask {
     /// Lives inside the builtin's `Box<Yes>` (freed with the interpreter) and
     /// took nothing for the bounce; nothing to do.
     unsafe fn release_unrun(_: *mut Self) {}
+    /// See [`ShellTaskCtx`](crate::shell::interpreter::ShellTaskCtx): a step of a shell script always runs.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
+    }
 }
 
 impl YesTask {

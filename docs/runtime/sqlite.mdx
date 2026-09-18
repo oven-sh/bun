@@ -503,6 +503,8 @@ WHERE id LIKE '%.0'
   AND abs(CAST(id AS REAL)) BETWEEN 2251799813685248 AND 9007199254740991;
 ```
 
+Run the statement before the upgraded application writes to the table. If a `PRIMARY KEY` or `UNIQUE` column already holds both forms of one value, SQLite rejects the statement and changes no rows. Merge or delete one row of each pair first.
+
 SQLite 3.51 and earlier stored 15 significant digits in that case, for example `'4.5035996273705e+15'`. Those rows do not hold the exact value.
 
 </Note>

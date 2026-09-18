@@ -1,6 +1,6 @@
 import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isWindows, tmpdirSync } from "harness";
 import { join } from "path";
 import { createTestBuilder } from "./test_builder";
 const TestBuilder = createTestBuilder(import.meta.path);
@@ -82,6 +82,26 @@ describe("bun exec", () => {
     const val = await $`bun exec 'bun'`.env({ ...bunEnv, PATH: "" }).nothrow();
     expect(val.stderr.toString()).not.toContain("bun: command not found: bun");
     expect(val.stdout.toString()).toContain("Bun is a fast JavaScript runtime");
+  });
+
+  // One plain command runs in place of `bun exec`, as `sh -c` does, so the
+  // program is the process a parent signals and waits for.
+  test.skipIf(isWindows)("a single plain command replaces the bun exec process", async () => {
+    const script = `${BUN} -e "console.log(process.ppid)"`;
+    await using proc = Bun.spawn({ cmd: [BUN, "exec", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(Number(stdout.trim())).toBe(process.pid);
+    expect(exitCode).toBe(0);
+  });
+
+  test.skipIf(isWindows)("a script with more than one command keeps the bun exec process", async () => {
+    const script = `true && ${BUN} -e "console.log(process.ppid)"`;
+    await using proc = Bun.spawn({ cmd: [BUN, "exec", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(Number(stdout.trim())).toBe(proc.pid);
+    expect(exitCode).toBe(0);
   });
 
   test("works with latin1 paths", async () => {

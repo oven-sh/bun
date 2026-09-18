@@ -1382,6 +1382,10 @@ fn extract_to_disk_filtered(
             }
             bun_sys::FileKind::File => {
                 let size: usize = usize::try_from(entry_ref.size().max(0)).expect("int cast");
+                // A mode without the owner write bit makes a read-only file, which a later extraction cannot open.
+                #[cfg(windows)]
+                let mode: Mode = 0;
+                #[cfg(not(windows))]
                 let mode: Mode =
                     libarchive::file_mode(entry_ref.perm(), libarchive::FileReaders::FromEntry);
 

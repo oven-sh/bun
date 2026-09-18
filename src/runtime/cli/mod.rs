@@ -939,10 +939,20 @@ pub mod command {
         let Some(mut first_arg_name) = iter.next() else {
             return Tag::AutoCommand;
         };
+        // A filter flag before `test`/`build` means the word names a package
+        // script: route to the filtered-run path, not the subcommand.
+        let mut saw_filter_flag = false;
         while !first_arg_name.is_empty()
             && first_arg_name[0] == b'-'
             && !(first_arg_name.len() > 1 && first_arg_name[1] == b'e')
         {
+            let arg: &[u8] = first_arg_name;
+            if arg == b"--workspaces"
+                || strings::has_prefix_comptime(arg, b"--filter=")
+                || (arg.len() > 2 && strings::has_prefix_comptime(arg, b"-F"))
+            {
+                saw_filter_flag = true;
+            }
             // `--interactive` stays on AutoCommand: Arguments.rs parses it and the no-target check
             // routes to RunCommand::exec_node_repl. An early ReplCommand return here would bypass
             // that and boot the legacy `bun repl` implementation instead.
@@ -960,6 +970,9 @@ pub mod command {
             return Tag::InitCommand;
         }
         if x == RootCommandMatcher::case(b"build") || x == RootCommandMatcher::case(b"bun") {
+            if saw_filter_flag && x == RootCommandMatcher::case(b"build") {
+                return Tag::AutoCommand;
+            }
             return Tag::BuildCommand;
         }
         if x == RootCommandMatcher::case(b"discord") {
@@ -1001,6 +1014,9 @@ pub mod command {
             return Tag::CreateCommand;
         }
         if x == RootCommandMatcher::case(b"test") {
+            if saw_filter_flag {
+                return Tag::AutoCommand;
+            }
             return Tag::TestCommand;
         }
         if x == RootCommandMatcher::case(b"pm") {

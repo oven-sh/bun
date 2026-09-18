@@ -830,6 +830,84 @@ describe("getHeapSnapshot", () => {
   });
 });
 
+// Node services these from Environment::RequestInterrupt: they settle while the worker runs
+// synchronous JavaScript and never returns to its event loop. The worker spins until the parent
+// sets flag[0], so each call can settle only if it runs without the loop's help, and sets flag[1]
+// once it has left the loop.
+// (cpuUsage() and getHeapStatistics() need nothing from the worker thread and are covered apart.)
+describe("introspection while the worker runs synchronous JavaScript", () => {
+  async function expectToSettleWhileBusy(worker: Worker, flag: Int32Array, calledBeforeOnline?: Promise<unknown>) {
+    const exited = once(worker, "exit");
+    try {
+      if (calledBeforeOnline) await expect(calledBeforeOnline).resolves.toBeDefined();
+
+      const handle = await worker.startCpuProfile();
+      const profile = JSON.parse(await handle.stop());
+      expect(profile.nodes[0].callFrame.functionName).toBe("(root)");
+
+      const stream = await worker.getHeapSnapshot();
+      expect(stream).toBeInstanceOf(Readable);
+      const json = JSON.parse(
+        await new Promise<string>((resolve, reject) => {
+          let text = "";
+          stream.on("data", chunk => (text += chunk));
+          stream.on("end", () => resolve(text));
+          stream.on("error", reject);
+        }),
+      );
+      expect(json.nodes.length).toBeGreaterThan(0);
+
+      // Everything above settled while the worker still spun.
+      expect(Atomics.load(flag, 1)).toBe(0);
+    } finally {
+      Atomics.store(flag, 0, 1);
+    }
+    const [exitCode] = await exited;
+    expect(exitCode).toBe(0);
+  }
+
+  test("while the entry module runs", async () => {
+    const flag = new Int32Array(new SharedArrayBuffer(8));
+    const worker = new Worker(
+      /* js */ `
+        const flag = new Int32Array(require("node:worker_threads").workerData);
+        while (Atomics.load(flag, 0) === 0) {}
+        Atomics.store(flag, 1, 1);
+      `,
+      { eval: true, workerData: flag.buffer },
+    );
+    // Requested before the worker's entry module starts: kept and made once it does.
+    const early = worker.startCpuProfile();
+    await once(worker, "online");
+    await expectToSettleWhileBusy(worker, flag, early);
+  });
+
+  test("while a message handler runs", async () => {
+    const flag = new Int32Array(new SharedArrayBuffer(8));
+    const worker = new Worker(
+      /* js */ `
+        const { parentPort, workerData } = require("node:worker_threads");
+        const flag = new Int32Array(workerData);
+        parentPort.once("message", () => {
+          parentPort.postMessage("spinning");
+          while (Atomics.load(flag, 0) === 0) {}
+          Atomics.store(flag, 1, 1);
+          process.exit(0);
+        });
+      `,
+      { eval: true, workerData: flag.buffer },
+    );
+    await once(worker, "online");
+    const spinning = once(worker, "message");
+    worker.postMessage("spin");
+    await spinning;
+    await expectToSettleWhileBusy(worker, flag);
+  });
+
+  // A thread parked in Atomics.wait services no VM trap; Node answers there too.
+  test.todo("while the worker is parked in Atomics.wait");
+});
+
 test("failed Worker construction restores transferred FileHandles", async () => {
   const dir = tmpdirSync("worker-fh-transfer");
   const file = join(dir, "x.txt");

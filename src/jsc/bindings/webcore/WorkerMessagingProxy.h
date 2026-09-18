@@ -27,6 +27,7 @@
 #pragma once
 
 #include "MessageWithMessagePorts.h"
+#include "VMInterrupts.h"
 #include "ScriptExecutionContext.h"
 #include "WorkerOptions.h"
 #include <JavaScriptCore/Strong.h>
@@ -84,6 +85,9 @@ public:
     void postMessageToWorkerGlobalScope(MessageWithMessagePorts&&);
     // Queued while Pending, posted while Running, refused (false) once Closing.
     bool postTaskToWorkerGlobalScope(Function<void(ScriptExecutionContext&)>&&);
+    // Run native work on the worker thread at its next safepoint, also in the middle of synchronous
+    // script (Bun::VMInterrupts). Kept while the thread starts, refused (false) once Closing. Parent thread.
+    bool postInterruptToWorkerGlobalScope(Bun::VMInterrupts::Work&&);
     void setKeepAlive(bool);
     void workerObjectDestroyed();
     // The parent context is exiting: the thread has been asked to stop; wait for it and release what

@@ -1,0 +1,7 @@
+{
+  "$schema": "https://raw.githubusercontent.com/denoland/deno/main/cli/schemas/config-file.v1.json",
+  "lock": false,
+  "imports": {
+    "mitata": "npm:mitata"
+  }
+}

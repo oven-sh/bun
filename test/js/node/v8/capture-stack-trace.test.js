@@ -1530,7 +1530,7 @@ test("a stack that a collection materializes reads the same as one materialized 
     const shapes = {
       "TypeError with a message": () => new TypeError("boom"),
       // Assigned, so it stays a rope: the constructor would flatten it.
-      "message that is a rope": () => Object.assign(new RangeError(), { message: "part " + part + " of " + part.repeat(40) }),
+      "message that is a rope": () => Object.assign(new RangeError(), { message: "part " + part + " of " + Buffer.alloc(40, part).toString() }),
       "no message": () => new Error(),
       "own name": () => Object.assign(new Error("boom"), { name: "Renamed" }),
       "empty own name": () => Object.assign(new Error("boom"), { name: "" }),

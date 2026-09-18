@@ -209,6 +209,7 @@ fn redirect(lockfile: &mut Lockfile, pairs: Vec<(PackageID, PackageID)>) {
     if pairs.is_empty() {
         return;
     }
+    let pairs = with_moved_subtrees(lockfile, pairs);
     let mut new_of: Vec<PackageID> = vec![invalid_package_id; lockfile.packages.len()];
     for (old, new) in pairs {
         let slot = &mut new_of[old as usize];
@@ -250,6 +251,97 @@ fn redirect(lockfile: &mut Lockfile, pairs: Vec<(PackageID, PackageID)>) {
     for (j, new) in moved {
         lockfile.buffers.resolutions[j] = new;
     }
+}
+
+/// A moved package's subtree moves with it: each row of the old package whose same-name row on
+/// the new package resolves to a different npm package of that name is a further `(old, new)`
+/// pair, transitively. Without this, an edge owned by an unchanged package (a loose peer range,
+/// say) keeps the old transitive target alive, and the hoister nests the new copy under the
+/// moved package instead of replacing the root one (#41048). A package the root's or a
+/// workspace's own rows still resolve to is pinned by the user, so it never counts as moved.
+fn with_moved_subtrees(
+    lockfile: &Lockfile,
+    pairs: Vec<(PackageID, PackageID)>,
+) -> Vec<(PackageID, PackageID)> {
+    let packages_len = lockfile.packages.len();
+    let pkg_res = lockfile.packages.items_resolution();
+    let name_hashes = lockfile.packages.items_name_hash();
+    let dep_slices = lockfile.packages.items_dependencies();
+    let res_slices = lockfile.packages.items_resolutions();
+    let deps = lockfile.buffers.dependencies.as_slice();
+    let resolutions = lockfile.buffers.resolutions.as_slice();
+
+    let mut direct_targets = DynamicBitSet::init_empty(packages_len).unwrap_or_oom();
+    for owner in 0..packages_len {
+        if !matches!(
+            pkg_res[owner].tag,
+            ResolutionTag::Root | ResolutionTag::Workspace
+        ) {
+            continue;
+        }
+        for &target in res_slices[owner].get(resolutions) {
+            if (target as usize) < packages_len {
+                direct_targets.set(target as usize);
+            }
+        }
+    }
+
+    let mut seen = DynamicBitSet::init_empty(packages_len).unwrap_or_oom();
+    for &(old, _) in &pairs {
+        if (old as usize) < packages_len {
+            seen.set(old as usize);
+        }
+    }
+    let mut out = pairs;
+    let mut i = 0usize;
+    while let Some(&(old, new)) = out.get(i) {
+        i += 1;
+        if (old as usize) >= packages_len || (new as usize) >= packages_len {
+            continue;
+        }
+        let new_rows: Vec<(PackageNameHash, Behavior, PackageID)> = dep_slices[new as usize]
+            .get(deps)
+            .iter()
+            .zip(res_slices[new as usize].get(resolutions))
+            .map(|(dep, &target)| (dep.name_hash, dep.behavior, target))
+            .collect();
+        let old_rows = dep_slices[old as usize]
+            .get(deps)
+            .iter()
+            .zip(res_slices[old as usize].get(resolutions));
+        for (dep, &old_target) in old_rows {
+            if dep.behavior.is_bundled() || (old_target as usize) >= packages_len {
+                continue;
+            }
+            // Same-behavior row first; a row whose dependency group changed between the two
+            // versions still matches by name alone.
+            let hit = new_rows
+                .iter()
+                .find(|&&(name_hash, behavior, _)| {
+                    name_hash == dep.name_hash && behavior == dep.behavior
+                })
+                .or_else(|| {
+                    new_rows
+                        .iter()
+                        .find(|&&(name_hash, _, _)| name_hash == dep.name_hash)
+                });
+            let Some(&(_, _, new_target)) = hit else {
+                continue;
+            };
+            if new_target == old_target
+                || (new_target as usize) >= packages_len
+                || pkg_res[new_target as usize].tag != ResolutionTag::Npm
+                || name_hashes[old_target as usize] != name_hashes[new_target as usize]
+                || direct_targets.is_set(old_target as usize)
+                || seen.is_set(old_target as usize)
+            {
+                continue;
+            }
+            seen.set(old_target as usize);
+            out.push((old_target, new_target));
+        }
+    }
+    out
 }
 
 struct Pin {

@@ -1,3 +1,4 @@
+use crate::{Loc, Range};
 use bun_core::strings;
 
 #[repr(u8)]
@@ -11,27 +12,28 @@ pub enum UseDirective {
     Server = 2,
 }
 
+const SKIPPED_PREFIX: &[u8] = b" \t\n\r;";
+const QUOTED_LEN: usize = b"'use client'".len();
+
 impl UseDirective {
     pub fn parse(contents: &[u8]) -> Option<UseDirective> {
-        let truncated = strings::trim_left(contents, b" \t\n\r;");
+        let truncated = strings::trim_left(contents, SKIPPED_PREFIX);
 
-        const DIRECTIVE_LEN: usize = b"'use client';".len();
-
-        if truncated.len() < DIRECTIVE_LEN {
+        if truncated.len() < QUOTED_LEN {
             return Some(UseDirective::None);
         }
 
-        let directive_string = &truncated[0..DIRECTIVE_LEN];
+        let directive_string = &truncated[0..QUOTED_LEN];
 
         let first_quote = directive_string[0];
-        let last_quote = directive_string[DIRECTIVE_LEN - 2];
+        let last_quote = directive_string[QUOTED_LEN - 1];
         if first_quote != last_quote
             || (first_quote != b'"' && first_quote != b'\'' && first_quote != b'`')
         {
             return Some(UseDirective::None);
         }
 
-        let unquoted = &directive_string[1..DIRECTIVE_LEN - 2];
+        let unquoted = &directive_string[1..QUOTED_LEN - 1];
 
         if unquoted == b"use client" {
             return Some(UseDirective::Client);
@@ -42,5 +44,16 @@ impl UseDirective {
         }
 
         None
+    }
+
+    /// Where the quoted directive that [`parse`](Self::parse) matched sits in `contents`.
+    pub fn range(contents: &[u8]) -> Range {
+        let start = contents.len() - strings::trim_left(contents, SKIPPED_PREFIX).len();
+        Range {
+            loc: Loc {
+                start: i32::try_from(start).unwrap_or(i32::MAX),
+            },
+            len: QUOTED_LEN as i32,
+        }
     }
 }

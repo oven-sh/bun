@@ -181,13 +181,13 @@ describe("jest-extended", () => {
       expect(1).toSatisfy(() => {
         throw new Error("Bun!");
       }),
-    ).toThrow("predicate threw an exception");
+    ).toThrow("Bun!");
     // @ts-expect-error
     expect(() =>
       expect(1).not.toSatisfy(() => {
         throw new Error("Bun!");
       }),
-    ).toThrow("predicate threw an exception");
+    ).toThrow("Bun!");
   });
 
   // Array

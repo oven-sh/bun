@@ -38,7 +38,8 @@ const AZURE_KEYVAULT = "bun-ci";
 const AZURE_TOKEN_SECRET = "buildkite-agent-token";
 
 // macOS major-version thresholds for the `release-tier` agent tag.
-//   >= LATEST   -> "latest"   (current macOS; arm64-only in practice)
+//   >  LATEST   -> "beta"     (next macOS, pre-release; its own queue)
+//   == LATEST   -> "latest"   (current macOS; arm64-only in practice)
 //   >= PREVIOUS -> "previous" (recent-but-not-current; 14/15 today)
 //   else        -> "oldest"   (min-supported; 13 today)
 // Bump LATEST when a new macOS ships and the first runner on it is online.
@@ -48,6 +49,7 @@ const PREVIOUS_DARWIN_RELEASE = 14;
 
 function darwinReleaseTier(distroVersion) {
   const major = parseInt(distroVersion?.split(".")[0] || "0");
+  if (major > LATEST_DARWIN_RELEASE) return "beta";
   if (major >= LATEST_DARWIN_RELEASE) return "latest";
   if (major >= PREVIOUS_DARWIN_RELEASE) return "previous";
   return "oldest";

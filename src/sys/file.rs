@@ -144,9 +144,6 @@ impl File {
     pub fn read(&self, buf: &mut [u8]) -> Maybe<usize> {
         read(self.handle, buf)
     }
-    pub fn write(&self, buf: &[u8]) -> Maybe<usize> {
-        write(self.handle, buf)
-    }
     pub fn write_all(&self, mut buf: &[u8]) -> Maybe<()> {
         while !buf.is_empty() {
             let n = write(self.handle, buf)?;
@@ -283,9 +280,9 @@ impl File {
         {
             let rt = windows::GetFileType(self.handle.native());
             if rt == windows::FILE_TYPE_UNKNOWN {
-                let err = windows::get_last_win32_error();
+                let err = windows::Win32Error::get();
                 if err != windows::Win32Error::SUCCESS {
-                    return Err(Error::from_code(err.to_e(), Tag::fstat));
+                    return Err(Error::from_win32(err, Tag::fstat));
                 }
             }
             Ok(match rt {
@@ -370,7 +367,7 @@ impl File {
         input_path: &[u8],
     ) -> Maybe<Vec<u8>> {
         let dir = dir.as_fd();
-        let mut buf = bun_paths::PathBuffer::default();
+        let mut buf = bun_paths::path_buffer_pool::get();
         let normalized = bun_paths::resolve_path::join_abs_string_buf_z::<bun_paths::platform::Loose>(
             top_level_dir,
             &mut buf.0,

@@ -7,9 +7,4 @@ extern "C" void Bun__EventLoopTaskNoContext__performTask(EventLoopTaskNoContext*
     task->performTask();
 }
 
-extern "C" const ::BunVmHandleRef* Bun__EventLoopTaskNoContext__vmHandle(const EventLoopTaskNoContext* task)
-{
-    return task->vmHandle();
-}
-
 } // namespace Bun

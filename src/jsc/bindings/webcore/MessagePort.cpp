@@ -137,6 +137,7 @@ ExceptionOr<void> MessagePort::postMessage(JSC::JSGlobalObject& state, JSC::JSVa
                 JSC::JSValue::encode(JSC::jsUndefined()));
             CLEAR_IF_EXCEPTION(warnScope);
             close();
+            RETURN_IF_EXCEPTION(warnScope, Exception { ExistingExceptionError });
             return {};
         }
     }
@@ -173,7 +174,7 @@ void MessagePort::start()
     ASSERT(context);
     // From the pipe's point of view "attached" means "ready to have drains
     // scheduled on my behalf" — that is exactly what start() promises.
-    m_pipe->attach(m_side, context->identifier(), ThreadSafeWeakPtr<MessagePort> { *this });
+    m_pipe->attach(m_side, *context, ThreadSafeWeakPtr<MessagePort> { *this });
 }
 
 void MessagePort::flushQueuedMessagesBeforeClose()
@@ -366,8 +367,17 @@ void MessagePort::dispatchOneMessage(ScriptExecutionContext& context, MessageWit
         return;
     }
 
+    // https://html.spec.whatwg.org/multipage/web-messaging.html#message-port-post-message-steps (7.3): if
+    // deserializing throws, catch it and fire messageerror instead.
     auto event = MessageEvent::create(*context.jsGlobalObject(), message.message.releaseNonNull(), {}, {}, {}, WTF::move(ports));
-    dispatchEvent(event.event);
+    if (scope.exception()) [[unlikely]] {
+        if (vm->hasPendingTerminationException())
+            return;
+        scope.clearException();
+        dispatchEvent(MessageEvent::create(eventNames().messageerrorEvent, MessageEvent::Init { {}, jsNull() }, MessageEvent::IsTrusted::Yes));
+        return;
+    }
+    dispatchEvent(event->event);
 }
 
 JSValue MessagePort::tryTakeMessage(JSGlobalObject* lexicalGlobalObject, bool& hadMessage)
@@ -521,7 +531,7 @@ bool MessagePort::addEventListener(const AtomString& eventType, Ref<EventListene
         // pause re-schedules the drain for messages buffered meanwhile.
         if (m_started && isEntangled()) {
             if (auto* context = scriptExecutionContext())
-                m_pipe->attach(m_side, context->identifier(), ThreadSafeWeakPtr<MessagePort> { *this });
+                m_pipe->attach(m_side, *context, ThreadSafeWeakPtr<MessagePort> { *this });
         }
     } else if (eventType == eventNames().closeEvent) {
         m_hasCloseEventListener.store(true, std::memory_order_release);
@@ -529,7 +539,7 @@ bool MessagePort::addEventListener(const AtomString& eventType, Ref<EventListene
             // Record our context with the pipe so the peer's close() can deliver a
             // 'close' event even if we never started (no 'message' listener).
             if (auto* context = scriptExecutionContext())
-                m_pipe->registerCloseContext(m_side, context->identifier(), ThreadSafeWeakPtr<MessagePort> { *this });
+                m_pipe->registerCloseContext(m_side, *context, ThreadSafeWeakPtr<MessagePort> { *this });
         }
     }
     return EventTarget::addEventListener(eventType, WTF::move(listener), options);

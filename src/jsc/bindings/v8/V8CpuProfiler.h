@@ -64,6 +64,7 @@ public:
 
 class CpuProfile {
 public:
+    BUN_EXPORT Local<String> GetTitle() const;
     BUN_EXPORT const CpuProfileNode* GetTopDownRoot() const;
     BUN_EXPORT int GetSamplesCount() const;
     BUN_EXPORT const CpuProfileNode* GetSample(int index) const;
@@ -89,7 +90,14 @@ public:
         bool record_samples = false,
         unsigned max_samples = UINT_MAX);
 
+    // The title-keyed API predates Start()/Stop(). google's pprof addon uses it.
+    BUN_EXPORT CpuProfilingStatus StartProfiling(Local<String> title, CpuProfilingMode mode,
+        bool record_samples = false,
+        unsigned max_samples = UINT_MAX);
+    BUN_EXPORT CpuProfilingStatus StartProfiling(Local<String> title, bool record_samples = false);
+
     BUN_EXPORT CpuProfile* Stop(ProfilerId id);
+    BUN_EXPORT CpuProfile* StopProfiling(Local<String> title);
 
 private:
     CpuProfiler();

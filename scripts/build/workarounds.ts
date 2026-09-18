@@ -33,7 +33,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Config } from "./config.ts";
 import { BuildError } from "./error.ts";
-import { satisfiesRange } from "./tools.ts";
+import { satisfiesRange, toolchainOverride } from "./tools.ts";
 
 /** Read a crate's locked version out of the repo's Cargo.lock. */
 function lockedCrateVersion(cfg: Config, name: string): string | undefined {
@@ -66,95 +66,6 @@ export interface Workaround {
 
 export const workarounds: Workaround[] = [
   {
-    id: "asan-dyld-shim",
-    issue: "https://github.com/llvm/llvm-project/issues/182943",
-    description:
-      "macOS 26.4 Dyld.framework reimplemented dyld_shared_cache_iterate_text in Swift; " +
-      "the _Block_copy allocation deadlocks ASAN init re-entrantly",
-    applies: cfg => cfg.darwin && cfg.asan,
-    expectedToBeFixed: cfg => {
-      // Fix merged to LLVM main. Backport to release/22.x is
-      // https://github.com/llvm/llvm-project/pull/188913 — lower this
-      // threshold to the exact 22.1.x once it lands. Apple clang is
-      // already excluded: resolveLlvmToolchain only accepts Homebrew
-      // llvm (LLVM_VERSION_RANGE is >=21 <23), so cfg.clangVersion is
-      // always LLVM clang's version here.
-      const FIXED_IN_LLVM = "22.1.4";
-      return cfg.clangVersion !== undefined && satisfiesRange(cfg.clangVersion, `>=${FIXED_IN_LLVM}`);
-    },
-    cleanup: `Delete scripts/build/shims/asan-dyld-shim.c, scripts/build/shims.ts, the emitShims() calls in bun.ts, registerShimRules in rules.ts, and this entry.`,
-  },
-  {
-    id: "rustc-no-regular-lto-summary",
-    issue:
-      "https://github.com/rust-lang/rust/issues/ (none filed yet — rustc has no equivalent of clang's shouldEmitRegularLTOSummary())",
-    description:
-      'Under -Clinker-plugin-lto + lto = "fat", rustc emits the merged bitcode module without a ' +
-      "per-module summary, so lld reads it as EnableSplitLTOUnit=0 while every clang full-LTO " +
-      "object (ours and the WebKit -lto prebuilts) hardcodes 1 — the ELF release link aborts " +
-      'with "inconsistent LTO Unit splitting". rust-lto-fix-cli.ts re-emits the Rust bitcode ' +
-      "with a regular-LTO summary using rustc's own llvm-tools (rustLtoLinkInputs() in rust.ts).",
-    applies: cfg => cfg.crossLangLto && !cfg.darwin,
-    expectedToBeFixed: cfg => {
-      // Re-evaluate when the pinned rustc moves to its next LLVM major:
-      // either rustc grew a way to emit regular-LTO summaries (delete the
-      // fix-up), or linux moved to ThinLTO (it's moot), or neither — bump
-      // the threshold and keep it.
-      const RECHECK_AT_RUST_LLVM = "23.0.0";
-      return cfg.rustLlvmVersion !== undefined && satisfiesRange(cfg.rustLlvmVersion, `>=${RECHECK_AT_RUST_LLVM}`);
-    },
-    cleanup:
-      `Delete scripts/build/rust-lto-fix-cli.ts, the rust_lto_fix rule and rustLtoLinkInputs() in ` +
-      `rust.ts, unwrap its call sites in bun.ts, drop "llvm-tools" from rust-toolchain.toml's ` +
-      `components, and delete this entry.`,
-  },
-  {
-    id: "rust-lld-for-crosslang-lto",
-    issue: "https://rustc-dev-guide.rust-lang.org/backend/updating-llvm.html",
-    description:
-      "rustc's bundled LLVM is newer than clang's, so clang's ld.lld can't read " +
-      "-Clinker-plugin-lto bitcode (forward-compatible only). Link with rust-lld instead " +
-      "(and compress ELF debug sections post-link via llvm-objcopy, since rust-lld lacks zlib).",
-    applies: cfg => cfg.crossLangLto && cfg.rustLlvmVersion !== undefined && cfg.clangVersion !== undefined,
-    expectedToBeFixed: cfg => {
-      // Obsolete once clang's LLVM major catches up to (or passes) rustc's —
-      // at that point clang's own ld.lld reads rustc's bitcode and the
-      // rust-lld swap in resolveConfig() never fires.
-      const clangMajor = Number(cfg.clangVersion!.split(".")[0]);
-      const rustMajor = Number(cfg.rustLlvmVersion!.split(".")[0]);
-      return clangMajor >= rustMajor;
-    },
-    cleanup:
-      `Delete the rust-lld swap block in resolveConfig() (config.ts), findRustLld() and its call ` +
-      `in resolveLlvmToolchain() (tools.ts), the rustLld/rustLlvmVersion fields on Toolchain/Config, ` +
-      `and this entry.`,
-  },
-  {
-    id: "darwin-cross-cpu-model",
-    issue: "https://github.com/llvm/llvm-project/tree/main/compiler-rt/lib/builtins/cpu_model",
-    description:
-      "macOS x64 cross-links from Linux have no libclang_rt.osx.a, and the SDK's libSystem " +
-      "reexport (libcompiler_rt.tbd) doesn't provide the __builtin_cpu_supports globals " +
-      "(___cpu_model / ___cpu_indicator_init / ___cpu_features2). A vendored copy of " +
-      "compiler-rt's cpu_model/x86.c is compiled into the cross link instead.",
-    // Only exercised on x64 darwin cross links (arm64 never references these).
-    applies: cfg => cfg.darwin && cfg.crossTarget !== undefined && cfg.x64 && cfg.osxSysroot !== undefined,
-    expectedToBeFixed: cfg => {
-      // Obsolete if the SDK starts exporting the symbol from the libSystem
-      // umbrella (then the shim would be a duplicate definition waiting to
-      // happen). Checked against the .tbd text — cheap and version-agnostic.
-      const tbd = join(cfg.osxSysroot!, "usr", "lib", "system", "libcompiler_rt.tbd");
-      try {
-        return readFileSync(tbd, "utf8").includes("___cpu_model");
-      } catch {
-        return false;
-      }
-    },
-    cleanup:
-      `Delete scripts/build/shims/cpu_model/, needsDarwinCpuModelShim() and its blocks in ` +
-      `scripts/build/shims.ts, and this entry.`,
-  },
-  {
     id: "darwin-cross-stack-size",
     issue:
       "https://github.com/llvm/llvm-project/blob/main/lld/MachO/Driver.cpp (OPT_stack_size in unimplemented warnings)",
@@ -164,16 +75,16 @@ export const workarounds: Workaround[] = [
       "18 MB JSC needs. shims/macho-postlink.c patches LC_MAIN.stacksize after the link instead.",
     applies: cfg => cfg.darwin && cfg.crossTarget !== undefined,
     expectedToBeFixed: cfg => {
-      // Not implemented as of LLVM 21 (lld/MachO/Driver.cpp keeps
-      // OPT_stack_size in the "unimplemented, warn and ignore" list).
-      // Re-test when the toolchain moves to LLVM 23: link a darwin cross
-      // build and check whether `ld64.lld ... -stack_size 0x1200000` still
-      // prints "is not yet implemented". If it does, bump this threshold.
+      // Not implemented as of LLVM 23.1.1, nor on llvm main in 2026-09:
+      // lld/MachO/Options.td still marks stack_size `HelpHidden`, which
+      // Driver.cpp's warnIfUnimplementedOption() reports as "is not yet
+      // implemented" and ignores. Re-check that flag at the next LLVM bump;
+      // if it is still there, bump this threshold again.
       // (A configure-time probe that spawned ld64.lld was tried first and
       // reverted: the rust/cpp split steps configure on machines whose
       // ld64.lld doesn't behave like the link machine's, and a probe that
       // misfires there fails the whole lane.)
-      const FIXED_IN_LLVM = "23.0.0";
+      const FIXED_IN_LLVM = "24.0.0";
       return cfg.clangVersion !== undefined && satisfiesRange(cfg.clangVersion, `>=${FIXED_IN_LLVM}`);
     },
     cleanup:
@@ -191,9 +102,10 @@ export const workarounds: Workaround[] = [
     // Only exercised when the rust-lld swap actually fired on a musl link.
     applies: cfg => cfg.linux && cfg.abi === "musl" && cfg.rustLld !== undefined && cfg.ld === cfg.rustLld,
     expectedToBeFixed: cfg => {
-      // Obsolete the same instant the rust-lld swap above is — once clang's
-      // ld.lld (built with zlib) reads rustc's bitcode, we never select
-      // rust-lld and the compressed CRTs are a non-issue.
+      // Only matters while the rust-lld swap in resolveConfig() fires, i.e.
+      // while rustc's LLVM major is ahead of clang's — when clang's ld.lld
+      // (built with zlib) reads rustc's bitcode, rust-lld is never selected
+      // and the compressed CRTs are a non-issue.
       const clangMajor = Number(cfg.clangVersion!.split(".")[0]);
       const rustMajor = Number(cfg.rustLlvmVersion!.split(".")[0]);
       return clangMajor >= rustMajor;
@@ -233,16 +145,24 @@ export const workarounds: Workaround[] = [
  * Call from configure.ts after Config is fully resolved.
  */
 export function checkWorkarounds(cfg: Config): void {
+  // Expiry thresholds are written against the pinned toolchains. With an
+  // explicitly supplied one (BUN_TOOLCHAIN_LLVM / BUN_TOOLCHAIN_RUST), which may
+  // be newer than the pin, an expired workaround is reported, not fatal.
+  const overridden = toolchainOverride.llvm !== undefined || toolchainOverride.rust !== undefined;
   for (const w of workarounds) {
     if (!w.applies(cfg)) continue;
     if (!w.expectedToBeFixed(cfg)) continue;
 
-    throw new BuildError(`Workaround '${w.id}' is obsolete — upstream fix is available`, {
-      hint:
-        `${w.description}\n` +
-        `  Tracked: ${w.issue}\n\n` +
-        `${w.cleanup}\n\n` +
-        `If the issue still reproduces, bump the threshold in expectedToBeFixed() in scripts/build/workarounds.ts instead.`,
-    });
+    const title = `Workaround '${w.id}' is obsolete — upstream fix is available`;
+    const hint =
+      `${w.description}\n` +
+      `  Tracked: ${w.issue}\n\n` +
+      `${w.cleanup}\n\n` +
+      `If the issue still reproduces, bump the threshold in expectedToBeFixed() in scripts/build/workarounds.ts instead.`;
+    if (overridden) {
+      console.warn(`note: ${title} (with the overridden toolchain)\n${hint}\n`);
+      continue;
+    }
+    throw new BuildError(title, { hint });
   }
 }

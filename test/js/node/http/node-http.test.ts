@@ -3661,6 +3661,63 @@ it("a chunked framing error in the body of an accepted Upgrade request does not 
   }
 });
 
+it("an Upgrade request with a non-chunked Transfer-Encoding switches protocols right after the head", async () => {
+  // Node v26.3.0 contract (verified): llhttp decides the body of an upgrade as
+  // chunked or Content-Length > 0 and exits the HTTP parser at the end of the
+  // head before it checks the framing. "Transfer-Encoding: identity" means no
+  // body, no HPE_INVALID_TRANSFER_ENCODING, the bytes after the head are the
+  // upgradeHead and req ends.
+  const events: string[] = [];
+  let serverSocket: import("node:net").Socket | undefined;
+  let client: import("node:net").Socket | undefined;
+  const server = createServer(() => events.push("request"));
+  const { promise: tunneled, resolve: onTunneled } = Promise.withResolvers<void>();
+  server.on("upgrade", (req, socket, head) => {
+    serverSocket = socket;
+    events.push(`upgrade head=${head.toString()}`);
+    req.on("data", d => events.push(`req data=${d.toString()}`));
+    req.on("end", () => events.push("req end"));
+    socket.on("error", () => {});
+    socket.on("data", d => {
+      events.push(`tunnel data=${d.toString()}`);
+      onTunneled();
+    });
+    socket.write("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: x\r\n\r\n");
+  });
+  server.on("clientError", (err: any, socket) => {
+    events.push(`clientError ${err.code}`);
+    socket.destroy();
+  });
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+
+    client = connect(port, "127.0.0.1");
+    client.on("error", () => {});
+    await once(client, "connect");
+    const got101 = new Promise<void>((resolve, reject) => {
+      let buf = "";
+      client!.on("data", d => {
+        buf += d;
+        if (buf.includes("\r\n\r\n")) resolve();
+      });
+      client!.on("close", () => reject(new Error("the server closed the socket: " + buf)));
+    });
+    client.write(
+      "GET /up HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: x\r\nTransfer-Encoding: identity\r\n\r\nhead",
+    );
+    await got101;
+    client.write("more");
+    await tunneled;
+    expect(events).toEqual(["upgrade head=head", "req end", "tunnel data=more"]);
+  } finally {
+    client?.destroy();
+    serverSocket?.destroy();
+    server.close();
+  }
+});
+
 // https://github.com/oven-sh/bun/issues/34158
 it("server.close(cb) completes after a raw upgrade once both sockets are destroyed", async () => {
   // Node v26.3.0 contract (verified): after the 'upgrade' handoff, destroying

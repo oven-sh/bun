@@ -457,6 +457,15 @@ void Zig::GlobalObject::resetOnEachMicrotaskTick()
     }
 }
 
+// Node runs a CommonJS entry point synchronously and then the process.nextTick queue, before any
+// microtask the entry point queued. Here the entry point runs inside a module loader microtask, so
+// the queue has to run when that microtask ends. The check armed at startup does that only until
+// the queue exists, and a module that loads before the entry point (a preload) can make it exist.
+void Zig::GlobalObject::armNextTickQueueCheckAfterEntryPoint()
+{
+    vm().setOnEachMicrotaskTick(&checkIfNextTickWasCalledDuringMicrotask);
+}
+
 extern "C" size_t Bun__reported_memory_size;
 
 // executionContextId: -1 for main thread

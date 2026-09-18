@@ -145,6 +145,27 @@ pub fn specifier_is_eval_entry_point(this: &mut VirtualMachine, specifier: JSVal
     false
 }
 
+/// Exported as `Bun__VM__specifierIsEntryPoint`: `specifier` is the path of the entry point.
+/// JSCommonJSModule.cpp asks once for each CommonJS module the ES module loader makes.
+// HOST_EXPORT(Bun__VM__specifierIsEntryPoint, c)
+pub fn specifier_is_entry_point(this: &mut VirtualMachine, specifier: JSValue) -> bool {
+    if this.main().is_empty() {
+        return false;
+    }
+    let global = this.global();
+    // A failed conversion is "no"; must never panic at an FFI boundary.
+    let Ok(specifier_str) = bun_core::String::from_js(specifier, global) else {
+        return false;
+    };
+    if specifier_str.eql_utf8(this.main()) {
+        return true;
+    }
+    // The module is keyed by its real path, and `main()` is a symlink for a bin that the `node`
+    // shim starts.
+    crate::api::bun_object::resolved_main_path(this)
+        .is_some_and(|resolved| specifier_str.eql(resolved))
+}
+
 /// Called once by JSCommonJSModule.cpp for the root CJS module so the run command reports
 /// origin `uncaughtException`. `main()` compare filters out an ESM entry that `import`s CJS.
 // HOST_EXPORT(Bun__VM__noteCommonJSEvaluation, c)

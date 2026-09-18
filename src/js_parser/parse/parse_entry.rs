@@ -201,6 +201,7 @@ impl<'a> Options<'a> {
                 set_breakpoint_on_first_line: f.set_breakpoint_on_first_line,
                 trim_unused_imports: f.trim_unused_imports,
                 auto_polyfill_require: f.auto_polyfill_require,
+                typeof_require_is_function: f.typeof_require_is_function,
                 replace_exports: Default::default(),
                 dont_bundle_twice: f.dont_bundle_twice,
                 unwrap_commonjs_packages: f.unwrap_commonjs_packages,

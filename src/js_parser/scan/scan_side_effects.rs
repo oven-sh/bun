@@ -206,10 +206,13 @@ impl SideEffects {
                         // "typeof x" must not be transformed into if "x" since doing so could
                         // cause an exception to be thrown. Instead we can just remove it since
                         // "typeof x" is special-cased in the standard to never throw.
-                        if matches!(un.value.data, ExprData::EIdentifier(_))
-                            && un
-                                .flags
-                                .contains(E::UnaryFlags::WAS_ORIGINALLY_TYPEOF_IDENTIFIER)
+                        // `ERequireCallTarget` is the substituted `require` identifier.
+                        if matches!(
+                            un.value.data,
+                            ExprData::EIdentifier(_) | ExprData::ERequireCallTarget
+                        ) && un
+                            .flags
+                            .contains(E::UnaryFlags::WAS_ORIGINALLY_TYPEOF_IDENTIFIER)
                         {
                             return None;
                         }

@@ -2967,6 +2967,7 @@ describe("a spec without a name that resolves to a dependency package.json alrea
     for (const [path, version] of [
       ["/pkga-1.0.0.tgz", "1.0.0"],
       ["/pkga-1.0.0.tgz?1", "1.0.0"],
+      ["/pkga-1.0.0.tgz", "1.0.0"],
       ["/pkga-2.0.0.tgz", "2.0.0"],
     ]) {
       const spec = new URL(path, server.url).href;

@@ -301,7 +301,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             return (0xFF, p);
         }
         let b = self.contents[p];
-        if b >= 0x80 || b == 0x0B || b == 0x0C {
+        if (b >= 0x80 || b == 0x0B || b == 0x0C) && !self.opts.strict {
             let b = match self.skip_unicode_ws() {
                 None => 0xFF,
                 Some(np) => self.contents[np],
@@ -483,6 +483,10 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         let close = self.pos_at(i + 1);
         let quote = self.contents[open];
         self.token_start = open;
+        if quote != b'"' && self.opts.strict {
+            let r = self.token_range(i);
+            return Err(self.strict_error(r, format_args!("JSON strings must use double quotes")));
+        }
         if close >= self.contents.len() || self.contents[close] != quote {
             self.add_default_error(b"Unterminated string literal")?;
             unreachable!()
@@ -552,7 +556,8 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
 
     #[inline]
     fn decode_escapes(&mut self, body: &[u8], buf: &mut Vec<u8>) -> PResult {
-        decode_string_escapes::<false, _>(self, body, buf)
+        let strict = self.opts.strict;
+        decode_string_escapes::<false, _>(self, body, buf, strict)
     }
 
     fn parse_scalar(&mut self, loc: Loc) -> PResult<Expr> {
@@ -608,6 +613,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                     }
                     _ => return false,
                 },
+                _ if self.opts.strict => return false,
                 _ => {
                     let iterator = strings::CodepointIterator::init(&rest[i..]);
                     let mut iter = strings::Cursor::default();
@@ -922,6 +928,16 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             self.expected(self.cursor, "number");
             return Err(self.unexpected(self.cursor));
         }
+        if q != minus_pos + 1 && self.opts.strict {
+            let r = Range {
+                loc: usize2loc(minus_pos),
+                len: 1,
+            };
+            return Err(self.strict_error(
+                r,
+                format_args!("JSON numbers must have a digit after \"-\""),
+            ));
+        }
         self.token_start = q;
         let run = &contents[q..self.pos_at(self.cursor + 1)];
         let (value, used) = self.parse_number_text(run, q)?;
@@ -951,9 +967,17 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         let n = t.len();
         let first = t[0];
         let mut i = 1;
+        let strict = self.opts.strict;
 
         if first == b'.' && (n < 2 || !t[1].is_ascii_digit()) {
             return Err(self.syntax_err_at(pos));
+        }
+        if first == b'.' && strict {
+            return Err(self.strict_number_error(
+                t,
+                pos,
+                format_args!("JSON numbers must have a digit before \".\""),
+            ));
         }
 
         if first == b'0' && n > 1 {
@@ -965,6 +989,20 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                 b'8' | b'9' => (10, 1, true),
                 _ => (0, 0, false),
             };
+            if radix != 0 && strict {
+                let what = match t[1] {
+                    b'b' | b'B' => "binary numbers",
+                    b'o' | b'O' => "octal numbers",
+                    b'x' | b'X' => "hexadecimal numbers",
+                    b'_' => "numeric separators",
+                    _ => "numbers with leading zeros",
+                };
+                return Err(self.strict_number_error(
+                    t,
+                    pos,
+                    format_args!("JSON does not support {what}"),
+                ));
+            }
             if radix != 0 {
                 return self.parse_radix_number(t, pos, radix, prefix_len, legacy_octal);
             }
@@ -979,6 +1017,13 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                     match t[i] {
                         b'0'..=b'9' => i += 1,
                         b'_' => {
+                            if strict {
+                                return Err(self.strict_number_error(
+                                    t,
+                                    pos,
+                                    format_args!("JSON does not support numeric separators"),
+                                ));
+                            }
                             if last_underscore_end != usize::MAX && i == last_underscore_end + 1 {
                                 return Err(self.syntax_err_at(pos));
                             }
@@ -1003,6 +1048,13 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             }
             has_dot_or_exp = true;
             i += 1;
+            if strict && (i >= n || !t[i].is_ascii_digit()) {
+                return Err(self.strict_number_error(
+                    t,
+                    pos,
+                    format_args!("JSON numbers must have a digit after \".\""),
+                ));
+            }
             if i < n && t[i] == b'_' {
                 return Err(self.syntax_err_at(pos));
             }
@@ -1151,13 +1203,37 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         }
     }
 
+    /// A form the JavaScript lexer accepts and `JSON.parse` rejects (`opts.strict`).
+    #[cold]
+    fn strict_error(&mut self, r: Range, args: core::fmt::Arguments<'_>) -> crate::Error {
+        let _ = self.add_range_error(r, args);
+        crate::Error::SyntaxError
+    }
+
+    #[cold]
+    fn strict_number_error(
+        &mut self,
+        t: &[u8],
+        pos: usize,
+        args: core::fmt::Arguments<'_>,
+    ) -> crate::Error {
+        let len = strings::index_of_any(t, b" \t\n\r/")
+            .unwrap_or(t.len())
+            .max(1);
+        let r = Range {
+            loc: usize2loc(pos),
+            len: len as i32,
+        };
+        self.strict_error(r, args)
+    }
+
     #[cold]
     fn parse_scalar_cold(&mut self, loc: Loc) -> PResult<Expr> {
         let cursor = self.cursor;
         let run = self.run(cursor);
         let start = self.pos_at(cursor);
 
-        if run[0] >= 0x80 || run[0] == 0x0B || run[0] == 0x0C {
+        if (run[0] >= 0x80 || run[0] == 0x0B || run[0] == 0x0C) && !self.opts.strict {
             let Some(p) = self.skip_unicode_ws() else {
                 self.token_start = self.contents.len();
                 return Err(self.unexpected(self.cursor));
@@ -1231,6 +1307,9 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         let cursor = self.cursor;
         let run = &self.contents[start..self.pos_at(cursor + 1)];
         self.token_start = start;
+        if self.opts.strict {
+            return Err(self.unexpected(cursor));
+        }
         let mut i = 0;
         while i < run.len() {
             let c = run[i];
@@ -1315,10 +1394,12 @@ fn read_trail_surrogate_escape(
     Some(value as u16)
 }
 
+/// `strict` accepts only the escapes JSON defines; otherwise `\v`, `\xHH`, `\8` and `\9` decode too.
 fn decode_string_escapes<'s, const ALLOW_RAW_CONTROL: bool, L: LexerLog<'s, Err = crate::Error>>(
     l: &mut L,
     body: &[u8],
     buf: &mut Vec<u8>,
+    strict: bool,
 ) -> PResult {
     let iterator = strings::CodepointIterator::init(body);
     let mut iter = strings::Cursor::default();
@@ -1346,9 +1427,9 @@ fn decode_string_escapes<'s, const ALLOW_RAW_CONTROL: bool, L: LexerLog<'s, Err 
             0x6E => buf.push(0x0a),
             0x72 => buf.push(0x0d),
             0x74 => buf.push(0x09),
-            0x76 => buf.push(0x0b),
-            0x38 | 0x39 => push_codepoint(buf, c2),
-            0x78 => {
+            0x76 if !strict => buf.push(0x0b),
+            0x38 | 0x39 if !strict => push_codepoint(buf, c2),
+            0x78 if !strict => {
                 let mut value: CodePoint = 0;
                 for _ in 0..2 {
                     if !iterator.next(&mut iter) {
@@ -1428,6 +1509,6 @@ pub(crate) fn decode_auto_quoted(
         body = &body[1..];
     }
     let mut buf: Vec<u8> = Vec::with_capacity(body.len());
-    decode_string_escapes::<true, _>(&mut l, body, &mut buf)?;
+    decode_string_escapes::<true, _>(&mut l, body, &mut buf, opts.strict)?;
     Ok(E::String::init(bump.alloc_slice_copy(&buf)))
 }

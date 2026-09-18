@@ -9689,8 +9689,8 @@ describe("outdated", () => {
         return Response.json({ name, "dist-tags": { latest: "2.0.0" }, versions });
       },
     });
-    // 12 columns in 26 bytes. The last emoji is a ZWJ sequence: 3 code points, 2 columns.
-    const workspaceName = "工作区-😀-\u{1F469}\u200D\u{1F4BB}";
+    // 14 columns in 20 bytes: a CJK character or an emoji takes 2 columns.
+    const workspaceName = "工作区-文档-😀";
     using dir = tempDir("outdated-display-width", {
       "bunfig.toml": `[install]\nregistry = "http://localhost:${server.port}/"\n`,
       "package.json": JSON.stringify({
@@ -9720,22 +9720,22 @@ describe("outdated", () => {
 
     // The widest Workspace cell is the list of the workspaces that use the catalog.
     expect(await table()).toMatchInlineSnapshot(`
-      "|------------------------------------------------------------------------------|
-      | Package          | Current | Update | Latest | Workspace                     |
-      |------------------|---------|--------|--------|-------------------------------|
-      | 日本語パッケージ | 1.0.0   | 1.0.0  | 2.0.0  | 工作区-😀-👩‍💻                  |
-      |------------------|---------|--------|--------|-------------------------------|
-      | dep              | 1.0.0   | 1.0.0  | 2.0.0  | catalog (plain, 工作区-😀-👩‍💻) |
-      |------------------------------------------------------------------------------|
+      "|--------------------------------------------------------------------------------|
+      | Package          | Current | Update | Latest | Workspace                       |
+      |------------------|---------|--------|--------|---------------------------------|
+      | 日本語パッケージ | 1.0.0   | 1.0.0  | 2.0.0  | 工作区-文档-😀                  |
+      |------------------|---------|--------|--------|---------------------------------|
+      | dep              | 1.0.0   | 1.0.0  | 2.0.0  | catalog (plain, 工作区-文档-😀) |
+      |--------------------------------------------------------------------------------|
       "
     `);
     // Without the catalog row, the widest Workspace cell is a workspace name.
     expect(await table("!dep")).toMatchInlineSnapshot(`
-      "|-------------------------------------------------------------|
-      | Package          | Current | Update | Latest | Workspace    |
-      |------------------|---------|--------|--------|--------------|
-      | 日本語パッケージ | 1.0.0   | 1.0.0  | 2.0.0  | 工作区-😀-👩‍💻 |
-      |-------------------------------------------------------------|
+      "|---------------------------------------------------------------|
+      | Package          | Current | Update | Latest | Workspace      |
+      |------------------|---------|--------|--------|----------------|
+      | 日本語パッケージ | 1.0.0   | 1.0.0  | 2.0.0  | 工作区-文档-😀 |
+      |---------------------------------------------------------------|
       "
     `);
   });

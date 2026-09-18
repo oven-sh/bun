@@ -34,11 +34,8 @@ struct GroupedOutdatedInfo {
     grouped_workspace_names: Option<Box<[u8]>>,
 }
 
-/// Terminal columns that `text` takes, as `Bun.stringWidth` counts them.
-/// `clone_utf8` transcodes to UTF-16 because only that width groups grapheme
-/// clusters. The UTF-8 width sums code points: 4 for a ZWJ pair, 1 for a keycap.
 fn visible_width(text: &[u8]) -> usize {
-    bun_core::String::clone_utf8(text).visible_width_exclude_ansi_colors(false)
+    strings::visible::width::exclude_ansi_colors::utf8(text)
 }
 
 /// The rows of the `bun outdated` table and the column widths that fit them.

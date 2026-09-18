@@ -512,6 +512,20 @@ describe("mock()", () => {
     expect(captured).toEqual([{ type: "throw", value: instance }]);
     expect(fn.mock.results).toEqual([]);
   });
+  test("a nested call after mockClear() keeps its own results entry", () => {
+    let nested = false;
+    const fn = jest.fn(() => {
+      if (nested) return 3;
+      nested = true;
+      fn.mockClear();
+      fn();
+      return 4;
+    });
+    const captured = fn.mock.results;
+    expect(fn()).toBe(4);
+    expect(captured).toEqual([{ type: "return", value: 4 }]);
+    expect(fn.mock.results).toEqual([{ type: "return", value: 3 }]);
+  });
   test("mock.results is empty after the implementation calls mockClear() and reads it", () => {
     let armed = false;
     const fn = jest.fn(() => {

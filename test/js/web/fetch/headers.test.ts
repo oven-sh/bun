@@ -233,6 +233,266 @@ describe("Headers", () => {
       ).toThrow(error);
     });
   });
+  // Web IDL converts a HeadersInit through the Symbol.iterator method of the value. A Headers
+  // object is copied from its header list only while that method is Headers.prototype.entries.
+  describe("a Headers object as HeadersInit", () => {
+    const entries = (headers: Headers) => [...Headers.prototype.entries.call(headers)];
+
+    class Overridden extends Headers {
+      *[Symbol.iterator](): Generator<[string, string], undefined, unknown> {
+        yield ["x-from-iterator", "1"];
+      }
+    }
+    const overridden = () => new Overridden([["a", "b"]]);
+
+    function withOwnIterator(method: unknown, enumerable = true) {
+      const headers = new Headers([["a", "b"]]);
+      Object.defineProperty(headers, Symbol.iterator, { value: method, enumerable, configurable: true });
+      return headers;
+    }
+
+    test("new Headers() calls a subclass iterator", () => {
+      expect(entries(new Headers(overridden()))).toEqual([["x-from-iterator", "1"]]);
+    });
+
+    test("new Headers() calls an own iterator", () => {
+      const headers = withOwnIterator(function* (this: Headers) {
+        yield ["x-own", this.get("a")];
+      });
+      expect(entries(new Headers(headers))).toEqual([["x-own", "b"]]);
+    });
+
+    test("new Headers() reads an accessor once", () => {
+      const headers = new Headers([["a", "b"]]);
+      let reads = 0;
+      Object.defineProperty(headers, Symbol.iterator, {
+        get() {
+          reads++;
+          return function* () {
+            yield ["x-getter", "1"];
+          };
+        },
+      });
+      expect(entries(new Headers(headers))).toEqual([["x-getter", "1"]]);
+      expect(reads).toBe(1);
+    });
+
+    test("new Headers() reads the iterator through a Proxy in the prototype chain", () => {
+      const headers = new Headers([["a", "b"]]);
+      const keys: PropertyKey[] = [];
+      const proxy = new Proxy(Headers.prototype, {
+        get(target, key, receiver) {
+          keys.push(key);
+          if (key !== Symbol.iterator) return Reflect.get(target, key, receiver);
+          return function* () {
+            yield ["x-proxy", "1"];
+          };
+        },
+      });
+      Object.setPrototypeOf(headers, proxy);
+      expect(entries(new Headers(headers))).toEqual([["x-proxy", "1"]]);
+      expect(keys).toEqual([Symbol.iterator]);
+    });
+
+    test("new Headers() reads a replaced and a deleted Headers.prototype[Symbol.iterator]", () => {
+      const descriptor = Object.getOwnPropertyDescriptor(Headers.prototype, Symbol.iterator)!;
+      const source = new Headers([["a", "b"]]);
+      const seen: Record<string, [string, string][]> = {};
+      try {
+        Headers.prototype[Symbol.iterator] = function* () {
+          yield ["x-prototype", "1"];
+        } as any;
+        seen.replaced = entries(new Headers(source));
+        delete (Headers.prototype as any)[Symbol.iterator];
+        // No iterator method: the value converts as a record, and it has no own keys.
+        seen.deleted = entries(new Headers(source));
+      } finally {
+        Object.defineProperty(Headers.prototype, Symbol.iterator, descriptor);
+      }
+      seen.restored = entries(new Headers(source));
+      expect(seen).toEqual({
+        replaced: [["x-prototype", "1"]],
+        deleted: [],
+        restored: [["a", "b"]],
+      });
+    });
+
+    test("new Headers() throws what the iterator throws", () => {
+      const error = new RangeError("Iterator failed.");
+      const headers = withOwnIterator(() => {
+        throw error;
+      });
+      expect(() => new Headers(headers)).toThrow(error);
+    });
+
+    test("new Headers() rejects an iterator that does not yield pairs", () => {
+      expect(() => new Headers(withOwnIterator(Headers.prototype.keys))).toThrow(TypeError);
+    });
+
+    test("new Headers() converts as a record when the iterator is undefined", () => {
+      expect(entries(new Headers(withOwnIterator(undefined, false)))).toEqual([]);
+      // A record key cannot be a symbol.
+      expect(() => new Headers(withOwnIterator(undefined))).toThrow(TypeError);
+    });
+
+    test("new Headers() copies the header list when the iterator is the built-in one", () => {
+      class OnlyEntries extends Headers {
+        *entries(): Generator<[string, string], undefined, unknown> {
+          yield ["x-entries", "1"];
+        }
+      }
+      expect(entries(new Headers(new OnlyEntries([["a", "b"]])))).toEqual([["a", "b"]]);
+      expect(entries(new Headers(withOwnIterator(Headers.prototype.entries)))).toEqual([["a", "b"]]);
+    });
+
+    test("Response and Request call the iterator", () => {
+      const request = new Request("http://localhost/", { headers: { "x-request": "1" } });
+      const emptyWithOwnIterator = new Headers();
+      emptyWithOwnIterator[Symbol.iterator] = (() => [["x-own", "1"]].values()) as any;
+      expect({
+        response: entries(new Response(null, { headers: overridden() }).headers),
+        json: entries(Response.json(null, { headers: overridden() }).headers),
+        redirect: entries(Response.redirect("http://localhost/", { headers: overridden() }).headers),
+        request: entries(new Request("http://localhost/", { headers: overridden() }).headers),
+        requestFromRequest: entries(new Request(request, { headers: overridden() }).headers),
+        emptyWithOwnIterator: entries(new Response(null, { headers: emptyWithOwnIterator }).headers),
+      }).toEqual({
+        response: [["x-from-iterator", "1"]],
+        json: [
+          ["content-type", "application/json;charset=utf-8"],
+          ["x-from-iterator", "1"],
+        ],
+        redirect: [
+          ["location", "http://localhost/"],
+          ["x-from-iterator", "1"],
+        ],
+        request: [["x-from-iterator", "1"]],
+        requestFromRequest: [["x-from-iterator", "1"]],
+        emptyWithOwnIterator: [["x-own", "1"]],
+      });
+    });
+
+    // Bun.serve gives lowercase names. The raw request shows the names as sent.
+    async function sentHeaders(send: (url: string) => Promise<unknown>) {
+      const { promise, resolve, reject } = Promise.withResolvers<string>();
+      let received = "";
+      using server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: {
+          data(socket, chunk) {
+            received += chunk.toString("latin1");
+            if (!received.includes("\r\n\r\n")) return;
+            // end() can call close() before it returns.
+            resolve(received);
+            socket.end("HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+          },
+          close() {
+            reject(new Error("The connection closed before the end of the headers."));
+          },
+          error(_, error) {
+            reject(error);
+          },
+        },
+      });
+      const [head] = await Promise.all([promise, send(`http://127.0.0.1:${server.port}/`)]);
+      return customHeaders(head);
+    }
+    const customHeaders = (head: string) =>
+      head
+        .split("\r\n")
+        .filter(line => /^(a|x-[a-z-]+):/i.test(line))
+        .sort();
+
+    test("fetch() sends what the iterator yields", async () => {
+      expect(await sentHeaders(url => fetch(url, { headers: overridden() }))).toEqual(["x-from-iterator: 1"]);
+    });
+
+    test("fetch({ url, headers }) sends what the iterator yields", async () => {
+      const sent = await sentHeaders(url => fetch({ url, headers: overridden() } as any));
+      expect(sent).toEqual(["x-from-iterator: 1"]);
+    });
+
+    test("fetch() keeps the case of the names when a subclass has the built-in iterator", async () => {
+      class Plain extends Headers {}
+      const headers = new Plain([["X-Mixed-Case", "1"]]);
+      expect(await sentHeaders(url => fetch(url, { headers }))).toEqual(["X-Mixed-Case: 1"]);
+    });
+
+    test("fetch() sends what the iterator of proxy.headers yields", async () => {
+      const sent = await sentHeaders(url =>
+        fetch("http://example.invalid/", { proxy: { url, headers: overridden() } }),
+      );
+      expect(sent).toEqual(["x-from-iterator: 1"]);
+    });
+
+    test("WebSocket sends what the iterator of proxy.headers yields", async () => {
+      const sent = await sentHeaders(url => {
+        const { promise, resolve } = Promise.withResolvers<void>();
+        // The proxy in this test answers and closes, so the handshake fails.
+        const ws = new WebSocket("ws://example.invalid/", { proxy: { url, headers: overridden() } });
+        ws.onclose = () => resolve();
+        return promise;
+      });
+      expect(sent).toEqual(["x-from-iterator: 1"]);
+    });
+
+    // The status line and the custom headers of the answer to a WebSocket handshake.
+    async function upgradeResponse(headers: HeadersInit) {
+      using server = Bun.serve({
+        hostname: "127.0.0.1",
+        port: 0,
+        fetch(request, server) {
+          if (server.upgrade(request, { headers })) return;
+          return new Response("The upgrade failed.", { status: 500 });
+        },
+        websocket: { message() {} },
+      });
+      const { promise, resolve, reject } = Promise.withResolvers<string>();
+      let received = "";
+      const socket = await Bun.connect({
+        hostname: "127.0.0.1",
+        port: server.port,
+        socket: {
+          open(socket) {
+            socket.write(
+              "GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n" +
+                "Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
+            );
+          },
+          data(_, chunk) {
+            received += chunk.toString("latin1");
+            if (received.includes("\r\n\r\n")) resolve(received);
+          },
+          close() {
+            reject(new Error("The connection closed before the end of the headers."));
+          },
+          error(_, error) {
+            reject(error);
+          },
+        },
+      });
+      try {
+        const head = await promise;
+        return [head.split("\r\n")[0], ...customHeaders(head)];
+      } finally {
+        socket.end();
+      }
+    }
+
+    test("server.upgrade() sends what the iterator yields", async () => {
+      expect(await upgradeResponse(overridden())).toEqual(["HTTP/1.1 101 Switching Protocols", "x-from-iterator: 1"]);
+    });
+
+    test("server.upgrade() adds no header when the HeadersInit is empty", async () => {
+      class YieldsNothing extends Headers {
+        *[Symbol.iterator](): Generator<[string, string], undefined, unknown> {}
+      }
+      for (const headers of [new YieldsNothing([["a", "b"]]), {}, []]) {
+        expect(await upgradeResponse(headers)).toEqual(["HTTP/1.1 101 Switching Protocols"]);
+      }
+    });
+  });
   describe("append()", () => {
     test("can append header", () => {
       const headers = new Headers();

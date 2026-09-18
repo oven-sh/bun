@@ -22,6 +22,7 @@
 
 #include "FetchHeaders.h"
 #include "JSDOMWrapper.h"
+#include "headers-handwritten.h"
 
 namespace WebCore {
 
@@ -81,5 +82,9 @@ template<> struct JSDOMWrapperConverterTraits<FetchHeaders> {
 };
 
 JSC::EncodedJSValue fetchHeadersGetSetCookie(JSC::JSGlobalObject* lexicalGlobalObject, VM& vm, WebCore::FetchHeaders* impl);
+
+// The IDLUnion steps for a HeadersInit. A TypeError from the conversion itself names the option.
+template<typename IDLStringType>
+FetchHeaders::Init convertHeadersInit(JSC::JSGlobalObject&, JSC::JSValue, HeadersInitName);
 
 } // namespace WebCore

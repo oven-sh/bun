@@ -221,14 +221,14 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
     // Native heap SSLConfig. RAII — freed on any early return, moved into
     // WebSocket::create() on success.
     WebSocketSSLConfigPtr sslConfig;
-    auto headersInit = std::optional<Converter<IDLUnion<IDLSequence<IDLSequence<IDLByteString>>, IDLRecord<IDLByteString, IDLByteString>>>::ReturnType>();
+    std::optional<FetchHeaders::Init> headersInit;
     // Default true — matches Bun's existing behavior of always offering permessage-deflate.
     // ws.WebSocket passes `perMessageDeflate: false` to opt out.
     bool offerPerMessageDeflate = true;
 
     // Proxy options
     String proxyUrl;
-    auto proxyHeadersInit = std::optional<Converter<IDLUnion<IDLSequence<IDLSequence<IDLByteString>>, IDLRecord<IDLByteString, IDLByteString>>>::ReturnType>();
+    std::optional<FetchHeaders::Init> proxyHeadersInit;
 
     if (JSC::JSObject* options = optionsObjectValue.getObject()) {
         const auto& builtinnames = WebCore::builtinNames(vm);
@@ -236,7 +236,7 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
         RETURN_IF_EXCEPTION(throwScope, {});
         if (headersValue) {
             if (!headersValue.isUndefinedOrNull()) {
-                headersInit = convert<IDLUnion<IDLSequence<IDLSequence<IDLByteString>>, IDLRecord<IDLByteString, IDLByteString>>>(*lexicalGlobalObject, headersValue);
+                headersInit = convertHeadersInit<IDLByteString>(*lexicalGlobalObject, headersValue, HeadersInitName::Headers);
                 RETURN_IF_EXCEPTION(throwScope, {});
             }
         }
@@ -324,7 +324,7 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
                             proxyHeadersInit = WTF::move(pairs);
                         } else {
                             // Fall back to IDL conversion for plain objects/arrays
-                            proxyHeadersInit = convert<IDLUnion<IDLSequence<IDLSequence<IDLByteString>>, IDLRecord<IDLByteString, IDLByteString>>>(*lexicalGlobalObject, proxyHeadersValue);
+                            proxyHeadersInit = convertHeadersInit<IDLByteString>(*lexicalGlobalObject, proxyHeadersValue, HeadersInitName::ProxyHeaders);
                             RETURN_IF_EXCEPTION(throwScope, {});
                         }
                     }

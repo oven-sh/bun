@@ -252,7 +252,7 @@ bun_collections::object_pool!(pub ByteListPool: Vec<u8>, threadsafe, 8);
 // Re-export the crate-local jsc shim's opaque type until `bun_jsc::fetch_headers`
 // is green; the shim's `#[repr(transparent)] struct FetchHeaders(usize)` matches the
 // opaque-handle ABI used by the `WebCore__FetchHeaders__*` extern fns.
-pub use crate::jsc::FetchHeaders;
+pub use crate::jsc::{FetchHeaders, HeadersInitName};
 
 #[path = "webcore/EncodingLabel.rs"]
 pub mod encoding_label;

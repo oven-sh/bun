@@ -266,6 +266,22 @@ describe("WebSocket custom headers", () => {
     }).toThrow("Header 'X-Test-Header' has invalid value");
   });
 
+  it("should name the option when headers or proxy.headers has the wrong type", () => {
+    // The constructor throws before it dials, so no server is needed.
+    const construct = (options: any) => () => new WebSocket("ws://localhost/", options);
+    const proxy = (headers: any) => ({ proxy: { url: "http://localhost/", headers } });
+    expect(construct({ headers: 1 })).toThrow(
+      'The "headers" argument must be an instance of Headers, Array, or Object. Received type number (1)',
+    );
+    expect(construct({ headers: ["a"] })).toThrow(
+      `The "headers[0]" argument must be an instance of Array. Received type string ('a')`,
+    );
+    expect(construct(proxy("x"))).toThrow(
+      `The "proxy.headers" property must be an instance of Headers, Array, or Object. Received type string ('x')`,
+    );
+    expect(construct(proxy([["a", "1"], {}]))).toThrow('The "proxy.headers[1]" property must be an instance of Array');
+  });
+
   it("should allow headers with special but valid characters", async () => {
     const url = await createHeaderEchoServer();
     const { promise, resolve, reject } = Promise.withResolvers<any>();

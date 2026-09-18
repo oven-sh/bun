@@ -508,15 +508,8 @@ fn on_close(ctx: *mut HTTPClient) {
     if in_progress && this.state.is_body_complete_on_close() {
         match this.finish_body_on_close() {
             Ok(()) => {
-                // A held body with nothing decoded has no update yet: the consumer's pull
-                // drains it through the outer socket, or through `socketless_bodies` once
-                // the proxy closes that too.
-                let held =
-                    this.state.has_pending_compressed() && this.state.decoded_body.list.is_empty();
-                if !held {
-                    // `this` dead (NLL); reborrow via `client_from_ctx` inside.
-                    progress_update_for_proxy_socket(ctx, proxy_nn);
-                }
+                // `this` dead (NLL); reborrow via `client_from_ctx` inside.
+                progress_update_for_proxy_socket(ctx, proxy_nn);
                 crate::http_thread().schedule_proxy_deref(keepalive);
                 return;
             }

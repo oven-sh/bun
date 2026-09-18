@@ -21,9 +21,7 @@ pub const BODY_HIGH_WATER_MARK: usize = 256 * 1024;
 /// moves `Paused -> Flowing` and schedules a resume. The transport applies `Paused` after the
 /// next read. Two terminal states: `BufferAll` (a consumer wants the whole body) and
 /// `Abandoned` (nothing will read it; the transport is being shut down, drop what arrives).
-/// `Unclaimed` is `Flowing` while no consumer has attached yet, for a body whose consumer
-/// attaches later (a `Response`). The transport may move it to `Paused` to keep a body whole
-/// until the consumer says how it reads (`Signals::hold_for_consumer`).
+/// `Unclaimed`: `Flowing` before a consumer attaches. See `Signals::hold_for_consumer`.
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum BodyReceiveMode {
@@ -103,8 +101,7 @@ impl Signals {
             })
     }
 
-    /// `Unclaimed -> Paused`. Returns whether it held: no consumer has attached, and the one
-    /// that does resumes the transport (`Store::receive_all`, `Store::receive_on_demand`).
+    /// `Unclaimed -> Paused`: a whole body waits for the consumer, which resumes the transport.
     #[inline]
     pub(crate) fn hold_for_consumer(self) -> bool {
         self.body_receive_mode
@@ -193,8 +190,7 @@ impl Store {
             });
     }
 
-    /// A streaming consumer attached: `Unclaimed` or `Paused -> Flowing`. The caller schedules
-    /// the transport's resume either way.
+    /// A streaming consumer attached: `Unclaimed` or `Paused -> Flowing`. The caller resumes.
     #[inline]
     pub fn receive_on_demand(&self) {
         let _ = self

@@ -6,12 +6,10 @@ use crate::{CertificateInfo, Decompressor, Encoding, HTTPRequestBody, HTTPRespon
 
 bun_core::define_scoped_log!(log, HTTPInternalState, hidden);
 
-/// A gzip trailer is arbitrary input from the internet, so this bounds the allocation it can
-/// ask libdeflate's exact-size call for.
+/// Bounds the allocation that an untrusted gzip trailer can ask libdeflate's exact-size call for.
 const EXACT_SIZE_INFLATE_MAX: usize = 32 * 1024 * 1024;
 
-/// gzip stores the size of the uncompressed data in the last 4 bytes of the stream. It is only
-/// valid if the stream is less than 4 GB, and it counts the last member alone.
+/// ISIZE, the last 4 bytes of a gzip stream: the decoded size of its last member, modulo 4 GB.
 fn gzip_trailer_size(buffer: &[u8]) -> Option<usize> {
     if buffer.len() <= 16 || buffer.len() >= 1024 * 1024 * 1024 {
         return None;
@@ -234,8 +232,7 @@ impl<'a> InternalState<'a> {
         self.flags.decompress_output_pending
     }
 
-    /// A complete gzip body that no decoder has touched, of a size that libdeflate inflates in
-    /// one exact-size call (`decompress_bytes`). An output budget rules that call out.
+    /// A complete gzip body that only an unbudgeted pass can inflate in one libdeflate call.
     pub(crate) fn wants_exact_size_inflate(&self) -> bool {
         bun_core::feature_flags::is_libdeflate_enabled()
             && self.encoding == Encoding::Gzip

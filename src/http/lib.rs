@@ -4124,8 +4124,7 @@ impl<'a> HTTPClient<'a> {
                 self.state.flags.decompress_output_pending = true;
                 return Ok(false);
             }
-            // A body that one libdeflate call can inflate waits whole for its consumer:
-            // `BufferAll` gets that call, a reader gets budgeted passes.
+            // A body that one libdeflate call can inflate waits whole for its consumer.
             if is_final_chunk && self.state.wants_exact_size_inflate() {
                 if self.signals.hold_for_consumer() {
                     self.state.flags.decompress_output_pending = true;
@@ -4709,8 +4708,7 @@ impl<'a> HTTPClient<'a> {
             || self.signals.body_receive_mode.is_some();
         if is_done || is_streaming || content_length.is_none() {
             let is_final_chunk = is_done;
-            // We can only use the libdeflate fast path when we are not streaming. A body that
-            // arrived whole keeps it: `process_received_body` may hold it for its consumer.
+            // A body that arrived whole keeps the libdeflate fast path: it may be held.
             if !is_final_chunk {
                 self.state.flags.is_libdeflate_fast_path_disabled = true;
             }

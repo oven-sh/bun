@@ -242,16 +242,16 @@ describe.concurrent("--rerun-each warns when a rerun registers fewer tests", () 
       });
     `,
     "cached.test.ts": `import "./helper.cjs";`,
-    // Its own helper: the files share one module cache when they run in one process.
-    "helper2.cjs": `
-      const { test, expect } = require("bun:test");
+    // Its own helper, an ES module this time: the files share one module cache when they run in one process.
+    "helper2.ts": `
+      import { test, expect } from "bun:test";
       test("from helper2", () => {
         expect(2).toBe(2);
       });
     `,
     "mixed.test.ts": `
       import { test, expect } from "bun:test";
-      import "./helper2.cjs";
+      import "./helper2.ts";
       test("mixed", () => {
         expect(1).toBe(1);
       });

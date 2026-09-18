@@ -4733,15 +4733,14 @@ impl NodeFS {
         Ok(())
     }
 
-    /// Cuts the old tail of a copy destination at `wrote`, then gives it the mode of the source.
-    /// A FIFO or a device that was already at the destination path keeps its mode. Node fails
-    /// such a copy with EINVAL and unlinks the path. Bun writes the data to it.
+    /// Cuts a copy destination at `wrote`, then copies the mode, but never onto a FIFO or device.
     #[cfg(not(windows))]
     fn truncate_and_copy_mode(dest_fd: FD, wrote: u64, mode: Mode) {
         let truncated = Syscall::ftruncate(dest_fd, (wrote & ((1u64 << 63) - 1)) as i64).is_ok();
         // Linux truncates only a regular file. POSIX leaves other file types unspecified.
         let is_regular = (cfg!(any(target_os = "linux", target_os = "android")) && truncated)
             || matches!(Syscall::fstat(dest_fd), Ok(st) if sys::S::ISREG(st.st_mode as u32));
+        // Node never gets here for a FIFO or device: libuv fails with EINVAL and unlinks it.
         if is_regular {
             let _ = Syscall::fchmod(dest_fd, mode);
         }

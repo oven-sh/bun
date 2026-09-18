@@ -113,16 +113,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         let mut value: Option<ExprNodeIndex> = None;
-        match p.lexer.token {
-            T::TCloseBrace
-            | T::TCloseParen
-            | T::TCloseBracket
-            | T::TColon
-            | T::TComma
-            | T::TSemicolon => {}
-            _ => {
-                if is_star || !p.lexer.has_newline_before {
-                    value = Some(p.parse_expr(Level::Yield)?);
+        if is_star {
+            // "yield*" always takes an operand
+            value = Some(p.parse_expr(Level::Yield)?);
+        } else {
+            match p.lexer.token {
+                T::TCloseBrace
+                | T::TCloseParen
+                | T::TCloseBracket
+                | T::TColon
+                | T::TComma
+                | T::TSemicolon => {}
+                _ => {
+                    if !p.lexer.has_newline_before {
+                        value = Some(p.parse_expr(Level::Yield)?);
+                    }
                 }
             }
         }
@@ -577,6 +582,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if is_arrow_fn || opts.force_arrow_fn {
                 p.maybe_comma_spread_error(comma_after_spread);
                 p.log_arrow_arg_errors(&mut arrow_arg_errors);
+                if let Some(r) = errors.invalid_paren {
+                    p.log().add_range_error(
+                        Some(p.source),
+                        r,
+                        b"Unexpected parentheses in binding pattern",
+                    );
+                }
 
                 // Now that we've decided we're an arrow function, report binding pattern
                 // conversion errors

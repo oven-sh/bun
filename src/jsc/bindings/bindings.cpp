@@ -3167,6 +3167,15 @@ void JSC__VM__collectAsyncIdle(JSC::VM* vm)
     vm->heap.collectAsync(request);
 }
 
+bool JSC__VM__shrinkFootprintNow(JSC::VM* vm)
+{
+    JSC::JSLockHolder lock(*vm);
+    // Deleting code waits for a collection that is under way (Heap::preventCollection).
+    if (vm->heap.collectionScope())
+        return false;
+    return vm->shrinkFootprintNow({ JSC::VM::ShrinkFootprint::LeaveCollectionToCaller, JSC::VM::ShrinkFootprint::KeepCodeInUse });
+}
+
 void JSC__VM__setStartupJITDeferralScale(JSC::VM* vm, double scale)
 {
     vm->setStartupJITDeferralScale(scale);

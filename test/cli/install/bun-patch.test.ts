@@ -1273,8 +1273,12 @@ describe("a bundled dependency as the target", () => {
 
   const runBun = (cwd: string, ...args: string[]) => spawnBun(cwd, join(cwd, ".bun-cache"), args);
 
-  async function installedProject(linker: "hoisted" | "isolated", dependencies: Record<string, string>) {
-    const packageJson = { name: "foo", dependencies };
+  async function installedProject(
+    linker: "hoisted" | "isolated",
+    dependencies: Record<string, string>,
+    overrides?: Record<string, string>,
+  ) {
+    const packageJson = { name: "foo", dependencies, ...(overrides && { overrides }) };
     const { packageDir } = await registry.createTestDir({
       bunfigOpts: { linker },
       files: { "package.json": JSON.stringify(packageJson) },
@@ -1422,10 +1426,41 @@ describe("a bundled dependency as the target", () => {
       expect(exitCode).toBe(0);
     });
 
-    // No package is named `my-alias`, so the path does not show what bundles no-deps. It is
-    // still refused, because nothing installs no-deps on its own.
+    // The override makes one-dep depend on no-deps@1.0.0, which bundled-transitive also bundles.
+    // The root alias takes the name `one-dep`, so one-dep nests in bundled-transitive. The
+    // lockfile's tree dedupes one-dep's no-deps against the bundled copy. The install does
+    // not: it places no-deps in the root node_modules.
+    test.concurrent.each(["no-deps", "no-deps@1.0.0"])(
+      "bun patch %s finds the copy that bun installed when the lockfile dedupes it against the bundled copy",
+      async arg => {
+        const { packageDir } = await installedProject(
+          linker,
+          { "bundled-transitive": "1.0.0", "one-dep": "npm:no-deps@2.0.0" },
+          { "no-deps": "1.0.0" },
+        );
+        const bundledCopy = "node_modules/bundled-transitive/node_modules/no-deps";
+        const marker = Bun.file(join(packageDir, bundledCopy, "only-in-the-bundled-copy.txt"));
+        await Bun.write(marker, "bundled");
+
+        const byPath = await runBun(packageDir, "patch", bundledCopy);
+        expect(byPath.stderr).toEndWith(bundledError("no-deps", "bundled-transitive"));
+        expect(byPath.exitCode).toBe(1);
+
+        const { stdout, stderr, exitCode } = await runBun(packageDir, "patch", arg);
+        expect(stderr).not.toContain("error:");
+        expect(stdout).toContain("To patch no-deps, edit the following folder:\n\n  node_modules/no-deps\n");
+        expect(await marker.exists()).toBe(true);
+        expect(exitCode).toBe(0);
+      },
+    );
+
+    // No package is named `my-alias`, and bun also installs no-deps@1.0.0 on its own. Only
+    // the lockfile's tree tells that `my-alias` is bundled-1.
     test.concurrent("bun patch <path> is refused under an aliased package that bundles", async () => {
-      const { packageDir } = await installedProject(linker, { "my-alias": "npm:bundled-1@1.0.0" });
+      const { packageDir } = await installedProject(linker, {
+        "my-alias": "npm:bundled-1@1.0.0",
+        "no-deps": "1.0.0",
+      });
       const marker = Bun.file(
         join(packageDir, "node_modules", "my-alias", "node_modules", "no-deps", "only-in-the-bundled-copy.txt"),
       );

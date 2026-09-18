@@ -107,6 +107,7 @@ pub fn do_patch_commit(
         }
         lockfile::LoadResult::Ok(_) => {}
     }
+    let install_tree = InstallTree::build(manager, &mut lockfile)?;
 
     let argument: &'static [u8] = manager.options.positionals[1];
     let arg_kind: PatchArgKind = PatchArgKind::from_arg(argument);
@@ -158,7 +159,7 @@ pub fn do_patch_commit(
         }
     };
 
-    let mut iterator = tree::Iterator::<{ tree::IteratorPathStyle::NodeModules }>::init(&lockfile);
+    let mut iterator = install_tree.iterator(&lockfile);
     let (changes_dir, pkg): (Vec<u8>, Package) = match arg_kind {
         PatchArgKind::Path => 'result: {
             let package_json_path =
@@ -252,6 +253,7 @@ pub fn do_patch_commit(
 
             crash_if_bundled_path(
                 &lockfile,
+                &install_tree,
                 argument,
                 actual_package.meta.id,
                 lockfile.str(&actual_package.name),
@@ -739,6 +741,13 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
         argument
     };
 
+    let install_tree = {
+        let mut lockfile: Box<Lockfile> = core::mem::take(&mut manager.lockfile);
+        let install_tree = InstallTree::build(manager, &mut lockfile);
+        manager.lockfile = lockfile;
+        install_tree?
+    };
+
     let (cache_dir, cache_dir_subpath, module_folder, pkg_name): (Fd, &[u8], Vec<u8>, Vec<u8>) =
         match arg_kind {
             PatchArgKind::Path => 'brk: {
@@ -841,7 +850,13 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
                 };
 
                 let name = lockfile.str(&package.name).to_vec();
-                crash_if_bundled_path(lockfile, argument, actual_package.meta.id, &name);
+                crash_if_bundled_path(
+                    lockfile,
+                    &install_tree,
+                    argument,
+                    actual_package.meta.id,
+                    &name,
+                );
 
                 let existing_patchfile_hash: Option<u64> = 'existing_patchfile_hash: {
                     let mut name_and_version = Vec::new();
@@ -885,9 +900,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
                 let pkg_maybe_version_to_patch = argument;
                 let (name, version) =
                     Dependency::split_name_and_maybe_version(pkg_maybe_version_to_patch);
-                let mut iterator = tree::Iterator::<{ tree::IteratorPathStyle::NodeModules }>::init(
-                    &manager.lockfile,
-                );
+                let mut iterator = install_tree.iterator(&manager.lockfile);
                 let (pkg_id, folder_relative_path) = pkg_info_for_name_and_version(
                     &manager.lockfile,
                     &mut iterator,
@@ -1227,38 +1240,35 @@ type NodeModulesIterator<'a> = tree::Iterator<'a, { tree::IteratorPathStyle::Nod
 // `relative_path`, so copy it out into an owned `Vec<u8>`.
 
 fn node_modules_folder_for_dependency_ids(
-    lockfile: &Lockfile,
-    bundled: &BundledPackages,
     iterator: &mut NodeModulesIterator<'_>,
     ids: &[IdPair],
-    bundler: &mut Option<PackageID>,
 ) -> Option<Vec<u8>> {
     loop {
         let node_modules = iterator.next(None)?;
-        let Some(placed) = ids
-            .iter()
-            .find(|id| node_modules.dependencies.contains(&id.0))
-        else {
-            continue;
-        };
-        // The tree also places a row inside a bundling package when a bundled package declares it.
-        if let Some(by) = bundled.bundler_of_placement(lockfile, node_modules.tree_id, placed.0) {
-            bundler.get_or_insert(by);
+        let mut found = false;
+        for id in ids {
+            if node_modules.dependencies.contains(&id.0) {
+                found = true;
+                break;
+            }
+        }
+        if found {
+            return Some(node_modules.relative_path.as_bytes().to_vec());
+        }
+    }
+}
+
+fn node_modules_folder_for_dependency_id(
+    iterator: &mut NodeModulesIterator<'_>,
+    dependency_id: DependencyID,
+) -> Option<Vec<u8>> {
+    loop {
+        let node_modules = iterator.next(None)?;
+        if !node_modules.dependencies.contains(&dependency_id) {
             continue;
         }
         return Some(node_modules.relative_path.as_bytes().to_vec());
     }
-}
-
-fn folder_not_found(lockfile: &Lockfile, target: &[u8], bundler: Option<PackageID>) -> ! {
-    if let Some(bundler) = bundler {
-        crash_bundled(lockfile, target, bundler);
-    }
-    bun_core::pretty_error!(
-        "<r><red>error<r>: could not find the folder for <b>{}<r> in node_modules<r>\n<r>",
-        bstr::BStr::new(target),
-    );
-    Global::crash();
 }
 
 /// For each package that only bundled dependencies reach: the package whose tarball ships it.
@@ -1325,99 +1335,74 @@ impl BundledPackages {
         }
         self.bundler_of_package(parent_id)
     }
+}
 
-    /// The package whose tarball ships what the tree places for row `dep_id` in `tree_id`, if one does.
-    fn bundler_of_placement(
-        &self,
-        lockfile: &Lockfile,
-        tree_id: tree::Id,
-        dep_id: DependencyID,
-    ) -> Option<PackageID> {
-        if let Some(bundler) = self.bundler_of_dependency(lockfile, dep_id) {
-            return Some(bundler);
-        }
-        let trees = lockfile.buffers.trees.as_slice();
-        let dependencies = lockfile.buffers.dependencies.as_slice();
-        let resolutions = lockfile.buffers.resolutions.as_slice();
-        // The package that bundles the folder of tree `id`, or of a tree between it and `stop`.
-        let bundler_above = |mut id: tree::Id, stop: tree::Id| -> Option<PackageID> {
-            while id != stop && id != 0 {
-                let tree = trees.get(id as usize)?;
-                if dependencies
-                    .get(tree.dependency_id as usize)
-                    .is_some_and(|owner| owner.behavior.is_bundled())
-                {
-                    return lockfile.get_parent_pkg_of_dependency(tree.dependency_id);
-                }
-                id = tree.parent;
-            }
-            None
-        };
-        if let Some(bundler) = bundler_above(tree_id, tree::Tree::INVALID_ID) {
-            return Some(bundler);
-        }
+/// The package whose tarball ships the folder at `path`. `None` when bun installs `pkg_id` there, or nothing ships it.
+fn bundler_on_path(
+    lockfile: &Lockfile,
+    install_tree: &InstallTree,
+    path: &[u8],
+    pkg_id: PackageID,
+) -> Option<PackageID> {
+    let top_level_dir = FileSystem::instance().top_level_dir();
+    let mut abs_buf = bun_paths::path_buffer_pool::get();
+    let abs = resolve_path::join_abs_string_buf_checked::<platform::Auto>(
+        top_level_dir,
+        &mut abs_buf[..],
+        &[path],
+    )?;
+    let path = resolve_path::relative(top_level_dir, abs).to_vec();
+    match install_tree.folder(lockfile, &path, pkg_id) {
+        Some(Folder::Installed) => None,
+        Some(Folder::ShippedBy(bundler)) => Some(bundler),
+        None => bundler_by_names(lockfile, &path),
+    }
+}
 
-        let declared_by = lockfile.get_parent_pkg_of_dependency(dep_id)?;
-        let owner = match tree_id {
-            0 => 0,
-            _ => *resolutions.get(trees.get(tree_id as usize)?.dependency_id as usize)?,
+/// The tree that the hoisted install builds. The saved tree also places what the tarballs ship.
+struct InstallTree {
+    trees: tree::List,
+    hoisted_dependencies: lockfile::DependencyIDList,
+}
+
+impl InstallTree {
+    fn build(manager: &mut PackageManager, lockfile: &mut Lockfile) -> Result<Self, crate::Error> {
+        let saved_trees = lockfile.buffers.trees.clone();
+        let saved_hoisted_dependencies = lockfile.buffers.hoisted_dependencies.clone();
+        let log = manager.log_mut();
+        let built = lockfile.filter(log, manager, true, &[], None);
+        // `filter` leaves its tree in the lockfile. The saved tree goes back before an error returns.
+        let install_tree = Self {
+            trees: core::mem::replace(&mut lockfile.buffers.trees, saved_trees),
+            hoisted_dependencies: core::mem::replace(
+                &mut lockfile.buffers.hoisted_dependencies,
+                saved_hoisted_dependencies,
+            ),
         };
-        if owner == declared_by {
-            return None;
-        }
-        // The row was hoisted into this tree. It is the tarball's copy when every placement of its package below is.
-        let mut bundler = None;
-        for tree in trees {
-            let mut ancestor = tree.id;
-            while ancestor != tree_id && ancestor != 0 {
-                ancestor = trees.get(ancestor as usize)?.parent;
-            }
-            if ancestor != tree_id {
-                continue;
-            }
-            for &placed in tree
-                .dependencies
-                .get(lockfile.buffers.hoisted_dependencies.as_slice())
-            {
-                if resolutions.get(placed as usize) != Some(&declared_by) {
-                    continue;
-                }
-                bundler = Some(if dependencies[placed as usize].behavior.is_bundled() {
-                    lockfile.get_parent_pkg_of_dependency(placed)?
-                } else {
-                    bundler_above(tree.id, tree_id)?
-                });
-            }
-        }
-        bundler
+        built?;
+        Ok(install_tree)
     }
 
-    /// The first dependency on `path` that a tarball ships. `None` also when `path` is not in the lockfile's tree.
-    fn bundler_on_path(&self, lockfile: &Lockfile, path: &[u8]) -> Option<PackageID> {
-        let top_level_dir = FileSystem::instance().top_level_dir();
-        let mut abs_buf = bun_paths::path_buffer_pool::get();
-        let abs = resolve_path::join_abs_string_buf_checked::<platform::Auto>(
-            top_level_dir,
-            &mut abs_buf[..],
-            &[path],
-        )?;
-        let path = resolve_path::relative(top_level_dir, abs).to_vec();
-        match self.walk_tree(lockfile, &path) {
-            Some(bundler) => bundler,
-            None => Self::bundler_by_names(lockfile, &path),
-        }
+    fn iterator<'a>(&'a self, lockfile: &'a Lockfile) -> NodeModulesIterator<'a> {
+        tree::Iterator::from_slices(
+            &self.trees,
+            &self.hoisted_dependencies,
+            lockfile.buffers.dependencies.as_slice(),
+            lockfile.buffers.string_bytes.as_slice(),
+        )
     }
 
-    /// Follows `<workspace>/node_modules/a/node_modules/b` in the lockfile's tree. `None` when the tree does not have it.
-    fn walk_tree(&self, lockfile: &Lockfile, path: &[u8]) -> Option<Option<PackageID>> {
+    /// Follows `<workspace>/node_modules/a/node_modules/b` in the install tree. `None` when the tree cannot tell.
+    fn folder(&self, lockfile: &Lockfile, path: &[u8], pkg_id: PackageID) -> Option<Folder> {
         let mut components = strings::tokenize_any(path, b"/\\").peekable();
         let string_buf = lockfile.buffers.string_bytes.as_slice();
         let dependencies = lockfile.buffers.dependencies.as_slice();
-        let trees = lockfile.buffers.trees.as_slice();
+        let resolutions = lockfile.buffers.resolutions.as_slice();
+        let trees = self.trees.as_slice();
         let root_tree = trees.first()?;
         let dependency_in = |tree: &tree::Tree, alias: &[u8]| {
             tree.dependencies
-                .get(lockfile.buffers.hoisted_dependencies.as_slice())
+                .get(self.hoisted_dependencies.as_slice())
                 .iter()
                 .copied()
                 .find(|&dep_id| dependencies[dep_id as usize].name.slice(string_buf) == alias)
@@ -1430,14 +1415,16 @@ impl BundledPackages {
             }
             workspace_folder.extend_from_slice(component);
         }
-        let mut tree = if workspace_folder.is_empty() {
+        let first_tree = if workspace_folder.is_empty() {
             root_tree
         } else {
-            workspace_tree(lockfile, &workspace_folder)?
+            self.workspace_tree(lockfile, &workspace_folder)?
         };
 
         // The isolated linker links a workspace's dependency into the workspace even when the tree hoists it.
-        let mut hoisted_to = (tree.id != root_tree.id).then_some(root_tree);
+        let mut hoisted_to = (first_tree.id != root_tree.id).then_some(root_tree);
+        let mut tree = Some(first_tree);
+        let mut container: Option<PackageID> = None;
         let mut alias: Vec<u8> = Vec::new();
         while components.peek().is_some() {
             if components.next()? != b"node_modules" {
@@ -1449,122 +1436,131 @@ impl BundledPackages {
                 alias.push(b'/');
                 alias.extend_from_slice(components.next()?);
             }
-            let dep_id = match dependency_in(tree, &alias) {
-                Some(dep_id) => dep_id,
-                None => {
-                    tree = hoisted_to?;
-                    dependency_in(tree, &alias)?
-                }
+            let mut placed = tree.and_then(|tree| dependency_in(tree, &alias));
+            if let (None, Some(root_tree)) = (placed, hoisted_to.take()) {
+                tree = Some(root_tree);
+                placed = dependency_in(root_tree, &alias);
+            }
+            // The last folder also has to hold the package that the tree places there.
+            let is_last = components.peek().is_none();
+            let placed =
+                placed.filter(|&dep_id| !is_last || resolutions[dep_id as usize] == pkg_id);
+            let Some(dep_id) = placed else {
+                return container
+                    .filter(|&container| ships(lockfile, container, &alias))
+                    .map(Folder::ShippedBy);
             };
-            hoisted_to = None;
-            if let Some(bundler) = self.bundler_of_placement(lockfile, tree.id, dep_id) {
-                return Some(Some(bundler));
-            }
-            if components.peek().is_none() {
-                break;
-            }
-            tree = trees.iter().find(|child| {
-                child.parent == tree.id
-                    && dependencies
-                        .get(child.dependency_id as usize)
-                        .is_some_and(|dep| dep.name.slice(string_buf) == alias)
-            })?;
+            container = Some(resolutions[dep_id as usize]);
+            tree = tree.and_then(|parent| {
+                trees.iter().find(|child| {
+                    child.parent == parent.id
+                        && dependencies
+                            .get(child.dependency_id as usize)
+                            .is_some_and(|dep| dep.name.slice(string_buf) == alias)
+                })
+            });
         }
-        Some(None)
+        Some(Folder::Installed)
     }
 
-    /// For a path outside the tree: the package named `a` that ships `b`, for a `node_modules/<a>/node_modules/<b>` pair.
-    fn bundler_by_names(lockfile: &Lockfile, path: &[u8]) -> Option<PackageID> {
-        let mut components = strings::tokenize_any(path, b"/\\");
-        let mut container: Option<Vec<u8>> = None;
-        while let Some(component) = components.next() {
-            if component != b"node_modules" {
-                container = None;
-                continue;
-            }
-            let mut alias = components.next()?.to_vec();
-            if alias.starts_with(b"@") {
-                alias.push(b'/');
-                alias.extend_from_slice(components.next()?);
-            }
-            if let Some(container) = &container {
-                let bundler = match lockfile.package_index.get(&string_hash(container)) {
-                    Some(PackageIndexEntry::Id(id)) => {
-                        Some(*id).filter(|&id| Self::ships(lockfile, id, &alias))
-                    }
-                    Some(PackageIndexEntry::Ids(ids)) => ids
-                        .as_slice()
-                        .iter()
-                        .copied()
-                        .find(|&id| Self::ships(lockfile, id, &alias)),
-                    None => None,
-                };
-                if bundler.is_some() {
-                    return bundler;
-                }
-            }
-            container = Some(alias);
-        }
-        None
-    }
-
-    /// Is `alias` a bundled dependency of `bundler`, or a dependency of one? npm packs those into the same tarball.
-    fn ships(lockfile: &Lockfile, bundler: PackageID, alias: &[u8]) -> bool {
+    /// The tree of the workspace in `folder` (relative to the root, `/` separators). The root tree when it has none.
+    fn workspace_tree(&self, lockfile: &Lockfile, folder: &[u8]) -> Option<&tree::Tree> {
         let string_buf = lockfile.buffers.string_bytes.as_slice();
-        let resolutions = lockfile.buffers.resolutions.as_slice();
-        let dependencies = lockfile.buffers.dependencies.as_slice();
-        let dependency_lists = lockfile.packages.items_dependencies();
-
-        let mut seen = vec![false; dependency_lists.len()];
-        seen[bundler as usize] = true;
-        let mut queue: Vec<PackageID> = Vec::new();
-        let mut package = bundler;
-        let mut only_bundled = true;
-        loop {
-            let list = dependency_lists[package as usize];
-            for dep_id in list.begin() as usize..list.end() as usize {
-                if only_bundled && !dependencies[dep_id].behavior.is_bundled() {
-                    continue;
-                }
-                if dependencies[dep_id].name.slice(string_buf) == alias {
-                    return true;
-                }
-                if let Some(seen) = seen.get_mut(resolutions[dep_id] as usize) {
-                    if !core::mem::replace(seen, true) {
-                        queue.push(resolutions[dep_id]);
-                    }
-                }
-            }
-            only_bundled = false;
-            let Some(next) = queue.pop() else {
-                return false;
-            };
-            package = next;
-        }
+        let workspace_id = lockfile
+            .packages
+            .items_resolution()
+            .iter()
+            .position(|resolution| {
+                resolution.tag == ResolutionTag::Workspace
+                    && resolution.workspace().slice(string_buf) == folder
+            })? as PackageID;
+        let workspace_tree = self.trees.iter().find(|tree| {
+            tree.parent == 0
+                && lockfile
+                    .buffers
+                    .resolutions
+                    .get(tree.dependency_id as usize)
+                    == Some(&workspace_id)
+        });
+        workspace_tree.or_else(|| self.trees.first())
     }
 }
 
-/// The tree of the workspace in `folder` (relative to the root, `/` separators). The root tree when it has none.
-fn workspace_tree<'a>(lockfile: &'a Lockfile, folder: &[u8]) -> Option<&'a tree::Tree> {
+enum Folder {
+    /// The install tree places the package there.
+    Installed,
+    /// The install tree places nothing there, and the package around the folder bundles that name.
+    ShippedBy(PackageID),
+}
+
+/// For a path outside the tree: the package named `a` that ships `b`, for a `node_modules/<a>/node_modules/<b>` pair.
+fn bundler_by_names(lockfile: &Lockfile, path: &[u8]) -> Option<PackageID> {
+    let mut components = strings::tokenize_any(path, b"/\\");
+    let mut container: Option<Vec<u8>> = None;
+    while let Some(component) = components.next() {
+        if component != b"node_modules" {
+            container = None;
+            continue;
+        }
+        let mut alias = components.next()?.to_vec();
+        if alias.starts_with(b"@") {
+            alias.push(b'/');
+            alias.extend_from_slice(components.next()?);
+        }
+        if let Some(container) = &container {
+            let bundler = match lockfile.package_index.get(&string_hash(container)) {
+                Some(PackageIndexEntry::Id(id)) => {
+                    Some(*id).filter(|&id| ships(lockfile, id, &alias))
+                }
+                Some(PackageIndexEntry::Ids(ids)) => ids
+                    .as_slice()
+                    .iter()
+                    .copied()
+                    .find(|&id| ships(lockfile, id, &alias)),
+                None => None,
+            };
+            if bundler.is_some() {
+                return bundler;
+            }
+        }
+        container = Some(alias);
+    }
+    None
+}
+
+/// Is `alias` a bundled dependency of `bundler`, or a dependency of one? npm packs those into the same tarball.
+fn ships(lockfile: &Lockfile, bundler: PackageID, alias: &[u8]) -> bool {
     let string_buf = lockfile.buffers.string_bytes.as_slice();
-    let workspace_id = lockfile
-        .packages
-        .items_resolution()
-        .iter()
-        .position(|resolution| {
-            resolution.tag == ResolutionTag::Workspace
-                && resolution.workspace().slice(string_buf) == folder
-        })? as PackageID;
-    let trees = lockfile.buffers.trees.as_slice();
-    let workspace_tree = trees.iter().find(|tree| {
-        tree.parent == 0
-            && lockfile
-                .buffers
-                .resolutions
-                .get(tree.dependency_id as usize)
-                == Some(&workspace_id)
-    });
-    workspace_tree.or_else(|| trees.first())
+    let resolutions = lockfile.buffers.resolutions.as_slice();
+    let dependencies = lockfile.buffers.dependencies.as_slice();
+    let dependency_lists = lockfile.packages.items_dependencies();
+
+    let mut seen = vec![false; dependency_lists.len()];
+    seen[bundler as usize] = true;
+    let mut queue: Vec<PackageID> = Vec::new();
+    let mut package = bundler;
+    let mut only_bundled = true;
+    loop {
+        let list = dependency_lists[package as usize];
+        for dep_id in list.begin() as usize..list.end() as usize {
+            if only_bundled && !dependencies[dep_id].behavior.is_bundled() {
+                continue;
+            }
+            if dependencies[dep_id].name.slice(string_buf) == alias {
+                return true;
+            }
+            if let Some(seen) = seen.get_mut(resolutions[dep_id] as usize) {
+                if !core::mem::replace(seen, true) {
+                    queue.push(resolutions[dep_id]);
+                }
+            }
+        }
+        only_bundled = false;
+        let Some(next) = queue.pop() else {
+            return false;
+        };
+        package = next;
+    }
 }
 
 fn crash_bundled(lockfile: &Lockfile, name: &[u8], bundler: PackageID) -> ! {
@@ -1577,13 +1573,17 @@ fn crash_bundled(lockfile: &Lockfile, name: &[u8], bundler: PackageID) -> ! {
     Global::crash();
 }
 
-/// Exits when `path` is inside a bundled dependency, or when `pkg_id` is only ever bundled.
-fn crash_if_bundled_path(lockfile: &Lockfile, path: &[u8], pkg_id: PackageID, name: &[u8]) {
-    let bundled = BundledPackages::new(lockfile);
-    if let Some(bundler) = bundled
-        .bundler_on_path(lockfile, path)
-        .or_else(|| bundled.bundler_of_package(pkg_id))
-    {
+/// Exits when a tarball ships the folder at `path`, or when `pkg_id` is only ever bundled.
+fn crash_if_bundled_path(
+    lockfile: &Lockfile,
+    install_tree: &InstallTree,
+    path: &[u8],
+    pkg_id: PackageID,
+    name: &[u8],
+) {
+    let bundler = bundler_on_path(lockfile, install_tree, path, pkg_id)
+        .or_else(|| BundledPackages::new(lockfile).bundler_of_package(pkg_id));
+    if let Some(bundler) = bundler {
         crash_bundled(lockfile, name, bundler);
     }
 }
@@ -1644,16 +1644,16 @@ fn pkg_info_for_name_and_version(
     // user supplied a version e.g. `is-even@1.0.0`
     if version.is_some() {
         if pairs.len() == 1 {
-            let (_, pkg_id) = pairs[0];
-            let folder = match node_modules_folder_for_dependency_ids(
-                lockfile,
-                &bundled,
-                iterator,
-                &pairs[..1],
-                &mut bundler,
-            ) {
+            let (dep_id, pkg_id) = pairs[0];
+            let folder = match node_modules_folder_for_dependency_id(iterator, dep_id) {
                 Some(f) => f,
-                None => folder_not_found(lockfile, pkg_maybe_version_to_patch, bundler),
+                None => {
+                    bun_core::pretty_error!(
+                        "<r><red>error<r>: could not find the folder for <b>{}<r> in node_modules<r>\n<r>",
+                        bstr::BStr::new(pkg_maybe_version_to_patch),
+                    );
+                    Global::crash();
+                }
             };
             return (pkg_id, folder);
         }
@@ -1662,15 +1662,15 @@ fn pkg_info_for_name_and_version(
         // the final package in the node_modules might be hoisted
         // so we are going to try looking for each dep id in node_modules
         let (_, pkg_id) = pairs[0];
-        let folder = match node_modules_folder_for_dependency_ids(
-            lockfile,
-            &bundled,
-            iterator,
-            &pairs,
-            &mut bundler,
-        ) {
+        let folder = match node_modules_folder_for_dependency_ids(iterator, &pairs) {
             Some(f) => f,
-            None => folder_not_found(lockfile, pkg_maybe_version_to_patch, bundler),
+            None => {
+                bun_core::pretty_error!(
+                    "<r><red>error<r>: could not find the folder for <b>{}<r> in node_modules<r>\n<r>",
+                    bstr::BStr::new(pkg_maybe_version_to_patch),
+                );
+                Global::crash();
+            }
         };
 
         return (pkg_id, folder);
@@ -1680,16 +1680,16 @@ fn pkg_info_for_name_and_version(
 
     // Only one match, let's use it
     if pairs.len() == 1 {
-        let (_, pkg_id) = pairs[0];
-        let folder = match node_modules_folder_for_dependency_ids(
-            lockfile,
-            &bundled,
-            iterator,
-            &pairs[..1],
-            &mut bundler,
-        ) {
+        let (dep_id, pkg_id) = pairs[0];
+        let folder = match node_modules_folder_for_dependency_id(iterator, dep_id) {
             Some(f) => f,
-            None => folder_not_found(lockfile, pkg_maybe_version_to_patch, bundler),
+            None => {
+                bun_core::pretty_error!(
+                    "<r><red>error<r>: could not find the folder for <b>{}<r> in node_modules<r>\n<r>",
+                    bstr::BStr::new(pkg_maybe_version_to_patch),
+                );
+                Global::crash();
+            }
         };
         return (pkg_id, folder);
     }
@@ -1714,15 +1714,15 @@ fn pkg_info_for_name_and_version(
     // Disambiguate case a) from b)
     if count as usize == pairs.len() {
         // It may be hoisted, so we'll try the first one that matches
-        let folder = match node_modules_folder_for_dependency_ids(
-            lockfile,
-            &bundled,
-            iterator,
-            &pairs,
-            &mut bundler,
-        ) {
+        let folder = match node_modules_folder_for_dependency_ids(iterator, &pairs) {
             Some(f) => f,
-            None => folder_not_found(lockfile, pkg_maybe_version_to_patch, bundler),
+            None => {
+                bun_core::pretty_error!(
+                    "<r><red>error<r>: could not find the folder for <b>{}<r> in node_modules<r>\n<r>",
+                    bstr::BStr::new(pkg_maybe_version_to_patch),
+                );
+                Global::crash();
+            }
         };
         return (pkg_id, folder);
     }

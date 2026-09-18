@@ -1313,6 +1313,9 @@ declare module "bun:sqlite" {
      *
      * Rows that a trigger or a foreign key action such as `ON DELETE CASCADE` changes do not count.
      * {@link Database.run} with several statements in one string reports the sum of the statements.
+     *
+     * One limit: a schema statement such as `CREATE VIRTUAL TABLE` can report rows that a virtual
+     * table module (for example FTS5) writes to its own tables while the statement runs.
      */
     changes: number;
 

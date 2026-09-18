@@ -1469,13 +1469,12 @@ static bool isSkippedInSQLiteQuery(const char c)
     return c == ' ' || c == ';' || (c >= '\t' && c <= '\r');
 }
 
-// Rows the statement changed itself. The sqlite3_total_changes() delta also counts what triggers, foreign
-// key actions and virtual table shadow tables write. sqlite3_changes64() is set only by INSERT, UPDATE and
-// DELETE. After another statement it is the count of an earlier write, or of the nested FTS5 flush that a
-// COMMIT, SAVEPOINT or RELEASE runs (those are read-only, and the flush moves sqlite3_total_changes()).
+// sqlite3_changes64() persists across statements: report it only when this statement can have set it. Not exact
+// for DDL during which a virtual table writes, see https://github.com/oven-sh/bun/pull/43306.
 static sqlite3_int64 directChangesSince(sqlite3_stmt* stmt, int totalChangesBefore)
 {
     sqlite3* db = sqlite3_db_handle(stmt);
+    // COMMIT, SAVEPOINT and RELEASE are read-only but can flush FTS5, which moves sqlite3_total_changes().
     if (sqlite3_stmt_readonly(stmt) || sqlite3_total_changes(db) == totalChangesBefore)
         return 0;
     return sqlite3_changes64(db);

@@ -190,6 +190,32 @@ describe("idle release", () => {
     expect(exitCode).toBe(0);
   });
 
+  // The quiet a tick counts is what the timer was armed with, not the 30 s of the slow tick it may be on: with a 20 ms
+  // tick the timer is slow after 0.6 s and is then armed for the first due, and the tick that follows counted 30 s, which
+  // crossed both dues at once (one collection where the list says two).
+  test.concurrent("a due that comes on the slow tick does not swallow the one after it", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `setTimeout(() => console.error("MARK"), 300); setTimeout(() => console.error("DONE"), 4200);`,
+      ],
+      env: {
+        ...bunEnv,
+        BUN_IDLE_GC_SECONDS: "1,1",
+        BUN_JSC_logGC: "1",
+        BUN_GC_TIMER_DISABLE: undefined,
+        BUN_GC_TIMER_INTERVAL: "20",
+      },
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const fulls = (stderr.slice(stderr.indexOf("MARK"), stderr.indexOf("DONE")).match(/FullCollection/g) || []).length;
+    expect(fulls).toBeGreaterThanOrEqual(2);
+    expect(exitCode).toBe(0);
+  });
+
   test.concurrent("BUN_IDLE_GC_SECONDS=0 disables it", async () => {
     const { fulls, exitCode } = await run("0");
     expect(fulls).toBe(0);

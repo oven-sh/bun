@@ -318,8 +318,7 @@ pub fn do_patch_commit(
             }
         };
 
-        // `git diff --no-index` takes no pathspec. Move the nested packages
-        // the cache entry does not have (bun installed them) out and back.
+        // `git diff --no-index` takes no pathspec: the packages bun installed move out and back.
         let has_nested_node_modules: bool = 'has_nested_node_modules: {
             let new_folder_handle =
                 match Dir::cwd().open_dir(new_folder, sys::OpenDirOptions::default()) {
@@ -1176,8 +1175,7 @@ fn is_package_group(name: &[u8]) -> bool {
     bun_core::starts_with_char(name, b'@') || name == b".bin"
 }
 
-/// Moves every entry of `from` that `reference` lacks into `to` (`None`
-/// moves everything). `to` may be `reference` itself.
+/// Moves the entries of `from` that `reference` lacks into `to`. `None` moves all.
 fn move_entries_absent_from(
     from: &Dir,
     reference: Option<&Dir>,
@@ -1305,8 +1303,7 @@ fn overwrite_package_in_node_modules_folder(
     }
 }
 
-/// A cache entry ships its `node_modules` (bundled dependencies). A project
-/// folder has installs there, and `file:.` contains the destination.
+/// A cache entry ships its `node_modules`. A project folder or `file:.` does not.
 fn copy_package_from_cache(
     cache_dir: Fd,
     cache_dir_subpath: &[u8],

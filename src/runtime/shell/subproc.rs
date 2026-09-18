@@ -685,6 +685,7 @@ impl ShellSubprocess {
 
         // SAFETY: `interp` is the live owning interpreter (see `SpawnArgs::interp`).
         let foreground = !unsafe { &*interp }.in_background(cmd_parent.id);
+        #[cfg_attr(not(unix), allow(unused_mut))]
         let mut ctrl_c_child = foreground.then(bun_spawn::ctrl_c::Child::enter);
         // SAFETY: `spawn_args.argv` / `env_array` are local null-terminated
         // C-string arrays with argv[0] non-null; valid for this call.

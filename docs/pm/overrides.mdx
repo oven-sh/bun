@@ -150,4 +150,4 @@ Bun compares the selector with the range each dependent _declares_, not the reso
 
 - Bun supports only one parent level. It ignores `a>b>c`, `a/b/c`, and deeper object nesting with a warning.
 - Bun does not support pnpm's `"pkg@"` (empty selector) and `"-"` (remove dependency) forms, and skips them with a warning.
-- Bun writes a lockfile containing nested or version-scoped rules as `lockfileVersion` 3, which older versions of Bun cannot read.
+- Bun writes a lockfile containing nested or version-scoped rules as `lockfileVersion` 3, which Bun 1.3 and earlier cannot read. See [Upgrading to Bun 1.4](/upgrade-to-1.4) before adding such rules to a project that older Bun versions still install.

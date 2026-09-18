@@ -947,9 +947,20 @@ fn declared_slots_of_resolved_name(
         return Vec::new();
     }
     let is_peer = |list: &[u8]| list == DependencyGroup::PEER.prop;
+    // `fold_resolved_positionals` leaves the row of an optional peer alone, so its entry is not handed over either.
+    let optional_peer = package_json
+        .as_property(b"peerDependenciesMeta")
+        .and_then(|meta| meta.expr.as_property(name))
+        .and_then(|entry| entry.expr.as_property(b"optional"))
+        .is_some_and(
+            |optional| matches!(&optional.expr.data, bun_ast::ExprData::EBoolean(b) if b.value),
+        );
     DependencyGroup::FOUR
         .iter()
-        .filter(|group| is_peer(group.prop) == is_peer(dependency_list))
+        .filter(|group| {
+            is_peer(group.prop) == is_peer(dependency_list)
+                && !(optional_peer && is_peer(group.prop))
+        })
         .filter_map(|group| {
             let declared = package_json
                 .as_property(group.prop)?
@@ -1295,7 +1306,7 @@ pub(crate) fn edit(
                 break;
             }
 
-            // The slot above was just re-keyed from the request's literal to its resolved name. An entry `declared_slots_of_resolved_name` could not hand over, because its value is not a string, still has that key and would duplicate it.
+            // The slot above was just re-keyed from the request's literal to its resolved name. An entry `declared_slots_of_resolved_name` did not hand over (its value is not a string, or it is an optional peer) still has that key and would duplicate it.
             if !request.is_aliased && k < new_dependencies.len() {
                 let resolved_name = request.get_resolved_name(&manager.lockfile);
                 let mut j = new_dependencies.len();

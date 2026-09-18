@@ -1053,9 +1053,12 @@ impl Tree {
             let res_id = builder.resolutions[dep_id as usize];
 
             // A row bun installs keeps its own copy below its dependent. See `ShippedRows`.
+            // A peer still shares the bundled copy itself: the tarball always has that one
+            // at `<host>/node_modules/<name>`, and a peer wants one instance.
             if METHOD == BuilderMethod::Filter
                 && !shipped
                 && package_id != invalid_package_id
+                && !(dependency.behavior.is_peer() && dep.behavior.is_bundled())
                 && builder.shipped_rows.contains(this.id, dep_id)
             {
                 return HoistDependencyResult::DependencyLoop; // 3

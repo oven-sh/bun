@@ -1555,12 +1555,84 @@ describe("bundledDependencies", () => {
           ]),
         ).toEqual([false, false, { name: "no-deps", version: "1.0.0" }, { name: "no-deps", version: "1.0.0" }]);
 
-        const { stdout, exitCode } = Bun.spawnSync({
+        await using proc = spawn({
           cmd: [bunExe(), "-e", `console.log(require("bundled-shipped-sibling"), require("./index.js"))`],
           cwd: join(packageDir, "node_modules", "bundled-nested-host"),
           env,
+          stdout: "pipe",
+          stderr: "pipe",
         });
-        expect(stdout.toString()).toBe("1.0.0 1.0.0\n");
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stdout).toBe("1.0.0 1.0.0\n");
+        expect(stderr).toBe("");
+        expect(exitCode).toBe(0);
+      }
+
+      await check();
+
+      ({ exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "ignore",
+        stderr: "ignore",
+        env,
+      }));
+
+      expect(await exited).toBe(0);
+
+      await check();
+    });
+
+    test(`(${textLockfile ? "bun.lock" : "bun.lockb"}) a peer under a bundling host shares the bundled copy`, async () => {
+      // `bundled-peer-host` bundles `no-deps@1.0.0` and depends on `bundled-peer-plugin`, which
+      // has a peer dependency on `no-deps`. The plugin nests under the host and must load the
+      // host's bundled copy: one instance, no copy of its own, nothing at the root.
+      await write(
+        packageJson,
+        JSON.stringify({
+          name: "bundled-peer",
+          dependencies: {
+            "bundled-peer-host": "1.0.0",
+            "bundled-peer-plugin": "npm:no-deps@2.0.0",
+          },
+        }),
+      );
+
+      const cmd = textLockfile ? [bunExe(), "install", "--save-text-lockfile"] : [bunExe(), "install"];
+      let { exited } = spawn({
+        cmd,
+        cwd: packageDir,
+        stdout: "ignore",
+        stderr: "ignore",
+        env,
+      });
+
+      expect(await exited).toBe(0);
+
+      async function check() {
+        const host = join(packageDir, "node_modules", "bundled-peer-host");
+        expect(
+          await Promise.all([
+            exists(join(packageDir, "node_modules", "no-deps")),
+            exists(join(host, "node_modules", "bundled-peer-plugin", "node_modules")),
+            file(join(host, "node_modules", "no-deps", "package.json")).json(),
+          ]),
+        ).toEqual([false, false, { name: "no-deps", version: "1.0.0" }]);
+
+        await using proc = spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `const [a, b] = require("./index.js"); console.log(a === b, a.endsWith(${JSON.stringify(join("bundled-peer-host", "node_modules", "no-deps", "package.json"))}))`,
+          ],
+          cwd: host,
+          env,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stdout).toBe("true true\n");
+        expect(stderr).toBe("");
         expect(exitCode).toBe(0);
       }
 

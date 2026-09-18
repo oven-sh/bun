@@ -293,6 +293,16 @@ struct HttpResponseData;
         /* RFC 9112 9.6: "close" is a case-insensitive token in the Connection list. */
         bool hasConnectionClose()
         {
+            return hasConnectionToken("close");
+        }
+
+        /* Whether some Connection field lists `lowerToken` as a whole item
+         * (case-insensitive, OWS around the item ignored, split on ','). This is
+         * also llhttp's Connection grammar (header_value_connection in
+         * src/llhttp/http.ts since 9.4.2), so node:http takes its close and
+         * upgrade verdicts from here. "close-x" and "foo close" do not count. */
+        bool hasConnectionToken(std::string_view lowerToken)
+        {
             if (!bf.mightHave("connection")) {
                 return false;
             }
@@ -314,7 +324,7 @@ struct HttpResponseData;
                     while (tokenEnd > tokenStart && (value[tokenEnd - 1] == ' ' || value[tokenEnd - 1] == '\t')) {
                         tokenEnd--;
                     }
-                    if (tokenEnd - tokenStart == 5 && !strncasecmp(value.data() + tokenStart, "close", 5)) {
+                    if (tokenEnd - tokenStart == lowerToken.length() && !strncasecmp(value.data() + tokenStart, lowerToken.data(), lowerToken.length())) {
                         return true;
                     }
                     if (pos < value.length()) {

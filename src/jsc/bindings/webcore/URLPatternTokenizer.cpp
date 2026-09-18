@@ -255,8 +255,10 @@ ExceptionOr<Vector<Token>> Tokenizer::tokenize()
 
             auto regexLength = regexPosition - regexStart - 1;
 
-            if (!regexLength)
+            if (!regexLength) {
                 maybeException = processTokenizingError(regexStart, m_index, "Regex length is zero."_s);
+                continue;
+            }
 
             addToken(TokenType::Regexp, regexPosition, regexStart, regexLength);
             continue;

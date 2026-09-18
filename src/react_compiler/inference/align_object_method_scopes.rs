@@ -12,6 +12,7 @@
 use std::cmp;
 use std::collections::{HashMap, HashSet};
 
+use crate::diagnostics::{CompilerDiagnostic, cold_invariant};
 use crate::hir::environment::Environment;
 use crate::hir::{
     EvaluationOrder, HirFunction, IdentifierId, InstructionValue, ObjectPropertyOrSpread, ScopeId,
@@ -25,7 +26,10 @@ use crate::utils::DisjointSet;
 /// Identifies ObjectMethod lvalue identifiers and then finds ObjectExpression
 /// instructions whose operands reference those methods. Returns a disjoint set
 /// of scopes that must be merged.
-fn find_scopes_to_merge(func: &HirFunction, env: &Environment) -> DisjointSet<ScopeId> {
+fn find_scopes_to_merge(
+    func: &HirFunction,
+    env: &Environment,
+) -> Result<DisjointSet<ScopeId>, CompilerDiagnostic> {
     let mut object_method_decls: HashSet<IdentifierId> = HashSet::new();
     let mut merged_scopes = DisjointSet::<ScopeId>::new();
 
@@ -48,14 +52,22 @@ fn find_scopes_to_merge(func: &HirFunction, env: &Environment) -> DisjointSet<Sc
                             let lvalue_scope =
                                 env.identifiers[instr.lvalue.identifier.0 as usize].scope;
 
-                            // TS: CompilerError.invariant(operandScope != null && lvalueScope != null, ...)
-                            let operand_sid = operand_scope.expect(
-                                "Internal error: Expected all ObjectExpressions and ObjectMethods to have non-null scope.",
-                            );
-                            let lvalue_sid = lvalue_scope.expect(
-                                "Internal error: Expected all ObjectExpressions and ObjectMethods to have non-null scope.",
-                            );
-                            merged_scopes.union(&[operand_sid, lvalue_sid]);
+                            match (operand_scope, lvalue_scope) {
+                                (Some(operand_sid), Some(lvalue_sid)) => {
+                                    merged_scopes.union(&[operand_sid, lvalue_sid]);
+                                }
+                                // No scopes exist without memoization. Upstream throws here.
+                                (None, None) if !env.enable_memoization() => {}
+                                // TS: CompilerError.invariant(operandScope != null && lvalueScope != null, ...)
+                                _ => {
+                                    return Err(cold_invariant(
+                                        "Internal error: Expected all ObjectExpressions and ObjectMethods to have non-null scope.",
+                                        None,
+                                        None,
+                                    )
+                                    .into());
+                                }
+                            }
                         }
                     }
                 }
@@ -64,7 +76,7 @@ fn find_scopes_to_merge(func: &HirFunction, env: &Environment) -> DisjointSet<Sc
         }
     }
 
-    merged_scopes
+    Ok(merged_scopes)
 }
 
 // =============================================================================
@@ -75,7 +87,10 @@ fn find_scopes_to_merge(func: &HirFunction, env: &Environment) -> DisjointSet<Sc
 /// ObjectExpression share the same scope.
 ///
 /// Corresponds to TS `alignObjectMethodScopes(fn: HIRFunction): void`.
-pub fn align_object_method_scopes(func: &mut HirFunction, env: &mut Environment) {
+pub(crate) fn align_object_method_scopes(
+    func: &mut HirFunction,
+    env: &mut Environment,
+) -> Result<(), CompilerDiagnostic> {
     // Handle inner functions first (TS recurses before processing the outer function)
     for (_block_id, block) in &func.body.blocks {
         for &instr_id in &block.instructions {
@@ -88,7 +103,7 @@ pub fn align_object_method_scopes(func: &mut HirFunction, env: &mut Environment)
                         &mut env.functions[func_id.0 as usize],
                         crate::ssa::enter_ssa::placeholder_function(),
                     );
-                    align_object_method_scopes(&mut inner_func, env);
+                    align_object_method_scopes(&mut inner_func, env)?;
                     env.functions[func_id.0 as usize] = inner_func;
                 }
                 _ => {}
@@ -96,7 +111,7 @@ pub fn align_object_method_scopes(func: &mut HirFunction, env: &mut Environment)
         }
     }
 
-    let mut merged_scopes = find_scopes_to_merge(func, env);
+    let mut merged_scopes = find_scopes_to_merge(func, env)?;
 
     // Step 1: Merge affected scopes to their canonical root.
     // Use a HashMap to accumulate min/max across all scopes mapping to the same root,
@@ -165,4 +180,6 @@ pub fn align_object_method_scopes(func: &mut HirFunction, env: &mut Environment)
             }
         }
     }
+
+    Ok(())
 }

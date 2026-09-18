@@ -1,11 +1,10 @@
-use bstr::ByteSlice;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 use super::{Expect, get_signature, throw};
 
 impl Expect {
     #[bun_jsc::host_fn(method)]
-    pub fn to_include_repeated(
+    pub(crate) fn to_include_repeated(
         &self,
         global: &JSGlobalObject,
         frame: &CallFrame,
@@ -15,8 +14,7 @@ impl Expect {
         let this = self.post_match_guard(global);
 
         let this_value = frame.this();
-        let arguments_ = frame.arguments_old::<2>();
-        let arguments = arguments_.slice();
+        let arguments = frame.arguments();
 
         if arguments.len() < 2 {
             return Err(global.throw_invalid_arguments(format_args!(
@@ -60,9 +58,8 @@ impl Expect {
 
         let not = this.flags.get().not();
 
-        let expect_string_as_str_owned = expect_string.to_slice_or_null(global)?;
-        let sub_string_as_str_owned = substring.to_slice_or_null(global)?;
-        // cleanup handled by Drop
+        let expect_string_as_str_owned = expect_string.to_utf8(global)?;
+        let sub_string_as_str_owned = substring.to_utf8(global)?;
 
         let expect_string_as_str = expect_string_as_str_owned.slice();
         let sub_string_as_str = sub_string_as_str_owned.slice();
@@ -74,7 +71,7 @@ impl Expect {
         }
 
         // Non-overlapping occurrence count.
-        let actual_count = expect_string_as_str.find_iter(sub_string_as_str).count();
+        let actual_count = bun_core::strings::count(expect_string_as_str, sub_string_as_str);
         let mut pass = actual_count == count_as_num as usize;
 
         if not {

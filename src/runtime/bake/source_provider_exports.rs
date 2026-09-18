@@ -38,8 +38,10 @@ unsafe extern "C" {
     // from the `&self` borrows below; any interior mutation lives behind the
     // FFI boundary in C++-owned storage that Rust has no provenance over
     // (these types are opaque ZST markers).
-    fn BakeSourceProvider__getSourceSlice(this: *const BakeSourceProvider) -> BunString;
-    fn DevServerSourceProvider__getSourceSlice(this: *const DevServerSourceProvider) -> BunString;
+    fn BakeSourceProvider__getSourceSlice(this: &BakeSourceProvider) -> bun_core::StringView<'_>;
+    fn DevServerSourceProvider__getSourceSlice(
+        this: &DevServerSourceProvider,
+    ) -> bun_core::StringView<'_>;
     fn DevServerSourceProvider__getSourceMapJSON(
         this: *const DevServerSourceProvider,
     ) -> DevServerSourceMapData;
@@ -50,9 +52,8 @@ unsafe extern "C" {
 impl SourceProvider for BakeSourceProvider {
     const HAS_EXTERNAL_DATA: bool = true;
 
-    fn get_source_slice(&self) -> BunString {
-        // SAFETY: opaque FFI handle; address-only pass-through, callee does
-        // not write Rust-visible memory.
+    fn get_source_slice(&self) -> bun_core::StringView<'_> {
+        // SAFETY: opaque FFI handle.
         unsafe { BakeSourceProvider__getSourceSlice(self) }
     }
 
@@ -94,9 +95,8 @@ impl SourceProvider for BakeSourceProvider {
 impl SourceProvider for DevServerSourceProvider {
     const HAS_SOURCE_MAP_JSON: bool = true;
 
-    fn get_source_slice(&self) -> BunString {
-        // SAFETY: opaque FFI handle; address-only pass-through, callee does
-        // not write Rust-visible memory.
+    fn get_source_slice(&self) -> bun_core::StringView<'_> {
+        // SAFETY: opaque FFI handle.
         unsafe { DevServerSourceProvider__getSourceSlice(self) }
     }
 

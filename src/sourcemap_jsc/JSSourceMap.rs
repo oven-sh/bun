@@ -7,23 +7,23 @@ use bstr::BStr;
 
 use bun_core::{self as bstring, strings};
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _, bun_string_jsc};
-use bun_sourcemap::{Mapping, Ordinal, ParseResult, ParsedSourceMap, mapping};
+use bun_sourcemap::{Mapping, Ordinal, ParsedSourceMap, mapping};
 
 // generate-classes.ts does not emit Rust accessors yet, so the
 // `to_js`/cached-setter helpers below forward to the codegen-emitted C++
 // symbols by hand.
 pub struct JSSourceMap {
-    pub sourcemap: Arc<ParsedSourceMap>,
-    pub sources: Box<[bstring::String]>,
-    pub names: Box<[bstring::String]>,
+    pub(crate) sourcemap: Arc<ParsedSourceMap>,
+    pub(crate) sources: Box<[bstring::String]>,
+    pub(crate) names: Box<[bstring::String]>,
 }
 
 /// TODO: when we implement --enable-source-map CLI flag, set this to true.
 // Mutable global; AtomicBool for safe mutation.
-pub(crate) static ENABLE_SOURCE_MAPS: AtomicBool = AtomicBool::new(false);
+static ENABLE_SOURCE_MAPS: AtomicBool = AtomicBool::new(false);
 
 #[bun_jsc::host_fn(export = "Bun__JSSourceMap__find")]
-pub(crate) fn find_source_map(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+fn find_source_map(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     // Node.js doesn't enable source maps by default.
     // In Bun, we do use them for almost all files since we transpile almost all files
     // If we enable this by default, we don't have a `payload` object since we don't internally create one.
@@ -38,9 +38,7 @@ pub(crate) fn find_source_map(global: &JSGlobalObject, frame: &CallFrame) -> JsR
         return Ok(JSValue::UNDEFINED);
     }
 
-    // reshaped for borrowck — `source_url_slice` borrows `source_url_string`;
-    // explicit deref/deinit calls become Drop on reassignment.
-    let mut source_url_string = bun_string_jsc::from_js(source_url_value, global)?;
+    let mut source_url_string = bun_core::String::from_js(source_url_value, global)?;
     let mut source_url_slice = source_url_string.to_utf8();
 
     {
@@ -55,7 +53,7 @@ pub(crate) fn find_source_map(global: &JSGlobalObject, frame: &CallFrame) -> JsR
 
     if let Some(source_url_index) = strings::index_of(source_url_slice.slice(), b"://") {
         if &source_url_slice.slice()[..source_url_index] == b"file" {
-            let path = bun_jsc::URL::path_from_file_url(source_url_string.dupe_ref());
+            let path = bun_url::path_from_file_url(&source_url_string);
 
             if path.is_dead() {
                 return Err(global.throw_value(global.err_invalid_url(format_args!(
@@ -78,8 +76,8 @@ pub(crate) fn find_source_map(global: &JSGlobalObject, frame: &CallFrame) -> JsR
     let Some(source_map) = vm.source_mappings().get(source_url) else {
         return Ok(JSValue::UNDEFINED);
     };
-    // Box allocation aborts on OOM (handleOom semantics).
-    let fake_sources_array: Box<[bstring::String]> = Box::new([source_url_string.dupe_ref()]);
+    drop(source_url_slice);
+    let fake_sources_array: Box<[bstring::String]> = Box::new([source_url_string]);
 
     // `SavedSourceMap::get` hands back a +1 ref as an `Arc<ParsedSourceMap>`;
     // `Drop` on the field releases it — no manual `deref_()` needed.
@@ -120,11 +118,9 @@ impl JSSourceMap {
                 global.throw_invalid_arguments(format_args!("payload 'mappings' must be a string"))
             );
         };
-        let mappings_value = bstring::OwnedString::new(mappings_value);
 
         let mappings_str = mappings_value.to_utf8();
 
-        // errdefer blocks deleted: Vec<bun_core::String> drops each element (deref) on `?` unwind.
         let mut names: Vec<bstring::String> = Vec::new();
         let mut sources: Vec<bstring::String> = Vec::new();
 
@@ -157,15 +153,15 @@ impl JSSourceMap {
         );
 
         let mapping_list = match parse_result {
-            ParseResult::Success(parsed) => parsed,
-            ParseResult::Fail(fail) => {
+            Ok(parsed) => parsed,
+            Err(fail) => {
                 if let Some(loc) = fail.loc.to_nullable() {
                     return Err(global.throw_value(global.create_syntax_error_instance(
-                        format_args!("{} at {}", BStr::new(fail.msg), loc.start),
+                        format_args!("{} at {}", fail.err.message(), loc.start),
                     )));
                 }
                 return Err(global.throw_value(
-                    global.create_syntax_error_instance(format_args!("{}", BStr::new(fail.msg))),
+                    global.create_syntax_error_instance(format_args!("{}", fail.err.message())),
                 ));
             }
         };
@@ -267,6 +263,9 @@ impl JSSourceMap {
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
         let [line_number, column_number] = get_line_column(global, frame)?;
+        if line_number < 0 || column_number < 0 {
+            return Ok(JSValue::create_empty_object(global, 0));
+        }
 
         let Some(mapping) = this.sourcemap.find_mapping(
             Ordinal::from_zero_based(line_number),
@@ -296,6 +295,9 @@ impl JSSourceMap {
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
         let [line_number, column_number] = get_line_column(global, frame)?;
+        if line_number < 0 || column_number < 0 {
+            return Ok(JSValue::create_empty_object(global, 0));
+        }
 
         let Some(mapping) = this.sourcemap.find_mapping(
             Ordinal::from_zero_based(line_number),

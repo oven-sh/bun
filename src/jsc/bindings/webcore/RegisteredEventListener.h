@@ -36,16 +36,18 @@ class WeakPtrImplWithEventTargetData;
 class RegisteredEventListener : public RefCounted<RegisteredEventListener> {
 public:
     struct Options {
-        Options(bool capture = false, bool passive = false, bool once = false)
+        Options(bool capture = false, bool passive = false, bool once = false, bool resistStopPropagation = false)
             : capture(capture)
             , passive(passive)
             , once(once)
+            , resistStopPropagation(resistStopPropagation)
         {
         }
 
         bool capture;
         bool passive;
         bool once;
+        bool resistStopPropagation;
     };
 
     static Ref<RegisteredEventListener> create(Ref<EventListener>&& listener, const Options& options)
@@ -60,6 +62,7 @@ public:
     bool isPassive() const { return m_isPassive; }
     bool isOnce() const { return m_isOnce; }
     bool wasRemoved() const { return m_wasRemoved; }
+    bool resistsStopPropagation() const { return m_resistStopPropagation; }
 
     void markAsRemoved();
 
@@ -77,6 +80,7 @@ private:
         , m_isPassive(options.passive)
         , m_isOnce(options.once)
         , m_wasRemoved(false)
+        , m_resistStopPropagation(options.resistStopPropagation)
         , m_callback(WTF::move(listener))
     {
     }
@@ -85,6 +89,7 @@ private:
     bool m_isPassive : 1;
     bool m_isOnce : 1;
     bool m_wasRemoved : 1;
+    bool m_resistStopPropagation : 1;
     uint32_t m_abortAlgorithmIdentifier { 0 };
     Ref<EventListener> m_callback;
     WeakPtr<AbortSignal, WeakPtrImplWithEventTargetData> m_abortSignal;

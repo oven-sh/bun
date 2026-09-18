@@ -80,6 +80,51 @@ test("isBoxedPrimitive", () => {
   );
 });
 
+test("isBigIntObject/isSymbolObject/isBoxedPrimitive survive structure and prototype changes", () => {
+  const cases = [
+    ["isBigIntObject", () => Object(1n)],
+    ["isSymbolObject", () => Object(Symbol())],
+  ];
+  for (const [method, make] of cases) {
+    const withProp = make();
+    withProp.foo = "bar";
+    const nullProto = Object.setPrototypeOf(make(), null);
+    const arrayProto = Object.setPrototypeOf(make(), Array.prototype);
+
+    expect({
+      [method]: {
+        plain: types[method](make()),
+        withProp: types[method](withProp),
+        nullProto: types[method](nullProto),
+        arrayProto: types[method](arrayProto),
+        primitive: types[method](make().valueOf()),
+        plainObject: types[method]({}),
+      },
+      isBoxedPrimitive: {
+        plain: types.isBoxedPrimitive(make()),
+        withProp: types.isBoxedPrimitive(withProp),
+        nullProto: types.isBoxedPrimitive(nullProto),
+        arrayProto: types.isBoxedPrimitive(arrayProto),
+      },
+    }).toEqual({
+      [method]: {
+        plain: true,
+        withProp: true,
+        nullProto: true,
+        arrayProto: true,
+        primitive: false,
+        plainObject: false,
+      },
+      isBoxedPrimitive: {
+        plain: true,
+        withProp: true,
+        nullProto: true,
+        arrayProto: true,
+      },
+    });
+  }
+});
+
 {
   const primitive = true;
   const arrayBuffer = new ArrayBuffer();

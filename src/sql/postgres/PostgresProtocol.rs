@@ -38,21 +38,15 @@ pub fn write_query<Context: WriterContext>(
     Ok(())
 }
 
-pub use crate::postgres::protocol::array_list::ArrayList;
 pub use crate::postgres::protocol::authentication::Authentication;
 pub use crate::postgres::protocol::backend_key_data::BackendKeyData;
-pub use crate::postgres::protocol::close::Close;
 pub use crate::postgres::protocol::command_complete::CommandComplete;
 pub use crate::postgres::protocol::copy_data::CopyData;
-pub use crate::postgres::protocol::copy_fail::CopyFail;
 pub use crate::postgres::protocol::data_row as DataRow;
 pub use crate::postgres::protocol::describe::Describe;
 pub use crate::postgres::protocol::error_response::ErrorResponse;
 pub use crate::postgres::protocol::execute::Execute;
 pub use crate::postgres::protocol::field_description::FieldDescription;
-pub use crate::postgres::protocol::field_message::FieldMessage;
-pub use crate::postgres::protocol::field_type::FieldType;
-pub use crate::postgres::protocol::negotiate_protocol_version::NegotiateProtocolVersion;
 pub use crate::postgres::protocol::new_reader::{NewReader, ReaderContext};
 pub use crate::postgres::protocol::new_writer::{NewWriter, WriterContext};
 pub use crate::postgres::protocol::notice_response::NoticeResponse;
@@ -68,4 +62,3 @@ pub use crate::postgres::protocol::sasl_initial_response::SASLInitialResponse;
 pub use crate::postgres::protocol::sasl_response::SASLResponse;
 pub use crate::postgres::protocol::stack_reader::StackReader;
 pub use crate::postgres::protocol::startup_message::StartupMessage;
-pub use crate::shared::column_identifier::ColumnIdentifier;

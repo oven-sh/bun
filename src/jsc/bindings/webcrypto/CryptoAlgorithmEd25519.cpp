@@ -76,7 +76,7 @@ Ref<CryptoAlgorithm> CryptoAlgorithmEd25519::create()
 
 void CryptoAlgorithmEd25519::generateKey(const CryptoAlgorithmParameters&, bool extractable, CryptoKeyUsageBitmap usages, KeyOrKeyPairCallback&& callback, ExceptionCallback&& exceptionCallback, ScriptExecutionContext&)
 {
-    if (usages & (CryptoKeyUsageEncrypt | CryptoKeyUsageDecrypt | CryptoKeyUsageDeriveKey | CryptoKeyUsageDeriveBits | CryptoKeyUsageWrapKey | CryptoKeyUsageUnwrapKey)) {
+    if (usages & (CryptoKeyUsageEncrypt | CryptoKeyUsageDecrypt | CryptoKeyUsageDeriveKey | CryptoKeyUsageDeriveBits | CryptoKeyUsageWrapKey | CryptoKeyUsageUnwrapKey | CryptoKeyUsageKemMask)) {
         exceptionCallback(SyntaxError, ""_s);
         return;
     }
@@ -120,15 +120,31 @@ void CryptoAlgorithmEd25519::verify(const CryptoAlgorithmParameters&, Ref<Crypto
 void CryptoAlgorithmEd25519::importKey(CryptoKeyFormat format, KeyData&& data, const CryptoAlgorithmParameters&, bool extractable, CryptoKeyUsageBitmap usages, KeyCallback&& callback, ExceptionCallback&& exceptionCallback)
 {
     RefPtr<CryptoKeyOKP> result;
+    bool keyTypeMismatch = false;
     switch (format) {
+    case CryptoKeyFormat::RawSecret:
+    case CryptoKeyFormat::RawPublic: // aliased to Raw in SubtleCrypto::importKey
+    case CryptoKeyFormat::RawSeed:
+        exceptionCallback(NotSupportedError, ""_s);
+        return;
     case CryptoKeyFormat::Jwk: {
         JsonWebKey key = WTF::move(std::get<JsonWebKey>(data));
         if (usages && ((!key.d.isNull() && (usages ^ CryptoKeyUsageSign)) || (key.d.isNull() && (usages ^ CryptoKeyUsageVerify)))) {
-            exceptionCallback(SyntaxError, ""_s);
+            exceptionCallback(SyntaxError, "Unsupported key usage for an Ed25519 key"_s);
             return;
         }
         if (usages && !key.use.isNull() && key.use != "sig"_s) {
-            exceptionCallback(DataError, ""_s);
+            exceptionCallback(DataError, "Invalid JWK \"use\" Parameter"_s);
+            return;
+        }
+        // RFC 8037: "crv" names the curve, and "alg" — when present — is either the
+        // curve name or "EdDSA".
+        if (!key.crv.isNull() && key.crv != "Ed25519"_s) {
+            exceptionCallback(DataError, "JWK \"crv\" Parameter and algorithm name mismatch"_s);
+            return;
+        }
+        if (!key.alg.isNull() && key.alg != "Ed25519"_s && key.alg != "EdDSA"_s) {
+            exceptionCallback(DataError, "JWK \"alg\" does not match the requested algorithm"_s);
             return;
         }
         result = CryptoKeyOKP::importJwk(CryptoAlgorithmIdentifier::Ed25519, CryptoKeyOKP::NamedCurve::Ed25519, WTF::move(key), extractable, usages);
@@ -136,28 +152,28 @@ void CryptoAlgorithmEd25519::importKey(CryptoKeyFormat format, KeyData&& data, c
     }
     case CryptoKeyFormat::Raw:
         if (usages && (usages ^ CryptoKeyUsageVerify)) {
-            exceptionCallback(SyntaxError, ""_s);
+            exceptionCallback(SyntaxError, "Unsupported key usage for an Ed25519 key"_s);
             return;
         }
         result = CryptoKeyOKP::importRaw(CryptoAlgorithmIdentifier::Ed25519, CryptoKeyOKP::NamedCurve::Ed25519, WTF::move(std::get<Vector<uint8_t>>(data)), extractable, usages);
         break;
     case CryptoKeyFormat::Spki:
         if (usages && (usages ^ CryptoKeyUsageVerify)) {
-            exceptionCallback(SyntaxError, ""_s);
+            exceptionCallback(SyntaxError, "Unsupported key usage for an Ed25519 key"_s);
             return;
         }
-        result = CryptoKeyOKP::importSpki(CryptoAlgorithmIdentifier::Ed25519, CryptoKeyOKP::NamedCurve::Ed25519, WTF::move(std::get<Vector<uint8_t>>(data)), extractable, usages);
+        result = CryptoKeyOKP::importSpki(CryptoAlgorithmIdentifier::Ed25519, CryptoKeyOKP::NamedCurve::Ed25519, WTF::move(std::get<Vector<uint8_t>>(data)), extractable, usages, &keyTypeMismatch);
         break;
     case CryptoKeyFormat::Pkcs8:
         if (usages && (usages ^ CryptoKeyUsageSign)) {
-            exceptionCallback(SyntaxError, ""_s);
+            exceptionCallback(SyntaxError, "Unsupported key usage for an Ed25519 key"_s);
             return;
         }
-        result = CryptoKeyOKP::importPkcs8(CryptoAlgorithmIdentifier::Ed25519, CryptoKeyOKP::NamedCurve::Ed25519, WTF::move(std::get<Vector<uint8_t>>(data)), extractable, usages);
+        result = CryptoKeyOKP::importPkcs8(CryptoAlgorithmIdentifier::Ed25519, CryptoKeyOKP::NamedCurve::Ed25519, WTF::move(std::get<Vector<uint8_t>>(data)), extractable, usages, &keyTypeMismatch);
         break;
     }
     if (!result) {
-        exceptionCallback(DataError, ""_s);
+        exceptionCallback(DataError, keyTypeMismatch ? "Invalid key type"_s : "Invalid keyData"_s);
         return;
     }
     callback(*result);
@@ -172,6 +188,11 @@ void CryptoAlgorithmEd25519::exportKey(CryptoKeyFormat format, Ref<CryptoKey>&& 
     }
     KeyData result;
     switch (format) {
+    case CryptoKeyFormat::RawSecret:
+    case CryptoKeyFormat::RawPublic: // aliased to Raw in SubtleCrypto::exportKey
+    case CryptoKeyFormat::RawSeed:
+        exceptionCallback(NotSupportedError, ""_s);
+        return;
     case CryptoKeyFormat::Jwk: {
         auto jwk = okpKey.exportJwk();
         if (jwk.hasException()) {

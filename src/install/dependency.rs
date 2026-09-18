@@ -72,8 +72,6 @@ pub trait DependencyExt {
         log: impl Into<Option<&'a mut bun_ast::Log>>,
         package_manager: impl Into<Option<&'b mut PackageManager>>,
     ) -> Option<Version>;
-    fn is_less_than(string_buf: &[u8], lhs: &Dependency, rhs: &Dependency) -> bool;
-    fn cmp(string_buf: &[u8], lhs: &Dependency, rhs: &Dependency) -> Ordering;
     fn count_with_different_buffers<SB: StringBuilderLike>(
         &self,
         name_buf: &[u8],
@@ -95,7 +93,6 @@ pub trait DependencyExt {
         builder: &mut SB,
     ) -> Result<Dependency, crate::Error>;
     fn realname(&self) -> String;
-    fn is_aliased(&self, buf: &[u8]) -> bool;
     fn eql(&self, b: &Dependency, lhs_buf: &[u8], rhs_buf: &[u8]) -> bool;
     fn is_remote_tarball(dep: &[u8]) -> bool;
     fn parse<'a, 'b>(
@@ -159,32 +156,6 @@ impl DependencyExt for Dependency {
         )
     }
 
-    /// Sorting order for dependencies is:
-    /// 1. [ `peerDependencies`, `optionalDependencies`, `devDependencies`, `dependencies` ]
-    /// 2. name ASC
-    /// "name" must be ASC so that later, when we rebuild the lockfile
-    /// we insert it back in reverse order without an extra sorting pass
-    fn is_less_than(string_buf: &[u8], lhs: &Dependency, rhs: &Dependency) -> bool {
-        let behavior = lhs.behavior.cmp(rhs.behavior);
-        if behavior != Ordering::Equal {
-            return behavior == Ordering::Less;
-        }
-
-        let lhs_name = lhs.name.slice(string_buf);
-        let rhs_name = rhs.name.slice(string_buf);
-        strings::cmp_strings_asc((), lhs_name, rhs_name)
-    }
-
-    /// Total-order comparator for `slice::sort_by`. Same key as
-    /// `is_less_than`: behavior group, then name ASC.
-    fn cmp(string_buf: &[u8], lhs: &Dependency, rhs: &Dependency) -> Ordering {
-        let behavior = lhs.behavior.cmp(rhs.behavior);
-        if behavior != Ordering::Equal {
-            return behavior;
-        }
-        lhs.name.slice(string_buf).cmp(rhs.name.slice(string_buf))
-    }
-
     fn count_with_different_buffers<SB: StringBuilderLike>(
         &self,
         name_buf: &[u8],
@@ -193,6 +164,9 @@ impl DependencyExt for Dependency {
     ) {
         builder.count(self.name.slice(name_buf));
         builder.count(self.version.literal.slice(version_buf));
+        if self.version.tag == Tag::Workspace {
+            builder.count(self.version.workspace().slice(version_buf));
+        }
     }
 
     fn count<SB: StringBuilderLike>(&self, buf: &[u8], builder: &mut SB) {
@@ -222,13 +196,21 @@ impl DependencyExt for Dependency {
         // prior slice. Append first, then borrow the (now-stable) buffer.
         let new_literal = builder.append_string(self.version.literal.slice(version_buf));
         let new_name = builder.append_string(self.name.slice(name_buf));
-        let out_slice = builder.string_bytes();
-        let sliced = new_literal.sliced(out_slice);
 
-        Ok(Dependency {
-            name_hash: self.name_hash,
-            name: new_name,
-            version: parse_with_tag(
+        // A workspace edge's path is not always its literal: `Package::parse` links an npm range
+        // (`^1`, `*`, `npm:pkg@1`) to a workspace and keeps the range as the literal.
+        let version = if self.version.tag == Tag::Workspace {
+            Version {
+                tag: Tag::Workspace,
+                literal: new_literal,
+                value: Value {
+                    workspace: builder.append_string(self.version.workspace().slice(version_buf)),
+                },
+            }
+        } else {
+            let out_slice = builder.string_bytes();
+            let sliced = new_literal.sliced(out_slice);
+            parse_with_tag(
                 new_name,
                 Some(Semver::string::Builder::string_hash(
                     new_name.slice(out_slice),
@@ -239,7 +221,13 @@ impl DependencyExt for Dependency {
                 None,
                 Some(package_manager as &mut dyn NpmAliasRegistry),
             )
-            .unwrap_or_default(),
+            .unwrap_or_default()
+        };
+
+        Ok(Dependency {
+            name_hash: self.name_hash,
+            name: new_name,
+            version,
             behavior: self.behavior,
         })
     }
@@ -254,18 +242,6 @@ impl DependencyExt for Dependency {
             Tag::Npm => self.version.npm().name,
             Tag::Tarball => self.version.tarball().package_name,
             _ => self.name,
-        }
-    }
-
-    #[inline]
-    fn is_aliased(&self, buf: &[u8]) -> bool {
-        match self.version.tag {
-            Tag::Npm => !self.version.npm().name.eql(self.name, buf, buf),
-            Tag::DistTag => !self.version.dist_tag().name.eql(self.name, buf, buf),
-            Tag::Git => !self.version.git().package_name.eql(self.name, buf, buf),
-            Tag::Github => !self.version.github().package_name.eql(self.name, buf, buf),
-            Tag::Tarball => !self.version.tarball().package_name.eql(self.name, buf, buf),
-            _ => false,
         }
     }
 
@@ -331,9 +307,9 @@ const SIZE: usize = core::mem::size_of::<VersionExternal>()
 
 pub struct Context<'a> {
     // allocator dropped (global mimalloc)
-    pub log: &'a mut bun_ast::Log,
-    pub buffer: &'a [u8],
-    pub package_manager: Option<&'a mut PackageManager>,
+    pub(crate) log: &'a mut bun_ast::Log,
+    pub(crate) buffer: &'a [u8],
+    pub(crate) package_manager: Option<&'a mut PackageManager>,
 }
 
 pub(crate) fn to_dependency(this: External, ctx: &mut Context<'_>) -> Dependency {
@@ -417,7 +393,7 @@ pub(crate) fn is_scp_like_path(dependency: &[u8]) -> bool {
 ///
 /// This also checks for a github url that ends with ".tar.gz"
 #[inline]
-pub(crate) fn is_github_tarball_path(dependency: &[u8]) -> bool {
+fn is_github_tarball_path(dependency: &[u8]) -> bool {
     if is_tarball(dependency) {
         return true;
     }
@@ -439,8 +415,15 @@ pub(crate) fn is_github_tarball_path(dependency: &[u8]) -> bool {
 // This won't work for query string params, but I'll let someone file an issue
 // before I add that.
 #[inline]
-pub(crate) fn is_tarball(dependency: &[u8]) -> bool {
-    dependency.ends_with(b".tgz") || dependency.ends_with(b".tar.gz")
+fn is_tarball(dependency: &[u8]) -> bool {
+    has_suffix_ignore_ascii_case(dependency, b".tgz")
+        || has_suffix_ignore_ascii_case(dependency, b".tar.gz")
+        || has_suffix_ignore_ascii_case(dependency, b".tar")
+}
+
+#[inline]
+fn has_suffix_ignore_ascii_case(s: &[u8], suffix: &[u8]) -> bool {
+    s.len() >= suffix.len() && s[s.len() - suffix.len()..].eq_ignore_ascii_case(suffix)
 }
 
 /// the input is assumed to be either a remote or local tarball
@@ -463,26 +446,8 @@ pub mod tarball {
     pub use super::{TarballInfo, URI as Uri};
 }
 
-pub(crate) fn split_version_and_maybe_name(str: &[u8]) -> (&[u8], Option<&[u8]>) {
-    if let Some(at_index) = strings::index_of_char(str, b'@') {
-        let at_index = at_index as usize;
-        if at_index != 0 {
-            return (&str[at_index + 1..], Some(&str[0..at_index]));
-        }
-
-        let Some(second) = strings::index_of_char(&str[1..], b'@') else {
-            return (str, None);
-        };
-        let second_at_index = second as usize + 1;
-
-        return (&str[second_at_index + 1..], Some(&str[0..second_at_index]));
-    }
-
-    (str, None)
-}
-
 /// Turns `foo@1.1.1` into `foo`, `1.1.1`, or `@foo/bar@1.1.1` into `@foo/bar`, `1.1.1`, or `foo` into `foo`, `null`.
-pub(crate) fn split_name_and_maybe_version(str: &[u8]) -> (&[u8], Option<&[u8]>) {
+fn split_name_and_maybe_version(str: &[u8]) -> (&[u8], Option<&[u8]>) {
     if let Some(at_index) = strings::index_of_char(str, b'@') {
         let at_index = at_index as usize;
         if at_index != 0 {
@@ -569,19 +534,17 @@ pub fn is_scoped_package_name(name: &[u8]) -> Result<bool, PackageNameError> {
 /// A dependency name/alias becomes a directory under `node_modules/`. Names
 /// come from untrusted `package.json` / manifest keys, so reject anything that
 /// could resolve outside that directory. `@scope/name` stays valid.
-pub fn is_safe_install_folder_name(name: &[u8]) -> bool {
+pub(crate) fn is_safe_install_folder_name(name: &[u8]) -> bool {
     if name.is_empty() {
         return false;
     }
 
-    for component in name.split(|&c| c == b'/') {
+    for component in strings::split(name, b"/") {
         if component.is_empty() || component == b"." || component == b".." {
             return false;
         }
-        for &c in component {
-            if c == b'\\' || c == b':' || c == 0 {
-                return false;
-            }
+        if strings::contains_any(component, b"\\:\0") {
+            return false;
         }
     }
 
@@ -604,13 +567,6 @@ pub fn without_build_tag(version: &[u8]) -> &[u8] {
 pub(crate) type VersionExternal = [u8; 9];
 
 pub trait VersionExt {
-    fn zeroed() -> Version;
-    fn clone_in<SB: StringBuilderLike>(
-        &self,
-        buf: &[u8],
-        builder: &mut SB,
-    ) -> Result<Version, crate::Error>;
-    fn is_less_than(string_buf: &[u8], lhs: &Version, rhs: &Version) -> bool;
     fn is_less_than_with_tag(string_buf: &[u8], lhs: &Version, rhs: &Version) -> bool;
     fn to_version(
         alias: String,
@@ -623,33 +579,6 @@ pub trait VersionExt {
 }
 
 impl VersionExt for Version {
-    #[inline]
-    fn zeroed() -> Version {
-        Version::default()
-    }
-
-    /// Named `clone_in` so it doesn't shadow `std::clone::Clone::clone`.
-    fn clone_in<SB: StringBuilderLike>(
-        &self,
-        buf: &[u8],
-        builder: &mut SB,
-    ) -> Result<Version, crate::Error> {
-        Ok(Version {
-            tag: self.tag,
-            literal: builder.append_string(self.literal.slice(buf)),
-            value: self.value.clone_in(self.tag, buf, builder)?,
-        })
-    }
-
-    fn is_less_than(string_buf: &[u8], lhs: &Version, rhs: &Version) -> bool {
-        debug_assert!(lhs.tag == rhs.tag);
-        strings::cmp_strings_asc(
-            (),
-            lhs.literal.slice(string_buf),
-            rhs.literal.slice(string_buf),
-        )
-    }
-
     fn is_less_than_with_tag(string_buf: &[u8], lhs: &Version, rhs: &Version) -> bool {
         let tag_order = lhs.tag.cmp(rhs.tag);
         if tag_order != Ordering::Equal {
@@ -746,6 +675,7 @@ impl VersionExt for Version {
             Tag::Tarball => self.tarball().eql(rhs.tarball(), lhs_buf, rhs_buf),
             Tag::Symlink => self.symlink().eql(*rhs.symlink(), lhs_buf, rhs_buf),
             Tag::Workspace => self.workspace().eql(*rhs.workspace(), lhs_buf, rhs_buf),
+            Tag::Catalog => self.catalog().eql(*rhs.catalog(), lhs_buf, rhs_buf),
             _ => true,
         }
     }
@@ -754,25 +684,6 @@ impl VersionExt for Version {
 // ──────────────────────────────────────────────────────────────────────────
 // Version::Tag
 // ──────────────────────────────────────────────────────────────────────────
-
-bun_core::comptime_string_map! {
-    static TAG_MAP: Tag = {
-        b"npm" => Tag::Npm,
-        b"git" => Tag::Git,
-        b"folder" => Tag::Folder,
-        b"github" => Tag::Github,
-        b"tarball" => Tag::Tarball,
-        b"symlink" => Tag::Symlink,
-        b"catalog" => Tag::Catalog,
-        b"dist_tag" => Tag::DistTag,
-        b"workspace" => Tag::Workspace,
-    };
-}
-
-#[inline]
-pub fn tag_from_bytes(bytes: &[u8]) -> Option<Tag> {
-    TAG_MAP.get(bytes).copied()
-}
 
 pub trait TagExt {
     fn cmp(self, other: Tag) -> Ordering;
@@ -1138,44 +1049,11 @@ impl TagExt for Tag {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Version payload types
-// ──────────────────────────────────────────────────────────────────────────
-
-pub trait ValueExt {
-    fn clone_in<SB: StringBuilderLike>(
-        &self,
-        _tag: Tag,
-        _buf: &[u8],
-        _builder: &mut SB,
-    ) -> Result<Value, crate::Error>;
-}
-
-impl ValueExt for Value {
-    fn clone_in<SB: StringBuilderLike>(
-        &self,
-        tag: Tag,
-        _buf: &[u8],
-        _builder: &mut SB,
-    ) -> Result<Value, crate::Error> {
-        Ok(match tag {
-            Tag::Npm => {
-                // SAFETY: `tag == Npm` selects the `npm` union arm.
-                let npm = unsafe { (*self.npm).clone() };
-                Value {
-                    npm: ManuallyDrop::new(npm),
-                }
-            }
-            // SAFETY: every other arm is `Copy` (no heap), so a bitwise read is a true clone.
-            _ => unsafe { core::ptr::read(self) },
-        })
-    }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
 // Free functions: parse
 // ──────────────────────────────────────────────────────────────────────────
 
-pub fn is_windows_abs_path_with_leading_slashes(dep: &[u8]) -> Option<&[u8]> {
+#[cfg(windows)]
+pub(crate) fn is_windows_abs_path_with_leading_slashes(dep: &[u8]) -> Option<&[u8]> {
     let mut i: usize = 0;
     if dep.len() > 2 && dep[i] == b'/' {
         while dep[i] == b'/' {
@@ -1215,7 +1093,7 @@ pub fn parse<'a, 'b>(
     )
 }
 
-pub fn parse_with_optional_tag<'a, 'b>(
+pub(crate) fn parse_with_optional_tag<'a, 'b>(
     alias: String,
     alias_hash: impl Into<Option<PackageNameHash>>,
     dependency: &[u8],
@@ -1238,7 +1116,7 @@ pub fn parse_with_optional_tag<'a, 'b>(
     )
 }
 
-pub fn parse_with_tag(
+pub(crate) fn parse_with_tag(
     alias: String,
     alias_hash: Option<PackageNameHash>,
     dependency: &[u8],
@@ -1620,7 +1498,11 @@ pub fn parse_with_tag(
                 literal: sliced.value(),
             })
         }
-        Tag::Uninitialized => None,
+        Tag::Uninitialized => Some(Version {
+            tag: Tag::Uninitialized,
+            literal: sliced.value(),
+            value: Value::default(),
+        }),
         Tag::Symlink => {
             if let Some(colon) = strings::index_of_char(dependency, b':') {
                 return Some(Version {

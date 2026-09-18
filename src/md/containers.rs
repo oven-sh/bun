@@ -7,7 +7,7 @@ use crate::parser::{self, BlockHeader, Parser};
 use crate::types::{self, BlockType, Container, VerbatimLine};
 
 impl Parser<'_> {
-    pub fn push_container(&mut self, c: &Container) -> Result<(), AllocError> {
+    pub(crate) fn push_container(&mut self, c: &Container) -> Result<(), AllocError> {
         if (self.n_containers as usize) >= self.containers.len() {
             self.containers.push(*c);
         } else {
@@ -23,7 +23,7 @@ impl Parser<'_> {
         Ok(())
     }
 
-    pub fn push_container_bytes(
+    pub(crate) fn push_container_bytes(
         &mut self,
         block_type: BlockType,
         data: u32,
@@ -39,7 +39,7 @@ impl Parser<'_> {
         Ok(())
     }
 
-    pub fn enter_child_containers(&mut self, count: u32) -> Result<(), parser::Error> {
+    pub(crate) fn enter_child_containers(&mut self, count: u32) -> Result<(), parser::Error> {
         let mut i: u32 = self.n_containers - count;
         while i < self.n_containers {
             // Capture the container fields before calling &mut self methods.
@@ -94,7 +94,7 @@ impl Parser<'_> {
         Ok(())
     }
 
-    pub fn leave_child_containers(&mut self, keep: u32) -> Result<(), parser::Error> {
+    pub(crate) fn leave_child_containers(&mut self, keep: u32) -> Result<(), parser::Error> {
         while self.n_containers > keep {
             self.n_containers -= 1;
             // Capture the container fields before calling &mut self methods.
@@ -155,7 +155,7 @@ impl Parser<'_> {
         Ok(())
     }
 
-    pub fn is_container_compatible(&self, existing: &Container, new: &Container) -> bool {
+    pub(crate) fn is_container_compatible(&self, existing: &Container, new: &Container) -> bool {
         let _ = self;
         // Same container type
         if existing.ch == b'>' && new.ch == b'>' {
@@ -172,7 +172,7 @@ impl Parser<'_> {
         false
     }
 
-    pub fn process_all_blocks(&mut self) -> Result<(), parser::Error> {
+    pub(crate) fn process_all_blocks(&mut self) -> Result<(), parser::Error> {
         let mut off: usize = 0;
         // Capture the raw ptr/len so we can call &mut self methods inside the
         // loop. block_bytes is not mutated during process_all_blocks.

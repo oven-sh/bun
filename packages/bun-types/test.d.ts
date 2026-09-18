@@ -29,6 +29,10 @@ declare module "bun:test" {
      * value of `factory`. If an export didn't exist before, it is not added to
      * existing import statements. This is a consequence of how ESM works.
      *
+     * If the module is already loaded and `factory` returns a promise that is
+     * still pending, the exports are overwritten once it settles and the
+     * returned promise resolves after that. Otherwise nothing is returned.
+     *
      * @param id module ID to mock
      * @param factory a function returning an object used as the exports of the mocked module
      *
@@ -94,7 +98,7 @@ declare module "bun:test" {
     function fn<T extends (...args: any[]) => any>(func?: T): Mock<T>;
     function setSystemTime(now?: number | Date): void;
     function setTimeout(milliseconds: number): void;
-    function useFakeTimers(options?: { now?: number | Date }): typeof vi;
+    function useFakeTimers(options?: { now?: number | Date } | "modern" | "legacy"): typeof vi;
     function useRealTimers(): typeof vi;
     function advanceTimersByTime(milliseconds: number): typeof vi;
     function advanceTimersToNextTimer(): typeof vi;

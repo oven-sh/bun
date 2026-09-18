@@ -1,14 +1,14 @@
 const EventEmitter = require("node:events");
 const Worker = require("internal/cluster/Worker");
-const RoundRobinHandle = require("internal/cluster/RoundRobinHandle");
-const SharedHandle = require("internal/cluster/SharedHandle");
-const path = require("node:path");
-const { throwNotImplemented, kHandle } = require("internal/shared");
+const { kHandle } = require("internal/shared");
 
 const sendHelper = $newRustFunction("node_cluster_binding.rs", "sendHelperPrimary", 4);
 const onInternalMessage = $newRustFunction("node_cluster_binding.rs", "onInternalMessagePrimary", 3);
+const { UV_EINVAL, UV_ENOBUFS } = process.binding("uv");
 
 let child_process;
+let RoundRobinHandle;
+let SharedHandle;
 
 const ArrayPrototypeSlice = Array.prototype.slice;
 const ObjectValues = Object.values;
@@ -39,13 +39,7 @@ const schedulingPolicyEnv = process.env.NODE_CLUSTER_SCHED_POLICY;
 let schedulingPolicy = 0;
 if (schedulingPolicyEnv === "rr") schedulingPolicy = SCHED_RR;
 else if (schedulingPolicyEnv === "none") schedulingPolicy = SCHED_NONE;
-else if (process.platform === "win32") {
-  // // Round-robin doesn't perform well on
-  // // Windows due to the way IOCP is wired up.
-  // schedulingPolicy = SCHED_NONE;
-  // TODO
-  schedulingPolicy = SCHED_RR;
-} else schedulingPolicy = SCHED_RR;
+else schedulingPolicy = SCHED_RR;
 cluster.schedulingPolicy = schedulingPolicy;
 
 cluster.setupPrimary = function (options) {
@@ -81,13 +75,6 @@ function createWorkerProcess(id, env) {
   const workerEnv = { ...process.env, ...env, NODE_UNIQUE_ID: `${id}` };
   const execArgv = [...cluster.settings.execArgv];
 
-  // if (cluster.settings.inspectPort === null) {
-  //   throw new ERR_SOCKET_BAD_PORT("Port", null, true);
-  // }
-  // if (isUsingInspector(cluster.settings.execArgv)) {
-  //   ArrayPrototypePush(execArgv, `--inspect-port=${getInspectPort(cluster.settings.inspectPort)}`);
-  // }
-
   child_process ??= require("node:child_process");
   return child_process.fork(cluster.settings.exec, cluster.settings.args, {
     cwd: cluster.settings.cwd,
@@ -112,11 +99,12 @@ function removeWorker(worker) {
   }
 }
 
-function removeHandlesForWorker(worker) {
+// channelGone: the channel is closed, so nothing the worker still holds can be acked (a primary disconnect() keeps it up until the acks arrive).
+function removeHandlesForWorker(worker, channelGone) {
   if (!worker) throw new Error("ERR_INTERNAL_ASSERTION");
 
   handles.forEach((handle, key) => {
-    if (handle.remove(worker)) handles.delete(key);
+    if (handle.remove(worker, channelGone)) handles.delete(key);
   });
 }
 
@@ -143,7 +131,7 @@ cluster.fork = function (env) {
      * still want to access it.
      */
     if (!worker.isConnected()) {
-      removeHandlesForWorker(worker);
+      removeHandlesForWorker(worker, true);
       removeWorker(worker);
     }
 
@@ -160,7 +148,7 @@ cluster.fork = function (env) {
      * associated with this worker because it is
      * not connected to the primary anymore.
      */
-    removeHandlesForWorker(worker);
+    removeHandlesForWorker(worker, true);
 
     /*
      * Remove the worker from the workers list only
@@ -232,15 +220,42 @@ function queryServer(worker, message) {
   // Stop processing if worker already disconnecting
   if (worker.exitedAfterDisconnect) return;
 
-  const key = `${message.address}:${message.port}:${message.addressType}:` + `${message.fd}:${message.index}`;
-  let handle = handles.get(key);
+  RoundRobinHandle ??= require("internal/cluster/RoundRobinHandle");
+  SharedHandle ??= require("internal/cluster/SharedHandle");
+
+  const key =
+    `${message.address}:${message.port}:${message.addressType}:${message.fd}` +
+    (message.port === 0 ? `:${message.index}` : "");
+  const cachedHandle = handles.get(key);
+  let handle;
+  if (cachedHandle && !cachedHandle.has(worker)) handle = cachedHandle;
+
+  const kSharedOnlyHint =
+    "TLS and non-TLS cluster workers cannot share the same address:port under SCHED_RR " +
+    "(Bun's TLS accept is native and cannot adopt round-robin connection fds)";
+  if (handle !== undefined && message.sharedOnly === true && handle instanceof RoundRobinHandle) {
+    send(worker, { errno: UV_EINVAL, key, ack: message.seq, data: handle.data, bunHint: kSharedOnlyHint }, null);
+    return;
+  }
+  if (
+    schedulingPolicy === SCHED_RR &&
+    handle !== undefined &&
+    message.sharedOnly !== true &&
+    handle instanceof SharedHandle &&
+    handle.sharedOnly &&
+    message.addressType !== "udp4" &&
+    message.addressType !== "udp6"
+  ) {
+    send(worker, { errno: UV_EINVAL, key, ack: message.seq, data: handle.data, bunHint: kSharedOnlyHint }, null);
+    return;
+  }
 
   if (handle === undefined) {
     let address = message.address;
 
     // Find shortest path for unix sockets because of the ~100 byte limit
     if (message.port < 0 && typeof address === "string" && process.platform !== "win32") {
-      address = path.relative(process.cwd(), address);
+      address = require("node:path").relative(process.cwd(), address);
 
       if (message.address.length < address.length) address = message.address;
     }
@@ -248,37 +263,36 @@ function queryServer(worker, message) {
     // UDP is exempt from round-robin connection balancing for what should
     // be obvious reasons: it's connectionless. There is nothing to send to
     // the workers except raw datagrams and that's pointless.
-    if (message.addressType === "udp4" || message.addressType === "udp6") {
-      if (process.platform === "win32") {
-        // Sharing a dgram descriptor with a worker is not supported on
-        // Windows. Node's write of the handle fails with ENOTSUP on the
-        // primary-side Worker object and the worker never gets a reply —
-        // node's test-dgram-bind-shared-ports.js asserts exactly that.
-        const error = new Error(`write ENOTSUP - cannot share a dgram socket with a worker on Windows`);
-        error.code = "ENOTSUP";
-        error.syscall = "write";
-        worker.emit("error", error);
-        return;
-      }
+    if (process.platform === "win32" && (message.addressType === "udp4" || message.addressType === "udp6")) {
+      const error = new Error(`write ENOTSUP - cannot share a dgram socket with a worker on Windows`);
+      error.code = "ENOTSUP";
+      error.syscall = "write";
+      worker.emit("error", error);
+      return;
+    }
+    if (
+      schedulingPolicy !== SCHED_RR ||
+      message.sharedOnly === true ||
+      message.addressType === "udp4" ||
+      message.addressType === "udp6"
+    ) {
       handle = new SharedHandle(key, address, message);
-    } else if (schedulingPolicy !== SCHED_RR) {
-      throwNotImplemented("node:cluster SCHED_NONE");
     } else {
       handle = new RoundRobinHandle(key, address, message);
     }
 
-    handles.set(key, handle);
+    if (!cachedHandle) handles.set(key, handle);
   }
 
   if (!handle.data) handle.data = message.data;
 
   // Set custom server data
-  handle.add(worker, (errno, reply, handle) => {
-    const { data } = handles.get(key);
+  handle.add(worker, (errno, reply, serverHandle) => {
+    const data = handles.get(key)?.data;
 
-    if (errno) handles.delete(key); // Gives other workers a chance to retry.
+    if (errno && !cachedHandle) handles.delete(key);
 
-    send(
+    const sent = send(
       worker,
       {
         errno,
@@ -287,8 +301,14 @@ function queryServer(worker, message) {
         data,
         ...reply,
       },
-      handle,
+      serverHandle,
     );
+    if (sent === null && serverHandle !== null && serverHandle !== undefined) {
+      send(worker, { errno: UV_ENOBUFS, key, ack: message.seq, data }, null);
+      // The worker never got the handle, so it will never send act:close for it.
+      if (handle.remove(worker) && handles.get(key) === handle) handles.delete(key);
+    }
+    if (cachedHandle && handle !== cachedHandle && !errno) handle.remove(worker);
   });
 }
 
@@ -315,13 +335,6 @@ function close(worker, message) {
 }
 
 function send(worker, message, handle?, cb?) {
-  if (handle) {
-    // Descriptor-bearing replies travel as a NODE_HANDLE envelope so the
-    // worker pairs the descriptor with the message and acks it; the inner
-    // message is marked NODE_CLUSTER so it is dispatched as a cluster-internal
-    // message rather than a process 'message' event.
-    message = { cmd: "NODE_HANDLE", type: "dgram.Native", message: { ...message, cmd: "NODE_CLUSTER" } };
-  }
   return sendHelper(worker.process[kHandle], message, handle, cb);
 }
 
@@ -330,7 +343,7 @@ Worker.prototype.disconnect = function () {
   this.exitedAfterDisconnect = true;
   send(this, { act: "disconnect" });
   this.process.disconnect();
-  removeHandlesForWorker(this);
+  removeHandlesForWorker(this, false);
   removeWorker(this);
   return this;
 };

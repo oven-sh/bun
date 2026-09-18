@@ -63,14 +63,6 @@ impl UUID {
 
         Ok(uuid)
     }
-
-    // Zero UUID
-    pub const ZERO: UUID = UUID { bytes: [0u8; 16] };
-
-    // Convenience function to return a new v4 UUID.
-    pub fn new_v4() -> UUID {
-        UUID::init()
-    }
 }
 
 // Indices in the UUID string representation for each byte.
@@ -108,25 +100,57 @@ pub struct UUID7 {
 // PORTING.md §Concurrency: `bun_threading::Guarded` has a `const fn new()` so
 // it can back a `static` directly (no lazy init).
 static UUID_V7_LOCK: bun_threading::Guarded<()> = bun_threading::Guarded::new(());
+// State for the default (Date.now()) path, where the RFC 9562 §6.2 monotonic
+// clamp applies.
 static UUID_V7_LAST_TIMESTAMP: AtomicU64 = AtomicU64::new(0);
 static UUID_V7_COUNTER: AtomicU32 = AtomicU32::new(0);
+// Separate state for caller-supplied timestamps so an explicit call neither
+// observes nor rebases the default path's monotonic state.
+static UUID_V7_EXPLICIT_REQUESTED: AtomicU64 = AtomicU64::new(u64::MAX);
+static UUID_V7_EXPLICIT_EMITTED: AtomicU64 = AtomicU64::new(0);
+static UUID_V7_EXPLICIT_COUNTER: AtomicU32 = AtomicU32::new(0);
+
+/// Where the `timestamp` passed to [`UUID7::init`] came from.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum TimestampSource {
+    /// Read from the generator's own clock. The RFC 9562 §6.2 monotonic clamp
+    /// applies: the emitted timestamp never moves backward.
+    Clock,
+    /// Supplied by the caller. The value is encoded verbatim and does not
+    /// touch the clock-path state.
+    Explicit,
+}
 
 impl UUID7 {
     // Returns the (possibly adjusted) timestamp and the 12-bit rand_a counter.
     // RFC 9562 §6.2: on counter rollover, increment the timestamp rather than
     // wrapping the counter, so the output stays monotonic.
-    fn next(timestamp: u64, seed: u16) -> (u64, u32) {
+    fn next(timestamp: u64, seed: u16, source: TimestampSource) -> (u64, u32) {
         // The high bit of the 12-bit counter is reserved as a rollover guard so
         // a freshly seeded millisecond always has at least 2048 increments left.
         let seed = (seed & 0x07FF) as u32;
 
         let _guard = UUID_V7_LOCK.lock();
-        let last = UUID_V7_LAST_TIMESTAMP.load(Ordering::Relaxed);
 
-        let (mut ts, mut count) = if timestamp > last {
-            (timestamp, seed)
-        } else {
-            (last, UUID_V7_COUNTER.load(Ordering::Relaxed) + 1)
+        let (mut ts, mut count) = match source {
+            TimestampSource::Clock => {
+                let last = UUID_V7_LAST_TIMESTAMP.load(Ordering::Relaxed);
+                if timestamp > last {
+                    (timestamp, seed)
+                } else {
+                    (last, UUID_V7_COUNTER.load(Ordering::Relaxed) + 1)
+                }
+            }
+            TimestampSource::Explicit => {
+                if timestamp != UUID_V7_EXPLICIT_REQUESTED.load(Ordering::Relaxed) {
+                    (timestamp, seed)
+                } else {
+                    (
+                        UUID_V7_EXPLICIT_EMITTED.load(Ordering::Relaxed),
+                        UUID_V7_EXPLICIT_COUNTER.load(Ordering::Relaxed) + 1,
+                    )
+                }
+            }
         };
 
         if count > 0x0FFF {
@@ -134,17 +158,26 @@ impl UUID7 {
             count = seed;
         }
 
-        UUID_V7_LAST_TIMESTAMP.store(ts, Ordering::Relaxed);
-        UUID_V7_COUNTER.store(count, Ordering::Relaxed);
+        match source {
+            TimestampSource::Clock => {
+                UUID_V7_LAST_TIMESTAMP.store(ts, Ordering::Relaxed);
+                UUID_V7_COUNTER.store(count, Ordering::Relaxed);
+            }
+            TimestampSource::Explicit => {
+                UUID_V7_EXPLICIT_REQUESTED.store(timestamp, Ordering::Relaxed);
+                UUID_V7_EXPLICIT_EMITTED.store(ts, Ordering::Relaxed);
+                UUID_V7_EXPLICIT_COUNTER.store(count, Ordering::Relaxed);
+            }
+        }
 
         (ts, count)
     }
 
-    pub fn init(timestamp: u64, random: [u8; 10]) -> UUID7 {
+    pub fn init(timestamp: u64, random: [u8; 10], source: TimestampSource) -> UUID7 {
         // random[0..8] supplies rand_b; random[8..10] seeds the rand_a counter
         // so the seeded counter value is independent of the visible random bits.
         let seed = u16::from_le_bytes([random[8], random[9]]);
-        let (timestamp, count) = Self::next(timestamp, seed);
+        let (timestamp, count) = Self::next(timestamp, seed, source);
 
         let mut bytes = [0u8; 16];
 
@@ -179,7 +212,7 @@ impl UUID7 {
         print_bytes(&self.to_bytes(), buf);
     }
 
-    pub fn to_uuid(self) -> UUID {
+    pub(crate) fn to_uuid(self) -> UUID {
         let bytes: [u8; 16] = self.to_bytes();
         UUID { bytes }
     }
@@ -202,19 +235,19 @@ pub struct UUID5 {
 pub mod namespaces {
     use super::*;
 
-    pub(crate) const DNS: &[u8; 16] = &[
+    const DNS: &[u8; 16] = &[
         0x6b, 0xa7, 0xb8, 0x10, 0x9d, 0xad, 0x11, 0xd1, 0x80, 0xb4, 0x00, 0xc0, 0x4f, 0xd4, 0x30,
         0xc8,
     ];
-    pub const URL: &[u8; 16] = &[
+    pub(crate) const URL: &[u8; 16] = &[
         0x6b, 0xa7, 0xb8, 0x11, 0x9d, 0xad, 0x11, 0xd1, 0x80, 0xb4, 0x00, 0xc0, 0x4f, 0xd4, 0x30,
         0xc8,
     ];
-    pub(crate) const OID: &[u8; 16] = &[
+    const OID: &[u8; 16] = &[
         0x6b, 0xa7, 0xb8, 0x12, 0x9d, 0xad, 0x11, 0xd1, 0x80, 0xb4, 0x00, 0xc0, 0x4f, 0xd4, 0x30,
         0xc8,
     ];
-    pub(crate) const X500: &[u8; 16] = &[
+    const X500: &[u8; 16] = &[
         0x6b, 0xa7, 0xb8, 0x14, 0x9d, 0xad, 0x11, 0xd1, 0x80, 0xb4, 0x00, 0xc0, 0x4f, 0xd4, 0x30,
         0xc8,
     ];
@@ -258,7 +291,7 @@ impl UUID5 {
         UUID5 { bytes }
     }
 
-    pub fn to_bytes(self) -> [u8; 16] {
+    pub(crate) fn to_bytes(self) -> [u8; 16] {
         self.bytes
     }
 
@@ -266,7 +299,7 @@ impl UUID5 {
         print_bytes(&self.to_bytes(), buf);
     }
 
-    pub fn to_uuid(self) -> UUID {
+    pub(crate) fn to_uuid(self) -> UUID {
         let bytes: [u8; 16] = self.to_bytes();
         UUID { bytes }
     }

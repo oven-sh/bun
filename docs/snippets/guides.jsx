@@ -160,7 +160,6 @@ export const GuidesList = () => {
             title: "Server-side render (SSR) a React component",
             href: "/guides/ecosystem/ssr-react",
           },
-          { title: "Build an HTTP server using StricJS and Bun", href: "/guides/ecosystem/stric" },
           {
             title: "Read and write data to MongoDB using Mongoose and Bun",
             href: "/guides/ecosystem/mongoose",

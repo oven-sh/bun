@@ -260,6 +260,58 @@ describe("Bun.semver.satisfies()", () => {
     testSatisfies("^" + padded, "6.0.0", false);
   });
 
+  test("u64::MAX component does not collapse ^/~/x/hyphen ranges to empty", () => {
+    // Desugaring these range forms builds an exclusive `< {component+1}` upper bound.
+    // At u64::MAX that +1 must not saturate back to MAX (which yields `>=X <X`, an empty range).
+    const M = "18446744073709551615";
+    const M1 = "18446744073709551614";
+
+    // sanity: version is valid and exactly matchable
+    testSatisfies("*", `${M}.0.0`, true);
+    testSatisfies(`=${M}.0.0`, `${M}.0.0`, true);
+    testSatisfies(`>=${M}.0.0`, `${M}.0.0`, true);
+
+    // caret: major / minor (major==0) / patch (major==0,minor==0)
+    testSatisfies(`^${M}`, `${M}.0.0`, true);
+    testSatisfies(`^${M}.2.3`, `${M}.5.0`, true);
+    testSatisfies(`^0.${M}`, `0.${M}.7`, true);
+    testSatisfies(`^0.${M}.3`, `0.${M}.7`, true);
+    testSatisfies(`^0.0.${M}`, `0.0.${M}`, true);
+
+    // tilde: major / minor
+    testSatisfies(`~${M}`, `${M}.0.0`, true);
+    testSatisfies(`~${M}`, `${M}.9.9`, true);
+    testSatisfies(`~1.${M}`, `1.${M}.0`, true);
+    testSatisfies(`~1.${M}.3`, `1.${M}.3`, true);
+    testSatisfies(`~1.${M}.3`, `1.${M}.9`, true);
+
+    // bare partial and x-range (init_wildcard)
+    testSatisfies(M, `${M}.0.0`, true);
+    testSatisfies(`${M}.x`, `${M}.0.0`, true);
+    testSatisfies(`${M}.x`, `${M}.5.0`, true);
+    testSatisfies(`1.${M}`, `1.${M}.0`, true);
+    testSatisfies(`1.${M}.x`, `1.${M}.5`, true);
+
+    // hyphen range right endpoint (partial)
+    testSatisfies(`1.0.0 - ${M}`, `${M}.5.0`, true);
+    testSatisfies(`1.0.0 - ${M}.x`, `${M}.5.0`, true);
+    testSatisfies(`1.0.0 - 1.${M}`, `1.${M}.5`, true);
+    testSatisfies(`1.0.0 - 1.${M}.x`, `1.${M}.5`, true);
+
+    // upper bound is still enforced: the clamped range doesn't leak past its ceiling
+    testSatisfies(`^0.${M}`, `1.0.0`, false);
+    testSatisfies(`^0.0.${M}`, `0.1.0`, false);
+    testSatisfies(`~1.${M}.3`, `2.0.0`, false);
+    testSatisfies(`1.${M}.x`, `2.0.0`, false);
+    testSatisfies(`1.0.0 - 1.${M}`, `2.0.0`, false);
+
+    // control at MAX-1: every shape already worked and still works
+    testSatisfies(`^${M1}`, `${M1}.0.0`, true);
+    testSatisfies(`~${M1}`, `${M1}.0.0`, true);
+    testSatisfies(M1, `${M1}.0.0`, true);
+    testSatisfies(`^${M1}`, `${M}.0.0`, false);
+  });
+
   test("ranges", () => {
     testSatisfies("~1.2.3", "1.2.3", true);
     testSatisfies("~1.2", "1.2.0", true);

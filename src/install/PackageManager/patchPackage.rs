@@ -1252,12 +1252,8 @@ fn node_modules_folder_for_dependency_id(
     }
 }
 
-/// Exits when `pkg_id` resolves to a folder on disk (a `file:` directory, a
-/// workspace member or a `link:` target). `bun install` links such a folder in
-/// place and never applies a patch to it: `patched_package_missing_from_cache`
-/// finds the folder itself. `compute_cache_dir_and_subpath` also resolves every
-/// `file:` folder against the project root, which is the wrong base for a path
-/// a registry package declares.
+/// Exits when `pkg_id` is a folder bun links in place (a `file:` directory, a
+/// workspace member or a `link:` target): `bun install` never applies a patch to one.
 fn crash_if_folder_target(lockfile: &Lockfile, pkg_id: PackageID, name: &[u8]) {
     let strbuf = lockfile.buffers.string_bytes.as_slice();
     let resolution = &lockfile.packages.items_resolution()[pkg_id as usize];
@@ -1285,9 +1281,7 @@ fn crash_if_folder_target(lockfile: &Lockfile, pkg_id: PackageID, name: &[u8]) {
         _ => return,
     };
 
-    // A `file:` path a registry package declares is relative to that package,
-    // which ships the folder. Every other declarer (the root, a workspace, a
-    // local `file:` package, a root override) wrote a path in the project.
+    // A path a registry package declares is relative to that package, which ships the folder.
     let dependency_id = lockfile
         .buffers
         .resolutions

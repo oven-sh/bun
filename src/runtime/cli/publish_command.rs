@@ -2,10 +2,10 @@ use bun_collections::VecExt;
 use std::io::Write as _;
 
 use crate::Error;
-use crate::cli::ci_info as ci;
 use bun_alloc::AllocError;
 use bun_ast::{E, Expr, G};
 use bun_core::MutableString;
+use bun_core::ci_info as ci;
 use bun_core::fmt as bun_fmt;
 use bun_core::{Environment, Global, Output};
 use bun_core::{ZStr, strings};

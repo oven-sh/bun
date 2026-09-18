@@ -270,8 +270,17 @@ test.concurrent("--rerun-each --isolate undoes the file's setDefaultTimeout() be
       test("outlasts the timeout that the next test sets", async () => {
         await Bun.sleep(50);
       });
-      test("sets a default timeout", () => {
+      // The global swap closes the socket, so the close handler sets the timeout once more during the swap.
+      test("sets a default timeout", async () => {
         setDefaultTimeout(1);
+        const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+        const { promise: opened, resolve } = Promise.withResolvers();
+        await Bun.connect({
+          hostname: "127.0.0.1",
+          port: server.port,
+          socket: { open: resolve, data() {}, close() { setDefaultTimeout(1); } },
+        });
+        await opened;
       });
     `,
   });

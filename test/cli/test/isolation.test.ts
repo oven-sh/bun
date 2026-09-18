@@ -323,6 +323,52 @@ describe.concurrent("bun test --isolate", () => {
     expect(exitCode).toBe(0);
   });
 
+  // The swap closes the socket that a.test.ts left open, and the close handler runs in the old global.
+  test.each([
+    ["--isolate", ["--isolate"], {}],
+    // One worker takes both files (scale-up gated), so the swap is the worker's.
+    ["--parallel worker", ["--parallel=2"], { BUN_TEST_PARALLEL_SCALE_MS: "60000" }],
+  ])(
+    "a setDefaultTimeout() made while the swap closes a file's socket does not reach the next file (%s)",
+    async (_, args, env) => {
+      using dir = tempDir("isolate-late-default-timeout", {
+        "a.test.ts": `
+        import { test, setDefaultTimeout } from "bun:test";
+        test("leaves a socket open", async () => {
+          const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+          const { promise: opened, resolve } = Promise.withResolvers();
+          await Bun.connect({
+            hostname: "127.0.0.1",
+            port: server.port,
+            socket: {
+              open: resolve,
+              data() {},
+              close() {
+                setDefaultTimeout(1);
+                console.log("closed");
+              },
+            },
+          });
+          await opened;
+        });
+      `,
+        "b.test.ts": `
+        import { test } from "bun:test";
+        test("outlasts 1ms", async () => { await Bun.sleep(50); });
+      `,
+      });
+      const { stdout, stderr, exitCode } = await runTests(String(dir), args, ["./a.test.ts", "./b.test.ts"], {
+        ...bunEnv,
+        ...env,
+      });
+      // A --parallel worker's console.log arrives on the coordinator's stderr.
+      expect(stdout + stderr).toContain("closed");
+      expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
+      expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
+      expect(exitCode).toBe(0);
+    },
+  );
+
   // The cached module record carries each name as Latin-1 or UTF-16; the second file links from that record.
   test("with --isolate, cached module records keep short, Latin-1 and UTF-16 names", async () => {
     using dir = tempDir("isolate-module-names", {

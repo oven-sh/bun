@@ -2757,11 +2757,11 @@ impl TestCommand {
                         if let Some(t) = reporter.timings.as_mut() {
                             t.record_since(file_name.as_bytes(), started);
                         }
-                        reporter.jest.default_timeout_override = u32::MAX;
                         Global::mimalloc_cleanup(false);
                         if isolate {
                             TestCommand::swap_global_for_test_isolation(reporter, vm);
                         }
+                        reporter.jest.default_timeout_override = u32::MAX;
                     }
                 }
 
@@ -2804,6 +2804,9 @@ impl TestCommand {
     /// The `--isolate` boundary after one run of a test file: stops what the
     /// run left open, replaces the global, and drops the preload-level hooks
     /// registered in the old global.
+    ///
+    /// This still runs JS of the old file (microtasks, close handlers), so undo
+    /// what that JS can set, like `setDefaultTimeout()`, after this call.
     pub(crate) fn swap_global_for_test_isolation(
         reporter: &mut CommandLineReporter,
         vm: &mut VirtualMachine,

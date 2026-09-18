@@ -4,8 +4,8 @@ use std::rc::Rc;
 use bun_alloc::AllocError;
 use bun_bundler::Transpiler;
 use bun_bundler::options::BundleOptions;
-use bun_collections::index_sort;
-use bun_core::{StringOrTinyString, strings};
+use bun_collections::{HashMap, index_sort};
+use bun_core::{StringOrTinyString, UnwrapOrOom, strings};
 use bun_output::{declare_scope, scoped_log};
 use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
 use bun_paths::{self, PathBuffer};
@@ -27,6 +27,9 @@ pub struct Scanner<'a> {
     pub(crate) dirs_to_scan: Fifo,
     /// Paths to test files found while scanning.
     pub(crate) test_files: Vec<Interned>,
+    /// Every path in `test_files`. A path that two arguments select (a directory
+    /// and a file inside it) is pushed once, at the position of its first match.
+    seen_test_files: HashMap<&'static [u8], ()>,
     pub(crate) fs: *mut FileSystem,
     pub(crate) open_dir_buf: PathBuffer,
     pub(crate) options: &'a BundleOptions<'a>,
@@ -85,6 +88,7 @@ impl<'a> Scanner<'a> {
             options: &transpiler.options,
             fs: transpiler.fs,
             test_files: results,
+            seen_test_files: HashMap::new(),
             open_dir_buf: PathBuffer::ZEROED,
             has_iterated: false,
             search_count: 0,
@@ -125,6 +129,19 @@ impl<'a> Scanner<'a> {
         Ok(core::mem::take(&mut self.test_files).into_boxed_slice())
     }
 
+    /// Append `path` to `test_files` unless an earlier scan already found it.
+    fn push_test_file(&mut self, path: Interned) -> Result<(), AllocError> {
+        if self
+            .seen_test_files
+            .get_or_put(path.as_bytes())?
+            .found_existing
+        {
+            return Ok(());
+        }
+        self.test_files.push(path);
+        Ok(())
+    }
+
     pub(crate) fn scan(&mut self, path_literal: &[u8]) -> Result<(), ScanError> {
         let mut scan_dir_buf = bun_paths::path_buffer_pool::get();
         let parts: [&[u8]; 2] = [self.top_level_dir(), path_literal];
@@ -147,7 +164,7 @@ impl<'a> Scanner<'a> {
                         .append_slice(path)
                         .map_err(|_| ScanError::OutOfMemory)?;
                     let rel_path = Interned::from_static(stored);
-                    self.test_files.push(rel_path);
+                    self.push_test_file(rel_path)?;
                 }
             } else if e == bun_resolver::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                 return Err(ScanError::DoesNotExist);
@@ -417,7 +434,7 @@ impl<'a> Scanner<'a> {
                     Err(_) => bun_core::out_of_memory(),
                 };
                 entry.abs_path = Interned::from_static(stored);
-                self.test_files.push(entry.abs_path);
+                self.push_test_file(entry.abs_path).unwrap_or_oom();
             }
         }
     }
